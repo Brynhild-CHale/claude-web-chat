@@ -1,0 +1,8 @@
+{
+  "name": "claude-web-chat",
+  "version": "0.1.0",
+  "description": "Live web canvas + turn graph for Claude Code.",
+  "author": {
+    "name": "Bryn"
+  }
+}

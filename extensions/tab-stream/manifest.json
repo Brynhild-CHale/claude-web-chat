@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "web-chat tab stream",
+  "version": "0.1.0",
+  "description": "Send a profile-distilled snapshot of the current tab to your web-chat conversation.",
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Send tab to web-chat" },
+  "options_page": "options.html"
+}

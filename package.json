@@ -1,0 +1,44 @@
+{
+  "name": "claude-web-chat",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Live web canvas + turn graph for Claude Code.",
+  "license": "MIT",
+  "homepage": "https://github.com/Brynhild-CHale/claude-web-chat#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Brynhild-CHale/claude-web-chat.git"
+  },
+  "main": "lib/server/index.js",
+  "bin": {
+    "claude-web-chat": "bin/claude-web-chat.js",
+    "claude-web-chat-mcp": "bin/claude-web-chat-mcp.js",
+    "claude-web-chat-hook": "bin/claude-web-chat-hook.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "public/",
+    "templates/",
+    "extensions/",
+    "install.sh",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bin/claude-web-chat.js start"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^4.19.2",
+    "node-html-parser": "^8.0.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>web-chat</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="stage" tabindex="0">
+    <!-- depth layers (behind content) -->
+    <div class="depth depth-radial"></div>
+    <div class="depth depth-grid"></div>
+    <div class="depth depth-ambient"></div>
+    <div class="depth depth-fog"></div>
+
+    <!-- topbar -->
+    <header id="topbar">
+      <div class="brand"><span class="status-dot off"></span>web-chat</div>
+      <span class="tb-div"></span>
+      <span class="node-label" id="node-label">—</span>
+
+      <button class="cmd-trigger" id="cmd-trigger" title="Command palette (⌘K)">
+        <span class="glyph">⌕</span><span class="ph">Search commands, nodes, components…</span><kbd>⌘K</kbd>
+      </button>
+
+      <div class="dock" id="dock">
+        <button class="dock-btn" id="btn-add" title="New pane · N">＋</button>
+        <button class="dock-btn" id="btn-bookmark" title="Bookmark node · B">⚑</button>
+        <button class="dock-btn" id="btn-pin-mode" title="Pin comment · C">✎</button>
+      </div>
+
+      <span class="tb-div"></span>
+      <div class="stepper">
+        <button id="btn-up" title="Previous node · [">↑</button>
+        <button id="btn-down" title="Next node · ]">↓</button>
+        <button id="btn-branch" title="Pick a branch" style="display:none">▾</button>
+      </div>
+
+      <span class="tb-div"></span>
+      <button class="dock-btn" id="btn-theme-toggle" title="Light / dark · T">◑</button>
+      <button class="dock-btn" id="btn-more" title="More">⋯</button>
+
+      <span class="tb-div"></span>
+      <button class="btn" id="btn-return-active" title="Return to the active node" style="display:none">↩ active</button>
+      <button class="btn" id="btn-set-active-here" title="Make the viewed node active" style="display:none">set active here</button>
+      <span class="active-pill" id="active-pill">active —</span>
+      <button class="btn-graph" id="btn-graph" title="View graph · G">Graph<kbd>G</kbd></button>
+      <span id="status" class="status-pill off">connecting…</span>
+    </header>
+
+    <!-- body: surface well + proximity queue rail -->
+    <div class="body">
+      <div class="well-wrap">
+        <main id="main"></main>
+        <div id="minbar" class="minbar"></div>
+      </div>
+      <aside id="queue-rail" class="rail">
+        <div class="rail-collapsed">
+          <div class="rail-vlabel">QUEUE</div>
+          <div class="rail-count">0</div>
+          <div class="rail-sub">PENDING</div>
+          <div class="rail-chips"></div>
+          <div class="rail-hint">‹ Q</div>
+        </div>
+        <div class="rail-expanded">
+          <div class="rail-head">
+            <span class="title">QUEUE → CLAUDE</span>
+            <span class="badge">0</span>
+            <kbd class="esc">ESC</kbd>
+          </div>
+          <div class="wake-slot"><span class="gear">⚙</span> wakes: Push</div>
+          <!-- B8: text is server-sent (GET /api/queue/policy activation_hint),
+               filled by wake-panel.js — not a hardcoded incantation here. -->
+          <div class="rail-notice hidden">
+            <div class="rn-title"></div>
+            <div class="rn-body"></div>
+            <code class="rn-cmd"></code>
+            <!-- parked-delivery mode line (server-sent, filled by wake-panel.js). -->
+            <div class="rn-parked"></div>
+          </div>
+          <div class="rail-items"><div class="rail-empty">No queued signals. Captures and pane signals collect here.</div></div>
+          <input class="rail-add" placeholder="Add comment…">
+          <button class="btn primary rail-push" disabled>Push 0 → Claude <kbd>P</kbd></button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- front glass (scanline + highlight), above content -->
+    <div class="glass-scanline"></div>
+
+    <!-- component drawer (visibility driven by .open, not .hidden) -->
+    <aside id="drawer" class="drawer">
+      <div class="drawer-head"><span class="title">COMPONENTS</span><button class="pane-btn" id="drawer-close">×</button></div>
+      <div id="drawer-body"></div>
+    </aside>
+
+    <!-- command palette -->
+    <div id="cmd-palette" class="palette hidden">
+      <input id="cmd-input" placeholder="Search commands, nodes, components…" autocomplete="off">
+      <div id="cmd-list" class="palette-list"></div>
+    </div>
+
+    <!-- more menu -->
+    <div id="more-menu" class="popover hidden">
+      <button class="menu-item" data-act="newgraph">◇ New graph</button>
+      <button class="menu-item" data-act="wipe">⌫ Wipe surface</button>
+      <button class="menu-item" data-act="export">↧ Export node</button>
+      <button class="menu-item" data-act="settings">⚙ Settings</button>
+      <button class="menu-item" data-act="shortcuts">⌨ Shortcuts</button>
+    </div>
+
+    <!-- settings -->
+    <div id="settings-panel" class="popover hidden">
+      <h4>Settings</h4>
+      <div class="row"><span>Theme</span><select id="settings-theme" class="wc-select"></select></div>
+      <div class="hint">Applies the web-chat-wide default. <span class="mono">web-chat</span> is the built-in stock look.</div>
+    </div>
+
+    <!-- new graph -->
+    <div id="new-graph-panel" class="popover hidden">
+      <h4>New graph</h4>
+      <input type="text" id="new-graph-name" placeholder="graph name (optional)…" maxlength="48" style="width:100%">
+      <div class="hint">Starts a fresh top-level graph; the name labels its root.</div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn" id="btn-new-graph-cancel">Cancel</button>
+        <button class="btn primary" id="btn-new-graph-go">Start</button>
+      </div>
+    </div>
+
+    <!-- bookmark popover -->
+    <div id="bookmark-pop" class="popover hidden">
+      <h4>Bookmark node</h4>
+      <input type="text" id="bookmark-name" placeholder="name…" maxlength="48" style="width:100%">
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button class="btn primary" id="btn-bookmark-save">Save</button>
+      </div>
+    </div>
+
+    <!-- keyboard legend -->
+    <div id="key-legend" class="legend hidden">
+      <div class="legend-card">
+        <h3>Keyboard</h3>
+        <div class="legend-row"><span>Command palette</span><span class="keys"><kbd>⌘K</kbd></span></div>
+        <div class="legend-row"><span>Open graph</span><span class="keys"><kbd>G</kbd></span></div>
+        <div class="legend-row"><span>New pane</span><span class="keys"><kbd>N</kbd></span></div>
+        <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
+        <div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>
+        <div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>
+        <div class="legend-row"><span>Toggle queue rail</span><span class="keys"><kbd>Q</kbd></span></div>
+        <div class="legend-row"><span>Push queue → Claude</span><span class="keys"><kbd>P</kbd></span></div>
+        <div class="legend-row"><span>Light / dark</span><span class="keys"><kbd>T</kbd></span></div>
+        <div class="legend-row"><span>Shortcuts · close</span><span class="keys"><kbd>?</kbd><kbd>Esc</kbd></span></div>
+      </div>
+    </div>
+
+    <!-- graph viewer: history ▸ DAG ▸ inspector (7b) -->
+    <div id="overlay" class="overlay hidden">
+      <div class="gv-header">
+        <span class="gv-brand">◇ GRAPH</span>
+        <span class="gv-graphsel" id="gv-graphsel">graph —</span>
+        <input class="gv-jump" id="gv-jump" placeholder="Jump to node or trigger…" autocomplete="off">
+        <div class="gv-seg" id="gv-mode">
+          <button data-mode="graph" class="on">Graph</button>
+          <button data-mode="log" disabled title="commit-log view — coming in 7b">Log</button>
+        </div>
+        <button class="gv-icon" id="gv-compare" disabled title="compare two nodes — coming in 7b">⇄</button>
+        <button class="gv-icon" id="overlay-fit" title="Fit to view">⤢</button>
+        <button class="gv-icon" id="overlay-close" title="Close (Esc)">✕</button>
+      </div>
+
+      <aside class="gv-history">
+        <div class="gv-history-head">HISTORY · <span id="gv-turncount">0</span> turns</div>
+        <div class="gv-filters" id="gv-filters">
+          <div class="gv-scope" id="gv-scope">
+            <button data-scope="all" class="on">All</button>
+            <button data-scope="graph" title="Just the selected node's graph">This graph</button>
+          </div>
+          <button class="gv-chip" data-filter="marked">⚑ Marked</button>
+          <button class="gv-chip" data-filter="forks">⑃ Forks</button>
+        </div>
+        <div class="gv-history-list" id="gv-history-list"></div>
+      </aside>
+
+      <div class="graph-canvas-wrap">
+        <svg id="graph-svg" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="gv-legend">
+          <span><i class="dot active"></i>active</span>
+          <span><i class="dot marked"></i>marked</span>
+          <span><i class="dot fork"></i>fork</span>
+          <span><i class="dot stack"></i>stack</span>
+        </div>
+        <div class="gv-zoom"><button id="gv-zoom-out">−</button><span id="gv-zoom-pct">100%</span><button id="gv-zoom-in">+</button></div>
+      </div>
+
+      <aside class="gv-inspector" id="gv-inspector">
+        <div class="gv-empty">Select a node to inspect it.</div>
+      </aside>
+
+      <div class="gv-status">
+        <span class="gv-status-active" id="gv-status-active">—</span>
+        <span id="gv-status-counts"></span>
+        <span class="gv-status-keys">↑↓ select · ↵ open · A set active · Space glance · ? keys</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="/mount-runtime.js"></script>
+  <script type="module" src="/app/main.js"></script>
+</body>
+</html>

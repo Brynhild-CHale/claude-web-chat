@@ -1,0 +1,125 @@
+<style>
+  :host, .frm { font: 13px ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  .frm { display: flex; flex-direction: column; gap: 10px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-size: 11px; color: #57606a; font-weight: 600; }
+  .field > label .req { color: #cf222e; margin-left: 2px; }
+  .field input[type=text], .field input[type=number], .field select {
+    padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 4px;
+    font: inherit; background: #fff;
+  }
+  .field input:focus, .field select:focus { outline: 2px solid #0969da55; border-color: #0969da; }
+  .field.bool { flex-direction: row; align-items: center; gap: 6px; }
+  .actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+  .submit {
+    padding: 6px 14px; border-radius: 4px;
+    border: 1px solid #1a7f37; background: #1a7f37; color: #fff;
+    cursor: pointer; font: inherit;
+  }
+  .submit:hover { background: #15622a; }
+  .error { color: #cf222e; font-size: 11px; min-height: 14px; }
+</style>
+<form class="frm">
+  <div id="fields"></div>
+  <div class="error" id="err"></div>
+  <div class="actions">
+    <button type="submit" class="submit" id="submit">Submit</button>
+  </div>
+</form>
+<script>
+  // params: { schema, submit_key, initial?, submit_label?, title?, emit_event? }
+  const schema = params.schema || { type: 'object', properties: {} };
+  const props = schema.properties || {};
+  const required = new Set(schema.required || []);
+  const initial = params.initial || {};
+  const submitKey = params.submit_key;
+  if (params.title) root.host.dataset.paneTitle = params.title;
+
+  const fieldsEl = root.getElementById('fields');
+  const errEl = root.getElementById('err');
+  const submitBtn = root.getElementById('submit');
+  if (params.submit_label) submitBtn.textContent = params.submit_label;
+
+  const inputs = {};
+
+  for (const [key, spec] of Object.entries(props)) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field' + (spec.type === 'boolean' ? ' bool' : '');
+    const lbl = document.createElement('label');
+    lbl.htmlFor = 'f_' + key;
+    lbl.textContent = spec.title || key;
+    if (required.has(key)) {
+      const r = document.createElement('span'); r.className = 'req'; r.textContent = '*';
+      lbl.appendChild(r);
+    }
+    let input;
+    if (spec.enum) {
+      input = document.createElement('select');
+      for (const v of spec.enum) {
+        const opt = document.createElement('option');
+        opt.value = String(v); opt.textContent = String(v);
+        input.appendChild(opt);
+      }
+    } else if (spec.type === 'boolean') {
+      input = document.createElement('input'); input.type = 'checkbox';
+    } else if (spec.type === 'number' || spec.type === 'integer') {
+      input = document.createElement('input'); input.type = 'number';
+      if (spec.minimum != null) input.min = spec.minimum;
+      if (spec.maximum != null) input.max = spec.maximum;
+    } else {
+      input = document.createElement('input'); input.type = 'text';
+    }
+    input.id = 'f_' + key;
+    if (initial[key] !== undefined) {
+      if (spec.type === 'boolean') input.checked = !!initial[key];
+      else input.value = String(initial[key]);
+    } else if (spec.default !== undefined) {
+      if (spec.type === 'boolean') input.checked = !!spec.default;
+      else input.value = String(spec.default);
+    }
+    inputs[key] = { input, spec };
+
+    if (spec.type === 'boolean') {
+      wrap.appendChild(input); wrap.appendChild(lbl);
+    } else {
+      wrap.appendChild(lbl); wrap.appendChild(input);
+    }
+    fieldsEl.appendChild(wrap);
+  }
+
+  function readValues() {
+    const out = {};
+    for (const [key, { input, spec }] of Object.entries(inputs)) {
+      if (spec.type === 'boolean') out[key] = input.checked;
+      else if (spec.type === 'number' || spec.type === 'integer') {
+        if (input.value === '') continue;
+        out[key] = spec.type === 'integer' ? parseInt(input.value, 10) : parseFloat(input.value);
+      } else {
+        if (input.value === '' && !required.has(key)) continue;
+        out[key] = input.value;
+      }
+    }
+    return out;
+  }
+
+  function validate(vals) {
+    for (const k of required) {
+      if (vals[k] === undefined || vals[k] === null || vals[k] === '') {
+        return `'${k}' is required`;
+      }
+    }
+    return null;
+  }
+
+  root.querySelector('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const vals = readValues();
+    const err = validate(vals);
+    errEl.textContent = err || '';
+    if (err) return;
+    if (submitKey) store.set({ [submitKey]: vals });
+    if (params.emit_event) {
+      root.host.dispatchEvent(new CustomEvent('form-submit', { bubbles: true, detail: vals }));
+    }
+  });
+</script>

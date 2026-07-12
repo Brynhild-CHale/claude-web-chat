@@ -1,0 +1,71 @@
+<!--
+  Synthetic modern-Reddit (shreddit) post-page fixture for the bundled `reddit`
+  profile. Exercises the REAL selectors in bundled/reddit/extract.js:
+    shreddit-post[post-title|author|subreddit-prefixed-name|permalink|score|
+      comment-count|created-timestamp|post-type|content-href] ·
+    [slot="text-body"] .md > p (self-text, <a> links preserved) ·
+    [slot="post-media-container"] img[src] (primary image for an image post) ·
+    shreddit-comment[author|permalink|score] > [slot="comment"] .md (top comments).
+  Six TOP-LEVEL comments are present (with one NESTED reply inside the first) to
+  prove the top-level-only filter AND the cap of 5 both hold: keep c1..c5, drop
+  the nested reply and c6. Loaded with URL
+  https://www.reddit.com/r/aww/comments/abc123/red_panda_being_adorable/
+-->
+<html>
+<head><title>Red panda being adorable : r/aww</title></head>
+<body>
+  <shreddit-app>
+    <shreddit-post
+      post-title="Red panda being adorable on a branch"
+      author="panda_fan"
+      subreddit-prefixed-name="r/aww"
+      subreddit-name="aww"
+      permalink="/r/aww/comments/abc123/red_panda_being_adorable/"
+      content-href="https://i.redd.it/redpanda.jpg"
+      score="18453"
+      comment-count="342"
+      created-timestamp="2024-03-14T09:30:00.000Z"
+      post-type="image">
+      <div slot="title"><h1>Red panda being adorable on a branch</h1></div>
+      <div slot="text-body">
+        <div class="md">
+          <p>Spotted this little one at the sanctuary today. More info about them at <a href="https://example.com/redpandas">the conservation site</a>.</p>
+          <p>They are classified as endangered, with fewer than 10,000 mature individuals left in the wild.</p>
+        </div>
+      </div>
+      <div slot="post-media-container">
+        <img src="https://preview.redd.it/redpanda.jpg?width=1080&amp;crop=smart" alt="A red panda resting on a tree branch">
+      </div>
+    </shreddit-post>
+
+    <div id="comment-tree">
+      <shreddit-comment author="commenter1" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/c1/" score="842" depth="0">
+        <div slot="comment"><div class="md"><p>This absolutely made my day. Look at that <a href="https://example.com/tail">ringed tail</a>!</p></div></div>
+        <shreddit-comment author="nested_replier" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/n1/" score="120" depth="1">
+          <div slot="comment"><div class="md"><p>Right?! A reply that must NOT surface as a top-level comment.</p></div></div>
+        </shreddit-comment>
+      </shreddit-comment>
+
+      <shreddit-comment author="commenter2" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/c2/" score="431" depth="0">
+        <div slot="comment"><div class="md"><p>Fun fact: they eat mostly bamboo.</p></div></div>
+      </shreddit-comment>
+
+      <shreddit-comment author="commenter3" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/c3/" score="288" depth="0">
+        <div slot="comment"><div class="md"><p>The sanctuary does great work.</p></div></div>
+      </shreddit-comment>
+
+      <shreddit-comment author="commenter4" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/c4/" score="150" depth="0">
+        <div slot="comment"><div class="md"><p>I need one. (I know, I know.)</p></div></div>
+      </shreddit-comment>
+
+      <shreddit-comment author="commenter5" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/c5/" score="97" depth="0">
+        <div slot="comment"><div class="md"><p>Fifth comment, still within the cap.</p></div></div>
+      </shreddit-comment>
+
+      <shreddit-comment author="commenter6" permalink="/r/aww/comments/abc123/red_panda_being_adorable/comment/c6/" score="12" depth="0">
+        <div slot="comment"><div class="md"><p>Sixth comment, dropped by the cap of 5.</p></div></div>
+      </shreddit-comment>
+    </div>
+  </shreddit-app>
+</body>
+</html>

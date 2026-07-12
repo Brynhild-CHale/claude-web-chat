@@ -1,0 +1,50 @@
+<!--
+  Synthetic Wikipedia article fixture for the bundled `wikipedia` profile.
+  Exercises the REAL selectors in bundled/wikipedia/extract.js:
+    h1#firstHeading (title) · .shortdescription · .mw-parser-output > p (lead
+    summary, direct children only, .mw-empty-elt skipped, <a> links preserved) ·
+    table.infobox (2-<td> fact rows + lead image) · .mw-heading2 h2 (section
+    outline, with a References heading that must be dropped by the SKIP set).
+  Five real lead paragraphs are present to prove the summary cap of 3 is honored.
+-->
+<html>
+<head><title>Red panda - Wikipedia</title></head>
+<body>
+  <div id="content">
+    <h1 id="firstHeading">Red panda</h1>
+    <div id="bodyContent">
+      <div class="mw-parser-output">
+        <div class="shortdescription">Small mammal native to the eastern Himalayas</div>
+
+        <table class="infobox">
+          <tbody>
+            <tr><th>Red panda</th></tr>
+            <tr><td><img src="//upload.wikimedia.org/wikipedia/commons/red_panda.jpg" alt="A red panda resting on a branch" width="220" height="165"></td></tr>
+            <tr><td>Conservation status</td><td>Endangered</td></tr>
+            <tr><td>Kingdom:</td><td><a href="/wiki/Animal">Animalia</a></td></tr>
+            <tr><td>Phylum:</td><td>Chordata</td></tr>
+            <tr><td>Family:</td><td><a href="/wiki/Ailuridae">Ailuridae</a></td></tr>
+            <tr><td>Genus:</td><td>Ailurus</td></tr>
+          </tbody>
+        </table>
+
+        <p class="mw-empty-elt"></p>
+        <p>The <a href="/wiki/Red_panda">red panda</a> (<i>Ailurus fulgens</i>) is a small mammal native to the eastern <a href="/wiki/Himalayas">Himalayas</a> and southwestern China.</p>
+        <p>It has dense reddish-brown fur and a ringed tail, and is roughly the size of a domestic cat though with a longer body.</p>
+        <p>The red panda is largely herbivorous and feeds mainly on bamboo, supplementing its diet with fruit, acorns, and eggs.</p>
+        <p>It is a solitary and mostly nocturnal animal, sheltering in tree hollows during the day.</p>
+        <p>The species is classified as endangered, with fewer than 10,000 mature individuals remaining in the wild.</p>
+
+        <div class="mw-heading mw-heading2"><h2 id="Description">Description</h2></div>
+        <p>Detailed description text that is not part of the lead summary.</p>
+
+        <div class="mw-heading mw-heading2"><h2 id="Behavior_and_ecology">Behavior and ecology</h2></div>
+        <p>Behavioral notes.</p>
+
+        <div class="mw-heading mw-heading2"><h2 id="References">References</h2></div>
+        <p>Reference clutter that must be dropped.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

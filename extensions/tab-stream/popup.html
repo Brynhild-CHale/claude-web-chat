@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 280px; margin: 0; padding: 14px; font: 13px system-ui, -apple-system, sans-serif; color: #111; }
+  h1 { font-size: 13px; margin: 0 0 10px; }
+  label { display: block; font-size: 11.5px; font-weight: 600; color: #57606a; margin: 0 0 4px; }
+  select { width: 100%; padding: 7px 8px; font-size: 13px; border: 1px solid #d0d7de; border-radius: 6px;
+           box-sizing: border-box; background: #fff; }
+  button { width: 100%; padding: 9px; font-size: 13px; font-weight: 600; border: 0; border-radius: 6px;
+           background: #0969da; color: #fff; cursor: pointer; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  #status { margin-top: 10px; font-size: 12px; color: #57606a; min-height: 16px; word-break: break-word; }
+  #status.ok { color: #1a7f37; }
+  #status.err { color: #cf222e; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .row select { flex: 1; }
+  .refresh { width: auto; padding: 7px 9px; background: #f6f8fa; color: #57606a; border: 1px solid #d0d7de; }
+  #send-profile { margin-top: 8px; background: #1a7f37; }
+  #send-selection { margin-top: 8px; background: #8250df; }
+  a { display: inline-block; margin-top: 10px; font-size: 11.5px; color: #57606a; }
+</style>
+</head>
+<body>
+  <h1>Send this tab to web-chat</h1>
+  <label for="instance">Instance</label>
+  <div class="row">
+    <select id="instance"><option>Loading…</option></select>
+    <button id="refresh" class="refresh" title="Refresh instance list">↻</button>
+  </div>
+  <button id="send" disabled>📥 Capture &amp; send</button>
+  <button id="send-profile" style="display:none" title="Capture using the matched profile"></button>
+  <button id="send-selection" style="display:none" title="Capture the highlighted text as a Markdown clipping"></button>
+  <div id="status"></div>
+  <a href="#" id="opts">Options</a>
+  <script src="popup.js"></script>
+</body>
+</html>

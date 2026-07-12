@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "web-chat embed helper",
+  "version": "0.1.0",
+  "description": "Strip X-Frame-Options and Content-Security-Policy from iframe responses initiated by localhost, so claude-web-chat can embed arbitrary pages. Local dev use only.",
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["sentinel.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "embed-helper@claude-web-chat.local",
+      "strict_min_version": "128.0"
+    }
+  }
+}

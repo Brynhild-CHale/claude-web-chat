@@ -1,0 +1,192 @@
+# Channels (dev) — the queue-gated wake bridge
+
+Status: research-preview integration (2026-07). This is the developer guide for
+the inbound/wake edge: how to run it, the wire contract, and how to smoke-test it
+without a live session. It rides on the change bus (`lib/core/bus.js`).
+
+## What this is
+
+MCP is pull-only — an MCP server can't push into a session on its own. Claude Code
+**Channels** (v2.1.80+) add the missing inbound edge: an MCP server that declares
+`capabilities.experimental['claude/channel']` may **push**
+`notifications/claude/channel {content, meta}` into the running session — events
+wake an idle session (or fold into the next turn if busy).
+
+Channels is web-chat's **wake path**: everything queues, and the
+user's **Push → Claude** wakes Claude with the batch. When no channel is connected,
+a Push is **parked** and delivered as context on the user's next message (parked
+delivery — see below), so the surface works on every Claude Code build with no dev
+flag. The legacy agent-armed waits (`wait_for` tool / `claude-web-chat watch`) are
+**gone**; `/api/wait` survives only as a driver-only long-poll.
+
+web-chat's channel is **the existing `web-chat` MCP server** with that capability
+turned on. No new process, no `.mcp.json` change.
+
+## The wake model — everything queues, Push wakes
+
+**Nothing wakes Claude on its own.** Wake-worthy bus events accumulate as items in
+the right-edge **queue rail** (server-side state). **Hitting "Push → Claude" (`P`)
+is the only thing that wakes Claude** — the deliberate-handoff ritual is preserved
+(the user controls *when*).
+
+Wake is **one primitive** — a `{kind:'wake', batch, reason, source}` bus event —
+with (currently) two producers:
+
+1. **The queue push (`P`).** `POST /api/queue/push` batches all queued items into
+   one `wake` and clears the queue.
+2. **A declared immediate signal.** A render can declare
+   `params.signals: [{key, wake:'immediate'}]`; when a **browser** write hits that
+   key, the daemon emits `wake` directly, bypassing the queue. Default is
+   `wake:'queue'` (enqueue).
+
+More producers can be added — the bridge only cares that *something* emitted
+`wake`. So "what wakes Claude" = "who emits `wake`" (see
+`lib/server/domain/queue.emitWake`), surfaced live at `GET /api/queue/policy` and
+in the rail's "what wakes Claude" panel.
+
+### Self-wake safety
+
+Only `browser`/`ext:*`-sourced events enqueue. Claude's `set_store` and drivers'
+writes are `source:'server'` and never enqueue — so Claude's own mutations can't
+wake it. (`lib/channel/policy.classify` is the one gate.)
+
+### Parked delivery — the no-channel fallback
+
+Channels availability is gated by four things the package can't control (Claude Code
+≥ 2.1.80, Anthropic auth, enterprise `channelsEnabled`, the dev flag), so a Push can
+land with **no bridge consuming wakes** (`state.wakeConsumers === 0`). `queue.flush`
+handles both cases:
+
+- **Connected** (`wakeConsumers > 0`): today's path — `emitWake` → `wake` bus event →
+  bridge → `<channel>` tag.
+- **Disconnected**: the same `wakeEnvelope(batch)` (summary only, identical contract)
+  is **parked** in `state.pendingWake` — drafted/persisted like other live state, so
+  it survives restart. The `POST /api/queue/push` response reports `mode:'parked'`;
+  the rail shows "delivers with your next message".
+
+The `UserPromptSubmit` hook (`lib/hooks/turn-begin.js`) then reads the park
+(`GET /api/queue/pending`), **claims it by id** (`POST /api/queue/pending/consume`),
+and injects the summary as context on that prompt — Claude fetches bodies by tool
+call exactly as on a channel wake. Path A (hook) and path B (a bridge that connects
+before the next prompt drains it) are mutually exclusive by the id-claim: **first
+consumer wins**, no double delivery. A re-push while a park is pending **merges** into
+the single envelope (re-stamped id) rather than stacking a second one.
+
+## Architecture
+
+```
+ daemon (HTTP/WS server)                         MCP process
+ ─────────────────────────                       ─────────────
+ bus event  ──▶ policy.classify ──▶ queue        subscribeSSE(kinds:['wake'])
+ (capture,        (daemon-side          │             │
+  browser         subscriber)           ▼             ▼
+  signal)                          state.queue    bridge.deliver
+                                        │             │
+                     POST /api/queue/push (P)         │  wakeEnvelope(batch)
+                                        ▼             ▼
+                              emitWake ──── wake ──▶ notify(
+                              (bus, emit-only)        'notifications/claude/channel',
+                                                       {content, meta})
+```
+
+- **`lib/channel/policy.js`** — pure `classify(event, {signals})`. Captures →
+  enqueue; declared browser signals → enqueue or immediate wake; everything else →
+  null.
+- **`lib/server/domain/queue.js`** — the queue + `emitWake`, the single `wake`
+  emitter. `wake` is emit-only (no WS frame; browsers never see it).
+- **`lib/channel/bridge.js`** — the MCP-process consumer. Taps `wake` over SSE,
+  fires one `notifications/claude/channel` per wake. Lazy connect + capped
+  backoff; seq-cursor dedupe. The experimental `notify` call is injected (one
+  seam).
+- **`lib/channel/envelope.js`** — `wakeEnvelope(batch) → {content, meta}`.
+
+## The envelope / meta contract (versioned)
+
+Constraints from the wire, enforced in `envelope.js`:
+
+- **`content` is one string** — a sanitized **summary only**. A capture body or a
+  signal payload is **never inlined** (prompt-injection surface). Claude fetches
+  the real payload by tool call (`get_captures` / `inspect_capture` / `get_store`).
+- **`meta` keys match `[A-Za-z0-9_]`** (the harness drops hyphens) and **values are
+  strings**. Enforced by `sanitizeMeta`.
+
+**Meta vocabulary** (`META_KEYS`, tripwire-tested in `test/conventions.test.js`):
+
+| key        | meaning                                                            |
+| ---------- | ----------------------------------------------------------------- |
+| `kind`     | `capture` \| `signal` \| `batch` (mixed)                           |
+| `count`    | number of included items                                          |
+| `seq`      | the wake's ring seq (correlation)                                 |
+| `origin`   | event source (`queue` \| `browser` \| `ext:tab-stream`) — NOT `source` |
+| `mount`    | origin mount id (single-item only)                                |
+| `ids`      | comma list of queue item ids                                     |
+| `captures` | comma list of capture ids to fetch                               |
+
+> The harness stamps `source="<channel-name>"` on the `<channel>` tag itself, so we
+> use **`origin`** for the event source to avoid a collision. Do not add a meta
+> `source` key.
+
+Example wire:
+
+```xml
+<channel source="web-chat" kind="capture" count="1" seq="4" origin="queue" ids="q1" captures="cap1">
+A queued signal was pushed to Claude:
+- [capture] captured example.com · profile tables · cap1
+</channel>
+```
+
+## Running it (dev)
+
+Requires Claude Code ≥ v2.1.80 and **Anthropic auth** (no Bedrock/Vertex/Foundry;
+Team/Enterprise needs `channelsEnabled`). Custom/development channels need the
+`--dangerously-load-development-channels` flag.
+
+```sh
+WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels
+```
+
+- `WEB_CHAT_CHANNEL=1` gates the capability declaration + bridge start. `install`
+  writes it into the project's `.mcp.json` env, so the only thing the
+  user adds by hand is the launch flag. **Unset, the capability isn't declared and
+  the bridge doesn't start** — a Push then **parks** and rides the user's next message
+  (parked delivery), so the surface still works, just without live
+  wakes.
+- A channel notification fired while no session is listening is **dropped by the
+  harness** — but the daemon is the buffer of record (queue/store/graph persist), and
+  a Push with no consumer **parks** rather than dropping (parked delivery), so the UX
+  degrades to catch-up-on-next-prompt, never data loss.
+
+## Smoke test (no live session needed)
+
+`scripts/channel-smoke.js` drives a producer against the running daemon, pushes,
+and prints the exact `<channel>` the bridge would emit:
+
+```sh
+node scripts/channel-smoke.js                       # a capture → push
+node scripts/channel-smoke.js --signal              # a declared queue signal → push
+node scripts/channel-smoke.js --note "focus totals" # attach batch context
+```
+
+To confirm Claude *actually* wakes: run the launch command above, queue a capture
+or a signal, hit **P**, and watch Claude wake with the `<channel>` batch and fetch
+bodies by tool call.
+
+## Tests
+
+- `test/channel-policy.test.js` — classify + envelope + sanitizers.
+- `test/queue.test.js` — enqueue / push→one-wake / remove / draft round-trip.
+- `test/channel-signals.test.js` — declared queue vs immediate wake.
+- `test/channel-bridge.test.js` — real-daemon SSE → exactly one notification;
+  dedupe/reconnect.
+- `test/channel-mcp.test.js` — the env-gated capability (off = 23 tools, no
+  experimental; on = `experimental['claude/channel']`).
+- `test/conventions.test.js` — the meta vocabulary tripwire.
+
+## Deferred
+
+- Turn-lock on channel wake — **first cut is lock-less** (a channel-woken turn's
+  renders fold into the next locked turn's node). `turn-begin-on-push` is the
+  fast-follow so channel-woken turns commit their own node.
+- Store-mailbox purification (`tab_capture` signal). *(The rules-file wake-loop
+  diet and the legacy `wait_for`/`watch` deletion shipped;
+  parked delivery replaced the planned GA fallback.)*

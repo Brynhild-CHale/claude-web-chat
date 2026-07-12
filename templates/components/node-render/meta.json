@@ -1,0 +1,12 @@
+{
+  "name": "node-render",
+  "description": "Render the contents of a graph node as a read-only preview pane: trigger summary, store snapshot, and HTML previews of each mount (scripts stripped for safety). Includes a 'set as active' button. Use for peeking at past nodes before navigating, or to anchor a reference to a specific node in the live view. Params: { node_id: string }.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "node_id": { "type": "string" }
+    },
+    "required": ["node_id"]
+  },
+  "builtin": true
+}

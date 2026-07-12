@@ -1,0 +1,52 @@
+<!--
+  Synthetic Gmail conversation fixture for the bundled `gmail` profile.
+  Built to exercise the REAL selectors in bundled/gmail/extract.js:
+    h2.hP (subject) · .gs message blocks · .gD (sender name/email attrs) ·
+    .g3 (date title attr) · .g2 (recipient name/email attrs) · .a3s (open body) ·
+    .gmail_quote / .im (quoted-chain + signature stripped) · .aZo attachment cards
+    (.aV3 filename, a.aQy download link, download_url mime, size text).
+  Not a byte-for-byte Gmail scrape — a minimal DOM whose class/attr shape matches.
+-->
+<html>
+<head><title>Project kickoff - alice@example.com - Gmail</title></head>
+<body>
+  <div class="nH">
+    <h2 class="hP">Project kickoff notes</h2>
+
+    <!-- Message 1: Alice -> Bob, an open message (.a3s) with a quoted reply that must be stripped -->
+    <div class="gs">
+      <span class="gD" name="Alice Smith" email="alice@example.com">Alice Smith</span>
+      <span class="g3" title="Mon, Jul 6, 2026, 9:00 AM">9:00 AM</span>
+      <span class="g2" name="Bob Jones" email="bob@example.com">Bob Jones</span>
+      <div class="a3s">
+        <div>Hi Bob,</div>
+        <div>Here are the kickoff notes. The agenda is at <a href="https://docs.example.com/agenda">docs.example.com/agenda</a>.</div>
+        <div>Talk soon,</div>
+        <div>Alice</div>
+        <div class="gmail_quote">
+          On Mon, Jul 6, 2026 at 8:00 AM Bob Jones &lt;bob@example.com&gt; wrote:
+          <blockquote>QUOTED_HISTORY_SHOULD_NOT_APPEAR in the distilled body.</blockquote>
+        </div>
+        <div class="im">-- <br>Alice Smith · Widgets Inc · SIGNATURE_SHOULD_NOT_APPEAR</div>
+      </div>
+    </div>
+
+    <!-- Message 2: Bob -> Alice, another open message -->
+    <div class="gs">
+      <span class="gD" name="Bob Jones" email="bob@example.com">Bob Jones</span>
+      <span class="g3" title="Mon, Jul 6, 2026, 10:30 AM">10:30 AM</span>
+      <span class="g2" name="Alice Smith" email="alice@example.com">Alice Smith</span>
+      <div class="a3s">
+        <div>Thanks Alice, looks great. I added the budget line to the sheet.</div>
+      </div>
+    </div>
+
+    <!-- Thread-level attachment card -->
+    <div class="aZo" data-name="agenda.pdf" download_url="application/pdf:agenda.pdf:https://mail.google.com/dl/agenda">
+      <span class="aV3">agenda.pdf</span>
+      <a class="aQy" href="https://mail.google.com/mail/u/0/?view=att&amp;disp=safe&amp;attid=0.1">download</a>
+      <span>128 KB</span>
+    </div>
+  </div>
+</body>
+</html>

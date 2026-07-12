@@ -1,0 +1,9 @@
+{
+  "name": "youtube",
+  "description": "Distills an individual YouTube video page to title, channel, view count, publish date, likes, thumbnail, and the description (with links preserved and redirect URLs decoded). Reads canonical values from rendered ytd-* elements and aria-labels (YouTube's og: meta tags go stale on SPA navigation).",
+  "matchers": [
+    { "type": "regex", "value": "youtube\\.com/watch\\?" },
+    { "type": "regex", "value": "youtu\\.be/" }
+  ],
+  "pane": { "default_mode": "reduced", "mount_suffix": "youtube" }
+}

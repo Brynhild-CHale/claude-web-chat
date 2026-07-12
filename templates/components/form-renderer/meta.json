@@ -1,0 +1,17 @@
+{
+  "name": "form-renderer",
+  "description": "Schema-driven form. Renders an HTML form from a JSON-Schema-subset (object root with string/number/integer/boolean/enum properties + required[]) and writes submitted values to a store key. Use for any structured user input (configuration, decisions, parameter capture). Params: { schema, submit_key, initial?, submit_label?, title?, emit_event? }.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "schema": { "type": "object" },
+      "submit_key": { "type": "string" },
+      "initial": { "type": "object" },
+      "submit_label": { "type": "string" },
+      "title": { "type": "string" },
+      "emit_event": { "type": "boolean" }
+    },
+    "required": ["schema", "submit_key"]
+  },
+  "builtin": true
+}

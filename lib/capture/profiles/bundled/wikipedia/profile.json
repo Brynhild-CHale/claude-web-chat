@@ -1,0 +1,9 @@
+{
+  "name": "wikipedia",
+  "description": "Distills a Wikipedia article to title, short description, lead summary, infobox facts (e.g. taxonomy ladder), and top-level section outline — dropping nav chrome, the language sidebar, and reference clutter.",
+  "matchers": [
+    { "type": "regex", "value": "wikipedia\\.org/wiki/" },
+    { "type": "domain", "value": "wikipedia.org" }
+  ],
+  "pane": { "default_mode": "reduced", "mount_suffix": "wikipedia" }
+}

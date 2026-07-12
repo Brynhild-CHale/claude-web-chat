@@ -1,0 +1,171 @@
+<style>
+  :host, .br { font: 13px ui-sans-serif, system-ui, -apple-system, sans-serif; color: #1f2328; }
+  .br { display: flex; flex-direction: column; height: 100%; min-height: 240px; }
+  .br-chrome {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; background: #eaeef2; border-bottom: 1px solid #d0d7de;
+  }
+  .br-btn {
+    border: 1px solid #d0d7de; background: #fff; cursor: pointer;
+    padding: 2px 8px; font-size: 12px; border-radius: 4px;
+    color: #1f2328; line-height: 1.4;
+  }
+  .br-btn:hover { background: #f6f8fa; }
+  .br-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .br-btn.primary { border-color: #1a7f37; background: #1a7f37; color: #fff; }
+  .br-btn.primary:hover { background: #15622a; }
+  .br-btn.icon { padding: 2px 6px; }
+  .br-url {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 8px; background: #fff;
+    border: 1px solid #d0d7de; border-radius: 12px;
+    font: 12px ui-monospace, Menlo, monospace;
+  }
+  .br-scheme { color: #8c959f; user-select: none; }
+  .br-input {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+    font: inherit; color: #0969da; padding: 0;
+  }
+  .br-input:focus { color: #1f2328; }
+  .br-select {
+    border: none; outline: none; background: transparent;
+    font: 12px ui-monospace, Menlo, monospace; color: #0969da;
+    cursor: pointer; padding: 0; max-width: 120px;
+  }
+  .br-meta {
+    font-size: 11px; color: #57606a; padding: 3px 8px;
+    background: #f6f8fa; border-bottom: 1px solid #eaeef2;
+    display: flex; gap: 8px; align-items: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .br-meta .chip {
+    font-size: 10.5px; padding: 1px 6px; border-radius: 8px;
+    background: #1a7f3720; color: #1a7f37; font-weight: 600;
+  }
+  .br-body { flex: 1; position: relative; min-height: 200px; background: #fafafa; }
+  .br-iframe {
+    width: 100%; height: 100%; min-height: 200px;
+    border: none; background: #fafafa; display: block;
+  }
+  .br-empty {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #8c959f; font-size: 13px; font-style: italic;
+  }
+</style>
+<div class="br">
+  <div class="br-chrome">
+    <button class="br-btn icon" id="btn-refresh" title="refresh">↻</button>
+    <div class="br-url">
+      <span class="br-scheme">node://</span>
+      <select class="br-select" id="node-select"></select>
+    </div>
+    <button class="br-btn icon" id="btn-open" title="open in new tab">↗</button>
+    <button class="br-btn primary" id="btn-set-active">set as active</button>
+  </div>
+  <div class="br-meta" id="meta">—</div>
+  <div class="br-body">
+    <iframe class="br-iframe" id="frame" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+  </div>
+</div>
+<script>
+  // params: { node_id: string }
+  const stateKey = 'node-render.' + mountId + '.node_id';
+  const saved = store.get(stateKey);
+  let nodeId = saved || (params && params.node_id);
+  const select = root.getElementById('node-select');
+  const frame = root.getElementById('frame');
+  const meta = root.getElementById('meta');
+  const btnRefresh = root.getElementById('btn-refresh');
+  const btnOpen = root.getElementById('btn-open');
+  const btnSetActive = root.getElementById('btn-set-active');
+
+  function setTitle(id) { if (id) root.host.dataset.paneTitle = 'node ' + id; }
+  setTitle(nodeId);
+
+  async function refreshList() {
+    const r = await fetch('/api/graph');
+    if (!r.ok) return null;
+    const g = await r.json();
+    // sort ascending by created_at
+    const sorted = [...g.nodes].sort((a, b) => a.created_at - b.created_at);
+    select.innerHTML = '';
+    for (const n of sorted) {
+      const opt = document.createElement('option');
+      opt.value = n.id;
+      const tag = n.id === g.active ? ' ● active' : '';
+      const trig = n.trigger_summary ? ' — ' + (n.trigger_summary.length > 30 ? n.trigger_summary.slice(0, 28) + '…' : n.trigger_summary) : '';
+      opt.textContent = n.id + tag + trig;
+      select.appendChild(opt);
+    }
+    if (!nodeId || !g.nodes.find(n => n.id === nodeId)) {
+      nodeId = g.active;
+      if (saved && saved !== nodeId) store.set({ [stateKey]: null });
+    }
+    select.value = nodeId;
+    return g;
+  }
+
+  async function loadNode() {
+    if (!nodeId) return;
+    const r = await fetch('/api/graph/node/' + encodeURIComponent(nodeId));
+    if (!r.ok) {
+      meta.textContent = `node '${nodeId}' not found`;
+      frame.src = 'about:blank';
+      return;
+    }
+    const node = await r.json();
+    const g = await fetch('/api/graph').then(r => r.ok ? r.json() : { active: null });
+    const isActive = node.id === g.active;
+    btnSetActive.disabled = isActive;
+    btnSetActive.textContent = isActive ? 'already active' : 'set as active';
+
+    const ts = node.created_at ? new Date(node.created_at).toLocaleString() : '';
+    const trig = (node.trigger && (node.trigger.message || node.trigger.summary)) || '';
+    meta.innerHTML = '';
+    if (isActive) { const c = document.createElement('span'); c.className = 'chip'; c.textContent = 'active'; meta.appendChild(c); }
+    const txt = document.createElement('span');
+    txt.textContent = `${node.author || '—'} · ${ts}${trig ? ' · ' + trig : ''}`;
+    meta.appendChild(txt);
+
+    setTitle(nodeId);
+    // Cache-bust so refresh shows up-to-date state after set-as-active / writes
+    frame.src = '/preview/node/' + encodeURIComponent(nodeId) + '?t=' + Date.now();
+  }
+
+  select.addEventListener('change', async () => {
+    nodeId = select.value;
+    store.set({ [stateKey]: nodeId });
+    await loadNode();
+  });
+  btnRefresh.addEventListener('click', async () => {
+    await refreshList();
+    await loadNode();
+  });
+  btnOpen.addEventListener('click', () => {
+    if (!nodeId) return;
+    window.open('/preview/node/' + encodeURIComponent(nodeId), '_blank', 'noopener');
+  });
+  btnSetActive.addEventListener('click', async () => {
+    if (!nodeId) return;
+    btnSetActive.disabled = true;
+    const r = await fetch('/api/graph/active', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: nodeId }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      btnSetActive.disabled = false;
+      btnSetActive.textContent = 'failed: ' + (err.error || r.statusText);
+    } else {
+      await refreshList();
+      await loadNode();
+    }
+  });
+
+  (async () => {
+    await refreshList();
+    await loadNode();
+  })();
+</script>

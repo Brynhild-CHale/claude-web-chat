@@ -1,0 +1,9 @@
+{
+  "name": "reddit",
+  "description": "Distills a Reddit post page to the post title, author, subreddit, self-text body (links preserved), the primary image for image posts, and the top few top-level comments (each with author, text, and a permalink) — plus a link to open the thread. Reads modern Reddit's shreddit web-component attributes (shreddit-post / shreddit-comment — semantic and stable across CSS redesigns) and falls back to old.reddit's div.thing / div.comment data-attributes; both DOMs distill to the same shape. Matches www/new/np and old.reddit /r/<sub>/comments/ post pages.",
+  "matchers": [
+    { "type": "regex", "value": "reddit\\.com/r/[^/]+/comments/" },
+    { "type": "domain", "value": "reddit.com" }
+  ],
+  "pane": { "default_mode": "reduced", "mount_suffix": "reddit" }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "website",
+  "description": "Browser-chrome pane that loads an arbitrary URL in a sandboxed iframe. Editable URL bar (submit to navigate), refresh, and open-in-new-tab. Use for embedding external pages alongside generated content. Many sites set X-Frame-Options/CSP frame-ancestors and will refuse to load; the open-in-tab button is the fallback. Params: { url?: string, title?: string }.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "url": { "type": "string", "title": "URL" },
+      "title": { "type": "string", "title": "Pane title (optional)" }
+    },
+    "required": ["url"]
+  },
+  "builtin": true
+}

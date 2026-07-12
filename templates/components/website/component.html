@@ -1,0 +1,245 @@
+<style>
+  :host, .br { font: 13px ui-sans-serif, system-ui, -apple-system, sans-serif; color: #1f2328; }
+  .br { display: flex; flex-direction: column; height: 100%; min-height: 240px; }
+  .br-chrome {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; background: #eaeef2; border-bottom: 1px solid #d0d7de;
+  }
+  .br-btn {
+    border: 1px solid #d0d7de; background: #fff; cursor: pointer;
+    padding: 2px 8px; font-size: 12px; border-radius: 4px;
+    color: #1f2328; line-height: 1.4;
+  }
+  .br-btn:hover { background: #f6f8fa; }
+  .br-btn.icon { padding: 2px 6px; }
+  .br-url {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; gap: 4px;
+    padding: 3px 8px; background: #fff;
+    border: 1px solid #d0d7de; border-radius: 12px;
+    font: 12px ui-monospace, Menlo, monospace;
+  }
+  .br-input {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+    font: inherit; color: #0969da; padding: 0;
+  }
+  .br-input:focus { color: #1f2328; }
+  .br-body { flex: 1; position: relative; min-height: 200px; background: #fafafa; }
+  .br-iframe {
+    width: 100%; height: 100%; min-height: 200px;
+    border: none; background: #fff; display: block;
+  }
+  .br-iframe.hidden { display: none; }
+  .br-empty {
+    position: absolute; inset: 0; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    color: #8c959f; font-size: 13px; font-style: italic;
+  }
+  .br-block {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 20px; text-align: center;
+    background: #fafafa; color: #1f2328;
+  }
+  .br-block .icon { font-size: 28px; opacity: 0.6; }
+  .br-block .h { font-size: 14px; font-weight: 600; }
+  .br-block .reason {
+    font: 11.5px ui-monospace, Menlo, monospace; color: #57606a;
+    background: #fff; border: 1px solid #eaeef2; border-radius: 4px;
+    padding: 4px 8px; max-width: 90%; word-break: break-word;
+  }
+  .br-block .desc { font-size: 12px; color: #57606a; max-width: 360px; line-height: 1.45; }
+  .br-block .actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; justify-content: center; }
+  .br-block .open {
+    border: 1px solid #0969da; background: #0969da; color: #fff;
+    padding: 6px 14px; border-radius: 4px; font: 13px ui-sans-serif, system-ui;
+    cursor: pointer;
+  }
+  .br-block .open:hover { background: #0550ae; }
+  .br-block .try {
+    border: 1px solid #d0d7de; background: #fff; color: #1f2328;
+    padding: 6px 12px; border-radius: 4px; font: 12px ui-sans-serif, system-ui;
+    cursor: pointer;
+  }
+  .br-block .try:hover { background: #f6f8fa; }
+  .br-checking {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #57606a; font-size: 12px;
+  }
+</style>
+<div class="br">
+  <div class="br-chrome">
+    <button class="br-btn icon" id="btn-refresh" title="refresh">↻</button>
+    <form class="br-url" id="form">
+      <input class="br-input" id="url-input" type="text" placeholder="https://…" spellcheck="false" autocomplete="off">
+    </form>
+    <button class="br-btn icon" id="btn-open" title="open in new tab">↗</button>
+  </div>
+  <div class="br-body" id="body">
+    <iframe class="br-iframe" id="frame"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+      referrerpolicy="no-referrer"></iframe>
+    <div class="br-empty" id="empty">enter a URL above</div>
+  </div>
+</div>
+<script>
+  // params: { url?: string, title?: string }
+  let currentUrl = (params && params.url) || '';
+  const urlInput = root.getElementById('url-input');
+  const frame = root.getElementById('frame');
+  const empty = root.getElementById('empty');
+  const body = root.getElementById('body');
+  const form = root.getElementById('form');
+  const btnRefresh = root.getElementById('btn-refresh');
+  const btnOpen = root.getElementById('btn-open');
+
+  function clearOverlays() {
+    body.querySelectorAll('.br-block, .br-checking').forEach(e => e.remove());
+  }
+
+  function showChecking() {
+    clearOverlays();
+    frame.classList.add('hidden');
+    empty.style.display = 'none';
+    const el = document.createElement('div');
+    el.className = 'br-checking';
+    el.textContent = 'checking…';
+    body.appendChild(el);
+  }
+
+  function showBlocked(url, reason) {
+    clearOverlays();
+    frame.classList.add('hidden');
+    empty.style.display = 'none';
+    const el = document.createElement('div');
+    el.className = 'br-block';
+    el.innerHTML = `
+      <div class="icon">🚫</div>
+      <div class="h">this site refuses to be embedded</div>
+      <div class="reason"></div>
+      <div class="desc">the site sends headers that block iframe rendering. install the embed helper to bypass this for localhost (your real cookies follow, so logged-in views work), or open in a new tab.</div>
+      <div class="actions">
+        <button class="open">↗ open in new tab</button>
+        <button class="install">📦 install embed helper</button>
+        <button class="try">try embed anyway</button>
+      </div>
+    `;
+    el.querySelector('.reason').textContent = reason || '';
+    el.querySelector('.open').addEventListener('click', () => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
+    el.querySelector('.install').addEventListener('click', () => {
+      window.open('/embed-helper', '_blank', 'noopener');
+    });
+    el.querySelector('.try').addEventListener('click', () => {
+      clearOverlays();
+      frame.classList.remove('hidden');
+      frame.src = url;
+    });
+    body.appendChild(el);
+  }
+
+  function showUnreachable(url, reason) {
+    clearOverlays();
+    frame.classList.add('hidden');
+    empty.style.display = 'none';
+    const el = document.createElement('div');
+    el.className = 'br-block';
+    el.innerHTML = `
+      <div class="icon">⚠️</div>
+      <div class="h">could not reach this URL</div>
+      <div class="reason"></div>
+      <div class="desc">the URL didn't respond. it may be wrong, offline, or blocking server-side requests. you can still try opening it in a new tab.</div>
+      <div class="actions">
+        <button class="open">↗ open in new tab</button>
+        <button class="try">try embed anyway</button>
+      </div>
+    `;
+    el.querySelector('.reason').textContent = reason || '';
+    el.querySelector('.open').addEventListener('click', () => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
+    el.querySelector('.try').addEventListener('click', () => {
+      clearOverlays();
+      frame.classList.remove('hidden');
+      frame.src = url;
+    });
+    body.appendChild(el);
+  }
+
+  function setTitle(url) {
+    if (params && params.title) { root.host.dataset.paneTitle = params.title; return; }
+    if (!url) { root.host.dataset.paneTitle = 'browser'; return; }
+    try { root.host.dataset.paneTitle = new URL(url).hostname; }
+    catch { root.host.dataset.paneTitle = url.slice(0, 40); }
+  }
+
+  function normalize(raw) {
+    raw = (raw || '').trim();
+    if (!raw) return '';
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('/')) return raw;
+    return 'https://' + raw;
+  }
+
+  function helperActive() {
+    return !!document.querySelector('meta[name="claude-web-chat-embed-helper"]');
+  }
+
+  async function load(url) {
+    currentUrl = url;
+    urlInput.value = url;
+    setTitle(url);
+    if (!url) {
+      clearOverlays();
+      frame.classList.add('hidden');
+      frame.removeAttribute('src');
+      empty.style.display = 'flex';
+      return;
+    }
+    // Local same-origin URLs don't need a pre-check.
+    const sameOrigin = url.startsWith('/') || url.startsWith(location.origin);
+    // With the embed helper extension active, XFO/CSP are stripped at the browser
+    // level for localhost-initiated iframe loads — skip the pre-check entirely.
+    if (sameOrigin || helperActive()) {
+      clearOverlays();
+      frame.classList.remove('hidden');
+      frame.src = url;
+      return;
+    }
+    showChecking();
+    try {
+      const r = await fetch('/api/embed-check?url=' + encodeURIComponent(url));
+      const j = await r.json();
+      if (currentUrl !== url) return; // a newer load() started
+      if (!j.ok || !j.reachable) {
+        showUnreachable(url, j.reason);
+        return;
+      }
+      if (j.blocked) {
+        showBlocked(url, j.reason);
+        return;
+      }
+      clearOverlays();
+      frame.classList.remove('hidden');
+      frame.src = j.finalUrl || url;
+    } catch (e) {
+      if (currentUrl !== url) return;
+      showUnreachable(url, e.message);
+    }
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    load(normalize(urlInput.value));
+  });
+  btnRefresh.addEventListener('click', () => {
+    if (currentUrl) frame.src = currentUrl;
+  });
+  btnOpen.addEventListener('click', () => {
+    if (currentUrl) window.open(currentUrl, '_blank', 'noopener,noreferrer');
+  });
+
+  load(normalize(currentUrl));
+</script>

@@ -1,0 +1,8 @@
+{
+  "name": "gmail",
+  "description": "Distills an open Gmail conversation to subject, participants, and a per-message list (sender, date, body) — stripping each message's quoted reply-chain and signature so only the new content remains. Links in message bodies are preserved.",
+  "matchers": [
+    { "type": "regex", "value": "mail\\.google\\.com/mail/" }
+  ],
+  "pane": { "default_mode": "reduced", "mount_suffix": "gmail" }
+}

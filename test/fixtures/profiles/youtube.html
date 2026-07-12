@@ -1,0 +1,38 @@
+<!--
+  Synthetic YouTube watch-page fixture for the bundled `youtube` profile.
+  Exercises the REAL selectors in bundled/youtube/extract.js:
+    ytd-watch-metadata h1 (title) · #owner ytd-channel-name a (channel) ·
+    #owner-sub-count · #view-count / #date-text aria-labels (views/date live in
+    aria-labels, not visible text) · button[aria-label] "…along with N other…"
+    (likes) · #attributed-snippet-text (description) · #video-summary (AI summary,
+    chrome stripped) · a.ytAttributedStringLink (body links: one /redirect?q=
+    external unwrapped, one plain external, one youtube channel link excluded).
+  The fixture is loaded with URL https://www.youtube.com/watch?v=dQw4w9WgXcQ so
+  the extractor derives videoId + thumbnail from the URL.
+-->
+<html>
+<head><title>Never Gonna Give You Up - YouTube</title></head>
+<body>
+  <ytd-app>
+    <ytd-watch-metadata>
+      <h1><yt-formatted-string>Never Gonna Give You Up (Official Video)</yt-formatted-string></h1>
+      <div id="owner">
+        <ytd-channel-name><a href="/@RickAstley">Rick Astley</a></ytd-channel-name>
+        <span id="owner-sub-count">1.5M subscribers</span>
+      </div>
+      <div id="info-container">
+        <span id="view-count" aria-label="1,634,908,551 views">1.6B views</span>
+        <span id="date-text" aria-label="Premiered Oct 25, 2009">Premiered Oct 25, 2009</span>
+      </div>
+      <button aria-label="like this video along with 16,000,000 other people">16M</button>
+      <div id="description-inline-expander">
+        <span id="attributed-snippet-text">The official video for "Never Gonna Give You Up". Taken from the album Whenever You Need Somebody. Listen on Spotify and grab the merch below.</span>
+        <a class="ytAttributedStringLink" href="/redirect?q=https%3A%2F%2Fexample.com%2Fspotify">example.com/spotify</a>
+        <a class="ytAttributedStringLink" href="https://example.com/merch">Official merch store</a>
+        <a class="ytAttributedStringLink" href="/@RickAstley">Subscribe to Rick Astley</a>
+      </div>
+      <div id="video-summary">Summary An upbeat 1987 pop anthem in which the singer pledges unwavering devotion. AI-generated video summary and may contain errors.</div>
+    </ytd-watch-metadata>
+  </ytd-app>
+</body>
+</html>

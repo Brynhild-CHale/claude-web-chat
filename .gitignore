@@ -1,0 +1,9 @@
+node_modules/
+.web-chat/
+.claude/settings.json
+.DS_Store
+.thumbnail
+*.log
+/tmp/
+.env
+.env.*

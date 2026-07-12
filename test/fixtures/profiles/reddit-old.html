@@ -1,0 +1,73 @@
+<!--
+  Synthetic old.reddit post-page fixture for the bundled `reddit` profile's
+  FALLBACK path. Exercises the old.reddit selectors in bundled/reddit/extract.js:
+    div.thing.link[data-author|data-subreddit-prefixed|data-permalink|data-url|
+      data-timestamp|data-comments-count] · a.title · .expando .usertext-body .md
+    (self-text) · .score.unvoted[title] · .comment[data-author|data-permalink] >
+    .tagline a.author + .score + .usertext-body .md + a.bylink (top comments).
+  Two TOP-LEVEL comments with one NESTED reply inside the first prove the
+  top-level-only filter (keep 2, drop the nested reply). Loaded with URL
+  https://old.reddit.com/r/aww/comments/abc123/red_panda_being_adorable/
+-->
+<html>
+<head><title>Red panda being adorable : aww</title></head>
+<body>
+  <div class="content">
+    <div id="siteTable" class="sitetable linklisting">
+      <div class="thing link self"
+           data-author="panda_fan"
+           data-subreddit-prefixed="r/aww"
+           data-subreddit="aww"
+           data-permalink="/r/aww/comments/abc123/red_panda_being_adorable/"
+           data-url="https://i.redd.it/redpanda.jpg"
+           data-timestamp="1710408600000"
+           data-comments-count="342"
+           data-type="link">
+        <div class="midcol unvoted"><div class="score unvoted" title="18453">18.5k</div></div>
+        <div class="entry unvoted">
+          <p class="title"><a class="title" href="/r/aww/comments/abc123/red_panda_being_adorable/">Red panda being adorable on a branch</a></p>
+          <div class="expando">
+            <div class="usertext-body">
+              <div class="md">
+                <p>Spotted this little one at the sanctuary today. More info at <a href="https://example.com/redpandas">the conservation site</a>.</p>
+                <p>They are classified as endangered.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="commentarea">
+      <div class="sitetable nestedlisting">
+        <div class="comment" data-author="old_commenter1" data-permalink="/r/aww/comments/abc123/red_panda_being_adorable/c1/">
+          <div class="entry unvoted">
+            <p class="tagline"><a class="author" href="/user/old_commenter1">old_commenter1</a> <span class="score unvoted" title="842">842 points</span></p>
+            <div class="usertext-body"><div class="md"><p>This made my day. Look at that <a href="https://example.com/tail">ringed tail</a>!</p></div></div>
+            <ul class="flat-list buttons"><li class="first"><a class="bylink" href="/r/aww/comments/abc123/red_panda_being_adorable/c1/">permalink</a></li></ul>
+          </div>
+          <div class="child">
+            <div class="sitetable listing">
+              <div class="comment" data-author="nested_old" data-permalink="/r/aww/comments/abc123/red_panda_being_adorable/n1/">
+                <div class="entry unvoted">
+                  <p class="tagline"><a class="author" href="/user/nested_old">nested_old</a> <span class="score unvoted" title="120">120 points</span></p>
+                  <div class="usertext-body"><div class="md"><p>A reply that must NOT surface as a top-level comment.</p></div></div>
+                  <ul class="flat-list buttons"><li class="first"><a class="bylink" href="/r/aww/comments/abc123/red_panda_being_adorable/n1/">permalink</a></li></ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="comment" data-author="old_commenter2" data-permalink="/r/aww/comments/abc123/red_panda_being_adorable/c2/">
+          <div class="entry unvoted">
+            <p class="tagline"><a class="author" href="/user/old_commenter2">old_commenter2</a> <span class="score unvoted" title="431">431 points</span></p>
+            <div class="usertext-body"><div class="md"><p>Fun fact: they eat mostly bamboo.</p></div></div>
+            <ul class="flat-list buttons"><li class="first"><a class="bylink" href="/r/aww/comments/abc123/red_panda_being_adorable/c2/">permalink</a></li></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
