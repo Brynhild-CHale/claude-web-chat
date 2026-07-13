@@ -105,7 +105,7 @@ Normally Claude only acts when you send a message. The surface's queue rail coll
 **It works with or without the Channels capability.** `claude-web-chat install` already wires `WEB_CHAT_CHANNEL=1` into this project's MCP entry, so the one thing left for a *live, no-prompt* wake is to launch Claude Code with the capability flag:
 
 ```sh
-WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels
+WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat
 ```
 
 With that, a Push wakes Claude immediately. **Without it, a Push isn't lost** — the batch is *parked* and delivered as context with your **next message** (the rail says "delivers with your next message", which is exactly what happens). The **Channels** capability is a research preview (needs Claude Code ≥ 2.1.80 and Anthropic auth); parked delivery is the universal fallback and needs neither. Details in [`docs/channels-dev.md`](docs/channels-dev.md).
