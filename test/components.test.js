@@ -39,6 +39,31 @@ test('components: save validates kebab + persists; get returns {...meta, source}
   assert.ok(list.json.components.some((c) => c.name === 'my-widget'));
 });
 
+test('components: save writes optional seed.js + service.js and surfaces has_service', async (t) => {
+  const { api, webChatDir } = await withServer(t);
+  const service = 'module.exports = { async start(){} };';
+  const seed = 'return { x: 1 };';
+  const ok = await api.post('/api/components', { name: 'svc-widget', source: '<p>S</p>', description: 'svc', seed, service });
+  assert.equal(ok.json.ok, true);
+
+  // sidecars land in the component dir
+  const dir = path.join(webChatDir, 'components', 'svc-widget');
+  assert.equal(fs.readFileSync(path.join(dir, 'service.js'), 'utf8'), service);
+  assert.equal(fs.readFileSync(path.join(dir, 'seed.js'), 'utf8'), seed);
+
+  // has_service surfaces in both list and get; has_seed too
+  const listed = (await api.get('/api/components')).json.components.find((c) => c.name === 'svc-widget');
+  assert.equal(listed.has_service, true);
+  assert.equal(listed.has_seed, true);
+  const got = await api.get('/api/components/svc-widget');
+  assert.equal(got.json.has_service, true);
+
+  // a component without a service reports has_service:false
+  await api.post('/api/components', { name: 'plain-widget', source: '<p>P</p>' });
+  const plain = (await api.get('/api/components')).json.components.find((c) => c.name === 'plain-widget');
+  assert.equal(plain.has_service, false);
+});
+
 test('components: get 404 on missing; seed 404 without a seed.js', async (t) => {
   const { api } = await withServer(t);
   assert.equal((await api.get('/api/components/nope')).status, 404);

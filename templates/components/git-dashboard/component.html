@@ -1,0 +1,84 @@
+<style>
+  .gd { font-family: var(--wc-font, system-ui, sans-serif); color: var(--wc-fg,#1a1a1a); padding: 16px 18px; line-height: 1.4; }
+  .gd .head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+  .gd .repo { font-size:16px; font-weight:700; letter-spacing:-.01em; }
+  .gd .onbr { font-size:12px; color:var(--wc-muted,#666); }
+  .gd .onbr b { color:var(--wc-accent,#6b5bd6); font-family:var(--wc-mono,monospace); }
+  .gd .waiting, .gd .err { font-size:13px; color:var(--wc-muted,#888); padding:18px 4px; }
+  .gd .err { color:#c0392b; font-family:var(--wc-mono,monospace); white-space:pre-wrap; }
+
+  .gd .sec { font-size:10.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--wc-muted,#888); margin:0 0 8px; }
+  .gd .branches { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
+  .gd .br { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--wc-border,#ddd); border-radius:20px; padding:3px 11px; font-size:12px; background:var(--wc-panel-bg,#fafafa); }
+  .gd .br.cur { border-color:var(--wc-accent,#6b5bd6); background:color-mix(in srgb, var(--wc-accent,#6b5bd6) 12%, transparent); font-weight:600; }
+  .gd .br .h { font-family:var(--wc-mono,monospace); font-size:11px; color:var(--wc-muted,#888); }
+  .gd .br .dot { width:6px; height:6px; border-radius:50%; background:var(--wc-muted,#bbb); }
+  .gd .br.cur .dot { background:var(--wc-accent,#6b5bd6); }
+
+  .gd .log { display:flex; flex-direction:column; }
+  .gd .c { display:grid; grid-template-columns: 14px auto 1fr auto; align-items:baseline; gap:10px; padding:6px 0; border-top:1px solid var(--wc-border-light,#f0f0f0); }
+  .gd .c:first-child { border-top:none; }
+  .gd .rail { position:relative; align-self:stretch; }
+  .gd .rail::before { content:""; position:absolute; left:5px; top:0; bottom:0; width:2px; background:var(--wc-border,#e2e2e2); }
+  .gd .rail::after { content:""; position:absolute; left:1px; top:7px; width:8px; height:8px; border-radius:50%; background:var(--wc-accent,#6b5bd6); border:2px solid var(--wc-bg,#fff); }
+  .gd .sha { font-family:var(--wc-mono,monospace); font-size:11.5px; color:var(--wc-gold,#b7791f); }
+  .gd .msg { font-size:13px; min-width:0; }
+  .gd .msg .subj { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+  .gd .refs { margin-top:2px; display:inline-flex; gap:4px; flex-wrap:wrap; }
+  .gd .ref { font-size:9.5px; font-family:var(--wc-mono,monospace); padding:0 5px; border-radius:3px; background:color-mix(in srgb, var(--wc-green,#2a9d5c) 16%, transparent); color:var(--wc-green,#1e7a45); }
+  .gd .ref.head { background:color-mix(in srgb, var(--wc-accent,#6b5bd6) 18%, transparent); color:var(--wc-accent-dark,#4b3fb0); }
+  .gd .meta { font-size:11px; color:var(--wc-muted,#999); white-space:nowrap; text-align:right; }
+  .gd .meta .who { color:var(--wc-muted,#777); }
+</style>
+<div class="gd">
+  <div class="head">
+    <span class="repo" data-repo>—</span>
+    <span class="onbr" data-onbranch></span>
+  </div>
+  <div data-body>
+    <div class="waiting">Waiting for the git service to report…</div>
+  </div>
+</div>
+<script>
+  const $ = (s) => root.querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+
+  function refBadge(r) {
+    const isHead = /HEAD/.test(r);
+    const label = r.replace('HEAD -> ', '');
+    return '<span class="ref' + (isHead ? ' head' : '') + '">' + esc(label) + '</span>';
+  }
+
+  function render(g) {
+    if (!g) return;
+    $('[data-repo]').textContent = g.repo || 'repository';
+    $('[data-onbranch]').innerHTML = g.branch ? 'on <b>' + esc(g.branch) + '</b>' : '';
+    const body = $('[data-body]');
+    if (g.error) { body.innerHTML = '<div class="err">git error:\n' + esc(g.error) + '</div>'; return; }
+
+    const branches = (g.branches || []).map((b) =>
+      '<span class="br' + (b.current ? ' cur' : '') + '"><span class="dot"></span>' +
+      esc(b.name) + ' <span class="h">' + esc(b.hash) + '</span></span>'
+    ).join('');
+
+    const commits = (g.commits || []).map((c) => {
+      const refs = (c.refs || []).map(refBadge).join('');
+      return '<div class="c">' +
+        '<div class="rail"></div>' +
+        '<div class="sha">' + esc(c.short) + '</div>' +
+        '<div class="msg"><span class="subj">' + esc(c.subject) + '</span>' +
+          (refs ? '<span class="refs">' + refs + '</span>' : '') + '</div>' +
+        '<div class="meta"><span class="who">' + esc(c.author) + '</span> · ' + esc(c.rel) + '</div>' +
+      '</div>';
+    }).join('');
+
+    body.innerHTML =
+      '<div class="sec">Branches (' + (g.branches || []).length + ')</div>' +
+      '<div class="branches">' + (branches || '<span class="onbr">none</span>') + '</div>' +
+      '<div class="sec">Commits</div>' +
+      '<div class="log">' + (commits || '<div class="waiting">no commits</div>') + '</div>';
+  }
+
+  render(store.get('git'));
+  store.subscribe('git', (g) => render(g));
+</script>

@@ -1,0 +1,9 @@
+{
+  "name": "git-dashboard",
+  "description": "Live git dashboard: current branch, all branches (with head short-hashes), and the last 50 commits with refs, author, and relative time. Service-backed — service.js reads the repo the daemon runs in and pushes to the store key `git`, re-reading on any .git change (plus a 5s poll). No params. Use to show repo history/branch state on the surface.",
+  "params_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "builtin": true
+}
