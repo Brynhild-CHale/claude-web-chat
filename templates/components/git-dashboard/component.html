@@ -1,6 +1,6 @@
 <style>
   .gd { font-family: var(--wc-font, system-ui, sans-serif); color: var(--wc-fg,#1a1a1a); padding: 16px 18px; line-height: 1.4; }
-  .gd .head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+  .gd .head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
   .gd .repo { font-size:16px; font-weight:700; letter-spacing:-.01em; }
   .gd .onbr { font-size:12px; color:var(--wc-muted,#666); }
   .gd .onbr b { color:var(--wc-accent,#6b5bd6); font-family:var(--wc-mono,monospace); }
@@ -9,18 +9,21 @@
 
   .gd .sec { font-size:10.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--wc-muted,#888); margin:0 0 8px; }
   .gd .branches { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
-  .gd .br { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--wc-border,#ddd); border-radius:20px; padding:3px 11px; font-size:12px; background:var(--wc-panel-bg,#fafafa); }
-  .gd .br.cur { border-color:var(--wc-accent,#6b5bd6); background:color-mix(in srgb, var(--wc-accent,#6b5bd6) 12%, transparent); font-weight:600; }
+  .gd .br { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--wc-border,#ddd); border-radius:20px; padding:3px 11px; font-size:12px; background:var(--wc-panel-bg,#fafafa); cursor:pointer; transition:border-color .12s, background .12s; }
+  .gd .br:hover { border-color:var(--wc-accent,#6b5bd6); }
+  .gd .br.viewing { border-color:var(--wc-accent,#6b5bd6); background:color-mix(in srgb, var(--wc-accent,#6b5bd6) 14%, transparent); font-weight:600; }
   .gd .br .h { font-family:var(--wc-mono,monospace); font-size:11px; color:var(--wc-muted,#888); }
-  .gd .br .dot { width:6px; height:6px; border-radius:50%; background:var(--wc-muted,#bbb); }
-  .gd .br.cur .dot { background:var(--wc-accent,#6b5bd6); }
+  .gd .br .dot { width:6px; height:6px; border-radius:50%; background:var(--wc-muted,#bbb); flex:none; }
+  .gd .br.head .dot { background:var(--wc-green,#2a9d5c); }
+  .gd .br .star { color:var(--wc-green,#2a9d5c); font-weight:700; }
 
   .gd .log { display:flex; flex-direction:column; }
-  .gd .c { display:grid; grid-template-columns: 14px auto 1fr auto; align-items:baseline; gap:10px; padding:6px 0; border-top:1px solid var(--wc-border-light,#f0f0f0); }
+  .gd .c { display:grid; grid-template-columns: 14px auto 1fr auto; align-items:baseline; gap:10px; padding:6px 4px; border-top:1px solid var(--wc-border-light,#f0f0f0); cursor:pointer; border-radius:6px; }
+  .gd .c:hover { background:var(--wc-panel-bg,#f6f6f6); }
   .gd .c:first-child { border-top:none; }
   .gd .rail { position:relative; align-self:stretch; }
   .gd .rail::before { content:""; position:absolute; left:5px; top:0; bottom:0; width:2px; background:var(--wc-border,#e2e2e2); }
-  .gd .rail::after { content:""; position:absolute; left:1px; top:7px; width:8px; height:8px; border-radius:50%; background:var(--wc-accent,#6b5bd6); border:2px solid var(--wc-bg,#fff); }
+  .gd .rail::after { content:""; position:absolute; left:1px; top:9px; width:8px; height:8px; border-radius:50%; background:var(--wc-accent,#6b5bd6); border:2px solid var(--wc-bg,#fff); }
   .gd .sha { font-family:var(--wc-mono,monospace); font-size:11.5px; color:var(--wc-gold,#b7791f); }
   .gd .msg { font-size:13px; min-width:0; }
   .gd .msg .subj { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
@@ -29,6 +32,24 @@
   .gd .ref.head { background:color-mix(in srgb, var(--wc-accent,#6b5bd6) 18%, transparent); color:var(--wc-accent-dark,#4b3fb0); }
   .gd .meta { font-size:11px; color:var(--wc-muted,#999); white-space:nowrap; text-align:right; }
   .gd .meta .who { color:var(--wc-muted,#777); }
+
+  /* detail view */
+  .gd .back { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--wc-accent,#6b5bd6); background:none; border:none; cursor:pointer; padding:0; margin-bottom:12px; font-family:inherit; }
+  .gd .back:hover { text-decoration:underline; }
+  .gd .d-subj { font-size:15px; font-weight:650; margin:0 0 6px; }
+  .gd .d-meta { font-size:12px; color:var(--wc-muted,#666); margin-bottom:4px; }
+  .gd .d-meta .sha { font-size:12px; }
+  .gd .d-body { font-family:var(--wc-mono,monospace); font-size:12px; white-space:pre-wrap; background:var(--wc-panel-bg,#f7f7f7); border:1px solid var(--wc-border-light,#eee); border-radius:6px; padding:10px 12px; margin:10px 0 16px; overflow-x:auto; }
+  .gd .d-tot { font-size:12px; color:var(--wc-muted,#666); margin-bottom:8px; }
+  .gd .d-tot .add { color:var(--wc-green,#2a9d5c); font-weight:600; }
+  .gd .d-tot .del { color:#c0392b; font-weight:600; }
+  .gd .files { display:flex; flex-direction:column; }
+  .gd .f { display:grid; grid-template-columns: 1fr auto auto; gap:10px; align-items:center; padding:4px 0; border-top:1px solid var(--wc-border-light,#f0f0f0); font-size:12px; }
+  .gd .f .fp { font-family:var(--wc-mono,monospace); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gd .f .add { color:var(--wc-green,#2a9d5c); font-family:var(--wc-mono,monospace); font-size:11px; }
+  .gd .f .del { color:#c0392b; font-family:var(--wc-mono,monospace); font-size:11px; }
+  .gd .f .bin { color:var(--wc-muted,#999); font-size:11px; }
+  .gd .loading { font-size:13px; color:var(--wc-muted,#999); padding:14px 4px; }
 </style>
 <div class="gd">
   <div class="head">
@@ -43,27 +64,31 @@
   const $ = (s) => root.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
 
-  function refBadge(r) {
-    const isHead = /HEAD/.test(r);
-    const label = r.replace('HEAD -> ', '');
-    return '<span class="ref' + (isHead ? ' head' : '') + '">' + esc(label) + '</span>';
+  // Local view state, echoed to the service via the git_ctl control key. The
+  // service lists commits for `viewing` and returns detail for `open`.
+  let viewing = null; // branch name being displayed (null → service default = HEAD branch)
+  let open = null;    // full commit hash drilled into, or null
+
+  function sendCtl() {
+    store.set({ git_ctl: { seq: Date.now(), viewing: viewing, open: open } });
   }
 
-  function render(g) {
-    if (!g) return;
-    $('[data-repo]').textContent = g.repo || 'repository';
-    $('[data-onbranch]').innerHTML = g.branch ? 'on <b>' + esc(g.branch) + '</b>' : '';
-    const body = $('[data-body]');
-    if (g.error) { body.innerHTML = '<div class="err">git error:\n' + esc(g.error) + '</div>'; return; }
+  function refBadge(r) {
+    const isHead = /HEAD/.test(r);
+    return '<span class="ref' + (isHead ? ' head' : '') + '">' + esc(r.replace('HEAD -> ', '')) + '</span>';
+  }
 
-    const branches = (g.branches || []).map((b) =>
-      '<span class="br' + (b.current ? ' cur' : '') + '"><span class="dot"></span>' +
-      esc(b.name) + ' <span class="h">' + esc(b.hash) + '</span></span>'
-    ).join('');
+  function renderList(g) {
+    const branches = (g.branches || []).map((b) => {
+      const isViewing = b.name === (viewing || g.viewing);
+      return '<span class="br' + (b.current ? ' head' : '') + (isViewing ? ' viewing' : '') + '" data-branch="' + esc(b.name) + '">' +
+        '<span class="dot"></span>' + (b.current ? '<span class="star">★</span>' : '') +
+        esc(b.name) + ' <span class="h">' + esc(b.hash) + '</span></span>';
+    }).join('');
 
     const commits = (g.commits || []).map((c) => {
       const refs = (c.refs || []).map(refBadge).join('');
-      return '<div class="c">' +
+      return '<div class="c" data-hash="' + esc(c.hash) + '">' +
         '<div class="rail"></div>' +
         '<div class="sha">' + esc(c.short) + '</div>' +
         '<div class="msg"><span class="subj">' + esc(c.subject) + '</span>' +
@@ -72,11 +97,61 @@
       '</div>';
     }).join('');
 
-    body.innerHTML =
-      '<div class="sec">Branches (' + (g.branches || []).length + ')</div>' +
+    $('[data-body]').innerHTML =
+      '<div class="sec">Branches (' + (g.branches || []).length + ') — click to view</div>' +
       '<div class="branches">' + (branches || '<span class="onbr">none</span>') + '</div>' +
-      '<div class="sec">Commits</div>' +
+      '<div class="sec">Commits · ' + esc(viewing || g.viewing || '') + ' — click to inspect</div>' +
       '<div class="log">' + (commits || '<div class="waiting">no commits</div>') + '</div>';
+
+    root.querySelectorAll('.br').forEach((el) => el.addEventListener('click', () => {
+      viewing = el.dataset.branch; open = null; sendCtl();
+    }));
+    root.querySelectorAll('.c').forEach((el) => el.addEventListener('click', () => {
+      open = el.dataset.hash; sendCtl();
+      // optimistic: show loading until the service returns matching detail
+      render(store.get('git'));
+    }));
+  }
+
+  function renderDetail(g) {
+    const d = g.detail;
+    const body = $('[data-body]');
+    const backBtn = '<button class="back">← back to log</button>';
+    if (!d || d.hash !== open) { body.innerHTML = backBtn + '<div class="loading">Loading commit ' + esc((open || '').slice(0, 10)) + '…</div>'; wireBack(); return; }
+    if (d.error) { body.innerHTML = backBtn + '<div class="err">' + esc(d.error) + '</div>'; wireBack(); return; }
+
+    const files = (d.stat || []).map((f) =>
+      '<div class="f"><span class="fp">' + esc(f.file) + '</span>' +
+      (f.binary ? '<span class="bin">binary</span><span></span>'
+                : '<span class="add">+' + (f.added || 0) + '</span><span class="del">−' + (f.removed || 0) + '</span>') +
+      '</div>'
+    ).join('');
+
+    body.innerHTML = backBtn +
+      '<div class="d-subj">' + esc(d.subject) + '</div>' +
+      '<div class="d-meta"><span class="sha sha-d">' + esc(d.short) + '</span> · ' + esc(d.author) + ' &lt;' + esc(d.email) + '&gt;</div>' +
+      '<div class="d-meta">' + esc(d.date) + ' · ' + esc(d.rel) + '</div>' +
+      (d.body ? '<div class="d-body">' + esc(d.body) + '</div>' : '<div style="height:10px"></div>') +
+      '<div class="d-tot">' + d.files_changed + ' file' + (d.files_changed === 1 ? '' : 's') + ' changed · ' +
+        '<span class="add">+' + d.insertions + '</span> · <span class="del">−' + d.deletions + '</span></div>' +
+      '<div class="files">' + files + '</div>';
+    wireBack();
+  }
+
+  function wireBack() {
+    const b = root.querySelector('.back');
+    if (b) b.addEventListener('click', () => { open = null; sendCtl(); render(store.get('git')); });
+  }
+
+  function render(g) {
+    if (!g) return;
+    if (viewing == null) viewing = g.viewing || g.branch || null;
+    $('[data-repo]').textContent = g.repo || 'repository';
+    $('[data-onbranch]').innerHTML = g.branch
+      ? 'on <b>' + esc(g.branch) + '</b>' + (viewing && viewing !== g.branch ? ' · viewing <b>' + esc(viewing) + '</b>' : '')
+      : '';
+    if (g.error) { $('[data-body]').innerHTML = '<div class="err">git error:\n' + esc(g.error) + '</div>'; return; }
+    if (open) renderDetail(g); else renderList(g);
   }
 
   render(store.get('git'));
