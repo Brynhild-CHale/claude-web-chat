@@ -40,6 +40,7 @@ async function readCommits(cwd, ref) {
   const fmt = ['%h', '%H', '%s', '%an', '%ar', '%D'].join(US);
   const args = ['log', '--pretty=format:' + fmt + RS, '-n', '50'];
   if (ref) args.push(ref);
+  args.push('--'); // disambiguate ref from a path (e.g. a `test` branch vs a test/ dir)
   const out = await git(args, cwd);
   return out.split(RS).map((s) => s.trim()).filter(Boolean).map((line) => {
     const [short, hash, subject, author, rel, refs] = line.split(US);
@@ -49,9 +50,9 @@ async function readCommits(cwd, ref) {
 
 async function readDetail(cwd, hash) {
   const hfmt = ['%H', '%h', '%s', '%an', '%ae', '%ad', '%ar'].join(US);
-  const head = (await git(['show', '-s', '--date=iso', '--format=' + hfmt, hash], cwd)).trim().split(US);
-  const body = (await git(['log', '-1', '--format=%b', hash], cwd)).replace(/\s+$/, '');
-  const numstat = (await git(['show', hash, '--numstat', '--format='], cwd)).split('\n').map((l) => l.trim()).filter(Boolean);
+  const head = (await git(['show', '-s', '--date=iso', '--format=' + hfmt, hash, '--'], cwd)).trim().split(US);
+  const body = (await git(['log', '-1', '--format=%b', hash, '--'], cwd)).replace(/\s+$/, '');
+  const numstat = (await git(['show', hash, '--numstat', '--format=', '--'], cwd)).split('\n').map((l) => l.trim()).filter(Boolean);
   let insertions = 0, deletions = 0;
   const stat = numstat.map((l) => {
     const parts = l.split('\t');
