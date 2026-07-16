@@ -53,12 +53,13 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/server/util/html` / `lib/capture/profiles/util` | copy the helper |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 
-Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
+Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 
 - **New MCP tool**: add `lib/mcp/tools/<name>.js`, append to the `tools` array in `lib/mcp/index.js`, add any backing route under `lib/server/routes/`, then `/exit` and reopen Claude Code (the MCP subprocess loads code at session start).
 - **New CLI subcommand**: add `lib/cli/commands/<name>.js`, register in the `commands` map in `lib/cli/index.js`, update `showHelp()`.
 - **New HTTP route**: add `lib/server/routes/<concern>.js` exporting `mountX(app, ctx)`, mount it from `lib/server/index.js`.
 - **New migration**: add `lib/update/migrations/v<N>-to-v<N+1>.js`, register in the `migrations` map, bump `SCHEMA_VERSION`.
+- **New service-backed component**: ship `templates/components/<name>/` with `component.html` + `meta.json` + `service.js` (+ optional `seed.js`), add the name to `BUILTINS` in `lib/server/builtins.js`. The daemon runs `service.js` (via the supervisor, `lib/server/services.js`) while the pane is active. Full contract: `docs/service-components.md`.
 
 **What restarts after which edit:** `public/*` → refresh browser (served from disk, no cache). `lib/server/*` and `lib/capture/*` → `claude-web-chat restart` (saved capture profiles also hot-reload live via `claude-web-chat profile reload`, no restart). `lib/hub/*` → restart the hub — but an instance restart self-heals it: the hub reports a `HUB_PROTOCOL_VERSION` in `/api/health`, and `ensureHub` (called on every instance boot) bounces a hub older than the current build, so bumping that version when hub routes change is enough. `lib/mcp/*` → `/exit` + reopen Claude Code. `lib/hooks/*` → nothing (fresh process per fire). `lib/cli/*` → next invocation.
 

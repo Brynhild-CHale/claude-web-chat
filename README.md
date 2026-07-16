@@ -98,6 +98,8 @@ A few things worth knowing once you're past the first render:
 
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`docs/driving-the-surface.md`](docs/driving-the-surface.md).
 
+**Or bundle the process with the component.** A saved component can carry a host-side service the daemon runs while its pane is open — a git dashboard, a test monitor, a file watcher that refreshes itself, no per-turn driving. The built-in `git-dashboard` is one. See [`docs/service-components.md`](docs/service-components.md).
+
 ## Channels (experimental)
 
 Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch.

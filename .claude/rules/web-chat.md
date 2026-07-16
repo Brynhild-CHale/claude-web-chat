@@ -61,6 +61,15 @@ A pane holds rich **local** state — sliders, toggles, draft text, multi-select
 - When you write something reusable, `save_component` with a specific description that answers *when to use this* (purpose, params, expected store interactions). Future invocations of you read that description to know what's available.
 - Use stable mount IDs to replace-in-place. Random IDs stack indefinitely.
 
+### Service-backed components
+
+A saved component can carry a host-side `service.js` that the daemon runs while its pane is on the **active node and a browser is watching** — it writes the shared store and the pane reacts, so the surface reflects live host state (git, test runs, file watches) between your turns, with no turn of yours involved.
+
+- **Author** one by passing `service` (and optionally `seed`) to `save_component`; `list_components` marks these `has_service`. Build the pane to read its data from the store and render reactively; the service supplies that data via `ctx.driver.setStore(...)`.
+- **First run prompts the user** to approve the service (it's host code that runs on their machine); editing it re-prompts. Nothing runs headless (no viewer) or off the active node — navigating away stops the service, navigating back respawns it.
+- **Make it interactive** by having the pane write a *control key* (e.g. `git_ctl`) the service watches over SSE and responds to — a live loop that does **not** wake you (it's a service reaction, not a declared signal). Reach for this for dashboards/browsers, not one-shot forms.
+- The service is a driver (`owner: "service:<name>"`, see below) the daemon supervises for you. Full contract: `docs/service-components.md`.
+
 ## Theming
 
 The surface is themeable via 5 agent-only tools: `set_theme`, `get_theme`, `save_theme`, `list_themes`, `apply_theme`. A theme = **design tokens** (CSS custom properties, `--wc-` prefix) plus an optional **raw-CSS escape hatch**.
