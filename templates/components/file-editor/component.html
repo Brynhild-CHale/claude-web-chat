@@ -1,0 +1,199 @@
+<style>
+  .fe { font-family: var(--wc-font, system-ui, sans-serif); color: var(--wc-fg,#1a1a1a); padding: 12px 14px; display:flex; flex-direction:column; gap:10px; min-height:320px; }
+  .fe .bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .fe .path-in { flex:1; min-width:160px; font-family:var(--wc-mono,monospace); font-size:12px; padding:5px 8px; border:1px solid var(--wc-border,#ccc); border-radius:var(--wc-radius-sm,6px); background:var(--wc-bg,#fff); color:var(--wc-fg,#1a1a1a); }
+  .fe button { font-family:inherit; font-size:12px; font-weight:600; border:1px solid var(--wc-border,#ccc); border-radius:var(--wc-radius-sm,6px); padding:5px 12px; cursor:pointer; background:var(--wc-panel-bg,#f6f6f6); color:var(--wc-fg,#1a1a1a); }
+  .fe button:hover { border-color:var(--wc-accent,#6b5bd6); }
+  .fe button.primary { background:var(--wc-accent,#6b5bd6); border-color:var(--wc-accent,#6b5bd6); color:#fff; }
+  .fe button.primary:hover { background:var(--wc-accent-dark,#584bc0); }
+  .fe button:disabled { opacity:.45; cursor:default; }
+  .fe .scope { font-size:10.5px; font-family:var(--wc-mono,monospace); color:var(--wc-muted,#888); padding:2px 7px; border:1px solid var(--wc-border-light,#eee); border-radius:20px; }
+  .fe .scope.unfenced { color:var(--wc-gold,#b7791f); border-color:color-mix(in srgb,var(--wc-gold,#c99a00) 40%, transparent); }
+  .fe .dirty { color:var(--wc-gold,#c99a00); font-size:16px; line-height:1; }
+  .fe .cur { font-family:var(--wc-mono,monospace); font-size:12px; color:var(--wc-muted,#666); }
+  .fe .cur b { color:var(--wc-fg,#222); }
+  .fe .new { font-size:10px; color:var(--wc-green,#2a9d5c); font-weight:700; }
+  .fe .error { font-family:var(--wc-mono,monospace); font-size:12px; color:#c0392b; background:color-mix(in srgb,#c0392b 8%, transparent); border:1px solid color-mix(in srgb,#c0392b 30%, transparent); border-radius:6px; padding:6px 9px; white-space:pre-wrap; }
+
+  .fe .body { display:flex; gap:12px; flex:1; min-height:220px; }
+  @media (max-width:680px){ .fe .body { flex-direction:column; } }
+  .fe .editor { flex:2; min-width:0; display:flex; flex-direction:column; }
+  .fe textarea { flex:1; min-height:220px; resize:vertical; font-family:var(--wc-mono,monospace); font-size:12.5px; line-height:1.5; tab-size:2; border:1px solid var(--wc-border,#ddd); border-radius:var(--wc-radius-sm,6px); padding:8px 10px; background:var(--wc-bg,#fff); color:var(--wc-fg,#1a1a1a); white-space:pre; overflow:auto; }
+  .fe .rail { flex:1; min-width:210px; max-width:320px; display:flex; flex-direction:column; gap:14px; overflow:auto; }
+  @media (max-width:680px){ .fe .rail { max-width:none; } }
+  .fe .sec { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--wc-muted,#888); margin:0 0 6px; }
+  .fe .vlist, .fe .flist { display:flex; flex-direction:column; }
+  .fe .v { display:grid; grid-template-columns:auto 1fr auto; gap:6px; align-items:center; padding:5px 4px; border-top:1px solid var(--wc-border-light,#f0f0f0); font-size:12px; }
+  .fe .v:first-child { border-top:none; }
+  .fe .v.sel { background:color-mix(in srgb,var(--wc-accent,#6b5bd6) 10%, transparent); border-radius:5px; }
+  .fe .v .vid { font-family:var(--wc-mono,monospace); font-weight:600; color:var(--wc-accent,#6b5bd6); }
+  .fe .v .vt { color:var(--wc-muted,#888); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fe .v .vbtns { display:flex; gap:4px; }
+  .fe .v .vbtns button { padding:2px 7px; font-size:11px; font-weight:500; }
+  .fe .empty { font-size:12px; color:var(--wc-muted,#999); padding:6px 2px; }
+  .fe .f { display:flex; align-items:center; gap:7px; padding:3px 4px; font-size:12px; cursor:pointer; border-radius:5px; font-family:var(--wc-mono,monospace); }
+  .fe .f:hover { background:var(--wc-panel-bg,#f2f2f2); }
+  .fe .f .ic { width:15px; text-align:center; flex:none; color:var(--wc-muted,#999); }
+  .fe .f.d .nm { color:var(--wc-accent,#6b5bd6); }
+  .fe .f .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .fe .diff { border:1px solid var(--wc-border,#ddd); border-radius:var(--wc-radius-sm,6px); overflow:hidden; }
+  .fe .diff .dh { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px; background:var(--wc-panel-bg,#f6f6f6); border-bottom:1px solid var(--wc-border-light,#eee); font-size:12px; }
+  .fe .diff .dh .cnt .add { color:var(--wc-green,#2a9d5c); font-weight:700; }
+  .fe .diff .dh .cnt .del { color:#c0392b; font-weight:700; }
+  .fe .diff .dh button { padding:2px 8px; font-size:11px; }
+  .fe .diff pre { margin:0; max-height:280px; overflow:auto; font-family:var(--wc-mono,monospace); font-size:12px; line-height:1.45; }
+  .fe .diff .hh { color:var(--wc-muted,#888); background:color-mix(in srgb,var(--wc-accent,#6b5bd6) 7%, transparent); padding:1px 10px; }
+  .fe .diff .ln { padding:0 10px; white-space:pre; }
+  .fe .diff .ln.add { background:color-mix(in srgb,var(--wc-green,#2a9d5c) 15%, transparent); }
+  .fe .diff .ln.del { background:color-mix(in srgb,#c0392b 13%, transparent); }
+  .fe .diff .same { padding:8px 10px; font-size:12px; color:var(--wc-muted,#888); }
+</style>
+<div class="fe">
+  <div class="bar">
+    <input class="path-in" placeholder="path/to/file — Enter or Open" data-pathin />
+    <button data-open>Open</button>
+    <span class="dirty" data-dirty style="visibility:hidden">●</span>
+    <button class="primary" data-save>Save</button>
+    <span class="scope" data-scope></span>
+  </div>
+  <div class="cur" data-cur></div>
+  <div class="error" data-error style="display:none"></div>
+
+  <div class="body">
+    <div class="editor">
+      <textarea data-ta spellcheck="false" placeholder="Open a file, or type a path above and Save to create it."></textarea>
+    </div>
+    <div class="rail">
+      <div>
+        <div class="sec">Version history</div>
+        <div class="vlist" data-versions><div class="empty">No versions yet — Save to snapshot.</div></div>
+      </div>
+      <div>
+        <div class="sec">Files</div>
+        <div class="flist" data-files></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="diff" data-diff style="display:none"></div>
+</div>
+<script>
+  const $ = (s) => root.querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+  const ta = $('[data-ta]');
+  const pathIn = $('[data-pathin]');
+
+  let curPath = null;   // the round-trip path string the service resolves
+  let lastLoad = -1;    // buffer (re)load token from the service
+  let dirty = false;
+
+  function setDirty(v) { dirty = v; $('[data-dirty]').style.visibility = v ? 'visible' : 'hidden'; }
+  function ctl(patch) { store.set({ editor_ctl: Object.assign({ seq: Date.now() }, patch) }); }
+  function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(1) + ' MB'; }
+  function fmtTime(ms) { try { return new Date(ms).toLocaleString(); } catch { return '' + ms; } }
+
+  function open(p) {
+    if (dirty && !confirm('Discard unsaved changes and open ' + p + '?')) return;
+    pathIn.value = p; ctl({ action: 'open', path: p });
+  }
+  function save() {
+    const p = curPath || pathIn.value.trim();
+    if (!p) { flashError('Enter a path first.'); return; }
+    ctl({ action: 'save', path: p, content: ta.value }); setDirty(false);
+  }
+  function flashError(m) { const el = $('[data-error]'); el.textContent = m; el.style.display = ''; }
+
+  $('[data-open]').addEventListener('click', () => { const p = pathIn.value.trim(); if (p) open(p); });
+  pathIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = pathIn.value.trim(); if (p) open(p); } });
+  $('[data-save]').addEventListener('click', save);
+  ta.addEventListener('input', () => setDirty(true));
+  ta.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); return; }
+    if (e.key === 'Tab') { // insert two spaces, keep it a plain editor
+      e.preventDefault();
+      const s = ta.selectionStart, en = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en);
+      ta.selectionStart = ta.selectionEnd = s + 2; setDirty(true);
+    }
+  });
+
+  function renderVersions(e) {
+    const box = $('[data-versions]');
+    if (!e.versions || !e.versions.length) { box.innerHTML = '<div class="empty">No versions yet — Save to snapshot.</div>'; return; }
+    box.innerHTML = e.versions.slice().reverse().map((v) =>
+      '<div class="v' + (v.id === e.selected ? ' sel' : '') + '">' +
+        '<span class="vid">' + esc(v.id) + '</span>' +
+        '<span class="vt">' + esc(fmtTime(v.at)) + ' · ' + fmtSize(v.size) + '</span>' +
+        '<span class="vbtns"><button data-diff="' + esc(v.id) + '">Diff</button>' +
+          '<button data-revert="' + esc(v.id) + '">Revert</button></span>' +
+      '</div>'
+    ).join('');
+    box.querySelectorAll('[data-diff]').forEach((b) => b.addEventListener('click', () =>
+      ctl({ action: 'diff', path: curPath, version: b.dataset.diff, content: ta.value })));
+    box.querySelectorAll('[data-revert]').forEach((b) => b.addEventListener('click', () => {
+      if (dirty && !confirm('Discard unsaved changes and revert to ' + b.dataset.revert + '?')) return;
+      ctl({ action: 'revert', path: curPath, version: b.dataset.revert });
+    }));
+  }
+
+  function renderFiles(e) {
+    const box = $('[data-files]'); const l = e.listing;
+    if (!l) { box.innerHTML = '<div class="empty">—</div>'; return; }
+    let html = '<div class="f d" data-browse="' + esc(l.dir) + '"><span class="ic">↻</span><span class="nm">' + esc(l.dir) + '</span></div>';
+    if (l.parent != null) html += '<div class="f d" data-browse="' + esc(l.parent) + '"><span class="ic">↑</span><span class="nm">..</span></div>';
+    html += l.entries.map((f) =>
+      '<div class="f' + (f.dir ? ' d' : '') + '" data-' + (f.dir ? 'browse' : 'openfile') + '="' + esc(f.path) + '">' +
+        '<span class="ic">' + (f.dir ? '▸' : '·') + '</span><span class="nm">' + esc(f.name) + '</span></div>'
+    ).join('');
+    box.innerHTML = html;
+    box.querySelectorAll('[data-browse]').forEach((el) => el.addEventListener('click', () => ctl({ action: 'browse', dir: el.dataset.browse })));
+    box.querySelectorAll('[data-openfile]').forEach((el) => el.addEventListener('click', () => open(el.dataset.openfile)));
+  }
+
+  function renderDiff(e) {
+    const box = $('[data-diff]');
+    if (!e.diff) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = '';
+    const r = e.diff.result;
+    const head = '<div class="dh"><span>' + esc(e.diff.version) + ' → current buffer</span>' +
+      '<span class="cnt">' + (r && !r.too_large ? '<span class="add">+' + (r.added||0) + '</span> <span class="del">−' + (r.removed||0) + '</span>' : '') +
+      ' <button data-closediff>close</button></span></div>';
+    if (!r) { box.innerHTML = head + '<div class="same">Identical — no changes from ' + esc(e.diff.version) + '.</div>'; }
+    else if (r.too_large) { box.innerHTML = head + '<div class="same">Too large to diff (' + r.a_lines + ' vs ' + r.b_lines + ' lines).</div>'; }
+    else {
+      const body = (r.hunks || []).map((h) =>
+        '<div class="hh">' + esc(h.header) + '</div>' +
+        h.lines.map((ln) => { const k = ln[0]; const cls = k === '+' ? 'add' : k === '-' ? 'del' : ''; return '<div class="ln ' + cls + '">' + esc(ln) + '</div>'; }).join('')
+      ).join('');
+      box.innerHTML = head + '<pre>' + body + (r.truncated ? '<div class="hh">… diff truncated …</div>' : '') + '</pre>';
+    }
+    const c = box.querySelector('[data-closediff]');
+    if (c) c.addEventListener('click', () => { box.style.display = 'none'; box.innerHTML = ''; });
+  }
+
+  function render(e) {
+    if (!e) return;
+    $('[data-scope]').textContent = e.unfenced ? 'any path' : e.root;
+    $('[data-scope]').className = 'scope' + (e.unfenced ? ' unfenced' : '');
+    const err = $('[data-error]');
+    if (e.error) { err.textContent = e.error; err.style.display = ''; } else { err.style.display = 'none'; }
+
+    if (e.path != null) {
+      curPath = e.path;
+      $('[data-cur]').innerHTML = 'editing <b>' + esc(e.path) + '</b>' + (e.exists ? '' : ' <span class="new">NEW</span>');
+    }
+    if (typeof e.load === 'number' && e.load !== lastLoad) {
+      lastLoad = e.load;
+      ta.value = e.content || '';
+      if (e.path != null) pathIn.value = e.path;
+      setDirty(false);
+    }
+    renderVersions(e);
+    renderFiles(e);
+    renderDiff(e);
+  }
+
+  render(store.get('editor'));
+  store.subscribe('editor', (e) => render(e));
+</script>

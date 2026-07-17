@@ -1,0 +1,13 @@
+{
+  "name": "file-editor",
+  "description": "Lightweight file editor with version history and diffs. Open a host file (browse or type a path), edit it, and Save — each save snapshots a version. Pick any version to diff against the current buffer (unified +/- hunks) or revert to it. Service-backed — service.js reads/writes the file, stores snapshots under .web-chat/file-versions/, and diffs via the daemon's line-diff engine; the pane drives it with the control key `editor_ctl`. Params: { path?: string (open on mount), root?: string (base dir, default the repo), unfenced?: boolean (allow any host path, default false — paths are fenced to the project root) }.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "title": "File to open on mount" },
+      "root": { "type": "string", "title": "Base directory (default: project root)" },
+      "unfenced": { "type": "boolean", "title": "Allow any host path (default false)" }
+    }
+  },
+  "builtin": true
+}

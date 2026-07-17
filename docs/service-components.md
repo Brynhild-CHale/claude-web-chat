@@ -38,6 +38,10 @@ module.exports = {
     // ctx.mountId — the pane id; namespace per-pane store keys with it if needed.
     // ctx.name    — the component name.
     // ctx.log     — stdout logger (piped to the daemon log).
+    // ctx.diff    — diff(a, b, opts?) → unified line-diff (lib/server/diff.js),
+    //               so services don't hand-roll one. Returns null when equal.
+    // ctx.webChatDir — the project's .web-chat abs path, for sidecar state
+    //               (e.g. version snapshots) without hardcoding the dir name.
   },
   async stop() {}, // optional — clear timers/watchers/streams. Also runs on process exit.
 };
