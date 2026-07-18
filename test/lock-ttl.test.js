@@ -55,11 +55,16 @@ test('stale lock is stolen by a new turn-begin', async () => {
   delete require.cache[require.resolve('../lib/server')];
 });
 
-test('new-graph is blocked by a fresh lock (409) — guardReaim block path', async (t) => {
+test('new-graph during a fresh lock QUEUES as a pending re-aim (guardReaim block path)', async (t) => {
   const { api } = await withServer(t);
   await api.post('/api/turn-begin', { message: 'x' });
   const r = await api.post('/api/graph/new', { name: 'fresh' });
-  assert.equal(r.status, 409);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.pending, true);
+  assert.equal(r.json.applies, 'turn-end');
+  // nothing happened yet — the graph is untouched until the turn ends
+  const { json: g } = await api.get('/api/graph');
+  assert.ok(g.lock, 'lock still held');
 });
 
 test('new-graph steals + persists a stale lock (guardReaim wiring / drift-fix path)', async () => {

@@ -44,6 +44,43 @@ More producers can be added — the bridge only cares that *something* emitted
 `lib/server/domain/queue.emitWake`), surfaced live at `GET /api/queue/policy` and
 in the rail's "what wakes Claude" panel.
 
+### The opt-out activity layer
+
+**Routing is opt-out, not opt-in.** Declared signals depend on the pane's own
+script calling `store.set` correctly — exactly what breaks when a component is
+mis-authored (a script that queried `document` instead of its shadow `root` dies
+at mount and its declared signal never fires, leaving a dead button and an empty
+Push). Underneath the declared layer, undeclared **browser** activity routes by
+default:
+
+- **Delegated dom events** (the shell's shadow-piercing `click`/`change`/`submit`
+  listeners — they live in the shell, so they survive a dead pane script) and
+  **undeclared browser store writes** classify as `{action:'coalesce'}`.
+- **Gesture gating**: an undeclared store write counts only when the client
+  stamped it `gesture:true` (the pane's store facade marks writes within ~1.5s
+  of a real interaction in that pane). A script's init/tick/reactive writes
+  carry no gesture and never masquerade as user activity — otherwise every
+  mount that seeds the store would enqueue a phantom item.
+- They fold into **one rolling `activity` item per mount**
+  (`queue.coalesce`): counts + touched key *names* only, re-summarized in place
+  (`queue` op:'update' frame) — never one row per click, and **never a value**
+  (payloads stay behind `get_store`/`get_events`, the captures posture).
+- Bare clicks on non-affordances (prose, whitespace) don't count; only
+  interactive tags / `data-*` targets, plus every change/submit.
+- **Opt-out**: `params.routing:'none'` on the render. Service-owned panes
+  (`owner:"service:*"`) default out — their store control-loop (e.g. `git_ctl`)
+  is pane↔service traffic, not a user handoff — and `params.routing:'auto'`
+  opts one back in. Derived per event from live mounts
+  (`signals.deriveRouting`), surfaced as `activity_default`/`activity_opted_out`
+  in `GET /api/queue/policy`.
+- Store-write attribution: the client's per-pane store facade stamps writes with
+  the mount id (`store:set` WS frame carries `mount`), so opt-out and coalescing
+  key on the right pane; unattributed writes coalesce under a generic
+  `surface` item.
+
+Activity items queue like everything else — they never wake on their own; the
+user's Push delivers them.
+
 ### Self-wake safety
 
 Only `browser`/`ext:*`-sourced events enqueue. Claude's `set_store` and drivers'
@@ -89,9 +126,10 @@ the single envelope (re-stamped id) rather than stacking a second one.
                                                        {content, meta})
 ```
 
-- **`lib/channel/policy.js`** — pure `classify(event, {signals})`. Captures →
-  enqueue; declared browser signals → enqueue or immediate wake; everything else →
-  null.
+- **`lib/channel/policy.js`** — pure `classify(event, {signals, routing})`.
+  Captures → enqueue; declared browser signals → enqueue or immediate wake;
+  undeclared browser activity (dom events, undeclared store writes) → coalesce
+  into the mount's rolling activity item; everything else → null.
 - **`lib/server/domain/queue.js`** — the queue + `emitWake`, the single `wake`
   emitter. `wake` is emit-only (no WS frame; browsers never see it).
 - **`lib/channel/bridge.js`** — the MCP-process consumer. Taps `wake` over SSE,
@@ -114,7 +152,7 @@ Constraints from the wire, enforced in `envelope.js`:
 
 | key        | meaning                                                            |
 | ---------- | ----------------------------------------------------------------- |
-| `kind`     | `capture` \| `signal` \| `batch` (mixed)                           |
+| `kind`     | `capture` \| `signal` \| `activity` \| `comment` \| `batch` (mixed) |
 | `count`    | number of included items                                          |
 | `seq`      | the wake's ring seq (correlation)                                 |
 | `origin`   | event source (`queue` \| `browser` \| `ext:tab-stream`) — NOT `source` |
@@ -142,7 +180,7 @@ Team/Enterprise needs `channelsEnabled`). Custom/development channels need the
 `--dangerously-load-development-channels` flag.
 
 ```sh
-WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels
+WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat
 ```
 
 - `WEB_CHAT_CHANNEL=1` gates the capability declaration + bridge start. `install`
@@ -176,17 +214,48 @@ bodies by tool call.
 - `test/channel-policy.test.js` — classify + envelope + sanitizers.
 - `test/queue.test.js` — enqueue / push→one-wake / remove / draft round-trip.
 - `test/channel-signals.test.js` — declared queue vs immediate wake.
+- `test/activity-routing.test.js` — the opt-out layer: per-mount coalescing,
+  affordance-only clicks, value-leak guards, service-pane default opt-out.
 - `test/channel-bridge.test.js` — real-daemon SSE → exactly one notification;
   dedupe/reconnect.
 - `test/channel-mcp.test.js` — the env-gated capability (off = 23 tools, no
   experimental; on = `experimental['claude/channel']`).
 - `test/conventions.test.js` — the meta vocabulary tripwire.
 
+## Turn-begin-on-push (the turn-lock model after channels)
+
+The pre-channels invariant — "Claude is working ⟺ a lock is held" — broke when
+wakes started turns without the `UserPromptSubmit` hook. Restored by locking at
+the source: **`queue.emitWake` acquires the turn lock** (`acquireWakeLock`,
+author `'wake'`, short per-lock TTL — `WEB_CHAT_WAKE_LOCK_TTL_MS`, default 3 min)
+just before the wake goes out, so a channel-woken turn runs locked like any
+other and its Stop-hook `turn-end` commits a first-class node whose
+`trigger.message` names the wake. Since every wake producer goes through the one
+emitter, the invariant is one-line-auditable. Cases:
+
+- **Fresh user lock** → the wake folds into the running typed turn (no-op).
+- **Fresh wake lock** → a second wake extends it (one turn, one node).
+- **Typed prompt during a wake turn** → `acquireLock` UPGRADES the wake lock in
+  place (same base, re-stamped author/message/clock) — never a 409, because the
+  prompt lands in the same session the wake woke.
+- **A parked push stays lock-less** — its delivery *is* the user's next prompt,
+  whose turn-begin hook locks normally.
+- An orphaned wake lock (wake emitted, turn never ran) self-heals via its short
+  TTL.
+
+### Pending re-aim
+
+A user re-aim (set-active / wipe / new-graph / branch-here) during a fresh lock
+is **queued, not 409'd** — one in-memory slot (`graph.pendingReaim`, last intent
+wins), surfaced to clients as a `reaim:pending` WS frame ("queued — applies when
+the turn ends"). `turn-end` commits on the lock base first, then applies the
+intent (`applyPendingReaim`); manual `/api/unlock` applies it too. Deliberately
+not persisted: on a crash the draft preserves the *work*, and the user re-clicks
+the *intent*. Tests: `test/turn-lock-wake.test.js`.
+
 ## Deferred
 
-- Turn-lock on channel wake — **first cut is lock-less** (a channel-woken turn's
-  renders fold into the next locked turn's node). `turn-begin-on-push` is the
-  fast-follow so channel-woken turns commit their own node.
 - Store-mailbox purification (`tab_capture` signal). *(The rules-file wake-loop
   diet and the legacy `wait_for`/`watch` deletion shipped;
-  parked delivery replaced the planned GA fallback.)*
+  parked delivery replaced the planned GA fallback; `turn-begin-on-push` +
+  pending re-aim shipped — see above.)*

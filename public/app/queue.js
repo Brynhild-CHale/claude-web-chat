@@ -259,7 +259,7 @@ function render() {
     if (!count) {
       const empty = document.createElement('div');
       empty.className = 'rail-empty';
-      empty.textContent = 'No queued signals. Captures and pane signals collect here.';
+      empty.textContent = 'No queued signals. Captures, pane signals, and pane activity collect here.';
       list.appendChild(empty);
     } else {
       list.appendChild(sectionHeader('Staged', staged.length, 'staged'));

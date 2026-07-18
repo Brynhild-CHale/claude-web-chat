@@ -5,7 +5,7 @@
 import { view, $ } from './state.js';
 import { toggleMode } from './theme.js';
 import {
-  previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover,
+  previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote,
 } from './topbar.js';
 import { openOverlay, isOverlayOpen } from './graph-view.js';
 import { openDrawer, spawnComponent } from './drawer.js';
@@ -75,11 +75,13 @@ async function startNewGraph() {
   const nameEl = $('new-graph-name');
   const name = ((nameEl && nameEl.value) || '').trim();
   $('new-graph-panel').classList.add('hidden');
+  try {
+    const r = await fetch('/api/graph/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    const body = await r.json().catch(() => ({}));
+    if (body.pending) { showReaimNote("Claude is mid-turn — the new graph starts when the turn ends."); return; }
+  } catch { return; }
   view.previewing = false; view.liveSnapshot = null;
   $('main').classList.remove('preview-readonly');
-  try {
-    await fetch('/api/graph/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-  } catch {}
 }
 function initNewGraph() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };

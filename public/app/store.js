@@ -12,7 +12,11 @@ import { send, isOpen } from './ws.js';
 
 export const store = window.__wcMount.createStore({}, (patch, opts) => {
   if (!opts.fromServer && !view.previewing && isOpen()) {
-    send({ type: 'store:set', patch });
+    // `mount`/`gesture` ride along when the write came through a pane's injected
+    // store facade (see mounts.js): `mount` attributes the write to its pane for
+    // opt-out activity routing; `gesture` marks it user-driven (proximate to a
+    // real interaction) so script init/tick writes never read as user activity.
+    send({ type: 'store:set', patch, ...(opts.mount ? { mount: opts.mount } : {}), ...(opts.gesture ? { gesture: true } : {}) });
   }
 });
 

@@ -30,9 +30,27 @@ test('classify: a server-sourced store write is never wake-worthy', () => {
   assert.equal(classify({ kind: 'store', patch: { form_submit: { seq: 1 } }, source: 'server' }, decl), null);
 });
 
-test('classify: a browser write to a non-declared key is not a signal', () => {
+test('classify: a gesture-stamped write to a non-declared key coalesces as activity (opt-out routing)', () => {
   const decl = { signals: { form_submit: { wake: 'queue' } } };
-  assert.equal(classify({ kind: 'store', patch: { slider: 42 }, source: 'browser' }, decl), null);
+  const r = classify({ kind: 'store', patch: { slider: 42 }, source: 'browser', mount: 'm1', gesture: true, seq: 7 }, decl);
+  assert.equal(r.action, 'coalesce');
+  assert.equal(r.item.kind, 'activity');
+  assert.equal(r.item.origin_mount, 'm1');
+  assert.equal(r.item.counts.store, 1);
+  // key NAMES may ride the summary; the VALUE never does
+  assert.match(r.item.summary, /slider/);
+  assert.doesNotMatch(r.item.summary, /42/);
+});
+
+test('classify: an undeclared write WITHOUT a gesture stamp is script traffic, not activity', () => {
+  // a pane script's init/tick writes must never enqueue a phantom item
+  assert.equal(classify({ kind: 'store', patch: { counter: 0 }, source: 'browser', mount: 'm1' }, { signals: {} }), null);
+});
+
+test('classify: a pane that opted out of routing stays silent', () => {
+  const ctx = { signals: {}, routing: { m1: 'none' } };
+  assert.equal(classify({ kind: 'store', patch: { slider: 42 }, source: 'browser', mount: 'm1', gesture: true }, ctx), null);
+  assert.equal(classify({ kind: 'dom', type: 'change', mountId: 'm1', tag: 'INPUT' }, ctx), null);
 });
 
 // ── classify: declared browser signals ───────────────────────────────────────

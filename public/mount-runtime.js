@@ -83,16 +83,107 @@
   // params||{}, mountId). Each script is isolated: one that throws is caught
   // (console.error) and does not abort its siblings or the mount. THE ONLY
   // dynamic-eval site in the codebase (see the conventions tripwire).
-  function runScripts(root, scripts, store, params, mountId) {
+  //
+  // `onError(err, scriptIndex)` is optional: the live client passes a reporter
+  // that forwards the failure to the daemon's event ring (a dead script is
+  // otherwise invisible outside the browser console — the double-silent
+  // failure). The frozen export/preview consumers pass nothing.
+  function runScripts(root, scripts, store, params, mountId, onError) {
     for (var i = 0; i < scripts.length; i++) {
       try {
         var fn = new Function('store', 'root', 'params', 'mountId', scripts[i]);
         fn(store, root, params || {}, mountId);
-      } catch (e) { console.error('component script error', mountId, e); }
+      } catch (e) {
+        console.error('component script error', mountId, e);
+        if (onError) { try { onError(e, i); } catch (e2) {} }
+      }
     }
   }
 
-  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts };
+  // ── Form-state persistence primitives ────────────────────────────────────
+  // A pane's form-element values (inputs, textareas, selects, contenteditable)
+  // live only in its shadow DOM — rebuilt from the html snapshot on every
+  // remount, so typed state would evaporate on refresh/navigation. These two
+  // primitives are the one capture/apply contract: the live client debounce-
+  // captures into the mount record (persisted via SNAPSHOT_FIELDS into nodes,
+  // drafts, exports), and every consumer re-applies after runScripts.
+  //
+  // Element keys are deterministic across remounts of the same html:
+  // '#<id>' / '@<name>' (when present) plus the element's enumeration index —
+  // so unnamed fields still round-trip, and a same-id re-render rehydrates
+  // best-effort (unmatched keys are silently dropped).
+  // Skipped: password fields (never persist secrets into graph history),
+  // hidden/file inputs (script-owned / unsettable), and anything marked
+  // data-no-persist.
+  function formElements(root) {
+    var els = root.querySelectorAll('input, textarea, select, [contenteditable]');
+    var out = [];
+    els.forEach(function (el) {
+      var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+      if (type === 'password' || type === 'hidden' || type === 'file') return;
+      if (el.hasAttribute && el.hasAttribute('data-no-persist')) return;
+      if (el.getAttribute && el.getAttribute('contenteditable') === 'false') return;
+      out.push(el);
+    });
+    return out;
+  }
+
+  function formKey(el, i) {
+    var base = el.id ? ('#' + el.id) : (el.name ? ('@' + el.name) : '');
+    return base + ':' + i;
+  }
+
+  function captureFormState(root) {
+    var out = {};
+    formElements(root).forEach(function (el, i) {
+      var key = formKey(el, i);
+      var tag = el.tagName;
+      var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') out[key] = { checked: !!el.checked };
+      else if (tag === 'SELECT' && el.multiple) {
+        var vals = [];
+        for (var j = 0; j < el.options.length; j++) if (el.options[j].selected) vals.push(el.options[j].value);
+        out[key] = { values: vals };
+      } else if (el.isContentEditable || (el.getAttribute && el.getAttribute('contenteditable') !== null)) {
+        out[key] = { text: el.innerText };
+      } else out[key] = { value: el.value };
+    });
+    return out;
+  }
+
+  // Apply a captured snapshot onto a (re)mounted root. Fires 'input' + 'change'
+  // on each element whose value actually changed, so pane scripts that mirror
+  // fields into local state resync — dispatch is guarded per element so one
+  // throwing listener doesn't abort the rest.
+  function applyFormState(root, form_state) {
+    if (!form_state) return;
+    formElements(root).forEach(function (el, i) {
+      var rec = form_state[formKey(el, i)];
+      if (!rec || typeof rec !== 'object') return;
+      var changed = false;
+      try {
+        var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+        if (type === 'checkbox' || type === 'radio') {
+          if ('checked' in rec && !!el.checked !== !!rec.checked) { el.checked = !!rec.checked; changed = true; }
+        } else if (el.tagName === 'SELECT' && el.multiple) {
+          if (rec.values) {
+            for (var j = 0; j < el.options.length; j++) {
+              var want = rec.values.indexOf(el.options[j].value) >= 0;
+              if (el.options[j].selected !== want) { el.options[j].selected = want; changed = true; }
+            }
+          }
+        } else if (el.isContentEditable || (el.getAttribute && el.getAttribute('contenteditable') !== null)) {
+          if ('text' in rec && el.innerText !== rec.text) { el.innerText = rec.text; changed = true; }
+        } else if ('value' in rec && el.value !== rec.value) { el.value = rec.value; changed = true; }
+        if (changed) {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      } catch (e) { console.error('applyFormState', e); }
+    });
+  }
+
+  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts, captureFormState: captureFormState, applyFormState: applyFormState };
   if (glob) glob.__wcMount = api;                                                 // browser global (before client.js)
   if (typeof module !== 'undefined' && module.exports) module.exports = api;      // node require() — createStore is testable
 })(typeof window !== 'undefined' ? window : null);

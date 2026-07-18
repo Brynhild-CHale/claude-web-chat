@@ -420,6 +420,17 @@ kbd {
 .qi-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--wc-muted); box-shadow: 0 0 6px var(--wc-glow-accent); }
 .qi-dot.qi-capture { background: var(--wc-gold, #d8a24a); }
 .qi-dot.qi-signal { background: var(--wc-accent); }
+.qi-dot.qi-activity { background: var(--wc-muted, #8c959f); }   /* ambient opt-out layer — quieter than a declared signal */
+
+/* pending re-aim notice — a user re-aim during a locked turn is queued, not
+   rejected; this transient banner says "honored, applies at turn end". */
+.reaim-note {
+  position: fixed; top: 52px; right: 16px; z-index: 60;
+  padding: 7px 12px; font: 500 12px var(--wc-font);
+  color: var(--wc-fg); background: var(--wc-panel-bg);
+  border: 1px solid var(--wc-gold, #d4a72c); border-radius: var(--wc-radius-sm, 6px);
+  box-shadow: var(--wc-shadow, 0 2px 8px rgba(0,0,0,.12));
+}
 .qi-dot.qi-comment { background: var(--wc-comment); }              /* B4: coral until Claude replies… */
 .qi-dot.qi-comment.answered { background: var(--wc-green, #7bb661); } /* …green once a Claude reply lands */
 .qi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

@@ -3,7 +3,7 @@
 // It drives a wake-worthy producer against the running daemon,
 // pushes the queue, and prints the EXACT <channel> envelope the bridge would
 // emit — so you can eyeball the wire without a live Claude Code session. Under
-// `WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels
+// `WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat
 // server:web-chat`, hitting Push (or running this) should actually wake Claude.
 //
 // Usage:

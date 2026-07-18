@@ -22,6 +22,10 @@ export const view = {
   graphCache: null,
   expandedStacks: new Set(),
   selectedNodeId: null,
+  // node id a branch-on-edit re-aim is in flight for (set before the POST,
+  // cleared after). Lets the ws 'branch-here' handler distinguish the editing
+  // client (local transition, DOM must not be re-rendered) from bystanders.
+  branchingTo: null,
 };
 
 // DOM by id — one short helper, used everywhere.

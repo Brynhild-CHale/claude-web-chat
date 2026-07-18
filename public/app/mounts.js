@@ -50,6 +50,58 @@ function emitPaneState(id) {
   }, 80));
 }
 
+// ── form-state sync ─────────────────────────────────────────────────────────
+// Debounce-capture a pane's form-element values (via the shared runtime's
+// captureFormState) into the mount record server-side, so typed state survives
+// refresh, node navigation, drafts, and exports. Skipped while previewing
+// (branch-on-edit flushes explicitly after the re-aim) and while a remote
+// apply is in flight (p._applyingForm gates the echo loop).
+const formTimers = new Map();
+const FORM_DEBOUNCE_MS = 350;
+function emitFormState(id) {
+  const p = panes.get(id);
+  if (!p || p._applyingForm || view.previewing) return;
+  if (formTimers.has(id)) clearTimeout(formTimers.get(id));
+  formTimers.set(id, setTimeout(() => {
+    formTimers.delete(id);
+    sendFormState(id);
+  }, FORM_DEBOUNCE_MS));
+}
+function sendFormState(id) {
+  const p = panes.get(id);
+  if (!p || view.previewing) return;
+  const fs = window.__wcMount.captureFormState(p.root);
+  const json = JSON.stringify(fs);
+  if (json === p._lastFormJson) return; // unchanged — don't chat
+  p._lastFormJson = json;
+  p.form_state = fs;
+  p.spec.form_state = fs;
+  if (isOpen()) send({ type: 'pane:form', id, form_state: fs });
+}
+// Immediate flush of every pane's current form values — called by the
+// branch-on-edit transition so the keystroke that triggered the branch isn't
+// waiting out a debounce when publishing resumes.
+export function flushFormStates() {
+  for (const id of panes.keys()) {
+    const t = formTimers.get(id);
+    if (t) { clearTimeout(t); formTimers.delete(id); }
+    sendFormState(id);
+  }
+}
+// Apply a remote client's pane:form (WS 'pane:form'): rehydrate the shadow DOM
+// via the shared runtime. The gate stops the dispatched input/change events
+// from re-capturing and echoing the same snapshot back.
+export function applyRemoteFormState(id, form_state) {
+  const p = panes.get(id);
+  if (!p) return;
+  p.form_state = form_state;
+  p.spec.form_state = form_state;
+  p._lastFormJson = JSON.stringify(form_state || {});
+  p._applyingForm = true;
+  try { window.__wcMount.applyFormState(p.root, form_state || {}); }
+  finally { p._applyingForm = false; }
+}
+
 export function applyPaneState(wrapper, pane_state) {
   wrapper.style.gridColumn = `span ${pane_state.colSpan}`;
   wrapper.style.gridRow = '';
@@ -377,7 +429,7 @@ function attachDrag(wrapper, handle, id) {
 }
 
 export function mount(m) {
-  const { html, target, id, params, pane_state, theme } = m;
+  const { html, target, id, params, pane_state, form_state, theme } = m;
   const slot = $(target) || $('main');
   const existing = panes.get(id);
   if (existing) {
@@ -402,18 +454,68 @@ export function mount(m) {
 
   const { root, scripts } = window.__wcMount.attachAndExtract(host, html);
 
-  root.addEventListener('click', (e) => reportEvent('click', e, id));
-  root.addEventListener('change', (e) => reportEvent('change', e, id));
-  root.addEventListener('submit', (e) => reportEvent('submit', e, id));
+  // markGesture: a REAL user interaction in this pane (synthetic rehydrate
+  // events are gated out in reportEvent/editInPreview via _applyingForm, so
+  // gesture-stamping lives with the same guard). Store writes that follow a
+  // recent gesture are flagged user-driven for the activity layer — a script's
+  // init/tick writes carry no gesture and never masquerade as user activity.
+  const markGesture = () => {
+    const p = panes.get(id);
+    if (p && !p._applyingForm) p._lastGestureAt = Date.now();
+  };
+  root.addEventListener('click', (e) => { markGesture(); reportEvent('click', e, id); });
+  root.addEventListener('change', (e) => { markGesture(); reportEvent('change', e, id); emitFormState(id); editInPreview(id); });
+  root.addEventListener('submit', (e) => { markGesture(); reportEvent('submit', e, id); editInPreview(id); });
+  // 'input' is deliberately NOT forwarded to the event ring (per-keystroke
+  // noise; 'change' carries the settled value on blur) — it only feeds the
+  // debounced form-state sync and the branch-on-edit trigger.
+  root.addEventListener('input', () => { markGesture(); emitFormState(id); editInPreview(id); });
 
   panes.set(id, {
-    wrapper, host, root, pane_state: ps, title: titleFromParams || id, paneTarget: target || 'main',
+    wrapper, host, root, pane_state: ps, form_state: form_state || null,
+    title: titleFromParams || id, paneTarget: target || 'main',
     theme: theme || null,
-    spec: { id, html, target: target || 'main', params: params || {}, component: m.component, pane_state: ps, theme: theme || undefined },
+    spec: { id, html, target: target || 'main', params: params || {}, component: m.component, pane_state: ps, form_state: form_state || undefined, theme: theme || undefined },
   });
   applyPaneTheme(panes.get(id), theme || null, false);
 
-  window.__wcMount.runScripts(root, scripts, store, params || {}, id);
+  // Per-pane store facade: same store, but writes are stamped with this mount's
+  // id so the server can attribute an undeclared write to its pane (opt-out
+  // activity routing). Panes that grab window.store instead still work, just
+  // unattributed.
+  const GESTURE_WINDOW_MS = 1500;
+  const paneStore = {
+    get: (k) => store.get(k),
+    set: (patch, opts) => {
+      const p = panes.get(id);
+      const gesture = !!p && (Date.now() - (p._lastGestureAt || 0)) < GESTURE_WINDOW_MS;
+      store.set(patch, { ...(opts || {}), mount: id, gesture });
+    },
+    subscribe: (a, b) => store.subscribe(a, b),
+  };
+  window.__wcMount.runScripts(root, scripts, paneStore, params || {}, id, (err, scriptIndex) => {
+    // Forward the failure to the daemon so it lands in the event ring
+    // (get_events kind:'script-error') — a dead pane script must be observable
+    // outside the browser console. Preview renders stay local.
+    if (view.previewing || !isOpen()) return;
+    send({
+      type: 'script:error', id, script_index: scriptIndex,
+      message: String((err && err.message) || err),
+      stack: err && err.stack ? String(err.stack).split('\n').slice(0, 3).join('\n') : undefined,
+    });
+  });
+
+  // Rehydrate persisted form values AFTER scripts ran, so a restored user draft
+  // wins over a script's own initialization; the runtime dispatches input/change
+  // for changed fields so reactive pane scripts resync. Gated so those dispatched
+  // events don't re-capture and echo the same snapshot straight back.
+  if (form_state) {
+    const p = panes.get(id);
+    p._lastFormJson = JSON.stringify(form_state);
+    p._applyingForm = true;
+    try { window.__wcMount.applyFormState(root, form_state); }
+    finally { p._applyingForm = false; }
+  }
 
   const hostTitle = host.dataset && host.dataset.paneTitle;
   if (hostTitle && !titleFromParams) {
@@ -470,8 +572,28 @@ export function applyRemotePaneState(id, pane_state) {
   renderMinbar();
 }
 
+// A form edit inside a pane while DETACHED on an older node triggers the
+// branch-on-edit flow (silent re-aim; see topbar.branchOnEdit). Decoupled via a
+// window event because topbar owns the preview state machine and already
+// imports from this module (avoids an import cycle). Clicks deliberately do NOT
+// trigger it — only genuine form edits (input/change/submit) branch.
+function editInPreview(mountId) {
+  // A rehydrate (applyFormState) dispatches synthetic input/change events that
+  // bubble here — without this gate, merely PREVIEWING a node with form_state
+  // would trigger a branch.
+  const p = panes.get(mountId);
+  if (p && p._applyingForm) return;
+  if (!view.previewing) return;
+  if (!view.viewedId || view.viewedId === view.activeId) return;
+  window.dispatchEvent(new CustomEvent('wc:edit-in-preview'));
+}
+
 function reportEvent(type, e, mountId) {
   if (view.previewing) return;
+  // Synthetic events from a form-state rehydrate are not user activity — don't
+  // forward them (they'd otherwise enqueue phantom activity items server-side).
+  const p = panes.get(mountId);
+  if (p && p._applyingForm) return;
   const t = e.target;
   const payload = {
     type, mountId,

@@ -5,7 +5,7 @@
 import { view, $ } from './state.js';
 import { store } from './store.js';
 import { nodeById, labelFor, childrenOf } from './labels.js';
-import { fullReset, panes } from './mounts.js';
+import { fullReset, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
 import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons } from './graph-view.js';
 
@@ -21,7 +21,10 @@ export function updateChip() {
       pill.textContent = `viewing ${labelFor(view.viewedId)}`;
     } else {
       pill.className = 'active-pill' + (view.lock ? ' locked' : '');
-      pill.textContent = (view.lock ? 'locked ' : 'active ') + labelFor(view.activeId);
+      // A 'wake' lock is a channel-woken turn (turn-begin-on-push) — label it
+      // for what it is so the user knows why the graph is briefly held.
+      const lockLabel = view.lock ? (view.lock.author === 'wake' ? 'channel turn ' : 'locked ') : 'active ';
+      pill.textContent = lockLabel + labelFor(view.activeId);
     }
   }
   const ra = $('btn-return-active'); if (rah(ra)) ra.style.display = detached ? '' : 'none';
@@ -89,6 +92,68 @@ export async function previewNode(id) {
   updateChip();
 }
 
+// ── branch-on-edit ──────────────────────────────────────────────────────────
+// The user edited a form while DETACHED on an older node (wc:edit-in-preview,
+// fired by the pane's delegated input/change/submit listeners). Silent re-aim:
+// the server auto-commits any dirty live state as a preserve node (nothing is
+// ever lost), then re-aims active onto the viewed node — so the user's edits
+// ride as uncommitted live state and the next commit lands as a BRANCH CHILD of
+// the node they were viewing, leaving the original and its downstream intact.
+// The on-screen DOM (the previewed node + the in-flight edit) IS the new live
+// state, so the transition is local — no re-render, no lost keystroke.
+let branchInFlight = false;
+export async function branchOnEdit() {
+  if (!view.previewing || branchInFlight) return;
+  const target = view.viewedId;
+  if (!target || target === view.activeId) return;
+  if (view.branchingTo === target) return; // already queued server-side; the 'branch-here' frame completes it
+  branchInFlight = true;
+  view.branchingTo = target;
+  let keepPending = false;
+  try {
+    const r = await fetch('/api/graph/branch-here', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: target }),
+    });
+    if (!r.ok) return; // 404 etc — cleared in finally
+    const body = await r.json().catch(() => ({}));
+    if (body.pending) {
+      // Claude is mid-turn: the server queued the re-aim (pending re-aim) and
+      // will apply it after the commit. Keep previewing; the eventual
+      // 'branch-here' WS frame completes the local transition.
+      keepPending = true;
+      showReaimNote("Claude is mid-turn — your edit branches here when the turn ends.");
+      return;
+    }
+    completeBranchTransition(target);
+  } catch {
+    // network hiccup: stay in preview; the next edit retries
+  } finally {
+    branchInFlight = false;
+    if (!keepPending && view.branchingTo === target && view.previewing) view.branchingTo = null;
+  }
+}
+
+// The editing client's half of a branch-here: exit preview WITHOUT re-rendering
+// (the on-screen DOM — previewed node + in-flight edit — IS the new live
+// state), then flush the gated form values. Idempotent and shared by the
+// immediate path (POST response) and the deferred path (the 'branch-here' WS
+// frame after a pending re-aim applies) — whichever arrives first wins.
+export function completeBranchTransition(id) {
+  if (view.branchingTo !== id) return false;
+  view.branchingTo = null;
+  if (view.previewing && view.viewedId === id) {
+    view.previewing = false;
+    view.liveSnapshot = null;
+    view.activeId = id;
+    view.viewedId = id;
+    $('main').classList.remove('preview-readonly');
+    flushFormStates();
+    onGraphChanged();
+  }
+  return true;
+}
+
 export function returnToActive() {
   if (!view.previewing) { view.viewedId = view.activeId; updateChip(); return; }
   const snap = view.liveSnapshot;
@@ -138,11 +203,30 @@ export function doExport() {
   a.remove();
 }
 
+// Transient "your re-aim is queued" note. A re-aim during a locked turn is no
+// longer rejected — the server queues it and applies it when the turn ends
+// (pending re-aim); this tells the user their click was honored, just deferred.
+export function showReaimNote(text) {
+  let el = $('reaim-note');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'reaim-note';
+    el.className = 'reaim-note';
+    const tb = $('topbar');
+    (tb ? tb.parentElement || document.body : document.body).appendChild(el);
+  }
+  el.textContent = text;
+  clearTimeout(showReaimNote._t);
+  showReaimNote._t = setTimeout(() => { const n = $('reaim-note'); if (n) n.remove(); }, 6000);
+}
+
 export async function doWipe() {
+  const r = await fetch('/api/graph/wipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const body = await r.json().catch(() => ({}));
+  if (body.pending) { showReaimNote("Claude is mid-turn — the surface wipes when the turn ends."); return; }
   view.previewing = false;
   view.liveSnapshot = null;
   $('main').classList.remove('preview-readonly');
-  await fetch('/api/graph/wipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
 }
 
 async function setActiveHere() {
@@ -153,6 +237,13 @@ async function setActiveHere() {
     body: JSON.stringify({ id: target }),
   });
   if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
+  const body = await r.json().catch(() => ({}));
+  if (body.pending) {
+    // Queued: stay detached; the turn-end apply broadcasts a reset that lands
+    // everywhere (this client folds it via the previewing reset path).
+    showReaimNote(`Queued — jumps to ${labelFor(target)} when Claude's turn ends.`);
+    return;
+  }
   view.previewing = false;
   view.liveSnapshot = null;
   $('main').classList.remove('preview-readonly');
@@ -178,6 +269,9 @@ export function initTopbar() {
 
   on('btn-return-active', 'click', returnToActive);
   on('btn-set-active-here', 'click', setActiveHere);
+  // Branch-on-edit: fired by a pane's delegated listeners (mounts.js) when the
+  // user edits a form while detached on an older node.
+  window.addEventListener('wc:edit-in-preview', branchOnEdit);
 
   on('btn-up', 'click', async () => {
     await ensureGraph();

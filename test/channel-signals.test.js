@@ -11,13 +11,15 @@ const { withServer } = require('../test-support/helpers');
 const { derive, parseSignals } = require('../lib/server/domain/signals');
 
 // Connect, wait for hello, send one store:set (source:'browser'), settle.
-function wsStoreSet(port, patch) {
+// `extra` merges into the frame (e.g. {gesture:true} — the client's facade
+// stamps user-driven writes; raw script writes carry nothing).
+function wsStoreSet(port, patch, extra) {
   return new Promise((resolve, reject) => {
     const sock = new WebSocket(`ws://localhost:${port}/ws`);
     sock.on('message', (raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'hello') {
-        sock.send(JSON.stringify({ type: 'store:set', patch }));
+        sock.send(JSON.stringify({ type: 'store:set', patch, ...(extra || {}) }));
         setTimeout(() => { sock.close(); resolve(); }, 80);
       }
     });
@@ -61,15 +63,16 @@ test('signals: a declared queue signal folds into the queue (no immediate wake)'
   assert.equal(wakes(ev.json).length, 0, 'no immediate wake for a queue signal');
 });
 
-test('signals: a browser write to an undeclared key stays plain state', async (t) => {
+test('signals: a browser write to an undeclared key coalesces as activity, never wakes', async (t) => {
   const { api, port } = await withServer(t);
   await api.post('/api/render', { id: 'p', html: '<div>x</div>' }); // no signals
-  await wsStoreSet(port, { slider: 42 });
+  await wsStoreSet(port, { slider: 42 }, { mount: 'p', gesture: true });
 
   const q = await api.get('/api/queue');
-  assert.equal(q.json.count, 0);
+  assert.equal(q.json.count, 1, 'opt-out routing: undeclared activity still reaches the queue');
+  assert.equal(q.json.items[0].kind, 'activity');
   const ev = await api.get('/api/events');
-  assert.equal(wakes(ev.json).length, 0);
+  assert.equal(wakes(ev.json).length, 0, 'activity queues; it never wakes on its own');
 });
 
 test('signals: derive follows the live mounts — clearing the pane retires its signal', async (t) => {
@@ -77,9 +80,12 @@ test('signals: derive follows the live mounts — clearing the pane retires its 
   await api.post('/api/render', { id: 'form', html: '<div>x</div>', params: { signals: [{ key: 'form_submit', wake: 'queue' }] } });
   await api.post('/api/clear', { id: 'form' }); // pane gone → signal retired
 
-  await wsStoreSet(port, { form_submit: { seq: 1 } });
+  await wsStoreSet(port, { form_submit: { seq: 1 } }, { gesture: true });
   const q = await api.get('/api/queue');
-  assert.equal(q.json.count, 0, 'a retired signal no longer enqueues');
+  // The DECLARED signal is retired; the (gesture-stamped) write still surfaces
+  // as generic activity (opt-out routing), so nothing the user did is lost.
+  assert.equal(q.json.items.filter((it) => it.kind === 'signal').length, 0, 'a retired signal no longer enqueues as a signal');
+  assert.equal(q.json.items.filter((it) => it.kind === 'activity').length, 1);
 });
 
 // ── unit: derive / parseSignals ──────────────────────────────────────────────
