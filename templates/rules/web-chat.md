@@ -8,7 +8,7 @@ This project has [claude-web-chat](https://github.com/) installed: a live browse
 
 - **MCP tools** (loaded into your tool list): `render`, `clear`, `list_mounts`, `save_component`, `list_components`, `get_component`, `use_component`, `get_store`, `set_store`, `get_events`, `get_graph`, `get_active`, `diff_nodes`, `get_comments`, `reply_comment`, `get_captures`, `inspect_capture`, `set_theme`, `get_theme`, `save_theme`, `list_themes`, `apply_theme`, `export`.
 - **Browser surface** at `http://localhost:5173`. The user sees both this chat and that page.
-- **Graph**: every turn of yours commits a node. The user can revisit any prior node, branch from it, or set a new active point. Reference nodes by their hierarchical label (`n1.7`); the stored id is opaque. Labels read as collapsed stacks of changes — `n1.x`/`n2.x` are separate top-level trees, trunk increments the last segment (`n1.1 → n1.2`), and a branch appends a segment (`n1.1.0`). `get_graph`/`get_active` surface these labels.
+- **Graph**: every turn of yours commits a node. The user can revisit any prior node, branch from it, or set a new active point. Reference nodes by their hierarchical label (`n1.7`); the stored id is opaque. Labels read as collapsed stacks of changes — `n1.x`/`n2.x` are separate top-level trees, trunk increments the last segment (`n1.1 → n1.2`), and a branch appends a segment (`n1.1.0`). `get_graph`/`get_active` surface these labels. **Branch-on-edit**: if the user edits a form while viewing an older node, the surface silently re-aims there (auto-committing any uncommitted live work as a `user`-authored preserve node first — nothing is lost) and the next commit lands as a branch child; the original node and its downstream are always preserved. If you see an unexpected preserve node or a re-aimed active, that's what happened.
 - **Disabled state**: if MCP returns `{disabled, scope, hint}`, the surface is off. Fall back to chat-only and pass on the hint.
 
 ## Use the surface for
@@ -19,6 +19,7 @@ This project has [claude-web-chat](https://github.com/) installed: a live browse
 - **Comparisons & tables** — especially with > ~3 rows or multiple dimensions.
 - **Anything worth revisiting** — every render is a graph-node-able artifact the user can come back to.
 - **Live demos / mockups** — when proposing UI, render it instead of describing it.
+- **Live host state** — git branches/history, test runs, log tails, file browsing/editing. A **service-backed component** (below) keeps the pane current between your turns; the user watches instead of re-asking. This trigger fires on the *task* ("what's on this branch?", "watch the tests"), not on any request to render.
 
 ## Stay in chat for
 
@@ -32,21 +33,30 @@ This project has [claude-web-chat](https://github.com/) installed: a live browse
 
 The surface is bidirectional. Don't treat it as a one-shot form ("render → user submits once → done"). You can render UI the user manipulates, get woken when they hand off, react, and re-render — a live loop you converse *through*. It's underused; reach for it whenever the work is iterative (refine a proposal, triage a list, tune options) rather than a single question.
 
-**Channels is the wake path.** Everything queues. Wake-worthy activity on the surface — page captures, shared comment pins, and pane writes to keys you *declared* as signals — collects in the right-edge **queue rail** (server-side state). The user hitting **Push → Claude** (`P`) wakes you with the whole batch as a `<channel>` tag. Nothing wakes you on its own; the user controls *when* (the deliberate-handoff ritual is preserved). The `<channel>` carries a **summary only** — fetch bodies by tool call (`get_captures` / `inspect_capture` / `get_store`). Full contract: `docs/channels-dev.md`.
+**Channels is the wake path.** Everything queues. Wake-worthy activity on the surface — page captures, shared comment pins, and pane writes to keys you *declared* as signals — collects in the right-edge **queue rail** (server-side state). The user hitting **Push → Claude** (`P`) wakes you with the whole batch as a `<channel>` tag. Nothing wakes you on its own; the user controls *when* (the deliberate-handoff ritual is preserved). The `<channel>` carries a **summary only** — fetch bodies by tool call (`get_captures` / `inspect_capture` / `get_store`). Full contract: run `claude-web-chat docs channels-dev`.
 
-### Signal-key convention
+### Routing is opt-out: the activity safety net
 
-A pane holds rich **local** state — sliders, toggles, draft text, multi-selects — but you should react to **deliberate handoffs**, not every keystroke. So:
+**A broken pane script is observable.** If a pane's inline `<script>` throws at mount, the failure lands in the event log as `kind:'script-error'` (mount id + message + stack head). When a pane seems unresponsive or a declared signal never fires, check `get_events` for one of these first.
+
+**Everything the user does in a pane reaches the queue by default — you don't have to arm anything.** Undeclared browser activity (clicks on affordances, form edits, submits, undeclared store writes) coalesces server-side into **one rolling `activity` item per mount** ("form-signoff · 2 edits, 1 click · keys: draft") delivered on the user's Push. This works even if your pane's script fails at mount — the delegated listeners live in the shell, not the pane — so a broken script degrades to "generic activity + persisted form values", never silence. Item summaries carry counts and key *names* only; fetch actual values with `get_store` / `list_mounts` / `get_events`. Opt a noisy pane out with `params.routing:'none'` (service-owned panes are opted out automatically).
+
+**Typed form values persist automatically.** Every pane's form-element state (inputs, textareas, selects, contenteditable — keyed `#<id>:<n>` by element id, `@<name>:<n>` by name, `:<n>` positional) is captured continuously into the mount's `form_state`: it survives refresh, node navigation, restarts, and your re-renders, travels with committed nodes and exports, and is rehydrated into the DOM on every remount. Read it via `list_mounts` to see what the user has typed *even if they never hit submit*. A re-render with `params.form_reset:true` drops it (use when you supply fresh prefills); mark fields `data-no-persist` to exclude them; password, hidden, and file inputs (and `contenteditable="false"`) are never captured.
+
+### Signal-key convention (the semantic layer)
+
+The activity layer tells you *that* the user interacted; a **declared signal** tells you *what it means*. For deliberate handoffs, still:
 
 - Give the pane an explicit affordance — an "Apply" / "Send" / "Next" / "Ask Claude" button — that writes **one signal key** to the store when clicked: e.g. `store.set({ form_submit: { seq: <n>, payload: {...} } })`. Bump `seq` (a counter or timestamp) on every click so repeats are distinguishable.
-- **Declare that key on the `render`** — `signals: [{ key: 'form_submit', wake: 'queue' }]`. A declared `wake:'queue'` key folds a browser write to it into the queue rail (delivered when the user hits Push); `wake:'immediate'` wakes you the instant the pane writes it, bypassing the queue — reserve it for explicit "Ask Claude now" affordances. Declaring the signal *is* the whole reactive primitive: no wait to arm, no loop to background.
+- **Declare that key on the `render`** — `signals: [{ key: 'form_submit', wake: 'queue' }]`. A declared `wake:'queue'` key folds a browser write to it into the queue rail as a named item (delivered when the user hits Push); `wake:'immediate'` wakes you the instant the pane writes it, bypassing the queue — reserve it for explicit "Ask Claude now" affordances. Declaring the signal *is* the whole reactive primitive: no wait to arm, no loop to background.
 - Tell the user the signal key in chat ("the panel sends to `form_submit` when you hit Apply") so they know what's captured and what triggers you.
+- In pane scripts, query the DOM via the injected `root` (the pane's shadow root) — **never `document.*`**, which cannot see into the shadow DOM and kills the script at mount.
 
 ### How you get woken, and how you catch up
 
-- **Channel wake (a channel is connected).** A Push (or a `wake:'immediate'` signal) delivers the batch as a `<channel>` tag mid-session. Read the summary, fetch bodies by tool call, act, and re-render the affected mount. If the interaction continues, you're simply woken again on the next Push — no re-arming.
+- **Channel wake (a channel is connected).** A Push (or a `wake:'immediate'` signal) delivers the batch as a `<channel>` tag mid-session. Read the summary, fetch bodies by tool call, act, and re-render the affected mount. If the interaction continues, you're simply woken again on the next Push — no re-arming. A channel-woken turn is a full turn: the wake acquires the turn lock and your Stop commits its own graph node (trigger names the wake), so your woken work has first-class provenance.
 - **Parked delivery (no channel this session).** If the Channels capability isn't live, a Push doesn't vanish: the daemon **parks** the same summary envelope and it arrives as context on the user's **next message** (the `UserPromptSubmit` hook injects it). Treat a parked delivery exactly like a channel wake — summary only, fetch bodies by tool call. The rail tells the user "delivers with your next message", so they know it rides their next turn rather than waking you now.
-- **Catch-up.** At the start of any turn, whatever happened since your last one is in the log: `get_events({ since })` for the tail (it reports `gap`/`dropped` if your cursor fell off the ring — resync from `get_store` then), and `get_store` for current signal-key values. A click you never declared as a signal isn't lost; it just waits here until your next turn.
+- **Catch-up.** At the start of any turn, whatever happened since your last one is in the log: `get_events({ since })` for the tail (it reports `gap`/`dropped` if your cursor fell off the ring — resync from `get_store` then), `get_store` for current signal-key values, and `list_mounts` for each pane's `form_state` (the user's typed-but-unsent values). Undeclared interactions also queue as per-mount activity items, so a Push tells you *which* panes saw action; these sources tell you what it was.
 
 ### Patterns beyond one-shot forms
 
@@ -56,7 +66,7 @@ A pane holds rich **local** state — sliders, toggles, draft text, multi-select
 
 ## Component discovery before rendering
 
-- Before rendering non-trivial UI, call `list_components` — there may already be a saved one for what you need.
+- Before rendering non-trivial UI — **and before answering a live-host-state ask (git, tests, logs, files) with one-shot terminal output** — call `list_components`; a saved or builtin component may already do it, live.
 - Each component carries a description. Read it before deciding to render from scratch.
 - When you write something reusable, `save_component` with a specific description that answers *when to use this* (purpose, params, expected store interactions). Future invocations of you read that description to know what's available.
 - Use stable mount IDs to replace-in-place. Random IDs stack indefinitely.
@@ -68,7 +78,9 @@ A saved component can carry a host-side `service.js` that the daemon runs while 
 - **Author** one by passing `service` (and optionally `seed`) to `save_component`; `list_components` marks these `has_service`. Build the pane to read its data from the store and render reactively; the service supplies that data via `ctx.driver.setStore(...)`.
 - **First run prompts the user** to approve the service (it's host code that runs on their machine); editing it re-prompts. Nothing runs headless (no viewer) or off the active node — navigating away stops the service, navigating back respawns it.
 - **Make it interactive** by having the pane write a *control key* (e.g. `git_ctl`) the service watches over SSE and responds to — a live loop that does **not** wake you (it's a service reaction, not a declared signal). Reach for this for dashboards/browsers, not one-shot forms.
-- The service is a driver (`owner: "service:<name>"`, see below) the daemon supervises for you. Full contract: `docs/service-components.md`.
+- **Crib from the builtins.** `git-dashboard` and `file-editor` ship canonical `service.js` implementations (SSE control-key loop, fs-watch + poll, store push) — `get_component` one before authoring a service from scratch.
+- **Trigger on the task, not the word "render".** "What's on this branch", "keep an eye on the tests", "tail that log", "let me edit that file" are service-component asks even though nobody asked for UI — check `list_components` before reaching for one-shot terminal output. Builtins already cover git (`git-dashboard`) and file editing (`file-editor`).
+- The service is a driver (`owner: "service:<name>"`, see below) the daemon supervises for you. Full contract: run `claude-web-chat docs service-components`.
 
 ## Theming
 
@@ -87,7 +99,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 - Such panes are tagged `owner: "service:<name>"` (see Render etiquette) — don't clobber them.
 - Driver writes show up in `get_events` with a `source` and fold into the next node like a user's pane clicks. But a driver write is `source:'server'`, so — unlike a browser signal — it does **not** enqueue or wake you: you see a driver's `test_run` at your next turn (catch up with `get_events`/`get_store`), never the instant it lands. Only browser/extension activity (captures, declared pane signals, shared pins) and the user's Push reach the queue.
 - Drivers can stream events live over SSE; that's their channel, not your wake path.
-- Full contract for driving the surface: `docs/driving-the-surface.md`.
+- Full contract for driving the surface: run `claude-web-chat docs driving-the-surface`.
 
 ## Exporting a page
 
@@ -101,7 +113,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 ## Turn lifecycle
 
 - Every `render`, `set_store`, `use_component`, and `clear` during your turn folds into that turn's commit when it ends.
-- Mid-turn user interactions (clicks, form submits, store writes from the page) also fold in. The lock prevents the user from re-aiming the commit point while you're working.
+- Mid-turn user interactions (clicks, form submits, store writes from the page) also fold in. A user re-aim (jump/wipe/new-graph/branch) during your turn isn't rejected — it's **queued** and applied right after your turn's commit, so don't be surprised when `active` moves the moment your turn ends.
 - You do **not** commit nodes — the harness's `Stop` hook does that. You do **not** change `active` — only the user does, via the graph viewer.
 - Reference prior nodes by id ("the form from n5", "let's pick up from n11"). The user can jump to them.
 - **What can wake you:** a new user prompt; a **channel wake** (the user hits **Push → Claude**, or a pane writes a key you declared `wake:'immediate'`) when a channel is connected; or a **parked delivery** folded into the user's next prompt when one isn't (see Interactive surfaces above). A user clicking a pane does **not** spontaneously start a turn — a browser signal reaches you only through the queue (on Push) or an immediate declared signal. Anything you didn't declare as a signal just accumulates in the store/event log until the user's next prompt (catch up then with `get_events({since})`).
@@ -122,4 +134,4 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 - **Don't re-render unchanged content** just to reference it. The mount is still there.
 - **Don't render boilerplate** that should be a saved component — extract it the first or second time you write it.
 - **Don't use rendering as a substitute for doing the work.** A plan render isn't a commit; a mock isn't an implementation. Build the thing.
-- **Don't expect a pane to wake you on its own.** A browser write reaches you only if you *declared* its key as a signal (`wake:'queue'` → on Push; `wake:'immediate'` → at once) — an undeclared click just waits in the log for your next turn. Render the UI, declare the signal, and tell the user the key *before* you end the turn; there's no wait to arm and nothing to background.
+- **Don't expect a pane to wake you on its own.** Nothing wakes you except the user's Push or a declared `wake:'immediate'` signal. Undeclared interactions aren't lost — they coalesce into per-mount activity items delivered on Push, and typed values persist in `form_state` — but they arrive as generic "the user did things here", so for anything with meaning (a submit payload, an approval) still declare a signal and tell the user the key *before* you end the turn.

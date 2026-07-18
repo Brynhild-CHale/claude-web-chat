@@ -2,7 +2,7 @@
 
 ## Context
 
-A "page" in web-chat is a graph node: `{ mounts: [{id, html, target, params, pane_state, theme}], store, comments }` (`lib/server/graph.js:140`). Every pane's HTML/JS is already a string held server-side, and the store/theme are plain data. That makes a **self-contained interactive `.html` export nearly free** — assemble a minimal shell + inlined mounts + baked store + baked theme into one file, no headless browser.
+A "page" in web-chat is a graph node: `{ mounts: [{id, html, target, params, pane_state, form_state, theme}], store, comments }` (`lib/server/graph.js:140`). Every pane's HTML/JS is already a string held server-side, and the store/theme are plain data. That makes a **self-contained interactive `.html` export nearly free** — assemble a minimal shell + inlined mounts + baked store + baked theme into one file, no headless browser.
 
 Two existing patterns are reused: the zero-dependency zip writer is *not* needed (single file), but the `Content-Disposition: attachment` download pattern (`embed-helper.js:185`) is, and `computeLabels` (`graph.js:176`) gives id↔label.
 
@@ -37,7 +37,7 @@ New module **`lib/server/export.js`**:
     <script> /* ~120-line runtime */ </script>
   </body></html>
   ```
-  - `mounts`: array of `{ id, html, target, params, theme }`. `pane_state` (collapsed/size) baked into initial host styling; not interactive chrome.
+  - `mounts`: array of `{ id, html, target, params, form_state, theme }`. `pane_state` (collapsed/size) baked into initial host styling; not interactive chrome. `form_state` is inlined and rehydrated into the frozen page's DOM, so the user's typed values survive into the export.
   - `store`: baked object; runtime seeds it before mounting so components read initial values synchronously.
   - HTML-escape only where injecting into attributes/text; the `<script type="application/json">` payload is JSON-encoded with `<` escaped (`<\/script>` / `<`) to prevent breakout. **This is the main injection-safety concern — covered by a test.**
   - No `ws://`, no `fetch` to the origin, no absolute localhost URLs. (Pane content that fetches the *public* network still does so at view time — documented, not solved.)

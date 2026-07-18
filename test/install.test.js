@@ -72,6 +72,47 @@ test('install preserves other mcpServers entries', () => {
   assert.equal(mcp.mcpServers['web-chat'].env.WEB_CHAT_CHANNEL, '1');
 });
 
+test('install preserves a plugin-portable entry when running under plugin packaging', () => {
+  const root = tmpRoot();
+  writeMcp(root, {
+    mcpServers: {
+      'web-chat': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'] },
+    },
+  });
+  const prev = process.env.CLAUDE_PLUGIN_ROOT;
+  process.env.CLAUDE_PLUGIN_ROOT = '/plugin/root';
+  try {
+    const status = ensureMcpRegistration(root);
+    assert.equal(status, 'kept plugin registration');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = prev;
+  }
+  const entry = readMcp(root).mcpServers['web-chat'];
+  // Portable args untouched, channels opt-in still wired in.
+  assert.deepEqual(entry.args, ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js']);
+  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
+});
+
+test('install rewrites a portable entry when NOT under plugin packaging (placeholder cannot resolve)', () => {
+  const root = tmpRoot();
+  writeMcp(root, {
+    mcpServers: {
+      'web-chat': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'] },
+    },
+  });
+  const prev = process.env.CLAUDE_PLUGIN_ROOT;
+  delete process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    ensureMcpRegistration(root);
+  } finally {
+    if (prev !== undefined) process.env.CLAUDE_PLUGIN_ROOT = prev;
+  }
+  const entry = readMcp(root).mcpServers['web-chat'];
+  assert.ok(path.isAbsolute(entry.args[0]) && /bin\/claude-web-chat-mcp\.js$/.test(entry.args[0]));
+  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
+});
+
 test('channelEnv merges without mutating the input and never drops keys', () => {
   const input = { FOO: 'bar' };
   const out = channelEnv(input);

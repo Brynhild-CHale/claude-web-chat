@@ -2,7 +2,12 @@
   "mcpServers": {
     "web-chat": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js"
+      ],
+      "env": {
+        "WEB_CHAT_CHANNEL": "1"
+      }
     }
   }
 }
