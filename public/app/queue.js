@@ -13,6 +13,18 @@ import { isCommentAnswered } from './comments.js';
 let items = [];
 const isStaged = (it) => it.staged !== false; // default staged; held is explicit
 
+// The in-flight push awaiting a delivery ack (see watchAck). A live wake is only
+// "sent" once the bridge acks it back as a `wake-ack` frame; until then the rail
+// shows "Sending…", and if the ack never comes it flips to a rejection the user
+// can retry. `null` when nothing is in flight.
+let pendingPush = null;
+const ACK_TIMEOUT_MS = 6000; // how long the rail waits for a delivery ack before rejecting
+// Acks that arrived BEFORE their watch was armed. The `wake-ack` WS frame can beat
+// the push's HTTP response (the bridge acks in ms), so an ack may land before
+// watchAck runs — we remember its seq here so the imminent watchAck resolves
+// immediately instead of falsely timing out. Bounded; monotonic seqs.
+const recentAcks = new Set();
+
 const railEl = () => $('queue-rail');
 const q = (sel) => { const r = railEl(); return r ? r.querySelector(sel) : null; };
 
@@ -101,15 +113,55 @@ export async function pushQueue() {
     if (ok) { try { result = await r.json(); } catch {} }
   } catch {}
   if (!ok) { showPushError(); return; } // keep note + rows; surface a visible rail error
-  // Confirmed: clear the note and drop the staged rows; held ones survive. The
-  // server also emits ONE batched `queue` remove frame (C4) — belt-and-suspenders.
+  // Confirmed AT THE HTTP LAYER: clear the note and drop the staged rows; held
+  // ones survive. The server also emits ONE batched `queue` remove frame (C4).
   if (add) add.value = '';
   items = items.filter((x) => !isStaged(x));
   render();
-  // a parked push (no channel connected) is delivered on the user's NEXT
-  // message, not woken now — say WHEN. The copy
-  // is server-sent (result.delivers).
-  if (result && result.mode === 'parked') showParkedNote(result.delivers);
+  if (result && result.mode === 'parked') {
+    // No live channel — held and delivered on the user's NEXT message. Reliable;
+    // no ack to await. Copy is server-sent (result.delivers).
+    showParkedNote(result.delivers);
+  } else if (result && result.mode === 'wake' && result.seq != null) {
+    // A live wake was fired — but HTTP 200 only means the daemon emitted it, NOT
+    // that it reached Claude. Await the bridge's delivery ack; reject on timeout.
+    watchAck(result.seq);
+  }
+}
+
+// Arm the delivery-confirmation watch for a live wake `seq`. Shows a transient
+// "Sending…" state; a matching `wake-ack` frame (onWakeAck) confirms it, and if
+// none arrives within ACK_TIMEOUT_MS the push is REJECTED with retry/hold actions.
+function watchAck(seq) {
+  clearAckWatch();
+  clearRailBanners();
+  // The ack may have already arrived (WS beat the HTTP response) — resolve now.
+  if (recentAcks.has(seq)) { recentAcks.delete(seq); showDelivered(); return; }
+  pendingPush = { seq, timer: null };
+  showSending();
+  pendingPush.timer = setTimeout(() => {
+    if (pendingPush) pendingPush.timer = null;
+    showPushRejected(seq);
+  }, ACK_TIMEOUT_MS);
+}
+function clearAckWatch() {
+  if (pendingPush && pendingPush.timer) clearTimeout(pendingPush.timer);
+  pendingPush = null;
+}
+
+// A `wake-ack` frame arrived — the bridge confirms the wake reached Claude.
+// Resolve the matching in-flight watch into a brief "Delivered" confirmation.
+// Ignores acks for a superseded/absent push (stale seq).
+export function onWakeAck(seq) {
+  if (pendingPush && pendingPush.seq === seq) {
+    clearAckWatch();
+    clearRailBanners();
+    showDelivered();
+    return;
+  }
+  // Arrived before watchAck armed — stash it so the imminent watch resolves at once.
+  recentAcks.add(seq);
+  if (recentAcks.size > 64) recentAcks.delete(recentAcks.values().next().value);
 }
 
 // transient confirmation that a Push was PARKED (delivered with the next
@@ -128,6 +180,88 @@ function showParkedNote(text) {
   note.textContent = text || 'Pushed — delivers with your next message.';
   clearTimeout(showParkedNote._t);
   showParkedNote._t = setTimeout(() => { const n = railEl() && railEl().querySelector('.rail-parked'); if (n) n.remove(); }, 6000);
+}
+
+// Insert a transient banner just above the Push button, replacing any existing
+// one of the same class. Returns the element so callers can fill it in.
+function railBanner(cls) {
+  const rail = railEl();
+  if (!rail) return null;
+  let el = rail.querySelector('.' + cls);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = cls;
+    const push = rail.querySelector('.rail-push');
+    if (push) push.insertAdjacentElement('beforebegin', el); else rail.appendChild(el);
+  }
+  return el;
+}
+// Clear every transient push banner + its timer — called whenever the push state
+// transitions (new push, ack, rejection) so stale banners never stack.
+function clearRailBanners() {
+  clearTimeout(showParkedNote._t);
+  clearTimeout(showDelivered._t);
+  for (const cls of ['rail-sending', 'rail-parked', 'rail-error']) {
+    const el = q('.' + cls);
+    if (el) el.remove();
+  }
+}
+
+// "Sending…" — a live wake was fired and we're awaiting the bridge's delivery ack.
+function showSending() {
+  const el = railBanner('rail-sending');
+  if (el) el.textContent = 'Sending to Claude…';
+}
+// "Delivered" — the ack arrived; the wake reached Claude. Brief, auto-clears.
+function showDelivered() {
+  const el = railBanner('rail-parked');
+  if (!el) return;
+  el.textContent = 'Delivered to Claude ✓';
+  clearTimeout(showDelivered._t);
+  showDelivered._t = setTimeout(() => { const n = q('.rail-parked'); if (n) n.remove(); }, 3000);
+}
+
+// The rejection the whole mechanism exists for: no ack came back, so the wake
+// likely never reached Claude. The batch is RETAINED server-side (pendingAck) —
+// Retry re-fires it, Hold converts it to a parked wake delivered on the next
+// message. `seq` correlates the retained batch.
+function showPushRejected(seq) {
+  const el = railBanner('rail-error');
+  if (!el) return;
+  el.textContent = '';
+  const msg = document.createElement('div');
+  msg.className = 'rail-error-msg';
+  msg.textContent = "This didn't reach Claude. Your batch is kept — try again.";
+  const actions = document.createElement('div');
+  actions.className = 'rail-error-actions';
+  const retry = document.createElement('button');
+  retry.className = 'rail-retry';
+  retry.textContent = 'Retry';
+  retry.addEventListener('click', () => repush(seq, false));
+  const hold = document.createElement('button');
+  hold.className = 'rail-hold';
+  hold.textContent = 'Hold for next message';
+  hold.addEventListener('click', () => repush(seq, true));
+  actions.append(retry, hold);
+  el.append(msg, actions);
+}
+
+// Recovery — ask the server to re-deliver the retained in-flight batch. `park`
+// true holds it for the next message (the reliable fallback); false re-fires a
+// live wake and re-arms the ack watch on the new seq.
+async function repush(seq, park) {
+  clearRailBanners();
+  let result = null, ok = false;
+  try {
+    const r = await fetch('/api/queue/repush', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seq, park }),
+    });
+    ok = r.ok;
+    if (ok) { try { result = await r.json(); } catch {} }
+  } catch {}
+  if (!ok) { showPushRejected(seq); return; } // still stuck — keep the rejection actionable
+  if (result && result.mode === 'parked') showParkedNote(result.delivers);
+  else if (result && result.mode === 'wake' && result.seq != null) watchAck(result.seq);
 }
 
 // F6: a visible rail error state (mirrors .rail-notice styling, coral) when a push

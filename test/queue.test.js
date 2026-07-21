@@ -17,7 +17,7 @@ const HTML = '<html><head><title>Doc</title></head><body><p>hi</p></body></html>
 // Default freshState is CONNECTED (wakeConsumers: 1) so a domain flush WAKES — the
 // parked path is exercised by the explicit wakeConsumers:0 tests below.
 function freshState() {
-  return { queue: [], queueSeq: 0, mounts: new Map(), store: {}, signals: {}, wakeConsumers: 1, pendingWake: null, pendingWakeSeq: 0 };
+  return { queue: [], queueSeq: 0, mounts: new Map(), store: {}, signals: {}, wakeConsumers: 1, wakeConsumerSeenAt: Date.now(), pendingAck: null, pendingWake: null, pendingWakeSeq: 0 };
 }
 
 const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));

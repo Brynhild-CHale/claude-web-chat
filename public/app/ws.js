@@ -17,7 +17,7 @@ import {
   completeBranchTransition, showReaimNote,
 } from './topbar.js';
 import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
-import { foldQueueFrame, hydrateQueue, renderQueue } from './queue.js';
+import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
 import { applyCommentsFrame } from './comments.js';
 
 let ws = null;
@@ -178,6 +178,9 @@ const HANDLERS = {
   // The wake queue — independent of preview state (it's wake
   // signals, not surface content), so it folds regardless.
   queue(msg) { foldQueueFrame(msg); },
+  // Delivery confirmation for a live Push — resolves the rail's "Sending…" state
+  // into "Delivered ✓" (the timeout otherwise rejects it). See queue.onWakeAck.
+  'wake-ack'(msg) { onWakeAck(msg.seq); },
   // Comment pins: every comment-route notify() and revertArtifact
   // pushes the whole comments array here so the marker layer re-renders immediately;
   // renderMarkers itself is the preview guard, so this can fold regardless too.
