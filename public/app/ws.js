@@ -18,6 +18,7 @@ import {
 } from './topbar.js';
 import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
 import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
+import { checkVersion } from './version.js';
 import { applyCommentsFrame } from './comments.js';
 
 let ws = null;
@@ -64,6 +65,10 @@ const HANDLERS = {
     // hello/reset, so a reconnect after a drop would otherwise leave the rail
     // permanently out of sync with any items enqueued during the gap.
     hydrateQueue();
+    // Re-check the build on every (re)connect: a reconnect after a self-update
+    // restart lands on the new daemon, so this clears the "Updating…" banner once
+    // the version has actually moved.
+    checkVersion();
   },
   'store:patch'(msg) {
     if (view.previewing) { if (view.liveSnapshot) Object.assign(view.liveSnapshot.store, msg.patch || {}); }

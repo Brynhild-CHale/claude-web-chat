@@ -210,6 +210,41 @@ html.wc-theming, html.wc-theming * {
 
 .hidden { display: none !important; }
 
+/* ===== update-available advisory (version.js) =====
+   A full-width bar above the topbar. Gold = advisory (matches .rail-notice); it
+   flows as the first flex row of #stage so it pushes the topbar/body down rather
+   than overlapping them. Flips to green (.ok) for the brief post-update flash. */
+.update-banner {
+  position: relative; z-index: 3; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 7px 14px 7px 16px;
+  font: 500 12px var(--wc-font); color: var(--wc-fg); line-height: 1.35;
+  background: color-mix(in srgb, var(--wc-gold) 16%, var(--wc-panel-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--wc-gold) 55%, transparent);
+}
+.update-banner.ok {
+  background: color-mix(in srgb, var(--wc-green) 16%, var(--wc-panel-bg));
+  border-bottom-color: color-mix(in srgb, var(--wc-green) 55%, transparent);
+  color: var(--wc-green);
+}
+.update-banner .ub-msg { flex: 1 1 auto; }
+.update-banner .ub-msg code { font: 11px var(--wc-mono); }
+.update-banner .ub-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.update-banner .ub-btn {
+  height: 26px; padding: 0 12px; border-radius: var(--wc-radius-sm);
+  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: #1c1710;
+  font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
+}
+.update-banner .ub-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
+.update-banner .ub-btn:disabled { opacity: .6; cursor: default; }
+.update-banner .ub-btn.hidden { display: none !important; }
+.update-banner .ub-x {
+  height: 24px; width: 24px; display: grid; place-items: center; padding: 0;
+  border: none; background: transparent; color: var(--wc-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; border-radius: var(--wc-radius-sm);
+}
+.update-banner .ub-x:hover { color: var(--wc-fg); background: color-mix(in srgb, var(--wc-fg) 8%, transparent); }
+
 /* ===================== topbar ===================== */
 #topbar {
   display: flex; align-items: center; gap: 8px;
