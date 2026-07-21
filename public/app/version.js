@@ -86,6 +86,39 @@ function updateSucceeded(v) {
   setTimeout(hide, 4000);
 }
 
+// Explicit "Check for updates" (the … menu). Forces a fresh fetch past the 24h
+// throttle: reveals the banner if a newer build exists (overriding any prior
+// dismissal), otherwise flashes a brief "you're on the latest" confirmation so
+// the click always gives feedback.
+export async function checkForUpdatesNow() {
+  let info;
+  try { info = await fetch('/api/version?force=1').then((r) => r.json()); } catch { info = null; }
+  if (!info || !info.ok || !info.current) { flashInfo('Could not check for updates — try again.'); return; }
+  currentBuild = info.current;
+  if (inProgress) return; // an update is already running; don't stomp its state
+  if (info.updateAvailable && info.latest) {
+    dismissedFor = null; // an explicit check overrides a prior dismiss
+    latestShown = info.latest;
+    const b = banner(); if (b) b.classList.remove('ok');
+    setMsg(`web-chat ${info.latest} is available — you're on ${info.current}.`);
+    setBtn('Update & restart', false);
+    show();
+  } else {
+    flashInfo(`You're on the latest version (${info.current}).`);
+  }
+}
+
+// Brief informational flash in the banner (green, no update button, auto-hides).
+function flashInfo(text) {
+  const b = banner(); if (!b) return;
+  b.classList.add('ok');
+  setMsg(text);
+  const btn = btnEl(); if (btn) btn.classList.add('hidden');
+  show();
+  clearTimeout(flashInfo._t);
+  flashInfo._t = setTimeout(hide, 4000);
+}
+
 function onDismiss() {
   const b = banner();
   if (b && b.classList.contains('ok')) return; // never dismiss the success flash out from under itself

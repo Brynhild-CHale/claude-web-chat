@@ -10,6 +10,7 @@ import {
 import { openOverlay, isOverlayOpen } from './graph-view.js';
 import { openDrawer, spawnComponent } from './drawer.js';
 import { togglePinMode } from './comments.js';
+import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
 import { initQueue, pushQueue } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
@@ -101,6 +102,7 @@ function initMoreMenu() {
     ({
       export: doExport, wipe: doWipe, newgraph: openNewGraph,
       settings: openSettings, shortcuts: () => toggleLegend(true),
+      checkupdate: checkForUpdatesNow,
     })[act.dataset.act]?.();
   });
 }
