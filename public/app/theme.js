@@ -80,12 +80,16 @@ export function applyPaneTheme(p, theme, animate) {
   if (p.spec) p.spec.theme = theme || undefined;
 }
 
-// --- Earthy light/dark mode (Earthy Dark is the stock look; light via data-theme) ---
+// --- Earthy light/dark mode (Earthy Light is the default; dark via stored pref) ---
 // Orthogonal to named themes: this only flips which set of --wc-* DEFAULTS :root
 // resolves to. A saved theme's tokens (applied inline) still override on top.
 const MODE_KEY = 'wc-mode';
 export function initMode() {
-  if (localStorage.getItem(MODE_KEY) === 'light') document.documentElement.dataset.theme = 'light';
+  // Earthy Light is the default; only an explicit stored 'dark' opts back into
+  // the dark look. index.html ships data-theme="light" so the first paint is
+  // already light — this just reconciles a returning user's dark preference.
+  if (localStorage.getItem(MODE_KEY) === 'dark') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = 'light';
 }
 export function toggleMode() {
   const nowLight = document.documentElement.dataset.theme !== 'light';

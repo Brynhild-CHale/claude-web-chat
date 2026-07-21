@@ -5,8 +5,9 @@
 
    Token model (unchanged contract): the `--wc-*` custom properties cascade
    pane -> node -> global and cross the shadow boundary by inheritance, so both
-   chrome and pane content restyle from them. Earthy Dark is the STOCK look
-   (values live here in :root); `:root[data-theme="light"]` is Earthy Light.
+   chrome and pane content restyle from them. Earthy Dark values live here in
+   :root; `:root[data-theme="light"]` is Earthy Light, which is the DEFAULT mode
+   (index.html ships data-theme="light"; a stored 'dark' pref opts back out).
    Saved themes still override per-token via applyTokens on :root/#main/.pane.
    ========================================================================== */
 

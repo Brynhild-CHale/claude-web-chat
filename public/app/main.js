@@ -11,7 +11,7 @@ import { initComments } from './comments.js';
 import { initShell } from './shell.js';
 import { connect } from './ws.js';
 
-initMode();       // Earthy dark/light before first paint
+initMode();       // Earthy light (default) / dark before first paint
 initTopbar();
 initGraph();
 initDrawer();
