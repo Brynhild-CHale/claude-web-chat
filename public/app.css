@@ -405,6 +405,13 @@ kbd {
 .rail-parked { margin: 8px 0 2px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--wc-green) 45%, transparent); background: color-mix(in srgb, var(--wc-green) 12%, transparent); border-radius: var(--wc-radius); font: 11px var(--wc-font); color: var(--wc-green); line-height: 1.4; }
 /* F6: push-failure notice — coral (an error, not the gold advisory above). */
 .rail-error { margin: 8px 0 2px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--wc-comment) 50%, transparent); background: color-mix(in srgb, var(--wc-comment) 12%, transparent); border-radius: var(--wc-radius); font: 11px var(--wc-font); color: var(--wc-comment); line-height: 1.4; }
+/* delivery-ack states: "Sending…" (muted, awaiting the bridge's ack) and the
+   rejection's recovery actions (Retry / Hold for next message). */
+.rail-sending { margin: 8px 0 2px; padding: 8px 10px; border: 1px solid var(--wc-border); background: color-mix(in srgb, var(--wc-muted) 8%, transparent); border-radius: var(--wc-radius); font: 11px var(--wc-font); color: var(--wc-muted); line-height: 1.4; }
+.rail-error-actions { display: flex; gap: 6px; margin-top: 7px; }
+.rail-error-actions button { flex: 0 0 auto; height: 24px; padding: 0 9px; border-radius: var(--wc-radius-sm); border: 1px solid color-mix(in srgb, var(--wc-comment) 45%, transparent); background: var(--wc-panel-bg); color: var(--wc-fg); font: 11px var(--wc-font); cursor: pointer; }
+.rail-error-actions button:hover { background: color-mix(in srgb, var(--wc-comment) 14%, transparent); }
+.rail-hold { border-color: var(--wc-border) !important; color: var(--wc-muted) !important; }
 .rail-items { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .rail-empty { font: 12px var(--wc-font); color: var(--wc-muted-dim); padding: 12px 4px; }
 .rail-add { margin-top: 8px; height: 30px; padding: 0 8px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-content-fg); font: 12px var(--wc-font); }
