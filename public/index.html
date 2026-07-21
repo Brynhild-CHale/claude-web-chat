@@ -8,6 +8,15 @@
 </head>
 <body>
   <div id="stage" tabindex="0">
+    <!-- update-available advisory: a full-width bar above the topbar (see version.js) -->
+    <div id="update-banner" class="update-banner hidden">
+      <span class="ub-msg"></span>
+      <span class="ub-actions">
+        <button id="btn-update-now" class="ub-btn">Update &amp; restart</button>
+        <button id="btn-update-dismiss" class="ub-x" title="Dismiss" aria-label="Dismiss">×</button>
+      </span>
+    </div>
+
     <!-- depth layers (behind content) -->
     <div class="depth depth-radial"></div>
     <div class="depth depth-grid"></div>

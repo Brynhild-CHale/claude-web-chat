@@ -9,6 +9,7 @@ import { initGraph } from './graph-view.js';
 import { initDrawer } from './drawer.js';
 import { initComments } from './comments.js';
 import { initShell } from './shell.js';
+import { initVersion } from './version.js';
 import { connect } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -17,4 +18,5 @@ initGraph();
 initDrawer();
 initComments();
 initShell();
+initVersion();    // update-available banner; re-checked on every WS (re)connect
 connect();
