@@ -114,6 +114,14 @@ test('/web-chat with no arguments guides Claude to actually render something', (
 // Prose may discuss a command that no longer exists, but not as a live
 // backticked instruction — that is how `claude-web-chat watch` outlived the
 // feature it named. A cited command must be one the user can actually run.
+// A command that is DESIGNED but not yet built may be cited — the pack format is
+// specified ahead of its tooling on purpose — but only in a doc that says so out
+// loud, so a reader never mistakes a spec for something they can run. Adding an
+// entry here is deliberate; shipping the command should remove it.
+const PLANNED = new Map([
+  ['pack', { doc: 'docs/component-packs.md', marker: /not built yet/i }],
+]);
+
 test('every `claude-web-chat <sub>` cited in the docs is a real CLI command', () => {
   const known = new Set([...cliCommands(), 'help']);
   const files = [
@@ -125,7 +133,12 @@ test('every `claude-web-chat <sub>` cited in the docs is a real CLI command', ()
   for (const rel of files) {
     const body = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
     for (const m of body.matchAll(/`claude-web-chat ([a-z][a-z-]*)/g)) {
-      assert.ok(known.has(m[1]), `${rel} cites \`claude-web-chat ${m[1]}\`, which is not a registered command`);
+      if (known.has(m[1])) continue;
+      const planned = PLANNED.get(m[1]);
+      assert.ok(planned, `${rel} cites \`claude-web-chat ${m[1]}\`, which is not a registered command`);
+      assert.equal(planned.doc, rel, `only ${planned.doc} may cite the unbuilt \`${m[1]}\` command`);
+      assert.match(body, planned.marker,
+        `${rel} cites the unbuilt \`claude-web-chat ${m[1]}\` without saying it is unbuilt`);
     }
   }
 });
