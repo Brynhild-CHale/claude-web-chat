@@ -1,0 +1,15 @@
+{
+  "name": "web-chat-tour",
+  "description": "Onboarding only — the first-run tour the CLI mounts before Claude Code has restarted. Do NOT pick this for general rendering. Params: {role:'guide'|'mirror', step, root, url, channel_connected}. Writes tour_scratch (scratch) and web_chat_init (declared signal, {seq, done, choice, note}). When you see web_chat_init, clear mounts 'web-chat-tour' and 'web-chat-tour-mirror' as your first act.",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "role": { "type": "string", "enum": ["guide", "mirror"] },
+      "step": { "type": "integer" },
+      "root": { "type": "string" },
+      "url": { "type": "string" },
+      "channel_connected": { "type": "boolean" }
+    }
+  },
+  "builtin": true
+}

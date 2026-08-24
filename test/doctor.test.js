@@ -390,3 +390,96 @@ test('doctor warns when the hub is up but this project is not in the instance re
   assert.ok(hit, `expected a registry warning; got ${JSON.stringify(summary.checks.map((c) => c.m))}`);
   assert.equal(hit.status, 'problem');
 });
+
+// ── dryRun ────────────────────────────────────────────────────────────────────
+// `claude-web-chat init --report` and `/web-chat init` both promise the caller
+// they change nothing. doctor is otherwise a REPAIRER — it deletes portfiles,
+// clears locks, rewrites hook commands, strips a stale env out of .mcp.json and
+// shells out to `claude mcp add` — so each of those five write paths is guarded
+// and reported as "would repair" instead. If any of these guards regresses, a
+// read-only report silently mutates the user's project.
+
+test('doctor --dryRun leaves a stale portfile in place and says it would repair it', async (t) => {
+  const root = project(t);
+  const portfile = path.join(root, '.web-chat', 'server.json');
+  fs.writeFileSync(portfile, JSON.stringify({ pid: 999999999, port: 65111, url: 'http://localhost:65111' }));
+  const claude = fakeClaude();
+
+  const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent, dryRun: true });
+
+  assert.equal(fs.existsSync(portfile), true, 'dryRun must NOT delete the portfile');
+  const hit = summary.checks.find((c) => /stale portfile/.test(c.m));
+  assert.ok(hit, 'the check still runs');
+  assert.equal(hit.dry, true, 'and is tagged as a repair that did not happen');
+});
+
+test('doctor --dryRun leaves an orphaned graph lock in _meta.json', async (t) => {
+  const root = project(t);
+  const metaPath = path.join(root, '.web-chat', 'graph', '_meta.json');
+  const before = JSON.stringify({ active: null, lock: { base: null, started_at: 0, author: 'user' } });
+  fs.writeFileSync(metaPath, before);
+  const claude = fakeClaude();
+
+  await doctor([], { cwd: root, runClaude: claude.fn, log: silent, dryRun: true });
+
+  assert.equal(fs.readFileSync(metaPath, 'utf8'), before, 'dryRun must not rewrite _meta.json');
+});
+
+test('doctor --dryRun never shells out to `claude mcp add`', async (t) => {
+  const root = project(t);
+  // A bare, PATH-dependent MCP entry: the repair path doctor exists for.
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'web-chat': { command: 'claude-web-chat-mcp' } } }, null, 2)
+  );
+  const claude = fakeClaude();
+
+  const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent, dryRun: true });
+
+  assert.equal(claude.calls.length, 0, 'a read-only run must not register anything with Claude Code');
+  assert.ok(summary.checks.some((c) => c.dry && /register web-chat at local scope/.test(c.m)));
+});
+
+test('doctor --dryRun does not strip a stale WEB_CHAT_CHANNEL from .mcp.json', async (t) => {
+  const root = project(t);
+  const mcpPath = path.join(root, '.mcp.json');
+  const mcpBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
+  const before = JSON.stringify({
+    mcpServers: { 'web-chat': { command: 'node', args: [mcpBin], env: { WEB_CHAT_CHANNEL: '1' } } },
+  }, null, 2);
+  fs.writeFileSync(mcpPath, before);
+  const claude = fakeClaude();
+
+  await doctor([], { cwd: root, runClaude: claude.fn, log: silent, dryRun: true });
+
+  assert.equal(fs.readFileSync(mcpPath, 'utf8'), before, 'dryRun must not rewrite .mcp.json');
+});
+
+test('doctor --dryRun does not rewrite a bare hook command in .claude/settings.json', async (t) => {
+  const root = project(t);
+  const settingsPath = path.join(root, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  const before = JSON.stringify({
+    hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-begin' }] }] },
+  }, null, 2);
+  fs.writeFileSync(settingsPath, before);
+  const claude = fakeClaude();
+
+  const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent, dryRun: true });
+
+  assert.equal(fs.readFileSync(settingsPath, 'utf8'), before, 'dryRun must not rewrite settings.json');
+  assert.ok(summary.checks.some((c) => c.dry && /rewrote the web-chat hook command/.test(c.m)));
+});
+
+test('doctor WITHOUT dryRun still repairs — the guard is opt-in, not a behaviour change', async (t) => {
+  const root = project(t);
+  const portfile = path.join(root, '.web-chat', 'server.json');
+  fs.writeFileSync(portfile, JSON.stringify({ pid: 999999999, port: 65111 }));
+  const claude = fakeClaude();
+
+  const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
+
+  assert.equal(fs.existsSync(portfile), false, 'the default is still to repair');
+  const hit = summary.checks.find((c) => /stale portfile/.test(c.m));
+  assert.equal(hit.dry, undefined, 'a real repair is not tagged dry');
+});

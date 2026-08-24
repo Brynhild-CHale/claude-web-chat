@@ -49,10 +49,14 @@ web-chat is opt-in per project. In any project where you want it:
 
 ```sh
 cd ~/Dev/my-project
-claude-web-chat install
+claude-web-chat init
 ```
 
-This adds the web-chat MCP server to `.mcp.json`, merges two hooks into `.claude/settings.json` (existing hooks are preserved), drops usage guidance for Claude into `.claude/rules/` plus a `/web-chat` slash command and two skills into `.claude/`, creates `.web-chat/` for the project's graph and components, adds `.web-chat/` to the project's `.gitignore`, and pre-warms the background server. Your `CLAUDE.md` is never touched, and re-running `install` is always safe.
+`init` is the one entry point, and it works out for itself which of two jobs it is doing. In a project with no `.web-chat/` it is first-time setup: it lists every file it is about to create or edit, asks once, runs the install, offers to open the surface, and leaves a short interactive tour on the page for you to work through while Claude Code restarts. In a project that already has web-chat it is orientation and repair instead: it runs `doctor`, reports managed-file drift, lists every web-chat surface running on your machine and which project each one is, and offers — one confirm-first question at a time, defaulting to the safe answer — to fix what it found. It never reaps another project's daemon, runs `update`, discards your local edits, or approves a service without you saying yes.
+
+Under the hood the setup step is `claude-web-chat install`, which you can still run directly: it adds the web-chat MCP server to `.mcp.json`, merges two hooks into `.claude/settings.json` (existing hooks are preserved), drops usage guidance for Claude into `.claude/rules/` plus a `/web-chat` slash command and two skills into `.claude/`, creates `.web-chat/` for the project's graph and components, adds `.web-chat/` to the project's `.gitignore`, and pre-warms the background server. Your `CLAUDE.md` is never touched, and re-running either command is always safe.
+
+`claude-web-chat init --report` (or `--json`) is the read-only twin: it diagnoses without repairing, writes nothing, prompts for nothing, and exits non-zero when something needs attention — which is what `/web-chat init` runs, and what makes it usable as a CI health gate.
 
 ### 3. Restart Claude Code
 
@@ -150,6 +154,7 @@ Sideloading is how you run it today; a Web Store listing is a planned follow-up.
 ```
 open                open the surface in your browser (starts the server if needed)
 launch              open the surface and start a Claude session together
+init                set up web-chat here, or check and tidy an existing install
 status              show version, daemon state, and install health for this project
 ls [--reap]         every web-chat surface running on this machine, and which
                     project each one is; --reap stops the others and clears
@@ -162,7 +167,8 @@ unlock              clear a turn lock orphaned by an interrupted turn
 export [node]       write a node to a self-contained .html
 docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see “Turning it off”)
-install             first-time setup, and how updates reach a project
+init                the one entry point: first-run setup + tutorial, or orient/repair
+install             the setup step on its own, and how updates reach a project
 update              reinstall the latest build from the public repo, sync, restart
 uninstall           remove the hooks (your graph data is kept)
 ```
@@ -185,7 +191,7 @@ claude-web-chat update
 
 It reinstalls the latest build from the public repo, reports the version before and after, then syncs *that* project's managed files (the Claude rules file, the `/web-chat` command, and the two skills) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite.
 
-For your *other* installed projects, run `claude-web-chat install` in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the MCP server logs a one-line nudge at session start when a refresh is due.
+For your *other* installed projects, run `claude-web-chat init` (or `install`) in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the MCP server logs a one-line nudge at session start when a refresh is due.
 
 The surface also checks for new **GitHub releases** (once a day, cached in `~/.web-chat/`) and shows a dismissible banner linking the release notes when one is newer than your build. Taking the update is always your call from the terminal — the page will not install anything.
 

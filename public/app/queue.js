@@ -87,23 +87,75 @@ export async function initQueue() {
 // by design, which left the user with a delivery pending and nothing on screen
 // saying so — and no way to take it back. This mirrors GET /api/queue/pending.
 let pendingId = null;
+// The park itself, so render() can list WHAT is waiting rather than only that
+// something is. The endpoint returns the wake envelope (summary only, by
+// contract), which is exactly the granularity a rail row shows.
+let parked = null;
 export async function refreshPending() {
   const rail = railEl();
   if (!rail) return;
   let pending = null;
   try { pending = (await fetch('/api/queue/pending').then((r) => r.json())).pending || null; } catch { return; }
   pendingId = pending ? pending.id : null;
+  parked = pending;
   const box = rail.querySelector('.rail-pending');
   rail.classList.toggle('has-pending', !!pending);
+  render(); // the held batch is part of the item list, not just a badge
   if (!box) return;
   box.classList.toggle('hidden', !pending);
   if (!pending) return;
   const txt = box.querySelector('.rp-text');
   if (txt) {
-    const n = Number((pending.envelope && pending.envelope.meta && pending.envelope.meta.count) || 0);
+    const n = parkedCount(pending);
     const what = n === 1 ? '1 signal' : `${n} signals`;
     txt.textContent = `⇢ Parked: ${what} deliver with your next message.`;
   }
+}
+
+/* ---------- the held batch, itemised ---------- */
+// How many signals the park holds. `meta.count` is authoritative (the envelope
+// caps its printed lines at 50 for a large batch); the parsed rows are the fallback.
+function parkedCount(pending) {
+  const meta = (pending && pending.envelope && pending.envelope.meta) || {};
+  const n = Number(meta.count);
+  return Number.isFinite(n) && n > 0 ? n : parkedRows(pending).length;
+}
+// The envelope's `content` is the one place the park's per-item detail lives
+// (lib/channel/envelope.js emits `- [kind] summary` per signal, plus a header, an
+// optional user note and an optional "N earlier signals omitted" line — none of
+// which match this shape). Parse it back into rows so the rail can show the held
+// batch the same way it shows staged items.
+function parkedRows(pending) {
+  const env = (pending && pending.envelope) || {};
+  const rows = [];
+  for (const line of String(env.content || '').split('\n')) {
+    const m = /^- \[([^\]]+)\] ([\s\S]*)$/.exec(line);
+    if (m) rows.push({ kind: m[1].trim(), summary: m[2].trim() });
+  }
+  if (rows.length) return rows;
+  // No parseable lines (a leaner envelope) — say what we do know rather than
+  // printing an empty section under the header.
+  const n = Number((env.meta && env.meta.count) || 0);
+  return n > 0 ? [{ kind: 'signal', summary: `${n} signal${n === 1 ? '' : 's'} awaiting delivery` }] : [];
+}
+// A parked row is read-only: the batch has already left the queue, so there is
+// nothing left to stage or revert — cancelling the whole delivery is the one
+// action, and it lives on .rail-pending above.
+function parkedRow(it) {
+  const row = document.createElement('div');
+  row.className = 'rail-item parked';
+  const dot = document.createElement('span');
+  dot.className = 'qi-dot qi-' + (it.kind || 'signal');
+  const body = document.createElement('div');
+  body.className = 'qi-body';
+  const top = document.createElement('div');
+  top.className = 'qi-top';
+  const kindEl = document.createElement('span'); kindEl.className = 'qi-kind'; kindEl.textContent = it.kind || 'signal';
+  top.appendChild(kindEl);
+  const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
+  body.append(top, sum);
+  row.append(dot, body);
+  return row;
 }
 // Take the park back. /api/queue/pending/consume is the same id-checked drain the
 // turn-begin hook uses, so cancelling is exactly "consume it and deliver nothing".
@@ -447,20 +499,33 @@ function render() {
     }
   }
 
+  // A parked push is real, durable server state (GET /api/queue/pending) that the
+  // user's next message will deliver — so it belongs IN the item list, under its
+  // own header, exactly the way staged and held items are shown. The transient
+  // "delivers with your next message" note expires after 6s; this does not.
+  const parkedList = parked ? parkedRows(parked) : [];
+
   const list = rail.querySelector('.rail-items');
   if (list) {
     list.innerHTML = '';
-    if (!count) {
+    if (!count && !parkedList.length) {
       const empty = document.createElement('div');
       empty.className = 'rail-empty';
       empty.textContent = 'No queued signals. Captures, pane signals, and pane activity collect here.';
       list.appendChild(empty);
     } else {
-      list.appendChild(sectionHeader('Staged', staged.length, 'staged'));
-      for (const it of staged) list.appendChild(itemRow(it));
-      if (held.length) {
-        list.appendChild(sectionHeader('Held', held.length, 'held'));
-        for (const it of held) list.appendChild(itemRow(it));
+      if (count) {
+        list.appendChild(sectionHeader('Staged', staged.length, 'staged'));
+        for (const it of staged) list.appendChild(itemRow(it));
+        if (held.length) {
+          list.appendChild(sectionHeader('Held', held.length, 'held'));
+          for (const it of held) list.appendChild(itemRow(it));
+        }
+      }
+      if (parkedList.length) {
+        list.appendChild(sectionHeader('Held for next prompt', parkedCount(parked), 'parked'));
+        if (parked.note) parkedList.unshift({ kind: 'note', summary: parked.note });
+        for (const it of parkedList) list.appendChild(parkedRow(it));
       }
     }
   }

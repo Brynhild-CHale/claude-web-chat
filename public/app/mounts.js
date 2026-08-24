@@ -195,11 +195,14 @@ function makePaneChrome(id, title, pane_state, params) {
   function mkBtn(label, tip, onClick, className = '') {
     const b = document.createElement('button');
     b.className = 'pane-btn' + (className ? ' ' + className : '');
-    b.textContent = label; b.title = tip;
+    // The label is a glyph, so the tip is also the pane button's accessible name.
+    b.textContent = label; b.title = tip; b.setAttribute('aria-label', tip);
     b.addEventListener('click', onClick);
     return b;
   }
-  const btnPin = mkBtn('📌', 'pin', () => {
+  // The pin's meaning, said out loud: it is not decoration, it is what keeps a
+  // pane through a surface wipe and an agent-driven clear-all.
+  const btnPin = mkBtn('📌', 'pin — this pane survives wipes and re-arrangement', () => {
     pane_state.pinned = !pane_state.pinned;
     btnPin.classList.toggle('active', pane_state.pinned);
     applyPaneState(wrapper, pane_state);
@@ -581,10 +584,29 @@ export function removePane(id) {
   renderMinbar();
 }
 
-export function clearTarget(target) {
+// A clear-all (a `clear` frame with no id) SPARES PINNED PANES — pinning means
+// "survives a wipe and a re-arrangement", and the server applies the same rule to
+// state.mounts, so a client that swept them anyway would put the DOM out of sync
+// with the surface it is meant to be showing.
+//
+// The frame stays authoritative wherever it says anything: `kept` (an explicit
+// list of surviving mount ids) is obeyed verbatim, and `force` clears everything
+// — matching POST /api/clear's own force escape. With neither, the pinned rule
+// applies. A clear BY ID is untouched: naming a pane is a deliberate act.
+export function survivesClear(paneState, frame = {}) {
+  if (frame.force) return false;
+  return !!(paneState && paneState.pinned);
+}
+
+export function clearTarget(target, frame = {}) {
   const slot = $(target) || $('main');
+  const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   slot.querySelectorAll('.pane').forEach(p => {
-    const id = p.dataset.paneId; if (id) panes.delete(id);
+    const id = p.dataset.paneId;
+    const pane = id ? panes.get(id) : null;
+    const keep = kept ? kept.has(id) : survivesClear(pane && pane.pane_state, frame);
+    if (keep) return;
+    if (id) panes.delete(id);
     p.remove();
   });
   renderMinbar();

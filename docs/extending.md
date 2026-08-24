@@ -90,6 +90,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
 | escape HTML | `server/util/html` `escapeHtml` | inline a `.replace` chain |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
+| ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 
 ## The engines in detail
@@ -297,11 +298,12 @@ Run the suite with `npm test` (a bare `node --test`, which auto-discovers
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for `new Function`) and holds a **per-file baseline** of three
+`lib/` (+ `public/` for `new Function`) and holds a **per-file baseline** of four
 banned constructs, then **ratchets**:
 
 - **New / grown occurrence → fail.** You added `http.request(` /`os.homedir()` /
-  `new Function('…')` somewhere new — route it through the engine instead.
+  `new Function('…')` / a readline require somewhere new — route it through the
+  engine instead.
 - **Removed occurrence → fail as a STALE baseline.** A consolidation dropped a
   count below its baseline; lower the number here in the same PR. The ceiling can
   only ever move toward zero-outside-the-home.
@@ -313,6 +315,7 @@ Current homes (baselines can only shrink toward these):
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
+| `require('node:readline…')` | `lib/cli/prompt.js` (the one prompt engine) | landed with `init` ✅ |
 
 Working with it:
 
@@ -321,7 +324,7 @@ Working with it:
   file's baseline with a justifying comment — and expect review pushback.
 - **The tripwire counts raw substrings, comments included.** Writing
   `os.homedir()` in a comment inflates the count. Reword the comment.
-- **Adding a new duplication-prone primitive?** Add a fourth pattern to
+- **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
 

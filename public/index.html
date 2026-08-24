@@ -153,6 +153,20 @@
       </div>
     </div>
 
+    <!-- wipe surface: same shape as #new-graph-panel — a wipe bookmarks the
+         point it happened at, so it gets the chance to label that bookmark.
+         An empty name still wipes and still bookmarks, just with no label. -->
+    <div id="wipe-panel" class="popover hidden">
+      <h4>Wipe surface</h4>
+      <label class="sr-only" for="wipe-name">Bookmark name</label>
+      <input type="text" id="wipe-name" placeholder="label this point (optional)…" maxlength="48" style="width:100%">
+      <div class="hint">Clears the panes and bookmarks this point so you can come back to it. Pinned panes stay.</div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn" id="btn-wipe-cancel">Cancel</button>
+        <button class="btn primary" id="btn-wipe-go">Wipe</button>
+      </div>
+    </div>
+
     <!-- bookmark popover -->
     <div id="bookmark-pop" class="popover hidden">
       <h4>Bookmark node</h4>

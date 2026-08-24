@@ -1,5 +1,6 @@
-// The Console shell interactions: settings (theme switcher) + new-graph popovers
-// (ports), the More menu, the ⌘K command palette, the global keyboard layer, and
+// The Console shell interactions: settings (theme switcher) + new-graph / wipe
+// popovers, the More menu, the ⌘K command palette, the ONE dismiss layer that
+// closes every chrome panel, the global keyboard layer, and
 // the proximity queue rail. The queue is a reserved forward-hook (channels /
 // "what wakes Claude") — inert until that lands.
 import { view, $ } from './state.js';
@@ -16,14 +17,77 @@ import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
-function closeAllPopovers() {
-  document.querySelectorAll('.popover:not(.hidden), #settings-panel:not(.hidden), #new-graph-panel:not(.hidden)').forEach(p => {
-    p.classList.add('hidden');
-    // keep any aria-expanded trigger honest — togglePopover does this on the
-    // normal path, but this bulk close bypasses it.
-    document.querySelectorAll(`[aria-controls="${p.id}"]`).forEach((c) => c.setAttribute('aria-expanded', 'false'));
-  });
-  const bp = $('branch-picker'); if (bp) bp.remove();
+
+/* ---------- the dismiss layer (one engine for every chrome panel) ----------
+   Every transient chrome panel — the More menu, Settings, New graph, Wipe, the
+   bookmark popover, the branch picker, the ⌘K palette, the shortcut legend and
+   the component drawer — is dismissed HERE. Before this each one had its own
+   story (or none): clicking anywhere else, or moving focus away, left them open
+   until the user happened to find Escape.
+
+   Openness is expressed two ways in the markup (`.hidden` for popovers /
+   palette / legend, `.open` for the drawer), so OPEN_PANELS lists both and
+   closePanel() knows which lever each one uses.
+
+   The ordering trap: a naive document-click listener that "closes everything"
+   makes the trigger button un-toggleable — the listener closes the menu, then
+   the button's own click handler sees it closed and reopens it. So the dismiss
+   pass runs on pointerdown and deliberately SKIPS the panel owned by whatever
+   trigger was pressed (`aria-controls`, which every trigger already declares
+   for a11y), leaving that panel for the trigger's own toggle to flip. */
+const OPEN_PANELS = '.popover:not(.hidden), .palette:not(.hidden), .legend:not(.hidden), .drawer.open';
+const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
+
+function closePanel(el) {
+  if (!el) return;
+  if (el.id === 'branch-picker') { el.remove(); return; } // built per open, not reused
+  if (el.classList.contains('drawer')) { el.classList.remove('open'); return; }
+  if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
+  el.classList.add('hidden');
+  // keep any aria-expanded trigger honest — togglePopover does this on the
+  // normal path, but this bulk close bypasses it.
+  document.querySelectorAll(`[aria-controls="${el.id}"]`).forEach((c) => c.setAttribute('aria-expanded', 'false'));
+}
+
+// Close every open chrome panel except `keep` — the one a trigger is about to
+// toggle, or the one that is being opened. Called with no argument it closes
+// everything, which is what Escape and a window blur want.
+function closeAllPopovers(keep) {
+  for (const p of openPanels()) if (p !== keep) closePanel(p);
+}
+
+// The panel a pressed element owns, if any — `[aria-controls]` is the trigger
+// contract, so a trigger is never dismissed out from under its own toggle.
+function ownedPanel(el) {
+  const trig = el && el.closest && el.closest('[aria-controls]');
+  if (!trig) return null;
+  return document.getElementById(trig.getAttribute('aria-controls'));
+}
+
+// Resolve an event to its real target — composedPath()[0] pierces a pane's
+// shadow root, so a click inside a mount counts as "outside every panel".
+function eventTarget(e) {
+  const src = (e.composedPath && e.composedPath()[0]) || e.target;
+  return src && src.nodeType === 1 ? src : (src && src.parentElement) || null;
+}
+
+function dismissFrom(el) {
+  const keep = ownedPanel(el);
+  for (const p of openPanels()) {
+    if (p === keep) continue;
+    if (el && p.contains(el)) continue; // a click/focus INSIDE a panel keeps it
+    closePanel(p);
+  }
+}
+
+function initDismissLayer() {
+  // pointerdown, not click: it beats the trigger's own click handler, which is
+  // what makes the skip-the-owned-panel dance above work.
+  document.addEventListener('pointerdown', (e) => dismissFrom(eventTarget(e)), true);
+  // focus leaving a panel dismisses it too (tabbing past it, or a pane taking focus)
+  document.addEventListener('focusin', (e) => dismissFrom(eventTarget(e)));
+  // and the whole window losing focus closes them all, like a native menu
+  window.addEventListener('blur', () => closeAllPopovers());
 }
 
 /* ---------- settings (theme switcher) ---------- */
@@ -57,6 +121,7 @@ async function populateThemeSelect() {
 }
 export function openSettings() {
   const p = $('settings-panel'); if (!p) return;
+  closeAllPopovers(p); // one panel at a time (see the dismiss layer)
   p.classList.remove('hidden');
   populateThemeSelect();
 }
@@ -73,6 +138,7 @@ function initSettings() {
 /* ---------- new graph ---------- */
 export function openNewGraph() {
   const panel = $('new-graph-panel'); if (!panel) return;
+  closeAllPopovers(panel); // one panel at a time (see the dismiss layer)
   panel.classList.remove('hidden');
   const nameEl = $('new-graph-name');
   if (nameEl) { nameEl.value = ''; setTimeout(() => nameEl.focus(), 0); }
@@ -96,6 +162,33 @@ function initNewGraph() {
   on('new-graph-name', 'keydown', (e) => { if (e.key === 'Enter') startNewGraph(); else if (e.key === 'Escape') $('new-graph-panel').classList.add('hidden'); });
 }
 
+/* ---------- wipe surface ----------
+   A wipe bookmarks the point it happened at (the server sets pendingBookmark,
+   so the next committed node carries the label) — which was a bookmark nobody
+   could name, because the wipe fired the instant the menu item was clicked.
+   #wipe-panel is the same shape as #new-graph-panel: a name field, Cancel,
+   confirm. An EMPTY name still wipes and still bookmarks, just unlabelled. */
+export function openWipe() {
+  const panel = $('wipe-panel'); if (!panel) return;
+  closeAllPopovers(panel);
+  panel.classList.remove('hidden');
+  const nameEl = $('wipe-name');
+  if (nameEl) { nameEl.value = ''; setTimeout(() => { if (!panel.classList.contains('hidden')) nameEl.focus(); }, 0); }
+}
+function closeWipe() { const p = $('wipe-panel'); if (p) p.classList.add('hidden'); }
+async function confirmWipe() {
+  const nameEl = $('wipe-name');
+  const name = ((nameEl && nameEl.value) || '').trim();
+  closeWipe();
+  await doWipe(name);
+}
+function initWipe() {
+  const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+  on('btn-wipe-go', 'click', confirmWipe);
+  on('btn-wipe-cancel', 'click', closeWipe);
+  on('wipe-name', 'keydown', (e) => { if (e.key === 'Enter') confirmWipe(); else if (e.key === 'Escape') closeWipe(); });
+}
+
 /* ---------- More menu ---------- */
 function initMoreMenu() {
   const btn = $('btn-more');
@@ -105,7 +198,7 @@ function initMoreMenu() {
     const act = e.target.closest('[data-act]'); if (!act) return;
     menu.classList.add('hidden');
     ({
-      export: doExport, wipe: doWipe, newgraph: openNewGraph,
+      export: doExport, wipe: openWipe, newgraph: openNewGraph,
       settings: openSettings, shortcuts: () => toggleLegend(true),
       checkupdate: checkForUpdatesNow,
     })[act.dataset.act]?.();
@@ -141,7 +234,7 @@ async function buildPalette(q) {
     { kind: 'cmd', label: 'New pane', run: openDrawer },
     { kind: 'cmd', label: 'Open graph', run: openOverlay },
     { kind: 'cmd', label: 'New graph', run: openNewGraph },
-    { kind: 'cmd', label: 'Wipe surface', run: doWipe },
+    { kind: 'cmd', label: 'Wipe surface', run: openWipe },
     { kind: 'cmd', label: 'Export node', run: doExport },
     { kind: 'cmd', label: 'Toggle light / dark', run: toggleMode },
     { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
@@ -201,6 +294,7 @@ function initPalette() {
 function toggleLegend(force) {
   const el = $('key-legend'); if (!el) return;
   const show = force === undefined ? el.classList.contains('hidden') : force;
+  if (show) closeAllPopovers(el); // one panel at a time (see the dismiss layer)
   el.classList.toggle('hidden', !show);
 }
 
@@ -246,7 +340,7 @@ function initKeyboard() {
     // Escape sits BELOW the focus guards (F12) so typing in any editable/shadow context
     // never triggers a chrome-wide close/unpin (e.g. a reply draft mid-type).
     if (e.key === 'Escape') {
-      closePalette(); closeAllPopovers(); toggleLegend(false);
+      closeAllPopovers(); // the palette + legend are panels too — one close path
       if (railPinned) { railPinned = false; setRail(false); }
       return;
     }
@@ -276,10 +370,12 @@ async function stepNode(dir) {
 export function initShell() {
   initSettings();
   initNewGraph();
+  initWipe();
   initMoreMenu();
   initPalette();
   initRail();
   initQueue();
   initWakePanel();
   initKeyboard();
+  initDismissLayer();
 }

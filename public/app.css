@@ -172,6 +172,43 @@ html.wc-theming, html.wc-theming * {
               border-color var(--wc-theme-transition) ease !important;
 }
 
+/* ===================== stacking order =====================
+   ONE scale, in one place. Every layered element in the shell reads its
+   z-index from here, so the paint order is a list you can read top-to-bottom
+   instead of a dozen numbers that were each picked independently (0, 2, 3, 8,
+   10, 12..16, 18, 19, 22, 40, 41, 60 — several of which had stopped meaning
+   anything relative to each other).
+
+   The rule the scale encodes, hard:
+
+     depth < surface content < front glass < drag feedback < pin markers
+       < TOPBAR < chrome panels < graph overlay < glance < host notices
+
+   The topbar is ALWAYS above surface content. #pin-layer sat at 10 against a
+   topbar at 2 — it is a `position:absolute; inset:0` layer on <body>, so a
+   comment pin anchored near the top of the page floated over the topbar and
+   its `pointer-events:auto` marker swallowed the topbar's clicks.
+
+   Deliberately NOT `--wc-*`: these are structure, not theme. applyTokens
+   (public/app/theme.js) only writes `--wc-` properties, so a saved theme can
+   restyle the shell but can never reorder it.
+
+   Every chrome panel shares ONE rung (--z-panel): shell.js's dismiss layer
+   closes the others whenever one opens, so their mutual order is moot and a
+   per-panel rung would only be a number to get wrong later. */
+:root {
+  --z-depth: 0;    /* .depth-* backdrop layers */
+  --z-content: 1;  /* .body — the surface well + queue rail */
+  --z-glass: 2;    /* .glass-scanline front glass (pointer-events:none) */
+  --z-drag: 3;     /* pane drag ghost + drop indicator */
+  --z-pins: 4;     /* #pin-layer comment markers */
+  --z-topbar: 5;   /* #topbar and the update banner stacked above it */
+  --z-panel: 6;    /* popovers, palette, legend, drawer, pin composer */
+  --z-overlay: 7;  /* the graph viewer — covers the whole stage */
+  --z-glance: 8;   /* the glance preview, opened from inside the overlay */
+  --z-notice: 9;   /* service-trust / re-aim notices — always reachable */
+}
+
 /* ===================== the stage + depth layers ===================== */
 #stage {
   position: relative;
@@ -182,7 +219,7 @@ html.wc-theming, html.wc-theming * {
   display: flex; flex-direction: column;
   box-shadow: var(--wc-vignette);
 }
-.depth { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.depth { position: absolute; inset: 0; z-index: var(--z-depth); pointer-events: none; }
 .depth-radial  { background: var(--wc-depth-radial); }
 .depth-grid {
   background-image:
@@ -197,7 +234,7 @@ html.wc-theming, html.wc-theming * {
 
 /* front glass overlays (scanline + top highlight), above content */
 .glass-scanline {
-  position: absolute; inset: 0; z-index: 8; pointer-events: none;
+  position: absolute; inset: 0; z-index: var(--z-glass); pointer-events: none;
   background:
     var(--wc-glass-highlight),
     repeating-linear-gradient(0deg, transparent 0 2px, var(--wc-scanline) 3px);
@@ -206,7 +243,8 @@ html.wc-theming, html.wc-theming * {
 }
 
 /* content column above the depth layers */
-#topbar, .body { position: relative; z-index: 2; }
+#topbar { position: relative; z-index: var(--z-topbar); }
+.body { position: relative; z-index: var(--z-content); }
 
 .hidden { display: none !important; }
 
@@ -215,7 +253,7 @@ html.wc-theming, html.wc-theming * {
    flows as the first flex row of #stage so it pushes the topbar/body down rather
    than overlapping them. Flips to green (.ok) for the brief post-update flash. */
 .update-banner {
-  position: relative; z-index: 3; flex: 0 0 auto;
+  position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 7px 14px 7px 16px;
   font: 500 12px var(--wc-font); color: var(--wc-fg); line-height: 1.35;
@@ -365,13 +403,13 @@ kbd {
 .pane-btn.active, .pane-btn.lock-active { color: var(--wc-accent); }
 .mount-host { flex: 1; overflow: auto; padding: 12px; color: var(--wc-fg); }
 
-/* resize handles */
+/* resize handles — local to the pane stack inside .body (--z-content), not the shell scale */
 .pane-resize-r { position: absolute; z-index: 3; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; }
 .pane-resize-b { position: absolute; z-index: 3; left: 0; bottom: -3px; height: 6px; width: 100%; cursor: row-resize; }
 
 /* drag ghost + drop indicator (appended to <body>) */
-.pane-ghost { position: fixed; z-index: 40; pointer-events: none; opacity: .5; border: 1px dashed var(--wc-accent); border-radius: var(--wc-radius); background: var(--wc-panel-glass); }
-.pane-drop-indicator { position: fixed; z-index: 41; pointer-events: none; background: var(--wc-accent); box-shadow: 0 0 8px var(--wc-glow-accent); display: none; }
+.pane-ghost { position: fixed; z-index: var(--z-drag); pointer-events: none; opacity: .5; border: 1px dashed var(--wc-accent); border-radius: var(--wc-radius); background: var(--wc-panel-glass); }
+.pane-drop-indicator { position: fixed; z-index: var(--z-drag); pointer-events: none; background: var(--wc-accent); box-shadow: 0 0 8px var(--wc-glow-accent); display: none; }
 
 /* minbar (minimized panes) */
 .minbar { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 22px 10px; }
@@ -479,7 +517,7 @@ kbd {
 /* pending re-aim notice — a user re-aim during a locked turn is queued, not
    rejected; this transient banner says "honored, applies at turn end". */
 .reaim-note {
-  position: fixed; top: 52px; right: 16px; z-index: 60;
+  position: fixed; top: 52px; right: 16px; z-index: var(--z-notice);
   padding: 7px 12px; font: 500 12px var(--wc-font);
   color: var(--wc-fg); background: var(--wc-panel-bg);
   border: 1px solid var(--wc-gold, #d4a72c); border-radius: var(--wc-radius-sm, 6px);
@@ -508,6 +546,15 @@ kbd {
 .rail-sec-cnt { font: 700 9px var(--wc-mono); min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--wc-accent); color: var(--wc-accent-fg); display: flex; align-items: center; justify-content: center; }
 .rail-sec.held .rail-sec-cnt { background: var(--wc-muted); }
 .rail-item.held { opacity: .6; }
+/* the PARKED batch: already pushed, waiting on the user's next message. Shown in
+   the item list like staged/held items (header "Held for next prompt") so what is
+   waiting is visible, not remembered. Read-only — the only action is Cancel
+   delivery, on .rail-pending above. */
+.rail-sec.parked { margin-top: 8px; }
+.rail-sec.parked .rail-sec-cap { color: var(--wc-gold, #d8a24a); }
+.rail-sec.parked .rail-sec-cnt { background: var(--wc-gold, #d8a24a); color: #1c1710; }
+.rail-item.parked { opacity: .85; border-left: 2px solid color-mix(in srgb, var(--wc-gold, #d8a24a) 60%, transparent); padding-left: 6px; }
+.rail-item.parked .qi-dot { box-shadow: none; }
 .rail-item.held .qi-dot { box-shadow: none; }
 .rail-chip.held { opacity: .4; }
 .rail-chip { width: 6px; height: 6px; border-radius: 50%; background: var(--wc-muted); }
@@ -516,7 +563,7 @@ kbd {
 
 /* ===================== keyboard legend overlay ===================== */
 .legend {
-  position: absolute; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center;
+  position: absolute; inset: 0; z-index: var(--z-panel); display: flex; align-items: center; justify-content: center;
   background: rgba(8,6,3,.5); backdrop-filter: blur(6px);
 }
 .legend-card { background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow); padding: 22px 26px; min-width: 380px; }
@@ -526,7 +573,7 @@ kbd {
 
 /* ===================== command palette ===================== */
 .palette {
-  position: absolute; z-index: 14; top: 60px; left: 50%; transform: translateX(-50%);
+  position: absolute; z-index: var(--z-panel); top: 60px; left: 50%; transform: translateX(-50%);
   width: min(560px, 90vw); background: var(--wc-panel-bg);
   border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
   overflow: hidden;
@@ -543,7 +590,7 @@ kbd {
 
 /* ===================== popovers (settings / more / new-graph / branch) ===================== */
 .popover {
-  position: absolute; z-index: 13; top: 50px; right: 12px; min-width: 240px;
+  position: absolute; z-index: var(--z-panel); top: 50px; right: 12px; min-width: 240px;
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg);
   box-shadow: var(--wc-shadow); padding: 12px;
 }
@@ -559,7 +606,7 @@ kbd {
 .muted { color: var(--wc-muted); }
 .small { font-size: 11px; }
 #overlay.overlay {
-  position: absolute; inset: 0; z-index: 16; background: var(--wc-bg); background-image: var(--wc-depth-radial);
+  position: absolute; inset: 0; z-index: var(--z-overlay); background: var(--wc-bg); background-image: var(--wc-depth-radial);
   display: grid; grid-template-columns: 288px 1fr 322px; grid-template-rows: 48px 1fr 26px;
   grid-template-areas: "header header header" "history canvas inspector" "status status status";
 }
@@ -665,7 +712,7 @@ kbd {
 
 /* ===================== component drawer ===================== */
 .drawer {
-  position: absolute; z-index: 15; top: 52px; left: 12px; width: 300px; max-height: 70vh;
+  position: absolute; z-index: var(--z-panel); top: 52px; left: 12px; width: 300px; max-height: 70vh;
   display: none; flex-direction: column; overflow: hidden;
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
@@ -683,7 +730,7 @@ kbd {
 
 /* ===================== pins / comments ===================== */
 /* map-pin markers positioned in viewport coords; #pin-layer covers the stage */
-#pin-layer { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
+#pin-layer { position: absolute; inset: 0; z-index: var(--z-pins); pointer-events: none; }
 /* 26px pin; tip (bottom-centre of the 26px box) points at the anchor. Coral by
    default (a comment awaiting reply), green once Claude has answered, muted when
    the element's comments are all private. */
@@ -732,7 +779,7 @@ body.pin-mode #main { cursor: crosshair; }
 
 /* pin composer / menu popover */
 .pin-pop {
-  position: fixed; z-index: 22; width: 264px; padding: 12px;
+  position: fixed; z-index: var(--z-panel); width: 264px; padding: 12px;
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
@@ -746,13 +793,13 @@ body.pin-mode #main { cursor: crosshair; }
 .pin-del { color: var(--wc-rust) !important; }
 
 /* ===================== glance / float preview (graph overlay) ===================== */
-.glance-backdrop { position: absolute; inset: 0; z-index: 18; background: rgba(8,6,3,.72); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+.glance-backdrop { position: absolute; inset: 0; z-index: var(--z-glance); background: rgba(8,6,3,.72); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
 .glance-card { position: relative; display: flex; flex-direction: column; width: 82%; height: 82%; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-elev-stage); overflow: hidden; }
 .glance-titlebar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); }
 .glance-title { font: 600 13px var(--wc-mono); color: var(--wc-fg-bright); }
 .glance-hint { margin-left: auto; font: 11px var(--wc-font); color: var(--wc-muted); }
 .glance-frame { flex: 1; width: 100%; border: 0; background: var(--wc-bg); }
-.glance-controls { position: absolute; top: 8%; right: 8%; display: flex; gap: 6px; z-index: 19; }
+.glance-controls { position: absolute; top: 8%; right: 8%; display: flex; gap: 6px; z-index: 1; } /* local to .glance-backdrop */
 .glance-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font-size: 13px; box-shadow: var(--wc-shadow); }
 .glance-btn:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
 
@@ -762,7 +809,7 @@ body.pin-mode #main { cursor: crosshair; }
    decision cannot be made in this page. Non-blocking: it must not sit over the
    surface, because the user has to go read their terminal. */
 .svc-trust-host {
-  position: fixed; right: 18px; bottom: 18px; z-index: 60;
+  position: fixed; right: 18px; bottom: 18px; z-index: var(--z-notice);
   display: flex; flex-direction: column; gap: 10px;
   max-width: min(420px, calc(100vw - 36px));
   max-height: calc(100vh - 36px); overflow-y: auto;

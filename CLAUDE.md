@@ -42,7 +42,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 
 ## Extending
 
-**Use the engines — don't bolt on.** Each concept is consolidated behind one module; extend it, never hand-roll a second copy (a second copy is a review-blocking defect, and `test/conventions.test.js` fails the build for the worst three). Full guide + rationale: `docs/extending.md`.
+**Use the engines — don't bolt on.** Each concept is consolidated behind one module; extend it, never hand-roll a second copy (a second copy is a review-blocking defect, and `test/conventions.test.js` fails the build for the worst four). Full guide + rationale: `docs/extending.md`.
 
 | Need to… | Use | Never |
 | --- | --- | --- |
@@ -51,6 +51,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
 | CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/server/util/html` / `lib/capture/profiles/util` | copy the helper |
+| ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
@@ -66,6 +67,6 @@ Dependency direction is one-way: `core` ← `client` ← everything else, and `c
 ## Conventions
 
 - CommonJS (`require`/`module.exports`), Node 18+, no transpile.
-- **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` outside its single allowed home (the count can only shrink toward the home). Run the suite with bare `node --test`. See `docs/extending.md`.
+- **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` / `require('node:readline` outside its single allowed home (the count can only shrink toward the home). Run the suite with bare `node --test`. See `docs/extending.md`.
 - Forward-compat stubs exist for Claude Code plugin packaging: `.claude-plugin/plugin.json` and `.mcp.json` use `${CLAUDE_PLUGIN_ROOT}` to resolve bin paths.
 - Distribution is the public git repo, not the npm registry: MIT-licensed v0.3.0, installed via `install.sh` and updated in place with `claude-web-chat update`. `package.json` keeps `"private": true` as an anti-publish guard — it makes an accidental `npm publish` fail fast.

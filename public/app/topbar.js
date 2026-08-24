@@ -185,10 +185,10 @@ function showBranchPicker(kids, anchor) {
     pop.appendChild(b);
   });
   document.body.appendChild(pop);
-  const close = (ev) => {
-    if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('mousedown', close); }
-  };
-  setTimeout(() => document.addEventListener('mousedown', close), 0);
+  // Dismissal is the shell's one dismiss layer (shell.js initDismissLayer):
+  // #branch-picker carries `.popover`, so an outside pointerdown, a focus move
+  // or Escape removes it like every other chrome panel. It used to own a private
+  // mousedown listener — a second copy of the same concept.
 }
 
 // Export the node AS RENDERED: a detached preview exports that committed node,
@@ -220,8 +220,15 @@ export function showReaimNote(text) {
   showReaimNote._t = setTimeout(() => { const n = $('reaim-note'); if (n) n.remove(); }, 6000);
 }
 
-export async function doWipe() {
-  const r = await fetch('/api/graph/wipe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+// Wipe the live surface. The server keeps `active` and sets a pendingBookmark, so
+// the next committed node marks this point — `name` labels that bookmark. Empty
+// (the user declined to label) still wipes and still bookmarks, unlabelled. The
+// label prompt itself is #wipe-panel (shell.js); this is the transport.
+export async function doWipe(name) {
+  const r = await fetch('/api/graph/wipe', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: (name || '').trim() }),
+  });
   const body = await r.json().catch(() => ({}));
   if (body.pending) { showReaimNote("Claude is mid-turn — the surface wipes when the turn ends."); return; }
   view.previewing = false;

@@ -11,6 +11,7 @@ import {
 } from './theme.js';
 import {
   mount, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
+  survivesClear,
 } from './mounts.js';
 import {
   applyActive, applyLock, ensureGraph, updateChip, onGraphChanged, syncThemeSelect,
@@ -40,10 +41,16 @@ function snapUpsertMount(m) {
   const i = view.liveSnapshot.mounts.findIndex(x => x.id === m.id);
   if (i >= 0) view.liveSnapshot.mounts[i] = entry; else view.liveSnapshot.mounts.push(entry);
 }
-function snapClearMount(id, target) {
+function snapClearMount(id, target, frame = {}) {
   if (!view.liveSnapshot) return;
-  if (id) view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => x.id !== id);
-  else view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => (x.target || 'main') !== (target || 'main'));
+  if (id) { view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => x.id !== id); return; }
+  // Same clear-all rule the attached path applies (mounts.survivesClear), so a
+  // detached client's captured live surface doesn't drift from the real one.
+  const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
+  view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => {
+    if ((x.target || 'main') !== (target || 'main')) return true;
+    return kept ? kept.has(x.id) : survivesClear(x.pane_state, frame);
+  });
 }
 function snapPaneState(id, ps) {
   if (!view.liveSnapshot) return;
@@ -84,9 +91,9 @@ const HANDLERS = {
     else mount(msg);
   },
   clear(msg) {
-    if (view.previewing) { snapClearMount(msg.id, msg.target); return; }
+    if (view.previewing) { snapClearMount(msg.id, msg.target, msg); return; }
     if (msg.id) removePane(msg.id);
-    else clearTarget(msg.target || 'main');
+    else clearTarget(msg.target || 'main', msg); // clear-all spares pinned panes
   },
   'pane:state'(msg) {
     if (view.previewing) { snapPaneState(msg.id, msg.pane_state); return; }
@@ -128,6 +135,12 @@ const HANDLERS = {
     applyActive(msg.active);
     onGraphChanged();
   },
+  // A full surface replacement (wipe, new graph, node jump, turn-end re-aim).
+  // The frame is AUTHORITATIVE and rendered VERBATIM: whatever mounts it carries
+  // are what the surface shows. Notably a wipe preserves pinned mounts SERVER-SIDE
+  // and sends the survivors here — the client must not do its own pinned-filtering
+  // on top, or the two rules would compound and a pin would resurrect a pane the
+  // server dropped (or drop one it kept).
   reset(msg) {
     applyGlobalTheme(msg.theme || null, true); // global applies regardless of preview
     setActiveNodeTheme(msg.activeTheme || null);

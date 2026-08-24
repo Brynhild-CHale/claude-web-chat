@@ -63,6 +63,22 @@ const PATTERNS = [
       'public/mount-runtime.js': 1,
     },
   },
+  {
+    // Interactive terminal prompts. `init` needs to ask questions; `trust` and
+    // `doctor` are the obvious next places one would grow. The thing that must
+    // not happen is a SECOND prompt engine with its own idea of when to skip the
+    // question — because the skip rule (no TTY / CI / --no-input / --yes) is the
+    // only thing standing between this CLI and a process that blocks forever on
+    // a closed stdin inside a hook or a pipeline.
+    name: "require('node:readline",
+    home: 'lib/cli/prompt.js (the one prompt engine)',
+    what: 'interactive terminal prompts',
+    roots: ['lib'],
+    re: /require\(['"]node:readline/g,
+    baseline: {
+      'lib/cli/prompt.js': 1,
+    },
+  },
 ];
 
 function walk(dir, acc) {

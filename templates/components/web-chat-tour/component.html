@@ -1,0 +1,298 @@
+<style>
+  :host { display: block; }
+  .tour {
+    font: 13px/1.55 var(--wc-font, ui-sans-serif, system-ui, -apple-system, sans-serif);
+    color: var(--wc-content-fg, var(--wc-fg, #24292f));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .rail { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--wc-muted, #57606a); }
+  .dot {
+    width: 18px; height: 18px; border-radius: 999px; display: grid; place-items: center;
+    border: 1px solid var(--wc-border, #d0d7de); font-size: 10px; font-weight: 600;
+  }
+  .dot.on { background: var(--wc-accent, #0969da); border-color: var(--wc-accent, #0969da); color: #fff; }
+  .dot.done { background: var(--wc-green, #1a7f37); border-color: var(--wc-green, #1a7f37); color: #fff; }
+  .card { display: none; flex-direction: column; gap: 10px; }
+  .card.show { display: flex; }
+  h3 { margin: 0; font-size: 14px; font-weight: 650; }
+  p { margin: 0; }
+  .muted { color: var(--wc-muted, #57606a); font-size: 12px; }
+  kbd {
+    font: 11px var(--wc-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    border: 1px solid var(--wc-border, #d0d7de); border-radius: 3px;
+    padding: 1px 5px; background: var(--wc-panel-bg, #f6f8fa);
+  }
+  code { font: 12px var(--wc-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sw {
+    width: 46px; height: 34px; border-radius: var(--wc-radius-sm, 4px);
+    border: 1px solid var(--wc-border, #d0d7de); cursor: pointer; padding: 0;
+  }
+  .sw:focus-visible { outline: 2px solid var(--wc-accent, #0969da); }
+  input[type=text], textarea {
+    font: inherit; padding: 6px 8px; width: 100%; box-sizing: border-box;
+    border: 1px solid var(--wc-border, #d0d7de); border-radius: var(--wc-radius-sm, 4px);
+    background: var(--wc-content-bg, #fff); color: inherit;
+  }
+  textarea { min-height: 62px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .choice {
+    font: inherit; padding: 5px 10px; cursor: pointer;
+    border: 1px solid var(--wc-border, #d0d7de); border-radius: var(--wc-radius-sm, 4px);
+    background: var(--wc-panel-bg, #f6f8fa); color: inherit;
+  }
+  .choice[aria-pressed="true"] { border-color: var(--wc-accent, #0969da); box-shadow: inset 0 0 0 1px var(--wc-accent, #0969da); }
+  .send {
+    font: inherit; padding: 6px 14px; cursor: pointer; color: #fff;
+    border: 1px solid var(--wc-green, #1a7f37); background: var(--wc-green, #1a7f37);
+    border-radius: var(--wc-radius-sm, 4px);
+  }
+  .send[disabled] { opacity: .5; cursor: default; }
+  .skip {
+    align-self: flex-start; font: inherit; font-size: 12px; background: none; cursor: pointer;
+    border: none; padding: 0; color: var(--wc-muted, #57606a); text-decoration: underline;
+  }
+  .ok { color: var(--wc-green, #1a7f37); font-size: 12px; }
+  .mirror-box {
+    height: 76px; border-radius: var(--wc-radius, 6px); border: 1px dashed var(--wc-border, #d0d7de);
+    display: grid; place-items: center; text-align: center; padding: 8px;
+    transition: background 160ms ease, border-color 160ms ease;
+  }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+</style>
+
+<div class="tour" id="tour">
+  <!-- GUIDE ------------------------------------------------------------- -->
+  <div id="guide" style="display:none">
+    <div class="rail" id="rail">
+      <span class="dot" id="d1">1</span><span class="dot" id="d2">2</span><span class="dot" id="d3">3</span>
+      <span id="railtext">two panes, one store</span>
+    </div>
+
+    <div class="card" id="c1">
+      <h3>1 · Two panes, one store</h3>
+      <p>This page isn't a document Claude prints into. Every pane is bound to one shared
+        key/value store — the same store Claude reads with <code>get_store</code>.</p>
+      <p class="muted">Pick a colour. The pane below this one is a different mount with a different
+        script; it is subscribed to the key, not to this pane.</p>
+      <div class="swatches">
+        <button class="sw" data-color="#0969da" style="background:#0969da" aria-label="blue"></button>
+        <button class="sw" data-color="#1a7f37" style="background:#1a7f37" aria-label="green"></button>
+        <button class="sw" data-color="#8250df" style="background:#8250df" aria-label="purple"></button>
+      </div>
+      <input type="text" id="tour_title" name="tour_title" placeholder="…and a label for it (optional)">
+      <div class="muted" id="s1hint">Waiting for the other pane to acknowledge…</div>
+      <button class="skip" data-skip="1">skip →</button>
+    </div>
+
+    <div class="card" id="c2">
+      <h3>2 · Your typing survives everything</h3>
+      <p>Type something below, then reload the page — <kbd>⌘R</kbd> or <kbd>F5</kbd>. Don't press
+        any button first.</p>
+      <textarea id="tour_note" name="tour_note" placeholder="anything at all"></textarea>
+      <p class="muted">Form values are captured by the surface's shell, not by this pane's script, so
+        they survive a refresh, a restart, walking the graph, and a re-render — and Claude can read
+        them with <code>list_mounts</code> even if you never submit.</p>
+      <div class="muted" id="s2hint">Waiting for a reload…</div>
+      <button class="skip" data-skip="2">skip →</button>
+    </div>
+
+    <div class="card" id="c3">
+      <h3>3 · Say something, and watch it queue</h3>
+      <p>Pick what you'd like Claude to do first in <code id="rootpath">this project</code>:</p>
+      <div class="row" id="choices">
+        <button class="choice" data-choice="architecture" aria-pressed="false">sketch this project's architecture</button>
+        <button class="choice" data-choice="git" aria-pressed="false">open the live git dashboard</button>
+        <button class="choice" data-choice="other" aria-pressed="false">something else…</button>
+      </div>
+      <input type="text" id="tour_ask" name="tour_ask" placeholder="…something else">
+      <div class="row">
+        <button class="send" id="send" disabled>Send →</button>
+        <span class="muted" id="s3hint">writes <code>web_chat_init</code></span>
+      </div>
+      <button class="skip" data-skip="3">skip →</button>
+    </div>
+
+    <div class="card" id="c4">
+      <h3>That's the surface</h3>
+      <p id="pushline"></p>
+      <p class="muted">The shell ignores hotkeys while your cursor is in a text field — click
+        anywhere outside one first, or use the <b>Push</b> button on the queue rail at the right edge.</p>
+      <p><b>Now go back to your terminal:</b></p>
+      <ul>
+        <li><code>/exit</code>, then reopen Claude Code in this project. It reads
+          <code>.mcp.json</code> only at startup, so the web-chat tools do not exist until you do.</li>
+        <li>Then type <code>/web-chat init</code> — Claude picks up exactly here.</li>
+      </ul>
+      <p class="muted">Worth knowing: <kbd>⌘K</kbd> commands · <kbd>N</kbd> components ·
+        <kbd>G</kbd> the graph of every turn · <kbd>P</kbd> push to Claude.</p>
+      <p class="muted">One thing this tour can't show you: the <b>graph</b>. Every Claude turn
+        commits a node under <code>.web-chat/graph/</code> that you can walk back to and branch
+        from — but only Claude's turns commit nodes, and this page was put here by the CLI, not by
+        a turn. So this project has none yet. <code>/web-chat init</code> shows you the first real
+        one, after the restart.</p>
+    </div>
+  </div>
+
+  <!-- MIRROR ------------------------------------------------------------ -->
+  <div id="mirror" style="display:none">
+    <div class="mirror-box" id="mbox"><span id="mtext" class="muted">A second pane. Nothing here is
+      listening to the pane above — it's listening to a store key.</span></div>
+    <div class="muted" id="mnote" style="margin-top:8px">key: <code>tour_scratch</code></div>
+  </div>
+</div>
+
+<script>
+  // The pre-restart tour. Runs entirely in the browser against the shared store;
+  // nothing here needs Claude, because on a fresh install none of the MCP tools
+  // exist until Claude Code has been restarted.
+  //
+  // Every step advances on OBSERVED EVIDENCE — a subscriber firing, a reload
+  // actually happening, a declared signal actually being written — never on a
+  // "Next" button. Each also offers `skip →`, so no step can dead-end.
+  //
+  // DOM access is through `root` (this pane's shadow root). `document.*` cannot
+  // see into a shadow root and would kill the script at mount.
+  var role = params.role === 'mirror' ? 'mirror' : 'guide';
+  var $ = function (id) { return root.getElementById(id); };
+  var read = function () { var v = store.get('tour_scratch'); return (v && typeof v === 'object') ? v : {}; };
+  var write = function (patch) { store.set({ tour_scratch: Object.assign({}, read(), patch) }); };
+
+  if (role === 'mirror') {
+    root.host.dataset.paneTitle = 'the other pane';
+    $('mirror').style.display = 'block';
+    var box = $('mbox');
+    var mtext = $('mtext');
+    var paint = function (v) {
+      if (!v || !v.color) return;
+      box.style.background = v.color;
+      box.style.borderColor = v.color;
+      box.style.borderStyle = 'solid';
+      mtext.style.color = '#fff';
+      mtext.textContent = v.title ? v.title : 'I got that from the store, not from the pane above.';
+      // Acknowledge, so the guide can prove the round trip actually happened
+      // rather than just assuming it. This pane is params.routing:'none', so the
+      // write never reaches the queue rail.
+      if (v.seq && v.ack !== v.seq) {
+        store.set({ tour_scratch: Object.assign({}, v, { ack: v.seq }) });
+      }
+    };
+    paint(read());
+    store.subscribe('tour_scratch', paint);
+  } else {
+    root.host.dataset.paneTitle = 'web-chat tour';
+    $('guide').style.display = 'block';
+    if (params.root) $('rootpath').textContent = params.root;
+    $('pushline').innerHTML = params.channel_connected
+      ? 'Your note is on the queue rail. Press <kbd>P</kbd> and Claude wakes up now, with that batch.'
+      : 'Your note is on the queue rail. Press <kbd>P</kbd> — the rail will say it <b>delivers with your next message</b>, and that is exactly what happens: no channel is connected, so it rides your next prompt instead of waking Claude on its own.';
+
+    // The mount counter. A script-init write carries no gesture flag, so it is
+    // never mistaken for user activity by the queue.
+    var s0 = read();
+    var mounts = (s0.mounts || 0) + 1;
+    write({ mounts: mounts });
+
+    var cards = { 1: $('c1'), 2: $('c2'), 3: $('c3'), 4: $('c4') };
+    var dots = { 1: $('d1'), 2: $('d2'), 3: $('d3') };
+    var railtext = $('railtext');
+    var LABELS = { 1: 'two panes, one store', 2: 'your typing survives everything', 3: 'say something', 4: 'done — back to the terminal' };
+
+    function doneMap() { var d = read().done; return (d && typeof d === 'object') ? d : {}; }
+    function current() {
+      var d = doneMap();
+      if (!d.s1) return 1;
+      if (!d.s2) return 2;
+      if (!d.s3) return 3;
+      return 4;
+    }
+    function paintStep() {
+      var n = current();
+      for (var k in cards) cards[k].classList.toggle('show', String(n) === k);
+      var d = doneMap();
+      for (var j = 1; j <= 3; j++) {
+        dots[j].className = 'dot' + (d['s' + j] ? ' done' : (n === j ? ' on' : ''));
+        if (d['s' + j]) dots[j].textContent = '✓';
+      }
+      railtext.textContent = LABELS[n];
+    }
+    function complete(n) {
+      var d = doneMap();
+      if (d['s' + n]) return;
+      d['s' + n] = true;
+      write({ done: d });
+      paintStep();
+    }
+
+    // --- step 1: the store round trip ---------------------------------------
+    root.querySelectorAll('.sw').forEach(function (b) {
+      b.addEventListener('click', function () {
+        write({ color: b.dataset.color, title: $('tour_title').value.trim(), seq: Date.now(), ack: null });
+      });
+    });
+    store.subscribe('tour_scratch', function (v) {
+      if (v && v.seq && v.ack === v.seq && !doneMap().s1) {
+        $('s1hint').innerHTML = '<span class="ok">✓ the other pane saw it and wrote back.</span>';
+        complete(1);
+      }
+    });
+
+    // --- step 2: form_state survives a reload -------------------------------
+    // applyFormState rehydrates AFTER this script runs and dispatches `input`
+    // for every field it changed, so the check is driven by that event rather
+    // than by a value read at mount time (which would always be empty).
+    function checkReload() {
+      if (doneMap().s2) return;
+      var note = $('tour_note');
+      if (mounts >= 2 && note && note.value.trim()) {
+        $('s2hint').innerHTML = '<span class="ok">✓ you reloaded the page and nothing was lost.</span>';
+        complete(2);
+      }
+    }
+    root.addEventListener('input', checkReload);
+    $('tour_note').addEventListener('input', function () {
+      if (mounts < 2 && !doneMap().s2) $('s2hint').textContent = 'Good. Now reload the page — ⌘R or F5.';
+    });
+    checkReload();
+
+    // --- step 3: the declared signal ----------------------------------------
+    var choice = null;
+    var sendBtn = $('send');
+    function syncSend() {
+      sendBtn.disabled = !(choice && (choice !== 'other' || $('tour_ask').value.trim()));
+    }
+    root.querySelectorAll('.choice').forEach(function (b) {
+      b.addEventListener('click', function () {
+        choice = b.dataset.choice;
+        root.querySelectorAll('.choice').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+        syncSend();
+      });
+    });
+    $('tour_ask').addEventListener('input', syncSend);
+    sendBtn.addEventListener('click', function () {
+      // ONE declared signal key, with a bumping seq so repeats are
+      // distinguishable. `init` declared it on the render
+      // (signals:[{key:'web_chat_init', wake:'queue'}]), which is what makes
+      // this write show up on the queue rail as a NAMED item.
+      store.set({
+        web_chat_init: {
+          seq: Date.now(),
+          done: true,
+          choice: choice,
+          note: $('tour_ask').value.trim(),
+        },
+      });
+      $('s3hint').innerHTML = '<span class="ok">✓ queued as <code>web_chat_init</code>.</span>';
+      complete(3);
+    });
+    syncSend();
+
+    // --- skipping ------------------------------------------------------------
+    root.querySelectorAll('.skip').forEach(function (b) {
+      b.addEventListener('click', function () { complete(parseInt(b.dataset.skip, 10)); });
+    });
+
+    paintStep();
+  }
+</script>

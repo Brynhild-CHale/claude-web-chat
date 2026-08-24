@@ -190,3 +190,70 @@ test('ensureGitignore creates one in a git repo that has none', () => {
   assert.equal(ensureGitignore(root), 'added');
   assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\.web-chat\/$/m);
 });
+
+// ── `install(args, { nextSteps })` ───────────────────────────────────────────
+// `claude-web-chat init` calls install IN-PROCESS and prints its own, fuller
+// closing checklist (it knows whether a browser opened and whether a tour is
+// waiting). The one behaviour change install grew for that is a gate on the
+// trailing next-steps block; everything above it — the result table, the
+// conflict/differs warnings, the pre-warm line — must still print verbatim.
+//
+// The daemon pre-warm is patched out BEFORE install is first required, so this
+// test never forks a real background server. install destructures spawnDaemon at
+// module load, so the patch has to happen first.
+const daemonMod = require('../lib/util/daemon');
+const realSpawnDaemon = daemonMod.spawnDaemon;
+daemonMod.spawnDaemon = async () => null;
+const install = require('../lib/cli/commands/install');
+daemonMod.spawnDaemon = realSpawnDaemon;
+
+async function captureInstall(root, opts) {
+  const prevCwd = process.cwd();
+  const prevLog = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    process.chdir(root);
+    await install([], opts);
+  } finally {
+    console.log = prevLog;
+    process.chdir(prevCwd);
+  }
+  return lines.join('\n');
+}
+
+function sandboxHome() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-install-home-'));
+  const prev = process.env.HOME;
+  process.env.HOME = home;
+  return () => {
+    if (prev === undefined) delete process.env.HOME; else process.env.HOME = prev;
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
+  };
+}
+
+test('install prints its next-steps checklist by default', async () => {
+  const restore = sandboxHome();
+  try {
+    const out = await captureInstall(tmpRoot(), {});
+    assert.match(out, /web-chat installed for/);
+    assert.match(out, /Next steps:/);
+    assert.match(out, /Optional — Channels/);
+  } finally {
+    restore();
+  }
+});
+
+test('install({nextSteps:false}) suppresses ONLY the trailing checklist', async () => {
+  const restore = sandboxHome();
+  try {
+    const out = await captureInstall(tmpRoot(), { nextSteps: false });
+    assert.match(out, /web-chat installed for/, 'the result header still prints');
+    assert.match(out, /\.mcp\.json/, 'the result table still prints');
+    assert.match(out, /Server (pre-warmed|will start)/, 'the pre-warm line still prints');
+    assert.doesNotMatch(out, /Next steps:/);
+    assert.doesNotMatch(out, /Optional — Channels/);
+  } finally {
+    restore();
+  }
+});
