@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`get_graph` now reports `pending_bookmark` and `pending_reaim`** — the name of a graph the user just started (applied to the next commit) and a navigation queued during the current turn. Both were previously invisible, so Claude could be working inside a graph the user had named without any way to know it.
 - Documentation no longer hardcodes `http://localhost:5173`. The port is per-project and walks upward, so that URL was wrong for every project after the first — and the rules file shipped into user projects was telling Claude to send people to another project's surface.
 
+- **The port walk now probes before binding, and web-chat's own clients dial `127.0.0.1` rather than `localhost`.** Both fell out of the loopback bind above: a bind to `127.0.0.1:P` does not collide with a process holding the wildcard `*:P`, so the walk began handing out ports that already had a server on them — and because every internal client resolved the *name* `localhost`, which is both `::1` and `127.0.0.1` on a dual-stack machine, requests could land on whichever daemon that resolution happened to pick. Observed in practice while upgrading: a new loopback-bound daemon took a port a legacy wildcard-bound one still held, and another project's queue started arriving.
+
 ### Changed
 - `install`'s next steps lead with the ordinary path (restart Claude Code, then `claude-web-chat open`) and present Channels as the optional research preview it is.
 - `status` reports the real channel state — connected, or parked-until-your-next-message — instead of inferring it from project wiring.
