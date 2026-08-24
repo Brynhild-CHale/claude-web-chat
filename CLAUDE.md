@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`claude-web-chat` is the **package that implements** the web-chat surface — not a project that uses it. It gives Claude Code a live browser canvas (`http://localhost:5173`) plus a turn-by-turn graph: Claude renders interactive HTML/JS into shadow-rooted mounts, reads/writes a shared key/value store the page is bound to, and every Claude turn becomes a navigable graph node the user can branch or revisit.
+`claude-web-chat` is the **package that implements** the web-chat surface — not a project that uses it. It gives Claude Code a live browser canvas (a per-project port, walking upward from 5173) plus a turn-by-turn graph: Claude renders interactive HTML/JS into shadow-rooted mounts, reads/writes a shared key/value store the page is bound to, and every Claude turn becomes a navigable graph node the user can branch or revisit.
 
 Note: `.claude/rules/web-chat.md` in this repo is the **end-user-facing rules file** (this dogfooding install of the product), describing the 23 MCP tools and how to use the surface. It is product behavior, not guidance for developing the package. When working on the package source, the architecture below is what matters.
 

@@ -13,10 +13,15 @@ const { withServer } = require('../test-support/helpers');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Resolves to the first truthy value `fn` returns (not just `true`), so a caller
+// can both assert on it and use it — e.g. to read the nonce off a trust prompt.
+// Falls back to `false` on timeout, keeping every `assert.ok(await waitUntil(…))`
+// call site working unchanged.
 async function waitUntil(fn, { timeout = 4000, interval = 40 } = {}) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
-    if (await fn()) return true;
+    const v = await fn();
+    if (v) return v;
     await sleep(interval);
   }
   return false;
@@ -41,8 +46,14 @@ function hashOf(source) {
   return crypto.createHash('sha256').update(source).digest('hex');
 }
 
+// Seed a consent record. USER-tier (ctx.userWebChat), not project-tier: a repo
+// must not be able to ship its own approval and get host code execution on clone.
+function trustedPath(ctx) {
+  return path.join(ctx.userWebChat, 'services', 'trusted.json');
+}
+
 function trust(ctx, source, name) {
-  const p = path.join(ctx.webChatDir, 'services', 'trusted.json');
+  const p = trustedPath(ctx);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify({ [hashOf(source)]: { name, approved_at: 1 } }, null, 2));
 }
@@ -152,18 +163,90 @@ test('services: trust gate blocks first spawn; approval unblocks it', async (t) 
 
   await api.post('/api/components/clock/use', { id: 'm1' });
 
-  // No child, but an approval overlay was broadcast to the viewer.
-  assert.ok(await waitUntil(() => frames.some((f) => f.type === 'render' && f.id === 'wc-service-approve-clock')), 'approval overlay broadcast');
+  // No child, but a trust prompt was broadcast to the viewer. It must be its OWN
+  // frame type — NOT a `render`. A render carried a `target`, and the client
+  // resolves an unknown target with `$(target) || $('main')`; the old code sent
+  // target:'overlay', which is a real element (the graph viewer, display:none),
+  // so the prompt was invisible and no service could ever be approved.
+  const prompt = await waitUntil(
+    () => frames.find((f) => f.type === 'service:trust' && f.hash === hashOf(CLOCK_SERVICE)),
+    { timeout: 4000 },
+  );
+  assert.ok(prompt, 'trust prompt broadcast on its own frame type');
+  assert.equal(prompt.name, 'clock');
+  assert.ok(prompt.nonce, 'prompt carries a nonce');
+  assert.ok(!frames.some((f) => f.type === 'render' && String(f.id).startsWith('wc-service-approve')),
+    'trust prompt is never a mount (a pane target could hide it)');
   await sleep(300);
   assert.equal(children(ctx).has('m1'), false, 'trust gate blocked the spawn');
 
-  // Simulate the user clicking Approve (the pane writes the control key).
+  // A store write must NOT be able to approve — any pane can write the store, so
+  // the old control-key path let a component approve its own service.js.
   sock.send(JSON.stringify({ type: 'store:set', patch: { wc_service_approval: { seq: 2, hash: hashOf(CLOCK_SERVICE), name: 'clock', decision: 'approve' } } }));
+  await sleep(400);
+  assert.equal(children(ctx).has('m1'), false, 'a store key cannot grant host execution');
+
+  // Nor may a decision frame carrying the wrong nonce.
+  sock.send(JSON.stringify({ type: 'service:decision', hash: hashOf(CLOCK_SERVICE), decision: 'approve', nonce: 'not-the-nonce' }));
+  await sleep(400);
+  assert.equal(children(ctx).has('m1'), false, 'a forged nonce cannot grant host execution');
+
+  // The real path: the chrome modal returns the server-issued nonce.
+  sock.send(JSON.stringify({ type: 'service:decision', hash: hashOf(CLOCK_SERVICE), decision: 'approve', nonce: prompt.nonce }));
 
   assert.ok(await waitUntil(() => children(ctx).has('m1')), 'child spawns after approval');
   // approval was persisted to trusted.json
-  const trusted = JSON.parse(fs.readFileSync(path.join(ctx.webChatDir, 'services', 'trusted.json'), 'utf8'));
+  const trusted = JSON.parse(fs.readFileSync(trustedPath(ctx), 'utf8'));
   assert.ok(trusted[hashOf(CLOCK_SERVICE)], 'approval persisted (content-hash keyed)');
+  assert.ok(!fs.existsSync(path.join(ctx.webChatDir, 'services', 'trusted.json')),
+    'consent is never written inside the project — a repo could otherwise ship it');
+});
+
+test('services: a denied service stays denied across viewers', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+  t.after(() => { try { v1.sock.close(); } catch {} });
+  await api.post('/api/components/clock/use', { id: 'm1' });
+
+  const first = await waitUntil(() => v1.frames.find((f) => f.type === 'service:trust'), { timeout: 4000 });
+  assert.ok(first, 'prompted on first use');
+  v1.sock.send(JSON.stringify({ type: 'service:decision', hash: first.hash, decision: 'deny', nonce: first.nonce }));
+  await sleep(400);
+  assert.equal(children(ctx).has('m1'), false, 'denied service does not run');
+
+  // Deny is sticky for the life of the daemon — a reconnect must not re-ask and
+  // must not run it.
+  v1.sock.close();
+  await sleep(300);
+  const v2 = await openViewer(ctx);
+  t.after(() => { try { v2.sock.close(); } catch {} });
+  await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
+  await sleep(600);
+  assert.equal(v2.frames.some((f) => f.type === 'service:trust'), false, 'a denied hash is not re-prompted');
+  assert.equal(children(ctx).has('m1'), false, 'still not running');
+});
+
+test('services: an UNDECIDED prompt is re-issued after the last viewer leaves', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+  await api.post('/api/components/clock/use', { id: 'm1' });
+  assert.ok(await waitUntil(() => v1.frames.find((f) => f.type === 'service:trust'), { timeout: 4000 }), 'prompted');
+
+  // The user refreshes instead of answering. The prompt lived only in that
+  // browser, so it died with the socket — and the supervisor's `prompted` memo
+  // used to keep the hash forever, leaving the service permanently unpromptable:
+  // the pane just waited with no prompt and no error, for the life of the daemon.
+  v1.sock.close();
+  await sleep(400);
+  const v2 = await openViewer(ctx);
+  t.after(() => { try { v2.sock.close(); } catch {} });
+  await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
+  assert.ok(await waitUntil(() => v2.frames.some((f) => f.type === 'service:trust'), { timeout: 4000 }),
+    're-prompted for the fresh viewer');
 });
 
 test('services: a crashing service is recorded and not respawned', async (t) => {

@@ -21,6 +21,7 @@
     "public/",
     "templates/",
     "extensions/",
+    "docs/",
     "install.sh",
     "README.md",
     "CHANGELOG.md",

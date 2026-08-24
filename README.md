@@ -5,7 +5,7 @@ claude-web-chat gives Claude Code a second surface: a live page in your browser 
 You get three things:
 
 - **Chat**, in your terminal, same as always — reasoning, narrative, quick answers.
-- **The surface**, at `http://localhost:5173` — everything visual and interactive. What you click and type there flows straight back to Claude as structured data.
+- **The surface**, in your browser — everything visual and interactive. What you click and type there flows straight back to Claude as structured data. (`claude-web-chat open` opens it; the port is per-project, starting at 5173 and walking upward, so a second project gets its own.)
 - **The graph** — every Claude turn is saved as a node. Revisit any earlier state, branch from it, and carry on. Trying a different direction never loses the first one.
 
 The quickstart below takes you from a fresh checkout to your first interactive page in about five minutes.

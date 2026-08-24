@@ -20,6 +20,7 @@ import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
 import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
 import { checkVersion } from './version.js';
 import { applyCommentsFrame } from './comments.js';
+import { onTrustPrompt, onTrustClear, resetTrustPrompts } from './service-trust.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -190,15 +191,26 @@ const HANDLERS = {
   // pushes the whole comments array here so the marker layer re-renders immediately;
   // renderMarkers itself is the preview guard, so this can fold regardless too.
   comments(msg) { applyCommentsFrame(msg.comments || []); renderQueue(); },
+  // Service consent. Chrome-level, never a mount — see service-trust.js for why.
+  'service:trust'(msg) { onTrustPrompt(msg); },
+  'service:trust:clear'(msg) { onTrustClear(msg); },
 };
 
 export function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => setConnStatus('live', 'live');
-  ws.onclose = () => { setConnStatus('reconnecting…', 'off'); setTimeout(connect, 1000); };
+  ws.onclose = () => {
+    setConnStatus('reconnecting…', 'off');
+    // The server releases its outstanding-prompt memo when the last viewer
+    // drops, so any nonce we still hold is dead. Clear and let it re-prompt.
+    resetTrustPrompts();
+    setTimeout(connect, 1000);
+  };
   ws.onmessage = (m) => {
     let msg; try { msg = JSON.parse(m.data); } catch { return; }
     const h = HANDLERS[msg.type];
-    if (h) h(msg);
+    // One throwing frame must not abort the rest of the stream (a `hello` that
+    // dies partway used to leave the topbar, queue and version banner uninitialised).
+    if (h) { try { h(msg); } catch (e) { console.error('[web-chat] handler failed for', msg.type, e); } }
   };
 }

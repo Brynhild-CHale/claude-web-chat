@@ -89,55 +89,60 @@ test('doctor treats a resolved `node <abs>` MCP registration as healthy', async 
   assert.ok(summary.checks.some((c) => c.status === 'ok' && /resolvable/.test(c.m)));
 });
 
-// doctor detects + repairs a missing channels env block.
-test('doctor wires WEB_CHAT_CHANNEL=1 into a web-chat entry that lacks it', async () => {
+// doctor detects + REMOVES a stale channels env block. The polarity inverted in
+// the 0.4.x release pass: pinning WEB_CHAT_CHANNEL=1 into .mcp.json makes the MCP
+// server start a channel bridge in every session, including ones launched without
+// the capability flag — so a Push is written to stdout, self-acked, reported
+// "Delivered to Claude ✓", and dropped, while the parked fallback never runs.
+// The env now belongs only on the launch line that also carries the flag.
+test('doctor removes a stale WEB_CHAT_CHANNEL from a web-chat entry', async () => {
   const root = tmpProject();
   const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
   const mcpPath = path.join(root, '.mcp.json');
-  // Resolvable entry, but no env — the pre-channels-wiring install shape.
-  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin] } } }));
+  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin], env: { WEB_CHAT_CHANNEL: '1' } } } }));
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
 
-  assert.ok(summary.checks.some((c) => c.status === 'problem' && /channels env not wired/.test(c.m)));
-  assert.ok(summary.checks.some((c) => c.status === 'repaired' && /WEB_CHAT_CHANNEL=1/.test(c.m)));
+  assert.ok(summary.checks.some((c) => c.status === 'problem' && /stale WEB_CHAT_CHANNEL/.test(c.m)));
+  assert.ok(summary.checks.some((c) => c.status === 'repaired' && /removed WEB_CHAT_CHANNEL/.test(c.m)));
   const entry = JSON.parse(fs.readFileSync(mcpPath, 'utf8')).mcpServers['web-chat'];
-  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
+  assert.equal(entry.env, undefined, 'no empty env block left behind');
 });
 
-test('doctor preserves unrelated env keys when repairing the channels env', async () => {
+test('doctor preserves unrelated env keys when removing the stale channels env', async () => {
   const root = tmpProject();
   const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
   const mcpPath = path.join(root, '.mcp.json');
-  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin], env: { DEBUG: 'wc:*' } } } }));
+  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin], env: { DEBUG: 'wc:*', WEB_CHAT_CHANNEL: '1' } } } }));
   const claude = fakeClaude();
   await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
   const entry = JSON.parse(fs.readFileSync(mcpPath, 'utf8')).mcpServers['web-chat'];
-  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
+  assert.equal(entry.env.WEB_CHAT_CHANNEL, undefined);
   assert.equal(entry.env.DEBUG, 'wc:*');
 });
 
-test('doctor reports ok (no write) when the channels env is already wired', async () => {
+test('doctor reports ok (no write) when there is no stale channels env', async () => {
   const root = tmpProject();
   const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
   const mcpPath = path.join(root, '.mcp.json');
-  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin], env: { WEB_CHAT_CHANNEL: '1' } } } }, null, 2));
+  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin] } } }, null, 2));
   const before = fs.readFileSync(mcpPath, 'utf8');
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
-  assert.ok(summary.checks.some((c) => c.status === 'ok' && /channels env .*wired/.test(c.m)));
+  assert.ok(summary.checks.some((c) => c.status === 'ok' && /no stale channels env/.test(c.m)));
   assert.equal(fs.readFileSync(mcpPath, 'utf8'), before, '.mcp.json left byte-identical');
 });
 
-test('doctor never edits a ${CLAUDE_PLUGIN_ROOT} plugin stub to add env', async () => {
+test('doctor cleans a stale env even from a ${CLAUDE_PLUGIN_ROOT} plugin stub', async () => {
   const root = tmpProject();
   const mcpPath = path.join(root, '.mcp.json');
-  const stub = JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'] } } }, null, 2);
-  fs.writeFileSync(mcpPath, stub);
+  fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'], env: { WEB_CHAT_CHANNEL: '1' } } } }, null, 2));
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
-  // Env-wiring is a note (leaving the stub alone), not a repair — the committed stub stays pure.
-  assert.ok(summary.checks.some((c) => c.status === 'note' && /plugin stub/.test(c.m)));
-  assert.ok(!summary.checks.some((c) => c.status === 'repaired' && /WEB_CHAT_CHANNEL/.test(c.m)));
-  assert.equal(fs.readFileSync(mcpPath, 'utf8'), stub, 'plugin stub left byte-identical');
+  // A committed stub carrying the opt-in is exactly as broken as any other
+  // entry — the bridge reads the env, not the arg style — so it is repaired too.
+  assert.ok(summary.checks.some((c) => c.status === 'repaired' && /removed WEB_CHAT_CHANNEL/.test(c.m)));
+  const entry = JSON.parse(fs.readFileSync(mcpPath, 'utf8')).mcpServers['web-chat'];
+  assert.deepEqual(entry.args, ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'], 'portable args untouched');
+  assert.equal(entry.env, undefined);
 });
