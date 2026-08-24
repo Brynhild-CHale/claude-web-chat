@@ -115,16 +115,25 @@
   // Skipped: password fields (never persist secrets into graph history),
   // hidden/file inputs (script-owned / unsettable), and anything marked
   // data-no-persist.
+  // The ONE predicate for "this element's value is never captured". Two
+  // consumers: the form-state capture below, and the shell's delegated
+  // dom-event reporter (public/app/mounts.js reportEvent), which forwards an
+  // event target's value into the daemon's event ring. Both must honour the
+  // same guarantee — a password reaching get_events is the same leak as one
+  // reaching form_state. Tolerates a non-element target (shadow root, document).
+  function isValueExcluded(el) {
+    if (!el) return false;
+    var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+    if (type === 'password' || type === 'hidden' || type === 'file') return true;
+    if (el.hasAttribute && el.hasAttribute('data-no-persist')) return true;
+    if (el.getAttribute && el.getAttribute('contenteditable') === 'false') return true;
+    return false;
+  }
+
   function formElements(root) {
     var els = root.querySelectorAll('input, textarea, select, [contenteditable]');
     var out = [];
-    els.forEach(function (el) {
-      var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
-      if (type === 'password' || type === 'hidden' || type === 'file') return;
-      if (el.hasAttribute && el.hasAttribute('data-no-persist')) return;
-      if (el.getAttribute && el.getAttribute('contenteditable') === 'false') return;
-      out.push(el);
-    });
+    els.forEach(function (el) { if (!isValueExcluded(el)) out.push(el); });
     return out;
   }
 
@@ -183,7 +192,7 @@
     });
   }
 
-  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts, captureFormState: captureFormState, applyFormState: applyFormState };
+  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded };
   if (glob) glob.__wcMount = api;                                                 // browser global (before client.js)
   if (typeof module !== 'undefined' && module.exports) module.exports = api;      // node require() — createStore is testable
 })(typeof window !== 'undefined' ? window : null);

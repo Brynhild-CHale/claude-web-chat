@@ -5,6 +5,8 @@
 // script (or Claude) doing anything.
 
 const test = require('node:test');
+const fs = require('fs');
+const path = require('path');
 const assert = require('node:assert');
 const WebSocket = require('ws');
 const { withServer } = require('../test-support/helpers');
@@ -82,4 +84,46 @@ test('an export inlines form_state so the frozen page rehydrates typed values', 
 
   const res = await api.get('/api/export/live');
   assert.match(res.text, /exported draft/);
+});
+
+
+// ── the value-exclusion guarantee, on BOTH paths ─────────────────────────────
+// templates/rules/web-chat.md promises "password, hidden, and file inputs (and
+// contenteditable=false) are never captured". form_state honoured that; the
+// delegated dom-event reporter did not, and its payload goes straight into the
+// event ring that get_events and the driver SSE tap serve. One predicate now
+// backs both, so they cannot drift apart again.
+
+test('isValueExcluded covers every field the rules file promises is never captured', () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><body><div id="h"></div></body>');
+  const g = global.window;
+  global.window = dom.window;
+  try {
+    const host = dom.window.document.getElementById('h');
+    host.innerHTML = '<input type="password" id="pw">' +
+      '<input data-no-persist id="np">' +
+      '<input type="hidden" id="hid">' +
+      '<input type="file" id="f">' +
+      '<div contenteditable="false" id="ce"></div>' +
+      '<input id="ok">';
+    const rt = require('../public/mount-runtime.js');
+    const api = rt && rt.isValueExcluded ? rt : dom.window.__wcMount;
+    const byId = (id) => dom.window.document.getElementById(id);
+    for (const id of ['pw', 'np', 'hid', 'f', 'ce']) {
+      assert.equal(api.isValueExcluded(byId(id)), true, `${id} must be excluded`);
+    }
+    assert.equal(api.isValueExcluded(byId('ok')), false, 'an ordinary input is captured');
+    assert.equal(api.isValueExcluded(null), false, 'a non-element target does not throw');
+  } finally {
+    if (g === undefined) delete global.window; else global.window = g;
+  }
+});
+
+test('the dom-event reporter gates the value through that predicate', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'mounts.js'), 'utf8');
+  assert.match(src, /value:\s*window\.__wcMount\.isValueExcluded\(t\)\s*\?\s*null\s*:/,
+    'reportEvent must redact excluded fields before the value reaches the wire');
+  assert.doesNotMatch(src, /^\s*value: t\?\.value \?\? null,$/m,
+    'the unguarded form of the payload must not come back');
 });

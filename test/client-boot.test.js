@@ -90,6 +90,19 @@ test('front-end module graph boots and the core flows work under jsdom', async (
     ws.onmessage({ data: JSON.stringify({ type: 'clear', id: 'm2' }) });
     assert.equal($('main').querySelectorAll('.pane').length, 1, 'clear removed a pane');
 
+    // A captured page's <title> reaches the minbar chip. It is attacker-supplied
+    // text from any site the user captures, and the chip was built with an
+    // innerHTML template — so a title could execute script in the surface origin,
+    // where pane scripts already run unsandboxed with no CSP.
+    const evil = 'Capture · default — <img src=x onerror="window.__pwned = 1">';
+    ws.onmessage({ data: JSON.stringify({ type: 'render', id: 'm3', html: '<b>x</b>', target: 'main', params: { title: evil }, pane_state: { minimized: true } }) });
+    await tick();
+    const chip = $('minbar').querySelector('.min-chip');
+    assert.ok(chip, 'a minimized pane gets a minbar chip');
+    assert.equal(chip.querySelector('img'), null, 'the title must not be parsed as markup');
+    assert.equal(window.__pwned, undefined, 'no handler from the title ran');
+    assert.ok(chip.textContent.includes('<img src=x'), 'it renders as literal text instead');
+
     // Drain any deferred timers (e.g. the 340ms theme-transition strip) while the
     // window is still valid, so nothing fires after the test ends.
     await new Promise((r) => setTimeout(r, 400));

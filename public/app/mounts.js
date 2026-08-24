@@ -123,7 +123,14 @@ export function renderMinbar() {
     if (!p.pane_state.minimized) continue;
     const chip = document.createElement('button');
     chip.className = 'min-chip';
-    chip.innerHTML = `<span>${p.title || id}</span><span class="restore">↗</span>`;
+    // textContent, never innerHTML: a pane title can be attacker-controlled (a
+    // captured page's <title> flows into params.title via routes/capture.js).
+    const chipLabel = document.createElement('span');
+    chipLabel.textContent = p.title || id;
+    const chipRestore = document.createElement('span');
+    chipRestore.className = 'restore';
+    chipRestore.textContent = '↗';
+    chip.append(chipLabel, chipRestore);
     chip.addEventListener('click', () => {
       p.pane_state.minimized = false;
       applyPaneState(p.wrapper, p.pane_state);
@@ -201,7 +208,9 @@ function makePaneChrome(id, title, pane_state, params) {
   const btnClose = mkBtn('×', 'close', async () => {
     await fetch('/api/clear', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
+      // force: the USER closing a pane outranks the clear clobber-guard — a
+      // driver-owned pane must still close when they hit ×.
+      body: JSON.stringify({ id, force: true }),
     });
   });
 
@@ -595,11 +604,17 @@ function reportEvent(type, e, mountId) {
   const p = panes.get(mountId);
   if (p && p._applyingForm) return;
   const t = e.target;
+  // A password/hidden/file/data-no-persist field's value is NEVER captured —
+  // same predicate the form-state capture uses, so the two paths can't drift.
+  // Only the value is redacted: the routing layer keys off type/tag/dataset/id
+  // (lib/channel/policy domIsMeaningful + activityItem, neither of which reads
+  // `value`), so a redacted event still produces its activity item exactly as
+  // before — a broken pane script stays observable.
   const payload = {
     type, mountId,
     tag: t?.tagName, id: t?.id || null,
     name: t?.getAttribute?.('name') || null,
-    value: t?.value ?? null,
+    value: window.__wcMount.isValueExcluded(t) ? null : (t?.value ?? null),
     dataset: t?.dataset ? { ...t.dataset } : null,
   };
   if (isOpen()) send({ type: 'event', payload });

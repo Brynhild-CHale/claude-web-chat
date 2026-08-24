@@ -1,14 +1,16 @@
-// The version / self-update surface. resolveLatest (the one "is an update
-// available" decision, shared by the stderr check and the route) plus the two
-// HTTP endpoints. The update spawn is exercised through WEB_CHAT_UPDATE_CMD so the
-// suite never shells out to npm or bounces the in-process test server.
+// The version surface. resolveLatest is the one "is an update available"
+// decision, shared by the stderr check and GET /api/version.
+//
+// There is no POST /api/update any more: a one-click self-update is a deployment
+// action masquerading as a page interaction, and it could destroy an `npm link`
+// dev install or install a downgrade. The surface informs; the user updates.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { withServer, withTempHome } = require('../test-support/helpers');
-const { resolveLatest, cachePath } = require('../lib/update/check');
+const { resolveLatest, cachePath, compareVersions } = require('../lib/update/check');
 const pkg = require('../package.json');
 
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
@@ -56,32 +58,34 @@ test('GET /api/version reports current vs latest from the seeded cache', async (
   assert.equal(json.current, pkg.version);
   assert.equal(json.latest, '999.0.0');
   assert.equal(json.updateAvailable, true);
-  assert.equal(json.updating, false);
+  assert.equal(json.releaseUrl, 'https://github.com/Brynhild-CHale/claude-web-chat/releases/latest',
+    'the bar links somewhere the user can read what changed');
 });
 
-// ── POST /api/update ─────────────────────────────────────────────────────────
-
-test('POST /api/update spawns the (overridden) updater and debounces a repeat', async (t) => {
+test('GET /api/update is gone — updating is not a page interaction', async (t) => {
   withTempHome(t);
-  const { api, root } = await withServer(t);
-  const marker = path.join(root, 'updater-ran');
-  const prev = process.env.WEB_CHAT_UPDATE_CMD;
-  // A harmless stand-in for `claude-web-chat update`: it just drops a marker so we
-  // can prove the detached spawn fired, without touching npm or the daemon.
-  process.env.WEB_CHAT_UPDATE_CMD = JSON.stringify(['node', '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ok')`]);
-  t.after(() => { if (prev === undefined) delete process.env.WEB_CHAT_UPDATE_CMD; else process.env.WEB_CHAT_UPDATE_CMD = prev; });
+  const { api } = await withServer(t);
+  const res = await api.post('/api/update', {});
+  assert.equal(res.status, 404, 'the self-update endpoint no longer exists');
+});
 
-  const first = await api.post('/api/update', {});
-  assert.equal(first.json.ok, true);
-  assert.equal(first.json.started, true);
-  assert.ok(await waitFor(() => fs.existsSync(marker)), 'the detached updater actually ran');
+// ── "newer", not "different" ─────────────────────────────────────────────────
 
-  // A second click while an update is in flight is debounced, not double-spawned.
-  const second = await api.post('/api/update', {});
-  assert.equal(second.json.started, false);
-  assert.equal(second.json.updating, true);
+test('resolveLatest: a release OLDER than the running build is not an update', async (t) => {
+  withTempHome(t);
+  // The maintainer's own machine, running a build ahead of the last release.
+  seedCache('0.4.0');
+  const info = await resolveLatest({ currentVersion: '0.5.0' });
+  assert.equal(info.latest, '0.4.0');
+  assert.equal(info.updateAvailable, false,
+    'string inequality used to count here, so this offered a DOWNGRADE');
+});
 
-  // GET reflects the in-progress flag so the banner can hold its "Updating…" state.
-  const v = await api.get('/api/version');
-  assert.equal(v.json.updating, true);
+test('compareVersions orders numerically, not lexically', () => {
+  assert.ok(compareVersions('0.10.0', '0.9.0') > 0, '0.10.0 is newer than 0.9.0');
+  assert.ok(compareVersions('1.0.0', '0.99.99') > 0);
+  assert.equal(compareVersions('0.4.0', '0.4.0'), 0);
+  assert.equal(compareVersions('v0.4.0', '0.4.0'), 0, 'a leading v is just tag syntax');
+  assert.ok(compareVersions('0.5.0-rc.1', '0.5.0') < 0, 'a prerelease never beats its final release');
+  assert.ok(compareVersions('0.5.0-rc.1', '0.4.0') > 0);
 });

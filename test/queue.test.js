@@ -656,3 +656,49 @@ test('queue: a parked wake rides the draft snapshot round-trip', async (t) => {
   assert.equal(pending.json.pending.id, id);
   assert.match(pending.json.pending.envelope.content, /example\.com/);
 });
+
+
+// ── Revert of an ACTIVITY item must not delete the pane ──────────────────────
+// Reported from the surface: "reverting browser activity clicks deletes the
+// pane." An `activity` item is created for ANY undeclared interaction, so the
+// pane long predates the item and was rendered by Claude, not by the activity.
+// Routing every non-comment kind to revertPane therefore threw away the artifact
+// the user was working in — along with anything typed into it. An activity's
+// artifact is the interaction, so Revert restores the pane's pre-activity state.
+
+test('queue domain: reverting an ACTIVITY item restores the pane, it does not delete it', () => {
+  const bus = createBus();
+  const state = freshState();
+  state.mounts.set('m1', { html: 'a', gen: 0, form_state: { '#a:0': { value: 'kept' } } });
+
+  const it = queue.enqueue(state, bus, {
+    kind: 'activity', origin_mount: 'm1', summary: 'm1 · 1 click',
+  });
+  // The user keeps typing after the activity item was opened.
+  state.mounts.get('m1').form_state = { '#a:0': { value: 'kept + junk' } };
+
+  const { reverted } = queue.remove(state, bus, it.id, { revert: true });
+  assert.equal(reverted, true, 'the domain reports it reverted something');
+  assert.ok(state.mounts.has('m1'), 'the pane SURVIVES — this is the reported bug');
+  assert.deepEqual(state.mounts.get('m1').form_state, { '#a:0': { value: 'kept' } },
+    'the pane is restored to its pre-activity state');
+});
+
+test('queue domain: reverting an activity item on a pane with no prior state keeps the pane', () => {
+  const bus = createBus();
+  const state = freshState();
+  state.mounts.set('m1', { html: 'a', gen: 0 });
+  const it = queue.enqueue(state, bus, { kind: 'activity', origin_mount: 'm1', summary: 'm1 · 1 click' });
+  queue.remove(state, bus, it.id, { revert: true });
+  assert.ok(state.mounts.has('m1'), 'nothing to restore is not a reason to delete');
+});
+
+test('queue domain: reverting a SIGNAL item still deletes its pane (unchanged)', () => {
+  const bus = createBus();
+  const state = freshState();
+  state.mounts.set('m1', { html: 'a', gen: 0 });
+  const it = queue.enqueue(state, bus, { kind: 'signal', origin_mount: 'm1', summary: 's' });
+  const { reverted } = queue.remove(state, bus, it.id, { revert: true });
+  assert.equal(reverted, true);
+  assert.equal(state.mounts.has('m1'), false, 'a signal\'s artifact IS the pane');
+});
