@@ -15,9 +15,9 @@ npm link
 `npm link` symlinks the three bin scripts (`claude-web-chat`, `-mcp`, `-hook`)
 onto your PATH so the CLI, MCP server, and hook helper all resolve to your working
 copy — edit and re-run, no reinstall cycle. After a `git pull` the symlinked bins
-already point at the new code. Run the suite with a bare `node --test`
-(auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
-reports a spurious failure).
+already point at the new code. Run the suite with `npm test` — that is a bare
+`node --test`, which auto-discovers `test/`; **not** `node --test test/`, which
+mis-resolves and reports a spurious failure.
 
 ### Loading the MCP tools when dogfooding this repo
 
@@ -87,7 +87,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
-| CORS on an extension-facing route | `core/cors` `setCors` / `mountCors` | copy the header block |
+| decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
 | escape HTML | `server/util/html` `escapeHtml` | inline a `.replace` chain |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
@@ -241,10 +241,34 @@ they only borrow `freshRequire`. Don't try to force a URL-matched or
 cascade-resolved resource through `get(name)` — that's the leaky abstraction this
 engine deliberately avoids.
 
+### `lib/core/cors.js` — the local network trust boundary
+
+Everything web-chat serves is unauthenticated by design — the graph, the shared
+store, arbitrary HTML/JS injection through `/api/render`. So "who may reach this
+server" is a single security decision, and it lives in one zero-import leaf
+module. Three facts that must never drift apart:
+
+- `LISTEN_HOST` — what the instance server and the hub bind. `127.0.0.1` unless
+  `WEB_CHAT_HOST` says otherwise; `warnIfExposed()` prints the consequences of
+  that override on startup. Never write a bind address anywhere else, and never
+  bind a wildcard "for convenience" — a loopback bind is the access control.
+- `isLocalOrigin(origin)` — is a browser `Origin` one of this machine's own
+  surfaces. Gates the WS upgrade (`verifyClient` in `lib/server/ws.js`), because
+  browsers apply no same-origin policy to WebSocket connects and the `hello`
+  frame is an unconditional full-state disclosure. An **absent** origin is not
+  decided here: the caller allows it, since a non-browser client (driver, CLI,
+  test) already has filesystem access to everything.
+- `setCors(req, res)` / `mountCors(app, path)` — the extension-facing headers.
+  The allowed set is narrow on purpose (extension schemes + this machine); it
+  used to reflect any `Origin`, which made every capture readable by any site the
+  user happened to be browsing.
+
+`LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
+the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
+dual-stack machine.
+
 ### Shared small homes
 
-- `lib/core/cors.js` — `setCors(req, res)`, `mountCors(app, path)` (the extension
-  hits the instance server and the hub cross-origin).
 - `lib/server/util/html.js` — `escapeHtml(s)` (null-safe).
 - `lib/capture/profiles/util.js` — `collapse(s)`.
 
@@ -267,8 +291,8 @@ count as a phantom passing test.
   the dev machine.
 - `tmpRoot`, `makeApi(baseUrl)`, `wsConnect`, `wsHello`, `safeStop`.
 
-Run the suite with bare `node --test` (auto-discovers `test/`). Not `node --test
-test/` — that mis-resolves.
+Run the suite with `npm test` (a bare `node --test`, which auto-discovers
+`test/`). Not `node --test test/` — that mis-resolves.
 
 ## The conventions tripwire
 

@@ -85,6 +85,32 @@ test('front-end module graph boots and the core flows work under jsdom', async (
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 't' }));
     assert.notEqual(window.document.documentElement.dataset.theme || 'dark', before, 'T toggled light/dark');
 
+    // Graph overlay focus management: it covers the surface and owns ↑↓/↵/A/Space,
+    // so opening it must MOVE focus into it and closing must hand focus back —
+    // otherwise a keyboard user is driving an element they've left behind, and on
+    // close is stranded inside a display:none subtree.
+    $('btn-graph').focus();
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'g' }));
+    await tick();
+    assert.ok(!$('overlay').classList.contains('hidden'), 'G opened the graph overlay');
+    assert.equal(window.document.activeElement, $('overlay'), 'focus moved into the overlay');
+
+    // history rows are clickable <div>s — they must be tabbable and Enter/Space-operable
+    const gvRow = $('gv-history-list').querySelector('.gv-row');
+    assert.ok(gvRow, 'the history list rendered a row');
+    assert.equal(gvRow.tabIndex, 0, 'a history row is reachable by keyboard');
+    assert.equal(gvRow.getAttribute('role'), 'option', 'and exposes an option role');
+    gvRow.focus();
+    gvRow.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick();
+    assert.equal($('gv-history-list').querySelectorAll('.gv-row.selected').length, 1,
+      'Enter on a focused row selects it, like a click');
+
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    assert.ok($('overlay').classList.contains('hidden'), 'Escape closed the overlay');
+    assert.equal(window.document.activeElement, $('btn-graph'), 'focus returned to what opened it');
+
     ws.onmessage({ data: JSON.stringify({ type: 'render', id: 'm2', html: '<b>two</b>', target: 'main', params: {}, pane_state: {} }) });
     assert.equal($('main').querySelectorAll('.pane').length, 2, 'render added a second pane');
     ws.onmessage({ data: JSON.stringify({ type: 'clear', id: 'm2' }) });

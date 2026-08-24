@@ -42,3 +42,66 @@ test('parked: daemon down (no policy observable) reads the same way', () => {
   assert.equal(r.state, 'parked');
   assert.match(r.line, /delivers with your next message/);
 });
+
+// --------------------------------------------------------------------------
+// The MCP restart line. `install` rewrites .mcp.json mid-session, Claude Code
+// reads it only at startup, so "registered in .mcp.json" alone is a lie of
+// omission — none of the 23 tools exist until the user restarts.
+// --------------------------------------------------------------------------
+
+const fs = require('fs');
+const path = require('path');
+const status = require('../lib/cli/commands/status');
+const { withTempHome, tmpRoot } = require('../test-support/helpers');
+const { recordMcpSeen } = require('../lib/core/mcp-seen');
+
+// Run `status` with cwd pointed at an installed project, capturing stdout.
+async function runStatus(t, seed) {
+  withTempHome(t);
+  const root = tmpRoot('wc-status-');
+  fs.mkdirSync(path.join(root, '.web-chat', 'graph'), { recursive: true });
+  const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin] } } }, null, 2)
+  );
+  if (seed) seed(root);
+
+  const prevCwd = process.cwd();
+  const lines = [];
+  const prevLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  process.chdir(root);
+  try {
+    await status();
+  } finally {
+    console.log = prevLog;
+    process.chdir(prevCwd);
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+  }
+  return lines.join('\n');
+}
+
+test('status flags RESTART when the MCP server we last saw predates the .mcp.json write', async (t) => {
+  const out = await runStatus(t, (root) => {
+    recordMcpSeen(root, { startedAt: Date.now() - 3600_000, now: Date.now() - 60_000 });
+  });
+  assert.match(out, /MCP: +registered in \.mcp\.json/);
+  assert.match(out, /RESTART:/, 'the restart verdict rides right under the MCP line');
+  assert.match(out, /restart Claude Code/i);
+});
+
+test('status reports the tools loaded once an MCP server started after the write', async (t) => {
+  const out = await runStatus(t, (root) => {
+    recordMcpSeen(root, { startedAt: Date.now() + 5000, now: Date.now() });
+  });
+  assert.match(out, /loaded:/);
+  assert.doesNotMatch(out, /RESTART:/);
+});
+
+test('status admits "unknown" rather than guessing when no MCP client was ever seen', async (t) => {
+  const out = await runStatus(t);
+  assert.match(out, /unknown:/);
+  assert.match(out, /can't tell/);
+  assert.doesNotMatch(out, /RESTART:/);
+});

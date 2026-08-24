@@ -27,10 +27,27 @@ export async function openOverlay() {
   if (view.selectedNodeId && nodeById(view.selectedNodeId)) renderInspector(view.selectedNodeId);
   else if (view.activeId) selectNode(view.activeId, { noRender: true });
   overlayEl.classList.remove('hidden');
+  // Focus management: the overlay covers the surface and owns ↑↓/↵/A/Space, but
+  // focus used to stay on whatever opened it — so a keyboard user was driving an
+  // element they had left behind. Move focus in (the container is tabindex="-1"),
+  // and remember where to hand it back on close.
+  returnFocusTo = document.activeElement;
+  overlayEl.focus({ preventScroll: true });
   fitView();
 }
 
-export function closeOverlay() { closeFloatPreview(); overlayEl.classList.add('hidden'); }
+// Where focus came from when the overlay opened, so closing returns it there.
+let returnFocusTo = null;
+// The single close path: hide + restore focus. Everything that dismisses the
+// overlay (✕, Escape, opening a node, a float-preview action) routes through here
+// so focus is never stranded on a display:none subtree.
+export function closeOverlay() {
+  closeFloatPreview();
+  overlayEl.classList.add('hidden');
+  const back = returnFocusTo;
+  returnFocusTo = null;
+  if (back && back.isConnected && typeof back.focus === 'function') back.focus({ preventScroll: true });
+}
 
 export function isOverlayOpen() { return !overlayEl.classList.contains('hidden'); }
 
@@ -109,6 +126,11 @@ function renderHistory() {
   if (!list) return;
   const rows = historyRows();
   const tc = $('gv-turncount'); if (tc) tc.textContent = (view.graphCache?.nodes || []).length;
+  // A keyboard selection re-renders this list, which would destroy the focused row
+  // and drop focus to <body>. Remember which node had it and hand it back below.
+  const focused = document.activeElement;
+  const refocusId = focused && focused.classList && focused.classList.contains('gv-row') && list.contains(focused)
+    ? focused.dataset.id : null;
   list.innerHTML = '';
   for (const n of rows) {
     const st = stateOf(n);
@@ -121,9 +143,27 @@ function renderHistory() {
       `<span class="glyph ${st.cls}">${glyph}</span>` +
       `<span class="main"><span class="lbl">${esc(n.label || n.id)}</span>${trig ? ' <span class="trig">· ' + esc(trig) + '</span>' : ''}</span>` +
       `<span class="time">${time}</span>`;
+    // The row is a clickable <div>, so it was invisible to tab and to Enter/Space.
+    // Give it button-ish option semantics and the same two actions the mouse gets:
+    // Enter/Space selects (single click), ⌘/Ctrl+Enter opens (double click).
+    row.tabIndex = 0;
+    row.dataset.id = n.id;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(n.id === view.selectedNodeId));
     row.addEventListener('click', () => { selectNode(n.id); centerOn(n.id); });
     row.addEventListener('dblclick', () => { openNode(n.id); });
+    row.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation(); // don't also fire the overlay-wide ↵/Space handlers
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) openNode(n.id);
+      else { selectNode(n.id); centerOn(n.id); }
+    });
     list.appendChild(row);
+  }
+  if (refocusId) {
+    const again = [...list.children].find((el) => el.dataset && el.dataset.id === refocusId);
+    if (again) again.focus({ preventScroll: true });
   }
 }
 
@@ -154,9 +194,9 @@ async function renderInspector(id) {
     `<div class="gv-actions">` +
       `<button class="gv-act primary" id="gv-set-active" data-act="active">Set active</button>` +
       `<button class="gv-act" data-act="open" title="Open on the surface (↵)">⤢ Open</button>` +
-      `<button class="gv-act" data-act="glance" title="Glance preview (Space)">◉</button>` +
-      `<button class="gv-act" data-act="bookmark" title="Bookmark (B)">⚑</button>` +
-      `<button class="gv-act" data-act="export" title="Export (E)">↧</button>` +
+      `<button class="gv-act" data-act="glance" title="Glance preview (Space)" aria-label="Glance preview (Space)">◉</button>` +
+      `<button class="gv-act" data-act="bookmark" title="Bookmark (B)" aria-label="Bookmark (B)">⚑</button>` +
+      `<button class="gv-act" data-act="export" title="Export (E)" aria-label="Export (E)">↧</button>` +
     `</div>`;
 
   drawPreview($('gv-preview'), id, mounts.length);
@@ -220,7 +260,7 @@ function updateStatus() {
 }
 
 // open a node fully on the surface (leaves the overlay)
-function openNode(id) { view.selectedNodeId = id; previewNode(id); overlayEl.classList.add('hidden'); }
+function openNode(id) { view.selectedNodeId = id; previewNode(id); closeOverlay(); }
 
 // set a node active (commits the next turn there / branches)
 async function setActive(id) {
@@ -277,7 +317,7 @@ function openFloatPreview(id) {
     floatEl.querySelector('[data-act="close"]').addEventListener('click', closeFloatPreview);
     floatEl.querySelector('[data-act="open"]').addEventListener('click', () => {
       const nid = floatEl.dataset.nodeId; closeFloatPreview();
-      view.selectedNodeId = nid; previewNode(nid); overlayEl.classList.add('hidden');
+      view.selectedNodeId = nid; previewNode(nid); closeOverlay();
     });
     floatEl.querySelector('[data-act="active"]').addEventListener('click', async () => {
       const nid = floatEl.dataset.nodeId;
@@ -287,7 +327,7 @@ function openFloatPreview(id) {
       if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
       view.previewing = false; view.liveSnapshot = null;
       $('main').classList.remove('preview-readonly');
-      closeFloatPreview(); overlayEl.classList.add('hidden');
+      closeOverlay();
       await refreshGraph();
     });
   }
@@ -743,7 +783,7 @@ export function layoutAndRender() {
       closeFloatPreview();
       view.selectedNodeId = el.dataset.id;
       previewNode(el.dataset.id);
-      overlayEl.classList.add('hidden');
+      closeOverlay();
     }
   };
 }
@@ -774,7 +814,7 @@ export function initGraph() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (floatEl) { closeFloatPreview(); return; }
-      if (!overlayEl.classList.contains('hidden')) overlayEl.classList.add('hidden');
+      if (isOverlayOpen()) closeOverlay();
       return;
     }
     // graph navigation keys — only while the graph overlay is open and not typing

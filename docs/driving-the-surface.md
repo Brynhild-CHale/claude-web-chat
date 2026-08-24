@@ -191,10 +191,19 @@ Don't POST the graph routes from a driver (see the three-actor model).
 
 ## Trust boundary & failure modes
 
-- **localhost only.** The server binds `localhost` with no auth — any local
-  process can read and write the store and render arbitrary HTML/JS into the
-  user's browser. Treat the surface as a same-machine trust domain; don't expose
-  the port off-box, and don't render untrusted third-party HTML through it.
+- **Loopback only.** The server binds `127.0.0.1` (`LISTEN_HOST` in
+  `lib/core/cors.js`, overridable with `WEB_CHAT_HOST` for the deliberate remote
+  case) with no auth — any local process can read and write the store and render
+  arbitrary HTML/JS into the user's browser. The bind address IS the access
+  control. Treat the surface as a same-machine trust domain; don't expose the port
+  off-box, and don't render untrusted third-party HTML through it.
+- **The WS upgrade is gated on `Origin`.** A browser asserting a foreign origin is
+  refused (that's what stops any page the user visits from opening
+  `ws://localhost:<port>/ws` and reading the whole store out of the `hello` frame).
+  A driver sends **no** `Origin` at all, and an absent one is allowed — so
+  `new WebSocket(...)` from a Node process is unaffected. Don't invent an `Origin`
+  header to "look like a browser"; that's the one thing that would get you
+  rejected.
 - **Server auto-shuts down ~10s after the last browser disconnects**
   (`lib/server/ws.js`). A driver polling an empty server sees `ECONNREFUSED`;
   re-discover via the portfile (a fresh server writes a new one) and treat

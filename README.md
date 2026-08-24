@@ -52,7 +52,7 @@ cd ~/Dev/my-project
 claude-web-chat install
 ```
 
-This adds the web-chat MCP server to `.mcp.json`, merges two hooks into `.claude/settings.json` (existing hooks are preserved), drops usage guidance for Claude into `.claude/rules/`, and creates `.web-chat/` for the project's graph and components. Your `CLAUDE.md` is never touched, and re-running `install` is always safe.
+This adds the web-chat MCP server to `.mcp.json`, merges two hooks into `.claude/settings.json` (existing hooks are preserved), drops usage guidance for Claude into `.claude/rules/` plus a `/web-chat` slash command and two skills into `.claude/`, creates `.web-chat/` for the project's graph and components, adds `.web-chat/` to the project's `.gitignore`, and pre-warms the background server. Your `CLAUDE.md` is never touched, and re-running `install` is always safe.
 
 ### 3. Restart Claude Code
 
@@ -64,13 +64,21 @@ Claude Code reads `.mcp.json` at startup, so restart it in this project. On firs
 claude-web-chat open
 ```
 
-This starts the background server (if it isn't already running) and opens the surface in your browser. You'll see an empty page with a topbar — that's correct; nothing has been rendered yet.
+This starts the background server (if it isn't already running) and opens the surface in your browser. It greets you with a **Nothing rendered yet** card — the empty state, listing the four keys worth knowing (`⌘K` commands, `N` components, `G` graph, `P` push). That's correct; nothing has been rendered yet.
 
 > Prefer one command? `claude-web-chat launch` opens the surface *and* starts a Claude session together.
 
 ### 5. Render your first page
 
-Back in Claude Code, try:
+Back in Claude Code, type:
+
+```
+/web-chat
+```
+
+With no arguments that slash command is a guided start: Claude checks the surface is up, looks at what your project actually is, and renders a first pane with a few concrete things it could do next — click one, hit **P**, and Claude picks it up. (With an argument it's a plain CLI passthrough: `/web-chat status`, `/web-chat restart`, `/web-chat doctor`.)
+
+Or just ask, in your own words:
 
 > Sketch this project's architecture as a diagram on the surface.
 
@@ -98,7 +106,14 @@ A few things worth knowing once you're past the first render:
 
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`docs/driving-the-surface.md`](docs/driving-the-surface.md).
 
-**Or bundle the process with the component.** A saved component can carry a host-side service the daemon runs while its pane is open — a git dashboard, a test monitor, a file watcher that refreshes itself, no per-turn driving. The built-in `git-dashboard` is one. See [`docs/service-components.md`](docs/service-components.md).
+**Or bundle the process with the component.** A saved component can carry a host-side service the daemon runs while its pane is open — a git dashboard, a test monitor, a file watcher that refreshes itself, no per-turn driving. The built-in `git-dashboard` is one. Because that's real code running on your machine, the first spawn waits for you to approve it **in your terminal**:
+
+```sh
+claude-web-chat trust                 # what's waiting
+claude-web-chat trust git-dashboard   # approve it (--deny refuses)
+```
+
+The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`. See [`docs/service-components.md`](docs/service-components.md).
 
 ## Channels (experimental)
 
@@ -136,14 +151,23 @@ Sideloading is how you run it today; a Web Store listing is a planned follow-up.
 open                open the surface in your browser (starts the server if needed)
 launch              open the surface and start a Claude session together
 status              show version, daemon state, and install health for this project
+ls [--reap]         every web-chat surface running on this machine, and which
+                    project each one is; --reap stops the others and clears
+                    stale registry entries
 doctor              diagnose and repair daemon / lock / MCP / hook issues
+trust [name]        approve (or --deny) a component's host-side service.js;
+                    with no name, list what's waiting
 stop | restart      stop or bounce the background server
+unlock              clear a turn lock orphaned by an interrupted turn
 export [node]       write a node to a self-contained .html
+docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see “Turning it off”)
 install             first-time setup, and how updates reach a project
 update              reinstall the latest build from the public repo, sync, restart
 uninstall           remove the hooks (your graph data is kept)
 ```
+
+Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start from step 5.
 
 ## Turning it off
 
@@ -159,19 +183,30 @@ Run `update` from any installed project:
 claude-web-chat update
 ```
 
-It reinstalls the latest build from the public repo, reports the version before and after, then syncs *that* project's managed files (the Claude rules and slash command) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite.
+It reinstalls the latest build from the public repo, reports the version before and after, then syncs *that* project's managed files (the Claude rules file, the `/web-chat` command, and the two skills) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite.
 
-For your *other* installed projects, run `claude-web-chat install` in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the server prints a one-line nudge at session start when a refresh is due.
+For your *other* installed projects, run `claude-web-chat install` in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the MCP server logs a one-line nudge at session start when a refresh is due.
+
+The surface also checks for new **GitHub releases** (once a day, cached in `~/.web-chat/`) and shows a dismissible banner linking the release notes when one is newer than your build. Taking the update is always your call from the terminal — the page will not install anything.
 
 Developing from a checkout? `git pull` (plus `npm install` if dependencies changed) is the whole package update — the global command is a symlink into your working copy.
 
 ## What it writes to your machine
 
-- `<project>/.web-chat/` — the graph, saved components, exports, server portfile and log. Gitignored by default.
-- `<project>/.claude/` — hook entries merged into `settings.json`, plus the managed rules file and `/web-chat` slash command.
-- `~/.web-chat/` — per-user state: disable markers and an update-check cache.
+- `<project>/.web-chat/` — the graph, saved components, exports, server portfile and log. `install` adds it to your `.gitignore` (unless a rule for it is already there).
+- `<project>/.claude/` — hook entries merged into `settings.json`, plus the managed rules file, the `/web-chat` slash command, and two skills.
+- `~/.web-chat/` — per-user state: disable markers, the update-check cache, and `services/trusted.json` (which component services you've approved, and for which project).
 
 Nothing else, and `uninstall` removes the hooks while leaving your graph data alone.
+
+## Who can reach it
+
+The server binds **loopback only** (`127.0.0.1`) and is deliberately unauthenticated: anything that can reach the port can read the graph and the shared store, and render arbitrary HTML/JS into your browser. So the bind address *is* the access control.
+
+- Other programs on your machine can drive the surface — that's the point (see "Other processes can draw too"), and it means you should treat a component from an untrusted source the way you'd treat running its code, because that is what it is.
+- The WebSocket upgrade is gated on `Origin`, so a random web page you happen to visit can't open a socket to `ws://localhost:<port>` and read your store. Non-browser clients (drivers, the CLI) send no `Origin` and are unaffected.
+- Captures are only readable cross-origin by the browser extension, not by any site you're browsing.
+- `WEB_CHAT_HOST` overrides the bind address for the deliberate remote case (a dev container, a remote workstation). Setting it exposes all of the above to that interface with no authentication, and the server says so on startup.
 
 ## When something's stuck
 
@@ -179,10 +214,12 @@ Start with `claude-web-chat doctor` — it checks the daemon, portfile, MCP regi
 
 - **Claude's tools return "disabled".** Some scope has web-chat off; `claude-web-chat status` shows which one.
 - **The graph won't let you navigate.** An interrupted turn can orphan the turn lock; `claude-web-chat unlock` clears it.
+- **A dashboard pane is sitting there empty.** Its component ships a `service.js` that hasn't been approved. `claude-web-chat trust` lists what's waiting.
+- **You've lost track of which port is which project.** `claude-web-chat ls` maps every running surface back to its project; `--reap` stops the ones you're done with.
 
 ## Contributing
 
-Development setup, architecture, and how to extend the package live in [`CLAUDE.md`](CLAUDE.md) and [`docs/extending.md`](docs/extending.md). Run the tests with a bare `node --test`.
+Development setup, architecture, and how to extend the package live in [`CLAUDE.md`](CLAUDE.md) and [`docs/extending.md`](docs/extending.md). Run the tests with `npm test` (a bare `node --test`, which auto-discovers `test/` — **not** `node --test test/`, which mis-resolves and reports a spurious failure).
 
 ## License
 

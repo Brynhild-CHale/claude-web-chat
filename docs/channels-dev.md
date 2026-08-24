@@ -16,8 +16,9 @@ Channels is web-chat's **wake path**: everything queues, and the
 user's **Push → Claude** wakes Claude with the batch. When no channel is connected,
 a Push is **parked** and delivered as context on the user's next message (parked
 delivery — see below), so the surface works on every Claude Code build with no dev
-flag. The legacy agent-armed waits (`wait_for` tool / `claude-web-chat watch`) are
-**gone**; `/api/wait` survives only as a driver-only long-poll.
+flag. The legacy agent-armed waits (the `wait_for` tool and the old `watch`
+subcommand) are **gone** — neither exists any more; `/api/wait` survives only as a
+driver-only long-poll.
 
 web-chat's channel is **the existing `web-chat` MCP server** with that capability
 turned on. No new process, no `.mcp.json` change.

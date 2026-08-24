@@ -303,10 +303,13 @@ export function initTopbar() {
   });
 }
 
-// generic popover show/hide (also used by shell.js via the export)
+// generic popover show/hide (also used by shell.js via the export). Any control
+// that declares `aria-controls="<id>"` has its aria-expanded kept in sync here, so
+// the one show/hide path is also the one place the a11y state is told the truth.
 export function togglePopover(id, force) {
   const el = $(id);
   if (!el) return;
   const show = force === undefined ? el.classList.contains('hidden') : force;
   el.classList.toggle('hidden', !show);
+  document.querySelectorAll(`[aria-controls="${id}"]`).forEach((c) => c.setAttribute('aria-expanded', String(show)));
 }

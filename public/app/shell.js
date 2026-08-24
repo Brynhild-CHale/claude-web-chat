@@ -12,12 +12,17 @@ import { openDrawer, spawnComponent } from './drawer.js';
 import { togglePinMode } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
-import { initQueue, pushQueue } from './queue.js';
+import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 function closeAllPopovers() {
-  document.querySelectorAll('.popover:not(.hidden), #settings-panel:not(.hidden), #new-graph-panel:not(.hidden)').forEach(p => p.classList.add('hidden'));
+  document.querySelectorAll('.popover:not(.hidden), #settings-panel:not(.hidden), #new-graph-panel:not(.hidden)').forEach(p => {
+    p.classList.add('hidden');
+    // keep any aria-expanded trigger honest — togglePopover does this on the
+    // normal path, but this bulk close bypasses it.
+    document.querySelectorAll(`[aria-controls="${p.id}"]`).forEach((c) => c.setAttribute('aria-expanded', 'false'));
+  });
   const bp = $('branch-picker'); if (bp) bp.remove();
 }
 
@@ -155,15 +160,27 @@ async function buildPalette(q) {
 }
 function renderPalette() {
   const list = $('cmd-list'); if (!list) return;
-  if (!paletteItems.length) { list.innerHTML = '<div class="palette-empty">no matches</div>'; return; }
+  const inp = $('cmd-input');
+  if (!paletteItems.length) {
+    list.innerHTML = '<div class="palette-empty">no matches</div>';
+    if (inp) inp.removeAttribute('aria-activedescendant');
+    return;
+  }
   list.innerHTML = '';
   paletteItems.forEach((it, i) => {
     const row = document.createElement('div');
     row.className = 'palette-item' + (i === paletteSel ? ' sel' : '');
+    // The rows are divs driven from the input (↑/↓/↵). Give them option semantics
+    // and point aria-activedescendant at the selected one so the keyboard model
+    // the sighted user already has is the one a screen reader is told about.
+    row.id = `cmd-opt-${i}`;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(i === paletteSel));
     row.innerHTML = `<span class="kind">${it.kind}</span><span>${it.label}</span>`;
     row.addEventListener('mousedown', (e) => { e.preventDefault(); runPalette(it); });
     list.appendChild(row);
   });
+  if (inp) inp.setAttribute('aria-activedescendant', `cmd-opt-${paletteSel}`);
 }
 function runPalette(it) { closePalette(); it && it.run && it.run(); }
 function initPalette() {
@@ -200,6 +217,11 @@ function initRail() {
   if (!rail) return;
   rail.addEventListener('pointerenter', () => setRail(true));
   rail.addEventListener('pointerleave', () => { if (!railPinned) setRail(false); });
+  // queue.js raises push confirmations / rejections / recovery buttons inside
+  // .rail-expanded. Give it the ability to PIN the rail open (not just reveal it —
+  // the ack rejection lands 6s later, long after the pointer has left), so no
+  // feedback is ever posted into a container the user can't see or click.
+  setRailOpener(() => { railPinned = true; setRail(true); });
 }
 function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
 
