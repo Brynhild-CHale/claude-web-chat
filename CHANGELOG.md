@@ -26,7 +26,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **The port walk now probes before binding, and web-chat's own clients dial `127.0.0.1` rather than `localhost`.** Both fell out of the loopback bind above: a bind to `127.0.0.1:P` does not collide with a process holding the wildcard `*:P`, so the walk began handing out ports that already had a server on them — and because every internal client resolved the *name* `localhost`, which is both `::1` and `127.0.0.1` on a dual-stack machine, requests could land on whichever daemon that resolution happened to pick. Observed in practice while upgrading: a new loopback-bound daemon took a port a legacy wildcard-bound one still held, and another project's queue started arriving.
 
+### Added
+- **The surface has a first-run state.** `#main` used to be literally empty on first open — every other panel in the app has a considered empty state, and the one thing every new user sees first had none. It now says what the surface is, offers a prompt to paste, and names the four keys that matter (palette, component library, graph, push).
+- **`claude-web-chat ls`** — every surface running on this machine, which project each one is, and on what port. The daemon is one-per-project and its port walks upward from 5173, so this was previously unanswerable; the registry the capture hub keeps already had it. `--reap` stops the ones that aren't the current project and clears stale entries.
+- **`npm test`, and CI.** The suite had never run anywhere but a maintainer's Mac and nothing had ever verified Linux. `npm test` is now the correct entry point (the obvious `node --test test/` misresolves), and GitHub Actions runs it on Ubuntu and macOS across Node 18/20/22.
+- **The connected-browser count is exposed** on `/api/health`. It was already tracked for the service supervisor and never surfaced, so Claude could render into a surface nobody had open, say "take a look", and be told it worked.
+- **`install` writes `.web-chat/` into `.gitignore`.** Three docs already stated it was gitignored and nothing ever wrote the line, so a project was one `git add -A` from committing its graph, portfile and drafts. Idempotent, and it respects a rule you already wrote.
+
 ### Changed
+- **The `UserPromptSubmit` hook no longer claims the render tools will fail.** It said so whenever the daemon was down — but the MCP client auto-spawns and the call succeeds, so the hook was talking Claude out of using the surface on exactly the turns that needed it, on the strength of a false claim. It now reports the thing it never checked: whether a browser is actually watching.
 - `install`'s next steps lead with the ordinary path (restart Claude Code, then `claude-web-chat open`) and present Channels as the optional research preview it is.
 - `status` reports the real channel state — connected, or parked-until-your-next-message — instead of inferring it from project wiring.
 - Server tests sandbox `HOME`, so the suite no longer writes the developer's real `~/.web-chat`.

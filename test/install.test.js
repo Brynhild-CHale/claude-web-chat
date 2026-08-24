@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { ensureMcpRegistration, channelEnv, stripChannelEnv, mcpEntryHasChannelEnv } = require('../lib/update/managed-files');
+const { ensureMcpRegistration, channelEnv, stripChannelEnv, mcpEntryHasChannelEnv, ensureGitignore } = require('../lib/update/managed-files');
 
 // `install` (via ensureMcpRegistration) writes the channels opt-in
 // into the PROJECT's .mcp.json. All tests operate on a tmp root so the dogfood
@@ -146,4 +146,47 @@ test('stripChannelEnv drops only the opt-in, without mutating the input', () => 
   assert.equal(stripChannelEnv({ WEB_CHAT_CHANNEL: '1' }), undefined);
   assert.equal(stripChannelEnv(undefined), undefined);
   assert.equal(stripChannelEnv([]), undefined);
+});
+
+
+// ── .gitignore ───────────────────────────────────────────────────────────────
+// CLAUDE.md, docs/export-pages.md and docs/capture-profiles-and-panes.md all
+// state that `.web-chat/` is gitignored. Nothing ever wrote the line, so every
+// project was one `git add -A` from committing its graph, portfile and drafts.
+
+test('ensureGitignore appends the rule, preserves what is there, and is idempotent', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\n');
+
+  assert.equal(ensureGitignore(root), 'added');
+  const body = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+  assert.match(body, /^node_modules\/$/m, 'existing rules survive');
+  assert.match(body, /^\.web-chat\/$/m);
+
+  assert.equal(ensureGitignore(root), 'already-present');
+  assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), body, 'byte-identical on re-run');
+});
+
+test('ensureGitignore respects a rule the user already wrote, in any form', () => {
+  for (const existing of ['.web-chat', '.web-chat/', '/.web-chat/']) {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.gitignore'), `${existing}\n`);
+    assert.equal(ensureGitignore(root), 'already-present', `${existing} already covers it`);
+    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), `${existing}\n`);
+  }
+});
+
+test('ensureGitignore does not litter a non-git directory', () => {
+  const root = tmpRoot();  // no .git, no .gitignore
+  assert.equal(ensureGitignore(root), 'no-gitignore');
+  assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
+});
+
+test('ensureGitignore creates one in a git repo that has none', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  assert.equal(ensureGitignore(root), 'added');
+  assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\.web-chat\/$/m);
 });

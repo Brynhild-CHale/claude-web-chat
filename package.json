@@ -31,7 +31,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node bin/claude-web-chat.js start"
+    "start": "node bin/claude-web-chat.js start",
+    "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

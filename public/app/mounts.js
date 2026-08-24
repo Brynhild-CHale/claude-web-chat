@@ -115,7 +115,41 @@ export function applyPaneState(wrapper, pane_state) {
   if (mb) { mb.textContent = expanded ? '⊟' : '⊞'; mb.classList.toggle('active', expanded); }
 }
 
+// The zero state. #main used to be literally empty on first open — every OTHER
+// panel in this app has a considered empty state (the queue rail, the graph
+// inspector, the command palette, the node preview), and the one surface every
+// new user sees first had none. The README had to apologise for it.
+//
+// Reconciled from renderMinbar because that is already the "the set of panes
+// changed" hook, called from mount / removePane / clearTarget / fullReset.
+function syncZeroState() {
+  const main = $('main');
+  if (!main) return;
+  const hasPanes = main.querySelector('.pane');
+  const existing = main.querySelector('.zero-state');
+  if (hasPanes) { if (existing) existing.remove(); return; }
+  if (existing) return;
+
+  const box = document.createElement('div');
+  box.className = 'zero-state';
+  const mod = navigator.platform && /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
+  box.innerHTML =
+    '<h2>Nothing rendered yet</h2>' +
+    '<p>This page is Claude\'s second surface. Ask for something visual in your terminal ' +
+    'and it appears here — diagrams, forms, comparisons, working mockups — and every turn ' +
+    'becomes a node you can walk back to.</p>' +
+    '<p class="zs-try">Try: <span class="zs-quote">sketch this project\'s architecture on the surface</span></p>' +
+    '<ul class="zs-keys">' +
+      '<li><kbd>' + mod + '</kbd><kbd>K</kbd> commands, nodes and components</li>' +
+      '<li><kbd>N</kbd> open the component library</li>' +
+      '<li><kbd>G</kbd> the graph of every turn</li>' +
+      '<li><kbd>P</kbd> push what you\'ve done here to Claude</li>' +
+    '</ul>';
+  main.appendChild(box);
+}
+
 export function renderMinbar() {
+  syncZeroState();
   const minbarEl = $('minbar');
   if (!minbarEl) return;
   minbarEl.innerHTML = '';

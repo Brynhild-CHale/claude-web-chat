@@ -57,6 +57,10 @@ const HANDLERS = {
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
     for (const mt of (msg.mounts || [])) mount(mt);
+    // mount() reconciles the minbar and the zero state on its way out — but with
+    // ZERO mounts it never runs, which is exactly the first-open case the zero
+    // state exists for. Reconcile explicitly once hello's mounts have settled.
+    renderMinbar();
     applyNodeTheme(getActiveNodeTheme(), false);
     applyActive(msg.active);
     applyLock(msg.lock);
