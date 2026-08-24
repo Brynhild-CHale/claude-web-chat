@@ -46,16 +46,42 @@ function hashOf(source) {
   return crypto.createHash('sha256').update(source).digest('hex');
 }
 
-// Seed a consent record. USER-tier (ctx.userWebChat), not project-tier: a repo
-// must not be able to ship its own approval and get host code execution on clone.
+// Approve (or deny) exactly the way `claude-web-chat trust` does: read the
+// pending request from the daemon, then WRITE THE USER-TIER TRUST FILE. The
+// browser is deliberately not part of this path — pane scripts share the page's
+// realm and origin, so nothing sent to the page can gate the code being gated.
+// Using the server-reported `key` rather than re-deriving it keeps the test on
+// the real contract, and is what the CLI itself does.
 function trustedPath(ctx) {
   return path.join(ctx.userWebChat, 'services', 'trusted.json');
 }
 
-function trust(ctx, source, name) {
-  const p = trustedPath(ctx);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify({ [hashOf(source)]: { name, approved_at: 1 } }, null, 2));
+async function pendingFor(ctx, name) {
+  const { pending } = (await ctx.api.get('/api/services/pending')).json;
+  return pending.filter((p) => p.name === name);
+}
+
+async function approve(ctx, name, { deny = false } = {}) {
+  const match = await waitUntil(async () => {
+    const p = await pendingFor(ctx, name);
+    return p.length ? p : false;
+  }, { timeout: 4000 });
+  assert.ok(match, `expected a pending trust request for "${name}"`);
+  const file = trustedPath(ctx);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  for (const p of match) {
+    data[p.key] = { name: p.name, hash: p.hash, root: p.root, params: p.params, approved: !deny, approved_at: 1 };
+  }
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  await ctx.api.post('/api/services/refresh-trust', {});
+  return match;
+}
+
+// Mount a service-backed component and approve it — the ordinary first-run flow.
+async function useApproved(ctx, name, id, params) {
+  await ctx.api.post(`/api/components/${name}/use`, params ? { id, params } : { id });
+  await approve(ctx, name);
 }
 
 // Open a viewer socket, resolve once hello arrives, and collect every frame.
@@ -80,12 +106,10 @@ test('services: spawn on active use — child runs and the store clock advances'
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'clock', source: '<p>clock</p>', description: 'clock', service: CLOCK_SERVICE });
-  trust(ctx, CLOCK_SERVICE, 'clock');
-
   const { sock } = await openViewer(ctx);
   t.after(() => { try { sock.close(); } catch {} });
 
-  await api.post('/api/components/clock/use', { id: 'm1' });
+  await useApproved(ctx, 'clock', 'm1');
 
   assert.ok(await waitUntil(() => children(ctx).has('m1')), 'child spawned for the active pane');
   const first = await waitUntil(async () => (await api.get('/api/store')).json.clock);
@@ -99,11 +123,10 @@ test('services: stop on clear — clearing the pane stops the child', async (t) 
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
-  trust(ctx, CLOCK_SERVICE, 'clock');
   const { sock } = await openViewer(ctx);
   t.after(() => { try { sock.close(); } catch {} });
 
-  await api.post('/api/components/clock/use', { id: 'm1' });
+  await useApproved(ctx, 'clock', 'm1');
   assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
 
   await api.post('/api/clear', { id: 'm1' });
@@ -114,12 +137,11 @@ test('services: graph-aware — stops on navigate-away, respawns on navigate-bac
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
-  trust(ctx, CLOCK_SERVICE, 'clock');
   const { sock } = await openViewer(ctx);
   t.after(() => { try { sock.close(); } catch {} });
 
   // Put the service pane on the surface and commit it as a node.
-  await api.post('/api/components/clock/use', { id: 'm1' });
+  await useApproved(ctx, 'clock', 'm1');
   assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned on the live surface');
   const committed = await api.post('/api/commit', { message: 'has-service' });
   const nodeA = committed.json.node_id;
@@ -139,10 +161,8 @@ test('services: last-viewer disconnect stops children; reconnect respawns', asyn
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
-  trust(ctx, CLOCK_SERVICE, 'clock');
-
   const v1 = await openViewer(ctx);
-  await api.post('/api/components/clock/use', { id: 'm1' });
+  await useApproved(ctx, 'clock', 'm1');
   assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned with a viewer present');
 
   await new Promise((r) => { v1.sock.on('close', r); v1.sock.close(); });
@@ -153,7 +173,7 @@ test('services: last-viewer disconnect stops children; reconnect respawns', asyn
   assert.ok(await waitUntil(() => children(ctx).has('m1')), 'respawned when a viewer reconnected');
 });
 
-test('services: trust gate blocks first spawn; approval unblocks it', async (t) => {
+test('services: trust gate blocks the spawn, and ONLY a filesystem write unblocks it', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
@@ -163,43 +183,58 @@ test('services: trust gate blocks first spawn; approval unblocks it', async (t) 
 
   await api.post('/api/components/clock/use', { id: 'm1' });
 
-  // No child, but a trust prompt was broadcast to the viewer. It must be its OWN
-  // frame type — NOT a `render`. A render carried a `target`, and the client
-  // resolves an unknown target with `$(target) || $('main')`; the old code sent
-  // target:'overlay', which is a real element (the graph viewer, display:none),
-  // so the prompt was invisible and no service could ever be approved.
+  // The browser is TOLD about the request, but is given nothing that could grant
+  // it. Pane scripts run in the page's own realm with document/fetch/WebSocket
+  // and no CSP, so anything sent here — a nonce, a token — is readable by the
+  // very code being gated. The frame is informational: a name and a command.
   const prompt = await waitUntil(
     () => frames.find((f) => f.type === 'service:trust' && f.hash === hashOf(CLOCK_SERVICE)),
     { timeout: 4000 },
   );
-  assert.ok(prompt, 'trust prompt broadcast on its own frame type');
-  assert.equal(prompt.name, 'clock');
-  assert.ok(prompt.nonce, 'prompt carries a nonce');
+  assert.ok(prompt, 'the viewer is told a service is waiting');
+  assert.match(prompt.command, /claude-web-chat trust clock/, 'it names the terminal command');
+  assert.equal(prompt.nonce, undefined, 'no capability is shipped to the page');
   assert.ok(!frames.some((f) => f.type === 'render' && String(f.id).startsWith('wc-service-approve')),
-    'trust prompt is never a mount (a pane target could hide it)');
+    'the notice is never a mount — a pane target could hide it');
   await sleep(300);
   assert.equal(children(ctx).has('m1'), false, 'trust gate blocked the spawn');
 
-  // A store write must NOT be able to approve — any pane can write the store, so
-  // the old control-key path let a component approve its own service.js.
-  sock.send(JSON.stringify({ type: 'store:set', patch: { wc_service_approval: { seq: 2, hash: hashOf(CLOCK_SERVICE), name: 'clock', decision: 'approve' } } }));
-  await sleep(400);
-  assert.equal(children(ctx).has('m1'), false, 'a store key cannot grant host execution');
+  // Every in-page route a hostile pane could take must be a no-op.
+  sock.send(JSON.stringify({ type: 'store:set', patch: { wc_service_approval: { hash: hashOf(CLOCK_SERVICE), name: 'clock', decision: 'approve' } } }));
+  sock.send(JSON.stringify({ type: 'service:decision', hash: hashOf(CLOCK_SERVICE), decision: 'approve', nonce: 'anything' }));
+  await sleep(500);
+  assert.equal(children(ctx).has('m1'), false, 'nothing sent from the page can grant host execution');
 
-  // Nor may a decision frame carrying the wrong nonce.
-  sock.send(JSON.stringify({ type: 'service:decision', hash: hashOf(CLOCK_SERVICE), decision: 'approve', nonce: 'not-the-nonce' }));
-  await sleep(400);
-  assert.equal(children(ctx).has('m1'), false, 'a forged nonce cannot grant host execution');
+  // The real path: the CLI writes the user-tier trust file.
+  await approve(ctx, 'clock');
 
-  // The real path: the chrome modal returns the server-issued nonce.
-  sock.send(JSON.stringify({ type: 'service:decision', hash: hashOf(CLOCK_SERVICE), decision: 'approve', nonce: prompt.nonce }));
-
-  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'child spawns after approval');
-  // approval was persisted to trusted.json
-  const trusted = JSON.parse(fs.readFileSync(trustedPath(ctx), 'utf8'));
-  assert.ok(trusted[hashOf(CLOCK_SERVICE)], 'approval persisted (content-hash keyed)');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'child spawns once consent is on disk');
   assert.ok(!fs.existsSync(path.join(ctx.webChatDir, 'services', 'trusted.json')),
     'consent is never written inside the project — a repo could otherwise ship it');
+});
+
+test('services: approving one params shape does not approve another', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  // Approve the no-params form only.
+  await useApproved(ctx, 'clock', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'the approved shape runs');
+  await api.post('/api/clear', { id: 'm1' });
+  await sleep(300);
+
+  // Spawning with params is a DIFFERENT request. This is what stops an approval
+  // of `file-editor` (fenced to the project) silently covering `unfenced:true`.
+  await api.post('/api/components/clock/use', { id: 'm2', params: { unfenced: true } });
+  await sleep(600);
+  assert.equal(children(ctx).has('m2'), false, 'different params re-ask rather than inherit the grant');
+
+  const pending = (await api.get('/api/services/pending')).json.pending;
+  assert.ok(pending.some((p) => p.name === 'clock' && p.params && p.params.unfenced === true),
+    'the pending request reports the params the user is being asked about');
 });
 
 test('services: a denied service stays denied across viewers', async (t) => {
@@ -212,7 +247,8 @@ test('services: a denied service stays denied across viewers', async (t) => {
 
   const first = await waitUntil(() => v1.frames.find((f) => f.type === 'service:trust'), { timeout: 4000 });
   assert.ok(first, 'prompted on first use');
-  v1.sock.send(JSON.stringify({ type: 'service:decision', hash: first.hash, decision: 'deny', nonce: first.nonce }));
+  // `claude-web-chat trust clock --deny` records the refusal on disk.
+  await approve(ctx, 'clock', { deny: true });
   await sleep(400);
   assert.equal(children(ctx).has('m1'), false, 'denied service does not run');
 
@@ -224,11 +260,11 @@ test('services: a denied service stays denied across viewers', async (t) => {
   t.after(() => { try { v2.sock.close(); } catch {} });
   await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
   await sleep(600);
-  assert.equal(v2.frames.some((f) => f.type === 'service:trust'), false, 'a denied hash is not re-prompted');
+  assert.equal(v2.frames.some((f) => f.type === 'service:trust'), false, 'a denied request is not re-prompted');
   assert.equal(children(ctx).has('m1'), false, 'still not running');
 });
 
-test('services: an UNDECIDED prompt is re-issued after the last viewer leaves', async (t) => {
+test('services: an UNDECIDED prompt is re-announced to every arriving viewer', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
@@ -236,28 +272,26 @@ test('services: an UNDECIDED prompt is re-issued after the last viewer leaves', 
   await api.post('/api/components/clock/use', { id: 'm1' });
   assert.ok(await waitUntil(() => v1.frames.find((f) => f.type === 'service:trust'), { timeout: 4000 }), 'prompted');
 
-  // The user refreshes instead of answering. The prompt lived only in that
-  // browser, so it died with the socket — and the supervisor's `prompted` memo
-  // used to keep the hash forever, leaving the service permanently unpromptable:
-  // the pane just waited with no prompt and no error, for the life of the daemon.
-  v1.sock.close();
-  await sleep(400);
+  // A SECOND viewer arrives while the first is still connected, so the viewer
+  // count never touches zero. Re-announcing only on a zero transition was not
+  // enough: with another tab open — or a half-open socket the 30s heartbeat has
+  // not yet reaped — a refreshing user would see the pane sitting there with no
+  // explanation at all.
   const v2 = await openViewer(ctx);
   t.after(() => { try { v2.sock.close(); } catch {} });
-  await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
+  t.after(() => { try { v1.sock.close(); } catch {} });
   assert.ok(await waitUntil(() => v2.frames.some((f) => f.type === 'service:trust'), { timeout: 4000 }),
-    're-prompted for the fresh viewer');
+    're-announced to the arriving viewer even though a viewer was already connected');
 });
 
 test('services: a crashing service is recorded and not respawned', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
   await api.post('/api/components', { name: 'crasher', source: '<p>x</p>', description: 'x', service: CRASH_SERVICE });
-  trust(ctx, CRASH_SERVICE, 'crasher');
   const { sock } = await openViewer(ctx);
   t.after(() => { try { sock.close(); } catch {} });
 
-  await api.post('/api/components/crasher/use', { id: 'm1' });
+  await useApproved(ctx, 'crasher', 'm1');
 
   // It spawns, crashes, is removed, and does not come back.
   assert.ok(await waitUntil(() => !children(ctx).has('m1'), { timeout: 4000 }), 'crashed child removed');

@@ -96,20 +96,61 @@ recorded and not hot-looped — the child won't respawn until `service.js` chang
 
 ## Trust
 
-Running host code from a saved artifact is gated. On the first attempt to spawn a
-given service, the daemon renders a **WS-only overlay** approve/deny pane (never a
-real mount, so it's never committed to the graph). Approval is persisted:
+Running host code from a saved artifact is gated, and **the decision is made in
+your terminal, not on the surface**:
 
-```json
-// .web-chat/services/trusted.json
-{ "<sha256 of service.js>": { "name": "git-dashboard", "approved_at": 1720000000000 } }
+```sh
+claude-web-chat trust              # list what is waiting
+claude-web-chat trust git-dashboard        # approve it
+claude-web-chat trust git-dashboard --deny # refuse it
 ```
 
-Trust is keyed by the **content hash** of `service.js`, so editing the service
-produces a new hash and re-prompts — you always approve the exact bytes that will
-run. Approval flows as a plain store write (`wc_service_approval`) the supervisor
-taps off the bus; it is deliberately **not** a declared signal, so it never wakes
-Claude — the supervisor is the audience.
+The surface shows a notice naming the component and the command to run. That
+notice grants nothing, and it deliberately cannot: pane scripts are compiled with
+`new Function` and run in the surface's own window realm with `document`, `fetch`
+and `WebSocket`, and no CSP is served. A pane can therefore synthesise a click on
+any button in the page, open its own same-origin socket and read anything the
+server broadcasts to the shell, and call any localhost endpoint. Nothing
+delivered to that page — a nonce, a token, a hidden node — is a secret from the
+very code the gate exists to gate. The filesystem is: only a real shell writes
+there.
+
+Approval is persisted in the **user tier**, not the project:
+
+```json
+// ~/.web-chat/services/trusted.json
+{ "<trust key>": {
+    "name": "git-dashboard",
+    "hash": "<sha256 of service.js>",
+    "root": "/Users/you/Dev/my-project",
+    "params": {},
+    "approved": true,
+    "approved_at": 1720000000000
+} }
+```
+
+It lives outside the project because a project could otherwise ship its own
+approval — commit `.web-chat/services/trusted.json` and cloning the repo would
+run its `service.js` unprompted.
+
+The trust key covers **(project root, `service.js` hash, params shape)**, so each
+of these asks again:
+
+- **editing the service** — you always approve the exact bytes that will run;
+- **the same component in another project** — a service reads and writes the
+  project it is spawned under, so one approval must not become a machine-wide
+  capability that every repo you later clone inherits;
+- **different params** — `file-editor` takes `unfenced: true`, which lifts its
+  writes out of the project root. Approving the fenced form must not silently
+  approve the unfenced one.
+
+A denial is recorded the same way, so a refused service stops asking.
+
+> **Scope of this gate.** It governs whether a *host process* runs. It is not a
+> sandbox for pane code: a component's pane JavaScript is fully privileged in the
+> surface's origin whether or not its service is approved. Treat installing a
+> component from an untrusted source as you would running its code — because that
+> is what it is.
 
 ## Talking to the pane: the store + a control key
 

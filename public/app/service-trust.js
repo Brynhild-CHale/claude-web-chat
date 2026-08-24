@@ -1,25 +1,26 @@
-// Service trust prompt — CHROME, deliberately not a mount.
+// Service trust notice — INFORMATIONAL ONLY. It grants nothing.
 //
-// This is the gate that decides whether a component's service.js runs as a host
-// process on the user's machine, so it must satisfy two things a pane cannot:
+// A component's `service.js` runs as a host process on the user's machine, so
+// approving one is a real privilege decision. That decision deliberately does
+// NOT happen here, because this page cannot make it safely:
 //
-//  1. It must be impossible to miss. It used to be sent as a render targeting
-//     'overlay', which resolves to the graph-viewer div (display:none until the
-//     user presses G) — so the prompt was invisible and services could never be
-//     approved at all.
-//  2. It must be impossible to forge. The decision used to travel as an ordinary
-//     store key, which any pane can write — a component could mount a second
-//     pane and approve its own service. Mounts use OPEN shadow roots, so a
-//     per-prompt nonce hidden in the prompt's DOM would not have helped either.
+//   Pane scripts are compiled with `new Function` and run in this same window
+//   realm (public/mount-runtime.js) with `document`, `fetch` and `WebSocket`,
+//   and no CSP is served. A pane can therefore synthesise a click on any button
+//   in this UI, open its own same-origin socket and read anything the server
+//   broadcasts to the shell, and call any localhost endpoint. Nothing delivered
+//   to this page — a nonce, a token, a hidden DOM node — is a secret from the
+//   very code the gate exists to gate. And a repository can commit
+//   `.web-chat/draft.json` plus a component directory, which the daemon restores
+//   at boot, so "clone a repo and run open" is enough to get a pane script
+//   running.
 //
-// Living in chrome fixes both: the modal is painted into the document by the
-// shell, and the decision goes back on a dedicated `service:decision` WS frame
-// that pane JS has no way to send (panes get `store`, never the socket).
+// So consent lives where pane JS cannot reach it: the filesystem, written by
+// `claude-web-chat trust` in the terminal. This card exists purely to tell the
+// user that a service is waiting and which command to run.
 
-import { send } from './ws.js';
-
-// hash -> nonce for prompts currently on screen.
-const outstanding = new Map();
+// hash -> { name, command }
+const pending = new Map();
 let host = null;
 
 function ensureHost() {
@@ -27,6 +28,8 @@ function ensureHost() {
   host = document.createElement('div');
   host.id = 'service-trust';
   host.className = 'svc-trust-host hidden';
+  host.setAttribute('role', 'status');
+  host.setAttribute('aria-live', 'polite');
   document.body.appendChild(host);
   return host;
 }
@@ -39,62 +42,40 @@ function esc(s) {
 
 function repaint() {
   const el = ensureHost();
-  if (!outstanding.size) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  if (!pending.size) { el.classList.add('hidden'); el.innerHTML = ''; return; }
   el.classList.remove('hidden');
-  el.innerHTML = [...outstanding.entries()].map(([hash, o]) => (
+  el.innerHTML = [...pending.entries()].map(([hash, p]) => (
     '<div class="svc-trust-card" data-hash="' + esc(hash) + '">' +
-      '<h3>Run host service for &ldquo;' + esc(o.name) + '&rdquo;?</h3>' +
-      '<p>This component ships a <code>service.js</code> that will run as a process ' +
-        'on your machine while its pane is open. It can read and write files with ' +
-        'your permissions.</p>' +
-      '<p class="svc-trust-hash">service.js sha256: <code>' + esc(String(hash).slice(0, 16)) + '&hellip;</code></p>' +
-      '<div class="svc-trust-row">' +
-        '<button class="svc-trust-no" data-decide="deny">Deny</button>' +
-        '<button class="svc-trust-ok" data-decide="approve">Approve &amp; run</button>' +
-      '</div>' +
+      '<h3>&ldquo;' + esc(p.name) + '&rdquo; is waiting for approval</h3>' +
+      '<p>This component ships a <code>service.js</code> that would run as a process ' +
+        'on your machine, with your permissions, while its pane is open.</p>' +
+      '<p>Approving is a terminal action — it cannot be done from this page, ' +
+        'because a component&rsquo;s own code runs here too. In your terminal:</p>' +
+      '<pre class="svc-trust-cmd"><code>' + esc(p.command) + '</code></pre>' +
+      '<p class="svc-trust-foot">Run it with <code>--deny</code> to refuse and stop being asked. ' +
+        'The pane stays inert until you decide.</p>' +
     '</div>'
   )).join('');
 }
 
-function decide(hash, decision) {
-  const o = outstanding.get(hash);
-  if (!o) return;
-  outstanding.delete(hash);
-  send({ type: 'service:decision', hash, decision, nonce: o.nonce });
-  repaint();
-}
-
-// Delegated: the card list is re-rendered on every change, so bind once on the host.
-function bind() {
-  const el = ensureHost();
-  if (el.dataset.bound) return;
-  el.dataset.bound = '1';
-  el.addEventListener('click', (ev) => {
-    const btn = ev.target.closest('[data-decide]');
-    if (!btn) return;
-    const card = btn.closest('[data-hash]');
-    if (card) decide(card.dataset.hash, btn.dataset.decide);
-  });
-}
-
-// A prompt is meaningful only while this socket is up: the server drops its
-// outstanding-prompt memo when the last viewer disconnects, so a nonce held
-// across a reconnect would no longer match. Clear on disconnect and let the
-// server re-prompt.
+// The notice reflects live server state; it is re-announced whenever a viewer
+// connects, so dropping it on disconnect just avoids showing a stale card.
 export function resetTrustPrompts() {
-  outstanding.clear();
+  pending.clear();
   repaint();
 }
 
 export function onTrustPrompt(msg) {
-  if (!msg || !msg.hash || !msg.nonce) return;
-  bind();
-  outstanding.set(msg.hash, { name: msg.name || 'service', nonce: msg.nonce });
+  if (!msg || !msg.hash) return;
+  pending.set(msg.hash, {
+    name: msg.name || 'service',
+    command: msg.command || `claude-web-chat trust ${msg.name || ''}`.trim(),
+  });
   repaint();
 }
 
 export function onTrustClear(msg) {
   if (!msg || !msg.hash) return;
-  outstanding.delete(msg.hash);
+  pending.delete(msg.hash);
   repaint();
 }

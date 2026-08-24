@@ -183,12 +183,15 @@ Team/Enterprise needs `channelsEnabled`). Custom/development channels need the
 WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat
 ```
 
-- `WEB_CHAT_CHANNEL=1` gates the capability declaration + bridge start. `install`
-  writes it into the project's `.mcp.json` env, so the only thing the
-  user adds by hand is the launch flag. **Unset, the capability isn't declared and
-  the bridge doesn't start** — a Push then **parks** and rides the user's next message
-  (parked delivery), so the surface still works, just without live
-  wakes.
+- `WEB_CHAT_CHANNEL=1` gates the capability declaration + bridge start. It is
+  supplied **only on this launch line**, never written into the project's
+  `.mcp.json`. It used to be: that made the bridge start in *every* session,
+  including ones launched without the flag, where it would write a Push to stdout
+  with nothing behind it, self-ack, and report "Delivered to Claude ✓" while the
+  batch was dropped and the parked fallback never ran. `install`, `update` and
+  `doctor` now remove a stale one. **Unset, the capability isn't declared and the
+  bridge doesn't start** — a Push then **parks** and rides the user's next message
+  (parked delivery), so the surface still works, just without live wakes.
 - A channel notification fired while no session is listening is **dropped by the
   harness** — but the daemon is the buffer of record (queue/store/graph persist), and
   a Push with no consumer **parks** rather than dropping (parked delivery), so the UX

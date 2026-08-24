@@ -104,7 +104,7 @@ A few things worth knowing once you're past the first render:
 
 Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch.
 
-**It works with or without the Channels capability.** `claude-web-chat install` already wires `WEB_CHAT_CHANNEL=1` into this project's MCP entry, so the one thing left for a *live, no-prompt* wake is to launch Claude Code with the capability flag:
+**It works with or without the Channels capability.** For a *live, no-prompt* wake, launch Claude Code with both the env var and the capability flag — they belong together on the launch line, so a session can never claim a channel it doesn't have:
 
 ```sh
 WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat
