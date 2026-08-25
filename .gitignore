@@ -1,5 +1,6 @@
 node_modules/
 .web-chat/
+dist/
 .claude/settings.json
 .DS_Store
 .thumbnail

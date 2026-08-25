@@ -22,7 +22,15 @@ One line in a terminal:
 curl -fsSL https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main/install.sh | sh
 ```
 
-That checks you have Node 18+, installs the `claude-web-chat` command globally from the public repo (no npm registry involved), and prints the next step. The script is short and does nothing but that — [read it](https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main/install.sh) before piping it to a shell if you like.
+That checks you have Node 18+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
+
+```
+~/.web-chat/versions/0.5.0/     the release, self-contained (dependencies included)
+~/.web-chat/current      ->     versions/0.5.0      (rollback = one symlink swap)
+~/.local/bin/claude-web-chat -> ~/.web-chat/current/bin/claude-web-chat.js
+```
+
+The script is short and does nothing but that — [read it](https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main/install.sh) before piping it to a shell if you like. Re-running it is always safe.
 
 Verify it worked:
 
@@ -30,18 +38,20 @@ Verify it worked:
 claude-web-chat help
 ```
 
-You should see the command list. If your shell can't find it, check that npm's global bin directory is on your PATH.
+You should see the command list. If your shell can't find it, `~/.local/bin` isn't on your PATH — the installer prints the exact `export PATH=…` line to add to your shell profile.
 
-**Developing on web-chat itself?** Install from a checkout instead, so your edits take effect on the next invocation:
+`claude-web-chat version` answers a question that matters more than it sounds: **which copy am I actually running?** It prints the running tree, what `~/.web-chat/current` points at, and what the `claude-web-chat` on your PATH resolves to, and shouts if those disagree.
+
+**On Windows, use WSL2.** web-chat is installed and run inside your WSL2 Linux environment like any other Linux install; there is no native Windows installer.
+
+**Developing on web-chat itself?** Work from a checkout and run it in place — see [`docs/extending.md`](docs/extending.md), which also explains why `npm link` is the one thing not to do here:
 
 ```sh
 git clone https://github.com/Brynhild-CHale/claude-web-chat.git
 cd claude-web-chat
 npm install
-npm link
+node bin/claude-web-chat.js help
 ```
-
-`npm link` puts the command on your PATH from your working copy. See [`docs/extending.md`](docs/extending.md) for the development setup.
 
 ### 2. Wire it into a project
 
@@ -137,13 +147,7 @@ Page captures — the "web" half of web-chat — come from a small Chrome extens
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode** (top-right toggle).
-3. Click **Load unpacked** and choose the extension folder inside your global install. Find the path with:
-
-   ```sh
-   npm root -g
-   ```
-
-   The folder is `<that path>/claude-web-chat/extensions/tab-stream`.
+3. Click **Load unpacked** and choose the extension folder inside your install: `~/.web-chat/current/extensions/tab-stream`. Or let web-chat show you — `claude-web-chat open extensions` opens a page that names the exact folder for your machine (the path differs for a dev checkout).
 
 Sideloading is how you run it today; a Web Store listing is a planned follow-up.
 
@@ -162,6 +166,7 @@ ls [--reap]         every web-chat surface running on this machine, and which
 doctor              diagnose and repair daemon / lock / MCP / hook issues
 trust [name]        approve (or --deny) a component's host-side service.js;
                     with no name, list what's waiting
+version             which version, and which tree it is actually running from
 stop | restart      stop or bounce the background server
 unlock              clear a turn lock orphaned by an interrupted turn
 export [node]       write a node to a self-contained .html
@@ -169,8 +174,10 @@ docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see “Turning it off”)
 init                the one entry point: first-run setup + tutorial, or orient/repair
 install             the setup step on its own, and how updates reach a project
-update              reinstall the latest build from the public repo, sync, restart
-uninstall           remove the hooks (your graph data is kept)
+update              install the latest GitHub release (checksum-verified), sync,
+                    restart; --list shows versions on disk, --to <v> rolls back
+uninstall           remove the hooks (your graph data is kept); --self also
+                    removes the program itself
 ```
 
 Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start from step 5.
@@ -189,21 +196,33 @@ Run `update` from any installed project:
 claude-web-chat update
 ```
 
-It reinstalls the latest build from the public repo, reports the version before and after, then syncs *that* project's managed files (the Claude rules file, the `/web-chat` command, and the two skills) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite.
+It resolves the latest GitHub Release, downloads the tarball and its `SHA256SUMS`, **verifies the checksum before unpacking anything**, unpacks into `~/.web-chat/versions/<version>/`, swaps the `~/.web-chat/current` symlink, restarts the background server, reports the version before and after, and syncs *that* project's managed files (the Claude rules file, the `/web-chat` command, and the two skills) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite.
 
 For your *other* installed projects, run `claude-web-chat init` (or `install`) in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the MCP server logs a one-line nudge at session start when a refresh is due.
 
+A failed or tampered download changes nothing: `current` only moves after a complete, verified unpack, so the install you have is the one you keep.
+
+Old versions stay unpacked (the newest three), which makes a rollback a symlink swap rather than a reinstall:
+
+```sh
+claude-web-chat update --list        # what's on disk, and which one is live
+claude-web-chat update --to 0.4.0    # go back to it — no download, no network
+```
+
+**`update` refuses to run from a git checkout**, loudly, and tells you to `git pull` instead. That is deliberate. npm's global prefix is a shared directory, and an unrelated `npm i -g` once replaced this package's link to a dev checkout with a copy of a build from 16 days earlier — green tests, ancient binary, no warning anywhere. Releases now live in a directory only this program writes, and `claude-web-chat version` will always tell you which tree you are running.
+
 The surface also checks for new **GitHub releases** (once a day, cached in `~/.web-chat/`) and shows a dismissible banner linking the release notes when one is newer than your build. Taking the update is always your call from the terminal — the page will not install anything.
 
-Developing from a checkout? `git pull` (plus `npm install` if dependencies changed) is the whole package update — the global command is a symlink into your working copy.
+Developing from a checkout? `git pull` (plus `npm install` if dependencies changed) is the whole package update.
 
 ## What it writes to your machine
 
 - `<project>/.web-chat/` — the graph, saved components, exports, server portfile and log. `install` adds it to your `.gitignore` (unless a rule for it is already there).
 - `<project>/.claude/` — hook entries merged into `settings.json`, plus the managed rules file, the `/web-chat` slash command, and two skills.
-- `~/.web-chat/` — per-user state: disable markers, the update-check cache, and `services/trusted.json` (which component services you've approved, and for which project).
+- `~/.web-chat/` — the program itself (`versions/<version>/` plus the `current` symlink) and per-user state: disable markers, the update-check cache, saved themes, and `services/trusted.json` (which component services you've approved, and for which project).
+- `~/.local/bin/` — three symlinks (`claude-web-chat`, `-mcp`, `-hook`) pointing at `~/.web-chat/current/bin/`.
 
-Nothing else, and `uninstall` removes the hooks while leaving your graph data alone.
+Nothing else — no system directories, and nothing needing sudo. `uninstall` removes this project's hooks while leaving your graph data alone; `claude-web-chat uninstall --self` also removes the program (the `~/.local/bin` links and every unpacked version), leaving per-user state and every project's graph in place.
 
 ## Who can reach it
 

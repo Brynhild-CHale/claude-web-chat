@@ -158,9 +158,12 @@ there is a real one.
 
 **Close — the three rough edges, stated plainly.**
 
-- `claude-web-chat update` today shells out to
-  `npm i -g git+https://github.com/Brynhild-CHale/claude-web-chat.git`. Distribution is
-  moving to GitHub Releases and this command has not caught up.
+- `claude-web-chat update` takes the latest **GitHub Release**: it verifies the
+  download's SHA-256 before unpacking it into `~/.web-chat/versions/<version>/`, swaps
+  the `~/.web-chat/current` symlink, and restarts the daemon. No npm anywhere.
+  `--to <version>` rolls back to a version still on disk. On a git checkout it
+  refuses and tells you to `git pull` — `claude-web-chat version` shows which tree
+  you are actually running.
 - Channels is a gated research preview. Quote the launch command from the init report
   verbatim — never invent or fork it.
 - Page capture needs the browser extension sideloaded; `claude-web-chat open extensions`

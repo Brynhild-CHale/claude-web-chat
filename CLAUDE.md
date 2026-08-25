@@ -11,10 +11,16 @@ Note: `.claude/rules/web-chat.md` in this repo is the **end-user-facing rules fi
 ## Commands
 
 ```sh
-npm install && npm link   # symlink the 3 bin scripts onto PATH (dev setup)
+npm install               # dev setup; run the CLI in place: node bin/claude-web-chat.js <cmd>
 node --test               # run the full test suite (Node built-in runner, test/*.test.js)
 node --test test/root.test.js   # run a single test file
+node scripts/build-release.js   # build the release tarball + SHA256SUMS into dist/
 ```
+
+> ⚠️ Do **not** `npm link` this package. npm's global prefix is shared mutable
+> state — an unrelated `npm i -g` silently replaced that link with a 16-day-old
+> copied build once already. See `docs/extending.md` for how to put a checkout on
+> PATH deliberately; `claude-web-chat version` always reports which tree is running.
 
 There is no build step (plain CommonJS) and no lint config. `npm start` / `node bin/claude-web-chat.js start` runs the server in the foreground; `claude-web-chat` is the user-facing CLI (`open`, `stop`, `restart`, `unlock`, `install`, `on`/`off`, `status`, `update`).
 
@@ -69,4 +75,4 @@ Dependency direction is one-way: `core` ← `client` ← everything else, and `c
 - CommonJS (`require`/`module.exports`), Node 18+, no transpile.
 - **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` / `require('node:readline` outside its single allowed home (the count can only shrink toward the home). Run the suite with bare `node --test`. See `docs/extending.md`.
 - Forward-compat stubs exist for Claude Code plugin packaging: `.claude-plugin/plugin.json` and `.mcp.json` use `${CLAUDE_PLUGIN_ROOT}` to resolve bin paths.
-- Distribution is the public git repo, not the npm registry: MIT-licensed v0.3.0, installed via `install.sh` and updated in place with `claude-web-chat update`. `package.json` keeps `"private": true` as an anti-publish guard — it makes an accidental `npm publish` fail fast.
+- **Distribution is GitHub Releases — npm is not involved at any point.** `scripts/build-release.js` builds a self-contained, reproducible `claude-web-chat-<version>.tar.gz` (the `files` allowlist plus production `node_modules`, since the four runtime deps mean a source tarball cannot run) plus `SHA256SUMS`; `.github/workflows/release.yml` attaches both to the release on a `v*` tag. `install.sh` and `claude-web-chat update` download it, verify the checksum, unpack into `~/.web-chat/versions/<v>/`, swap the `~/.web-chat/current` symlink and link three bins into `~/.local/bin` — no sudo, and `update --to <v>` rolls back to a version still on disk. `update` refuses to run from a git checkout or any other unmanaged copy (`lib/update/install-layout.js`). Windows means WSL2. `package.json` keeps `"private": true` as an anti-publish guard — it makes an accidental `npm publish` fail fast.

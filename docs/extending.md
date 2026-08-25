@@ -9,15 +9,37 @@ keeps them singular.
 git clone https://github.com/Brynhild-CHale/claude-web-chat.git
 cd claude-web-chat
 npm install
-npm link
+node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
-`npm link` symlinks the three bin scripts (`claude-web-chat`, `-mcp`, `-hook`)
-onto your PATH so the CLI, MCP server, and hook helper all resolve to your working
-copy — edit and re-run, no reinstall cycle. After a `git pull` the symlinked bins
-already point at the new code. Run the suite with `npm test` — that is a bare
-`node --test`, which auto-discovers `test/`; **not** `node --test test/`, which
-mis-resolves and reports a spurious failure.
+Run the suite with `npm test` — that is a bare `node --test`, which auto-discovers
+`test/`; **not** `node --test test/`, which mis-resolves and reports a spurious
+failure.
+
+**Do not use `npm link`.** npm's global prefix is a shared mutable directory: any
+later `npm i -g` of anything rewrites what lives there, and that is not
+hypothetical — it silently replaced this package's link to a dev checkout with a
+copied build from 16 days earlier. The checkout's tests stayed green while the
+`claude-web-chat` on PATH was ancient, and the first symptom was `unknown
+command` for a command written that morning. Releases now install into
+`~/.web-chat/versions/<v>/` with `~/.local/bin` symlinks, and nothing but this
+program writes there.
+
+To put a checkout on your PATH, link it yourself and know what you are doing:
+
+```sh
+ln -sf "$(pwd)/bin/claude-web-chat.js"      ~/.local/bin/claude-web-chat
+ln -sf "$(pwd)/bin/claude-web-chat-mcp.js"  ~/.local/bin/claude-web-chat-mcp
+ln -sf "$(pwd)/bin/claude-web-chat-hook.js" ~/.local/bin/claude-web-chat-hook
+```
+
+That *shadows* any installed release (the release's own links live at the same
+three paths). `claude-web-chat version` always prints which tree it is running
+from, what `~/.web-chat/current` points at, and what the command on your PATH
+resolves to — check it whenever behaviour and source disagree. `claude-web-chat
+update` refuses outright on a checkout: a checkout is updated with `git pull`,
+and rewriting `~/.web-chat/versions/` would change nothing you actually run.
+Re-run `install.sh` to put the release links back.
 
 ### Loading the MCP tools when dogfooding this repo
 
