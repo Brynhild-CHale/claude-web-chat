@@ -132,7 +132,13 @@ function syncZeroState() {
 
   const box = document.createElement('div');
   box.className = 'zero-state';
-  const mod = navigator.platform && /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
+  // `navigator` is guarded because this module is imported by the jsdom suite on
+  // Node 18/20, where globalThis.navigator does not exist (it landed in Node 21)
+  // — an unguarded read threw a ReferenceError out of the `hello` WS handler,
+  // taking the whole first paint with it. package.json says Node 18+, so the
+  // engine range is what has to be honoured here, not the newest runtime.
+  const platform = (typeof navigator !== 'undefined' && navigator && navigator.platform) || '';
+  const mod = /Mac/i.test(platform) ? '⌘' : 'Ctrl';
   box.innerHTML =
     '<h2>Nothing rendered yet</h2>' +
     '<p>This page is Claude\'s second surface. Ask for something visual in your terminal ' +
