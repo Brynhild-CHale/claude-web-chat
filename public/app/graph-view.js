@@ -1003,21 +1003,43 @@ export function layoutAndRender() {
   };
 }
 
-export function fitView() {
+// The ONE place that decides where the camera goes to put the whole graph in the
+// middle of the viewport. `pickScale` is the only thing its two callers differ
+// on: Fit chooses a scale that makes everything visible, the zoom badge resets
+// to a true 1:1. Everything else — the bounds, the centring translate, the
+// re-render, the badge — is shared, so the two can never drift into centring
+// the graph differently.
+//
+// This does NOT route through setZoom: setZoom preserves an anchor point (what a
+// wheel zoom wants) whereas centring deliberately discards the existing pan.
+// Both still end at updateZoomReadout, which is the invariant that matters —
+// the badge always reflects camera.scale.
+function centerGraph(pickScale) {
   const { glyphs } = computeGraphLayout();
   if (!glyphs.length) return;
   const xs = glyphs.map(g => g.x), ys = glyphs.map(g => g.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
   const w = svgEl.clientWidth || 800, h = svgEl.clientHeight || 600;
-  const contentW = (maxX - minX) + 160, contentH = (maxY - minY) + 160;
-  const scale = Math.min(1.4, Math.max(0.35, Math.min(w / contentW, h / contentH)));
+  const scale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pickScale({
+    w, h, contentW: (maxX - minX) + 160, contentH: (maxY - minY) + 160,
+  })));
   camera.scale = scale;
   camera.tx = w / 2 - ((minX + maxX) / 2) * scale;
   camera.ty = h / 2 - ((minY + maxY) / 2) * scale;
   layoutAndRender();
-  updateZoomReadout();   // fit changes the zoom too — the badge must follow
+  updateZoomReadout();   // centring changes the zoom too — the badge must follow
 }
+
+export function fitView() {
+  centerGraph(({ w, h, contentW, contentH }) =>
+    Math.min(1.4, Math.max(0.35, Math.min(w / contentW, h / contentH))));
+}
+
+// Clicking the zoom percentage between − and +: back to a true 1:1, graph
+// centred. The readout is the affordance — the number you are being shown is
+// also the button that undoes whatever pan and zoom you wandered into.
+export function resetView() { centerGraph(() => 1); }
 
 // Wire the overlay-internal controls: fit/close buttons, the document keydown
 // handler (Escape/arrows/space, active only while the overlay is open), the
@@ -1100,6 +1122,7 @@ export function initGraph() {
   });
 
   // zoom controls — both go through setZoom, the one owner of "change the zoom"
+  $('gv-zoom-pct').addEventListener('click', resetView);
   $('gv-zoom-in').addEventListener('click', () => setZoom(camera.scale * 1.2));
   $('gv-zoom-out').addEventListener('click', () => setZoom(camera.scale / 1.2));
 

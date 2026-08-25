@@ -685,6 +685,11 @@ kbd {
 .gv-zoom { position: absolute; bottom: 12px; left: 12px; display: flex; align-items: center; gap: 6px; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 2px 4px; }
 .gv-zoom button { width: 22px; height: 22px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 14px; }
 .gv-zoom span { font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
+/* The readout is a real button (click = reset to 100% + centre) but must keep
+   reading as a label between − and +, not as a third control. */
+#gv-zoom-pct { width: auto; height: auto; padding: 2px 4px; border-radius: var(--wc-radius-sm, 4px); cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
+#gv-zoom-pct:hover { color: var(--wc-fg); background: var(--wc-bg); }
+#gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 
 /* inspector column */
 .gv-inspector { grid-area: inspector; overflow: auto; background: var(--wc-panel-bg); border-left: 1px solid var(--wc-border); padding: 14px; }

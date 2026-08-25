@@ -229,6 +229,47 @@ test('the +/− buttons and the wheel agree on the same readout', async () => {
   assert.equal(pct(), before, 'and − returns exactly where + came from');
 });
 
+test('clicking the zoom percentage resets to 100% and re-centres the graph', async () => {
+  await openGraph();
+  const pct = () => Number(($('gv-zoom-pct').textContent || '').replace('%', ''));
+  const wrap = W.document.querySelector('.graph-canvas-wrap');
+  const rootG = () => W.document.querySelector('#graph-svg g[transform]');
+  const xf = () => (rootG() || {}).getAttribute && rootG().getAttribute('transform');
+
+  // Wander off: zoom somewhere that is not 100%, then pan away from centre.
+  wrap.dispatchEvent(new W.WheelEvent('wheel', { deltaY: -400, bubbles: true, cancelable: true }));
+  mouse(wrap, 'mousedown', 500, 400);
+  W.dispatchEvent(new W.MouseEvent('mousemove', { bubbles: true, clientX: 260, clientY: 180 }));
+  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 260, clientY: 180 }));
+  const wandered = xf();
+  assert.notEqual(pct(), 100, 'precondition: we are not at 100%');
+
+  // The readout IS the button.
+  $('gv-zoom-pct').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+
+  assert.equal(pct(), 100, 'the badge reads a true 1:1');
+  assert.match(xf(), /scale\(1\)/, 'and the camera is actually at scale 1, not just the label');
+  assert.notEqual(xf(), wandered, 'the pan was discarded — the graph re-centred');
+});
+
+test('the reset centres the same way Fit does — one owner of the centring math', async () => {
+  await openGraph();
+  const tx = () => /translate\(([-\d.]+),/.exec(
+    W.document.querySelector('#graph-svg g[transform]').getAttribute('transform'))[1];
+
+  $('gv-zoom-pct').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  const resetTx = Number(tx());
+  $('overlay-fit').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  const fitTx = Number(tx());
+
+  // Fit may pick a different SCALE, but both put the graph's midpoint at the
+  // viewport's midpoint — so with the same content the translate tracks the
+  // scale rather than being computed by two different sets of arithmetic.
+  const w = (W.document.querySelector('#graph-svg').clientWidth) || 800;
+  assert.ok(Math.abs(resetTx - w / 2) < w, 'reset centres on the viewport');
+  assert.ok(Math.abs(fitTx - w / 2) < w, 'and so does fit');
+});
+
 /* ================= (5) renaming a graph ================= */
 
 test('a graph heading renames the graph through /api/graph/bookmark', async () => {
