@@ -39,7 +39,18 @@ if [ "$node_major" -lt 22 ]; then
 Node 18 and 20 are both past end-of-life, and one of this program's dependencies
 (entities, via node-html-parser) is now ESM-only: without require(esm), which
 landed in Node 22, the daemon cannot even start.
-Upgrade from https://nodejs.org/ and run this again."
+
+Note that your distro's package may well be older than this: Ubuntu 24.04 ships
+Node 18, Debian 12 ships 18, Debian 13 ships 20. So 'apt install nodejs' is
+probably not the answer. Any of these are:
+
+  nvm     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+          then: nvm install 22
+  fnm     curl -fsSL https://fnm.vercel.app/install | bash
+          then: fnm install 22
+  distro  NodeSource packages — https://github.com/nodesource/distributions
+
+Then run this again."
 fi
 
 # 2. Pick a downloader and a checksum tool. Both are needed; say which is missing.

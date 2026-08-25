@@ -11,6 +11,21 @@ the four runtime dependencies (`node-html-parser`) requires an `entities` that i
 ESM-only, and `require(esm)` landed in Node 22. Below it the daemon does not
 start at all.
 
+**Your distro's Node is probably too old.** Verified by running each image:
+
+| | `apt` candidate `nodejs` | Meets the floor |
+| --- | --- | --- |
+| Ubuntu 24.04 LTS | 18.19.1 | no |
+| Debian 12 | 18.20.4 | no |
+| Debian 13 | 20.19.2 | no |
+| Alpine 3.21+ | 22.x | yes |
+| Fedora 42+ | 22+ | yes |
+
+So `apt install nodejs` is not the route on the Debian family — use `nvm`, `fnm`,
+or NodeSource. `install.sh` refuses with those three options named, rather than
+sending you to nodejs.org for a tarball. Lowering the floor would not have
+helped much: `>=20.19` would have admitted Debian 13 and nothing else.
+
 ---
 
 ## What "supported" means here
