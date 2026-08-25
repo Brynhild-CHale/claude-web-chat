@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **A stated platform position — `docs/platform-support.md`.** macOS and Linux are supported (the full suite runs on both in CI on every push); Windows is WSL2 only. The page is deliberately honest about the difference between "supported" and "bug-free": it lists the cross-platform defects that a Windows and a Linux assessment both surfaced, rather than filing them away as somebody else's platform. Per-platform findings and test plans live on the `platform/windows` and `platform/linux` branches, written so someone with real hardware can confirm or overturn each hypothesis — every claim in them is marked observed or inferred.
+
 ### Changed
 - **Node 22 is now the floor** (`engines: >=22`, was `>=18`). Not a preference — a dependency of `node-html-parser`, one of the four runtime deps, moved to ESM-only at `entities@5`, and `node-html-parser@8` requires `^8.0.0` of it. `require()` of an ESM module needs `require(esm)`, which landed in Node 22 (and was backported to 20.19). Below that, `entities/dist/index.js` throws `ERR_REQUIRE_ESM` while `lib/server` is still being required — so the daemon does not start and the CLI does not run at all. Pinning `entities` backwards would hand `node-html-parser` a package with a different API; Node 18 and 20 are both past end-of-life. CI now covers 22 and 24 (24 is what releases are built and run on, and it had never been tested).
 

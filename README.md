@@ -12,7 +12,7 @@ The quickstart below takes you from a fresh checkout to your first interactive p
 
 ## Quickstart
 
-You'll need **Node 22+** and **Claude Code** already installed.
+You'll need **Node 22+** and **Claude Code** already installed, on **macOS or Linux** (Windows via WSL2 — see [platform support](docs/platform-support.md)).
 
 ### 1. Install the package
 
@@ -42,7 +42,7 @@ You should see the command list. If your shell can't find it, `~/.local/bin` isn
 
 `claude-web-chat version` answers a question that matters more than it sounds: **which copy am I actually running?** It prints the running tree, what `~/.web-chat/current` points at, and what the `claude-web-chat` on your PATH resolves to, and shouts if those disagree.
 
-**On Windows, use WSL2.** web-chat is installed and run inside your WSL2 Linux environment like any other Linux install; there is no native Windows installer.
+**Platforms.** macOS and Linux are supported — the full suite runs on both in CI on every push. **On Windows, use WSL2**: web-chat installs and runs inside your WSL2 Linux environment like any other Linux install, and there is no native Windows installer. What each of those actually means, and what is known to be untested, is in [`docs/platform-support.md`](docs/platform-support.md).
 
 **Developing on web-chat itself?** Work from a checkout and run it in place — see [`docs/extending.md`](docs/extending.md), which also explains why `npm link` is the one thing not to do here:
 
