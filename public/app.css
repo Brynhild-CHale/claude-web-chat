@@ -182,7 +182,16 @@ html.wc-theming, html.wc-theming * {
    The rule the scale encodes, hard:
 
      depth < surface content < front glass < drag feedback < pin markers
-       < TOPBAR < chrome panels < graph overlay < glance < host notices
+       < TOPBAR < chrome panels < host notices < graph overlay < glance
+
+   Host notices (service-trust, the queued-re-aim note) sit above every piece of
+   ordinary chrome so an advisory is never buried — but BELOW the graph overlay.
+   The overlay is a full-screen working view the user deliberately opened and can
+   dismiss with Escape or ✕; the notice is advisory, non-blocking, and reflects
+   standing server state that is re-announced on every viewer connect, so
+   yielding for the duration of the overlay loses nothing. The reverse (notice
+   over overlay) painted a card the user could not move over the one view that
+   needs the whole screen.
 
    The topbar is ALWAYS above surface content. #pin-layer sat at 10 against a
    topbar at 2 — it is a `position:absolute; inset:0` layer on <body>, so a
@@ -204,9 +213,9 @@ html.wc-theming, html.wc-theming * {
   --z-pins: 4;     /* #pin-layer comment markers */
   --z-topbar: 5;   /* #topbar and the update banner stacked above it */
   --z-panel: 6;    /* popovers, palette, legend, drawer, pin composer */
-  --z-overlay: 7;  /* the graph viewer — covers the whole stage */
-  --z-glance: 8;   /* the glance preview, opened from inside the overlay */
-  --z-notice: 9;   /* service-trust / re-aim notices — always reachable */
+  --z-notice: 7;   /* service-trust / re-aim notices — above all ordinary chrome */
+  --z-overlay: 8;  /* the graph viewer — covers the whole stage, notices included */
+  --z-glance: 9;   /* raised from INSIDE the overlay: the glance preview + the rename panel */
 }
 
 /* ===================== the stage + depth layers ===================== */
@@ -599,6 +608,11 @@ kbd {
 .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 8px; border: 0; background: transparent; text-align: left; color: var(--wc-text-1); font: 12px var(--wc-font); border-radius: var(--wc-radius); }
 .menu-item:hover { background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
 .wc-select, .popover input[type="text"] { height: 28px; padding: 0 8px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-fg); font: 12px var(--wc-font); }
+/* The one popover raised from INSIDE the graph overlay, so it needs the rung
+   above it (the same one the glance uses) — every other popover lives under the
+   overlay by design. Centred, because it is anchored to an SVG heading that can
+   sit anywhere on a panned canvas. */
+.popover.gv-name-panel { z-index: var(--z-glance); top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); min-width: 280px; }
 .hint { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; }
 .mono { font-family: var(--wc-mono); }
 
@@ -663,6 +677,11 @@ kbd {
 .gv-legend .dot.marked { background: var(--wc-gold); }
 .gv-legend .dot.fork { background: var(--wc-accent); opacity: .6; }
 .gv-legend .dot.stack { background: var(--wc-muted); }
+/* A graph's heading is its handle: click to rename, drag to place. Make it read
+   as one — the pencil only shows on hover so the canvas stays quiet. */
+.gv-tree-title:hover .gv-tt-hit { fill: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+.gv-tt-pencil { opacity: 0; transition: opacity .12s ease; }
+.gv-tree-title:hover .gv-tt-pencil { opacity: 1; }
 .gv-zoom { position: absolute; bottom: 12px; left: 12px; display: flex; align-items: center; gap: 6px; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 2px 4px; }
 .gv-zoom button { width: 22px; height: 22px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 14px; }
 .gv-zoom span { font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
@@ -824,8 +843,21 @@ body.pin-mode #main { cursor: crosshair; }
   border-radius: var(--wc-radius, 10px);
   box-shadow: var(--wc-shadow, 0 8px 32px rgba(0, 0, 0, .22));
   padding: 14px 16px;
+  position: relative;
 }
-.svc-trust-card h3 { margin: 0 0 8px; font-size: 14px; }
+/* Dismiss (session-only, never a denial — see public/app/service-trust.js). An
+   advisory the user cannot put down is nagging; an advisory that can be MISTAKEN
+   for a refusal is worse, so the control is a plain hide with its intent spelled
+   out in the tooltip and the card's own footer. */
+.svc-trust-x {
+  position: absolute; top: 8px; right: 9px;
+  width: 22px; height: 22px; padding: 0;
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--wc-muted, #666); font: 16px/1 var(--wc-font, system-ui, sans-serif);
+  border-radius: var(--wc-radius-sm, 6px);
+}
+.svc-trust-x:hover { background: color-mix(in srgb, var(--wc-muted, #666) 18%, transparent); color: var(--wc-fg, #1a1a1a); }
+.svc-trust-card h3 { margin: 0 22px 8px 0; font-size: 14px; }
 .svc-trust-card p { margin: 5px 0; font-size: 12.5px; line-height: 1.55; color: var(--wc-muted, #666); }
 .svc-trust-card code { font-family: var(--wc-mono, ui-monospace, monospace); font-size: 11.5px; }
 .svc-trust-cmd {

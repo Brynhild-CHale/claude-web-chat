@@ -82,7 +82,7 @@ test('the topbar sits above every surface artifact — including comment pins', 
 test('the whole z-index inventory is one ordered scale', () => {
   const s = scale();
   const order = ['--z-depth', '--z-content', '--z-glass', '--z-drag', '--z-pins',
-    '--z-topbar', '--z-panel', '--z-overlay', '--z-glance', '--z-notice'];
+    '--z-topbar', '--z-panel', '--z-notice', '--z-overlay', '--z-glance'];
   for (const k of order) assert.ok(k in s, `the scale declares ${k}`);
   for (let i = 1; i < order.length; i++) {
     assert.ok(s[order[i - 1]] < s[order[i]],
@@ -95,9 +95,22 @@ test('the whole z-index inventory is one ordered scale', () => {
   assert.equal(zOf('.popover'), zOf('.legend'));
   assert.equal(zOf('.popover'), zOf('.pin-pop'));
   assert.ok(zOf('.popover') < zOf('#overlay.overlay'), 'the graph overlay covers the panels');
-  assert.ok(zOf('#overlay.overlay') < zOf('.svc-trust-host'),
-    'the service-trust notice is reachable even over the graph overlay');
-  assert.ok(zOf('#overlay.overlay') < zOf('.reaim-note'));
+  // Host notices sit above ALL ordinary chrome so an advisory is never buried…
+  assert.ok(zOf('.popover') < zOf('.svc-trust-host'),
+    'the service-trust notice is reachable over every chrome panel');
+  assert.ok(zOf('.popover') < zOf('.reaim-note'));
+  // …but BELOW the graph overlay, which is a full-screen working view the user
+  // deliberately opened. The notice is advisory, non-blocking, and re-announced
+  // on every viewer connect, so yielding for the overlay's duration loses nothing;
+  // the reverse painted an undismissable card over the one view that needs the
+  // whole screen.
+  assert.ok(zOf('.svc-trust-host') < zOf('#overlay.overlay'),
+    'the graph overlay is not painted over by an advisory notice');
+  assert.ok(zOf('.reaim-note') < zOf('#overlay.overlay'));
+  // Layers raised from INSIDE the overlay ride above it.
+  assert.ok(zOf('#overlay.overlay') < zOf('.glance-backdrop'));
+  assert.ok(zOf('#overlay.overlay') < zOf('.popover.gv-name-panel'),
+    'the graph rename panel opens above the overlay that raised it');
 });
 
 test('no z-index in the shell is a hand-picked number any more', () => {

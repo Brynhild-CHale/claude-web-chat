@@ -19,6 +19,33 @@
 // `claude-web-chat trust` in the terminal. This card exists purely to tell the
 // user that a service is waiting and which command to run.
 
+// DISMISSAL IS NOT DENIAL. The × below hides the card for this browser session
+// only; the request stays pending on the server and `claude-web-chat trust
+// <name> --deny` remains the only way to refuse it. Dismissals are keyed by the
+// request HASH — the same identity the daemon consents on (project root +
+// service.js contents + params) — so a DIFFERENT component, or the same one
+// after an edit, still gets a card.
+//
+// sessionStorage, not localStorage, is what makes "session" mean session, and
+// every access is wrapped: a private window / blocked site data makes the
+// accessor itself throw, which would otherwise abort module bootstrap and leave
+// a dead page (same shape as public/app/version.js).
+const DISMISS_KEY = 'wc:svc-trust-dismissed';
+
+function dismissedSet() {
+  try {
+    const raw = sessionStorage.getItem(DISMISS_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch { return new Set(); }
+}
+function rememberDismissal(hash) {
+  try {
+    const s = dismissedSet();
+    s.add(hash);
+    sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...s]));
+  } catch { /* private window — the card simply returns on the next announce */ }
+}
+
 // hash -> { name, command }
 const pending = new Map();
 let host = null;
@@ -30,6 +57,14 @@ function ensureHost() {
   host.className = 'svc-trust-host hidden';
   host.setAttribute('role', 'status');
   host.setAttribute('aria-live', 'polite');
+  // Delegated so it survives every repaint (the card markup is rebuilt wholesale).
+  host.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('[data-dismiss]');
+    if (!btn) return;
+    const hash = btn.getAttribute('data-dismiss');
+    rememberDismissal(hash);
+    repaint();
+  });
   document.body.appendChild(host);
   return host;
 }
@@ -42,10 +77,15 @@ function esc(s) {
 
 function repaint() {
   const el = ensureHost();
-  if (!pending.size) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const dismissed = dismissedSet();
+  const shown = [...pending.entries()].filter(([hash]) => !dismissed.has(hash));
+  if (!shown.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
   el.classList.remove('hidden');
-  el.innerHTML = [...pending.entries()].map(([hash, p]) => (
+  el.innerHTML = shown.map(([hash, p]) => (
     '<div class="svc-trust-card" data-hash="' + esc(hash) + '">' +
+      '<button class="svc-trust-x" type="button" data-dismiss="' + esc(hash) + '"' +
+        ' title="Hide for this session — this does NOT deny the request"' +
+        ' aria-label="Hide this notice for this session (does not deny the request)">×</button>' +
       '<h3>&ldquo;' + esc(p.name) + '&rdquo; is waiting for approval</h3>' +
       '<p>This component ships a <code>service.js</code> that would run as a process ' +
         'on your machine, with your permissions, while its pane is open.</p>' +
@@ -53,7 +93,8 @@ function repaint() {
         'because a component&rsquo;s own code runs here too. In your terminal:</p>' +
       '<pre class="svc-trust-cmd"><code>' + esc(p.command) + '</code></pre>' +
       '<p class="svc-trust-foot">Run it with <code>--deny</code> to refuse and stop being asked. ' +
-        'The pane stays inert until you decide.</p>' +
+        'The pane stays inert until you decide. Closing this card only hides it for ' +
+        'this browser session — it neither approves nor denies.</p>' +
     '</div>'
   )).join('');
 }

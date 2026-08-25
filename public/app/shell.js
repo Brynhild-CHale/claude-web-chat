@@ -8,7 +8,7 @@ import { toggleMode } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote,
 } from './topbar.js';
-import { openOverlay, isOverlayOpen } from './graph-view.js';
+import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview } from './graph-view.js';
 import { openDrawer, spawnComponent } from './drawer.js';
 import { togglePinMode } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
@@ -319,6 +319,27 @@ function initRail() {
 }
 function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
 
+/* ---------- Escape: ONE owner, one precedence order ----------
+   Escape used to be claimed by two document keydown listeners — this module's and
+   the graph overlay's — neither stopping propagation, neither able to see the
+   other's state, and their order an accident of module init order. It now has a
+   single owner, and the layers are closed most-specific-first:
+
+     1. the glance / float preview      ┐ raised from INSIDE the overlay, so they
+     2. the graph rename panel          ┘ must never outlive it   (escapeInOverlay)
+     3. the graph overlay itself        ┘
+     4. every chrome panel + the pinned queue rail
+
+   An editable chrome field that owns its own Escape (a comment reply draft, the
+   bookmark / new-graph / wipe name, the palette input) still wins over 4 — but not
+   over 1–3: the overlay is modal, and the jump box inside it holds a filter, not a
+   draft, so Escape from there closes the overlay exactly as it always did. */
+export function handleEscape() {
+  if (escapeInOverlay()) return;      // glance ▸ rename panel ▸ the overlay
+  closeAllPopovers();                 // the palette + legend are panels too
+  if (railPinned) { railPinned = false; setRail(false); }
+}
+
 /* ---------- global keyboard layer ---------- */
 function initKeyboard() {
   document.addEventListener('keydown', (e) => {
@@ -334,16 +355,17 @@ function initKeyboard() {
     // (same idiom as comments.js).
     const src = e.composedPath && e.composedPath()[0];
     const root = src && src.getRootNode && src.getRootNode();
-    if (root && root.host && isEditable(src)) return; // editable pane target owns the key
-    // Light-DOM chrome fields (palette, bookmark name, jump box) still guard by activeElement.
-    if (isEditable(document.activeElement) || meta) return;
-    // Escape sits BELOW the focus guards (F12) so typing in any editable/shadow context
-    // never triggers a chrome-wide close/unpin (e.g. a reply draft mid-type).
-    if (e.key === 'Escape') {
-      closeAllPopovers(); // the palette + legend are panels too — one close path
-      if (railPinned) { railPinned = false; setRail(false); }
+    // An editable target owns its own keys: a pane's shadow-rooted field (F12 —
+    // document.activeElement only ever resolves to the pane HOST, so pierce with
+    // composedPath), or a light-DOM chrome field (palette, bookmark name, jump box).
+    const editable = (root && root.host && isEditable(src)) || isEditable(document.activeElement);
+    if (e.key === 'Escape' && !meta) {
+      // …except the modal overlay layers, which take Escape even from a field
+      // inside them. See handleEscape for the full precedence order.
+      if (hasFloatPreview() || isOverlayOpen() || !editable) handleEscape();
       return;
     }
+    if (editable || meta) return;
     if (isOverlayOpen()) return;
     switch (e.key) {
       case 'q': case 'Q': e.preventDefault(); toggleRail(); break;

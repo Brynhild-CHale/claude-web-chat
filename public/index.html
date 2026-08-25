@@ -177,6 +177,22 @@
       </div>
     </div>
 
+    <!-- graph-overlay name field: renames a GRAPH (its bookmarked root node) or
+         bookmarks any node. Same shape as #new-graph-panel / #bookmark-pop —
+         the in-page pattern every other input in this chrome uses. It replaced
+         a native window.prompt(), which blocked the browser, looked like nothing
+         else in the app, and wedged automated drivers. -->
+    <div id="gv-name-panel" class="popover gv-name-panel hidden">
+      <h4 id="gv-name-title">Name</h4>
+      <label class="sr-only" for="gv-name-input">Name</label>
+      <input type="text" id="gv-name-input" placeholder="name…" maxlength="48" style="width:100%">
+      <div class="hint" id="gv-name-hint">Empty clears the name.</div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn" id="btn-gv-name-cancel">Cancel</button>
+        <button class="btn primary" id="btn-gv-name-go">Save</button>
+      </div>
+    </div>
+
     <!-- keyboard legend -->
     <div id="key-legend" class="legend hidden">
       <div class="legend-card">
