@@ -76,8 +76,15 @@ test('boot the shell', async () => {
   // and Node's EventTarget rejects a jsdom CustomEvent as "not an Event".
   for (const k of ['window', 'document', 'location', 'EventTarget', 'Event', 'CustomEvent',
     'KeyboardEvent', 'MouseEvent', 'PointerEvent', 'FocusEvent',
-    'getComputedStyle', 'localStorage', 'WebSocket', 'fetch', 'HTMLElement', 'Node', 'Element']) {
-    try { saved[k] = global[k]; global[k] = W[k]; } catch {}
+    'navigator', 'getComputedStyle', 'localStorage', 'WebSocket', 'fetch', 'HTMLElement', 'Node', 'Element']) {
+    try { saved[k] = global[k]; } catch {}
+  // Node 21+ defines some of these (navigator) as GETTERS with no setter, so a
+  // plain assignment is a silent no-op and the modules keep seeing Node's own.
+  const aliasGlobal = (k, v) => {
+    try { Object.defineProperty(global, k, { value: v, configurable: true, writable: true }); }
+    catch { try { global[k] = v; } catch {} }
+  };
+    aliasGlobal(k, W[k]);
   }
   global.setInterval = () => 0;
   global.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
@@ -98,6 +105,12 @@ test('boot the shell', async () => {
 });
 
 const drawerOpen = () => !$('drawer').classList.contains('hidden');
+// jsdom defines navigator.clipboard as a read-only accessor, so a plain
+// assignment is a silent no-op — which looks exactly like the copy handler
+// never firing.
+const setClipboard = (impl) => {
+  Object.defineProperty(W.navigator, 'clipboard', { value: impl, configurable: true, writable: true });
+};
 const key = (k, target) => (target || W.document).dispatchEvent(new W.KeyboardEvent('keydown', { key: k, bubbles: true }));
 
 async function openDrawer() {
@@ -556,4 +569,128 @@ test('a transient fetch failure does NOT poison the component cache for the sess
   // nothing but a WS frame or a reload would ever have cleared it — so one blip
   // left the Library tab and the ⌘K palette permanently empty.
   assert.deepEqual((await mod.components()).map((c) => c.name), ['deploy-board']);
+});
+
+// ── one command, and one click to copy it ───────────────────────────────────
+// Installing a pack with three service-backed components used to mean three
+// `trust <name>` commands, retyped by hand — and the pack card named only the
+// FIRST one, silently dropping the rest. The page still cannot grant the
+// approval (a pane script runs in this same page and could ask on its own
+// behalf), so the job is purely to make getting the command out of here trivial.
+
+test('installing a pack with services shows ONE command covering all of them', async () => {
+  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  await openDrawer();
+  press($('drawer-tab-manage'));
+  await tick();
+  $('pk-url').value = 'https://github.com/acme/ops-pack';
+
+  await withFetch(
+    async (url) => (url === '/api/packs/install' ? jsonRes({
+      ok: true,
+      pack: { name: 'acme-ops', units: [{ kind: 'component', name: 'a' }, { kind: 'component', name: 'b' }, { kind: 'component', name: 'c' }] },
+      tier: 'local',
+      services: ['deploy-board', 'incident-timeline', 'service-health'],
+      skill: { dest: '.claude/skills/acme-ops/SKILL.md' },
+      results: [], warnings: [],
+    }) : null),
+    async () => {
+      const now = [...$('drawer-manage').querySelectorAll('.pk-actions button')][1];
+      press(now); await tick();   // arm
+      press(now); await tick();   // go
+    },
+  );
+
+  const manage = $('drawer-manage');
+  assert.match(manage.textContent, /3 components need your approval/);
+  assert.match(manage.textContent, /deploy-board, incident-timeline, service-health/);
+
+  const cmds = [...manage.querySelectorAll('.rn-cmd')].map((c) => c.textContent);
+  assert.ok(cmds.includes('claude-web-chat trust --all'),
+    'one command covers all three — not three commands, and not one name with the rest dropped');
+  assert.equal(cmds.some((c) => /trust deploy-board$/.test(c)), false);
+});
+
+test('a single service names that service, rather than --all', async () => {
+  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  await openDrawer();
+  press($('drawer-tab-manage'));
+  await tick();
+  $('pk-url').value = 'https://github.com/acme/one-pack';
+
+  await withFetch(
+    async (url) => (url === '/api/packs/install' ? jsonRes({
+      ok: true,
+      pack: { name: 'one-pack', units: [{ kind: 'component', name: 'a' }] },
+      tier: 'local', services: ['deploy-board'], skill: null, results: [], warnings: [],
+    }) : null),
+    async () => {
+      const now = [...$('drawer-manage').querySelectorAll('.pk-actions button')][1];
+      press(now); await tick();
+      press(now); await tick();
+    },
+  );
+
+  const cmds = [...$('drawer-manage').querySelectorAll('.rn-cmd')].map((c) => c.textContent);
+  assert.ok(cmds.includes('claude-web-chat trust deploy-board'));
+  assert.equal(cmds.includes('claude-web-chat trust --all'), false, 'no need for --all when there is one');
+});
+
+test('every command notice carries a copy button that puts it on the clipboard', async () => {
+  const copied = [];
+  setClipboard({ writeText: async (t) => { copied.push(t); } });
+
+  routes['/api/packs'] = { ok: true, quarantined: [], packs: [{
+    name: 'acme-ops', version: '1.2.0', tier: 'local', drift: false,
+    source: { via: 'archive', sha: 'abc1234000000000000000000000000000000000' },
+    components: ['deploy-board', 'incident-timeline'],
+    services: ['deploy-board', 'incident-timeline'], skill: null,
+  }] };
+  routes['/api/services/pending'] = { ok: true, pending: [{ name: 'deploy-board' }, { name: 'incident-timeline' }] };
+  const { invalidate } = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);
+  invalidate();
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  await openDrawer();
+  press($('drawer-tab-manage'));
+  await tick();
+
+  const card = $('drawer-manage').querySelector('.pk-card');
+  assert.match(card.textContent, /one command covers all 2/);
+  const cmd = card.querySelector('.rn-cmd').textContent;
+  assert.equal(cmd, 'claude-web-chat trust --all');
+
+  const copy = card.querySelector('.rn-copy');
+  assert.ok(copy, 'the command has a copy button');
+  press(copy);
+  await tick();
+  assert.deepEqual(copied, ['claude-web-chat trust --all']);
+  assert.match(copy.textContent, /copied/);
+
+  routes['/api/services/pending'] = { ok: true, pending: [] };
+  setClipboard(undefined);
+});
+
+test('a clipboard that refuses does not throw — the command is still selectable', async () => {
+  setClipboard({ writeText: async () => { throw new Error('denied'); } });
+  routes['/api/packs'] = { ok: true, quarantined: [], packs: [] };
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  await openDrawer();
+  press($('drawer-tab-manage'));
+  await tick();
+
+  // The "not wired" path also renders a command notice; force it so there is one
+  // to click without needing an install.
+  await withFetch(
+    async (url) => (url === '/api/packs' ? { ok: false, status: 404, json: async () => ({}), text: async () => '' } : null),
+    async () => { key('Escape'); await tick(); await openDrawer(); press($('drawer-tab-manage')); await tick(); },
+  );
+  const copy = $('drawer-manage').querySelector('.rn-copy');
+  assert.ok(copy);
+  press(copy);
+  await tick();
+  assert.match(copy.textContent, /select it/, 'it says so rather than lying or throwing');
+  setClipboard(undefined);
+  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
 });

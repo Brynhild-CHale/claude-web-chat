@@ -65,8 +65,14 @@ async function boot() {
 
   const saved = {};
   const keys = ['window', 'document', 'location', 'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'PointerEvent',
-    'getComputedStyle', 'localStorage', 'WebSocket', 'fetch', 'HTMLElement', 'Node', 'Element'];
-  for (const k of keys) { try { saved[k] = global[k]; global[k] = window[k]; } catch {} }
+    'navigator', 'getComputedStyle', 'localStorage', 'WebSocket', 'fetch', 'HTMLElement', 'Node', 'Element'];
+  // Node 21+ defines some of these (navigator) as GETTERS with no setter, so a
+  // plain assignment is a silent no-op and the modules keep seeing Node's own.
+  const aliasGlobal = (k, v) => {
+    try { Object.defineProperty(global, k, { value: v, configurable: true, writable: true }); }
+    catch { try { global[k] = v; } catch {} }
+  };
+  for (const k of keys) { try { saved[k] = global[k]; } catch {} aliasGlobal(k, window[k]); }
   const savedSetInterval = global.setInterval;
   global.setInterval = () => 0; // no pollers keeping the process alive
   global.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);

@@ -47,6 +47,10 @@ let packsState = null;        // last GET /api/packs payload, or null
 let packsWired = false;       // has the daemon got the pack routes at all?
 let pendingTrust = new Set(); // component names waiting on `claude-web-chat trust`
 let armedInstall = null;      // the URL a second "Install now" click would install
+// The services a just-finished install left needing a terminal. Held here rather
+// than appended to the DOM, because refresh() rebuilds the Manage panel and would
+// wipe anything appended after it.
+let postInstall = null;
 
 const isOpen = () => !$('drawer').classList.contains('hidden');
 
@@ -64,6 +68,7 @@ export function closeDrawer() {
   el.classList.add('hidden');
   document.querySelectorAll('[aria-controls="drawer"]').forEach((c) => c.setAttribute('aria-expanded', 'false'));
   armedInstall = null;
+  postInstall = null;
   if (inside) { const btn = $('btn-add'); if (btn) btn.focus(); }
 }
 
@@ -167,11 +172,59 @@ function chip(text, kind) {
   return el('span', `de-chip${kind ? ' ' + kind : ''}`, text);
 }
 
+// The one command that covers whatever is waiting. A pack with three
+// service-backed components should not mean three commands to copy out.
+function trustCommand(names) {
+  const waiting = (names || []).filter(Boolean);
+  if (!waiting.length) return 'claude-web-chat trust';
+  return waiting.length === 1 ? `claude-web-chat trust ${waiting[0]}` : 'claude-web-chat trust --all';
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* not a secure context, or no permission — fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
 function notice(title, body, cmd) {
   const box = el('div', 'rail-notice');
   box.appendChild(el('div', 'rn-title', title));
   if (body) box.appendChild(el('div', 'rn-body', body));
-  if (cmd) box.appendChild(el('code', 'rn-cmd', cmd));
+  if (cmd) {
+    // Click-to-copy. The command still has to be run in a terminal — the page
+    // cannot grant a service approval, and deliberately does not try (see the
+    // header of lib/cli/commands/trust.js). What it can do is make getting the
+    // command out of here a single click instead of a careful re-type.
+    const row = el('div', 'rn-cmd-row');
+    const code = el('code', 'rn-cmd', cmd);
+    const copy = el('button', 'rn-copy', 'copy');
+    copy.type = 'button';
+    copy.title = `Copy: ${cmd}`;
+    copy.setAttribute('aria-label', `Copy command: ${cmd}`);
+    const flash = (ok) => {
+      copy.textContent = ok ? 'copied' : 'select it';
+      copy.classList.toggle('ok', ok);
+      setTimeout(() => { copy.textContent = 'copy'; copy.classList.remove('ok'); }, 1600);
+    };
+    copy.addEventListener('click', async (e) => { e.stopPropagation(); flash(await copyText(cmd)); });
+    // The code itself is user-select:all, so a click selects the whole command
+    // even when the clipboard is unavailable.
+    row.append(code, copy);
+    box.appendChild(row);
+  }
   return box;
 }
 
@@ -279,7 +332,7 @@ function componentRow(c) {
     row.appendChild(notice(
       'Waiting for your approval',
       'This component runs a host-side process. It stays inert until you approve it in a terminal — the page deliberately cannot.',
-      `claude-web-chat trust ${c.name}`,
+      trustCommand([c.name]),
     ));
   }
   return row;
@@ -400,6 +453,11 @@ function renderManage() {
   }
 
   body.appendChild(installForm());
+
+  if (postInstall) {
+    const p = trustPrompt(postInstall);
+    if (p) body.appendChild(p);
+  }
 
   const waiting = (packsState.quarantined || []);
   if (waiting.length) {
@@ -539,6 +597,7 @@ async function doInstall(btn) {
     const body = await postJson('/api/packs/install', { url, global: wantsGlobal() });
     if (!body.ok) { status(body.hint || 'could not install that pack', 'err'); return; }
     $('pk-url').value = '';
+    postInstall = body;
     invalidate();
     await refresh();
     status(installedSummary(body), 'ok');
@@ -551,8 +610,24 @@ function installedSummary(body) {
   const n = (body.pack.units || []).filter((u) => u.kind === 'component').length;
   const bits = [`installed ${body.pack.name} — ${n} component${n === 1 ? '' : 's'}`];
   if (body.skill) bits.push('skill added');
-  if ((body.services || []).length) bits.push(`${body.services.length} need ‘trust’`);
+  const svc = (body.services || []).length;
+  if (svc) bits.push(`${svc} need${svc === 1 ? 's' : ''} approval`);
   return bits.join(' · ');
+}
+
+// Post-install: the services that need a terminal, and the ONE command that
+// covers them, right where the user is still looking. Without this the only
+// prompt was a per-component notice further down the Library tab.
+function trustPrompt(body) {
+  const services = body.services || [];
+  if (!services.length) return null;
+  return notice(
+    services.length === 1 ? 'One component needs your approval' : `${services.length} components need your approval`,
+    `${services.join(', ')} ship a service.js — a process on your machine, with your permissions. `
+      + 'They stay inert until you approve them in a terminal. The page cannot grant this, and deliberately does not try: '
+      + 'a pane script runs in this same page and could ask on its own behalf.',
+    trustCommand(services),
+  );
 }
 
 async function postJson(path, payload) {
@@ -722,6 +797,7 @@ async function approvePack(name, btn) {
   try {
     const body = await postJson(`/api/packs/quarantine/${encodeURIComponent(name)}/approve`, {});
     if (!body.ok) { cardStatus(card, body.hint || 'could not install it', 'err'); btn.disabled = false; return; }
+    postInstall = body;
     invalidate();
     await refresh();
   } catch (e) {
@@ -775,8 +851,10 @@ function installedCard(p) {
     if (waiting.length) {
       card.appendChild(notice(
         'Waiting for your approval',
-        `${waiting.join(', ')} run host-side processes. They stay inert until you approve them in a terminal.`,
-        `claude-web-chat trust ${waiting[0]}`,
+        waiting.length === 1
+          ? `${waiting[0]} runs a host-side process. It stays inert until you approve it in a terminal.`
+          : `${waiting.join(', ')} run host-side processes. They stay inert until you approve them — one command covers all ${waiting.length}.`,
+        trustCommand(waiting),
       ));
     }
   }

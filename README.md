@@ -12,7 +12,7 @@ The quickstart below takes you from a fresh checkout to your first interactive p
 
 ## Quickstart
 
-You'll need **Node 18+** and **Claude Code** already installed.
+You'll need **Node 22+** and **Claude Code** already installed.
 
 ### 1. Install the package
 
@@ -22,7 +22,7 @@ One line in a terminal:
 curl -fsSL https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main/install.sh | sh
 ```
 
-That checks you have Node 18+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
+That checks you have Node 22+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
 
 ```
 ~/.web-chat/versions/0.6.0/     the release, self-contained (dependencies included)

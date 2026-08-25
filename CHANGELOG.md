@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+- **Node 22 is now the floor** (`engines: >=22`, was `>=18`). Not a preference — a dependency of `node-html-parser`, one of the four runtime deps, moved to ESM-only at `entities@5`, and `node-html-parser@8` requires `^8.0.0` of it. `require()` of an ESM module needs `require(esm)`, which landed in Node 22 (and was backported to 20.19). Below that, `entities/dist/index.js` throws `ERR_REQUIRE_ESM` while `lib/server` is still being required — so the daemon does not start and the CLI does not run at all. Pinning `entities` backwards would hand `node-html-parser` a package with a different API; Node 18 and 20 are both past end-of-life. CI now covers 22 and 24 (24 is what releases are built and run on, and it had never been tested).
+
 ## [0.6.0] - 2026-08-24
 
 ### Security

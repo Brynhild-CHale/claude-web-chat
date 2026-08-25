@@ -481,6 +481,18 @@ kbd {
 .rn-title { font: 700 10px var(--wc-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--wc-gold); }
 .rn-body { font: 11px var(--wc-font); color: var(--wc-muted); margin: 4px 0 6px; line-height: 1.4; }
 .rn-cmd { display: block; font: 10.5px var(--wc-mono); color: var(--wc-fg); background: var(--wc-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); padding: 5px 7px; overflow-x: auto; white-space: nowrap; user-select: all; }
+/* command + click-to-copy. The command still has to be run in a terminal — the
+   page cannot grant a service approval — so the only job here is getting it out
+   of the page in one click instead of a careful re-type. */
+.rn-cmd-row { display: flex; align-items: stretch; gap: 5px; }
+.rn-cmd-row .rn-cmd { flex: 1; min-width: 0; }
+.rn-copy {
+  flex: none; padding: 0 8px; font: 600 9.5px var(--wc-mono); letter-spacing: .04em;
+  color: var(--wc-muted); background: var(--wc-bg);
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); cursor: pointer;
+}
+.rn-copy:hover { color: var(--wc-fg-bright); border-color: var(--wc-border-light); }
+.rn-copy.ok { color: var(--wc-green); border-color: color-mix(in srgb, var(--wc-green) 55%, transparent); }
 /* parked-delivery line inside the notice, + the transient post-push
    confirmation (green = informational, a Push is safely held, not an error). */
 .rn-parked { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; line-height: 1.4; }

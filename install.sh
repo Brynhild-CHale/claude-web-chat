@@ -30,12 +30,15 @@ TMP=""
 cleanup() { if [ -n "$TMP" ]; then rm -rf "$TMP"; fi; }
 trap cleanup EXIT INT TERM
 
-# 1. Require Node 18+.
-command -v node >/dev/null 2>&1 || die "claude-web-chat needs Node.js (18 or newer), which isn't installed.
+# 1. Require Node 22+.
+command -v node >/dev/null 2>&1 || die "claude-web-chat needs Node.js (22 or newer), which isn't installed.
 Get it from https://nodejs.org/ and run this again."
 node_major=$(node -p 'process.versions.node.split(".")[0]')
-if [ "$node_major" -lt 18 ]; then
-  die "claude-web-chat needs Node 18 or newer — you have $(node -v).
+if [ "$node_major" -lt 22 ]; then
+  die "claude-web-chat needs Node 22 or newer — you have $(node -v).
+Node 18 and 20 are both past end-of-life, and one of this program's dependencies
+(entities, via node-html-parser) is now ESM-only: without require(esm), which
+landed in Node 22, the daemon cannot even start.
 Upgrade from https://nodejs.org/ and run this again."
 fi
 
