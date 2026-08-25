@@ -118,10 +118,13 @@ test('components: system tier — save to ~/.web-chat/components, visible, proje
   await api.post('/api/components', { name: 'shared-widget', source: '<p>PROJ</p>', description: 'proj', location: 'local' });
   assert.equal((await api.get('/api/components/shared-widget')).json.source, '<p>PROJ</p>', 'project shadows system');
 
-  // list has BOTH (no cross-tier dedup) — one local, one system
+  // list is DEDUPED by name and agrees with get: one row, the winning tier.
+  // It used to emit both, identically, giving the agent reading this list no
+  // signal about which one `use_component` would actually resolve to.
   const both = (await api.get('/api/components')).json.components.filter((c) => c.name === 'shared-widget');
-  assert.equal(both.length, 2);
-  assert.deepEqual(both.map((c) => c.location).sort(), ['local', 'system']);
+  assert.equal(both.length, 1, 'one row per name — list agrees with get');
+  assert.equal(both[0].location, 'local', 'the resolved (most-specific) tier wins');
+  assert.deepEqual(both[0].shadows, ['system'], 'the shadowed tier is still reported, not silently dropped');
 
   // builtins seed into the PROJECT tier only
   const frLocs = (await api.get('/api/components')).json.components.filter((c) => c.name === 'form-renderer').map((c) => c.location);

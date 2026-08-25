@@ -7,6 +7,7 @@
 // Each pin has a "share with Claude" toggle (default on); Claude reads only
 // shared pins via get_comments.
 import { view, $ } from './state.js';
+import { esc } from './esc.js';
 
 // Module-level pin-mode state, shared between the #btn-pin-mode click handler
 // (wired in initComments) and the exported togglePinMode()/setPinMode() the
@@ -69,7 +70,6 @@ export function initComments() {
     openPinMenu(m._pins, ev.clientX, ev.clientY);
   });
 
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const cssEsc = (window.CSS && CSS.escape) ? CSS.escape.bind(CSS) : (s) => s;
 
   async function refresh() {

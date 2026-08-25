@@ -215,3 +215,65 @@ test('install records baselines; second install is all up-to-date; dryRun clean'
   for (const r of results) assert.equal(r.action, 'up-to-date');
   assert.equal(fs.readFileSync(path.join(root, '.web-chat', 'managed.json'), 'utf8'), before);
 });
+
+// ── the bin path a project's .mcp.json / settings.json is pointed at ────────
+// A managed install must register ~/.web-chat/current/bin/<name>, never the
+// version directory the process happens to be running from. pruneVersions
+// deletes all but the newest KEEP_VERSIONS, so a pinned path becomes a dangling
+// reference three updates later: the MCP server stops spawning and every hook
+// exits non-zero — silently, in every project, with no lock and no graph nodes.
+
+const { withTempHome } = require('../test-support/helpers');
+const { installPaths, PACKAGE_ROOT } = require('../lib/core/paths');
+
+test('stableBin points a DEV checkout at its own bin', (t) => {
+  withTempHome(t);
+  // This test tree is not under ~/.web-chat/versions, so it is unmanaged — and
+  // an absolute path to its own bin is exactly right: nothing else resolves.
+  const bin = mf.stableBin('claude-web-chat-hook');
+  assert.equal(bin, path.join(PACKAGE_ROOT, 'bin', 'claude-web-chat-hook.js'));
+  assert.ok(fs.existsSync(bin));
+});
+
+test('resolveHookCommand rewrites a BARE command to an absolute one', () => {
+  const out = mf.resolveHookCommand('claude-web-chat-hook turn-begin');
+  assert.match(out, /^node "\/.*claude-web-chat-hook\.js" turn-begin$/);
+});
+
+test('resolveHookCommand REPOINTS a stale absolute path, and is idempotent', () => {
+  // The shape a pruned version directory leaves behind. Without this, ensureHooks
+  // would skip the event (it already has a web-chat handler) and the stale entry
+  // would stay stale forever — the B3 fix would only ever help new projects.
+  const stale = 'node "/Users/someone/.web-chat/versions/0.6.0/bin/claude-web-chat-hook.js" turn-begin';
+  const fixed = mf.resolveHookCommand(stale);
+  assert.doesNotMatch(fixed, /versions\/0\.6\.0/, 'the pinned version directory is gone');
+  assert.match(fixed, /claude-web-chat-hook\.js" turn-begin$/, 'and the subcommand survives');
+  assert.equal(mf.resolveHookCommand(fixed), fixed, 'idempotent');
+});
+
+test('resolveHookCommand leaves a command that is not ours alone', () => {
+  const other = 'node /opt/some-other-tool/hook.js run';
+  assert.equal(mf.resolveHookCommand(other), other);
+});
+
+test('a MANAGED install registers current/, NOT the version directory it is running from', (t) => {
+  const home = withTempHome(t);
+  const paths = installPaths();
+  // The layout an unpacked release actually has. The process cannot move itself
+  // into it, so the decision is exercised against a fabricated packageRoot —
+  // the same seam describeInstall({ packageRoot }) already offers.
+  const vdir = path.join(paths.versions, '0.6.0');
+  fs.mkdirSync(path.join(vdir, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(vdir, 'bin', 'claude-web-chat-hook.js'), '');
+
+  const bin = mf.stableBin('claude-web-chat-hook', { packageRoot: vdir, paths });
+  assert.equal(bin, path.join(home, '.web-chat', 'current', 'bin', 'claude-web-chat-hook.js'));
+  assert.doesNotMatch(bin, /versions\/0\.6\.0/,
+    'pruneVersions deletes that directory three updates later; every hook would then exit non-zero, silently');
+
+  // An unmanaged tree still gets its own absolute path — nothing else resolves.
+  const checkout = path.join(home, 'Dev', 'web-chat-dev');
+  fs.mkdirSync(checkout, { recursive: true });
+  assert.equal(mf.stableBin('claude-web-chat-hook', { packageRoot: checkout, paths }),
+    path.join(checkout, 'bin', 'claude-web-chat-hook.js'));
+});

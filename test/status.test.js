@@ -1,37 +1,107 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-// the channels line in `status`. describeChannels is the pure
-// phrasing core — given the env-wiring flag and the /api/queue/policy body, it
-// returns the layman-facing state + line status prints.
+// the channels line in `status`. describeChannels is the pure phrasing core —
+// given the stale-env flag and the /api/queue/policy body, it returns the
+// layman-facing state + line status prints.
+//
+// The polarity here INVERTED in the 0.4.x release pass. Channels is a property
+// of the SESSION (Claude Code launched with the capability flag), not of the
+// project, so a WEB_CHAT_CHANNEL pinned into .mcp.json is no longer the desired
+// state — it is a defect that makes the MCP server start a channel bridge in
+// sessions with no channel behind it, so a Push self-acks as delivered and is
+// dropped instead of parked. The live policy is now the only real signal.
 const { describeChannels } = require('../lib/cli/commands/status');
 
-test('unwired: no WEB_CHAT_CHANNEL in .mcp.json → tells the user to install', () => {
-  const r = describeChannels({ envWired: false, policy: null });
-  assert.equal(r.state, 'unwired');
-  assert.match(r.line, /not wired/);
-  assert.match(r.line, /claude-web-chat install/);
+test('stale env: a pinned WEB_CHAT_CHANNEL is reported as a defect to repair', () => {
+  const r = describeChannels({ staleEnv: true, policy: null });
+  assert.equal(r.state, 'stale-env');
+  assert.match(r.line, /stale WEB_CHAT_CHANNEL/);
+  assert.match(r.line, /claude-web-chat doctor/);
 });
 
-test('unwired wins even if a stray policy shows connected (env is the gate)', () => {
-  const r = describeChannels({ envWired: false, policy: { channel_connected: true } });
-  assert.equal(r.state, 'unwired');
+test('stale env wins even if the policy shows connected — the wiring still needs cleaning', () => {
+  const r = describeChannels({ staleEnv: true, policy: { channel_connected: true } });
+  assert.equal(r.state, 'stale-env');
 });
 
-test('connected: wired + a channel-enabled session actually attached', () => {
-  const r = describeChannels({ envWired: true, policy: { channel_connected: true } });
+test('connected: a channel-enabled session is actually attached', () => {
+  const r = describeChannels({ staleEnv: false, policy: { channel_connected: true } });
   assert.equal(r.state, 'connected');
   assert.equal(r.line, 'connected');
 });
 
-test('wired-waiting: wired but daemon up with no channel connected', () => {
-  const r = describeChannels({ envWired: true, policy: { channel_connected: false } });
-  assert.equal(r.state, 'wired');
-  assert.match(r.line, /wired, waiting for a channel-enabled Claude Code session/);
+test('parked: daemon up, no channel connected — states the real fallback', () => {
+  const r = describeChannels({ staleEnv: false, policy: { channel_connected: false } });
+  assert.equal(r.state, 'parked');
+  assert.match(r.line, /delivers with your next message/);
 });
 
-test('wired-waiting: wired but daemon down (no policy observable)', () => {
-  const r = describeChannels({ envWired: true, policy: null });
-  assert.equal(r.state, 'wired');
-  assert.match(r.line, /wired, waiting for a channel-enabled Claude Code session/);
+test('parked: daemon down (no policy observable) reads the same way', () => {
+  const r = describeChannels({ staleEnv: false, policy: null });
+  assert.equal(r.state, 'parked');
+  assert.match(r.line, /delivers with your next message/);
+});
+
+// --------------------------------------------------------------------------
+// The MCP restart line. `install` rewrites .mcp.json mid-session, Claude Code
+// reads it only at startup, so "registered in .mcp.json" alone is a lie of
+// omission — none of the 23 tools exist until the user restarts.
+// --------------------------------------------------------------------------
+
+const fs = require('fs');
+const path = require('path');
+const status = require('../lib/cli/commands/status');
+const { withTempHome, tmpRoot } = require('../test-support/helpers');
+const { recordMcpSeen } = require('../lib/core/mcp-seen');
+
+// Run `status` with cwd pointed at an installed project, capturing stdout.
+async function runStatus(t, seed) {
+  withTempHome(t);
+  const root = tmpRoot('wc-status-');
+  fs.mkdirSync(path.join(root, '.web-chat', 'graph'), { recursive: true });
+  const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin] } } }, null, 2)
+  );
+  if (seed) seed(root);
+
+  const prevCwd = process.cwd();
+  const lines = [];
+  const prevLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  process.chdir(root);
+  try {
+    await status();
+  } finally {
+    console.log = prevLog;
+    process.chdir(prevCwd);
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+  }
+  return lines.join('\n');
+}
+
+test('status flags RESTART when the MCP server we last saw predates the .mcp.json write', async (t) => {
+  const out = await runStatus(t, (root) => {
+    recordMcpSeen(root, { startedAt: Date.now() - 3600_000, now: Date.now() - 60_000 });
+  });
+  assert.match(out, /MCP: +registered in \.mcp\.json/);
+  assert.match(out, /RESTART:/, 'the restart verdict rides right under the MCP line');
+  assert.match(out, /restart Claude Code/i);
+});
+
+test('status reports the tools loaded once an MCP server started after the write', async (t) => {
+  const out = await runStatus(t, (root) => {
+    recordMcpSeen(root, { startedAt: Date.now() + 5000, now: Date.now() });
+  });
+  assert.match(out, /loaded:/);
+  assert.doesNotMatch(out, /RESTART:/);
+});
+
+test('status admits "unknown" rather than guessing when no MCP client was ever seen', async (t) => {
+  const out = await runStatus(t);
+  assert.match(out, /unknown:/);
+  assert.match(out, /can't tell/);
+  assert.doesNotMatch(out, /RESTART:/);
 });

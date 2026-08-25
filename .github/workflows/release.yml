@@ -1,0 +1,97 @@
+# Cut a release. Distribution is GitHub Releases and nothing else — there is no
+# npm publish step, and package.json keeps "private": true so an accidental one
+# fails fast.
+#
+# Tag a commit `v0.6.0` and push it; this builds the self-contained tarball
+# (code + production node_modules, because the package has four runtime deps and
+# a source-only tarball cannot run) plus SHA256SUMS, and attaches both to the
+# release. install.sh and `claude-web-chat update` read exactly those two assets.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (e.g. v0.6.0)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The full install: the test run below needs devDependencies. The build
+      # script selects the PRODUCTION tree itself (`npm ls --omit=dev`), so
+      # jsdom cannot reach the artifact.
+      - run: npm ci
+
+      # Cheap guards first: a mistyped tag or an unstamped changelog should fail
+      # in seconds, not after a full test run.
+      - name: Tag must match package.json version
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          pkg="v$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $tag does not match package.json ($pkg) — bump the version in the tagged commit" >&2
+            exit 1
+          fi
+
+      - name: CHANGELOG must have a dated section for this version
+        run: |
+          ver="$(node -p 'require("./package.json").version')"
+          grep -qE "^## \[$ver\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md \
+            || { echo "CHANGELOG.md has no dated [$ver] heading — stamp [Unreleased] before tagging" >&2; exit 1; }
+
+      # main serves install.sh to every new user via the curl one-liner in the
+      # README. A release cut while main still carried the old npm-based
+      # installer would be invisible to all of them.
+      - name: install.sh must be the release installer
+        run: |
+          grep -q 'releases/latest' install.sh
+          ! grep -q 'npm i -g' install.sh
+
+      # A release that fails its own suite is not a release.
+      # `npm test` is a bare `node --test`: passing the directory misresolves.
+      - run: npm test
+
+      - run: node scripts/build-release.js
+
+      # Prove the artifact runs before publishing it: unpack into a scratch HOME
+      # exactly the way install.sh does, and run the CLI out of it with no npm
+      # install of any kind.
+      - name: Smoke-test the artifact
+        run: |
+          set -eu
+          tag="v$(node -p 'require("./package.json").version')"
+          ver="${tag#v}"
+          scratch="$(mktemp -d)"
+          mkdir -p "$scratch/.web-chat/versions/$ver"
+          tar -xzf "dist/claude-web-chat-$ver.tar.gz" --strip-components 1 -C "$scratch/.web-chat/versions/$ver"
+          ln -s "versions/$ver" "$scratch/.web-chat/current"
+          HOME="$scratch" node "$scratch/.web-chat/current/bin/claude-web-chat.js" --version
+          HOME="$scratch" node "$scratch/.web-chat/current/bin/claude-web-chat.js" help > /dev/null
+      - name: Verify the published checksum
+        run: cd dist && shasum -a 256 -c SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.tar.gz dist/SHA256SUMS --clobber
+          else
+            gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS \
+              --title "$tag" --generate-notes
+          fi

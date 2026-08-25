@@ -1,6 +1,6 @@
 {
   "name": "claude-web-chat",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Live web canvas + turn graph for Claude Code.",
   "license": "MIT",
@@ -21,6 +21,7 @@
     "public/",
     "templates/",
     "extensions/",
+    "docs/",
     "install.sh",
     "README.md",
     "CHANGELOG.md",
@@ -30,7 +31,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node bin/claude-web-chat.js start"
+    "start": "node bin/claude-web-chat.js start",
+    "test": "node --test",
+    "build:release": "node scripts/build-release.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

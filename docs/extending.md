@@ -9,15 +9,37 @@ keeps them singular.
 git clone https://github.com/Brynhild-CHale/claude-web-chat.git
 cd claude-web-chat
 npm install
-npm link
+node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
-`npm link` symlinks the three bin scripts (`claude-web-chat`, `-mcp`, `-hook`)
-onto your PATH so the CLI, MCP server, and hook helper all resolve to your working
-copy — edit and re-run, no reinstall cycle. After a `git pull` the symlinked bins
-already point at the new code. Run the suite with a bare `node --test`
-(auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
-reports a spurious failure).
+Run the suite with `npm test` — that is a bare `node --test`, which auto-discovers
+`test/`; **not** `node --test test/`, which mis-resolves and reports a spurious
+failure.
+
+**Do not use `npm link`.** npm's global prefix is a shared mutable directory: any
+later `npm i -g` of anything rewrites what lives there, and that is not
+hypothetical — it silently replaced this package's link to a dev checkout with a
+copied build from 16 days earlier. The checkout's tests stayed green while the
+`claude-web-chat` on PATH was ancient, and the first symptom was `unknown
+command` for a command written that morning. Releases now install into
+`~/.web-chat/versions/<v>/` with `~/.local/bin` symlinks, and nothing but this
+program writes there.
+
+To put a checkout on your PATH, link it yourself and know what you are doing:
+
+```sh
+ln -sf "$(pwd)/bin/claude-web-chat.js"      ~/.local/bin/claude-web-chat
+ln -sf "$(pwd)/bin/claude-web-chat-mcp.js"  ~/.local/bin/claude-web-chat-mcp
+ln -sf "$(pwd)/bin/claude-web-chat-hook.js" ~/.local/bin/claude-web-chat-hook
+```
+
+That *shadows* any installed release (the release's own links live at the same
+three paths). `claude-web-chat version` always prints which tree it is running
+from, what `~/.web-chat/current` points at, and what the command on your PATH
+resolves to — check it whenever behaviour and source disagree. `claude-web-chat
+update` refuses outright on a checkout: a checkout is updated with `git pull`,
+and rewriting `~/.web-chat/versions/` would change nothing you actually run.
+Re-run `install.sh` to put the release links back.
 
 ### Loading the MCP tools when dogfooding this repo
 
@@ -77,6 +99,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | You need to… | Use | Never |
 | --- | --- | --- |
 | resolve a path under `.web-chat/` or `~/.web-chat/` | `core/paths` `projectPaths(root)` / `userPaths()` | hardcode `'.web-chat'` or call `os.homedir()` |
+| resolve a path under `.claude/` (settings, rules, skills) | `core/paths` `claudePaths(root)` / `userClaudePaths()` | hardcode `'.claude'` |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
@@ -87,9 +110,14 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
-| CORS on an extension-facing route | `core/cors` `setCors` / `mountCors` | copy the header block |
+| decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
 | escape HTML | `server/util/html` `escapeHtml` | inline a `.replace` chain |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
+| unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
+| decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
+| fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
+| name the reserved component names | `lib/server/builtins` `BUILTINS` | re-list them |
+| ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 
 ## The engines in detail
@@ -241,10 +269,83 @@ they only borrow `freshRequire`. Don't try to force a URL-matched or
 cascade-resolved resource through `get(name)` — that's the leaky abstraction this
 engine deliberately avoids.
 
+### `lib/core/cors.js` — the local network trust boundary
+
+Everything web-chat serves is unauthenticated by design — the graph, the shared
+store, arbitrary HTML/JS injection through `/api/render`. So "who may reach this
+server" is a single security decision, and it lives in one zero-import leaf
+module. Three facts that must never drift apart:
+
+- `LISTEN_HOST` — what the instance server and the hub bind. `127.0.0.1` unless
+  `WEB_CHAT_HOST` says otherwise; `warnIfExposed()` prints the consequences of
+  that override on startup. Never write a bind address anywhere else, and never
+  bind a wildcard "for convenience" — a loopback bind is the access control.
+- `isLocalOrigin(origin)` — is a browser `Origin` one of this machine's own
+  surfaces. Gates the WS upgrade (`verifyClient` in `lib/server/ws.js`), because
+  browsers apply no same-origin policy to WebSocket connects and the `hello`
+  frame is an unconditional full-state disclosure. An **absent** origin is not
+  decided here: the caller allows it, since a non-browser client (driver, CLI,
+  test) already has filesystem access to everything.
+- `setCors(req, res)` / `mountCors(app, path)` — the extension-facing headers.
+  The allowed set is narrow on purpose (extension schemes + this machine); it
+  used to reflect any `Origin`, which made every capture readable by any site the
+  user happened to be browsing.
+
+`LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
+the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
+dual-stack machine.
+
+### `lib/packs/` — the component-pack pipeline
+
+A pack is a git repository that installs as components **plus a Claude skill**.
+The skill is the reason the format exists: `list_components` is a *pull* (Claude
+learns a component exists only if it calls the tool), while a skill's frontmatter
+description sits in context from session start.
+
+One direction, one module per step, no step reaching backwards:
+
+```
+source.js    parse a URL → { owner, repo, apiBase }; resolve a ref → a commit sha
+   ↓
+fetch.js     download (release+SHA256SUMS, else the sha-pinned archive) → verify
+             → stage into mkdtemp; refuse hostile archive members on OUR terms
+   ↓
+manifest.js  parse + validate web-chat-pack.json; read SKILL.md frontmatter
+   ↓
+plan.js      planInstall() → { units, collisions, services, errors }  — PURE
+   ↓
+tree.js      applyPlan / removeUnits / verifyPack / stage+promote quarantine
+   ↓
+install.js   orchestrate, write the provenance record, append the audit line
+```
+
+`plan.js` writes nothing, deliberately: the same function serves the install, the
+`review` output, and the drawer's quarantine card, so "show me what this would
+do" cannot drift from what it actually does.
+
+Three invariants live in code rather than in a reviewer's memory:
+
+- **`tar` is not the security boundary — the copier is.** Members are listed
+  (`archive.listTarGz`, pure JS) and refused before extraction: absolute paths,
+  any `..` segment, anything that is not a regular file or a directory. BSD tar
+  errors on a `..` member and GNU tar has historically stripped it; "refused" vs
+  "silently renamed" is exactly the distinction that matters, so it is ours to
+  make. The staged tree is then walked again and modes normalized.
+- **The integrity anchor is the commit sha, never the tarball digest.** GitHub
+  archive tarballs are not byte-stable. `tarball_sha256` is recorded as an
+  observed fact and never compared.
+- **A builtin component name is a hard refusal.** No override, either tier,
+  either actor — because `seedBuiltins` only repairs a directory whose
+  `meta.json` says `builtin: true`, so a shadowing pack would win permanently.
+
+`lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
+`install.js`. **Read the risk paragraph at the head of the route file before
+changing it**: the install endpoint is reachable by any pane script and cannot
+tell a pane's `fetch` from a user's click. `--replace`, and removing a pack you
+have edited, are therefore terminal-only.
+
 ### Shared small homes
 
-- `lib/core/cors.js` — `setCors(req, res)`, `mountCors(app, path)` (the extension
-  hits the instance server and the hub cross-origin).
 - `lib/server/util/html.js` — `escapeHtml(s)` (null-safe).
 - `lib/capture/profiles/util.js` — `collapse(s)`.
 
@@ -267,17 +368,18 @@ count as a phantom passing test.
   the dev machine.
 - `tmpRoot`, `makeApi(baseUrl)`, `wsConnect`, `wsHello`, `safeStop`.
 
-Run the suite with bare `node --test` (auto-discovers `test/`). Not `node --test
-test/` — that mis-resolves.
+Run the suite with `npm test` (a bare `node --test`, which auto-discovers
+`test/`). Not `node --test test/` — that mis-resolves.
 
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for `new Function`) and holds a **per-file baseline** of three
+`lib/` (+ `public/` for `new Function`) and holds a **per-file baseline** of four
 banned constructs, then **ratchets**:
 
 - **New / grown occurrence → fail.** You added `http.request(` /`os.homedir()` /
-  `new Function('…')` somewhere new — route it through the engine instead.
+  `new Function('…')` / a readline require somewhere new — route it through the
+  engine instead.
 - **Removed occurrence → fail as a STALE baseline.** A consolidation dropped a
   count below its baseline; lower the number here in the same PR. The ceiling can
   only ever move toward zero-outside-the-home.
@@ -289,6 +391,7 @@ Current homes (baselines can only shrink toward these):
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
+| `require('node:readline…')` | `lib/cli/prompt.js` (the one prompt engine) | landed with `init` ✅ |
 
 Working with it:
 
@@ -297,7 +400,7 @@ Working with it:
   file's baseline with a justifying comment — and expect review pushback.
 - **The tripwire counts raw substrings, comments included.** Writing
   `os.homedir()` in a comment inflates the count. Reword the comment.
-- **Adding a new duplication-prone primitive?** Add a fourth pattern to
+- **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
 

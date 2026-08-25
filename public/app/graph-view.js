@@ -10,12 +10,82 @@
 import { view, $, cssVar } from './state.js';
 import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
 import { previewNode, ensureGraph } from './topbar.js';
+import { esc } from './esc.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
 let camera = { tx: 0, ty: 0, scale: 1 };
 let historyScope = 'all';              // 'all' | 'graph' (just the selected node's tree)
 const historyFilters = new Set();      // subset of {'marked','forks'} — independent toggles, union
+
+/* ---------- the camera: ONE owner of "change the view transform" ----------
+   The +/− buttons went through zoomBy (which also wrote the % readout) while the
+   wheel handler set camera.scale itself — so scrolling zoomed the canvas and left
+   the badge sitting at 100%. Both now go through setZoom, and every camera change
+   ends in applyCamera, which is also the cheap path: panning used to call
+   layoutAndRender() on every mousemove, relaying out the whole DAG to move a
+   transform that the layout does not depend on. Moving the camera and recomputing
+   the layout are now separate operations. */
+const ZOOM_MIN = 0.2, ZOOM_MAX = 3;
+let rootGEl = null;                    // the <g> layoutAndRender puts every glyph in
+
+function updateZoomReadout() {
+  const p = $('gv-zoom-pct');
+  if (p) p.textContent = Math.round(camera.scale * 100) + '%';
+}
+// Push the current camera onto the existing SVG — no layout, no re-render.
+function applyCamera() {
+  if (rootGEl && rootGEl.isConnected) {
+    rootGEl.setAttribute('transform', `translate(${camera.tx},${camera.ty}) scale(${camera.scale})`);
+  } else {
+    layoutAndRender();
+  }
+  updateZoomReadout();
+}
+// `anchor` ({x,y} in SVG client coords) keeps that point fixed while scaling —
+// what a wheel zoom wants; the buttons pass none and scale about the origin.
+function setZoom(scale, anchor) {
+  const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scale));
+  if (anchor && camera.scale) {
+    camera.tx = anchor.x - (anchor.x - camera.tx) * (next / camera.scale);
+    camera.ty = anchor.y - (anchor.y - camera.ty) * (next / camera.scale);
+  }
+  camera.scale = next;
+  applyCamera();
+}
+
+/* ---------- per-graph placement on the canvas ----------
+   Trees are auto-laid-out left-to-right and their placement was not the user's to
+   control; dragging a graph by its heading now nudges the whole tree, auto-layout
+   staying the base and the drag being a delta on top of it.
+
+   This lives CLIENT-SIDE, keyed by root node id, on purpose. Where a graph sits on
+   one person's canvas is a viewport preference, not graph data: the server's
+   .web-chat/ graph is turn history that migrations must keep append-only, a second
+   browser (or a second person on the same daemon) has its own viewport and its own
+   window size, and a shared position would make one viewer's tidy-up everybody's.
+   It also needs no route and no schema bump. localStorage — not sessionStorage —
+   because "survives a reload" is the whole point; every access is wrapped, since a
+   private window or blocked site data makes the accessor itself throw. */
+const POS_KEY = 'wc:gv-graph-pos';
+let graphOffsets = null;
+function offsets() {
+  if (graphOffsets) return graphOffsets;
+  try { graphOffsets = JSON.parse(localStorage.getItem(POS_KEY) || '{}') || {}; }
+  catch { graphOffsets = {}; }
+  return graphOffsets;
+}
+function offsetFor(rootId) {
+  const o = offsets()[rootId];
+  return (Array.isArray(o) && o.length === 2) ? o : [0, 0];
+}
+// persist:false keeps the drag cheap — one write on mouseup, not one per frame.
+function setOffset(rootId, dx, dy, persist = true) {
+  const o = offsets();
+  const rx = Math.round(dx), ry = Math.round(dy);
+  if (!rx && !ry) delete o[rootId]; else o[rootId] = [rx, ry];
+  if (persist) { try { localStorage.setItem(POS_KEY, JSON.stringify(o)); } catch { /* private window */ } }
+}
 
 // Open the overlay: refresh the graph, reveal it, and fit the view. Wired to the
 // topbar's Graph button by the topbar module (which also closes the drawer);
@@ -27,12 +97,85 @@ export async function openOverlay() {
   if (view.selectedNodeId && nodeById(view.selectedNodeId)) renderInspector(view.selectedNodeId);
   else if (view.activeId) selectNode(view.activeId, { noRender: true });
   overlayEl.classList.remove('hidden');
+  // Focus management: the overlay covers the surface and owns ↑↓/↵/A/Space, but
+  // focus used to stay on whatever opened it — so a keyboard user was driving an
+  // element they had left behind. Move focus in (the container is tabindex="-1"),
+  // and remember where to hand it back on close.
+  returnFocusTo = document.activeElement;
+  overlayEl.focus({ preventScroll: true });
   fitView();
 }
 
-export function closeOverlay() { closeFloatPreview(); overlayEl.classList.add('hidden'); }
+// Where focus came from when the overlay opened, so closing returns it there.
+let returnFocusTo = null;
+// The single close path: hide + restore focus. Everything that dismisses the
+// overlay (✕, Escape, opening a node, a float-preview action) routes through here
+// so focus is never stranded on a display:none subtree.
+export function closeOverlay() {
+  closeFloatPreview();
+  closeNamePanel();   // raised from inside the overlay — it must not outlive it
+  overlayEl.classList.add('hidden');
+  const back = returnFocusTo;
+  returnFocusTo = null;
+  if (back && back.isConnected && typeof back.focus === 'function') back.focus({ preventScroll: true });
+}
 
 export function isOverlayOpen() { return !overlayEl.classList.contains('hidden'); }
+
+/* The overlay's half of the ONE Escape owner (shell.js handleEscape). Escape used
+   to be claimed by two racing document listeners; the order between them was an
+   accident of module init order and neither could see the other's state. This
+   function is the overlay's layers in precedence order, and it reports whether it
+   consumed the key so the shell knows to stop.
+
+     1. the glance / float preview   (raised from inside the overlay)
+     2. the rename / bookmark panel  (ditto — must never outlive its parent)
+     3. the overlay itself
+*/
+export function escapeInOverlay() {
+  if (floatEl) { closeFloatPreview(); return true; }
+  if (isNamePanelOpen()) { closeNamePanel(); return true; }
+  if (isOverlayOpen()) { closeOverlay(); return true; }
+  return false;
+}
+
+/* Same-origin preview iframes swallow the key. The inspector's "surface preview"
+   thumbnail and the glance card are both <iframe src="/preview/node/:id">, and
+   clicking either moves focus INTO that document — after which a real Escape
+   keypress is delivered to the iframe's document and never reaches ours at all
+   (document.activeElement reads back as the IFRAME element, and no keydown
+   listener on our document fires). That, not the listener race, is why Escape
+   looked dead in a real browser: the overlay's own preview is the easiest thing
+   on screen to click.
+
+   Both frames are same-origin, so forward the key back to the page that owns the
+   layers. This is transport, not a second Escape implementation — the forwarded
+   event runs the same one owner. */
+function forwardEscapeFrom(frame) {
+  const bind = () => {
+    let doc = null;
+    try { doc = frame.contentDocument; } catch { return; }   // cross-origin: nothing to do
+    if (!doc || doc.__wcEscBound) return;
+    doc.__wcEscBound = true;
+    doc.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+  };
+  // Three cheap, idempotent moments — a navigation swaps the child document out
+  // from under any single one of them:
+  //   now       the document that is already there
+  //   load      the one the src navigated to
+  //   focus     the moment it matters — focus is entering the frame, and whatever
+  //             document is live then is the one about to receive the keystrokes
+  if (!frame.__wcEscWired) {
+    frame.__wcEscWired = true;
+    frame.addEventListener('load', bind);
+    frame.addEventListener('focus', bind, true);
+  }
+  bind();
+}
 
 export async function refreshGraph() {
   await ensureGraph(true);
@@ -81,7 +224,6 @@ function stateOf(n) {
   if (!n.parent_id) return { cls: 'root', text: 'ROOT' };
   return { cls: 'root', text: 'TURN' };
 }
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // The top-level tree a node belongs to (walk parents to the rootless ancestor).
 function rootOf(id) {
@@ -109,6 +251,11 @@ function renderHistory() {
   if (!list) return;
   const rows = historyRows();
   const tc = $('gv-turncount'); if (tc) tc.textContent = (view.graphCache?.nodes || []).length;
+  // A keyboard selection re-renders this list, which would destroy the focused row
+  // and drop focus to <body>. Remember which node had it and hand it back below.
+  const focused = document.activeElement;
+  const refocusId = focused && focused.classList && focused.classList.contains('gv-row') && list.contains(focused)
+    ? focused.dataset.id : null;
   list.innerHTML = '';
   for (const n of rows) {
     const st = stateOf(n);
@@ -121,9 +268,27 @@ function renderHistory() {
       `<span class="glyph ${st.cls}">${glyph}</span>` +
       `<span class="main"><span class="lbl">${esc(n.label || n.id)}</span>${trig ? ' <span class="trig">· ' + esc(trig) + '</span>' : ''}</span>` +
       `<span class="time">${time}</span>`;
+    // The row is a clickable <div>, so it was invisible to tab and to Enter/Space.
+    // Give it button-ish option semantics and the same two actions the mouse gets:
+    // Enter/Space selects (single click), ⌘/Ctrl+Enter opens (double click).
+    row.tabIndex = 0;
+    row.dataset.id = n.id;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(n.id === view.selectedNodeId));
     row.addEventListener('click', () => { selectNode(n.id); centerOn(n.id); });
     row.addEventListener('dblclick', () => { openNode(n.id); });
+    row.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation(); // don't also fire the overlay-wide ↵/Space handlers
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) openNode(n.id);
+      else { selectNode(n.id); centerOn(n.id); }
+    });
     list.appendChild(row);
+  }
+  if (refocusId) {
+    const again = [...list.children].find((el) => el.dataset && el.dataset.id === refocusId);
+    if (again) again.focus({ preventScroll: true });
   }
 }
 
@@ -154,9 +319,9 @@ async function renderInspector(id) {
     `<div class="gv-actions">` +
       `<button class="gv-act primary" id="gv-set-active" data-act="active">Set active</button>` +
       `<button class="gv-act" data-act="open" title="Open on the surface (↵)">⤢ Open</button>` +
-      `<button class="gv-act" data-act="glance" title="Glance preview (Space)">◉</button>` +
-      `<button class="gv-act" data-act="bookmark" title="Bookmark (B)">⚑</button>` +
-      `<button class="gv-act" data-act="export" title="Export (E)">↧</button>` +
+      `<button class="gv-act" data-act="glance" title="Glance preview (Space)" aria-label="Glance preview (Space)">◉</button>` +
+      `<button class="gv-act" data-act="bookmark" title="Bookmark (B)" aria-label="Bookmark (B)">⚑</button>` +
+      `<button class="gv-act" data-act="export" title="Export (E)" aria-label="Export (E)">↧</button>` +
     `</div>`;
 
   drawPreview($('gv-preview'), id, mounts.length);
@@ -186,6 +351,7 @@ function drawPreview(box, id, paneCount) {
   fr.style.height = Math.round((box.clientHeight || 120) / scale) + 'px';
   fr.style.transform = 'scale(' + scale + ')';
   fr.src = '/preview/node/' + encodeURIComponent(id);
+  forwardEscapeFrom(fr);
   box.insertBefore(fr, box.firstChild);
 }
 
@@ -220,7 +386,7 @@ function updateStatus() {
 }
 
 // open a node fully on the surface (leaves the overlay)
-function openNode(id) { view.selectedNodeId = id; previewNode(id); overlayEl.classList.add('hidden'); }
+function openNode(id) { view.selectedNodeId = id; previewNode(id); closeOverlay(); }
 
 // set a node active (commits the next turn there / branches)
 async function setActive(id) {
@@ -241,16 +407,66 @@ function exportNode(id) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-async function bookmarkNode(id) {
-  const n = nodeById(id);
-  const name = prompt('Bookmark name (empty to clear):', (n && n.name) || '');
-  if (name === null) return;
+/* ---------- naming: the ONE name field, two callers ----------
+   A graph's name IS the `name` on its bookmarked ROOT node — that is exactly what
+   `new graph` writes (pendingBookmark labels the first committed node). Until now
+   only creation could set it, so a graph that was not named at birth read forever
+   as the fallback "graph n1" with no affordance anywhere to fix it. The canvas
+   heading is now that affordance, and it reuses POST /api/graph/bookmark — the
+   same endpoint the ⚑ inspector action uses, and the same one `new graph` ends at.
+
+   Both callers go through #gv-name-panel. `bookmarkNode` used to call the native
+   window.prompt(): a blocking browser dialog, unlike every other input in this
+   chrome, and one that wedges an automated driver. Never window.prompt. */
+const namePanel = () => $('gv-name-panel');
+function isNamePanelOpen() { const p = namePanel(); return !!p && !p.classList.contains('hidden'); }
+function closeNamePanel() { const p = namePanel(); if (p) p.classList.add('hidden'); }
+
+let nameTargetId = null;
+function openNamePanel({ id, title, hint, value }) {
+  const p = namePanel();
+  if (!p) return;
+  nameTargetId = id;
+  const t = $('gv-name-title'); if (t) t.textContent = title;
+  const h = $('gv-name-hint'); if (h) h.textContent = hint;
+  const inp = $('gv-name-input');
+  if (inp) inp.value = value || '';
+  p.classList.remove('hidden');
+  if (inp) setTimeout(() => { if (isNamePanelOpen()) { inp.focus(); inp.select(); } }, 0);
+}
+async function commitName() {
+  const id = nameTargetId;
+  const inp = $('gv-name-input');
+  const name = ((inp && inp.value) || '').trim();
+  closeNamePanel();
+  if (!id) return;
   await fetch('/api/graph/bookmark', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: name.trim() }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }),
   });
   await refreshGraph();
   renderHistory();
-  renderInspector(id);
+  if (view.selectedNodeId) renderInspector(view.selectedNodeId);
+}
+
+function bookmarkNode(id) {
+  const n = nodeById(id);
+  openNamePanel({
+    id,
+    title: 'Bookmark ' + labelFor(id),
+    hint: 'Marks this turn so you can find it again. Empty clears the bookmark.',
+    value: (n && n.name) || '',
+  });
+}
+
+// Rename a whole GRAPH: name its root node, which is what the canvas heading shows.
+function renameGraph(rootId) {
+  const n = nodeById(rootId);
+  openNamePanel({
+    id: rootId,
+    title: 'Rename graph',
+    hint: 'A graph is named by its root node — this is the heading shown on the canvas. Empty restores the fallback label.',
+    value: (n && n.name) || '',
+  });
 }
 
 // --- Floating read-only preview: an Arc/Zen-style "glance" — a centered card
@@ -277,7 +493,7 @@ function openFloatPreview(id) {
     floatEl.querySelector('[data-act="close"]').addEventListener('click', closeFloatPreview);
     floatEl.querySelector('[data-act="open"]').addEventListener('click', () => {
       const nid = floatEl.dataset.nodeId; closeFloatPreview();
-      view.selectedNodeId = nid; previewNode(nid); overlayEl.classList.add('hidden');
+      view.selectedNodeId = nid; previewNode(nid); closeOverlay();
     });
     floatEl.querySelector('[data-act="active"]').addEventListener('click', async () => {
       const nid = floatEl.dataset.nodeId;
@@ -287,17 +503,20 @@ function openFloatPreview(id) {
       if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
       view.previewing = false; view.liveSnapshot = null;
       $('main').classList.remove('preview-readonly');
-      closeFloatPreview(); overlayEl.classList.add('hidden');
+      closeOverlay();
       await refreshGraph();
     });
   }
   floatEl.dataset.nodeId = id;
   floatEl.querySelector('.glance-title').textContent = 'preview ' + labelFor(id);
   const frame = floatEl.querySelector('.glance-frame');
+  forwardEscapeFrom(frame);
   const src = '/preview/node/' + id;
   if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
 }
 function closeFloatPreview() { if (floatEl) { floatEl.remove(); floatEl = null; } }
+// Read by the one Escape owner so it can tell a modal overlay layer is up.
+export function hasFloatPreview() { return !!floatEl; }
 function toggleFloatPreview() {
   if (floatEl) closeFloatPreview();
   else if (view.selectedNodeId) openFloatPreview(view.selectedNodeId);
@@ -543,9 +762,24 @@ function computeGraphLayout() {
   // are scannable. Label = the root's bookmark name, falling back to its id.
   const treeTitles = [];
   for (const r of roots) {
+    const g0 = glyphs.length, e0 = edges.length;   // this tree's slice of the output
     const first = walk(r, frontier, 0);
     const rn = byId.get(r);
-    if (first && rn) treeTitles.push({ x: first.x, y: first.y, graphLabel: (rn.label || '').replace(/\.0$/, ''), name: rn.name || '' });
+    const tt = (first && rn)
+      ? { x: first.x, y: first.y, graphLabel: (rn.label || '').replace(/\.0$/, ''), name: rn.name || '', rootId: r }
+      : null;
+    if (tt) treeTitles.push(tt);
+    // The user's saved placement is a delta ON the auto-layout: shift everything
+    // this tree produced. `frontier` was advanced from the unshifted x, so moving
+    // one graph never reflows the others.
+    const [dx, dy] = offsetFor(r);
+    if (dx || dy) {
+      for (let i = g0; i < glyphs.length; i++) { glyphs[i].x += dx; glyphs[i].y += dy; }
+      for (let i = e0; i < edges.length; i++) {
+        const e = edges[i]; e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy;
+      }
+      if (tt) { tt.x += dx; tt.y += dy; }
+    }
   }
   return { glyphs, edges, treeTitles };
 }
@@ -572,6 +806,7 @@ export function layoutAndRender() {
   const mono = (fb) => cssVar('--wc-mono', fb);
 
   const rootG = svgEl_('g', { transform: `translate(${camera.tx},${camera.ty}) scale(${camera.scale})` });
+  rootGEl = rootG;   // applyCamera moves THIS without recomputing the layout
   svgEl.appendChild(rootG);
 
   // Edges first (under glyphs)
@@ -600,16 +835,36 @@ export function layoutAndRender() {
     edgesG.appendChild(svgEl_('path', { d, fill: 'none', stroke: muted('#8b949e'), 'stroke-width': '1.5' }));
   }
 
-  // Tree titles (one per top-level graph), above each column.
+  // Tree titles (one per top-level graph), above each column. The heading is the
+  // graph's handle: click it to rename the graph (it names the root node), drag it
+  // to place the graph on the canvas.
   for (const tt of (treeTitles || [])) {
-    const grp = svgEl_('g', {});
+    const grp = svgEl_('g', { class: 'gv-tree-title' });
+    grp.dataset.graphRoot = tt.rootId;
+    grp.style.cursor = 'grab';
+    const caption = (tt.name ? '🔖 ' : '') + (tt.name || ('graph ' + tt.graphLabel));
+    // A transparent pad so the heading is a target, not a 12px glyph outline.
+    const hitW = Math.max(96, caption.length * 8 + 40);
+    grp.appendChild(svgEl_('rect', {
+      x: tt.x - hitW / 2, y: tt.y - 48, width: hitW, height: tt.name ? 34 : 20, rx: 10,
+      fill: 'transparent', class: 'gv-tt-hit',
+    }));
+    const hint = svgEl_('title', {});
+    hint.textContent = 'Click to rename this graph · drag to move it';
+    grp.appendChild(hint);
     const t = svgEl_('text', {
       x: tt.x, y: tt.y - 34, 'text-anchor': 'middle',
       'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '12', 'font-weight': '700',
       fill: tt.name ? gold('#9a6700') : muted('#57606a'),
     });
-    t.textContent = (tt.name ? '🔖 ' : '') + (tt.name || ('graph ' + tt.graphLabel));
+    t.textContent = caption;
     grp.appendChild(t);
+    const pencil = svgEl_('text', {
+      x: tt.x + hitW / 2 - 10, y: tt.y - 33, 'text-anchor': 'middle', class: 'gv-tt-pencil',
+      'font-family': 'ui-sans-serif, system-ui', 'font-size': '11', fill: muted('#8b949e'),
+    });
+    pencil.textContent = '✎';
+    grp.appendChild(pencil);
     if (tt.name) {
       const sub = svgEl_('text', {
         x: tt.x, y: tt.y - 21, 'text-anchor': 'middle',
@@ -743,25 +998,48 @@ export function layoutAndRender() {
       closeFloatPreview();
       view.selectedNodeId = el.dataset.id;
       previewNode(el.dataset.id);
-      overlayEl.classList.add('hidden');
+      closeOverlay();
     }
   };
 }
 
-export function fitView() {
+// The ONE place that decides where the camera goes to put the whole graph in the
+// middle of the viewport. `pickScale` is the only thing its two callers differ
+// on: Fit chooses a scale that makes everything visible, the zoom badge resets
+// to a true 1:1. Everything else — the bounds, the centring translate, the
+// re-render, the badge — is shared, so the two can never drift into centring
+// the graph differently.
+//
+// This does NOT route through setZoom: setZoom preserves an anchor point (what a
+// wheel zoom wants) whereas centring deliberately discards the existing pan.
+// Both still end at updateZoomReadout, which is the invariant that matters —
+// the badge always reflects camera.scale.
+function centerGraph(pickScale) {
   const { glyphs } = computeGraphLayout();
   if (!glyphs.length) return;
   const xs = glyphs.map(g => g.x), ys = glyphs.map(g => g.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
   const w = svgEl.clientWidth || 800, h = svgEl.clientHeight || 600;
-  const contentW = (maxX - minX) + 160, contentH = (maxY - minY) + 160;
-  const scale = Math.min(1.4, Math.max(0.35, Math.min(w / contentW, h / contentH)));
+  const scale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pickScale({
+    w, h, contentW: (maxX - minX) + 160, contentH: (maxY - minY) + 160,
+  })));
   camera.scale = scale;
   camera.tx = w / 2 - ((minX + maxX) / 2) * scale;
   camera.ty = h / 2 - ((minY + maxY) / 2) * scale;
   layoutAndRender();
+  updateZoomReadout();   // centring changes the zoom too — the badge must follow
 }
+
+export function fitView() {
+  centerGraph(({ w, h, contentW, contentH }) =>
+    Math.min(1.4, Math.max(0.35, Math.min(w / contentW, h / contentH))));
+}
+
+// Clicking the zoom percentage between − and +: back to a true 1:1, graph
+// centred. The readout is the affordance — the number you are being shown is
+// also the button that undoes whatever pan and zoom you wandered into.
+export function resetView() { centerGraph(() => 1); }
 
 // Wire the overlay-internal controls: fit/close buttons, the document keydown
 // handler (Escape/arrows/space, active only while the overlay is open), the
@@ -772,11 +1050,10 @@ export function initGraph() {
   $('overlay-close').addEventListener('click', closeOverlay);
   $('overlay-fit').addEventListener('click', fitView);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (floatEl) { closeFloatPreview(); return; }
-      if (!overlayEl.classList.contains('hidden')) overlayEl.classList.add('hidden');
-      return;
-    }
+    // Escape is NOT handled here. It has one owner (shell.js handleEscape), which
+    // calls this module's escapeInOverlay() for the overlay's own layers — two
+    // document listeners both claiming the key is what made it unpredictable.
+    if (e.key === 'Escape') return;
     // graph navigation keys — only while the graph overlay is open and not typing
     if (overlayEl.classList.contains('hidden')) return;
     const t = e.target;
@@ -832,36 +1109,76 @@ export function initGraph() {
     overlayEl.classList.toggle('log-mode', b.dataset.mode === 'log');
   });
 
-  // zoom controls
-  const zoomBy = (f) => { camera.scale = Math.max(0.2, Math.min(3, camera.scale * f)); layoutAndRender(); const p = $('gv-zoom-pct'); if (p) p.textContent = Math.round(camera.scale * 100) + '%'; };
-  $('gv-zoom-in').addEventListener('click', () => zoomBy(1.2));
-  $('gv-zoom-out').addEventListener('click', () => zoomBy(1 / 1.2));
+  // the one name field (graph rename + node bookmark) — see openNamePanel
+  const onEl = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+  onEl('btn-gv-name-go', 'click', commitName);
+  onEl('btn-gv-name-cancel', 'click', closeNamePanel);
+  onEl('gv-name-input', 'keydown', (e) => {
+    // Escape here is the field's own (an editable chrome field owns its Escape,
+    // like #bookmark-name / #new-graph-name); stop it before the document owner
+    // reads it as "close the overlay".
+    if (e.key === 'Enter') { e.preventDefault(); commitName(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeNamePanel(); }
+  });
 
-  // pan & zoom
+  // zoom controls — both go through setZoom, the one owner of "change the zoom"
+  $('gv-zoom-pct').addEventListener('click', resetView);
+  $('gv-zoom-in').addEventListener('click', () => setZoom(camera.scale * 1.2));
+  $('gv-zoom-out').addEventListener('click', () => setZoom(camera.scale / 1.2));
+
+  // pan, graph placement & zoom
   (() => {
     const wrap = document.querySelector('.graph-canvas-wrap');
     let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
+    // Dragging a graph HEADING moves that tree; dragging empty canvas still pans;
+    // a glyph still owns its own click. One mousedown, three destinations.
+    let titleDrag = null;
+    const DRAG_SLOP = 4; // px before a press on the heading counts as a drag, not a click
+
     wrap.addEventListener('mousedown', (e) => {
-      if (e.target.closest && e.target.closest('.glyph')) return;
+      if (!e.target.closest) return;
+      if (e.target.closest('.glyph')) return;
+      const heading = e.target.closest('.gv-tree-title');
+      if (heading && heading.dataset.graphRoot) {
+        const [ox, oy] = offsetFor(heading.dataset.graphRoot);
+        titleDrag = { rootId: heading.dataset.graphRoot, sx: e.clientX, sy: e.clientY, ox, oy, moved: false };
+        e.preventDefault();
+        return;
+      }
       panning = true; sx = e.clientX; sy = e.clientY; stx = camera.tx; sty = camera.ty;
     });
-    window.addEventListener('mouseup', () => { panning = false; });
+    window.addEventListener('mouseup', () => {
+      if (titleDrag) {
+        const d = titleDrag;
+        titleDrag = null;
+        // Moved → persist the placement. Didn't move → it was a click: rename.
+        if (d.moved) { const [dx, dy] = offsetFor(d.rootId); setOffset(d.rootId, dx, dy, true); }
+        else renameGraph(d.rootId);
+        return;
+      }
+      panning = false;
+    });
     window.addEventListener('mousemove', (e) => {
+      if (titleDrag) {
+        if (!titleDrag.moved && Math.hypot(e.clientX - titleDrag.sx, e.clientY - titleDrag.sy) < DRAG_SLOP) return;
+        titleDrag.moved = true;
+        const s = camera.scale || 1;   // screen px → graph units
+        setOffset(titleDrag.rootId,
+          titleDrag.ox + (e.clientX - titleDrag.sx) / s,
+          titleDrag.oy + (e.clientY - titleDrag.sy) / s, false);
+        layoutAndRender();             // the layout really did change
+        return;
+      }
       if (!panning) return;
       camera.tx = stx + (e.clientX - sx);
       camera.ty = sty + (e.clientY - sy);
-      layoutAndRender();
+      applyCamera();                   // camera only — no relayout per mousemove
     });
     wrap.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const factor = Math.exp(-e.deltaY * 0.0015);
       const rect = svgEl.getBoundingClientRect();
-      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      const newScale = Math.max(0.2, Math.min(3, camera.scale * factor));
-      camera.tx = mx - (mx - camera.tx) * (newScale / camera.scale);
-      camera.ty = my - (my - camera.ty) * (newScale / camera.scale);
-      camera.scale = newScale;
-      layoutAndRender();
+      setZoom(camera.scale * Math.exp(-e.deltaY * 0.0015),
+        { x: e.clientX - rect.left, y: e.clientY - rect.top });
     }, { passive: false });
   })();
 }

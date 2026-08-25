@@ -28,6 +28,15 @@ const recentAcks = new Set();
 const railEl = () => $('queue-rail');
 const q = (sel) => { const r = railEl(); return r ? r.querySelector(sel) : null; };
 
+// Reveal the rail. Every push confirmation, rejection and recovery button lives
+// INSIDE .rail-expanded, which is invisible (and pointer-events:none) while the
+// rail is collapsed — so pressing P with a collapsed rail used to post the whole
+// feedback conversation somewhere the user could not see or click. The rail's
+// open/pinned state is owned by shell.js; it registers its opener here at boot so
+// this module can demand visibility without importing back into shell (cycle).
+let openRail = () => {};
+export function setRailOpener(fn) { if (typeof fn === 'function') openRail = fn; }
+
 // Fetch the authoritative queue snapshot and RECONCILE it against the local
 // mirror rather than overwriting. Run on init AND on every (re)connect: the GET
 // is authoritative for the server's current ids (so items the client missed
@@ -62,7 +71,102 @@ export async function initQueue() {
     // Toggle the Push button live as the comment is typed/cleared.
     add.addEventListener('input', updatePushLabel);
   }
+  const cancel = q('.rp-cancel');
+  if (cancel) cancel.addEventListener('click', cancelPending);
   await hydrateQueue();
+  await refreshPending();
+  // The park is consumed by the turn-begin hook on the user's next message — an
+  // event the browser never sees — so the standing indicator has to poll to learn
+  // it's gone. Same cadence as the wake panel; the endpoint is a field read.
+  setInterval(refreshPending, 5000);
+}
+
+/* ---------- standing parked-delivery indicator ---------- */
+// A parked push is durable server state: it sits in state.pendingWake until the
+// user's next message delivers it. The moment-of-push confirmation is transient
+// by design, which left the user with a delivery pending and nothing on screen
+// saying so — and no way to take it back. This mirrors GET /api/queue/pending.
+let pendingId = null;
+// The park itself, so render() can list WHAT is waiting rather than only that
+// something is. The endpoint returns the wake envelope (summary only, by
+// contract), which is exactly the granularity a rail row shows.
+let parked = null;
+export async function refreshPending() {
+  const rail = railEl();
+  if (!rail) return;
+  let pending = null;
+  try { pending = (await fetch('/api/queue/pending').then((r) => r.json())).pending || null; } catch { return; }
+  pendingId = pending ? pending.id : null;
+  parked = pending;
+  const box = rail.querySelector('.rail-pending');
+  rail.classList.toggle('has-pending', !!pending);
+  render(); // the held batch is part of the item list, not just a badge
+  if (!box) return;
+  box.classList.toggle('hidden', !pending);
+  if (!pending) return;
+  const txt = box.querySelector('.rp-text');
+  if (txt) {
+    const n = parkedCount(pending);
+    const what = n === 1 ? '1 signal' : `${n} signals`;
+    txt.textContent = `⇢ Parked: ${what} deliver with your next message.`;
+  }
+}
+
+/* ---------- the held batch, itemised ---------- */
+// How many signals the park holds. `meta.count` is authoritative (the envelope
+// caps its printed lines at 50 for a large batch); the parsed rows are the fallback.
+function parkedCount(pending) {
+  const meta = (pending && pending.envelope && pending.envelope.meta) || {};
+  const n = Number(meta.count);
+  return Number.isFinite(n) && n > 0 ? n : parkedRows(pending).length;
+}
+// The envelope's `content` is the one place the park's per-item detail lives
+// (lib/channel/envelope.js emits `- [kind] summary` per signal, plus a header, an
+// optional user note and an optional "N earlier signals omitted" line — none of
+// which match this shape). Parse it back into rows so the rail can show the held
+// batch the same way it shows staged items.
+function parkedRows(pending) {
+  const env = (pending && pending.envelope) || {};
+  const rows = [];
+  for (const line of String(env.content || '').split('\n')) {
+    const m = /^- \[([^\]]+)\] ([\s\S]*)$/.exec(line);
+    if (m) rows.push({ kind: m[1].trim(), summary: m[2].trim() });
+  }
+  if (rows.length) return rows;
+  // No parseable lines (a leaner envelope) — say what we do know rather than
+  // printing an empty section under the header.
+  const n = Number((env.meta && env.meta.count) || 0);
+  return n > 0 ? [{ kind: 'signal', summary: `${n} signal${n === 1 ? '' : 's'} awaiting delivery` }] : [];
+}
+// A parked row is read-only: the batch has already left the queue, so there is
+// nothing left to stage or revert — cancelling the whole delivery is the one
+// action, and it lives on .rail-pending above.
+function parkedRow(it) {
+  const row = document.createElement('div');
+  row.className = 'rail-item parked';
+  const dot = document.createElement('span');
+  dot.className = 'qi-dot qi-' + (it.kind || 'signal');
+  const body = document.createElement('div');
+  body.className = 'qi-body';
+  const top = document.createElement('div');
+  top.className = 'qi-top';
+  const kindEl = document.createElement('span'); kindEl.className = 'qi-kind'; kindEl.textContent = it.kind || 'signal';
+  top.appendChild(kindEl);
+  const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
+  body.append(top, sum);
+  row.append(dot, body);
+  return row;
+}
+// Take the park back. /api/queue/pending/consume is the same id-checked drain the
+// turn-begin hook uses, so cancelling is exactly "consume it and deliver nothing".
+async function cancelPending() {
+  if (!pendingId) return;
+  try {
+    await fetch('/api/queue/pending/consume', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pendingId }),
+    });
+  } catch {}
+  await refreshPending();
 }
 
 // Fold a `queue` WS frame (op add|update|remove|clear) into the local mirror.
@@ -99,10 +203,13 @@ export function foldQueueFrame(msg) {
 export async function pushQueue() {
   const add = q('.rail-add');
   const note = ((add && add.value) || '').trim();
-  if (!items.some(isStaged) && !note) return;
+  // Nothing to send. This used to be a silent `return`: pressing P with an empty
+  // queue did and said nothing, which reads as "the key is broken". Say so instead.
+  if (!items.some(isStaged) && !note) { showNothingToPush(); return; }
+  openRail(); // the confirmation/rejection conversation below must be visible
+  clearRailBanners(); // a new push resets the whole feedback state, not just errors
   // F6: don't drop the staged rows or clear the note until the POST confirms — a
   // failed push (daemon mid-restart) must lose neither the batch nor the typed note.
-  clearPushError();
   let ok = false;
   let result = null;
   try {
@@ -122,6 +229,7 @@ export async function pushQueue() {
     // No live channel — held and delivered on the user's NEXT message. Reliable;
     // no ack to await. Copy is server-sent (result.delivers).
     showParkedNote(result.delivers);
+    refreshPending(); // and raise the STANDING indicator, which outlives the note
   } else if (result && result.mode === 'wake' && result.seq != null) {
     // A live wake was fired — but HTTP 200 only means the daemon emitted it, NOT
     // that it reached Claude. Await the bridge's delivery ack; reject on timeout.
@@ -167,16 +275,9 @@ export function onWakeAck(seq) {
 // transient confirmation that a Push was PARKED (delivered with the next
 // message) rather than woken live. Mirrors the .rail-notice styling; auto-clears.
 function showParkedNote(text) {
-  const rail = railEl();
-  if (!rail) return;
   clearPushError();
-  let note = rail.querySelector('.rail-parked');
-  if (!note) {
-    note = document.createElement('div');
-    note.className = 'rail-parked';
-    const push = rail.querySelector('.rail-push');
-    if (push) push.insertAdjacentElement('beforebegin', note); else rail.appendChild(note);
-  }
+  const note = railBanner('rail-parked'); // railBanner reveals the rail (see above)
+  if (!note) return;
   note.textContent = text || 'Pushed — delivers with your next message.';
   clearTimeout(showParkedNote._t);
   showParkedNote._t = setTimeout(() => { const n = railEl() && railEl().querySelector('.rail-parked'); if (n) n.remove(); }, 6000);
@@ -187,10 +288,14 @@ function showParkedNote(text) {
 function railBanner(cls) {
   const rail = railEl();
   if (!rail) return null;
+  // Every banner is push feedback, and every one of them is inside the expanded
+  // rail — so raising one is also a demand that the rail be on screen.
+  openRail();
   let el = rail.querySelector('.' + cls);
   if (!el) {
     el = document.createElement('div');
     el.className = cls;
+    el.setAttribute('role', 'status');
     const push = rail.querySelector('.rail-push');
     if (push) push.insertAdjacentElement('beforebegin', el); else rail.appendChild(el);
   }
@@ -201,10 +306,21 @@ function railBanner(cls) {
 function clearRailBanners() {
   clearTimeout(showParkedNote._t);
   clearTimeout(showDelivered._t);
-  for (const cls of ['rail-sending', 'rail-parked', 'rail-error']) {
+  clearTimeout(showNothingToPush._t);
+  for (const cls of ['rail-sending', 'rail-parked', 'rail-error', 'rail-nothing']) {
     const el = q('.' + cls);
     if (el) el.remove();
   }
+}
+
+// P with an empty queue and no note. Not an error — just says why nothing happened.
+function showNothingToPush() {
+  clearRailBanners();
+  const el = railBanner('rail-nothing');
+  if (!el) return;
+  el.textContent = 'Nothing to push yet — captures, pane signals and comments collect here first.';
+  clearTimeout(showNothingToPush._t);
+  showNothingToPush._t = setTimeout(() => { const n = q('.rail-nothing'); if (n) n.remove(); }, 4000);
 }
 
 // "Sending…" — a live wake was fired and we're awaiting the bridge's delivery ack.
@@ -228,6 +344,7 @@ function showDelivered() {
 function showPushRejected(seq) {
   const el = railBanner('rail-error');
   if (!el) return;
+  el.setAttribute('role', 'alert');
   el.textContent = '';
   const msg = document.createElement('div');
   msg.className = 'rail-error-msg';
@@ -267,15 +384,10 @@ async function repush(seq, park) {
 // F6: a visible rail error state (mirrors .rail-notice styling, coral) when a push
 // fails, so the kept batch/note aren't a silent mystery. Cleared on the next push.
 function showPushError() {
-  const rail = railEl();
-  if (!rail) return;
-  if (rail.querySelector('.rail-error')) return;
-  const err = document.createElement('div');
-  err.className = 'rail-error';
+  const err = railBanner('rail-error'); // railBanner reveals the rail (see above)
+  if (!err) return;
+  err.setAttribute('role', 'alert');
   err.textContent = 'Push failed — your batch and note are kept. Try again.';
-  const push = rail.querySelector('.rail-push');
-  if (push) push.insertAdjacentElement('beforebegin', err);
-  else rail.appendChild(err);
 }
 function clearPushError() {
   const err = q('.rail-error');
@@ -387,20 +499,33 @@ function render() {
     }
   }
 
+  // A parked push is real, durable server state (GET /api/queue/pending) that the
+  // user's next message will deliver — so it belongs IN the item list, under its
+  // own header, exactly the way staged and held items are shown. The transient
+  // "delivers with your next message" note expires after 6s; this does not.
+  const parkedList = parked ? parkedRows(parked) : [];
+
   const list = rail.querySelector('.rail-items');
   if (list) {
     list.innerHTML = '';
-    if (!count) {
+    if (!count && !parkedList.length) {
       const empty = document.createElement('div');
       empty.className = 'rail-empty';
       empty.textContent = 'No queued signals. Captures, pane signals, and pane activity collect here.';
       list.appendChild(empty);
     } else {
-      list.appendChild(sectionHeader('Staged', staged.length, 'staged'));
-      for (const it of staged) list.appendChild(itemRow(it));
-      if (held.length) {
-        list.appendChild(sectionHeader('Held', held.length, 'held'));
-        for (const it of held) list.appendChild(itemRow(it));
+      if (count) {
+        list.appendChild(sectionHeader('Staged', staged.length, 'staged'));
+        for (const it of staged) list.appendChild(itemRow(it));
+        if (held.length) {
+          list.appendChild(sectionHeader('Held', held.length, 'held'));
+          for (const it of held) list.appendChild(itemRow(it));
+        }
+      }
+      if (parkedList.length) {
+        list.appendChild(sectionHeader('Held for next prompt', parkedCount(parked), 'parked'));
+        if (parked.note) parkedList.unshift({ kind: 'note', summary: parked.note });
+        for (const it of parkedList) list.appendChild(parkedRow(it));
       }
     }
   }

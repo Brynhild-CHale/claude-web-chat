@@ -115,7 +115,41 @@ export function applyPaneState(wrapper, pane_state) {
   if (mb) { mb.textContent = expanded ? '⊟' : '⊞'; mb.classList.toggle('active', expanded); }
 }
 
+// The zero state. #main used to be literally empty on first open — every OTHER
+// panel in this app has a considered empty state (the queue rail, the graph
+// inspector, the command palette, the node preview), and the one surface every
+// new user sees first had none. The README had to apologise for it.
+//
+// Reconciled from renderMinbar because that is already the "the set of panes
+// changed" hook, called from mount / removePane / clearTarget / fullReset.
+function syncZeroState() {
+  const main = $('main');
+  if (!main) return;
+  const hasPanes = main.querySelector('.pane');
+  const existing = main.querySelector('.zero-state');
+  if (hasPanes) { if (existing) existing.remove(); return; }
+  if (existing) return;
+
+  const box = document.createElement('div');
+  box.className = 'zero-state';
+  const mod = navigator.platform && /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
+  box.innerHTML =
+    '<h2>Nothing rendered yet</h2>' +
+    '<p>This page is Claude\'s second surface. Ask for something visual in your terminal ' +
+    'and it appears here — diagrams, forms, comparisons, working mockups — and every turn ' +
+    'becomes a node you can walk back to.</p>' +
+    '<p class="zs-try">Try: <span class="zs-quote">sketch this project\'s architecture on the surface</span></p>' +
+    '<ul class="zs-keys">' +
+      '<li><kbd>' + mod + '</kbd><kbd>K</kbd> commands, nodes and components</li>' +
+      '<li><kbd>N</kbd> open the component library</li>' +
+      '<li><kbd>G</kbd> the graph of every turn</li>' +
+      '<li><kbd>P</kbd> push what you\'ve done here to Claude</li>' +
+    '</ul>';
+  main.appendChild(box);
+}
+
 export function renderMinbar() {
+  syncZeroState();
   const minbarEl = $('minbar');
   if (!minbarEl) return;
   minbarEl.innerHTML = '';
@@ -123,7 +157,14 @@ export function renderMinbar() {
     if (!p.pane_state.minimized) continue;
     const chip = document.createElement('button');
     chip.className = 'min-chip';
-    chip.innerHTML = `<span>${p.title || id}</span><span class="restore">↗</span>`;
+    // textContent, never innerHTML: a pane title can be attacker-controlled (a
+    // captured page's <title> flows into params.title via routes/capture.js).
+    const chipLabel = document.createElement('span');
+    chipLabel.textContent = p.title || id;
+    const chipRestore = document.createElement('span');
+    chipRestore.className = 'restore';
+    chipRestore.textContent = '↗';
+    chip.append(chipLabel, chipRestore);
     chip.addEventListener('click', () => {
       p.pane_state.minimized = false;
       applyPaneState(p.wrapper, p.pane_state);
@@ -154,11 +195,14 @@ function makePaneChrome(id, title, pane_state, params) {
   function mkBtn(label, tip, onClick, className = '') {
     const b = document.createElement('button');
     b.className = 'pane-btn' + (className ? ' ' + className : '');
-    b.textContent = label; b.title = tip;
+    // The label is a glyph, so the tip is also the pane button's accessible name.
+    b.textContent = label; b.title = tip; b.setAttribute('aria-label', tip);
     b.addEventListener('click', onClick);
     return b;
   }
-  const btnPin = mkBtn('📌', 'pin', () => {
+  // The pin's meaning, said out loud: it is not decoration, it is what keeps a
+  // pane through a surface wipe and an agent-driven clear-all.
+  const btnPin = mkBtn('📌', 'pin — this pane survives wipes and re-arrangement', () => {
     pane_state.pinned = !pane_state.pinned;
     btnPin.classList.toggle('active', pane_state.pinned);
     applyPaneState(wrapper, pane_state);
@@ -201,7 +245,9 @@ function makePaneChrome(id, title, pane_state, params) {
   const btnClose = mkBtn('×', 'close', async () => {
     await fetch('/api/clear', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
+      // force: the USER closing a pane outranks the clear clobber-guard — a
+      // driver-owned pane must still close when they hit ×.
+      body: JSON.stringify({ id, force: true }),
     });
   });
 
@@ -538,10 +584,29 @@ export function removePane(id) {
   renderMinbar();
 }
 
-export function clearTarget(target) {
+// A clear-all (a `clear` frame with no id) SPARES PINNED PANES — pinning means
+// "survives a wipe and a re-arrangement", and the server applies the same rule to
+// state.mounts, so a client that swept them anyway would put the DOM out of sync
+// with the surface it is meant to be showing.
+//
+// The frame stays authoritative wherever it says anything: `kept` (an explicit
+// list of surviving mount ids) is obeyed verbatim, and `force` clears everything
+// — matching POST /api/clear's own force escape. With neither, the pinned rule
+// applies. A clear BY ID is untouched: naming a pane is a deliberate act.
+export function survivesClear(paneState, frame = {}) {
+  if (frame.force) return false;
+  return !!(paneState && paneState.pinned);
+}
+
+export function clearTarget(target, frame = {}) {
   const slot = $(target) || $('main');
+  const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   slot.querySelectorAll('.pane').forEach(p => {
-    const id = p.dataset.paneId; if (id) panes.delete(id);
+    const id = p.dataset.paneId;
+    const pane = id ? panes.get(id) : null;
+    const keep = kept ? kept.has(id) : survivesClear(pane && pane.pane_state, frame);
+    if (keep) return;
+    if (id) panes.delete(id);
     p.remove();
   });
   renderMinbar();
@@ -556,6 +621,24 @@ export function fullReset({ mounts, store: newStore }) {
   store.replace(newStore);
   for (const m of (mounts || [])) mount(m);
   renderMinbar();
+}
+
+// Restore a minimized pane, locally and everywhere.
+//
+// The drawer spawns into a STABLE slot (`spawn-<name>`), so spawning the same
+// component twice replaces the pane in place. If that pane happened to be
+// minimized, the re-spawn lands inside a collapsed chip and the click reads as a
+// no-op — the user asked for a pane and nothing appeared. Same restore the
+// minbar chip does, exported so the spawn path can share it rather than reach
+// into pane_state itself.
+export function unminimize(id) {
+  const p = panes.get(id);
+  if (!p || !p.pane_state.minimized) return false;
+  p.pane_state.minimized = false;
+  applyPaneState(p.wrapper, p.pane_state);
+  renderMinbar();
+  emitPaneState(id);
+  return true;
 }
 
 // Apply a remote client's pane:state (WS 'pane:state'): merge, re-layout, and
@@ -595,11 +678,17 @@ function reportEvent(type, e, mountId) {
   const p = panes.get(mountId);
   if (p && p._applyingForm) return;
   const t = e.target;
+  // A password/hidden/file/data-no-persist field's value is NEVER captured —
+  // same predicate the form-state capture uses, so the two paths can't drift.
+  // Only the value is redacted: the routing layer keys off type/tag/dataset/id
+  // (lib/channel/policy domIsMeaningful + activityItem, neither of which reads
+  // `value`), so a redacted event still produces its activity item exactly as
+  // before — a broken pane script stays observable.
   const payload = {
     type, mountId,
     tag: t?.tagName, id: t?.id || null,
     name: t?.getAttribute?.('name') || null,
-    value: t?.value ?? null,
+    value: window.__wcMount.isValueExcluded(t) ? null : (t?.value ?? null),
     dataset: t?.dataset ? { ...t.dataset } : null,
   };
   if (isOpen()) send({ type: 'event', payload });

@@ -88,7 +88,9 @@ test('turn-begin: no portfile -> emits no-server notice', async (t) => {
   await pending;
   const parsed = JSON.parse(out);
   assert.equal(parsed.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-  assert.match(parsed.hookSpecificOutput.additionalContext, /does not have a web-chat tab open/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /No web-chat daemon is running/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /MCP tools still work/,
+    'it must not claim the render tools will fail — they auto-spawn the daemon and succeed');
 });
 
 test('turn-begin: reachable server -> POST /api/turn-begin', async (t) => {
@@ -131,13 +133,25 @@ test('turn-begin: delivers a parked wake as context, then consumes it', async (t
   assert.equal((await api.get('/api/queue/pending')).json.pending, null, 'the park was consumed');
 });
 
-test('turn-begin: reachable server with NO parked wake emits nothing extra', async (t) => {
+test('turn-begin: a running daemon with NO browser watching says so', async (t) => {
   withTempHome(t);
   const { api, root } = await withServer(t, { writePortfile: true });
+  // No WS client is connected, so nothing is watching: a render would succeed and
+  // commit, and be seen by nobody. That is the warning worth giving.
   const out = await captureStdout(() => turnBegin({ prompt: 'hi' }, { root }));
-  assert.equal(out.trim(), '', 'no park → no additionalContext on the reachable path');
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /no browser is watching/);
   // Sanity: the turn-begin lock was still acquired (the primary hook effect).
   assert.equal((await api.get('/api/queue/pending')).json.pending, null);
+});
+
+test('turn-begin: with a browser watching, it stays quiet', async (t) => {
+  withTempHome(t);
+  const ctx = await withServer(t, { writePortfile: true });
+  const sock = ctx.ws();
+  await new Promise((r, j) => { sock.on('message', (d) => { if (JSON.parse(d).type === 'hello') r(); }); sock.on('error', j); });
+  t.after(() => { try { sock.close(); } catch {} });
+  const out = await captureStdout(() => turnBegin({ prompt: 'hi' }, { root: ctx.root }));
+  assert.equal(out.trim(), '', 'nothing to warn about — someone is looking');
 });
 
 // --- turn-end (in-process) ---
@@ -194,5 +208,7 @@ test('hook index: enabled + no server -> emits no-server notice (exit 0)', () =>
   assert.equal(r.status, 0);
   const parsed = JSON.parse(r.stdout);
   assert.equal(parsed.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-  assert.match(parsed.hookSpecificOutput.additionalContext, /does not have a web-chat tab open/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /No web-chat daemon is running/);
+  assert.match(parsed.hookSpecificOutput.additionalContext, /MCP tools still work/,
+    'it must not claim the render tools will fail — they auto-spawn the daemon and succeed');
 });

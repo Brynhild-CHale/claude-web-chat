@@ -6,6 +6,10 @@ Tiny browser extension that strips `X-Frame-Options` and `Content-Security-Polic
 
 ## Install
 
+**Run `claude-web-chat open extensions`** for an install page that prints the
+absolute path of this folder on your machine, offers a zip, and tells you live
+whether the helper is already loaded. The manual steps below are the same thing.
+
 ### Chromium browsers (Chrome / Edge / Brave / Arc)
 
 1. Open `chrome://extensions/` (or `edge://extensions/`, `brave://extensions/`, `arc://extensions/`).

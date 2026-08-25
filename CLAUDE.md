@@ -4,17 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-`claude-web-chat` is the **package that implements** the web-chat surface — not a project that uses it. It gives Claude Code a live browser canvas (`http://localhost:5173`) plus a turn-by-turn graph: Claude renders interactive HTML/JS into shadow-rooted mounts, reads/writes a shared key/value store the page is bound to, and every Claude turn becomes a navigable graph node the user can branch or revisit.
+`claude-web-chat` is the **package that implements** the web-chat surface — not a project that uses it. It gives Claude Code a live browser canvas (a per-project port, walking upward from 5173) plus a turn-by-turn graph: Claude renders interactive HTML/JS into shadow-rooted mounts, reads/writes a shared key/value store the page is bound to, and every Claude turn becomes a navigable graph node the user can branch or revisit.
 
 Note: `.claude/rules/web-chat.md` in this repo is the **end-user-facing rules file** (this dogfooding install of the product), describing the 23 MCP tools and how to use the surface. It is product behavior, not guidance for developing the package. When working on the package source, the architecture below is what matters.
 
 ## Commands
 
 ```sh
-npm install && npm link   # symlink the 3 bin scripts onto PATH (dev setup)
+npm install               # dev setup; run the CLI in place: node bin/claude-web-chat.js <cmd>
 node --test               # run the full test suite (Node built-in runner, test/*.test.js)
 node --test test/root.test.js   # run a single test file
+node scripts/build-release.js   # build the release tarball + SHA256SUMS into dist/
 ```
+
+> ⚠️ Do **not** `npm link` this package. npm's global prefix is shared mutable
+> state — an unrelated `npm i -g` silently replaced that link with a 16-day-old
+> copied build once already. See `docs/extending.md` for how to put a checkout on
+> PATH deliberately; `claude-web-chat version` always reports which tree is running.
 
 There is no build step (plain CommonJS) and no lint config. `npm start` / `node bin/claude-web-chat.js start` runs the server in the foreground; `claude-web-chat` is the user-facing CLI (`open`, `stop`, `restart`, `unlock`, `install`, `on`/`off`, `status`, `update`).
 
@@ -42,7 +48,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 
 ## Extending
 
-**Use the engines — don't bolt on.** Each concept is consolidated behind one module; extend it, never hand-roll a second copy (a second copy is a review-blocking defect, and `test/conventions.test.js` fails the build for the worst three). Full guide + rationale: `docs/extending.md`.
+**Use the engines — don't bolt on.** Each concept is consolidated behind one module; extend it, never hand-roll a second copy (a second copy is a review-blocking defect, and `test/conventions.test.js` fails the build for the worst four). Full guide + rationale: `docs/extending.md`.
 
 | Need to… | Use | Never |
 | --- | --- | --- |
@@ -51,6 +57,12 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
 | CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/server/util/html` / `lib/capture/profiles/util` | copy the helper |
+| ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
+| unpack or inspect a `.tar.gz` | `lib/update/archive` (`extractTarGz`/`rootOf`/`listTarGz`) | a second `spawnSync('tar')` |
+| compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |
+| resolve a `.claude/` path (settings, rules, skills) | `lib/core/paths` (`claudePaths`/`userClaudePaths`) | hardcode `.claude` |
+| fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
+| name a reserved component | `lib/server/builtins.BUILTINS` | re-list the builtin names |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
@@ -59,6 +71,7 @@ Dependency direction is one-way: `core` ← `client` ← everything else, and `c
 - **New CLI subcommand**: add `lib/cli/commands/<name>.js`, register in the `commands` map in `lib/cli/index.js`, update `showHelp()`.
 - **New HTTP route**: add `lib/server/routes/<concern>.js` exporting `mountX(app, ctx)`, mount it from `lib/server/index.js`.
 - **New migration**: add `lib/update/migrations/v<N>-to-v<N+1>.js`, register in the `migrations` map, bump `SCHEMA_VERSION`.
+- **Component packs** (`lib/packs/`): a pack is a repo that installs as components **plus a `.claude/skills/<pack>/SKILL.md`** — the skill is the point (`list_components` is a pull; a skill's description is in context from session start). The pipeline is one direction: `source` (parse a URL, pin a commit) → `fetch` (download, verify, stage — refusing hostile archive members on our terms, not `tar`'s) → `manifest` (validate, read the skill frontmatter) → `plan` (PURE — no writes) → `tree` (copy / remove per unit) → `install` (orchestrate + record + audit). `lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over `lib/packs/install`. **Read the risk paragraph at the head of `routes/packs.js` before touching any of it**: the install endpoint is reachable by any pane and cannot distinguish a pane's `fetch` from a user's click. A builtin component name is a hard refusal with no override, in either tier, for either actor — `seedBuiltins` only repairs directories marked `builtin`, so a shadowing pack would win permanently.
 - **New service-backed component**: ship `templates/components/<name>/` with `component.html` + `meta.json` + `service.js` (+ optional `seed.js`), add the name to `BUILTINS` in `lib/server/builtins.js`. The daemon runs `service.js` (via the supervisor, `lib/server/services.js`) while the pane is active. Full contract: `docs/service-components.md`.
 
 **What restarts after which edit:** `public/*` → refresh browser (served from disk, no cache). `lib/server/*` and `lib/capture/*` → `claude-web-chat restart` (saved capture profiles also hot-reload live via `claude-web-chat profile reload`, no restart). `lib/hub/*` → restart the hub — but an instance restart self-heals it: the hub reports a `HUB_PROTOCOL_VERSION` in `/api/health`, and `ensureHub` (called on every instance boot) bounces a hub older than the current build, so bumping that version when hub routes change is enough. `lib/mcp/*` → `/exit` + reopen Claude Code. `lib/hooks/*` → nothing (fresh process per fire). `lib/cli/*` → next invocation.
@@ -66,6 +79,6 @@ Dependency direction is one-way: `core` ← `client` ← everything else, and `c
 ## Conventions
 
 - CommonJS (`require`/`module.exports`), Node 18+, no transpile.
-- **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` outside its single allowed home (the count can only shrink toward the home). Run the suite with bare `node --test`. See `docs/extending.md`.
+- **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` / `require('node:readline` outside its single allowed home (the count can only shrink toward the home). Run the suite with bare `node --test`. See `docs/extending.md`.
 - Forward-compat stubs exist for Claude Code plugin packaging: `.claude-plugin/plugin.json` and `.mcp.json` use `${CLAUDE_PLUGIN_ROOT}` to resolve bin paths.
-- Distribution is the public git repo, not the npm registry: MIT-licensed v0.3.0, installed via `install.sh` and updated in place with `claude-web-chat update`. `package.json` keeps `"private": true` as an anti-publish guard — it makes an accidental `npm publish` fail fast.
+- **Distribution is GitHub Releases — npm is not involved at any point.** `scripts/build-release.js` builds a self-contained, reproducible `claude-web-chat-<version>.tar.gz` (the `files` allowlist plus production `node_modules`, since the four runtime deps mean a source tarball cannot run) plus `SHA256SUMS`; `.github/workflows/release.yml` attaches both to the release on a `v*` tag. `install.sh` and `claude-web-chat update` download it, verify the checksum, unpack into `~/.web-chat/versions/<v>/`, swap the `~/.web-chat/current` symlink and link three bins into `~/.local/bin` — no sudo, and `update --to <v>` rolls back to a version still on disk. `update` refuses to run from a git checkout or any other unmanaged copy (`lib/update/install-layout.js`). Windows means WSL2. `package.json` keeps `"private": true` as an anti-publish guard — it makes an accidental `npm publish` fail fast.

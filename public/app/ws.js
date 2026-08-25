@@ -11,6 +11,7 @@ import {
 } from './theme.js';
 import {
   mount, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
+  survivesClear,
 } from './mounts.js';
 import {
   applyActive, applyLock, ensureGraph, updateChip, onGraphChanged, syncThemeSelect,
@@ -20,6 +21,9 @@ import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
 import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
 import { checkVersion } from './version.js';
 import { applyCommentsFrame } from './comments.js';
+import { onTrustPrompt, onTrustClear, resetTrustPrompts } from './service-trust.js';
+import { invalidate as invalidateComponents } from './components.js';
+import { bus } from './bus.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -39,10 +43,16 @@ function snapUpsertMount(m) {
   const i = view.liveSnapshot.mounts.findIndex(x => x.id === m.id);
   if (i >= 0) view.liveSnapshot.mounts[i] = entry; else view.liveSnapshot.mounts.push(entry);
 }
-function snapClearMount(id, target) {
+function snapClearMount(id, target, frame = {}) {
   if (!view.liveSnapshot) return;
-  if (id) view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => x.id !== id);
-  else view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => (x.target || 'main') !== (target || 'main'));
+  if (id) { view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => x.id !== id); return; }
+  // Same clear-all rule the attached path applies (mounts.survivesClear), so a
+  // detached client's captured live surface doesn't drift from the real one.
+  const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
+  view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => {
+    if ((x.target || 'main') !== (target || 'main')) return true;
+    return kept ? kept.has(x.id) : survivesClear(x.pane_state, frame);
+  });
 }
 function snapPaneState(id, ps) {
   if (!view.liveSnapshot) return;
@@ -56,6 +66,10 @@ const HANDLERS = {
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
     for (const mt of (msg.mounts || [])) mount(mt);
+    // mount() reconciles the minbar and the zero state on its way out — but with
+    // ZERO mounts it never runs, which is exactly the first-open case the zero
+    // state exists for. Reconcile explicitly once hello's mounts have settled.
+    renderMinbar();
     applyNodeTheme(getActiveNodeTheme(), false);
     applyActive(msg.active);
     applyLock(msg.lock);
@@ -79,9 +93,9 @@ const HANDLERS = {
     else mount(msg);
   },
   clear(msg) {
-    if (view.previewing) { snapClearMount(msg.id, msg.target); return; }
+    if (view.previewing) { snapClearMount(msg.id, msg.target, msg); return; }
     if (msg.id) removePane(msg.id);
-    else clearTarget(msg.target || 'main');
+    else clearTarget(msg.target || 'main', msg); // clear-all spares pinned panes
   },
   'pane:state'(msg) {
     if (view.previewing) { snapPaneState(msg.id, msg.pane_state); return; }
@@ -123,6 +137,12 @@ const HANDLERS = {
     applyActive(msg.active);
     onGraphChanged();
   },
+  // A full surface replacement (wipe, new graph, node jump, turn-end re-aim).
+  // The frame is AUTHORITATIVE and rendered VERBATIM: whatever mounts it carries
+  // are what the surface shows. Notably a wipe preserves pinned mounts SERVER-SIDE
+  // and sends the survivors here — the client must not do its own pinned-filtering
+  // on top, or the two rules would compound and a pin would resurrect a pane the
+  // server dropped (or drop one it kept).
   reset(msg) {
     applyGlobalTheme(msg.theme || null, true); // global applies regardless of preview
     setActiveNodeTheme(msg.activeTheme || null);
@@ -190,15 +210,33 @@ const HANDLERS = {
   // pushes the whole comments array here so the marker layer re-renders immediately;
   // renderMarkers itself is the preview guard, so this can fold regardless too.
   comments(msg) { applyCommentsFrame(msg.comments || []); renderQueue(); },
+  // The component set moved: a save_component, or a pack installed / approved /
+  // removed anywhere (this browser, another one, or the CLI's announce). Drop
+  // the ONE component cache; the drawer and the ⌘K palette both read it, and
+  // the palette's private cache was never invalidated — so an install used to
+  // be invisible there until the page was reloaded.
+  components() { invalidateComponents(); },
+  'packs:changed'(msg) { bus.emit('packs:changed', msg); },
+  // Service consent. Chrome-level, never a mount — see service-trust.js for why.
+  'service:trust'(msg) { onTrustPrompt(msg); },
+  'service:trust:clear'(msg) { onTrustClear(msg); },
 };
 
 export function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => setConnStatus('live', 'live');
-  ws.onclose = () => { setConnStatus('reconnecting…', 'off'); setTimeout(connect, 1000); };
+  ws.onclose = () => {
+    setConnStatus('reconnecting…', 'off');
+    // The server releases its outstanding-prompt memo when the last viewer
+    // drops, so any nonce we still hold is dead. Clear and let it re-prompt.
+    resetTrustPrompts();
+    setTimeout(connect, 1000);
+  };
   ws.onmessage = (m) => {
     let msg; try { msg = JSON.parse(m.data); } catch { return; }
     const h = HANDLERS[msg.type];
-    if (h) h(msg);
+    // One throwing frame must not abort the rest of the stream (a `hello` that
+    // dies partway used to leave the topbar, queue and version banner uninitialised).
+    if (h) { try { h(msg); } catch (e) { console.error('[web-chat] handler failed for', msg.type, e); } }
   };
 }

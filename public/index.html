@@ -12,8 +12,8 @@
     <div id="update-banner" class="update-banner hidden">
       <span class="ub-msg"></span>
       <span class="ub-actions">
-        <button id="btn-update-now" class="ub-btn">Update &amp; restart</button>
-        <button id="btn-update-dismiss" class="ub-x" title="Dismiss" aria-label="Dismiss">×</button>
+        <a id="ub-release-link" class="ub-btn" href="#" target="_blank" rel="noopener noreferrer">Release notes</a>
+        <button id="btn-update-dismiss" class="ub-x" title="Dismiss for this session" aria-label="Dismiss for this session">×</button>
       </span>
     </div>
 
@@ -26,31 +26,37 @@
     <!-- topbar -->
     <header id="topbar">
       <div class="brand"><span class="status-dot off"></span>web-chat</div>
-      <span class="tb-div"></span>
+      <span class="tb-div" aria-hidden="true"></span>
       <span class="node-label" id="node-label">—</span>
 
-      <button class="cmd-trigger" id="cmd-trigger" title="Command palette (⌘K)">
-        <span class="glyph">⌕</span><span class="ph">Search commands, nodes, components…</span><kbd>⌘K</kbd>
+      <button class="cmd-trigger" id="cmd-trigger" title="Command palette (⌘K)" aria-label="Command palette (Cmd K)">
+        <span class="glyph" aria-hidden="true">⌕</span><span class="ph">Search commands, nodes, components…</span><kbd>⌘K</kbd>
       </button>
 
       <div class="dock" id="dock">
-        <button class="dock-btn" id="btn-add" title="New pane · N">＋</button>
-        <button class="dock-btn" id="btn-bookmark" title="Bookmark node · B">⚑</button>
-        <button class="dock-btn" id="btn-pin-mode" title="Pin comment · C">✎</button>
+        <!-- aria-controls is not cosmetic here: it opts this button into the
+             dismiss layer's owned-panel skip (public/app/shell.js), which is why
+             ＋ can now TOGGLE. Without it, pointerdown closed the drawer and the
+             button's own click reopened it, so it never closed anything. -->
+        <button class="dock-btn" id="btn-add" title="Components — spawn a pane, manage packs · N"
+                aria-label="Components — spawn a pane, manage packs (N)"
+                aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">＋</button>
+        <button class="dock-btn" id="btn-bookmark" title="Bookmark node · B" aria-label="Bookmark node (B)" aria-haspopup="dialog" aria-expanded="false" aria-controls="bookmark-pop">⚑</button>
+        <button class="dock-btn" id="btn-pin-mode" title="Pin comment · C" aria-label="Pin comment (C)">✎</button>
       </div>
 
-      <span class="tb-div"></span>
+      <span class="tb-div" aria-hidden="true"></span>
       <div class="stepper">
-        <button id="btn-up" title="Previous node · [">↑</button>
-        <button id="btn-down" title="Next node · ]">↓</button>
-        <button id="btn-branch" title="Pick a branch" style="display:none">▾</button>
+        <button id="btn-up" title="Previous node · [" aria-label="Previous node ([)">↑</button>
+        <button id="btn-down" title="Next node · ]" aria-label="Next node (])">↓</button>
+        <button id="btn-branch" title="Pick a branch" aria-label="Pick a branch" style="display:none">▾</button>
       </div>
 
-      <span class="tb-div"></span>
-      <button class="dock-btn" id="btn-theme-toggle" title="Light / dark · T">◑</button>
-      <button class="dock-btn" id="btn-more" title="More">⋯</button>
+      <span class="tb-div" aria-hidden="true"></span>
+      <button class="dock-btn" id="btn-theme-toggle" title="Light / dark · T" aria-label="Toggle light / dark (T)">◑</button>
+      <button class="dock-btn" id="btn-more" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
 
-      <span class="tb-div"></span>
+      <span class="tb-div" aria-hidden="true"></span>
       <button class="btn" id="btn-return-active" title="Return to the active node" style="display:none">↩ active</button>
       <button class="btn" id="btn-set-active-here" title="Make the viewed node active" style="display:none">set active here</button>
       <span class="active-pill" id="active-pill">active —</span>
@@ -64,12 +70,15 @@
         <main id="main"></main>
         <div id="minbar" class="minbar"></div>
       </div>
-      <aside id="queue-rail" class="rail">
+      <aside id="queue-rail" class="rail" aria-label="Queue to Claude">
         <div class="rail-collapsed">
           <div class="rail-vlabel">QUEUE</div>
           <div class="rail-count">0</div>
           <div class="rail-sub">PENDING</div>
           <div class="rail-chips"></div>
+          <!-- collapsed mirror of the standing parked-delivery indicator below:
+               a park is real server state and must stay visible without expanding. -->
+          <div class="rail-parked-mini" title="A push is parked — it delivers with your next message">⇢</div>
           <div class="rail-hint">‹ Q</div>
         </div>
         <div class="rail-expanded">
@@ -88,8 +97,17 @@
             <!-- parked-delivery mode line (server-sent, filled by wake-panel.js). -->
             <div class="rn-parked"></div>
           </div>
+          <!-- standing parked-delivery indicator. A parked push is server state
+               (GET /api/queue/pending) that survives until the user's next message
+               consumes it — so unlike the transient confirmation it stays put, and
+               offers the only way to take it back. Filled by queue.js. -->
+          <div class="rail-pending hidden" role="status">
+            <div class="rp-text"></div>
+            <button class="rp-cancel" type="button">Cancel delivery</button>
+          </div>
           <div class="rail-items"><div class="rail-empty">No queued signals. Captures, pane signals, and pane activity collect here.</div></div>
-          <input class="rail-add" placeholder="Add comment…">
+          <label class="sr-only" for="rail-add">Comment to send with the push</label>
+          <input class="rail-add" id="rail-add" placeholder="Add comment…">
           <button class="btn primary rail-push" disabled>Push 0 → Claude <kbd>P</kbd></button>
         </div>
       </aside>
@@ -98,16 +116,32 @@
     <!-- front glass (scanline + highlight), above content -->
     <div class="glass-scanline"></div>
 
-    <!-- component drawer (visibility driven by .open, not .hidden) -->
-    <aside id="drawer" class="drawer">
-      <div class="drawer-head"><span class="title">COMPONENTS</span><button class="pane-btn" id="drawer-close">×</button></div>
-      <div id="drawer-body"></div>
+    <!-- The components + packs manager. Openness is `.hidden`, the lever every
+         other chrome panel uses — the drawer's old `.open` was the reason the
+         dismiss layer needed two special cases and the ＋ button could not
+         toggle. Two tabs, not stacked sections: an install form above the list
+         would push the hot path (spawn a pane) below the fold. -->
+    <aside id="drawer" class="drawer hidden" role="dialog" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <span class="title" id="drawer-title">COMPONENTS</span>
+        <div class="gv-seg drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Components and packs">
+          <button role="tab" type="button" data-tab="library" id="drawer-tab-library"
+                  class="on" aria-selected="true" aria-controls="drawer-library">Library</button>
+          <button role="tab" type="button" data-tab="manage" id="drawer-tab-manage"
+                  aria-selected="false" aria-controls="drawer-manage">Manage<span class="tab-badge hidden"></span></button>
+        </div>
+        <button class="pane-btn" id="drawer-close" title="Close components" aria-label="Close components">×</button>
+      </div>
+      <div id="drawer-library" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-library"></div>
+      <div id="drawer-manage" class="drawer-panel hidden" role="tabpanel" aria-labelledby="drawer-tab-manage"></div>
     </aside>
 
     <!-- command palette -->
-    <div id="cmd-palette" class="palette hidden">
-      <input id="cmd-input" placeholder="Search commands, nodes, components…" autocomplete="off">
-      <div id="cmd-list" class="palette-list"></div>
+    <div id="cmd-palette" class="palette hidden" role="dialog" aria-modal="true" aria-label="Command palette">
+      <label class="sr-only" for="cmd-input">Search commands, nodes, components</label>
+      <input id="cmd-input" placeholder="Search commands, nodes, components…" autocomplete="off"
+             role="combobox" aria-controls="cmd-list" aria-expanded="true" aria-autocomplete="list">
+      <div id="cmd-list" class="palette-list" role="listbox" aria-label="Results"></div>
     </div>
 
     <!-- more menu -->
@@ -123,13 +157,14 @@
     <!-- settings -->
     <div id="settings-panel" class="popover hidden">
       <h4>Settings</h4>
-      <div class="row"><span>Theme</span><select id="settings-theme" class="wc-select"></select></div>
+      <div class="row"><label for="settings-theme">Theme</label><select id="settings-theme" class="wc-select"></select></div>
       <div class="hint">Applies the web-chat-wide default. <span class="mono">web-chat</span> is the built-in stock look.</div>
     </div>
 
     <!-- new graph -->
     <div id="new-graph-panel" class="popover hidden">
       <h4>New graph</h4>
+      <label class="sr-only" for="new-graph-name">Graph name</label>
       <input type="text" id="new-graph-name" placeholder="graph name (optional)…" maxlength="48" style="width:100%">
       <div class="hint">Starts a fresh top-level graph; the name labels its root.</div>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
@@ -138,12 +173,43 @@
       </div>
     </div>
 
+    <!-- wipe surface: same shape as #new-graph-panel — a wipe bookmarks the
+         point it happened at, so it gets the chance to label that bookmark.
+         An empty name still wipes and still bookmarks, just with no label. -->
+    <div id="wipe-panel" class="popover hidden">
+      <h4>Wipe surface</h4>
+      <label class="sr-only" for="wipe-name">Bookmark name</label>
+      <input type="text" id="wipe-name" placeholder="label this point (optional)…" maxlength="48" style="width:100%">
+      <div class="hint">Clears the panes and bookmarks this point so you can come back to it. Pinned panes stay.</div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn" id="btn-wipe-cancel">Cancel</button>
+        <button class="btn primary" id="btn-wipe-go">Wipe</button>
+      </div>
+    </div>
+
     <!-- bookmark popover -->
     <div id="bookmark-pop" class="popover hidden">
       <h4>Bookmark node</h4>
+      <label class="sr-only" for="bookmark-name">Bookmark name</label>
       <input type="text" id="bookmark-name" placeholder="name…" maxlength="48" style="width:100%">
       <div class="row" style="justify-content:flex-end;margin-top:8px">
         <button class="btn primary" id="btn-bookmark-save">Save</button>
+      </div>
+    </div>
+
+    <!-- graph-overlay name field: renames a GRAPH (its bookmarked root node) or
+         bookmarks any node. Same shape as #new-graph-panel / #bookmark-pop —
+         the in-page pattern every other input in this chrome uses. It replaced
+         a native window.prompt(), which blocked the browser, looked like nothing
+         else in the app, and wedged automated drivers. -->
+    <div id="gv-name-panel" class="popover gv-name-panel hidden">
+      <h4 id="gv-name-title">Name</h4>
+      <label class="sr-only" for="gv-name-input">Name</label>
+      <input type="text" id="gv-name-input" placeholder="name…" maxlength="48" style="width:100%">
+      <div class="hint" id="gv-name-hint">Empty clears the name.</div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn" id="btn-gv-name-cancel">Cancel</button>
+        <button class="btn primary" id="btn-gv-name-go">Save</button>
       </div>
     </div>
 
@@ -153,7 +219,7 @@
         <h3>Keyboard</h3>
         <div class="legend-row"><span>Command palette</span><span class="keys"><kbd>⌘K</kbd></span></div>
         <div class="legend-row"><span>Open graph</span><span class="keys"><kbd>G</kbd></span></div>
-        <div class="legend-row"><span>New pane</span><span class="keys"><kbd>N</kbd></span></div>
+        <div class="legend-row"><span>Components · packs</span><span class="keys"><kbd>N</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
         <div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>
         <div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>
@@ -165,21 +231,22 @@
     </div>
 
     <!-- graph viewer: history ▸ DAG ▸ inspector (7b) -->
-    <div id="overlay" class="overlay hidden">
+    <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Turn graph" tabindex="-1">
       <div class="gv-header">
         <span class="gv-brand">◇ GRAPH</span>
         <span class="gv-graphsel" id="gv-graphsel">graph —</span>
+        <label class="sr-only" for="gv-jump">Jump to node or trigger</label>
         <input class="gv-jump" id="gv-jump" placeholder="Jump to node or trigger…" autocomplete="off">
         <div class="gv-seg" id="gv-mode">
           <button data-mode="graph" class="on">Graph</button>
           <button data-mode="log" disabled title="commit-log view — coming in 7b">Log</button>
         </div>
-        <button class="gv-icon" id="gv-compare" disabled title="compare two nodes — coming in 7b">⇄</button>
-        <button class="gv-icon" id="overlay-fit" title="Fit to view">⤢</button>
-        <button class="gv-icon" id="overlay-close" title="Close (Esc)">✕</button>
+        <button class="gv-icon" id="gv-compare" disabled title="compare two nodes — coming in 7b" aria-label="Compare two nodes">⇄</button>
+        <button class="gv-icon" id="overlay-fit" title="Fit to view" aria-label="Fit graph to view">⤢</button>
+        <button class="gv-icon" id="overlay-close" title="Close (Esc)" aria-label="Close graph (Escape)">✕</button>
       </div>
 
-      <aside class="gv-history">
+      <aside class="gv-history" aria-label="Turn history">
         <div class="gv-history-head">HISTORY · <span id="gv-turncount">0</span> turns</div>
         <div class="gv-filters" id="gv-filters">
           <div class="gv-scope" id="gv-scope">
@@ -189,7 +256,7 @@
           <button class="gv-chip" data-filter="marked">⚑ Marked</button>
           <button class="gv-chip" data-filter="forks">⑃ Forks</button>
         </div>
-        <div class="gv-history-list" id="gv-history-list"></div>
+        <div class="gv-history-list" id="gv-history-list" role="listbox" aria-label="Turns"></div>
       </aside>
 
       <div class="graph-canvas-wrap">
@@ -200,7 +267,7 @@
           <span><i class="dot fork"></i>fork</span>
           <span><i class="dot stack"></i>stack</span>
         </div>
-        <div class="gv-zoom"><button id="gv-zoom-out">−</button><span id="gv-zoom-pct">100%</span><button id="gv-zoom-in">+</button></div>
+        <div class="gv-zoom"><button id="gv-zoom-out" aria-label="Zoom out">−</button><button id="gv-zoom-pct" title="Reset zoom — 100%, centred" aria-label="Reset zoom to 100% and center the graph">100%</button><button id="gv-zoom-in" aria-label="Zoom in">+</button></div>
       </div>
 
       <aside class="gv-inspector" id="gv-inspector">

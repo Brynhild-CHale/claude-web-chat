@@ -31,15 +31,23 @@ function tmpRoot(prefix = 'wc-') {
 // write the dev machine. Two forms:
 //   withTempHome(t)               -> returns home; restores + rm's on t.after
 //   withTempHome(async home => …) -> sets, awaits, restores in finally
+// The sandbox currently in effect, so withServer can join an existing one
+// instead of shadowing it with a second (which would strand a caller that
+// seeded ~/.web-chat before booting the server). Null when HOME is not redirected.
+let activeTempHome = null;
+
 function withTempHome(tOrFn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-home-'));
   const prevHome = process.env.HOME;
   const prevUserProfile = process.env.USERPROFILE;
+  const prevActive = activeTempHome;
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  activeTempHome = home;
   const restore = () => {
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUserProfile;
+    activeTempHome = prevActive;
     try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
   };
   if (typeof tOrFn === 'function') {
@@ -121,10 +129,22 @@ async function withServer(t, opts, fn) {
   if (typeof opts === 'function') { fn = opts; opts = {}; }
   opts = opts || {};
 
+  // Sandbox HOME for every server test. The daemon touches user-tier state on
+  // boot and during a run — the cross-project instance registry, user-tier
+  // components/themes, and (since service consent moved out of the project, so a
+  // repo can't ship its own approval) the service TRUST STORE. Without this the
+  // suite wrote all of that into the developer's real ~/.web-chat, which for the
+  // trust store would mean tests silently granting host-execution approvals on
+  // the dev machine. Skipped when the caller already sandboxed HOME itself.
+  // A caller that already called withTempHome (to seed ~/.web-chat before boot)
+  // keeps its own sandbox — creating a second one here would strand that seed.
+  const home = opts.home === false ? null : (activeTempHome || withTempHome(t));
+  const userWebChat = home ? path.join(home, '.web-chat') : null;
+
   const root = opts.root || tmpRoot();
   const webChatDir = path.join(root, '.web-chat');
   fs.mkdirSync(webChatDir, { recursive: true });
-  if (opts.seed) await opts.seed({ root, webChatDir });
+  if (opts.seed) await opts.seed({ root, webChatDir, home, userWebChat });
 
   const srv = createServer({ root, port: opts.mode === 'start' ? 'auto' : 0 });
 
@@ -155,6 +175,8 @@ async function withServer(t, opts, fn) {
     baseUrl,
     root,
     webChatDir,
+    home,
+    userWebChat,
     api: makeApi(baseUrl),
     ws: (pathStr = '/ws') => wsConnect(port, pathStr),
     wsHello: (pathStr = '/ws') => wsHello(port, pathStr),

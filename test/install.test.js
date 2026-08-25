@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { ensureMcpRegistration, channelEnv, mcpEntryHasChannelEnv } = require('../lib/update/managed-files');
+const { ensureMcpRegistration, channelEnv, stripChannelEnv, mcpEntryHasChannelEnv, ensureGitignore } = require('../lib/update/managed-files');
 
 // `install` (via ensureMcpRegistration) writes the channels opt-in
 // into the PROJECT's .mcp.json. All tests operate on a tmp root so the dogfood
@@ -21,27 +21,42 @@ function writeMcp(root, obj) {
   fs.writeFileSync(path.join(root, '.mcp.json'), JSON.stringify(obj, null, 2) + '\n');
 }
 
-test('install wires WEB_CHAT_CHANNEL=1 into a fresh .mcp.json entry', () => {
+// Channels is a SESSION property, not a project one: it exists only when Claude
+// Code was launched with the capability flag. Pinning WEB_CHAT_CHANNEL=1 into
+// .mcp.json made the MCP server start a channel bridge in EVERY session, so a
+// Push in a flag-less session was written to stdout, self-acked, reported
+// "Delivered to Claude ✓" — and dropped, with the parked fallback never running.
+// install must therefore never write it; the launch line supplies it.
+test('install does NOT pin WEB_CHAT_CHANNEL into a fresh .mcp.json entry', () => {
   const root = tmpRoot();
   const status = ensureMcpRegistration(root);
   assert.equal(status, 'web-chat server registered');
   const entry = readMcp(root).mcpServers['web-chat'];
   assert.equal(entry.command, 'node');
   assert.ok(path.isAbsolute(entry.args[0]) && /bin\/claude-web-chat-mcp\.js$/.test(entry.args[0]));
-  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
-  assert.ok(mcpEntryHasChannelEnv(entry));
+  assert.equal(entry.env, undefined, 'no env block at all when there is nothing to put in it');
+  assert.ok(!mcpEntryHasChannelEnv(entry));
 });
 
-test('install is idempotent — re-running on an already-wired entry does not duplicate env', () => {
+test('install CLEANS a stale WEB_CHAT_CHANNEL written by an older install', () => {
+  const root = tmpRoot();
+  writeMcp(root, {
+    mcpServers: { 'web-chat': { command: 'node', args: ['/old/path.js'], env: { WEB_CHAT_CHANNEL: '1' } } },
+  });
+  ensureMcpRegistration(root);
+  const entry = readMcp(root).mcpServers['web-chat'];
+  assert.ok(!mcpEntryHasChannelEnv(entry), 'stale opt-in removed on upgrade');
+  assert.equal(entry.env, undefined, 'no empty env block left behind');
+});
+
+test('install is idempotent — re-running produces a byte-identical entry', () => {
   const root = tmpRoot();
   ensureMcpRegistration(root);
   const first = readMcp(root);
   const status = ensureMcpRegistration(root);
   assert.equal(status, 'already up to date');
   const second = readMcp(root);
-  // Byte-identical: no growth, no duplicate keys, one WEB_CHAT_CHANNEL=1.
   assert.deepEqual(second, first);
-  assert.deepEqual(Object.keys(second.mcpServers['web-chat'].env), ['WEB_CHAT_CHANNEL']);
 });
 
 test('install preserves unrelated env keys a user added', () => {
@@ -53,9 +68,9 @@ test('install preserves unrelated env keys a user added', () => {
   });
   ensureMcpRegistration(root);
   const entry = readMcp(root).mcpServers['web-chat'];
-  // Channel opt-in added...
-  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
-  // ...without clobbering the user's keys.
+  // No channel opt-in written...
+  assert.ok(!mcpEntryHasChannelEnv(entry));
+  // ...and the user's own keys survive untouched.
   assert.equal(entry.env.HTTP_PROXY, 'http://proxy:8080');
   assert.equal(entry.env.DEBUG, 'wc:*');
   // Command/args are still rewritten to the resolvable absolute bin.
@@ -69,7 +84,7 @@ test('install preserves other mcpServers entries', () => {
   ensureMcpRegistration(root);
   const mcp = readMcp(root);
   assert.deepEqual(mcp.mcpServers.other, { command: 'foo' });
-  assert.equal(mcp.mcpServers['web-chat'].env.WEB_CHAT_CHANNEL, '1');
+  assert.ok(!mcpEntryHasChannelEnv(mcp.mcpServers['web-chat']));
 });
 
 test('install preserves a plugin-portable entry when running under plugin packaging', () => {
@@ -89,9 +104,9 @@ test('install preserves a plugin-portable entry when running under plugin packag
     else process.env.CLAUDE_PLUGIN_ROOT = prev;
   }
   const entry = readMcp(root).mcpServers['web-chat'];
-  // Portable args untouched, channels opt-in still wired in.
+  // Portable args untouched, and no channels opt-in pinned into the committed stub.
   assert.deepEqual(entry.args, ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js']);
-  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
+  assert.ok(!mcpEntryHasChannelEnv(entry));
 });
 
 test('install rewrites a portable entry when NOT under plugin packaging (placeholder cannot resolve)', () => {
@@ -110,7 +125,7 @@ test('install rewrites a portable entry when NOT under plugin packaging (placeho
   }
   const entry = readMcp(root).mcpServers['web-chat'];
   assert.ok(path.isAbsolute(entry.args[0]) && /bin\/claude-web-chat-mcp\.js$/.test(entry.args[0]));
-  assert.equal(entry.env.WEB_CHAT_CHANNEL, '1');
+  assert.ok(!mcpEntryHasChannelEnv(entry));
 });
 
 test('channelEnv merges without mutating the input and never drops keys', () => {
@@ -121,4 +136,124 @@ test('channelEnv merges without mutating the input and never drops keys', () => 
   // Non-object / array inputs degrade to a clean env with just the opt-in.
   assert.deepEqual(channelEnv(undefined), { WEB_CHAT_CHANNEL: '1' });
   assert.deepEqual(channelEnv([]), { WEB_CHAT_CHANNEL: '1' });
+});
+
+test('stripChannelEnv drops only the opt-in, without mutating the input', () => {
+  const input = { FOO: 'bar', WEB_CHAT_CHANNEL: '1' };
+  assert.deepEqual(stripChannelEnv(input), { FOO: 'bar' });
+  assert.deepEqual(input, { FOO: 'bar', WEB_CHAT_CHANNEL: '1' }, 'input not mutated');
+  // Nothing left to keep → undefined, so no empty `env: {}` is written.
+  assert.equal(stripChannelEnv({ WEB_CHAT_CHANNEL: '1' }), undefined);
+  assert.equal(stripChannelEnv(undefined), undefined);
+  assert.equal(stripChannelEnv([]), undefined);
+});
+
+
+// ── .gitignore ───────────────────────────────────────────────────────────────
+// CLAUDE.md, docs/export-pages.md and docs/capture-profiles-and-panes.md all
+// state that `.web-chat/` is gitignored. Nothing ever wrote the line, so every
+// project was one `git add -A` from committing its graph, portfile and drafts.
+
+test('ensureGitignore appends the rule, preserves what is there, and is idempotent', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\n');
+
+  assert.equal(ensureGitignore(root), 'added');
+  const body = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+  assert.match(body, /^node_modules\/$/m, 'existing rules survive');
+  assert.match(body, /^\.web-chat\/$/m);
+
+  assert.equal(ensureGitignore(root), 'already-present');
+  assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), body, 'byte-identical on re-run');
+});
+
+test('ensureGitignore respects a rule the user already wrote, in any form', () => {
+  for (const existing of ['.web-chat', '.web-chat/', '/.web-chat/']) {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.gitignore'), `${existing}\n`);
+    assert.equal(ensureGitignore(root), 'already-present', `${existing} already covers it`);
+    assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), `${existing}\n`);
+  }
+});
+
+test('ensureGitignore does not litter a non-git directory', () => {
+  const root = tmpRoot();  // no .git, no .gitignore
+  assert.equal(ensureGitignore(root), 'no-gitignore');
+  assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
+});
+
+test('ensureGitignore creates one in a git repo that has none', () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+  assert.equal(ensureGitignore(root), 'added');
+  assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\.web-chat\/$/m);
+});
+
+// ── `install(args, { nextSteps })` ───────────────────────────────────────────
+// `claude-web-chat init` calls install IN-PROCESS and prints its own, fuller
+// closing checklist (it knows whether a browser opened and whether a tour is
+// waiting). The one behaviour change install grew for that is a gate on the
+// trailing next-steps block; everything above it — the result table, the
+// conflict/differs warnings, the pre-warm line — must still print verbatim.
+//
+// The daemon pre-warm is patched out BEFORE install is first required, so this
+// test never forks a real background server. install destructures spawnDaemon at
+// module load, so the patch has to happen first.
+const daemonMod = require('../lib/util/daemon');
+const realSpawnDaemon = daemonMod.spawnDaemon;
+daemonMod.spawnDaemon = async () => null;
+const install = require('../lib/cli/commands/install');
+daemonMod.spawnDaemon = realSpawnDaemon;
+
+async function captureInstall(root, opts) {
+  const prevCwd = process.cwd();
+  const prevLog = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    process.chdir(root);
+    await install([], opts);
+  } finally {
+    console.log = prevLog;
+    process.chdir(prevCwd);
+  }
+  return lines.join('\n');
+}
+
+function sandboxHome() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-install-home-'));
+  const prev = process.env.HOME;
+  process.env.HOME = home;
+  return () => {
+    if (prev === undefined) delete process.env.HOME; else process.env.HOME = prev;
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
+  };
+}
+
+test('install prints its next-steps checklist by default', async () => {
+  const restore = sandboxHome();
+  try {
+    const out = await captureInstall(tmpRoot(), {});
+    assert.match(out, /web-chat installed for/);
+    assert.match(out, /Next steps:/);
+    assert.match(out, /Optional — Channels/);
+  } finally {
+    restore();
+  }
+});
+
+test('install({nextSteps:false}) suppresses ONLY the trailing checklist', async () => {
+  const restore = sandboxHome();
+  try {
+    const out = await captureInstall(tmpRoot(), { nextSteps: false });
+    assert.match(out, /web-chat installed for/, 'the result header still prints');
+    assert.match(out, /\.mcp\.json/, 'the result table still prints');
+    assert.match(out, /Server (pre-warmed|will start)/, 'the pre-warm line still prints');
+    assert.doesNotMatch(out, /Next steps:/);
+    assert.doesNotMatch(out, /Optional — Channels/);
+  } finally {
+    restore();
+  }
 });

@@ -29,7 +29,9 @@ test('front-end module graph boots and the core flows work under jsdom', async (
   window.fetch = async (url) => {
     fetchCalls.push(url);
     const body = url === '/api/graph' ? { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' }
-      : url === '/api/components' ? { components: [{ name: 'demo', description: 'd' }] }
+      : url === '/api/components' ? { components: [{ name: 'demo', description: 'd', location: 'local' }] }
+      : url === '/api/packs' ? { ok: true, packs: [], quarantined: [] }
+      : url === '/api/services/pending' ? { ok: true, pending: [] }
       : url === '/api/themes' ? { themes: [] }
       : url.startsWith('/api/theme') ? { name: 'web-chat' }
       : { ok: true };
@@ -78,17 +80,56 @@ test('front-end module graph boots and the core flows work under jsdom', async (
 
     $('btn-add').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     await tick();
-    assert.ok($('drawer').classList.contains('open'), 'btn-add opened the drawer');
+    assert.ok(!$('drawer').classList.contains('hidden'), 'btn-add opened the drawer');
     assert.ok(fetchCalls.includes('/api/components'), 'drawer fetched /api/components');
 
     const before = window.document.documentElement.dataset.theme || 'dark';
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 't' }));
     assert.notEqual(window.document.documentElement.dataset.theme || 'dark', before, 'T toggled light/dark');
 
+    // Graph overlay focus management: it covers the surface and owns ↑↓/↵/A/Space,
+    // so opening it must MOVE focus into it and closing must hand focus back —
+    // otherwise a keyboard user is driving an element they've left behind, and on
+    // close is stranded inside a display:none subtree.
+    $('btn-graph').focus();
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'g' }));
+    await tick();
+    assert.ok(!$('overlay').classList.contains('hidden'), 'G opened the graph overlay');
+    assert.equal(window.document.activeElement, $('overlay'), 'focus moved into the overlay');
+
+    // history rows are clickable <div>s — they must be tabbable and Enter/Space-operable
+    const gvRow = $('gv-history-list').querySelector('.gv-row');
+    assert.ok(gvRow, 'the history list rendered a row');
+    assert.equal(gvRow.tabIndex, 0, 'a history row is reachable by keyboard');
+    assert.equal(gvRow.getAttribute('role'), 'option', 'and exposes an option role');
+    gvRow.focus();
+    gvRow.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick();
+    assert.equal($('gv-history-list').querySelectorAll('.gv-row.selected').length, 1,
+      'Enter on a focused row selects it, like a click');
+
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    assert.ok($('overlay').classList.contains('hidden'), 'Escape closed the overlay');
+    assert.equal(window.document.activeElement, $('btn-graph'), 'focus returned to what opened it');
+
     ws.onmessage({ data: JSON.stringify({ type: 'render', id: 'm2', html: '<b>two</b>', target: 'main', params: {}, pane_state: {} }) });
     assert.equal($('main').querySelectorAll('.pane').length, 2, 'render added a second pane');
     ws.onmessage({ data: JSON.stringify({ type: 'clear', id: 'm2' }) });
     assert.equal($('main').querySelectorAll('.pane').length, 1, 'clear removed a pane');
+
+    // A captured page's <title> reaches the minbar chip. It is attacker-supplied
+    // text from any site the user captures, and the chip was built with an
+    // innerHTML template — so a title could execute script in the surface origin,
+    // where pane scripts already run unsandboxed with no CSP.
+    const evil = 'Capture · default — <img src=x onerror="window.__pwned = 1">';
+    ws.onmessage({ data: JSON.stringify({ type: 'render', id: 'm3', html: '<b>x</b>', target: 'main', params: { title: evil }, pane_state: { minimized: true } }) });
+    await tick();
+    const chip = $('minbar').querySelector('.min-chip');
+    assert.ok(chip, 'a minimized pane gets a minbar chip');
+    assert.equal(chip.querySelector('img'), null, 'the title must not be parsed as markup');
+    assert.equal(window.__pwned, undefined, 'no handler from the title ran');
+    assert.ok(chip.textContent.includes('<img src=x'), 'it renders as literal text instead');
 
     // Drain any deferred timers (e.g. the 340ms theme-transition strip) while the
     // window is still valid, so nothing fires after the test ends.

@@ -13,7 +13,9 @@
 // pane chrome, theme application, slotting, title predicate) and calls these:
 //   createStore(seed, publish?)        - the pub/sub store (no DOM, no ws)
 //   attachAndExtract(host, html)       - shadow root + inline-script extraction
-//   runScripts(root, scripts, ...)     - THE ONLY new Function() site
+//   runScripts(root, scripts, ...)     - a pane's inline-script bodies
+//   runSeed(code, store)               - a component's seed.js
+// The last two are THE ONLY dynamic-eval sites in the codebase.
 //
 // Authored ES5-ish (var/function, Object.assign/Map/Set) so a baked offline
 // export runs in any browser. Do NOT use ES-2016+ syntax here. Never embed an
@@ -100,6 +102,52 @@
     }
   }
 
+  // A component's optional seed.js: browser-side code that computes default
+  // params when the user spawns the component from the drawer. It runs as an
+  // ASYNC function body with `store` in scope, so a seed may await.
+  //
+  // This lived in public/app/drawer.js, deriving the AsyncFunction constructor
+  // inline. That is a second dynamic-eval site — the exact thing the conventions
+  // ratchet exists to stop — and it dodged the tripwire only because the tripwire
+  // matched one literal spelling and this is the other one. The eval belongs here
+  // with runScripts, and the ratchet now matches this spelling too (see the
+  // AsyncFunction pattern in test/conventions.test.js).
+  //
+  // Deriving the constructor WITHOUT writing `async function` in this file's own
+  // source is deliberate: the server splices this text verbatim into exported
+  // documents, so an engine too old to parse `async` would fail to parse the
+  // WHOLE file rather than just this line. Built lazily, once.
+  var _asyncCtor = null;
+  function asyncCtor() {
+    if (!_asyncCtor) {
+      try {
+        _asyncCtor = new Function('return Object.getPrototypeOf(async function () {}).constructor')();
+      } catch (e) {
+        // No async support in this engine. A plain Function still runs the seed;
+        // `await` inside it would be a syntax error, which surfaces as a normal
+        // seed failure rather than taking the page down.
+        _asyncCtor = Function;
+      }
+    }
+    return _asyncCtor;
+  }
+
+  // Returns a promise for whatever the seed returned (or null if it threw — a
+  // broken seed must degrade to "no defaults", never to a dead spawn).
+  function runSeed(code, store, onError) {
+    try {
+      var Ctor = asyncCtor();
+      var fn = new Ctor('store', code);
+      return Promise.resolve(fn(store)).catch(function (e) {
+        if (onError) { try { onError(e); } catch (e2) {} }
+        return null;
+      });
+    } catch (e) {
+      if (onError) { try { onError(e); } catch (e2) {} }
+      return Promise.resolve(null);
+    }
+  }
+
   // ── Form-state persistence primitives ────────────────────────────────────
   // A pane's form-element values (inputs, textareas, selects, contenteditable)
   // live only in its shadow DOM — rebuilt from the html snapshot on every
@@ -115,16 +163,25 @@
   // Skipped: password fields (never persist secrets into graph history),
   // hidden/file inputs (script-owned / unsettable), and anything marked
   // data-no-persist.
+  // The ONE predicate for "this element's value is never captured". Two
+  // consumers: the form-state capture below, and the shell's delegated
+  // dom-event reporter (public/app/mounts.js reportEvent), which forwards an
+  // event target's value into the daemon's event ring. Both must honour the
+  // same guarantee — a password reaching get_events is the same leak as one
+  // reaching form_state. Tolerates a non-element target (shadow root, document).
+  function isValueExcluded(el) {
+    if (!el) return false;
+    var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
+    if (type === 'password' || type === 'hidden' || type === 'file') return true;
+    if (el.hasAttribute && el.hasAttribute('data-no-persist')) return true;
+    if (el.getAttribute && el.getAttribute('contenteditable') === 'false') return true;
+    return false;
+  }
+
   function formElements(root) {
     var els = root.querySelectorAll('input, textarea, select, [contenteditable]');
     var out = [];
-    els.forEach(function (el) {
-      var type = (el.getAttribute && el.getAttribute('type') || '').toLowerCase();
-      if (type === 'password' || type === 'hidden' || type === 'file') return;
-      if (el.hasAttribute && el.hasAttribute('data-no-persist')) return;
-      if (el.getAttribute && el.getAttribute('contenteditable') === 'false') return;
-      out.push(el);
-    });
+    els.forEach(function (el) { if (!isValueExcluded(el)) out.push(el); });
     return out;
   }
 
@@ -183,7 +240,7 @@
     });
   }
 
-  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts, captureFormState: captureFormState, applyFormState: applyFormState };
+  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded };
   if (glob) glob.__wcMount = api;                                                 // browser global (before client.js)
   if (typeof module !== 'undefined' && module.exports) module.exports = api;      // node require() — createStore is testable
 })(typeof window !== 'undefined' ? window : null);
