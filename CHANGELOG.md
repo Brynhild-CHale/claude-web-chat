@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 - **Node 22 is now the floor** (`engines: >=22`, was `>=18`). Not a preference — a dependency of `node-html-parser`, one of the four runtime deps, moved to ESM-only at `entities@5`, and `node-html-parser@8` requires `^8.0.0` of it. `require()` of an ESM module needs `require(esm)`, which landed in Node 22 (and was backported to 20.19). Below that, `entities/dist/index.js` throws `ERR_REQUIRE_ESM` while `lib/server` is still being required — so the daemon does not start and the CLI does not run at all. Pinning `entities` backwards would hand `node-html-parser` a package with a different API; Node 18 and 20 are both past end-of-life. CI now covers 22 and 24 (24 is what releases are built and run on, and it had never been tested).
 
+### Fixed
+- **`claude-web-chat open` died with a raw stack when there was no browser launcher.** `launchBrowser` wrapped `spawn()` in a `try`/`catch`, but a missing executable is reported asynchronously as an `'error'` event, not a throw — so the catch was dead code and no listener was attached. On any Linux server, WSL, slim container or desktop without `xdg-utils`, `open` printed "server started at http://localhost:5173" and then took an unhandled error, exiting 1 with the URL scrolled off above the trace: the "open this URL manually" fallback it was carrying all along was unreachable, and the failure read as a broken install. `launch` awaits `open()`, so it went down too. The listener is attached before `unref()` now; the `try`/`catch` stays for the synchronous `EACCES` case.
+
 ## [0.6.0] - 2026-08-24
 
 ### Security
