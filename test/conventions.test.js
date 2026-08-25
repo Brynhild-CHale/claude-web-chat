@@ -60,6 +60,26 @@ const PATTERNS = [
     // ONE remaining eval site. The three former copies (client, export, preview)
     // now consume the shared primitives and hold zero.
     baseline: {
+      // Two eval sites, both here: runScripts (pane <script> bodies) and the
+      // lazily-derived async constructor runSeed uses (a component's seed.js).
+      'public/mount-runtime.js': 2,
+    },
+  },
+  {
+    // The OTHER spelling of dynamic eval, and the reason this pattern exists:
+    // public/app/drawer.js built an AsyncFunction with
+    // `Object.getPrototypeOf(async function(){}).constructor` to run a
+    // component's seed.js. That is a second eval site in the window realm — the
+    // exact thing the pattern above exists to prevent — and it sat there for the
+    // life of the ratchet because the ratchet matched the literal text
+    // `new Function('`. Matching the derivation spelling too means the next
+    // person who reaches for it has to come here and say why.
+    name: 'getPrototypeOf(async function',
+    home: 'the unified mount runtime — public/mount-runtime.js (runSeed)',
+    what: 'deriving the AsyncFunction constructor for dynamic eval',
+    roots: ['lib', 'public'],
+    re: /getPrototypeOf\(\s*async\s*function/g,
+    baseline: {
       'public/mount-runtime.js': 1,
     },
   },

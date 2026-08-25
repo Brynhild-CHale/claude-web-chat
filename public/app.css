@@ -734,23 +734,137 @@ kbd {
 #main.preview-readonly { opacity: .96; }
 #main.preview-readonly::after { content: 'preview'; position: absolute; top: 8px; right: 8px; font: 600 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-gold); opacity: .7; pointer-events: none; }
 
-/* ===================== component drawer ===================== */
+/* ============== components + packs drawer ==============
+   Openness is `.hidden`, the lever every other chrome panel uses — the old
+   `.open` is what forced two special cases into the dismiss layer and kept the
+   ＋ button from toggling. 360px (was 300) because the Manage tab carries a URL
+   field, provenance lines and file paths. */
 .drawer {
-  position: absolute; z-index: var(--z-panel); top: 52px; left: 12px; width: 300px; max-height: 70vh;
-  display: none; flex-direction: column; overflow: hidden;
+  position: absolute; z-index: var(--z-panel); top: 52px; left: 12px; width: 360px; max-height: 76vh;
+  display: flex; flex-direction: column; overflow: hidden;
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
-.drawer.open { display: flex; }
+.drawer.hidden { display: none; }
 .drawer-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--wc-border); }
 .drawer-head .title { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
 .drawer-head .pane-btn { margin-left: auto; }
-#drawer-body { overflow: auto; padding: 6px; }
-.drawer-entry { padding: 9px 10px; border-radius: var(--wc-radius); cursor: pointer; }
-.drawer-entry:hover { background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
-.drawer-entry .name { display: flex; align-items: center; gap: 6px; font: 500 13px var(--wc-font); color: var(--wc-fg-bright); }
-.drawer-entry .desc { font: 12px var(--wc-font); color: var(--wc-muted); margin-top: 2px; }
-.seed-badge { font: 600 9px var(--wc-mono); color: var(--wc-accent-fg); background: var(--wc-accent); border-radius: var(--wc-radius); padding: 0 4px; letter-spacing: .04em; }
+/* tabs reuse .gv-seg (the graph viewer's segmented control) */
+.drawer-tabs { margin-left: 4px; }
+.drawer-tabs button { height: 24px; padding: 0 10px; cursor: pointer; }
+.drawer-tabs .tab-badge {
+  display: inline-block; margin-left: 5px; min-width: 14px; padding: 0 3px;
+  font: 700 9px var(--wc-mono); line-height: 14px; text-align: center;
+  color: var(--wc-bg); background: var(--wc-gold); border-radius: 7px;
+}
+.drawer-tabs .tab-badge.hidden { display: none; }
+.drawer-panel { overflow: auto; padding: 6px 8px 10px; }
+.drawer-panel.hidden { display: none; }
+.de-group {
+  font: 700 9.5px var(--wc-mono); letter-spacing: .12em; color: var(--wc-muted-dim);
+  padding: 10px 4px 4px; text-transform: uppercase;
+}
+.de-cta { margin: 8px 4px; }
+
+/* a row: a real button plus a duplicate control, never role=option (an option
+   must not contain interactive children) */
+.drawer-entry { display: grid; grid-template-columns: 1fr auto; gap: 2px; align-items: start; border-radius: var(--wc-radius); }
+.drawer-entry:hover { background: color-mix(in srgb, var(--wc-accent) 10%, transparent); }
+.de-main {
+  grid-column: 1; text-align: left; width: 100%; padding: 8px 8px 9px;
+  background: transparent; border: 0; border-radius: var(--wc-radius); cursor: pointer; color: inherit;
+}
+.de-main:focus-visible, .de-dup:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
+.de-dup {
+  grid-column: 2; align-self: center; width: 26px; height: 26px; margin-right: 4px;
+  background: transparent; border: 1px solid transparent; border-radius: var(--wc-radius-sm);
+  color: var(--wc-muted); font: 13px var(--wc-font); cursor: pointer;
+}
+.drawer-entry:hover .de-dup { border-color: var(--wc-border); }
+.de-dup:hover { color: var(--wc-fg-bright); background: var(--wc-bg); }
+.drawer-entry .name { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.de-name { font: 500 13px var(--wc-font); color: var(--wc-fg-bright); }
+/* Clamped to three lines. A component's description is written for CLAUDE —
+   it names params, store keys and control keys, and the builtins' run to a full
+   paragraph each. Unclamped, six builtins pushed THIS PROJECT (where the user's
+   own and pack-installed components live) a long scroll below the fold, which is
+   the hot path. The full text is on the row's title attribute. */
+.drawer-entry .desc {
+  font: 12px var(--wc-font); color: var(--wc-muted); margin-top: 3px; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.de-from { font: 10px var(--wc-mono); color: var(--wc-muted-dim); margin-top: 4px; }
+.de-chip {
+  font: 600 9px var(--wc-mono); letter-spacing: .04em; padding: 1px 5px;
+  border-radius: var(--wc-radius-sm); border: 1px solid var(--wc-border-light); color: var(--wc-muted);
+}
+.de-chip.builtin { border-color: color-mix(in srgb, var(--wc-accent) 45%, transparent); color: var(--wc-accent-text); }
+.de-chip.seed, .de-chip.form { border-color: var(--wc-border); }
+.de-chip.service { border-color: color-mix(in srgb, var(--wc-green) 55%, transparent); color: var(--wc-green); }
+.de-chip.warn { border-color: color-mix(in srgb, var(--wc-gold) 55%, transparent); color: var(--wc-gold); }
+.de-chip.shadow { border-color: color-mix(in srgb, var(--wc-gold) 40%, transparent); color: var(--wc-gold); }
+.drawer-entry .rail-notice { margin: 2px 6px 8px; grid-column: 1 / -1; }
+
+/* ---- Manage: install form ---- */
+.pk-install { padding: 0 4px; }
+.pk-url {
+  width: 100%; height: 30px; padding: 0 8px; font: 12px var(--wc-mono);
+  color: var(--wc-fg); background: var(--wc-bg);
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm);
+}
+.pk-check { display: flex; align-items: center; gap: 6px; margin: 8px 0 6px; font: 12px var(--wc-font); color: var(--wc-muted); cursor: pointer; }
+.pk-warn {
+  margin: 4px 0 8px; padding: 8px 10px; border-radius: var(--wc-radius);
+  border: 1px solid color-mix(in srgb, var(--wc-gold) 40%, transparent);
+  background: color-mix(in srgb, var(--wc-gold) 8%, transparent);
+}
+.pk-warn-title { font: 700 10px var(--wc-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--wc-gold); }
+.pk-warn ul { margin: 5px 0 0; padding-left: 16px; }
+.pk-warn li { font: 11px var(--wc-font); color: var(--wc-muted); line-height: 1.45; margin-bottom: 2px; }
+.pk-warn-foot { font: 11px var(--wc-font); color: var(--wc-fg); margin-top: 6px; }
+.pk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pk-now.armed { border-color: var(--wc-gold); color: var(--wc-gold); }
+.pk-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; min-height: 14px; line-height: 1.4; }
+.pk-status.err { color: var(--wc-coral, #d05a4a); }
+.pk-status.warn { color: var(--wc-gold); }
+.pk-status.ok { color: var(--wc-green); }
+
+/* ---- Manage: a pack card ---- */
+.pk-card { padding: 9px 10px; margin: 4px 0; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); }
+.pk-quarantined { border-color: color-mix(in srgb, var(--wc-gold) 45%, transparent); }
+.pk-head { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.pk-name { font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
+.pk-card .desc { font: 12px var(--wc-font); color: var(--wc-muted); margin-top: 3px; line-height: 1.35; }
+.pk-prov { font: 10px var(--wc-mono); color: var(--wc-muted-dim); margin-top: 4px; overflow-wrap: anywhere; }
+.pk-units { margin-top: 6px; }
+.pk-unit { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.pk-unit-list { font: 11px var(--wc-mono); color: var(--wc-muted); margin-top: 5px; overflow-wrap: anywhere; }
+.pk-card-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 5px; }
+.pk-card-status.err { color: var(--wc-coral, #d05a4a); }
+
+/* SKILL.md, inline — the artefact nobody thinks to read, and the one that ends
+   up in Claude's instructions */
+.pk-skill { margin-top: 7px; }
+.pk-skill > summary { font: 600 11px var(--wc-font); color: var(--wc-accent-text); cursor: pointer; list-style: revert; }
+.pk-skill-body { padding: 6px 0 0 2px; }
+.pk-skill-desc { font: 12px var(--wc-font); color: var(--wc-fg); line-height: 1.45; }
+.pk-skill-note { font: 10px var(--wc-mono); color: var(--wc-muted-dim); margin-top: 4px; overflow-wrap: anywhere; }
+.pk-skill-full { margin-top: 6px; }
+.pk-file {
+  margin: 5px 0 0; padding: 7px 8px; max-height: 260px; overflow: auto;
+  font: 10.5px/1.5 var(--wc-mono); color: var(--wc-fg); white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--wc-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm);
+}
+.pk-files { margin-top: 7px; border-top: 1px solid var(--wc-border-light); padding-top: 5px; }
+.pk-file-row {
+  display: flex; justify-content: space-between; gap: 8px; width: 100%; padding: 3px 4px;
+  background: transparent; border: 0; border-radius: var(--wc-radius-sm); cursor: pointer;
+  font: 10.5px var(--wc-mono); color: var(--wc-muted); text-align: left;
+}
+.pk-file-row:hover { background: color-mix(in srgb, var(--wc-accent) 10%, transparent); color: var(--wc-fg); }
+.pk-file-name { overflow-wrap: anywhere; }
+.pk-file-size { flex: none; color: var(--wc-muted-dim); }
 
 /* ===================== pins / comments ===================== */
 /* map-pin markers positioned in viewport coords; #pin-layer covers the stage */

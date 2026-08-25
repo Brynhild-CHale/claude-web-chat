@@ -144,3 +144,13 @@ test('the three bin names are minted in one place and used everywhere', () => {
   const sh = read('install.sh');
   for (const name of BIN_NAMES) assert.ok(sh.includes(name), `install.sh must link ${name}`);
 });
+
+// The plugin manifest has drifted behind package.json twice: fixed deliberately
+// in 5d21f38 (0.1.0 → 0.4.0) and regressed one commit later at 5d6635e. Nothing
+// reads it at runtime, which is exactly why nobody notices.
+test('the plugin manifest tracks the package version', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const plugin = JSON.parse(read('.claude-plugin/plugin.json'));
+  assert.equal(plugin.version, pkg.version,
+    '.claude-plugin/plugin.json must not drift behind package.json');
+});

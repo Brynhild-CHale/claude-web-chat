@@ -152,7 +152,9 @@ async function boot() {
   window.fetch = async (url, opts) => {
     calls.push({ url, method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null });
     if (url === '/api/graph') return json({ nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' });
-    if (url === '/api/components') return json({ components: [{ name: 'demo', description: 'd' }] });
+    if (url === '/api/components') return json({ components: [{ name: 'demo', description: 'd', location: 'local' }] });
+    if (url === '/api/packs') return json({ ok: true, packs: [], quarantined: [] });
+    if (url === '/api/services/pending') return json({ ok: true, pending: [] });
     if (url === '/api/themes') return json({ themes: [] });
     if (url === '/api/queue') return json(routes.queue);
     if (url === '/api/queue/pending') return json({ pending: routes.pending });
@@ -252,11 +254,13 @@ test('the palette, the legend and the drawer participate in the same dismissal',
   press($('main'));
   assert.ok(!open('key-legend'), 'an outside click closes the legend');
 
+  // The drawer now expresses openness with `.hidden`, like every other panel —
+  // which is what let the two special cases come out of the dismiss layer.
   press($('btn-add'));
   await tick();
-  assert.ok($('drawer').classList.contains('open'), '+ opened the component drawer');
+  assert.ok(!$('drawer').classList.contains('hidden'), '+ opened the components drawer');
   press($('main'));
-  assert.ok(!$('drawer').classList.contains('open'), 'an outside click closes the drawer');
+  assert.ok($('drawer').classList.contains('hidden'), 'an outside click closes the drawer');
 
   // Escape must keep working for all of them.
   press($('btn-more'));

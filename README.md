@@ -25,8 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main
 That checks you have Node 18+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
 
 ```
-~/.web-chat/versions/0.5.0/     the release, self-contained (dependencies included)
-~/.web-chat/current      ->     versions/0.5.0      (rollback = one symlink swap)
+~/.web-chat/versions/0.6.0/     the release, self-contained (dependencies included)
+~/.web-chat/current      ->     versions/0.6.0      (rollback = one symlink swap)
 ~/.local/bin/claude-web-chat -> ~/.web-chat/current/bin/claude-web-chat.js
 ```
 
@@ -129,6 +129,20 @@ claude-web-chat trust git-dashboard   # approve it (--deny refuses)
 
 The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`. See [`docs/service-components.md`](docs/service-components.md).
 
+**Install a whole set at once — a component pack.** A pack is a git repository that installs as components *plus a Claude skill*, and the skill is the point: `list_components` is a **pull** (Claude only finds a component if it decides to look), while a skill's description sits in Claude's context from the start of the session. The same components shipped as a pack get used constantly instead of occasionally.
+
+```sh
+claude-web-chat pack get https://github.com/acme/ops-pack     # download for review — installs nothing
+claude-web-chat pack review acme-ops                          # manifest, plan, files, and what SKILL.md tells Claude
+claude-web-chat pack approve acme-ops                         # install it
+claude-web-chat pack list --verify                            # what's installed, and what you've edited
+claude-web-chat pack remove acme-ops                          # a component you edited is kept, not deleted
+```
+
+`pack install <url>` skips straight to installing; `--global` installs for every project instead of this one. The same thing lives behind the topbar's **＋** button, under **Manage**.
+
+Installing a pack runs its code: panes are unsandboxed in the surface page, and any `service.js` is host code behind the `trust` gate above. **`pack get` is the right default for a pack you didn't write** — it downloads and verifies without installing, and `pack review` shows you the plan and the skill text before you commit. See [`docs/component-packs.md`](docs/component-packs.md).
+
 ## Channels (experimental)
 
 Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch.
@@ -206,7 +220,7 @@ Old versions stay unpacked (the newest three), which makes a rollback a symlink 
 
 ```sh
 claude-web-chat update --list        # what's on disk, and which one is live
-claude-web-chat update --to 0.4.0    # go back to it — no download, no network
+claude-web-chat update --to <version>    # go back to it — no download, no network
 ```
 
 **`update` refuses to run from a git checkout**, loudly, and tells you to `git pull` instead. That is deliberate. npm's global prefix is a shared directory, and an unrelated `npm i -g` once replaced this package's link to a dev checkout with a copy of a build from 16 days earlier — green tests, ancient binary, no warning anywhere. Releases now live in a directory only this program writes, and `claude-web-chat version` will always tell you which tree you are running.

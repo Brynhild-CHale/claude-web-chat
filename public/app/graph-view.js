@@ -10,6 +10,7 @@
 import { view, $, cssVar } from './state.js';
 import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
 import { previewNode, ensureGraph } from './topbar.js';
+import { esc } from './esc.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -223,7 +224,6 @@ function stateOf(n) {
   if (!n.parent_id) return { cls: 'root', text: 'ROOT' };
   return { cls: 'root', text: 'TURN' };
 }
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // The top-level tree a node belongs to (walk parents to the rootless ancestor).
 function rootOf(id) {

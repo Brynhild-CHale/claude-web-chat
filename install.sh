@@ -6,8 +6,8 @@
 # ~/.local/bin. No npm, no registry, no sudo — nothing outside your home
 # directory is touched, and re-running this is always safe.
 #
-#   ~/.web-chat/versions/0.5.0/   the release, self-contained (deps included)
-#   ~/.web-chat/current      ->   versions/0.5.0     (rollback = symlink swap)
+#   ~/.web-chat/versions/0.6.0/   the release, self-contained (deps included)
+#   ~/.web-chat/current      ->   versions/0.6.0     (rollback = symlink swap)
 #   ~/.local/bin/claude-web-chat -> ~/.web-chat/current/bin/claude-web-chat.js
 #
 # It does nothing but what you see here — read it before piping it to a shell.

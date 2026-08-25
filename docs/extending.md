@@ -99,6 +99,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | You need to… | Use | Never |
 | --- | --- | --- |
 | resolve a path under `.web-chat/` or `~/.web-chat/` | `core/paths` `projectPaths(root)` / `userPaths()` | hardcode `'.web-chat'` or call `os.homedir()` |
+| resolve a path under `.claude/` (settings, rules, skills) | `core/paths` `claudePaths(root)` / `userClaudePaths()` | hardcode `'.claude'` |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
@@ -112,6 +113,10 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
 | escape HTML | `server/util/html` `escapeHtml` | inline a `.replace` chain |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
+| unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
+| decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
+| fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
+| name the reserved component names | `lib/server/builtins` `BUILTINS` | re-list them |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 
@@ -289,6 +294,55 @@ module. Three facts that must never drift apart:
 `LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
 the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
 dual-stack machine.
+
+### `lib/packs/` — the component-pack pipeline
+
+A pack is a git repository that installs as components **plus a Claude skill**.
+The skill is the reason the format exists: `list_components` is a *pull* (Claude
+learns a component exists only if it calls the tool), while a skill's frontmatter
+description sits in context from session start.
+
+One direction, one module per step, no step reaching backwards:
+
+```
+source.js    parse a URL → { owner, repo, apiBase }; resolve a ref → a commit sha
+   ↓
+fetch.js     download (release+SHA256SUMS, else the sha-pinned archive) → verify
+             → stage into mkdtemp; refuse hostile archive members on OUR terms
+   ↓
+manifest.js  parse + validate web-chat-pack.json; read SKILL.md frontmatter
+   ↓
+plan.js      planInstall() → { units, collisions, services, errors }  — PURE
+   ↓
+tree.js      applyPlan / removeUnits / verifyPack / stage+promote quarantine
+   ↓
+install.js   orchestrate, write the provenance record, append the audit line
+```
+
+`plan.js` writes nothing, deliberately: the same function serves the install, the
+`review` output, and the drawer's quarantine card, so "show me what this would
+do" cannot drift from what it actually does.
+
+Three invariants live in code rather than in a reviewer's memory:
+
+- **`tar` is not the security boundary — the copier is.** Members are listed
+  (`archive.listTarGz`, pure JS) and refused before extraction: absolute paths,
+  any `..` segment, anything that is not a regular file or a directory. BSD tar
+  errors on a `..` member and GNU tar has historically stripped it; "refused" vs
+  "silently renamed" is exactly the distinction that matters, so it is ours to
+  make. The staged tree is then walked again and modes normalized.
+- **The integrity anchor is the commit sha, never the tarball digest.** GitHub
+  archive tarballs are not byte-stable. `tarball_sha256` is recorded as an
+  observed fact and never compared.
+- **A builtin component name is a hard refusal.** No override, either tier,
+  either actor — because `seedBuiltins` only repairs a directory whose
+  `meta.json` says `builtin: true`, so a shadowing pack would win permanently.
+
+`lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
+`install.js`. **Read the risk paragraph at the head of the route file before
+changing it**: the install endpoint is reachable by any pane script and cannot
+tell a pane's `fetch` from a user's click. `--replace`, and removing a pack you
+have edited, are therefore terminal-only.
 
 ### Shared small homes
 

@@ -9,7 +9,8 @@ import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote,
 } from './topbar.js';
 import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview } from './graph-view.js';
-import { openDrawer, spawnComponent } from './drawer.js';
+import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
+import { components as componentList } from './components.js';
 import { togglePinMode } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
@@ -25,23 +26,27 @@ const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXT
    story (or none): clicking anywhere else, or moving focus away, left them open
    until the user happened to find Escape.
 
-   Openness is expressed two ways in the markup (`.hidden` for popovers /
-   palette / legend, `.open` for the drawer), so OPEN_PANELS lists both and
-   closePanel() knows which lever each one uses.
+   Openness is ONE lever now: `.hidden`, for popovers, the palette, the legend
+   and the drawer alike. The drawer used to express it as `.open`, which is why
+   this file carried two special cases (one in OPEN_PANELS, one in closePanel)
+   and why `togglePopover` could not keep its trigger's aria-expanded honest.
 
    The ordering trap: a naive document-click listener that "closes everything"
    makes the trigger button un-toggleable — the listener closes the menu, then
    the button's own click handler sees it closed and reopens it. So the dismiss
    pass runs on pointerdown and deliberately SKIPS the panel owned by whatever
    trigger was pressed (`aria-controls`, which every trigger already declares
-   for a11y), leaving that panel for the trigger's own toggle to flip. */
-const OPEN_PANELS = '.popover:not(.hidden), .palette:not(.hidden), .legend:not(.hidden), .drawer.open';
+   for a11y), leaving that panel for the trigger's own toggle to flip. That is
+   exactly what ＋ was missing: it declared no aria-controls, so it was dismissed
+   out from under its own toggle and could never close the drawer. */
+const OPEN_PANELS = '.popover:not(.hidden), .palette:not(.hidden), .legend:not(.hidden), .drawer:not(.hidden)';
 const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
 
 function closePanel(el) {
   if (!el) return;
   if (el.id === 'branch-picker') { el.remove(); return; } // built per open, not reused
-  if (el.classList.contains('drawer')) { el.classList.remove('open'); return; }
+  // ONE closeDrawer: it also restores focus to ＋ and disarms a primed install.
+  if (el.id === 'drawer') { closeDrawer(); return; }
   if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
   el.classList.add('hidden');
   // keep any aria-expanded trigger honest — togglePopover does this on the
@@ -81,6 +86,11 @@ function dismissFrom(el) {
 }
 
 function initDismissLayer() {
+  // The drawer opens itself (it is not a `togglePopover` panel), and must still
+  // obey "one panel at a time". A window event keeps that one-way: drawer.js
+  // already imports from this file's neighbours, and an import back the other
+  // way would close a cycle.
+  window.addEventListener('wc:close-popovers', (e) => closeAllPopovers(e.detail && e.detail.keep));
   // pointerdown, not click: it beats the trigger's own click handler, which is
   // what makes the skip-the-owned-panel dance above work.
   document.addEventListener('pointerdown', (e) => dismissFrom(eventTarget(e)), true);
@@ -206,7 +216,7 @@ function initMoreMenu() {
 }
 
 /* ---------- command palette (⌘K) ---------- */
-let paletteItems = [], paletteSel = 0, componentCache = null;
+let paletteItems = [], paletteSel = 0;
 export function openPalette() {
   const pal = $('cmd-palette'); if (!pal) return;
   closeAllPopovers();
@@ -222,16 +232,11 @@ function closePalette() {
   const p = $('cmd-palette'); if (p) p.classList.add('hidden');
   const inp = $('cmd-input'); if (inp) inp.blur(); // else focus lingers and swallows single-key shortcuts
 }
-async function ensureComponents() {
-  if (componentCache) return componentCache;
-  try { componentCache = (await fetch('/api/components').then(r => r.json())).components || []; }
-  catch { componentCache = []; }
-  return componentCache;
-}
 async function buildPalette(q) {
   const ql = q.toLowerCase();
   const cmds = [
-    { kind: 'cmd', label: 'New pane', run: openDrawer },
+    { kind: 'cmd', label: 'New pane', run: () => openDrawer() },
+    { kind: 'cmd', label: 'Component packs…', run: openDrawerManage },
     { kind: 'cmd', label: 'Open graph', run: openOverlay },
     { kind: 'cmd', label: 'New graph', run: openNewGraph },
     { kind: 'cmd', label: 'Wipe surface', run: openWipe },
@@ -243,7 +248,11 @@ async function buildPalette(q) {
   const nodes = (view.graphCache?.nodes || []).map(n => ({
     kind: 'node', label: `${labelFor(n.id)}${n.name ? ' · ' + n.name : ''}`, run: () => previewNode(n.id),
   }));
-  const comps = (await ensureComponents()).map(c => ({
+  // The ONE component cache (public/app/components.js). This module used to
+  // memoise its own and never invalidate it, so a component saved mid-session —
+  // or a whole pack installed from the drawer — stayed invisible here until the
+  // page was reloaded.
+  const comps = (await componentList()).map(c => ({
     kind: 'component', label: c.name, run: () => spawnComponent(c),
   }));
   const all = [...cmds, ...nodes, ...comps];
@@ -371,7 +380,7 @@ function initKeyboard() {
       case 'q': case 'Q': e.preventDefault(); toggleRail(); break;
       case 'p': case 'P': e.preventDefault(); pushQueue(); break;
       case 'g': case 'G': e.preventDefault(); openOverlay(); break;
-      case 'n': case 'N': e.preventDefault(); openDrawer(); break;
+      case 'n': case 'N': e.preventDefault(); openDrawer(); break;   // still SPAWN — Library is the default tab
       case 't': case 'T': e.preventDefault(); toggleMode(); break;
       case 'c': case 'C': e.preventDefault(); togglePinMode(); break;
       case 'b': case 'B': e.preventDefault(); togglePopover('bookmark-pop', true); { const bm = $('bookmark-name'); if (bm) setTimeout(() => bm.focus(), 0); } break;

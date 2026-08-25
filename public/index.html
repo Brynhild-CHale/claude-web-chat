@@ -34,7 +34,13 @@
       </button>
 
       <div class="dock" id="dock">
-        <button class="dock-btn" id="btn-add" title="New pane · N" aria-label="New pane (N)">＋</button>
+        <!-- aria-controls is not cosmetic here: it opts this button into the
+             dismiss layer's owned-panel skip (public/app/shell.js), which is why
+             ＋ can now TOGGLE. Without it, pointerdown closed the drawer and the
+             button's own click reopened it, so it never closed anything. -->
+        <button class="dock-btn" id="btn-add" title="Components — spawn a pane, manage packs · N"
+                aria-label="Components — spawn a pane, manage packs (N)"
+                aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">＋</button>
         <button class="dock-btn" id="btn-bookmark" title="Bookmark node · B" aria-label="Bookmark node (B)" aria-haspopup="dialog" aria-expanded="false" aria-controls="bookmark-pop">⚑</button>
         <button class="dock-btn" id="btn-pin-mode" title="Pin comment · C" aria-label="Pin comment (C)">✎</button>
       </div>
@@ -110,10 +116,24 @@
     <!-- front glass (scanline + highlight), above content -->
     <div class="glass-scanline"></div>
 
-    <!-- component drawer (visibility driven by .open, not .hidden) -->
-    <aside id="drawer" class="drawer">
-      <div class="drawer-head"><span class="title">COMPONENTS</span><button class="pane-btn" id="drawer-close" title="Close components" aria-label="Close components">×</button></div>
-      <div id="drawer-body"></div>
+    <!-- The components + packs manager. Openness is `.hidden`, the lever every
+         other chrome panel uses — the drawer's old `.open` was the reason the
+         dismiss layer needed two special cases and the ＋ button could not
+         toggle. Two tabs, not stacked sections: an install form above the list
+         would push the hot path (spawn a pane) below the fold. -->
+    <aside id="drawer" class="drawer hidden" role="dialog" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <span class="title" id="drawer-title">COMPONENTS</span>
+        <div class="gv-seg drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Components and packs">
+          <button role="tab" type="button" data-tab="library" id="drawer-tab-library"
+                  class="on" aria-selected="true" aria-controls="drawer-library">Library</button>
+          <button role="tab" type="button" data-tab="manage" id="drawer-tab-manage"
+                  aria-selected="false" aria-controls="drawer-manage">Manage<span class="tab-badge hidden"></span></button>
+        </div>
+        <button class="pane-btn" id="drawer-close" title="Close components" aria-label="Close components">×</button>
+      </div>
+      <div id="drawer-library" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-library"></div>
+      <div id="drawer-manage" class="drawer-panel hidden" role="tabpanel" aria-labelledby="drawer-tab-manage"></div>
     </aside>
 
     <!-- command palette -->
@@ -199,7 +219,7 @@
         <h3>Keyboard</h3>
         <div class="legend-row"><span>Command palette</span><span class="keys"><kbd>⌘K</kbd></span></div>
         <div class="legend-row"><span>Open graph</span><span class="keys"><kbd>G</kbd></span></div>
-        <div class="legend-row"><span>New pane</span><span class="keys"><kbd>N</kbd></span></div>
+        <div class="legend-row"><span>Components · packs</span><span class="keys"><kbd>N</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
         <div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>
         <div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>

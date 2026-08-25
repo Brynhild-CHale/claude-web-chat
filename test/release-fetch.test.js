@@ -191,3 +191,90 @@ test('unpackTarball rejects an archive that is not a claude-web-chat release', (
   ])));
   assert.throws(() => release.unpackTarball(f, path.join(dir, 'out')), /no package\.json/);
 });
+
+// ── the redirect credential guard ──────────────────────────────────────────
+// A release asset URL redirects to object storage on a DIFFERENT host. Any
+// credentialed header carried across that hop is handed to whoever answers
+// there. This was latent while nothing minted a token; honoring GITHUB_TOKEN
+// (which a pack install must, since unauthenticated api.github.com is 60
+// req/hr/IP) makes it a live leak. These two tests are the guard.
+
+// Two independent servers, so a redirect between them is genuinely cross-origin
+// (different port ⇒ different origin). Each records the headers it was sent.
+async function recordingServer(t, handler) {
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    seen.push({ url: req.url, headers: req.headers });
+    handler(req, res, () => `http://127.0.0.1:${srv.address().port}`);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => srv.close(r)));
+  return { seen, base: () => `http://127.0.0.1:${srv.address().port}` };
+}
+
+test('Authorization is DROPPED on a cross-host redirect — the second host never sees the token', async (t) => {
+  const dest = await recordingServer(t, (req, res) => { res.writeHead(200); res.end('payload'); });
+  const origin = await recordingServer(t, (req, res) => {
+    res.writeHead(302, { Location: `${dest.base()}/obj/thing` });
+    res.end();
+  });
+
+  const res = await release.httpGet(`${origin.base()}/dl/thing`, {
+    headers: { Authorization: 'Bearer super-secret', Cookie: 'session=abc', Accept: 'application/json' },
+  });
+  assert.equal(res.statusCode, 200);
+  res.resume();
+
+  assert.equal(origin.seen[0].headers.authorization, 'Bearer super-secret', 'the origin host is the one we meant to authenticate to');
+  assert.equal(dest.seen.length, 1, 'the redirect was followed');
+  assert.equal(dest.seen[0].headers.authorization, undefined, 'the token must not cross the origin boundary');
+  assert.equal(dest.seen[0].headers.cookie, undefined, 'nor may a cookie');
+  assert.equal(dest.seen[0].headers.accept, 'application/json', 'non-sensitive headers still travel');
+});
+
+test('Authorization SURVIVES a same-origin redirect (else authenticated fetches break)', async (t) => {
+  const srv = await recordingServer(t, (req, res, base) => {
+    if (req.url === '/a') { res.writeHead(302, { Location: `${base()}/b` }); res.end(); return; }
+    res.writeHead(200); res.end('ok');
+  });
+  const res = await release.httpGet(`${srv.base()}/a`, { headers: { Authorization: 'Bearer keep-me' } });
+  res.resume();
+  assert.equal(srv.seen.length, 2);
+  assert.equal(srv.seen[1].headers.authorization, 'Bearer keep-me');
+});
+
+test('githubAuth mints a token for github.com only — never for a host the user pasted', () => {
+  const env = { GITHUB_TOKEN: 'tok' };
+  assert.deepEqual(release.githubAuth('https://api.github.com/repos/a/b', env), { Authorization: 'Bearer tok' });
+  assert.deepEqual(release.githubAuth('https://codeload.github.com/a/b/tar.gz/x', env), { Authorization: 'Bearer tok' });
+  assert.deepEqual(release.githubAuth('https://evil.example.com/repos/a/b', env), {});
+  assert.deepEqual(release.githubAuth('https://notgithub.com/x', env), {});
+  assert.deepEqual(release.githubAuth('https://api.github.com/x', {}), {}, 'no token, no header');
+});
+
+test('download enforces maxBytes mid-stream and leaves no .part behind', async (t) => {
+  const big = Buffer.alloc(64 * 1024, 0x61);
+  const srv = await recordingServer(t, (req, res) => {
+    // No Content-Length: the cap must be enforced on the bytes actually seen,
+    // not on a header the server is free to omit or lie about.
+    res.writeHead(200);
+    res.end(big);
+  });
+  const dir = tmpDir('wc-cap-');
+  const dest = path.join(dir, 'thing.tar.gz');
+  await assert.rejects(
+    release.download(`${srv.base()}/big`, dest, { maxBytes: 1024 }),
+    /exceeded 1024 bytes/,
+  );
+  assert.deepEqual(fs.readdirSync(dir), [], 'neither the file nor its .part survives an overflow');
+});
+
+test('download under the cap still lands the whole file', async (t) => {
+  const body = Buffer.from('small enough');
+  const srv = await recordingServer(t, (req, res) => { res.writeHead(200); res.end(body); });
+  const dir = tmpDir('wc-cap-ok-');
+  const dest = path.join(dir, 'thing.bin');
+  await release.download(`${srv.base()}/small`, dest, { maxBytes: 1024 });
+  assert.equal(fs.readFileSync(dest, 'utf8'), 'small enough');
+  assert.deepEqual(fs.readdirSync(dir), ['thing.bin']);
+});

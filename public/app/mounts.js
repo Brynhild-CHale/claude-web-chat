@@ -623,6 +623,24 @@ export function fullReset({ mounts, store: newStore }) {
   renderMinbar();
 }
 
+// Restore a minimized pane, locally and everywhere.
+//
+// The drawer spawns into a STABLE slot (`spawn-<name>`), so spawning the same
+// component twice replaces the pane in place. If that pane happened to be
+// minimized, the re-spawn lands inside a collapsed chip and the click reads as a
+// no-op — the user asked for a pane and nothing appeared. Same restore the
+// minbar chip does, exported so the spawn path can share it rather than reach
+// into pane_state itself.
+export function unminimize(id) {
+  const p = panes.get(id);
+  if (!p || !p.pane_state.minimized) return false;
+  p.pane_state.minimized = false;
+  applyPaneState(p.wrapper, p.pane_state);
+  renderMinbar();
+  emitPaneState(id);
+  return true;
+}
+
 // Apply a remote client's pane:state (WS 'pane:state'): merge, re-layout, and
 // dispatch wc:mode into the shadow root if the mode changed remotely.
 export function applyRemotePaneState(id, pane_state) {

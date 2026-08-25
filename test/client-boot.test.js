@@ -29,7 +29,9 @@ test('front-end module graph boots and the core flows work under jsdom', async (
   window.fetch = async (url) => {
     fetchCalls.push(url);
     const body = url === '/api/graph' ? { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' }
-      : url === '/api/components' ? { components: [{ name: 'demo', description: 'd' }] }
+      : url === '/api/components' ? { components: [{ name: 'demo', description: 'd', location: 'local' }] }
+      : url === '/api/packs' ? { ok: true, packs: [], quarantined: [] }
+      : url === '/api/services/pending' ? { ok: true, pending: [] }
       : url === '/api/themes' ? { themes: [] }
       : url.startsWith('/api/theme') ? { name: 'web-chat' }
       : { ok: true };
@@ -78,7 +80,7 @@ test('front-end module graph boots and the core flows work under jsdom', async (
 
     $('btn-add').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     await tick();
-    assert.ok($('drawer').classList.contains('open'), 'btn-add opened the drawer');
+    assert.ok(!$('drawer').classList.contains('hidden'), 'btn-add opened the drawer');
     assert.ok(fetchCalls.includes('/api/components'), 'drawer fetched /api/components');
 
     const before = window.document.documentElement.dataset.theme || 'dark';

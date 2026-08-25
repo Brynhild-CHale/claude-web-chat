@@ -22,6 +22,8 @@ import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js
 import { checkVersion } from './version.js';
 import { applyCommentsFrame } from './comments.js';
 import { onTrustPrompt, onTrustClear, resetTrustPrompts } from './service-trust.js';
+import { invalidate as invalidateComponents } from './components.js';
+import { bus } from './bus.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -208,6 +210,13 @@ const HANDLERS = {
   // pushes the whole comments array here so the marker layer re-renders immediately;
   // renderMarkers itself is the preview guard, so this can fold regardless too.
   comments(msg) { applyCommentsFrame(msg.comments || []); renderQueue(); },
+  // The component set moved: a save_component, or a pack installed / approved /
+  // removed anywhere (this browser, another one, or the CLI's announce). Drop
+  // the ONE component cache; the drawer and the ⌘K palette both read it, and
+  // the palette's private cache was never invalidated — so an install used to
+  // be invisible there until the page was reloaded.
+  components() { invalidateComponents(); },
+  'packs:changed'(msg) { bus.emit('packs:changed', msg); },
   // Service consent. Chrome-level, never a mount — see service-trust.js for why.
   'service:trust'(msg) { onTrustPrompt(msg); },
   'service:trust:clear'(msg) { onTrustClear(msg); },

@@ -30,6 +30,8 @@
 // every access is wrapped: a private window / blocked site data makes the
 // accessor itself throw, which would otherwise abort module bootstrap and leave
 // a dead page (same shape as public/app/version.js).
+import { esc } from './esc.js';
+
 const DISMISS_KEY = 'wc:svc-trust-dismissed';
 
 function dismissedSet() {
@@ -67,12 +69,6 @@ function ensureHost() {
   });
   document.body.appendChild(host);
   return host;
-}
-
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
-  ));
 }
 
 function repaint() {

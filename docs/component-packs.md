@@ -1,7 +1,7 @@
 # Component packs — a developer's guide
 
-A **component pack** is a git repository that installs into web-chat as two
-things at once:
+A **component pack** is a repository — on GitHub, or on a host that speaks
+GitHub's REST API — that installs into web-chat as two things at once:
 
 - a set of **components** — reusable panes the user can spawn and Claude can
   render, optionally each with a host-side process behind it;
@@ -19,16 +19,22 @@ component shipped as a pack is a capability Claude already knows about. In
 practice that is the difference between a library that gets used and one that
 doesn't.
 
-> **Status.** The pack *format* below is settled and is what you should author
-> against. The `claude-web-chat pack install <url>` tooling is not built yet —
-> see [Installing a pack](#installing-a-pack) for what to do meanwhile.
+> **Status.** The format below is settled, and the tooling is built:
+> `claude-web-chat pack install|get|review|approve|discard|list|info|remove`,
+> plus the **Manage** tab behind the surface's `＋` button. See
+> [Installing a pack](#installing-a-pack).
 
 ---
 
 ## 1. Repository layout
 
-A pack is a normal git repository. Nothing is generated; everything is a file
-you can read.
+A pack is a normal repository. Nothing is generated; everything is a file you
+can read.
+
+web-chat never clones it. It resolves your ref to a commit sha through the
+GitHub API and downloads that commit's tarball (or a release asset), then
+refuses anything in that archive that is not a plain file or directory — no
+symlinks, no hard links, no `..` members.
 
 ```
 my-pack/
@@ -66,7 +72,7 @@ Two rules that save pain later:
   "name": "acme-ops",
   "version": "1.2.0",
   "description": "Deploy board, incident timeline and service health for Acme services.",
-  "requires": { "web-chat": ">=0.5.0" },
+  "requires": { "web-chat": ">=0.6.0" },
   "components": ["deploy-board", "incident-timeline", "service-health"],
   "themes": ["acme-dark"]
 }
@@ -75,6 +81,15 @@ Two rules that save pain later:
 `components` is an explicit allowlist rather than "whatever is in the directory".
 It means a half-finished component in your working tree does not ship because
 you forgot to delete it, and it makes the install diff reviewable.
+
+`requires."web-chat"` is checked against the running build before anything is
+written. **`>=0.6.0` is the floor for any pack**: the `pack` command, the
+`/api/packs` routes and the drawer's Manage tab all landed in 0.6.0, so a pack
+cannot be installed by an earlier build at all. Ranges may be written with or
+without a space after the operator (`>=0.6.0` and `>= 0.6.0` both work), several
+may be combined (`>=0.6.0 <1.0.0`), and `^`/`~` mean what npm means by them. A
+range this does not understand is treated as satisfied rather than as a failure —
+an unfamiliar syntax should not make your pack uninstallable.
 
 ---
 
@@ -337,6 +352,7 @@ pane reflect live state between Claude's turns without Claude being involved.
 ```js
 // components/deploy-board/service.js
 let timer = null;
+let stream = null;
 
 module.exports = {
   async start(ctx) {
@@ -351,18 +367,35 @@ module.exports = {
 
     // React to the pane's control key over SSE — a live loop that does NOT
     // wake Claude, because it is a service reaction, not a declared signal.
-    ctx.driver.subscribe('deploy_ctl', async (ctl) => {
-      if (!ctl) return;
-      ctx.driver.setStore({ deploys: await readDeploys(ctl.env) });
+    // Honour a selection the pane made before we came up, then stream.
+    let ctl = (await ctx.driver.getStore(['deploy_ctl'])).deploy_ctl;
+    stream = ctx.driver.streamEvents({
+      kinds: ['store'],
+      onEvent: async (e) => {
+        const next = e && e.patch && e.patch.deploy_ctl;
+        if (!next || next.seq === (ctl && ctl.seq)) return;   // ignore our own echo
+        ctl = next;
+        ctx.driver.setStore({ deploys: await readDeploys(ctl.env) });
+      },
+      onError: () => {}, onClose: () => {},
     });
   },
 
   async stop() {
     if (timer) clearInterval(timer);
     timer = null;
+    if (stream) { try { stream.close(); } catch {} stream = null; }
   },
 };
 ```
+
+The driver's whole surface is `render`, `setStore`, `getStore`, `clear`,
+`getEvents`, `waitFor` and `streamEvents` — see `lib/driver.js`. **There is no
+per-key `subscribe`.** A control loop is `streamEvents({ kinds: ['store'] })`
+plus a slow poll as the reconnect fallback, exactly as `git-dashboard` does it.
+A service that calls a method the driver does not have throws at `start()`, and
+a crashed service is not respawned at the same hash — so the pane sits
+permanently empty until you edit the file.
 
 ### Lifetime
 
@@ -439,36 +472,157 @@ user has to fill in every time.
 
 ## 8. Installing a pack
 
-**The intended flow** (project-scoped by default, per the maintainer's ruling):
+Project-scoped by default; `--global` installs for every project instead.
 
 ```sh
-claude-web-chat pack install https://github.com/acme/acme-ops-pack
+claude-web-chat pack get     https://github.com/acme/acme-ops-pack   # download for review
+claude-web-chat pack review  acme-ops                                # read it before you commit
+claude-web-chat pack approve acme-ops                                # install it
+
+claude-web-chat pack install https://github.com/acme/acme-ops-pack   # or skip straight to it
+claude-web-chat pack install https://github.com/acme/acme-ops-pack --ref v1.2.0
 claude-web-chat pack install https://github.com/acme/acme-ops-pack --global
-claude-web-chat pack list
-claude-web-chat pack remove acme-ops
+claude-web-chat pack list --verify        # --verify flags locally edited units
+claude-web-chat pack info   acme-ops      # per-unit state: intact / edited / missing
+claude-web-chat pack remove acme-ops --dry-run
 ```
 
-with a field in the surface's component drawer that takes the same URL, and a
-checkbox to install for all projects.
+The source can be a full URL, `github.com/owner/repo`, bare `owner/repo`, a
+`git@github.com:owner/repo.git` remote, or a `…/tree/<ref>` link (the ref in the
+URL is used as `--ref`). **`--ref` takes a tag, branch or sha, and is how you
+pin.** `--asset <name>` picks the release tarball when a release publishes more
+than one. `download`, `ls` and `rm` are accepted as aliases for `get`, `list`
+and `remove`.
+
+`install` asks before it does anything, and the answer defaults to **no**. Pass
+`--yes` to install without the question; with no TTY and no `--yes` — CI, a
+pipe, a hook — nothing is installed. `pack get` followed by `pack approve`
+never prompts at all, which is the better shape for a script.
+
+The surface's `＋` drawer has the same thing under **Manage**: a URL field, an
+all-projects checkbox, and the same two options — *Download for review* is the
+primary button there, and *Install now* takes a second, deliberate click for a
+URL that was never reviewed.
+
+### Private packs — `gh`
+
+A component library is often private, and the plain HTTPS path cannot reach one:
+it authenticates only if `GITHUB_TOKEN` happens to be exported, and even then a
+bare token does not carry the SAML/SSO authorization an organization requires.
+
+So **if `gh` is on your PATH and logged in, it is used** — for resolving the
+commit, reading the release, and streaming the tarball. Nothing to configure; if
+`gh auth status` is happy, private packs just work. It also lifts the anonymous
+API rate limit (60 requests/hour/IP), which a couple of installs can exhaust.
+
+```sh
+gh auth login                       # once; then private packs resolve
+claude-web-chat pack get https://github.com/acme/internal-pack
+
+WEB_CHAT_NO_GH=1 claude-web-chat pack get <url>    # force the plain HTTPS path
+```
+
+Two properties worth knowing:
+
+- **Your `gh` credential is only ever spent on GitHub.** github.com, or an
+  enterprise host you configured yourself via `GH_HOST` — never a host that
+  merely appeared in a pasted URL. A pack URL is supplied by whoever asked for
+  the install, and on the surface that can be a pane script.
+- **Without `gh`, nothing changes.** The HTTPS path is the fallback and is
+  unmodified, so a public pack installs identically either way.
+
+`pack list` and the drawer both show which transport fetched a pack (`via gh`),
+because "this arrived authenticated as me" is worth being able to see.
 
 Where things land:
 
 | | project install (default) | `--global` |
 | --- | --- | --- |
 | components | `.web-chat/components/` | `~/.web-chat/components/` |
+| themes | `.web-chat/themes/` | `~/.web-chat/themes/` |
 | `SKILL.md` | `.claude/skills/<pack>/` | `~/.claude/skills/<pack>/` |
+| provenance record | `.web-chat/packs.json` | `~/.web-chat/packs.json` |
+| audit log | `.web-chat/packs/audit.log` | `.web-chat/packs/audit.log` (per project, always) |
 
 The skill **follows the components' tier**, so a skill can never be discoverable
 somewhere its components are not.
 
-Installs pin a commit and record provenance (source URL, sha, file list) so
-`remove` is exact and `update` is a diff you can look at.
+A pack theme lands in the ordinary themes registry, so Claude applies it by name
+— `apply_theme({ name: 'acme-dark', scope: 'global' })` — and `list_themes`
+shows it. Removing the pack deletes that theme's own JSON file and never the
+shared `themes/` directory.
 
-> **Not built yet.** Until `pack install` ships, install by hand: copy each
-> `components/<name>/` directory into `.web-chat/components/` (or
-> `~/.web-chat/components/`), and copy `SKILL.md` to
-> `.claude/skills/<pack>/SKILL.md`. Restart Claude Code so it picks up the skill.
-> Components are picked up without a restart; skills are not.
+Components install **flat** into the existing tier directories rather than
+nesting under `packs/<name>/components/` — a nested layout would need a third
+registry tier, and `use_component` could not resolve it. Pack identity therefore
+lives entirely in the provenance record, which pins the commit sha and the
+sha256 of every file written, so `remove` is exact.
+
+The integrity anchor is the **commit sha**, never the tarball's digest. GitHub
+archive tarballs are not byte-stable, so a recorded tarball hash would fail to
+reproduce for reasons that have nothing to do with tampering; a commit sha cannot
+be re-pointed. That is also why a release publishing **no** `SHA256SUMS` falls
+back to the sha-pinned source archive rather than installing an unverified asset:
+an asset can be deleted and re-uploaded under the same tag.
+
+Both tiers install the same way, with one asymmetry worth knowing: a `--global`
+install of a name this project already has is flagged **shadowed** — it installs,
+and the project's copy keeps winning here.
+
+### Reviewing before you install
+
+`pack get` fetches and **quarantines**: the verified tree is staged under
+`.web-chat/packs/quarantine/<name>/`, which nothing in web-chat reads. No
+component registry tier points there, the service supervisor never hears about
+it, and the skill is not in Claude's context. It is inert **by location**, which
+is a stronger guarantee than a flag someone has to remember to check.
+
+```sh
+claude-web-chat pack get https://github.com/acme/ops-pack
+claude-web-chat pack review acme-ops                       # manifest, plan, file list, SKILL.md
+claude-web-chat pack review acme-ops --file components/deploy-board/component.html
+claude-web-chat pack approve acme-ops                      # or: pack discard acme-ops
+```
+
+`approve` re-hashes the staged tree and refuses unless it still matches the
+record **this machine** wrote when it downloaded it. That record lives in
+`~/.web-chat/packs.json`, not in the project — a repository can commit a
+plausible-looking quarantine directory, and it must not be able to forge its own
+approval. `approve` also re-runs the structural gate, so a symlink that appeared
+in the staged tree after download is refused exactly as it would have been at
+download time.
+
+`pack get` takes `--global` too, and the choice is recorded rather than acted on:
+the staged tree always lives in **this project's** `.web-chat/packs/quarantine/`,
+because only the integrity record is user-tier.
+
+### What `remove` will and will not delete
+
+Removal is per **unit**, not per file. A component is a directory of up to four
+files; if you edited one of them, deleting the other three would leave a broken
+half-component that the registry still lists. So:
+
+| | |
+| --- | --- |
+| every recorded file still matches | the whole unit is removed |
+| **any** recorded file differs | the whole unit is **kept** — it is yours now |
+| `--force` | removed regardless |
+
+A file you *added* to a pack component keeps its directory too; `remove` deletes
+what it wrote, never the folder wholesale. `pack remove <name> --dry-run` prints
+exactly that table and changes nothing, so you can answer "what would this take
+from me?" before committing to it.
+
+When something is kept, the pack's record is kept too, trimmed to just the units
+that survived. `pack list` therefore still shows the pack, now listing only the
+components it still owns — that is the removal having worked, not having failed.
+A later `pack remove <name> --force` finishes the job, and `pack info <name>`
+shows the per-unit state (intact / edited / missing) at any point.
+
+> **`pack update` is deliberately absent in v1.** A correct update is a 3-way
+> tree reconcile, and the install record already carries the baseline hashes it
+> needs — so it is cheap to add later. A half-reconcile that clobbers your edits
+> is worse than nothing.
 
 ### Trust, honestly
 
@@ -480,13 +634,43 @@ So: `pack install <url>` is as trusting as `curl … | sh`. That is fine for pac
 you or your team wrote, which is the currently supported model. It is not yet
 safe as a "paste any link from the internet" ecosystem — that needs a CSP and a
 sandboxed pane realm, which would change this authoring contract. Until then,
-read a pack before you install it, and pin a commit.
+read a pack before you install it (`pack get` + `pack review` exist for exactly
+that), and pin a commit.
+
+### The residual risk, stated plainly
+
+Pane scripts run via `new Function` in the window realm with `fetch`, under no
+CSP. `POST /api/packs/install` is therefore reachable by any pane, and **the
+endpoint cannot tell a user's click from a pane's `fetch` — the two are
+byte-identical requests.** The warning copy protects a human who reads it; it
+does not protect against a pane, and nothing delivered to the page can. This was
+raised, and the maintainer has accepted it knowingly.
+
+What remains closed, and must stay closed:
+
+- **A builtin name is hard-refused, no override, either tier, either actor.**
+  This is the sharp edge: `seedBuiltins` only repairs a directory whose
+  `meta.json` says `builtin: true`, so a pack shadowing `git-dashboard` would win
+  **permanently**.
+- A user's own same-named component is never silently replaced (`--replace` is
+  terminal-only; the HTTP route does not accept it).
+- `service.js` still cannot run without `claude-web-chat trust` — a fresh service
+  is unapproved by construction, since consent is keyed to the file's hash.
+- Every install/quarantine/remove appends to `.web-chat/packs/audit.log` and
+  records `actor: "http"|"cli"`, so a pane-initiated install is at least
+  discoverable.
+
+Read that log with `cat .web-chat/packs/audit.log` or
+`GET /api/packs/audit`. It is append-only and one JSON object per line.
 
 ---
 
 ## 9. Developing and testing a pack
 
-There is no pack test harness yet, so work against a real surface:
+`pack install` and `pack get` take a **repository URL only** — there is no
+local-path or `file://` source (both are refused with a message saying so).
+Develop against a real surface with a symlink, and let `pack get` + `pack review`
+be what you do to the pack *after* it is pushed:
 
 ```sh
 # 1. In a scratch project, install web-chat and open the surface.
@@ -498,7 +682,23 @@ claude-web-chat open
 ln -s ~/src/acme-ops-pack/components/deploy-board .web-chat/components/deploy-board
 
 # 3. Spawn it from the drawer (＋ or N) and watch it.
+
+# 4. Once it is pushed, rehearse the real thing in a scratch project.
+claude-web-chat pack get https://github.com/you/your-pack --ref <sha-or-tag>
+claude-web-chat pack review your-pack            # what a stranger sees before installing
+claude-web-chat pack review your-pack --file SKILL.md
+claude-web-chat pack discard your-pack
 ```
+
+A symlink is fine in step 2 — the component registry follows it, so edits in your
+checkout are live. Do **not** commit one into the pack: the fetcher refuses any
+archive containing a symlink or a hard link, so a pack with a symlinked component
+directory fails at install for everyone.
+
+`pack review` is the closest thing to a lint pass. It prints every manifest error
+and warning, the collisions your pack would hit in that project, the file list
+with sizes, and the `SKILL.md` frontmatter description exactly as Claude will
+read it.
 
 What reloads when:
 
@@ -506,7 +706,13 @@ What reloads when:
 | --- | --- |
 | `component.html`, `meta.json`, `seed.js` | re-spawn the pane (no restart) |
 | `service.js` | re-spawn the pane — and re-approve, since the hash changed |
-| `SKILL.md` | restart Claude Code |
+| `SKILL.md` | nothing — Claude Code picks it up within a few seconds |
+
+> The `SKILL.md` row used to say "restart Claude Code". That was checked
+> empirically against Claude Code 2.1.243: a skill written into
+> `.claude/skills/<name>/` mid-session becomes available on its own, without an
+> `/exit` and reopen. (A `.mcp.json` change still does need a restart — that one
+> genuinely is read only at session start.)
 
 Debugging:
 
@@ -522,6 +728,26 @@ Debugging:
 
 ## 10. Checklist before you tag a release
 
+**These are enforced — `pack install` refuses on any of them:**
+
+- [ ] `name` is kebab-case — lowercase, starts with a letter, `[a-z][a-z0-9-]*`. It becomes a directory name.
+- [ ] `name` is not `capture-profile` or `respond-to-comment` — skills web-chat manages itself, and the next `install` would revert yours.
+- [ ] No component is named `form-renderer`, `node-render`, `website`, `git-dashboard`, `file-editor` or `web-chat-tour`. Built-in names are refused in either tier, for either actor, **with no override**.
+- [ ] Every component name is kebab-case, listed once, and has a real `components/<name>/component.html`.
+- [ ] Every theme listed in `themes` has a real `themes/<name>.json`.
+- [ ] `requires` names a floor that exists — `>=0.6.0` or newer.
+- [ ] No symlinks or hard links anywhere in the repository; plain files and directories only.
+- [ ] If you publish a release with a `SHA256SUMS`, it lists the tarball by bare basename (see §8).
+
+A collision with something the target project already has — a component, a theme
+or a skill of the same name — also refuses, unless the user re-runs in a terminal
+with `--replace`. You cannot fix that from your side; just pick distinctive names.
+
+**These are warnings, or nobody's rule but yours:**
+
+- [ ] `web-chat-pack.json` has a `version` — without one, `pack list` shows the pack with no version at all.
+- [ ] `SKILL.md` opens with a `---` frontmatter block carrying `name` and `description`. Without the fence Claude Code will not load it as a skill, and the pack installs silently skill-less.
+- [ ] `claude-web-chat pack review <name>` on a fresh clone reports zero errors and zero warnings.
 - [ ] Every component directory name matches its `meta.json` `name`.
 - [ ] Every `description` answers *when to use this*, not just what it is.
 - [ ] `params_schema` is complete enough that the drawer's generated form is usable.
