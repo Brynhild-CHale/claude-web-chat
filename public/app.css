@@ -726,6 +726,15 @@ kbd {
 .gv-panes { display: flex; flex-direction: column; gap: 4px; }
 .gv-pane-row { display: flex; align-items: center; gap: 8px; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .gv-pane-row .pd { width: 7px; height: 7px; border-radius: 50%; background: var(--wc-accent); }
+
+/* Turns that changed nothing: the run of no-change turns this node stands for.
+   Deliberately quieter than the pane list — it is provenance, not content. */
+.gv-folded { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow-y: auto; }
+.gv-folded .muted.small { margin-bottom: 3px; }
+.gv-folded-row { display: flex; align-items: baseline; gap: 6px; font: 11px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border); padding: 1px 0 1px 7px; }
+.gv-folded-tag { font: 600 10px var(--wc-mono); color: var(--wc-border-light, var(--wc-muted)); flex: none; }
+.gv-folded-who { font: 600 10px var(--wc-mono); flex: none; opacity: .75; }
+.gv-folded-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gv-diff { display: flex; gap: 14px; font: 12px var(--wc-mono); }
 .gv-diff .add { color: var(--wc-green); }
 .gv-diff .chg { color: var(--wc-gold); }

@@ -235,8 +235,26 @@ function rootOf(id) {
 // --- history list (left column) ---
 // Scope ('all' vs the selected node's graph) then the union of active toggle
 // filters (marked / forks); no filter active → everything in scope.
+// The graph AS DRAWN. Turns that changed nothing are dropped and each survivor's
+// parent is rewritten to the nearest survivor, so a run of no-change turns
+// closes up instead of stretching the trunk with copies of one surface. The
+// server decides what collapses (GET /api/graph -> collapsed / display_parent);
+// this is the one place the decision is applied, so every consumer below —
+// history list, runs, layout, keyboard nav, counts — agrees on what exists.
+// `view.showCollapsed` turns it off and shows the raw commit history.
+function displayNodes() {
+  const all = view.graphCache?.nodes || [];
+  if (view.showCollapsed) return all;
+  return all
+    .filter((n) => !n.collapsed)
+    .map((n) => {
+      const dp = n.display_parent === undefined ? n.parent_id : n.display_parent;
+      return dp === n.parent_id ? n : { ...n, parent_id: dp };
+    });
+}
+
 function historyRows() {
-  let ns = (view.graphCache?.nodes || []).slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
+  let ns = displayNodes().slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
   if (historyScope === 'graph') {
     const root = rootOf(view.selectedNodeId || view.activeId);
     if (root) ns = ns.filter((n) => rootOf(n.id) === root);
@@ -250,7 +268,7 @@ function renderHistory() {
   const list = $('gv-history-list');
   if (!list) return;
   const rows = historyRows();
-  const tc = $('gv-turncount'); if (tc) tc.textContent = (view.graphCache?.nodes || []).length;
+  const tc = $('gv-turncount'); if (tc) tc.textContent = displayNodes().length;
   // A keyboard selection re-renders this list, which would destroy the focused row
   // and drop focus to <body>. Remember which node had it and hand it back below.
   const focused = document.activeElement;
@@ -292,6 +310,40 @@ function renderHistory() {
   }
 }
 
+// The turns this node stands for. Two sources, one list:
+//   node.folded    turns that ended with no surface change and committed no node
+//                  at all (domain/turns fold-forward) — recorded at commit time
+//   n.absorbed     nodes committed BEFORE fold-forward landed that are
+//                  byte-identical to their parent; the server marks them
+//                  collapsed and names this node as the one they belong to
+// Same thing to a reader — a turn that happened and changed nothing — so they
+// render as one chronological list. This is where a chat-only turn's trigger
+// text survives after its node stops being drawn.
+function foldedSection(id, node) {
+  const cached = nodeById(id) || {};
+  const rows = [];
+  for (const a of (cached.absorbed || [])) {
+    rows.push({ at: a.created_at || 0, who: a.author || 'claude', label: a.label || a.id, text: a.trigger_summary || '' });
+  }
+  for (const f of (Array.isArray(node.folded) ? node.folded : [])) {
+    rows.push({ at: f.at || 0, who: f.author || 'claude', label: '', text: f.summary || f.message || '' });
+  }
+  if (!rows.length) return '';
+  rows.sort((a, b) => a.at - b.at);
+  // folded_count counts turns the MAX_FOLDED cap dropped as well, so it can
+  // exceed what we can show. Say so rather than quietly under-reporting.
+  const total = (node.folded_count || (node.folded || []).length) + (cached.absorbed_count || 0);
+  const aged = total - rows.length;
+  const body = rows.map((r) => {
+    const when = r.at ? new Date(r.at).toLocaleString() : '';
+    const tag = r.label ? `<span class="gv-folded-tag">${esc(r.label)}</span>` : '';
+    return `<div class="gv-folded-row" title="${esc(when)}">${tag}<span class="gv-folded-who">${esc(r.who)}</span><span class="gv-folded-text">${esc(r.text || '(no trigger)')}</span></div>`;
+  }).join('');
+  const note = aged > 0 ? `<div class="muted small">+${aged} older turn${aged === 1 ? '' : 's'} aged out of the record</div>` : '';
+  return `<div class="gv-sect">COLLAPSED TURNS · ${total}</div>` +
+    `<div class="gv-folded"><div class="muted small">changed nothing on the surface; kept here instead of as nodes</div>${body}${note}</div>`;
+}
+
 // --- inspector (right column) ---
 async function renderInspector(id) {
   const box = $('gv-inspector');
@@ -307,6 +359,7 @@ async function renderInspector(id) {
     : '<div class="muted small">no panes — narrative turn</div>';
   const trigger = node.trigger?.message || node.trigger?.summary || node.trigger_summary || '(no trigger)';
   const committed = node.created_at ? new Date(node.created_at).toLocaleString() : '—';
+  const foldedHtml = foldedSection(id, node);
 
   box.innerHTML =
     `<div class="gv-preview" id="gv-preview"></div>` +
@@ -315,6 +368,7 @@ async function renderInspector(id) {
     `<div class="gv-meta"><span class="k">AUTHOR</span><span class="v">${esc(node.author || '—')}</span><span class="k">COMMITTED</span><span class="v">${esc(committed)}</span></div>` +
     `<div class="gv-sect">TRIGGER</div><div class="gv-trigger">${esc(trigger)}</div>` +
     `<div class="gv-sect">RENDERED · ${mounts.length} pane${mounts.length === 1 ? '' : 's'}</div><div class="gv-panes">${paneRows}</div>` +
+    foldedHtml +
     `<div class="gv-sect" id="gv-diff-sect">DIFF vs parent</div><div class="gv-diff" id="gv-diff"><span class="muted small">…</span></div>` +
     `<div class="gv-actions">` +
       `<button class="gv-act primary" id="gv-set-active" data-act="active">Set active</button>` +
@@ -360,12 +414,18 @@ async function renderDiff(id, node) {
   const sect = $('gv-diff-sect');
   if (!el) return;
   const n = nodeById(id) || node;
-  if (!n || !n.parent_id) { if (sect) sect.style.display = 'none'; el.style.display = 'none'; return; }
-  const parentLabel = labelFor(n.parent_id);
+  // Diff against the parent shown in the graph. With collapsed turns hidden the
+  // drawn parent is display_parent — and since every collapsed node is
+  // byte-identical to its own parent, the numbers are the same either way; this
+  // only makes the label name the edge the user can actually see.
+  const parentId = (!view.showCollapsed && n.display_parent !== undefined && n.display_parent !== null)
+    ? n.display_parent : n.parent_id;
+  if (!n || !parentId) { if (sect) sect.style.display = 'none'; el.style.display = 'none'; return; }
+  const parentLabel = labelFor(parentId);
   if (sect) { sect.style.display = ''; sect.textContent = 'DIFF vs parent ' + parentLabel; }
   el.style.display = '';
   try {
-    const d = await fetch(`/api/graph/diff?a=${encodeURIComponent(n.parent_id)}&b=${encodeURIComponent(id)}`).then((r) => r.ok ? r.json() : null);
+    const d = await fetch(`/api/graph/diff?a=${encodeURIComponent(parentId)}&b=${encodeURIComponent(id)}`).then((r) => r.ok ? r.json() : null);
     const m = (d && d.mounts) || {};
     const add = (m.added || []).length, chg = (m.changed || []).length, rm = (m.removed || []).length;
     el.innerHTML = `<span class="add">+${add} pane${add === 1 ? '' : 's'}</span><span class="chg">~${chg} changed</span><span class="rm">${rm} removed</span>`;
@@ -376,10 +436,18 @@ function updateStatus() {
   const a = $('gv-status-active'); if (a) a.textContent = (view.activeId ? labelFor(view.activeId) + ' active' : '—');
   const c = $('gv-status-counts');
   if (c) {
-    const nodes = view.graphCache?.nodes || [];
+    const nodes = displayNodes();
     const forks = nodes.filter((n) => isFork(n)).length;
     const marks = nodes.filter((n) => n.name).length;
     c.textContent = `${nodes.length} turns · ${forks} fork${forks === 1 ? '' : 's'} · ${marks} mark${marks === 1 ? '' : 's'}`;
+  }
+  // The chip only exists when there is something to reveal.
+  const n = view.graphCache?.collapsed_count || 0;
+  const chip = $('gv-show-collapsed');
+  if (chip) {
+    chip.classList.toggle('hidden', n === 0);
+    chip.classList.toggle('on', !!view.showCollapsed);
+    const cn = $('gv-collapsed-n'); if (cn) cn.textContent = n;
   }
   const g = $('gv-graphsel');
   if (g) { const root = lineageOf(view.selectedNodeId || view.activeId)[0]; g.textContent = 'graph ' + (root ? (root.label || root.id).split('.')[0] : '—'); }
@@ -538,7 +606,7 @@ function centerOn(id) {
 function computeRuns() {
   const map = new Map();
   if (!view.graphCache) return map;
-  const nodes = view.graphCache.nodes;
+  const nodes = displayNodes();
   const byId = new Map(nodes.map(n => [n.id, n]));
   const childMap = new Map();
   for (const n of nodes) {
@@ -574,7 +642,7 @@ function computeRuns() {
 // Leaving an expanded stack collapses it; entering a collapsed stack expands it.
 export function moveSelection(dir) {
   if (!view.graphCache) return;
-  const cur = nodeById(view.selectedNodeId) || nodeById(view.activeId) || view.graphCache.nodes[0];
+  const cur = nodeById(view.selectedNodeId) || nodeById(view.activeId) || displayNodes()[0];
   if (!cur) return;
   let targetId = null;
   if (dir === 'up') {
@@ -585,7 +653,7 @@ export function moveSelection(dir) {
   } else {
     const sibs = cur.parent_id
       ? childrenOf(cur.parent_id)
-      : view.graphCache.nodes.filter(n => n.parent_id == null).sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
+      : displayNodes().filter(n => n.parent_id == null).sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
     const idx = sibs.findIndex(s => s.id === cur.id);
     const next = sibs[idx + (dir === 'right' ? 1 : -1)];
     targetId = next && next.id;
@@ -613,7 +681,7 @@ const DX = 130, DY = 66, NODE_R = 16, STACK_W = 40, STACK_H = 30;
 const SERP_THRESHOLD = 8, SERP_TARGET_LEG = 6, SERP_MIN_LEG = 4, SERP_MAX_LEG = 9, SDX = 72, SDY = 46;
 
 function computeGraphLayout() {
-  const nodes = view.graphCache ? view.graphCache.nodes : [];
+  const nodes = displayNodes();
   const byId = new Map(nodes.map(n => [n.id, n]));
   const childMap = new Map();
   for (const n of nodes) {
@@ -1083,6 +1151,17 @@ export function initGraph() {
     historyScope = b.dataset.scope;
     [...$('gv-scope').children].forEach((x) => x.classList.toggle('on', x === b));
     renderHistory();
+  });
+  // Show/hide the collapsed no-change turns. Not a history filter — it changes
+  // what the whole view considers to exist — so it redraws rather than just
+  // re-listing.
+  const collapsedChip = $('gv-show-collapsed');
+  if (collapsedChip) collapsedChip.addEventListener('click', () => {
+    view.showCollapsed = !view.showCollapsed;
+    collapsedChip.classList.toggle('on', view.showCollapsed);
+    layoutAndRender();
+    renderHistory();
+    updateStatus();
   });
   // marked / forks — independent toggle filters (one, both, or neither)
   $('gv-filters').addEventListener('click', (e) => {
