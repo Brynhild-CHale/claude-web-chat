@@ -28,7 +28,9 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 > `test/`). `node --test test/` mis-resolves and reports a spurious single failure. The
 > timeout is load-bearing: without it one leaked handle or never-settling await hangs the
 > whole run indefinitely. Do **not** add `--test-force-exit` — it turns a hang into a
-> silent pass.
+> silent pass. `npm test` also passes `--import ./test-support/sandbox.js`, which points
+> HOME at a throwaway dir before any require, so a test that spawns a subprocess (which
+> inherits `process.env`) cannot reach the developer's real `~/.web-chat`.
 
 ## Architecture
 
@@ -78,6 +80,9 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
 | decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab grammar, or re-list the builtin names |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
+| boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |
+| wait on a condition in a test | `test-support/helpers` (`waitUntil`) | a private `waitFor`/`until` loop |
+| open an SSE stream in a test | `test-support/helpers` (`openSSE`) | `subscribeSSE` with only `onOpen` — it can never reject |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, `core` imports nothing else from `lib/`, and entry points never reach into each other's internals — **`test/dependency-direction.test.js` enforces all three**, with a named, shrink-only baseline for the edges that legitimately remain. Every concept is consolidated behind one engine (paths, portfiles, durable JSON records, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 

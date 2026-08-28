@@ -12,7 +12,10 @@
 // Net effect: the ceiling can only ever move toward zero-outside-the-home; it can
 // never silently grow. Counts are per-file substring counts (not file:line — line
 // numbers drift with unrelated edits). test/ and test-support/ are intentionally
-// NOT scanned, so the harness may use raw http/ws/fetch.
+// NOT scanned by THESE patterns, so the harness may use raw http/ws/fetch; the
+// five constructs that do have a single home inside test-support (the deadline
+// poll, the SSE opener, the server boot, the hub boot) are ratcheted separately
+// by test/harness-conventions.test.js.
 //
 // A pattern names either `roots` (scan these trees) or `files` (scan exactly
 // these paths). The `files` form exists for a construct that is legitimate in
