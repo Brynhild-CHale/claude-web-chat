@@ -259,4 +259,36 @@ test('a clear-all sweeps every target; a targeted clear sweeps only its own', as
   assert.equal(mainEl.querySelectorAll('.pane').length, 0, 'clear-all swept every pane, whatever its target');
 });
 
+// The same filter has a second implementation: while a detached node is being
+// previewed the shell folds clears into the captured live snapshot instead of the
+// DOM (ws.js snapClearMount). It must agree with clearTarget above, or returning
+// to live shows panes the server has already dropped.
+test('the previewed snapshot applies the same clear filter as the live surface', async () => {
+  const state = await import(pathToFileURL(path.join(REPO, 'public/app/state.js')).href);
+  const snap = () => ({
+    mounts: [
+      { id: 'snap-side', html: '<p>side</p>', target: 'side', params: {}, pane_state: {} },
+      { id: 'snap-main', html: '<p>main</p>', target: 'main', params: {}, pane_state: {} },
+    ],
+    store: {},
+  });
+  state.view.previewing = true;
+  try {
+    state.view.liveSnapshot = snap();
+    frame({ type: 'clear', target: 'main' });
+    await tick();
+    assert.deepEqual(state.view.liveSnapshot.mounts.map((m) => m.id), ['snap-side'],
+      "clear{target:'main'} folded into the snapshot spared the 'side' mount");
+
+    state.view.liveSnapshot = snap();
+    frame({ type: 'clear' });
+    await tick();
+    assert.deepEqual(state.view.liveSnapshot.mounts, [],
+      'a clear with no target swept the whole snapshot, whatever each mount\'s target');
+  } finally {
+    state.view.previewing = false;
+    state.view.liveSnapshot = null;
+  }
+});
+
 test.after(async () => { await new Promise((r) => setTimeout(r, 400)); restore(); });
