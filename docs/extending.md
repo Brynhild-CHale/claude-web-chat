@@ -88,8 +88,8 @@ shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · cha
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
-lib/core/          paths · portfiles · html · versions · cors · channels
-                                              (zero deps on the rest of lib/)
+lib/core/          paths · portfiles · bus · names · html · versions · cors ·
+                   channels · resources · mcp-seen   (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -156,15 +156,15 @@ were the only places they lived.
 
 ### `lib/core/paths.js` — the path authority
 
-The **only** file that contains the `'.web-chat'` literal or an `os.homedir()`
-call. Both builders are **pure** (no fs), so reading a path never has a side
-effect.
+The only file that **builds** a `.web-chat` path or calls `os.homedir()` (one
+other file compares a single path segment against `'.web-chat'`; nothing else
+joins one). Both builders are **pure** (no fs), so reading a path never has a
+side effect.
 
-- `projectPaths(root)` → `{ dir, serverJson, draft, graphDir, meta, captures,
-  components, themesDir, theme, profiles, exports, version, managed, disabled,
-  captureToken, serverLog, hookLog, PUBLIC_DIR, EXTENSIONS_DIR }`
-- `userPaths()` → `{ root, disabled, sessionsDir, sessionFile(id), themesDir,
-  theme, profiles, components, hubLog, instances, updateCheck }`
+- `projectPaths(root)` / `userPaths()` — **see the return object in the source.**
+  The key sets are deliberately not copied here: an enumeration in prose falls
+  behind the moment a feature adds a file, and this one did (it predated the
+  packs and services keys).
 - `ensureProjectDirs(projectPaths(root))` — the explicit boot-time mkdir (the
   server calls it; nothing else needs to).
 - `findProjectRoot(startDir)` / `resolveWebChatDir(startDir)` — root anchoring.
@@ -183,7 +183,9 @@ Everything about "is a daemon there and how do I find it." Role-based:
   (`<root>/.web-chat/server.json`); `server` is the only role-based portfile now
   (the hub folded into the registry in Phase 6). `checkLiveness` (default true)
   gates on a live pid.
-- `writePortfile(role, {root, pid, port})` / `deletePortfile(role, {root})`
+- `writePortfile(role, {root, pid, port})` / `deletePortfile(role, {root, pid})` —
+  `pid` is the owner guard: a portfile whose record belongs to another live pid is
+  left alone rather than deleted.
 - `discoverPort({role, root, port, env})` — explicit port → `WEB_CHAT_PORT`
   (only when `env:true`) → portfile. **Don't pass `env:true` on a site that
   doesn't honor `WEB_CHAT_PORT` today** — that silently widens behavior.
@@ -263,8 +265,10 @@ docs. Three primitives, each consumer keeps its own outer shell:
   client passes its ws-echo there; the frozen export/preview pass none.
 - `attachAndExtract(host, html)` → `{ root, scripts }` — shadow root + inline-script
   extraction.
-- `runScripts(root, scripts, store, params, mountId)` — **the one `new Function`
-  site in the codebase** (the conventions tripwire enforces it).
+- `runScripts(root, scripts, store, params, mountId)` — one of the two dynamic-eval
+  sites in this file, which is **the only file that has any** (the other is
+  `runSeed`, which derives an AsyncFunction for a component's `seed.js`). The
+  conventions tripwire enforces both spellings.
 
 Authored ES5-ish so a baked offline export runs in any browser, and with **no
 script/style tag literal** (it's spliced unescaped inside a `<script>` — the
@@ -465,12 +469,11 @@ auto-discovers `test/`). Not `node --test test/` — that mis-resolves.
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for `new Function`) and holds a **per-file baseline** of four
-banned constructs, then **ratchets**:
+`lib/` (+ `public/` for the eval, escaping and token patterns) and holds a
+**per-file baseline** for every construct in the table below, then **ratchets**:
 
-- **New / grown occurrence → fail.** You added `http.request(` /`os.homedir()` /
-  `new Function('…')` / a readline require somewhere new — route it through the
-  engine instead.
+- **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
+  route it through its engine instead.
 - **Removed occurrence → fail as a STALE baseline.** A consolidation dropped a
   count below its baseline; lower the number here in the same PR. The ceiling can
   only ever move toward zero-outside-the-home.
@@ -482,6 +485,8 @@ Current homes (baselines can only shrink toward these):
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
+| `getPrototypeOf(async function` | `public/mount-runtime.js` (`runSeed`) — the AsyncFunction spelling of the same eval, added when `drawer.js` grew a second eval site the `new Function(` pattern could not see | Phase 4 ✅ |
+| `/^[a-z][a-z0-9-]*$/` (the component-name grammar) | `lib/core/names.js` (`COMPONENT_NAME_RE`, beside the reserved builtin list) | landed with `core/names` ✅ |
 | `require('node:readline…')` | `lib/cli/prompt.js` (the one prompt engine) | landed with `init` ✅ |
 | `.replace(/&/g` | `lib/core/html.js` (`escapeHtml`) — plus `lib/server/export.js`, whose one match is JSON-for-`<script>` escaping, not HTML | landed with the core leaves ✅ |
 | `{'&': '&amp;'}` (the lookup-map spelling) | `lib/core/html.js` (host) · `public/app/esc.js` (client) — the eight bundled capture profiles are grandfathered until they get an injected `esc` | landed with the core leaves ✅ |
