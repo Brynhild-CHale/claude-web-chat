@@ -14,15 +14,13 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { withServer } = require('../test-support/helpers');
 
-// Isolate ~/.web-chat so the dev machine's real global profiles can't shadow the
-// builtins (article/default) these tests exercise. Set before requiring anything
-// path-resolving; paths are computed per-call, so this governs every resolve.
-const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-article-home-'));
-process.env.HOME = FAKE_HOME;
-process.env.USERPROFILE = FAKE_HOME;
+// ~/.web-chat is already isolated: test-support/sandbox (loaded by --import
+// before any require, and by helpers above as a fallback) points HOME at a
+// throwaway dir, so the dev machine's real global profiles cannot shadow the
+// builtins (article/default) these tests exercise. Paths are computed per-call,
+// so the redirect governs every resolve regardless of require order.
 
 const reg = require('../lib/capture/profiles');
 const article = require('../lib/capture/profiles/article');
