@@ -14,10 +14,14 @@ const pexec = util.promisify(execFile);
 const US = '\x1f'; // field separator
 const RS = '\x1e'; // record separator
 
+// An abbreviated-or-full object name, which is all the pane ever sends as `open`.
+const OBJECT_NAME = /^[0-9a-f]{7,40}$/;
+
 let watcher = null;
 let pollTimer = null;
 let stream = null;
 let stopped = false;
+let eooSupport = null; // tri-state: null = not probed yet
 
 function git(args, cwd) {
   return pexec('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 }).then((r) => r.stdout);
@@ -25,6 +29,18 @@ function git(args, cwd) {
 
 async function trim(args, cwd) {
   try { return (await git(args, cwd)).trim(); } catch { return ''; }
+}
+
+// `--end-of-options` (git >= 2.24) is the only thing that makes git stop reading
+// argv as options; a trailing `--` separates revs from paths but comes too late
+// to stop `--output=<file>` earlier in the line. Probed once per process; on
+// older git the caller's allowlisting still stands on its own.
+async function endOfOptions(cwd) {
+  if (eooSupport === null) {
+    const m = /(\d+)\.(\d+)/.exec(await trim(['--version'], cwd));
+    eooSupport = !!m && (Number(m[1]) > 2 || (Number(m[1]) === 2 && Number(m[2]) >= 24));
+  }
+  return eooSupport ? ['--end-of-options'] : [];
 }
 
 async function readBranches(cwd) {
@@ -39,7 +55,7 @@ async function readBranches(cwd) {
 async function readCommits(cwd, ref) {
   const fmt = ['%h', '%H', '%s', '%an', '%ar', '%D'].join(US);
   const args = ['log', '--pretty=format:' + fmt + RS, '-n', '50'];
-  if (ref) args.push(ref);
+  if (ref) args.push(...(await endOfOptions(cwd)), ref);
   args.push('--'); // disambiguate ref from a path (e.g. a `test` branch vs a test/ dir)
   const out = await git(args, cwd);
   return out.split(RS).map((s) => s.trim()).filter(Boolean).map((line) => {
@@ -50,9 +66,11 @@ async function readCommits(cwd, ref) {
 
 async function readDetail(cwd, hash) {
   const hfmt = ['%H', '%h', '%s', '%an', '%ae', '%ad', '%ar'].join(US);
-  const head = (await git(['show', '-s', '--date=iso', '--format=' + hfmt, hash, '--'], cwd)).trim().split(US);
-  const body = (await git(['log', '-1', '--format=%b', hash, '--'], cwd)).replace(/\s+$/, '');
-  const numstat = (await git(['show', hash, '--numstat', '--format=', '--'], cwd)).split('\n').map((l) => l.trim()).filter(Boolean);
+  // Every option goes BEFORE the fence; `hash` is the first non-option word.
+  const eoo = await endOfOptions(cwd);
+  const head = (await git(['show', '-s', '--date=iso', '--format=' + hfmt, ...eoo, hash, '--'], cwd)).trim().split(US);
+  const body = (await git(['log', '-1', '--format=%b', ...eoo, hash, '--'], cwd)).replace(/\s+$/, '');
+  const numstat = (await git(['show', '--numstat', '--format=', ...eoo, hash, '--'], cwd)).split('\n').map((l) => l.trim()).filter(Boolean);
   let insertions = 0, deletions = 0;
   const stat = numstat.map((l) => {
     const parts = l.split('\t');
@@ -68,21 +86,31 @@ async function readDetail(cwd, hash) {
   };
 }
 
+// `ctl` comes from the `git_ctl` store key, which every pane script in the page
+// — and any local process — can write. Nothing out of it is trusted as a git
+// argument: `viewing` is accepted only if it is one of the branch names this
+// function just read for itself, and `open` only if it looks like an object
+// name. Anything else falls back to the checked-out branch / no detail, so an
+// option-shaped value (`--output=<path>` makes git log write a host file) can
+// never become a git option.
 async function build(cwd, ctl) {
   const branch = await trim(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
-  const viewing = (ctl && ctl.viewing) || branch;
   const repo = path.basename(await trim(['rev-parse', '--show-toplevel'], cwd)) || 'repository';
-  const base = { repo, branch, viewing, at: Date.now() };
+  const open = ctl && OBJECT_NAME.test(String(ctl.open || '')) ? String(ctl.open) : null;
+  let viewing = branch;
   try {
-    const [branches, commits] = await Promise.all([readBranches(cwd), readCommits(cwd, viewing)]);
+    const branches = await readBranches(cwd);
+    const wanted = ctl && ctl.viewing != null ? String(ctl.viewing) : '';
+    if (wanted && branches.some((b) => b.name === wanted)) viewing = wanted;
+    const commits = await readCommits(cwd, viewing);
     let detail = null;
-    if (ctl && ctl.open) {
-      try { detail = await readDetail(cwd, ctl.open); }
-      catch (e) { detail = { hash: ctl.open, error: String((e && e.message) || e) }; }
+    if (open) {
+      try { detail = await readDetail(cwd, open); }
+      catch (e) { detail = { hash: open, error: String((e && e.message) || e) }; }
     }
-    return { ...base, branches, commits, detail };
+    return { repo, branch, viewing, at: Date.now(), branches, commits, detail };
   } catch (e) {
-    return { ...base, error: String((e && e.message) || e) };
+    return { repo, branch, viewing, at: Date.now(), error: String((e && e.message) || e) };
   }
 }
 
