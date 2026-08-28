@@ -150,6 +150,64 @@ test('update downloads, activates, relinks, prunes and restarts', async (t) => {
   assert.match(d.log.text(), /Updated: v0\.5\.0 → v0\.6\.0/);
 });
 
+// cli-ops-2: the help text promises an update propagates the new release's
+// rules, skills and hook template. It never did — reconcileManagedFiles and
+// friends were required at module load from the tree this process started in
+// (the version being REPLACED) and templatesDir() is __dirname-relative, so the
+// reconcile compared the project against the OLD templates and reported every
+// file up to date. No test asserted WHICH templates were used, which is why it
+// survived. This one does, by making the target version's engine identifiable.
+test("update syncs with the NEW version's engine, not the one it was launched from", async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-proj-')));
+  fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  const prevCwd = process.cwd();
+  process.chdir(project);
+  t.after(() => process.chdir(prevCwd));
+
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      const dir = fakeVersion(paths, release.version);
+      // The new build's registration engine, identifiable by what it writes.
+      fs.mkdirSync(path.join(dir, 'lib', 'setup'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'lib', 'setup', 'registration.js'),
+        "const fs = require('fs');\nconst path = require('path');\n"
+        + "module.exports.apply = (root) => {\n"
+        + "  fs.mkdirSync(path.join(root, '.claude', 'rules'), { recursive: true });\n"
+        + "  fs.writeFileSync(path.join(root, '.claude', 'rules', 'web-chat.md'), 'shipped by v0.6.0\\n');\n"
+        + "  return { managed: [{ dest: '.claude/rules/web-chat.md', action: 'updated' }] };\n};\n");
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  await update([], d);
+
+  assert.equal(
+    fs.readFileSync(path.join(project, '.claude', 'rules', 'web-chat.md'), 'utf8'),
+    'shipped by v0.6.0\n',
+    "the sync must come from versions/<target>, not the module graph this process booted with",
+  );
+});
+
+test('a target version with no registration engine falls back LOUDLY', async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.4.0');   // predates the engine
+  const errlog = sink();
+  const mod = update.loadRegistration(paths, '0.4.0', errlog);
+  assert.equal(typeof mod.apply, 'function', 'it still syncs, with this build');
+  assert.match(errlog.text(), /ships no registration engine/);
+  assert.match(errlog.text(), /THIS build's templates/,
+    'the call site downgrades any failure to "sync skipped", so a silent fallback would be indistinguishable from success');
+});
+
 test('update does not downgrade when the latest release is older than this build', async (t) => {
   withTempHome(t);
   inScratchCwd(t);
