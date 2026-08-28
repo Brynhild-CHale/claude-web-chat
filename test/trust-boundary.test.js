@@ -70,6 +70,15 @@ test('isLocalHost: a single non-loopback bind adds exactly that address', () => 
   assert.equal(isLocalHost('10.0.0.7:5173', '10.0.0.7'), true, 'the address the user bound');
   assert.equal(isLocalHost('localhost:5173', '10.0.0.7'), true, 'loopback still answers');
   assert.equal(isLocalHost('evil.example:5173', '10.0.0.7'), false, 'nothing else does');
+
+  // server.listen takes an IPv6 literal BARE, but a Host header must bracket it,
+  // so the bind value and the header are not the same spelling of one address.
+  assert.equal(isLocalHost('[2001:db8::5]:5173', '2001:db8::5'), true, 'a bare v6 bind is still the bound host');
+  assert.equal(isLocalHost('[2001:db8::5]', '2001:db8::5'), true, '…with or without a port');
+  assert.equal(isLocalHost('[fe80::1]:5173', 'fe80::1'), true, 'link-local binds the same way');
+  assert.equal(isLocalHost('[2001:db8::6]:5173', '2001:db8::5'), false, 'a different v6 address is not the bound one');
+  assert.equal(isLocalHost('evil.example:5173', '2001:db8::5'), false, 'and a name still is not');
+  assert.equal(isLocalHost('localhost:5173', '2001:db8::5'), true, 'loopback answers under a v6 bind too');
 });
 
 test('hostGateApplies: a wildcard bind makes the gate undecidable', () => {
