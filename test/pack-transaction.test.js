@@ -101,6 +101,30 @@ function throwOnCopy(t, nth) {
   return () => seen;
 }
 
+// The DOUBLE FAULT: the apply fails and the unwind fails too, for the same
+// reason — which is the ordinary shape of ENOSPC and of a directory that lost
+// its permissions, not a corner case. Every copy into the project throws from
+// the Nth onward, the journal's own restores included (they copy OUT of
+// `.web-chat/packs/backup` and INTO the project). The snapshots keep working:
+// they are taken before the failure.
+function throwOnCopyAndRestore(t, nth) {
+  const real = fs.copyFileSync;
+  const packsDir = path.join('.web-chat', 'packs');
+  let seen = 0;
+  let firing = false;
+  fs.copyFileSync = function patched(src, dest, ...rest) {
+    const intoProject = !String(dest).includes(packsDir);
+    if (intoProject && !firing && ++seen === nth) firing = true;
+    if (intoProject && firing) {
+      const e = new Error(`ENOSPC: no space left on device, copyfile '${dest}'`);
+      e.code = 'ENOSPC';
+      throw e;
+    }
+    return real.call(fs, src, dest, ...rest);
+  };
+  t.after(() => { fs.copyFileSync = real; });
+}
+
 // ── the pure diff ───────────────────────────────────────────────────────────
 
 test('droppedUnits diffs the previous record against the plan, per unit AND per file', () => {
@@ -181,6 +205,50 @@ test('a failed same-pack update RESTORES the previous bytes rather than unlinkin
   assert.equal(listPacks(root)[0].version, '1.0.0', 'and the v1 record still stands');
 });
 
+test('a rollback that cannot finish keeps every piece of evidence, and says so', async (t) => {
+  const root = project(t);
+  const v1 = packFixture({ version: '1.0.0', components: [{ name: 'deploy-board', html: '<div>v1</div>' }] });
+  await packs.installPack({ url: (await forgeFor(t, v1)).url('acme', 'ops'), root });
+
+  const v2 = packFixture({ version: '2.0.0', components: [{ name: 'deploy-board', html: '<div>v2</div>' }] });
+  const forge2 = await forgeFor(t, v2, SHA2);
+  throwOnCopyAndRestore(t, 2);   // the second file in, and every restore after it
+
+  const err = await packs.installPack({ url: forge2.url('acme', 'ops'), root }).then(() => null, (e) => e);
+  assert.ok(err, 'the install failed');
+  assert.match(err.message, /ENOSPC/);
+  // `die()` in the CLI and `fail()` in the route print `e.message` and nothing
+  // else, and appendAudit is allowed by design to swallow its own write — so a
+  // half-applied tree that is only in the audit log is a half-applied tree
+  // nobody is told about.
+  assert.match(err.message, /rollback could not finish/);
+  assert.ok((err.rollbackErrors || []).length, 'and the failures ride the error');
+
+  // The audit does not claim a rollback that did not happen.
+  const failed = require('../lib/packs/store').readAudit(root).findLast((e) => e.ok === false);
+  assert.equal(failed.rolled_back, false, 'the tree is torn — saying otherwise is worse than saying nothing');
+  assert.ok(failed.rollback_errors.length);
+
+  // The marker SURVIVES (a cleared one would mean "nothing to see here"), says
+  // what could not be undone, and names where the previous bytes went.
+  const { pending, packs: installed } = packs.listInstalled({ root });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].status, 'rollback-failed');
+  assert.equal(pending[0].name, 'acme-ops');
+  assert.ok(pending[0].rollback_errors.length);
+  assert.ok(pending[0].backup_dir, 'and it names the snapshot directory');
+  assert.deepEqual(installed.map((p) => p.version), ['1.0.0'], 'the v2 record was never written');
+
+  // And those bytes are still on disk. The failed rollback deleting its own
+  // snapshots would destroy the only remaining copy of what it clobbered.
+  const snaps = fs.readdirSync(pending[0].backup_dir);
+  assert.ok(snaps.length, 'the snapshots survive a rollback that failed');
+  assert.ok(
+    snaps.some((f) => fs.readFileSync(path.join(pending[0].backup_dir, f), 'utf8').includes('v1')),
+    'including the v1 bytes the apply had already clobbered',
+  );
+});
+
 test('an install whose record cannot be written leaves no files behind', async (t) => {
   const root = project(t);
   const dir = packFixture({ components: [{ name: 'deploy-board' }] });
@@ -227,6 +295,40 @@ test('the journal rmdirs only directories it created, and only while they are em
   // whole transaction, so a second rollback must not double-restore.
   assert.deepEqual(j.rollback(), []);
   assert.equal(fs.readFileSync(path.join(shared, 'theirs.txt'), 'utf8'), 'theirs\n');
+});
+
+test('a failed restore is remembered — every later rollback still reports it', (t) => {
+  withTempHome(t);
+  const base = tmpDir('wc-journal-');
+  const unit = path.join(base, 'unit');
+  fs.mkdirSync(unit, { recursive: true });
+  const file = path.join(unit, 'component.html');
+  fs.writeFileSync(file, 'v1\n');
+
+  const j = beginJournal({ backupDir: path.join(base, 'backup') });
+  j.overwriting(file);
+  fs.writeFileSync(file, 'v2\n');
+
+  const real = fs.copyFileSync;
+  fs.copyFileSync = function patched(src, dest, ...rest) {
+    if (String(dest) === file) {
+      const e = new Error('ENOSPC: no space left on device');
+      e.code = 'ENOSPC';
+      throw e;
+    }
+    return real.call(fs, src, dest, ...rest);
+  };
+  t.after(() => { fs.copyFileSync = real; });
+
+  const first = j.rollback();
+  assert.equal(first.length, 1, 'the restore failed');
+  // applyPlan unwinds on its own throw and installFromStage unwinds the whole
+  // transaction, so the journal is rolled back TWICE. Clearing the failures with
+  // the entries would tell the second caller — the one that writes the audit
+  // line and the marker — that the tree came back clean.
+  assert.deepEqual(j.rollback(), first, 'the second caller is told the same thing');
+  assert.ok(j.backupDir && fs.readdirSync(j.backupDir).length,
+    'and the snapshots stay, because they are now the only copy of the old bytes');
 });
 
 // ── the same-pack update ────────────────────────────────────────────────────
@@ -353,25 +455,40 @@ test('every applyPlan call site passes a journal — a second un-journalled appl
     }
   })(libDir);
 
+  // The whole call EXPRESSION, not the line it starts on: a call wrapped across
+  // two lines would otherwise read as un-journalled, and reformatting is not a
+  // defect. Scans forward from `applyPlan(` to the matching close paren.
+  function callAt(text, at) {
+    let depth = 0;
+    for (let i = at; i < text.length; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')' && --depth === 0) return text.slice(at, i + 1).replace(/\s+/g, ' ');
+    }
+    return text.slice(at).replace(/\s+/g, ' ');
+  }
+
   const sites = [];
   for (const f of files) {
     const rel = path.relative(path.join(__dirname, '..'), f).split(path.sep).join('/');
-    for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+    const text = fs.readFileSync(f, 'utf8');
+    for (const line of text.split('\n')) {
       if (!line.includes('applyPlan(')) continue;
       // The definition and the import are not call sites.
       if (/function applyPlan\(/.test(line) || /^\s*(applyPlan,|\s*applyPlan,)/.test(line)) continue;
       if (/^\s*(\/\/|\*)/.test(line)) continue;
-      sites.push({ rel, line: line.trim() });
+      sites.push({ rel, call: callAt(text, text.indexOf(line) + line.indexOf('applyPlan(')) });
     }
   }
 
   assert.ok(sites.length >= 1, 'applyPlan has no call sites at all — this guardrail has gone stale');
   for (const s of sites) {
     assert.ok(
-      s.line.includes('journal'),
-      `${s.rel} calls applyPlan without a journal:\n    ${s.line}\n` +
+      // `dryRun` is the pure half of the same function — it writes nothing, so it
+      // needs nothing to undo.
+      /\bjournal\b/.test(s.call) || /\bdryRun\b/.test(s.call),
+      `${s.rel} calls applyPlan without a journal:\n    ${s.call}\n` +
       'An un-journalled apply is the packs-5 defect verbatim — a partial copy with no undo list. ' +
-      'Pass the transaction\'s journal (see installFromStage in lib/packs/install.js).',
+      'Pass the transaction\'s journal (see installFromStage in lib/packs/install.js), or dryRun for a pure diff.',
     );
   }
 });
