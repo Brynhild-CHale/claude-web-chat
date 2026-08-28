@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const net = require('net');
 const crypto = require('crypto');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil } = require('../test-support/helpers');
 
 // Resolve once the socket receives its first frame, then hand back the live
 // socket (the caller closes it to exercise the grace timer).
@@ -81,13 +81,21 @@ function pinConnection(t, port, kind = 'http') {
 for (const kind of ['http', 'ws']) {
   test(`grace: gracefulShutdown is bounded when a ${kind} client holds a socket open`, async (t) => {
     const { port, graceful } = await withServer(t);
-    await pinConnection(t, port, kind);
+    const sock = await pinConnection(t, port, kind);
 
     const outcome = await Promise.race([
       graceful().then(() => 'done'),
       new Promise((r) => setTimeout(() => r('stalled'), 8000)),
     ]);
     assert.equal(outcome, 'done', 'the shutdown must finish on its own budget, not the client\'s');
+    // Settling is not enough: the hard deadline at CLOSE_DRAIN_TIMEOUT_MS*2 would
+    // resolve the promise even if nothing had hung the socket up, which is how
+    // `wsApi.terminate()` sat unpinned. The force step must actually END the
+    // connection — and for the ws case only terminate() can, because Node drops a
+    // socket from the HTTP server's connection list the moment it is upgraded, so
+    // closeAllConnections() cannot see it.
+    await waitUntil(() => sock.destroyed, { timeout: 1000, interval: 20 });
+    assert.ok(sock.destroyed, `the ${kind} socket must be hung up by the shutdown, not merely outlived by it`);
   });
 }
 
