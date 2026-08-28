@@ -38,8 +38,10 @@ const NODE_MOUNTS = {
   n2: [{ id: 'm-old', html: '<input id="f" value="typed">', target: 'main', params: {}, pane_state: {} }],
 };
 
-// Flipped per test: the server's answer to a re-aim while Claude holds the lock.
+// Flipped per test: the server's answer to a re-aim while Claude holds the lock,
+// and whether POST /api/graph/active refuses outright.
 let PENDING = false;
+let ACTIVE_FAILS = false;
 
 const calls = [];
 let W = null, WS = null, sent = [], restore = () => {};
@@ -56,6 +58,12 @@ async function boot() {
     send(d) { sent.push(JSON.parse(d)); }
     close() {}
   };
+  // The chrome must never reach for a native dialog: it blocks the browser and
+  // wedges an automated driver. Make both loud rather than the silent no-ops
+  // jsdom ships, so the set-active failure path cannot hide here.
+  window.alert = () => { throw new Error('window.alert was called'); };
+  window.prompt = () => { throw new Error('window.prompt was called'); };
+  window.confirm = () => { throw new Error('window.confirm was called'); };
   const json = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
   window.fetch = async (url, opts) => {
     const u = String(url);
@@ -65,6 +73,9 @@ async function boot() {
       const id = decodeURIComponent(u.split('/').pop());
       const n = NODES.find((x) => x.id === id) || NODES[0];
       return json({ ...n, author: 'claude', mounts: (NODE_MOUNTS[id] || []).map((m) => ({ ...m })), store: {} });
+    }
+    if (u === '/api/graph/active' && ACTIVE_FAILS) {
+      return { ok: false, status: 409, statusText: 'Conflict', json: async () => ({ error: 'the turn lock is held' }), text: async () => '' };
     }
     if (u === '/api/graph/branch-here' || u === '/api/graph/wipe' || u === '/api/graph/new' || u === '/api/graph/active') {
       return json({ ok: true, pending: PENDING });
@@ -201,7 +212,37 @@ test('a new graph queued behind a locked turn keeps the preview up', async () =>
   await tick();
   assert.equal(previewing(), true, 'the new graph starts when the turn ends — not now');
   assert.match(noteText(), /mid-turn/, 'and says so');
+});
+
+/* ---------- the graph overlay's own set-active, which lacked both branches ---------- */
+
+test('the graph overlay honours a queued re-aim instead of dropping the preview', async () => {
+  assert.equal(previewing(), true, 'precondition: still detached');
+  click('btn-graph');
+  await tick(); await tick();
+  const row = [...$('gv-history-list').children].find((r) => r.dataset.id === 'n2');
+  row.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await tick();
+  assert.match(noteText(), /Queued/, 'the overlay says what the topbar has always said');
+  assert.equal(previewing(), true,
+    'this path used to run the bare three-line transition with no pending branch, so a locked turn '
+    + 'left the client detached-but-not-previewing: an old node on screen, treated as live');
   PENDING = false;
+});
+
+test('a refused Set active surfaces in the page, never in a blocking dialog', async () => {
+  ACTIVE_FAILS = true;
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await tick();
+  assert.match(noteText(), /Could not set active/, 'the failure is visible');
+  assert.match(noteText(), /the turn lock is held/, 'and carries the server’s reason');
+  assert.equal(previewing(), true, 'and nothing moved');
+  ACTIVE_FAILS = false;
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
 });
 
 /* ---------- the server-driven copy ---------- */

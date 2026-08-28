@@ -9,7 +9,7 @@
 // `view` is the shared state (activeId/viewedId/lock/graphCache/…).
 import { view, $, cssVar } from './state.js';
 import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
-import { previewNode, ensureGraph, leavePreview } from './topbar.js';
+import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
 
@@ -456,16 +456,47 @@ function updateStatus() {
 // open a node fully on the surface (leaves the overlay)
 function openNode(id) { view.selectedNodeId = id; previewNode(id); closeOverlay(); }
 
-// set a node active (commits the next turn there / branches)
-async function setActive(id) {
-  if (!id) return;
+/* ---------- setting a node active: ONE POST, one failure path ----------
+   Three call sites move `active`: the inspector's "Set active" / the A key
+   (setActive), the glance card's ◉, and the topbar's "set active here". All
+   three carried the same block hand-copied, and the two in THIS file had quietly
+   lost the queued-re-aim branch topbar's copy carries — so pressing A during a
+   locked turn dropped this client out of preview while the server had only
+   QUEUED the move, leaving the surface showing an old node as if it were live.
+
+   All three also reported failure with alert(): a blocking browser dialog that
+   looks like nothing else in this chrome and wedges an automated driver — the
+   exact thing the naming panel below exists to avoid, argued twelve lines from a
+   call to it. The failure now goes to topbar's in-page notice, which is what the
+   queued case already used.
+
+   Returns true only when active actually moved. */
+async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
+  if (!id) return false;
   const r = await fetch('/api/graph/active', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
   });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    showReaimNote('Could not set active: ' + (err.error || r.statusText));
+    return false;
+  }
+  const body = await r.json().catch(() => ({}));
+  if (body.pending) {
+    // Claude is mid-turn: the server queued the re-aim and applies it at
+    // turn-end. Stay exactly where we are — the eventual reset frame lands it.
+    showReaimNote(`Queued — jumps to ${labelFor(id)} when Claude's turn ends.`);
+    return false;
+  }
   leavePreview();
+  if (alsoCloseOverlay) closeOverlay();
   await refreshGraph();
-  renderHistory();
+  return true;
+}
+
+// set a node active (commits the next turn there / branches)
+async function setActive(id) {
+  if (await postSetActive(id)) renderHistory();
 }
 
 function exportNode(id) {
@@ -562,15 +593,8 @@ function openFloatPreview(id) {
       const nid = floatEl.dataset.nodeId; closeFloatPreview();
       view.selectedNodeId = nid; previewNode(nid); closeOverlay();
     });
-    floatEl.querySelector('[data-act="active"]').addEventListener('click', async () => {
-      const nid = floatEl.dataset.nodeId;
-      const r = await fetch('/api/graph/active', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: nid }),
-      });
-      if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
-      leavePreview();
-      closeOverlay();
-      await refreshGraph();
+    floatEl.querySelector('[data-act="active"]').addEventListener('click', () => {
+      postSetActive(floatEl.dataset.nodeId, { alsoCloseOverlay: true });
     });
   }
   floatEl.dataset.nodeId = id;

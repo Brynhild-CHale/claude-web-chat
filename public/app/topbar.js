@@ -266,7 +266,7 @@ async function setActiveHere() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: target }),
   });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
+  if (!r.ok) { const err = await r.json().catch(() => ({})); showReaimNote('Could not set active: ' + (err.error || r.statusText)); return; }
   const body = await r.json().catch(() => ({}));
   if (body.pending) {
     // Queued: stay detached; the turn-end apply broadcasts a reset that lands
