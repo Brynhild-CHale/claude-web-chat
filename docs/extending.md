@@ -12,7 +12,7 @@ npm install
 node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
-Run the suite with `npm test` — that is a bare `node --test --test-timeout=60000`,
+Run the suite with `npm test` — that is `node --test --test-timeout=60000 --import ./test-support/sandbox.js`,
 which auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
 reports a spurious failure. The timeout is load-bearing: without it one leaked
 handle or never-settling await hangs the whole run indefinitely. Do not add

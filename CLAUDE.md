@@ -24,7 +24,7 @@ node scripts/build-release.js   # build the release tarball + SHA256SUMS into di
 
 There is no build step (plain CommonJS) and no lint config. `npm start` / `node bin/claude-web-chat.js start` runs the server in the foreground; `claude-web-chat` is the user-facing CLI (`open`, `stop`, `restart`, `unlock`, `install`, `on`/`off`, `status`, `update`).
 
-> ⚠️ Run tests with `npm test` — a bare `node --test --test-timeout=60000` (auto-discovers
+> ⚠️ Run tests with `npm test` — `node --test --test-timeout=60000 --import ./test-support/sandbox.js` (auto-discovers
 > `test/`). `node --test test/` mis-resolves and reports a spurious single failure. The
 > timeout is load-bearing: without it one leaked handle or never-settling await hangs the
 > whole run indefinitely. Do **not** add `--test-force-exit` — it turns a hang into a
