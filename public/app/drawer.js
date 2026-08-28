@@ -465,6 +465,17 @@ function renderManage() {
     for (const q of waiting) body.appendChild(quarantineCard(q));
   }
 
+  // An install that started here and never finished. It rides ALONGSIDE the
+  // installed list and never in it — a half-install must not read as a pack —
+  // but it must be visible here too: the terminal already reports it under
+  // `pack list`, and a surface that shows nothing is a surface that says the
+  // install simply vanished.
+  const stalled = (packsState.pending || []);
+  if (stalled.length) {
+    body.appendChild(el('div', 'de-group', 'INTERRUPTED'));
+    for (const p of stalled) body.appendChild(pendingCard(p));
+  }
+
   body.appendChild(el('div', 'de-group', 'INSTALLED'));
   const installed = packsState.packs || [];
   if (!installed.length) body.appendChild(empty('No packs installed here.'));
@@ -821,6 +832,39 @@ async function discardPack(name, btn) {
 }
 
 /* ── the installed card ───────────────────────────────────────────────────── */
+
+// A pending marker, in the two shapes it comes in. `applying` means the process
+// died between the marker and the record, and re-running the install is the
+// whole recovery. `rollback-failed` is the other, rarer news: the unwind ran and
+// could not finish, so the tree really is half-applied and the previous bytes
+// are sitting in a snapshot directory the card has to name.
+function pendingCard(p) {
+  const card = el('div', 'pk-card');
+  const head = el('div', 'pk-head');
+  head.appendChild(el('span', 'pk-name', p.name));
+  if (p.version) head.appendChild(chip(p.version, 'tier'));
+  head.appendChild(chip(p.tier === 'system' ? 'all projects' : 'this project', 'tier'));
+  const torn = p.status === 'rollback-failed';
+  head.appendChild(chip(torn ? 'rollback failed' : 'never finished', 'warn'));
+  card.appendChild(head);
+
+  if (p.started_at) card.appendChild(el('div', 'pk-prov', `started ${p.started_at}`));
+  if (torn) {
+    for (const f of p.rollback_errors || []) card.appendChild(el('div', 'pk-prov', `could not undo: ${f}`));
+    card.appendChild(notice(
+      'This install is half-applied',
+      `The rollback could not finish, so some files are from the new version and some are not.${p.backup_dir ? ` The previous bytes were copied aside to ${p.backup_dir}.` : ''} Sort it out from a terminal — the page cannot.`,
+      'claude-web-chat pack list',
+    ));
+  } else {
+    card.appendChild(notice(
+      'Nothing was registered',
+      'This install started and never finished, so no pack was recorded and nothing here is using it. Re-running the install is the whole recovery.',
+      'claude-web-chat pack list',
+    ));
+  }
+  return card;
+}
 
 function installedCard(p) {
   const card = el('div', 'pk-card');

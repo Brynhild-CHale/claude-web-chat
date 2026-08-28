@@ -83,8 +83,11 @@ function makeApi(baseUrl) {
   };
 }
 
-function wsConnect(port, pathStr = '/ws') {
-  return new WebSocket(`ws://localhost:${port}${pathStr}`);
+// `opts` is passed straight to the ws client, so a test can set request headers
+// the URL cannot express — notably `Host`, which the upgrade is gated on and
+// which the browser-side APIs forbid.
+function wsConnect(port, pathStr = '/ws', opts) {
+  return new WebSocket(`ws://localhost:${port}${pathStr}`, opts);
 }
 
 // Open a socket, resolve the first {type:'hello'} frame, then close it.
@@ -178,7 +181,7 @@ async function withServer(t, opts, fn) {
     home,
     userWebChat,
     api: makeApi(baseUrl),
-    ws: (pathStr = '/ws') => wsConnect(port, pathStr),
+    ws: (pathStr = '/ws', opts) => wsConnect(port, pathStr, opts),
     wsHello: (pathStr = '/ws') => wsHello(port, pathStr),
     stop: () => safeStop(srv),
     graceful: () => srv.gracefulShutdown(),

@@ -4,6 +4,7 @@
 // boundary: global/node css → head <style> (chrome only); pane css → a <style>
 // inside that pane's shadow root (content only). (See rewrite risks #1, #11.)
 import { $ } from './state.js';
+import { getLocal, setLocal } from './storage.js';
 
 export const WC_TOKEN_RE = /^--wc-[\w-]+$/;
 let globalThemeObj = null;      // resolved web-chat-wide default ({tokens, css})
@@ -88,13 +89,15 @@ export function initMode() {
   // Earthy Light is the default; only an explicit stored 'dark' opts back into
   // the dark look. index.html ships data-theme="light" so the first paint is
   // already light — this just reconciles a returning user's dark preference.
-  if (localStorage.getItem(MODE_KEY) === 'dark') delete document.documentElement.dataset.theme;
+  // Through storage.js: this is main.js's FIRST statement, so an unguarded read
+  // in a private window would abort bootstrap and leave a dead page.
+  if (getLocal(MODE_KEY) === 'dark') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = 'light';
 }
 export function toggleMode() {
   const nowLight = document.documentElement.dataset.theme !== 'light';
   beginThemeTransition();
-  if (nowLight) { document.documentElement.dataset.theme = 'light'; localStorage.setItem(MODE_KEY, 'light'); }
-  else { delete document.documentElement.dataset.theme; localStorage.setItem(MODE_KEY, 'dark'); }
+  if (nowLight) { document.documentElement.dataset.theme = 'light'; setLocal(MODE_KEY, 'light'); }
+  else { delete document.documentElement.dataset.theme; setLocal(MODE_KEY, 'dark'); }
   return nowLight;
 }
