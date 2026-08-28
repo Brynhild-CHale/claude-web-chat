@@ -76,7 +76,9 @@ profile/
 
 Both entry points are handed the same helper kit — `esc` (the five-character
 HTML escaper), `collapse`, `safeHref(href, pageUrl)` and the lenient
-`absolutize(href, base)`. A bundle lives in `.web-chat/profiles/<name>/` or
+`absolutize(href, base)` (which hands an unresolvable value back unchanged rather
+than empty, and refuses `javascript:`/`vbscript:` but gates nothing else — reach
+for `safeHref` unless you specifically want that leniency). A bundle lives in `.web-chat/profiles/<name>/` or
 `~/.web-chat/profiles/<name>/`, outside the package with no require path back
 into it, so **ctx injection is the only mechanism a profile has** to reach a
 shared helper — which is why nine hand-rolled `esc` copies (four character sets'

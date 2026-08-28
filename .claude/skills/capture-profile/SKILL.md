@@ -24,7 +24,7 @@ package and cannot `require` into it, so both `extract({...})` and
 | `esc(s)` | HTML-escape `& < > " '` — safe in a text node AND an attribute value |
 | `collapse(s)` | squeeze whitespace runs to single spaces and trim |
 | `safeHref(href, pageUrl)` | resolve a relative href/src against the page URL and refuse any scheme outside http/https/mailto/tel — returns `''`, so keep the link text and drop the href |
-| `absolutize(href, base)` | the lenient resolver: no scheme gate, unresolvable values come back unchanged. Prefer `safeHref` |
+| `absolutize(href, base)` | the lenient resolver: an unresolvable value comes back unchanged instead of empty. It refuses `javascript:`/`vbscript:`, but has no allowlist — prefer `safeHref` |
 
 Read `root.text` (decoded), never `root.rawText` (raw source text — entities like
 `&amp;` and `&nbsp;` survive it and land in the distillate).
@@ -83,7 +83,7 @@ shadowing is all-or-nothing (no field merge); offer to copy the global pane forw
   `module.exports = ({ url, root, esc, collapse, safeHref }) => ({ kind: '<kind>', ... })`.
   `root` is the parsed DOM (`root.querySelector(...)`, `.text`, etc.) — and take
   the helpers off the argument rather than declaring your own (see the table above).
-- Dry-run it against the real capture: `claude-web-chat profile dry-run <tmpdir> --capture <id> --url <url>` (Bash).
+- Dry-run it against the real capture: `claude-web-chat profile dry-run <tmpdir> --capture <id> --url <url>` (Bash). It loads the bundle through the daemon's loader and calls `extract`/`render` with the same helper kit the daemon injects, so its verdict is the daemon's.
   Show the distilled JSON. Iterate with the user until the distillation is right —
   small and high-signal, not the whole page.
 
