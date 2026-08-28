@@ -62,6 +62,8 @@ function inertDeps(extra = {}) {
   return {
     doctor: fakeDoctor(),
     collectRows: async () => [],
+    // Nothing in this suite may signal or unlink another project's daemon.
+    reap: async () => ({ stopped: 0, cleared: 0, skipped: [] }),
     client: {
       get: async () => { throw new Error('no daemon'); },
       post: async () => { throw new Error('no daemon'); },
@@ -405,7 +407,7 @@ test('existing + --yes: the SAFE defaults are taken, the dangerous ones still ar
       update: (...a) => { updateCalls.push(a); },
       reconcile: () => [{ dest: '.claude/rules/web-chat.md', tpl: 'rules/web-chat.md', action: 'updated' }],
       // A live surface for ANOTHER project, and a newer release: both default No.
-      collectRows: async () => [{ root: '/somewhere/else', title: 'else', url: 'http://127.0.0.1:5199', port: 5199, pid: process.pid, live: true, reachable: true }],
+      collectRows: async () => [{ root: '/somewhere/else', title: 'else', url: 'http://127.0.0.1:5199', port: 5199, pid: process.pid, pid_alive: true, reachable: true }],
       latest: { latest: '99.0.0', updateAvailable: true, releaseUrl: 'https://example.invalid' },
     }),
     // inRoot must not really chdir in a test.
@@ -425,8 +427,8 @@ test('existing mode prints the machine inventory and the terminal-only trust com
     cwd: root, log,
     ...inertDeps({
       collectRows: async () => [
-        { root, title: 'mine', url: 'http://127.0.0.1:5311', port: 5311, pid: process.pid, live: true, reachable: true },
-        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, live: true, reachable: true },
+        { root, title: 'mine', url: 'http://127.0.0.1:5311', port: 5311, pid: process.pid, pid_alive: true, reachable: true },
+        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, pid_alive: true, reachable: true },
       ],
     }),
   });
@@ -528,7 +530,7 @@ test('the inventory legend never claims a surface is this project when none is',
     ...inertDeps({
       // One live surface, belonging to a DIFFERENT project.
       collectRows: async () => [
-        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, live: true, reachable: true },
+        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, pid_alive: true, reachable: true },
       ],
     }),
   });
