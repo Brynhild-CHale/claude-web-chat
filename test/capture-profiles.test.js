@@ -305,3 +305,21 @@ test('bundled profile "reddit": old.reddit DOM distills to the same shape via th
     'each comment carries author + text + permalink',
   );
 });
+
+// ---------------------------------------------------------------------------
+// inspectRaw's profile re-run threads the capture URL
+// ---------------------------------------------------------------------------
+
+test('inspectRaw: the profile re-run receives the page URL, so url-derived fields resolve', () => {
+  loadBundledOnly();
+  const html = readFixture('youtube');
+  const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+  // With no url the youtube extractor has nothing to parse an id out of, and
+  // videoId/thumbnail come back null while the ingest path fills them in.
+  const scoped = reg.inspectRaw(html, { url, profile: 'youtube' });
+  assert.equal(scoped.mode, 'profile');
+  assert.equal(scoped.result.videoId, 'dQw4w9WgXcQ', 'videoId parsed from the threaded url');
+  assert.match(scoped.result.thumbnail, /i\.ytimg\.com/, 'thumbnail derived from that id');
+  assert.equal(scoped.result.url, url, 'the distillate carries the page url');
+});
