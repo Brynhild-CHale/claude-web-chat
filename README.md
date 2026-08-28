@@ -258,7 +258,7 @@ Start with `claude-web-chat doctor` — it checks the daemon, portfile, MCP regi
 
 ## Contributing
 
-Development setup, architecture, and how to extend the package live in [`CLAUDE.md`](CLAUDE.md) and [`docs/extending.md`](docs/extending.md). Run the tests with `npm test` (a bare `node --test`, which auto-discovers `test/` — **not** `node --test test/`, which mis-resolves and reports a spurious failure).
+Development setup, architecture, and how to extend the package live in [`CLAUDE.md`](CLAUDE.md) and [`docs/extending.md`](docs/extending.md). Run the tests with `npm test` (a bare `node --test --test-timeout=60000`, which auto-discovers `test/` — **not** `node --test test/`, which mis-resolves and reports a spurious failure).
 
 ## License
 

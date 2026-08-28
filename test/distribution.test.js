@@ -120,7 +120,10 @@ test('the docs describe the install that exists, not the npm one that does not',
 test('package.json keeps the anti-publish guard and ships no build step', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.equal(pkg.private, true, '"private": true is what makes an accidental npm publish fail fast');
-  assert.equal(pkg.scripts.test, 'node --test');
+  // A bare `node --test` (no path argument — a directory mis-resolves), plus a
+  // per-test timeout: without one a single leaked handle hangs the whole run.
+  // Deliberately NOT --test-force-exit, which turns a hang into a silent pass.
+  assert.equal(pkg.scripts.test, 'node --test --test-timeout=60000');
   assert.ok(pkg.scripts['build:release'], 'the release artifact must be buildable from a script');
   for (const bin of Object.values(pkg.bin)) {
     assert.match(read(bin).split('\n')[0], /^#!\/usr\/bin\/env node$/, `${bin} needs a shebang — it is symlinked onto PATH directly`);
