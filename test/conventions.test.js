@@ -162,6 +162,29 @@ const PATTERNS = [
     },
   },
   {
+    // Hand-rolled path containment: `path.relative(...)` plus a `..` prefix
+    // test. It is the wrong answer twice over — it says nothing about symlinks
+    // (reads and writes follow them, so a link inside the fence walks out of
+    // it), and it cannot be made right by adding a realpath call at one site
+    // while the other copies keep the old shape. The tree had two; the last one
+    // was templates/components/file-editor/service.js, which is why `templates`
+    // is scanned here — a builtin service is host code the user approves once,
+    // and its fence is exactly what they are approving.
+    //
+    // The one home is lib/core/paths: `isInside(parent, child)` for a path on
+    // disk, `fence(parent, child)` for one you were handed and may be about to
+    // create (services get that one injected as `ctx.fence`). The single
+    // grandfathered occurrence IS the lexical half of `fence`.
+    name: "startsWith('..' + path.sep)",
+    home: 'lib/core/paths.js — isInside(parent, child) / fence(parent, child)',
+    what: 'hand-rolled path containment',
+    roots: ['lib', 'public', 'templates'],
+    re: /startsWith\(\s*['"]\.\.['"]\s*\+\s*path\.sep/g,
+    baseline: {
+      'lib/core/paths.js': 1,
+    },
+  },
+  {
     // Interactive terminal prompts. `init` needs to ask questions; `trust` and
     // `doctor` are the obvious next places one would grow. The thing that must
     // not happen is a SECOND prompt engine with its own idea of when to skip the
