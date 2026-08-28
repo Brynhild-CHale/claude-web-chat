@@ -13,7 +13,11 @@
 // Everything in `editor_ctl` is attacker-shaped input: it is a store key, so
 // every script in the page and every local driver can write it. Paths go
 // through the fence; a version id is checked against the index this service
-// itself wrote; and on respawn only a VIEW action is replayed (see below).
+// itself wrote; and a control write stamped at or before this service's own
+// start is PERSISTED, not clicked, so it is never executed — only a view action
+// (`open`/`browse`) is replayed from one, and only at startup (see below). The
+// pane stamps `seq: Date.now()` at click time, which is what makes that test
+// mean what it says.
 //
 // Version snapshots live under <webChatDir>/file-versions/<sha1(abspath)>/ :
 // an index.json plus one raw-content file per version. Gitignored, project-local.
@@ -32,6 +36,7 @@ let stopped = false;
 
 module.exports = {
   async start(ctx) {
+    const startedAt = Date.now(); // the control-key cursor's floor — see below
     const cwd = process.cwd();
     const root = ctx.params && ctx.params.root ? path.resolve(cwd, ctx.params.root) : cwd;
     const unfenced = !!(ctx.params && ctx.params.unfenced);
@@ -39,7 +44,12 @@ module.exports = {
 
     let seq = 0;
     let load = 0;          // bumped only when the pane should (re)load the buffer
-    let lastCtlSeq = 0;
+    // The control-key cursor. It starts at THIS SERVICE'S START TIME, not at
+    // zero: the pane stamps `seq: Date.now()` at click time (component.html), so
+    // a write stamped at or before we started is by construction not a click
+    // made during our life — it is a persisted one, and a persisted `save` or
+    // `revert` must never execute (D8). Only a live write gets past this floor.
+    let lastCtlSeq = startedAt;
     const st = {
       root: unfenced ? '(any host path)' : displayPath(root),
       unfenced, path: null, exists: false, content: '', versions: [],
@@ -165,9 +175,17 @@ module.exports = {
     // older node hands us that node's control write. Replaying it re-executed
     // whatever it was: a stale `save` rewrote the file on disk with a buffer
     // from another session (edit the file in your IDE, reopen the tab, lose it),
-    // a stale `revert` refilled the buffer from an old snapshot. So seed the
-    // cursor from the persisted write — later writes are still honoured, an
-    // identical replay is not — and replay only `open`/`browse`.
+    // a stale `revert` refilled the buffer from an old snapshot. So replay only
+    // `open`/`browse`, and take the persisted seq into the cursor if it is
+    // somehow ahead of our start.
+    //
+    // The startup read is not the only way a persisted write reaches us: the
+    // supervisor keeps this child alive across graph nodes that carry the same
+    // mount, and restoring a node swaps the WHOLE store — so a jump to a node
+    // whose snapshot holds a `save` hands that save to the live SSE stream and
+    // to the 4 s poll below, with no respawn involved. The `startedAt` floor is
+    // what covers that leg: that save was stamped when it was clicked, which is
+    // before we started, so it is refused there exactly as it is here.
     try {
       const ctl = (await ctx.driver.getStore(['editor_ctl'])).editor_ctl;
       if (ctl && ctl.seq > lastCtlSeq) lastCtlSeq = ctl.seq;

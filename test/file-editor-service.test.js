@@ -35,6 +35,19 @@ const SERVICE = path.join(__dirname, '..', 'templates', 'components', 'file-edit
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The pane stamps `seq: Date.now()` at click time, and the service ignores every
+// control write stamped at or before its own start — that floor is what makes a
+// PERSISTED write inert, whether it arrives from the startup read or from a
+// graph node being restored into the store under a running service. So a test
+// click has to carry a live timestamp; a small counter would read as persisted,
+// which is exactly what it would be.
+let clicks = 0;
+const click = () => Date.now() + ++clicks;
+// A write that was already sitting in the store when the service came up: the
+// pane clicked it in an earlier session, or a graph node carrying it was
+// restored. Always stamped before this service started.
+const stale = (agoMs = 60000) => Date.now() - agoMs;
+
 function tmpTree(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   fs.mkdirSync(path.join(dir, '.web-chat'), { recursive: true });
@@ -96,14 +109,14 @@ test('file-editor service: saves a new file under the root and snapshots a versi
 
   // A file that does not exist yet, in a directory that does not exist yet —
   // the case a realpath-only fence gets wrong under a symlinked $TMPDIR.
-  h.fire({ editor_ctl: { seq: 1, action: 'save', path: 'notes/a.txt', content: 'hello\n' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'notes/a.txt', content: 'hello\n' } });
   await sleep(50);
   assert.equal(h.latest().error, null, 'saving inside the root is not refused');
   assert.equal(fs.readFileSync(path.join(root, 'notes', 'a.txt'), 'utf8'), 'hello\n');
   assert.deepEqual(h.latest().versions.map((v) => v.id), ['v1'], 'the save snapshotted v1');
 
   // And the snapshot is readable back through diff/revert by its real id.
-  h.fire({ editor_ctl: { seq: 2, action: 'revert', path: 'notes/a.txt', version: 'v1' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'revert', path: 'notes/a.txt', version: 'v1' } });
   await sleep(50);
   assert.equal(h.latest().error, null);
   assert.equal(h.latest().content, 'hello\n', 'a version the service wrote still reverts');
@@ -121,7 +134,7 @@ test('file-editor service: a version id that escapes the snapshot dir is refused
 
   const store = {};
   const h = await startService(t, root, store, { path: 'a.txt' });
-  h.fire({ editor_ctl: { seq: 1, action: 'save', path: 'a.txt', content: 'one\n' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'a.txt', content: 'one\n' } });
   await sleep(50);
   assert.deepEqual(h.latest().versions.map((v) => v.id), ['v1'], 'the snapshot dir exists');
 
@@ -129,20 +142,20 @@ test('file-editor service: a version id that escapes the snapshot dir is refused
   // is the project root: an unchecked join reads any file the daemon can.
   const escape = '../../../secret.txt';
 
-  h.fire({ editor_ctl: { seq: 2, action: 'revert', path: 'a.txt', version: escape } });
+  h.fire({ editor_ctl: { seq: click(), action: 'revert', path: 'a.txt', version: escape } });
   await sleep(50);
   assert.ok(h.latest().error, 'revert to a forged version is an error');
   assert.match(h.latest().error, /version/i);
   assert.ok(!String(h.latest().content).includes('SECRET-HOST-CONTENT'), 'no host file reached the buffer');
   assert.notEqual(h.latest().selected, escape);
 
-  h.fire({ editor_ctl: { seq: 3, action: 'diff', path: 'a.txt', version: escape, content: '' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'diff', path: 'a.txt', version: escape, content: '' } });
   await sleep(50);
   assert.ok(h.latest().error, 'diffing against a forged version is an error');
   assert.equal(h.latest().diff, null, 'and produces no diff of the host file');
 
   // Nor a well-shaped id the service never wrote.
-  h.fire({ editor_ctl: { seq: 4, action: 'revert', path: 'a.txt', version: 'v99' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'revert', path: 'a.txt', version: 'v99' } });
   await sleep(50);
   assert.ok(h.latest().error, 'a version id that is not in the index is refused');
   assert.equal(h.latest().content, 'one\n');
@@ -165,24 +178,24 @@ test('file-editor service: a symlink pointing out of the root is refused', async
   const store = {};
   const h = await startService(t, root, store);
 
-  h.fire({ editor_ctl: { seq: 1, action: 'open', path: 'link.txt' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'open', path: 'link.txt' } });
   await sleep(50);
   assert.ok(h.latest().error, 'opening through the link is an error');
   assert.match(h.latest().error, /outside the project root/);
   assert.ok(!String(h.latest().content).includes('SECRET-OUTSIDE-CONTENT'), 'nothing leaked into the buffer');
 
-  h.fire({ editor_ctl: { seq: 2, action: 'browse', dir: 'linkdir' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'browse', dir: 'linkdir' } });
   await sleep(50);
   assert.match(h.latest().error, /outside the project root/, 'nor listing through a linked directory');
 
   // A write through the link would have escaped too.
-  h.fire({ editor_ctl: { seq: 3, action: 'save', path: 'link.txt', content: 'clobbered\n' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'link.txt', content: 'clobbered\n' } });
   await sleep(50);
   assert.match(h.latest().error, /outside the project root/);
   assert.equal(fs.readFileSync(path.join(outside, 'passwd'), 'utf8'), SECRET, 'the outside file is untouched');
 
   // A plain lexical escape is still refused, as before.
-  h.fire({ editor_ctl: { seq: 4, action: 'open', path: '../elsewhere.txt' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'open', path: '../elsewhere.txt' } });
   await sleep(50);
   assert.match(h.latest().error, /outside the project root/);
 });
@@ -206,18 +219,18 @@ test('file-editor service: a DANGLING symlink out of the root is refused, not cr
   const store = {};
   const h = await startService(t, root, store);
 
-  h.fire({ editor_ctl: { seq: 1, action: 'save', path: 'dangling.txt', content: 'ESCAPED\n' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'dangling.txt', content: 'ESCAPED\n' } });
   await sleep(50);
   assert.match(h.latest().error, /outside the project root/, 'saving through a dangling link is refused');
   assert.equal(fs.existsSync(target), false, 'and nothing was created outside the root');
 
-  h.fire({ editor_ctl: { seq: 2, action: 'open', path: 'dangling.txt' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'open', path: 'dangling.txt' } });
   await sleep(50);
   assert.match(h.latest().error, /outside the project root/, 'nor is it a file to open');
 
   // The mid-path case must be refused BY THE FENCE, not by mkdir happening to
   // fail with ENOENT — that accident is not a containment rule.
-  h.fire({ editor_ctl: { seq: 3, action: 'save', path: 'dangdir/new.txt', content: 'ESCAPED\n' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'dangdir/new.txt', content: 'ESCAPED\n' } });
   await sleep(50);
   assert.match(h.latest().error, /outside the project root/, 'a dangling directory component is refused too');
   assert.equal(fs.existsSync(path.join(outside, 'nodir')), false);
@@ -233,7 +246,7 @@ test('file-editor service: a persisted save is not re-applied on respawn', async
 
   // The store a respawn wakes up to: the pane's last Save is still sitting in
   // `editor_ctl` (nothing clears it, and restoring a graph node puts it back).
-  const store = { editor_ctl: { seq: 100, action: 'save', path: 'note.txt', content: 'FROM PANE\n' } };
+  const store = { editor_ctl: { seq: stale(), action: 'save', path: 'note.txt', content: 'FROM PANE\n' } };
   const h = await startService(t, root, store, { path: 'note.txt' });
   await sleep(50);
 
@@ -245,16 +258,62 @@ test('file-editor service: a persisted save is not re-applied on respawn', async
   assert.equal(h.latest().path, 'note.txt', 'params.path opened instead of the replay');
   assert.equal(h.latest().content, 'FROM DISK\n', 'showing what is actually on disk');
 
-  // The cursor is SEEDED, not reset: a write at or below the persisted seq is
-  // still stale, and the next real click is still honoured.
-  h.fire({ editor_ctl: { seq: 99, action: 'save', path: 'note.txt', content: 'REPLAYED\n' } });
+  // The cursor's floor is this service's own START — not zero, and not merely
+  // the persisted seq. Any other write from before we came up is stale too, and
+  // a live click is still honoured.
+  h.fire({ editor_ctl: { seq: stale(90000), action: 'save', path: 'note.txt', content: 'REPLAYED\n' } });
   await sleep(50);
   assert.equal(fs.readFileSync(path.join(root, 'note.txt'), 'utf8'), 'FROM DISK\n');
 
-  h.fire({ editor_ctl: { seq: 101, action: 'save', path: 'note.txt', content: 'FROM A REAL CLICK\n' } });
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'note.txt', content: 'FROM A REAL CLICK\n' } });
   await sleep(50);
   assert.equal(fs.readFileSync(path.join(root, 'note.txt'), 'utf8'), 'FROM A REAL CLICK\n',
     'a live save after the respawn still works');
+});
+
+// The second leg of the same finding, and the one a respawn-only fix misses:
+// NO respawn happens here. The supervisor keeps a service child alive across
+// graph nodes that carry the same mount (identity is service hash + params), and
+// `restoreLiveToNode` replaces the WHOLE store when the user navigates — so a
+// jump to a node whose snapshot holds a `save` hands that save to the live
+// stream and to the 4 s poll of a service that is already running. Without a
+// start-time floor the poll applied it and rewrote the file on disk.
+test('file-editor service: a restored node\'s save is not executed by the running service', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-nav-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  const onDisk = path.join(root, 'note.txt');
+  fs.writeFileSync(onDisk, 'FROM DISK\n');
+
+  // Node A: an old save, from the session that committed it.
+  const store = { editor_ctl: { seq: stale(120000), action: 'save', path: 'note.txt', content: 'NODE-A\n' } };
+  const h = await startService(t, root, store, { path: 'note.txt' });
+  await sleep(50);
+  assert.equal(fs.readFileSync(onDisk, 'utf8'), 'FROM DISK\n');
+
+  // The user jumps to node B, whose committed store holds a LATER save — later
+  // than node A's, still older than this service. A wholesale store swap, the
+  // way graph.restoreLiveToNode does it.
+  for (const k of Object.keys(store)) delete store[k];
+  Object.assign(store, { editor_ctl: { seq: stale(60000), action: 'save', path: 'note.txt', content: 'NODE-B\n' } });
+
+  h.fire({ editor_ctl: store.editor_ctl }); // the SSE leg of the restore
+  await sleep(50);
+  assert.equal(fs.readFileSync(onDisk, 'utf8'), 'FROM DISK\n',
+    "a restored node's save is a snapshot, not a click");
+
+  // And the poll leg, which is how the restore reaches a service whose stream
+  // dropped — the path this was actually reproduced through.
+  await sleep(4300);
+  assert.equal(fs.readFileSync(onDisk, 'utf8'), 'FROM DISK\n',
+    'the 4 s poll does not execute it either');
+  assert.ok(!fs.existsSync(path.join(root, '.web-chat', 'file-versions')), 'and took no snapshot');
+
+  // A real click on the restored node still saves, so navigation has not left
+  // the pane inert.
+  h.fire({ editor_ctl: { seq: click(), action: 'save', path: 'note.txt', content: 'A REAL CLICK\n' } });
+  await sleep(50);
+  assert.equal(fs.readFileSync(onDisk, 'utf8'), 'A REAL CLICK\n');
 });
 
 test('file-editor service: a persisted revert is not re-applied on respawn', async (t) => {
@@ -263,7 +322,7 @@ test('file-editor service: a persisted revert is not re-applied on respawn', asy
   t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   fs.writeFileSync(path.join(root, 'note.txt'), 'CURRENT\n');
 
-  const store = { editor_ctl: { seq: 7, action: 'revert', path: 'note.txt', version: 'v1' } };
+  const store = { editor_ctl: { seq: stale(), action: 'revert', path: 'note.txt', version: 'v1' } };
   const h = await startService(t, root, store, { path: 'note.txt' });
   await sleep(50);
   assert.equal(h.latest().content, 'CURRENT\n', 'the buffer shows the file, not an old snapshot');
@@ -277,13 +336,13 @@ test('file-editor service: a persisted view action IS replayed on respawn', asyn
   fs.mkdirSync(path.join(root, 'sub'));
   fs.writeFileSync(path.join(root, 'sub', 'b.txt'), 'bee\n');
 
-  const opened = await startService(t, root, { editor_ctl: { seq: 3, action: 'open', path: 'sub/b.txt' } });
+  const opened = await startService(t, root, { editor_ctl: { seq: stale(), action: 'open', path: 'sub/b.txt' } });
   await sleep(50);
   assert.equal(opened.latest().path, path.join('sub', 'b.txt'), 'the persisted open was replayed');
   assert.equal(opened.latest().content, 'bee\n');
   await opened.svc.stop();
 
-  const browsed = await startService(t, root, { editor_ctl: { seq: 4, action: 'browse', dir: 'sub' } });
+  const browsed = await startService(t, root, { editor_ctl: { seq: stale(), action: 'browse', dir: 'sub' } });
   await sleep(50);
   assert.equal(browsed.latest().listing.dir, 'sub', 'so was the persisted browse');
 });
