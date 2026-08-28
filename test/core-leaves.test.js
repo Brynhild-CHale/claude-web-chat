@@ -140,6 +140,34 @@ test('isInside: the old home re-exports the SAME function, not a copy', () => {
   assert.equal(require('../lib/update/install-layout').isInside, isInside);
 });
 
+// The re-export is a compatibility shim with, right now, no consumer in lib/.
+// It is also invisible to test/dependency-direction.test.js: install-layout and
+// packs are both SHARED, and shared→shared is legal, so switching
+// lib/packs/fetch.js back to `require('../update/install-layout').isInside`
+// would reopen the exact sideways path this unit closed and pass every
+// direction test. This is the check that notices — it is about WHERE isInside
+// is imported from, which the direction rule cannot express.
+test('isInside: nothing imports the predicate from the shim — core/paths is the home', () => {
+  const LIB = path.resolve(__dirname, '..', 'lib');
+  const files = [];
+  (function walk(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) walk(f);
+      else if (e.isFile() && e.name.endsWith('.js')) files.push(f);
+    }
+  })(LIB);
+  const offenders = [];
+  for (const f of files) {
+    if (f.endsWith(path.join('update', 'install-layout.js'))) continue; // the shim itself
+    for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+      if (!/require\((['"])[^'"]*install-layout\1\)/.test(line)) continue;
+      if (/\bisInside\b|\brealpath\b/.test(line)) offenders.push(`${path.relative(LIB, f)}: ${line.trim()}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `isInside/realpath live in lib/core/paths — import them from there, not through the install-layout shim:\n  ${offenders.join('\n  ')}`);
+});
+
 // ── the Node floor ──────────────────────────────────────────────────────────
 
 const { NODE_FLOOR, checkNodeFloor } = require('../lib/core/versions');
