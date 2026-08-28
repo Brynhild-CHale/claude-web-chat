@@ -183,6 +183,12 @@
     return 'https://' + raw;
   }
 
+  // A pane cannot require lib/, so this is a deliberate browser-side echo of the
+  // private-range list in lib/server/routes/embed.js — which is the authoritative
+  // one. It exists because /api/embed-check now refuses a local target outright,
+  // so asking it about one would report "unreachable" for the user's own dev
+  // server; local URLs skip the pre-check and go straight into the frame. Keep
+  // the two in step, or at least keep this one no WIDER than embed.js's.
   function isLocalTarget(u) {
     if (u.startsWith('/')) return true;
     let h;
