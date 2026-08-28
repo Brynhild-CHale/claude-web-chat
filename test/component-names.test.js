@@ -203,3 +203,50 @@ test('names: seedBuiltins reports a marker-less directory sitting on a builtin n
   // …and it is still left alone, because the user's edits are in it.
   assert.equal(fs.readFileSync(path.join(dir, 'component.html'), 'utf8'), '<div>shadow</div>');
 });
+
+// ── the READ routes ─────────────────────────────────────────────────────────
+// Express decodes %2f into a route param, so `/api/components/..%2f..%2fx/seed`
+// arrives as the name `../../x` and used to be joined and existsSync'd with no
+// check at all — weaker than the save route, which at least tested the grammar.
+// /use is the sharpest of the three: the name it accepts becomes mount.component,
+// which the service supervisor turns into the service.js path it forks.
+test('names: a traversal name is not resolvable through any of the three read routes', async (t) => {
+  const { api, webChatDir } = await withServer(t);
+
+  // A real component.html + seed.js one level ABOVE the components dir, so a
+  // successful traversal would have something to return.
+  const outside = path.join(webChatDir, 'outside-component');
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, 'component.html'), '<div>ESCAPED</div>');
+  fs.writeFileSync(path.join(outside, 'seed.js'), 'return { escaped: true };');
+  fs.writeFileSync(path.join(outside, 'meta.json'), JSON.stringify({ name: 'outside-component' }));
+
+  const hostile = ['..%2foutside-component', '..%2f..%2fetc', '%2e%2e%2foutside-component', 'Bad%20Name', 'has.dot'];
+  for (const n of hostile) {
+    const got = await api.get(`/api/components/${n}`);
+    assert.equal(got.status, 404, `GET /api/components/${n} must not resolve`);
+    assert.equal(got.text.includes('ESCAPED'), false);
+
+    const seed = await api.get(`/api/components/${n}/seed`);
+    assert.equal(seed.status, 404, `GET /api/components/${n}/seed must not resolve`);
+    assert.equal(seed.text.includes('escaped'), false);
+
+    const used = await api.post(`/api/components/${n}/use`, {});
+    assert.equal(used.status, 404, `POST /api/components/${n}/use must not resolve`);
+  }
+
+  // …and nothing was mounted under any of those names.
+  const mounts = await api.get('/api/mounts');
+  assert.equal(JSON.stringify(mounts.json).includes('outside-component'), false);
+});
+
+test('names: an ordinary component still reads, seeds and mounts', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/components', { name: 'my-widget', source: '<p>hi</p>', description: 'd', seed: 'return { x: 1 };' });
+  assert.equal((await api.get('/api/components/my-widget')).json.source, '<p>hi</p>');
+  assert.equal((await api.get('/api/components/my-widget/seed')).status, 200);
+  assert.equal((await api.post('/api/components/my-widget/use', { id: 'm1' })).json.ok, true);
+  // A builtin name is reserved for WRITING, never for reading or mounting —
+  // `claude-web-chat init` mounts web-chat-tour by name.
+  assert.equal((await api.post('/api/components/web-chat-tour/use', { id: 'm2' })).json.ok, true);
+});
