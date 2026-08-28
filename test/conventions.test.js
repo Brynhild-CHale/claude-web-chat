@@ -159,6 +159,27 @@ const PATTERNS = [
       'lib/cli/prompt.js': 1,
     },
   },
+  {
+    // The `--wc-*` token-key filter. It had three declarations on the host side
+    // — theme.js's TOKEN_RE plus private copies in export.js and
+    // routes/graph.js — each paired with its OWN strip set (`[{}<>;]`,
+    // `[\n;{}<>]`, `[{}<]`), so the same token value came back different
+    // depending on which copy cleared it, and the narrowest set was the one
+    // baking tokens into a preview page. sanitizeTokens / tokenDecls in
+    // lib/server/theme.js is the one home now.
+    name: '/^--wc-[\\w-]+$/',
+    home: 'lib/server/theme.js (TOKEN_RE + sanitizeTokens/tokenDecls)',
+    what: 'the --wc-* design-token key filter',
+    roots: ['lib'],
+    re: /\^--wc-/g,
+    baseline: {
+      'lib/server/theme.js': 1,
+      // Inside the export shell's BAKED inline script: that code runs in a
+      // downloaded file with no server behind it, so it cannot require the
+      // engine. The export's own server-side token path is on tokenDecls.
+      'lib/server/export.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
