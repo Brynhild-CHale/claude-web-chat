@@ -10,13 +10,19 @@
 // says "not running", doctor reports no problems, stop has nothing to stop, and
 // the daemon keeps serving and keeps writing the graph.
 //
+// The same is true of the OTHER half of that record: the ~/.web-chat registry
+// entry the capture hub routes through. It was released one line later with no
+// ownership rule at all, so the orphan's exit deleted the live daemon's entry
+// while correctly leaving its portfile alone. Both halves are asserted here.
+//
 // Daemons are child processes because a real gracefulShutdown calls
 // process.exit. They are booted the way test/stop-cli.test.js boots one — the
 // production server on port 0 with start({writePortfile:false}), so the
 // machine-wide side effects of the real boot (ensureHub on its fixed port, the
-// ~/.web-chat instance registry, the 5173+ port walk) never run. The portfile is
-// then written exactly as start() would have written it. The DELETE path under
-// test is the production one.
+// 5173+ port walk) never run. The portfile and the registry entry are then
+// claimed exactly as start() would have claimed them, under a FAKE HOME shared
+// by this process and both children — nothing here touches the developer's real
+// registry. The RELEASE path under test is the production one.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -25,19 +31,30 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { once } = require('node:events');
+// Redirect ~/.web-chat before the registry module resolves it. node --test runs
+// each file in its own process, so this only affects this suite.
+const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-own-home-'));
+process.env.HOME = FAKE_HOME;
+process.env.USERPROFILE = FAKE_HOME;
+process.on('exit', () => { try { fs.rmSync(FAKE_HOME, { recursive: true, force: true }); } catch {} });
+
 const portfiles = require('../lib/core/portfiles');
+const { readInstances, instanceId } = require('../lib/util/registry');
 
 const REPO = path.resolve(__dirname, '..');
 
 const REAL_DAEMON = `
 const { createServer } = require(${JSON.stringify(path.join(REPO, 'lib/server'))});
 const { writePortfile } = require(${JSON.stringify(path.join(REPO, 'lib/core/portfiles'))});
+const { registerInstance } = require(${JSON.stringify(path.join(REPO, 'lib/util/registry'))});
 const root = process.env.WC_TEST_ROOT;
 const srv = createServer({ root, port: 0 });
 srv.start({ writePortfile: false }).then(() => {
-  // Claim the record, exactly as start()'s own writePortfile call would. This is
-  // the overwrite a second daemon on one root performs.
+  // Claim BOTH records, exactly as start()'s own writePortfile + registerInstance
+  // calls would (minus ensureHub, which would bind the machine-wide hub port).
+  // This is the overwrite a second daemon on one root performs.
   writePortfile('server', { root, pid: process.pid, port: srv.port });
+  registerInstance({ root, port: srv.port, pid: process.pid, url: 'http://localhost:' + srv.port, title: 'ownership-test' });
   srv.installSignalHandlers();
   if (process.send) process.send({ ready: true, port: srv.port });
 });
@@ -95,13 +112,11 @@ async function shutdown(child) {
   return code;
 }
 
-test('an orphaned daemon does not delete the live daemon\'s portfile', async (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-own-home-'));
+test('an orphaned daemon does not delete the live daemon\'s records', async (t) => {
+  const home = FAKE_HOME;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-own-'));
   fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
-  t.after(() => {
-    for (const d of [home, root]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
-  });
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
 
   // Daemon A comes up and owns the record.
   const a = await bootInto(t, root, home);
@@ -114,6 +129,9 @@ test('an orphaned daemon does not delete the live daemon\'s portfile', async (t)
   const claimed = portfiles.readPortfile('server', { root });
   assert.equal(claimed.pid, b.child.pid, 'B owns the record');
   assert.equal(claimed.port, b.port);
+  const registered = readInstances().find((e) => e.id === instanceId(root));
+  assert.ok(registered, 'and the registry entry too');
+  assert.equal(registered.pid, b.child.pid, 'B owns the registry entry');
 
   // The orphan exits. Its gracefulShutdown must leave B's record alone.
   assert.equal(await shutdown(a.child), 0, 'the orphan shut down cleanly');
@@ -122,6 +140,13 @@ test('an orphaned daemon does not delete the live daemon\'s portfile', async (t)
   assert.ok(after, 'the portfile survives the orphan (this is the regression)');
   assert.equal(after.pid, b.child.pid, 'and still names the live daemon');
   assert.equal(after.port, b.port);
+
+  // The other half of the same regression: ~/.web-chat/instances.json is what
+  // the capture hub routes through, and it was cleared unconditionally.
+  const stillRegistered = readInstances().find((e) => e.id === instanceId(root));
+  assert.ok(stillRegistered, "the orphan left B's registry entry alone");
+  assert.equal(stillRegistered.pid, b.child.pid);
+  assert.equal(stillRegistered.port, b.port);
 
   // The payoff: the live daemon is still discoverable the way every CLI command
   // and MCP tool discovers it — readPortfile, then a probe of the port it names.
@@ -133,4 +158,6 @@ test('an orphaned daemon does not delete the live daemon\'s portfile', async (t)
   assert.equal(portfiles.readPortfile('server', { root }), null,
     'the owner removes its own record on the way out');
   assert.equal(fs.existsSync(path.join(root, '.web-chat', 'server.json')), false);
+  assert.equal(readInstances().find((e) => e.id === instanceId(root)), undefined,
+    'and its registry entry with it');
 });
