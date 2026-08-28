@@ -165,6 +165,7 @@ were the only places they lived.
 | register a project, or un-register one | `lib/setup/registration` `apply(root, {force, dryRun, runClaude})` / `remove(root, {runClaude})` | call `ensureHooks` + `reconcileManagedFiles` + `ensureMcpRegistration` in your own order, with your own stub policy |
 | build the `claude mcp add`/`remove` argv | `lib/setup/registration` `mcpArgv()` / `removeArgv()` | `path.join(__dirname, …, 'bin')` (that is the version dir, which gets pruned) |
 | name the hook events registration means | `lib/setup/registration` `hookEvents()` | iterate whatever `settings.hooks` happens to hold |
+| say what a managed-file conflict means and how it ends | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (which never converges) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
@@ -526,11 +527,30 @@ pre-warming the daemon stay in the command, so `doctor`'s repair never forks a
 server), and `remove()` is **not** the inverse of `apply()` (`.web-chat/` holds
 the graph and is preserved; the daemon is not stopped).
 
+`isInstalled(root)` is the cheap half of `inspect` — one `existsSync` — because
+the MCP dispatcher asks "is web-chat installed here?" on every tool call in a
+disabled project, and `inspect().installed` is defined as it.
+
+**`runClaude(argv, {cwd})` always takes the resolved root.** `claude mcp
+add|remove … --scope local` registers the directory `claude` runs in, so a
+shell-out from `process.cwd()` would be a second, implicit root derivation
+inside the one module that exists to have exactly one: `install` in a
+subdirectory would adopt the parent root and then register the subdirectory,
+and `uninstall` would leave the local-scope entry it exists to remove. The three
+call sites (`apply`, `remove`, `doctor`) all pass `{cwd: root}`; a fake in a test
+must record it, not just the argv. `update` deliberately passes a `runClaude`
+that **records and prints** rather than runs — an upgrade syncs project files
+and does not mutate Claude Code's own config behind the user's back.
+
 It sits **above** `lib/update/managed-files`, which keeps every export: that is
 where the primitives live, and `lib/packs` imports two of them — a pack installer
 must not become a dependent of a CLI-registration module. And it imports no entry
 point, which is why the `claude` shell-out is an injectable `runClaude` rather
-than something reached for from `lib/cli`.
+than something reached for from `lib/cli`. The hook template has one reader,
+`managed-files.hookTemplate()` — `ensureHooks` merges its handlers, `hookEvents()`
+takes `Object.keys` off it — and the wording for a managed-file **conflict** has
+one home too, `managed-files.conflictAdvice()` / `conflictSummary()`, which
+`install`, `update`, `init` and `status` all print.
 
 `update` loads this module out of `versions/<target>` (the same reason
 `loadRestart` exists), so **the export surface is a cross-version contract**:
