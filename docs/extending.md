@@ -133,6 +133,10 @@ were the only places they lived.
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
+| ask whether a pid is alive | `core/portfiles` `isPidAlive(pid)` | `try { process.kill(pid, 0) }` inline (the type guard is the point) |
+| remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
+| list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
+| stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
 | call the daemon over HTTP | `lib/client` `get` / `post` / `request` / `api` | `http.request` |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
@@ -183,7 +187,14 @@ Everything about "is a daemon there and how do I find it." Role-based:
   (`<root>/.web-chat/server.json`); `server` is the only role-based portfile now
   (the hub folded into the registry in Phase 6). `checkLiveness` (default true)
   gates on a live pid.
-- `writePortfile(role, {root, pid, port})` / `deletePortfile(role, {root})`
+- `writePortfile(role, {root, pid, port})` / `deletePortfile(role, {root, pid})` —
+  the delete carries an **ownership rule**, and `pid` is tri-state: omitted =
+  unguarded (legacy), a number = "mine, unless a different live process has since
+  claimed it", `null` = "I own nothing; reap only if the process it names is
+  gone". Two daemons can share one root, and the one that leaves must not tear
+  down the record of the one that stayed. `lib/util/registry.release({root, pid})`
+  applies the same rule to BOTH records at once — call that from a shutdown path,
+  not this one.
 - `discoverPort({role, root, port, env})` — explicit port → `WEB_CHAT_PORT`
   (only when `env:true`) → portfile. **Don't pass `env:true` on a site that
   doesn't honor `WEB_CHAT_PORT` today** — that silently widens behavior.
@@ -486,6 +497,7 @@ Current homes (baselines can only shrink toward these):
 | `.replace(/&/g` | `lib/core/html.js` (`escapeHtml`) — plus `lib/server/export.js`, whose one match is JSON-for-`<script>` escaping, not HTML | landed with the core leaves ✅ |
 | `{'&': '&amp;'}` (the lookup-map spelling) | `lib/core/html.js` (host) · `public/app/esc.js` (client) — the eight bundled capture profiles are grandfathered until they get an injected `esc` | landed with the core leaves ✅ |
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
+| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 
 Working with it:
 
@@ -506,9 +518,14 @@ Every planned consolidation has shipped — the current engines are below.
 `role:'hub'` entry alongside instances) + `lib/core/versions.js` (the three
 version facts: `packageVersion`, `SCHEMA_VERSION`, `PROTOCOL_VERSION` +
 `isProtocolCurrent`) (Phase 6). Register a running process with
-`registerInstance`/`registerHub`; read it with `readInstances`/`readHubEntry`.
-`_version.json` has one writer — the migration runner. Don't stamp a version or
-add a second "who's running where" file by hand.)
+`registerInstance`/`registerHub`; read it with `readInstances`/`readHubEntry`;
+release it with `release({root, pid})`, which removes the portfile and the
+registry entry under one ownership rule; classify the machine with `rows()`.
+`readInstances` prunes dead pids as it reads (the hub's idle monitor depends on
+it) — `readAllEntries()` is the raw view, and the only thing that can report a
+ghost record instead of quietly deleting it. `_version.json` has one writer —
+the migration runner. Don't stamp a version or add a second "who's running
+where" file by hand.)
 
 (Shipped: **tiered named resources** → `lib/core/resources.js` (Phase 5), a
 NARROW engine — components + themes' named library adopt it; profiles keep their

@@ -82,13 +82,19 @@ else's.
   `$HOME` resolves to `$HOME`, so `init` takes the existing-install branch, skips
   the first-run consent gate, and configures the whole machine. Needs a
   `samePath()` that realpaths both sides.
-- **`ls --reap` is signal-only.** `lib/cli/commands/ls.js`. It `SIGTERM`s other
-  projects' daemons without the `/api/shutdown` ask that `stop` makes, and
-  `writeDraft` only runs inside `gracefulShutdown` — so every reaped project
-  loses its uncommitted surface state.
-- **PID liveness is not identity.** `stop.js` and `ls.js` ask "does a process with
-  this pid exist", not "is it ours", so a recycled pid can be signalled. Wants
-  `root` on `/api/health` and a gate on that.
+- **PID liveness is not identity — still true in `stop`.** `stop.js` asks "does a
+  process with this pid exist", not "is it ours", so a recycled pid in
+  `.web-chat/server.json` can be signalled by its SIGTERM escalation. Wants
+  `root` on `/api/health` (it reports `pid` but not `root` today) and a gate on
+  that. `ls --reap` no longer has this hole — see "Changed deliberately" below.
+- **The capture hub's port is machine-wide, its registry is per-user.** The hub
+  binds one fixed port (5170) for the whole machine, but `registerHub` and
+  `readInstances` read `~/.web-chat/instances.json`, which is per user. On a
+  shared host, user B's daemon meets user A's hub: if it is current, B's
+  instances are simply never listed in the extension; if it is stale, B cannot
+  bounce it (`EPERM`). `ensureHub` now reports that and gives up immediately
+  instead of stalling ~12 s and returning null in silence — the workaround is a
+  per-user `WEB_CHAT_HUB_PORT`.
 - **`doctor`'s hook-command regex truncates any path containing a space.**
   `lib/cli/commands/doctor.js`.
 - **The theme name regex admits case-fold collisions.**
@@ -99,6 +105,25 @@ else's.
   friends are valid kebab-case, so a pack or theme can be named after one. Worth
   refusing on *every* platform: a pack that installs on Linux and cannot install
   on Windows is worse for the ecosystem than one refused everywhere.
+
+### Changed deliberately, not a bug
+
+**`ls --reap` is conservative on purpose.** It used to `SIGTERM` any row whose registry pid was
+alive and then unlink the portfile — no `/api/shutdown` ask, so every reaped
+project lost its uncommitted surface, and `~/.web-chat/instances.json` is a
+user-scope file whose pids belong to unrelated processes after a reboot. It now
+reaps through `lib/cli/reap.js`, and the rule has three arms:
+- a row whose daemon **answers on its port and reports the pid the registry
+  named** is stopped through the same acknowledged-shutdown engine `stop` uses
+  (so its `draft.json` is written), with a **5 s per-row ack budget** rather
+  than `stop`'s 40 s — a reap is a serial loop over N projects;
+- a row whose **pid is alive but whose port is silent** is printed with its pid
+  and a `kill` hint and is **never signalled**. This is the deliberate change of
+  behaviour: a genuinely wedged daemon is no longer stopped by `ls --reap`,
+  because from the outside it is indistinguishable from a stranger's process
+  that inherited the pid;
+- a row whose **pid is gone** is a ghost record; both its records are removed
+  under the "reap only what names a dead process" rule.
 
 ## Reporting a platform problem
 
