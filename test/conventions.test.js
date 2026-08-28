@@ -332,6 +332,33 @@ const PATTERNS = [
     re: /writeFileSync\(/g,
     baseline: {},
   },
+  {
+    // Installing a pack writes into directories it does NOT own wholesale —
+    // components land flat in the tier dir, a theme is one file in the SHARED
+    // themes dir, a skill lands under `.claude/skills` — so there is no
+    // directory to rename over and the stage-then-rename idiom two rows above is
+    // unavailable here. The only thing that makes an install reversible is the
+    // undo journal in lib/packs/tree.js: every creation recorded, every
+    // overwrite copied aside to packsBackup, every created directory
+    // remembered, all of it unwound on a throw.
+    //
+    // That guarantee is worth exactly as much as the number of places that can
+    // mutate the installed tree. `install.js` orchestrates and `plan.js` is pure
+    // by contract, so both are held at a hard zero: a copy or an unlink growing
+    // in either is a second apply path with no undo list — the packs-5 defect
+    // verbatim — and it would pass every behavioural test in
+    // test/pack-transaction.test.js, because they all go through
+    // installFromStage.
+    name: 'copyFileSync/unlinkSync/rmSync in the pack orchestrator and planner',
+    home: 'lib/packs/tree.js — applyPlan / removeUnits, under `beginJournal`',
+    what: 'mutating the installed tree during a pack operation',
+    files: [
+      'lib/packs/install.js',
+      'lib/packs/plan.js',
+    ],
+    re: /\b(copyFileSync|unlinkSync|rmSync)\(/g,
+    baseline: {},
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
