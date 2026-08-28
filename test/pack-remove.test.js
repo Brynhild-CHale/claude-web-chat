@@ -215,3 +215,111 @@ test('a partial removal trims the record\'s summary fields, not just its units',
     '…so the record must not still advertise it — `pack list` was naming a file the same removal had deleted');
   assert.deepEqual(rec.services, ['deploy-board'], 'services trim to the components that remain');
 });
+
+// ── the record is untrusted input ───────────────────────────────────────────
+// .web-chat/packs.json is PROJECT tier, and lib/packs/store.js already states
+// the threat: a repository can commit a plausible-looking .web-chat/ tree. Every
+// path removeUnits unlinks is built by joining `unit.name` and `f.path` out of
+// that record, so a cloned repo could ship a record naming a file outside the
+// project and the documented recovery (`pack remove`) would delete it.
+
+const { upsertPack } = require('../lib/packs/store');
+
+// A record that was never written by an install — the shape a hostile
+// repository would commit.
+function plantRecord(root, units, { name = 'acme-ops', tier = 'local' } = {}) {
+  upsertPack(root, tier, {
+    name,
+    version: '1.0.0',
+    description: 'planted',
+    installed_at: new Date().toISOString(),
+    source: { slug: 'acme/ops', sha: SHA },
+    units,
+  });
+}
+
+test('a record whose file path traverses out of the unit is refused, not unlinked', async (t) => {
+  const root = project(t);
+  const victim = path.join(root, 'KEEP-ME.txt');
+  fs.writeFileSync(victim, 'do not delete me');
+
+  plantRecord(root, [{
+    kind: 'component',
+    name: 'deploy-board',
+    files: [{ path: '../../../KEEP-ME.txt', sha256: 'x'.repeat(64) }],
+  }]);
+
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(fs.existsSync(victim), true, 'the file outside the unit is still there');
+  assert.equal(res.results[0].action, 'refused');
+  assert.match(res.results[0].reason, /escapes the unit directory/);
+  assert.equal(res.removedAll, false, 'a refused unit keeps the record for a human to look at');
+  assert.equal(listPacks(root).length, 1, 'the record survives so the evidence is not erased');
+});
+
+test('a record whose UNIT NAME traverses out is refused before a directory is derived', async (t) => {
+  const root = project(t);
+  const victimDir = path.join(root, 'src');
+  fs.mkdirSync(victimDir, { recursive: true });
+  fs.writeFileSync(path.join(victimDir, 'index.js'), 'module.exports = 1;\n');
+
+  plantRecord(root, [{
+    kind: 'component',
+    name: '../../src',
+    files: [{ path: 'index.js', sha256: 'x'.repeat(64) }],
+  }]);
+
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(fs.existsSync(path.join(victimDir, 'index.js')), true);
+  assert.equal(res.results[0].action, 'refused');
+  assert.match(res.results[0].reason, /not a plain kebab-case name/);
+});
+
+test('an absolute file path in a record is refused', async (t) => {
+  const root = project(t);
+  const victim = path.join(tmpDir('wc-victim-'), 'secret');
+  fs.writeFileSync(victim, 's');
+
+  plantRecord(root, [{
+    kind: 'theme',
+    name: 'acme-dark',
+    files: [{ path: victim, sha256: 'x'.repeat(64) }],
+  }]);
+
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(fs.existsSync(victim), true);
+  assert.equal(res.results[0].action, 'refused');
+});
+
+test('a record with an unknown unit kind is refused rather than throwing', async (t) => {
+  const root = project(t);
+  plantRecord(root, [{ kind: 'wat', name: 'thing', files: [{ path: 'a', sha256: 'x'.repeat(64) }] }]);
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(res.results[0].action, 'refused');
+});
+
+test('verifyPack reports a refused unit as drift, so refuseOnDrift stops the HTTP path', async (t) => {
+  const root = project(t);
+  plantRecord(root, [{
+    kind: 'component',
+    name: 'deploy-board',
+    files: [{ path: '../../../etc/anything', sha256: 'x'.repeat(64) }],
+  }]);
+  const pack = listPacks(root)[0];
+  const v = verifyPack(pack, { root, tier: 'local' });
+  assert.equal(v.drift, true);
+  assert.equal(v.units[0].state, 'refused');
+
+  // removePackByName is synchronous — it throws rather than rejecting.
+  assert.throws(
+    () => packs.removePackByName({ name: 'acme-ops', root, refuseOnDrift: true }),
+    /not removing it from here/,
+  );
+});
+
+test('a well-formed record still removes cleanly — the gate is not a blanket refusal', async (t) => {
+  const root = await installed(t);
+  const res = await packs.removePackByName({ name: 'acme-ops', root });
+  assert.equal(res.removedAll, true);
+  assert.equal(res.results.some((r) => r.action === 'refused'), false);
+});
