@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const http = require('http');
 const { URL } = require('url');
 const {
-  fetchHead, classify, refuseTarget, isPrivateAddress, publicOnlyLookup,
+  fetchHead, classify, refuseTarget, isPrivateAddress, publicOnlyLookup, PRIVATE_TARGET,
 } = require('../lib/server/routes/embed');
 const { withServer } = require('../test-support/helpers');
 
@@ -185,4 +185,31 @@ test('userinfo credentials are stripped from the URL we report and follow', asyn
   const r = await fetchHead(withCreds + '/p', 'HEAD', 4, OPEN);
   assert.equal(r.status, 200);
   assert.ok(!/secret/.test(r.finalUrl), `finalUrl still carried credentials: ${r.finalUrl}`);
+});
+
+// --- telling "I will not fetch that FOR you" apart from "it will not frame" ---
+
+test('a private-target refusal is labelled, and no other refusal is', async (t) => {
+  // The pane cannot decide this itself (a name only the user's resolver knows
+  // about is indistinguishable from a public one until DNS answers), so the
+  // route says WHICH refusal it is and the pane frames the target itself.
+  assert.equal(typeof PRIVATE_TARGET, 'string', 'the label is a stable exported constant');
+  const { api, port } = await withServer(t);
+  const priv = await api.get('/api/embed-check?url=' + encodeURIComponent(`http://127.0.0.1:${port}/`));
+  assert.strictEqual(priv.json.code, PRIVATE_TARGET);
+  assert.match(priv.json.reason, /not a public host/, 'the human text is unchanged');
+  assert.equal(priv.json.reachable, false, 'and it is still a refusal — nothing was fetched');
+
+  const scheme = await api.get('/api/embed-check?url=' + encodeURIComponent('file:///etc/passwd'));
+  assert.strictEqual(scheme.json.code, null, 'a non-http(s) target is not something to go ahead and frame');
+});
+
+test('the resolver half refuses with the same string the label is derived from', async () => {
+  // The literal fence and the DNS fence must agree, or a name that resolves to
+  // a private address comes back as a plain "unreachable" and the regression
+  // returns for exactly the hosts (myapp.test, foo.local) it was about.
+  const r = await fetchHead('http://localhost:9/', 'HEAD', 4, {
+    refuse: () => null, lookup: publicOnlyLookup,
+  });
+  assert.equal(r.error, refuseTarget(new URL('http://10.0.0.1/')));
 });
