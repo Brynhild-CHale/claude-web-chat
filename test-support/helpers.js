@@ -199,11 +199,14 @@ async function openSSE(port, { kinds, since, onEvent, timeout = 5000, awaitChann
   return stream;
 }
 
-// `headers` is what makes the WS Origin gate (lib/server/ws.js verifyClient)
-// testable at all: Node's ws client sends no Origin, so before this every test
-// connection took the `!origin` branch and deleting the gate passed the suite.
-function wsConnect(port, pathStr = '/ws', { headers } = {}) {
-  return new WebSocket(`ws://localhost:${port}${pathStr}`, headers ? { headers } : undefined);
+// `opts` is passed straight to the ws client. Two server-side gates depend on it,
+// and neither is reachable from a URL: the Origin gate (lib/server/ws.js
+// verifyClient) — Node's ws client sends no Origin, so before this every test
+// connection took the `!origin` branch and deleting the gate still passed the
+// suite — and the Host gate on the upgrade, which the browser-side APIs forbid
+// setting at all.
+function wsConnect(port, pathStr = '/ws', opts) {
+  return new WebSocket(`ws://localhost:${port}${pathStr}`, opts);
 }
 
 // Open a socket, resolve the first {type:'hello'} frame, then close it.

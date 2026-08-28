@@ -496,3 +496,40 @@ test('services: a crash block is forgotten when its pane leaves the surface', as
   await api.post('/api/clear', { id: 'm1' });
   assert.ok(await waitUntil(() => !failed.has('m1')), 'the block is dropped with the pane');
 });
+
+test('services: a pack change reconciles — a service.js an update dropped stops its child', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'clock', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
+  // Ticking, not merely spawned: the child has to have LOADED service.js before
+  // the file is taken away, or it dies of its own missing module and this test
+  // proves nothing about the reconcile.
+  const started = await waitUntil(async () => (await api.get('/api/store')).json.clock && (await api.get('/api/store')).json.clock.seq);
+  assert.ok(started, 'the child is running its service');
+
+  // Exactly what a same-pack update's prune does to a component whose new
+  // version stopped shipping a service: the file goes.
+  fs.unlinkSync(path.join(ctx.root, '.web-chat', 'components', 'clock', 'service.js'));
+  assert.ok(await waitUntil(async () => (await api.get('/api/store')).json.clock.seq > started),
+    'the already-running child does not notice — unlinking the source does not stop a loaded process');
+  assert.ok(children(ctx).has('m1'), 'nothing has told the supervisor yet');
+
+  // And `packs` is the ONLY event a pack operation emits. Until it was a
+  // reconcile trigger, the already-trusted child kept running under the new
+  // record until some unrelated render or navigation happened along. (A record
+  // with no units is the cheapest pack operation there is: it removes nothing
+  // and still emits the event.)
+  fs.writeFileSync(
+    path.join(ctx.root, '.web-chat', 'packs.json'),
+    JSON.stringify({ version: 1, packs: [{ name: 'ghost', units: [] }], quarantine: [] }) + '\n',
+  );
+  const removed = await api.del('/api/packs/ghost');
+  assert.equal(removed.json.ok, true, 'the pack route ran, so the packs event fired');
+
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the child stopped on the packs event');
+});

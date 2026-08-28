@@ -5,6 +5,7 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 const { PUBLIC_DIR } = require('../lib/core/paths');
 const src = require('../lib/server/runtime/mount-runtime-src');
+const { PREVIEW_CSP } = require('../lib/core/cors');
 
 // The shared runtime dual-exports for node (module.exports) so createStore is
 // testable headlessly; the DOM primitives need a real DOM (jsdom, below).
@@ -130,6 +131,29 @@ test('the /preview/node doc splices the shared runtime source verbatim', async (
   await api.post('/api/commit', { message: 'seed' }); // fresh graph → n0
   const html = await (await fetch(`http://localhost:${port}/preview/node/n0`)).text();
   assert.ok(html.includes(src.source()), 'preview must ship the same runtime bytes');
+});
+
+test('the /preview/node response carries the CSP, on the 404 branch too', async (t) => {
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'm1', html: '<p>hi</p>' });
+  await api.post('/api/commit', { message: 'seed' });
+
+  // The graph viewer draws one of these per visible node, every time it draws,
+  // executing pane scripts from nodes the user is not on — against the LIVE
+  // daemon, same-origin, unless something says otherwise. connect-src is that
+  // something; jsdom enforces no CSP, so the header itself is the assertion.
+  const res = await fetch(`http://localhost:${port}/preview/node/n0`);
+  assert.equal(res.status, 200);
+  const csp = res.headers.get('content-security-policy');
+  assert.equal(csp, PREVIEW_CSP);
+  assert.match(csp, /connect-src 'none'/, 'the load-bearing directive');
+  assert.match(csp, /script-src [^;]*'unsafe-eval'/,
+    "the spliced runtime runs pane code through new Function — without 'unsafe-eval' every preview blanks");
+
+  const missing = await fetch(`http://localhost:${port}/preview/node/nope`);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get('content-security-policy'), PREVIEW_CSP,
+    'the policy is not a function of which branch ran');
 });
 
 test('a node preview renders + executes offline under jsdom, keeping the sandbox (window.store undefined)', async (t) => {

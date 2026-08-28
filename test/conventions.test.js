@@ -420,6 +420,59 @@ const PATTERNS = [
     baseline: { 'lib/update/managed-files.js': 1 },
     re: /['"]settings\.hooks\.json['"]/g,
   },
+  {
+    // Installing a pack writes into directories it does NOT own wholesale —
+    // components land flat in the tier dir, a theme is one file in the SHARED
+    // themes dir, a skill lands under `.claude/skills` — so there is no
+    // directory to rename over and the stage-then-rename idiom two rows above is
+    // unavailable here. The only thing that makes an install reversible is the
+    // undo journal in lib/packs/tree.js: every creation recorded, every
+    // overwrite copied aside to packsBackup, every created directory
+    // remembered, all of it unwound on a throw.
+    //
+    // That guarantee is worth exactly as much as the number of places that can
+    // mutate the installed tree. `install.js` orchestrates and `plan.js` is pure
+    // by contract, so both are held at a hard zero: a copy or an unlink growing
+    // in either is a second apply path with no undo list — the packs-5 defect
+    // verbatim — and it would pass every behavioural test in
+    // test/pack-transaction.test.js, because they all go through
+    // installFromStage.
+    name: 'copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync in the pack orchestrator and planner',
+    home: 'lib/packs/tree.js — applyPlan / removeUnits, under `beginJournal`',
+    what: 'mutating the installed tree during a pack operation',
+    files: [
+      'lib/packs/install.js',
+      'lib/packs/plan.js',
+    ],
+    // Every way a second apply path could be spelled, not just the three the
+    // first one happened to use: a copy written with `cpSync`, or with
+    // `writeFileSync(readFileSync(...))`, or a move written with `renameSync`,
+    // is the same missing undo list. Both files are at zero for all of them.
+    re: /\b(copyFileSync|cpSync|writeFileSync|renameSync|unlinkSync|rmSync|rmdirSync)\(/g,
+    baseline: {},
+  },
+  {
+    // The one row scoped to the FRONT END, and the one that reaches a true zero
+    // outside its home. `localStorage` / `sessionStorage` are getters on window:
+    // in a private window or with site data blocked, reading the property throws
+    // before `.getItem` is reached, which aborts evaluation of the module that
+    // touched it — and in an ES-module graph that kills everything downstream.
+    // theme.js's initMode() is main.js's FIRST statement, so its unwrapped read
+    // was a dead page, not a dead toggle.
+    //
+    // Three other modules had each hand-rolled the same try/catch. storage.js is
+    // now the single guarded home; the six touches below are its own accessor
+    // calls (get/set/remove x local/session) and nothing else in public/app may
+    // touch either name.
+    name: 'localStorage / sessionStorage in public/app',
+    home: 'public/app/storage.js - getLocal/setLocal/getSession/... (all fail open)',
+    what: 'browser storage, whose accessor itself throws when site data is blocked',
+    roots: ['public/app'],
+    re: /(?:local|session)Storage\s*\./g,
+    baseline: {
+      'public/app/storage.js': 6,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

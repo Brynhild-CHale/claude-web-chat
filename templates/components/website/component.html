@@ -183,6 +183,20 @@
     return 'https://' + raw;
   }
 
+  // A pane cannot require lib/, so this is a deliberate browser-side echo of the
+  // private-range list in lib/server/routes/embed.js — which is the authoritative
+  // one. It exists because /api/embed-check now refuses a local target outright,
+  // so asking it about one would report "unreachable" for the user's own dev
+  // server; local URLs skip the pre-check and go straight into the frame. Keep
+  // the two in step, or at least keep this one no WIDER than embed.js's.
+  function isLocalTarget(u) {
+    if (u.startsWith('/')) return true;
+    let h;
+    try { h = new URL(u, location.href).hostname.toLowerCase(); } catch { return false; }
+    if (h === 'localhost' || h.endsWith('.localhost') || h === '::1' || h === '[::1]') return true;
+    return /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
+  }
+
   function helperActive() {
     return !!document.querySelector('meta[name="claude-web-chat-embed-helper"]');
   }
@@ -198,11 +212,13 @@
       empty.style.display = 'flex';
       return;
     }
-    // Local same-origin URLs don't need a pre-check.
-    const sameOrigin = url.startsWith('/') || url.startsWith(location.origin);
+    // Local targets skip the pre-check — and must, because /api/embed-check
+    // refuses loopback and private hosts so the daemon cannot be used to probe
+    // the local network. Nothing is lost: the pre-check is only an advisory
+    // "will this frame?", and for a local dev server the browser can just try.
     // With the embed helper extension active, XFO/CSP are stripped at the browser
     // level for localhost-initiated iframe loads — skip the pre-check entirely.
-    if (sameOrigin || helperActive()) {
+    if (isLocalTarget(url) || helperActive()) {
       clearOverlays();
       frame.classList.remove('hidden');
       frame.src = url;

@@ -546,6 +546,8 @@ Where things land:
 | themes | `.web-chat/themes/` | `~/.web-chat/themes/` |
 | `SKILL.md` | `.claude/skills/<pack>/` | `~/.claude/skills/<pack>/` |
 | provenance record | `.web-chat/packs.json` | `~/.web-chat/packs.json` |
+| in-flight marker | `.web-chat/packs/pending.json` | `~/.web-chat/packs/pending.json` |
+| rollback snapshots | `.web-chat/packs/backup/apply-*/` | `~/.web-chat/packs/backup/apply-*/` |
 | audit log | `.web-chat/packs/audit.log` | `.web-chat/packs/audit.log` (per project, always) |
 
 The skill **follows the components' tier**, so a skill can never be discoverable
@@ -600,6 +602,10 @@ download time.
 the staged tree always lives in **this project's** `.web-chat/packs/quarantine/`,
 because only the integrity record is user-tier.
 
+Because of that split, the record is keyed by **(project, name)** rather than by
+name alone. Two projects can hold a staged `acme-ops` at the same time; `review`,
+`approve`, `discard` and `pack list` each see only the one staged here.
+
 ### What `remove` will and will not delete
 
 Removal is per **unit**, not per file. A component is a directory of up to four
@@ -640,10 +646,65 @@ print the reason, and the record is kept so you can see what claimed to be
 installed. `--force` does not override this: it overrides *your edits*, not the
 shape of the record.
 
-> **`pack update` is deliberately absent in v1.** A correct update is a 3-way
-> tree reconcile, and the install record already carries the baseline hashes it
-> needs — so it is cheap to add later. A half-reconcile that clobbers your edits
-> is worse than nothing.
+### Updating: re-install the same pack
+
+There is no `pack update` verb. Re-running `pack install <same url>` **is** the
+update, and it is a real reconcile rather than a copy-over:
+
+1. The previous record's units are diffed against the new version's plan, per
+   unit **and per file** — what v2 no longer ships.
+2. v2 is applied.
+3. Then, and only then, the difference is removed **through the same per-unit
+   rule as `pack remove`**: a dropped file you have since edited is *kept* and
+   released to you, exactly as it would be by a removal. The report calls those
+   deletions `removed (this version no longer ships it)`, so an update's
+   deletions are never mistaken for a removal you asked for.
+
+The prune runs *after* the apply on purpose: the two sets are disjoint, so a
+failed apply never has to restore deletions as well as writes.
+
+This is what closes the case that made the old "no update verb" position
+necessary. A v2 that drops `service.js` from a component used to leave v1's file
+on disk — where `has_service` is read from disk presence and service trust is
+keyed to the file's *unchanged* bytes, so the old, already-approved service kept
+running under the new pack's record. Now the file goes with the version that
+stopped shipping it, the component reports `has_service: false`, and the
+supervisor stops the child that was running it — a pack change is a reconcile
+trigger, so the service goes with the file rather than lingering until the next
+render.
+
+> **An install is one transaction.** Everything a `pack install` writes is
+> journalled: a file that did not exist is recorded as a creation, a file that
+> did is copied aside to `.web-chat/packs/backup/` before it is clobbered, and
+> every directory the install had to create is remembered. Any failure — a
+> permission error partway through, an unwritable record — unwinds all of it in
+> reverse and rethrows, so a failed update leaves v1 exactly as it was rather
+> than half-replaced. Rollback restores overwritten bytes rather than merely
+> unlinking them, and it removes only directories that install created (never
+> the shared themes directory or `.claude/skills`).
+>
+> The provenance record is written as a `pending` marker *before* the first byte
+> lands and finalised after, in its own `.web-chat/packs/pending.json` — never in
+> `packs.json`, so nothing treats a half-install as installed. `pack list` shows
+> a surviving marker under **interrupted installs**; re-running the install is
+> the whole recovery.
+>
+> **If the rollback itself fails** — a full disk and a permission change both
+> break the restore for the same reason they broke the apply — nothing is tidied
+> away. The snapshots stay (they are then the only copy of the bytes that were
+> overwritten), the marker stays as `rollback-failed` and names the snapshot
+> directory, the audit line says `rolled_back: false`, and the error names every
+> file that could not be put back. `pack list` prints all of it. This is the one
+> case where a pack operation leaves the tree half-applied, and it says so.
+>
+> A snapshot directory that outlives its install — the process was killed
+> mid-apply, so nothing ran `commit()` or `rollback()` — is inert: nothing reads
+> `.web-chat/packs/backup/`, and nothing reaps it either. Delete an `apply-*`
+> directory by hand once you are satisfied the install it belonged to is settled.
+>
+> What this does **not** make safe is two installs at once. There is no lock
+> around an install, and a pane-initiated `POST /api/packs/install` racing a
+> terminal one still interleaves two journals over the same destinations.
 
 ### Trust, honestly
 

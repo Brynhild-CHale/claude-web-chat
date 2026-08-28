@@ -68,7 +68,7 @@ The popup remembers your last-used instance; the right-click menu reuses it
 
 | Field | Default | Notes |
 |---|---|---|
-| Hub endpoint | `http://localhost:5170` | The router the extension talks to. For a non-local host, also add it to `host_permissions` in `manifest.json`. |
+| Hub endpoint | `http://localhost:5170` | The router the extension talks to. For a non-local host, also add it to `host_permissions` in `manifest.json` **and** start the hub with `WEB_CHAT_HOST` set to that host (a wildcard works too) — otherwise the hub's Host check refuses the request with `421 Misdirected Request`. |
 | Token | _(blank)_ | Required only if the server sets `WEB_CHAT_CAPTURE_TOKEN` or `.web-chat/capture-token`. |
 | Profile | _(blank)_ | Force a profile (e.g. `tables`); blank = server auto-selects. |
 

@@ -249,6 +249,17 @@ test('losing focus dismisses a popover too', () => {
   assert.ok(!open('bookmark-pop'), 'focus leaving the popover dismisses it');
 });
 
+test('focus falling to <body> is not "focus moved elsewhere"', () => {
+  press($('btn-bookmark'));
+  assert.ok(open('bookmark-pop'), 'precondition: a panel is open');
+  focusOn(W.document.body);
+  assert.ok(open('bookmark-pop'),
+    'a deliberate .blur() leaves focus on <body>; reading that as an outside click would defeat the '
+    + 'comment thread’s first-Escape draft guard, which blurs exactly that way');
+  focusOn($('btn-graph'));
+  assert.ok(!open('bookmark-pop'), 'a move to a real element still dismisses');
+});
+
 test('the palette, the legend and the drawer participate in the same dismissal', async () => {
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'k', metaKey: true }));
   assert.ok(open('cmd-palette'), '⌘K opened the palette');
@@ -282,6 +293,116 @@ test('opening one panel closes the others — one at a time', () => {
   assert.ok(open('bookmark-pop'), 'the bookmark popover opened');
   assert.ok(!open('more-menu'), 'and the ⋯ menu closed on the way');
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
+});
+
+/* ---------- the comment pin popover, which used to run its own layer ----------
+   comments.js kept a private outside-mousedown listener AND a second
+   document-level Escape owner beside this file's, and .pin-pop carried no
+   `.popover` class — so it was invisible to OPEN_PANELS: Escape could not reach
+   a thread, focus moving away did not dismiss it, and "one panel at a time" was
+   false for it. Nothing tested it in either direction. */
+
+// Click an element INSIDE a pane's shadow root, the way a real press does:
+// composed, so composedPath() reaches document and comments.js can see the host.
+const pressInPane = (mountId, sel) => {
+  const host = [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === mountId);
+  const target = host.shadowRoot.querySelector(sel);
+  for (const type of ['pointerdown', 'click']) {
+    target.dispatchEvent(new W.MouseEvent(type, { bubbles: true, composed: true, clientX: 40, clientY: 40 }));
+  }
+};
+const pinPop = () => W.document.querySelector('.pin-pop');
+
+test('a comment composer is a chrome panel like any other', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));   // pin mode
+  assert.ok(W.document.body.classList.contains('pin-mode'), 'precondition: pin mode armed');
+  pressInPane('drop', 'p');
+  await tick();
+  const pop = pinPop();
+  assert.ok(pop, 'clicking a pane element in pin mode opened the composer');
+  assert.ok(pop.classList.contains('popover'),
+    'and it declares itself a panel, so the ONE dismiss layer can see it at all');
+});
+
+test('an outside press dismisses the composer, like every other panel', async () => {
+  assert.ok(pinPop(), 'precondition');
+  press($('topbar'));
+  await tick();
+  assert.equal(pinPop(), null, 'the shell’s dismiss layer removed it — comments.js no longer runs its own');
+});
+
+test('opening another panel closes an open comment popover', async () => {
+  pressInPane('drop', 'p');
+  await tick();
+  assert.ok(pinPop(), 'precondition: composer open');
+  press($('btn-more'));
+  assert.ok(open('more-menu'), 'the ⋯ menu opened');
+  assert.equal(pinPop(), null, '"one panel at a time" now includes the comment popover');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
+});
+
+test('Escape in the composer closes it and leaves pin mode', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));   // re-arm: the Escape above disarmed it
+  pressInPane('drop', 'p');
+  await tick();
+  const ta = pinPop().querySelector('.pin-text');
+  ta.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal(pinPop(), null, 'the composer closed');
+  assert.ok(!W.document.body.classList.contains('pin-mode'), 'and pin mode is disarmed, as it always was');
+});
+
+test('Escape leaves pin mode even with nothing open', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));
+  assert.ok(W.document.body.classList.contains('pin-mode'), 'armed');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.ok(!W.document.body.classList.contains('pin-mode'),
+    'the one Escape owner does what comments.js’s second document listener used to');
+});
+
+test('a reply draft survives the first Escape and closes on the second (F12)', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));   // arm pin mode: a marker click reaches the thread with the crosshair up
+  assert.ok(W.document.body.classList.contains('pin-mode'), 'precondition: pin mode armed');
+  WS.onmessage({ data: JSON.stringify({
+    type: 'comments',
+    comments: [{ id: 'c1', text: 'look here', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }],
+  }) });
+  await tick();
+  const marker = $('pin-layer').querySelector('.pin-marker');
+  assert.ok(marker, 'the pin rendered a marker');
+  marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
+  await tick();
+  const thread = pinPop();
+  assert.ok(thread && thread.classList.contains('pin-thread'), 'the marker opened the thread');
+
+  const ta = thread.querySelector('.pin-reply-text');
+  ta.value = 'half-written';
+  ta.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.ok(pinPop(), 'the first Escape kept the thread — a non-empty draft is not thrown away');
+  assert.equal(pinPop().querySelector('.pin-reply-text').value, 'half-written', 'and kept the draft');
+
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
+  await tick();
+  assert.equal(pinPop(), null, 'the second Escape — focus off the field — closes it through the shell');
+  assert.ok(!W.document.body.classList.contains('pin-mode'), 'and that one, being the shell’s, disarmed pin mode');
+});
+
+test('Escape on an EMPTY reply draft closes the thread and leaves pin mode too', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));
+  assert.ok(W.document.body.classList.contains('pin-mode'), 'armed');
+  const marker = $('pin-layer').querySelector('.pin-marker');
+  marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
+  await tick();
+  const ta = pinPop().querySelector('.pin-reply-text');
+  assert.equal(ta.value, '', 'precondition: nothing typed, so this Escape closes rather than blurs');
+
+  ta.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal(pinPop(), null, 'the thread closed');
+  assert.ok(!W.document.body.classList.contains('pin-mode'),
+    'and the crosshair went with it — this handler stops the key, so it owes what the shell’s ' +
+    'Escape (and the document listener comments.js used to run) would have done');
 });
 
 /* ---------- (d) wiping offers a label ---------- */

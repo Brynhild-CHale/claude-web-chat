@@ -13,8 +13,8 @@ test('SCHEMA_VERSION is a positive integer', () => {
   assert.ok(Number.isInteger(SCHEMA_VERSION) && SCHEMA_VERSION >= 1);
 });
 
-test('PROTOCOL_VERSION is 2 (profile-match landed in v2)', () => {
-  assert.equal(PROTOCOL_VERSION, 2);
+test('PROTOCOL_VERSION is 3 (the hub Host gate landed in v3)', () => {
+  assert.equal(PROTOCOL_VERSION, 3);
 });
 
 test('isProtocolCurrent gates on version >= PROTOCOL_VERSION', () => {

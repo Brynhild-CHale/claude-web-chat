@@ -149,7 +149,7 @@ were the only places they lived.
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
-| decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
+| decide who may reach this server (bind host, `Host` gate, WS `Origin` gate, extension CORS, the preview document's CSP) | `core/cors` `LISTEN_HOST` / `requireLocalHost` / `isLocalHost` / `verifyUpgrade` / `isLocalOrigin` / `isBrowserRequest` / `setCors` / `mountCors` / `PREVIEW_CSP` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", read `req.headers.host` by hand, or copy the header block |
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
@@ -170,6 +170,10 @@ were the only places they lived.
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
+| read or write a browser storage key from the chrome | `public/app/storage.js` `getLocal` / `setLocal` / `getSession` / `getLocalJson` — every one fails open | touch `localStorage` / `sessionStorage` directly: the accessor itself throws in a private window and takes the whole module graph down with it |
+| leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot, flushForms})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
+| walk the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses | `labels.childrenOf`, which is the RAW commit topology and has one consumer by design: the ⑃ branch picker |
+| dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
@@ -380,22 +384,43 @@ engine deliberately avoids.
 Everything web-chat serves is unauthenticated by design — the graph, the shared
 store, arbitrary HTML/JS injection through `/api/render`. So "who may reach this
 server" is a single security decision, and it lives in one zero-import leaf
-module. Three facts that must never drift apart:
+module. Facts that must never drift apart:
 
 - `LISTEN_HOST` — what the instance server and the hub bind. `127.0.0.1` unless
   `WEB_CHAT_HOST` says otherwise; `warnIfExposed()` prints the consequences of
   that override on startup. Never write a bind address anywhere else, and never
   bind a wildcard "for convenience" — a loopback bind is the access control.
+- `isLocalHost(host)` / `requireLocalHost` / `verifyUpgrade` — is the NAME the
+  client dialled one we answer to. A loopback bind stops a remote packet but not
+  a page whose DNS is rebound to `127.0.0.1`: that fetch is *same-origin*, so it
+  carries no `Origin` and none of the rules below ever fire. `Host` is the header
+  that still tells the truth and the one page script cannot forge. Mounted as the
+  **first** middleware on both apps (above `express.json`, so a rebound POST is
+  refused before a 200mb body is parsed) and folded into the WS upgrade as
+  `verifyUpgrade`, which never sees `app.use`. A single non-loopback
+  `WEB_CHAT_HOST` is accepted alongside loopback; a wildcard bind skips the check
+  entirely, because no name is then distinguishable from any other.
 - `isLocalOrigin(origin)` — is a browser `Origin` one of this machine's own
   surfaces. Gates the WS upgrade (`verifyClient` in `lib/server/ws.js`), because
   browsers apply no same-origin policy to WebSocket connects and the `hello`
   frame is an unconditional full-state disclosure. An **absent** origin is not
   decided here: the caller allows it, since a non-browser client (driver, CLI,
   test) already has filesystem access to everything.
+- `isBrowserRequest(headers)` — is this a browser at all, ours or anyone's. The
+  gate for an endpoint whose damage is done by the *request* rather than the
+  reply, where CORS is no defence: `POST /api/shutdown` and the disk-writing
+  `GET /api/export/:ref?format=file`. Fails closed — Node's global `fetch` sends
+  `Sec-Fetch-*` and is refused too; local tooling reaches these through
+  `lib/client`.
 - `setCors(req, res)` / `mountCors(app, path)` — the extension-facing headers.
   The allowed set is narrow on purpose (extension schemes + this machine); it
   used to reflect any `Origin`, which made every capture readable by any site the
   user happened to be browsing.
+- `PREVIEW_CSP` — what the `/preview/node` document may reach. The graph viewer
+  runs one of those documents per visible node thumbnail, executing historical
+  pane scripts unattended against the live daemon, so `connect-src 'none'` is the
+  load-bearing directive. `'unsafe-eval'` is required, not sloppy: the spliced
+  mount runtime executes pane bodies through `new Function`.
 
 `LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
 the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
@@ -421,6 +446,7 @@ manifest.js  parse + validate web-chat-pack.json; read SKILL.md frontmatter
 plan.js      planInstall() → { units, collisions, services, errors }  — PURE
    ↓
 tree.js      applyPlan / removeUnits / verifyPack / stage+promote quarantine
+             — plus beginJournal (the undo list) and droppedUnits (the diff)
    ↓
 install.js   orchestrate, write the provenance record, append the audit line
 ```
@@ -429,7 +455,23 @@ install.js   orchestrate, write the provenance record, append the audit line
 `review` output, and the drawer's quarantine card, so "show me what this would
 do" cannot drift from what it actually does.
 
-Four invariants live in code rather than in a reviewer's memory:
+Five invariants live in code rather than in a reviewer's memory:
+
+- **An install is one transaction.** Pack units land FLAT in shared tier
+  directories, so there is no directory to rename over the way `installRelease`
+  and `symlinkAtomic` do — the reversibility has to be an undo list instead.
+  `beginJournal({ backupDir })` records every creation, copies every file it is
+  about to overwrite into `projectPaths(root).packsBackup`, and remembers every
+  directory the apply had to create; any throw unwinds in reverse and rethrows.
+  `installFromStage` writes a `pending` marker (its own file, never `packs.json`)
+  before the first byte and clears it after the record, so a half-install is
+  discoverable without being mistaken for an installed one. A same-pack
+  re-install diffs the previous record against the plan (`droppedUnits`, pure)
+  and routes the difference through `removeUnits` — under the same edited-file
+  rule — *after* a successful apply. `lib/packs/install.js` and
+  `lib/packs/plan.js` are held at zero `copyFileSync`/`unlinkSync`/`rmSync` by
+  the conventions tripwire, so a second apply path cannot grow beside the
+  journalled one.
 
 - **`tar` is not the security boundary — the copier is.** Members are listed
   (`archive.listTarGz`, pure JS) and refused before extraction: absolute paths,
@@ -696,7 +738,8 @@ whole surface and broadcast a `reset` instead of per-pane frames, and
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for the eval, escaping and token patterns) and holds a
+`lib/` (+ `public/` for the eval, escaping and token patterns, and `public/app`
+for the browser-storage one) and holds a
 **per-file baseline** for every construct in the table below, then **ratchets**.
 It does not scan `test/` or `test-support/`, so the harness may use raw
 http/ws/fetch; the harness's own five constructs have their own file
@@ -730,6 +773,8 @@ Current homes (baselines can only shrink toward these):
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
 | `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
 | `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
+| `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |
+| `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 
 Working with it:
 
@@ -741,6 +786,18 @@ Working with it:
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
+- **Deliberately NOT ratcheted: the outbound requesters.** The `http.request(`
+  row above polices calls to *our own daemon*, whose home is `lib/client`. Two
+  places instead reach the **public internet**, and they are a different concept
+  with no engine: `lib/server/routes/embed.js` (probe a URL a pane named — spelt
+  `lib.request(`, so the row does not see it) and `lib/update/release.js` (fetch a
+  release tarball — spelt `agentFor(u).get(`, which no `.request(` regex sees
+  either). A row here would have to name a home that does not exist, and routing
+  either through `lib/client` would be wrong: the client dials loopback and has
+  none of the fencing an outbound request needs (`refuseTarget` /
+  `publicOnlyLookup` in `embed.js`, checksum verification in `release.js`). If a
+  **third** outbound requester appears, that is the moment to extract the engine
+  and add the row — not before.
 - **A construct that is fine almost everywhere but must stay at zero in a few
   places?** Give the pattern a `files` list instead of `roots`. That is why
   `writeFileSync(` is not banned tree-wide: about eight of its ~35 sites in

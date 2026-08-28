@@ -197,7 +197,24 @@ Don't POST the graph routes from a driver (see the three-actor model).
   arbitrary HTML/JS into the user's browser. The bind address IS the access
   control. Treat the surface as a same-machine trust domain; don't expose the port
   off-box, and don't render untrusted third-party HTML through it.
-- **The WS upgrade is gated on `Origin`.** A browser asserting a foreign origin is
+- **Every request is gated on `Host`.** The daemon and the hub answer only to the
+  names they actually are — `localhost`, `127.0.0.1`, `[::1]` — and reply
+  `421 Misdirected Request` to anything else. This is the DNS-rebinding gate: a
+  page at `attacker.example` whose DNS is rebound to `127.0.0.1` reaches us
+  *same-origin*, so it sends no `Origin` and the CORS rules never fire; `Host`
+  still carries the name it dialled, and page script cannot forge it. A driver is
+  unaffected — dial `127.0.0.1` or `localhost` and Node sets the header for you.
+  Two exceptions to know: with `WEB_CHAT_HOST` set to a **single** address, that
+  address is accepted alongside loopback (the deliberate remote case), and with it
+  set to a **wildcard** (`0.0.0.0`, `::`) the check is skipped entirely, because
+  every name that resolves to this machine is then legitimate and none is
+  distinguishable — a wildcard bind is back to "the bind address is the access
+  control", which is what `warnIfExposed` warns about at boot. Point the browser
+  extension at a non-local hub and you must bind that host explicitly, or its
+  requests are refused.
+- **The WS upgrade is gated on `Origin`** (and on `Host`, as above — the upgrade
+  never passes through express middleware, so `verifyUpgrade` folds both in).
+  A browser asserting a foreign origin is
   refused (that's what stops any page the user visits from opening
   `ws://localhost:<port>/ws` and reading the whole store out of the `hello` frame).
   A driver sends **no** `Origin` at all, and an absent one is allowed — so
