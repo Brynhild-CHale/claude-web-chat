@@ -162,6 +162,46 @@ const PATTERNS = [
     },
   },
   {
+    // Sending a signal to another process. There is exactly one legitimate
+    // reason to reach for this in a general way — asking "is this pid alive"
+    // (`kill(pid, 0)`), which is lib/core/portfiles.isPidAlive — and a short,
+    // named list of places that deliberately deliver a SIGTERM.
+    //
+    // The pattern exists because ls.js re-declared the liveness probe three
+    // lines under the import of the module that exports it, and the copy was
+    // weaker (no numeric type guard, so a string pid coerced and could read as
+    // alive). It then used that copy to gate a SIGTERM at whatever process held
+    // a registry pid — a user-scope file that outlives every daemon. ls.js is at
+    // zero now: the classification is lib/util/registry.rows() and the reaping is
+    // lib/cli/reap.js, which stops a daemon by ASKING it (lib/cli/commands/stop)
+    // and never signals a pid it has not heard answer for itself.
+    //
+    // The baselines below are counted as substrings, so the explanatory comments
+    // in stop.js and restart.js (which quote the construct they replaced) are
+    // included deliberately.
+    name: 'process.kill(',
+    home: 'lib/core/portfiles.js `isPidAlive` (liveness) · lib/cli/commands/stop.js (the one acknowledged-shutdown escalation)',
+    what: 'probing or signalling another process',
+    roots: ['lib'],
+    re: /process\.kill\(/g,
+    baseline: {
+      // The one liveness predicate, `kill(pid, 0)`.
+      'lib/core/portfiles.js': 1,
+      // The stop engine: one SIGTERM escalation after an unacknowledged (or
+      // wedged) shutdown request, plus the comment explaining why asking comes
+      // first.
+      'lib/cli/commands/stop.js': 2,
+      // The hub bounce, and its CLI twin. These are the ONLY signal sites that
+      // already gate on identity — they kill the pid /api/health reported, not a
+      // pid read out of a file.
+      'lib/util/hub.js': 1,
+      'lib/cli/commands/hub.js': 1,
+      // A comment quoting the hand-rolled kill restart dropped in favour of the
+      // stop engine.
+      'lib/cli/commands/restart.js': 1,
+    },
+  },
+  {
     // Interactive terminal prompts. `init` needs to ask questions; `trust` and
     // `doctor` are the obvious next places one would grow. The thing that must
     // not happen is a SECOND prompt engine with its own idea of when to skip the
