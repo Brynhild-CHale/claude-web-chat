@@ -101,12 +101,13 @@ const PATTERNS = [
   },
 ];
 
-function walk(dir, acc) {
+// ext === null collects every file (the NUL scan below needs .html/.json/.md too).
+function walk(dir, acc, ext = '.js') {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name === 'node_modules') continue;
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p, acc);
-    else if (e.isFile() && e.name.endsWith('.js')) acc.push(p);
+    if (e.isDirectory()) walk(p, acc, ext);
+    else if (e.isFile() && (ext === null || e.name.endsWith(ext))) acc.push(p);
   }
   return acc;
 }
@@ -151,6 +152,33 @@ for (const p of PATTERNS) {
     }
   });
 }
+
+// ── raw NUL bytes. A single 0x00 anywhere in a file makes git classify that file
+// as binary for the rest of its life: `git diff`, `git log -p` and `git blame`
+// all go silent on it, so changes land unreviewed and history is unreadable.
+// lib/server/services.js did exactly this for the NUL that separates the three
+// components of a service trust key — invisible in source, invisible in review.
+// A NUL in a string is fine; it must be SPELLED as an escape (\0 or \u0000), which
+// produces the identical byte while leaving the file text.
+const NUL_ROOTS = ['lib', 'bin', 'public/app', 'templates'];
+
+test('conventions: no source file carries a raw NUL byte (git would treat it as binary)', () => {
+  const offenders = [];
+  for (const r of NUL_ROOTS) {
+    const abs = path.join(REPO_ROOT, r);
+    if (!fs.existsSync(abs)) continue;
+    for (const f of walk(abs, [], null)) {
+      const buf = fs.readFileSync(f); // Buffer, not utf8 — a decode would hide the byte
+      const at = buf.indexOf(0);
+      if (at !== -1) offenders.push(`${relPosix(f)} (first at byte ${at})`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `raw 0x00 byte(s) found — git will diff these files as binary. Spell the NUL as an escape (\\0 or \\u0000) instead; the string value is unchanged:\n  ${offenders.join('\n  ')}`,
+  );
+});
 
 // ── the channel meta vocabulary is a locked, versioned contract. The wire only
 // permits meta keys matching [A-Za-z0-9_] with string values;
