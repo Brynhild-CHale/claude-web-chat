@@ -30,6 +30,8 @@
         <a class="ytAttributedStringLink" href="/redirect?q=https%3A%2F%2Fexample.com%2Fspotify">example.com/spotify</a>
         <a class="ytAttributedStringLink" href="https://example.com/merch">Official merch store</a>
         <a class="ytAttributedStringLink" href="/@RickAstley">Subscribe to Rick Astley</a>
+        <!-- /redirect?q= carries attacker-controllable text: the unwrapped value goes through safeHref. -->
+        <a class="ytAttributedStringLink" href="/redirect?q=javascript%3Aalert(1)">ENTITY_JS_LINK</a>
       </div>
       <div id="video-summary">Summary An upbeat 1987 pop anthem in which the singer pledges unwavering devotion. AI-generated video summary and may contain errors.</div>
     </ytd-watch-metadata>
