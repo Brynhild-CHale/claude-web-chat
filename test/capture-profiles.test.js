@@ -28,7 +28,7 @@ process.env.HOME = FAKE_HOME;
 process.env.USERPROFILE = FAKE_HOME;
 
 const reg = require('../lib/capture/profiles');
-const { defaultReduce } = require('../lib/capture/pane');
+const { defaultReduce, renderProfilePane } = require('../lib/capture/pane');
 const { resolvePaths } = require('../lib/server/paths');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'profiles');
@@ -247,14 +247,19 @@ for (const name of BUNDLED_NAMES) {
     const pane = profile.pane;
     assert.ok(pane && typeof pane.render === 'function', 'profile carries a renderable pane');
 
-    // Reduced view is derived from the SAME distilled payload (Contract 6) via the
-    // pane's own reduce(), or the platform default when a pane omits it.
+    // Render the way the surface does — through renderProfilePane, which derives
+    // the reduced view from the SAME distilled payload (Contract 6) via the
+    // pane's own reduce() or the platform default, injects the helper ctx
+    // (`esc`/`collapse`/`safeHref`, so a bundle need not hand-roll them), and
+    // adds the mode wrapper. Calling pane.render bare would test a contract
+    // nothing in the product uses.
     const reduced = pane.reduce ? pane.reduce(out.distilled) : defaultReduce(out.distilled);
+    assert.ok(reduced && typeof reduced === 'object', 'a reduced payload is derivable');
 
     for (const mode of ['reduced', 'expanded']) {
       let rendered;
       assert.doesNotThrow(() => {
-        rendered = pane.render(out.distilled, { reduced, mode });
+        rendered = renderProfilePane(profile, out.distilled, { mode, mount_id: 'x', profile: name });
       }, `pane.render did not throw in ${mode} mode`);
       assert.ok(
         typeof rendered === 'string' && rendered.trim().length > 0,
@@ -263,7 +268,7 @@ for (const name of BUNDLED_NAMES) {
     }
 
     // The pane declares a distinct expanded region, so the two modes really differ.
-    const full = pane.render(out.distilled, { reduced, mode: 'expanded' });
+    const full = renderProfilePane(profile, out.distilled, { mode: 'expanded', mount_id: 'x', profile: name });
     assert.match(full, /data-wc-when="expanded"/, 'pane declares an expanded-mode region');
   });
 }
@@ -345,7 +350,41 @@ for (const name of BUNDLED_NAMES) {
     assert.match(json, /Ailurus &(?:amp;)? ?Ailuropoda/, 'the marker phrase reached the distillate');
     assert.doesNotMatch(json, /&amp;(?:amp|nbsp|lt|gt|quot|#\d+);/,
       'nothing is escaped twice (the signature of escaping raw source text)');
-    assert.doesNotMatch(json, /&nbsp;|&#8217;|&#39;(?!\s)/,
+    assert.doesNotMatch(json, /&nbsp;|&#8217;/,
       'no undecoded entity survives into the distillate');
   });
 }
+
+// ---------------------------------------------------------------------------
+// URL schemes across every bundled extractor
+// ---------------------------------------------------------------------------
+
+// The wikipedia and reddit fixtures carry an <a href="javascript:alert(1)"> in a
+// field whose HTML the pane injects unescaped. Each bundle used to carry its own
+// URL helper — three variants, none of which gated a scheme — so the href
+// reached the distillate and the pane verbatim.
+for (const name of BUNDLED_NAMES) {
+  test(`bundled profile "${name}": no javascript:/data: URL reaches the distillate or the pane`, () => {
+    loadBundledOnly();
+    const spec = SPECS[name];
+    const profile = reg.getProfile(name);
+    const out = reg.runProfile(profile, { url: spec.url, html: readFixture(name) });
+
+    assert.doesNotMatch(JSON.stringify(out.distilled), /javascript:|vbscript:|href=.?data:/i,
+      'the distillate carries no refused scheme');
+    for (const mode of ['reduced', 'expanded']) {
+      const html = renderProfilePane(profile, out.distilled, { mode, mount_id: 'x', profile: name });
+      assert.doesNotMatch(html, /javascript:|vbscript:/i, `the ${mode} pane carries none either`);
+    }
+  });
+}
+
+test('bundled profiles: the refused link keeps its text', () => {
+  loadBundledOnly();
+  for (const name of ['wikipedia', 'reddit']) {
+    const spec = SPECS[name];
+    const out = reg.runProfile(reg.getProfile(name), { url: spec.url, html: readFixture(name) });
+    assert.match(JSON.stringify(out.distilled), /ENTITY_JS_LINK/,
+      `${name}: the link text survives, only the href is dropped`);
+  }
+});

@@ -62,6 +62,10 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
 | CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/core/html` (`escapeHtml(s)` — five characters, no modes) / `lib/capture/profiles/util` | copy the helper, or inline a `.replace` chain |
+| resolve + scheme-gate an href/src read out of a captured page | `lib/capture/profiles/util` (`safeHref(href, pageUrl)`) | `new URL` plus your own `javascript:` regex |
+| render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `lib/capture/pane` | import them from `lib/server/routes/capture` |
+| read/validate/require a capture-profile bundle | `lib/capture/profiles` (`loadBundle` / `validateMeta`) | a second reader of `profile.json` with its own rules |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`) | the injected extract/pane ctx (`CTX_HELPERS`) | declare one inside the bundle |
 | ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | unpack or inspect a `.tar.gz` | `lib/update/archive` (`extractTarGz`/`rootOf`/`listTarGz`) | a second `spawnSync('tar')` |
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |

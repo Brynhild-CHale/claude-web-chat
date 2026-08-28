@@ -132,33 +132,51 @@ const PATTERNS = [
     //
     // What the baseline grandfathers, and why each entry is still there:
     //
-    //   * the eight bundled capture profiles. A profile is user-authorable —
-    //     the same loader reads .web-chat/profiles/<name>/extract.js, which
-    //     cannot `require` anything out of the package — so these cannot import
-    //     the engine the way lib/ code does. Giving profiles an injected `esc`
-    //     is L8a's job; until then they are pinned here so no TENTH appears.
     //   * public/app/esc.js IS the client-side home (it collapsed four copies
     //     with three different character sets), and it is a module the chrome
     //     imports. It escapes all five, same as lib/core/html.js.
+    //   * the two builtin component templates. Their pane script is evaluated in
+    //     the BROWSER by the mount runtime with no module scope — no import, no
+    //     require — so neither home is reachable from one. They are pinned
+    //     because they are the files users copy when authoring a component.
     //
-    // Everything in lib/ that CAN import the engine now does; the last one was
-    // lib/capture/profiles/simplify.js, whose four-character copy was used for
-    // `href=` and `src=` alike.
+    // The eight bundled capture profiles used to be here too. They are gone:
+    // extractors and panes now get `esc` on their ctx (CTX_HELPERS in
+    // lib/capture/profiles/index.js), which is the only mechanism a bundle
+    // living outside the package has.
     name: "{ '&': '&amp;' } map",
-    home: "lib/core/html.js (host) · public/app/esc.js (client) · an injected `esc` for profiles (L8a)",
+    home: "lib/core/html.js (host) · public/app/esc.js (client) · the injected `esc` for capture profiles",
     what: 'hand-rolled HTML entity escaping (lookup-map spelling)',
-    roots: ['lib', 'public'],
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
     re: /['"]&['"]\s*:\s*['"]&amp;['"]/g,
     baseline: {
-      'lib/capture/profiles/bundled/gmail/extract.js': 1,
-      'lib/capture/profiles/bundled/gmail/pane.js': 1,
-      'lib/capture/profiles/bundled/reddit/extract.js': 1,
-      'lib/capture/profiles/bundled/reddit/pane.js': 1,
-      'lib/capture/profiles/bundled/wikipedia/extract.js': 1,
-      'lib/capture/profiles/bundled/wikipedia/pane.js': 1,
-      'lib/capture/profiles/bundled/youtube/extract.js': 1,
-      'lib/capture/profiles/bundled/youtube/pane.js': 1,
       'public/app/esc.js': 1,
+      'templates/components/file-editor/component.html': 1,
+      'templates/components/git-dashboard/component.html': 1,
+    },
+  },
+  {
+    // The escaper, spelled as a DECLARATION rather than as its body. Both rows
+    // above match a particular way of writing the replacement; this one matches
+    // the name, so a copy that escapes a different character set, or builds the
+    // map some other way, still trips it. It is the row that would have caught
+    // the nine `esc` declarations across lib/capture the moment a tenth
+    // appeared, regardless of how its author spelled the body.
+    //
+    // A capture profile takes `esc` off its ctx and a component template gets
+    // the two entries explained above; nothing else in lib/ or public/ may
+    // declare one.
+    name: 'const esc = / function esc(',
+    home: 'lib/core/html.js (host) · public/app/esc.js (client) · the injected `esc` for capture profiles',
+    what: 'declaring a local HTML escaper instead of taking the shared one',
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
+    re: /(?:const|let|var)\s+esc\s*=|function\s+esc\s*\(/g,
+    baseline: {
+      'public/app/esc.js': 1,
+      'templates/components/file-editor/component.html': 1,
+      'templates/components/git-dashboard/component.html': 1,
     },
   },
   {
@@ -215,12 +233,18 @@ function relPosix(abs) {
   return path.relative(REPO_ROOT, abs).split(path.sep).join('/');
 }
 
-function census(roots, re) {
+// `exts` defaults to .js. A pattern that also governs code living in .html (a
+// component template's pane script, which is evaluated in the browser and so
+// cannot import anything) says so explicitly — without it those files are simply
+// invisible to the ratchet, which is how two hand-rolled escapers sat in
+// templates/ unpoliced while the same construct was pinned everywhere else.
+function census(roots, re, exts = ['.js']) {
   const map = {};
   for (const r of roots) {
     const abs = path.join(REPO_ROOT, r);
     if (!fs.existsSync(abs)) continue;
-    for (const f of walk(abs, [])) {
+    for (const f of walk(abs, [], null)) {
+      if (!exts.some((e) => f.endsWith(e))) continue;
       const m = fs.readFileSync(f, 'utf8').match(re);
       if (m && m.length) map[relPosix(f)] = m.length;
     }
@@ -230,7 +254,7 @@ function census(roots, re) {
 
 for (const p of PATTERNS) {
   test(`conventions: \`${p.name}\` (${p.what}) is confined to its allowed home`, () => {
-    const actual = census(p.roots, p.re);
+    const actual = census(p.roots, p.re, p.exts);
 
     // (a) tripwire — no new or grown occurrences.
     for (const [file, n] of Object.entries(actual)) {

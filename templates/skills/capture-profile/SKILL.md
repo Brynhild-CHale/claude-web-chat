@@ -11,9 +11,23 @@ bundle directory:
 ```
 <name>/
   profile.json   # { name, description, matchers[], pane?{default_mode,mount_suffix,dedupe_by} }
-  extract.js     # module.exports = ({ url, html, root }) => distilled   (root = node-html-parser)
+  extract.js     # module.exports = ({ url, html, root, esc, collapse, safeHref, absolutize }) => distilled
   pane.js        # OPTIONAL — module.exports = { render(distilled, ctx), reduce(distilled) }
 ```
+
+**Helpers ride the ctx — never hand-roll them.** A bundle lives outside the
+package and cannot `require` into it, so both `extract({...})` and
+`render(distilled, ctx)` are handed the same kit:
+
+| helper | what it does |
+| --- | --- |
+| `esc(s)` | HTML-escape `& < > " '` — safe in a text node AND an attribute value |
+| `collapse(s)` | squeeze whitespace runs to single spaces and trim |
+| `safeHref(href, pageUrl)` | resolve a relative href/src against the page URL and refuse any scheme outside http/https/mailto/tel — returns `''`, so keep the link text and drop the href |
+| `absolutize(href, base)` | the lenient resolver: no scheme gate, unresolvable values come back unchanged. Prefer `safeHref` |
+
+Read `root.text` (decoded), never `root.rawText` (raw source text — entities like
+`&amp;` and `&nbsp;` survive it and land in the distillate).
 
 Profiles resolve **project → global → builtin**, most-specific URL match wins, and a
 project profile shadows a same-named global one entirely. The extension shows a
@@ -66,14 +80,20 @@ shadowing is all-or-nothing (no field merge); offer to copy the global pane forw
 
 ### 3. Extractor
 - Draft `extract.js` in a temp dir alongside a `profile.json` carrying the matchers:
-  `module.exports = ({ url, html, root }) => ({ kind: '<kind>', ... })`. `root` is the
-  parsed DOM (`root.querySelector(...)`, `.text`, etc.).
+  `module.exports = ({ url, root, esc, collapse, safeHref }) => ({ kind: '<kind>', ... })`.
+  `root` is the parsed DOM (`root.querySelector(...)`, `.text`, etc.) — and take
+  the helpers off the argument rather than declaring your own (see the table above).
 - Dry-run it against the real capture: `claude-web-chat profile dry-run <tmpdir> --capture <id> --url <url>` (Bash).
   Show the distilled JSON. Iterate with the user until the distillation is right —
   small and high-signal, not the whole page.
 
 ### 4. Pane (optional)
 - Draft `pane.js`: `module.exports = { render(distilled, ctx), reduce(distilled) }`.
+  - `render` runs **server-side, in Node** — its return value is a string the
+    surface mounts. `ctx` carries `{ mode, reduced, mount_id, profile }` plus the
+    same `esc` / `collapse` / `safeHref` / `absolutize` helpers the extractor
+    gets; destructure them (`render(d, { esc, mode })`) instead of writing an
+    escaper.
   - **One payload, two modes.** Mark elements `data-wc-when="expanded"` or
     `data-wc-when="reduced"`; the platform collapses the off-mode ones. `render` gets
     the full `distilled` AND `ctx.reduced` (your `reduce()` output, or a default).
