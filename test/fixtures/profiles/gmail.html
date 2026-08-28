@@ -21,6 +21,7 @@
       <div class="a3s">
         <div>Hi Bob,</div>
         <div>Here are the kickoff notes. The agenda is at <a href="https://docs.example.com/agenda">docs.example.com/agenda</a>. Ailurus &amp; Ailuropoda&nbsp;differ.</div>
+        <div>And one more: <a href="javascript:alert(1)">ENTITY_JS_LINK</a></div>
         <div>Talk soon,</div>
         <div>Alice</div>
         <div class="gmail_quote">
@@ -46,6 +47,14 @@
       <span class="aV3">agenda.pdf</span>
       <a class="aQy" href="https://mail.google.com/mail/u/0/?view=att&amp;disp=safe&amp;attid=0.1">download</a>
       <span>128 KB</span>
+    </div>
+
+    <!-- A second card whose download link carries an executable scheme: the
+         filename survives, the href does not. -->
+    <div class="aZo" data-name="notes.txt" download_url="text/plain:notes.txt:https://mail.google.com/dl/notes">
+      <span class="aV3">notes.txt</span>
+      <a class="aQy" href="javascript:alert(1)">download</a>
+      <span>2 KB</span>
     </div>
   </div>
 </body>
