@@ -183,18 +183,18 @@
     return 'https://' + raw;
   }
 
-  // A pane cannot require lib/, so this is a deliberate browser-side echo of the
-  // private-range list in lib/server/routes/embed.js — which is the authoritative
-  // one. It exists because /api/embed-check now refuses a local target outright,
-  // so asking it about one would report "unreachable" for the user's own dev
-  // server; local URLs skip the pre-check and go straight into the frame. Keep
-  // the two in step, or at least keep this one no WIDER than embed.js's.
-  function isLocalTarget(u) {
-    if (u.startsWith('/')) return true;
+  // The server is the authority on what is a private target, and there is no
+  // copy of its list here on purpose: it also RESOLVES a name before deciding,
+  // which a pane cannot do, so any list here would be both a second copy and
+  // wrong for every host only the user's resolver knows about (myapp.test,
+  // foo.local, host.docker.internal). /api/embed-check labels that refusal
+  // `code:'private-target'` and load() below just frames the URL when it sees
+  // it. This is only a fast path for the two cases that need no round trip.
+  function skipPrecheck(u) {
+    if (u.startsWith('/')) return true; // our own origin — nothing to ask about
     let h;
     try { h = new URL(u, location.href).hostname.toLowerCase(); } catch { return false; }
-    if (h === 'localhost' || h.endsWith('.localhost') || h === '::1' || h === '[::1]') return true;
-    return /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
+    return h === 'localhost' || h.endsWith('.localhost');
   }
 
   function helperActive() {
@@ -212,13 +212,11 @@
       empty.style.display = 'flex';
       return;
     }
-    // Local targets skip the pre-check — and must, because /api/embed-check
-    // refuses loopback and private hosts so the daemon cannot be used to probe
-    // the local network. Nothing is lost: the pre-check is only an advisory
-    // "will this frame?", and for a local dev server the browser can just try.
-    // With the embed helper extension active, XFO/CSP are stripped at the browser
-    // level for localhost-initiated iframe loads — skip the pre-check entirely.
-    if (isLocalTarget(url) || helperActive()) {
+    // The pre-check is only an advisory "will this frame?", so skipping it costs
+    // nothing but a nicer error message. Skip it for the obvious local case,
+    // and with the embed helper extension active, where XFO/CSP are stripped at
+    // the browser level for localhost-initiated iframe loads anyway.
+    if (skipPrecheck(url) || helperActive()) {
       clearOverlays();
       frame.classList.remove('hidden');
       frame.src = url;
@@ -230,6 +228,16 @@
       const j = await r.json();
       if (currentUrl !== url) return; // a newer load() started
       if (!j.ok || !j.reachable) {
+        // "The daemon will not fetch that on your behalf" is not "that URL is
+        // unreachable" — it is the SSRF fence, and it says nothing about
+        // whether the browser can frame the page. It can: this is how a local
+        // dev server, a container name or a Tailscale address gets embedded.
+        if (j.code === 'private-target') {
+          clearOverlays();
+          frame.classList.remove('hidden');
+          frame.src = url;
+          return;
+        }
         showUnreachable(url, j.reason);
         return;
       }
