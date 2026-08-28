@@ -9,6 +9,12 @@ export function labelFor(id) {
   const n = nodeById(id);
   return (n && n.label) || id;
 }
+// RAW commit children — no collapse awareness. One consumer by design: topbar's
+// ⑃ branch picker, which is asking about the commit graph. Everything that
+// describes what is ON SCREEN (keyboard nav, fork glyphs, the breadcrumb, the
+// scope filter, the ↓ button) reads graph-view's graphIndex() instead, which is
+// built from displayNodes(). Reaching for this one from a display consumer is
+// the bug it caused before: a step onto a node the DAG never drew.
 export function childrenOf(id) {
   if (!view.graphCache) return [];
   return view.graphCache.nodes

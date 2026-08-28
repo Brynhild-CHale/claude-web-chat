@@ -8,7 +8,7 @@
 // transform. The transform is now `camera` ({tx, ty, scale}); the imported
 // `view` is the shared state (activeId/viewedId/lock/graphCache/…).
 import { view, $, cssVar } from './state.js';
-import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
+import { seqNum, nodeById, labelFor } from './labels.js';
 import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
@@ -205,16 +205,19 @@ export async function selectNode(id, opts = {}) {
 }
 
 // --- lineage / state helpers ---
-function lineageOf(id) {
-  const chain = [];
-  let cur = nodeById(id), guard = 0;
-  while (cur && guard++ < 200) { chain.unshift(cur); cur = cur.parent_id ? nodeById(cur.parent_id) : null; }
-  return chain;
-}
+// All three read the DISPLAY topology (graphIndex), not the raw commit graph:
+// the breadcrumb, the ⑃ glyph and the graph-scope filter describe what is on
+// screen. Reading raw parents here meant the breadcrumb listed nodes the history
+// list had hidden, and a surviving child of a collapsed node was labelled a fork
+// while the DAG drew it on the trunk.
+const lineageOf = (id) => graphIndex().lineageOf(id);
 function isFork(n) {
-  if (!n || !n.parent_id) return false;
-  const sibs = childrenOf(n.parent_id);
-  return sibs.length > 1 && sibs[0] && sibs[0].id !== n.id; // a non-trunk child of a branch point
+  if (!n) return false;
+  const idx = graphIndex();
+  const dn = idx.byId.get(n.id);          // the node AS DRAWN (its display parent)
+  if (!dn || !dn.parent_id) return false;
+  const sibs = idx.childrenOf(dn.parent_id);
+  return sibs.length > 1 && sibs[0] && sibs[0].id !== dn.id; // a non-trunk child of a branch point
 }
 function stateOf(n) {
   if (!n) return { cls: 'root', text: 'NODE' };
@@ -225,12 +228,9 @@ function stateOf(n) {
   return { cls: 'root', text: 'TURN' };
 }
 
-// The top-level tree a node belongs to (walk parents to the rootless ancestor).
-function rootOf(id) {
-  let cur = nodeById(id), guard = 0;
-  while (cur && cur.parent_id && guard++ < 500) cur = nodeById(cur.parent_id);
-  return cur ? cur.id : null;
-}
+// The top-level tree a node belongs to (walk display parents to the ancestor the
+// canvas draws a heading over).
+const rootOf = (id) => graphIndex().rootOf(id);
 
 // --- history list (left column) ---
 // Scope ('all' vs the selected node's graph) then the union of active toggle
@@ -326,7 +326,7 @@ function graphIndex() {
 export function displayChildrenOf(id) { return graphIndex().childrenOf(id); }
 
 function historyRows() {
-  let ns = displayNodes().slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
+  let ns = graphIndex().nodes.slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
   if (historyScope === 'graph') {
     const root = rootOf(view.selectedNodeId || view.activeId);
     if (root) ns = ns.filter((n) => rootOf(n.id) === root);
@@ -340,7 +340,7 @@ function renderHistory() {
   const list = $('gv-history-list');
   if (!list) return;
   const rows = historyRows();
-  const tc = $('gv-turncount'); if (tc) tc.textContent = displayNodes().length;
+  const tc = $('gv-turncount'); if (tc) tc.textContent = graphIndex().nodes.length;
   // A keyboard selection re-renders this list, which would destroy the focused row
   // and drop focus to <body>. Remember which node had it and hand it back below.
   const focused = document.activeElement;
@@ -417,11 +417,20 @@ function foldedSection(id, node) {
 }
 
 // --- inspector (right column) ---
+// One request token for the whole panel. renderInspector and renderDiff each
+// await a fetch before painting, and the action footer below them acts on
+// view.selectedNodeId — which moves synchronously on every arrow key. Holding
+// an arrow down therefore raced: a slower earlier response could land last and
+// leave the inspector describing node A while ↵/A/⚑/↧ operated on node B. A
+// response is now painted only if it is still the one being asked for.
+let inspectorSeq = 0;
 async function renderInspector(id) {
   const box = $('gv-inspector');
   if (!box) return;
+  const seq = ++inspectorSeq;
   let node = null;
   try { node = await fetch('/api/graph/node/' + id).then((r) => r.ok ? r.json() : null); } catch {}
+  if (seq !== inspectorSeq) return;   // a newer selection won the race
   if (!node) { box.innerHTML = '<div class="gv-empty">Node unavailable.</div>'; return; }
   const st = stateOf(nodeById(id) || node);
   const lineage = lineageOf(id).map((n, i, a) => i === a.length - 1 ? `<b>${esc(n.label || n.id)}</b>` : esc(n.label || n.id)).join(' › ');
@@ -451,7 +460,7 @@ async function renderInspector(id) {
     `</div>`;
 
   drawPreview($('gv-preview'), id, mounts.length);
-  renderDiff(id, node);
+  renderDiff(id, node, seq);
   updateSidebarButtons();
   updateStatus();
 }
@@ -481,7 +490,7 @@ function drawPreview(box, id, paneCount) {
   box.insertBefore(fr, box.firstChild);
 }
 
-async function renderDiff(id, node) {
+async function renderDiff(id, node, seq) {
   const el = $('gv-diff');
   const sect = $('gv-diff-sect');
   if (!el) return;
@@ -498,6 +507,7 @@ async function renderDiff(id, node) {
   el.style.display = '';
   try {
     const d = await fetch(`/api/graph/diff?a=${encodeURIComponent(parentId)}&b=${encodeURIComponent(id)}`).then((r) => r.ok ? r.json() : null);
+    if (seq !== undefined && seq !== inspectorSeq) return;   // the selection moved on
     const m = (d && d.mounts) || {};
     const add = (m.added || []).length, chg = (m.changed || []).length, rm = (m.removed || []).length;
     el.innerHTML = `<span class="add">+${add} pane${add === 1 ? '' : 's'}</span><span class="chg">~${chg} changed</span><span class="rm">${rm} removed</span>`;
@@ -508,7 +518,7 @@ function updateStatus() {
   const a = $('gv-status-active'); if (a) a.textContent = (view.activeId ? labelFor(view.activeId) + ' active' : '—');
   const c = $('gv-status-counts');
   if (c) {
-    const nodes = displayNodes();
+    const nodes = graphIndex().nodes;
     const forks = nodes.filter((n) => isFork(n)).length;
     const marks = nodes.filter((n) => n.name).length;
     c.textContent = `${nodes.length} turns · ${forks} fork${forks === 1 ? '' : 's'} · ${marks} mark${marks === 1 ? '' : 's'}`;
@@ -720,20 +730,27 @@ function computeRuns() {
 // Leaving an expanded stack collapses it; entering a collapsed stack expands it.
 export function moveSelection(dir) {
   if (!view.graphCache) return;
-  const cur = nodeById(view.selectedNodeId) || nodeById(view.activeId) || displayNodes()[0];
+  // The DISPLAY topology, so every step lands on a node that has a glyph. It
+  // used to walk the raw graph: with a collapsed turn between two survivors,
+  // ArrowDown selected the hidden node — centerOn found no glyph, so the camera
+  // did not move and nothing highlighted — and a second press was needed to
+  // reach the child actually on screen.
+  const idx = graphIndex();
+  const cur = idx.byId.get(view.selectedNodeId) || idx.byId.get(view.activeId) || idx.nodes[0];
   if (!cur) return;
   let targetId = null;
   if (dir === 'up') {
-    targetId = cur.parent_id;
+    const p = idx.parentOf(cur.id);
+    targetId = p && p.id;
   } else if (dir === 'down') {
-    const kids = childrenOf(cur.id);
+    const kids = idx.childrenOf(cur.id);
     targetId = kids[0] && kids[0].id;
   } else {
-    const sibs = cur.parent_id
-      ? childrenOf(cur.parent_id)
-      : displayNodes().filter(n => n.parent_id == null).sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
-    const idx = sibs.findIndex(s => s.id === cur.id);
-    const next = sibs[idx + (dir === 'right' ? 1 : -1)];
+    const sibs = (cur.parent_id != null && idx.byId.has(cur.parent_id))
+      ? idx.childrenOf(cur.parent_id)
+      : idx.roots.map((rid) => idx.byId.get(rid));
+    const at = sibs.findIndex((sib) => sib.id === cur.id);
+    const next = sibs[at + (dir === 'right' ? 1 : -1)];
     targetId = next && next.id;
   }
   if (!targetId) return;

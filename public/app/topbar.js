@@ -7,7 +7,7 @@ import { store } from './store.js';
 import { nodeById, labelFor, childrenOf } from './labels.js';
 import { fullReset, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
-import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons } from './graph-view.js';
+import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf } from './graph-view.js';
 
 export function updateChip() {
   const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
@@ -31,10 +31,15 @@ export function updateChip() {
   const sa = $('btn-set-active-here'); if (rah(sa)) sa.style.display = detached ? '' : 'none';
 
   const cur = nodeById(view.viewedId);
-  const kids = childrenOf(view.viewedId);
+  // Two different questions, two topologies. ↓ steps to the next turn the graph
+  // DRAWS — the same gesture ArrowDown performs in the overlay, and it used to
+  // disagree with it, navigating to a node the DAG will not draw. ⑃ opens the
+  // raw commit children, which is what the branch picker is asking about.
+  const drawnKids = displayChildrenOf(view.viewedId);
+  const rawKids = childrenOf(view.viewedId);
   const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && cur.parent_id);
-  const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = kids.length === 0;
-  const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = kids.length > 1 ? '' : 'none';
+  const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = drawnKids.length === 0;
+  const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = rawKids.length > 1 ? '' : 'none';
 
   const bm = $('bookmark-name');
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
@@ -306,7 +311,7 @@ export function initTopbar() {
   });
   on('btn-down', 'click', async () => {
     await ensureGraph();
-    const kids = childrenOf(view.viewedId);
+    const kids = displayChildrenOf(view.viewedId);   // the next turn as DRAWN — see updateChip
     if (kids.length) previewNode(kids[0].id);
   });
   on('btn-branch', 'click', async (e) => {
