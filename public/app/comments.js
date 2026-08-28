@@ -20,6 +20,10 @@ let btn = null;
 // `renderMarkersFn` is the closure-private repaint, exposed once initComments runs.
 let liveComments = [];
 let renderMarkersFn = null;
+// The shell's dismiss layer closes the pin popover through here (shell.js
+// closePanel). Assigned once initComments runs, like renderMarkersFn.
+let closePopFn = null;
+export function closePinPop() { if (closePopFn) closePopFn(); }
 
 // F13: apply a pushed `comments` WS frame — swap the live pin set and repaint
 // markers immediately (the 3s poll is now only a fallback). Exported for ws.js.
@@ -129,26 +133,38 @@ export function initComments() {
     openComposer(captureAnchor(target, h.host), e.clientX, e.clientY);
   }, true);
 
-  // --- popovers (composer + pin menu), dismissed on outside mousedown ---
-  let pop = null, onOutside = null;
+  /* --- the pin popover (composer / chooser / thread) ---
+     Dismissal is the shell's ONE dismiss layer (shell.js initDismissLayer):
+     every .pin-pop carries `.popover`, so an outside pointerdown, a focus move
+     out of it, another panel opening, a window blur or Escape all remove it like
+     every other chrome panel. This file used to run a private document mousedown
+     listener AND a second document-level Escape owner beside shell's — two
+     listeners in module-init order, neither able to see the other's state, which
+     is the exact failure shell.js's header describes. It also meant .pin-pop was
+     invisible to OPEN_PANELS: Escape could not reach a thread, and "one panel at
+     a time" was false for it.
+
+     What stays here is only what the shell cannot know: the F12 rule that the
+     first Escape in a non-empty reply draft blurs rather than closes, which is a
+     keydown on the textarea itself. */
+  let pop = null;
   function closePop() {
     if (pop) { pop.remove(); pop = null; }
-    if (onOutside) { document.removeEventListener('mousedown', onOutside); onOutside = null; }
   }
+  closePopFn = closePop;
   function openPop(el, x, y, w, h) {
     closePop();
     pop = el;
     document.body.appendChild(el);
+    // Viewport coordinates from the click; .pin-pop stays position:fixed, which
+    // is why it overrides .popover's absolute top/right (see app.css).
     el.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + 'px';
     el.style.top = Math.max(8, Math.min(y, window.innerHeight - h - 8)) + 'px';
-    el.addEventListener('mousedown', (ev) => ev.stopPropagation());
-    onOutside = () => closePop();
-    setTimeout(() => document.addEventListener('mousedown', onOutside), 0);
   }
 
   function openComposer(anchor, x, y) {
     const el = document.createElement('div');
-    el.className = 'pin-pop';
+    el.className = 'popover pin-pop';
     el.innerHTML =
       '<div class="pin-anchor">📌 ' + esc(anchor.mount) + (anchor.text ? ' · “' + esc(anchor.text.slice(0, 40)) + '”' : '') + '</div>'
       + '<textarea class="pin-text" rows="3" placeholder="Comment…"></textarea>'
@@ -157,6 +173,14 @@ export function initComments() {
     openPop(el, x, y, 264, 156);
     const ta = el.querySelector('.pin-text');
     ta.focus();
+    // The composer's own Escape: shell.js stands down for a focused editable, so
+    // the field owns the key (same contract as #bookmark-name / #wipe-name).
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault(); e.stopPropagation();
+      closePop();
+      setPinMode(false);
+    });
     el.querySelector('.pin-cancel').addEventListener('click', closePop);
     el.querySelector('.pin-save').addEventListener('click', async () => {
       const text = ta.value.trim();
@@ -194,7 +218,7 @@ export function initComments() {
 
   function openThreadChooser(pins, x, y) {
     const el = document.createElement('div');
-    el.className = 'pin-pop pin-chooser';
+    el.className = 'popover pin-pop pin-chooser';
     el.innerHTML = '<div class="pin-anchor">' + pins.length + ' comments here</div>'
       + pins.map((p) => {
         const n = Array.isArray(p.replies) ? p.replies.length : 0;
@@ -215,7 +239,7 @@ export function initComments() {
     const pin = findPin(id);
     if (!pin) { closePop(); return; }
     const el = document.createElement('div');
-    el.className = 'pin-pop pin-thread';
+    el.className = 'popover pin-pop pin-thread';
     const anchorLabel = esc(pin.anchor && pin.anchor.mount ? pin.anchor.mount : 'pane')
       + (pin.anchor && pin.anchor.text ? ' · “' + esc(String(pin.anchor.text).slice(0, 32)) + '”' : '');
     const msgs = threadMessages(pin).map((mmsg) =>
@@ -260,7 +284,16 @@ export function initComments() {
       openThread(pin.id, x, y); // re-render the thread in place with the new message
     };
     el.querySelector('.pin-reply-send').addEventListener('click', send);
-    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); return; }
+      if (e.key !== 'Escape') return;
+      e.preventDefault(); e.stopPropagation();
+      // F12: guard an in-progress reply. The first Escape only blurs a non-empty
+      // draft (popover + draft survive); the next one — focus now off the field —
+      // reaches shell's dismiss layer and closes the thread as before.
+      if (ta.value.trim()) { ta.blur(); return; }
+      closePop();
+    });
     el.querySelector('.pin-share-cb').addEventListener('change', async (ev) => {
       try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: ev.target.checked }) }); } catch (_) {}
       refresh();
@@ -378,17 +411,6 @@ export function initComments() {
   // Scroll/resize only reposition (F11) — cheap and non-destructive.
   window.addEventListener('scroll', positionMarkers, true);
   window.addEventListener('resize', positionMarkers);
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    // F12: guard an in-progress reply. When the reply textarea is focused and holds
-    // a draft, the first Escape only blurs it (popover + draft survive); the next
-    // Escape (focus now off it) closes as before. shell.js stands down here because
-    // the focused textarea is editable.
-    const ta = pop && pop.querySelector && pop.querySelector('.pin-reply-text');
-    if (ta && document.activeElement === ta && ta.value.trim()) { e.preventDefault(); ta.blur(); return; }
-    closePop();
-    setPinMode(false);
-  });
   setInterval(renderMarkers, 500); // reflow / preview-transition fallback; rebuilds only on a pin-set change (F11)
   setInterval(refresh, 3000);      // fallback sync — the WS `comments` frame is now the primary path (F13)
   refresh();

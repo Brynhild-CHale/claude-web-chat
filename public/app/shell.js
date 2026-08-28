@@ -11,7 +11,7 @@ import {
 import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview } from './graph-view.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
 import { components as componentList } from './components.js';
-import { togglePinMode } from './comments.js';
+import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
@@ -45,6 +45,10 @@ const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
 function closePanel(el) {
   if (!el) return;
   if (el.id === 'branch-picker') { el.remove(); return; } // built per open, not reused
+  // Same story: the comment composer / chooser / thread is built per open and
+  // body-appended, so it is removed, not hidden — and comments.js owns the
+  // reference, hence the hook rather than el.remove() here.
+  if (el.classList.contains('pin-pop')) { closePinPop(); return; }
   // ONE closeDrawer: it also restores focus to ＋ and disarms a primed install.
   if (el.id === 'drawer') { closeDrawer(); return; }
   if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
@@ -354,7 +358,8 @@ function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
    draft, so Escape from there closes the overlay exactly as it always did. */
 export function handleEscape() {
   if (escapeInOverlay()) return;      // glance ▸ rename panel ▸ the overlay
-  closeAllPopovers();                 // the palette + legend are panels too
+  closeAllPopovers();                 // the palette, the legend and a comment thread are panels too
+  setPinMode(false);                  // …and Escape leaves pin mode, armed or not
   if (railPinned) { railPinned = false; setRail(false); }
 }
 

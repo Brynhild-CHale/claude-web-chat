@@ -936,9 +936,12 @@ body.pin-mode #main { cursor: crosshair; }
 /* F10: inline hint when a reply fails to send — the draft stays in the textarea. */
 .pin-reply-err { font: 11px var(--wc-font); color: var(--wc-comment); }
 
-/* pin composer / menu popover */
+/* pin composer / menu popover. It carries `.popover` so shell.js's one dismiss
+   layer sees it (outside press, focus loss, Escape, another panel opening) — but
+   it is anchored to a click, in VIEWPORT coordinates written inline by openPop,
+   so it keeps position:fixed and cancels .popover's absolute top/right corner. */
 .pin-pop {
-  position: fixed; z-index: var(--z-panel); width: 264px; padding: 12px;
+  position: fixed; top: auto; right: auto; z-index: var(--z-panel); width: 264px; padding: 12px;
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
