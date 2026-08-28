@@ -32,7 +32,7 @@
   },
   "scripts": {
     "start": "node bin/claude-web-chat.js start",
-    "test": "node --test --test-timeout=60000",
+    "test": "node --test --test-timeout=60000 --import ./test-support/sandbox.js",
     "build:release": "node scripts/build-release.js"
   },
   "dependencies": {
