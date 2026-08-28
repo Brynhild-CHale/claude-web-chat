@@ -542,6 +542,8 @@ Where things land:
 | themes | `.web-chat/themes/` | `~/.web-chat/themes/` |
 | `SKILL.md` | `.claude/skills/<pack>/` | `~/.claude/skills/<pack>/` |
 | provenance record | `.web-chat/packs.json` | `~/.web-chat/packs.json` |
+| in-flight marker | `.web-chat/packs/pending.json` | `~/.web-chat/packs/pending.json` |
+| rollback snapshots | `.web-chat/packs/backup/apply-*/` | `~/.web-chat/packs/backup/apply-*/` |
 | audit log | `.web-chat/packs/audit.log` | `.web-chat/packs/audit.log` (per project, always) |
 
 The skill **follows the components' tier**, so a skill can never be discoverable
@@ -675,6 +677,19 @@ stopped shipping it, and the component reports `has_service: false`.
 > `packs.json`, so nothing treats a half-install as installed. `pack list` shows
 > a surviving marker under **interrupted installs**; re-running the install is
 > the whole recovery.
+>
+> **If the rollback itself fails** — a full disk and a permission change both
+> break the restore for the same reason they broke the apply — nothing is tidied
+> away. The snapshots stay (they are then the only copy of the bytes that were
+> overwritten), the marker stays as `rollback-failed` and names the snapshot
+> directory, the audit line says `rolled_back: false`, and the error names every
+> file that could not be put back. `pack list` prints all of it. This is the one
+> case where a pack operation leaves the tree half-applied, and it says so.
+>
+> A snapshot directory that outlives its install — the process was killed
+> mid-apply, so nothing ran `commit()` or `rollback()` — is inert: nothing reads
+> `.web-chat/packs/backup/`, and nothing reaps it either. Delete an `apply-*`
+> directory by hand once you are satisfied the install it belonged to is settled.
 >
 > What this does **not** make safe is two installs at once. There is no lock
 > around an install, and a pane-initiated `POST /api/packs/install` racing a
