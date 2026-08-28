@@ -62,6 +62,19 @@ module.exports = {
   },
 };`;
 
+// A service that never finishes shutting down: stop() returns a promise that
+// never settles, and a ref'd interval keeps the event loop alive. Exactly the
+// population the trust gate exists to doubt — an awaited stream close that never
+// fires looks like this.
+const HUNG_STOP_SERVICE = `
+module.exports = {
+  async start(ctx) {
+    ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, pid: process.pid } });
+    setInterval(() => {}, 1000);
+  },
+  async stop() { await new Promise(() => {}); },
+};`;
+
 function hashOf(source) {
   return crypto.createHash('sha256').update(source).digest('hex');
 }
@@ -359,4 +372,26 @@ test('services: a stop-then-respawn on one mount id keeps exactly one tracked ch
   const frozen = (await api.get('/api/store')).json.clock.seq;
   await sleep(400);
   assert.equal((await api.get('/api/store')).json.clock.seq, frozen, 'no orphan is still writing the store');
+});
+
+test('services: a stop() that never resolves is still ended by the fallback SIGTERM', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'hung', source: '<p>c</p>', description: 'c', service: HUNG_STOP_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'hung', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
+  const child = children(ctx).get('m1').child;
+  t.after(() => { try { child.kill('SIGKILL'); } catch {} });
+  const exited = new Promise((r) => child.once('exit', () => r('exited')));
+
+  // The IPC stop is swallowed by the hung stop(). The supervisor's SIGTERM at
+  // STOP_GRACE_MS is the fallback kill the contract promises — if the runner
+  // treats it as a second, already-in-flight shutdown() it is a no-op, and the
+  // process lives on holding whatever handles stop() failed to clear.
+  await api.post('/api/clear', { id: 'm1' });
+  const outcome = await Promise.race([exited, sleep(6000).then(() => 'alive')]);
+  assert.equal(outcome, 'exited', 'the child process actually died');
 });
