@@ -690,6 +690,7 @@ Current homes (baselines can only shrink toward these):
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 | `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
+| `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
 
 Working with it:
 
