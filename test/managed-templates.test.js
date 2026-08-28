@@ -4,6 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const { MANAGED_FILES, templatesDir } = require('../lib/update/managed-files');
+// The commands map has ONE source-parser, in test-support/doc-truth.js — the
+// doc-truth suite asserts everything else about it (which commands the docs may
+// cite, which the README must list).
+const { cliCommands } = require('../test-support/doc-truth');
 
 const repoRoot = path.join(__dirname, '..');
 
@@ -21,20 +25,6 @@ test('every managed template exists and matches this repo\'s live install', () =
       fs.readFileSync(destPath, 'utf8'),
       fs.readFileSync(tplPath, 'utf8'),
       `${dest} diverged from templates/${tpl} — backport the edit; consumers only receive the template`
-    );
-  }
-});
-
-// The rules file points at bundled docs via `claude-web-chat docs <name>` —
-// every name it cites must actually ship in docs/.
-test('docs referenced by the rules resolve to bundled docs', () => {
-  const rules = fs.readFileSync(path.join(templatesDir(), 'rules', 'web-chat.md'), 'utf8');
-  const cited = [...rules.matchAll(/claude-web-chat docs ([a-z0-9-]+)/g)].map(m => m[1]);
-  assert.ok(cited.length >= 3, 'rules should cite the contract docs via `claude-web-chat docs <name>`');
-  for (const name of cited) {
-    assert.ok(
-      fs.existsSync(path.join(repoRoot, 'docs', `${name}.md`)),
-      `rules cite \`claude-web-chat docs ${name}\` but docs/${name}.md does not exist`
     );
   }
 });
@@ -59,16 +49,6 @@ function bashLine() {
   const line = commandTemplate.split('\n').find((l) => l.startsWith('!'));
   assert.ok(line, 'templates/commands/web-chat.md must still execute the CLI via a `!` line');
   return line.slice(1);
-}
-
-// The subcommand names the CLI actually registers.
-function cliCommands() {
-  const src = fs.readFileSync(path.join(repoRoot, 'lib', 'cli', 'index.js'), 'utf8');
-  const block = src.match(/const commands = \{([\s\S]*?)\n\};/);
-  assert.ok(block, 'could not locate the commands map in lib/cli/index.js');
-  const names = [...block[1].matchAll(/^\s{2}([a-z][a-z-]*):/gm)].map((m) => m[1]);
-  assert.ok(names.length > 5, 'commands map parse looks wrong');
-  return names;
 }
 
 // Run the template's shell line with a stub `claude-web-chat` on PATH that
@@ -104,60 +84,6 @@ test('/web-chat with no arguments guides Claude to actually render something', (
     assert.ok(
       commandTemplate.includes(needle),
       `the guided start must mention \`${needle}\` — without it the command orients but never puts a pane on screen`
-    );
-  }
-});
-
-// ---------------------------------------------------------------------------
-// CLI-reference truth, both directions.
-
-// Prose may discuss a command that no longer exists, but not as a live
-// backticked instruction — that is how `claude-web-chat watch` outlived the
-// feature it named. A cited command must be one the user can actually run.
-// A command that is DESIGNED but not yet built may be cited — the pack format is
-// specified ahead of its tooling on purpose — but only in a doc that says so out
-// loud, so a reader never mistakes a spec for something they can run. Adding an
-// entry here is deliberate; shipping the command should remove it.
-const PLANNED = new Map([
-  ['pack', { doc: 'docs/component-packs.md', marker: /not built yet/i }],
-]);
-
-test('every `claude-web-chat <sub>` cited in the docs is a real CLI command', () => {
-  const known = new Set([...cliCommands(), 'help']);
-  const files = [
-    'README.md',
-    'templates/rules/web-chat.md',
-    'templates/commands/web-chat.md',
-    ...fs.readdirSync(path.join(repoRoot, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`),
-  ];
-  for (const rel of files) {
-    const body = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
-    for (const m of body.matchAll(/`claude-web-chat ([a-z][a-z-]*)/g)) {
-      if (known.has(m[1])) continue;
-      const planned = PLANNED.get(m[1]);
-      assert.ok(planned, `${rel} cites \`claude-web-chat ${m[1]}\`, which is not a registered command`);
-      assert.equal(planned.doc, rel, `only ${planned.doc} may cite the unbuilt \`${m[1]}\` command`);
-      assert.match(body, planned.marker,
-        `${rel} cites the unbuilt \`claude-web-chat ${m[1]}\` without saying it is unbuilt`);
-    }
-  }
-});
-
-// And the other direction: a command the user is expected to reach for has to be
-// discoverable somewhere other than `--help`. `trust` — the ONLY way to approve a
-// component's service — and `ls` both shipped documented nowhere at all.
-test('README documents every user-facing CLI command', () => {
-  // Deliberately absent from the README: `start` is the foreground dev entry
-  // point, `hub` is extension plumbing, `profile` is driven by the
-  // capture-profile skill. A new user-facing command means a README line or an
-  // explicit exemption here.
-  const notInReadme = new Set(['start', 'hub', 'profile']);
-  const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
-  for (const name of cliCommands()) {
-    if (notInReadme.has(name)) continue;
-    assert.ok(
-      new RegExp(`(^|[\`\\s])${name}([\`\\s]|$)`, 'm').test(readme),
-      `\`claude-web-chat ${name}\` is not mentioned anywhere in the README`
     );
   }
 });
