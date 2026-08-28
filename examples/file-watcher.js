@@ -8,9 +8,11 @@
 //   node examples/file-watcher.js <path>...    # watch one or more files/dirs
 //   node examples/file-watcher.js src lib      # (defaults to cwd if omitted)
 //
-// On each change it bumps the `file_change` store key (a signal Claude can
-// `wait_for`) and re-renders a pane listing the most recent changes. It owns the
-// pane as `service:file-watcher`, so Claude won't clobber it by accident.
+// On each change it bumps the `file_change` store key and re-renders a pane
+// listing the most recent changes. A driver write is source:'server', so it does
+// not wake Claude — Claude sees `file_change` at its next turn via get_store /
+// get_events. It owns the pane as `service:file-watcher`, so Claude won't clobber
+// it by accident.
 
 const fs = require('fs');
 const path = require('path');

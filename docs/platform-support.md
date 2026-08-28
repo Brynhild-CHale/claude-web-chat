@@ -3,8 +3,8 @@
 | Platform | Status | Verified by |
 | --- | --- | --- |
 | **macOS** (Apple silicon + Intel) | **Supported** | Developed on it; the full suite runs on `macos-latest` in CI on every push |
-| **Linux** (Ubuntu/Debian family) | **Supported, with gaps in what CI can prove** | Full suite runs on `ubuntu-latest` in CI on every push — but CI is a headless container. See [`platform-linux.md`](platform-linux.md) on the `platform/linux` branch |
-| **Windows** | **Via WSL2 only. No native support.** | Never run on Windows by anyone. See [`platform-windows.md`](platform-windows.md) on the `platform/windows` branch |
+| **Linux** (Ubuntu/Debian family) | **Supported, with gaps in what CI can prove** | Full suite runs on `ubuntu-latest` in CI on every push — but CI is a headless container. See [`platform-linux.md`](https://github.com/Brynhild-CHale/claude-web-chat/blob/platform/linux/docs/platform-linux.md) on the `platform/linux` branch |
+| **Windows** | **Via WSL2 only. No native support.** | Never run on Windows by anyone. See [`platform-windows.md`](https://github.com/Brynhild-CHale/claude-web-chat/blob/platform/windows/docs/platform-windows.md) on the `platform/windows` branch |
 
 **Node 22 or newer**, on every platform. That floor is not a preference: one of
 the four runtime dependencies (`node-html-parser`) requires an `entities` that is

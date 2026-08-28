@@ -25,8 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main
 That checks you have Node 22+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
 
 ```
-~/.web-chat/versions/0.6.0/     the release, self-contained (dependencies included)
-~/.web-chat/current      ->     versions/0.6.0      (rollback = one symlink swap)
+~/.web-chat/versions/<version>/ the release, self-contained (dependencies included)
+~/.web-chat/current      ->     versions/<version>  (rollback = one symlink swap)
 ~/.local/bin/claude-web-chat -> ~/.web-chat/current/bin/claude-web-chat.js
 ```
 
@@ -187,7 +187,6 @@ unlock              clear a turn lock orphaned by an interrupted turn
 export [node]       write a node to a self-contained .html
 docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see “Turning it off”)
-init                the one entry point: first-run setup + tutorial, or orient/repair
 install             the setup step on its own, and how updates reach a project
 update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back
