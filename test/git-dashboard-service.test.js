@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { withTempHome } = require('../test-support/helpers');
+const { withTempHome, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
 
 // Smoke test for the git-dashboard builtin's host-side service.js, driven
 // against a throwaway git repo through a faithful `ctx` stub (the same shape
@@ -23,15 +23,9 @@ const SERVICE = path.join(__dirname, '..', 'templates', 'components', 'git-dashb
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function waitUntil(fn, { timeout = 4000, interval = 25 } = {}) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    const v = await fn();
-    if (v) return v;
-    await sleep(interval);
-  }
-  return false;
-}
+// The harness poll with this file's budget bound in — every wait here is on a
+// `git` subprocess, not an in-process assertion.
+const waitUntil = (fn, opts) => harnessWaitUntil(fn, { timeout: 4000, interval: 25, ...opts });
 
 // A git repo with two branches and a couple of commits, isolated from the dev
 // machine's global config by the temp HOME the caller has already installed.

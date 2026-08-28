@@ -17,6 +17,7 @@ const express = require('express');
 const http = require('http');
 const { mountHealthRoutes } = require('../lib/server/routes/health');
 const { isBrowserRequest, SHUTDOWN_HEADER, SHUTDOWN_HEADER_VALUE } = require('../lib/core/cors');
+const { waitUntil } = require('../test-support/helpers');
 
 const OK_HEADERS = { [SHUTDOWN_HEADER]: SHUTDOWN_HEADER_VALUE };
 
@@ -66,14 +67,7 @@ async function routeHost(t, { wire = true } = {}) {
     base: `http://127.0.0.1:${port}`,
     state,
     post: (headers) => raw(port, 'POST', '/api/shutdown', headers),
-    async waitForTrigger(maxMs = 1000) {
-      const deadline = Date.now() + maxMs;
-      while (Date.now() < deadline) {
-        if (state.calls > 0) return true;
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      return false;
-    },
+    waitForTrigger: (timeout = 1000) => waitUntil(() => state.calls > 0, { timeout, interval: 10 }),
   };
 }
 

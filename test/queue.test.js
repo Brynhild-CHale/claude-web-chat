@@ -7,9 +7,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil, openSSE } = require('../test-support/helpers');
 const { createBus } = require('../lib/core/bus');
-const { subscribeSSE } = require('../lib/client');
 const queue = require('../lib/server/domain/queue');
 
 const HTML = '<html><head><title>Doc</title></head><body><p>hi</p></body></html>';
@@ -21,18 +20,10 @@ function freshState() {
 }
 
 const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
-async function waitUntil(pred, timeout = 1500) {
-  const start = Date.now();
-  while (Date.now() - start < timeout) { if (await pred()) return true; await settle(15); }
-  return await pred();
-}
 // A wake-filtered SSE consumer makes state.wakeConsumers > 0 — i.e. "a channel is
-// connected", so a Push WAKES rather than parks. Returns a close handle.
-async function connectChannel(api, port) {
-  const h = subscribeSSE({ port, kinds: ['wake'] });
-  await waitUntil(async () => (await api.get('/api/queue/policy')).json.channel_connected);
-  return h;
-}
+// connected", so a Push WAKES rather than parks. `awaitChannel` is the harness's
+// name for exactly that readiness poll. Returns a close handle.
+const connectChannel = (api, port) => openSSE(port, { kinds: ['wake'], awaitChannel: api });
 
 // ── integration: captures fold into the queue ────────────────────────────────
 
@@ -617,10 +608,10 @@ test('queue: a connecting wake-consumer drains a parked wake exactly once', asyn
   assert.equal((await api.post('/api/queue/push', {})).json.mode, 'parked', 'no channel → parked');
 
   const wakes = [];
-  const h = subscribeSSE({ port, kinds: ['wake'], onEvent: (e) => { if (e.kind === 'wake') wakes.push(e); } });
+  const h = await openSSE(port, { kinds: ['wake'], onEvent: (e) => { if (e.kind === 'wake') wakes.push(e); } });
   t.after(() => h.close());
 
-  await waitUntil(() => wakes.length >= 1);
+  await waitUntil(() => wakes.length >= 1, { what: 'the parked wake to drain' });
   await settle(60); // give any (erroneous) second wake a chance to arrive
   assert.equal(wakes.length, 1, 'the park drains into exactly one wake');
   assert.equal(wakes[0].batch.length, 1);

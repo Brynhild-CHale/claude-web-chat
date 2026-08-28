@@ -8,18 +8,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil, openSSE } = require('../test-support/helpers');
 const { subscribeSSE } = require('../lib/client');
 const { startChannelBridge } = require('../lib/channel/bridge');
 
 const HTML = '<html><head><title>Doc</title></head><body><p>hi</p></body></html>';
 const BACKOFF_TICK = 1000; // > BACKOFF_MIN_MS (500), so the first reconnect fires
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred, ms = 2000) {
-  const start = Date.now();
-  while (Date.now() - start < ms) { if (pred()) return; await settle(20); }
-  throw new Error('waitFor timed out');
-}
 
 // Wrap the real client so the test can await the SSE subscription being live
 // before it emits a wake (the first connect is live-only — no replay — so the
@@ -46,7 +41,7 @@ test('bridge: a real wake becomes exactly one notification with the sanitized en
   await api.post('/api/capture', { url: 'https://example.com/page', title: 'Ex', html: HTML });
   await api.post('/api/queue/push', {});
 
-  await waitFor(() => notified.length >= 1);
+  await waitUntil(() => notified.length >= 1, { what: 'the bridge notification' });
   await settle(60); // give any (erroneous) extra notification a chance to arrive
 
   assert.equal(notified.length, 1, 'exactly one notification per wake');
@@ -61,17 +56,18 @@ test('bridge: a real wake becomes exactly one notification with the sanitized en
 
 test('policy: channel_connected reflects only explicit wake subscribers (not all-kinds)', async (t) => {
   const { api, port } = await withServer(t);
-  const openSSE = (kinds) => new Promise((resolve) => { const h = subscribeSSE({ port, kinds, onOpen: () => resolve(h) }); });
 
   assert.equal((await api.get('/api/queue/policy')).json.channel_connected, false, 'baseline: no channel');
 
-  const all = await openSSE(undefined); // an all-kinds driver stream
+  const all = await openSSE(port); // an all-kinds driver stream
+  // A deliberate fixed wait: the assertion is that something must NOT happen,
+  // and there is no predicate to poll for a non-event.
   await settle(40);
   assert.equal((await api.get('/api/queue/policy')).json.channel_connected, false, 'an all-kinds SSE is not a channel');
   all.close();
 
-  const wake = await openSSE(['wake']); // the bridge
-  await settle(40);
+  // awaitChannel resolves only once the server itself agrees — no sleep needed.
+  const wake = await openSSE(port, { kinds: ['wake'], awaitChannel: api }); // the bridge
   assert.equal((await api.get('/api/queue/policy')).json.channel_connected, true, 'a wake-filtered SSE is the channel');
   wake.close();
 });

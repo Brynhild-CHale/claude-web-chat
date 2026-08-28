@@ -11,8 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer } = require('../test-support/helpers');
-const { subscribeSSE } = require('../lib/client');
+const { withServer, openSSE } = require('../test-support/helpers');
 const {
   acquireWakeLock, lockIsStale, WAKE_LOCK_TTL_MS, LOCK_TTL_MS,
 } = require('../lib/server/domain/turns');
@@ -52,9 +51,12 @@ test('lockIsStale: honors the per-lock ttl_ms (wake locks go stale sooner)', () 
 
 // ── HTTP: wake locks the turn; turn-end commits a wake node ──────────────────
 
-const openWakeSSE = (port) => new Promise((resolve) => {
-  const h = subscribeSSE({ port, kinds: ['wake'], onOpen: () => resolve(h) });
-});
+// The wake path only fires with a channel connected, so every HTTP test here
+// opens one first. This used to be a private opener that passed onOpen alone —
+// the exact shape that hangs the runner forever on a transport hiccup, since
+// subscribeSSE reports non-200 / request-error / close through the callbacks it
+// did not supply. The harness opener rejects on all of them.
+const openWakeSSE = (port) => openSSE(port, { kinds: ['wake'] });
 
 test('a live push acquires a wake lock; turn-end commits the channel turn as its own node', async (t) => {
   const { api, port } = await withServer(t);

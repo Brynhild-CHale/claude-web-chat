@@ -163,6 +163,9 @@ were the only places they lived.
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
+| boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
+| wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
+| open an SSE stream in a test | `test-support/helpers` `openSSE(port, {kinds, since, onEvent, awaitChannel})` | `subscribeSSE` with only `onOpen` (it can never reject) |
 
 ## The engines in detail
 
@@ -517,19 +520,81 @@ count as a phantom passing test.
   - `opts`: `{ root }` (reuse a root, for restart tests), `{ seed }` (write into
     `.web-chat` before boot), `{ mode:'start' }` (bind the real 5173+ range —
     port-walk only), `{ writePortfile:true }` (watch discovery).
+  - `opts` also takes `{ createServer }` — an injected module, for a test that
+    busts `require.cache` (lock-ttl re-reads `WEB_CHAT_LOCK_TTL_MS` at module
+    load). `withServer` resolves `createServer` **lazily**; it used to bind it at
+    require time, which meant such a test silently booted the stale module.
+- `withHub(t, { port })` — the same for the capture hub: `createHub` + a
+  `LISTEN_HOST` bind + idempotent `t.after` stop. Returns `{ hub, server, port,
+  baseUrl, api, stop }`. Four boots used to be hand-rolled with the stop at the
+  end of the test body.
+- `waitUntil(pred, { timeout = 2000, interval = 25, what })` — **the** deadline
+  poll. Awaits the predicate, resolves with the **first truthy value** (not
+  `true`, so a caller can read a nonce or a pid straight out), re-evaluates once
+  after the deadline, and on failure throws ``timed out waiting for `what` `` when
+  `what` is given, else returns `false` (which is what keeps
+  `assert.ok(await waitUntil(…), 'message')` reporting its own message). Nine
+  files carried a private copy under four names and three incompatible timeout
+  contracts. Binding a longer budget onto it for a file that waits on child
+  processes is fine; writing a second loop is not.
+- `openSSE(port, { kinds, since, onEvent, timeout = 5000, awaitChannel })` — the
+  one stream opener, and the only one that can **fail**: it rejects on `onError`,
+  on a close before open, and on the deadline. The three private openers passed
+  `onOpen` alone, so a non-200 or a request error left the promise pending
+  forever — that is the shape behind an unexplained hung run. `awaitChannel: api`
+  additionally polls `/api/queue/policy` until the server counts the stream as
+  the connected channel. It does **not** subsume `test/events-sse.test.js`, whose
+  raw client asserts on `:` heartbeat comments and `id:` lines that
+  `subscribeSSE` discards.
 - `withTempHome(t)` — redirect `HOME`/`USERPROFILE` to a throwaway dir so
   `os.homedir()`-based tiers (theme system scope, toggle user/session) don't touch
   the dev machine.
-- `tmpRoot`, `makeApi(baseUrl)`, `wsConnect`, `wsHello`, `safeStop`.
+- `wsConnect(port, path, { headers })` / `wsHello(port, path, { headers })` —
+  `headers` is what makes the WS Origin gate testable at all (Node's `ws` client
+  sends no `Origin`, so every connection used to take the `!origin` branch and
+  deleting `verifyClient` passed the suite). `wsHello` surfaces a refused upgrade
+  as a rejection carrying `.statusCode`, not a hang.
+- `tmpRoot`, `makeApi(baseUrl)`, `safeStop`.
 
-Run the suite with `npm test` (a bare `node --test --test-timeout=60000`, which
-auto-discovers `test/`). Not `node --test test/` — that mis-resolves.
+`test-support/sandbox.js` is loaded by `npm test` through
+`--import ./test-support/sandbox.js`, before any test file's first `require`, and
+required from `helpers.js` as a fallback for a runner that does not carry the
+flag through to its per-file children. It points `HOME`/`USERPROFILE` at a
+throwaway dir for the whole process. Its job is the two paths `withServer` cannot
+see, both of which spawn a subprocess with **no `env`** so the child inherits:
+`client-autospawn`'s real daemon (which used to register tmp roots in the
+developer's `~/.web-chat/instances.json` and bounce the live capture hub) and
+`profile-cli`'s real CLI (which read the developer's real profiles). It is a
+floor, not a replacement — `withServer` still mints a per-test home, because one
+process-wide home does not isolate tests from each other (the service trust
+store, system-scope themes and the update-check throttle all accumulate).
+
+Run the suite with `npm test`. It is `node --test` with **no path argument** (a
+directory mis-resolves), `--test-timeout=60000` so an unsettled await is a named
+failing test instead of an anonymous 15-minute CI job, and the sandbox preload.
+Deliberately **not** `--test-force-exit`: that turns a leaked handle from a loud
+hang into a silent green, and `test/events-sse.test.js` has the suite's only
+structural leak detectors.
+
+`test/harness-conventions.test.js` ratchets the five constructs above back into
+`test-support` — the deadline loop, a poll-helper definition, `subscribeSSE(`,
+`createServer({ root` and `.server.listen(` — with named exemptions (the two
+heredoc daemons, the fake clients injected into the channel bridge). It is a
+separate file from `conventions.test.js` on purpose: that one deliberately does
+not scan `test/`, and adding these roots to its patterns would fire
+`http.request(` and `os.homedir()` across ~20 files at once. Fixed sleeps and
+`process.env.HOME =` are deliberately **not** ratcheted — a good number of both
+are legitimate, so a count could never approach zero.
 
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
 `lib/` (+ `public/` for the eval, escaping and token patterns) and holds a
-**per-file baseline** for every construct in the table below, then **ratchets**:
+**per-file baseline** for every construct in the table below, then **ratchets**.
+It does not scan `test/` or `test-support/`, so the harness may use raw
+http/ws/fetch; the harness's own five constructs have their own file
+(`test/harness-conventions.test.js`, described under the test harness above).
+The ratchet works the same way in both:
 
 - **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
   route it through its engine instead.
