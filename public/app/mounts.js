@@ -11,6 +11,24 @@ import { applyPaneTheme } from './theme.js';
 // pane records keyed by mount id: { wrapper, host, root, pane_state, title, paneTarget, theme, themeStyle, spec }
 export const panes = new Map();
 
+// A pane may only ever land in a SLOT. `target` arrives from /api/render, which
+// accepts any string for it, so resolving it with getElementById made every
+// chrome element a mountable container: `target:'topbar'` filed a pane inside
+// the header, and `target:'overlay'` hid one inside the (display:none) graph
+// viewer — which is exactly how the service-trust prompt shipped invisible in
+// 0.6.0. There is one slot today; anything that is not a slot falls back to it,
+// matching the server's own `target = 'main'` default.
+const SLOTS = new Set(['main']);
+const slotFor = (target) => $(SLOTS.has(target) ? target : 'main');
+
+// A mount id is agent-supplied too, and 'main' / 'status' / 'overlay' are all
+// plausible ids for Claude to pick. Only ever remove an element that is a mount
+// HOST: removing an arbitrary element found by id deleted chrome, and because
+// the mount persists in state.mounts and in every committed node, `hello`
+// replayed the removal on every reload — the surface stayed dead until the
+// mount was cleared from outside the browser.
+const isMountHost = (el) => !!(el && el.classList && el.classList.contains('mount-host'));
+
 function applyPaneStateDefaults(s) {
   s = s || {};
   // Legacy rowSpan → heightPx so old nodes look about right.
@@ -482,14 +500,16 @@ function attachDrag(wrapper, handle, id) {
 
 export function mount(m) {
   const { html, target, id, params, pane_state, form_state, theme } = m;
-  const slot = $(target) || $('main');
+  const slot = slotFor(target);
   const existing = panes.get(id);
   if (existing) {
     if (existing.wrapper.parentElement) existing.wrapper.parentElement.removeChild(existing.wrapper);
     panes.delete(id);
   } else {
+    // A bare mount host left over from an older session (no pane record) — and
+    // never anything else that happens to answer to this id.
     const stale = document.getElementById(id);
-    if (stale) stale.remove();
+    if (isMountHost(stale)) stale.remove();
   }
 
   const ps = applyPaneStateDefaults(pane_state);
@@ -586,7 +606,7 @@ export function mount(m) {
 export function removePane(id) {
   const p = panes.get(id);
   if (p) { if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
-  else { const host = document.getElementById(id); if (host) host.remove(); } // legacy bare host
+  else { const host = document.getElementById(id); if (isMountHost(host)) host.remove(); } // legacy bare host
   renderMinbar();
 }
 
@@ -605,11 +625,17 @@ export function survivesClear(paneState, frame = {}) {
 }
 
 export function clearTarget(target, frame = {}) {
-  const slot = $(target) || $('main');
+  const t = target || 'main';
+  const slot = slotFor(t);
   const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   slot.querySelectorAll('.pane').forEach(p => {
     const id = p.dataset.paneId;
     const pane = id ? panes.get(id) : null;
+    // Membership of a target is the pane's RECORD, not DOM containment: every
+    // pane lives in the one slot now, so a targeted clear has to read the target
+    // the pane was rendered with or it would sweep the whole surface. The server
+    // filters `m.target === target` the same way (POST /api/clear).
+    if (pane && pane.paneTarget !== t) return;
     const keep = kept ? kept.has(id) : survivesClear(pane && pane.pane_state, frame);
     if (keep) return;
     if (id) panes.delete(id);
