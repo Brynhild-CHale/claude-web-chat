@@ -8,8 +8,7 @@
 // except for wall-clock stamps, which scrubGolden() normalizes.
 
 const WebSocket = require('ws');
-
-const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+const { waitUntil } = require('./helpers');
 
 // Values that are wall-clock / environment dependent and therefore differ every
 // run. Normalized to a sentinel (rather than deleted) so the snapshot still
@@ -41,7 +40,14 @@ function collectFrames(port) {
 async function driveGoldenSession({ api, port }) {
   const { frames, ws, ready } = collectFrames(port);
   await ready;
-  await settle(60); // let `hello` land
+  // Wait for the FRAMES, not the clock. This is the strictest assertion in the
+  // suite — bus-golden deepEquals the complete ordered frame list — and it used
+  // to be synchronised by two fixed sleeps, so under a loaded parallel run a
+  // late frame made the wire look changed and the failure read as a regression
+  // rather than a flake. Both boundaries are deterministic and known: `hello`
+  // opens the stream, `node-added` (the turn-end commit) closes it.
+  const seen = (type) => () => frames.some((f) => f.type === type);
+  await waitUntil(seen('hello'), { timeout: 5000, interval: 5, what: 'the hello frame' });
 
   await api.post('/api/render', { id: 'm1', html: '<p>hello</p>', target: 'main' });
   await api.post('/api/store', { patch: { greeting: 'hi', n: 1 } });
@@ -58,7 +64,7 @@ async function driveGoldenSession({ api, port }) {
   });
   await api.post('/api/turn-end', { author: 'claude', summary: 'did the golden thing' });
 
-  await settle(100); // drain the socket
+  await waitUntil(seen('node-added'), { timeout: 5000, interval: 5, what: 'the terminal node-added frame' });
   ws.close();
 
   const { json: ev } = await api.get('/api/events');
