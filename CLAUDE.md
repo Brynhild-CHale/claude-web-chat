@@ -77,6 +77,10 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | resolve a `.claude/` path (settings, rules, skills) | `lib/core/paths` (`claudePaths`/`userClaudePaths`) | hardcode `.claude` |
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
 | decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab grammar, or re-list the builtin names |
+| read/write a browser storage key in the chrome | `public/app/storage.js` (`getLocal`/`setLocal`/`getSession`/`getLocalJson`, all fail open) | touch `localStorage`/`sessionStorage` directly (the accessor throws in a private window) |
+| leave the detached node preview | `public/app/topbar.js` (`leavePreview({activeId, restoreSnapshot, flushForms})`) | hand-copy the `previewing = false` transition |
+| walk the graph as DRAWN (nav, forks, lineage, layout) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`) | `labels.childrenOf` — raw commit children, for the ⑃ branch picker only |
+| dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, `core` imports nothing else from `lib/`, and entry points never reach into each other's internals — **`test/dependency-direction.test.js` enforces all three**, with a named, shrink-only baseline for the edges that legitimately remain. Every concept is consolidated behind one engine (paths, portfiles, durable JSON records, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
