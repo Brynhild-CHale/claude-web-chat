@@ -124,7 +124,7 @@ const ENTRIES = [
       const out = removeUnits(pack, { root, tier: 'local', force: true });
       const state = verifyPack(pack, { root, tier: 'local' }).units[0].state;
       return {
-        refused: state === 'unsafe-name' && out.removedAll === false,
+        refused: state === 'refused' && out.removedAll === false,
         detail: `state=${state} ${JSON.stringify(out.results)}`,
       };
     },

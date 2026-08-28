@@ -81,11 +81,15 @@ rest rely on this doc and review.
 ## Dependency direction (what may import what)
 
 ```
-entry points   cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
-                     │  import ↓ only
-lib/client/          the one daemon HTTP client
-                     │  import ↓ only
-lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/)
+entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
+                         │  import ↓ only      (never each other)
+shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
+                         │  import ↓ only      (may import each OTHER — that is
+                         │                      composition, not direction)
+lib/client/        the one daemon HTTP client
+                         │  import ↓ only
+lib/core/          paths · portfiles · html · versions · cors · channels
+                                              (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -94,7 +98,29 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
   not in the client.
 - `lib/client` imports `core/*` (+ `util/daemon`). Everything else imports
   `lib/client` and `core/*`; entry points never reach into each other's internals.
+- A **shared library** implements one concern and is consumed by the entry
+  points. It may import another shared library (`lib/packs` uses `lib/update`'s
+  archive reader); it may never import an entry point.
 - A helper that seems to belong in two layers belongs in the lower one.
+
+**`test/dependency-direction.test.js` enforces this.** It parses every relative
+`require()` under `lib/`, maps it to an edge between two subsystems, and fails
+any edge the direction forbids — a `core` or `client` reach outward, an entry
+point importing another entry point, a shared library importing an entry point.
+The edges that legitimately remain are listed in a `BASELINE` in that file, each
+with the reason it is allowed, and the baseline is **shrink-only**: an entry that
+no longer matches fails as stale, so a consolidation tightens the rule in the
+same PR. One entry is marked `OWED` — `lib/packs` still reaches into
+`lib/server` for the components registry (the reserved-name list now lives in
+`lib/core/names.js`).
+
+The rule was a paragraph until then, and a paragraph is one lazy `require` away
+from being wrong. It already was, in four places, and every one of them was the
+same mistake: a *generic leaf helper parked above the leaf layer*. `lib/packs`
+imported the **updater** for a path predicate and the **server** for a path
+adapter; `lib/capture` imported the **server** for an HTML escaper. Nobody meant
+to couple those subsystems — they wanted `isInside` and `escapeHtml`, and those
+were the only places they lived.
 
 ## The engines — need X, use Y
 
@@ -103,6 +129,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | resolve a path under `.web-chat/` or `~/.web-chat/` | `core/paths` `projectPaths(root)` / `userPaths()` | hardcode `'.web-chat'` or call `os.homedir()` |
 | resolve a path under `.claude/` (settings, rules, skills) | `core/paths` `claudePaths(root)` / `userClaudePaths()` | hardcode `'.claude'` |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
+| ask whether a path is inside a directory (a fence) | `core/paths` `isInside(parent, child)` / `realpath(p)` | `startsWith` / `path.relative` containment by hand |
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
@@ -113,10 +140,13 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
 | decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
-| escape HTML | `server/util/html` `escapeHtml` | inline a `.replace` chain |
+| escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
+| sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
+| gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
+| name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
@@ -325,7 +355,7 @@ install.js   orchestrate, write the provenance record, append the audit line
 `review` output, and the drawer's quarantine card, so "show me what this would
 do" cannot drift from what it actually does.
 
-Three invariants live in code rather than in a reviewer's memory:
+Four invariants live in code rather than in a reviewer's memory:
 
 - **`tar` is not the security boundary — the copier is.** Members are listed
   (`archive.listTarGz`, pure JS) and refused before extraction: absolute paths,
@@ -342,6 +372,13 @@ Three invariants live in code rather than in a reviewer's memory:
   The list and the grammar both live in `lib/core/names.js`, and the refusal is
   asserted at every writer (`POST /api/components`, `componentsRegistry.write`,
   `validateManifest`, `planInstall`), not just in the packs pipeline.
+- **The installed record is untrusted input.** `.web-chat/packs.json` is
+  project-tier and a repository can commit a `.web-chat/` tree — the reason
+  quarantine records were moved to the user tier. Every path `removeUnits`
+  unlinks is built from that record, so `verifyPack` validates it at READ time:
+  kebab-case unit name, `memberEscapes` on every recorded path, and
+  `isInside` for any recorded file that exists. A unit that fails is `refused`
+  whole — nothing unlinked, counted as drift, kept in the record.
 
 `lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
 `install.js`. **Read the risk paragraph at the head of the route file before
@@ -386,7 +423,21 @@ skipping rather than throwing so `pack remove` over a damaged record degrades.
 
 ### Shared small homes
 
-- `lib/server/util/html.js` — `escapeHtml(s)` (null-safe).
+- `lib/core/html.js` — `escapeHtml(s)`. Null-safe; escapes all five characters
+  (`& < > " '`) because the result lands in an attribute value as often as in a
+  text node, and an escaper that is only safe in one of those positions is a
+  trap. There is deliberately **no** fewer-characters mode: the only reason to
+  want one is byte-preservation for a producer whose output is compared, and
+  nothing in the tree is in that position — add it then, named for what it
+  omits, with its caller in the same PR. `lib/server/util/html.js` re-exports it
+  for the server routes that already import it from there.
+  **The client has its own home**, `public/app/esc.js` (same five characters) —
+  the chrome cannot `require` out of `lib/`. **Capture profiles have neither**:
+  the loader reads user-authored profiles from `.web-chat/profiles/`, which
+  cannot import the package, so the eight bundled profiles still carry a
+  four-character copy each. Both spellings of a hand-rolled escaper — the
+  `.replace` chain and the `{'&':'&amp;'}` lookup map — are pinned by
+  `test/conventions.test.js`, and those eight are the whole grandfathered list.
 - `lib/capture/profiles/util.js` — `collapse(s)`.
 
 ## The test harness — `test-support/helpers.js`
@@ -432,6 +483,9 @@ Current homes (baselines can only shrink toward these):
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
 | `require('node:readline…')` | `lib/cli/prompt.js` (the one prompt engine) | landed with `init` ✅ |
+| `.replace(/&/g` | `lib/core/html.js` (`escapeHtml`) — plus `lib/server/export.js`, whose one match is JSON-for-`<script>` escaping, not HTML | landed with the core leaves ✅ |
+| `{'&': '&amp;'}` (the lookup-map spelling) | `lib/core/html.js` (host) · `public/app/esc.js` (client) — the eight bundled capture profiles are grandfathered until they get an injected `esc` | landed with the core leaves ✅ |
+| `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
 
 Working with it:
 

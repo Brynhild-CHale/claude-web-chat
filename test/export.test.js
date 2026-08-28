@@ -118,6 +118,9 @@ function fakeCtx() {
   fs.mkdirSync(path.join(webChat, 'graph'), { recursive: true });
   const paths = {
     WEB_CHAT_DIR: webChat,
+    // Shaped like resolvePaths, which is what the real ctx carries — writeExport
+    // reads EXPORTS_DIR from the path authority rather than joining 'exports'.
+    EXPORTS_DIR: path.join(webChat, 'exports'),
     GRAPH_DIR: path.join(webChat, 'graph'),
     META_PATH: path.join(webChat, 'graph', '_meta.json'),
     THEME_PATH: path.join(webChat, 'theme.json'),
