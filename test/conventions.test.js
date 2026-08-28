@@ -312,6 +312,37 @@ const PATTERNS = [
     },
   },
   {
+    // Resolving "which project does this command operate on" INSIDE a command
+    // that registers, un-registers or reports on a project. Not a lib-wide ban:
+    // `open`, `start`, `stop`, `export`, `unlock`, `trust`, `pack`, `profile`,
+    // `restart`, `ls` and the hooks all legitimately walk up to find a DAEMON,
+    // and that is a different question with the same answer today.
+    //
+    // Scoped instead to the eight files that carried the divergence: five
+    // different answers to the same question (install/uninstall/on/off on
+    // process.cwd(), doctor/status on findProjectRoot(cwd) || cwd, update
+    // skipping when it returned null), which meant the same directory named two
+    // different projects depending on which command you typed — and `install`
+    // in a subdirectory built a second, nested surface Claude Code never loads.
+    // Each of these must ask lib/setup/registration.resolveRoot, whose three
+    // modes ARE the three refusal shapes they used to disagree about.
+    name: 'findProjectRoot( in a registration consumer',
+    home: 'lib/setup/registration.js — `resolveRoot(cwd, {mode})`',
+    what: 'deciding which project a registration command operates on',
+    files: [
+      'lib/cli/commands/install.js',
+      'lib/cli/commands/uninstall.js',
+      'lib/cli/commands/on.js',
+      'lib/cli/commands/off.js',
+      'lib/cli/commands/doctor.js',
+      'lib/cli/commands/status.js',
+      'lib/cli/commands/update.js',
+      'lib/mcp/index.js',
+    ],
+    re: /findProjectRoot\(/g,
+    baseline: {},
+  },
+  {
     // NOT a lib-wide ban: 8 of the ~35 writeFileSync sites in lib/ are
     // legitimately not JSON records (export HTML, capture sidecars,
     // component.html/seed.js/service.js, .gitignore, the empty disable markers),
