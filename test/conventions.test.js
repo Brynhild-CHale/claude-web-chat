@@ -84,6 +84,30 @@ const PATTERNS = [
     },
   },
   {
+    // The HTML escape chain. It always starts `.replace(/&/g` — the ampersand
+    // must be replaced first or the escaper double-escapes its own output — so
+    // that prefix is an exact fingerprint for "someone is hand-rolling an
+    // escaper again". There were two live copies plus two callers reaching
+    // across subsystem lines for one of them before the engine landed in
+    // lib/core/html.js; copy N+1 is free to disagree about which characters it
+    // covers, and a three-character escaper interpolated into an attribute
+    // value is an XSS.
+    name: '.replace(/&/g',
+    home: 'lib/core/html.js — `escapeHtml(s, { quotes })`',
+    what: 'hand-rolled HTML entity escaping',
+    roots: ['lib', 'public'],
+    re: /\.replace\(\/&\/g/g,
+    baseline: {
+      'lib/core/html.js': 1,
+      // NOT an HTML escaper, and deliberately not routed through one:
+      // jsonForScript rewrites & to the JS `&` escape so a JSON blob
+      // cannot break out of the <script> element carrying it. Different output,
+      // different threat — escapeHtml would emit `&amp;` into JSON and corrupt
+      // the payload.
+      'lib/server/export.js': 1,
+    },
+  },
+  {
     // Interactive terminal prompts. `init` needs to ask questions; `trust` and
     // `doctor` are the obvious next places one would grow. The thing that must
     // not happen is a SECOND prompt engine with its own idea of when to skip the
