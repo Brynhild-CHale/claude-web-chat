@@ -88,7 +88,7 @@ shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · cha
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
-lib/core/          paths · portfiles · html · versions · cors · channels
+lib/core/          paths · portfiles · fsjson · html · versions · cors · channels
                                               (zero deps on the rest of lib/)
 ```
 
@@ -137,6 +137,9 @@ were the only places they lived.
 | call the daemon over HTTP | `lib/client` `get` / `post` / `request` / `api` | `http.request` |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
+| write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
+| read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
+| keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
@@ -222,6 +225,48 @@ Two policies are load-bearing — preserve them:
   `waitFor`) runs for up to `timeout_ms`; a blanket socket timeout would break it.
   `timeout` is opt-in. (Claude no longer long-polls — channels-only wake made
   `/api/wait` a driver-only endpoint.)
+
+### `lib/core/fsjson.js` — the durable-JSON-record engine
+
+The small JSON records under `.web-chat/` and `~/.web-chat/` — graph node files,
+`graph/_meta.json`, `draft.json`, `_version.json`, `instances.json`, `packs.json`
+— written so a crash cannot tear one, and read so a torn one is distinguishable
+from a missing one.
+
+- `writeJsonAtomic(file, value, { pretty = 2, newline = false, mkdir = true,
+  fsync = false })` — serialize, write `${file}.${pid}.tmp` **in the same
+  directory**, `renameSync` onto the destination. Returns the path; **throws** on
+  failure, because the callers legitimately disagree about what to do with one
+  (`writeNode` lets the route 500, `writeDraft` returns false, `recordMcpSeen`
+  ignores it). `newline` defaults off so adopting the engine never rewrites the
+  bytes of a record that had no trailing newline.
+- `readJson(file, { validate })` → exactly one of `{ok, value}` / `{absent}` /
+  `{corrupt, error}` / `{invalid, error, value}`. Not `existsSync`-then-read —
+  that is a TOCTOU; the ENOENT branch *is* the check.
+- `readJsonOr(file, fallback, { validate })` — the shape most readers want. The
+  fallback covers `corrupt` too, which is right both for the fail-CLOSED readers
+  (a torn trust store must read as "nothing trusted") and the documented
+  fail-soft ones.
+- `renameAside(file, { tag = 'corrupt', keep = 0 })` — move a record you could
+  not use out of the way instead of destroying it; `keep` caps how many such
+  files accumulate.
+
+Two rules the engine deliberately keeps:
+
+- **No type-specific knowledge.** Shape predicates are passed in as `validate`
+  and live next to the type's owner (`isGraphNode` sits beside `graph.load`) —
+  the same boundary `core/resources.js` draws.
+- **`invalid` is a returned state, never a throw and never a silent skip.** The
+  callers want three different things from it: `graph.load` skips the node,
+  `components-registry` surfaces a placeholder record, `seedBuiltins` repairs the
+  directory from the shipped copy.
+
+Out of scope: cross-filesystem moves (the temp file is always a sibling, so
+`renameSync` cannot hit `EXDEV`), append-only logs (`packs`' NDJSON audit trail
+stays on `appendFileSync` — a torn *line* is recoverable, a torn rewrite of the
+whole log is not), and read-modify-write races. Atomic rename makes each write
+whole; it does not serialize two writers. `doctor`'s out-of-process `_meta.json`
+repair says so in place.
 
 ### `lib/core/bus.js` — the change bus
 
@@ -487,6 +532,8 @@ Current homes (baselines can only shrink toward these):
 | `.replace(/&/g` | `lib/core/html.js` (`escapeHtml`) — plus `lib/server/export.js`, whose one match is JSON-for-`<script>` escaping, not HTML | landed with the core leaves ✅ |
 | `{'&': '&amp;'}` (the lookup-map spelling) | `lib/core/html.js` (host) · `public/app/esc.js` (client) — the eight bundled capture profiles are grandfathered until they get an injected `esc` | landed with the core leaves ✅ |
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
+| a per-pid `.tmp` name (both spellings) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
+| `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 
 Working with it:
 
@@ -498,6 +545,13 @@ Working with it:
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
+- **A construct that is fine almost everywhere but must stay at zero in a few
+  places?** Give the pattern a `files` list instead of `roots`. That is why
+  `writeFileSync(` is not banned tree-wide: about eight of its ~35 sites in
+  `lib/` are legitimately not JSON records (export HTML, capture sidecars,
+  `component.html`/`seed.js`/`service.js`, `.gitignore`, the empty disable
+  markers), so a tree-wide ceiling could never approach zero-outside-the-home and
+  would bake in a table of baselines that are correct forever.
 
 ## When you genuinely need a *new* engine
 

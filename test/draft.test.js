@@ -46,8 +46,14 @@ test('draft: empty state does not write draft', async (t) => {
   assert.equal(fs.existsSync(draftFile), false, 'no draft when nothing to save');
 });
 
-test('draft: discarded when base_active no longer matches', async (t) => {
-  // Seed a draft tied to base_active 'n-bogus'
+test('draft: not applied when base_active no longer matches, but kept aside rather than destroyed', async (t) => {
+  // Seed a draft tied to base_active 'n-bogus'.
+  //
+  // This assertion used to read `existsSync(draft.json) === false`. It is
+  // deliberately rewritten: a draft is the only copy of uncommitted work, and
+  // loadDraft was the one reader in the tree that deleted the record it could
+  // not use. It is no longer applied (the surface stays empty) but the bytes
+  // survive as draft.json.corrupt-<ts>.
   const { api, webChatDir } = await withServer(t, {
     seed: ({ webChatDir }) => {
       fs.writeFileSync(path.join(webChatDir, 'draft.json'), JSON.stringify({
@@ -58,6 +64,23 @@ test('draft: discarded when base_active no longer matches', async (t) => {
   });
 
   const { json } = await api.get('/api/mounts');
-  assert.equal(json.mounts.length, 0, 'mismatched draft should be discarded');
-  assert.equal(fs.existsSync(path.join(webChatDir, 'draft.json')), false);
+  assert.equal(json.mounts.length, 0, 'mismatched draft is not applied');
+  assert.equal(fs.existsSync(path.join(webChatDir, 'draft.json')), false, 'and no longer occupies the live name');
+  const aside = fs.readdirSync(webChatDir).filter((f) => f.startsWith('draft.json.corrupt-'));
+  assert.equal(aside.length, 1, 'it is moved aside, not unlinked');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(webChatDir, aside[0]), 'utf8')).base_active, 'n-bogus');
+});
+
+test('draft: an unparsable draft.json is kept aside and the daemon boots clean', async (t) => {
+  const { api, webChatDir } = await withServer(t, {
+    seed: ({ webChatDir }) => {
+      fs.writeFileSync(path.join(webChatDir, 'draft.json'), '{"schema_version":1,"mounts":[{"id":"gho');
+    },
+  });
+
+  const { json } = await api.get('/api/mounts');
+  assert.equal(json.mounts.length, 0);
+  const aside = fs.readdirSync(webChatDir).filter((f) => f.startsWith('draft.json.corrupt-'));
+  assert.equal(aside.length, 1);
+  assert.equal(fs.readFileSync(path.join(webChatDir, aside[0]), 'utf8').startsWith('{"schema_version":1'), true);
 });
