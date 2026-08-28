@@ -219,3 +219,71 @@ test('resolveRoot inherits findProjectRoot\'s $HOME refusal', (t) => {
   assert.equal(reg.resolveRoot(under, { mode: 'optional' }).root, null);
   assert.equal(projectPaths(under).dir, path.join(under, '.web-chat'));
 });
+
+// ── every consumer agrees on the root ───────────────────────────────────────
+// The guardrail for cli-setup-7: install/uninstall/on/off used to anchor on
+// process.cwd() while doctor/status walked up to findProjectRoot, so the same
+// directory meant two different projects depending on which command you typed.
+
+test('doctor, status, install, uninstall, on and off resolve the SAME root from a subdirectory', async (t) => {
+  withTempHome(t);
+  const root = installedRoot('wc-agree-');
+  const sub = path.join(root, 'packages', 'web', 'src');
+  fs.mkdirSync(sub, { recursive: true });
+  const claude = fakeClaude();
+  const lines = [];
+  const prevLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+
+  // install is required with the daemon pre-warm patched out — it destructures
+  // spawnDaemon at module load, so the patch has to happen first.
+  const daemonMod = require('../lib/util/daemon');
+  const realSpawn = daemonMod.spawnDaemon;
+  daemonMod.spawnDaemon = async () => null;
+  const install = require('../lib/cli/commands/install');
+  daemonMod.spawnDaemon = realSpawn;
+  const uninstall = require('../lib/cli/commands/uninstall');
+  const status = require('../lib/cli/commands/status');
+  const doctor = require('../lib/cli/commands/doctor');
+  const on = require('../lib/cli/commands/on');
+  const off = require('../lib/cli/commands/off');
+
+  try {
+    await install([], { cwd: sub, runClaude: claude.fn });
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'install: the parent');
+    assert.equal(fs.existsSync(path.join(sub, '.mcp.json')), false);
+
+    off([], { cwd: sub });
+    assert.ok(fs.existsSync(projectPaths(root).disabled), 'off: the parent');
+    on([], { cwd: sub });
+    assert.equal(fs.existsSync(projectPaths(root).disabled), false, 'on: the parent');
+
+    const summary = await doctor([], { cwd: sub, runClaude: claude.fn, log: () => {} });
+    assert.ok(summary.checks.length, 'doctor ran against an installed project, not a bare subdir');
+
+    lines.length = 0;
+    await status([], { cwd: sub });
+    assert.match(lines.join('\n'), new RegExp(`\\(${root}\\)`), 'status: the parent');
+
+    lines.length = 0;
+    uninstall([], { cwd: sub, runClaude: claude.fn });
+    assert.match(lines.join('\n'), new RegExp(`uninstalled from ${root}`), 'uninstall: the parent');
+  } finally {
+    console.log = prevLog;
+  }
+});
+
+test('`on` in a directory with no install refuses, exactly like `off`', () => {
+  const bare = tmpRoot('wc-agree-bare-');
+  const on = require('../lib/cli/commands/on');
+  const off = require('../lib/cli/commands/off');
+  for (const [name, fn] of [['on', on], ['off', off]]) {
+    assert.throws(
+      () => fn([], { cwd: bare }),
+      // `on` used to print "web-chat is not disabled for this project" here —
+      // false reassurance for a project that was never installed.
+      (e) => e.userFacing === true && /run `claude-web-chat init`/.test(e.message),
+      `${name} must refuse`,
+    );
+  }
+});
