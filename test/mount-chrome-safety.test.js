@@ -16,7 +16,8 @@
 //   3. a clear whose id names chrome removes nothing;
 //   4. ...and the real behaviour this must not break: a re-render replaces in
 //      place, and a stale bare mount host is still reaped;
-//   5. one mount that throws does not abort the rest of the `hello` frame.
+//   5. one mount that throws does not abort the rest of the `hello` frame — and
+//      leaves no half-built pane behind for the next render to stack onto;
 //   6. a mount whose id names chrome does not HIJACK it either: the shell looks
 //      its own chrome up live (`$` is document.getElementById), so a pane host
 //      that took the id would win every later lookup — persistently, because the
@@ -172,10 +173,19 @@ test('one mount that throws does not abort the rest of a hello', async () => {
     await tick();
     assert.ok(mainEl.querySelector('[data-pane-id="good"]'), 'the mount after the failing one still rendered');
     assert.equal(W.document.title, 'after-boom — web-chat', 'the rest of the hello frame still ran');
+    // The wrapper is in the DOM before the shadow root is attached, so a failure
+    // used to leave an empty .pane with no pane record behind it.
+    assert.equal(mainEl.querySelectorAll('[data-pane-id="bad"]').length, 0, 'the failed mount left no half-built pane');
   } finally {
     W.__wcMount.attachAndExtract = realAttach;
     console.error = realError;
   }
+
+  // ...and re-rendering that id now yields ONE pane, not a second wrapper beside
+  // the orphan.
+  frame({ type: 'render', id: 'bad', html: '<p>recovered</p>', target: 'main', params: {}, pane_state: {} });
+  await tick();
+  assert.equal(mainEl.querySelectorAll('[data-pane-id="bad"]').length, 1, 'the id re-renders into a single pane');
 });
 
 test('a mount whose id names chrome does not hijack the shell\'s live lookups', async () => {

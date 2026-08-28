@@ -40,13 +40,19 @@ function hostFor(id) {
   return null;
 }
 
-// Remove what belongs to `id` in the DOM but that no pane record owns: a bare
-// mount host left over from an older session, and the pane wrapper around it.
-// Only ever mount DOM — never an arbitrary element that happens to answer to the id.
+// Remove everything in the DOM that belongs to `id` but that no pane record owns:
+// a bare mount host from an older session, and the half-built wrapper left by a
+// mount that threw (the wrapper is appended before the shadow root is attached,
+// so a failure used to leave an empty .pane behind and a re-render then stacked a
+// second one on top of it). Only ever mount DOM — never an arbitrary element that
+// happens to answer to the id.
 function dropOrphanDom(id) {
   if (id == null) return;
   const host = hostFor(id);
   if (host) (host.closest('.pane') || host).remove();
+  for (const w of document.querySelectorAll('.pane')) {
+    if (w.dataset.paneId === id) w.remove();
+  }
 }
 
 function applyPaneStateDefaults(s) {
@@ -518,7 +524,21 @@ function attachDrag(wrapper, handle, id) {
   });
 }
 
+// A mount that throws must not leave a half-built pane behind — mount() has the
+// wrapper in the DOM before attachAndExtract can fail — so the failure is unwound
+// here and the throw is re-raised for the caller (mountAll isolates it).
 export function mount(m) {
+  try { mountPane(m); }
+  catch (e) {
+    const id = m && m.id;
+    panes.delete(id);
+    dropOrphanDom(id);
+    renderMinbar();
+    throw e;
+  }
+}
+
+function mountPane(m) {
   const { html, target, id, params, pane_state, form_state, theme } = m;
   const slot = slotFor(target);
   const existing = panes.get(id);
@@ -526,8 +546,9 @@ export function mount(m) {
     if (existing.wrapper.parentElement) existing.wrapper.parentElement.removeChild(existing.wrapper);
     panes.delete(id);
   } else {
-    // A bare mount host left over from an older session (no pane record) — and
-    // never anything else that happens to answer to this id.
+    // Whatever this id left in the DOM without a pane record — a bare mount host
+    // from an older session, a wrapper a failed mount left behind — and never
+    // anything else that happens to answer to this id.
     dropOrphanDom(id);
   }
 
@@ -632,7 +653,7 @@ export function mount(m) {
 export function removePane(id) {
   const p = panes.get(id);
   if (p) { if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
-  else dropOrphanDom(id); // legacy bare host
+  else dropOrphanDom(id); // a legacy bare host, or a failed mount's leftovers
   renderMinbar();
 }
 
