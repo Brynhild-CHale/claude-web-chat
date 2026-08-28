@@ -1,6 +1,11 @@
 # Capture profiles & profile-paired panes
 
-Status: shipped in 0.3.0. Date: 2026-06-29.
+Status: **partly shipped.** Matchers, tiered project/global/bundled resolution,
+profile-paired panes with reduced/expanded modes, capture dedupe and hot reload
+shipped in 0.3.0. The **in-page interaction half is NOT BUILT** — the step model,
+the step compiler, `interact.js`, the extension's inject-then-snapshot flow and
+the `POST /api/probe` authoring channel are design only, and the sections
+describing them are marked below. Date: 2026-06-29.
 
 Builds on the shipped tab-streaming MVP and the profile registry in
 `lib/capture/profiles/`. This doc specifies two additions:
@@ -128,8 +133,9 @@ pane travels with its profile, and the project profile wins.
 `lib/capture/profiles/index.js` gains a loader that, at server boot, reads global
 then project dirs and registers them ahead of built-ins (project last so it wins).
 A throwing `require` of a user `extract.js`/`pane.js` is caught and logged; that
-profile is skipped (capture still distills via the next tier). Reload on
-`claude-web-chat restart` (consistent with `lib/server/*` edit policy).
+profile is skipped (capture still distills via the next tier). A saved profile
+reloads live with `claude-web-chat profile reload` (`POST /api/profiles/reload`);
+no daemon restart needed.
 
 ## Panes: one payload, two modes
 
@@ -169,6 +175,9 @@ In `lib/server/routes/capture.js`, after `runProfile`:
 
 ## Page interaction (in-page)
 
+> **NOT BUILT — design.** The extension does not inject; `background.js` says so
+> in place. Everything in this section and the two that follow it is a spec.
+
 The server only ever receives a static HTML snapshot, so any logic that must *fire
 events and react to live page state* has to run in the tab. A profile may therefore
 ship an **interaction sequence** that the extension injects (via
@@ -187,6 +196,9 @@ extension → GET match for URL (server) → user clicks the profile button
 (a static table needs none); when absent, capture is exactly today's passive flow.
 
 ### Step model (hybrid steps + inline JS)
+
+> **NOT BUILT — design.** `claude-web-chat profile compile` (materialising
+> `interact.js` from `interact.steps`) lands with the interaction slice.
 
 `profile.interact.steps` is an ordered list. Each step:
 
@@ -212,6 +224,10 @@ extension → GET match for URL (server) → user clicks the profile button
 
 ### Consent / the two buttons
 
+> Partly built: the extension asks `GET {hub}/api/profile-match` and labels its
+> buttons from the answer. The interaction the profile button would run is
+> **NOT BUILT** — picking it captures the page as it stands.
+
 The extension gates the altering path through its UI, not a prompt:
 
 - On popup open (or tab change) the extension calls `GET {hub}/api/profile-match?url=…`
@@ -226,6 +242,9 @@ So the user always has a safe, non-altering capture available, and the fuller
 (potentially page-changing) capture is a deliberate, separately-labelled choice.
 
 ## Live probe channel (authoring)
+
+> **NOT BUILT — design.** No `/api/probe` handler exists in any route file; the
+> route path below names something you cannot call today.
 
 To develop interaction steps with the user against the real page, the extension
 gains a **probe mode**: the agent (via the server) pushes a trial snippet to the
@@ -290,11 +309,11 @@ pane is part of its profile; you re-enter the skill on the profile to work its p
    project/global dirs, add `matchers` resolution + tiered `pickProfile`. Tests.
 2. **Pane pairing + modes.** `pane.js` contract, `pane_state.mode`, capture-route
    wiring to per-profile mounts, client toggle. Tests.
-3. **Interaction (in-page).** Step model + compiler to `interact.js`; extension
+3. **Interaction (in-page). NOT BUILT.** Step model + compiler to `interact.js`; extension
    profile-match lookup (`/api/profile-match`) + the two-button UI; inject-then-
    snapshot flow; interaction budget/timeout handling. Tests for the compiler and
    match endpoint (in-page execution itself is manual/extension-tested).
-4. **Live probe channel.** `/api/probe` server↔extension round-trip; extension
+4. **Live probe channel. NOT BUILT.** `/api/probe` server↔extension round-trip; extension
    authoring mode. Gated to active authoring sessions only.
 5. **The `/capture-profile` skill.** The interactive authoring/eval/save loop that
    ties matchers → interaction (via probe) → extractor → pane → eval → save.
