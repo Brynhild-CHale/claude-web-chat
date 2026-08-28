@@ -66,10 +66,10 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |
 | resolve a `.claude/` path (settings, rules, skills) | `lib/core/paths` (`claudePaths`/`userClaudePaths`) | hardcode `.claude` |
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
-| name a reserved component | `lib/server/builtins.BUILTINS` | re-list the builtin names |
+| decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab regex, or re-list the builtin names |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 
-Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
+Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the component-name policy, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 
 - **New MCP tool**: add `lib/mcp/tools/<name>.js`, append to the `tools` array in `lib/mcp/index.js`, add any backing route under `lib/server/routes/`, then `/exit` and reopen Claude Code (the MCP subprocess loads code at session start).
 - **New CLI subcommand**: add `lib/cli/commands/<name>.js`, register in the `commands` map in `lib/cli/index.js`, update `showHelp()`.

@@ -84,6 +84,24 @@ const PATTERNS = [
     },
   },
   {
+    // The component-name grammar. A component name BECOMES A DIRECTORY, so this
+    // literal is not a style rule — it is the containment rule that keeps a name
+    // from carrying a separator out of the components dir, and it is paired with
+    // the reserved builtin list in the same module. It was declared twice
+    // (routes/components.js and packs/manifest.js) while the reserved list lived
+    // somewhere neither of them shared, which is exactly how POST
+    // /api/components ended up enforcing half the policy. A second copy is how
+    // the halves come back.
+    name: '/^[a-z][a-z0-9-]*$/ (the component-name grammar)',
+    home: 'lib/core/names.js (COMPONENT_NAME_RE / isComponentName / assertComponentName)',
+    what: 'deciding whether a name may become a component directory',
+    roots: ['lib', 'public'],
+    re: /\/\^\[a-z\]\[a-z0-9-\]\*\$\//g,
+    baseline: {
+      'lib/core/names.js': 1,
+    },
+  },
+  {
     // Interactive terminal prompts. `init` needs to ask questions; `trust` and
     // `doctor` are the obvious next places one would grow. The thing that must
     // not happen is a SECOND prompt engine with its own idea of when to skip the
