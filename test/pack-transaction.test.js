@@ -387,6 +387,13 @@ test('a dropped file the user edited is KEPT — an update obeys the same edited
 
   assert.match(fs.readFileSync(svc, 'utf8'), /mine/, 'work the user did is never deleted by an update');
   assert.ok(out.results.some((r) => r.action === 'kept-edited' && r.name === 'deploy-board'), 'and they are told');
+
+  // The audit log is the evidence channel, and this is the one case where it has
+  // to be exact: a file that was KEPT because the user edited it must not be
+  // recorded as a deletion.
+  const audit = require('../lib/packs/store').readAudit(root).at(-1);
+  assert.equal(audit.removed, undefined, 'nothing was removed, so nothing is logged as removed');
+  assert.deepEqual(audit.kept, ['component:deploy-board'], 'what was kept is logged as kept');
 });
 
 test('a same-pack update touches only that pack — another pack\'s component is not pruned', async (t) => {
