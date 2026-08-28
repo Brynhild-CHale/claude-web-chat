@@ -22,12 +22,32 @@ const SLOTS = new Set(['main']);
 const slotFor = (target) => $(SLOTS.has(target) ? target : 'main');
 
 // A mount id is agent-supplied too, and 'main' / 'status' / 'overlay' are all
-// plausible ids for Claude to pick. Only ever remove an element that is a mount
-// HOST: removing an arbitrary element found by id deleted chrome, and because
-// the mount persists in state.mounts and in every committed node, `hello`
-// replayed the removal on every reload — the surface stayed dead until the
-// mount was cleared from outside the browser.
-const isMountHost = (el) => !!(el && el.classList && el.classList.contains('mount-host'));
+// plausible ids for Claude to pick. Everything this module resolves from an id
+// goes through hostFor/dropOrphanDom, which only ever see mount HOSTS: resolving
+// an id against the whole document removed chrome, and because the mount persists
+// in state.mounts and in every committed node, `hello` replayed the removal on
+// every reload — the surface stayed dead until the mount was cleared from outside
+// the browser.
+//
+// hostFor scans rather than selects because a mount id is arbitrary text and
+// would have to be CSS-escaped to go into a selector; it reads the dataset first
+// because a host only takes the DOM id when it is free (see mount()).
+function hostFor(id) {
+  if (id == null) return null;
+  for (const h of document.querySelectorAll('.mount-host')) {
+    if ((h.dataset.mountId || h.id) === id) return h;
+  }
+  return null;
+}
+
+// Remove what belongs to `id` in the DOM but that no pane record owns: a bare
+// mount host left over from an older session, and the pane wrapper around it.
+// Only ever mount DOM — never an arbitrary element that happens to answer to the id.
+function dropOrphanDom(id) {
+  if (id == null) return;
+  const host = hostFor(id);
+  if (host) (host.closest('.pane') || host).remove();
+}
 
 function applyPaneStateDefaults(s) {
   s = s || {};
@@ -508,8 +528,7 @@ export function mount(m) {
   } else {
     // A bare mount host left over from an older session (no pane record) — and
     // never anything else that happens to answer to this id.
-    const stale = document.getElementById(id);
-    if (isMountHost(stale)) stale.remove();
+    dropOrphanDom(id);
   }
 
   const ps = applyPaneStateDefaults(pane_state);
@@ -517,7 +536,14 @@ export function mount(m) {
   const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params);
 
   const host = document.createElement('div');
-  host.id = id;
+  // The mount id is agent-supplied, and the shell resolves its OWN chrome live
+  // ($ in state.js is document.getElementById): a host that claimed an id the
+  // chrome already owns would win every later lookup of it — renderMinbar's
+  // $('minbar'), the drawer's open/close, the queue rail, the palette — and,
+  // because the mount replays on every hello, would keep winning. The id always
+  // lives in the dataset; it is mirrored onto the DOM id only when it is free.
+  host.dataset.mountId = id;
+  if (!document.getElementById(id)) host.id = id;
   host.className = 'mount-host';
   wrapper.appendChild(host);
 
@@ -606,7 +632,7 @@ export function mount(m) {
 export function removePane(id) {
   const p = panes.get(id);
   if (p) { if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
-  else { const host = document.getElementById(id); if (isMountHost(host)) host.remove(); } // legacy bare host
+  else dropOrphanDom(id); // legacy bare host
   renderMinbar();
 }
 

@@ -99,7 +99,7 @@ export function initComments() {
     const sel = selectorFor(target);
     let ordinal = 0;
     try { ordinal = Math.max(0, [...host.shadowRoot.querySelectorAll(sel)].indexOf(target)); } catch (_) {}
-    return { mount: host.id, selector: sel, text: (target.textContent || '').trim().slice(0, 120), ordinal };
+    return { mount: host.dataset.mountId || host.id, selector: sel, text: (target.textContent || '').trim().slice(0, 120), ordinal };
   }
 
   // In pin mode, resolve an event to the pane + element it targets — or null when

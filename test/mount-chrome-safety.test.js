@@ -17,7 +17,11 @@
 //   4. ...and the real behaviour this must not break: a re-render replaces in
 //      place, and a stale bare mount host is still reaped;
 //   5. one mount that throws does not abort the rest of the `hello` frame.
-//   6. a clear-all sweeps panes rendered with ANY target, and a targeted clear
+//   6. a mount whose id names chrome does not HIJACK it either: the shell looks
+//      its own chrome up live (`$` is document.getElementById), so a pane host
+//      that took the id would win every later lookup — persistently, because the
+//      mount replays on every hello;
+//   7. a clear-all sweeps panes rendered with ANY target, and a targeted clear
 //      sweeps only its own — the filter POST /api/clear applies server-side.
 const test = require('node:test');
 const assert = require('node:assert');
@@ -172,6 +176,41 @@ test('one mount that throws does not abort the rest of a hello', async () => {
     W.__wcMount.attachAndExtract = realAttach;
     console.error = realError;
   }
+});
+
+test('a mount whose id names chrome does not hijack the shell\'s live lookups', async () => {
+  const minbarEl = $('minbar'), drawerEl = $('drawer'), railEl = $('queue-rail');
+  assert.ok(minbarEl && drawerEl && railEl, 'precondition: the chrome after <main> exists');
+
+  frame({
+    type: 'hello', store: {}, theme: null, activeTheme: null, active: 'n1', lock: null, project: 'hijack',
+    mounts: [
+      { id: 'minbar', html: '<p>shadow the minbar</p>', target: 'main', params: {}, pane_state: {} },
+      { id: 'drawer', html: '<p>shadow the drawer</p>', target: 'main', params: {}, pane_state: {} },
+      { id: 'queue-rail', html: '<p>shadow the rail</p>', target: 'main', params: {}, pane_state: {} },
+    ],
+  });
+  await tick();
+
+  // These ids all sit AFTER <main> in document order, so a host that took the id
+  // would be the one getElementById returns — and $ in state.js is a live
+  // getElementById, called on every renderMinbar / drawer open / rail update.
+  for (const [id, el] of [['minbar', minbarEl], ['drawer', drawerEl], ['queue-rail', railEl]]) {
+    assert.equal(W.document.getElementById(id), el, `#${id} still resolves to the chrome, not a pane host`);
+    assert.ok(mainEl.querySelector(`[data-pane-id="${id}"]`), `the pane named ${id} mounted anyway`);
+  }
+
+  // The functional half: the chrome those lookups drive still works.
+  frame({ type: 'render', id: 'chip', html: '<p>minimized</p>', target: 'main', params: {}, pane_state: { minimized: true } });
+  await tick();
+  assert.ok(minbarEl.querySelector('.min-chip'), 'the minbar still gets the minimized pane\'s chip');
+
+  $('btn-add').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(drawerEl.classList.contains('hidden'), false, 'the ＋ button still opens the real drawer');
+  $('btn-add').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(drawerEl.classList.contains('hidden'), true, 'and still closes it');
 });
 
 test('a clear-all sweeps every target; a targeted clear sweeps only its own', async () => {
