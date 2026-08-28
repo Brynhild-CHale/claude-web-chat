@@ -61,7 +61,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | read/write/discover/probe a daemon portfile | `lib/core/portfiles` | read `server.json` or `http.request` a probe by hand |
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
-| CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/core/html` (`escapeHtml(s, {quotes})`) / `lib/capture/profiles/util` | copy the helper, or inline a `.replace` chain |
+| CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/core/html` (`escapeHtml(s)` — five characters, no modes) / `lib/capture/profiles/util` | copy the helper, or inline a `.replace` chain |
 | ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | unpack or inspect a `.tar.gz` | `lib/update/archive` (`extractTarGz`/`rootOf`/`listTarGz`) | a second `spawnSync('tar')` |
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |
