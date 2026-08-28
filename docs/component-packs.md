@@ -664,7 +664,10 @@ necessary. A v2 that drops `service.js` from a component used to leave v1's file
 on disk — where `has_service` is read from disk presence and service trust is
 keyed to the file's *unchanged* bytes, so the old, already-approved service kept
 running under the new pack's record. Now the file goes with the version that
-stopped shipping it, and the component reports `has_service: false`.
+stopped shipping it, the component reports `has_service: false`, and the
+supervisor stops the child that was running it — a pack change is a reconcile
+trigger, so the service goes with the file rather than lingering until the next
+render.
 
 > **An install is one transaction.** Everything a `pack install` writes is
 > journalled: a file that did not exist is recorded as a creation, a file that
