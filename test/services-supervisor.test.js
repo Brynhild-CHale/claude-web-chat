@@ -42,6 +42,26 @@ module.exports = {
 
 const CRASH_SERVICE = `module.exports = { async start() { process.exit(1); } };`;
 
+// Like CLOCK_SERVICE, but stamping its own pid so a test can tell one generation
+// of child from the next, and lingering in stop(): the tick stops at once, the
+// process takes ~600ms to actually exit. That gap is the window in which a
+// clear-then-re-use of the same mount id spawns a replacement before the old
+// child's 'exit' event has fired.
+const LINGERING_SERVICE = `
+let timer = null;
+module.exports = {
+  async start(ctx) {
+    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, pid: process.pid } });
+    tick();
+    timer = setInterval(tick, 40);
+  },
+  async stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    await new Promise((r) => setTimeout(r, 600));
+  },
+};`;
+
 function hashOf(source) {
   return crypto.createHash('sha256').update(source).digest('hex');
 }
@@ -299,4 +319,44 @@ test('services: a crashing service is recorded and not respawned', async (t) => 
   await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
   await sleep(400);
   assert.equal(children(ctx).has('m1'), false, 'not respawned after crash');
+});
+
+test('services: a stop-then-respawn on one mount id keeps exactly one tracked child', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'lingerer', source: '<p>c</p>', description: 'c', service: LINGERING_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'lingerer', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'first child spawned');
+  const firstPid = await waitUntil(async () => (await api.get('/api/store')).json.clock?.pid);
+  assert.ok(firstPid, 'the first child is writing the store');
+
+  // Clear the pane and re-use the same id while the old child is still shutting
+  // down — the same shape reconcile() produces on its own when an entry's
+  // identity changes: stop(mountId) then spawn(mountId), synchronously.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the old child is untracked on clear');
+  await api.post('/api/components/lingerer/use', { id: 'm1' });
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'a replacement child spawned');
+  const secondPid = await waitUntil(async () => {
+    const pid = (await api.get('/api/store')).json.clock?.pid;
+    return pid && pid !== firstPid ? pid : false;
+  });
+  assert.ok(secondPid, 'the replacement child is the one writing the store');
+
+  // The old child's 'exit' lands about here. Keyed on the mount id alone it
+  // reads as the REPLACEMENT crashing, and evicts it from tracking.
+  await sleep(1200);
+  assert.ok(children(ctx).has('m1'), 'the replacement is still tracked after the old child exits');
+
+  // Being tracked is what makes it stoppable: an evicted child is never stopped
+  // on clear, viewer-leave, navigation or shutdown, and keeps writing the store.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the replacement stops on clear');
+  await sleep(400);
+  const frozen = (await api.get('/api/store')).json.clock.seq;
+  await sleep(400);
+  assert.equal((await api.get('/api/store')).json.clock.seq, frozen, 'no orphan is still writing the store');
 });
