@@ -587,6 +587,18 @@ Working with it:
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
+- **Deliberately NOT ratcheted: the outbound requesters.** The `http.request(`
+  row above polices calls to *our own daemon*, whose home is `lib/client`. Two
+  places instead reach the **public internet**, and they are a different concept
+  with no engine: `lib/server/routes/embed.js` (probe a URL a pane named — spelt
+  `lib.request(`, so the row does not see it) and `lib/update/release.js` (fetch a
+  release tarball — spelt `agentFor(u).get(`, which no `.request(` regex sees
+  either). A row here would have to name a home that does not exist, and routing
+  either through `lib/client` would be wrong: the client dials loopback and has
+  none of the fencing an outbound request needs (`refuseTarget` /
+  `publicOnlyLookup` in `embed.js`, checksum verification in `release.js`). If a
+  **third** outbound requester appears, that is the moment to extract the engine
+  and add the row — not before.
 - **A construct that is fine almost everywhere but must stay at zero in a few
   places?** Give the pattern a `files` list instead of `roots`. That is why
   `writeFileSync(` is not banned tree-wide: about eight of its ~35 sites in
