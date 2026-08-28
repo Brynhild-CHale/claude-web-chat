@@ -42,6 +42,13 @@ module.exports = {
     //               so services don't hand-roll one. Returns null when equal.
     // ctx.webChatDir — the project's .web-chat abs path, for sidecar state
     //               (e.g. version snapshots) without hardcoding the dir name.
+    // ctx.fence   — fence(parent, child) → the abs path inside `parent`, or null
+    //               when it escapes. Put EVERY path a pane hands you through it
+    //               (control keys are store values, and the store is writable by
+    //               every script in the page): it refuses `../..` and a symlink
+    //               that resolves out of the tree, which reads and writes follow
+    //               — including a link whose target does not exist yet, because
+    //               a write through one CREATES the file at that target.
   },
   async stop() {}, // optional — clear timers/watchers/streams. Also runs on process exit.
 };
@@ -49,8 +56,11 @@ module.exports = {
 
 The child is a `fork()`ed Node process (`lib/server/service-runner.js`). It loads
 `service.js`, builds the driver with an explicit port (no portfile discovery), and
-calls `start(ctx)`. On stop it sends IPC `stop`, falling back to `SIGTERM`; the
-child also exits if the daemon disconnects, so services never orphan.
+calls `start(ctx)`. On stop it sends IPC `stop` and, two seconds later, `SIGTERM`;
+the child also exits if the daemon disconnects. Either of those is decisive once a
+stop is already in flight — a `stop()` that never resolves does not keep the
+process alive — so services never orphan. Do the cleanup that matters inside the
+grace period; anything still awaiting when the fallback lands is cut off.
 
 **Driver etiquette holds.** A service is a driver: write the store and (later, not
 in v1) render panes, but **never touch the graph routes** (`turn-begin`/`turn-end`/

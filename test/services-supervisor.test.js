@@ -29,11 +29,38 @@ async function waitUntil(fn, { timeout = 4000, interval = 40 } = {}) {
 
 // A service that heartbeats a per-mount clock into the store, so tests can observe
 // "running" (clock advances) vs "stopped" (clock freezes).
+//
+// It also reports what the REAL runner handed it for `ctx.fence`. Every builtin
+// service fences the paths its pane hands it through that one function, and the
+// only place it is assembled is lib/server/service-runner.js — where a typo
+// would leave every fenced open/save/browse throwing `ctx.fence is not a
+// function` into the pane's error line, in production, with a suite full of ctx
+// stubs still green. These tests fork real children, so they are where it is
+// checked.
 const CLOCK_SERVICE = `
 let timer = null;
 module.exports = {
   async start(ctx) {
-    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId } });
+    const fence = {
+      type: typeof ctx.fence,
+      escapes: typeof ctx.fence === 'function' ? ctx.fence(process.cwd(), '..') : 'no fence',
+      inside: typeof ctx.fence === 'function' ? ctx.fence(process.cwd(), 'a/b.txt') : 'no fence',
+    };
+    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, fence } });
+    tick();
+    timer = setInterval(tick, 40);
+  },
+  async stop() { if (timer) clearInterval(timer); timer = null; },
+};`;
+
+// Reports the params it was spawned with, so a test can see WHICH request is
+// running — params are half a service's identity (they are what `file-editor`'s
+// `unfenced:true` changes) and half its trust key.
+const PARAMS_SERVICE = `
+let timer = null;
+module.exports = {
+  async start(ctx) {
+    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, params: ctx.params } });
     tick();
     timer = setInterval(tick, 40);
   },
@@ -41,6 +68,39 @@ module.exports = {
 };`;
 
 const CRASH_SERVICE = `module.exports = { async start() { process.exit(1); } };`;
+
+// Like CLOCK_SERVICE, but stamping its own pid so a test can tell one generation
+// of child from the next, and lingering in stop(): the tick stops at once, the
+// process takes ~600ms to actually exit. That gap is the window in which a
+// clear-then-re-use of the same mount id spawns a replacement before the old
+// child's 'exit' event has fired.
+const LINGERING_SERVICE = `
+let timer = null;
+module.exports = {
+  async start(ctx) {
+    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, pid: process.pid } });
+    tick();
+    timer = setInterval(tick, 40);
+  },
+  async stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    await new Promise((r) => setTimeout(r, 600));
+  },
+};`;
+
+// A service that never finishes shutting down: stop() returns a promise that
+// never settles, and a ref'd interval keeps the event loop alive. Exactly the
+// population the trust gate exists to doubt — an awaited stream close that never
+// fires looks like this.
+const HUNG_STOP_SERVICE = `
+module.exports = {
+  async start(ctx) {
+    ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, pid: process.pid } });
+    setInterval(() => {}, 1000);
+  },
+  async stop() { await new Promise(() => {}); },
+};`;
 
 function hashOf(source) {
   return crypto.createHash('sha256').update(source).digest('hex');
@@ -117,6 +177,14 @@ test('services: spawn on active use — child runs and the store clock advances'
   const s1 = (await api.get('/api/store')).json.clock.seq;
   assert.equal((await api.get('/api/store')).json.clock.mount, 'm1', 'clock carries the mount id');
   assert.ok(await waitUntil(async () => (await api.get('/api/store')).json.clock.seq > s1), 'clock advances (service alive)');
+
+  // The ctx the real runner builds, not a test stub's: a service that reaches
+  // for `ctx.fence` gets the containment engine, and it fails closed.
+  const { fence } = (await api.get('/api/store')).json.clock;
+  assert.equal(fence.type, 'function', 'the runner hands every service ctx.fence');
+  assert.equal(fence.escapes, null, 'and it refuses a path that leaves the parent');
+  assert.ok(fence.inside && fence.inside.endsWith(path.join('a', 'b.txt')),
+    'while a path that stays inside resolves, even before it exists');
 });
 
 test('services: stop on clear — clearing the pane stops the child', async (t) => {
@@ -299,4 +367,136 @@ test('services: a crashing service is recorded and not respawned', async (t) => 
   await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
   await sleep(400);
   assert.equal(children(ctx).has('m1'), false, 'not respawned after crash');
+});
+
+test('services: a stop-then-respawn on one mount id keeps exactly one tracked child', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'lingerer', source: '<p>c</p>', description: 'c', service: LINGERING_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'lingerer', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'first child spawned');
+  const firstPid = await waitUntil(async () => (await api.get('/api/store')).json.clock?.pid);
+  assert.ok(firstPid, 'the first child is writing the store');
+
+  // Clear the pane and re-use the same id while the old child is still shutting
+  // down — the same shape reconcile() produces on its own when an entry's
+  // identity changes: stop(mountId) then spawn(mountId), synchronously.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the old child is untracked on clear');
+  await api.post('/api/components/lingerer/use', { id: 'm1' });
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'a replacement child spawned');
+  const secondPid = await waitUntil(async () => {
+    const pid = (await api.get('/api/store')).json.clock?.pid;
+    return pid && pid !== firstPid ? pid : false;
+  });
+  assert.ok(secondPid, 'the replacement child is the one writing the store');
+
+  // The old child's 'exit' lands about here. Keyed on the mount id alone it
+  // reads as the REPLACEMENT crashing, and evicts it from tracking.
+  await sleep(1200);
+  assert.ok(children(ctx).has('m1'), 'the replacement is still tracked after the old child exits');
+
+  // Being tracked is what makes it stoppable: an evicted child is never stopped
+  // on clear, viewer-leave, navigation or shutdown, and keeps writing the store.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the replacement stops on clear');
+  await sleep(400);
+  const frozen = (await api.get('/api/store')).json.clock.seq;
+  await sleep(400);
+  assert.equal((await api.get('/api/store')).json.clock.seq, frozen, 'no orphan is still writing the store');
+});
+
+test('services: a stop() that never resolves is still ended by the fallback SIGTERM', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'hung', source: '<p>c</p>', description: 'c', service: HUNG_STOP_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'hung', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
+  const child = children(ctx).get('m1').child;
+  t.after(() => { try { child.kill('SIGKILL'); } catch {} });
+  const exited = new Promise((r) => child.once('exit', () => r('exited')));
+
+  // The IPC stop is swallowed by the hung stop(). The supervisor's SIGTERM at
+  // STOP_GRACE_MS is the fallback kill the contract promises — if the runner
+  // treats it as a second, already-in-flight shutdown() it is a no-op, and the
+  // process lives on holding whatever handles stop() failed to clear.
+  await api.post('/api/clear', { id: 'm1' });
+  const outcome = await Promise.race([exited, sleep(6000).then(() => 'alive')]);
+  assert.equal(outcome, 'exited', 'the child process actually died');
+});
+
+test('services: re-using a mount id with different params restarts and re-gates the child', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'scoped', source: '<p>c</p>', description: 'c', service: PARAMS_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'scoped', 'm1');
+  assert.ok(await waitUntil(async () => (await api.get('/api/store')).json.clock), 'the approved shape runs');
+  assert.deepEqual((await api.get('/api/store')).json.clock.params, {}, 'running with the params that were approved');
+
+  // /use with an existing id replaces the mount in place. Params decide what a
+  // service does and are half its trust key, so this is a DIFFERENT request: the
+  // old child must stop, and the new shape must be gated on its own.
+  await api.post('/api/components/scoped/use', { id: 'm1', params: { root: 'src' } });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the old-params child is stopped');
+  const asked = await waitUntil(async () => {
+    const p = await pendingFor(ctx, 'scoped');
+    return p.find((x) => x.params && x.params.root === 'src') || false;
+  });
+  assert.ok(asked, 'the new params shape asks for its own approval');
+
+  await approve(ctx, 'scoped');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'respawned once the new shape is approved');
+  assert.ok(await waitUntil(async () => {
+    const c = (await api.get('/api/store')).json.clock;
+    return Boolean(c && c.params && c.params.root === 'src');
+  }), 'the running child carries the new params');
+});
+
+test('services: an unanswered trust prompt survives a refresh but retires with its pane', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+  await api.post('/api/components/clock/use', { id: 'm1' });
+  assert.ok(await waitUntil(async () => (await pendingFor(ctx, 'clock')).length), 'listed for `claude-web-chat trust`');
+
+  // A refresh takes the viewer count to zero and back. The user may be in the
+  // terminal at that moment — the request must still be there to approve.
+  await new Promise((r) => { v1.sock.on('close', r); v1.sock.close(); });
+  await sleep(500);
+  assert.ok((await pendingFor(ctx, 'clock')).length, 'a viewerless moment does not retire the request');
+  const v2 = await openViewer(ctx);
+  t.after(() => { try { v2.sock.close(); } catch {} });
+
+  // Clearing the pane does: nothing is waiting on the answer any more, so the
+  // CLI must stop listing it and arriving viewers must stop being told about it.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(async () => (await pendingFor(ctx, 'clock')).length === 0),
+    'the request is retired with the pane that raised it');
+});
+
+test('services: a crash block is forgotten when its pane leaves the surface', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'crasher', source: '<p>x</p>', description: 'x', service: CRASH_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'crasher', 'm1');
+  const failed = ctx.srv.services._failed;
+  assert.ok(await waitUntil(() => failed.has('m1')), 'the crashed version is blocked for this mount id');
+
+  // The block belongs to that pane, not to the id forever: a mount id is reusable
+  // and the next thing mounted under it has nothing to do with what crashed.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !failed.has('m1')), 'the block is dropped with the pane');
 });

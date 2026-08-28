@@ -10,7 +10,7 @@ import {
   applyGlobalTheme, applyNodeTheme, applyPaneTheme, setActiveNodeTheme, getActiveNodeTheme,
 } from './theme.js';
 import {
-  mount, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
+  mount, mountAll, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
   survivesClear,
 } from './mounts.js';
 import {
@@ -50,7 +50,7 @@ function snapClearMount(id, target, frame = {}) {
   // detached client's captured live surface doesn't drift from the real one.
   const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => {
-    if ((x.target || 'main') !== (target || 'main')) return true;
+    if (target && (x.target || 'main') !== target) return true;
     return kept ? kept.has(x.id) : survivesClear(x.pane_state, frame);
   });
 }
@@ -65,7 +65,7 @@ const HANDLERS = {
     store.merge(msg.store);
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
-    for (const mt of (msg.mounts || [])) mount(mt);
+    mountAll(msg.mounts);
     // mount() reconciles the minbar and the zero state on its way out — but with
     // ZERO mounts it never runs, which is exactly the first-open case the zero
     // state exists for. Reconcile explicitly once hello's mounts have settled.
@@ -95,7 +95,7 @@ const HANDLERS = {
   clear(msg) {
     if (view.previewing) { snapClearMount(msg.id, msg.target, msg); return; }
     if (msg.id) removePane(msg.id);
-    else clearTarget(msg.target || 'main', msg); // clear-all spares pinned panes
+    else clearTarget(msg.target, msg); // clear-all spares pinned panes
   },
   'pane:state'(msg) {
     if (view.previewing) { snapPaneState(msg.id, msg.pane_state); return; }

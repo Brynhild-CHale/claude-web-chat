@@ -229,3 +229,60 @@ test('an archive using GNU base-256 size fields is refused rather than mis-liste
   assert.throws(() => listTarGz(f), /base-256/);
   assert.throws(() => assertSafeMembers(f), /could not read the pack archive/);
 });
+
+// ── the decompression cap ───────────────────────────────────────────────────
+// The listing is the pre-extraction gate, and it gunzips the whole archive into
+// one Buffer to walk it. Deflate compresses a run of zeros at roughly 1000:1,
+// so the 64 MB download cap in fetch.js bounds nothing on this side: a 64 MB
+// body inflates to ~66 GB, and Buffer.MAX_LENGTH on Node 22 is 2^53-1, so
+// nothing refuses the allocation — the daemon is OOM-killed rather than
+// throwing something catchable. It runs IN the daemon (routes/packs.js →
+// installPack → fetchPack → stagePack → assertSafeMembers → listTarGz), and
+// that endpoint is reachable by any pane's fetch.
+//
+// Capping the listing also bounds EXTRACTION, which is the other half of the
+// hole: stagePack lists before it hands the file to `tar`, and the inflated
+// stream the cap measures is exactly the bytes tar would write.
+
+function writeZeroBomb(file, megabytes) {
+  return new Promise((resolve, reject) => {
+    const gz = zlib.createGzip();
+    const out = fs.createWriteStream(file);
+    const chunk = Buffer.alloc(1024 * 1024);
+    let left = megabytes;
+    const pump = () => {
+      while (left > 0) { left--; if (!gz.write(chunk)) { gz.once('drain', pump); return; } }
+      gz.end();
+    };
+    gz.on('error', reject);
+    out.on('error', reject);
+    out.on('close', () => resolve(file));
+    gz.pipe(out);
+    pump();
+  });
+}
+
+test('an archive that inflates past the cap is refused instead of allocated', async () => {
+  const dir = tmpDir('wc-bomb-');
+  // 300 MB of zeros — 300 KB on disk, over the 256 MB ceiling, and nothing like
+  // the memory a real bomb would ask for, because the cap stops the inflate.
+  const bomb = await writeZeroBomb(path.join(dir, 'bomb.tar.gz'), 300);
+  assert.ok(fs.statSync(bomb).size < 2 * 1024 * 1024, 'the fixture must be small on disk — that IS the attack');
+  assert.throws(() => listTarGz(bomb), /inflates to more than/);
+  assert.throws(() => assertSafeMembers(bomb), /could not read the pack archive/);
+});
+
+test('the cap refuses on our terms — a userFacing error, and an honest archive still lists', () => {
+  const dir = packFixture({ components: [{ name: 'deploy-board' }] });
+  const f = path.join(tmpDir('wc-cap-'), 'pack.tar.gz');
+  fs.writeFileSync(f, tarballOf(dir, 'pack-1'));
+
+  assert.ok(listTarGz(f).some((m) => m.name === 'pack-1/web-chat-pack.json'), 'the same archive lists fine uncapped');
+  try {
+    listTarGz(f, { maxBytes: 512 });
+    assert.fail('a 512-byte ceiling must refuse a multi-kilobyte archive');
+  } catch (e) {
+    assert.match(e.message, /inflates to more than/);
+    assert.equal(e.userFacing, true, 'the refusal must be sayable to the user, not a raw RangeError');
+  }
+});

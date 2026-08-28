@@ -3,13 +3,50 @@
 // <script> extraction + execution stay in the shared runtime (window.__wcMount);
 // this never reimplements that contract (rewrite risk #1). Pane DOM order is
 // local-only — never persisted (the drag reorder is cosmetic).
-import { $, view } from './state.js';
+import { $, hostFor, view } from './state.js';
 import { store } from './store.js';
 import { send, isOpen } from './ws.js';
 import { applyPaneTheme } from './theme.js';
 
 // pane records keyed by mount id: { wrapper, host, root, pane_state, title, paneTarget, theme, themeStyle, spec }
 export const panes = new Map();
+
+// A pane may only ever land in a SLOT. `target` arrives from /api/render, which
+// accepts any string for it, so resolving it with getElementById made every
+// chrome element a mountable container: `target:'topbar'` filed a pane inside
+// the header, and `target:'overlay'` hid one inside the (display:none) graph
+// viewer — which is exactly how the service-trust prompt shipped invisible in
+// 0.6.0. There is one slot today; anything that is not a slot falls back to it,
+// matching the server's own `target = 'main'` default.
+const SLOTS = new Set(['main']);
+const slotFor = (target) => $(SLOTS.has(target) ? target : 'main');
+
+// A mount id is agent-supplied too, and 'main' / 'status' / 'overlay' are all
+// plausible ids for Claude to pick. Everything this module resolves from an id
+// goes through hostFor/dropOrphanDom, which only ever see mount HOSTS: resolving
+// an id against the whole document removed chrome, and because the mount persists
+// in state.mounts and in every committed node, `hello` replayed the removal on
+// every reload — the surface stayed dead until the mount was cleared from outside
+// the browser.
+//
+// hostFor lives beside `$` in state.js: comment pins resolve a stored anchor's
+// mount id back to its host too, and one home keeps the write side (mount()'s
+// dataset) and every read side in agreement.
+
+// Remove everything in the DOM that belongs to `id` but that no pane record owns:
+// a bare mount host from an older session, and the half-built wrapper left by a
+// mount that threw (the wrapper is appended before the shadow root is attached,
+// so a failure used to leave an empty .pane behind and a re-render then stacked a
+// second one on top of it). Only ever mount DOM — never an arbitrary element that
+// happens to answer to the id.
+function dropOrphanDom(id) {
+  if (id == null) return;
+  const host = hostFor(id);
+  if (host) (host.closest('.pane') || host).remove();
+  for (const w of document.querySelectorAll('.pane')) {
+    if (w.dataset.paneId === id) w.remove();
+  }
+}
 
 function applyPaneStateDefaults(s) {
   s = s || {};
@@ -480,16 +517,32 @@ function attachDrag(wrapper, handle, id) {
   });
 }
 
+// A mount that throws must not leave a half-built pane behind — mount() has the
+// wrapper in the DOM before attachAndExtract can fail — so the failure is unwound
+// here and the throw is re-raised for the caller (mountAll isolates it).
 export function mount(m) {
+  try { mountPane(m); }
+  catch (e) {
+    const id = m && m.id;
+    panes.delete(id);
+    dropOrphanDom(id);
+    renderMinbar();
+    throw e;
+  }
+}
+
+function mountPane(m) {
   const { html, target, id, params, pane_state, form_state, theme } = m;
-  const slot = $(target) || $('main');
+  const slot = slotFor(target);
   const existing = panes.get(id);
   if (existing) {
     if (existing.wrapper.parentElement) existing.wrapper.parentElement.removeChild(existing.wrapper);
     panes.delete(id);
   } else {
-    const stale = document.getElementById(id);
-    if (stale) stale.remove();
+    // Whatever this id left in the DOM without a pane record — a bare mount host
+    // from an older session, a wrapper a failed mount left behind — and never
+    // anything else that happens to answer to this id.
+    dropOrphanDom(id);
   }
 
   const ps = applyPaneStateDefaults(pane_state);
@@ -497,7 +550,14 @@ export function mount(m) {
   const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params);
 
   const host = document.createElement('div');
-  host.id = id;
+  // The mount id is agent-supplied, and the shell resolves its OWN chrome live
+  // ($ in state.js is document.getElementById): a host that claimed an id the
+  // chrome already owns would win every later lookup of it — renderMinbar's
+  // $('minbar'), the drawer's open/close, the queue rail, the palette — and,
+  // because the mount replays on every hello, would keep winning. The id always
+  // lives in the dataset; it is mirrored onto the DOM id only when it is free.
+  host.dataset.mountId = id;
+  if (!document.getElementById(id)) host.id = id;
   host.className = 'mount-host';
   wrapper.appendChild(host);
 
@@ -586,7 +646,7 @@ export function mount(m) {
 export function removePane(id) {
   const p = panes.get(id);
   if (p) { if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
-  else { const host = document.getElementById(id); if (host) host.remove(); } // legacy bare host
+  else dropOrphanDom(id); // a legacy bare host, or a failed mount's leftovers
   renderMinbar();
 }
 
@@ -605,17 +665,38 @@ export function survivesClear(paneState, frame = {}) {
 }
 
 export function clearTarget(target, frame = {}) {
-  const slot = $(target) || $('main');
+  const slot = slotFor(target);
   const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   slot.querySelectorAll('.pane').forEach(p => {
     const id = p.dataset.paneId;
     const pane = id ? panes.get(id) : null;
+    // Membership of a target is the pane's RECORD, not DOM containment: every
+    // pane lives in the one slot now, so a targeted clear has to read the target
+    // the pane was rendered with or it would sweep the whole surface. NO target
+    // still means every pane — the server's filter is `!target || m.target ===
+    // target` (POST /api/clear), and a clear-all that spared the panes rendered
+    // with some other target would leave them standing after the server dropped
+    // them from state.mounts.
+    if (target && pane && pane.paneTarget !== target) return;
     const keep = kept ? kept.has(id) : survivesClear(pane && pane.pane_state, frame);
     if (keep) return;
     if (id) panes.delete(id);
     p.remove();
   });
   renderMinbar();
+}
+
+// Mount a whole frame's worth of mounts, isolating failures. One mount that
+// throws must not take the others — or the rest of the frame — with it: a `hello`
+// that died partway left the topbar, the queue rail and the version banner
+// uninitialised, so a single bad pane read as a dead surface. The failure is
+// logged rather than swallowed silently, and a pane script that throws is
+// already reported separately (get_events kind:'script-error').
+export function mountAll(mounts) {
+  for (const m of (mounts || [])) {
+    try { mount(m); }
+    catch (e) { console.error('[web-chat] mount failed for', m && m.id, e); }
+  }
 }
 
 export function fullReset({ mounts, store: newStore }) {
@@ -625,7 +706,7 @@ export function fullReset({ mounts, store: newStore }) {
   panes.clear();
   document.querySelectorAll('.mount-host').forEach(h => h.remove());
   store.replace(newStore);
-  for (const m of (mounts || [])) mount(m);
+  mountAll(mounts);
   renderMinbar();
 }
 

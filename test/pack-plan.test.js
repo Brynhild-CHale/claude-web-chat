@@ -169,3 +169,57 @@ test('a pack with no SKILL.md plans no skill unit', (t) => {
   assert.equal(p.skill, null);
   assert.equal(p.units.some((u) => u.kind === 'skill'), false);
 });
+
+// ── "PURE" means no directories either ──────────────────────────────────────
+// snapshot() above walks FILES, which is why this went unnoticed for so long:
+// planInstall resolved its registry through lib/server/paths, whose resolvePaths
+// calls ensureProjectDirs, so every plan mkdir'd six directories in the target
+// project — including the plan quarantinePack computes for a tree the user has
+// NOT approved, whose whole promise is "nothing is installed, nothing is
+// registered".
+
+function dirSnapshot(root) {
+  const out = [];
+  const walk = (d) => {
+    let entries; try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (!e.isDirectory()) continue;
+      const abs = path.join(d, e.name);
+      out.push(path.relative(root, abs));
+      walk(abs);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+test('planInstall creates no directories in the project or the user tier', (t) => {
+  const root = project(t);
+  const home = path.dirname(userPaths().root);
+  const dir = packFixture({ components: [{ name: 'deploy-board' }], themes: [{ name: 'acme-dark' }] });
+
+  const beforeProject = dirSnapshot(root);
+  const beforeHome = dirSnapshot(home);
+
+  const { plan: p } = plan(dir, root);
+  assert.ok(p.units.length, 'the plan still describes what it would do');
+
+  assert.deepEqual(dirSnapshot(root), beforeProject, 'planning created a directory in the project');
+  assert.deepEqual(dirSnapshot(home), beforeHome, 'planning created a directory in ~/.web-chat');
+});
+
+test('planInstall touches nothing at all when the project has no .web-chat yet', (t) => {
+  withTempHome(t);
+  const root = tmpDir('wc-bare-'); // deliberately NOT initialised
+  const dir = packFixture({ components: [{ name: 'deploy-board' }] });
+
+  const { plan: p } = plan(dir, root);
+  assert.ok(p.units.length);
+  assert.deepEqual(fs.readdirSync(root), [], 'a plan against a bare directory left it bare');
+});
+
+test('lib/packs no longer reaches into lib/server for its paths', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'packs', 'plan.js'), 'utf8');
+  assert.ok(!/require\(['"]\.\.\/server\/paths['"]\)/.test(src),
+    'plan.js imports the server paths adapter again — it mkdirs, which makes planInstall impure');
+});

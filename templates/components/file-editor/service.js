@@ -5,8 +5,19 @@
 // pushes state under the store key `editor`. v1 contract: store writes only.
 //
 // Path fencing: by default paths resolve under `root` (params.root or the repo
-// the daemon runs in) and anything escaping it is rejected. params.unfenced:true
+// the daemon runs in) and anything escaping it is rejected — through ctx.fence,
+// the daemon's containment engine (lib/core/paths), which refuses a lexical
+// `../..` AND a symlink that resolves out of the tree. params.unfenced:true
 // lifts the fence (for LLM-driven use) — a per-mount setting, off by default.
+//
+// Everything in `editor_ctl` is attacker-shaped input: it is a store key, so
+// every script in the page and every local driver can write it. Paths go
+// through the fence; a version id is checked against the index this service
+// itself wrote; and a control write stamped at or before this service's own
+// start is PERSISTED, not clicked, so it is never executed — only a view action
+// (`open`/`browse`) is replayed from one, and only at startup (see below). The
+// pane stamps `seq: Date.now()` at click time, which is what makes that test
+// mean what it says.
 //
 // Version snapshots live under <webChatDir>/file-versions/<sha1(abspath)>/ :
 // an index.json plus one raw-content file per version. Gitignored, project-local.
@@ -15,12 +26,17 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// The id shape `snapshot` mints, and the only actions a respawn may replay.
+const VERSION_RE = /^v\d+$/;
+const VIEW_ACTIONS = new Set(['open', 'browse']);
+
 let stream = null;
 let pollTimer = null;
 let stopped = false;
 
 module.exports = {
   async start(ctx) {
+    const startedAt = Date.now(); // the control-key cursor's floor — see below
     const cwd = process.cwd();
     const root = ctx.params && ctx.params.root ? path.resolve(cwd, ctx.params.root) : cwd;
     const unfenced = !!(ctx.params && ctx.params.unfenced);
@@ -28,7 +44,12 @@ module.exports = {
 
     let seq = 0;
     let load = 0;          // bumped only when the pane should (re)load the buffer
-    let lastCtlSeq = 0;
+    // The control-key cursor. It starts at THIS SERVICE'S START TIME, not at
+    // zero: the pane stamps `seq: Date.now()` at click time (component.html), so
+    // a write stamped at or before we started is by construction not a click
+    // made during our life — it is a persisted one, and a persisted `save` or
+    // `revert` must never execute (D8). Only a live write gets past this floor.
+    let lastCtlSeq = startedAt;
     const st = {
       root: unfenced ? '(any host path)' : displayPath(root),
       unfenced, path: null, exists: false, content: '', versions: [],
@@ -40,14 +61,15 @@ module.exports = {
       const rel = path.relative(root, abs);
       return rel === '' ? '.' : rel;
     }
+    // The fence lives in the daemon (ctx.fence → lib/core/paths). It resolves
+    // the path AND refuses a symlink that points out of the root, which the
+    // lexical path.relative check this used to do could not see — readFileSync
+    // and writeFileSync follow links, so a link committed in the repo walked
+    // straight out of the fence the pane's description promises.
     function resolveInput(p) {
-      const abs = path.resolve(root, p || '.');
-      if (!unfenced) {
-        const rel = path.relative(root, abs);
-        if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
-          throw new Error('path is outside the project root: ' + p);
-        }
-      }
+      if (unfenced) return path.resolve(root, p || '.');
+      const abs = ctx.fence(root, p || '.');
+      if (!abs) throw new Error('path is outside the project root: ' + p);
       return abs;
     }
     function verDir(abs) {
@@ -67,8 +89,17 @@ module.exports = {
       fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(idx, null, 2));
       return idx;
     }
+    // A version id becomes a FILENAME inside the snapshot directory, and it
+    // arrives from the store — so only an id this service minted may be read
+    // back. Shape first (`v<N>` is all `snapshot` ever writes), then the index
+    // itself, which is the unforgeable half: `../../../etc/passwd` is not a
+    // version, and neither is a well-shaped `v99` nobody took.
     function readVersion(abs, id) {
-      return fs.readFileSync(path.join(verDir(abs), id), 'utf8');
+      const key = String(id == null ? '' : id);
+      if (!VERSION_RE.test(key) || !loadIndex(abs).some((v) => v && v.id === key)) {
+        throw new Error('unknown version: ' + key);
+      }
+      return fs.readFileSync(path.join(verDir(abs), key), 'utf8');
     }
 
     const push = () => { if (!stopped) ctx.driver.setStore({ editor: { ...st, seq: ++seq, load } }); };
@@ -137,11 +168,34 @@ module.exports = {
       return true;
     };
 
-    // Honor a pre-existing control write, then an initial view.
-    try { if (!applyCtl((await ctx.driver.getStore(['editor_ctl'])).editor_ctl)) {
-      if (ctx.params && ctx.params.path) doOpen(ctx.params.path); else doBrowse('.');
-      push();
-    } } catch (e) { st.error = String(e.message || e); push(); }
+    // Startup: adopt the pane's VIEW state, never re-run its mutations. Nothing
+    // ever clears `editor_ctl`, and this service is respawned every time the
+    // last viewer leaves, the pane returns to the active node, or the daemon
+    // restarts — and a graph node restores the whole store, so navigating to an
+    // older node hands us that node's control write. Replaying it re-executed
+    // whatever it was: a stale `save` rewrote the file on disk with a buffer
+    // from another session (edit the file in your IDE, reopen the tab, lose it),
+    // a stale `revert` refilled the buffer from an old snapshot. So replay only
+    // `open`/`browse`, and take the persisted seq into the cursor if it is
+    // somehow ahead of our start.
+    //
+    // The startup read is not the only way a persisted write reaches us: the
+    // supervisor keeps this child alive across graph nodes that carry the same
+    // mount, and restoring a node swaps the WHOLE store — so a jump to a node
+    // whose snapshot holds a `save` hands that save to the live SSE stream and
+    // to the 4 s poll below, with no respawn involved. The `startedAt` floor is
+    // what covers that leg: that save was stamped when it was clicked, which is
+    // before we started, so it is refused there exactly as it is here.
+    try {
+      const ctl = (await ctx.driver.getStore(['editor_ctl'])).editor_ctl;
+      if (ctl && ctl.seq > lastCtlSeq) lastCtlSeq = ctl.seq;
+      if (ctl && VIEW_ACTIONS.has(ctl.action)) {
+        handle(ctl); // pushes
+      } else {
+        if (ctx.params && ctx.params.path) doOpen(ctx.params.path); else doBrowse('.');
+        push();
+      }
+    } catch (e) { st.error = String(e.message || e); push(); }
 
     // React to the pane's control writes live; poll as a startup/SSE-drop fallback.
     try {
