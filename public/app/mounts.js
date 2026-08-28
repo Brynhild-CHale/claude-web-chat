@@ -3,7 +3,7 @@
 // <script> extraction + execution stay in the shared runtime (window.__wcMount);
 // this never reimplements that contract (rewrite risk #1). Pane DOM order is
 // local-only — never persisted (the drag reorder is cosmetic).
-import { $, view } from './state.js';
+import { $, hostFor, view } from './state.js';
 import { store } from './store.js';
 import { send, isOpen } from './ws.js';
 import { applyPaneTheme } from './theme.js';
@@ -29,16 +29,9 @@ const slotFor = (target) => $(SLOTS.has(target) ? target : 'main');
 // every reload — the surface stayed dead until the mount was cleared from outside
 // the browser.
 //
-// hostFor scans rather than selects because a mount id is arbitrary text and
-// would have to be CSS-escaped to go into a selector; it reads the dataset first
-// because a host only takes the DOM id when it is free (see mount()).
-function hostFor(id) {
-  if (id == null) return null;
-  for (const h of document.querySelectorAll('.mount-host')) {
-    if ((h.dataset.mountId || h.id) === id) return h;
-  }
-  return null;
-}
+// hostFor lives beside `$` in state.js: comment pins resolve a stored anchor's
+// mount id back to its host too, and one home keeps the write side (mount()'s
+// dataset) and every read side in agreement.
 
 // Remove everything in the DOM that belongs to `id` but that no pane record owns:
 // a bare mount host from an older session, and the half-built wrapper left by a

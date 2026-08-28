@@ -21,7 +21,8 @@
 //   6. a mount whose id names chrome does not HIJACK it either: the shell looks
 //      its own chrome up live (`$` is document.getElementById), so a pane host
 //      that took the id would win every later lookup — persistently, because the
-//      mount replays on every hello;
+//      mount replays on every hello. And the mirror image: a comment pin anchored
+//      to such a pane still resolves, because anchors go through hostFor too;
 //   7. a clear-all sweeps panes rendered with ANY target, and a targeted clear
 //      sweeps only its own — the filter POST /api/clear applies server-side.
 const test = require('node:test');
@@ -221,6 +222,20 @@ test('a mount whose id names chrome does not hijack the shell\'s live lookups', 
   $('btn-add').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick();
   assert.equal(drawerEl.classList.contains('hidden'), true, 'and still closes it');
+
+  // The mirror image: a comment pin stores the MOUNT id (captureAnchor writes
+  // host.dataset.mountId), so resolving it back with document.getElementById
+  // would hand comments.js the chrome element — no shadow root, no marker, the
+  // pin silently dropped from the layer even though the server still holds it.
+  frame({
+    type: 'comments',
+    comments: [{ id: 'c1', shared: true, text: 'x', anchor: { mount: 'drawer', selector: 'p', ordinal: 0, text: 'shadow the drawer' } }],
+  });
+  await tick();
+  assert.equal($('pin-layer').querySelectorAll('.pin-marker').length, 1,
+    'the pin on the chrome-named pane resolved to its host and drew a marker');
+  frame({ type: 'comments', comments: [] });
+  await tick();
 });
 
 test('a clear-all sweeps every target; a targeted clear sweeps only its own', async () => {

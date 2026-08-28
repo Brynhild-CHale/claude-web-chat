@@ -6,7 +6,7 @@
 // private pins must never leak into Claude's store reads). Shown as a 📌 marker.
 // Each pin has a "share with Claude" toggle (default on); Claude reads only
 // shared pins via get_comments.
-import { view, $ } from './state.js';
+import { view, $, hostFor } from './state.js';
 import { esc } from './esc.js';
 
 // Module-level pin-mode state, shared between the #btn-pin-mode click handler
@@ -277,7 +277,10 @@ export function initComments() {
   // reliable anchor, 6/6); text is only a tiebreak so identical-text twins don't
   // pull the marker to the wrong element.
   function resolveAnchorEl(a) {
-    const host = a && $(a.mount);
+    // By MOUNT id, not by DOM id: captureAnchor stores host.dataset.mountId, and
+    // a pane whose id names chrome never takes the DOM id — `$` would return the
+    // chrome element (no shadowRoot) and silently drop every pin on that pane.
+    const host = a && hostFor(a.mount);
     if (!host || !host.shadowRoot) return null;
     let cands = [];
     try { cands = [...host.shadowRoot.querySelectorAll(a.selector)]; } catch (_) { return null; }
