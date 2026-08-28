@@ -177,6 +177,150 @@ test('differs does not discard an existing conflict sidecar (baseline lost mid-c
   assert.ok(fs.existsSync(sidecarPath(root)), 'sidecar preserved through differs');
 });
 
+// ── distribution-4: the conflict→resolution transition ──────────────────────
+//
+// The reconcile used to have no way OUT of `conflict`. `setBaseline` stayed
+// null on that branch, so after the user hand-merged, `local` matched neither
+// `baseline` nor `shipped` and the SAME branch fired on every `install` and
+// every `update`, forever: the sidecar rewritten, nothing recorded, no
+// convergence. The only exits were `--force` (adopt the shipped bytes, discard
+// the merge) or living with the reminder — and the shipped advice said
+// "review and merge, then re-run", which could not work.
+//
+// The fix is RECORD-ON-OFFER: `.web-chat/managed.json` keeps its shape, but its
+// value's meaning widens from "the shipped bytes we last WROTE" to "the shipped
+// bytes this file was last reconciled against — applied OR offered". The
+// reminder is derived from the filesystem (`<dest>.new` present while the file
+// still differs from shipped), not from new persisted state.
+
+test('a hand-merged conflict converges to kept-edited instead of re-firing forever', () => {
+  const root = tmpRoot();
+  const baseVersion = shippedContent() + '\n<!-- baseline -->\n';
+  const localEdit = shippedContent() + '\n<!-- MY local edit -->\n';
+  writeDest(root, localEdit);
+  setBaseline(root, RULES_DEST, hashContent(baseVersion));
+
+  // Run 1 — the offer. Announced, sidecar written, and the baseline advances to
+  // the bytes we just offered. That last part is the whole fix.
+  let r = resultFor(reconcileManagedFiles(root, {}), RULES_DEST);
+  assert.equal(r.action, 'conflict');
+  assert.ok(fs.existsSync(sidecarPath(root)), 'the offer writes the sidecar');
+  assert.equal(readBaselines(root)[RULES_DEST], hashContent(shippedContent()),
+    'the offered shipped hash is recorded — without this the machine never converges');
+
+  // The user merges by hand: bytes matching NEITHER side.
+  const merged = shippedContent() + '\n<!-- merged by hand -->\n';
+  writeDest(root, merged);
+
+  // Runs 2 and 3 — settled. The same offer is never announced twice.
+  for (const run of [2, 3]) {
+    r = resultFor(reconcileManagedFiles(root, {}), RULES_DEST);
+    assert.equal(r.action, 'kept-edited', `run ${run} must not re-flag the same offer`);
+    assert.equal(readDest(root), merged, `run ${run} leaves the merge alone`);
+  }
+});
+
+test('the first offer is never swallowed: a fresh conflict still announces', () => {
+  // The trap in the obvious fix ("sidecar absent ⇒ resolved"): on the FIRST
+  // conflict the sidecar does not exist either, so that rule would silently
+  // adopt the shipped hash, call the file kept-edited, and never tell the user
+  // an update was waiting.
+  const root = tmpRoot();
+  const baseVersion = shippedContent() + '\n<!-- baseline -->\n';
+  const localEdit = shippedContent() + '\n<!-- MY local edit -->\n';
+  writeDest(root, localEdit);
+  setBaseline(root, RULES_DEST, hashContent(baseVersion));
+  assert.ok(!fs.existsSync(sidecarPath(root)), 'no sidecar yet — this is the first offer');
+
+  const r = resultFor(reconcileManagedFiles(root, {}), RULES_DEST);
+  assert.equal(r.action, 'conflict', 'the first offer is announced, not silently recorded');
+  assert.equal(r.sidecar, RULES_DEST + '.new');
+  assert.equal(fs.readFileSync(sidecarPath(root), 'utf8'), shippedContent());
+  assert.equal(readDest(root), localEdit, 'and the file is untouched');
+});
+
+test('the .new sidecar is the reminder: it survives until the user deletes it', () => {
+  const root = tmpRoot();
+  const baseVersion = shippedContent() + '\n<!-- baseline -->\n';
+  const localEdit = shippedContent() + '\n<!-- MY local edit -->\n';
+  writeDest(root, localEdit);
+  setBaseline(root, RULES_DEST, hashContent(baseVersion));
+  reconcileManagedFiles(root, {});
+
+  const merged = shippedContent() + '\n<!-- merged by hand -->\n';
+  writeDest(root, merged);
+
+  // Settled, but not finished: the sidecar is still there and still says so.
+  for (const run of [1, 2]) {
+    const r = resultFor(reconcileManagedFiles(root, {}), RULES_DEST);
+    assert.equal(r.action, 'kept-edited');
+    assert.ok(r.pending, `run ${run} still reminds`);
+    assert.equal(r.sidecar, RULES_DEST + '.new');
+    assert.ok(fs.existsSync(sidecarPath(root)),
+      'the sidecar is the merge material AND the reminder — cleanup must not eat it');
+  }
+
+  // Deleting it ends the reminder. Nothing rewrites it.
+  fs.unlinkSync(sidecarPath(root));
+  const r = resultFor(reconcileManagedFiles(root, {}), RULES_DEST);
+  assert.equal(r.action, 'kept-edited');
+  assert.ok(!r.pending, 'quiet once the user has dealt with it');
+  assert.ok(!r.sidecar);
+  assert.ok(!fs.existsSync(sidecarPath(root)));
+});
+
+test('a genuine upstream change re-announces after a resolution', () => {
+  const root = tmpRoot();
+  const merged = shippedContent() + '\n<!-- merged by hand -->\n';
+  writeDest(root, merged);
+  // Resolved state: the baseline is the shipped bytes last offered, the file is
+  // the user's merge, no sidecar.
+  setBaseline(root, RULES_DEST, hashContent(shippedContent()));
+  assert.equal(resultFor(reconcileManagedFiles(root, {}), RULES_DEST).action, 'kept-edited');
+
+  // Now the template moves. This test cannot rewrite templates/, so it stages
+  // the identical on-disk state: the recorded baseline is the PREVIOUS shipped
+  // bytes and the real template is the new ones.
+  const previousShipped = shippedContent() + '\n<!-- the version we offered last time -->\n';
+  setBaseline(root, RULES_DEST, hashContent(previousShipped));
+
+  const r = resultFor(reconcileManagedFiles(root, {}), RULES_DEST);
+  assert.equal(r.action, 'conflict', 'a NEW offer is announced — only the same one goes quiet');
+  assert.equal(fs.readFileSync(sidecarPath(root), 'utf8'), shippedContent(), 'a fresh sidecar');
+  assert.equal(readBaselines(root)[RULES_DEST], hashContent(shippedContent()));
+  assert.equal(readDest(root), merged, 'and the merge is still not clobbered');
+});
+
+test('--force adopts the shipped bytes and clears the sidecar', () => {
+  const root = tmpRoot();
+  const baseVersion = shippedContent() + '\n<!-- baseline -->\n';
+  writeDest(root, shippedContent() + '\n<!-- MY local edit -->\n');
+  setBaseline(root, RULES_DEST, hashContent(baseVersion));
+  reconcileManagedFiles(root, {});
+  assert.ok(fs.existsSync(sidecarPath(root)));
+
+  const r = resultFor(reconcileManagedFiles(root, { force: true }), RULES_DEST);
+  assert.equal(r.action, 'overwritten');
+  assert.ok(!r.pending);
+  assert.equal(readDest(root), shippedContent());
+  assert.ok(!fs.existsSync(sidecarPath(root)), 'nothing left to merge, nothing left to remind about');
+  assert.equal(readBaselines(root)[RULES_DEST], hashContent(shippedContent()));
+});
+
+test('dryRun neither writes the sidecar nor advances the offered baseline', () => {
+  const root = tmpRoot();
+  const baseVersion = shippedContent() + '\n<!-- baseline -->\n';
+  const localEdit = shippedContent() + '\n<!-- MY local edit -->\n';
+  writeDest(root, localEdit);
+  setBaseline(root, RULES_DEST, hashContent(baseVersion));
+
+  const r = resultFor(reconcileManagedFiles(root, { dryRun: true }), RULES_DEST);
+  assert.equal(r.action, 'conflict');
+  assert.ok(!fs.existsSync(sidecarPath(root)), 'looking is not offering');
+  assert.equal(readBaselines(root)[RULES_DEST], hashContent(baseVersion),
+    'and looking does not record an offer that was never made');
+});
+
 test('dryRun writes nothing', () => {
   const root = tmpRoot();
   const results = reconcileManagedFiles(root, { dryRun: true });
