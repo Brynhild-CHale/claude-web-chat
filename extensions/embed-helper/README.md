@@ -40,7 +40,7 @@ If your browser allows that pref to be changed, you can then drag `manifest.json
 
 ## Verifying it works
 
-1. Open `http://localhost:5173/` and load the **embed helper status** component (or any `website` component).
+1. Run `claude-web-chat open` (the surface port is per-project — it walks upward from 5173, so it is not the same URL in every project) and load the **embed helper status** component (or any `website` component).
 2. If the helper is active, the website component skips the server-side embed-check and loads URLs directly with your browser session.
 3. Without the helper, you'll get the friendly "this site refuses to be embedded" panel for sites that set `X-Frame-Options` or restrictive CSP.
 

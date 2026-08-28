@@ -15,8 +15,11 @@
 //
 // The pane shows the latest run and a "Re-run" button. Clicking it bumps the
 // `rerun_request` store key; this script waits on that key and runs again — so
-// the user drives re-runs from the browser with no terminal round-trip. Claude
-// can also `wait_for` the `test_run` key to be told when a run finishes.
+// the user drives re-runs from the browser with no terminal round-trip. The
+// `test_run` key this script writes is a driver write (source:'server'), so it
+// never wakes Claude: Claude catches it up at its next turn via get_store /
+// get_events. To have a run wake Claude, the PANE must write a key declared via
+// `signals` and the user hits Push.
 
 const { spawn } = require('child_process');
 const { createDriver } = require('../lib/driver');

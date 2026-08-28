@@ -25,8 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main
 That checks you have Node 22+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
 
 ```
-~/.web-chat/versions/0.6.0/     the release, self-contained (dependencies included)
-~/.web-chat/current      ->     versions/0.6.0      (rollback = one symlink swap)
+~/.web-chat/versions/<version>/ the release, self-contained (dependencies included)
+~/.web-chat/current      ->     versions/<version>  (rollback = one symlink swap)
 ~/.local/bin/claude-web-chat -> ~/.web-chat/current/bin/claude-web-chat.js
 ```
 
@@ -175,8 +175,9 @@ launch              open the surface and start a Claude session together
 init                set up web-chat here, or check and tidy an existing install
 status              show version, daemon state, and install health for this project
 ls [--reap]         every web-chat surface running on this machine, and which
-                    project each one is; --reap stops the others and clears
-                    stale registry entries
+                    project each one is; --reap asks the others to shut down
+                    (uncommitted surface saved) and clears entries whose
+                    process is gone
 doctor              diagnose and repair daemon / lock / MCP / hook issues
 trust [name]        approve (or --deny) a component's host-side service.js;
                     with no name, list what's waiting
@@ -186,7 +187,6 @@ unlock              clear a turn lock orphaned by an interrupted turn
 export [node]       write a node to a self-contained .html
 docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see “Turning it off”)
-init                the one entry point: first-run setup + tutorial, or orient/repair
 install             the setup step on its own, and how updates reach a project
 update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back
@@ -254,7 +254,7 @@ Start with `claude-web-chat doctor` — it checks the daemon, portfile, MCP regi
 - **Claude's tools return "disabled".** Some scope has web-chat off; `claude-web-chat status` shows which one.
 - **The graph won't let you navigate.** An interrupted turn can orphan the turn lock; `claude-web-chat unlock` clears it.
 - **A dashboard pane is sitting there empty.** Its component ships a `service.js` that hasn't been approved. `claude-web-chat trust` lists what's waiting.
-- **You've lost track of which port is which project.** `claude-web-chat ls` maps every running surface back to its project; `--reap` stops the ones you're done with.
+- **You've lost track of which port is which project.** `claude-web-chat ls` maps every running surface back to its project; `--reap` asks the ones you're done with to shut down cleanly.
 
 ## Contributing
 

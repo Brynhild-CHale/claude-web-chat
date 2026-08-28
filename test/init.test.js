@@ -62,6 +62,8 @@ function inertDeps(extra = {}) {
   return {
     doctor: fakeDoctor(),
     collectRows: async () => [],
+    // Nothing in this suite may signal or unlink another project's daemon.
+    reap: async () => ({ stopped: 0, cleared: 0, skipped: [] }),
     client: {
       get: async () => { throw new Error('no daemon'); },
       post: async () => { throw new Error('no daemon'); },
@@ -405,7 +407,7 @@ test('existing + --yes: the SAFE defaults are taken, the dangerous ones still ar
       update: (...a) => { updateCalls.push(a); },
       reconcile: () => [{ dest: '.claude/rules/web-chat.md', tpl: 'rules/web-chat.md', action: 'updated' }],
       // A live surface for ANOTHER project, and a newer release: both default No.
-      collectRows: async () => [{ root: '/somewhere/else', title: 'else', url: 'http://127.0.0.1:5199', port: 5199, pid: process.pid, live: true, reachable: true }],
+      collectRows: async () => [{ root: '/somewhere/else', title: 'else', url: 'http://127.0.0.1:5199', port: 5199, pid: process.pid, pid_alive: true, reachable: true }],
       latest: { latest: '99.0.0', updateAvailable: true, releaseUrl: 'https://example.invalid' },
     }),
     // inRoot must not really chdir in a test.
@@ -425,8 +427,8 @@ test('existing mode prints the machine inventory and the terminal-only trust com
     cwd: root, log,
     ...inertDeps({
       collectRows: async () => [
-        { root, title: 'mine', url: 'http://127.0.0.1:5311', port: 5311, pid: process.pid, live: true, reachable: true },
-        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, live: true, reachable: true },
+        { root, title: 'mine', url: 'http://127.0.0.1:5311', port: 5311, pid: process.pid, pid_alive: true, reachable: true },
+        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, pid_alive: true, reachable: true },
       ],
     }),
   });
@@ -528,7 +530,7 @@ test('the inventory legend never claims a surface is this project when none is',
     ...inertDeps({
       // One live surface, belonging to a DIFFERENT project.
       collectRows: async () => [
-        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, live: true, reachable: true },
+        { root: '/other/proj', title: 'other', url: 'http://127.0.0.1:5312', port: 5312, pid: process.pid, pid_alive: true, reachable: true },
       ],
     }),
   });
@@ -537,6 +539,42 @@ test('the inventory legend never claims a surface is this project when none is',
   assert.doesNotMatch(text, /← is this project\./,
     'the legend contradicted the remediation two paragraphs later');
   assert.match(text, /none of these is this project/);
+});
+
+// The remediation that used to be unreachable. `readInstances` pruned dead-pid
+// entries as it read, so no row init ever saw had `pid_alive:false` and this
+// branch could not fire — and if it had, it unlinked the OTHER project's
+// portfile and reported "cleared", leaving ~/.web-chat untouched. It now goes
+// through the one reaper, which for a ghost row removes the registry entry the
+// question actually named. `--yes` takes the printed Yes default here (as it
+// does for install/on), which is what drives the branch without a terminal.
+test('a stale registry entry is reaped through the shared reaper, not by hand', async (t) => {
+  const root = installedProject(t);
+  const ghost = { root: '/gone/proj', title: 'ghost', url: 'http://127.0.0.1:5399', port: 5399, pid: 2 ** 30, pid_alive: false, reachable: false };
+  const reapCalls = [];
+  const log = sink();
+  await init(['--yes'], {
+    cwd: root, log,
+    ...inertDeps({
+      collectRows: async () => [ghost],
+      reap: async (rows, opts) => { reapCalls.push({ rows, opts }); return { stopped: 0, cleared: rows.length, skipped: [] }; },
+      // --yes takes every printed Yes default, so every OTHER offer has to be
+      // inert too. Left real, `install` rewrote this repo's own .mcp.json and
+      // pre-warmed a daemon in the checkout — a test may touch neither.
+      install: async () => {},
+      reconcile: () => [],
+      open: async () => {},
+    }),
+    inRoot: async (r, fn) => fn(),
+  });
+
+  assert.equal(reapCalls.length, 1, 'the remediation ran, through deps.reap');
+  assert.deepEqual(reapCalls[0].rows, [ghost], 'and was handed exactly the stale row');
+  const text = log.text();
+  assert.match(text, /1 stale registry entry/);
+  assert.match(text, /cleared 1 entry\./);
+  assert.match(text, /\(dead — registry entry is stale\)/,
+    'the annotation that could never print before rows() read the registry raw');
 });
 
 // ------------------------------------------------ the tour pane, mounted ----

@@ -88,8 +88,8 @@ shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · cha
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
-lib/core/          paths · portfiles · html · versions · cors · channels
-                                              (zero deps on the rest of lib/)
+lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
+                   channels · resources · mcp-seen   (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -134,9 +134,16 @@ were the only places they lived.
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
+| ask whether a pid is alive | `core/portfiles` `isPidAlive(pid)` | `try { process.kill(pid, 0) }` inline (the type guard is the point) |
+| remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
+| list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
+| stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
 | call the daemon over HTTP | `lib/client` `get` / `post` / `request` / `api` | `http.request` |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
+| write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
+| read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
+| keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
@@ -144,6 +151,10 @@ were the only places they lived.
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
+| resolve + scheme-gate an href/src read out of a captured page | `capture/profiles/util` `safeHref(href, pageUrl)` | `new URL` plus your own `javascript:` regex |
+| render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `capture/pane` `renderProfilePane` / `renderSimplifiedPane` / `defaultReduce` | import them from `lib/server/routes/capture` |
+| read, validate and require a capture-profile bundle | `capture/profiles` `loadBundle(dir)` / `validateMeta(meta)` | a second reader of `profile.json` with its own acceptance rules |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is the only alternative) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
@@ -157,15 +168,15 @@ were the only places they lived.
 
 ### `lib/core/paths.js` — the path authority
 
-The **only** file that contains the `'.web-chat'` literal or an `os.homedir()`
-call. Both builders are **pure** (no fs), so reading a path never has a side
-effect.
+The only file that **builds** a `.web-chat` path or calls `os.homedir()` (one
+other file compares a single path segment against `'.web-chat'`; nothing else
+joins one). Both builders are **pure** (no fs), so reading a path never has a
+side effect.
 
-- `projectPaths(root)` → `{ dir, serverJson, draft, graphDir, meta, captures,
-  components, themesDir, theme, profiles, exports, version, managed, disabled,
-  captureToken, serverLog, hookLog, PUBLIC_DIR, EXTENSIONS_DIR }`
-- `userPaths()` → `{ root, disabled, sessionsDir, sessionFile(id), themesDir,
-  theme, profiles, components, hubLog, instances, updateCheck }`
+- `projectPaths(root)` / `userPaths()` — **see the return object in the source.**
+  The key sets are deliberately not copied here: an enumeration in prose falls
+  behind the moment a feature adds a file, and this one did (it predated the
+  packs and services keys).
 - `ensureProjectDirs(projectPaths(root))` — the explicit boot-time mkdir (the
   server calls it; nothing else needs to).
 - `findProjectRoot(startDir)` / `resolveWebChatDir(startDir)` — root anchoring.
@@ -184,7 +195,14 @@ Everything about "is a daemon there and how do I find it." Role-based:
   (`<root>/.web-chat/server.json`); `server` is the only role-based portfile now
   (the hub folded into the registry in Phase 6). `checkLiveness` (default true)
   gates on a live pid.
-- `writePortfile(role, {root, pid, port})` / `deletePortfile(role, {root})`
+- `writePortfile(role, {root, pid, port})` / `deletePortfile(role, {root, pid})` —
+  the delete carries an **ownership rule**, and `pid` is tri-state: omitted =
+  unguarded (legacy), a number = "mine, unless a different live process has since
+  claimed it", `null` = "I own nothing; reap only if the process it names is
+  gone". Two daemons can share one root, and the one that leaves must not tear
+  down the record of the one that stayed. `lib/util/registry.release({root, pid})`
+  applies the same rule to BOTH records at once — call that from a shutdown path,
+  not this one.
 - `discoverPort({role, root, port, env})` — explicit port → `WEB_CHAT_PORT`
   (only when `env:true`) → portfile. **Don't pass `env:true` on a site that
   doesn't honor `WEB_CHAT_PORT` today** — that silently widens behavior.
@@ -222,6 +240,48 @@ Two policies are load-bearing — preserve them:
   `waitFor`) runs for up to `timeout_ms`; a blanket socket timeout would break it.
   `timeout` is opt-in. (Claude no longer long-polls — channels-only wake made
   `/api/wait` a driver-only endpoint.)
+
+### `lib/core/fsjson.js` — the durable-JSON-record engine
+
+The small JSON records under `.web-chat/` and `~/.web-chat/` — graph node files,
+`graph/_meta.json`, `draft.json`, `_version.json`, `instances.json`, `packs.json`
+— written so a crash cannot tear one, and read so a torn one is distinguishable
+from a missing one.
+
+- `writeJsonAtomic(file, value, { pretty = 2, newline = false, mkdir = true,
+  fsync = false })` — serialize, write `${file}.${pid}.tmp` **in the same
+  directory**, `renameSync` onto the destination. Returns the path; **throws** on
+  failure, because the callers legitimately disagree about what to do with one
+  (`writeNode` lets the route 500, `writeDraft` returns false, `recordMcpSeen`
+  ignores it). `newline` defaults off so adopting the engine never rewrites the
+  bytes of a record that had no trailing newline.
+- `readJson(file, { validate })` → exactly one of `{ok, value}` / `{absent}` /
+  `{corrupt, error}` / `{invalid, error, value}`. Not `existsSync`-then-read —
+  that is a TOCTOU; the ENOENT branch *is* the check.
+- `readJsonOr(file, fallback, { validate })` — the shape most readers want. The
+  fallback covers `corrupt` too, which is right both for the fail-CLOSED readers
+  (a torn trust store must read as "nothing trusted") and the documented
+  fail-soft ones.
+- `renameAside(file, { tag = 'corrupt', keep = 0 })` — move a record you could
+  not use out of the way instead of destroying it; `keep` caps how many such
+  files accumulate.
+
+Two rules the engine deliberately keeps:
+
+- **No type-specific knowledge.** Shape predicates are passed in as `validate`
+  and live next to the type's owner (`isGraphNode` sits beside `graph.load`) —
+  the same boundary `core/resources.js` draws.
+- **`invalid` is a returned state, never a throw and never a silent skip.** The
+  callers want three different things from it: `graph.load` skips the node,
+  `components-registry` surfaces a placeholder record, `seedBuiltins` repairs the
+  directory from the shipped copy.
+
+Out of scope: cross-filesystem moves (the temp file is always a sibling, so
+`renameSync` cannot hit `EXDEV`), append-only logs (`packs`' NDJSON audit trail
+stays on `appendFileSync` — a torn *line* is recoverable, a torn rewrite of the
+whole log is not), and read-modify-write races. Atomic rename makes each write
+whole; it does not serialize two writers. `doctor`'s out-of-process `_meta.json`
+repair says so in place.
 
 ### `lib/core/bus.js` — the change bus
 
@@ -264,8 +324,10 @@ docs. Three primitives, each consumer keeps its own outer shell:
   client passes its ws-echo there; the frozen export/preview pass none.
 - `attachAndExtract(host, html)` → `{ root, scripts }` — shadow root + inline-script
   extraction.
-- `runScripts(root, scripts, store, params, mountId)` — **the one `new Function`
-  site in the codebase** (the conventions tripwire enforces it).
+- `runScripts(root, scripts, store, params, mountId)` — one of the two dynamic-eval
+  sites in this file, which is **the only file that has any** (the other is
+  `runSeed`, which derives an AsyncFunction for a component's `seed.js`). The
+  conventions tripwire enforces both spellings.
 
 Authored ES5-ish so a baked offline export runs in any browser, and with **no
 script/style tag literal** (it's spliced unescaped inside a `<script>` — the
@@ -466,12 +528,11 @@ auto-discovers `test/`). Not `node --test test/` — that mis-resolves.
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for `new Function`) and holds a **per-file baseline** of four
-banned constructs, then **ratchets**:
+`lib/` (+ `public/` for the eval, escaping and token patterns) and holds a
+**per-file baseline** for every construct in the table below, then **ratchets**:
 
-- **New / grown occurrence → fail.** You added `http.request(` /`os.homedir()` /
-  `new Function('…')` / a readline require somewhere new — route it through the
-  engine instead.
+- **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
+  route it through its engine instead.
 - **Removed occurrence → fail as a STALE baseline.** A consolidation dropped a
   count below its baseline; lower the number here in the same PR. The ceiling can
   only ever move toward zero-outside-the-home.
@@ -483,10 +544,17 @@ Current homes (baselines can only shrink toward these):
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
+| `getPrototypeOf(async function` | `public/mount-runtime.js` (`runSeed`) — the AsyncFunction spelling of the same eval, added when `drawer.js` grew a second eval site the `new Function(` pattern could not see | Phase 4 ✅ |
+| `/^[a-z][a-z0-9-]*$/` (the component-name grammar) | `lib/core/names.js` (`COMPONENT_NAME_RE`, beside the reserved builtin list) | landed with `core/names` ✅ |
 | `require('node:readline…')` | `lib/cli/prompt.js` (the one prompt engine) | landed with `init` ✅ |
 | `.replace(/&/g` | `lib/core/html.js` (`escapeHtml`) — plus `lib/server/export.js`, whose one match is JSON-for-`<script>` escaping, not HTML | landed with the core leaves ✅ |
-| `{'&': '&amp;'}` (the lookup-map spelling) | `lib/core/html.js` (host) · `public/app/esc.js` (client) — the eight bundled capture profiles are grandfathered until they get an injected `esc` | landed with the core leaves ✅ |
+| `startsWith('..' + path.sep)` | `lib/core/paths.js` — `isInside(parent, child)` for a path on disk, `fence(parent, child)` for one you were handed (services get it as `ctx.fence`); the one grandfathered match is the lexical half of `fence` itself | landed with the file-editor hole fix ✅ |
+| `{'&': '&amp;'}` (the lookup-map spelling) | `lib/core/html.js` (host) · `public/app/esc.js` (client) — plus the two builtin component templates, whose pane script is evaluated in the browser with no module scope | landed with the core leaves ✅ |
+| `const esc =` / `function esc(` (the declaration spelling) | same two homes — capture profiles take `esc` off their injected ctx | landed with `lib/capture/pane` ✅ |
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
+| `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
+| `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
+| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 
 Working with it:
 
@@ -498,6 +566,13 @@ Working with it:
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
+- **A construct that is fine almost everywhere but must stay at zero in a few
+  places?** Give the pattern a `files` list instead of `roots`. That is why
+  `writeFileSync(` is not banned tree-wide: about eight of its ~35 sites in
+  `lib/` are legitimately not JSON records (export HTML, capture sidecars,
+  `component.html`/`seed.js`/`service.js`, `.gitignore`, the empty disable
+  markers), so a tree-wide ceiling could never approach zero-outside-the-home and
+  would bake in a table of baselines that are correct forever.
 
 ## When you genuinely need a *new* engine
 
@@ -507,9 +582,14 @@ Every planned consolidation has shipped — the current engines are below.
 `role:'hub'` entry alongside instances) + `lib/core/versions.js` (the three
 version facts: `packageVersion`, `SCHEMA_VERSION`, `PROTOCOL_VERSION` +
 `isProtocolCurrent`) (Phase 6). Register a running process with
-`registerInstance`/`registerHub`; read it with `readInstances`/`readHubEntry`.
-`_version.json` has one writer — the migration runner. Don't stamp a version or
-add a second "who's running where" file by hand.)
+`registerInstance`/`registerHub`; read it with `readInstances`/`readHubEntry`;
+release it with `release({root, pid})`, which removes the portfile and the
+registry entry under one ownership rule; classify the machine with `rows()`.
+`readInstances` prunes dead pids as it reads (the hub's idle monitor depends on
+it) — `readAllEntries()` is the raw view, and the only thing that can report a
+ghost record instead of quietly deleting it. `_version.json` has one writer —
+the migration runner. Don't stamp a version or add a second "who's running
+where" file by hand.)
 
 (Shipped: **tiered named resources** → `lib/core/resources.js` (Phase 5), a
 NARROW engine — components + themes' named library adopt it; profiles keep their

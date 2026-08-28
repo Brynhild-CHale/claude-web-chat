@@ -207,7 +207,7 @@ test('commitNode (commit params): omits label + unlock, does not clear the lock,
 
 // ── Draft round-trip ───────────────────────────────────────────────────────
 
-test('writeDraft/loadDraft: empty-surface skip, round-trip via SNAPSHOT_FIELDS, base_active gate unlinks', (t) => {
+test('writeDraft/loadDraft: empty-surface skip, round-trip via SNAPSHOT_FIELDS, base_active gate keeps the draft aside', (t) => {
   const { dir } = tmpGraph(t);
   const draftFile = path.join(dir, 'draft.json');
 
@@ -227,5 +227,19 @@ test('writeDraft/loadDraft: empty-surface skip, round-trip via SNAPSHOT_FIELDS, 
   const s3 = createState();
   turns.loadDraft(draftFile, 'DIFFERENT', s3);
   assert.equal(Object.keys(s3.store).length, 0);
-  assert.equal(fs.existsSync(draftFile), false, 'a base_active-mismatched draft is unlinked');
+  assert.equal(fs.existsSync(draftFile), false, 'a base_active-mismatched draft is not left at the live name');
+  const aside = fs.readdirSync(dir).filter((f) => f.startsWith('draft.json.corrupt-'));
+  assert.equal(aside.length, 1, 'it is renamed aside, never unlinked — a draft is the only copy of uncommitted work');
+});
+
+test('loadDraft: aside copies are capped, so a repeatedly-mismatched draft cannot pile up', (t) => {
+  const { dir } = tmpGraph(t);
+  const draftFile = path.join(dir, 'draft.json');
+  const snap = { mounts: [{ id: 'm1', html: '<p>x</p>' }], store: {}, comments: [], captures: [] };
+  for (let i = 0; i < 5; i++) {
+    turns.writeDraft(draftFile, `n${i}`, snap);
+    turns.loadDraft(draftFile, 'DIFFERENT', createState());
+  }
+  const aside = fs.readdirSync(dir).filter((f) => f.startsWith('draft.json.corrupt-'));
+  assert.ok(aside.length <= 3, `expected at most 3 aside drafts, found ${aside.length}`);
 });

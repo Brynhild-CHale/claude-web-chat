@@ -184,3 +184,108 @@ test('loader: inspectRaw and listProfiles see a loaded user profile (scope/has_p
   assert.equal(scoped.result.kind, 'rich');
   assert.equal(scoped.result.n, 42);
 });
+
+// ---------------------------------------------------------------------------
+// loadBundle / validateMeta — one loader, one verdict
+// ---------------------------------------------------------------------------
+//
+// The daemon's loader used to validate nothing but "extract.js exports a
+// function", so a typo'd matcher type or an uncompilable regex loaded cleanly
+// and was silently inert; the real checks lived in a SECOND loader inside
+// `claude-web-chat profile validate`, and the two disagreed on three points.
+// These pin the shared verdict.
+
+// Write a bundle with a raw profile.json (putProfile above always writes a valid
+// one), so the invalid shapes can be exercised.
+function putRawProfile(profilesDir, dirName, metaJson, extractJs) {
+  const dir = path.join(profilesDir, dirName);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'profile.json'), metaJson);
+  fs.writeFileSync(path.join(dir, 'extract.js'), extractJs || 'module.exports = () => ({ kind: "x" });');
+  return dir;
+}
+
+test('loadBundle: an unknown matcher type or an uncompilable regex is an error, not silence', () => {
+  const errs = reg.validateMeta({
+    name: 'typo',
+    matchers: [{ type: 'domian', value: 'example.com' }, { type: 'regex', value: '(' }],
+  });
+  assert.equal(errs.length, 2, 'both matchers reported');
+  assert.ok(errs.some((e) => /type must be 'domain' or 'regex'/.test(e)));
+  assert.ok(errs.some((e) => /bad regex/.test(e)));
+});
+
+test('loadBundle: the name `default` is refused — the CLI used to pass it', () => {
+  assert.ok(reg.validateMeta({ name: 'default' }).some((e) => /reserved/.test(e)));
+  // A missing name is NOT an error: the daemon has always fallen back to the
+  // directory name, so the validator must accept what the daemon loads.
+  assert.deepEqual(reg.validateMeta({ description: 'd' }), []);
+});
+
+test('loadBundle: a DIRECTORY named `default` is refused too, name or no name', () => {
+  withTempHome(() => {
+    const root = tmpRoot();
+    const paths = resolvePaths(root);
+    // The reservation used to sit on meta.name alone, so a bundle whose
+    // profile.json declared no name and whose directory was `default` resolved
+    // to the name `default` and registered — shadowing the builtin catch-all in
+    // getProfile/resolve/listProfiles for every page.
+    const dir = putRawProfile(paths.PROFILES_DIR, 'default', JSON.stringify({ description: 'no name' }));
+    const b = reg.loadBundle(dir);
+    assert.equal(b.name, 'default');
+    assert.ok(b.errors.some((e) => /reserved/.test(e)), 'the resolved name is checked, not just the declared one');
+
+    reg.loadUserProfiles(paths);
+    assert.equal(reg.listProfiles().filter((p) => p.name === 'default').length, 1,
+      'only the builtin catch-all is listed under that name');
+    assert.equal(reg.getProfile('default').scope, undefined,
+      'getProfile(\'default\') still returns the builtin, not a project bundle');
+  });
+});
+
+test('loadBundle: a missing name falls back to the directory name', () => {
+  withTempHome(() => {
+    const root = tmpRoot();
+    const paths = resolvePaths(root);
+    const dir = putRawProfile(paths.PROFILES_DIR, 'anonymous', JSON.stringify({ description: 'no name' }));
+    const b = reg.loadBundle(dir);
+    assert.deepEqual(b.errors, []);
+    assert.equal(b.name, 'anonymous');
+  });
+});
+
+test('loader: a bundle with an invalid profile.json is logged and skipped, not loaded inert', () => {
+  withTempHome(() => {
+    const root = tmpRoot();
+    const paths = resolvePaths(root);
+    putProfile(paths.PROFILES_DIR, 'fine', { matchers: [{ type: 'domain', value: 'fine.test' }] });
+    putRawProfile(paths.PROFILES_DIR, 'typo', JSON.stringify({
+      name: 'typo', matchers: [{ type: 'domian', value: 'typo.test' }],
+    }));
+    putRawProfile(paths.PROFILES_DIR, 'reserved', JSON.stringify({ name: 'default', matchers: [] }));
+
+    reg.loadUserProfiles(paths);
+    const names = reg.listProfiles().filter((p) => p.scope === 'project').map((p) => p.name);
+    assert.deepEqual(names, ['fine'], 'only the valid bundle registers');
+    assert.equal(reg.listProfiles().some((p) => p.name === 'typo'), false,
+      'the typo\'d matcher no longer loads as an inert profile');
+  });
+});
+
+test('loader: a mount_suffix collision moves the later profile to a suffix that is FREE', () => {
+  withTempHome(() => {
+    const root = tmpRoot();
+    const paths = resolvePaths(root);
+    // `a` claims suffix 'b'; `b`'s own default suffix is 'b' too. The old
+    // fallback re-used the profile's name — which was 'b' — so both panes
+    // mounted at the same id and clobbered each other.
+    putProfile(paths.PROFILES_DIR, 'a', {
+      matchers: [{ type: 'domain', value: 'a.test' }], pane: { mount_suffix: 'b' },
+    });
+    putProfile(paths.PROFILES_DIR, 'b', { matchers: [{ type: 'domain', value: 'b.test' }] });
+    reg.loadUserProfiles(paths);
+
+    const suffixes = ['a', 'b'].map((n) => reg.getProfile(n).mount_suffix);
+    assert.equal(new Set(suffixes).size, 2, `distinct mount suffixes (got ${JSON.stringify(suffixes)})`);
+  });
+});

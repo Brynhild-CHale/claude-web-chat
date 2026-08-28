@@ -13,6 +13,12 @@
 // never silently grow. Counts are per-file substring counts (not file:line — line
 // numbers drift with unrelated edits). test/ and test-support/ are intentionally
 // NOT scanned, so the harness may use raw http/ws/fetch.
+//
+// A pattern names either `roots` (scan these trees) or `files` (scan exactly
+// these paths). The `files` form exists for a construct that is legitimate in
+// most of the tree and must stay at zero in a few named places — a tree-wide
+// ceiling there would be a permanent table of files whose baseline is "correct
+// forever", which is a weaker contract than the one this file states.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -132,33 +138,51 @@ const PATTERNS = [
     //
     // What the baseline grandfathers, and why each entry is still there:
     //
-    //   * the eight bundled capture profiles. A profile is user-authorable —
-    //     the same loader reads .web-chat/profiles/<name>/extract.js, which
-    //     cannot `require` anything out of the package — so these cannot import
-    //     the engine the way lib/ code does. Giving profiles an injected `esc`
-    //     is L8a's job; until then they are pinned here so no TENTH appears.
     //   * public/app/esc.js IS the client-side home (it collapsed four copies
     //     with three different character sets), and it is a module the chrome
     //     imports. It escapes all five, same as lib/core/html.js.
+    //   * the two builtin component templates. Their pane script is evaluated in
+    //     the BROWSER by the mount runtime with no module scope — no import, no
+    //     require — so neither home is reachable from one. They are pinned
+    //     because they are the files users copy when authoring a component.
     //
-    // Everything in lib/ that CAN import the engine now does; the last one was
-    // lib/capture/profiles/simplify.js, whose four-character copy was used for
-    // `href=` and `src=` alike.
+    // The eight bundled capture profiles used to be here too. They are gone:
+    // extractors and panes now get `esc` on their ctx (CTX_HELPERS in
+    // lib/capture/profiles/index.js), which is the only mechanism a bundle
+    // living outside the package has.
     name: "{ '&': '&amp;' } map",
-    home: "lib/core/html.js (host) · public/app/esc.js (client) · an injected `esc` for profiles (L8a)",
+    home: "lib/core/html.js (host) · public/app/esc.js (client) · the injected `esc` for capture profiles",
     what: 'hand-rolled HTML entity escaping (lookup-map spelling)',
-    roots: ['lib', 'public'],
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
     re: /['"]&['"]\s*:\s*['"]&amp;['"]/g,
     baseline: {
-      'lib/capture/profiles/bundled/gmail/extract.js': 1,
-      'lib/capture/profiles/bundled/gmail/pane.js': 1,
-      'lib/capture/profiles/bundled/reddit/extract.js': 1,
-      'lib/capture/profiles/bundled/reddit/pane.js': 1,
-      'lib/capture/profiles/bundled/wikipedia/extract.js': 1,
-      'lib/capture/profiles/bundled/wikipedia/pane.js': 1,
-      'lib/capture/profiles/bundled/youtube/extract.js': 1,
-      'lib/capture/profiles/bundled/youtube/pane.js': 1,
       'public/app/esc.js': 1,
+      'templates/components/file-editor/component.html': 1,
+      'templates/components/git-dashboard/component.html': 1,
+    },
+  },
+  {
+    // The escaper, spelled as a DECLARATION rather than as its body. Both rows
+    // above match a particular way of writing the replacement; this one matches
+    // the name, so a copy that escapes a different character set, or builds the
+    // map some other way, still trips it. It is the row that would have caught
+    // the nine `esc` declarations across lib/capture the moment a tenth
+    // appeared, regardless of how its author spelled the body.
+    //
+    // A capture profile takes `esc` off its ctx and a component template gets
+    // the two entries explained above; nothing else in lib/ or public/ may
+    // declare one.
+    name: 'const esc = / function esc(',
+    home: 'lib/core/html.js (host) · public/app/esc.js (client) · the injected `esc` for capture profiles',
+    what: 'declaring a local HTML escaper instead of taking the shared one',
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
+    re: /(?:const|let|var)\s+esc\s*=|function\s+esc\s*\(/g,
+    baseline: {
+      'public/app/esc.js': 1,
+      'templates/components/file-editor/component.html': 1,
+      'templates/components/git-dashboard/component.html': 1,
     },
   },
   {
@@ -182,6 +206,46 @@ const PATTERNS = [
     re: /startsWith\(\s*['"]\.\.['"]\s*\+\s*path\.sep/g,
     baseline: {
       'lib/core/paths.js': 1,
+    },
+  },
+  {
+    // Sending a signal to another process. There is exactly one legitimate
+    // reason to reach for this in a general way — asking "is this pid alive"
+    // (`kill(pid, 0)`), which is lib/core/portfiles.isPidAlive — and a short,
+    // named list of places that deliberately deliver a SIGTERM.
+    //
+    // The pattern exists because ls.js re-declared the liveness probe three
+    // lines under the import of the module that exports it, and the copy was
+    // weaker (no numeric type guard, so a string pid coerced and could read as
+    // alive). It then used that copy to gate a SIGTERM at whatever process held
+    // a registry pid — a user-scope file that outlives every daemon. ls.js is at
+    // zero now: the classification is lib/util/registry.rows() and the reaping is
+    // lib/cli/reap.js, which stops a daemon by ASKING it (lib/cli/commands/stop)
+    // and never signals a pid it has not heard answer for itself.
+    //
+    // The baselines below are counted as substrings, so the explanatory comments
+    // in stop.js and restart.js (which quote the construct they replaced) are
+    // included deliberately.
+    name: 'process.kill(',
+    home: 'lib/core/portfiles.js `isPidAlive` (liveness) · lib/cli/commands/stop.js (the one acknowledged-shutdown escalation)',
+    what: 'probing or signalling another process',
+    roots: ['lib'],
+    re: /process\.kill\(/g,
+    baseline: {
+      // The one liveness predicate, `kill(pid, 0)`.
+      'lib/core/portfiles.js': 1,
+      // The stop engine: one SIGTERM escalation after an unacknowledged (or
+      // wedged) shutdown request, plus the comment explaining why asking comes
+      // first.
+      'lib/cli/commands/stop.js': 2,
+      // The hub bounce, and its CLI twin. These are the ONLY signal sites that
+      // already gate on identity — they kill the pid /api/health reported, not a
+      // pid read out of a file.
+      'lib/util/hub.js': 1,
+      'lib/cli/commands/hub.js': 1,
+      // A comment quoting the hand-rolled kill restart dropped in favour of the
+      // stop engine.
+      'lib/cli/commands/restart.js': 1,
     },
   },
   {
@@ -221,6 +285,53 @@ const PATTERNS = [
       'lib/server/export.js': 1,
     },
   },
+  {
+    // The tmp+rename idiom's fingerprint: a temp path carrying the pid. It
+    // existed twice with two spellings — `${p}.${pid}.tmp` in lib/util/registry
+    // and `${file}.tmp-${pid}` in lib/packs/store — which is exactly how the
+    // three records that most needed it (graph node files, graph/_meta.json,
+    // draft.json) ended up with no atomicity at all: there was no single thing
+    // to adopt. Both spellings are matched, so reaching for either one now has
+    // to come through here.
+    name: 'a per-pid `.tmp` name (the tmp+rename idiom)',
+    home: 'lib/core/fsjson.js — `writeJsonAtomic`',
+    what: 'writing a durable record via a temp file + renameSync',
+    roots: ['lib'],
+    re: /\$\{process\.pid\}\.tmp|\.tmp-\$\{process\.pid\}/g,
+    baseline: {
+      'lib/core/fsjson.js': 1,
+      // A DIFFERENT concept that happens to share the idiom, and it must not be
+      // routed through the engine: symlinkAtomic swaps ~/.web-chat/current,
+      // which is a symlink, not a JSON record — there is nothing to serialize
+      // and the temp entry is created with symlinkSync. Same discipline, other
+      // object.
+      'lib/update/install-layout.js': 1,
+    },
+  },
+  {
+    // NOT a lib-wide ban: 8 of the ~35 writeFileSync sites in lib/ are
+    // legitimately not JSON records (export HTML, capture sidecars,
+    // component.html/seed.js/service.js, .gitignore, the empty disable markers),
+    // so a lib-wide ceiling could never approach zero-outside-the-home the way
+    // the contract at the top of this file promises.
+    //
+    // Scoped instead to the three files whose records the durable-JSON engine
+    // was extracted FOR, each at a hard zero. Every writer in them — a graph
+    // node file, graph/_meta.json, draft.json — is a durable record that a
+    // crash mid-write used to be able to tear, and the reader of each one has a
+    // recovery path that assumes it cannot happen twice. A new bare
+    // writeFileSync here is the regression.
+    name: 'writeFileSync( in the three durable-record files',
+    home: 'lib/core/fsjson.js — `writeJsonAtomic`',
+    what: 'writing a graph node, graph/_meta.json or draft.json',
+    files: [
+      'lib/server/graph.js',
+      'lib/server/domain/turns.js',
+      'lib/update/migrations/index.js',
+    ],
+    re: /writeFileSync\(/g,
+    baseline: {},
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
@@ -238,22 +349,34 @@ function relPosix(abs) {
   return path.relative(REPO_ROOT, abs).split(path.sep).join('/');
 }
 
-function census(roots, re) {
+// A pattern scans whole `roots`, or — when the construct has legitimate uses
+// elsewhere in the tree and only a named set of files must stay at zero — an
+// explicit `files` list. The two forms share the same ratchet below.
+//
+// `exts` defaults to .js. A pattern that also governs code living in .html (a
+// component template's pane script, which is evaluated in the browser and so
+// cannot import anything) says so explicitly — without it those files are simply
+// invisible to the ratchet, which is how two hand-rolled escapers sat in
+// templates/ unpoliced while the same construct was pinned everywhere else.
+function census({ roots, files, re, exts = ['.js'] }) {
   const map = {};
-  for (const r of roots) {
-    const abs = path.join(REPO_ROOT, r);
-    if (!fs.existsSync(abs)) continue;
-    for (const f of walk(abs, [])) {
-      const m = fs.readFileSync(f, 'utf8').match(re);
-      if (m && m.length) map[relPosix(f)] = m.length;
-    }
+  const targets = files
+    ? files.map((f) => path.join(REPO_ROOT, f))
+    : (roots || []).flatMap((r) => {
+      const abs = path.join(REPO_ROOT, r);
+      return fs.existsSync(abs) ? walk(abs, [], null).filter((f) => exts.some((e) => f.endsWith(e))) : [];
+    });
+  for (const f of targets) {
+    if (files) assert.ok(fs.existsSync(f), `conventions: ${relPosix(f)} is listed in a pattern's \`files\` but does not exist — fix the list.`);
+    const m = fs.readFileSync(f, 'utf8').match(re);
+    if (m && m.length) map[relPosix(f)] = m.length;
   }
   return map;
 }
 
 for (const p of PATTERNS) {
   test(`conventions: \`${p.name}\` (${p.what}) is confined to its allowed home`, () => {
-    const actual = census(p.roots, p.re);
+    const actual = census(p);
 
     // (a) tripwire — no new or grown occurrences.
     for (const [file, n] of Object.entries(actual)) {

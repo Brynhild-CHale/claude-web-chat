@@ -26,10 +26,12 @@
       </div>
       <button aria-label="like this video along with 16,000,000 other people">16M</button>
       <div id="description-inline-expander">
-        <span id="attributed-snippet-text">The official video for "Never Gonna Give You Up". Taken from the album Whenever You Need Somebody. Listen on Spotify and grab the merch below.</span>
+        <span id="attributed-snippet-text">The official video for "Never Gonna Give You Up". Taken from the album Whenever You Need Somebody. Listen on Spotify and grab the merch below. Ailurus &amp; Ailuropoda&nbsp;differ.</span>
         <a class="ytAttributedStringLink" href="/redirect?q=https%3A%2F%2Fexample.com%2Fspotify">example.com/spotify</a>
         <a class="ytAttributedStringLink" href="https://example.com/merch">Official merch store</a>
         <a class="ytAttributedStringLink" href="/@RickAstley">Subscribe to Rick Astley</a>
+        <!-- /redirect?q= carries attacker-controllable text: the unwrapped value goes through safeHref. -->
+        <a class="ytAttributedStringLink" href="/redirect?q=javascript%3Aalert(1)">ENTITY_JS_LINK</a>
       </div>
       <div id="video-summary">Summary An upbeat 1987 pop anthem in which the singer pledges unwavering devotion. AI-generated video summary and may contain errors.</div>
     </ytd-watch-metadata>
