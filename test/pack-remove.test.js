@@ -405,3 +405,96 @@ test('a record whose file list is not an array is refused, not thrown out of', a
   assert.equal(v.units[0].state, 'refused');
   assert.match(v.units[0].refused, /not an array/);
 });
+
+// ── the anchor must not refuse a unit that is simply GONE ───────────────────
+// isInside is realpath-based on both sides and falls back to path.resolve for a
+// path it cannot resolve, so an anchor reached through a symlink (macOS /var,
+// a checkout or a $HOME that is a link) plus a directory that is not there made
+// the two sides disagree — and "already gone" came back as a refusal --force
+// could not clear, with a reason that read like an escape attempt. These roots
+// are deliberately NOT realpath'd: they are symlinks, which is the state the
+// suite's own tmpDir was hiding.
+
+function symlinkedRoot(prefix) {
+  const real = tmpDir(prefix);
+  const link = path.join(tmpDir(`${prefix}link-`), 'proj');
+  fs.symlinkSync(real, link);
+  return link;
+}
+
+test('a unit whose directory the user deleted by hand is `missing`, not refused, under a symlinked root', async (t) => {
+  withTempHome(t);
+  const root = symlinkedRoot('wc-symroot-');
+  fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+  assert.notEqual(root, fs.realpathSync(root), 'the root must be reached through a symlink for this to test anything');
+
+  // The record is well formed; the directory it names is simply not there.
+  plantRecord(root, [{
+    kind: 'component',
+    name: 'deploy-board',
+    files: [{ path: 'component.html', sha256: 'x'.repeat(64) }],
+  }]);
+  assert.equal(fs.existsSync(path.join(projectPaths(root).components, 'deploy-board')), false);
+
+  const v = verifyPack(listPacks(root)[0], { root, tier: 'local' });
+  assert.equal(v.units[0].state, 'missing', 'a directory that is gone is gone — not an escape');
+  assert.equal(v.units[0].refused, undefined);
+
+  const res = await packs.removePackByName({ name: 'acme-ops', root });
+  assert.equal(res.results[0].action, 'already gone');
+  assert.equal(res.removedAll, true, 'nothing was kept, so the record can go');
+  assert.equal(listPacks(root).length, 0, 'the record for a hand-deleted unit is droppable');
+});
+
+test('the same holds on the system tier when $HOME is a symlink', async (t) => {
+  const home = symlinkedRoot('wc-symhome-');
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  t.after(() => {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevProfile;
+  });
+  assert.notEqual(home, fs.realpathSync(home));
+
+  const root = tmpDir('wc-proj-');
+  fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+  plantRecord(root, [{
+    kind: 'skill',
+    name: 'acme-ops',
+    files: [{ path: 'SKILL.md', sha256: 'x'.repeat(64) }],
+  }], { tier: 'system' });
+
+  const v = verifyPack(listPacks(root)[0], { root, tier: 'system' });
+  assert.equal(v.units[0].state, 'missing');
+
+  const res = await packs.removePackByName({ name: 'acme-ops', root, tier: 'system' });
+  assert.equal(res.results[0].action, 'already gone');
+  assert.equal(res.removedAll, true);
+  assert.equal(listPacks(root).length, 0);
+});
+
+test('a committed symlink is still refused when the anchor is itself symlinked', async (t) => {
+  withTempHome(t);
+  const root = symlinkedRoot('wc-symroot2-');
+  const outside = tmpDir('wc-victim-');
+  const victim = path.join(outside, 'component.html');
+  fs.writeFileSync(victim, '<p>somebody else\'s file</p>');
+  const sha = require('crypto').createHash('sha256').update(fs.readFileSync(victim)).digest('hex');
+
+  fs.mkdirSync(projectPaths(root).components, { recursive: true });
+  fs.symlinkSync(outside, path.join(projectPaths(root).components, 'deploy-board'));
+  plantRecord(root, [{
+    kind: 'component',
+    name: 'deploy-board',
+    files: [{ path: 'component.html', sha256: sha }],
+  }]);
+
+  const v = verifyPack(listPacks(root)[0], { root, tier: 'local' });
+  assert.equal(v.units[0].state, 'refused', 'the escape is caught at the ancestor that does exist');
+  assert.match(v.units[0].refused, /resolves outside/);
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(res.results[0].action, 'refused');
+  assert.equal(fs.existsSync(victim), true);
+});
