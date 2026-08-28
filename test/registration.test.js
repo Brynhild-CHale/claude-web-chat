@@ -172,6 +172,22 @@ test('mcpArgv registers at local scope through stableBin, never __dirname', (t) 
   assert.deepEqual(reg.removeArgv(), ['mcp', 'remove', 'web-chat', '--scope', 'local']);
 });
 
+test('mcpArgv points a MANAGED install at current/, not the version directory', (t) => {
+  const home = withTempHome(t);
+  const { installPaths } = require('../lib/core/paths');
+  const paths = installPaths();
+  // The layout an unpacked release has; the process cannot move itself into it,
+  // so the decision is exercised against a fabricated packageRoot.
+  const vdir = path.join(paths.versions, '0.6.0');
+  fs.mkdirSync(path.join(vdir, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(vdir, 'bin', 'claude-web-chat-mcp.js'), '');
+
+  const argv = reg.mcpArgv({ packageRoot: vdir, paths });
+  assert.equal(argv[7], path.join(home, '.web-chat', 'current', 'bin', 'claude-web-chat-mcp.js'));
+  assert.doesNotMatch(argv[7], /versions\/0\.6\.0/,
+    'a local-scope registration overrides .mcp.json and never self-heals — a pruned version dir would be permanent');
+});
+
 // ── resolveRoot ─────────────────────────────────────────────────────────────
 
 test('resolveRoot: `existing` refuses outside a project, `install` falls back, `optional` reports null', () => {

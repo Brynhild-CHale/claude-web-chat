@@ -6,6 +6,7 @@ const os = require('os');
 const doctor = require('../lib/cli/commands/doctor');
 const { withTempHome, withServer, withHub } = require('../test-support/helpers');
 const { recordMcpSeen } = require('../lib/core/mcp-seen');
+const { mcpArgv } = require('../lib/setup/registration');
 
 // doctor now probes the capture hub on the fixed hub port. Pin it, for the whole
 // file, at a port nothing is listening on so the check is deterministic and never
@@ -90,6 +91,44 @@ test('doctor detects and repairs a bare (unresolvable) MCP registration', async 
   assert.deepEqual(argv.slice(0, 6), ['mcp', 'add', 'web-chat', '--scope', 'local', '--']);
   assert.equal(argv[6], 'node');
   assert.ok(path.isAbsolute(argv[7]) && /bin\/claude-web-chat-mcp\.js$/.test(argv[7]));
+});
+
+// cli-setup-2: the repair argv used to be hand-built from __dirname, which on a
+// managed install is ~/.web-chat/versions/<v>/… — the path pruneVersions deletes
+// three updates later. A local-scope registration overrides .mcp.json and never
+// self-heals, so that write is silently permanent. doctor has no bin path of its
+// own any more; it asks the engine, whose builder is stableBin.
+test('doctor repairs with the ENGINE\'s argv, not a bin path of its own', async (t) => {
+  const root = project(t);
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'web-chat': { command: 'claude-web-chat-mcp' } } })
+  );
+  const claude = fakeClaude({ ok: true });
+  await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
+  assert.deepEqual(claude.calls[0], mcpArgv());
+});
+
+// cli-setup-6: the turn lifecycle needs BOTH hooks — UserPromptSubmit takes the
+// lock, Stop commits the node. Counting handlers reported "1 hook(s) registered
+// and resolvable" for a project where no turn could ever commit.
+test('doctor fails the hook check when only ONE of the two events is registered', async (t) => {
+  const root = project(t);
+  const settingsPath = path.join(root, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
+  fs.writeFileSync(settingsPath, JSON.stringify({
+    hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }] },
+  }, null, 2));
+  const claude = fakeClaude();
+
+  const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
+
+  assert.ok(summary.checks.some((c) => c.status === 'problem' && /missing for Stop/.test(c.m)),
+    'the missing event is named, not folded into a smaller count');
+  assert.ok(summary.checks.some((c) => c.status === 'repaired' && /registered the missing hook\(s\): Stop/.test(c.m)));
+  const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  assert.ok(after.hooks.Stop, 'and the repair actually added it');
 });
 
 test('doctor treats a resolved `node <abs>` MCP registration as healthy', async (t) => {
