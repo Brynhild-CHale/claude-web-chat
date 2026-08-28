@@ -15,7 +15,7 @@ import {
 } from './mounts.js';
 import {
   applyActive, applyLock, ensureGraph, updateChip, onGraphChanged, syncThemeSelect,
-  completeBranchTransition, showReaimNote,
+  completeBranchTransition, showReaimNote, leavePreview,
 } from './topbar.js';
 import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
 import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
@@ -150,9 +150,7 @@ const HANDLERS = {
     // exactly where this client is previewing — attach instead of staying in a
     // half-detached state (previewing with viewedId === activeId).
     if (view.previewing && 'active' in msg && msg.active === view.viewedId) {
-      view.previewing = false;
-      view.liveSnapshot = null;
-      $('main').classList.remove('preview-readonly');
+      leavePreview();
     }
     if (view.previewing) {
       view.liveSnapshot = { mounts: (msg.mounts || []).map(x => ({ ...x })), store: { ...(msg.store || {}) } };

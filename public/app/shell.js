@@ -6,7 +6,7 @@
 import { view, $ } from './state.js';
 import { toggleMode } from './theme.js';
 import {
-  previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote,
+  previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
 import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview } from './graph-view.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
@@ -162,8 +162,7 @@ async function startNewGraph() {
     const body = await r.json().catch(() => ({}));
     if (body.pending) { showReaimNote("Claude is mid-turn — the new graph starts when the turn ends."); return; }
   } catch { return; }
-  view.previewing = false; view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
+  leavePreview();
 }
 function initNewGraph() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };

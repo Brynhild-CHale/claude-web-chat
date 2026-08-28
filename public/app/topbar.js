@@ -134,6 +134,42 @@ export async function branchOnEdit() {
   }
 }
 
+/* ---------- leaving preview: ONE owner of the transition ----------
+   Three lines — `previewing = false`, drop the snapshot, un-gate #main — were
+   hand-copied to EIGHT places (this file x4, graph-view x2, ws.js, shell.js) and
+   had already drifted: some copies also moved active/viewed, one restored the
+   captured live surface, one flushed the gated form values, and the two in
+   graph-view had quietly lost the queued-re-aim branch their siblings carry.
+   `previewing` is the flag state.js says GATES all writes, so a copy that drops
+   out of step is a preview mutating the live node.
+
+   The core is unconditional; the three real variations are named options rather
+   than a switchboard:
+     activeId        this client now believes active is here (a set-active or a
+                     branch-here that has actually landed) — moves activeId AND
+                     viewedId with it.
+     restoreSnapshot go back to the live surface captured on the way in:
+                     re-render it, re-apply the active node's theme, aim viewed
+                     at active. Consumes liveSnapshot before it is dropped.
+     flushForms      release the form values gated during the preview (the
+                     branch-on-edit path, whose on-screen DOM IS the new live
+                     state — so it deliberately does not re-render).
+   Callers keep their own `body.pending` early return: whether a queued re-aim
+   should leave preview AT ALL is the caller's question, not this one's. */
+export function leavePreview({ activeId = null, restoreSnapshot = false, flushForms = false } = {}) {
+  const snap = view.liveSnapshot;
+  view.previewing = false;
+  view.liveSnapshot = null;
+  $('main').classList.remove('preview-readonly');
+  if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
+  if (restoreSnapshot) {
+    view.viewedId = view.activeId;
+    if (snap) fullReset({ mounts: snap.mounts, store: snap.store });
+    applyNodeTheme(getActiveNodeTheme(), true);
+  }
+  if (flushForms) flushFormStates();
+}
+
 // The editing client's half of a branch-here: exit preview WITHOUT re-rendering
 // (the on-screen DOM — previewed node + in-flight edit — IS the new live
 // state), then flush the gated form values. Idempotent and shared by the
@@ -143,12 +179,7 @@ export function completeBranchTransition(id) {
   if (view.branchingTo !== id) return false;
   view.branchingTo = null;
   if (view.previewing && view.viewedId === id) {
-    view.previewing = false;
-    view.liveSnapshot = null;
-    view.activeId = id;
-    view.viewedId = id;
-    $('main').classList.remove('preview-readonly');
-    flushFormStates();
+    leavePreview({ activeId: id, flushForms: true });
     onGraphChanged();
   }
   return true;
@@ -156,13 +187,7 @@ export function completeBranchTransition(id) {
 
 export function returnToActive() {
   if (!view.previewing) { view.viewedId = view.activeId; updateChip(); return; }
-  const snap = view.liveSnapshot;
-  view.previewing = false;
-  view.liveSnapshot = null;
-  view.viewedId = view.activeId;
-  $('main').classList.remove('preview-readonly');
-  if (snap) fullReset({ mounts: snap.mounts, store: snap.store });
-  applyNodeTheme(getActiveNodeTheme(), true);
+  leavePreview({ restoreSnapshot: true });
   updateChip();
 }
 
@@ -231,9 +256,7 @@ export async function doWipe(name) {
   });
   const body = await r.json().catch(() => ({}));
   if (body.pending) { showReaimNote("Claude is mid-turn — the surface wipes when the turn ends."); return; }
-  view.previewing = false;
-  view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
+  leavePreview();
 }
 
 async function setActiveHere() {
@@ -251,11 +274,7 @@ async function setActiveHere() {
     showReaimNote(`Queued — jumps to ${labelFor(target)} when Claude's turn ends.`);
     return;
   }
-  view.previewing = false;
-  view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
-  view.activeId = target;
-  view.viewedId = target;
+  leavePreview({ activeId: target });
   const nr = await fetch('/api/graph/node/' + target);
   if (nr.ok) { const node = await nr.json(); fullReset({ mounts: node.mounts || [], store: node.store || {} }); }
   await onGraphChanged();

@@ -9,7 +9,7 @@
 // `view` is the shared state (activeId/viewedId/lock/graphCache/…).
 import { view, $, cssVar } from './state.js';
 import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
-import { previewNode, ensureGraph } from './topbar.js';
+import { previewNode, ensureGraph, leavePreview } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
 
@@ -463,8 +463,7 @@ async function setActive(id) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
   });
   if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
-  view.previewing = false; view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
+  leavePreview();
   await refreshGraph();
   renderHistory();
 }
@@ -569,8 +568,7 @@ function openFloatPreview(id) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: nid }),
       });
       if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
-      view.previewing = false; view.liveSnapshot = null;
-      $('main').classList.remove('preview-readonly');
+      leavePreview();
       closeOverlay();
       await refreshGraph();
     });
