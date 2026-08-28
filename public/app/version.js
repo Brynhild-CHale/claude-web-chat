@@ -10,11 +10,11 @@
 // of the last release.
 //
 // Dismissal lasts THE SESSION, per the product decision: closing the message
-// closes it until this tab is opened fresh. sessionStorage, not localStorage,
-// is what makes "session" mean session — and every access is guarded, because a
-// private window or blocked site data makes the accessor itself throw, which
-// would otherwise abort module bootstrap and leave a dead page.
+// closes it until this tab is opened fresh. Session, not local, storage is what
+// makes "session" mean session — through storage.js, which is the one home for
+// the private-window guard every such access needs.
 import { $ } from './state.js';
+import { getSession, setSession, removeSession } from './storage.js';
 
 const RECHECK_MS = 20 * 60 * 1000; // long-open tabs re-check occasionally (server caches 24h)
 const DISMISS_KEY = 'wc:update-dismissed';
@@ -28,11 +28,11 @@ const show = () => { const b = banner(); if (b) b.classList.remove('hidden'); };
 const hide = () => { const b = banner(); if (b) b.classList.add('hidden'); };
 
 function dismissedVersion() {
-  try { return sessionStorage.getItem(DISMISS_KEY); } catch { return null; }
+  return getSession(DISMISS_KEY);
 }
 
 function rememberDismissal(v) {
-  try { sessionStorage.setItem(DISMISS_KEY, v); } catch { /* private window — the bar simply returns next check */ }
+  setSession(DISMISS_KEY, v);   // private window — the bar simply returns next check
 }
 
 // The one entry point: fetch current-vs-latest and reconcile the bar. Safe to
@@ -59,7 +59,7 @@ export async function checkVersion() {
 // clears this session's dismissal — asking explicitly should get an answer even
 // if you closed the bar earlier.
 export async function checkForUpdatesNow() {
-  try { sessionStorage.removeItem(DISMISS_KEY); } catch {}
+  removeSession(DISMISS_KEY);
   let info;
   try { info = await fetch('/api/version?force=1').then((r) => r.json()); } catch { info = null; }
   if (!info || !info.ok) { flash('Could not reach GitHub to check for updates.'); return; }

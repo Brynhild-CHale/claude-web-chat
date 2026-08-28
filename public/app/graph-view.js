@@ -11,6 +11,7 @@ import { view, $, cssVar } from './state.js';
 import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
 import { previewNode, ensureGraph } from './topbar.js';
 import { esc } from './esc.js';
+import { getLocalJson, setLocalJson } from './storage.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -64,15 +65,14 @@ function setZoom(scale, anchor) {
    .web-chat/ graph is turn history that migrations must keep append-only, a second
    browser (or a second person on the same daemon) has its own viewport and its own
    window size, and a shared position would make one viewer's tidy-up everybody's.
-   It also needs no route and no schema bump. localStorage — not sessionStorage —
-   because "survives a reload" is the whole point; every access is wrapped, since a
-   private window or blocked site data makes the accessor itself throw. */
+   It also needs no route and no schema bump. Local, not session, storage —
+   because "survives a reload" is the whole point; it goes through storage.js,
+   which is where the private-window guard lives. */
 const POS_KEY = 'wc:gv-graph-pos';
 let graphOffsets = null;
 function offsets() {
   if (graphOffsets) return graphOffsets;
-  try { graphOffsets = JSON.parse(localStorage.getItem(POS_KEY) || '{}') || {}; }
-  catch { graphOffsets = {}; }
+  graphOffsets = getLocalJson(POS_KEY, {});
   return graphOffsets;
 }
 function offsetFor(rootId) {
@@ -84,7 +84,7 @@ function setOffset(rootId, dx, dy, persist = true) {
   const o = offsets();
   const rx = Math.round(dx), ry = Math.round(dy);
   if (!rx && !ry) delete o[rootId]; else o[rootId] = [rx, ry];
-  if (persist) { try { localStorage.setItem(POS_KEY, JSON.stringify(o)); } catch { /* private window */ } }
+  if (persist) setLocalJson(POS_KEY, o);
 }
 
 // Open the overlay: refresh the graph, reveal it, and fit the view. Wired to the

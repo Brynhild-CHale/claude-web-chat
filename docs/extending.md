@@ -528,8 +528,9 @@ auto-discovers `test/`). Not `node --test test/` — that mis-resolves.
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for the eval, escaping and token patterns) and holds a
-**per-file baseline** for every construct in the table below, then **ratchets**:
+`lib/` (+ `public/` for the eval, escaping and token patterns, and `public/app`
+for the browser-storage one) and holds a **per-file baseline** for every construct
+in the table below, then **ratchets**:
 
 - **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
   route it through its engine instead.
@@ -555,6 +556,7 @@ Current homes (baselines can only shrink toward these):
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
+| `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 
 Working with it:
 

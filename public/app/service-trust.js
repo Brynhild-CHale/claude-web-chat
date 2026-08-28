@@ -26,26 +26,23 @@
 // service.js contents + params) — so a DIFFERENT component, or the same one
 // after an edit, still gets a card.
 //
-// sessionStorage, not localStorage, is what makes "session" mean session, and
-// every access is wrapped: a private window / blocked site data makes the
-// accessor itself throw, which would otherwise abort module bootstrap and leave
-// a dead page (same shape as public/app/version.js).
+// Session, not local, storage is what makes "session" mean session, and it goes
+// through storage.js — the one home for the private-window guard (a blocked
+// accessor throws on the getter itself, which would otherwise abort module
+// bootstrap and leave a dead page).
 import { esc } from './esc.js';
+import { getSessionJson, setSessionJson } from './storage.js';
 
 const DISMISS_KEY = 'wc:svc-trust-dismissed';
 
 function dismissedSet() {
-  try {
-    const raw = sessionStorage.getItem(DISMISS_KEY);
-    return new Set(raw ? JSON.parse(raw) : []);
-  } catch { return new Set(); }
+  const raw = getSessionJson(DISMISS_KEY, []);
+  return new Set(Array.isArray(raw) ? raw : []);
 }
 function rememberDismissal(hash) {
-  try {
-    const s = dismissedSet();
-    s.add(hash);
-    sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...s]));
-  } catch { /* private window — the card simply returns on the next announce */ }
+  const s = dismissedSet();
+  s.add(hash);
+  setSessionJson(DISMISS_KEY, [...s]);   // private window — the card simply returns on the next announce
 }
 
 // hash -> { name, command }
