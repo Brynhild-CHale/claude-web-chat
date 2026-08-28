@@ -285,14 +285,18 @@ restarts and your re-renders. That is usually what you want. When it is not:
 - password, hidden and file inputs are never captured, and never reach the event
   log either.
 
-### `use_component` cannot declare signals
+### `use_component` declares signals the same way `render` does
 
-`render` takes a `signals` array; `use_component` does not. A saved interactive
-component therefore cannot declare its own wake signals when spawned by name.
-Until that gap closes, an interactive pack component has two options: have Claude
-`render` it directly when the interaction matters, or rely on the **activity**
-layer, which is opt-out and routes undeclared interaction to the queue rail
-automatically.
+`use_component` takes the same `signals` array as `render` (and the same
+`force`): the tool nests it under `params.signals`, which is the persisted mount
+field the daemon derives its wake registry from. So a saved interactive component
+can declare its own wake signals when it is spawned by name — no need to have
+Claude `render` it inline just to get a declared wake.
+
+It was not always so: the tool's schema had neither parameter, and a top-level
+`signals` array was silently discarded, so the declared wake never registered.
+Either way the **activity** layer is underneath — it is opt-out and routes
+undeclared interaction to the queue rail automatically.
 
 ### Theme tokens cross the shadow boundary; raw CSS does not
 

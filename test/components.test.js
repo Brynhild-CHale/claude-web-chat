@@ -175,3 +175,31 @@ test('components: system tier — save to ~/.web-chat/components, visible, proje
   const frLocs = (await api.get('/api/components')).json.components.filter((c) => c.name === 'form-renderer').map((c) => c.location);
   assert.deepEqual(frLocs, ['local'], 'builtins seed project-only, never system');
 });
+
+test('use_component tool: force and signals reach the route, signals nested under params', async () => {
+  // The description has always claimed parity with `render`. The schema had
+  // neither parameter, and a top-level `signals` array was dropped by the
+  // handler's destructuring — so a declared wake silently never registered
+  // (lib/server/domain/signals reads params.signals, nothing else).
+  const client = require('../lib/mcp/client');
+  const tool = require('../lib/mcp/tools/use_component');
+  assert.ok(tool.inputSchema.properties.force, 'schema declares force');
+  assert.ok(tool.inputSchema.properties.signals, 'schema declares signals');
+  const seen = [];
+  const orig = client.post;
+  client.post = async (p, body) => { seen.push([p, body]); return {}; };
+  try {
+    await tool.handler({
+      name: 'w', id: 'p1', force: true,
+      params: { a: 1 },
+      signals: [{ key: 'form_submit', wake: 'queue' }],
+    });
+    await tool.handler({ name: 'w', id: 'p2', params: { a: 1 } });
+  } finally {
+    client.post = orig;
+  }
+  assert.equal(seen[0][0], '/api/components/w/use');
+  assert.equal(seen[0][1].force, true);
+  assert.deepEqual(seen[0][1].params, { a: 1, signals: [{ key: 'form_submit', wake: 'queue' }] });
+  assert.deepEqual(seen[1][1].params, { a: 1 }, 'no signals → params untouched');
+});
