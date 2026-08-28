@@ -29,11 +29,24 @@ async function waitUntil(fn, { timeout = 4000, interval = 40 } = {}) {
 
 // A service that heartbeats a per-mount clock into the store, so tests can observe
 // "running" (clock advances) vs "stopped" (clock freezes).
+//
+// It also reports what the REAL runner handed it for `ctx.fence`. Every builtin
+// service fences the paths its pane hands it through that one function, and the
+// only place it is assembled is lib/server/service-runner.js — where a typo
+// would leave every fenced open/save/browse throwing `ctx.fence is not a
+// function` into the pane's error line, in production, with a suite full of ctx
+// stubs still green. These tests fork real children, so they are where it is
+// checked.
 const CLOCK_SERVICE = `
 let timer = null;
 module.exports = {
   async start(ctx) {
-    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId } });
+    const fence = {
+      type: typeof ctx.fence,
+      escapes: typeof ctx.fence === 'function' ? ctx.fence(process.cwd(), '..') : 'no fence',
+      inside: typeof ctx.fence === 'function' ? ctx.fence(process.cwd(), 'a/b.txt') : 'no fence',
+    };
+    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, fence } });
     tick();
     timer = setInterval(tick, 40);
   },
@@ -164,6 +177,14 @@ test('services: spawn on active use — child runs and the store clock advances'
   const s1 = (await api.get('/api/store')).json.clock.seq;
   assert.equal((await api.get('/api/store')).json.clock.mount, 'm1', 'clock carries the mount id');
   assert.ok(await waitUntil(async () => (await api.get('/api/store')).json.clock.seq > s1), 'clock advances (service alive)');
+
+  // The ctx the real runner builds, not a test stub's: a service that reaches
+  // for `ctx.fence` gets the containment engine, and it fails closed.
+  const { fence } = (await api.get('/api/store')).json.clock;
+  assert.equal(fence.type, 'function', 'the runner hands every service ctx.fence');
+  assert.equal(fence.escapes, null, 'and it refuses a path that leaves the parent');
+  assert.ok(fence.inside && fence.inside.endsWith(path.join('a', 'b.txt')),
+    'while a path that stays inside resolves, even before it exists');
 });
 
 test('services: stop on clear — clearing the pane stops the child', async (t) => {

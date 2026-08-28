@@ -168,6 +168,77 @@ test('isInside: nothing imports the predicate from the shim — core/paths is th
   assert.deepEqual(offenders, [], `isInside/realpath live in lib/core/paths — import them from there, not through the install-layout shim:\n  ${offenders.join('\n  ')}`);
 });
 
+// ── fence ───────────────────────────────────────────────────────────────────
+
+const { fence, nearestExisting } = require('../lib/core/paths');
+
+test('fence: a path that does not exist yet, under a symlinked parent, is allowed', (t) => {
+  // The everyday save: a new file in a new directory, under a $TMPDIR that is
+  // itself a link on macOS. This is the case `isInside` alone gets wrong, and
+  // the reason `fence` exists at all.
+  const root = tmp(t, 'wc-fence-new-');
+  assert.equal(fence(root, 'notes/a.txt'), path.join(root, 'notes', 'a.txt'));
+  assert.equal(fence(root, '.'), path.resolve(root));
+});
+
+test('fence: a lexical traversal out is refused whether or not it exists', (t) => {
+  const root = tmp(t, 'wc-fence-lex-');
+  assert.equal(fence(root, '../elsewhere.txt'), null);
+  assert.equal(fence(root, 'a/../../etc/passwd'), null);
+  assert.equal(fence(root, path.join(os.tmpdir(), 'absolute.txt')), null);
+  assert.equal(fence('', 'a.txt'), null, 'no parent is no fence');
+});
+
+test('fence: a symlink resolving out of the parent is refused', (t) => {
+  const root = tmp(t, 'wc-fence-link-');
+  const outside = tmp(t, 'wc-fence-out-');
+  fs.writeFileSync(path.join(outside, 'passwd'), 'secret\n');
+  fs.symlinkSync(path.join(outside, 'passwd'), path.join(root, 'link.txt'));
+  fs.symlinkSync(outside, path.join(root, 'linkdir'));
+  assert.equal(fence(root, 'link.txt'), null);
+  assert.equal(fence(root, 'linkdir'), null);
+  assert.equal(fence(root, 'linkdir/passwd'), null);
+});
+
+// The half a following walk cannot see. `existsSync` follows links, so a link
+// whose target is MISSING reads as "nothing there yet" — the anchor walk steps
+// over it, lands on the root, and answers "inside". The caller then writes, and
+// the write lands at the target: a file created outside the fence, by a path
+// the fence approved. git commits symlinks, so this is a link a repository can
+// ship. The anchor is found by lstat for exactly this.
+test('fence: a DANGLING symlink inside the parent is refused, not read as absent', (t) => {
+  const root = tmp(t, 'wc-fence-dangle-');
+  const outside = tmp(t, 'wc-fence-dangle-out-');
+  fs.symlinkSync(path.join(outside, 'new.txt'), path.join(root, 'dangling.txt'));
+  fs.symlinkSync(path.join(outside, 'nodir'), path.join(root, 'dangdir'));
+
+  assert.equal(fence(root, 'dangling.txt'), null, 'a dangling leaf link is not a free filename');
+  assert.equal(fence(root, 'dangdir/new.txt'), null, 'nor is a dangling link in the middle of the path');
+  assert.equal(fs.existsSync(path.join(outside, 'new.txt')), false, 'and nothing was created outside');
+
+  // A dangling link that points back INSIDE the fence is refused on the same
+  // rule: we cannot resolve it, so we do not vouch for where a write lands.
+  fs.symlinkSync(path.join(root, 'inner.txt'), path.join(root, 'dangling-in.txt'));
+  assert.equal(fence(root, 'dangling-in.txt'), null);
+});
+
+test('nearestExisting: the two walks differ on exactly the dangling link', (t) => {
+  const root = tmp(t, 'wc-anchor-');
+  const outside = tmp(t, 'wc-anchor-out-');
+  const link = path.join(root, 'dangling.txt');
+  fs.symlinkSync(path.join(outside, 'nope'), link);
+
+  // Following (the default, what lib/packs/tree.js wants): the link is absent,
+  // so the anchor is its parent. By lstat (what `fence` wants): it is there.
+  assert.equal(nearestExisting(link), path.resolve(root));
+  assert.equal(nearestExisting(link, { follow: false }), path.resolve(link));
+
+  // Everything else agrees: a plain missing tail anchors at the deepest real dir.
+  const missing = path.join(root, 'a', 'b', 'c.txt');
+  assert.equal(nearestExisting(missing), path.resolve(root));
+  assert.equal(nearestExisting(missing, { follow: false }), path.resolve(root));
+});
+
 // ── the Node floor ──────────────────────────────────────────────────────────
 
 const { NODE_FLOOR, checkNodeFloor } = require('../lib/core/versions');

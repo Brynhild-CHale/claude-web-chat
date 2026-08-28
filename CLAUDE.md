@@ -57,7 +57,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | Need to… | Use | Never |
 | --- | --- | --- |
 | resolve a `.web-chat`/`~/.web-chat` path, or the project root | `lib/core/paths` (`projectPaths`/`userPaths`/`findProjectRoot`) | hardcode `.web-chat` / call `os.homedir()` |
-| ask whether a path is inside a directory (a fence) | `lib/core/paths` (`isInside`/`realpath` — realpath-based, fails closed) | compare with `startsWith` or `path.relative` by hand |
+| ask whether a path is inside a directory (a fence) | `lib/core/paths` (`isInside`/`realpath` for a path on disk; `fence(parent, child)` for one you were HANDED or are about to create — services get it as `ctx.fence`) | compare with `startsWith` or `path.relative` by hand |
 | read/write/discover/probe a daemon portfile | `lib/core/portfiles` | read `server.json` or `http.request` a probe by hand |
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
