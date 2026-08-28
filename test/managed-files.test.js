@@ -277,3 +277,27 @@ test('a MANAGED install registers current/, NOT the version directory it is runn
   assert.equal(mf.stableBin('claude-web-chat-hook', { packageRoot: checkout, paths }),
     path.join(checkout, 'bin', 'claude-web-chat-hook.js'));
 });
+
+// distribution-4, the half consolidation can actually reach. `install`,
+// `update`, `init` and `status` each printed their own version of what a
+// conflict means, and the two that gave a next step gave one that cannot
+// converge: after a hand merge, local matches neither the baseline nor the
+// shipped bytes, so the same branch fires again on every install and update.
+// One helper, one wording, and it names the only step that actually resolves.
+// (The missing conflict→resolution TRANSITION is still open — that is a change
+// to the reconcile state machine above, not to this text.)
+test('the conflict wording has one home and names the step that resolves', () => {
+  const results = [{ action: 'conflict', dest: RULES_DEST, sidecar: RULES_DEST + '.new' }];
+  const advice = mf.conflictAdvice(results).join('\n');
+  assert.match(advice, /install --force/, 'the one exit is named');
+  assert.match(advice, new RegExp(RULES_DEST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.new'));
+  assert.match(mf.conflictSummary(results), /install --force/);
+  assert.deepEqual(mf.conflictAdvice([{ action: 'up-to-date', dest: RULES_DEST }]), []);
+  assert.equal(mf.conflictSummary([]), '');
+
+  for (const f of ['install.js', 'update.js', 'status.js', 'init.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cli', 'commands', f), 'utf8');
+    assert.doesNotMatch(src, /Review and merge|review and merge\./,
+      `${f} must print the shared advice, not a fifth wording of it`);
+  }
+});
