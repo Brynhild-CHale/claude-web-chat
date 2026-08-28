@@ -109,7 +109,20 @@ test('install preserves a plugin-portable entry when running under plugin packag
   assert.ok(!mcpEntryHasChannelEnv(entry));
 });
 
-test('install rewrites a portable entry when NOT under plugin packaging (placeholder cannot resolve)', () => {
+// FLIPPED, deliberately. This test used to assert that install REWRITES a
+// committed ${CLAUDE_PLUGIN_ROOT} stub to this machine's absolute path whenever
+// the env var is unset — which is every dogfooding session in this repo, and is
+// how a /Users/<someone>/… path got into a tracked .mcp.json once already.
+// `doctor`, facing the identical entry, was deliberately taught the opposite:
+// leave the committed file alone and register at Claude Code's LOCAL scope,
+// which overrides .mcp.json for this project only. Two commands, one file, two
+// contradictory policies; doctor's is the one that survives.
+//
+// The stub is preserved here, and lib/setup/registration.apply() completes the
+// fix by running the same `claude mcp add --scope local` doctor runs (asserted
+// below) — so the placeholder that cannot resolve still ends up spawning.
+test('install PRESERVES a portable entry outside plugin packaging and registers at local scope', async () => {
+  const restore = sandboxHome();
   const root = tmpRoot();
   writeMcp(root, {
     mcpServers: {
@@ -118,14 +131,21 @@ test('install rewrites a portable entry when NOT under plugin packaging (placeho
   });
   const prev = process.env.CLAUDE_PLUGIN_ROOT;
   delete process.env.CLAUDE_PLUGIN_ROOT;
+  const calls = [];
   try {
-    ensureMcpRegistration(root);
+    const status = ensureMcpRegistration(root);
+    assert.equal(status, 'kept plugin registration');
+    await captureInstall(root, { runClaude: (argv) => { calls.push(argv); return { ok: true }; } });
   } finally {
     if (prev !== undefined) process.env.CLAUDE_PLUGIN_ROOT = prev;
+    restore();
   }
   const entry = readMcp(root).mcpServers['web-chat'];
-  assert.ok(path.isAbsolute(entry.args[0]) && /bin\/claude-web-chat-mcp\.js$/.test(entry.args[0]));
+  assert.deepEqual(entry.args, ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'],
+    'the committed portable stub is never rewritten to this machine\'s path');
   assert.ok(!mcpEntryHasChannelEnv(entry));
+  assert.equal(calls.length, 1, 'and the unresolvable stub is completed at local scope');
+  assert.deepEqual(calls[0].slice(0, 6), ['mcp', 'add', 'web-chat', '--scope', 'local', '--']);
 });
 
 test('channelEnv merges without mutating the input and never drops keys', () => {
