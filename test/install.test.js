@@ -207,17 +207,17 @@ daemonMod.spawnDaemon = async () => null;
 const install = require('../lib/cli/commands/install');
 daemonMod.spawnDaemon = realSpawnDaemon;
 
+// The root is PASSED, not chdir'd into: install resolves it through the
+// registration engine, so a test no longer has to mutate global process state —
+// and `runClaude` is stubbed so no test can shell out to a real `claude`.
 async function captureInstall(root, opts) {
-  const prevCwd = process.cwd();
   const prevLog = console.log;
   const lines = [];
   console.log = (...a) => lines.push(a.join(' '));
   try {
-    process.chdir(root);
-    await install([], opts);
+    await install([], { cwd: root, runClaude: () => ({ ok: true }), ...opts });
   } finally {
     console.log = prevLog;
-    process.chdir(prevCwd);
   }
   return lines.join('\n');
 }
@@ -253,6 +253,49 @@ test('install({nextSteps:false}) suppresses ONLY the trailing checklist', async 
     assert.match(out, /Server (pre-warmed|will start)/, 'the pre-warm line still prints');
     assert.doesNotMatch(out, /Next steps:/);
     assert.doesNotMatch(out, /Optional — Channels/);
+  } finally {
+    restore();
+  }
+});
+
+// ── the root install operates on ─────────────────────────────────────────────
+// Typed in a subdirectory, install used to create a SECOND nested install:
+// .web-chat/, .claude/settings.json and .mcp.json that Claude Code (which reads
+// the project root) never loads — and from then on findProjectRoot resolved the
+// nested one for every command run below it. There was no test of it at all.
+
+test('install from a SUBDIRECTORY adopts the enclosing project root', async () => {
+  const restore = sandboxHome();
+  try {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+    const sub = path.join(root, 'packages', 'app');
+    fs.mkdirSync(sub, { recursive: true });
+
+    const out = await captureInstall(sub, {});
+
+    assert.match(out, new RegExp(`web-chat installed for ${root}`));
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the parent gets the registration');
+    assert.ok(fs.existsSync(path.join(root, '.claude', 'settings.json')));
+    assert.equal(fs.existsSync(path.join(sub, '.web-chat')), false, 'and no second nested surface is created');
+    assert.equal(fs.existsSync(path.join(sub, '.mcp.json')), false);
+  } finally {
+    restore();
+  }
+});
+
+test('install THROWS userFacing on a malformed settings.json instead of exiting', async () => {
+  const restore = sandboxHome();
+  try {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{ not json');
+    await assert.rejects(
+      () => captureInstall(root, {}),
+      // process.exit(1) here killed `init` mid-sequence: before the onboarding
+      // stamp, before the restart instructions, and before prompt.close().
+      (e) => e.userFacing === true && /error parsing/.test(e.message),
+    );
   } finally {
     restore();
   }
