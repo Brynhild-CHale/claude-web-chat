@@ -4,6 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
+// `run()` below spawnSyncs the real CLI with no `env`, so the child inherits
+// this process's HOME — which without this would be the developer's, and
+// `profile list` would read their real ~/.web-chat/profiles. Required directly
+// (not via helpers, which this file does not otherwise need) so the redirect
+// holds even when the runner is invoked without the --import preload.
+require('../test-support/sandbox');
 
 const BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat.js');
 

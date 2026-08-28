@@ -19,8 +19,7 @@ const express = require('express');
 const {
   isLocalHost, hostGateApplies, requireLocalHost, verifyUpgrade,
 } = require('../lib/core/cors');
-const { withServer, withTempHome } = require('../test-support/helpers');
-const { createHub } = require('../lib/hub');
+const { withServer, withTempHome, withHub } = require('../test-support/helpers');
 
 // A request that dials 127.0.0.1 but ASSERTS whatever name the caller passes —
 // exactly the shape a rebound browser produces.
@@ -166,10 +165,7 @@ test('hub app: the fixed-port listing is not readable under a foreign Host', asy
   // own registry, so it runs inside a temp HOME like every other test that
   // touches user-scope state.
   withTempHome(t);
-  const hub = createHub({ port: 0 });
-  await new Promise((r) => hub.server.listen(0, '127.0.0.1', r));
-  const port = hub.server.address().port;
-  t.after(() => hub.stop());
+  const { port } = await withHub(t);
 
   const bad = await raw(port, '/api/instances', { host: 'evil.example:5170' });
   assert.equal(bad.status, 421, 'the rebinding target with the guessable port');

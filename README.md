@@ -210,7 +210,7 @@ Run `update` from any installed project:
 claude-web-chat update
 ```
 
-It resolves the latest GitHub Release, downloads the tarball and its `SHA256SUMS`, **verifies the checksum before unpacking anything**, unpacks into `~/.web-chat/versions/<version>/`, swaps the `~/.web-chat/current` symlink, restarts the background server, reports the version before and after, and syncs *that* project's managed files (the Claude rules file, the `/web-chat` command, and the two skills) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite.
+It resolves the latest GitHub Release, downloads the tarball and its `SHA256SUMS`, **verifies the checksum before unpacking anything**, unpacks into `~/.web-chat/versions/<version>/`, swaps the `~/.web-chat/current` symlink, restarts the background server, reports the version before and after, and syncs *that* project's managed files (the Claude rules file, the `/web-chat` command, and the two skills) edit-preservingly: untouched files update automatically, your edits are kept, and a genuine conflict lands beside your file as `<file>.new` for you to merge — never a silent overwrite. (Merging is by hand: `claude-web-chat install --force` is the one command that adopts the shipped version, and it discards your edits.)
 
 For your *other* installed projects, run `claude-web-chat init` (or `install`) in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the MCP server logs a one-line nudge at session start when a refresh is due.
 
@@ -258,7 +258,7 @@ Start with `claude-web-chat doctor` — it checks the daemon, portfile, MCP regi
 
 ## Contributing
 
-Development setup, architecture, and how to extend the package live in [`CLAUDE.md`](CLAUDE.md) and [`docs/extending.md`](docs/extending.md). Run the tests with `npm test` (a bare `node --test --test-timeout=60000`, which auto-discovers `test/` — **not** `node --test test/`, which mis-resolves and reports a spurious failure).
+Development setup, architecture, and how to extend the package live in [`CLAUDE.md`](CLAUDE.md) and [`docs/extending.md`](docs/extending.md). Run the tests with `npm test` (`node --test` with a per-test timeout and a throwaway-HOME preload — see `docs/extending.md`).
 
 ## License
 

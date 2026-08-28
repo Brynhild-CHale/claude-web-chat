@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
 
 // The service supervisor: spawns/stops host-side service.js children for
 // service-backed components, bound to the active graph node + viewer presence.
@@ -13,19 +13,15 @@ const { withServer } = require('../test-support/helpers');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Resolves to the first truthy value `fn` returns (not just `true`), so a caller
-// can both assert on it and use it — e.g. to read the nonce off a trust prompt.
-// Falls back to `false` on timeout, keeping every `assert.ok(await waitUntil(…))`
-// call site working unchanged.
-async function waitUntil(fn, { timeout = 4000, interval = 40 } = {}) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    const v = await fn();
-    if (v) return v;
-    await sleep(interval);
-  }
-  return false;
-}
+// The harness poll, with this file's budget bound in — NOT a second
+// implementation. Everything waited on here is a FORKED CHILD PROCESS starting,
+// writing the store or exiting, which is an order of magnitude slower than the
+// in-process assertions the shared default (2000ms/25ms) is sized for. The
+// engine's contract is what the ~20 call sites below depend on: it resolves to
+// the first truthy VALUE (so a caller can read the nonce off a trust prompt) and
+// returns `false` rather than throwing on timeout (so every
+// `assert.ok(await waitUntil(…), 'message')` keeps its own message).
+const waitUntil = (fn, opts) => harnessWaitUntil(fn, { timeout: 4000, interval: 40, ...opts });
 
 // A service that heartbeats a per-mount clock into the store, so tests can observe
 // "running" (clock advances) vs "stopped" (clock freezes).

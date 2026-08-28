@@ -10,13 +10,39 @@
 // failing assertion can't leak the port/handle: createServer + server.listen(0)
 // (never start() with a portfile, so no hub spawn / no ~/.web-chat registry
 // writes), and an idempotent t.after stop.
+//
+// Beyond booting a server this file owns four more things every test needs and
+// a dozen files used to hand-roll: ONE deadline poll (`waitUntil`), ONE SSE opener
+// that can actually FAIL (`openSSE`), a WS connect that can send headers
+// (`wsConnect`, so the Origin gate is reachable), and a hub boot (`withHub`).
+// `test/harness-conventions.test.js` ratchets those back here.
+
+// The throwaway-HOME preload. `--import ./test-support/sandbox.js` in the npm
+// script gets it in before ANY require; requiring it here is the belt for a
+// runner that doesn't propagate the flag to its per-file children, and for
+// anyone who runs a single file with a bare `node --test test/x.test.js`. The
+// module is idempotent — a second load is a no-op.
+require('./sandbox');
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const WebSocket = require('ws');
-const { createServer } = require('../lib/server');
 const { writePortfileAt: writePortfile } = require('../lib/core/portfiles');
+const { LISTEN_HOST } = require('../lib/core/cors');
+const { subscribeSSE } = require('../lib/client');
+
+// Resolved LAZILY, not at require time. lock-ttl.test.js sets
+// WEB_CHAT_LOCK_TTL_MS and then deletes four require.cache entries so the TTL is
+// re-read at module load; a binding captured up here would hand that test the
+// STALE module and it would pass while exercising the wrong code. `opts.createServer`
+// lets a caller inject one outright.
+function resolveCreateServer(injected) {
+  return injected || require('../lib/server').createServer;
+}
+function resolveCreateHub(injected) {
+  return injected || require('../lib/hub').createHub;
+}
 
 // Fresh isolated project root with an empty .web-chat/. OS tmp is left to the OS
 // to reap; withServer also rm's the roots it mints.
@@ -83,17 +109,120 @@ function makeApi(baseUrl) {
   };
 }
 
-// `opts` is passed straight to the ws client, so a test can set request headers
-// the URL cannot express — notably `Host`, which the upgrade is gated on and
-// which the browser-side APIs forbid.
+// ── waitUntil — the ONE deadline poll ────────────────────────────────────────
+//
+// It replaced eight private copies with three mutually incompatible contracts
+// (throw-with-a-label / return-false / re-check-then-return; boolean vs
+// first-truthy-value; one that called its predicate synchronously). The union,
+// spelled out because every clause has a caller that needs it:
+//
+//   * the predicate is AWAITED — a synchronous one still works, the reverse
+//     does not;
+//   * it resolves with the FIRST TRUTHY VALUE, not `true`, so a caller can read
+//     the thing it was waiting for straight out (a nonce off a trust prompt, a
+//     pid off the store) instead of fetching it again;
+//   * after the deadline it evaluates ONCE more, so a predicate that only just
+//     became true is not lost to the last sleep;
+//   * on final failure it THROWS `timed out waiting for <what>` when `what` is
+//     given, and otherwise returns `false` — because ~17 call sites are
+//     `assert.ok(await waitUntil(…), 'message')` and want the assertion's
+//     message, not a raw throw.
+async function waitUntil(pred, { timeout = 2000, interval = 25, what } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const v = await pred();
+    if (v) return v;
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(interval, left)));
+  }
+  const last = await pred();
+  if (last) return last;
+  if (what) throw new Error(`timed out waiting for ${what}`);
+  return false;
+}
+
+// ── openSSE — the ONE event-stream opener, and it can FAIL ───────────────────
+//
+// The three private copies all passed `onOpen` alone, so every failure path in
+// lib/client's subscribeSSE (non-200, request error, close) left the promise
+// pending FOREVER — the shape behind the suite's mystery hangs. This one rejects
+// on all three plus a deadline.
+//
+//   openSSE(port, { kinds, since, onEvent, timeout, awaitChannel })
+//     → { close(), events }
+//
+// `events` accumulates every event the stream delivers (so a test can assert on
+// the tail without wiring its own collector). `awaitChannel: api` is the
+// stronger readiness the queue tests need: `onOpen` only means HTTP 200 came
+// back, so it polls /api/queue/policy until the server counts this stream as the
+// connected channel.
+//
+// It deliberately does NOT subsume test/events-sse.test.js, whose raw client
+// asserts on `:` heartbeat comments and `id:` lines that subscribeSSE discards.
+async function openSSE(port, { kinds, since, onEvent, timeout = 5000, awaitChannel } = {}) {
+  const events = [];
+  let opened = false;
+  let resolveOpen, rejectOpen;
+  const openedP = new Promise((res, rej) => { resolveOpen = res; rejectOpen = rej; });
+  const handle = subscribeSSE({
+    port,
+    kinds,
+    since,
+    onOpen: () => { opened = true; resolveOpen(); },
+    onEvent: (e) => { events.push(e); if (onEvent) { try { onEvent(e); } catch {} } },
+    onError: (e) => { if (!opened) rejectOpen(e instanceof Error ? e : new Error(String(e))); },
+    onClose: () => { if (!opened) rejectOpen(new Error('SSE stream closed before it opened')); },
+  });
+
+  let timer;
+  const deadline = new Promise((_res, rej) => {
+    timer = setTimeout(() => rej(new Error(`SSE stream did not open within ${timeout}ms`)), timeout);
+  });
+  try {
+    await Promise.race([openedP, deadline]);
+  } catch (e) {
+    try { handle.close(); } catch {}
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const stream = { events, close: () => { try { handle.close(); } catch {} } };
+  if (awaitChannel) {
+    const live = await waitUntil(
+      async () => (await awaitChannel.get('/api/queue/policy')).json.channel_connected,
+      { timeout, interval: 15 },
+    );
+    if (!live) { stream.close(); throw new Error('SSE opened but the server never counted it as a connected channel'); }
+  }
+  return stream;
+}
+
+// `opts` is passed straight to the ws client. Two server-side gates depend on it,
+// and neither is reachable from a URL: the Origin gate (lib/server/ws.js
+// verifyClient) — Node's ws client sends no Origin, so before this every test
+// connection took the `!origin` branch and deleting the gate still passed the
+// suite — and the Host gate on the upgrade, which the browser-side APIs forbid
+// setting at all.
 function wsConnect(port, pathStr = '/ws', opts) {
   return new WebSocket(`ws://localhost:${port}${pathStr}`, opts);
 }
 
 // Open a socket, resolve the first {type:'hello'} frame, then close it.
-function wsHello(port, pathStr = '/ws') {
+// A REFUSED upgrade rejects with an error carrying .statusCode — ws only skips
+// its own 'error' for an unexpected response when something is listening for it,
+// so a refusal is an assertable outcome here instead of a hang.
+function wsHello(port, pathStr = '/ws', opts = {}) {
   return new Promise((resolve, reject) => {
-    const sock = wsConnect(port, pathStr);
+    const sock = wsConnect(port, pathStr, opts);
+    sock.on('unexpected-response', (_req, res) => {
+      res.resume();
+      const err = new Error(`ws upgrade refused: HTTP ${res.statusCode}`);
+      err.statusCode = res.statusCode;
+      try { sock.terminate(); } catch {}
+      reject(err);
+    });
     sock.on('message', (data) => {
       let msg = null;
       try { msg = JSON.parse(data.toString()); } catch {}
@@ -126,6 +255,8 @@ async function safeStop(srv) {
 //               (port-walk only); default listens on an ephemeral port
 //   - writePortfile: write server.json into the tmp root so a watch/discovery
 //               path can find this server
+//   - createServer: inject a module (a require.cache-busted one, for the lock
+//               TTL tests); default is a LAZY require of lib/server
 // Returns ctx { srv, server, port, baseUrl, root, webChatDir, api, ws, wsHello,
 // stop, graceful }; also passed to fn if given.
 async function withServer(t, opts, fn) {
@@ -149,7 +280,7 @@ async function withServer(t, opts, fn) {
   fs.mkdirSync(webChatDir, { recursive: true });
   if (opts.seed) await opts.seed({ root, webChatDir, home, userWebChat });
 
-  const srv = createServer({ root, port: opts.mode === 'start' ? 'auto' : 0 });
+  const srv = resolveCreateServer(opts.createServer)({ root, port: opts.mode === 'start' ? 'auto' : 0 });
 
   if (opts.mode === 'start') {
     await srv.start({ writePortfile: false });
@@ -181,8 +312,9 @@ async function withServer(t, opts, fn) {
     home,
     userWebChat,
     api: makeApi(baseUrl),
-    ws: (pathStr = '/ws', opts) => wsConnect(port, pathStr, opts),
-    wsHello: (pathStr = '/ws') => wsHello(port, pathStr),
+    ws: (pathStr = '/ws', wsOpts) => wsConnect(port, pathStr, wsOpts),
+    wsHello: (pathStr = '/ws', wsOpts) => wsHello(port, pathStr, wsOpts),
+    sse: (sseOpts) => openSSE(port, sseOpts),
     stop: () => safeStop(srv),
     graceful: () => srv.gracefulShutdown(),
   };
@@ -191,4 +323,38 @@ async function withServer(t, opts, fn) {
   return ctx;
 }
 
-module.exports = { withServer, tmpRoot, withTempHome, makeApi, wsConnect, wsHello, safeStop };
+// Stand up the capture HUB for a test and own its teardown — withServer's
+// missing sibling. Four hand-rolled `createHub + listen(0)` boots (hub.test.js
+// twice, profile-match.test.js, doctor.test.js) had nowhere else to go, and each
+// stopped the hub at the END of the test body, so a failed assertion leaked a
+// listening handle. Binds LISTEN_HOST like the real `hub run`, so the loopback
+// bind is exercised here too.
+//   withHub(t)                 — ephemeral port
+//   withHub(t, { port: 5170 }) — the pinned port (doctor's hub-is-up branch)
+async function withHub(t, { port = 0, createHub } = {}) {
+  const hub = resolveCreateHub(createHub)({ port });
+  await new Promise((resolve, reject) => {
+    const onError = (e) => { hub.server.off('error', onError); reject(e); };
+    hub.server.once('error', onError);
+    hub.server.listen(port, LISTEN_HOST, () => { hub.server.off('error', onError); resolve(); });
+  });
+  const bound = hub.server.address().port;
+  const baseUrl = `http://localhost:${bound}`;
+  // Idempotent: hub.stop() resolves off server.close(), which never fires on an
+  // already-closed server, so guard on .listening exactly as safeStop does.
+  const stop = async () => {
+    if (!hub.server.listening) return;
+    try {
+      const closing = hub.stop();
+      hub.server.closeAllConnections?.();
+      await closing;
+    } catch {}
+  };
+  t.after(stop);
+  return { hub, server: hub.server, port: bound, baseUrl, api: makeApi(baseUrl), stop };
+}
+
+module.exports = {
+  withServer, withHub, tmpRoot, withTempHome, makeApi,
+  waitUntil, openSSE, wsConnect, wsHello, safeStop,
+};

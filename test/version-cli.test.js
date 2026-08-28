@@ -95,19 +95,19 @@ test('uninstall --self removes the program; plain uninstall only touches the pro
 
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-proj-')));
   fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
-  const prev = process.cwd();
   const logs = [];
   const origLog = console.log;
   console.log = (m = '') => logs.push(String(m));
-  process.chdir(project);
+  // The project is PASSED, and `claude` is stubbed: uninstall now also removes
+  // the local-scope registration, and no test may shell out for real.
+  const opts = { cwd: project, runClaude: () => ({ ok: true }) };
   try {
-    uninstall([]);
+    uninstall([], opts);
     assert.ok(fs.existsSync(paths.binLink('claude-web-chat')), 'a plain uninstall must not remove the program');
     assert.match(logs.join('\n'), /uninstall --self/, 'and it should say how to remove the program too');
 
-    uninstall(['--self']);
+    uninstall(['--self'], opts);
   } finally {
-    process.chdir(prev);
     console.log = origLog;
   }
   assert.ok(!fs.existsSync(paths.binLink('claude-web-chat')), '--self removes the PATH links');

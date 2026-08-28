@@ -49,7 +49,12 @@ const LIB = path.join(REPO_ROOT, 'lib');
 // lib/packs consumes lib/update's archive reader, and that is composition, not
 // a direction violation.
 const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server']);
-const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel']);
+// lib/setup is SHARED: the project-registration model (what it means for a
+// project to be registered with Claude Code), consumed by the cli and mcp entry
+// points and layered on lib/update's managed-file primitives. It must never
+// import an entry point — which is why resolveRoot takes no prompt of its own
+// and the `claude` shell-out is injectable rather than reaching for lib/cli.
+const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup']);
 
 // ── the baseline: edges that legitimately remain ────────────────────────────
 // Each is `from => to` at FILE granularity, because the point of naming them is

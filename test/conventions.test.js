@@ -12,7 +12,10 @@
 // Net effect: the ceiling can only ever move toward zero-outside-the-home; it can
 // never silently grow. Counts are per-file substring counts (not file:line — line
 // numbers drift with unrelated edits). test/ and test-support/ are intentionally
-// NOT scanned, so the harness may use raw http/ws/fetch.
+// NOT scanned by THESE patterns, so the harness may use raw http/ws/fetch; the
+// five constructs that do have a single home inside test-support (the deadline
+// poll, the SSE opener, the server boot, the hub boot) are ratcheted separately
+// by test/harness-conventions.test.js.
 //
 // A pattern names either `roots` (scan these trees) or `files` (scan exactly
 // these paths). The `files` form exists for a construct that is legitimate in
@@ -309,6 +312,72 @@ const PATTERNS = [
     },
   },
   {
+    // Putting a pane on the live surface is not one write: it is a lock check,
+    // an owner gate plus force, reserved-id validation, the pane_state /
+    // form_state / theme carry rules, a gen bump, an owner stamp and one paired
+    // ring event + WS frame. Four routes hand-copied that sequence and each
+    // dropped a DIFFERENT part — /use had no owner gate, no owner, no gen and no
+    // theme carry; both capture mount-sets emitted a WS frame with no ring
+    // entry, so the service supervisor was deaf to capture panes. A list fix at
+    // one site was re-copied by the next route, which is exactly what this row
+    // exists to stop.
+    //
+    // The engine is lib/server/domain/mounts (setMount / removeMount /
+    // emitMount). What stays outside it, and why:
+    //   * graph.js — restoreLiveToNode replaces the WHOLE surface on node
+    //     navigation and broadcasts a `reset` instead of per-pane frames, and
+    //     clearLiveMounts is the pin-filtered Wipe with no frames at all.
+    //   * domain/turns.js — loadDraft, the same bulk shape at boot.
+    //   * routes/render.js — the bulk clear's per-pane delete, which owns a pin
+    //     filter and two batched frame shapes removeMount cannot serve.
+    name: 'state.mounts.set( / .delete(',
+    home: 'lib/server/domain/mounts.js (setMount / removeMount / emitMount)',
+    what: 'writing a pane onto — or off — the live surface',
+    roots: ['lib'],
+    re: /state\.mounts\.(?:set|delete)\(/g,
+    baseline: {
+      // The engine itself: one set, one delete.
+      'lib/server/domain/mounts.js': 2,
+      // Bulk restore (restoreLiveToNode) + the pin-filtered Wipe.
+      'lib/server/graph.js': 2,
+      // Bulk restore from draft.json at boot.
+      'lib/server/domain/turns.js': 1,
+      // The bulk clear's per-pane delete.
+      'lib/server/routes/render.js': 1,
+    },
+  },
+  {
+    // Resolving "which project does this command operate on" INSIDE a command
+    // that registers, un-registers or reports on a project. Not a lib-wide ban:
+    // `open`, `start`, `stop`, `export`, `unlock`, `trust`, `pack`, `profile`,
+    // `restart`, `ls` and the hooks all legitimately walk up to find a DAEMON,
+    // and that is a different question with the same answer today.
+    //
+    // Scoped instead to the eight files that carried the divergence: five
+    // different answers to the same question (install/uninstall/on/off on
+    // process.cwd(), doctor/status on findProjectRoot(cwd) || cwd, update
+    // skipping when it returned null), which meant the same directory named two
+    // different projects depending on which command you typed — and `install`
+    // in a subdirectory built a second, nested surface Claude Code never loads.
+    // Each of these must ask lib/setup/registration.resolveRoot, whose three
+    // modes ARE the three refusal shapes they used to disagree about.
+    name: 'findProjectRoot( in a registration consumer',
+    home: 'lib/setup/registration.js — `resolveRoot(cwd, {mode})`',
+    what: 'deciding which project a registration command operates on',
+    files: [
+      'lib/cli/commands/install.js',
+      'lib/cli/commands/uninstall.js',
+      'lib/cli/commands/on.js',
+      'lib/cli/commands/off.js',
+      'lib/cli/commands/doctor.js',
+      'lib/cli/commands/status.js',
+      'lib/cli/commands/update.js',
+      'lib/mcp/index.js',
+    ],
+    re: /findProjectRoot\(/g,
+    baseline: {},
+  },
+  {
     // NOT a lib-wide ban: 8 of the ~35 writeFileSync sites in lib/ are
     // legitimately not JSON records (export HTML, capture sidecars,
     // component.html/seed.js/service.js, .gitignore, the empty disable markers),
@@ -331,6 +400,25 @@ const PATTERNS = [
     ],
     re: /writeFileSync\(/g,
     baseline: {},
+  },
+  {
+    // WHICH hook events registration means. templates/settings.hooks.json is the
+    // answer, and for a long time it was read in exactly one place (ensureHooks)
+    // and exposed nowhere — so doctor, status and uninstall each iterated
+    // `Object.keys(settings.hooks)`, i.e. whatever happened to be ON DISK, and a
+    // project missing its Stop hook looked healthy to all three. That is the
+    // divergence hookEvents() closed; this row keeps it closed.
+    //
+    // The pattern is the QUOTED filename, not the bare word, so the four places
+    // that legitimately NAME the template — a comment, a doctor warning that
+    // tells the user where the event list lives, docs/extending.md — do not
+    // count. Only reaching for the file itself does.
+    name: "'settings.hooks.json' (the file, not the mention)",
+    home: 'lib/update/managed-files.js — `hookTemplate()`, exposed as `hookEvents()`',
+    what: 'deciding which hook events a registered project must have',
+    roots: ['lib'],
+    baseline: { 'lib/update/managed-files.js': 1 },
+    re: /['"]settings\.hooks\.json['"]/g,
   },
   {
     // Installing a pack writes into directories it does NOT own wholesale —

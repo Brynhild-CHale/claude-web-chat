@@ -109,7 +109,20 @@ test('install preserves a plugin-portable entry when running under plugin packag
   assert.ok(!mcpEntryHasChannelEnv(entry));
 });
 
-test('install rewrites a portable entry when NOT under plugin packaging (placeholder cannot resolve)', () => {
+// FLIPPED, deliberately. This test used to assert that install REWRITES a
+// committed ${CLAUDE_PLUGIN_ROOT} stub to this machine's absolute path whenever
+// the env var is unset — which is every dogfooding session in this repo, and is
+// how a /Users/<someone>/… path got into a tracked .mcp.json once already.
+// `doctor`, facing the identical entry, was deliberately taught the opposite:
+// leave the committed file alone and register at Claude Code's LOCAL scope,
+// which overrides .mcp.json for this project only. Two commands, one file, two
+// contradictory policies; doctor's is the one that survives.
+//
+// The stub is preserved here, and lib/setup/registration.apply() completes the
+// fix by running the same `claude mcp add --scope local` doctor runs (asserted
+// below) — so the placeholder that cannot resolve still ends up spawning.
+test('install PRESERVES a portable entry outside plugin packaging and registers at local scope', async () => {
+  const restore = sandboxHome();
   const root = tmpRoot();
   writeMcp(root, {
     mcpServers: {
@@ -118,14 +131,28 @@ test('install rewrites a portable entry when NOT under plugin packaging (placeho
   });
   const prev = process.env.CLAUDE_PLUGIN_ROOT;
   delete process.env.CLAUDE_PLUGIN_ROOT;
+  const calls = [];
+  const cwds = [];
   try {
-    ensureMcpRegistration(root);
+    const status = ensureMcpRegistration(root);
+    assert.equal(status, 'kept plugin registration');
+    await captureInstall(root, {
+      runClaude: (argv, opts = {}) => { calls.push(argv); cwds.push(opts.cwd); return { ok: true }; },
+    });
   } finally {
     if (prev !== undefined) process.env.CLAUDE_PLUGIN_ROOT = prev;
+    restore();
   }
   const entry = readMcp(root).mcpServers['web-chat'];
-  assert.ok(path.isAbsolute(entry.args[0]) && /bin\/claude-web-chat-mcp\.js$/.test(entry.args[0]));
+  assert.deepEqual(entry.args, ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'],
+    'the committed portable stub is never rewritten to this machine\'s path');
   assert.ok(!mcpEntryHasChannelEnv(entry));
+  assert.equal(calls.length, 1, 'and the unresolvable stub is completed at local scope');
+  assert.deepEqual(calls[0].slice(0, 6), ['mcp', 'add', 'web-chat', '--scope', 'local', '--']);
+  // `--scope local` keys the registration to the directory `claude` runs in, so
+  // the cwd is half the command: shelling out from the shell's cwd would register
+  // a project install never examined. Record it, not just the argv.
+  assert.equal(cwds[0], root, 'the shell-out runs from the resolved root');
 });
 
 test('channelEnv merges without mutating the input and never drops keys', () => {
@@ -207,17 +234,17 @@ daemonMod.spawnDaemon = async () => null;
 const install = require('../lib/cli/commands/install');
 daemonMod.spawnDaemon = realSpawnDaemon;
 
+// The root is PASSED, not chdir'd into: install resolves it through the
+// registration engine, so a test no longer has to mutate global process state —
+// and `runClaude` is stubbed so no test can shell out to a real `claude`.
 async function captureInstall(root, opts) {
-  const prevCwd = process.cwd();
   const prevLog = console.log;
   const lines = [];
   console.log = (...a) => lines.push(a.join(' '));
   try {
-    process.chdir(root);
-    await install([], opts);
+    await install([], { cwd: root, runClaude: () => ({ ok: true }), ...opts });
   } finally {
     console.log = prevLog;
-    process.chdir(prevCwd);
   }
   return lines.join('\n');
 }
@@ -253,6 +280,49 @@ test('install({nextSteps:false}) suppresses ONLY the trailing checklist', async 
     assert.match(out, /Server (pre-warmed|will start)/, 'the pre-warm line still prints');
     assert.doesNotMatch(out, /Next steps:/);
     assert.doesNotMatch(out, /Optional — Channels/);
+  } finally {
+    restore();
+  }
+});
+
+// ── the root install operates on ─────────────────────────────────────────────
+// Typed in a subdirectory, install used to create a SECOND nested install:
+// .web-chat/, .claude/settings.json and .mcp.json that Claude Code (which reads
+// the project root) never loads — and from then on findProjectRoot resolved the
+// nested one for every command run below it. There was no test of it at all.
+
+test('install from a SUBDIRECTORY adopts the enclosing project root', async () => {
+  const restore = sandboxHome();
+  try {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+    const sub = path.join(root, 'packages', 'app');
+    fs.mkdirSync(sub, { recursive: true });
+
+    const out = await captureInstall(sub, {});
+
+    assert.match(out, new RegExp(`web-chat installed for ${root}`));
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the parent gets the registration');
+    assert.ok(fs.existsSync(path.join(root, '.claude', 'settings.json')));
+    assert.equal(fs.existsSync(path.join(sub, '.web-chat')), false, 'and no second nested surface is created');
+    assert.equal(fs.existsSync(path.join(sub, '.mcp.json')), false);
+  } finally {
+    restore();
+  }
+});
+
+test('install THROWS userFacing on a malformed settings.json instead of exiting', async () => {
+  const restore = sandboxHome();
+  try {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{ not json');
+    await assert.rejects(
+      () => captureInstall(root, {}),
+      // process.exit(1) here killed `init` mid-sequence: before the onboarding
+      // stamp, before the restart instructions, and before prompt.close().
+      (e) => e.userFacing === true && /error parsing/.test(e.message),
+    );
   } finally {
     restore();
   }

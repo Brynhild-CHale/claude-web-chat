@@ -24,11 +24,13 @@ node scripts/build-release.js   # build the release tarball + SHA256SUMS into di
 
 There is no build step (plain CommonJS) and no lint config. `npm start` / `node bin/claude-web-chat.js start` runs the server in the foreground; `claude-web-chat` is the user-facing CLI (`open`, `stop`, `restart`, `unlock`, `install`, `on`/`off`, `status`, `update`).
 
-> ⚠️ Run tests with `npm test` — a bare `node --test --test-timeout=60000` (auto-discovers
+> ⚠️ Run tests with `npm test` — `node --test --test-timeout=60000 --import ./test-support/sandbox.js` (auto-discovers
 > `test/`). `node --test test/` mis-resolves and reports a spurious single failure. The
 > timeout is load-bearing: without it one leaked handle or never-settling await hangs the
 > whole run indefinitely. Do **not** add `--test-force-exit` — it turns a hang into a
-> silent pass.
+> silent pass. `npm test` also passes `--import ./test-support/sandbox.js`, which points
+> HOME at a throwaway dir before any require, so a test that spawns a subprocess (which
+> inherits `process.env`) cannot reach the developer's real `~/.web-chat`.
 
 ## Architecture
 
@@ -44,7 +46,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 
 **Turn lifecycle / the lock.** A user prompt fires the `UserPromptSubmit` hook (`turn-begin`), which acquires a graph lock pinning the commit point; a channel wake acquires one too (`turn-begin-on-push`: `emitWake` → `acquireWakeLock`, author `'wake'`, short TTL — a typed prompt mid-wake-turn upgrades it in place). Claude's `render`/`set_store`/`clear`/`use_component` calls mutate live server state during the turn. The `Stop` hook (`turn-end`) commits all of it as one new graph node and releases the lock. A user re-aim during a locked turn is never 409'd — it queues as `graph.pendingReaim` (last wins) and applies after the turn-end commit or on unlock. Claude never commits nodes or moves `active` — the harness and the user do. The user also moves it implicitly via **branch-on-edit** (`POST /api/graph/branch-here`): editing a form while previewing an older node auto-commits any dirty live state as a `user`-authored preserve node, then re-aims `active` to the previewed node so the next commit branches (`liveIsDirty` in `lib/server/domain/turns.js`). A stale/orphaned lock is cleared with `claude-web-chat unlock`. On graceful shutdown the server snapshots uncommitted live state to `draft.json` and restores it on next boot.
 
-**Toggle policy — three scopes, most-restrictive-wins** (`lib/toggle/`): user (`~/.web-chat/disabled`), project (`${cwd}/.web-chat/`), session. The MCP server enforces only user+project because Claude Code doesn't pass `session_id` to MCP subprocesses; session scope only affects hooks. When disabled, hooks no-op and MCP tools return `{ disabled, scope, hint }`.
+**Toggle policy — three scopes, most-restrictive-wins** (`lib/toggle/`): user (`~/.web-chat/disabled`), project (`${cwd}/.web-chat/`), session. The MCP server enforces only user+project because Claude Code doesn't pass `session_id` to MCP subprocesses; session scope only affects hooks. When disabled, hooks no-op and MCP tools return `{ disabled, scope, reason, hint }` — `reason` is `'not-installed'` or `'marker'`, because the project scope conflates "no `.web-chat/`" with "disabled" (right for the hooks, wrong as an instruction: the hint names `init` for the first and `on` for the second).
 
 **State migrations** (`lib/update/migrations/`) run on every server boot for any project below `SCHEMA_VERSION`. They edit files in `.web-chat/` and must be idempotent and append-only — never rewrite graph history.
 
@@ -65,6 +67,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | write a small JSON record durably, or read one back honestly | `lib/core/fsjson` (`writeJsonAtomic`; `readJson` → `ok`/`absent`/`corrupt`/`invalid`, `readJsonOr`, `renameAside`) | `writeFileSync(JSON.stringify(...))`, a private tmp+rename, or a `catch` that collapses absent and torn |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
+| put a pane on the live surface, or take one off | `lib/server/domain/mounts` (`setMount` / `removeMount` / `emitMount` — lock, owner gate, reserved ids, carry rules, `gen`, one paired emit) | hand-write `state.mounts.set(...)` beside a render frame |
 | CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/core/html` (`escapeHtml(s)` — five characters, no modes) / `lib/capture/profiles/util` | copy the helper, or inline a `.replace` chain |
 | resolve + scheme-gate an href/src read out of a captured page | `lib/capture/profiles/util` (`safeHref(href, pageUrl)`) | `new URL` plus your own `javascript:` regex |
 | render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `lib/capture/pane` | import them from `lib/server/routes/capture` |
@@ -75,6 +78,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |
 | know the supported Node floor, or where releases come from | `lib/core/versions` (`NODE_FLOOR`/`checkNodeFloor`, `REPO_SLUG` + the URLs built from it) | write `22` or the repo slug into a message |
 | resolve a `.claude/` path (settings, rules, skills) | `lib/core/paths` (`claudePaths`/`userClaudePaths`) | hardcode `.claude` |
+| decide which project a command operates on, or read/apply/remove its Claude Code registration | `lib/setup/registration` (`resolveRoot(cwd,{mode})` / `inspect` / `apply` / `remove` / `mcpArgv`) | anchor on `process.cwd()` per command, hand-build a `claude mcp add` argv, or count hooks a second way |
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
 | decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab grammar, or re-list the builtin names |
 | read/write a browser storage key in the chrome | `public/app/storage.js` (`getLocal`/`setLocal`/`getSession`/`getLocalJson`, all fail open) | touch `localStorage`/`sessionStorage` directly (the accessor throws in a private window) |
@@ -82,6 +86,9 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | walk the graph as DRAWN (nav, forks, lineage, layout) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`) | `labels.childrenOf` — raw commit children, for the ⑃ branch picker only |
 | dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
+| boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |
+| wait on a condition in a test | `test-support/helpers` (`waitUntil`) | a private `waitFor`/`until` loop |
+| open an SSE stream in a test | `test-support/helpers` (`openSSE`) | `subscribeSSE` with only `onOpen` — it can never reject |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, `core` imports nothing else from `lib/`, and entry points never reach into each other's internals — **`test/dependency-direction.test.js` enforces all three**, with a named, shrink-only baseline for the edges that legitimately remain. Every concept is consolidated behind one engine (paths, portfiles, durable JSON records, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 

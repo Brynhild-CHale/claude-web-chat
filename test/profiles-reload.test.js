@@ -2,14 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
-// Isolate ~/.web-chat (global profiles tier) before modules read homedir, so the
-// dogfood global profiles don't leak into these assertions.
-const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-reloadhome-'));
-process.env.HOME = FAKE_HOME;
-process.env.USERPROFILE = FAKE_HOME;
-
+// helpers loads test-support/sandbox, which has already redirected ~/.web-chat
+// to a throwaway dir — so the dogfood global profiles tier can't leak into these
+// assertions.
 const { withServer } = require('../test-support/helpers');
 
 function profileDir(root, name) { return path.join(root, '.web-chat', 'profiles', name); }

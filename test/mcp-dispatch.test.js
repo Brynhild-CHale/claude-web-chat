@@ -53,13 +53,34 @@ test('tools/list returns the full tool set with well-formed entries', async (t) 
   }
 });
 
-test('tools/call disabled at project scope -> disabled envelope, no --flag', async (t) => {
+// FLIPPED, deliberately. This asserted only that the hint carries no scope flag,
+// which locked in an instruction that cannot work: for a directory with no
+// .web-chat/ the project scope reports "disabled" (correct for the hooks, which
+// must exit silently), and the dispatcher turned that into "Run
+// `claude-web-chat on`" — which answers "web-chat is not disabled for this
+// project" and changes nothing. The hint must name a command that would change
+// the state, so the two cases are now distinguished by reason.
+test('tools/call in an UNINSTALLED project names init, not `on`', async (t) => {
   const client = await launchMcp(t, { cwd: mkTmp(), home: mkTmp() }); // cwd has no .web-chat
   const res = await client.callTool({ name: 'render', arguments: {} });
   assert.equal(res.isError, true);
   const payload = JSON.parse(res.content[0].text);
   assert.equal(payload.disabled, true);
   assert.equal(payload.scope, 'project');
+  assert.equal(payload.reason, 'not-installed');
+  assert.match(payload.hint, /claude-web-chat init/);
+  assert.ok(!payload.hint.includes('--'), 'project hint carries no scope flag');
+});
+
+test('tools/call disabled BY THE MARKER still points at `claude-web-chat on`', async (t) => {
+  const cwd = installedProject();
+  fs.writeFileSync(path.join(cwd, '.web-chat', 'disabled'), '');
+  const client = await launchMcp(t, { cwd, home: mkTmp() });
+  const res = await client.callTool({ name: 'render', arguments: {} });
+  const payload = JSON.parse(res.content[0].text);
+  assert.equal(payload.scope, 'project');
+  assert.equal(payload.reason, 'marker');
+  assert.match(payload.hint, /claude-web-chat on/);
   assert.ok(!payload.hint.includes('--'), 'project hint carries no scope flag');
 });
 

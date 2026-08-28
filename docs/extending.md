@@ -12,7 +12,7 @@ npm install
 node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
-Run the suite with `npm test` — that is a bare `node --test --test-timeout=60000`,
+Run the suite with `npm test` — that is `node --test --test-timeout=60000 --import ./test-support/sandbox.js`,
 which auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
 reports a spurious failure. The timeout is load-bearing: without it one leaked
 handle or never-settling await hangs the whole run indefinitely. Do not add
@@ -83,7 +83,8 @@ rest rely on this doc and review.
 ```
 entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
                          │  import ↓ only      (never each other)
-shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
+shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · capture/* ·
+                   channel/*
                          │  import ↓ only      (may import each OTHER — that is
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
@@ -145,6 +146,7 @@ were the only places they lived.
 | read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
+| put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
 | decide who may reach this server (bind host, `Host` gate, WS `Origin` gate, extension CORS, the preview document's CSP) | `core/cors` `LISTEN_HOST` / `requireLocalHost` / `isLocalHost` / `verifyUpgrade` / `isLocalOrigin` / `isBrowserRequest` / `setCors` / `mountCors` / `PREVIEW_CSP` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", read `req.headers.host` by hand, or copy the header block |
@@ -159,6 +161,12 @@ were the only places they lived.
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
+| decide which project a command operates on | `lib/setup/registration` `resolveRoot(cwd, {mode})` → `{root, movedUp}` | `process.cwd()`, or your own `findProjectRoot(cwd) || cwd` per command |
+| read what is registered with Claude Code here (hooks per event, the `.mcp.json` entry, managed-file drift, gitignore) | `lib/setup/registration` `inspect(root)` | count hooks yourself, or classify the MCP entry a second way |
+| register a project, or un-register one | `lib/setup/registration` `apply(root, {force, dryRun, runClaude})` / `remove(root, {runClaude})` | call `ensureHooks` + `reconcileManagedFiles` + `ensureMcpRegistration` in your own order, with your own stub policy |
+| build the `claude mcp add`/`remove` argv | `lib/setup/registration` `mcpArgv()` / `removeArgv()` | `path.join(__dirname, …, 'bin')` (that is the version dir, which gets pruned) |
+| name the hook events registration means | `lib/setup/registration` `hookEvents()` | iterate whatever `settings.hooks` happens to hold |
+| say what a managed-file conflict means and how it ends | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (which never converges) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
@@ -167,6 +175,9 @@ were the only places they lived.
 | walk the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses | `labels.childrenOf`, which is the RAW commit topology and has one consumer by design: the ⑃ branch picker |
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
+| boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
+| wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
+| open an SSE stream in a test | `test-support/helpers` `openSSE(port, {kinds, since, onEvent, awaitChannel})` | `subscribeSSE` with only `onOpen` (it can never reject) |
 
 ## The engines in detail
 
@@ -526,6 +537,68 @@ destination's `meta.json` already says `builtin: true` (an fs check, not a name
 check), and `verifyPack` re-validates a *recorded* unit name at read time,
 skipping rather than throwing so `pack remove` over a damaged record degrades.
 
+### `lib/setup/registration.js` — the project-registration model
+
+What it means for a project to be **registered with Claude Code**: which root a
+command operates on, the hook events from `templates/settings.hooks.json`, the
+`.mcp.json` entry and its `${CLAUDE_PLUGIN_ROOT}` policy, the managed files and
+their baselines, the `.gitignore` line. Four functions:
+
+- **`resolveRoot(cwd, {mode})`** → `{root, from, source, movedUp}`. One answer
+  where there were five. `'existing'` requires an installed root at or above
+  `cwd` and throws a `userFacing` refusal naming `claude-web-chat init` (`on`,
+  `off`); `'install'` falls back to `cwd` when there is none (`install`,
+  `uninstall`, `doctor`, `status`, the MCP dispatcher); `'optional'` returns
+  `root: null` for a caller with nothing to do outside a project (`update`).
+  All three inherit `findProjectRoot`'s `$HOME` refusal.
+- **`inspect(root)`** — pure read: `installed`, `hooks` per event
+  (`ok` / `bare` / `missing`), `mcp` (`present`, `kind`, `resolvable`, `reason`,
+  `channelEnv`), `managed` (the dry-run reconcile), `gitignore`. `doctor`,
+  `status` and the MCP dispatcher all report from this one read, so they cannot
+  disagree about the same project.
+- **`apply(root, {force, dryRun, runClaude})`** — hooks + managed files +
+  `.gitignore` + the MCP registration, under **one** stub policy: a committed
+  `${CLAUDE_PLUGIN_ROOT}` entry is never rewritten, and when it cannot resolve
+  here the registration is completed with `claude mcp add --scope local`.
+- **`remove(root, {runClaude})`** — the hook handlers for `hookEvents()` only,
+  the managed files, their `.new` sidecars and baselines, the `.mcp.json` entry,
+  and the local-scope registration `apply`/`doctor` may have written.
+
+Two asymmetries are deliberate, and stated in the module header: `apply()` is
+**not** the whole of `install` (creating `.web-chat/`, running the migrations and
+pre-warming the daemon stay in the command, so `doctor`'s repair never forks a
+server), and `remove()` is **not** the inverse of `apply()` (`.web-chat/` holds
+the graph and is preserved; the daemon is not stopped).
+
+`isInstalled(root)` is the cheap half of `inspect` — one `existsSync` — because
+the MCP dispatcher asks "is web-chat installed here?" on every tool call in a
+disabled project, and `inspect().installed` is defined as it.
+
+**`runClaude(argv, {cwd})` always takes the resolved root.** `claude mcp
+add|remove … --scope local` registers the directory `claude` runs in, so a
+shell-out from `process.cwd()` would be a second, implicit root derivation
+inside the one module that exists to have exactly one: `install` in a
+subdirectory would adopt the parent root and then register the subdirectory,
+and `uninstall` would leave the local-scope entry it exists to remove. The three
+call sites (`apply`, `remove`, `doctor`) all pass `{cwd: root}`; a fake in a test
+must record it, not just the argv. `update` deliberately passes a `runClaude`
+that **records and prints** rather than runs — an upgrade syncs project files
+and does not mutate Claude Code's own config behind the user's back.
+
+It sits **above** `lib/update/managed-files`, which keeps every export: that is
+where the primitives live, and `lib/packs` imports two of them — a pack installer
+must not become a dependent of a CLI-registration module. And it imports no entry
+point, which is why the `claude` shell-out is an injectable `runClaude` rather
+than something reached for from `lib/cli`. The hook template has one reader,
+`managed-files.hookTemplate()` — `ensureHooks` merges its handlers, `hookEvents()`
+takes `Object.keys` off it — and the wording for a managed-file **conflict** has
+one home too, `managed-files.conflictAdvice()` / `conflictSummary()`, which
+`install`, `update`, `init` and `status` all print.
+
+`update` loads this module out of `versions/<target>` (the same reason
+`loadRestart` exists), so **the export surface is a cross-version contract**:
+keep it small and additive, and keep the fallback in `loadRegistration` loud.
+
 ### Shared small homes
 
 - `lib/core/html.js` — `escapeHtml(s)`. Null-safe; escapes all five characters
@@ -559,20 +632,119 @@ count as a phantom passing test.
   - `opts`: `{ root }` (reuse a root, for restart tests), `{ seed }` (write into
     `.web-chat` before boot), `{ mode:'start' }` (bind the real 5173+ range —
     port-walk only), `{ writePortfile:true }` (watch discovery).
+  - `opts` also takes `{ createServer }` — an injected module, for a test that
+    busts `require.cache` (lock-ttl re-reads `WEB_CHAT_LOCK_TTL_MS` at module
+    load). `withServer` resolves `createServer` **lazily**; it used to bind it at
+    require time, which meant such a test silently booted the stale module.
+- `withHub(t, { port })` — the same for the capture hub: `createHub` + a
+  `LISTEN_HOST` bind + idempotent `t.after` stop. Returns `{ hub, server, port,
+  baseUrl, api, stop }`. Four boots used to be hand-rolled with the stop at the
+  end of the test body.
+- `waitUntil(pred, { timeout = 2000, interval = 25, what })` — **the** deadline
+  poll. Awaits the predicate, resolves with the **first truthy value** (not
+  `true`, so a caller can read a nonce or a pid straight out), re-evaluates once
+  after the deadline, and on failure throws ``timed out waiting for `what` `` when
+  `what` is given, else returns `false` (which is what keeps
+  `assert.ok(await waitUntil(…), 'message')` reporting its own message). Nine
+  files carried a private copy under four names and three incompatible timeout
+  contracts. Binding a longer budget onto it for a file that waits on child
+  processes is fine; writing a second loop is not.
+- `openSSE(port, { kinds, since, onEvent, timeout = 5000, awaitChannel })` — the
+  one stream opener, and the only one that can **fail**: it rejects on `onError`,
+  on a close before open, and on the deadline. The three private openers passed
+  `onOpen` alone, so a non-200 or a request error left the promise pending
+  forever — that is the shape behind an unexplained hung run. `awaitChannel: api`
+  additionally polls `/api/queue/policy` until the server counts the stream as
+  the connected channel. It does **not** subsume `test/events-sse.test.js`, whose
+  raw client asserts on `:` heartbeat comments and `id:` lines that
+  `subscribeSSE` discards.
 - `withTempHome(t)` — redirect `HOME`/`USERPROFILE` to a throwaway dir so
   `os.homedir()`-based tiers (theme system scope, toggle user/session) don't touch
   the dev machine.
-- `tmpRoot`, `makeApi(baseUrl)`, `wsConnect`, `wsHello`, `safeStop`.
+- `wsConnect(port, path, { headers })` / `wsHello(port, path, { headers })` —
+  `headers` is what makes the WS Origin gate testable at all (Node's `ws` client
+  sends no `Origin`, so every connection used to take the `!origin` branch and
+  deleting `verifyClient` passed the suite). `wsHello` surfaces a refused upgrade
+  as a rejection carrying `.statusCode`, not a hang.
+- `tmpRoot`, `makeApi(baseUrl)`, `safeStop`.
 
-Run the suite with `npm test` (a bare `node --test --test-timeout=60000`, which
-auto-discovers `test/`). Not `node --test test/` — that mis-resolves.
+`test-support/sandbox.js` is loaded by `npm test` through
+`--import ./test-support/sandbox.js`, before any test file's first `require`, and
+required from `helpers.js` as a fallback for a runner that does not carry the
+flag through to its per-file children. It points `HOME`/`USERPROFILE` at a
+throwaway dir for the whole process. Its job is the two paths `withServer` cannot
+see, both of which spawn a subprocess with **no `env`** so the child inherits:
+`client-autospawn`'s real daemon (which used to register tmp roots in the
+developer's `~/.web-chat/instances.json` and bounce the live capture hub) and
+`profile-cli`'s real CLI (which read the developer's real profiles). It is a
+floor, not a replacement — `withServer` still mints a per-test home, because one
+process-wide home does not isolate tests from each other (the service trust
+store, system-scope themes and the update-check throttle all accumulate).
+
+Run the suite with `npm test`. It is `node --test` with **no path argument** (a
+directory mis-resolves), `--test-timeout=60000` so an unsettled await is a named
+failing test instead of an anonymous 15-minute CI job, and the sandbox preload.
+Deliberately **not** `--test-force-exit`: that turns a leaked handle from a loud
+hang into a silent green, and `test/events-sse.test.js` has the suite's only
+structural leak detectors.
+
+`test/harness-conventions.test.js` ratchets the five constructs above back into
+`test-support` — the deadline loop, a poll-helper definition, `subscribeSSE(`,
+`createServer({ root` and `.server.listen(` — with named exemptions (the two
+heredoc daemons, the fake clients injected into the channel bridge). It is a
+separate file from `conventions.test.js` on purpose: that one deliberately does
+not scan `test/`, and adding these roots to its patterns would fire
+`http.request(` and `os.homedir()` across ~20 files at once. Fixed sleeps and
+`process.env.HOME =` are deliberately **not** ratcheted — a good number of both
+are legitimate, so a count could never approach zero.
+
+### `lib/server/domain/mounts.js` — the mount-set engine
+
+Putting a pane on the live surface is not one write. It is, in order: reserved-id
+validation, a lock check, an owner gate plus `force`, the `pane_state` /
+`form_state` / `theme` carry rules, the `gen` bump a queued Revert is stamped
+against, the owner stamp, and ONE `bus.emit` naming both the ring event and the
+WS frame. Four routes hand-copied that sequence and each dropped a different
+part of it, which is the whole argument for the module.
+
+- `setMount(state, bus, {id, html, target, params, owner, force, component, theme, pane_state_patch, policy})`
+  → `{ok:true, id, owner}` or a refusal envelope (`lockReject` / `ownerReject` /
+  `reservedReject` — always HTTP 200 with `ok:false`, the tree's refusal
+  convention; Claude's tools and the drawer read `.ok`, not the status).
+- `removeMount(state, bus, {id, source, originGen, target})` → whether a pane
+  went. `originGen` is the queue's generation guard.
+- `emitMount(state, bus, id, {source})` — re-broadcast a pane as it stands,
+  without replacing it (the queue's activity Revert restores form values in
+  place and needs every browser to remount).
+
+**The carry rules are not uniform and must not be flattened.** `pane_state` and
+`theme` carry; `form_state` carries unless `params.form_reset`; a supplied
+`theme` wins over the pane's; and `component` is written only when the caller
+passes one — never carried, because a plain render over a service-backed pane
+dropping `component` is exactly how the supervisor stops that pane's child.
+
+**Two named policies, and a third means the abstraction is wrong.** `default`
+covers Claude, `/use` and drivers. `capture` exists for one deviation: the
+tab-stream extension re-renders its own pane on every capture and must not
+soft-reject itself against a stale owner on that id. Everything else the capture
+path used to skip — the ring event, the lock check, `gen`, the `form_state`
+carry — it no longer does.
+
+What stays OUTSIDE: `graph.restoreLiveToNode` and `turns.loadDraft` replace the
+whole surface and broadcast a `reset` instead of per-pane frames, and
+`routes/render.js`'s bulk clear owns a pin filter and two batched frame shapes.
+`test/conventions.test.js` ratchets exactly that boundary.
 
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
 `lib/` (+ `public/` for the eval, escaping and token patterns, and `public/app`
-for the browser-storage one) and holds a **per-file baseline** for every construct
-in the table below, then **ratchets**:
+for the browser-storage one) and holds a
+**per-file baseline** for every construct in the table below, then **ratchets**.
+It does not scan `test/` or `test-support/`, so the harness may use raw
+http/ws/fetch; the harness's own five constructs have their own file
+(`test/harness-conventions.test.js`, described under the test harness above).
+The ratchet works the same way in both:
 
 - **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
   route it through its engine instead.
@@ -598,6 +770,9 @@ Current homes (baselines can only shrink toward these):
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
+| `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
+| `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
+| `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
 | `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 

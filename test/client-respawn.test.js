@@ -18,18 +18,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const portfiles = require('../lib/core/portfiles');
+const { waitUntil } = require('../test-support/helpers');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function until(fn, { timeout = 8000, interval = 50 } = {}) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    const v = await fn();
-    if (v) return v;
-    await sleep(interval);
-  }
-  return false;
-}
+// Spawning a real daemon and waiting for it to die are both slow next to an
+// in-process assertion, so this file waits on a longer budget than the shared
+// default.
+const SPAWN = { timeout: 8000, interval: 50 };
 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
@@ -64,7 +58,7 @@ test('the MCP client respawns a daemon that has died mid-session', async (t) => 
 
   // The daemon goes away — a crash, an OOM kill, a `claude-web-chat stop`.
   process.kill(firstPid, 'SIGTERM');
-  assert.ok(await until(() => !alive(firstPid)), 'the first daemon is gone');
+  assert.ok(await waitUntil(() => !alive(firstPid), SPAWN), 'the first daemon is gone');
 
   // The very next tool call must bring one back, not fail for the rest of the session.
   const second = await client.get('/api/health');

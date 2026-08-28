@@ -150,6 +150,113 @@ test('update downloads, activates, relinks, prunes and restarts', async (t) => {
   assert.match(d.log.text(), /Updated: v0\.5\.0 → v0\.6\.0/);
 });
 
+// cli-ops-2: the help text promises an update propagates the new release's
+// rules, skills and hook template. It never did — reconcileManagedFiles and
+// friends were required at module load from the tree this process started in
+// (the version being REPLACED) and templatesDir() is __dirname-relative, so the
+// reconcile compared the project against the OLD templates and reported every
+// file up to date. No test asserted WHICH templates were used, which is why it
+// survived. This one does, by making the target version's engine identifiable.
+test("update syncs with the NEW version's engine, not the one it was launched from", async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-proj-')));
+  fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  const prevCwd = process.cwd();
+  process.chdir(project);
+  t.after(() => process.chdir(prevCwd));
+
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      const dir = fakeVersion(paths, release.version);
+      // The new build's registration engine, identifiable by what it writes.
+      fs.mkdirSync(path.join(dir, 'lib', 'setup'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'lib', 'setup', 'registration.js'),
+        "const fs = require('fs');\nconst path = require('path');\n"
+        + "module.exports.apply = (root) => {\n"
+        + "  fs.mkdirSync(path.join(root, '.claude', 'rules'), { recursive: true });\n"
+        + "  fs.writeFileSync(path.join(root, '.claude', 'rules', 'web-chat.md'), 'shipped by v0.6.0\\n');\n"
+        + "  return { managed: [{ dest: '.claude/rules/web-chat.md', action: 'updated' }] };\n};\n");
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  await update([], d);
+
+  assert.equal(
+    fs.readFileSync(path.join(project, '.claude', 'rules', 'web-chat.md'), 'utf8'),
+    'shipped by v0.6.0\n',
+    "the sync must come from versions/<target>, not the module graph this process booted with",
+  );
+});
+
+// `update` now runs the engine's full apply(), which completes an unresolvable
+// .mcp.json entry by shelling out to `claude mcp add … --scope local`. That
+// writes Claude Code's own config, OUTSIDE this project — install's and doctor's
+// job, sanctioned for them and for nobody else. An upgrade must not do it
+// silently, so the shell-out is recorded and printed instead of run.
+test('update prints the local-scope command instead of shelling out to `claude`', async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-stub-')));
+  fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  // The dogfooding shape: a committed plugin stub that cannot resolve outside a
+  // plugin install. D4 says preserve it and register at local scope.
+  const stub = JSON.stringify({
+    mcpServers: { 'web-chat': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'] } },
+  }, null, 2) + '\n';
+  fs.writeFileSync(path.join(project, '.mcp.json'), stub);
+  const prevCwd = process.cwd();
+  process.chdir(project);
+  const prevPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  delete process.env.CLAUDE_PLUGIN_ROOT;
+  t.after(() => {
+    process.chdir(prevCwd);
+    if (prevPluginRoot === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = prevPluginRoot;
+  });
+
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    // No lib/setup/registration.js in the target, so the sync falls back to THIS
+    // build's engine — the real one, whose apply() would otherwise shell out.
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      fakeVersion(paths, release.version);
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  await update([], d);
+
+  assert.equal(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8'), stub,
+    'the committed plugin stub is preserved byte for byte');
+  assert.match(d.log.text(), /run: claude mcp add web-chat --scope local --/,
+    'the command is printed for the user to run deliberately, not executed mid-upgrade');
+});
+
+test('a target version with no registration engine falls back LOUDLY', async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.4.0');   // predates the engine
+  const errlog = sink();
+  const mod = update.loadRegistration(paths, '0.4.0', errlog);
+  assert.equal(typeof mod.apply, 'function', 'it still syncs, with this build');
+  assert.match(errlog.text(), /ships no registration engine/);
+  assert.match(errlog.text(), /THIS build's templates/,
+    'the call site downgrades any failure to "sync skipped", so a silent fallback would be indistinguishable from success');
+});
+
 test('update does not downgrade when the latest release is older than this build', async (t) => {
   withTempHome(t);
   inScratchCwd(t);

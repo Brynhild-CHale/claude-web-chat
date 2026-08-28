@@ -8,19 +8,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil, openSSE } = require('../test-support/helpers');
 const { subscribeSSE } = require('../lib/client');
 const { createBus } = require('../lib/core/bus');
 const { startChannelBridge } = require('../lib/channel/bridge');
 const queue = require('../lib/server/domain/queue');
 
 const HTML = '<html><head><title>Doc</title></head><body><p>hi</p></body></html>';
-const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred, ms = 2500) {
-  const start = Date.now();
-  while (Date.now() - start < ms) { if (await pred()) return; await settle(20); }
-  throw new Error('waitFor timed out');
-}
 
 function liveState() {
   return { queue: [], queueSeq: 0, mounts: new Map(), store: {}, signals: {}, wakeConsumers: 1, wakeConsumerSeenAt: Date.now(), pendingAck: null, pendingWake: null, pendingWakeSeq: 0 };
@@ -158,8 +152,8 @@ function readyClient() {
 test('bridge: a delivered wake is acked back, clearing the retain and emitting wake-ack', async (t) => {
   const { api, root, port } = await withServer(t, { writePortfile: true });
   const acks = [];
-  const ackStream = subscribeSSE({ port, kinds: ['wake-ack'], onEvent: (e) => { if (e.kind === 'wake-ack') acks.push(e); } });
-  t.after(() => { try { ackStream.close(); } catch {} });
+  const ackStream = await openSSE(port, { kinds: ['wake-ack'], onEvent: (e) => { if (e.kind === 'wake-ack') acks.push(e); } });
+  t.after(() => ackStream.close());
 
   const { client, ready } = readyClient();
   const notified = [];
@@ -173,8 +167,8 @@ test('bridge: a delivered wake is acked back, clearing the retain and emitting w
   assert.equal(typeof push.seq, 'number');
 
   // The bridge delivers the notification, then POSTs the ack, which emits wake-ack.
-  await waitFor(() => notified.length >= 1);
-  await waitFor(() => acks.some((a) => a.seq === push.seq));
+  await waitUntil(() => notified.length >= 1, { timeout: 2500, what: 'the bridge notification' });
+  await waitUntil(() => acks.some((a) => a.seq === push.seq), { timeout: 2500, what: 'the wake-ack event' });
 
   // Retain is cleared: a repush now finds nothing in flight.
   const rp = await api.post('/api/queue/repush', { seq: push.seq });

@@ -6,41 +6,20 @@ const os = require('os');
 const net = require('net');
 const { spawn } = require('child_process');
 
-// Isolate ~/.web-chat (registry + hub portfile live under HOME) before the
-// modules read homedir. node --test runs each file in its own process, so this
-// only affects this suite.
-const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-hubhome-'));
-process.env.HOME = FAKE_HOME;
-process.env.USERPROFILE = FAKE_HOME;
-
-const { createServer } = require('../lib/server');
-const { createHub } = require('../lib/hub');
+// ~/.web-chat (the registry + the hub portfile) is redirected by
+// test-support/sandbox, which helpers loads before any lib module resolves
+// homedir; the registry tests below take a per-test home on top so they cannot
+// see each other's entries.
+const { withServer, withHub, withTempHome, waitUntil } = require('../test-support/helpers');
 const { registerInstance, deregisterInstance, readInstances, instanceId, registerHub, deregisterHub, readHubEntry, readAllLive } = require('../lib/util/registry');
 const { HUB_PROTOCOL_VERSION, probeHub, probeHubHealth, ensureHub } = require('../lib/util/hub');
 
-function tmpRoot(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wc-${name}-`));
-  fs.mkdirSync(path.join(dir, '.web-chat'), { recursive: true });
-  return dir;
-}
-async function listen(httpServerOwner) {
-  await new Promise((r) => httpServerOwner.server.listen(0, r));
-  return httpServerOwner.server.address().port;
-}
-function api(port) {
-  const base = `http://localhost:${port}`;
-  return {
-    get: (p) => fetch(base + p).then(async (r) => ({ status: r.status, json: await r.json() })),
-    post: (p, b) => fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) })
-      .then(async (r) => ({ status: r.status, json: await r.json() })),
-  };
-}
-
 const HTML = '<html><head><title>T</title></head><body><p>SECRET-MARKER hello</p></body></html>';
 
-test('registry: register, prune dead pids, deregister', () => {
-  const rootLive = tmpRoot('live');
-  const rootDead = tmpRoot('dead');
+test('registry: register, prune dead pids, deregister', async (t) => {
+  withTempHome(t);
+  const rootLive = path.join(os.tmpdir(), 'wc-live');
+  const rootDead = path.join(os.tmpdir(), 'wc-dead');
   registerInstance({ root: rootLive, port: 1, pid: process.pid, title: 'live' });
   registerInstance({ root: rootDead, port: 2, pid: 2 ** 30, title: 'dead' }); // pid that can't be alive
 
@@ -52,8 +31,9 @@ test('registry: register, prune dead pids, deregister', () => {
   assert.equal(readInstances().length, 0);
 });
 
-test('registry: hub entry registers/reads/deregisters and never shows as an instance', () => {
-  const rootI = tmpRoot('withhub');
+test('registry: hub entry registers/reads/deregisters and never shows as an instance', async (t) => {
+  withTempHome(t);
+  const rootI = path.join(os.tmpdir(), 'wc-withhub');
   registerInstance({ root: rootI, port: 7, pid: process.pid, title: 'inst' });
   registerHub({ port: 5170, pid: process.pid });
 
@@ -79,13 +59,14 @@ test('registry: hub entry registers/reads/deregisters and never shows as an inst
   assert.equal(readAllLive().length, 0);
 });
 
-test('registry: tolerant read — a legacy entry with no role is an instance, never a hub', () => {
+test('registry: tolerant read — a legacy entry with no role is an instance, never a hub', async (t) => {
   // Simulate an entry written by a build predating the role/version fields — the
   // sole cross-version safety for this user-scope file (no migration runner). It
   // must read back as an instance (role || 'instance') and never as the hub.
-  const root = path.join(FAKE_HOME, 'legacy-proj');
+  const home = withTempHome(t);
+  const root = path.join(home, 'legacy-proj');
   const id = instanceId(root);
-  const regPath = path.join(FAKE_HOME, '.web-chat', 'instances.json');
+  const regPath = path.join(home, '.web-chat', 'instances.json');
   fs.mkdirSync(path.dirname(regPath), { recursive: true });
   fs.writeFileSync(regPath, JSON.stringify({ instances: [
     { id, root, title: 'legacy', port: 9, pid: process.pid, url: 'http://localhost:9', started_at: 1 },
@@ -100,27 +81,24 @@ test('registry: tolerant read — a legacy entry with no role is an instance, ne
   assert.equal(readAllLive().length, 0);
 });
 
-test('hub: lists instances and routes a capture to the chosen one', async () => {
-  const rootA = tmpRoot('projA');
-  const rootB = tmpRoot('projB');
-  const srvA = createServer({ root: rootA, port: 0 });
-  const srvB = createServer({ root: rootB, port: 0 });
-  const portA = await listen(srvA);
-  const portB = await listen(srvB);
+test('hub: lists instances and routes a capture to the chosen one', async (t) => {
+  // Two instances in ONE home: the first withServer mints the per-test home and
+  // the second joins it, so both registrations and the hub's read of them are the
+  // same throwaway registry.
+  const A = await withServer(t);
+  const B = await withServer(t);
   // Register manually (tests bypass start(), which is what normally registers).
-  registerInstance({ root: rootA, port: portA, pid: process.pid, title: 'projA' });
-  registerInstance({ root: rootB, port: portB, pid: process.pid, title: 'projB' });
+  registerInstance({ root: A.root, port: A.port, pid: process.pid, title: 'projA' });
+  registerInstance({ root: B.root, port: B.port, pid: process.pid, title: 'projB' });
 
-  const hub = createHub({ port: 0 });
-  const hubPort = await listen(hub);
-  const H = api(hubPort);
+  const H = (await withHub(t)).api;
 
   // list
   const list = await H.get('/api/instances');
   assert.equal(list.status, 200);
   assert.equal(list.json.instances.length, 2);
   assert.ok(list.json.instances.every((i) => i.pid === undefined), 'pid not leaked to browser');
-  const idA = instanceId(rootA);
+  const idA = instanceId(A.root);
 
   // ambiguous → 409
   const amb = await H.post('/api/capture', { url: 'http://x', title: 'X', html: HTML });
@@ -133,8 +111,8 @@ test('hub: lists instances and routes a capture to the chosen one', async () => 
   assert.equal(routed.json.instance.id, idA);
 
   // landed in A, not B
-  const capsA = await api(portA).get('/api/captures');
-  const capsB = await api(portB).get('/api/captures');
+  const capsA = await A.api.get('/api/captures');
+  const capsB = await B.api.get('/api/captures');
   assert.equal(capsA.json.captures.length, 1);
   assert.equal(capsB.json.captures.length, 0);
   assert.equal(capsA.json.captures[0].source, 'ext:tab-stream');
@@ -144,20 +122,15 @@ test('hub: lists instances and routes a capture to the chosen one', async () => 
   assert.equal(bad.status, 404);
 
   // lone instance: deregister B, omit instance → routes to A implicitly
-  deregisterInstance(rootB);
+  deregisterInstance(B.root);
   const lone = await H.post('/api/capture', { url: 'http://a2', title: 'A2', html: HTML });
   assert.equal(lone.status, 200);
   assert.equal(lone.json.instance.id, idA);
-
-  await srvA.gracefulShutdown();
-  await srvB.gracefulShutdown();
-  await hub.stop();
 });
 
-test('hub: health reports role hub + protocol version; probes read it', async () => {
-  const hub = createHub({ port: 0 });
-  const port = await listen(hub);
-  const h = await api(port).get('/api/health');
+test('hub: health reports role hub + protocol version; probes read it', async (t) => {
+  const { api, port } = await withHub(t);
+  const h = await api.get('/api/health');
   assert.equal(h.json.role, 'hub');
   assert.equal(h.json.ok, true);
   // The version drives ensureHub's self-heal: a hub older than this gets bounced.
@@ -173,10 +146,10 @@ test('hub: health reports role hub + protocol version; probes read it', async ()
   // A non-hub / dead port → false / null.
   assert.equal(await probeHub(1), false);
   assert.equal(await probeHubHealth(1), null);
-
-  await hub.stop();
 });
 
+// Deliberately NOT withHub: this asks the OS for a port NUMBER that nothing is
+// listening on, then gives it back — there is no server to own.
 function freePort() {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
@@ -185,23 +158,25 @@ function freePort() {
   });
 }
 
-test('hub: self-closes when the registry stays empty past the grace window', async () => {
-  // Fresh HOME → empty registry. Tiny grace/poll so the test is quick.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-idlehome-'));
+test('hub: self-closes when the registry stays empty past the grace window', async (t) => {
+  // Fresh HOME → empty registry. Tiny grace/poll so the test is quick. The hub
+  // under test is a SUBPROCESS (start() calls process.exit, so it cannot be
+  // exercised in-process), which is why this one does not use withHub.
+  const home = withTempHome(t);
   const port = await freePort();
   const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat.js');
   const child = spawn(process.execPath, [bin, 'hub', 'run'], {
     env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_HUB_PORT: String(port), WEB_CHAT_HUB_IDLE_MS: '200', WEB_CHAT_HUB_POLL_MS: '80' },
     stdio: 'ignore',
   });
+  t.after(() => { try { child.kill('SIGKILL'); } catch {} });
 
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
   const result = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), 5000))]);
   if (result === 'timeout') { child.kill(); assert.fail('hub did not self-close on empty registry'); }
   assert.equal(result, 0, 'hub exited cleanly');
   // The hub self-registers into the registry (not a hub.json) and must deregister
-  // on self-close. Read the subprocess's own HOME registry raw (readHubEntry reads
-  // this process's ambient HOME, a different dir).
+  // on self-close. Read the subprocess's own HOME registry raw.
   const regPath = path.join(home, '.web-chat', 'instances.json');
   const entries = fs.existsSync(regPath) ? (JSON.parse(fs.readFileSync(regPath, 'utf8')).instances || []) : [];
   assert.equal(entries.find((e) => e.role === 'hub'), undefined, 'hub deregistered from the registry on self-close');
@@ -221,21 +196,23 @@ s.listen(port);
 process.on('SIGTERM',()=>{try{fs.unlinkSync(path.join(dir,'hub.json'));}catch(e){} s.close(()=>process.exit(0)); setTimeout(()=>process.exit(0),300);});
 `;
 
-test('hub: ensureHub bounces a stale (old-protocol) hub; a current one takes over', async () => {
+test('hub: ensureHub bounces a stale (old-protocol) hub; a current one takes over', async (t) => {
+  const home = withTempHome(t);
   const port = await freePort();
   assert.notEqual(port, 5170, 'must never touch the real default-port hub');
 
-  // Bring up a fake v1 hub on the fixed port (writes its own portfile in FAKE_HOME).
+  // Bring up a fake v1 hub on the fixed port (writes its own portfile in `home`).
   const fake = spawn(process.execPath, ['-e', FAKE_V1_HUB], {
-    env: { ...process.env, HOME: FAKE_HOME, USERPROFILE: FAKE_HOME, WEB_CHAT_HUB_PORT: String(port) },
+    env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_HUB_PORT: String(port) },
     stdio: 'ignore',
   });
   const fakeExited = new Promise((r) => fake.on('exit', () => r()));
   try {
-    let h = null;
-    const upBy = Date.now() + 4000;
-    while (Date.now() < upBy) { h = await probeHubHealth(port); if (h && h.version === 1) break; await new Promise((r) => setTimeout(r, 50)); }
-    assert.ok(h && h.version === 1, 'fake v1 hub answering');
+    const h = await waitUntil(async () => {
+      const probed = await probeHubHealth(port);
+      return probed && probed.version === 1 ? probed : false;
+    }, { timeout: 4000, interval: 50 });
+    assert.ok(h, 'fake v1 hub answering');
 
     // ensureHub sees the stale version, SIGTERMs it, waits for the port, respawns.
     const prevPort = process.env.WEB_CHAT_HUB_PORT;
@@ -257,12 +234,11 @@ test('hub: ensureHub bounces a stale (old-protocol) hub; a current one takes ove
     await Promise.race([fakeExited, new Promise((r) => setTimeout(r, 2000))]); // the stale hub was bounced
 
     // Cleanup: kill the real hub ensureHub spawned and wait for the port to free.
-    // Its pid comes from the registry now (ensureHub spawns it under this process's
-    // HOME=FAKE_HOME, so readHubEntry reads the same registry it self-registered in).
+    // Its pid comes from the registry now (ensureHub spawns it under this
+    // process's HOME, so readHubEntry reads the registry it self-registered in).
     const real = readHubEntry();
     if (real && real.pid) { try { process.kill(real.pid, 'SIGTERM'); } catch {} }
-    const freeBy = Date.now() + 4000;
-    while (Date.now() < freeBy) { if (!(await probeHub(port))) break; await new Promise((r) => setTimeout(r, 50)); }
+    await waitUntil(async () => !(await probeHub(port)), { timeout: 4000, interval: 50 });
   } finally {
     try { fake.kill('SIGKILL'); } catch {}
   }

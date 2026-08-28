@@ -2,14 +2,36 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { withServer } = require('../test-support/helpers');
 
-function tmpRoot() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-lockttl-'));
-  fs.mkdirSync(path.join(dir, '.web-chat'), { recursive: true });
-  return dir;
+// LOCK_TTL_MS is read once, at lib/server/domain/turns LOAD, so the only way to
+// test the stale-lock path in reasonable time is to set the env var and re-read
+// the module — which means evicting turns.js and everything that top-imports it
+// (graph.js pulls in turns; routes/graph and the server index pull in graph), or
+// two turns instances end up loaded at once.
+const TTL_MODULES = ['../lib/server/domain/turns', '../lib/server/graph', '../lib/server/routes/graph', '../lib/server'];
+const bustTtlModules = () => { for (const m of TTL_MODULES) delete require.cache[require.resolve(m)]; };
+
+// Returns the FRESH createServer for withServer to boot. Passing it explicitly
+// matters: helpers used to capture createServer at require time, so a test that
+// busted the cache got the STALE module back and passed while exercising the old
+// TTL — a silent false green in a lock-correctness test. Both the env var and the
+// cache are restored on t.after, so a failing assertion cannot leak either.
+function shortTtlServer(t, ms = 50) {
+  const prev = process.env.WEB_CHAT_LOCK_TTL_MS;
+  process.env.WEB_CHAT_LOCK_TTL_MS = String(ms);
+  bustTtlModules();
+  const { createServer } = require('../lib/server');
+  t.after(() => {
+    if (prev === undefined) delete process.env.WEB_CHAT_LOCK_TTL_MS; else process.env.WEB_CHAT_LOCK_TTL_MS = prev;
+    bustTtlModules();
+  });
+  return createServer;
 }
+
+// A real elapsed wait, not a synchronisation point: the assertion IS that the
+// TTL has passed.
+const elapse = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('fresh lock blocks a second turn-begin (409)', async (t) => {
   const { api } = await withServer(t);
@@ -19,40 +41,14 @@ test('fresh lock blocks a second turn-begin (409)', async (t) => {
   assert.equal(r2.status, 409);
 });
 
-test('stale lock is stolen by a new turn-begin', async () => {
-  process.env.WEB_CHAT_LOCK_TTL_MS = '50';
-  // Re-require the whole server subtree so the env override takes effect in a
-  // fresh module cache. LOCK_TTL_MS is read at lib/server/domain/turns load; bust
-  // graph.js too (it top-imports turns) so a single turns instance is loaded.
-  delete require.cache[require.resolve('../lib/server/domain/turns')];
-  delete require.cache[require.resolve('../lib/server/graph')];
-  delete require.cache[require.resolve('../lib/server/routes/graph')];
-  delete require.cache[require.resolve('../lib/server')];
-  const { createServer: cs } = require('../lib/server');
-  const root = tmpRoot();
-  const srv = cs({ root, port: 0 });
-  await new Promise((r) => srv.server.listen(0, r));
-  const port = srv.server.address().port;
+test('stale lock is stolen by a new turn-begin', async (t) => {
+  const { api } = await withServer(t, { createServer: shortTtlServer(t) });
 
-  await fetch(`http://localhost:${port}/api/turn-begin`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: 'first' }),
-  });
-  await new Promise((r) => setTimeout(r, 120)); // exceed the 50ms TTL
-  const r2 = await fetch(`http://localhost:${port}/api/turn-begin`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: 'second' }),
-  });
+  await api.post('/api/turn-begin', { message: 'first' });
+  await elapse(120); // exceed the 50ms TTL
+  const r2 = await api.post('/api/turn-begin', { message: 'second' });
   assert.equal(r2.status, 200);
-  const body = await r2.json();
-  assert.equal(body.stole_stale_lock, true);
-
-  await srv.stop();
-  delete process.env.WEB_CHAT_LOCK_TTL_MS;
-  delete require.cache[require.resolve('../lib/server/domain/turns')];
-  delete require.cache[require.resolve('../lib/server/graph')];
-  delete require.cache[require.resolve('../lib/server/routes/graph')];
-  delete require.cache[require.resolve('../lib/server')];
+  assert.equal(r2.json.stole_stale_lock, true);
 });
 
 test('new-graph during a fresh lock QUEUES as a pending re-aim (guardReaim block path)', async (t) => {
@@ -67,39 +63,20 @@ test('new-graph during a fresh lock QUEUES as a pending re-aim (guardReaim block
   assert.ok(g.lock, 'lock still held');
 });
 
-test('new-graph steals + persists a stale lock (guardReaim wiring / drift-fix path)', async () => {
-  process.env.WEB_CHAT_LOCK_TTL_MS = '50';
-  delete require.cache[require.resolve('../lib/server/domain/turns')];
-  delete require.cache[require.resolve('../lib/server/graph')];
-  delete require.cache[require.resolve('../lib/server/routes/graph')];
-  delete require.cache[require.resolve('../lib/server')];
-  const { createServer: cs } = require('../lib/server');
-  const root = tmpRoot();
-  const srv = cs({ root, port: 0 });
-  await new Promise((r) => srv.server.listen(0, r));
-  const port = srv.server.address().port;
-  const post = (p, b) => fetch(`http://localhost:${port}${p}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}),
-  });
+test('new-graph steals + persists a stale lock (guardReaim wiring / drift-fix path)', async (t) => {
+  const { api, root } = await withServer(t, { createServer: shortTtlServer(t) });
 
-  await post('/api/turn-begin', { message: 'first' });
-  await new Promise((r) => setTimeout(r, 120)); // exceed the 50ms TTL → lock stale
+  await api.post('/api/turn-begin', { message: 'first' });
+  await elapse(120); // exceed the 50ms TTL → lock stale
   // new-graph must STEAL the stale lock (200), not block (409) — i.e. it routes
   // through guardReaim, not lockHeld.
-  const r = await post('/api/graph/new', { name: 'fresh' });
+  const r = await api.post('/api/graph/new', { name: 'fresh' });
   assert.equal(r.status, 200);
   // …and the steal must be PERSISTED to _meta.json (the drift the fix closes):
   // reloading from disk shows no stale lock.
   const meta = JSON.parse(fs.readFileSync(path.join(root, '.web-chat', 'graph', '_meta.json'), 'utf8'));
   assert.equal(meta.lock, null, 'stale lock cleared + persisted');
   assert.equal(meta.active, null, 'new-graph detached active');
-
-  await srv.stop();
-  delete process.env.WEB_CHAT_LOCK_TTL_MS;
-  delete require.cache[require.resolve('../lib/server/domain/turns')];
-  delete require.cache[require.resolve('../lib/server/graph')];
-  delete require.cache[require.resolve('../lib/server/routes/graph')];
-  delete require.cache[require.resolve('../lib/server')];
 });
 
 test('boot clears a stale lock persisted in _meta.json', async (t) => {

@@ -24,8 +24,13 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    classify subscriber folds it into the queue. That enqueue fires SYNCHRONOUSLY
 //    inside the capture event's subscriber phase — i.e. BEFORE the capture emit's
 //    own `store:patch` WS frame — so the `queue` add frame precedes it, and a
-//    `queue` event lands between the capture and turn-end (bumping turn-end to
-//    seq 7). `enqueued_at` is scrubbed volatile.
+//    `queue` event lands between the capture and turn-end. `enqueued_at` is
+//    scrubbed volatile.
+//  - D1 (tranche 3): the capture pane's render is no longer a WS-only frame. It
+//    goes through the shared mount-set (lib/server/domain/mounts), so it emits a
+//    ring `render` event at seq 7 — which is what makes a capture pane visible
+//    in /api/events and to the service supervisor's reconcile subscriber — and
+//    turn-end moves to seq 8.
 const GOLDEN = {
   frames: [
     {
@@ -112,9 +117,12 @@ const GOLDEN = {
         origin_mount: null, seq: 1, id: 'q1', enqueued_at: '<v>',
       },
     },
-    { seq: 7, ts: '<v>', kind: 'graph', op: 'turn-end', id: 'n0' },
+    // D1: the capture pane goes through the shared mount-set now, so it emits a
+    // ring `render` event like every other pane instead of a WS-only frame.
+    { seq: 7, ts: '<v>', kind: 'render', id: 'tab-capture:tables:bf705e83', target: 'main', bytes: 527, source: 'service:tab-stream' },
+    { seq: 8, ts: '<v>', kind: 'graph', op: 'turn-end', id: 'n0' },
   ],
-  latest: 7,
+  latest: 8,
 };
 
 test('bus golden: the whole wire is byte-identical to the pre-refactor server', async (t) => {

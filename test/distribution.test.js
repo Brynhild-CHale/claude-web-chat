@@ -133,7 +133,9 @@ test('package.json keeps the anti-publish guard and ships no build step', () => 
   // A bare `node --test` (no path argument — a directory mis-resolves), plus a
   // per-test timeout: without one a single leaked handle hangs the whole run.
   // Deliberately NOT --test-force-exit, which turns a hang into a silent pass.
-  assert.equal(pkg.scripts.test, 'node --test --test-timeout=60000');
+  // --import loads the throwaway-HOME sandbox before any test file's first
+  // require, so an env-less subprocess spawn can't reach the real ~/.web-chat.
+  assert.equal(pkg.scripts.test, 'node --test --test-timeout=60000 --import ./test-support/sandbox.js');
   assert.ok(pkg.scripts['build:release'], 'the release artifact must be buildable from a script');
   for (const bin of Object.values(pkg.bin)) {
     assert.match(read(bin).split('\n')[0], /^#!\/usr\/bin\/env node$/, `${bin} needs a shebang — it is symlinked onto PATH directly`);

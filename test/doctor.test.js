@@ -4,8 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const doctor = require('../lib/cli/commands/doctor');
-const { withTempHome, withServer } = require('../test-support/helpers');
+const { withTempHome, withServer, withHub } = require('../test-support/helpers');
 const { recordMcpSeen } = require('../lib/core/mcp-seen');
+const { mcpArgv } = require('../lib/setup/registration');
 
 // doctor now probes the capture hub on the fixed hub port. Pin it, for the whole
 // file, at a port nothing is listening on so the check is deterministic and never
@@ -27,10 +28,15 @@ function project(t) {
   return tmpProject();
 }
 
-// A runClaude that never shells out — records the argv it would have run.
+// A runClaude that never shells out — records the argv it would have run AND
+// the cwd it would have run it from. The cwd is not incidental: `--scope local`
+// keys the registration to the directory `claude` is invoked in, so a fake that
+// captures only the argv cannot tell a repair of THIS project from a repair of
+// whatever directory the shell happened to be sitting in.
 function fakeClaude(result = { ok: true }) {
   const calls = [];
-  return { fn: (argv) => { calls.push(argv); return result; }, calls };
+  const cwds = [];
+  return { fn: (argv, opts = {}) => { calls.push(argv); cwds.push(opts.cwd); return result; }, calls, cwds };
 }
 
 const silent = () => {};
@@ -90,6 +96,47 @@ test('doctor detects and repairs a bare (unresolvable) MCP registration', async 
   assert.deepEqual(argv.slice(0, 6), ['mcp', 'add', 'web-chat', '--scope', 'local', '--']);
   assert.equal(argv[6], 'node');
   assert.ok(path.isAbsolute(argv[7]) && /bin\/claude-web-chat-mcp\.js$/.test(argv[7]));
+});
+
+// cli-setup-2: the repair argv used to be hand-built from __dirname, which on a
+// managed install is ~/.web-chat/versions/<v>/… — the path pruneVersions deletes
+// three updates later. A local-scope registration overrides .mcp.json and never
+// self-heals, so that write is silently permanent. doctor has no bin path of its
+// own any more; it asks the engine, whose builder is stableBin.
+test('doctor repairs with the ENGINE\'s argv, not a bin path of its own', async (t) => {
+  const root = project(t);
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'web-chat': { command: 'claude-web-chat-mcp' } } })
+  );
+  const claude = fakeClaude({ ok: true });
+  await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
+  assert.deepEqual(claude.calls[0], mcpArgv());
+  // …and from the root doctor resolved, not the shell's cwd: a local-scope
+  // registration written for the wrong directory never self-heals.
+  assert.equal(claude.cwds[0], root, 'the repair shells out from the resolved root');
+});
+
+// cli-setup-6: the turn lifecycle needs BOTH hooks — UserPromptSubmit takes the
+// lock, Stop commits the node. Counting handlers reported "1 hook(s) registered
+// and resolvable" for a project where no turn could ever commit.
+test('doctor fails the hook check when only ONE of the two events is registered', async (t) => {
+  const root = project(t);
+  const settingsPath = path.join(root, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
+  fs.writeFileSync(settingsPath, JSON.stringify({
+    hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }] },
+  }, null, 2));
+  const claude = fakeClaude();
+
+  const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
+
+  assert.ok(summary.checks.some((c) => c.status === 'problem' && /missing for Stop/.test(c.m)),
+    'the missing event is named, not folded into a smaller count');
+  assert.ok(summary.checks.some((c) => c.status === 'repaired' && /registered the missing hook\(s\): Stop/.test(c.m)));
+  const after = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  assert.ok(after.hooks.Stop, 'and the repair actually added it');
 });
 
 test('doctor treats a resolved `node <abs>` MCP registration as healthy', async (t) => {
@@ -354,23 +401,13 @@ test('doctor prefers the live daemon sighting over the on-disk one', async (t) =
   assert.ok(summary.checks.some((c) => c.status === 'ok' && /has restarted since \.mcp\.json changed/.test(c.m)));
 });
 
-// Boot a real hub on the pinned port so the "hub is up" branch — which is where
+// Boot a real hub on the PINNED port so the "hub is up" branch — which is where
 // the instance-registration check lives — is exercised too.
-async function withHub(t) {
-  const { createHub } = require('../lib/hub');
-  const hub = createHub({ port: Number(process.env.WEB_CHAT_HUB_PORT) });
-  await new Promise((resolve, reject) => {
-    const onError = (e) => { hub.server.off('error', onError); reject(e); };
-    hub.server.once('error', onError);
-    hub.server.listen(Number(process.env.WEB_CHAT_HUB_PORT), '127.0.0.1', () => { hub.server.off('error', onError); resolve(); });
-  });
-  t.after(async () => { try { await new Promise((r) => hub.server.close(r)); } catch {} });
-  return hub;
-}
+const pinnedHub = (t) => withHub(t, { port: Number(process.env.WEB_CHAT_HUB_PORT) });
 
 test('doctor confirms the hub AND this project being registered with it', async (t) => {
   const ctx = await withServer(t, { writePortfile: true });
-  await withHub(t);
+  await pinnedHub(t);
   const { registerInstance } = require('../lib/util/registry');
   registerInstance({ root: ctx.root, port: ctx.port, pid: process.pid, title: 'x' });
 
@@ -382,7 +419,7 @@ test('doctor confirms the hub AND this project being registered with it', async 
 
 test('doctor warns when the hub is up but this project is not in the instance registry', async (t) => {
   const ctx = await withServer(t, { writePortfile: true });
-  await withHub(t);
+  await pinnedHub(t);
   // Deliberately NOT registered — the hub cannot resolve a capture to us.
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: ctx.root, runClaude: claude.fn, log: silent });

@@ -18,14 +18,11 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-
-// Isolate ~/.web-chat before any path is resolved so the user's real global
+// Isolates ~/.web-chat for the whole test process, so the user's real global
 // profiles (the dogfood ~/.web-chat/profiles/{gmail,wikipedia,youtube}) can never
-// shadow the BUNDLED copies these tests are meant to exercise. Paths are computed
-// per-call (pure), so setting HOME here governs every resolvePaths/userPaths call.
-const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-bundled-home-'));
-process.env.HOME = FAKE_HOME;
-process.env.USERPROFILE = FAKE_HOME;
+// shadow the BUNDLED copies these tests are meant to exercise. Required here
+// rather than assumed because this file imports no other test-support module.
+require('../test-support/sandbox');
 
 const reg = require('../lib/capture/profiles');
 const { defaultReduce, renderProfilePane } = require('../lib/capture/pane');

@@ -65,6 +65,21 @@ test('theme: node.theme persists across restart', async (t) => {
   assert.equal(node.theme.tokens['--wc-fg'], '#abcabc');
 });
 
+test('theme: a re-render with a theme APPLIES it; without one the pane keeps its own', async (t) => {
+  const { api } = await withServer(t);
+  // lib/driver.js documents `theme` as a render parameter. The route used to
+  // read `existing ? existing.theme : req.theme`, so once the pane existed the
+  // request's theme was silently discarded (routes-7).
+  await api.post('/api/render', { id: 'p1', html: '<div>a</div>', theme: { tokens: { '--wc-accent': '#aaaaaa' } } });
+  assert.equal((await api.get('/api/theme?scope=pane&target=p1')).json.tokens['--wc-accent'], '#aaaaaa');
+
+  await api.post('/api/render', { id: 'p1', html: '<div>b</div>', theme: { tokens: { '--wc-accent': '#bbbbbb' } } });
+  assert.equal((await api.get('/api/theme?scope=pane&target=p1')).json.tokens['--wc-accent'], '#bbbbbb', 'a supplied theme wins');
+
+  await api.post('/api/render', { id: 'p1', html: '<div>c</div>' });
+  assert.equal((await api.get('/api/theme?scope=pane&target=p1')).json.tokens['--wc-accent'], '#bbbbbb', 'a re-render with no theme keeps the pane theme');
+});
+
 test('theme: pane theme round-trips through set-active and reboot', async (t) => {
   const { root, api, graceful } = await withServer(t);
 

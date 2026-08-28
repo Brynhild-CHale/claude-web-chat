@@ -292,7 +292,7 @@ test('--yes resolves prompts to their default without a readline, and CI counts 
 
 // ----------------------------------------------------------- the tour ------
 
-test('the tour mounts as two UNOWNED panes, routed auto, with the declared signal', async (t) => {
+test('the tour mounts as two claude-owned panes, routed auto, with the declared signal', async (t) => {
   await withServer(t, async (ctx) => {
     // A portfile so init's own portfile read finds this server, plus a client
     // shim that speaks to it. (withServer binds an ephemeral port.)
@@ -325,11 +325,13 @@ test('the tour mounts as two UNOWNED panes, routed auto, with the declared signa
     assert.ok(byId[init.TOUR_MOUNT], 'the guide pane landed');
     assert.ok(byId[init.TOUR_MIRROR_MOUNT], 'the mirror pane landed');
 
-    // THE point of using /use instead of lib/driver: no owner. An owner of
-    // `service:init` would flip routing to 'none' (killing the activity layer
-    // the tour teaches) and clobber-guard Claude out of clearing its own tour.
-    assert.equal(byId[init.TOUR_MOUNT].owner, null);
-    assert.equal(byId[init.TOUR_MIRROR_MOUNT].owner, null);
+    // THE point of using /use instead of lib/driver: the panes are Claude's.
+    // /use stamps owner 'claude', which is not a `service:` prefix — routing
+    // stays 'auto' (the activity layer the tour teaches) and Claude can clear
+    // its own tour with no force:true. An owner of `service:init` would do
+    // neither.
+    assert.equal(byId[init.TOUR_MOUNT].owner, 'claude');
+    assert.equal(byId[init.TOUR_MIRROR_MOUNT].owner, 'claude');
 
     // params ride on the mount record; read them off the ws hello frame.
     const hello = await ctx.wsHello();
