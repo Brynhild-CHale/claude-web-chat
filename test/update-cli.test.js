@@ -196,6 +196,55 @@ test("update syncs with the NEW version's engine, not the one it was launched fr
   );
 });
 
+// `update` now runs the engine's full apply(), which completes an unresolvable
+// .mcp.json entry by shelling out to `claude mcp add … --scope local`. That
+// writes Claude Code's own config, OUTSIDE this project — install's and doctor's
+// job, sanctioned for them and for nobody else. An upgrade must not do it
+// silently, so the shell-out is recorded and printed instead of run.
+test('update prints the local-scope command instead of shelling out to `claude`', async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-stub-')));
+  fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  // The dogfooding shape: a committed plugin stub that cannot resolve outside a
+  // plugin install. D4 says preserve it and register at local scope.
+  const stub = JSON.stringify({
+    mcpServers: { 'web-chat': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'] } },
+  }, null, 2) + '\n';
+  fs.writeFileSync(path.join(project, '.mcp.json'), stub);
+  const prevCwd = process.cwd();
+  process.chdir(project);
+  const prevPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  delete process.env.CLAUDE_PLUGIN_ROOT;
+  t.after(() => {
+    process.chdir(prevCwd);
+    if (prevPluginRoot === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = prevPluginRoot;
+  });
+
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    // No lib/setup/registration.js in the target, so the sync falls back to THIS
+    // build's engine — the real one, whose apply() would otherwise shell out.
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      fakeVersion(paths, release.version);
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  await update([], d);
+
+  assert.equal(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8'), stub,
+    'the committed plugin stub is preserved byte for byte');
+  assert.match(d.log.text(), /run: claude mcp add web-chat --scope local --/,
+    'the command is printed for the user to run deliberately, not executed mid-upgrade');
+});
+
 test('a target version with no registration engine falls back LOUDLY', async (t) => {
   withTempHome(t);
   const paths = installPaths();
