@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const doctor = require('../lib/cli/commands/doctor');
-const { withTempHome, withServer } = require('../test-support/helpers');
+const { withTempHome, withServer, withHub } = require('../test-support/helpers');
 const { recordMcpSeen } = require('../lib/core/mcp-seen');
 
 // doctor now probes the capture hub on the fixed hub port. Pin it, for the whole
@@ -354,23 +354,13 @@ test('doctor prefers the live daemon sighting over the on-disk one', async (t) =
   assert.ok(summary.checks.some((c) => c.status === 'ok' && /has restarted since \.mcp\.json changed/.test(c.m)));
 });
 
-// Boot a real hub on the pinned port so the "hub is up" branch — which is where
+// Boot a real hub on the PINNED port so the "hub is up" branch — which is where
 // the instance-registration check lives — is exercised too.
-async function withHub(t) {
-  const { createHub } = require('../lib/hub');
-  const hub = createHub({ port: Number(process.env.WEB_CHAT_HUB_PORT) });
-  await new Promise((resolve, reject) => {
-    const onError = (e) => { hub.server.off('error', onError); reject(e); };
-    hub.server.once('error', onError);
-    hub.server.listen(Number(process.env.WEB_CHAT_HUB_PORT), '127.0.0.1', () => { hub.server.off('error', onError); resolve(); });
-  });
-  t.after(async () => { try { await new Promise((r) => hub.server.close(r)); } catch {} });
-  return hub;
-}
+const pinnedHub = (t) => withHub(t, { port: Number(process.env.WEB_CHAT_HUB_PORT) });
 
 test('doctor confirms the hub AND this project being registered with it', async (t) => {
   const ctx = await withServer(t, { writePortfile: true });
-  await withHub(t);
+  await pinnedHub(t);
   const { registerInstance } = require('../lib/util/registry');
   registerInstance({ root: ctx.root, port: ctx.port, pid: process.pid, title: 'x' });
 
@@ -382,7 +372,7 @@ test('doctor confirms the hub AND this project being registered with it', async 
 
 test('doctor warns when the hub is up but this project is not in the instance registry', async (t) => {
   const ctx = await withServer(t, { writePortfile: true });
-  await withHub(t);
+  await pinnedHub(t);
   // Deliberately NOT registered — the hub cannot resolve a capture to us.
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: ctx.root, runClaude: claude.fn, log: silent });
