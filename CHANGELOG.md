@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Security
+- **A pack archive can no longer OOM the daemon by decompressing.** `listTarGz` — the pre-extraction gate every pack install passes through — gunzipped the whole archive into one Buffer with no ceiling. The download cap (64 MB) bounds nothing on that side: deflate compresses a run of zeros at roughly 1000:1, so a 64 MB body inflates to tens of gigabytes, and `Buffer.MAX_LENGTH` is 2^53-1, so nothing refused the allocation — the daemon holding the live graph was OOM-killed rather than throwing anything catchable. The install endpoint is reachable by any pane's `fetch`, so a rendered script (or a pasted URL) could take the process down. The inflate is now capped at 256 MB and the overflow is reported as a refusal naming the archive. The same cap bounds extraction: the listing runs before the file is handed to `tar`, and the bytes it measures are the bytes `tar` would write.
+
 ### Added
 - **A stated platform position — `docs/platform-support.md`.** macOS and Linux are supported (the full suite runs on both in CI on every push); Windows is WSL2 only. The page is deliberately honest about the difference between "supported" and "bug-free": it lists the cross-platform defects that a Windows and a Linux assessment both surfaced, rather than filing them away as somebody else's platform. Per-platform findings and test plans live on the `platform/windows` and `platform/linux` branches, written so someone with real hardware can confirm or overturn each hypothesis — every claim in them is marked observed or inferred.
 
