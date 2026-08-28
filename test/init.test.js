@@ -541,6 +541,40 @@ test('the inventory legend never claims a surface is this project when none is',
   assert.match(text, /none of these is this project/);
 });
 
+// The remediation that used to be unreachable. `readInstances` pruned dead-pid
+// entries as it read, so no row init ever saw had `pid_alive:false` and this
+// branch could not fire — and if it had, it unlinked the OTHER project's
+// portfile and reported "cleared", leaving ~/.web-chat untouched. It now goes
+// through the one reaper, which for a ghost row removes the registry entry the
+// question actually named. `--yes` takes the printed Yes default here (as it
+// does for install/on), which is what drives the branch without a terminal.
+test('a stale registry entry is reaped through the shared reaper, not by hand', async (t) => {
+  const root = installedProject(t);
+  const ghost = { root: '/gone/proj', title: 'ghost', url: 'http://127.0.0.1:5399', port: 5399, pid: 2 ** 30, pid_alive: false, reachable: false };
+  const reapCalls = [];
+  const log = sink();
+  await init(['--yes'], {
+    cwd: root, log,
+    ...inertDeps({
+      collectRows: async () => [ghost],
+      reap: async (rows, opts) => { reapCalls.push({ rows, opts }); return { stopped: 0, cleared: rows.length, skipped: [] }; },
+      // --yes takes every printed Yes default, so the OTHER remediations have to
+      // be inert too or this test would install managed files for real.
+      install: async () => {},
+      reconcile: () => [],
+    }),
+    inRoot: async (r, fn) => fn(),
+  });
+
+  assert.equal(reapCalls.length, 1, 'the remediation ran, through deps.reap');
+  assert.deepEqual(reapCalls[0].rows, [ghost], 'and was handed exactly the stale row');
+  const text = log.text();
+  assert.match(text, /1 stale registry entry/);
+  assert.match(text, /cleared 1 entry\./);
+  assert.match(text, /\(dead — registry entry is stale\)/,
+    'the annotation that could never print before rows() read the registry raw');
+});
+
 // ------------------------------------------------ the tour pane, mounted ----
 // The tour is the ONE piece of this feature that runs in a browser, on a fresh
 // install, before Claude exists to notice anything is wrong. If its script

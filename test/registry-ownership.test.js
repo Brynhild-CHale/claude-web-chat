@@ -27,9 +27,16 @@ const portfiles = require('../lib/core/portfiles');
 // A pid that cannot be alive: above the platform maximum on every supported OS.
 const DEAD_PID = 2 ** 30;
 
+// Everything made under os.tmpdir() goes away with the process, fake HOME first.
+const MADE = [FAKE_HOME];
+process.on('exit', () => {
+  for (const d of MADE) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+});
+
 function project(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wc-reg-${name}-`));
   fs.mkdirSync(path.join(dir, '.web-chat'), { recursive: true });
+  MADE.push(dir);
   return dir;
 }
 

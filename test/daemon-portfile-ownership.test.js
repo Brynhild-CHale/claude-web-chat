@@ -36,6 +36,7 @@ const { once } = require('node:events');
 const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-own-home-'));
 process.env.HOME = FAKE_HOME;
 process.env.USERPROFILE = FAKE_HOME;
+process.on('exit', () => { try { fs.rmSync(FAKE_HOME, { recursive: true, force: true }); } catch {} });
 
 const portfiles = require('../lib/core/portfiles');
 const { readInstances, instanceId } = require('../lib/util/registry');
