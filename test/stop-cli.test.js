@@ -17,8 +17,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
+const crypto = require('crypto');
 const path = require('path');
 const { spawn } = require('child_process');
+const { once } = require('node:events');
 const { withServer } = require('../test-support/helpers');
 const portfiles = require('../lib/core/portfiles');
 const client = require('../lib/client');
@@ -29,14 +32,22 @@ const restart = require('../lib/cli/commands/restart');
 
 // A real daemon: the production server, minus the portfile side-effects that
 // reach outside the sandbox (hub spawn, ~/.web-chat instance registry).
+// WC_TEST_REGISTER=1 adds the OTHER half of the daemon's claim — the
+// ~/.web-chat instance registry entry that start() writes one line after the
+// portfile and that release() drops one line after it — into the per-test HOME,
+// so a test can assert that BOTH records were released.
 const REAL_DAEMON = `
 const path = require('path');
 const { createServer } = require(${JSON.stringify(path.join(REPO, 'lib/server'))});
 const { writePortfile } = require(${JSON.stringify(path.join(REPO, 'lib/core/portfiles'))});
+const { registerInstance } = require(${JSON.stringify(path.join(REPO, 'lib/util/registry'))});
 const root = process.env.WC_TEST_ROOT;
 const srv = createServer({ root, port: 0 });
 srv.start({ writePortfile: false }).then(() => {
   writePortfile('server', { root, pid: process.pid, port: srv.port });
+  if (process.env.WC_TEST_REGISTER) {
+    registerInstance({ root, port: srv.port, pid: process.pid, url: 'http://localhost:' + srv.port, title: 'stop-cli-test' });
+  }
   srv.installSignalHandlers();
 });
 `;
@@ -239,4 +250,73 @@ test('restart: refuses to start on top of a daemon it could not stop', async (t)
   assert.equal(res.ok, false);
   assert.equal(started, 0, 'starting here would race the survivor for the port and the portfile');
   assert.match(log.text(), /restart aborted/);
+});
+
+// ── a signal landing on a shutdown that is already running ─────────────────
+//
+// The escalation path above has a trap of its own. `stop` waits out the
+// daemon's worst case and then SIGTERMs — and the signal handler ran the same
+// gracefulShutdown the ack had already started. A boolean re-entrancy guard made
+// that second entry resolve INSTANTLY, and every caller follows its await with
+// process.exit(), so the signal exited the daemon mid-shutdown: `release()` at
+// the end of gracefulShutdown never ran, and the daemon left a stale portfile
+// and a stale registry entry behind. `stop` then found the portfile still there
+// and reported a shutdown that had in fact succeeded as "survived both a
+// shutdown request and SIGTERM", advising `kill -9` on a pid that no longer
+// existed — and, if that pid had been recycled, on a stranger's process.
+//
+// Reproducing it needs the shutdown to still be in flight when the signal lands.
+// In the wild that is the 30 s turn-lock drain (a stop issued from inside a live
+// Claude turn, which is exactly when a developer swaps builds); here it is a
+// browser that never answers the close frame, which pins the final
+// server.close() — the same "still working" state, reachable in a second.
+
+// A tab that has gone deaf: a raw socket that completes the WebSocket upgrade
+// and then ignores everything, close frame included.
+function deafBrowser(t, port) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1', () => {
+      const key = crypto.randomBytes(16).toString('base64');
+      sock.write(
+        'GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+        + `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      );
+    });
+    sock.on('data', (d) => { if (/101/.test(d.toString().slice(0, 16))) resolve(sock); });
+    sock.on('error', reject);
+    t.after(() => { try { sock.destroy(); } catch {} });
+  });
+}
+
+function instancesIn(home) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(home, '.web-chat', 'instances.json'), 'utf8')).instances || [];
+  } catch { return []; }
+}
+
+test('stop: a SIGTERM landing mid-shutdown must not truncate it — no stale records', async (t) => {
+  const { root, home, info, child, portfile } = await bootDaemon(t, REAL_DAEMON, { WC_TEST_REGISTER: '1' });
+  assert.ok(instancesIn(home).some((e) => e.pid === child.pid), 'the daemon claimed its registry entry');
+
+  // Uncommitted surface state: the thing gracefulShutdown exists to save, and
+  // the thing a truncated shutdown is at risk of losing.
+  await client.post('/api/render', { id: 'p1', html: '<div>unsaved work</div>' }, {
+    port: info.port, root, noSpawn: true, timeout: 5_000,
+  });
+  await deafBrowser(t, info.port);
+
+  const exited = once(child, 'exit');
+  const log = collector();
+  // A deliberately short ack budget so the escalation fires while the daemon is
+  // still legitimately working. `stop`'s real budget is 40s for the same reason
+  // in reverse: it outlasts the daemon's worst case.
+  const res = await stop([], { root, log, ackWaitMs: 300, signalWaitMs: 8_000 });
+  await exited;
+
+  assert.equal(fs.existsSync(portfile), false, 'the daemon released its portfile on the way out');
+  assert.equal(instancesIn(home).some((e) => e.pid === child.pid), false, 'and its registry entry');
+  assert.ok(fs.existsSync(path.join(root, '.web-chat', 'draft.json')), 'and still wrote the draft snapshot');
+  assert.equal(res.ok, true, 'a shutdown that worked is not reported as a failure');
+  assert.doesNotMatch(log.text(), /survived both/);
+  assert.doesNotMatch(log.text(), /kill -9/, 'never advise killing a pid that is already gone');
 });

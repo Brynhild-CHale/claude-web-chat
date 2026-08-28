@@ -90,3 +90,21 @@ for (const kind of ['http', 'ws']) {
     assert.equal(outcome, 'done', 'the shutdown must finish on its own budget, not the client\'s');
   });
 }
+
+// The other half of the same defect. gracefulShutdown was guarded by a boolean,
+// so a SECOND entry returned instantly — and every caller in the tree follows
+// its await with process.exit(). A signal arriving during an in-flight shutdown
+// therefore exited the process mid-drain, before the release() that drops the
+// portfile and the registry entry. One shared promise is the fix: a second
+// trigger waits for the first to finish rather than overtaking it.
+test('grace: a second shutdown trigger awaits the first instead of overtaking it', async (t) => {
+  const { port, graceful } = await withServer(t);
+  await pinConnection(t, port, 'ws');
+
+  const order = [];
+  await Promise.all([
+    graceful().then(() => order.push('first')),
+    graceful().then(() => order.push('second')),
+  ]);
+  assert.deepEqual(order, ['first', 'second'], 'the second caller must not be released early');
+});

@@ -125,10 +125,14 @@ has four arms:
   daemon's: `gracefulShutdown` waits out a live turn for up to 30 s, so an
   expiry here is not evidence of a wedge. Reaping therefore passes
   `signalAfterAck:false` to `stop`, which switches off its SIGTERM escalation —
-  a signal delivered mid-drain re-enters the re-entrancy-guarded
-  `gracefulShutdown` and `process.exit`s before `writeDraft`, destroying exactly
-  the snapshot the ask was for. `claude-web-chat stop` waits the full 40 s worst
-  case and so keeps the escalation;
+  interrupting work that is going fine buys nothing, and a reap has N projects
+  to get through. (A signal delivered mid-drain used to be worse than useless:
+  it re-entered the boolean-guarded `gracefulShutdown`, returned instantly and
+  `process.exit`ed before the drain finished, destroying the snapshot the ask
+  was for and leaving the portfile behind. A second trigger now **awaits** the
+  in-flight shutdown, which is safe because every step of it is bounded.)
+  `claude-web-chat stop` waits the full ~37 s worst case and so keeps the
+  escalation;
 - a row whose **pid is alive but whose port is silent** is printed with its pid
   and a `kill` hint and is **never signalled**. This is the deliberate change of
   behaviour: a genuinely wedged daemon is no longer stopped by `ls --reap`,
