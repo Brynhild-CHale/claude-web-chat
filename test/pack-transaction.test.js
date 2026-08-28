@@ -14,9 +14,10 @@
 // file's unchanged bytes — the old, already-trusted service kept running under
 // the new pack's record.
 //
-// Everything below asserts one of three things: nothing lands on a failure, an
-// overwrite is RESTORED rather than unlinked, and an update deletes exactly what
-// the new version dropped and nothing else.
+// Everything below asserts one of four things: nothing lands on a failure, an
+// overwrite is RESTORED rather than unlinked, an update deletes exactly what the
+// new version dropped and nothing else, and a staged tree belongs to the project
+// it was staged in.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -26,7 +27,7 @@ const crypto = require('crypto');
 
 const packs = require('../lib/packs/install');
 const { droppedUnits, beginJournal } = require('../lib/packs/tree');
-const { listPacks, ownerOf, putPending, readPending, clearPending } = require('../lib/packs/store');
+const { listPacks, ownerOf, putPending, readPending, clearPending, listQuarantine, findQuarantine } = require('../lib/packs/store');
 const { componentsRegistry, serviceInfo } = require('../lib/server/components-registry');
 const { resolvePaths } = require('../lib/server/paths');
 const { projectPaths, claudePaths } = require('../lib/core/paths');
@@ -443,6 +444,49 @@ test('a completed install leaves no pending marker behind', async (t) => {
   await packs.installPack({ url: (await forgeFor(t, dir)).url('acme', 'ops'), root });
   assert.deepEqual(packs.listInstalled({ root }).pending, []);
   assert.equal(fs.existsSync(projectPaths(root).packsPending), false);
+});
+
+// ── quarantine is keyed to the project, not to the name ─────────────────────
+// The integrity record is user-tier (a repository must not be able to forge the
+// consent record for its own staged tree) while the tree it describes is
+// per-project. Keyed on the name alone, those two disagreed the moment a second
+// project quarantined the same pack.
+
+test('two projects quarantining the same pack name do not collide', async (t) => {
+  withTempHome(t);
+  const a = tmpDir('wc-proj-a-');
+  const b = tmpDir('wc-proj-b-');
+  for (const r of [a, b]) fs.mkdirSync(path.join(r, '.web-chat'), { recursive: true });
+
+  const packA = packFixture({ version: '1.0.0', components: [{ name: 'deploy-board', html: '<div>from A</div>' }] });
+  const packB = packFixture({ version: '2.0.0', components: [{ name: 'deploy-board', html: '<div>from B</div>' }] });
+  await packs.quarantinePack({ url: (await forgeFor(t, packA)).url('acme', 'ops'), root: a });
+  await packs.quarantinePack({ url: (await forgeFor(t, packB, SHA2)).url('acme', 'ops'), root: b });
+
+  // B's staging used to drop A's record, orphaning A's staged tree with no way
+  // to discard it — discarding needs the record.
+  assert.equal(listQuarantine().length, 2, 'one record per project, under the same name');
+  assert.equal(findQuarantine(a, 'acme-ops').version, '1.0.0');
+  assert.equal(findQuarantine(b, 'acme-ops').version, '2.0.0');
+
+  // Each project reviews and lists its OWN staged tree. `pack list` in A used to
+  // report B's pack as present, because the record carries an absolute pack_dir.
+  const reviewed = packs.reviewQuarantine({ name: 'acme-ops', root: a });
+  assert.ok(reviewed.record.dir.startsWith(projectPaths(a).quarantine), 'review reads this project\'s tree');
+  assert.deepEqual(packs.listInstalled({ root: a }).quarantined.map((q) => q.version), ['1.0.0']);
+  assert.deepEqual(packs.listInstalled({ root: b }).quarantined.map((q) => q.version), ['2.0.0']);
+
+  // Approving in A installs A's tree, and leaves B's staged tree and record alone
+  // — it used to install B's bytes into A and then delete them out from under B.
+  packs.approvePack({ name: 'acme-ops', root: a });
+  assert.match(fs.readFileSync(path.join(projectPaths(a).components, 'deploy-board', 'component.html'), 'utf8'), /from A/);
+  assert.equal(findQuarantine(a, 'acme-ops'), null, 'A\'s record is consumed');
+  const stillB = findQuarantine(b, 'acme-ops');
+  assert.ok(stillB && fs.existsSync(stillB.pack_dir), 'B\'s staged tree is untouched');
+
+  // And A can no longer reach B's record at all.
+  assert.throws(() => packs.discardPack({ name: 'acme-ops', root: a }), /nothing is quarantined/);
+  assert.ok(fs.existsSync(stillB.pack_dir), 'so discarding in A cannot delete B\'s tree');
 });
 
 // ── the guardrail ───────────────────────────────────────────────────────────

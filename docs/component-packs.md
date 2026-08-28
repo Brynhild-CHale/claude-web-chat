@@ -598,6 +598,10 @@ download time.
 the staged tree always lives in **this project's** `.web-chat/packs/quarantine/`,
 because only the integrity record is user-tier.
 
+Because of that split, the record is keyed by **(project, name)** rather than by
+name alone. Two projects can hold a staged `acme-ops` at the same time; `review`,
+`approve`, `discard` and `pack list` each see only the one staged here.
+
 ### What `remove` will and will not delete
 
 Removal is per **unit**, not per file. A component is a directory of up to four
