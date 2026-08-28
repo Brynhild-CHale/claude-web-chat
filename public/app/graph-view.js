@@ -253,6 +253,78 @@ function displayNodes() {
     });
 }
 
+/* ---------- the display topology, built once per graph ----------
+   displayNodes() decides what EXISTS; this decides what is connected to what.
+   The byId / childMap / per-parent sort / isBreakout block was verbatim in two
+   places (computeRuns and computeGraphLayout), and the breakout rule decides
+   both which nodes get their own glyph (layout) and which stacks keyboard
+   navigation expands and collapses (computeRuns) — so a change to one copy
+   silently desynchronised the drawn stacks from the keyboard's idea of them.
+
+   Everything topological reads THIS: runs, layout, keyboard nav, fork
+   classification, the breadcrumb, the graph-scope filter and the counts. It is
+   rebuilt when — and only when — the graph payload, the show-collapsed toggle or
+   the active/viewed node changes, which is what isBreakout depends on; the same
+   index therefore serves a whole burst of arrow keys without rewalking.
+
+   labels.js's childrenOf() stays RAW (commit topology) and keeps one consumer:
+   topbar's branch picker, which is asking a different question. */
+let indexCache = null;
+function graphIndex() {
+  if (indexCache
+    && indexCache.cache === view.graphCache
+    && indexCache.showCollapsed === view.showCollapsed
+    && indexCache.activeId === view.activeId
+    && indexCache.viewedId === view.viewedId) return indexCache.idx;
+
+  const nodes = displayNodes();
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const childMap = new Map();
+  for (const n of nodes) {
+    const p = n.parent_id;
+    if (p == null || !byId.has(p)) continue;
+    if (!childMap.has(p)) childMap.set(p, []);
+    childMap.get(p).push(n.id);
+  }
+  const order = (a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b));
+  for (const arr of childMap.values()) arr.sort(order);
+  // A node whose parent is not in the display set is a top-level tree here —
+  // the same definition the layout has always used to pick its roots.
+  const roots = nodes.filter((n) => n.parent_id == null || !byId.has(n.parent_id)).map((n) => n.id).sort(order);
+
+  // A break-out node (fork, bookmark, active, or viewed) gets its own glyph; a
+  // run of consecutive non-break-out trunk nodes collapses into one stack.
+  const isBreakout = (id) => {
+    const n = byId.get(id);
+    if (!n) return false;
+    return (childMap.get(id) || []).length > 1 || n.bookmarked || id === view.activeId || id === view.viewedId;
+  };
+  const childrenOf = (id) => (childMap.get(id) || []).map((cid) => byId.get(cid));
+  const parentOf = (id) => {
+    const n = byId.get(id);
+    return (n && n.parent_id != null && byId.get(n.parent_id)) || null;
+  };
+  const lineageOf = (id) => {
+    const chain = [];
+    let cur = byId.get(id), guard = 0;
+    while (cur && guard++ < 200) { chain.unshift(cur); cur = parentOf(cur.id); }
+    return chain;
+  };
+  const rootOf = (id) => { const chain = lineageOf(id); return chain.length ? chain[0].id : null; };
+
+  const idx = { nodes, byId, childMap, roots, isBreakout, childrenOf, parentOf, lineageOf, rootOf };
+  indexCache = {
+    cache: view.graphCache, showCollapsed: view.showCollapsed,
+    activeId: view.activeId, viewedId: view.viewedId, idx,
+  };
+  return idx;
+}
+
+// The topbar's ↓ button steps to the next turn the graph DRAWS, which is the
+// same gesture ArrowDown performs in the overlay. (Its ⑃ branch picker asks a
+// different question and stays on labels.childrenOf's raw commit children.)
+export function displayChildrenOf(id) { return graphIndex().childrenOf(id); }
+
 function historyRows() {
   let ns = displayNodes().slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
   if (historyScope === 'graph') {
@@ -628,23 +700,7 @@ function centerOn(id) {
 function computeRuns() {
   const map = new Map();
   if (!view.graphCache) return map;
-  const nodes = displayNodes();
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const childMap = new Map();
-  for (const n of nodes) {
-    const p = n.parent_id;
-    if (p == null || !byId.has(p)) continue;
-    if (!childMap.has(p)) childMap.set(p, []);
-    childMap.get(p).push(n.id);
-  }
-  for (const arr of childMap.values()) {
-    arr.sort((a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b)));
-  }
-  const isBreakout = (id) => {
-    const kids = childMap.get(id) || [];
-    const n = byId.get(id);
-    return kids.length > 1 || n.bookmarked || id === view.activeId || id === view.viewedId;
-  };
+  const { nodes, byId, childMap, isBreakout } = graphIndex();
   for (const n of nodes) {
     const start = !isBreakout(n.id) && (n.parent_id == null || !byId.has(n.parent_id) || isBreakout(n.parent_id));
     if (!start) continue;
@@ -703,22 +759,7 @@ const DX = 130, DY = 66, NODE_R = 16, STACK_W = 40, STACK_H = 30;
 const SERP_THRESHOLD = 8, SERP_TARGET_LEG = 6, SERP_MIN_LEG = 4, SERP_MAX_LEG = 9, SDX = 72, SDY = 46;
 
 function computeGraphLayout() {
-  const nodes = displayNodes();
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const childMap = new Map();
-  for (const n of nodes) {
-    const p = n.parent_id;
-    if (p == null || !byId.has(p)) continue;
-    if (!childMap.has(p)) childMap.set(p, []);
-    childMap.get(p).push(n.id);
-  }
-  for (const arr of childMap.values()) {
-    arr.sort((a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b)));
-  }
-  const roots = nodes
-    .filter(n => n.parent_id == null || !byId.has(n.parent_id))
-    .map(n => n.id)
-    .sort((a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b)));
+  const { byId, childMap, roots, isBreakout } = graphIndex();
 
   const glyphs = [];
   const edges = [];
@@ -727,11 +768,6 @@ function computeGraphLayout() {
   let frontier = 0;
   const bumpFrontier = (x) => { if (x + DX > frontier) frontier = x + DX; };
 
-  const isBreakout = (id) => {
-    const kids = childMap.get(id) || [];
-    const n = byId.get(id);
-    return kids.length > 1 || n.bookmarked || id === view.activeId || id === view.viewedId;
-  };
   const placeNode = (id, x, y, plain) => {
     const n = byId.get(id);
     const g = {
