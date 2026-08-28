@@ -39,7 +39,17 @@ test('isPrivateAddress covers both families and the v4-mapped middle ground', ()
     ['::1', true], ['[::1]', true], ['::', true],
     ['fc00::1', true], ['fd12:3456::1', true], ['fe80::1', true], ['ff02::1', true],
     ['::ffff:127.0.0.1', true], ['::ffff:8.8.8.8', false],
+    // The spellings a table of text prefixes misses: WHATWG URL re-serialises
+    // [::ffff:127.0.0.1] into hex form, and loopback may be written uncompressed.
+    ['::ffff:7f00:1', true, 'the hex form of ::ffff:127.0.0.1'],
+    ['::ffff:a9fe:a9fe', true, 'the hex form of the cloud metadata address'],
+    ['::ffff:0808:0808', false, '…and the hex form of a public one is still public'],
+    ['0:0:0:0:0:0:0:1', true, 'uncompressed loopback'],
+    ['0:0:0:0:0:0:0:0', true, 'uncompressed unspecified'],
     ['2606:4700:4700::1111', false],
+    ['1:2:3:4:5:6:7:8', false, 'a full public literal'],
+    ['1:2:3:4:5:6:7:8:9', true, 'nine groups is not an address — fail closed'],
+    ['::1::2', true, 'nor is a second :: — fail closed'],
     ['999.1.1.1', true, 'an unparseable literal fails closed'],
     [null, true, 'so does a non-string'],
   ];
