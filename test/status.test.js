@@ -55,7 +55,10 @@ const status = require('../lib/cli/commands/status');
 const { withTempHome, tmpRoot } = require('../test-support/helpers');
 const { recordMcpSeen } = require('../lib/core/mcp-seen');
 
-// Run `status` with cwd pointed at an installed project, capturing stdout.
+// Run `status` against an installed project, capturing stdout. The root is
+// PASSED, not chdir'd into: status resolves it through the registration engine
+// like every other command, so a test no longer has to mutate global process
+// state to point it somewhere.
 async function runStatus(t, seed) {
   withTempHome(t);
   const root = tmpRoot('wc-status-');
@@ -67,16 +70,13 @@ async function runStatus(t, seed) {
   );
   if (seed) seed(root);
 
-  const prevCwd = process.cwd();
   const lines = [];
   const prevLog = console.log;
   console.log = (...a) => lines.push(a.join(' '));
-  process.chdir(root);
   try {
-    await status();
+    await status([], { cwd: root });
   } finally {
     console.log = prevLog;
-    process.chdir(prevCwd);
     try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
   }
   return lines.join('\n');
