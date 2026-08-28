@@ -83,7 +83,8 @@ rest rely on this doc and review.
 ```
 entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
                          │  import ↓ only      (never each other)
-shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
+shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · capture/* ·
+                   channel/*
                          │  import ↓ only      (may import each OTHER — that is
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
@@ -160,6 +161,12 @@ were the only places they lived.
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
+| decide which project a command operates on | `lib/setup/registration` `resolveRoot(cwd, {mode})` → `{root, movedUp}` | `process.cwd()`, or your own `findProjectRoot(cwd) || cwd` per command |
+| read what is registered with Claude Code here (hooks per event, the `.mcp.json` entry, managed-file drift, gitignore) | `lib/setup/registration` `inspect(root)` | count hooks yourself, or classify the MCP entry a second way |
+| register a project, or un-register one | `lib/setup/registration` `apply(root, {force, dryRun, runClaude})` / `remove(root, {runClaude})` | call `ensureHooks` + `reconcileManagedFiles` + `ensureMcpRegistration` in your own order, with your own stub policy |
+| build the `claude mcp add`/`remove` argv | `lib/setup/registration` `mcpArgv()` / `removeArgv()` | `path.join(__dirname, …, 'bin')` (that is the version dir, which gets pruned) |
+| name the hook events registration means | `lib/setup/registration` `hookEvents()` | iterate whatever `settings.hooks` happens to hold |
+| say what a managed-file conflict means and how it ends | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (which never converges) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
@@ -488,6 +495,68 @@ destination's `meta.json` already says `builtin: true` (an fs check, not a name
 check), and `verifyPack` re-validates a *recorded* unit name at read time,
 skipping rather than throwing so `pack remove` over a damaged record degrades.
 
+### `lib/setup/registration.js` — the project-registration model
+
+What it means for a project to be **registered with Claude Code**: which root a
+command operates on, the hook events from `templates/settings.hooks.json`, the
+`.mcp.json` entry and its `${CLAUDE_PLUGIN_ROOT}` policy, the managed files and
+their baselines, the `.gitignore` line. Four functions:
+
+- **`resolveRoot(cwd, {mode})`** → `{root, from, source, movedUp}`. One answer
+  where there were five. `'existing'` requires an installed root at or above
+  `cwd` and throws a `userFacing` refusal naming `claude-web-chat init` (`on`,
+  `off`); `'install'` falls back to `cwd` when there is none (`install`,
+  `uninstall`, `doctor`, `status`, the MCP dispatcher); `'optional'` returns
+  `root: null` for a caller with nothing to do outside a project (`update`).
+  All three inherit `findProjectRoot`'s `$HOME` refusal.
+- **`inspect(root)`** — pure read: `installed`, `hooks` per event
+  (`ok` / `bare` / `missing`), `mcp` (`present`, `kind`, `resolvable`, `reason`,
+  `channelEnv`), `managed` (the dry-run reconcile), `gitignore`. `doctor`,
+  `status` and the MCP dispatcher all report from this one read, so they cannot
+  disagree about the same project.
+- **`apply(root, {force, dryRun, runClaude})`** — hooks + managed files +
+  `.gitignore` + the MCP registration, under **one** stub policy: a committed
+  `${CLAUDE_PLUGIN_ROOT}` entry is never rewritten, and when it cannot resolve
+  here the registration is completed with `claude mcp add --scope local`.
+- **`remove(root, {runClaude})`** — the hook handlers for `hookEvents()` only,
+  the managed files, their `.new` sidecars and baselines, the `.mcp.json` entry,
+  and the local-scope registration `apply`/`doctor` may have written.
+
+Two asymmetries are deliberate, and stated in the module header: `apply()` is
+**not** the whole of `install` (creating `.web-chat/`, running the migrations and
+pre-warming the daemon stay in the command, so `doctor`'s repair never forks a
+server), and `remove()` is **not** the inverse of `apply()` (`.web-chat/` holds
+the graph and is preserved; the daemon is not stopped).
+
+`isInstalled(root)` is the cheap half of `inspect` — one `existsSync` — because
+the MCP dispatcher asks "is web-chat installed here?" on every tool call in a
+disabled project, and `inspect().installed` is defined as it.
+
+**`runClaude(argv, {cwd})` always takes the resolved root.** `claude mcp
+add|remove … --scope local` registers the directory `claude` runs in, so a
+shell-out from `process.cwd()` would be a second, implicit root derivation
+inside the one module that exists to have exactly one: `install` in a
+subdirectory would adopt the parent root and then register the subdirectory,
+and `uninstall` would leave the local-scope entry it exists to remove. The three
+call sites (`apply`, `remove`, `doctor`) all pass `{cwd: root}`; a fake in a test
+must record it, not just the argv. `update` deliberately passes a `runClaude`
+that **records and prints** rather than runs — an upgrade syncs project files
+and does not mutate Claude Code's own config behind the user's back.
+
+It sits **above** `lib/update/managed-files`, which keeps every export: that is
+where the primitives live, and `lib/packs` imports two of them — a pack installer
+must not become a dependent of a CLI-registration module. And it imports no entry
+point, which is why the `claude` shell-out is an injectable `runClaude` rather
+than something reached for from `lib/cli`. The hook template has one reader,
+`managed-files.hookTemplate()` — `ensureHooks` merges its handlers, `hookEvents()`
+takes `Object.keys` off it — and the wording for a managed-file **conflict** has
+one home too, `managed-files.conflictAdvice()` / `conflictSummary()`, which
+`install`, `update`, `init` and `status` all print.
+
+`update` loads this module out of `versions/<target>` (the same reason
+`loadRestart` exists), so **the export surface is a cross-version contract**:
+keep it small and additive, and keep the fallback in `loadRegistration` loud.
+
 ### Shared small homes
 
 - `lib/core/html.js` — `escapeHtml(s)`. Null-safe; escapes all five characters
@@ -659,6 +728,8 @@ Current homes (baselines can only shrink toward these):
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
+| `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
+| `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
 
 Working with it:
 

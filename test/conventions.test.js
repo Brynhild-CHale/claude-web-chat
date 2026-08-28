@@ -347,6 +347,37 @@ const PATTERNS = [
     },
   },
   {
+    // Resolving "which project does this command operate on" INSIDE a command
+    // that registers, un-registers or reports on a project. Not a lib-wide ban:
+    // `open`, `start`, `stop`, `export`, `unlock`, `trust`, `pack`, `profile`,
+    // `restart`, `ls` and the hooks all legitimately walk up to find a DAEMON,
+    // and that is a different question with the same answer today.
+    //
+    // Scoped instead to the eight files that carried the divergence: five
+    // different answers to the same question (install/uninstall/on/off on
+    // process.cwd(), doctor/status on findProjectRoot(cwd) || cwd, update
+    // skipping when it returned null), which meant the same directory named two
+    // different projects depending on which command you typed — and `install`
+    // in a subdirectory built a second, nested surface Claude Code never loads.
+    // Each of these must ask lib/setup/registration.resolveRoot, whose three
+    // modes ARE the three refusal shapes they used to disagree about.
+    name: 'findProjectRoot( in a registration consumer',
+    home: 'lib/setup/registration.js — `resolveRoot(cwd, {mode})`',
+    what: 'deciding which project a registration command operates on',
+    files: [
+      'lib/cli/commands/install.js',
+      'lib/cli/commands/uninstall.js',
+      'lib/cli/commands/on.js',
+      'lib/cli/commands/off.js',
+      'lib/cli/commands/doctor.js',
+      'lib/cli/commands/status.js',
+      'lib/cli/commands/update.js',
+      'lib/mcp/index.js',
+    ],
+    re: /findProjectRoot\(/g,
+    baseline: {},
+  },
+  {
     // NOT a lib-wide ban: 8 of the ~35 writeFileSync sites in lib/ are
     // legitimately not JSON records (export HTML, capture sidecars,
     // component.html/seed.js/service.js, .gitignore, the empty disable markers),
@@ -369,6 +400,25 @@ const PATTERNS = [
     ],
     re: /writeFileSync\(/g,
     baseline: {},
+  },
+  {
+    // WHICH hook events registration means. templates/settings.hooks.json is the
+    // answer, and for a long time it was read in exactly one place (ensureHooks)
+    // and exposed nowhere — so doctor, status and uninstall each iterated
+    // `Object.keys(settings.hooks)`, i.e. whatever happened to be ON DISK, and a
+    // project missing its Stop hook looked healthy to all three. That is the
+    // divergence hookEvents() closed; this row keeps it closed.
+    //
+    // The pattern is the QUOTED filename, not the bare word, so the four places
+    // that legitimately NAME the template — a comment, a doctor warning that
+    // tells the user where the event list lives, docs/extending.md — do not
+    // count. Only reaching for the file itself does.
+    name: "'settings.hooks.json' (the file, not the mention)",
+    home: 'lib/update/managed-files.js — `hookTemplate()`, exposed as `hookEvents()`',
+    what: 'deciding which hook events a registered project must have',
+    roots: ['lib'],
+    baseline: { 'lib/update/managed-files.js': 1 },
+    re: /['"]settings\.hooks\.json['"]/g,
   },
 ];
 
