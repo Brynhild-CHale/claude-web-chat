@@ -129,3 +129,49 @@ test('realpath: returns null rather than throwing for a path that is not there',
 test('isInside: the old home re-exports the SAME function, not a copy', () => {
   assert.equal(require('../lib/update/install-layout').isInside, isInside);
 });
+
+// ── the Node floor ──────────────────────────────────────────────────────────
+
+const { NODE_FLOOR, checkNodeFloor } = require('../lib/core/versions');
+const { nodeFloorMessage } = require('../lib/cli/commands/init');
+
+test('the Node floor is ONE number: core, package.json engines and install.sh agree', () => {
+  const REPO = path.resolve(__dirname, '..');
+
+  const engines = require('../package.json').engines.node;
+  const enginesFloor = parseInt(String(engines).replace(/[^\d.]/g, '').split('.')[0], 10);
+  assert.equal(enginesFloor, NODE_FLOOR,
+    `package.json engines says "${engines}" but lib/core/versions NODE_FLOOR is ${NODE_FLOOR}`);
+
+  // install.sh cannot require() anything, so its copy of the number is a shell
+  // literal. It is the FIRST gate a new user meets; it must not be the one that
+  // disagrees.
+  const sh = fs.readFileSync(path.join(REPO, 'install.sh'), 'utf8');
+  const m = sh.match(/node_major"?\s*-lt\s+(\d+)/);
+  assert.ok(m, 'install.sh no longer has a `-lt <major>` Node gate — did it move?');
+  assert.equal(parseInt(m[1], 10), NODE_FLOOR,
+    `install.sh refuses below ${m[1]} but lib/core/versions NODE_FLOOR is ${NODE_FLOOR}`);
+});
+
+test('checkNodeFloor: parses the running-version shapes it is handed', () => {
+  assert.equal(checkNodeFloor('22.0.0').ok, true);
+  assert.equal(checkNodeFloor('v24.3.1').ok, true);
+  assert.equal(checkNodeFloor('21.7.3').ok, false);
+  assert.equal(checkNodeFloor('20.0.0').major, 20);
+  assert.equal(checkNodeFloor('nonsense').ok, false, 'an unparseable version fails closed');
+  assert.equal(checkNodeFloor().ok, true, 'this suite is running on a supported Node');
+});
+
+test('init refuses Node below the floor, and says which floor and why', () => {
+  assert.equal(nodeFloorMessage('24.1.0'), null);
+  assert.equal(nodeFloorMessage(String(NODE_FLOOR) + '.0.0'), null);
+
+  // The regression this closes: 18 through 21 used to print a green tick here.
+  for (const v of ['18.20.4', '20.11.1', '21.7.3']) {
+    const msg = nodeFloorMessage(v);
+    assert.ok(msg, `init must refuse Node ${v}`);
+    assert.match(msg, new RegExp(`Node ${NODE_FLOOR} or newer`));
+    assert.match(msg, /require\(esm\)/, 'the message names the reason, not just the number');
+    assert.ok(!/Node 18 or newer/.test(msg), 'the stale floor is gone from the message');
+  }
+});
