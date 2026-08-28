@@ -147,7 +147,7 @@ were the only places they lived.
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
-| decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
+| decide who may reach this server (bind host, `Host` gate, WS `Origin` gate, extension CORS, the preview document's CSP) | `core/cors` `LISTEN_HOST` / `requireLocalHost` / `isLocalHost` / `verifyUpgrade` / `isLocalOrigin` / `isBrowserRequest` / `setCors` / `mountCors` / `PREVIEW_CSP` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", read `req.headers.host` by hand, or copy the header block |
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
@@ -369,22 +369,43 @@ engine deliberately avoids.
 Everything web-chat serves is unauthenticated by design — the graph, the shared
 store, arbitrary HTML/JS injection through `/api/render`. So "who may reach this
 server" is a single security decision, and it lives in one zero-import leaf
-module. Three facts that must never drift apart:
+module. Facts that must never drift apart:
 
 - `LISTEN_HOST` — what the instance server and the hub bind. `127.0.0.1` unless
   `WEB_CHAT_HOST` says otherwise; `warnIfExposed()` prints the consequences of
   that override on startup. Never write a bind address anywhere else, and never
   bind a wildcard "for convenience" — a loopback bind is the access control.
+- `isLocalHost(host)` / `requireLocalHost` / `verifyUpgrade` — is the NAME the
+  client dialled one we answer to. A loopback bind stops a remote packet but not
+  a page whose DNS is rebound to `127.0.0.1`: that fetch is *same-origin*, so it
+  carries no `Origin` and none of the rules below ever fire. `Host` is the header
+  that still tells the truth and the one page script cannot forge. Mounted as the
+  **first** middleware on both apps (above `express.json`, so a rebound POST is
+  refused before a 200mb body is parsed) and folded into the WS upgrade as
+  `verifyUpgrade`, which never sees `app.use`. A single non-loopback
+  `WEB_CHAT_HOST` is accepted alongside loopback; a wildcard bind skips the check
+  entirely, because no name is then distinguishable from any other.
 - `isLocalOrigin(origin)` — is a browser `Origin` one of this machine's own
   surfaces. Gates the WS upgrade (`verifyClient` in `lib/server/ws.js`), because
   browsers apply no same-origin policy to WebSocket connects and the `hello`
   frame is an unconditional full-state disclosure. An **absent** origin is not
   decided here: the caller allows it, since a non-browser client (driver, CLI,
   test) already has filesystem access to everything.
+- `isBrowserRequest(headers)` — is this a browser at all, ours or anyone's. The
+  gate for an endpoint whose damage is done by the *request* rather than the
+  reply, where CORS is no defence: `POST /api/shutdown` and the disk-writing
+  `GET /api/export/:ref?format=file`. Fails closed — Node's global `fetch` sends
+  `Sec-Fetch-*` and is refused too; local tooling reaches these through
+  `lib/client`.
 - `setCors(req, res)` / `mountCors(app, path)` — the extension-facing headers.
   The allowed set is narrow on purpose (extension schemes + this machine); it
   used to reflect any `Origin`, which made every capture readable by any site the
   user happened to be browsing.
+- `PREVIEW_CSP` — what the `/preview/node` document may reach. The graph viewer
+  runs one of those documents per visible node thumbnail, executing historical
+  pane scripts unattended against the live daemon, so `connect-src 'none'` is the
+  load-bearing directive. `'unsafe-eval'` is required, not sloppy: the spliced
+  mount runtime executes pane bodies through `new Function`.
 
 `LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
 the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
