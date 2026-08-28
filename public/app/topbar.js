@@ -7,7 +7,7 @@ import { store } from './store.js';
 import { nodeById, labelFor, childrenOf } from './labels.js';
 import { fullReset, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
-import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
+import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf, requestSetActive } from './graph-view.js';
 
 export function updateChip() {
   const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
@@ -266,21 +266,16 @@ export async function doWipe(name) {
   leavePreview();
 }
 
+// The third caller of the one set-active request. requestSetActive owns the POST
+// and both not-moved answers — the refusal note, and the queued re-aim that
+// stays detached because the turn-end apply broadcasts a reset landing
+// everywhere. The tail below is this caller's own: it aims THIS client at the
+// node and refetches that node's panes, where the overlay's two callers restore
+// the live surface and relay the DAG out.
 async function setActiveHere() {
   const target = view.viewedId;
   if (!target) return;
-  const r = await fetch('/api/graph/active', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: target }),
-  });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); showReaimNote('Could not set active: ' + (err.error || r.statusText)); return; }
-  const body = await r.json().catch(() => ({}));
-  if (body.pending) {
-    // Queued: stay detached; the turn-end apply broadcasts a reset that lands
-    // everywhere (this client folds it via the previewing reset path).
-    showReaimNote(`Queued — jumps to ${labelFor(target)} when Claude's turn ends.`);
-    return;
-  }
+  if (!await requestSetActive(target)) return;
   leavePreview({ activeId: target });
   const nr = await fetch('/api/graph/node/' + target);
   if (nr.ok) { const node = await nr.json(); fullReset({ mounts: node.mounts || [], store: node.store || {} }); }

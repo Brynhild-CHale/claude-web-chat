@@ -568,8 +568,14 @@ function openNode(id) { view.selectedNodeId = id; previewNode(id); closeOverlay(
    call to it. The failure now goes to topbar's in-page notice, which is what the
    queued case already used.
 
-   Returns true only when active actually moved. */
-async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
+   The POST and its two not-moved answers are requestSetActive, which all three
+   share. What comes AFTER differs and stays with each caller: the two here
+   restore the live surface and relay the DAG out (postSetActive); the topbar's
+   aims this client at the node and refetches that node's panes. One owner of the
+   request, two tails — not one function with a flag for the difference.
+
+   Both return true only when active actually moved. */
+export async function requestSetActive(id) {
   if (!id) return false;
   const r = await fetch('/api/graph/active', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
@@ -586,6 +592,11 @@ async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
     showReaimNote(`Queued — jumps to ${labelFor(id)} when Claude's turn ends.`);
     return false;
   }
+  return true;
+}
+
+async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
+  if (!await requestSetActive(id)) return false;
   leavePreview();
   if (alsoCloseOverlay) closeOverlay();
   await refreshGraph();
