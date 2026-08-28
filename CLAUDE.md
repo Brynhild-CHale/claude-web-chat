@@ -57,19 +57,21 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | Need to… | Use | Never |
 | --- | --- | --- |
 | resolve a `.web-chat`/`~/.web-chat` path, or the project root | `lib/core/paths` (`projectPaths`/`userPaths`/`findProjectRoot`) | hardcode `.web-chat` / call `os.homedir()` |
+| ask whether a path is inside a directory (a fence) | `lib/core/paths` (`isInside`/`realpath` — realpath-based, fails closed) | compare with `startsWith` or `path.relative` by hand |
 | read/write/discover/probe a daemon portfile | `lib/core/portfiles` | read `server.json` or `http.request` a probe by hand |
 | call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
-| CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/server/util/html` / `lib/capture/profiles/util` | copy the helper |
+| CORS / escape HTML / collapse profile text | `lib/core/cors` / `lib/core/html` (`escapeHtml(s, {quotes})`) / `lib/capture/profiles/util` | copy the helper, or inline a `.replace` chain |
 | ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | unpack or inspect a `.tar.gz` | `lib/update/archive` (`extractTarGz`/`rootOf`/`listTarGz`) | a second `spawnSync('tar')` |
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |
+| know the supported Node floor, or where releases come from | `lib/core/versions` (`NODE_FLOOR`/`checkNodeFloor`, `REPO_SLUG` + the URLs built from it) | write `22` or the repo slug into a message |
 | resolve a `.claude/` path (settings, rules, skills) | `lib/core/paths` (`claudePaths`/`userClaudePaths`) | hardcode `.claude` |
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
 | name a reserved component | `lib/server/builtins.BUILTINS` | re-list the builtin names |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 
-Dependency direction is one-way: `core` ← `client` ← everything else, and `core` imports nothing else from `lib/`. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
+Dependency direction is one-way: `core` ← `client` ← everything else, `core` imports nothing else from `lib/`, and entry points never reach into each other's internals — **`test/dependency-direction.test.js` enforces all three**, with a named, shrink-only baseline for the edges that legitimately remain. Every concept is consolidated behind one engine (paths, portfiles, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 
 - **New MCP tool**: add `lib/mcp/tools/<name>.js`, append to the `tools` array in `lib/mcp/index.js`, add any backing route under `lib/server/routes/`, then `/exit` and reopen Claude Code (the MCP subprocess loads code at session start).
 - **New CLI subcommand**: add `lib/cli/commands/<name>.js`, register in the `commands` map in `lib/cli/index.js`, update `showHelp()`.

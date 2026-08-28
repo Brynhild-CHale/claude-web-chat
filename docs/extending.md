@@ -96,6 +96,24 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
   `lib/client` and `core/*`; entry points never reach into each other's internals.
 - A helper that seems to belong in two layers belongs in the lower one.
 
+**`test/dependency-direction.test.js` enforces this.** It parses every relative
+`require()` under `lib/`, maps it to an edge between two subsystems, and fails
+any edge the direction forbids — a `core` or `client` reach outward, an entry
+point importing another entry point, a shared library importing an entry point.
+The edges that legitimately remain are listed in a `BASELINE` in that file, each
+with the reason it is allowed, and the baseline is **shrink-only**: an entry that
+no longer matches fails as stale, so a consolidation tightens the rule in the
+same PR. Two entries are marked `OWED` — `lib/packs` still reaches into
+`lib/server` for `BUILTINS` and the components registry.
+
+The rule was a paragraph until then, and a paragraph is one lazy `require` away
+from being wrong. It already was, in four places, and every one of them was the
+same mistake: a *generic leaf helper parked above the leaf layer*. `lib/packs`
+imported the **updater** for a path predicate and the **server** for a path
+adapter; `lib/capture` imported the **server** for an HTML escaper. Nobody meant
+to couple those subsystems — they wanted `isInside` and `escapeHtml`, and those
+were the only places they lived.
+
 ## The engines — need X, use Y
 
 | You need to… | Use | Never |
@@ -103,6 +121,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | resolve a path under `.web-chat/` or `~/.web-chat/` | `core/paths` `projectPaths(root)` / `userPaths()` | hardcode `'.web-chat'` or call `os.homedir()` |
 | resolve a path under `.claude/` (settings, rules, skills) | `core/paths` `claudePaths(root)` / `userClaudePaths()` | hardcode `'.claude'` |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
+| ask whether a path is inside a directory (a fence) | `core/paths` `isInside(parent, child)` / `realpath(p)` | `startsWith` / `path.relative` containment by hand |
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
@@ -113,10 +132,12 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
 | decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
-| escape HTML | `server/util/html` `escapeHtml` | inline a `.replace` chain |
+| escape HTML | `core/html` `escapeHtml(s, { quotes })` | inline a `.replace` chain |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
+| gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
+| name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | name the reserved component names | `lib/server/builtins` `BUILTINS` | re-list them |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
@@ -325,7 +346,7 @@ install.js   orchestrate, write the provenance record, append the audit line
 `review` output, and the drawer's quarantine card, so "show me what this would
 do" cannot drift from what it actually does.
 
-Three invariants live in code rather than in a reviewer's memory:
+Four invariants live in code rather than in a reviewer's memory:
 
 - **`tar` is not the security boundary — the copier is.** Members are listed
   (`archive.listTarGz`, pure JS) and refused before extraction: absolute paths,
@@ -339,6 +360,13 @@ Three invariants live in code rather than in a reviewer's memory:
 - **A builtin component name is a hard refusal.** No override, either tier,
   either actor — because `seedBuiltins` only repairs a directory whose
   `meta.json` says `builtin: true`, so a shadowing pack would win permanently.
+- **The installed record is untrusted input.** `.web-chat/packs.json` is
+  project-tier and a repository can commit a `.web-chat/` tree — the reason
+  quarantine records were moved to the user tier. Every path `removeUnits`
+  unlinks is built from that record, so `verifyPack` validates it at READ time:
+  kebab-case unit name, `memberEscapes` on every recorded path, and
+  `isInside` for any recorded file that exists. A unit that fails is `refused`
+  whole — nothing unlinked, counted as drift, kept in the record.
 
 `lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
 `install.js`. **Read the risk paragraph at the head of the route file before
@@ -348,7 +376,12 @@ have edited, are therefore terminal-only.
 
 ### Shared small homes
 
-- `lib/server/util/html.js` — `escapeHtml(s)` (null-safe).
+- `lib/core/html.js` — `escapeHtml(s, { quotes })`. Null-safe; the default
+  escapes all five characters (`& < > " '`) because the result lands in an
+  attribute value as often as in a text node, and an escaper that is only safe in
+  one of those positions is a trap. `{ quotes: false }` is the text-node mode,
+  for a producer whose output bytes are compared. `lib/server/util/html.js`
+  re-exports it for the server routes that already import it from there.
 - `lib/capture/profiles/util.js` — `collapse(s)`.
 
 ## The test harness — `test-support/helpers.js`
@@ -394,6 +427,7 @@ Current homes (baselines can only shrink toward these):
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
 | `require('node:readline…')` | `lib/cli/prompt.js` (the one prompt engine) | landed with `init` ✅ |
+| `.replace(/&/g` | `lib/core/html.js` (`escapeHtml`) — plus `lib/server/export.js`, whose one match is JSON-for-`<script>` escaping, not HTML | landed with the core leaves ✅ |
 
 Working with it:
 
