@@ -278,7 +278,17 @@ function renderPalette() {
     row.id = `cmd-opt-${i}`;
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(i === paletteSel));
-    row.innerHTML = `<span class="kind">${it.kind}</span><span>${it.label}</span>`;
+    // textContent, not an innerHTML template: `it.label` carries a graph node's
+    // `name`, which is user- or API-supplied text the server only trim()s. A
+    // bookmark named `R&D <plan>` used to render half-swallowed, and one named
+    // `<img src=x onerror=…>` executed in the privileged chrome origin the
+    // moment ⌘K opened. (Same reasoning as the minbar chip in mounts.js.)
+    const kindEl = document.createElement('span');
+    kindEl.className = 'kind';
+    kindEl.textContent = it.kind;
+    const labelEl = document.createElement('span');
+    labelEl.textContent = it.label;
+    row.append(kindEl, labelEl);
     row.addEventListener('mousedown', (e) => { e.preventDefault(); runPalette(it); });
     list.appendChild(row);
   });
