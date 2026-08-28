@@ -12,8 +12,8 @@ Note: `.claude/rules/web-chat.md` in this repo is the **end-user-facing rules fi
 
 ```sh
 npm install               # dev setup; run the CLI in place: node bin/claude-web-chat.js <cmd>
-node --test               # run the full test suite (Node built-in runner, test/*.test.js)
-node --test test/root.test.js   # run a single test file
+npm test                  # run the full test suite (Node built-in runner, test/*.test.js)
+node --test --test-timeout=60000 test/root.test.js   # run a single test file
 node scripts/build-release.js   # build the release tarball + SHA256SUMS into dist/
 ```
 
@@ -24,7 +24,11 @@ node scripts/build-release.js   # build the release tarball + SHA256SUMS into di
 
 There is no build step (plain CommonJS) and no lint config. `npm start` / `node bin/claude-web-chat.js start` runs the server in the foreground; `claude-web-chat` is the user-facing CLI (`open`, `stop`, `restart`, `unlock`, `install`, `on`/`off`, `status`, `update`).
 
-> ⚠️ Run tests with bare `node --test` (auto-discovers `test/`). `node --test test/` mis-resolves and reports a spurious single failure.
+> ⚠️ Run tests with `npm test` — a bare `node --test --test-timeout=60000` (auto-discovers
+> `test/`). `node --test test/` mis-resolves and reports a spurious single failure. The
+> timeout is load-bearing: without it one leaked handle or never-settling await hangs the
+> whole run indefinitely. Do **not** add `--test-force-exit` — it turns a hang into a
+> silent pass.
 
 ## Architecture
 
@@ -79,6 +83,6 @@ Dependency direction is one-way: `core` ← `client` ← everything else, and `c
 ## Conventions
 
 - CommonJS (`require`/`module.exports`), Node 22+, no transpile. The floor is 22 because `node-html-parser` pulls in an ESM-only `entities`, and `require(esm)` landed in 22 — below it the daemon does not start at all.
-- **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` / `require('node:readline` outside its single allowed home (the count can only shrink toward the home). Run the suite with bare `node --test`. See `docs/extending.md`.
+- **One engine per concept, enforced.** `test/conventions.test.js` is a ratchet — it fails on a new *or newly-removed* `http.request(` / `os.homedir()` / `new Function(` / `require('node:readline` outside its single allowed home (the count can only shrink toward the home). Run the suite with `npm test`. See `docs/extending.md`.
 - Forward-compat stubs exist for Claude Code plugin packaging: `.claude-plugin/plugin.json` and `.mcp.json` use `${CLAUDE_PLUGIN_ROOT}` to resolve bin paths.
 - **Distribution is GitHub Releases — npm is not involved at any point.** `scripts/build-release.js` builds a self-contained, reproducible `claude-web-chat-<version>.tar.gz` (the `files` allowlist plus production `node_modules`, since the four runtime deps mean a source tarball cannot run) plus `SHA256SUMS`; `.github/workflows/release.yml` attaches both to the release on a `v*` tag. `install.sh` and `claude-web-chat update` download it, verify the checksum, unpack into `~/.web-chat/versions/<v>/`, swap the `~/.web-chat/current` symlink and link three bins into `~/.local/bin` — no sudo, and `update --to <v>` rolls back to a version still on disk. `update` refuses to run from a git checkout or any other unmanaged copy (`lib/update/install-layout.js`). **macOS and Linux are supported; Windows means WSL2** — the policy, what CI does and does not prove, and the known cross-platform bugs are in `docs/platform-support.md`, with per-platform findings on the `platform/linux` and `platform/windows` branches. `package.json` keeps `"private": true` as an anti-publish guard — it makes an accidental `npm publish` fail fast.

@@ -12,9 +12,11 @@ npm install
 node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
-Run the suite with `npm test` — that is a bare `node --test`, which auto-discovers
-`test/`; **not** `node --test test/`, which mis-resolves and reports a spurious
-failure.
+Run the suite with `npm test` — that is a bare `node --test --test-timeout=60000`,
+which auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
+reports a spurious failure. The timeout is load-bearing: without it one leaked
+handle or never-settling await hangs the whole run indefinitely. Do not add
+`--test-force-exit` — it would turn that hang into a silent pass.
 
 **Do not use `npm link`.** npm's global prefix is a shared mutable directory: any
 later `npm i -g` of anything rewrites what lives there, and that is not
@@ -368,8 +370,8 @@ count as a phantom passing test.
   the dev machine.
 - `tmpRoot`, `makeApi(baseUrl)`, `wsConnect`, `wsHello`, `safeStop`.
 
-Run the suite with `npm test` (a bare `node --test`, which auto-discovers
-`test/`). Not `node --test test/` — that mis-resolves.
+Run the suite with `npm test` (a bare `node --test --test-timeout=60000`, which
+auto-discovers `test/`). Not `node --test test/` — that mis-resolves.
 
 ## The conventions tripwire
 
