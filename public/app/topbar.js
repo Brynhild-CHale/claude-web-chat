@@ -7,7 +7,7 @@ import { store } from './store.js';
 import { nodeById, labelFor, childrenOf } from './labels.js';
 import { fullReset, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
-import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf } from './graph-view.js';
+import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
 
 export function updateChip() {
   const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
@@ -31,13 +31,15 @@ export function updateChip() {
   const sa = $('btn-set-active-here'); if (rah(sa)) sa.style.display = detached ? '' : 'none';
 
   const cur = nodeById(view.viewedId);
-  // Two different questions, two topologies. ↓ steps to the next turn the graph
-  // DRAWS — the same gesture ArrowDown performs in the overlay, and it used to
-  // disagree with it, navigating to a node the DAG will not draw. ⑃ opens the
-  // raw commit children, which is what the branch picker is asking about.
+  // Two different questions, two topologies. ↑/↓ step to the previous/next turn
+  // the graph DRAWS — the same pair ArrowUp/ArrowDown performs in the overlay,
+  // and they used to disagree with it, navigating to nodes the DAG will not
+  // draw. ⑃ opens the raw commit children, which is what the branch picker is
+  // asking about.
   const drawnKids = displayChildrenOf(view.viewedId);
+  const drawnParent = displayParentOf(view.viewedId);
   const rawKids = childrenOf(view.viewedId);
-  const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && cur.parent_id);
+  const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && drawnParent);
   const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = drawnKids.length === 0;
   const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = rawKids.length > 1 ? '' : 'none';
 
@@ -306,8 +308,8 @@ export function initTopbar() {
 
   on('btn-up', 'click', async () => {
     await ensureGraph();
-    const cur = nodeById(view.viewedId);
-    if (cur && cur.parent_id) previewNode(cur.parent_id);
+    const parentId = displayParentOf(view.viewedId);  // the previous turn as DRAWN — see updateChip
+    if (parentId) previewNode(parentId);
   });
   on('btn-down', 'click', async () => {
     await ensureGraph();

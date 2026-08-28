@@ -209,6 +209,50 @@ test('the topbar ↓ steps to the same node ArrowDown does', async () => {
   assert.ok(!W.__calls.includes('/api/graph/node/n2'), 'the collapsed node is never navigated to');
 });
 
+test('the topbar ↑ comes back the way ↓ went, instead of stranding the viewer on a hidden node', async () => {
+  assert.equal($('node-label').textContent, 'n1.2', 'precondition: ↓ left the viewer on n3');
+  W.__calls.length = 0;
+  assert.equal($('btn-up').disabled, false, 'the ↑ gate is live');
+
+  $('btn-up').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+
+  assert.ok(!W.__calls.includes('/api/graph/node/n2'),
+    '↑ previewed the DRAWN parent, not the collapsed turn between — it walked the raw parent_id ' +
+    'while ↓ walked the display topology, so the pair was not symmetric');
+  assert.equal($('node-label').textContent, 'n1.0',
+    'it landed on the node ↓ came from (n1 is active, so the return needs no fetch at all)');
+  assert.equal($('btn-down').disabled, false,
+    '↓ still works from here — landing on n2 disabled it (n2 is absent from the display index, ' +
+    'so displayChildrenOf(n2) is empty): a dead end ↑ itself created');
+});
+
+test('with the collapsed turns shown, ↑/↓ walk them — the pair follows whatever is drawn', async () => {
+  $('btn-graph').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick(); await tick();
+  $('gv-show-collapsed').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.ok(drawnIds().includes('n2'), 'precondition: n2 is drawn now');
+  key('Escape');                       // back to the topbar
+  await tick();
+
+  W.__calls.length = 0;
+  $('btn-down').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal($('node-label').textContent, 'n1.1', '↓ steps onto the no-change turn, which is on screen now');
+  $('btn-up').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal($('node-label').textContent, 'n1.0', 'and ↑ is its exact inverse');
+
+  $('btn-graph').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick(); await tick();
+  $('gv-show-collapsed').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.ok(!drawnIds().includes('n2'), 'restored: collapsed again for the tests below');
+  key('Escape');
+  await tick();
+});
+
 /* ---------------- the inspector/footer race ---------------- */
 
 test('rapid navigation never leaves the inspector describing a node the footer is not on', async () => {

@@ -325,6 +325,22 @@ function graphIndex() {
 // different question and stays on labels.childrenOf's raw commit children.)
 export function displayChildrenOf(id) { return graphIndex().childrenOf(id); }
 
+// ...and the topbar's ↑ is its mirror: the previous turn as DRAWN, the node
+// ArrowUp selects. The two buttons have to read the SAME topology or they are
+// not inverses — with ↓ on the display graph and ↑ on the raw one, ↑ landed on a
+// collapsed turn the DAG does not draw, and ↓ was disabled there: a dead end.
+//
+// One raw fallback: if the viewed node is not in the display set at all — the
+// user previewed a collapsed turn with show-collapsed on and then toggled it off
+// — there is no drawn parent to return, and the raw parent is the only way back
+// out of it.
+export function displayParentOf(id) {
+  const idx = graphIndex();
+  if (idx.byId.has(id)) { const p = idx.parentOf(id); return p ? p.id : null; }
+  const n = nodeById(id);
+  return (n && n.parent_id) || null;
+}
+
 function historyRows() {
   let ns = graphIndex().nodes.slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
   if (historyScope === 'graph') {
