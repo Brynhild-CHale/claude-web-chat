@@ -175,3 +175,37 @@ test('init refuses Node below the floor, and says which floor and why', () => {
     assert.ok(!/Node 18 or newer/.test(msg), 'the stale floor is gone from the message');
   }
 });
+
+// ── the repo slug ───────────────────────────────────────────────────────────
+
+const versions = require('../lib/core/versions');
+
+test('the repo slug is ONE fact: every URL the program prints is built from it', () => {
+  assert.equal(require('../lib/update/release').REPO_SLUG, versions.REPO_SLUG);
+  assert.equal(require('../lib/update/check').RELEASES_PAGE, versions.RELEASES_PAGE);
+
+  for (const u of [versions.REPO_URL, versions.RELEASES_PAGE, versions.DOCS_URL,
+    versions.INSTALL_SH_URL, versions.releaseTagUrl('v1.2.3')]) {
+    assert.ok(u.includes(versions.REPO_SLUG), `${u} does not carry the slug`);
+  }
+  assert.equal(versions.releaseTagUrl('v1.2.3'), `${versions.REPO_URL}/releases/tag/v1.2.3`);
+});
+
+test('no source file under lib/ hardcodes the repo slug except its one home', () => {
+  const LIB = path.join(path.resolve(__dirname, '..'), 'lib');
+  const offenders = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(f); continue; }
+      if (!e.name.endsWith('.js')) continue;
+      const n = (fs.readFileSync(f, 'utf8').match(/Brynhild-CHale\/claude-web-chat/g) || []).length;
+      if (n) offenders.push(`lib/${path.relative(LIB, f)} (${n})`);
+    }
+  };
+  walk(LIB);
+  // The one home. Anything else is a URL that would ignore WEB_CHAT_REPO — the
+  // failure this consolidated: `update` downloaded from the override while the
+  // very next line told the user to curl the original repo's install.sh.
+  assert.deepEqual(offenders, ['lib/core/versions.js (1)']);
+});
