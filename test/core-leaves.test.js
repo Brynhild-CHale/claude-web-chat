@@ -28,9 +28,19 @@ test('escapeHtml: nullish renders as empty, not the literal "null"', () => {
   assert.equal(escapeHtml(false), 'false');
 });
 
-test('escapeHtml: { quotes: false } leaves quotes alone but still closes tags', () => {
+test('escapeHtml: one mode, all five characters — safe in an attribute value', () => {
   assert.equal(escapeHtml(`it's <b>&</b> "q"`), `it&#39;s &lt;b&gt;&amp;&lt;/b&gt; &quot;q&quot;`);
-  assert.equal(escapeHtml(`it's <b>&</b> "q"`, { quotes: false }), `it's &lt;b&gt;&amp;&lt;/b&gt; "q"`);
+  // There is no fewer-characters mode, and an options argument does not create
+  // one: an escaper that is only safe in a text node is the defect the engine
+  // exists to remove, and a mode nothing calls is a promise nothing keeps.
+  assert.equal(escapeHtml(`it's "q"`, { quotes: false }), `it&#39;s &quot;q&quot;`);
+});
+
+test('escapeHtml: the capture reader render uses the engine, not a private copy', () => {
+  const { simplifiedDocument } = require('../lib/capture/profiles/simplify');
+  const doc = simplifiedDocument({ title: `Ivan's <script>`, url: 'https://x/y', bodyHtml: '<p>hi</p>' });
+  assert.match(doc, /Ivan&#39;s &lt;script&gt;/, 'apostrophe and angle brackets both escaped');
+  assert.equal(/<title>[^<]*<script/.test(doc), false);
 });
 
 test('escapeHtml: the old homes re-export the SAME function, not a copy', () => {

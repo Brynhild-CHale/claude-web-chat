@@ -132,7 +132,7 @@ were the only places they lived.
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
 | decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
-| escape HTML | `core/html` `escapeHtml(s, { quotes })` | inline a `.replace` chain |
+| escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
@@ -376,12 +376,21 @@ have edited, are therefore terminal-only.
 
 ### Shared small homes
 
-- `lib/core/html.js` — `escapeHtml(s, { quotes })`. Null-safe; the default
-  escapes all five characters (`& < > " '`) because the result lands in an
-  attribute value as often as in a text node, and an escaper that is only safe in
-  one of those positions is a trap. `{ quotes: false }` is the text-node mode,
-  for a producer whose output bytes are compared. `lib/server/util/html.js`
-  re-exports it for the server routes that already import it from there.
+- `lib/core/html.js` — `escapeHtml(s)`. Null-safe; escapes all five characters
+  (`& < > " '`) because the result lands in an attribute value as often as in a
+  text node, and an escaper that is only safe in one of those positions is a
+  trap. There is deliberately **no** fewer-characters mode: the only reason to
+  want one is byte-preservation for a producer whose output is compared, and
+  nothing in the tree is in that position — add it then, named for what it
+  omits, with its caller in the same PR. `lib/server/util/html.js` re-exports it
+  for the server routes that already import it from there.
+  **The client has its own home**, `public/app/esc.js` (same five characters) —
+  the chrome cannot `require` out of `lib/`. **Capture profiles have neither**:
+  the loader reads user-authored profiles from `.web-chat/profiles/`, which
+  cannot import the package, so the eight bundled profiles still carry a
+  four-character copy each. Both spellings of a hand-rolled escaper — the
+  `.replace` chain and the `{'&':'&amp;'}` lookup map — are pinned by
+  `test/conventions.test.js`, and those eight are the whole grandfathered list.
 - `lib/capture/profiles/util.js` — `collapse(s)`.
 
 ## The test harness — `test-support/helpers.js`

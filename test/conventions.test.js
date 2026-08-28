@@ -84,17 +84,14 @@ const PATTERNS = [
     },
   },
   {
-    // The HTML escape chain. It always starts `.replace(/&/g` — the ampersand
-    // must be replaced first or the escaper double-escapes its own output — so
-    // that prefix is an exact fingerprint for "someone is hand-rolling an
-    // escaper again". There were two live copies plus two callers reaching
-    // across subsystem lines for one of them before the engine landed in
-    // lib/core/html.js; copy N+1 is free to disagree about which characters it
-    // covers, and a three-character escaper interpolated into an attribute
-    // value is an XSS.
+    // The HTML escape chain, SPELLING ONE: a sequence of .replace() calls. It
+    // always starts `.replace(/&/g` — the ampersand must go first or the escaper
+    // double-escapes its own output — so that prefix is an exact fingerprint.
+    // lib/server/export.js carried one of these privately until the engine
+    // landed in lib/core/html.js.
     name: '.replace(/&/g',
-    home: 'lib/core/html.js — `escapeHtml(s, { quotes })`',
-    what: 'hand-rolled HTML entity escaping',
+    home: 'lib/core/html.js — `escapeHtml(s)`',
+    what: 'hand-rolled HTML entity escaping (chain spelling)',
     roots: ['lib', 'public'],
     re: /\.replace\(\/&\/g/g,
     baseline: {
@@ -105,6 +102,45 @@ const PATTERNS = [
       // different threat — escapeHtml would emit `&amp;` into JSON and corrupt
       // the payload.
       'lib/server/export.js': 1,
+    },
+  },
+  {
+    // The escape chain, SPELLING TWO — and the more common one in this tree: a
+    // character-class replace against a lookup map,
+    // `.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', … }[c]))`. The row above does
+    // not match it at all, so for nine of the eleven copies that existed when
+    // the engine landed, "copy N+1 fails the build" was simply not true. The
+    // map's first entry is the fingerprint, in either quote style.
+    //
+    // What the baseline grandfathers, and why each entry is still there:
+    //
+    //   * the eight bundled capture profiles. A profile is user-authorable —
+    //     the same loader reads .web-chat/profiles/<name>/extract.js, which
+    //     cannot `require` anything out of the package — so these cannot import
+    //     the engine the way lib/ code does. Giving profiles an injected `esc`
+    //     is L8a's job; until then they are pinned here so no TENTH appears.
+    //   * public/app/esc.js IS the client-side home (it collapsed four copies
+    //     with three different character sets), and it is a module the chrome
+    //     imports. It escapes all five, same as lib/core/html.js.
+    //
+    // Everything in lib/ that CAN import the engine now does; the last one was
+    // lib/capture/profiles/simplify.js, whose four-character copy was used for
+    // `href=` and `src=` alike.
+    name: "{ '&': '&amp;' } map",
+    home: "lib/core/html.js (host) · public/app/esc.js (client) · an injected `esc` for profiles (L8a)",
+    what: 'hand-rolled HTML entity escaping (lookup-map spelling)',
+    roots: ['lib', 'public'],
+    re: /['"]&['"]\s*:\s*['"]&amp;['"]/g,
+    baseline: {
+      'lib/capture/profiles/bundled/gmail/extract.js': 1,
+      'lib/capture/profiles/bundled/gmail/pane.js': 1,
+      'lib/capture/profiles/bundled/reddit/extract.js': 1,
+      'lib/capture/profiles/bundled/reddit/pane.js': 1,
+      'lib/capture/profiles/bundled/wikipedia/extract.js': 1,
+      'lib/capture/profiles/bundled/wikipedia/pane.js': 1,
+      'lib/capture/profiles/bundled/youtube/extract.js': 1,
+      'lib/capture/profiles/bundled/youtube/pane.js': 1,
+      'public/app/esc.js': 1,
     },
   },
   {
