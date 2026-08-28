@@ -145,6 +145,7 @@ were the only places they lived.
 | read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
+| put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
 | decide who may reach this server (bind host, WS `Origin` gate, extension CORS) | `core/cors` `LISTEN_HOST` / `isLocalOrigin` / `setCors` / `mountCors` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", or copy the header block |
@@ -585,6 +586,43 @@ not scan `test/`, and adding these roots to its patterns would fire
 `http.request(` and `os.homedir()` across ~20 files at once. Fixed sleeps and
 `process.env.HOME =` are deliberately **not** ratcheted — a good number of both
 are legitimate, so a count could never approach zero.
+
+### `lib/server/domain/mounts.js` — the mount-set engine
+
+Putting a pane on the live surface is not one write. It is, in order: reserved-id
+validation, a lock check, an owner gate plus `force`, the `pane_state` /
+`form_state` / `theme` carry rules, the `gen` bump a queued Revert is stamped
+against, the owner stamp, and ONE `bus.emit` naming both the ring event and the
+WS frame. Four routes hand-copied that sequence and each dropped a different
+part of it, which is the whole argument for the module.
+
+- `setMount(state, bus, {id, html, target, params, owner, force, component, theme, pane_state_patch, policy})`
+  → `{ok:true, id, owner}` or a refusal envelope (`lockReject` / `ownerReject` /
+  `reservedReject` — always HTTP 200 with `ok:false`, the tree's refusal
+  convention; Claude's tools and the drawer read `.ok`, not the status).
+- `removeMount(state, bus, {id, source, originGen, target})` → whether a pane
+  went. `originGen` is the queue's generation guard.
+- `emitMount(state, bus, id, {source})` — re-broadcast a pane as it stands,
+  without replacing it (the queue's activity Revert restores form values in
+  place and needs every browser to remount).
+
+**The carry rules are not uniform and must not be flattened.** `pane_state` and
+`theme` carry; `form_state` carries unless `params.form_reset`; a supplied
+`theme` wins over the pane's; and `component` is written only when the caller
+passes one — never carried, because a plain render over a service-backed pane
+dropping `component` is exactly how the supervisor stops that pane's child.
+
+**Two named policies, and a third means the abstraction is wrong.** `default`
+covers Claude, `/use` and drivers. `capture` exists for one deviation: the
+tab-stream extension re-renders its own pane on every capture and must not
+soft-reject itself against a stale owner on that id. Everything else the capture
+path used to skip — the ring event, the lock check, `gen`, the `form_state`
+carry — it no longer does.
+
+What stays OUTSIDE: `graph.restoreLiveToNode` and `turns.loadDraft` replace the
+whole surface and broadcast a `reset` instead of per-pane frames, and
+`routes/render.js`'s bulk clear owns a pin filter and two batched frame shapes.
+`test/conventions.test.js` ratchets exactly that boundary.
 
 ## The conventions tripwire
 
