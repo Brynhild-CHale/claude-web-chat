@@ -183,6 +183,14 @@
     return 'https://' + raw;
   }
 
+  function isLocalTarget(u) {
+    if (u.startsWith('/')) return true;
+    let h;
+    try { h = new URL(u, location.href).hostname.toLowerCase(); } catch { return false; }
+    if (h === 'localhost' || h.endsWith('.localhost') || h === '::1' || h === '[::1]') return true;
+    return /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
+  }
+
   function helperActive() {
     return !!document.querySelector('meta[name="claude-web-chat-embed-helper"]');
   }
@@ -198,11 +206,13 @@
       empty.style.display = 'flex';
       return;
     }
-    // Local same-origin URLs don't need a pre-check.
-    const sameOrigin = url.startsWith('/') || url.startsWith(location.origin);
+    // Local targets skip the pre-check — and must, because /api/embed-check
+    // refuses loopback and private hosts so the daemon cannot be used to probe
+    // the local network. Nothing is lost: the pre-check is only an advisory
+    // "will this frame?", and for a local dev server the browser can just try.
     // With the embed helper extension active, XFO/CSP are stripped at the browser
     // level for localhost-initiated iframe loads — skip the pre-check entirely.
-    if (sameOrigin || helperActive()) {
+    if (isLocalTarget(url) || helperActive()) {
       clearOverlays();
       frame.classList.remove('hidden');
       frame.src = url;
