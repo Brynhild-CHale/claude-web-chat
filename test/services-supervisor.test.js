@@ -40,6 +40,20 @@ module.exports = {
   async stop() { if (timer) clearInterval(timer); timer = null; },
 };`;
 
+// Reports the params it was spawned with, so a test can see WHICH request is
+// running — params are half a service's identity (they are what `file-editor`'s
+// `unfenced:true` changes) and half its trust key.
+const PARAMS_SERVICE = `
+let timer = null;
+module.exports = {
+  async start(ctx) {
+    const tick = () => ctx.driver.setStore({ clock: { seq: Date.now(), mount: ctx.mountId, params: ctx.params } });
+    tick();
+    timer = setInterval(tick, 40);
+  },
+  async stop() { if (timer) clearInterval(timer); timer = null; },
+};`;
+
 const CRASH_SERVICE = `module.exports = { async start() { process.exit(1); } };`;
 
 // Like CLOCK_SERVICE, but stamping its own pid so a test can tell one generation
@@ -394,4 +408,74 @@ test('services: a stop() that never resolves is still ended by the fallback SIGT
   await api.post('/api/clear', { id: 'm1' });
   const outcome = await Promise.race([exited, sleep(6000).then(() => 'alive')]);
   assert.equal(outcome, 'exited', 'the child process actually died');
+});
+
+test('services: re-using a mount id with different params restarts and re-gates the child', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'scoped', source: '<p>c</p>', description: 'c', service: PARAMS_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'scoped', 'm1');
+  assert.ok(await waitUntil(async () => (await api.get('/api/store')).json.clock), 'the approved shape runs');
+  assert.deepEqual((await api.get('/api/store')).json.clock.params, {}, 'running with the params that were approved');
+
+  // /use with an existing id replaces the mount in place. Params decide what a
+  // service does and are half its trust key, so this is a DIFFERENT request: the
+  // old child must stop, and the new shape must be gated on its own.
+  await api.post('/api/components/scoped/use', { id: 'm1', params: { root: 'src' } });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the old-params child is stopped');
+  const asked = await waitUntil(async () => {
+    const p = await pendingFor(ctx, 'scoped');
+    return p.find((x) => x.params && x.params.root === 'src') || false;
+  });
+  assert.ok(asked, 'the new params shape asks for its own approval');
+
+  await approve(ctx, 'scoped');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'respawned once the new shape is approved');
+  assert.ok(await waitUntil(async () => {
+    const c = (await api.get('/api/store')).json.clock;
+    return Boolean(c && c.params && c.params.root === 'src');
+  }), 'the running child carries the new params');
+});
+
+test('services: an unanswered trust prompt survives a refresh but retires with its pane', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+  await api.post('/api/components/clock/use', { id: 'm1' });
+  assert.ok(await waitUntil(async () => (await pendingFor(ctx, 'clock')).length), 'listed for `claude-web-chat trust`');
+
+  // A refresh takes the viewer count to zero and back. The user may be in the
+  // terminal at that moment — the request must still be there to approve.
+  await new Promise((r) => { v1.sock.on('close', r); v1.sock.close(); });
+  await sleep(500);
+  assert.ok((await pendingFor(ctx, 'clock')).length, 'a viewerless moment does not retire the request');
+  const v2 = await openViewer(ctx);
+  t.after(() => { try { v2.sock.close(); } catch {} });
+
+  // Clearing the pane does: nothing is waiting on the answer any more, so the
+  // CLI must stop listing it and arriving viewers must stop being told about it.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(async () => (await pendingFor(ctx, 'clock')).length === 0),
+    'the request is retired with the pane that raised it');
+});
+
+test('services: a crash block is forgotten when its pane leaves the surface', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/components', { name: 'crasher', source: '<p>x</p>', description: 'x', service: CRASH_SERVICE });
+  const { sock } = await openViewer(ctx);
+  t.after(() => { try { sock.close(); } catch {} });
+
+  await useApproved(ctx, 'crasher', 'm1');
+  const failed = ctx.srv.services._failed;
+  assert.ok(await waitUntil(() => failed.has('m1')), 'the crashed version is blocked for this mount id');
+
+  // The block belongs to that pane, not to the id forever: a mount id is reusable
+  // and the next thing mounted under it has nothing to do with what crashed.
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !failed.has('m1')), 'the block is dropped with the pane');
 });
