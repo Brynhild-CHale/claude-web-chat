@@ -21,6 +21,8 @@ No state migration runs — the on-disk schema is unchanged, so your graph, draf
 7. **`init --json` renames `surfaces[].live` to `surfaces[].pid_alive`** (and adds `reachable`). Anything parsing that report needs updating.
 8. **`file-editor` fences paths by realpath now**, so a symlink inside the project that resolves outside it — including one whose target does not exist yet — is refused where it used to be followed. Use `unfenced: true`, or point `root` at the tree you mean.
 
+Three more repairs are conditional — they apply only if they describe you, and each is spelled out in *Fixed*: a committed `${CLAUDE_PLUGIN_ROOT}` stub in `.mcp.json` that the 0.6.0 code rewrites to an absolute path one last time (check `git diff .mcp.json`); an install made by an `install.sh` older than this one, whose `current` symlink may still point at the previous version (check `claude-web-chat version`); and a component ever saved over a builtin name, whose shadowing directory the daemon now names on stderr at boot for you to delete by hand.
+
 ### Security
 
 - **Graph-node previews carry a Content-Security-Policy.** `/preview/node` is served from the daemon's own origin and the graph viewer instantiates one per node thumbnail plus the glance card, so pane scripts from nodes you are not on were re-executing unattended with `fetch` reach into `/api/*`. **You may notice:** inside a *preview*, a pane that pulls an image, font or iframe off the network renders empty; the live surface is unchanged.
@@ -69,7 +71,7 @@ No state migration runs — the on-disk schema is unchanged, so your graph, draf
 
 - **`install` in a subdirectory installs into the project** instead of creating a nested surface Claude Code never loads. See upgrade step 6.
 - **`uninstall` is reversible again.** It now also runs `claude mcp remove … --scope local` (printing the command when `claude` is not on PATH), so a "clean" removal is not undone by the first tool call re-creating `.web-chat/`.
-- **`doctor` and `status` no longer pass a project that is missing half its hooks.** They report per event against the template; a project that had lost its `Stop` hook used to look healthy while no turn ever committed.
+- **`doctor` and `status` no longer pass a project that is missing half its hooks.** They report per event against the template; a project that had lost its `Stop` hook used to look healthy while no turn ever committed. The output shape changed with it: `status` now prints Hooks as `N/M registered` naming any missing event, and can report the MCP entry as `— NOT resolvable: <reason>` — worth knowing if you parse it.
 - **`doctor`'s MCP repair points at `~/.web-chat/current/`,** not at a `versions/<v>/` path that pruning deletes three updates later — which silently stopped the MCP server from spawning, inside a local-scope registration that never self-heals.
 - **`install` stops rewriting a committed `${CLAUDE_PLUGIN_ROOT}` stub to your machine's absolute path.** **On this upgrade only**, the 0.6.0 code performing it rewrites the placeholder one last time — check `git diff .mcp.json`, restore the stub, re-run `install`.
 - **Re-running `install.sh` upgraded nothing.** The `current` symlink swap put the new link *inside* the old version directory, so every curl-one-liner upgrade after the first printed the new version and left all three commands on the old code (`claude-web-chat update` was never affected). **If you have upgraded that way, check `claude-web-chat version`** — re-running the new installer repairs the link.
