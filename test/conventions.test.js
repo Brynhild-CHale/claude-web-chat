@@ -366,6 +366,25 @@ const PATTERNS = [
     re: /writeFileSync\(/g,
     baseline: {},
   },
+  {
+    // WHICH hook events registration means. templates/settings.hooks.json is the
+    // answer, and for a long time it was read in exactly one place (ensureHooks)
+    // and exposed nowhere — so doctor, status and uninstall each iterated
+    // `Object.keys(settings.hooks)`, i.e. whatever happened to be ON DISK, and a
+    // project missing its Stop hook looked healthy to all three. That is the
+    // divergence hookEvents() closed; this row keeps it closed.
+    //
+    // The pattern is the QUOTED filename, not the bare word, so the four places
+    // that legitimately NAME the template — a comment, a doctor warning that
+    // tells the user where the event list lives, docs/extending.md — do not
+    // count. Only reaching for the file itself does.
+    name: "'settings.hooks.json' (the file, not the mention)",
+    home: 'lib/update/managed-files.js — `hookTemplate()`, exposed as `hookEvents()`',
+    what: 'deciding which hook events a registered project must have',
+    roots: ['lib'],
+    baseline: { 'lib/update/managed-files.js': 1 },
+    re: /['"]settings\.hooks\.json['"]/g,
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
