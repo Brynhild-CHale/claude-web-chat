@@ -27,18 +27,20 @@ function paneMounts(hello, suffix) {
   return hello.mounts.filter((x) => x.id === base || x.id.startsWith(base + ':'));
 }
 
-// Send a pane:state update over WS (the only path that mutates a mount's mode),
-// then resolve once the server has had a moment to apply it.
-function wsSetPaneState(port, id, pane_state) {
+// Send a pane:state / pane:form update over WS (the only paths that mutate a
+// mount's mode or its captured form values), then resolve once the server has
+// had a moment to apply it.
+function wsSend(port, msg) {
   return new Promise((resolve, reject) => {
     const sock = new WebSocket(`ws://localhost:${port}/ws`);
     sock.on('open', () => {
-      sock.send(JSON.stringify({ type: 'pane:state', id, pane_state }));
+      sock.send(JSON.stringify(msg));
       setTimeout(() => { sock.close(); resolve(); }, 60);
     });
     sock.on('error', reject);
   });
 }
+const wsSetPaneState = (port, id, pane_state) => wsSend(port, { type: 'pane:state', id, pane_state });
 
 const TABLE_HTML = '<html><head><title>Sheet</title></head><body><h1>Budget</h1>'
   + '<table><tr><th>Item</th><th>Cost</th></tr><tr><td>Rent</td><td>1200</td></tr><tr><td>Food</td><td>400</td></tr></table>'
@@ -335,6 +337,65 @@ test('capture: re-capturing the SAME page replaces its pane in place, preserving
   assert.equal(ms[0].id, id);
   assert.equal(ms[0].pane_state.mode, 'expanded', 'toggled mode survives the next capture');
   assert.equal(ms[0].params.mode, 'expanded');
+});
+
+// ── the capture pane is a pane like any other (decision D1) ─────────────────
+// Both capture mount-sets were hand-copied from /api/render and dropped the lock
+// check and the form_state carry along the way. Going through the shared engine
+// puts a capture pane under the same rules as every other writer's.
+
+test('capture: a capture over a user-LOCKED pane is soft-rejected, like every other writer', async (t) => {
+  const { api, port, wsHello } = await withServer(t, {
+    seed: async ({ root }) => {
+      putProfile(root, 'rich', { matchers: [{ type: 'domain', value: 'rich.test' }] });
+    },
+  });
+
+  await api.post('/api/capture', { url: 'https://rich.test/a', html: '<p>1</p>' });
+  const id = paneMounts(await wsHello(), 'rich')[0].id;
+  await wsSetPaneState(port, id, { locked: true });
+
+  await api.post('/api/capture', { url: 'https://rich.test/a', html: '<p>SECOND</p>' });
+  const ms = paneMounts(await wsHello(), 'rich');
+  assert.equal(ms.length, 1);
+  assert.ok(!/SECOND/.test(ms[0].html), 'the lock holds against a re-capture too');
+});
+
+test('capture: a re-capture carries the pane form_state the user typed', async (t) => {
+  const { api, port, wsHello } = await withServer(t, {
+    seed: async ({ root }) => {
+      putProfile(root, 'rich', { matchers: [{ type: 'domain', value: 'rich.test' }] });
+    },
+  });
+
+  await api.post('/api/capture', { url: 'https://rich.test/a', html: '<p>1</p>' });
+  const id = paneMounts(await wsHello(), 'rich')[0].id;
+  await wsSend(port, { type: 'pane:form', id, form_state: { '#note:0': 'my note' } });
+
+  await api.post('/api/capture', { url: 'https://rich.test/a', html: '<p>2</p>' });
+  const { json } = await api.get('/api/mounts');
+  assert.deepEqual(json.mounts.find((m) => m.id === id).form_state, { '#note:0': 'my note' });
+});
+
+test('capture: a profile mount_suffix cannot name shell chrome — the prefix namespaces it', async (t) => {
+  // Capture mount ids are partly USER-controlled (profile.json's pane.mount_suffix),
+  // and they go through the same reserved-id validation as every other writer.
+  // They can never trip it, because MOUNT_PREFIX namespaces the suffix — which is
+  // the structural reason, pinned here so a change to that prefix has to face it.
+  const { api, wsHello } = await withServer(t, {
+    seed: async ({ root }) => {
+      putProfile(root, 'sneaky', {
+        matchers: [{ type: 'domain', value: 'sneaky.test' }],
+        pane: { mount_suffix: 'main' },
+      });
+    },
+  });
+
+  await api.post('/api/capture', { url: 'https://sneaky.test/a', html: '<p>x</p>' });
+  const ids = (await wsHello()).mounts.map((m) => m.id);
+  assert.equal(ids.length, 1);
+  assert.ok(ids[0].startsWith('tab-capture:main:'), `namespaced, got ${ids[0]}`);
+  assert.ok(!ids.includes('main'));
 });
 
 test('capture: dedupe_by:profile keeps a single pane every capture shares', async (t) => {
