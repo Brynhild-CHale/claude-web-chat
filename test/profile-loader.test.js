@@ -222,6 +222,27 @@ test('loadBundle: the name `default` is refused — the CLI used to pass it', ()
   assert.deepEqual(reg.validateMeta({ description: 'd' }), []);
 });
 
+test('loadBundle: a DIRECTORY named `default` is refused too, name or no name', () => {
+  withTempHome(() => {
+    const root = tmpRoot();
+    const paths = resolvePaths(root);
+    // The reservation used to sit on meta.name alone, so a bundle whose
+    // profile.json declared no name and whose directory was `default` resolved
+    // to the name `default` and registered — shadowing the builtin catch-all in
+    // getProfile/resolve/listProfiles for every page.
+    const dir = putRawProfile(paths.PROFILES_DIR, 'default', JSON.stringify({ description: 'no name' }));
+    const b = reg.loadBundle(dir);
+    assert.equal(b.name, 'default');
+    assert.ok(b.errors.some((e) => /reserved/.test(e)), 'the resolved name is checked, not just the declared one');
+
+    reg.loadUserProfiles(paths);
+    assert.equal(reg.listProfiles().filter((p) => p.name === 'default').length, 1,
+      'only the builtin catch-all is listed under that name');
+    assert.equal(reg.getProfile('default').scope, undefined,
+      'getProfile(\'default\') still returns the builtin, not a project bundle');
+  });
+});
+
 test('loadBundle: a missing name falls back to the directory name', () => {
   withTempHome(() => {
     const root = tmpRoot();
