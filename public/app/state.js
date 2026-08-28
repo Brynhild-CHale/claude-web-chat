@@ -35,6 +35,25 @@ export const view = {
 // DOM by id — one short helper, used everywhere.
 export const $ = (id) => document.getElementById(id);
 
+// A mount host by MOUNT id — the other half of the lookup pair, and the only
+// way anything should turn an agent-supplied mount id into an element. A mount
+// id is arbitrary text ('main', 'status', 'drawer' are all plausible ids for
+// Claude to pick), so `$` would happily hand back a chrome element instead: the
+// host therefore always carries its id in `dataset.mountId` and only mirrors it
+// onto the DOM id when that id is free (see mount() in mounts.js). Both
+// consumers — the mount lifecycle and the comment-pin anchors — resolve through
+// here so the two halves cannot drift.
+//
+// It scans rather than selects because an arbitrary id would have to be
+// CSS-escaped to go into a selector.
+export function hostFor(id) {
+  if (id == null) return null;
+  for (const h of document.querySelectorAll('.mount-host')) {
+    if ((h.dataset.mountId || h.id) === id) return h;
+  }
+  return null;
+}
+
 // Read a resolved --wc-* token off :root (SVG needs literal values, not var()).
 export const cssVar = (name, fallback) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
