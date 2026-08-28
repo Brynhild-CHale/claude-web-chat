@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Security
+- **The `git-dashboard` service no longer lets a pane turn a store value into a git option.** The pane picks what to show by writing `git_ctl { viewing, open }`, and the service passed both straight into git's argv. `execFile` keeps a shell out of it and the trailing `--` separates revs from paths, but git parses any earlier argv word beginning with `-` as an option — and `git log`/`git show` accept `--output=<file>`. The store is writable by every pane script in the page and by any local process, so once a user had run `claude-web-chat trust git-dashboard` (the builtin they are pointed at as the reference service), anything on the surface could make the daemon overwrite a file the user can write — a shell rc file, a `.git` hook — with git-log text. `viewing` is now accepted only when it matches a branch name the service itself just read, `open` only when it looks like an object name (`[0-9a-f]{7,40}`), and every ref is fenced behind `--end-of-options` on git 2.24+. A refused value falls back to the checked-out branch, which is what the pane already displays, so nothing about ordinary use changes.
+
+  **After upgrading, service-backed components ask for trust once more.** Consent is keyed to the contents of `service.js`, so this fix invalidates the existing grant: run `claude-web-chat trust git-dashboard` (or bare `claude-web-chat trust` to see everything waiting) the first time a service pane comes up empty.
+
 ### Added
 - **A stated platform position — `docs/platform-support.md`.** macOS and Linux are supported (the full suite runs on both in CI on every push); Windows is WSL2 only. The page is deliberately honest about the difference between "supported" and "bug-free": it lists the cross-platform defects that a Windows and a Linux assessment both surfaced, rather than filing them away as somebody else's platform. Per-platform findings and test plans live on the `platform/windows` and `platform/linux` branches, written so someone with real hardware can confirm or overturn each hypothesis — every claim in them is marked observed or inferred.
 
