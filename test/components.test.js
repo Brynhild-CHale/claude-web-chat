@@ -84,6 +84,51 @@ test('components: use mounts the component (render event carrying component prov
   assert.equal((await api.post('/api/components/nope/use', {})).status, 404);
 });
 
+// ── /use is the SAME mount-set as /api/render (routes-2) ─────────────────────
+// It used to hand-copy a third of it: the lock check and the form_state carry,
+// with no owner gate, no owner stamp, no gen bump and no theme carry. Each
+// omission was load-bearing — public/app/drawer.js already tells the user "a
+// locked or driver-owned pane answers 200 with {ok:false}", and the queue's
+// Revert generation guard degrades to delete-if-present against a gen-less
+// mount. All four are pinned here.
+
+test('components: use over a pane owned by a driver is soft-rejected (owned envelope)', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/components', { name: 'w-own', source: '<p>W</p>' });
+  await api.post('/api/render', { id: 'svc', html: '<p>driver</p>', owner: 'service:git' });
+  const rejected = (await api.post('/api/components/w-own/use', { id: 'svc' })).json;
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.owned, true);
+  assert.equal(rejected.owner, 'service:git');
+  assert.match(rejected.hint, /force:true/);
+  const forced = (await api.post('/api/components/w-own/use', { id: 'svc', force: true })).json;
+  assert.equal(forced.ok, true);
+  assert.equal(forced.owner, 'claude', 'the takeover re-stamps the pane as Claude\'s');
+});
+
+test('components: use stamps owner claude, so Claude may re-render and clear its own pane', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/components', { name: 'w-gen', source: '<p>W</p>' });
+  const first = (await api.post('/api/components/w-gen/use', { id: 'g1' })).json;
+  assert.equal(first.owner, 'claude', 'the response reports the owner, as /api/render does');
+  const { json: mounts } = await api.get('/api/mounts');
+  assert.equal(mounts.mounts.find((m) => m.id === 'g1').owner, 'claude');
+  // 'claude' is not a `service:` prefix, so activity routing stays 'auto' (the
+  // first-run tour depends on that) and a same-owner render/clear still passes.
+  assert.equal((await api.post('/api/render', { id: 'g1', html: '<p>x</p>' })).json.ok, true);
+  assert.equal((await api.post('/api/clear', { id: 'g1' })).json.ok, true);
+});
+
+test('components: use preserves a per-pane theme across a re-use', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/components', { name: 'w-theme', source: '<p>W</p>' });
+  await api.post('/api/components/w-theme/use', { id: 't1' });
+  await api.post('/api/theme', { scope: 'pane', target: 't1', tokens: { '--wc-accent': '#abcdef' } });
+  await api.post('/api/components/w-theme/use', { id: 't1' });
+  const resolved = (await api.get('/api/theme?scope=pane&target=t1')).json;
+  assert.equal(resolved.tokens['--wc-accent'], '#abcdef', 're-using a component must not drop the pane theme');
+});
+
 test('components: use is soft-rejected on a locked pane (lockReject)', async (t) => {
   const { api, port } = await withServer(t);
   await api.post('/api/components', { name: 'w2', source: '<p>W2</p>' });
