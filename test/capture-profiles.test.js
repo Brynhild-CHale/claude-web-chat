@@ -28,7 +28,7 @@ process.env.HOME = FAKE_HOME;
 process.env.USERPROFILE = FAKE_HOME;
 
 const reg = require('../lib/capture/profiles');
-const { defaultReduce } = require('../lib/server/routes/capture');
+const { defaultReduce } = require('../lib/capture/pane');
 const { resolvePaths } = require('../lib/server/paths');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'profiles');
