@@ -187,6 +187,42 @@ test('file-editor service: a symlink pointing out of the root is refused', async
   assert.match(h.latest().error, /outside the project root/);
 });
 
+// A link whose target does not exist yet is the half a following walk misses:
+// `existsSync` says the link is absent, so a fence that anchors on it treats the
+// name as a free filename inside the root — and then the WRITE creates the
+// target, outside. git commits symlinks, so this is a link a repository can
+// ship, and `doSave` is exactly the caller that would create it.
+test('file-editor service: a DANGLING symlink out of the root is refused, not created', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-dangle-');
+  const outside = tmpTree('wc-fileed-dangle-out-');
+  t.after(() => {
+    for (const d of [root, outside]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  });
+  const target = path.join(outside, 'planted.txt');
+  fs.symlinkSync(target, path.join(root, 'dangling.txt'));       // leaf link, nothing at the end
+  fs.symlinkSync(path.join(outside, 'nodir'), path.join(root, 'dangdir')); // ditto, mid-path
+
+  const store = {};
+  const h = await startService(t, root, store);
+
+  h.fire({ editor_ctl: { seq: 1, action: 'save', path: 'dangling.txt', content: 'ESCAPED\n' } });
+  await sleep(50);
+  assert.match(h.latest().error, /outside the project root/, 'saving through a dangling link is refused');
+  assert.equal(fs.existsSync(target), false, 'and nothing was created outside the root');
+
+  h.fire({ editor_ctl: { seq: 2, action: 'open', path: 'dangling.txt' } });
+  await sleep(50);
+  assert.match(h.latest().error, /outside the project root/, 'nor is it a file to open');
+
+  // The mid-path case must be refused BY THE FENCE, not by mkdir happening to
+  // fail with ENOENT — that accident is not a containment rule.
+  h.fire({ editor_ctl: { seq: 3, action: 'save', path: 'dangdir/new.txt', content: 'ESCAPED\n' } });
+  await sleep(50);
+  assert.match(h.latest().error, /outside the project root/, 'a dangling directory component is refused too');
+  assert.equal(fs.existsSync(path.join(outside, 'nodir')), false);
+});
+
 // ── services-3: respawn replays view state only ─────────────────────────────
 
 test('file-editor service: a persisted save is not re-applied on respawn', async (t) => {
