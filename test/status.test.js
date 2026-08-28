@@ -105,3 +105,41 @@ test('status admits "unknown" rather than guessing when no MCP client was ever s
   assert.match(out, /can't tell/);
   assert.doesNotMatch(out, /RESTART:/);
 });
+
+// cli-setup-6, status's half. This line used to count handler GROUPS while
+// doctor counted individual handlers — two numbers for the same file, and
+// neither noticed a MISSING event. The turn lifecycle needs both:
+// UserPromptSubmit takes the lock, Stop commits the node. A project with only
+// UserPromptSubmit reported "1 hook(s) registered" and looked healthy while no
+// turn ever committed. status now reports per event, off the template's key
+// set, and names what is absent.
+test('status names the missing hook EVENT rather than reporting a smaller count', async (t) => {
+  const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
+  const out = await runStatus(t, (root) => {
+    const settingsPath = path.join(root, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }] },
+    }, null, 2));
+  });
+  assert.match(out, /Hooks: +1\/2 registered/, 'both template events are counted, not just the ones on disk');
+  assert.match(out, /missing: Stop/, 'and the absent one is named');
+  assert.match(out, /claude-web-chat install/, 'with the command that repairs it');
+});
+
+test('status reports both hook events registered when both are present', async (t) => {
+  const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
+  const out = await runStatus(t, (root) => {
+    const settingsPath = path.join(root, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }],
+        Stop: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-end` }] }],
+      },
+    }, null, 2));
+  });
+  assert.match(out, /Hooks: +2\/2 registered/);
+  assert.doesNotMatch(out, /missing:/);
+  assert.doesNotMatch(out, /bare command:/);
+});
