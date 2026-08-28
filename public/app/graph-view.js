@@ -8,9 +8,10 @@
 // transform. The transform is now `camera` ({tx, ty, scale}); the imported
 // `view` is the shared state (activeId/viewedId/lock/graphCache/…).
 import { view, $, cssVar } from './state.js';
-import { seqNum, nodeById, labelFor, childrenOf } from './labels.js';
-import { previewNode, ensureGraph } from './topbar.js';
+import { seqNum, nodeById, labelFor } from './labels.js';
+import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
+import { getLocalJson, setLocalJson } from './storage.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -64,15 +65,14 @@ function setZoom(scale, anchor) {
    .web-chat/ graph is turn history that migrations must keep append-only, a second
    browser (or a second person on the same daemon) has its own viewport and its own
    window size, and a shared position would make one viewer's tidy-up everybody's.
-   It also needs no route and no schema bump. localStorage — not sessionStorage —
-   because "survives a reload" is the whole point; every access is wrapped, since a
-   private window or blocked site data makes the accessor itself throw. */
+   It also needs no route and no schema bump. Local, not session, storage —
+   because "survives a reload" is the whole point; it goes through storage.js,
+   which is where the private-window guard lives. */
 const POS_KEY = 'wc:gv-graph-pos';
 let graphOffsets = null;
 function offsets() {
   if (graphOffsets) return graphOffsets;
-  try { graphOffsets = JSON.parse(localStorage.getItem(POS_KEY) || '{}') || {}; }
-  catch { graphOffsets = {}; }
+  graphOffsets = getLocalJson(POS_KEY, {});
   return graphOffsets;
 }
 function offsetFor(rootId) {
@@ -84,7 +84,7 @@ function setOffset(rootId, dx, dy, persist = true) {
   const o = offsets();
   const rx = Math.round(dx), ry = Math.round(dy);
   if (!rx && !ry) delete o[rootId]; else o[rootId] = [rx, ry];
-  if (persist) { try { localStorage.setItem(POS_KEY, JSON.stringify(o)); } catch { /* private window */ } }
+  if (persist) setLocalJson(POS_KEY, o);
 }
 
 // Open the overlay: refresh the graph, reveal it, and fit the view. Wired to the
@@ -205,16 +205,19 @@ export async function selectNode(id, opts = {}) {
 }
 
 // --- lineage / state helpers ---
-function lineageOf(id) {
-  const chain = [];
-  let cur = nodeById(id), guard = 0;
-  while (cur && guard++ < 200) { chain.unshift(cur); cur = cur.parent_id ? nodeById(cur.parent_id) : null; }
-  return chain;
-}
+// All three read the DISPLAY topology (graphIndex), not the raw commit graph:
+// the breadcrumb, the ⑃ glyph and the graph-scope filter describe what is on
+// screen. Reading raw parents here meant the breadcrumb listed nodes the history
+// list had hidden, and a surviving child of a collapsed node was labelled a fork
+// while the DAG drew it on the trunk.
+const lineageOf = (id) => graphIndex().lineageOf(id);
 function isFork(n) {
-  if (!n || !n.parent_id) return false;
-  const sibs = childrenOf(n.parent_id);
-  return sibs.length > 1 && sibs[0] && sibs[0].id !== n.id; // a non-trunk child of a branch point
+  if (!n) return false;
+  const idx = graphIndex();
+  const dn = idx.byId.get(n.id);          // the node AS DRAWN (its display parent)
+  if (!dn || !dn.parent_id) return false;
+  const sibs = idx.childrenOf(dn.parent_id);
+  return sibs.length > 1 && sibs[0] && sibs[0].id !== dn.id; // a non-trunk child of a branch point
 }
 function stateOf(n) {
   if (!n) return { cls: 'root', text: 'NODE' };
@@ -225,12 +228,9 @@ function stateOf(n) {
   return { cls: 'root', text: 'TURN' };
 }
 
-// The top-level tree a node belongs to (walk parents to the rootless ancestor).
-function rootOf(id) {
-  let cur = nodeById(id), guard = 0;
-  while (cur && cur.parent_id && guard++ < 500) cur = nodeById(cur.parent_id);
-  return cur ? cur.id : null;
-}
+// The top-level tree a node belongs to (walk display parents to the ancestor the
+// canvas draws a heading over).
+const rootOf = (id) => graphIndex().rootOf(id);
 
 // --- history list (left column) ---
 // Scope ('all' vs the selected node's graph) then the union of active toggle
@@ -253,8 +253,96 @@ function displayNodes() {
     });
 }
 
+/* ---------- the display topology, built once per graph ----------
+   displayNodes() decides what EXISTS; this decides what is connected to what.
+   The byId / childMap / per-parent sort / isBreakout block was verbatim in two
+   places (computeRuns and computeGraphLayout), and the breakout rule decides
+   both which nodes get their own glyph (layout) and which stacks keyboard
+   navigation expands and collapses (computeRuns) — so a change to one copy
+   silently desynchronised the drawn stacks from the keyboard's idea of them.
+
+   Everything topological reads THIS: runs, layout, keyboard nav, fork
+   classification, the breadcrumb, the graph-scope filter and the counts. It is
+   rebuilt when — and only when — the graph payload, the show-collapsed toggle or
+   the active/viewed node changes, which is what isBreakout depends on; the same
+   index therefore serves a whole burst of arrow keys without rewalking.
+
+   labels.js's childrenOf() stays RAW (commit topology) and keeps one consumer:
+   topbar's branch picker, which is asking a different question. */
+let indexCache = null;
+function graphIndex() {
+  if (indexCache
+    && indexCache.cache === view.graphCache
+    && indexCache.showCollapsed === view.showCollapsed
+    && indexCache.activeId === view.activeId
+    && indexCache.viewedId === view.viewedId) return indexCache.idx;
+
+  const nodes = displayNodes();
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const childMap = new Map();
+  for (const n of nodes) {
+    const p = n.parent_id;
+    if (p == null || !byId.has(p)) continue;
+    if (!childMap.has(p)) childMap.set(p, []);
+    childMap.get(p).push(n.id);
+  }
+  const order = (a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b));
+  for (const arr of childMap.values()) arr.sort(order);
+  // A node whose parent is not in the display set is a top-level tree here —
+  // the same definition the layout has always used to pick its roots.
+  const roots = nodes.filter((n) => n.parent_id == null || !byId.has(n.parent_id)).map((n) => n.id).sort(order);
+
+  // A break-out node (fork, bookmark, active, or viewed) gets its own glyph; a
+  // run of consecutive non-break-out trunk nodes collapses into one stack.
+  const isBreakout = (id) => {
+    const n = byId.get(id);
+    if (!n) return false;
+    return (childMap.get(id) || []).length > 1 || n.bookmarked || id === view.activeId || id === view.viewedId;
+  };
+  const childrenOf = (id) => (childMap.get(id) || []).map((cid) => byId.get(cid));
+  const parentOf = (id) => {
+    const n = byId.get(id);
+    return (n && n.parent_id != null && byId.get(n.parent_id)) || null;
+  };
+  const lineageOf = (id) => {
+    const chain = [];
+    let cur = byId.get(id), guard = 0;
+    while (cur && guard++ < 200) { chain.unshift(cur); cur = parentOf(cur.id); }
+    return chain;
+  };
+  const rootOf = (id) => { const chain = lineageOf(id); return chain.length ? chain[0].id : null; };
+
+  const idx = { nodes, byId, childMap, roots, isBreakout, childrenOf, parentOf, lineageOf, rootOf };
+  indexCache = {
+    cache: view.graphCache, showCollapsed: view.showCollapsed,
+    activeId: view.activeId, viewedId: view.viewedId, idx,
+  };
+  return idx;
+}
+
+// The topbar's ↓ button steps to the next turn the graph DRAWS, which is the
+// same gesture ArrowDown performs in the overlay. (Its ⑃ branch picker asks a
+// different question and stays on labels.childrenOf's raw commit children.)
+export function displayChildrenOf(id) { return graphIndex().childrenOf(id); }
+
+// ...and the topbar's ↑ is its mirror: the previous turn as DRAWN, the node
+// ArrowUp selects. The two buttons have to read the SAME topology or they are
+// not inverses — with ↓ on the display graph and ↑ on the raw one, ↑ landed on a
+// collapsed turn the DAG does not draw, and ↓ was disabled there: a dead end.
+//
+// One raw fallback: if the viewed node is not in the display set at all — the
+// user previewed a collapsed turn with show-collapsed on and then toggled it off
+// — there is no drawn parent to return, and the raw parent is the only way back
+// out of it.
+export function displayParentOf(id) {
+  const idx = graphIndex();
+  if (idx.byId.has(id)) { const p = idx.parentOf(id); return p ? p.id : null; }
+  const n = nodeById(id);
+  return (n && n.parent_id) || null;
+}
+
 function historyRows() {
-  let ns = displayNodes().slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
+  let ns = graphIndex().nodes.slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
   if (historyScope === 'graph') {
     const root = rootOf(view.selectedNodeId || view.activeId);
     if (root) ns = ns.filter((n) => rootOf(n.id) === root);
@@ -268,7 +356,7 @@ function renderHistory() {
   const list = $('gv-history-list');
   if (!list) return;
   const rows = historyRows();
-  const tc = $('gv-turncount'); if (tc) tc.textContent = displayNodes().length;
+  const tc = $('gv-turncount'); if (tc) tc.textContent = graphIndex().nodes.length;
   // A keyboard selection re-renders this list, which would destroy the focused row
   // and drop focus to <body>. Remember which node had it and hand it back below.
   const focused = document.activeElement;
@@ -345,11 +433,20 @@ function foldedSection(id, node) {
 }
 
 // --- inspector (right column) ---
+// One request token for the whole panel. renderInspector and renderDiff each
+// await a fetch before painting, and the action footer below them acts on
+// view.selectedNodeId — which moves synchronously on every arrow key. Holding
+// an arrow down therefore raced: a slower earlier response could land last and
+// leave the inspector describing node A while ↵/A/⚑/↧ operated on node B. A
+// response is now painted only if it is still the one being asked for.
+let inspectorSeq = 0;
 async function renderInspector(id) {
   const box = $('gv-inspector');
   if (!box) return;
+  const seq = ++inspectorSeq;
   let node = null;
   try { node = await fetch('/api/graph/node/' + id).then((r) => r.ok ? r.json() : null); } catch {}
+  if (seq !== inspectorSeq) return;   // a newer selection won the race
   if (!node) { box.innerHTML = '<div class="gv-empty">Node unavailable.</div>'; return; }
   const st = stateOf(nodeById(id) || node);
   const lineage = lineageOf(id).map((n, i, a) => i === a.length - 1 ? `<b>${esc(n.label || n.id)}</b>` : esc(n.label || n.id)).join(' › ');
@@ -379,7 +476,7 @@ async function renderInspector(id) {
     `</div>`;
 
   drawPreview($('gv-preview'), id, mounts.length);
-  renderDiff(id, node);
+  renderDiff(id, node, seq);
   updateSidebarButtons();
   updateStatus();
 }
@@ -409,7 +506,7 @@ function drawPreview(box, id, paneCount) {
   box.insertBefore(fr, box.firstChild);
 }
 
-async function renderDiff(id, node) {
+async function renderDiff(id, node, seq) {
   const el = $('gv-diff');
   const sect = $('gv-diff-sect');
   if (!el) return;
@@ -426,6 +523,7 @@ async function renderDiff(id, node) {
   el.style.display = '';
   try {
     const d = await fetch(`/api/graph/diff?a=${encodeURIComponent(parentId)}&b=${encodeURIComponent(id)}`).then((r) => r.ok ? r.json() : null);
+    if (seq !== undefined && seq !== inspectorSeq) return;   // the selection moved on
     const m = (d && d.mounts) || {};
     const add = (m.added || []).length, chg = (m.changed || []).length, rm = (m.removed || []).length;
     el.innerHTML = `<span class="add">+${add} pane${add === 1 ? '' : 's'}</span><span class="chg">~${chg} changed</span><span class="rm">${rm} removed</span>`;
@@ -436,7 +534,7 @@ function updateStatus() {
   const a = $('gv-status-active'); if (a) a.textContent = (view.activeId ? labelFor(view.activeId) + ' active' : '—');
   const c = $('gv-status-counts');
   if (c) {
-    const nodes = displayNodes();
+    const nodes = graphIndex().nodes;
     const forks = nodes.filter((n) => isFork(n)).length;
     const marks = nodes.filter((n) => n.name).length;
     c.textContent = `${nodes.length} turns · ${forks} fork${forks === 1 ? '' : 's'} · ${marks} mark${marks === 1 ? '' : 's'}`;
@@ -456,17 +554,58 @@ function updateStatus() {
 // open a node fully on the surface (leaves the overlay)
 function openNode(id) { view.selectedNodeId = id; previewNode(id); closeOverlay(); }
 
-// set a node active (commits the next turn there / branches)
-async function setActive(id) {
-  if (!id) return;
+/* ---------- setting a node active: ONE POST, one failure path ----------
+   Three call sites move `active`: the inspector's "Set active" / the A key
+   (setActive), the glance card's ◉, and the topbar's "set active here". All
+   three carried the same block hand-copied, and the two in THIS file had quietly
+   lost the queued-re-aim branch topbar's copy carries — so pressing A during a
+   locked turn dropped this client out of preview while the server had only
+   QUEUED the move, leaving the surface showing an old node as if it were live.
+
+   All three also reported failure with alert(): a blocking browser dialog that
+   looks like nothing else in this chrome and wedges an automated driver — the
+   exact thing the naming panel below exists to avoid, argued twelve lines from a
+   call to it. The failure now goes to topbar's in-page notice, which is what the
+   queued case already used.
+
+   The POST and its two not-moved answers are requestSetActive, which all three
+   share. What comes AFTER differs and stays with each caller: the two here
+   restore the live surface and relay the DAG out (postSetActive); the topbar's
+   aims this client at the node and refetches that node's panes. One owner of the
+   request, two tails — not one function with a flag for the difference.
+
+   Both return true only when active actually moved. */
+export async function requestSetActive(id) {
+  if (!id) return false;
   const r = await fetch('/api/graph/active', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
   });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
-  view.previewing = false; view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    showReaimNote('Could not set active: ' + (err.error || r.statusText));
+    return false;
+  }
+  const body = await r.json().catch(() => ({}));
+  if (body.pending) {
+    // Claude is mid-turn: the server queued the re-aim and applies it at
+    // turn-end. Stay exactly where we are — the eventual reset frame lands it.
+    showReaimNote(`Queued — jumps to ${labelFor(id)} when Claude's turn ends.`);
+    return false;
+  }
+  return true;
+}
+
+async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
+  if (!await requestSetActive(id)) return false;
+  leavePreview();
+  if (alsoCloseOverlay) closeOverlay();
   await refreshGraph();
-  renderHistory();
+  return true;
+}
+
+// set a node active (commits the next turn there / branches)
+async function setActive(id) {
+  if (await postSetActive(id)) renderHistory();
 }
 
 function exportNode(id) {
@@ -563,16 +702,8 @@ function openFloatPreview(id) {
       const nid = floatEl.dataset.nodeId; closeFloatPreview();
       view.selectedNodeId = nid; previewNode(nid); closeOverlay();
     });
-    floatEl.querySelector('[data-act="active"]').addEventListener('click', async () => {
-      const nid = floatEl.dataset.nodeId;
-      const r = await fetch('/api/graph/active', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: nid }),
-      });
-      if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
-      view.previewing = false; view.liveSnapshot = null;
-      $('main').classList.remove('preview-readonly');
-      closeOverlay();
-      await refreshGraph();
+    floatEl.querySelector('[data-act="active"]').addEventListener('click', () => {
+      postSetActive(floatEl.dataset.nodeId, { alsoCloseOverlay: true });
     });
   }
   floatEl.dataset.nodeId = id;
@@ -606,23 +737,7 @@ function centerOn(id) {
 function computeRuns() {
   const map = new Map();
   if (!view.graphCache) return map;
-  const nodes = displayNodes();
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const childMap = new Map();
-  for (const n of nodes) {
-    const p = n.parent_id;
-    if (p == null || !byId.has(p)) continue;
-    if (!childMap.has(p)) childMap.set(p, []);
-    childMap.get(p).push(n.id);
-  }
-  for (const arr of childMap.values()) {
-    arr.sort((a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b)));
-  }
-  const isBreakout = (id) => {
-    const kids = childMap.get(id) || [];
-    const n = byId.get(id);
-    return kids.length > 1 || n.bookmarked || id === view.activeId || id === view.viewedId;
-  };
+  const { nodes, byId, childMap, isBreakout } = graphIndex();
   for (const n of nodes) {
     const start = !isBreakout(n.id) && (n.parent_id == null || !byId.has(n.parent_id) || isBreakout(n.parent_id));
     if (!start) continue;
@@ -642,20 +757,27 @@ function computeRuns() {
 // Leaving an expanded stack collapses it; entering a collapsed stack expands it.
 export function moveSelection(dir) {
   if (!view.graphCache) return;
-  const cur = nodeById(view.selectedNodeId) || nodeById(view.activeId) || displayNodes()[0];
+  // The DISPLAY topology, so every step lands on a node that has a glyph. It
+  // used to walk the raw graph: with a collapsed turn between two survivors,
+  // ArrowDown selected the hidden node — centerOn found no glyph, so the camera
+  // did not move and nothing highlighted — and a second press was needed to
+  // reach the child actually on screen.
+  const idx = graphIndex();
+  const cur = idx.byId.get(view.selectedNodeId) || idx.byId.get(view.activeId) || idx.nodes[0];
   if (!cur) return;
   let targetId = null;
   if (dir === 'up') {
-    targetId = cur.parent_id;
+    const p = idx.parentOf(cur.id);
+    targetId = p && p.id;
   } else if (dir === 'down') {
-    const kids = childrenOf(cur.id);
+    const kids = idx.childrenOf(cur.id);
     targetId = kids[0] && kids[0].id;
   } else {
-    const sibs = cur.parent_id
-      ? childrenOf(cur.parent_id)
-      : displayNodes().filter(n => n.parent_id == null).sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
-    const idx = sibs.findIndex(s => s.id === cur.id);
-    const next = sibs[idx + (dir === 'right' ? 1 : -1)];
+    const sibs = (cur.parent_id != null && idx.byId.has(cur.parent_id))
+      ? idx.childrenOf(cur.parent_id)
+      : idx.roots.map((rid) => idx.byId.get(rid));
+    const at = sibs.findIndex((sib) => sib.id === cur.id);
+    const next = sibs[at + (dir === 'right' ? 1 : -1)];
     targetId = next && next.id;
   }
   if (!targetId) return;
@@ -681,22 +803,7 @@ const DX = 130, DY = 66, NODE_R = 16, STACK_W = 40, STACK_H = 30;
 const SERP_THRESHOLD = 8, SERP_TARGET_LEG = 6, SERP_MIN_LEG = 4, SERP_MAX_LEG = 9, SDX = 72, SDY = 46;
 
 function computeGraphLayout() {
-  const nodes = displayNodes();
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const childMap = new Map();
-  for (const n of nodes) {
-    const p = n.parent_id;
-    if (p == null || !byId.has(p)) continue;
-    if (!childMap.has(p)) childMap.set(p, []);
-    childMap.get(p).push(n.id);
-  }
-  for (const arr of childMap.values()) {
-    arr.sort((a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b)));
-  }
-  const roots = nodes
-    .filter(n => n.parent_id == null || !byId.has(n.parent_id))
-    .map(n => n.id)
-    .sort((a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b)));
+  const { byId, childMap, roots, isBreakout } = graphIndex();
 
   const glyphs = [];
   const edges = [];
@@ -705,11 +812,6 @@ function computeGraphLayout() {
   let frontier = 0;
   const bumpFrontier = (x) => { if (x + DX > frontier) frontier = x + DX; };
 
-  const isBreakout = (id) => {
-    const kids = childMap.get(id) || [];
-    const n = byId.get(id);
-    return kids.length > 1 || n.bookmarked || id === view.activeId || id === view.viewedId;
-  };
   const placeNode = (id, x, y, plain) => {
     const n = byId.get(id);
     const g = {

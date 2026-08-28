@@ -6,12 +6,12 @@
 import { view, $ } from './state.js';
 import { toggleMode } from './theme.js';
 import {
-  previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote,
+  previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
 import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview } from './graph-view.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
 import { components as componentList } from './components.js';
-import { togglePinMode } from './comments.js';
+import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
@@ -45,6 +45,10 @@ const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
 function closePanel(el) {
   if (!el) return;
   if (el.id === 'branch-picker') { el.remove(); return; } // built per open, not reused
+  // Same story: the comment composer / chooser / thread is built per open and
+  // body-appended, so it is removed, not hidden — and comments.js owns the
+  // reference, hence the hook rather than el.remove() here.
+  if (el.classList.contains('pin-pop')) { closePinPop(); return; }
   // ONE closeDrawer: it also restores focus to ＋ and disarms a primed install.
   if (el.id === 'drawer') { closeDrawer(); return; }
   if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
@@ -95,7 +99,14 @@ function initDismissLayer() {
   // what makes the skip-the-owned-panel dance above work.
   document.addEventListener('pointerdown', (e) => dismissFrom(eventTarget(e)), true);
   // focus leaving a panel dismisses it too (tabbing past it, or a pane taking focus)
-  document.addEventListener('focusin', (e) => dismissFrom(eventTarget(e)));
+  document.addEventListener('focusin', (e) => {
+    const el = eventTarget(e);
+    // …but focus FALLING to <body> is not a move to somewhere else: it is what a
+    // deliberate .blur() leaves behind — the comment thread's first-Escape draft
+    // guard does exactly that — and it must not be read as an outside click.
+    if (!el || el === document.body || el === document.documentElement) return;
+    dismissFrom(el);
+  });
   // and the whole window losing focus closes them all, like a native menu
   window.addEventListener('blur', () => closeAllPopovers());
 }
@@ -162,8 +173,7 @@ async function startNewGraph() {
     const body = await r.json().catch(() => ({}));
     if (body.pending) { showReaimNote("Claude is mid-turn — the new graph starts when the turn ends."); return; }
   } catch { return; }
-  view.previewing = false; view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
+  leavePreview();
 }
 function initNewGraph() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
@@ -278,7 +288,17 @@ function renderPalette() {
     row.id = `cmd-opt-${i}`;
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(i === paletteSel));
-    row.innerHTML = `<span class="kind">${it.kind}</span><span>${it.label}</span>`;
+    // textContent, not an innerHTML template: `it.label` carries a graph node's
+    // `name`, which is user- or API-supplied text the server only trim()s. A
+    // bookmark named `R&D <plan>` used to render half-swallowed, and one named
+    // `<img src=x onerror=…>` executed in the privileged chrome origin the
+    // moment ⌘K opened. (Same reasoning as the minbar chip in mounts.js.)
+    const kindEl = document.createElement('span');
+    kindEl.className = 'kind';
+    kindEl.textContent = it.kind;
+    const labelEl = document.createElement('span');
+    labelEl.textContent = it.label;
+    row.append(kindEl, labelEl);
     row.addEventListener('mousedown', (e) => { e.preventDefault(); runPalette(it); });
     list.appendChild(row);
   });
@@ -345,7 +365,8 @@ function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
    draft, so Escape from there closes the overlay exactly as it always did. */
 export function handleEscape() {
   if (escapeInOverlay()) return;      // glance ▸ rename panel ▸ the overlay
-  closeAllPopovers();                 // the palette + legend are panels too
+  closeAllPopovers();                 // the palette, the legend and a comment thread are panels too
+  setPinMode(false);                  // …and Escape leaves pin mode, armed or not
   if (railPinned) { railPinned = false; setRail(false); }
 }
 

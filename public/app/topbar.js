@@ -7,7 +7,7 @@ import { store } from './store.js';
 import { nodeById, labelFor, childrenOf } from './labels.js';
 import { fullReset, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
-import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons } from './graph-view.js';
+import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf, requestSetActive } from './graph-view.js';
 
 export function updateChip() {
   const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
@@ -31,10 +31,17 @@ export function updateChip() {
   const sa = $('btn-set-active-here'); if (rah(sa)) sa.style.display = detached ? '' : 'none';
 
   const cur = nodeById(view.viewedId);
-  const kids = childrenOf(view.viewedId);
-  const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && cur.parent_id);
-  const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = kids.length === 0;
-  const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = kids.length > 1 ? '' : 'none';
+  // Two different questions, two topologies. ↑/↓ step to the previous/next turn
+  // the graph DRAWS — the same pair ArrowUp/ArrowDown performs in the overlay,
+  // and they used to disagree with it, navigating to nodes the DAG will not
+  // draw. ⑃ opens the raw commit children, which is what the branch picker is
+  // asking about.
+  const drawnKids = displayChildrenOf(view.viewedId);
+  const drawnParent = displayParentOf(view.viewedId);
+  const rawKids = childrenOf(view.viewedId);
+  const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && drawnParent);
+  const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = drawnKids.length === 0;
+  const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = rawKids.length > 1 ? '' : 'none';
 
   const bm = $('bookmark-name');
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
@@ -134,6 +141,42 @@ export async function branchOnEdit() {
   }
 }
 
+/* ---------- leaving preview: ONE owner of the transition ----------
+   Three lines — `previewing = false`, drop the snapshot, un-gate #main — were
+   hand-copied to EIGHT places (this file x4, graph-view x2, ws.js, shell.js) and
+   had already drifted: some copies also moved active/viewed, one restored the
+   captured live surface, one flushed the gated form values, and the two in
+   graph-view had quietly lost the queued-re-aim branch their siblings carry.
+   `previewing` is the flag state.js says GATES all writes, so a copy that drops
+   out of step is a preview mutating the live node.
+
+   The core is unconditional; the three real variations are named options rather
+   than a switchboard:
+     activeId        this client now believes active is here (a set-active or a
+                     branch-here that has actually landed) — moves activeId AND
+                     viewedId with it.
+     restoreSnapshot go back to the live surface captured on the way in:
+                     re-render it, re-apply the active node's theme, aim viewed
+                     at active. Consumes liveSnapshot before it is dropped.
+     flushForms      release the form values gated during the preview (the
+                     branch-on-edit path, whose on-screen DOM IS the new live
+                     state — so it deliberately does not re-render).
+   Callers keep their own `body.pending` early return: whether a queued re-aim
+   should leave preview AT ALL is the caller's question, not this one's. */
+export function leavePreview({ activeId = null, restoreSnapshot = false, flushForms = false } = {}) {
+  const snap = view.liveSnapshot;
+  view.previewing = false;
+  view.liveSnapshot = null;
+  $('main').classList.remove('preview-readonly');
+  if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
+  if (restoreSnapshot) {
+    view.viewedId = view.activeId;
+    if (snap) fullReset({ mounts: snap.mounts, store: snap.store });
+    applyNodeTheme(getActiveNodeTheme(), true);
+  }
+  if (flushForms) flushFormStates();
+}
+
 // The editing client's half of a branch-here: exit preview WITHOUT re-rendering
 // (the on-screen DOM — previewed node + in-flight edit — IS the new live
 // state), then flush the gated form values. Idempotent and shared by the
@@ -143,12 +186,7 @@ export function completeBranchTransition(id) {
   if (view.branchingTo !== id) return false;
   view.branchingTo = null;
   if (view.previewing && view.viewedId === id) {
-    view.previewing = false;
-    view.liveSnapshot = null;
-    view.activeId = id;
-    view.viewedId = id;
-    $('main').classList.remove('preview-readonly');
-    flushFormStates();
+    leavePreview({ activeId: id, flushForms: true });
     onGraphChanged();
   }
   return true;
@@ -156,13 +194,7 @@ export function completeBranchTransition(id) {
 
 export function returnToActive() {
   if (!view.previewing) { view.viewedId = view.activeId; updateChip(); return; }
-  const snap = view.liveSnapshot;
-  view.previewing = false;
-  view.liveSnapshot = null;
-  view.viewedId = view.activeId;
-  $('main').classList.remove('preview-readonly');
-  if (snap) fullReset({ mounts: snap.mounts, store: snap.store });
-  applyNodeTheme(getActiveNodeTheme(), true);
+  leavePreview({ restoreSnapshot: true });
   updateChip();
 }
 
@@ -231,31 +263,20 @@ export async function doWipe(name) {
   });
   const body = await r.json().catch(() => ({}));
   if (body.pending) { showReaimNote("Claude is mid-turn — the surface wipes when the turn ends."); return; }
-  view.previewing = false;
-  view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
+  leavePreview();
 }
 
+// The third caller of the one set-active request. requestSetActive owns the POST
+// and both not-moved answers — the refusal note, and the queued re-aim that
+// stays detached because the turn-end apply broadcasts a reset landing
+// everywhere. The tail below is this caller's own: it aims THIS client at the
+// node and refetches that node's panes, where the overlay's two callers restore
+// the live surface and relay the DAG out.
 async function setActiveHere() {
   const target = view.viewedId;
   if (!target) return;
-  const r = await fetch('/api/graph/active', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: target }),
-  });
-  if (!r.ok) { const err = await r.json().catch(() => ({})); alert('failed: ' + (err.error || r.statusText)); return; }
-  const body = await r.json().catch(() => ({}));
-  if (body.pending) {
-    // Queued: stay detached; the turn-end apply broadcasts a reset that lands
-    // everywhere (this client folds it via the previewing reset path).
-    showReaimNote(`Queued — jumps to ${labelFor(target)} when Claude's turn ends.`);
-    return;
-  }
-  view.previewing = false;
-  view.liveSnapshot = null;
-  $('main').classList.remove('preview-readonly');
-  view.activeId = target;
-  view.viewedId = target;
+  if (!await requestSetActive(target)) return;
+  leavePreview({ activeId: target });
   const nr = await fetch('/api/graph/node/' + target);
   if (nr.ok) { const node = await nr.json(); fullReset({ mounts: node.mounts || [], store: node.store || {} }); }
   await onGraphChanged();
@@ -282,12 +303,12 @@ export function initTopbar() {
 
   on('btn-up', 'click', async () => {
     await ensureGraph();
-    const cur = nodeById(view.viewedId);
-    if (cur && cur.parent_id) previewNode(cur.parent_id);
+    const parentId = displayParentOf(view.viewedId);  // the previous turn as DRAWN — see updateChip
+    if (parentId) previewNode(parentId);
   });
   on('btn-down', 'click', async () => {
     await ensureGraph();
-    const kids = childrenOf(view.viewedId);
+    const kids = displayChildrenOf(view.viewedId);   // the next turn as DRAWN — see updateChip
     if (kids.length) previewNode(kids[0].id);
   });
   on('btn-branch', 'click', async (e) => {

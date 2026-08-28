@@ -363,6 +363,28 @@ const PATTERNS = [
     re: /\b(copyFileSync|cpSync|writeFileSync|renameSync|unlinkSync|rmSync|rmdirSync)\(/g,
     baseline: {},
   },
+  {
+    // The one row scoped to the FRONT END, and the one that reaches a true zero
+    // outside its home. `localStorage` / `sessionStorage` are getters on window:
+    // in a private window or with site data blocked, reading the property throws
+    // before `.getItem` is reached, which aborts evaluation of the module that
+    // touched it — and in an ES-module graph that kills everything downstream.
+    // theme.js's initMode() is main.js's FIRST statement, so its unwrapped read
+    // was a dead page, not a dead toggle.
+    //
+    // Three other modules had each hand-rolled the same try/catch. storage.js is
+    // now the single guarded home; the six touches below are its own accessor
+    // calls (get/set/remove x local/session) and nothing else in public/app may
+    // touch either name.
+    name: 'localStorage / sessionStorage in public/app',
+    home: 'public/app/storage.js - getLocal/setLocal/getSession/... (all fail open)',
+    what: 'browser storage, whose accessor itself throws when site data is blocked',
+    roots: ['public/app'],
+    re: /(?:local|session)Storage\s*\./g,
+    baseline: {
+      'public/app/storage.js': 6,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

@@ -29,18 +29,25 @@ const { pathToFileURL } = require('url');
 
 const REPO = path.resolve(__dirname, '..');
 
-/* ---------------- static: the native dialog is gone for good ---------------- */
+/* ---------------- static: the native dialog is gone for good ----------------
+   This assertion used to promise "alert-style blocking dialogs" and match only
+   `prompt(`, so the three live alert() calls in the set-active failure paths
+   passed it unnoticed — and in jsdom alert() is a no-op, which hid them from
+   every dynamic test too. The regex now covers what the name claims. Scoped to
+   public/app, as it always was: a component template's pane script is evaluated
+   in the browser with no module system and is a different argument. */
 test('no front-end module calls window.prompt / alert-style blocking dialogs for input', () => {
   const offenders = [];
   for (const f of fs.readdirSync(path.join(REPO, 'public/app'))) {
     if (!f.endsWith('.js')) continue;
     const src = fs.readFileSync(path.join(REPO, 'public/app', f), 'utf8')
       .replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-    // `prompt(` as a call, not `openNamePanel(`/`.prompt` property reads.
-    for (const m of src.matchAll(/(^|[^.\w])prompt\s*\(/g)) offenders.push(`${f}: ${m[0].trim()}`);
+    // A call, not `openNamePanel(`/`confirmWipe(`/`.prompt` property reads.
+    for (const m of src.matchAll(/(^|[^.\w])(prompt|alert|confirm)\s*\(/g)) offenders.push(`${f}: ${m[0].trim()}`);
   }
   assert.deepEqual(offenders, [],
-    'window.prompt blocks the browser, looks like nothing else in this chrome, and wedges automated drivers');
+    'a native dialog blocks the browser, looks like nothing else in this chrome, and wedges automated '
+    + 'drivers — failures belong in the in-page notice (topbar.showReaimNote) or a panel');
 });
 
 /* ============================== the jsdom boot ============================== */

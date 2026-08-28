@@ -12,6 +12,12 @@ const { pathToFileURL } = require('url');
 
 const REPO = path.resolve(__dirname, '..');
 
+// A graph node's `name` is user- or API-supplied text — POST /api/graph/bookmark
+// only trim()s it, and the bookmark field's maxlength is client-side only. It
+// reaches the ⌘K palette as a row label, which used to be built with an
+// innerHTML template. Same attacker-supplied-text shape as the minbar chip below.
+const EVIL_NAME = '<img src=x onerror="window.__pwned_palette = 1">';
+
 test('front-end module graph boots and the core flows work under jsdom', async () => {
   const html = fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8')
     .replace(/<script[^>]*><\/script>/g, ''); // strip scripts; we load modules ourselves
@@ -28,7 +34,7 @@ test('front-end module graph boots and the core flows work under jsdom', async (
   const fetchCalls = [];
   window.fetch = async (url) => {
     fetchCalls.push(url);
-    const body = url === '/api/graph' ? { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' }
+    const body = url === '/api/graph' ? { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1, name: EVIL_NAME }], active: 'n1' }
       : url === '/api/components' ? { components: [{ name: 'demo', description: 'd', location: 'local' }] }
       : url === '/api/packs' ? { ok: true, packs: [], quarantined: [] }
       : url === '/api/services/pending' ? { ok: true, pending: [] }
@@ -136,6 +142,19 @@ test('front-end module graph boots and the core flows work under jsdom', async (
     assert.equal(chip.querySelector('img'), null, 'the title must not be parsed as markup');
     assert.equal(window.__pwned, undefined, 'no handler from the title ran');
     assert.ok(chip.textContent.includes('<img src=x'), 'it renders as literal text instead');
+
+    // …and the same for a NODE NAME reaching the ⌘K palette. shell.js built its
+    // rows from an innerHTML template, so a bookmark name executed in the
+    // privileged chrome origin the moment the palette opened.
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+    await tick();
+    const evilRow = [...$('cmd-list').querySelectorAll('.palette-item')]
+      .find((r) => r.textContent.includes('<img src=x'));
+    assert.ok(evilRow, 'the palette lists the named node');
+    assert.equal($('cmd-list').querySelector('img'), null, 'the name must not be parsed as markup');
+    assert.equal(window.__pwned_palette, undefined, 'no handler from the node name ran');
+    assert.equal(evilRow.querySelector('.kind').textContent, 'node', 'the row still carries its kind');
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
 
     // Drain any deferred timers (e.g. the 340ms theme-transition strip) while the
     // window is still valid, so nothing fires after the test ends.
