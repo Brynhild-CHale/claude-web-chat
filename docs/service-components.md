@@ -42,6 +42,11 @@ module.exports = {
     //               so services don't hand-roll one. Returns null when equal.
     // ctx.webChatDir — the project's .web-chat abs path, for sidecar state
     //               (e.g. version snapshots) without hardcoding the dir name.
+    // ctx.fence   — fence(parent, child) → the abs path inside `parent`, or null
+    //               when it escapes. Put EVERY path a pane hands you through it
+    //               (control keys are store values, and the store is writable by
+    //               every script in the page): it refuses `../..` and a symlink
+    //               that resolves out of the tree, which reads and writes follow.
   },
   async stop() {}, // optional — clear timers/watchers/streams. Also runs on process exit.
 };

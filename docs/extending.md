@@ -130,6 +130,7 @@ were the only places they lived.
 | resolve a path under `.claude/` (settings, rules, skills) | `core/paths` `claudePaths(root)` / `userClaudePaths()` | hardcode `'.claude'` |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
 | ask whether a path is inside a directory (a fence) | `core/paths` `isInside(parent, child)` / `realpath(p)` | `startsWith` / `path.relative` containment by hand |
+| fence a path you were HANDED (a store value, a form field), incl. one about to be created | `core/paths` `fence(parent, child)` → abs \| null (services get it as `ctx.fence`) | a lexical `path.relative` check that a symlink walks straight out of |
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
