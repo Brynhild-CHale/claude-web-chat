@@ -33,10 +33,15 @@ function installedRoot(prefix = 'wc-reg-') {
   return root;
 }
 
-// Nothing in this suite may shell out to a real `claude`.
+// Nothing in this suite may shell out to a real `claude`. The fake records the
+// cwd as well as the argv: `claude mcp add|remove … --scope local` keys the
+// registration to the directory it runs in, so an argv-only assertion cannot
+// tell "registered the project the engine resolved" from "registered whatever
+// directory the user happened to be standing in".
 function fakeClaude(result = { ok: true }) {
   const calls = [];
-  return { fn: (argv) => { calls.push(argv); return result; }, calls };
+  const cwds = [];
+  return { fn: (argv, opts = {}) => { calls.push(argv); cwds.push(opts.cwd); return result; }, calls, cwds };
 }
 
 // ── the round trip ──────────────────────────────────────────────────────────
@@ -87,6 +92,7 @@ test('apply → inspect → remove → inspect round-trips the registration mode
   assert.equal(removed.baselines, 'removed');
   assert.deepEqual(removeClaude.calls, [['mcp', 'remove', 'web-chat', '--scope', 'local']],
     'uninstall undoes the LOCAL-scope registration doctor writes, not just the project file');
+  assert.deepEqual(removeClaude.cwds, [root], 'and it un-registers THE ROOT, not the shell\'s cwd');
 
   const end = reg.inspect(root);
   for (const e of events) assert.equal(end.hooks[e], 'missing', `${e} unregistered again`);
@@ -268,6 +274,16 @@ test('doctor, status, install, uninstall, on and off resolve the SAME root from 
     lines.length = 0;
     uninstall([], { cwd: sub, runClaude: claude.fn });
     assert.match(lines.join('\n'), new RegExp(`uninstalled from ${root}`), 'uninstall: the parent');
+
+    // …including the half that leaves the project: `claude mcp add|remove …
+    // --scope local` registers the directory it RUNS in. Resolving the root and
+    // then shelling out from process.cwd() would print a success row for a
+    // project it never registered, and leave the local-scope entry behind on
+    // uninstall — a second, implicit root derivation inside the one module that
+    // exists to have exactly one.
+    assert.ok(claude.cwds.length, 'the local-scope shell-out happened at least once');
+    assert.deepEqual([...new Set(claude.cwds)], [root],
+      'every `claude mcp …` ran in the resolved root, never in the subdirectory');
   } finally {
     console.log = prevLog;
   }

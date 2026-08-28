@@ -8,10 +8,13 @@ const uninstall = require('../lib/cli/commands/uninstall');
 const { MANAGED_FILES, baselinePath } = require('../lib/update/managed-files');
 
 // No test may shell out to a real `claude`: uninstall now also removes the
-// LOCAL-scope registration doctor's repair writes.
+// LOCAL-scope registration doctor's repair writes. The cwd is recorded too —
+// `--scope local` un-registers the directory `claude` runs in, so the argv alone
+// does not say WHICH project was un-registered.
 function fakeClaude(result = { ok: true }) {
   const calls = [];
-  return { fn: (argv) => { calls.push(argv); return result; }, calls };
+  const cwds = [];
+  return { fn: (argv, opts = {}) => { calls.push(argv); cwds.push(opts.cwd); return result; }, calls, cwds };
 }
 
 function tmpRoot() {
@@ -45,6 +48,7 @@ test('uninstall removes every managed file, sidecars, baselines, and prunes empt
   uninstall([], { cwd: root, runClaude: claude.fn });
   assert.deepEqual(claude.calls, [['mcp', 'remove', 'web-chat', '--scope', 'local']],
     'the local-scope registration doctor writes is undone too — otherwise Claude Code keeps spawning the MCP server');
+  assert.deepEqual(claude.cwds, [root]);
 
   for (const { dest } of MANAGED_FILES) {
     assert.ok(!fs.existsSync(path.join(root, dest)), `${dest} should be removed`);
@@ -76,16 +80,22 @@ test('uninstall from a SUBDIRECTORY removes from the enclosing project root', ()
   const sub = path.join(root, 'src', 'deep');
   fs.mkdirSync(sub, { recursive: true });
 
+  const claude = fakeClaude();
   const lines = [];
   const prevLog = console.log;
   console.log = (...a) => lines.push(a.join(' '));
   try {
-    uninstall([], { cwd: sub, runClaude: fakeClaude().fn });
+    uninstall([], { cwd: sub, runClaude: claude.fn });
   } finally {
     console.log = prevLog;
   }
 
   assert.match(lines.join('\n'), new RegExp(`uninstalled from ${root}`));
+  // The shell-out is the half that leaves the project. Run from the shell's cwd
+  // it would ask Claude Code to un-register the SUBDIRECTORY, leaving the
+  // local-scope registration for the root — the exact thing this removal exists
+  // to undo — alive after a reported-successful uninstall.
+  assert.deepEqual(claude.cwds, [root], '`claude mcp remove --scope local` runs in the resolved root');
   for (const { dest } of MANAGED_FILES) {
     assert.ok(!fs.existsSync(path.join(root, dest)), `${dest} should be removed from the parent`);
   }
