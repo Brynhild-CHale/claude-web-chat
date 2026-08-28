@@ -310,10 +310,12 @@ test('verifyPack reports a refused unit as drift, so refuseOnDrift stops the HTT
   assert.equal(v.drift, true);
   assert.equal(v.units[0].state, 'refused');
 
-  // removePackByName is synchronous — it throws rather than rejecting.
+  // removePackByName is synchronous — it throws rather than rejecting. The
+  // message is the REFUSAL one, not the "local edits" one: a refused record is
+  // not an edit, and no terminal command will remove it either.
   assert.throws(
     () => packs.removePackByName({ name: 'acme-ops', root, refuseOnDrift: true }),
-    /not removing it from here/,
+    (e) => /did not validate/.test(e.message) && /escapes the unit directory/.test(e.message) && !/pack remove/.test(e.message),
   );
 });
 
