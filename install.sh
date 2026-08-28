@@ -139,17 +139,27 @@ fi
 rm -rf "$dest"
 mv "$dest.incoming" "$dest"
 
-# 6. Point `current` at it, atomically: rename(2) over the old symlink, so the
-#    command never briefly does not exist. The target is relative, so the whole
-#    ~/.web-chat tree stays movable.
+# 6. Point `current` at it. `ln -sfn` replaces the link where it stands; both
+#    GNU and BSD ln accept -n, and with it neither follows an existing symlink.
+#
+#    What must NOT be used here is `mv`: it stat()s its destination, so a
+#    `current` that points at a version DIRECTORY looks like a directory to it,
+#    and the new link is moved INSIDE the old version instead of over it. That
+#    is what this installer did on every re-run until the line below replaced
+#    the `mv`: the new release unpacked, `current` (and therefore all three
+#    bins, which resolve through it) stayed on the old one, and the installer
+#    reported success.
+#
+#    The target is relative, so the whole ~/.web-chat tree stays movable.
 if [ -d "$WC_HOME/current" ] && [ ! -L "$WC_HOME/current" ]; then
   rm -rf "$WC_HOME/current"
 fi
-rm -f "$WC_HOME/current.incoming"
-ln -s "versions/$version" "$WC_HOME/current.incoming"
-mv -f "$WC_HOME/current.incoming" "$WC_HOME/current"
+rm -f "$WC_HOME/current.incoming"   # debris from an interrupted older install
+ln -sfn "versions/$version" "$WC_HOME/current"
 
-# 7. Link the three bins into ~/.local/bin — same atomic swap, no sudo.
+# 7. Link the three bins into ~/.local/bin — no sudo. These may use the rename
+#    swap, and do: they point at FILES, so mv renames over them rather than into
+#    them, and the command never briefly does not exist.
 mkdir -p "$BIN_DIR"
 for b in $BINS; do
   chmod +x "$WC_HOME/current/bin/$b.js" 2>/dev/null || true

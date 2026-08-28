@@ -13,7 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
@@ -83,6 +83,16 @@ test('install.sh is POSIX sh, needs no sudo, and verifies before it installs', (
   assert.match(sh, /command -v wget/);
   assert.match(sh, /needs curl or wget/);
   // The destructive steps come after verification.
+  // `current` is a symlink to a DIRECTORY: mv stat()s its destination, sees a
+  // directory and moves the source inside it. Only `ln -sfn` replaces it.
+  assert.match(sh, /ln -sfn "versions\/\$version" "\$WC_HOME\/current"/,
+    'the `current` swap must be `ln -sfn` — see the executed test at the foot of this file');
+  for (const line of sh.split('\n')) {
+    if (/^\s*#/.test(line)) continue;
+    assert.ok(!/^\s*mv\b.*"\$WC_HOME\/current"\s*$/.test(line),
+      `mv cannot rename over a symlink-to-a-directory — it moves INTO it:\n  ${line.trim()}`);
+  }
+
   const verifiedAt = sh.indexOf('echo "Checksum verified."');
   const movedAt = sh.indexOf('mv "$dest.incoming" "$dest"');
   assert.ok(verifiedAt > 0 && movedAt > 0, 'both the verify and the move must be present');
@@ -156,4 +166,132 @@ test('the plugin manifest tracks the package version', () => {
   const plugin = JSON.parse(read('.claude-plugin/plugin.json'));
   assert.equal(plugin.version, pkg.version,
     '.claude-plugin/plugin.json must not drift behind package.json');
+});
+
+// ── install.sh, actually executed ───────────────────────────────────────────
+// Everything above READS install.sh. This runs it, twice, against a scratch
+// HOME and a loopback stand-in for the GitHub API — no network, nothing outside
+// a temp dir, and the CLI itself is never invoked (the tarball's "bins" only
+// print their version).
+//
+// Twice is the whole point. `mv -f current.incoming current` stat()s its
+// destination, and a `current` symlink pointing at a version directory stats as
+// a directory — so mv moved the new link INTO the old version instead of
+// renaming over it. The first install looked perfect; every upgrade after it
+// unpacked the new release, printed the new version number, and left `current`
+// (and therefore all three bins, which resolve through it) pointing at the old
+// code. CI has never run install.sh at all: release.yml's smoke test does its
+// own `ln -s` into a fresh scratch HOME, which is exactly the case that works.
+
+const http = require('http');
+const os = require('os');
+const zlib = require('zlib');
+const crypto = require('crypto');
+const { spawnSync } = require('child_process');
+const { makeTar } = require('../scripts/build-release');
+const { BIN_NAMES } = require('../lib/core/paths');
+
+function scratchDir(prefix) {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function hasCommand(name) {
+  return spawnSync('/bin/sh', ['-c', `command -v ${name}`], { stdio: 'ignore' }).status === 0;
+}
+
+// A minimal but genuine release tarball: the single `claude-web-chat-<v>/`
+// prefix install.sh strips, a package.json so its "is this actually a release?"
+// check passes, and the three bins it links onto PATH — each stamped with its
+// own version, so the test can tell which tree a bin symlink resolves to.
+function buildFakeRelease(dir, version) {
+  const src = path.join(dir, `src-${version}`);
+  fs.mkdirSync(path.join(src, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'package.json'), JSON.stringify({ name: 'claude-web-chat', version }));
+  const entries = [{
+    name: `claude-web-chat-${version}/package.json`, type: 'file', mode: 0o644, source: path.join(src, 'package.json'),
+  }];
+  for (const b of BIN_NAMES) {
+    const f = path.join(src, 'bin', `${b}.js`);
+    fs.writeFileSync(f, `#!/usr/bin/env node\nconsole.log('${version}');\n`);
+    entries.push({ name: `claude-web-chat-${version}/bin/${b}.js`, type: 'file', mode: 0o755, source: f });
+  }
+  const name = `claude-web-chat-${version}.tar.gz`;
+  const tgz = zlib.gzipSync(makeTar(entries));
+  fs.writeFileSync(path.join(dir, name), tgz);
+  const sha = crypto.createHash('sha256').update(tgz).digest('hex');
+  fs.writeFileSync(path.join(dir, `SHA256SUMS.${version}`), `${sha}  ${name}\n`);
+  return name;
+}
+
+// The two endpoints install.sh talks to: /releases/latest and the asset URLs it
+// scrapes out of that JSON. `state.version` is what "latest" currently means.
+function fakeReleases(t, dir, state) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const url = req.url.split('?')[0];
+      if (url === '/releases/latest') {
+        const v = state.version;
+        const base = `http://127.0.0.1:${server.address().port}`;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          tag_name: `v${v}`,
+          assets: [
+            { browser_download_url: `${base}/dl/claude-web-chat-${v}.tar.gz` },
+            { browser_download_url: `${base}/dl/SHA256SUMS` },
+          ],
+        }));
+        return;
+      }
+      const file = url === '/dl/SHA256SUMS'
+        ? path.join(dir, `SHA256SUMS.${state.version}`)
+        : path.join(dir, path.basename(url));
+      if (!url.startsWith('/dl/') || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      res.end(fs.readFileSync(file));
+    });
+    t.after(() => new Promise((done) => server.close(done)));
+    server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`));
+  });
+}
+
+test('install.sh moves `current` to the new version when it is re-run over an existing install', async (t) => {
+  if (process.platform === 'win32') { t.skip('WSL2 is the Windows story'); return; }
+  if (!hasCommand('curl') && !hasCommand('wget')) { t.skip('no curl or wget'); return; }
+  if (!hasCommand('shasum') && !hasCommand('sha256sum')) { t.skip('no shasum or sha256sum'); return; }
+  if (!hasCommand('tar')) { t.skip('no tar'); return; }
+
+  const dir = scratchDir('wc-install-sh-');
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home);
+  buildFakeRelease(dir, '9.9.1');
+  buildFakeRelease(dir, '9.9.2');
+  const state = { version: '9.9.1' };
+  const base = await fakeReleases(t, dir, state);
+
+  // ASYNC on purpose: the stand-in server shares this process's event loop, so a
+  // synchronous spawn would block the thread the installer's own download is
+  // waiting on.
+  const install = () => new Promise((resolve, reject) => {
+    execFile('/bin/sh', [path.join(REPO_ROOT, 'install.sh')], {
+      env: { ...process.env, HOME: home, WEB_CHAT_API_BASE: base },
+      encoding: 'utf8',
+    }, (err, stdout, stderr) => (err ? reject(new Error(`install.sh failed: ${stderr || err.message}`)) : resolve(stdout)));
+  });
+  const current = path.join(home, '.web-chat', 'current');
+  const cli = path.join(home, '.local', 'bin', 'claude-web-chat');
+
+  await install();
+  assert.equal(fs.readlinkSync(current), 'versions/9.9.1');
+  assert.match(fs.readFileSync(cli, 'utf8'), /9\.9\.1/, 'the bin symlink must resolve into the installed version');
+
+  // The re-run. This is the case the installer promises is "always safe".
+  state.version = '9.9.2';
+  await install();
+  assert.equal(fs.readlinkSync(current), 'versions/9.9.2', '`current` must point at the version just installed');
+  assert.match(fs.readFileSync(cli, 'utf8'), /9\.9\.2/, 'the bins resolve through `current`, so they move with it');
+  assert.deepEqual(
+    fs.readdirSync(path.join(home, '.web-chat', 'versions', '9.9.1')).sort(),
+    ['bin', 'package.json'],
+    'the swap must not deposit anything inside the version it replaced',
+  );
 });
