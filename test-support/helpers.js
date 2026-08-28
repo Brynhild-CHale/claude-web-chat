@@ -12,7 +12,7 @@
 // writes), and an idempotent t.after stop.
 //
 // Beyond booting a server this file owns four more things every test needs and
-// eight files used to hand-roll: ONE deadline poll (`waitUntil`), ONE SSE opener
+// a dozen files used to hand-roll: ONE deadline poll (`waitUntil`), ONE SSE opener
 // that can actually FAIL (`openSSE`), a WS connect that can send headers
 // (`wsConnect`, so the Origin gate is reachable), and a hub boot (`withHub`).
 // `test/harness-conventions.test.js` ratchets those back here.
