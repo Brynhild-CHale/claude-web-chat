@@ -13,6 +13,12 @@
 // never silently grow. Counts are per-file substring counts (not file:line — line
 // numbers drift with unrelated edits). test/ and test-support/ are intentionally
 // NOT scanned, so the harness may use raw http/ws/fetch.
+//
+// A pattern names either `roots` (scan these trees) or `files` (scan exactly
+// these paths). The `files` form exists for a construct that is legitimate in
+// most of the tree and must stay at zero in a few named places — a tree-wide
+// ceiling there would be a permanent table of files whose baseline is "correct
+// forever", which is a weaker contract than the one this file states.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -198,6 +204,53 @@ const PATTERNS = [
       'lib/server/export.js': 1,
     },
   },
+  {
+    // The tmp+rename idiom's fingerprint: a temp path carrying the pid. It
+    // existed twice with two spellings — `${p}.${pid}.tmp` in lib/util/registry
+    // and `${file}.tmp-${pid}` in lib/packs/store — which is exactly how the
+    // three records that most needed it (graph node files, graph/_meta.json,
+    // draft.json) ended up with no atomicity at all: there was no single thing
+    // to adopt. Both spellings are matched, so reaching for either one now has
+    // to come through here.
+    name: 'a per-pid `.tmp` name (the tmp+rename idiom)',
+    home: 'lib/core/fsjson.js — `writeJsonAtomic`',
+    what: 'writing a durable record via a temp file + renameSync',
+    roots: ['lib'],
+    re: /\$\{process\.pid\}\.tmp|\.tmp-\$\{process\.pid\}/g,
+    baseline: {
+      'lib/core/fsjson.js': 1,
+      // A DIFFERENT concept that happens to share the idiom, and it must not be
+      // routed through the engine: symlinkAtomic swaps ~/.web-chat/current,
+      // which is a symlink, not a JSON record — there is nothing to serialize
+      // and the temp entry is created with symlinkSync. Same discipline, other
+      // object.
+      'lib/update/install-layout.js': 1,
+    },
+  },
+  {
+    // NOT a lib-wide ban: 8 of the ~35 writeFileSync sites in lib/ are
+    // legitimately not JSON records (export HTML, capture sidecars,
+    // component.html/seed.js/service.js, .gitignore, the empty disable markers),
+    // so a lib-wide ceiling could never approach zero-outside-the-home the way
+    // the contract at the top of this file promises.
+    //
+    // Scoped instead to the three files whose records the durable-JSON engine
+    // was extracted FOR, each at a hard zero. Every writer in them — a graph
+    // node file, graph/_meta.json, draft.json — is a durable record that a
+    // crash mid-write used to be able to tear, and the reader of each one has a
+    // recovery path that assumes it cannot happen twice. A new bare
+    // writeFileSync here is the regression.
+    name: 'writeFileSync( in the three durable-record files',
+    home: 'lib/core/fsjson.js — `writeJsonAtomic`',
+    what: 'writing a graph node, graph/_meta.json or draft.json',
+    files: [
+      'lib/server/graph.js',
+      'lib/server/domain/turns.js',
+      'lib/update/migrations/index.js',
+    ],
+    re: /writeFileSync\(/g,
+    baseline: {},
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
@@ -215,22 +268,28 @@ function relPosix(abs) {
   return path.relative(REPO_ROOT, abs).split(path.sep).join('/');
 }
 
-function census(roots, re) {
+// A pattern scans whole `roots`, or — when the construct has legitimate uses
+// elsewhere in the tree and only a named set of files must stay at zero — an
+// explicit `files` list. The two forms share the same ratchet below.
+function census({ roots, files, re }) {
   const map = {};
-  for (const r of roots) {
-    const abs = path.join(REPO_ROOT, r);
-    if (!fs.existsSync(abs)) continue;
-    for (const f of walk(abs, [])) {
-      const m = fs.readFileSync(f, 'utf8').match(re);
-      if (m && m.length) map[relPosix(f)] = m.length;
-    }
+  const targets = files
+    ? files.map((f) => path.join(REPO_ROOT, f))
+    : (roots || []).flatMap((r) => {
+      const abs = path.join(REPO_ROOT, r);
+      return fs.existsSync(abs) ? walk(abs, []) : [];
+    });
+  for (const f of targets) {
+    if (files) assert.ok(fs.existsSync(f), `conventions: ${relPosix(f)} is listed in a pattern's \`files\` but does not exist — fix the list.`);
+    const m = fs.readFileSync(f, 'utf8').match(re);
+    if (m && m.length) map[relPosix(f)] = m.length;
   }
   return map;
 }
 
 for (const p of PATTERNS) {
   test(`conventions: \`${p.name}\` (${p.what}) is confined to its allowed home`, () => {
-    const actual = census(p.roots, p.re);
+    const actual = census(p);
 
     // (a) tripwire — no new or grown occurrences.
     for (const [file, n] of Object.entries(actual)) {
