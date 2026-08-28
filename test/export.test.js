@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const http = require('http');
 
 const {
   assembleExport, nodeForExport, resolveExportTheme, buildExportHtml, writeExport,
@@ -236,16 +237,64 @@ test('route: GET /api/export/active streams an attachment', async (t) => {
   assert.ok(!/ws:\/\//.test(html));
 });
 
+// ?format=file is gated on "no browsers" (lib/core/cors isBrowserRequest), and
+// Node's global `fetch` — which makeApi uses — sends `sec-fetch-mode`, so it is
+// deliberately on the browser side of that gate. This is the request lib/client
+// actually makes: raw http.request, no fetch metadata. Same helper shape as
+// test/shutdown-route.test.js, the other file that lives on both sides of it.
+function rawGet(port, pathStr, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port, path: pathStr, method: 'GET', headers }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        let json = null;
+        try { json = body ? JSON.parse(body) : null; } catch {}
+        resolve({ status: res.statusCode, json, body });
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 test('route: ?format=file writes under .web-chat/exports and returns the path', async (t) => {
-  const { api } = await withServer(t);
+  const { api, port } = await withServer(t);
   await api.post('/api/render', { id: 'p1', html: '<div>filey</div>' });
   await api.post('/api/commit', { message: 'seed' });
 
-  const r = (await api.get('/api/export/active?format=file')).json;
+  const r = (await rawGet(port, '/api/export/active?format=file')).json;
   assert.ok(r.ok);
   assert.ok(fs.existsSync(r.path));
   assert.ok(r.path.includes(path.join('.web-chat', 'exports')));
   assert.match(fs.readFileSync(r.path, 'utf8'), /filey/);
+});
+
+test('route: ?format=file refuses a browser, and writes nothing', async (t) => {
+  const { api, port, webChatDir } = await withServer(t);
+  await api.post('/api/render', { id: 'p1', html: '<div>filey</div>' });
+  await api.post('/api/commit', { message: 'seed' });
+  const exportsDir = path.join(webChatDir, 'exports');
+
+  // Any page the user is browsing can fire this GET; it does not need to read
+  // the reply for the disk write and the ring entry to have happened.
+  for (const headers of [
+    { origin: 'https://evil.example' },
+    { 'sec-fetch-mode': 'no-cors' },
+    { 'sec-fetch-dest': 'image' },
+  ]) {
+    const res = await rawGet(port, '/api/export/active?format=file', headers);
+    assert.equal(res.status, 403, `refused with ${JSON.stringify(headers)}`);
+    assert.match(res.json.hint, /download button/);
+    assert.ok(!fs.existsSync(exportsDir), 'no export directory was created');
+  }
+
+  // The download shape — same route, no format=file — is untouched: its callers
+  // ARE browsers (the topbar and graph-view buttons).
+  const dl = await api.get('/api/export/active');
+  assert.equal(dl.status, 200);
+  assert.match(dl.text, /filey/);
+  assert.ok(!fs.existsSync(exportsDir), 'and it still writes nothing');
 });
 
 test('route: unknown ref → 404 with error', async (t) => {

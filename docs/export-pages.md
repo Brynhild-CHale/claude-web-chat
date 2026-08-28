@@ -14,7 +14,7 @@ wants to **share, save or send** something that was rendered.
 | `export` MCP tool — `export({ node })` | Claude | the absolute path of a file written under `.web-chat/exports/` |
 | `claude-web-chat export [node]` | the user, from a terminal | the same write, path printed |
 | the topbar **⬇** button | the user, from the surface | a browser download of the node currently on screen |
-| `GET /api/export/:ref` | anything local | the html streamed as an attachment; add `?format=file` to write it and get back `{ path, label }` |
+| `GET /api/export/:ref` | anything local | the html streamed as an attachment; add `?format=file` to write it and get back `{ path, label }` (non-browser callers only — see below) |
 
 All four assemble through the same builder in `lib/server/export.js`, so what a
 user downloads and what Claude writes are the same bytes.
@@ -67,6 +67,13 @@ decisions are worth carrying forward, because the code still turns on them:
   button (no disk write); the MCP tool and the CLI go through `?format=file`,
   which writes under `.web-chat/exports/` and returns a path, because Claude and
   scripts want a file to reference. Both call the same `buildExportHtml`.
+  `?format=file` carries the "no browsers" gate from `lib/core/cors`
+  (`isBrowserRequest`, the same one on `POST /api/shutdown`) and answers `403` to
+  anything sending `Origin` or `Sec-Fetch-*` — a GET that writes a file and
+  appends to the event ring is otherwise triggerable by any page the user is
+  browsing, with an `<img>` tag. The MCP tool and the CLI reach it through
+  `lib/client` (raw `http.request`), which sends neither; Node's global `fetch`
+  does, so it is on the browser side of that gate too.
 - **The export runtime is not a second implementation.** The plan called for a
   purpose-built ~120-line runtime; what shipped instead splices the one mount
   runtime verbatim, so the export cannot drift from the live surface. Don't
