@@ -292,7 +292,13 @@ export function initComments() {
       // draft (popover + draft survive); the next one — focus now off the field —
       // reaches shell's dismiss layer and closes the thread as before.
       if (ta.value.trim()) { ta.blur(); return; }
+      // An empty draft closes here, so this handler also owes what the shell's
+      // Escape would have done: leave pin mode. openThread focuses this field,
+      // and a marker click reaches it with the crosshair still armed — Escape
+      // must not close the thread and leave the crosshair behind. Same pair the
+      // composer's Escape does.
       closePop();
+      setPinMode(false);
     });
     el.querySelector('.pin-share-cb').addEventListener('change', async (ev) => {
       try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: ev.target.checked }) }); } catch (_) {}

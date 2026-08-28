@@ -361,6 +361,8 @@ test('Escape leaves pin mode even with nothing open', async () => {
 });
 
 test('a reply draft survives the first Escape and closes on the second (F12)', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));   // arm pin mode: a marker click reaches the thread with the crosshair up
+  assert.ok(W.document.body.classList.contains('pin-mode'), 'precondition: pin mode armed');
   WS.onmessage({ data: JSON.stringify({
     type: 'comments',
     comments: [{ id: 'c1', text: 'look here', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }],
@@ -383,6 +385,24 @@ test('a reply draft survives the first Escape and closes on the second (F12)', a
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
   await tick();
   assert.equal(pinPop(), null, 'the second Escape — focus off the field — closes it through the shell');
+  assert.ok(!W.document.body.classList.contains('pin-mode'), 'and that one, being the shell’s, disarmed pin mode');
+});
+
+test('Escape on an EMPTY reply draft closes the thread and leaves pin mode too', async () => {
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));
+  assert.ok(W.document.body.classList.contains('pin-mode'), 'armed');
+  const marker = $('pin-layer').querySelector('.pin-marker');
+  marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
+  await tick();
+  const ta = pinPop().querySelector('.pin-reply-text');
+  assert.equal(ta.value, '', 'precondition: nothing typed, so this Escape closes rather than blurs');
+
+  ta.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal(pinPop(), null, 'the thread closed');
+  assert.ok(!W.document.body.classList.contains('pin-mode'),
+    'and the crosshair went with it — this handler stops the key, so it owes what the shell’s ' +
+    'Escape (and the document listener comments.js used to run) would have done');
 });
 
 /* ---------- (d) wiping offers a label ---------- */
