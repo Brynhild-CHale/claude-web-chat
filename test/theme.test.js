@@ -175,3 +175,10 @@ test('theme: tokens are sanitized (bad keys dropped, values stripped)', async (t
   assert.equal(g.tokens['color'], undefined, 'non --wc- key dropped');
   assert.equal(g.tokens['--wc-bg'], 'red  body', 'breakout chars stripped');
 });
+
+test('theme: sanitizeTokens keeps whitespace-separated values apart across a line break', () => {
+  const { sanitizeTokens } = require('../lib/server/theme');
+  const out = sanitizeTokens({ '--wc-shadow': '0 1px\n2px rgba(0,0,0,.2)', '--wc-bg': '#fff;}\r\n<b>' });
+  assert.equal(out['--wc-shadow'], '0 1px 2px rgba(0,0,0,.2)');
+  assert.equal(out['--wc-bg'], '#fff b');
+});
