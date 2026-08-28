@@ -19,7 +19,7 @@ const express = require('express');
 const {
   isLocalHost, hostGateApplies, requireLocalHost, verifyUpgrade,
 } = require('../lib/core/cors');
-const { withServer, tmpRoot } = require('../test-support/helpers');
+const { withServer, withTempHome } = require('../test-support/helpers');
 const { createHub } = require('../lib/hub');
 
 // A request that dials 127.0.0.1 but ASSERTS whatever name the caller passes —
@@ -151,8 +151,12 @@ test('verifyUpgrade folds the Origin gate together with the Host gate', () => {
 });
 
 test('hub app: the fixed-port listing is not readable under a foreign Host', async (t) => {
-  const root = tmpRoot('wc-hub-boundary-');
-  t.after(() => { try { require('fs').rmSync(root, { recursive: true, force: true }); } catch {} });
+  // GET /api/instances reads the cross-project registry, and that read PRUNES
+  // dead-pid rows and rewrites ~/.web-chat/instances.json (lib/util/registry
+  // readAllLive). Under the ambient HOME this test would edit the developer's
+  // own registry, so it runs inside a temp HOME like every other test that
+  // touches user-scope state.
+  withTempHome(t);
   const hub = createHub({ port: 0 });
   await new Promise((r) => hub.server.listen(0, '127.0.0.1', r));
   const port = hub.server.address().port;
