@@ -87,13 +87,12 @@ test('updated: local matches baseline, template changed → auto-apply', () => {
   assert.equal(readBaselines(root)[RULES_DEST], hashContent(shippedContent()));
 });
 
-test('conflict: local & template both diverged → .new sidecar, original kept, baseline unchanged', () => {
+test('conflict: local & template both diverged → .new sidecar, original kept, offer recorded', () => {
   const root = tmpRoot();
   const baseVersion = shippedContent() + '\n<!-- baseline tail -->\n';
   const localEdit = shippedContent() + '\n<!-- MY local edit -->\n';
   writeDest(root, localEdit);
   setBaseline(root, RULES_DEST, hashContent(baseVersion));
-  const baselineBefore = readBaselines(root)[RULES_DEST];
 
   const results = reconcileManagedFiles(root, {});
   const r = resultFor(results, RULES_DEST);
@@ -103,8 +102,10 @@ test('conflict: local & template both diverged → .new sidecar, original kept, 
   assert.equal(readDest(root), localEdit);
   // Sidecar holds the shipped version
   assert.equal(fs.readFileSync(sidecarPath(root), 'utf8'), shippedContent());
-  // Baseline unchanged
-  assert.equal(readBaselines(root)[RULES_DEST], baselineBefore);
+  // The baseline ADVANCES to the bytes just offered. It used to be pinned as
+  // "unchanged", which is precisely the bug: leaving it behind meant the same
+  // offer was re-announced on every install and update for the rest of time.
+  assert.equal(readBaselines(root)[RULES_DEST], hashContent(shippedContent()));
 });
 
 test('kept-edited: local edited, template unchanged → respect edit, no write', () => {
@@ -422,22 +423,33 @@ test('a MANAGED install registers current/, NOT the version directory it is runn
     path.join(checkout, 'bin', 'claude-web-chat-hook.js'));
 });
 
-// distribution-4, the half consolidation can actually reach. `install`,
-// `update`, `init` and `status` each printed their own version of what a
-// conflict means, and the two that gave a next step gave one that cannot
-// converge: after a hand merge, local matches neither the baseline nor the
-// shipped bytes, so the same branch fires again on every install and update.
-// One helper, one wording, and it names the only step that actually resolves.
-// (The missing conflict→resolution TRANSITION is still open — that is a change
-// to the reconcile state machine above, not to this text.)
+// distribution-4. `install`, `update`, `init` and `status` each printed their
+// own version of what a conflict means, and the two that gave a next step gave
+// one that could not converge. L6 gave the wording one home; this unit gave the
+// state machine the transition, so the wording must now name the step that
+// actually ends it — merge, then DELETE the .new — and must no longer claim the
+// file gets re-flagged on the next install/update, which stopped being true.
 test('the conflict wording has one home and names the step that resolves', () => {
+  const rulesNew = new RegExp(RULES_DEST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.new');
   const results = [{ action: 'conflict', dest: RULES_DEST, sidecar: RULES_DEST + '.new' }];
   const advice = mf.conflictAdvice(results).join('\n');
-  assert.match(advice, /install --force/, 'the one exit is named');
-  assert.match(advice, new RegExp(RULES_DEST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.new'));
+  assert.match(advice, /install --force/, 'the one adopt-the-shipped-bytes exit is still named');
+  assert.match(advice, rulesNew);
+  assert.match(advice, /delete/i, 'and the step that actually resolves it');
+  assert.doesNotMatch(advice, /re-flags|matches neither side/,
+    'the old text described a loop that no longer exists');
   assert.match(mf.conflictSummary(results), /install --force/);
   assert.deepEqual(mf.conflictAdvice([{ action: 'up-to-date', dest: RULES_DEST }]), []);
   assert.equal(mf.conflictSummary([]), '');
+
+  // A pending sidecar is a reminder, not a fresh offer, and it has the same
+  // single home: no consumer grows its own sentence for it.
+  const reminder = [{ action: 'kept-edited', dest: RULES_DEST, sidecar: RULES_DEST + '.new', pending: true }];
+  const pendingAdvice = mf.conflictAdvice(reminder).join('\n');
+  assert.match(pendingAdvice, rulesNew);
+  assert.match(pendingAdvice, /delete/i);
+  assert.match(mf.conflictSummary(reminder), rulesNew);
+  assert.deepEqual(mf.conflictAdvice([{ action: 'kept-edited', dest: RULES_DEST }]), []);
 
   for (const f of ['install.js', 'update.js', 'status.js', 'init.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cli', 'commands', f), 'utf8');
