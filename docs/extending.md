@@ -166,7 +166,7 @@ were the only places they lived.
 | register a project, or un-register one | `lib/setup/registration` `apply(root, {force, dryRun, runClaude})` / `remove(root, {runClaude})` | call `ensureHooks` + `reconcileManagedFiles` + `ensureMcpRegistration` in your own order, with your own stub policy |
 | build the `claude mcp add`/`remove` argv | `lib/setup/registration` `mcpArgv()` / `removeArgv()` | `path.join(__dirname, …, 'bin')` (that is the version dir, which gets pruned) |
 | name the hook events registration means | `lib/setup/registration` `hookEvents()` | iterate whatever `settings.hooks` happens to hold |
-| say what a managed-file conflict means and how it ends | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (which never converges) |
+| say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
@@ -594,6 +594,21 @@ than something reached for from `lib/cli`. The hook template has one reader,
 takes `Object.keys` off it — and the wording for a managed-file **conflict** has
 one home too, `managed-files.conflictAdvice()` / `conflictSummary()`, which
 `install`, `update`, `init` and `status` all print.
+
+`inspect().managed` rows carry that conflict's whole state machine, and it is
+worth knowing which end of it you are reading. The baseline in
+`.web-chat/managed.json` is **the shipped bytes a file was last reconciled
+against — applied or merely offered**, so announcing a conflict records the
+offer: the next run sees `shipped === baseline` and a hand merge settles as
+`kept-edited` rather than re-announcing itself forever. A real template change
+moves `shipped` off that baseline and fires a fresh conflict. The outstanding
+offer is tracked on the **filesystem**, not in JSON: while `<dest>.new` sits
+beside a file that still differs from shipped, the row carries `pending: true`,
+and deleting the sidecar is the entire resolution ritual. Consumers therefore
+have two questions to answer, not one — "is this a fresh conflict?" and "is
+there an offer still open?" — and each one states its answer in a comment
+(`status`/`init` report both; the MCP startup nudge reports only the first,
+because it tells the user to run `install` and `install` cannot merge for them).
 
 `update` loads this module out of `versions/<target>` (the same reason
 `loadRestart` exists), so **the export surface is a cross-version contract**:
