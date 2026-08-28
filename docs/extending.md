@@ -118,7 +118,7 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
-| name the reserved component names | `lib/server/builtins` `BUILTINS` | re-list them |
+| decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 
@@ -339,12 +339,50 @@ Three invariants live in code rather than in a reviewer's memory:
 - **A builtin component name is a hard refusal.** No override, either tier,
   either actor — because `seedBuiltins` only repairs a directory whose
   `meta.json` says `builtin: true`, so a shadowing pack would win permanently.
+  The list and the grammar both live in `lib/core/names.js`, and the refusal is
+  asserted at every writer (`POST /api/components`, `componentsRegistry.write`,
+  `validateManifest`, `planInstall`), not just in the packs pipeline.
 
 `lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
 `install.js`. **Read the risk paragraph at the head of the route file before
 changing it**: the install endpoint is reachable by any pane script and cannot
 tell a pane's `fetch` from a user's click. `--replace`, and removing a pack you
 have edited, are therefore terminal-only.
+
+### `lib/core/names.js` — what may become a component directory
+
+A component name is not decoration: it **becomes a directory**. Every writer
+joins it to a tier dir, and every reader joins it again to reach
+`component.html` / `seed.js` / `service.js`. Two rules govern it, and they are
+declared once, here:
+
+- **The grammar**, `COMPONENT_NAME_RE = /^[a-z][a-z0-9-]*$/`. A containment rule
+  wearing a style rule's clothes — a name that cannot carry a separator cannot
+  leave its parent. `test/conventions.test.js` ratchets this literal to this file.
+- **The reserved list**, `BUILTIN_COMPONENTS`. The six builtins, refused in either
+  tier for either actor with no override, because `seedBuiltins` only repairs a
+  directory whose `meta.json` says `builtin: true`.
+
+`assertComponentName(name, { what, reserved })` throws a `userFacing` error
+carrying `code: 'name-invalid' | 'name-reserved'`, so each caller maps one
+refusal onto its own wire shape without re-deciding what is legal:
+`POST /api/components` answers 400 for the first and 200 `{ok:false, reserved,
+hint}` for the second (the drawer and `save_component` read `.ok`, not the
+status), the packs route uses its `reject()` envelope, the CLI lets it throw.
+`isComponentName` is the non-throwing half, for `validateManifest`, which
+collects every problem instead of stopping at the first.
+
+The list lives in **core**, not `lib/server`, because `lib/packs` needs it too and
+`lib/packs → lib/server` is backwards; `lib/server/builtins.js` re-exports it as
+`BUILTINS` and keeps `seedBuiltins`. Pack names share the grammar but **not** the
+reserved list (a pack is checked against reserved *skill* names, derived from
+`lib/update/managed-files`, which core must not import) — which is why
+`reserved` is an explicit argument rather than an assumption.
+
+Two checks deliberately stay outside the engine: `planInstall` refuses when the
+destination's `meta.json` already says `builtin: true` (an fs check, not a name
+check), and `verifyPack` re-validates a *recorded* unit name at read time,
+skipping rather than throwing so `pack remove` over a damaged record degrades.
 
 ### Shared small homes
 
