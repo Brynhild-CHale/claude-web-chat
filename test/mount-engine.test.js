@@ -6,8 +6,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
+const { withServer } = require('../test-support/helpers');
 const { createBus } = require('../lib/core/bus');
-const { setMount, removeMount, emitMount } = require('../lib/server/domain/mounts');
+const { setMount, removeMount, emitMount, RESERVED_IDS, isReservedId } = require('../lib/server/domain/mounts');
 
 const freshState = () => ({ mounts: new Map(), store: {} });
 
@@ -109,4 +112,59 @@ test('mounts engine: emitMount re-broadcasts the pane as it stands without touch
   assert.equal(seen[0].kind, 'render');
   assert.equal(seen[0].source, 'queue-revert');
   assert.equal(emitMount(state, bus, 'gone'), false);
+});
+
+// ── reserved ids (the server half of fe-shell-1) ─────────────────────────────
+
+test('mounts engine: RESERVED_IDS covers every static id in public/index.html', () => {
+  // Derived, not transcribed: the chrome grows, and a set that has to be kept in
+  // sync by hand is the set that falls behind. Any id the shell declares in its
+  // own markup is an id a mount must not be allowed to claim.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const declared = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(declared.length > 40, `expected the shell to declare many ids, found ${declared.length}`);
+  const missing = declared.filter((id) => !RESERVED_IDS.has(id));
+  assert.deepEqual(missing, [], 'add these to RESERVED_IDS in lib/server/domain/mounts.js');
+});
+
+test('mounts engine: RESERVED_IDS covers the ids the shell creates lazily', () => {
+  // Invisible to the derivation above — they exist only in the modules that
+  // build them, so they are listed by hand and pinned here.
+  for (const id of [
+    'branch-picker', 'reaim-note', 'wc-theme-global-css', 'wc-theme-node-css',
+    'pk-url', 'pk-global', 'service-trust', 'pin-layer',
+  ]) assert.ok(isReservedId(id), `${id} must be reserved`);
+  assert.ok(isReservedId('cmd-opt-0'), 'the palette rows are a family, not a literal');
+  assert.ok(isReservedId('cmd-opt-12'));
+  assert.ok(!isReservedId('cmd-opt-x'));
+  assert.ok(!isReservedId('tab-capture:main:bf705e83'), 'a namespaced capture id is not chrome');
+});
+
+test('mounts engine: a reserved id is refused without touching the pane set', () => {
+  const state = freshState();
+  const bus = createBus();
+  const r = setMount(state, bus, { id: 'main', html: '<p>hijack</p>' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reserved, true);
+  assert.match(r.hint, /reserved/);
+  assert.equal(state.mounts.size, 0);
+  // The capture policy is not an override: it forces past an OWNER, not the id.
+  assert.equal(setMount(state, bus, { id: 'status', html: '<p>x</p>', policy: 'capture', force: true }).ok, false);
+});
+
+test('mounts engine: render and use both refuse a reserved id with 200 + ok:false', async (t) => {
+  const { api } = await withServer(t);
+  // 200 + {ok:false} is the tree's refusal convention (routes/packs.js): Claude's
+  // tools and public/app/drawer.js both read `.ok`, so a 4xx would flash nothing.
+  const r = await api.post('/api/render', { id: 'main', html: '<p>hijack</p>' });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.reserved, true);
+
+  await api.post('/api/components', { name: 'w-res', source: '<p>W</p>' });
+  const u = await api.post('/api/components/w-res/use', { id: 'overlay' });
+  assert.equal(u.status, 200);
+  assert.equal(u.json.reserved, true);
+
+  assert.deepEqual((await api.get('/api/mounts')).json.mounts, [], 'neither refusal left a pane behind');
 });

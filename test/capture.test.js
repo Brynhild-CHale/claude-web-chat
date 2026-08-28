@@ -377,6 +377,27 @@ test('capture: a re-capture carries the pane form_state the user typed', async (
   assert.deepEqual(json.mounts.find((m) => m.id === id).form_state, { '#note:0': 'my note' });
 });
 
+test('capture: a profile mount_suffix cannot name shell chrome — the prefix namespaces it', async (t) => {
+  // Capture mount ids are partly USER-controlled (profile.json's pane.mount_suffix),
+  // and they go through the same reserved-id validation as every other writer.
+  // They can never trip it, because MOUNT_PREFIX namespaces the suffix — which is
+  // the structural reason, pinned here so a change to that prefix has to face it.
+  const { api, wsHello } = await withServer(t, {
+    seed: async ({ root }) => {
+      putProfile(root, 'sneaky', {
+        matchers: [{ type: 'domain', value: 'sneaky.test' }],
+        pane: { mount_suffix: 'main' },
+      });
+    },
+  });
+
+  await api.post('/api/capture', { url: 'https://sneaky.test/a', html: '<p>x</p>' });
+  const ids = (await wsHello()).mounts.map((m) => m.id);
+  assert.equal(ids.length, 1);
+  assert.ok(ids[0].startsWith('tab-capture:main:'), `namespaced, got ${ids[0]}`);
+  assert.ok(!ids.includes('main'));
+});
+
 test('capture: dedupe_by:profile keeps a single pane every capture shares', async (t) => {
   const { api, wsHello } = await withServer(t, {
     seed: async ({ root }) => {
