@@ -77,10 +77,6 @@ const BASELINE = {
   'lib/cli/commands/hub.js => lib/hub/index.js':
     'the hub subcommand runs the hub in-process',
 
-  // `profile` renders a capture pane to test a profile without a daemon.
-  'lib/cli/commands/profile.js => lib/server/routes/capture.js':
-    'profile reuses the capture pane renderer so CLI output matches the surface',
-
   // The two hooks are MCP-adjacent by construction: they talk to the same daemon
   // through the same spawn-injecting shim the 23 tools use.
   'lib/hooks/turn-begin.js => lib/mcp/client.js':

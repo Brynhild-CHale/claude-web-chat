@@ -159,6 +159,25 @@ test('capture: inspect raw — full (capped), selector, query, profile-rerun', a
   assert.equal(missing.status, 404);
 });
 
+test('capture: the /raw profile re-run gets the capture URL, so url-derived fields resolve', async (t) => {
+  // inspectRaw used to call runProfile with no url at all, so every url-derived
+  // field of a re-run distillate came back empty while the ingest path (which
+  // does pass url) filled them in. The route holds rec.url; it must pass it.
+  const { api } = await withServer(t, {
+    seed: ({ root }) => putProfile(root, 'urlecho', {
+      matchers: [{ type: 'domain', value: 'echo.test' }],
+      extractJs: 'module.exports = ({ url }) => ({ kind: "urlecho", url, deep: url.split("/").pop() });',
+    }),
+  });
+
+  await api.post('/api/capture', { url: 'https://echo.test/a/b/page.html', html: TEXT_HTML, profile: 'urlecho' });
+
+  const rerun = await api.get('/api/captures/cap1/raw?profile=urlecho');
+  assert.equal(rerun.json.mode, 'profile');
+  assert.equal(rerun.json.result.url, 'https://echo.test/a/b/page.html', 'the re-run sees the capture URL');
+  assert.equal(rerun.json.result.deep, 'page.html');
+});
+
 test('capture: sets the tab_capture signal and emits the capture event', async (t) => {
   // Channels-only wake: Claude no longer arms /api/wait, so the
   // capture's wake surface is probed directly — the store signal a channel/driver

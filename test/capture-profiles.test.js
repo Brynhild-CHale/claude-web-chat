@@ -28,7 +28,7 @@ process.env.HOME = FAKE_HOME;
 process.env.USERPROFILE = FAKE_HOME;
 
 const reg = require('../lib/capture/profiles');
-const { defaultReduce } = require('../lib/server/routes/capture');
+const { defaultReduce, renderProfilePane } = require('../lib/capture/pane');
 const { resolvePaths } = require('../lib/server/paths');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'profiles');
@@ -247,14 +247,19 @@ for (const name of BUNDLED_NAMES) {
     const pane = profile.pane;
     assert.ok(pane && typeof pane.render === 'function', 'profile carries a renderable pane');
 
-    // Reduced view is derived from the SAME distilled payload (Contract 6) via the
-    // pane's own reduce(), or the platform default when a pane omits it.
+    // Render the way the surface does — through renderProfilePane, which derives
+    // the reduced view from the SAME distilled payload (Contract 6) via the
+    // pane's own reduce() or the platform default, injects the helper ctx
+    // (`esc`/`collapse`/`safeHref`, so a bundle need not hand-roll them), and
+    // adds the mode wrapper. Calling pane.render bare would test a contract
+    // nothing in the product uses.
     const reduced = pane.reduce ? pane.reduce(out.distilled) : defaultReduce(out.distilled);
+    assert.ok(reduced && typeof reduced === 'object', 'a reduced payload is derivable');
 
     for (const mode of ['reduced', 'expanded']) {
       let rendered;
       assert.doesNotThrow(() => {
-        rendered = pane.render(out.distilled, { reduced, mode });
+        rendered = renderProfilePane(profile, out.distilled, { mode, mount_id: 'x', profile: name });
       }, `pane.render did not throw in ${mode} mode`);
       assert.ok(
         typeof rendered === 'string' && rendered.trim().length > 0,
@@ -263,7 +268,7 @@ for (const name of BUNDLED_NAMES) {
     }
 
     // The pane declares a distinct expanded region, so the two modes really differ.
-    const full = pane.render(out.distilled, { reduced, mode: 'expanded' });
+    const full = renderProfilePane(profile, out.distilled, { mode: 'expanded', mount_id: 'x', profile: name });
     assert.match(full, /data-wc-when="expanded"/, 'pane declares an expanded-mode region');
   });
 }
@@ -304,4 +309,125 @@ test('bundled profile "reddit": old.reddit DOM distills to the same shape via th
     d.comments.every((c) => c.author && c.text && c.permalink),
     'each comment carries author + text + permalink',
   );
+});
+
+// ---------------------------------------------------------------------------
+// inspectRaw's profile re-run threads the capture URL
+// ---------------------------------------------------------------------------
+
+test('inspectRaw: the profile re-run receives the page URL, so url-derived fields resolve', () => {
+  loadBundledOnly();
+  const html = readFixture('youtube');
+  const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+
+  // With no url the youtube extractor has nothing to parse an id out of, and
+  // videoId/thumbnail come back null while the ingest path fills them in.
+  const scoped = reg.inspectRaw(html, { url, profile: 'youtube' });
+  assert.equal(scoped.mode, 'profile');
+  assert.equal(scoped.result.videoId, 'dQw4w9WgXcQ', 'videoId parsed from the threaded url');
+  assert.match(scoped.result.thumbnail, /i\.ytimg\.com/, 'thumbnail derived from that id');
+  assert.equal(scoped.result.url, url, 'the distillate carries the page url');
+});
+
+// ---------------------------------------------------------------------------
+// Entity decoding across every bundled extractor
+// ---------------------------------------------------------------------------
+
+// Each fixture carries the same marker phrase — "Ailurus &amp; Ailuropoda&nbsp;differ"
+// — somewhere the profile reads. Every extractor used to walk `rawText` (the RAW
+// source text) rather than `.text`, so the entities survived into the distillate:
+// as literal `&amp;`/`&nbsp;` where the field is plain text, and double-escaped
+// as `&amp;amp;` where the extractor escapes what it read. gmail papered over it
+// with a hand-rolled decode that collapsed every unlisted named entity to a
+// space and ignored numeric entities entirely.
+for (const name of BUNDLED_NAMES) {
+  test(`bundled profile "${name}": HTML entities are decoded exactly once`, () => {
+    loadBundledOnly();
+    const spec = SPECS[name];
+    const out = reg.runProfile(reg.getProfile(name), { url: spec.url, html: readFixture(name) });
+    const json = JSON.stringify(out.distilled);
+
+    assert.match(json, /Ailurus &(?:amp;)? ?Ailuropoda/, 'the marker phrase reached the distillate');
+    assert.doesNotMatch(json, /&amp;(?:amp|nbsp|lt|gt|quot|#\d+);/,
+      'nothing is escaped twice (the signature of escaping raw source text)');
+    assert.doesNotMatch(json, /&nbsp;|&#8217;/,
+      'no undecoded entity survives into the distillate');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// URL schemes across every bundled extractor
+// ---------------------------------------------------------------------------
+
+// The wikipedia and reddit fixtures carry an <a href="javascript:alert(1)"> in a
+// field whose HTML the pane injects unescaped. Each bundle used to carry its own
+// URL helper — three variants, none of which gated a scheme — so the href
+// reached the distillate and the pane verbatim.
+for (const name of BUNDLED_NAMES) {
+  test(`bundled profile "${name}": no javascript:/data: URL reaches the distillate or the pane`, () => {
+    loadBundledOnly();
+    const spec = SPECS[name];
+    const profile = reg.getProfile(name);
+    const out = reg.runProfile(profile, { url: spec.url, html: readFixture(name) });
+
+    assert.doesNotMatch(JSON.stringify(out.distilled), /javascript:|vbscript:|href=.?data:/i,
+      'the distillate carries no refused scheme');
+    for (const mode of ['reduced', 'expanded']) {
+      const html = renderProfilePane(profile, out.distilled, { mode, mount_id: 'x', profile: name });
+      assert.doesNotMatch(html, /javascript:|vbscript:/i, `the ${mode} pane carries none either`);
+    }
+  });
+}
+
+// Both members of the kit refuse an executable scheme. They differ on
+// RESOLUTION — safeHref returns '' for anything it cannot resolve or that lands
+// outside its allowlist; absolutize hands an unresolvable value back as written,
+// because bundles use it for links they already trust — but neither may emit
+// `javascript:`. Deleting that scheme from absolutize's passthrough list did not
+// close it on its own: the `new URL` fallback underneath returned
+// `javascript:alert(1)` unchanged, with or without a base.
+test('helper kit: safeHref AND absolutize both refuse javascript:/vbscript:', () => {
+  const { safeHref, absolutize } = require('../lib/capture/profiles/util');
+  const PAGE = 'https://x.test/a/b/page.html';
+  for (const evil of ['javascript:alert(1)', 'java\tscript:alert(1)', 'VBScript:x', ' javascript:alert(1)']) {
+    assert.equal(safeHref(evil, PAGE), '', `safeHref refuses ${JSON.stringify(evil)} with a base`);
+    assert.equal(safeHref(evil, ''), '', `safeHref refuses ${JSON.stringify(evil)} with no base`);
+    assert.equal(absolutize(evil, PAGE), '', `absolutize refuses ${JSON.stringify(evil)} with a base`);
+    assert.equal(absolutize(evil, ''), '', `absolutize refuses ${JSON.stringify(evil)} with no base`);
+  }
+  // Leniency is intact everywhere else.
+  assert.equal(absolutize('c.html', PAGE), 'https://x.test/a/b/c.html', 'resolves against the page, not the origin');
+  assert.equal(absolutize('c.html', ''), 'c.html', 'unresolvable values still come back as written');
+  assert.equal(absolutize('data:image/png;base64,AAA', ''), 'data:image/png;base64,AAA', 'data: still passes the lenient resolver');
+  assert.equal(safeHref('data:image/png;base64,AAA', PAGE), '', 'but not the gated one');
+});
+
+// youtube's decodeHref unwraps /redirect?...&q=<real-url> before resolving, and
+// the unwrapped value is attacker-controllable text off the page. The generic
+// scan above cannot pin it: the description-links loop drops anything that is
+// not http(s) anyway, so the only field where an ungated unwrap would surface is
+// the channel URL, which the fixture needs populated. Pin it directly.
+test('bundled profile "youtube": an unwrapped /redirect?q= payload is gated, not trusted', () => {
+  loadBundledOnly();
+  const html = `<html><body><ytd-app><ytd-watch-metadata>
+    <h1>t</h1>
+    <div id="owner"><ytd-channel-name>
+      <a href="/redirect?q=javascript%3Aalert(1)">Chan</a>
+    </ytd-channel-name></div>
+  </ytd-watch-metadata></ytd-app></body></html>`;
+  const out = reg.runProfile(reg.getProfile('youtube'), {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', html,
+  });
+  assert.equal(out.distilled.channel.url, '', 'the unwrapped javascript: payload is refused, not emitted');
+  assert.equal(out.distilled.channel.name, 'Chan', 'the channel name survives — only the href is dropped');
+});
+
+test('bundled profiles: the refused link keeps its text', () => {
+  loadBundledOnly();
+  for (const name of ['wikipedia', 'reddit']) {
+    const spec = SPECS[name];
+    const out = reg.runProfile(reg.getProfile(name), { url: spec.url, html: readFixture(name) });
+    assert.match(JSON.stringify(out.distilled), /ENTITY_JS_LINK/,
+      `${name}: the link text survives, only the href is dropped`);
+  }
 });

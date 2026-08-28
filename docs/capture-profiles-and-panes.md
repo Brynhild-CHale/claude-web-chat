@@ -70,9 +70,20 @@ A **profile** is now a bundle:
 profile/
   profile.json     # metadata + matchers + pane pairing + interaction steps
   interact.js      # OPTIONAL — compiled in-page interaction (steps + guards). Runs in the tab. (new)
-  extract.js       # module.exports = ({ url, html, root }) => distilled   (existing contract)
+  extract.js       # module.exports = ({ url, html, root, ...helpers }) => distilled
   pane.js          # module.exports = { render(distilled, ctx) , reduce(distilled) }  (new)
 ```
+
+Both entry points are handed the same helper kit — `esc` (the five-character
+HTML escaper), `collapse`, `safeHref(href, pageUrl)` and the lenient
+`absolutize(href, base)` (which hands an unresolvable value back unchanged rather
+than empty, and refuses `javascript:`/`vbscript:` but gates nothing else — reach
+for `safeHref` unless you specifically want that leniency). A bundle lives in `.web-chat/profiles/<name>/` or
+`~/.web-chat/profiles/<name>/`, outside the package with no require path back
+into it, so **ctx injection is the only mechanism a profile has** to reach a
+shared helper — which is why nine hand-rolled `esc` copies (four character sets'
+worth) and three incompatible `absolutize` copies accumulated before it existed.
+Take them off the argument; do not re-declare them.
 
 `profile.json`:
 
@@ -138,7 +149,8 @@ The pane is paired to the profile and rendered by `pane.js` against the profile'
 
 ```js
 module.exports = {
-  // full render — receives the complete distilled payload + pane ctx (mode, store helpers)
+  // full render — runs SERVER-SIDE; receives the complete distilled payload plus
+  // ctx { mode, reduced, mount_id, profile, esc, collapse, safeHref, absolutize }
   render(distilled, ctx) { /* returns HTML/JS string */ },
   // OPTIONAL: programmatic reduction of the SAME payload for reduced mode.
   // If omitted, reduced mode is a default summarization (title + first-N rows/lines).
@@ -160,7 +172,9 @@ module.exports = {
 
 ### Capture-route change
 
-In `lib/server/routes/capture.js`, after `runProfile`:
+In `lib/server/routes/capture.js`, after `runProfile` (the rendering itself lives
+in `lib/capture/pane.js`, which the route and `claude-web-chat profile dry-run`
+both call):
 
 1. Resolve the profile's paired pane (project > global; none → generic card).
 2. Render it into `tab-capture:<suffix>` with `owner: "service:tab-stream"`,
