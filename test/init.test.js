@@ -391,6 +391,35 @@ test('existing + no TTY: remediations PRINT their command, they do not run', asy
   assert.match(text, /not a terminal — run `claude-web-chat on` yourself/);
 });
 
+// distribution-4. An unmerged `.new` beside a settled file is unfinished
+// business, so init reports it — but `claude-web-chat install` cannot resolve
+// it (the merge is by hand), so init must not offer to "refresh" it. Offering
+// would run a command that touches nothing and let the user believe the sidecar
+// had been dealt with.
+test('existing + --yes: a pending .new is reported but never "refreshed"', async (t) => {
+  const root = installedProject(t);
+
+  const installCalls = [];
+  const log = sink();
+  await init(['--yes'], {
+    cwd: root, log,
+    ...inertDeps({
+      install: async (...a) => { installCalls.push(a); },
+      reconcile: () => [{
+        dest: '.claude/rules/web-chat.md', tpl: 'rules/web-chat.md',
+        action: 'kept-edited', sidecar: '.claude/rules/web-chat.md.new', pending: true,
+      }],
+    }),
+    inRoot: async (r, fn) => fn(),
+  });
+
+  assert.equal(installCalls.length, 0, 'install would do nothing for a pending sidecar');
+  const text = log.text();
+  assert.match(text, /web-chat\.md\.new/, 'the sidecar is named');
+  assert.match(text, /delete/i, 'and so is the step that clears it');
+  assert.doesNotMatch(text, /is behind the package/, 'it is not a refreshable drift row');
+});
+
 test('existing + --yes: the SAFE defaults are taken, the dangerous ones still are not', async (t) => {
   const root = installedProject(t);
   fs.writeFileSync(path.join(root, '.web-chat', 'disabled'), '');
