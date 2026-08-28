@@ -142,6 +142,69 @@ test('simplifyDom: strips scripts/iframes/handlers/site-CSS, keeps semantic stru
   assert.equal(/newsletter/i.test(b), false, 'aside promo dropped');
 });
 
+// ---------------------------------------------------------------------------
+// URL handling: the page URL is the base, and the scheme is gated
+// ---------------------------------------------------------------------------
+
+// One deep page, one of every href shape a real page throws at a walker.
+const LINKS_URL = 'https://x.example.com/a/b/page.html';
+const LINKS_HTML = '<html><body><article>'
+  + '<p><a href="c.html">rel</a> <a href="../d.html">up</a> <a href="/root.html">root</a>'
+  + ' <a href="//cdn.example.net/f.html">proto</a> <a href="https://other.example/g">abs</a></p>'
+  + '<p><a href="javascript:alert(1)">js</a> <a href="java&#9;script:alert(2)">jstab</a>'
+  + ' <a href="data:text/html,<b>x</b>">data</a></p>'
+  + '<img src="img/pic.png" alt="pic">'
+  + '</article></body></html>';
+
+test('article/simplify: document-relative hrefs resolve against the page URL, not its origin', () => {
+  const root = reg.safeParse(LINKS_HTML);
+  const hrefs = article.extract({ url: LINKS_URL, root })
+    .blocks.flatMap((b) => (b.links || []).map((l) => l.href));
+
+  assert.ok(hrefs.includes('https://x.example.com/a/b/c.html'), 'c.html resolves beside the page');
+  assert.ok(hrefs.includes('https://x.example.com/a/d.html'), '../d.html walks up one directory');
+  assert.ok(hrefs.includes('https://x.example.com/root.html'), 'a root-relative href still hits the root');
+  assert.ok(hrefs.includes('https://cdn.example.net/f.html'), 'protocol-relative href takes the page scheme');
+  assert.ok(hrefs.includes('https://other.example/g'), 'an absolute href is untouched');
+
+  // The image src takes the same base.
+  const img = article.extract({ url: LINKS_URL, root: reg.safeParse(LINKS_HTML) })
+    .blocks.find((b) => b.type === 'image');
+  assert.equal(img.src, 'https://x.example.com/a/b/img/pic.png', 'image src resolves beside the page');
+
+  const b = simplifyDom(reg.safeParse(LINKS_HTML), { url: LINKS_URL }).bodyHtml;
+  assert.match(b, /href="https:\/\/x\.example\.com\/a\/b\/c\.html"/, 'the reader render resolves the same way');
+  assert.match(b, /href="https:\/\/x\.example\.com\/a\/d\.html"/);
+  assert.match(b, /src="https:\/\/x\.example\.com\/a\/b\/img\/pic\.png"/);
+});
+
+test('article/simplify/markdown: javascript: and data: hrefs are dropped, their text kept', () => {
+  const d = article.extract({ url: LINKS_URL, root: reg.safeParse(LINKS_HTML) });
+  const hrefs = d.blocks.flatMap((b) => (b.links || []).map((l) => l.href));
+  assert.equal(hrefs.some((h) => /javascript:/i.test(h)), false, 'no javascript: href in the distillate');
+  assert.equal(hrefs.some((h) => /^data:/i.test(h)), false, 'no data: href in the distillate');
+  // The words survive — only the href is refused.
+  const paraText = d.blocks.filter((b) => b.type === 'para').map((b) => b.text).join(' ');
+  assert.match(paraText, /js jstab data/, 'the link text is still in the distilled text');
+
+  const b = simplifyDom(reg.safeParse(LINKS_HTML), { url: LINKS_URL }).bodyHtml;
+  assert.doesNotMatch(b, /javascript:/i, 'the reader render emits no javascript: href');
+  assert.doesNotMatch(b, /href="data:/i, 'the reader render emits no data: href');
+  assert.match(b, /<p>js jstab data<\/p>/, 'link text kept in the reader render');
+
+  // The tab-obfuscated spelling is normalised by `new URL` before the scheme is
+  // read, so it is refused too — the old regex gate let it through.
+  const doc = simplifiedDocument({ title: 'T', url: LINKS_URL, bodyHtml: b });
+  assert.doesNotMatch(doc, /javascript:/i, 'nor does the sidecar reader document');
+
+  const { toMarkdown, toSafeHtml } = require('../lib/capture/markdown');
+  const md = toMarkdown('<p><a href="javascript:alert(1)">js</a> <a href="c.html">rel</a></p>', { baseUrl: LINKS_URL });
+  assert.doesNotMatch(md, /javascript:/i, 'markdown drops it too');
+  assert.match(md, /\[rel\]\(https:\/\/x\.example\.com\/a\/b\/c\.html\)/, 'and resolves against the page URL');
+  assert.doesNotMatch(toSafeHtml('<a href="java\tscript:alert(1)">x</a>'), /script:/i,
+    'the tab-obfuscated spelling is refused with no base at all');
+});
+
 test('simplifyDom: enforces the byte cap', () => {
   const s = simplifyDom(reg.safeParse(ARTICLE_HTML), { url: ARTICLE_URL, cap: 300 });
   assert.equal(s.truncated, true, 'truncated when the body exceeds the cap');
