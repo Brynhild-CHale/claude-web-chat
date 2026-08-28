@@ -22,6 +22,12 @@ const { MANAGED_FILES, baselinePath } = require('../lib/update/managed-files');
 const { claudePaths, projectPaths } = require('../lib/core/paths');
 const { withTempHome } = require('../test-support/helpers');
 
+// The cross-command guardrail below runs `doctor`, which probes the capture hub
+// on the fixed hub port. Pin it, for the whole file, at a port nothing is
+// listening on — exactly as test/doctor.test.js does — so the check is
+// deterministic and never picks up a hub the developer happens to be running.
+process.env.WEB_CHAT_HUB_PORT = '65533';
+
 function tmpRoot(prefix = 'wc-reg-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
