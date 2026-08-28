@@ -13,13 +13,6 @@ const { withServer, withTempHome } = require('../test-support/helpers');
 const { resolveLatest, cachePath, compareVersions } = require('../lib/update/check');
 const pkg = require('../package.json');
 
-const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred, ms = 2000) {
-  const start = Date.now();
-  while (Date.now() - start < ms) { if (await pred()) return true; await settle(20); }
-  return await pred();
-}
-
 // Seed the update-check cache with a FRESH timestamp so resolveLatest returns it
 // straight from cache — no network fetch. (HOME is sandboxed by withTempHome, so
 // cachePath() points into the throwaway home.)

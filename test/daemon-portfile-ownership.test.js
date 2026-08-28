@@ -20,7 +20,7 @@
 // production server on port 0 with start({writePortfile:false}), so the
 // machine-wide side effects of the real boot (ensureHub on its fixed port, the
 // 5173+ port walk) never run. The portfile and the registry entry are then
-// claimed exactly as start() would have claimed them, under a FAKE HOME shared
+// claimed exactly as start() would have claimed them, under the harness sandbox HOME shared
 // by this process and both children — nothing here touches the developer's real
 // registry. The RELEASE path under test is the production one.
 
@@ -31,13 +31,12 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { once } = require('node:events');
-// Redirect ~/.web-chat before the registry module resolves it. node --test runs
-// each file in its own process, so this only affects this suite.
-const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-own-home-'));
-process.env.HOME = FAKE_HOME;
-process.env.USERPROFILE = FAKE_HOME;
-process.on('exit', () => { try { fs.rmSync(FAKE_HOME, { recursive: true, force: true }); } catch {} });
-
+// test-support/sandbox (loaded through helpers, and through --import before
+// that) has already pointed HOME/USERPROFILE at a throwaway dir, so ~/.web-chat
+// is redirected before the registry module resolves it — and both children
+// inherit process.env, so all three processes share that one fake home. This
+// file used to mint its own; the sandbox does it for every file now.
+const { waitUntil } = require('../test-support/helpers');
 const portfiles = require('../lib/core/portfiles');
 const { readInstances, instanceId } = require('../lib/util/registry');
 
@@ -66,17 +65,6 @@ function reapAll() {
 }
 process.on('exit', reapAll);
 
-const deadline = (ms) => Date.now() + ms;
-async function until(pred, ms, what) {
-  const by = deadline(ms);
-  while (Date.now() < by) {
-    const v = await pred();
-    if (v) return v;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`timed out waiting for ${what}`);
-}
-
 // Boot a production daemon into an EXISTING root, so two of them can share one.
 async function bootInto(t, root, home) {
   const script = path.join(root, `daemon-${kids.length}.js`);
@@ -96,9 +84,9 @@ async function bootInto(t, root, home) {
     once(child, 'exit').then(() => { throw new Error(`daemon exited during boot: ${err}`); }),
   ]);
   // The record must name this daemon before the test proceeds.
-  await until(
+  await waitUntil(
     () => { const r = portfiles.readPortfile('server', { root }); return r && r.pid === child.pid; },
-    5000, `daemon ${child.pid} to claim the portfile`,
+    { timeout: 5000, interval: 50, what: `daemon ${child.pid} to claim the portfile` },
   );
   return { child, port: msg.port };
 }
@@ -113,7 +101,7 @@ async function shutdown(child) {
 }
 
 test('an orphaned daemon does not delete the live daemon\'s records', async (t) => {
-  const home = FAKE_HOME;
+  const home = process.env.HOME;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-own-'));
   fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
   t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
