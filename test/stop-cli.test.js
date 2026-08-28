@@ -57,6 +57,8 @@ srv.start({ writePortfile: false }).then(() => {
 //   deaf       — 404s /api/shutdown (an old daemon, or a broken one); SIGTERM works
 //   ack        — acks /api/shutdown and then does nothing at all; SIGTERM works
 //   unkillable — 404s, and ignores SIGTERM entirely
+//   orphan     — 404s, and exits on SIGTERM WITHOUT dropping its portfile (the
+//                shape a daemon leaves behind when it dies abruptly)
 const STUB_DAEMON = `
 const http = require('http');
 const { writePortfileAt, deletePortfileAt } = require(${JSON.stringify(path.join(REPO, 'lib/core/portfiles'))});
@@ -85,6 +87,7 @@ srv.listen(0, '127.0.0.1', () => {
   writePortfileAt(dir, { pid: process.pid, port: srv.address().port });
 });
 if (mode === 'unkillable') process.on('SIGTERM', () => {});
+else if (mode === 'orphan') process.on('SIGTERM', () => { process.exit(0); });
 else process.on('SIGTERM', () => { deletePortfileAt(dir); process.exit(0); });
 setInterval(() => {}, 1000);
 `;
@@ -319,4 +322,25 @@ test('stop: a SIGTERM landing mid-shutdown must not truncate it — no stale rec
   assert.equal(res.ok, true, 'a shutdown that worked is not reported as a failure');
   assert.doesNotMatch(log.text(), /survived both/);
   assert.doesNotMatch(log.text(), /kill -9/, 'never advise killing a pid that is already gone');
+});
+
+// `stop`'s reporting, against a daemon that dies without releasing. "Portfile
+// present" is not the same fact as "daemon running", and conflating them is how
+// a correct shutdown got reported as a wedge — with advice (`kill -9 <pid>`)
+// that is noise at best and, once the OS has recycled that pid, aimed at
+// somebody else's process.
+test('stop: a daemon that exits without releasing is reaped, not called a survivor', async (t) => {
+  const { root, info, child, portfile } = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'orphan' });
+  const exited = once(child, 'exit');
+
+  const log = collector();
+  const res = await stop([], { root, log, signalWaitMs: 1_200 });
+  await exited;
+
+  assert.equal(portfiles.isPidAlive(info.pid), false, 'the daemon really is gone');
+  assert.equal(fs.existsSync(portfile), false, 'stop reaps the record its dead owner left behind');
+  assert.equal(res.ok, true, 'the server is stopped — reporting that as a failure breaks restart');
+  assert.doesNotMatch(log.text(), /survived both/);
+  assert.doesNotMatch(log.text(), /kill -9/, 'never advise killing a pid that is not running');
+  assert.match(log.text(), /not guaranteed/, 'and still say the draft snapshot is not guaranteed');
 });
