@@ -349,14 +349,18 @@ const PATTERNS = [
     // verbatim — and it would pass every behavioural test in
     // test/pack-transaction.test.js, because they all go through
     // installFromStage.
-    name: 'copyFileSync/unlinkSync/rmSync in the pack orchestrator and planner',
+    name: 'copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync in the pack orchestrator and planner',
     home: 'lib/packs/tree.js — applyPlan / removeUnits, under `beginJournal`',
     what: 'mutating the installed tree during a pack operation',
     files: [
       'lib/packs/install.js',
       'lib/packs/plan.js',
     ],
-    re: /\b(copyFileSync|unlinkSync|rmSync)\(/g,
+    // Every way a second apply path could be spelled, not just the three the
+    // first one happened to use: a copy written with `cpSync`, or with
+    // `writeFileSync(readFileSync(...))`, or a move written with `renameSync`,
+    // is the same missing undo list. Both files are at zero for all of them.
+    re: /\b(copyFileSync|cpSync|writeFileSync|renameSync|unlinkSync|rmSync|rmdirSync)\(/g,
     baseline: {},
   },
 ];
