@@ -2,11 +2,13 @@
 //
 // docs/extending.md draws it:
 //
-//     entry points   cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
-//                          │  import ↓ only
-//     lib/client/          the one daemon HTTP client
-//                          │  import ↓ only
-//     lib/core/            zero deps on the rest of lib/
+//     entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
+//                              │  import ↓ only      (never each other)
+//     shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
+//                              │  import ↓ only      (may import each other)
+//     lib/client/        the one daemon HTTP client
+//                              │  import ↓ only
+//     lib/core/          zero deps on the rest of lib/
 //
 // plus two sentences that carry as much weight as the picture: "entry points
 // never reach into each other's internals", and "a helper that seems to belong

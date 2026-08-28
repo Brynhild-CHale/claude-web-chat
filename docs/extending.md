@@ -81,11 +81,15 @@ rest rely on this doc and review.
 ## Dependency direction (what may import what)
 
 ```
-entry points   cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
-                     │  import ↓ only
-lib/client/          the one daemon HTTP client
-                     │  import ↓ only
-lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/)
+entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
+                         │  import ↓ only      (never each other)
+shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
+                         │  import ↓ only      (may import each OTHER — that is
+                         │                      composition, not direction)
+lib/client/        the one daemon HTTP client
+                         │  import ↓ only
+lib/core/          paths · portfiles · html · versions · cors · channels
+                                              (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -94,6 +98,9 @@ lib/core/            paths · portfiles · cors   (zero deps on the rest of lib/
   not in the client.
 - `lib/client` imports `core/*` (+ `util/daemon`). Everything else imports
   `lib/client` and `core/*`; entry points never reach into each other's internals.
+- A **shared library** implements one concern and is consumed by the entry
+  points. It may import another shared library (`lib/packs` uses `lib/update`'s
+  archive reader); it may never import an entry point.
 - A helper that seems to belong in two layers belongs in the lower one.
 
 **`test/dependency-direction.test.js` enforces this.** It parses every relative
