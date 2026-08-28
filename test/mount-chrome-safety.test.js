@@ -15,7 +15,8 @@
 //   2. a render whose target names chrome lands in the surface anyway;
 //   3. a clear whose id names chrome removes nothing;
 //   4. ...and the real behaviour this must not break: a re-render replaces in
-//      place, and a stale bare mount host is still reaped.
+//      place, and a stale bare mount host is still reaped;
+//   5. one mount that throws does not abort the rest of the `hello` frame.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -144,6 +145,31 @@ test('a legitimate re-render still replaces in place, and a stale bare host is s
   await tick();
   assert.equal(legacy.isConnected, false, 'the stale bare mount host was removed');
   assert.ok(mainEl.querySelector('[data-pane-id="legacy-host"]'), 'and its id now belongs to a real pane');
+});
+
+test('one mount that throws does not abort the rest of a hello', async () => {
+  const realAttach = W.__wcMount.attachAndExtract;
+  const realError = console.error;
+  console.error = () => {};
+  W.__wcMount.attachAndExtract = (host, html) => {
+    if (String(html).includes('BOOM')) throw new Error('mount blew up');
+    return realAttach(host, html);
+  };
+  try {
+    frame({
+      type: 'hello', store: {}, theme: null, activeTheme: null, active: 'n1', lock: null, project: 'after-boom',
+      mounts: [
+        { id: 'bad', html: '<p>BOOM</p>', target: 'main', params: {}, pane_state: {} },
+        { id: 'good', html: '<p>fine</p>', target: 'main', params: {}, pane_state: {} },
+      ],
+    });
+    await tick();
+    assert.ok(mainEl.querySelector('[data-pane-id="good"]'), 'the mount after the failing one still rendered');
+    assert.equal(W.document.title, 'after-boom — web-chat', 'the rest of the hello frame still ran');
+  } finally {
+    W.__wcMount.attachAndExtract = realAttach;
+    console.error = realError;
+  }
 });
 
 test.after(async () => { await new Promise((r) => setTimeout(r, 400)); restore(); });

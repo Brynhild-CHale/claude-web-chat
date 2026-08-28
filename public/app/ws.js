@@ -10,7 +10,7 @@ import {
   applyGlobalTheme, applyNodeTheme, applyPaneTheme, setActiveNodeTheme, getActiveNodeTheme,
 } from './theme.js';
 import {
-  mount, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
+  mount, mountAll, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
   survivesClear,
 } from './mounts.js';
 import {
@@ -65,7 +65,7 @@ const HANDLERS = {
     store.merge(msg.store);
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
-    for (const mt of (msg.mounts || [])) mount(mt);
+    mountAll(msg.mounts);
     // mount() reconciles the minbar and the zero state on its way out — but with
     // ZERO mounts it never runs, which is exactly the first-open case the zero
     // state exists for. Reconcile explicitly once hello's mounts have settled.

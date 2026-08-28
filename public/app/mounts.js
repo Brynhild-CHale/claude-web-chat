@@ -644,6 +644,19 @@ export function clearTarget(target, frame = {}) {
   renderMinbar();
 }
 
+// Mount a whole frame's worth of mounts, isolating failures. One mount that
+// throws must not take the others — or the rest of the frame — with it: a `hello`
+// that died partway left the topbar, the queue rail and the version banner
+// uninitialised, so a single bad pane read as a dead surface. The failure is
+// logged rather than swallowed silently, and a pane script that throws is
+// already reported separately (get_events kind:'script-error').
+export function mountAll(mounts) {
+  for (const m of (mounts || [])) {
+    try { mount(m); }
+    catch (e) { console.error('[web-chat] mount failed for', m && m.id, e); }
+  }
+}
+
 export function fullReset({ mounts, store: newStore }) {
   for (const [, p] of panes) {
     if (p.wrapper.parentElement) p.wrapper.parentElement.removeChild(p.wrapper);
@@ -651,7 +664,7 @@ export function fullReset({ mounts, store: newStore }) {
   panes.clear();
   document.querySelectorAll('.mount-host').forEach(h => h.remove());
   store.replace(newStore);
-  for (const m of (mounts || [])) mount(m);
+  mountAll(mounts);
   renderMinbar();
 }
 
