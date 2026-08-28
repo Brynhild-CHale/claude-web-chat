@@ -94,7 +94,9 @@ else's.
   instances are simply never listed in the extension; if it is stale, B cannot
   bounce it (`EPERM`). `ensureHub` now reports that and gives up immediately
   instead of stalling ~12 s and returning null in silence — the workaround is a
-  per-user `WEB_CHAT_HUB_PORT`.
+  per-user `WEB_CHAT_HUB_PORT`. Only `EPERM` bails: any other signal failure
+  (`ESRCH` — the stale hub exited between the probe and the signal) is logged
+  and the respawn goes ahead, because that port really can free.
 - **`doctor`'s hook-command regex truncates any path containing a space.**
   `lib/cli/commands/doctor.js`.
 - **The theme name regex admits case-fold collisions.**
@@ -112,11 +114,21 @@ else's.
 alive and then unlink the portfile — no `/api/shutdown` ask, so every reaped
 project lost its uncommitted surface, and `~/.web-chat/instances.json` is a
 user-scope file whose pids belong to unrelated processes after a reboot. It now
-reaps through `lib/cli/reap.js`, and the rule has three arms:
+reaps through `lib/cli/reap.js`, and **nothing it does sends a signal**. The rule
+has four arms:
 - a row whose daemon **answers on its port and reports the pid the registry
   named** is stopped through the same acknowledged-shutdown engine `stop` uses
   (so its `draft.json` is written), with a **5 s per-row ack budget** rather
   than `stop`'s 40 s — a reap is a serial loop over N projects;
+- a row that **acknowledged and is still draining** when that budget expires is
+  reported as draining and left to finish. The budget is the reaper's, not the
+  daemon's: `gracefulShutdown` waits out a live turn for up to 30 s, so an
+  expiry here is not evidence of a wedge. Reaping therefore passes
+  `signalAfterAck:false` to `stop`, which switches off its SIGTERM escalation —
+  a signal delivered mid-drain re-enters the re-entrancy-guarded
+  `gracefulShutdown` and `process.exit`s before `writeDraft`, destroying exactly
+  the snapshot the ask was for. `claude-web-chat stop` waits the full 40 s worst
+  case and so keeps the escalation;
 - a row whose **pid is alive but whose port is silent** is printed with its pid
   and a `kill` hint and is **never signalled**. This is the deliberate change of
   behaviour: a genuinely wedged daemon is no longer stopped by `ls --reap`,
@@ -124,6 +136,8 @@ reaps through `lib/cli/reap.js`, and the rule has three arms:
   that inherited the pid;
 - a row whose **pid is gone** is a ghost record; both its records are removed
   under the "reap only what names a dead process" rule.
+
+Only the first arm counts toward the "stopped N surfaces" line.
 
 ## Reporting a platform problem
 
