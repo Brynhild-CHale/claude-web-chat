@@ -249,6 +249,17 @@ test('losing focus dismisses a popover too', () => {
   assert.ok(!open('bookmark-pop'), 'focus leaving the popover dismisses it');
 });
 
+test('focus falling to <body> is not "focus moved elsewhere"', () => {
+  press($('btn-bookmark'));
+  assert.ok(open('bookmark-pop'), 'precondition: a panel is open');
+  focusOn(W.document.body);
+  assert.ok(open('bookmark-pop'),
+    'a deliberate .blur() leaves focus on <body>; reading that as an outside click would defeat the '
+    + 'comment thread’s first-Escape draft guard, which blurs exactly that way');
+  focusOn($('btn-graph'));
+  assert.ok(!open('bookmark-pop'), 'a move to a real element still dismisses');
+});
+
 test('the palette, the legend and the drawer participate in the same dismissal', async () => {
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'k', metaKey: true }));
   assert.ok(open('cmd-palette'), '⌘K opened the palette');

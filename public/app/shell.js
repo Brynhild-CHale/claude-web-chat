@@ -99,7 +99,14 @@ function initDismissLayer() {
   // what makes the skip-the-owned-panel dance above work.
   document.addEventListener('pointerdown', (e) => dismissFrom(eventTarget(e)), true);
   // focus leaving a panel dismisses it too (tabbing past it, or a pane taking focus)
-  document.addEventListener('focusin', (e) => dismissFrom(eventTarget(e)));
+  document.addEventListener('focusin', (e) => {
+    const el = eventTarget(e);
+    // …but focus FALLING to <body> is not a move to somewhere else: it is what a
+    // deliberate .blur() leaves behind — the comment thread's first-Escape draft
+    // guard does exactly that — and it must not be read as an outside click.
+    if (!el || el === document.body || el === document.documentElement) return;
+    dismissFrom(el);
+  });
   // and the whole window losing focus closes them all, like a native menu
   window.addEventListener('blur', () => closeAllPopovers());
 }
