@@ -379,6 +379,49 @@ for (const name of BUNDLED_NAMES) {
   });
 }
 
+// Both members of the kit refuse an executable scheme. They differ on
+// RESOLUTION — safeHref returns '' for anything it cannot resolve or that lands
+// outside its allowlist; absolutize hands an unresolvable value back as written,
+// because bundles use it for links they already trust — but neither may emit
+// `javascript:`. Deleting that scheme from absolutize's passthrough list did not
+// close it on its own: the `new URL` fallback underneath returned
+// `javascript:alert(1)` unchanged, with or without a base.
+test('helper kit: safeHref AND absolutize both refuse javascript:/vbscript:', () => {
+  const { safeHref, absolutize } = require('../lib/capture/profiles/util');
+  const PAGE = 'https://x.test/a/b/page.html';
+  for (const evil of ['javascript:alert(1)', 'java\tscript:alert(1)', 'VBScript:x', ' javascript:alert(1)']) {
+    assert.equal(safeHref(evil, PAGE), '', `safeHref refuses ${JSON.stringify(evil)} with a base`);
+    assert.equal(safeHref(evil, ''), '', `safeHref refuses ${JSON.stringify(evil)} with no base`);
+    assert.equal(absolutize(evil, PAGE), '', `absolutize refuses ${JSON.stringify(evil)} with a base`);
+    assert.equal(absolutize(evil, ''), '', `absolutize refuses ${JSON.stringify(evil)} with no base`);
+  }
+  // Leniency is intact everywhere else.
+  assert.equal(absolutize('c.html', PAGE), 'https://x.test/a/b/c.html', 'resolves against the page, not the origin');
+  assert.equal(absolutize('c.html', ''), 'c.html', 'unresolvable values still come back as written');
+  assert.equal(absolutize('data:image/png;base64,AAA', ''), 'data:image/png;base64,AAA', 'data: still passes the lenient resolver');
+  assert.equal(safeHref('data:image/png;base64,AAA', PAGE), '', 'but not the gated one');
+});
+
+// youtube's decodeHref unwraps /redirect?...&q=<real-url> before resolving, and
+// the unwrapped value is attacker-controllable text off the page. The generic
+// scan above cannot pin it: the description-links loop drops anything that is
+// not http(s) anyway, so the only field where an ungated unwrap would surface is
+// the channel URL, which the fixture needs populated. Pin it directly.
+test('bundled profile "youtube": an unwrapped /redirect?q= payload is gated, not trusted', () => {
+  loadBundledOnly();
+  const html = `<html><body><ytd-app><ytd-watch-metadata>
+    <h1>t</h1>
+    <div id="owner"><ytd-channel-name>
+      <a href="/redirect?q=javascript%3Aalert(1)">Chan</a>
+    </ytd-channel-name></div>
+  </ytd-watch-metadata></ytd-app></body></html>`;
+  const out = reg.runProfile(reg.getProfile('youtube'), {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', html,
+  });
+  assert.equal(out.distilled.channel.url, '', 'the unwrapped javascript: payload is refused, not emitted');
+  assert.equal(out.distilled.channel.name, 'Chan', 'the channel name survives — only the href is dropped');
+});
+
 test('bundled profiles: the refused link keeps its text', () => {
   loadBundledOnly();
   for (const name of ['wikipedia', 'reddit']) {
