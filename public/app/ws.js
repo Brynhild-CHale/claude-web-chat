@@ -50,7 +50,7 @@ function snapClearMount(id, target, frame = {}) {
   // detached client's captured live surface doesn't drift from the real one.
   const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   view.liveSnapshot.mounts = view.liveSnapshot.mounts.filter(x => {
-    if ((x.target || 'main') !== (target || 'main')) return true;
+    if (target && (x.target || 'main') !== target) return true;
     return kept ? kept.has(x.id) : survivesClear(x.pane_state, frame);
   });
 }
@@ -95,7 +95,7 @@ const HANDLERS = {
   clear(msg) {
     if (view.previewing) { snapClearMount(msg.id, msg.target, msg); return; }
     if (msg.id) removePane(msg.id);
-    else clearTarget(msg.target || 'main', msg); // clear-all spares pinned panes
+    else clearTarget(msg.target, msg); // clear-all spares pinned panes
   },
   'pane:state'(msg) {
     if (view.previewing) { snapPaneState(msg.id, msg.pane_state); return; }

@@ -17,6 +17,8 @@
 //   4. ...and the real behaviour this must not break: a re-render replaces in
 //      place, and a stale bare mount host is still reaped;
 //   5. one mount that throws does not abort the rest of the `hello` frame.
+//   6. a clear-all sweeps panes rendered with ANY target, and a targeted clear
+//      sweeps only its own — the filter POST /api/clear applies server-side.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -170,6 +172,27 @@ test('one mount that throws does not abort the rest of a hello', async () => {
     W.__wcMount.attachAndExtract = realAttach;
     console.error = realError;
   }
+});
+
+test('a clear-all sweeps every target; a targeted clear sweeps only its own', async () => {
+  frame({ type: 'render', id: 'side-pane', html: '<p>side</p>', target: 'side', params: {}, pane_state: {} });
+  frame({ type: 'render', id: 'main-pane', html: '<p>main</p>', target: 'main', params: {}, pane_state: {} });
+  await tick();
+  // A non-slot target still lands in the surface (there is one slot), but the
+  // pane REMEMBERS the target it was rendered with — that is what a clear filters on.
+  assert.ok(mainEl.querySelector('[data-pane-id="side-pane"]'), 'the off-slot pane mounted into the surface');
+
+  frame({ type: 'clear', target: 'main' });
+  await tick();
+  assert.equal(mainEl.querySelectorAll('[data-pane-id="main-pane"]').length, 0, "clear{target:'main'} swept the 'main' pane");
+  assert.equal(mainEl.querySelectorAll('[data-pane-id="side-pane"]').length, 1, "...and spared the 'side' pane");
+
+  // No target means EVERY pane — the server's filter is `!target || m.target ===
+  // target`, so a client that read an absent target as 'main' would leave the
+  // off-target panes standing after the server dropped them from state.mounts.
+  frame({ type: 'clear' });
+  await tick();
+  assert.equal(mainEl.querySelectorAll('.pane').length, 0, 'clear-all swept every pane, whatever its target');
 });
 
 test.after(async () => { await new Promise((r) => setTimeout(r, 400)); restore(); });

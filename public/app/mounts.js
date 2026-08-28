@@ -625,17 +625,19 @@ export function survivesClear(paneState, frame = {}) {
 }
 
 export function clearTarget(target, frame = {}) {
-  const t = target || 'main';
-  const slot = slotFor(t);
+  const slot = slotFor(target);
   const kept = Array.isArray(frame.kept) ? new Set(frame.kept) : null;
   slot.querySelectorAll('.pane').forEach(p => {
     const id = p.dataset.paneId;
     const pane = id ? panes.get(id) : null;
     // Membership of a target is the pane's RECORD, not DOM containment: every
     // pane lives in the one slot now, so a targeted clear has to read the target
-    // the pane was rendered with or it would sweep the whole surface. The server
-    // filters `m.target === target` the same way (POST /api/clear).
-    if (pane && pane.paneTarget !== t) return;
+    // the pane was rendered with or it would sweep the whole surface. NO target
+    // still means every pane — the server's filter is `!target || m.target ===
+    // target` (POST /api/clear), and a clear-all that spared the panes rendered
+    // with some other target would leave them standing after the server dropped
+    // them from state.mounts.
+    if (target && pane && pane.paneTarget !== target) return;
     const keep = kept ? kept.has(id) : survivesClear(pane && pane.pane_state, frame);
     if (keep) return;
     if (id) panes.delete(id);
