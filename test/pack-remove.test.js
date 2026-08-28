@@ -323,3 +323,83 @@ test('a well-formed record still removes cleanly — the gate is not a blanket r
   assert.equal(res.removedAll, true);
   assert.equal(res.results.some((r) => r.action === 'refused'), false);
 });
+
+// ── the fence's anchor ──────────────────────────────────────────────────────
+// Fencing each recorded file against the unit's own directory is not enough:
+// git commits symlinks, so a hostile repository can ship the unit directory
+// ITSELF as a link out of the project and both sides of the check then resolve
+// through it. The anchor is the project root (system tier: the home), which the
+// repository cannot forge.
+
+test('a unit directory that is a committed symlink out of the project is refused', async (t) => {
+  const root = project(t);
+  const outside = tmpDir('wc-victim-');
+  const victim = path.join(outside, 'component.html');
+  fs.writeFileSync(victim, '<p>somebody else\'s file</p>');
+  const sha = require('crypto').createHash('sha256').update(fs.readFileSync(victim)).digest('hex');
+
+  // .web-chat/components/deploy-board -> /outside  (what the clone commits)
+  fs.mkdirSync(projectPaths(root).components, { recursive: true });
+  fs.symlinkSync(outside, path.join(projectPaths(root).components, 'deploy-board'));
+
+  // The record names only paths that look innocent, and the digest MATCHES —
+  // so without the anchor the unit verifies as 'intact' and is removed.
+  plantRecord(root, [{
+    kind: 'component',
+    name: 'deploy-board',
+    files: [{ path: 'component.html', sha256: sha }],
+  }]);
+
+  const pack = listPacks(root)[0];
+  const v = verifyPack(pack, { root, tier: 'local' });
+  assert.equal(v.units[0].state, 'refused', 'the symlinked unit directory is refused, not verified');
+  assert.match(v.units[0].refused, /resolves outside/);
+
+  // --force does not override a refusal.
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(res.results[0].action, 'refused');
+  assert.equal(fs.existsSync(victim), true, 'the file outside the project is still there');
+
+  // ...and the HTTP path (refuseOnDrift, no force) stops on the drift.
+  assert.throws(() => packs.removePackByName({ name: 'acme-ops', root, refuseOnDrift: true }));
+  assert.equal(fs.existsSync(victim), true);
+  assert.equal(listPacks(root).length, 1, 'the record survives so the evidence is not erased');
+});
+
+test('a themes directory that is a committed symlink out of the project is refused', async (t) => {
+  const root = project(t);
+  const outside = tmpDir('wc-victim-');
+  const victim = path.join(outside, 'acme-dark.json');
+  fs.writeFileSync(victim, '{"tokens":{}}');
+  const sha = require('crypto').createHash('sha256').update(fs.readFileSync(victim)).digest('hex');
+
+  // A theme unit ignores its name entirely — the shared themes directory IS the
+  // unit directory, so a link there needs no traversal in any recorded path.
+  fs.mkdirSync(projectPaths(root).dir, { recursive: true });
+  fs.symlinkSync(outside, projectPaths(root).themesDir);
+
+  plantRecord(root, [{
+    kind: 'theme',
+    name: 'acme-dark',
+    files: [{ path: 'acme-dark.json', sha256: sha }],
+  }]);
+
+  const v = verifyPack(listPacks(root)[0], { root, tier: 'local' });
+  assert.equal(v.units[0].state, 'refused');
+  assert.match(v.units[0].refused, /resolves outside/);
+
+  const res = await packs.removePackByName({ name: 'acme-ops', root, force: true });
+  assert.equal(res.results[0].action, 'refused');
+  assert.equal(fs.existsSync(victim), true, 'the file outside the project is still there');
+
+  assert.throws(() => packs.removePackByName({ name: 'acme-ops', root, refuseOnDrift: true }));
+  assert.equal(fs.existsSync(victim), true);
+});
+
+test('a record whose file list is not an array is refused, not thrown out of', async (t) => {
+  const root = project(t);
+  plantRecord(root, [{ kind: 'component', name: 'deploy-board', files: 7 }]);
+  const v = verifyPack(listPacks(root)[0], { root, tier: 'local' });
+  assert.equal(v.units[0].state, 'refused');
+  assert.match(v.units[0].refused, /not an array/);
+});

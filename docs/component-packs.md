@@ -623,12 +623,18 @@ shows the per-unit state (intact / edited / missing / refused) at any point.
 repository can commit a `.web-chat/` tree — that is why quarantine records live
 in the user tier instead. Every path a removal touches is built from the unit
 names and file paths in that record, so the record is validated before any of
-them is used: a unit name must be plain kebab-case, no recorded file path may be
-absolute or contain a `..` segment, and any recorded file that exists must
-resolve (through symlinks) inside its own unit directory. A unit that fails is
-**refused** — nothing is unlinked, `remove` reports it, and the record is kept
-so you can see what claimed to be installed. `--force` does not override this:
-it overrides *your edits*, not the shape of the record.
+them is used: a unit name must be plain kebab-case, the recorded file list must
+be a list, no recorded file path may be absolute or contain a `..` segment, and
+every path — the unit's own directory first, then each recorded file that exists
+— must resolve, through symlinks, inside the **project root** (for a system-tier
+pack, inside your home). The anchor is the root rather than the unit directory
+on purpose: git commits symlinks, so a repository that ships
+`.web-chat/components/<unit>` or `.web-chat/themes` as a link out of the project
+would otherwise have both sides of the check resolving through the same link.
+A unit that fails is **refused** — nothing is unlinked, `remove` and `pack info`
+print the reason, and the record is kept so you can see what claimed to be
+installed. `--force` does not override this: it overrides *your edits*, not the
+shape of the record.
 
 > **`pack update` is deliberately absent in v1.** A correct update is a 3-way
 > tree reconcile, and the install record already carries the baseline hashes it
