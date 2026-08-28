@@ -323,3 +323,29 @@ test('inspectRaw: the profile re-run receives the page URL, so url-derived field
   assert.match(scoped.result.thumbnail, /i\.ytimg\.com/, 'thumbnail derived from that id');
   assert.equal(scoped.result.url, url, 'the distillate carries the page url');
 });
+
+// ---------------------------------------------------------------------------
+// Entity decoding across every bundled extractor
+// ---------------------------------------------------------------------------
+
+// Each fixture carries the same marker phrase — "Ailurus &amp; Ailuropoda&nbsp;differ"
+// — somewhere the profile reads. Every extractor used to walk `rawText` (the RAW
+// source text) rather than `.text`, so the entities survived into the distillate:
+// as literal `&amp;`/`&nbsp;` where the field is plain text, and double-escaped
+// as `&amp;amp;` where the extractor escapes what it read. gmail papered over it
+// with a hand-rolled decode that collapsed every unlisted named entity to a
+// space and ignored numeric entities entirely.
+for (const name of BUNDLED_NAMES) {
+  test(`bundled profile "${name}": HTML entities are decoded exactly once`, () => {
+    loadBundledOnly();
+    const spec = SPECS[name];
+    const out = reg.runProfile(reg.getProfile(name), { url: spec.url, html: readFixture(name) });
+    const json = JSON.stringify(out.distilled);
+
+    assert.match(json, /Ailurus &(?:amp;)? ?Ailuropoda/, 'the marker phrase reached the distillate');
+    assert.doesNotMatch(json, /&amp;(?:amp|nbsp|lt|gt|quot|#\d+);/,
+      'nothing is escaped twice (the signature of escaping raw source text)');
+    assert.doesNotMatch(json, /&nbsp;|&#8217;|&#39;(?!\s)/,
+      'no undecoded entity survives into the distillate');
+  });
+}

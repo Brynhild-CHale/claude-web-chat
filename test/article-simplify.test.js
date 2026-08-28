@@ -143,6 +143,67 @@ test('simplifyDom: strips scripts/iframes/handlers/site-CSS, keeps semantic stru
 });
 
 // ---------------------------------------------------------------------------
+// Entity decoding + nested lists: the three walkers must agree
+// ---------------------------------------------------------------------------
+
+// One paragraph, one nested list — the two shapes the walkers disagreed on.
+// `&amp;` `&#8217;` `&nbsp;` are ubiquitous in real pages, so this hit nearly
+// every capture: article emitted the raw source text, simplify escaped THAT and
+// so double-escaped it into the pane and the sidecar, and only markdown was
+// right.
+const ENTITY_URL = 'https://e.example.com/post';
+const ENTITY_FRAG = '<p>Tom &amp; Jerry&#8217;s&nbsp;show</p>'
+  + '<ul><li>outer<ul><li>inner</li></ul></li><li>sibling</li></ul>';
+const ENTITY_HTML = `<html><body><article>${ENTITY_FRAG}</article></body></html>`;
+const DECODED = 'Tom & Jerry\u2019s show';
+
+// Compare the three walkers on TEXT, not markup: strip tags, unescape the five
+// characters escapeHtml writes, collapse whitespace.
+function readable(s) {
+  return String(s)
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+test('article/simplify/markdown: the same paragraph decodes to the same text in all three', () => {
+  const { toMarkdown } = require('../lib/capture/markdown');
+
+  const para = article.extract({ url: ENTITY_URL, root: reg.safeParse(ENTITY_HTML) })
+    .blocks.find((b) => b.type === 'para');
+  assert.equal(para.text, DECODED, 'the article distillate carries decoded text, not source text');
+
+  const body = simplifyDom(reg.safeParse(ENTITY_HTML), { url: ENTITY_URL }).bodyHtml;
+  assert.match(body, /<p>Tom &amp; Jerry\u2019s\u00a0show<\/p>/,
+    'the reader render escapes ONCE from decoded text (never &amp;amp;)');
+  assert.doesNotMatch(body, /&amp;(amp|nbsp|#8217);/, 'no double-escaped entity reaches the pane');
+
+  const md = toMarkdown(ENTITY_FRAG, { baseUrl: ENTITY_URL });
+
+  assert.equal(readable(body).split(' outer')[0], DECODED);
+  assert.equal(readable(md).split(/\n|- outer/)[0].trim(), DECODED);
+  assert.equal(para.text, readable(body).split(' outer')[0], 'article agrees with simplify');
+});
+
+test('article/simplify: a nested list yields each item once, not twice', () => {
+  const { toMarkdown } = require('../lib/capture/markdown');
+
+  const list = article.extract({ url: ENTITY_URL, root: reg.safeParse(ENTITY_HTML) })
+    .blocks.find((b) => b.type === 'list');
+  assert.deepEqual(list.items, ['outerinner', 'sibling'],
+    'the nested item is not also emitted as a top-level item');
+
+  const body = simplifyDom(reg.safeParse(ENTITY_HTML), { url: ENTITY_URL }).bodyHtml;
+  const items = body.match(/<li>/g) || [];
+  assert.equal(items.length, 2, 'the reader render emits two <li>, not three');
+
+  // markdown was always right here; it stays right.
+  assert.match(toMarkdown(ENTITY_FRAG), /- outer\n {2}- inner\n- sibling/);
+});
+
+// ---------------------------------------------------------------------------
 // URL handling: the page URL is the base, and the scheme is gated
 // ---------------------------------------------------------------------------
 
