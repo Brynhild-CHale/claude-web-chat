@@ -64,7 +64,7 @@ test('the integrity record is written to the USER tier, not into the project', a
 
   assert.equal(listQuarantine().length, 1, 'the record lives in ~/.web-chat/packs.json');
   assert.equal(readStore(projectPaths(root).packs).quarantine.length, 0, 'and never in the project, which a repo can commit');
-  assert.match(findQuarantine('acme-ops').tree_sha256, /^[0-9a-f]{64}$/);
+  assert.match(findQuarantine(root, 'acme-ops').tree_sha256, /^[0-9a-f]{64}$/);
 });
 
 test('review reads the manifest, the plan, the file tree and one file\'s text — and writes nothing', async (t) => {

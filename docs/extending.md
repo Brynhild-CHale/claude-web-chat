@@ -431,6 +431,7 @@ manifest.js  parse + validate web-chat-pack.json; read SKILL.md frontmatter
 plan.js      planInstall() → { units, collisions, services, errors }  — PURE
    ↓
 tree.js      applyPlan / removeUnits / verifyPack / stage+promote quarantine
+             — plus beginJournal (the undo list) and droppedUnits (the diff)
    ↓
 install.js   orchestrate, write the provenance record, append the audit line
 ```
@@ -439,7 +440,23 @@ install.js   orchestrate, write the provenance record, append the audit line
 `review` output, and the drawer's quarantine card, so "show me what this would
 do" cannot drift from what it actually does.
 
-Four invariants live in code rather than in a reviewer's memory:
+Five invariants live in code rather than in a reviewer's memory:
+
+- **An install is one transaction.** Pack units land FLAT in shared tier
+  directories, so there is no directory to rename over the way `installRelease`
+  and `symlinkAtomic` do — the reversibility has to be an undo list instead.
+  `beginJournal({ backupDir })` records every creation, copies every file it is
+  about to overwrite into `projectPaths(root).packsBackup`, and remembers every
+  directory the apply had to create; any throw unwinds in reverse and rethrows.
+  `installFromStage` writes a `pending` marker (its own file, never `packs.json`)
+  before the first byte and clears it after the record, so a half-install is
+  discoverable without being mistaken for an installed one. A same-pack
+  re-install diffs the previous record against the plan (`droppedUnits`, pure)
+  and routes the difference through `removeUnits` — under the same edited-file
+  rule — *after* a successful apply. `lib/packs/install.js` and
+  `lib/packs/plan.js` are held at zero `copyFileSync`/`unlinkSync`/`rmSync` by
+  the conventions tripwire, so a second apply path cannot grow beside the
+  journalled one.
 
 - **`tar` is not the security boundary — the copier is.** Members are listed
   (`archive.listTarGz`, pure JS) and refused before extraction: absolute paths,
@@ -576,6 +593,7 @@ Current homes (baselines can only shrink toward these):
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
+| `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |
 
 Working with it:
 
