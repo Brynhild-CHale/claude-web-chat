@@ -312,6 +312,41 @@ const PATTERNS = [
     },
   },
   {
+    // Putting a pane on the live surface is not one write: it is a lock check,
+    // an owner gate plus force, reserved-id validation, the pane_state /
+    // form_state / theme carry rules, a gen bump, an owner stamp and one paired
+    // ring event + WS frame. Four routes hand-copied that sequence and each
+    // dropped a DIFFERENT part — /use had no owner gate, no owner, no gen and no
+    // theme carry; both capture mount-sets emitted a WS frame with no ring
+    // entry, so the service supervisor was deaf to capture panes. A list fix at
+    // one site was re-copied by the next route, which is exactly what this row
+    // exists to stop.
+    //
+    // The engine is lib/server/domain/mounts (setMount / removeMount /
+    // emitMount). What stays outside it, and why:
+    //   * graph.js — restoreLiveToNode replaces the WHOLE surface on node
+    //     navigation and broadcasts a `reset` instead of per-pane frames, and
+    //     clearLiveMounts is the pin-filtered Wipe with no frames at all.
+    //   * domain/turns.js — loadDraft, the same bulk shape at boot.
+    //   * routes/render.js — the bulk clear's per-pane delete, which owns a pin
+    //     filter and two batched frame shapes removeMount cannot serve.
+    name: 'state.mounts.set( / .delete(',
+    home: 'lib/server/domain/mounts.js (setMount / removeMount / emitMount)',
+    what: 'writing a pane onto — or off — the live surface',
+    roots: ['lib'],
+    re: /state\.mounts\.(?:set|delete)\(/g,
+    baseline: {
+      // The engine itself: one set, one delete.
+      'lib/server/domain/mounts.js': 2,
+      // Bulk restore (restoreLiveToNode) + the pin-filtered Wipe.
+      'lib/server/graph.js': 2,
+      // Bulk restore from draft.json at boot.
+      'lib/server/domain/turns.js': 1,
+      // The bulk clear's per-pane delete.
+      'lib/server/routes/render.js': 1,
+    },
+  },
+  {
     // NOT a lib-wide ban: 8 of the ~35 writeFileSync sites in lib/ are
     // legitimately not JSON records (export HTML, capture sidecars,
     // component.html/seed.js/service.js, .gitignore, the empty disable markers),

@@ -620,6 +620,7 @@ Current homes (baselines can only shrink toward these):
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
+| `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
 
 Working with it:
 
