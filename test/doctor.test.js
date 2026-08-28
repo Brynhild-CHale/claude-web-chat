@@ -28,10 +28,15 @@ function project(t) {
   return tmpProject();
 }
 
-// A runClaude that never shells out — records the argv it would have run.
+// A runClaude that never shells out — records the argv it would have run AND
+// the cwd it would have run it from. The cwd is not incidental: `--scope local`
+// keys the registration to the directory `claude` is invoked in, so a fake that
+// captures only the argv cannot tell a repair of THIS project from a repair of
+// whatever directory the shell happened to be sitting in.
 function fakeClaude(result = { ok: true }) {
   const calls = [];
-  return { fn: (argv) => { calls.push(argv); return result; }, calls };
+  const cwds = [];
+  return { fn: (argv, opts = {}) => { calls.push(argv); cwds.push(opts.cwd); return result; }, calls, cwds };
 }
 
 const silent = () => {};
@@ -107,6 +112,9 @@ test('doctor repairs with the ENGINE\'s argv, not a bin path of its own', async 
   const claude = fakeClaude({ ok: true });
   await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
   assert.deepEqual(claude.calls[0], mcpArgv());
+  // …and from the root doctor resolved, not the shell's cwd: a local-scope
+  // registration written for the wrong directory never self-heals.
+  assert.equal(claude.cwds[0], root, 'the repair shells out from the resolved root');
 });
 
 // cli-setup-6: the turn lifecycle needs BOTH hooks — UserPromptSubmit takes the

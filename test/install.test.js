@@ -132,10 +132,13 @@ test('install PRESERVES a portable entry outside plugin packaging and registers 
   const prev = process.env.CLAUDE_PLUGIN_ROOT;
   delete process.env.CLAUDE_PLUGIN_ROOT;
   const calls = [];
+  const cwds = [];
   try {
     const status = ensureMcpRegistration(root);
     assert.equal(status, 'kept plugin registration');
-    await captureInstall(root, { runClaude: (argv) => { calls.push(argv); return { ok: true }; } });
+    await captureInstall(root, {
+      runClaude: (argv, opts = {}) => { calls.push(argv); cwds.push(opts.cwd); return { ok: true }; },
+    });
   } finally {
     if (prev !== undefined) process.env.CLAUDE_PLUGIN_ROOT = prev;
     restore();
@@ -146,6 +149,10 @@ test('install PRESERVES a portable entry outside plugin packaging and registers 
   assert.ok(!mcpEntryHasChannelEnv(entry));
   assert.equal(calls.length, 1, 'and the unresolvable stub is completed at local scope');
   assert.deepEqual(calls[0].slice(0, 6), ['mcp', 'add', 'web-chat', '--scope', 'local', '--']);
+  // `--scope local` keys the registration to the directory `claude` runs in, so
+  // the cwd is half the command: shelling out from the shell's cwd would register
+  // a project install never examined. Record it, not just the argv.
+  assert.equal(cwds[0], root, 'the shell-out runs from the resolved root');
 });
 
 test('channelEnv merges without mutating the input and never drops keys', () => {
