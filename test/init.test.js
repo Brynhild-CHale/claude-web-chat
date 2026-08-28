@@ -558,10 +558,12 @@ test('a stale registry entry is reaped through the shared reaper, not by hand', 
     ...inertDeps({
       collectRows: async () => [ghost],
       reap: async (rows, opts) => { reapCalls.push({ rows, opts }); return { stopped: 0, cleared: rows.length, skipped: [] }; },
-      // --yes takes every printed Yes default, so the OTHER remediations have to
-      // be inert too or this test would install managed files for real.
+      // --yes takes every printed Yes default, so every OTHER offer has to be
+      // inert too. Left real, `install` rewrote this repo's own .mcp.json and
+      // pre-warmed a daemon in the checkout — a test may touch neither.
       install: async () => {},
       reconcile: () => [],
+      open: async () => {},
     }),
     inRoot: async (r, fn) => fn(),
   });
