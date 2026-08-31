@@ -1,8 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const net = require('net');
-const crypto = require('crypto');
-const { withServer, waitUntil } = require('../test-support/helpers');
+const { withServer, waitUntil, deafWs } = require('../test-support/helpers');
 
 // Resolve once the socket receives its first frame, then hand back the live
 // socket (the caller closes it to exercise the grace timer).
@@ -52,27 +51,18 @@ test('grace: reconnect within grace cancels shutdown timer', async (t) => {
 
 // A client that pins a connection open and will not let go. `kind:'http'` sends
 // request headers it never terminates (an ACTIVE connection, so closeIdle skips
-// it); `kind:'ws'` completes the WebSocket upgrade and then goes deaf, which
-// closeAllConnections() cannot reach either — Node drops a socket from the HTTP
-// server's connection list the moment it is upgraded.
+// it); `kind:'ws'` is the harness's `deafWs` — a completed upgrade that then
+// ignores everything, which closeAllConnections() cannot reach either, because
+// Node drops a socket from the HTTP server's connection list the moment it is
+// upgraded. Only the http half is local: it is this file's own idiom, and no
+// second copy of it exists.
 function pinConnection(t, port, kind = 'http') {
+  if (kind === 'ws') return deafWs(t, port);
   return new Promise((resolve, reject) => {
     const sock = net.connect(port, '127.0.0.1', () => {
-      if (kind === 'ws') {
-        const key = crypto.randomBytes(16).toString('base64');
-        sock.write(
-          'GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
-          + `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
-        );
-      } else {
-        sock.write('GET /api/health HTTP/1.1\r\nHost: localhost\r\n'); // never terminated
-        resolve(sock);
-      }
+      sock.write('GET /api/health HTTP/1.1\r\nHost: localhost\r\n'); // never terminated
+      resolve(sock);
     });
-    // For the WS pin, wait for the upgrade response so the socket is genuinely
-    // upgraded before the test proceeds. Then ignore everything, close frame
-    // included.
-    sock.on('data', (d) => { if (kind === 'ws' && /101/.test(d.toString().slice(0, 16))) resolve(sock); });
     sock.on('error', reject);
     t.after(() => { try { sock.destroy(); } catch {} });
   });

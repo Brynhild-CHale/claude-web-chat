@@ -11,11 +11,12 @@
 // (never start() with a portfile, so no hub spawn / no ~/.web-chat registry
 // writes), and an idempotent t.after stop.
 //
-// Beyond booting a server this file owns four more things every test needs and
+// Beyond booting a server this file owns five more things every test needs and
 // a dozen files used to hand-roll: ONE deadline poll (`waitUntil`), ONE SSE opener
 // that can actually FAIL (`openSSE`), a WS connect that can send headers
-// (`wsConnect`, so the Origin gate is reachable), and a hub boot (`withHub`).
-// `test/harness-conventions.test.js` ratchets those back here.
+// (`wsConnect`, so the Origin gate is reachable), a deaf raw-socket WS client
+// (`deafWs`, the connection that never answers a close frame), and a hub boot
+// (`withHub`). `test/harness-conventions.test.js` ratchets those back here.
 
 // The throwaway-HOME preload. `--import ./test-support/sandbox.js` in the npm
 // script gets it in before ANY require; requiring it here is the belt for a
@@ -27,6 +28,8 @@ require('./sandbox');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const net = require('net');
+const crypto = require('crypto');
 const WebSocket = require('ws');
 const { writePortfileAt: writePortfile } = require('../lib/core/portfiles');
 const { LISTEN_HOST } = require('../lib/core/cors');
@@ -209,6 +212,33 @@ function wsConnect(port, pathStr = '/ws', opts) {
   return new WebSocket(`ws://localhost:${port}${pathStr}`, opts);
 }
 
+// A tab that has gone DEAF: a raw socket that completes the WebSocket upgrade by
+// hand and then ignores everything sent to it, the polite close frame included.
+//
+// It has to be a raw socket. The `ws` client answers a close frame — that is the
+// whole point of it — so `wsConnect` cannot stand in: the connection under test
+// is the one that will NOT let go, which is what pins gracefulShutdown's final
+// `server.close()` and makes the daemon's own drain budget the assertion. Node
+// also drops a socket from the HTTP server's connection list the moment it is
+// upgraded, so `closeAllConnections()` cannot reach this one either.
+//
+// Resolves once the 101 is seen, so the socket is genuinely upgraded before the
+// test proceeds; teardown is on t.after, so a failed assertion cannot leak it.
+function deafWs(t, port, pathStr = '/ws') {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1', () => {
+      const key = crypto.randomBytes(16).toString('base64');
+      sock.write(
+        `GET ${pathStr} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
+        + `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      );
+    });
+    sock.on('data', (d) => { if (/101/.test(d.toString().slice(0, 16))) resolve(sock); });
+    sock.on('error', reject);
+    t.after(() => { try { sock.destroy(); } catch {} });
+  });
+}
+
 // Open a socket, resolve the first {type:'hello'} frame, then close it.
 // A REFUSED upgrade rejects with an error carrying .statusCode — ws only skips
 // its own 'error' for an unexpected response when something is listening for it,
@@ -356,5 +386,5 @@ async function withHub(t, { port = 0, createHub } = {}) {
 
 module.exports = {
   withServer, withHub, tmpRoot, withTempHome, makeApi,
-  waitUntil, openSSE, wsConnect, wsHello, safeStop,
+  waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };
