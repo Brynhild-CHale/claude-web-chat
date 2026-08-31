@@ -52,7 +52,7 @@ const ev = await wc.waitFor({ store_key: 'rerun_request', exists: true });
 
 | Method | Maps to | Notes |
 |---|---|---|
-| `render({html, id?, target?, params?, theme?, force?})` | `POST /api/render` | Auto-tags `owner`. Returns the envelope — check `.ok` (see ownership below). |
+| `render({html, id?, target?, params?, theme?, force?})` | `POST /api/render` | Auto-tags `owner`. Returns the envelope — check `.ok` (see ownership below). `theme` is normalized like any other (below). |
 | `setStore(patch)` | `POST /api/store` | Merge a patch; use a signal key with a bumping `seq`. |
 | `getStore(keys?)` | `GET /api/store` | Full store, or a filtered subset. |
 | `clear({id?, target?})` | `POST /api/clear` | Auto-tags `owner`. |
@@ -180,10 +180,19 @@ Any language can drive the surface — it's just HTTP. Discover the port from
 | `GET /api/health` | — | `{ok, pid, active, nodes, lock}` — liveness + graph state. |
 | `GET /api/store?keys=a,b` | — | Full store, or filtered. |
 | `POST /api/store` | `{patch}` | Merge + broadcast. Returns post-patch store. |
-| `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?}` | Mount/replace. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. |
+| `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?}` | Mount/replace. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. `theme` normalized (below). |
 | `POST /api/clear` | `{id?}` / `{target?}` / `{}` | Remove a pane / slot / everything. |
 | `GET /api/events?since=<seq>` | — | `{events, latest, oldest, gap, dropped}`. |
 | `POST /api/wait` | `{predicate, timeout_ms}` | Long-poll (**driver-only**; Claude uses the channel/queue). `{ok:false, timeout:true}` (HTTP 200) on miss. Counts against the 5s shutdown drain. |
+
+**A `theme` on a render is a pane theme, and it takes the same path as one set
+through `POST /api/theme` with `{scope:'pane'}`.** Token names that are not
+`--wc-` prefixed are dropped, and values lose the characters that could break out
+of a `name: value;` declaration — so the two doors onto a pane's theme agree.
+Omitting `theme` on a re-render KEEPS the pane's current one; sending `null`
+clears it. Raw `css` at pane scope is still the documented escape hatch and is
+carried through as written: it lands inside that pane's shadow root and styles
+that pane's content only.
 
 Don't POST the graph routes from a driver (see the three-actor model).
 
