@@ -543,6 +543,13 @@ test('queue domain: drainPending delivers the park as one wake, exactly once', (
   assert.equal(w.note, 'ctx');
   assert.equal(wakes.length, 1, 'exactly one wake emitted');
   assert.equal(state.pendingWake, null, 'the park is cleared');
+  // A drained wake is a live wake: retained until the bridge acks it, exactly as
+  // a flushed one is, so a second drop is still recoverable. Ack it (as the
+  // bridge does) and a second drain then finds nothing at all — un-acked, a
+  // second drain would fold it back into a park and redeliver, which is the
+  // reconnect path's deliberate duplicate-over-loss rule.
+  assert.equal(state.pendingAck && state.pendingAck.seq, w.seq, 'retained awaiting ack');
+  state.pendingAck = null;
   assert.equal(queue.drainPending(state, bus), null, 'a second drain finds nothing');
   assert.equal(wakes.length, 1, 'no second wake');
 });
