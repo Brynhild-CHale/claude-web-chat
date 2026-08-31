@@ -127,6 +127,23 @@ function mcpTools() {
     .sort();
 }
 
+// The prose the MCP tools ship. CLAUDE.md calls these descriptions load-bearing
+// because Claude picks and interprets a tool by reading one, so a wrong sentence
+// here is acted on exactly like a wrong line in the rules file — same doc set,
+// same claim checks. Required (not source-parsed): a tool module pulls in
+// lib/mcp/client, which has no side effects at require time.
+function toolDescriptions() {
+  return mcpTools().map((name) => {
+    const mod = require(path.join(REPO_ROOT, 'lib', 'mcp', 'tools', `${name}.js`));
+    const parts = [mod.description || ''];
+    const props = (mod.inputSchema && mod.inputSchema.properties) || {};
+    for (const key of Object.keys(props)) {
+      if (props[key] && props[key].description) parts.push(props[key].description);
+    }
+    return { rel: `lib/mcp/tools/${name}.js`, body: parts.join('\n\n') };
+  });
+}
+
 // The keys the route ctx literal in lib/server/index.js actually carries — the
 // contract CLAUDE.md tells a contributor to code a new route against.
 function ctxKeys() {
@@ -213,6 +230,18 @@ const ALLOW = {
   ],
   // CLI subcommands a doc may cite before they are registered.
   cliCommand: [],
+  // Docs that may spell the service trust store as a PROJECT path. Consent moved
+  // to the user tier because a project-side file let a cloned repo ship its own
+  // approval, so the project spelling survives only where a doc is explaining
+  // that vulnerability.
+  trustStore: [
+    {
+      rel: 'docs/service-components.md',
+      claim: '.web-chat/services/trusted.json',
+      reason: 'names the location the fix REMOVED, in the sentence saying why consent cannot live in the project',
+      marker: /commit `\.web-chat\/services\/trusted\.json` and cloning the repo would run its `service\.js` unprompted/,
+    },
+  ],
   // Registered commands the README's command reference block may omit.
   readmeBlock: [
     { claim: 'start', reason: 'the foreground dev entry point, documented in CLAUDE.md instead' },
@@ -231,6 +260,7 @@ module.exports = {
   flatten,
   cliCommands,
   mcpTools,
+  toolDescriptions,
   ctxKeys,
   patternNames,
   routePaths,

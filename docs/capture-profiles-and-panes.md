@@ -2,7 +2,7 @@
 
 Status: **partly shipped.** Matchers, tiered project/global/bundled resolution,
 profile-paired panes with reduced/expanded modes, capture dedupe and hot reload
-shipped in 0.3.0. The **in-page interaction half is NOT BUILT** — the step model,
+are all shipped. The **in-page interaction half is NOT BUILT** — the step model,
 the step compiler, `interact.js`, the extension's inject-then-snapshot flow and
 the `POST /api/probe` authoring channel are design only, and the sections
 describing them are marked below. Date: 2026-06-29.

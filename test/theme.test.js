@@ -240,3 +240,38 @@ test('theme: sanitizeTokens keeps whitespace-separated values apart across a lin
   assert.equal(out['--wc-shadow'], '0 1px 2px rgba(0,0,0,.2)');
   assert.equal(out['--wc-bg'], '#fff b');
 });
+
+// list_themes said "local and system", omitting the builtins the route lists,
+// and apply_theme said "local wins on name clash" while apply resolves the
+// builtin FIRST — so an agent that saved a local theme over a builtin name and
+// applied it would have been told the wrong one had been applied.
+test('theme: the tool descriptions match what the theme routes actually do', async (t) => {
+  const { api } = await withServer(t);
+
+  const listed = (await api.get('/api/themes')).json.themes;
+  const locations = new Set(listed.map((x) => x.location));
+  assert.ok(locations.has('builtin'), 'GET /api/themes lists the builtin themes');
+  const listDesc = require('../lib/mcp/tools/list_themes').description;
+  for (const loc of locations) {
+    assert.ok(listDesc.includes(loc),
+      `GET /api/themes reports location:"${loc}" but the list_themes description never mentions it`);
+  }
+
+  // Precedence, established rather than asserted from source: save a local theme
+  // over a builtin name and see which one apply resolves.
+  const builtin = listed.find((x) => x.location === 'builtin');
+  assert.ok(builtin, 'at least one builtin theme ships');
+  await api.post('/api/themes', {
+    name: builtin.name, location: 'local', tokens: { '--wc-accent': '#abcdef' }, css: '',
+  });
+  await api.post('/api/render', { id: 'pane-x', html: '<div>x</div>' });
+  await api.post('/api/theme/apply', { name: builtin.name, scope: 'pane', target: 'pane-x' });
+  const applied = (await api.get('/api/theme?scope=pane&target=pane-x')).json;
+  assert.notEqual(applied.tokens['--wc-accent'], '#abcdef',
+    'apply resolves the BUILTIN first — a local theme of the same name does not shadow it');
+
+  const applyDesc = require('../lib/mcp/tools/apply_theme').description;
+  assert.ok(/builtin first/i.test(applyDesc),
+    'apply_theme resolves builtin → local → system; its description must say so rather than "local wins"');
+  assert.ok(!/local wins/i.test(applyDesc), 'apply_theme no longer resolves local-first — the description still claims it does');
+});

@@ -27,6 +27,7 @@ const {
   flatten,
   cliCommands,
   mcpTools,
+  toolDescriptions,
   ctxKeys,
   patternNames,
   routePaths,
@@ -372,4 +373,385 @@ test('CLAUDE.md\'s engines table is a subset of docs/extending.md\'s', () => {
         'the short in-context copy may not say something the full reference does not');
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// The turn lifecycle.
+//
+// Since fold-forward, a turn that leaves the surface byte-identical to the
+// active node commits NO node — it accumulates on `pendingFolded` and rides onto
+// the next node that does commit. Both the rules file (which tells Claude it may
+// point the user at "the node from that turn") and CLAUDE.md's lifecycle
+// paragraph described the pre-fold behaviour for two releases. Checked in both
+// directions: if `skipTurn` ever leaves domain/turns.js, this test says so
+// rather than silently permitting the old prose back.
+
+test('the turn-lifecycle prose says a no-change turn commits no node', () => {
+  const turns = read('lib/server/domain/turns.js');
+  assert.ok(/function skipTurn\(/.test(turns) && /function applyFolded\(/.test(turns),
+    'lib/server/domain/turns.js no longer implements the no-change skip — the doc sentences this test guards ' +
+    'were written against skipTurn/applyFolded, so re-read them before dropping this assertion');
+
+  for (const rel of ['CLAUDE.md', '.claude/rules/web-chat.md', 'templates/rules/web-chat.md']) {
+    const flat = flatten(read(rel));
+    assert.ok(/\bStop\b/.test(flat) || /turn-end/.test(flat),
+      `${rel} no longer describes the Stop hook — it is where the commit rule is stated`);
+    assert.ok(/folded_count|pending_folded|folds onto|commits nothing/.test(flat),
+      `${rel} describes the turn commit but never the no-change skip: a chat-only turn commits nothing, so telling ` +
+      'Claude (or a contributor) that every turn produces a node promises a node that will not exist');
+  }
+});
+
+// A stored node id really is `n<seq>` (n5, n11) and a label really is dotted
+// (n1.0, n1.1.0), so a bare `n11` in prose is an instruction to quote an id the
+// user cannot see — which is the confusion labels were introduced to end. The
+// rules file said both things, four lines apart. Measured over the whole doc
+// set: 2 true hits (both on the stale line), 0 false ones — every other `n<d>`
+// token in the docs is the leading segment of a label.
+test('no doc tells anyone to reference a graph node by its stored id', () => {
+  for (const { rel, body } of DOCS) {
+    for (const m of body.matchAll(/\bn\d+\b(?![.\dx])/g)) {
+      const near = body.slice(Math.max(0, m.index - 80), m.index + 40).replace(/\s+/g, ' ');
+      assert.fail(
+        `${rel} names the node id \`${m[0]}\` (…${near}…). Nodes are referenced by the hierarchical LABEL the ` +
+        'graph viewer shows (n1.4, n2.0); the stored id is opaque and the user never sees it');
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Pane scripts and the shadow root.
+//
+// Only document *queries* fail inside a shadow root. The wholesale ban that
+// stood in the rules file, `render`'s description and the pack checklist also
+// forbade `document.createElement` — which is how every shipped pane builds DOM
+// from data, and the alternative the pack doc's own §4 warns against is
+// `innerHTML` with interpolation, the bug class it says already shipped once.
+// So: a prohibition of `document` in the shipped prose has to name the queries.
+test('the shadow-root rule bans document QUERIES, not document.createElement', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  // The other direction: the ban is only wrong because the sanctioned API is in
+  // use. If no shipped pane builds DOM this way, re-read the rule before this.
+  const panes = fs.readdirSync(path.join(REPO_ROOT, 'templates/components'))
+    .map((d) => path.join(REPO_ROOT, 'templates/components', d, 'component.html'))
+    .filter((f) => fs.existsSync(f));
+  assert.ok(panes.some((f) => /document\.createElement/.test(fs.readFileSync(f, 'utf8'))),
+    'no shipped pane uses document.createElement any more — re-check the guidance this test protects');
+
+  for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+    const flat = flatten(body);
+    for (const m of flat.matchAll(/(?:never|no)\s+(?:\*\*)?`document([^`]*)`(.{0,80})/gi)) {
+      assert.ok(/quer|getElementById/i.test(m[1] + m[2]),
+        `${rel} forbids \`document${m[1]}\` without saying it is the QUERIES that break ("${m[0].trim()}"). ` +
+        'document.createElement/createTextNode work fine in a pane and are the safe way to build DOM from data');
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Where consent lives.
+//
+// The location of trusted.json is a security property, not a detail: a
+// project-local file let a hostile repo ship its own pre-approval, so the record
+// moved to the user tier. The doc that explains that move kept a Code map row
+// naming the removed location — the one row a maintainer scans for where consent
+// lives, pointing at the path the fix deleted.
+test('no doc places the service trust store inside the project', () => {
+  const { projectPaths, userPaths } = require('../lib/core/paths');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  assert.match(userPaths().trustedServices, /\/\.web-chat\/services\/trusted\.json$/,
+    'userPaths().trustedServices has moved — re-read every doc this test guards before changing it');
+  const project = Object.values(projectPaths(REPO_ROOT)).filter((v) => typeof v === 'string');
+  assert.ok(!project.some((v) => v.endsWith('trusted.json')),
+    'projectPaths now names a trusted.json — consent is back inside the project, which is the vulnerability the ' +
+    'user-tier move closed; this test and the docs it guards both need rewriting');
+
+  // A project-relative `.web-chat/services/` is only wrong where the doc is
+  // talking about CONSENT — the dir itself still exists in a project. So the
+  // window around each mention decides, and the one legitimate hit (the sentence
+  // describing the vulnerability the move closed) is on the allowlist.
+  for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+    const flat = flatten(body);
+    for (const m of flat.matchAll(/(?<!~\/)`?\.web-chat\/services\/(trusted\.json)?/g)) {
+      const near = flat.slice(Math.max(0, m.index - 120), m.index + 120);
+      if (!/trust|consent|approv/i.test(near)) continue;
+      // The allowance is per-OCCURRENCE, not per-file: its marker has to match
+      // this mention's own window, or one exempt sentence would exempt the
+      // whole document (which is how the stale Code map row survived beside the
+      // Trust section that contradicts it).
+      const allowed = allowFor('trustStore', rel, '.web-chat/services/trusted.json');
+      assert.ok(allowed && allowed.marker.test(near),
+        `${rel} points at a project-relative \`.web-chat/services/\` for the trust store (…${near.trim()}…); ` +
+        'consent lives at `~/.web-chat/services/trusted.json` (userPaths().trustedServices) precisely so a ' +
+        'repository cannot ship its own approval' +
+        (allowed ? ` — the only exempt mention is the one that ${allowed.reason}` : ''));
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Identifiers a consolidation retired.
+//
+// The recurring doc defect is not a wrong path — it is the right path beside a
+// name the refactor deleted, which no existence check sees. A driver author sent
+// to `pushEvent` finds nothing and hand-pairs the broadcast the bus exists to
+// replace. Each entry is checked in BOTH directions: still undeclared in `lib/`,
+// still unnamed in the docs. A name that comes back fails as a stale entry
+// rather than silently exempting itself.
+const RETIRED = [
+  { name: 'pushEvent', now: 'lib/core/bus.js — `bus.emit({ event, ws })`, the one ring + WS pairing' },
+  // Not an identifier: a named emit that no longer exists. `literal` means the
+  // token must be absent from lib/ outright, not merely undeclared.
+  {
+    name: 'legacy-clear',
+    literal: true,
+    now: 'lib/server/domain/mounts.js — a capture clear goes through removeMount and DOES enter the ring, ' +
+      "so it is no longer an example of a ws-only emit (turns.js's reaim/lock frames are)",
+  },
+];
+
+test('no shipped doc names an identifier a consolidation retired', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  const sources = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.js')) sources.push(fs.readFileSync(p, 'utf8'));
+    }
+  })(path.join(REPO_ROOT, 'lib'));
+
+  for (const { name, literal, now } of RETIRED) {
+    // Declared, not merely mentioned: the engines that replaced these names say
+    // so in their own comments, and a comment is not a re-introduction. A
+    // `literal` entry is a string rather than a binding, so any occurrence at all
+    // means it is back.
+    const declared = literal
+      ? new RegExp(name)
+      : new RegExp(`(?:function|const|let|var)\\s+${name}\\b|\\b${name}\\s*[:(]\\s*(?:function|\\()`);
+    assert.ok(!sources.some((s) => declared.test(s)),
+      `\`${name}\` is back under lib/ — drop its RETIRED entry (it was replaced by ${now})`);
+    // A retired name may still be NAMED as the thing not to do — "hand-pair
+    // broadcast() + pushEvent()" is the engines table doing its job. What it may
+    // not be is presented as something a reader can reach for, so the window
+    // around each mention has to say it is gone or forbidden.
+    const excused = /hand-pair|no longer|used to|replaced by|retired|deleted|removed|is gone/i;
+    for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+      const flat = flatten(body);
+      for (const m of flat.matchAll(new RegExp(`(?<![\\w-])${name}(?![\\w-])`, 'g'))) {
+        const near = flat.slice(Math.max(0, m.index - 120), m.index + 120);
+        assert.ok(excused.test(near),
+          `${rel} names \`${name}\` as something live (…${near.trim()}…), and nothing under lib/ has it any ` +
+          `more. The engine is ${now}`);
+      }
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Service components: the lessons that live only in a builtin.
+//
+// The doc tells authors to crib from `git-dashboard` and `file-editor`. Where a
+// builtin's code carries a rule and the doc does not, an author who reads the
+// doc first (which is what a doc is for) writes the bug the builtin was fixed
+// for. Each check is anchored on the builtin still embodying the rule.
+
+test('the control-key section says a control value is untrusted input', () => {
+  const service = read('templates/components/git-dashboard/service.js');
+  assert.ok(/OBJECT_NAME/.test(service) && /branches\.some\(/.test(service),
+    'git-dashboard no longer allowlists its control key against what it read for itself — ' +
+    'docs/service-components.md points at build() as the pattern, so both need re-reading');
+
+  const doc = flatten(read('docs/service-components.md'));
+  const section = doc.match(/Talking to the pane[\s\S]*?## Worked example/);
+  assert.ok(section, 'docs/service-components.md no longer has the control-key section');
+  assert.match(section[0], /untrusted|allowlist/i,
+    'the control-key section presents the key purely as a mechanism. A control value is written by any pane in ' +
+    'the page or any local process, and git-dashboard allowlists it before it reaches argv precisely because an ' +
+    'option-shaped value becomes a git option — say so where authors are told to build one');
+});
+
+test('the lifecycle table lists every stop trigger the supervisor has', () => {
+  const supervisor = read('lib/server/services.js');
+  // Identity is the trust key (hash + root + params fingerprint), so a re-use of
+  // the pane with different params stops the child exactly as an edit does.
+  assert.match(supervisor, /if \(!d \|\| d\.key !== entry\.key\) stop\(mountId\)/,
+    'the supervisor no longer stops on an identity change — the lifecycle table was written against that line');
+  assert.match(supervisor, /if \(!onSurface\.has\(mountId\)\) failed\.delete\(mountId\)/,
+    'prune() no longer drops the crash block with the pane — re-read the Lifecycle section');
+
+  const lifecycle = read('docs/service-components.md').match(/## Lifecycle[\s\S]*?## Trust/);
+  assert.ok(lifecycle, 'docs/service-components.md no longer has its Lifecycle section');
+  const flat = flatten(lifecycle[0]);
+  assert.match(flat, /different params/,
+    'the **stopped** row omits the params half of the identity: re-using a pane with different params stops the ' +
+    'child, which is the whole reason `file-editor --unfenced` cannot ride the fenced approval');
+  assert.match(flat, /leaves the surface|prune/,
+    "the crash paragraph still says a crashed child waits for a `service.js` edit; prune() also lifts the block " +
+    'when the pane leaves the surface');
+});
+
+test('the startup-replay snippet says a mutating action must not be replayed', () => {
+  const editor = read('templates/components/file-editor/service.js');
+  assert.match(editor, /let lastCtlSeq = startedAt;/,
+    "file-editor no longer floors its control cursor at its own start time — that rule is what the doc now teaches");
+  assert.match(editor, /VIEW_ACTIONS/,
+    'file-editor no longer separates view actions from mutating ones at startup');
+
+  const section = read('docs/service-components.md').match(/## Talking to the pane[\s\S]*?## Worked example/);
+  assert.ok(section, 'docs/service-components.md no longer has the control-key section');
+  const flat = flatten(section[0]);
+  assert.ok(/mutat/i.test(flat) && /startup read/i.test(flat),
+    "the generic snippet still shows the naive startup replay (adopt anything with a newer seq) with nothing saying " +
+    'a host-mutating control action must not run from it — the shape that let a persisted `save` re-fire on respawn');
+});
+
+// ---------------------------------------------------------------------------
+// Counting prose.
+//
+// A numeral in prose is the least durable claim a doc can make: the tripwire
+// table grew from three rows to nineteen while the sentence introducing it still
+// said "Three of the most-copied primitives". The table itself is checked above,
+// so the honest fix is to state no number — and this makes any number that IS
+// stated have to be right.
+const NUMBER_WORDS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20,
+};
+
+test('any count of the constructs the ratchet enforces equals the number it bans', () => {
+  const n = patternNames().length;
+  const re = /\b(\d+|[a-z]+)\b(?:[^.]{0,120}?)(?:are|is) enforced automatically/gi;
+  for (const { rel, body } of DOCS) {
+    for (const m of flatten(body).matchAll(re)) {
+      const word = m[1].toLowerCase();
+      const stated = /^\d+$/.test(word) ? Number(word) : NUMBER_WORDS[word];
+      if (stated === undefined) continue; // "primitives are enforced automatically" — no count claimed
+      assert.equal(stated, n,
+        `${rel} says ${m[1]} constructs are enforced automatically, but test/conventions.test.js bans ${n}. ` +
+        'Prefer no number: point at the tripwire table, which this suite already checks row for row');
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Managed-file conflicts.
+//
+// The README and the CHANGELOG promise four surfaces report a pending sidecar;
+// extending.md's paragraph named two. Which commands consume the engine is not
+// prose — it is a require away.
+test('extending.md names every command that reports a managed-file conflict', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  const dir = path.join(REPO_ROOT, 'lib/cli/commands');
+  const consumers = fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.js') && /conflictAdvice|conflictSummary/.test(fs.readFileSync(path.join(dir, f), 'utf8')))
+    .map((f) => f.replace(/\.js$/, ''));
+  assert.ok(consumers.length >= 3, 'nothing consumes conflictAdvice/conflictSummary any more — re-read the paragraph');
+
+  // Bounded by the blank line, so the NEXT paragraph (which happens to name
+  // `update` for an unrelated reason) cannot answer for this one.
+  const block = read('docs/extending.md').split(/\n\n+/).map(flatten)
+    .find((b) => b.includes('Consumers therefore have two questions'));
+  assert.ok(block, 'docs/extending.md no longer carries the conflict-reporting paragraph');
+  const para = block;
+  for (const name of consumers) {
+    assert.ok(para.includes(`\`${name}\``),
+      `\`claude-web-chat ${name}\` reports a managed-file conflict but extending.md's paragraph omits it — ` +
+      'the README and CHANGELOG both promise the full set');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// What CI actually covers.
+//
+// "Structurally uncovered" is a promise about the test suite, and the suite
+// changes underneath it. install.sh sat on that list for a release after the
+// suite started executing it end to end — which is worse than an ordinary stale
+// sentence, because it invites someone to write the coverage that already
+// exists, or to distrust the coverage they have.
+test('docs/platform-support.md does not call install.sh structurally uncovered', () => {
+  const suite = read('test/distribution.test.js');
+  assert.match(suite, /execFile\('\/bin\/sh', \[path\.join\(REPO_ROOT, 'install\.sh'\)\]/,
+    'the suite no longer EXECUTES install.sh — put it back on the uncovered list in docs/platform-support.md');
+  const ci = read('.github/workflows/test.yml');
+  assert.ok(/ubuntu-latest/.test(ci) && /macos-latest/.test(ci),
+    'the CI matrix has changed — docs/platform-support.md names the platforms it runs on');
+
+  // Bounded by the blank line: the paragraph that says what CI does NOT cover.
+  // (`install.sh` carries a period, so a sentence split on dots truncates it.)
+  const uncovered = read('docs/platform-support.md').split(/\n\n+/).map(flatten)
+    .find((b) => b.includes('Structurally uncovered:'));
+  assert.ok(uncovered, 'docs/platform-support.md no longer carries the "structurally uncovered" list');
+  assert.ok(!/install\.sh/.test(uncovered),
+    `docs/platform-support.md still lists install.sh as structurally uncovered ("${uncovered}"), but the suite ` +
+    'runs it end to end against a scratch HOME and a loopback GitHub stand-in, on both CI platforms');
+});
+
+// ---------------------------------------------------------------------------
+// What `ls --reap` promises about signals.
+//
+// "nothing it does sends a signal" was the headline of a deliberate behaviour
+// change, and it overstated what the code keeps: `signalAfterAck:false` gates
+// the ACKNOWLEDGED branch alone, so a daemon that answered /api/health as our
+// pid and then failed to acknowledge the shutdown request still takes stop's
+// SIGTERM. A safety claim that is stronger than the code is the kind a reader
+// builds on.
+test('no doc claims the reaper never signals while stop can still escalate', () => {
+  const stop = read('lib/cli/commands/stop.js');
+  const fallback = stop.indexOf('falling back to SIGTERM');
+  const signal = stop.indexOf("process.kill(info.pid, 'SIGTERM')");
+  assert.ok(fallback >= 0 && signal > fallback,
+    "lib/cli/commands/stop.js no longer falls back to SIGTERM on an unacknowledged shutdown — if that branch is " +
+    'gone or gated, the absolute claim is true again and this test should go');
+  assert.ok(!/signalAfterAck/.test(stop.slice(fallback, signal)),
+    'the unacknowledged branch consults signalAfterAck now — a reap can no longer signal, so the docs may make ' +
+    'the stronger claim and this test should go');
+
+  const ABSOLUTE = /nothing (?:it does|here) (?:ever )?sends? a signal|nothing here ever signals/i;
+  const sources = [...DOCS, { rel: 'lib/cli/reap.js', body: read('lib/cli/reap.js') }];
+  for (const { rel, body } of sources) {
+    const m = flatten(body).match(ABSOLUTE);
+    assert.ok(!m,
+      `${rel} claims "${m && m[0]}". A reap never signals mid-drain and never a pid that did not answer ` +
+      '/api/health as the listed pid — but an unacknowledged shutdown still falls through to stop\'s SIGTERM');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Version attribution in a status header.
+//
+// A doc that specifies more than has been built carries a `Status: **…**`
+// header, and that header has exactly one job: tell a reader which half they can
+// use. docs/capture-profiles-and-panes.md's also pinned the built half to a
+// release — "capture dedupe and hot reload shipped in 0.3.0" — and the
+// CHANGELOG's [0.3.0] section names neither, so the one place a reader would
+// check the attribution does not corroborate it. Provenance is the CHANGELOG's
+// job; a release number in prose is a claim with no owner, and getting it wrong
+// misdates a feature for everyone who reads the spec instead of the history.
+test('a status header says what is built, not which release built it', () => {
+  // Anchored on the claim being TRUE: the numeral is what goes, not the feature.
+  assert.match(read('lib/server/routes/profiles.js'), /'\/api\/profiles\/reload'/,
+    'the profile hot-reload route is gone — the status header this test guards lists it as shipped');
+  assert.match(read('lib/cli/commands/profile.js'), /sub === 'reload'/,
+    "`claude-web-chat profile reload` is gone — the status header lists hot reload as shipped");
+
+  let found = 0;
+  for (const { rel, body } of DOCS) {
+    const header = body.match(/^Status: \*\*[\s\S]*?\n\n/m);
+    if (!header) continue;
+    found++;
+    const version = flatten(header[0]).match(/\b\d+\.\d+\.\d+\b/);
+    assert.ok(!version,
+      `${rel}'s status header dates its shipped half to ${version && version[0]}. The header answers ` +
+      'shipped-vs-unbuilt; which release shipped a thing is the CHANGELOG\'s claim to make, and nothing ' +
+      'reconciles a version written here against it');
+  }
+  assert.ok(found >= 1, 'no doc carries a `Status: **…**` header any more — this check has nothing to walk');
 });
