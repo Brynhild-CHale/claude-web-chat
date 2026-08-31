@@ -529,3 +529,26 @@ test('no shipped doc names an identifier a consolidation retired', () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Service components: the lessons that live only in a builtin.
+//
+// The doc tells authors to crib from `git-dashboard` and `file-editor`. Where a
+// builtin's code carries a rule and the doc does not, an author who reads the
+// doc first (which is what a doc is for) writes the bug the builtin was fixed
+// for. Each check is anchored on the builtin still embodying the rule.
+
+test('the control-key section says a control value is untrusted input', () => {
+  const service = read('templates/components/git-dashboard/service.js');
+  assert.ok(/OBJECT_NAME/.test(service) && /branches\.some\(/.test(service),
+    'git-dashboard no longer allowlists its control key against what it read for itself — ' +
+    'docs/service-components.md points at build() as the pattern, so both need re-reading');
+
+  const doc = flatten(read('docs/service-components.md'));
+  const section = doc.match(/Talking to the pane[\s\S]*?## Worked example/);
+  assert.ok(section, 'docs/service-components.md no longer has the control-key section');
+  assert.match(section[0], /untrusted|allowlist/i,
+    'the control-key section presents the key purely as a mechanism. A control value is written by any pane in ' +
+    'the page or any local process, and git-dashboard allowlists it before it reaches argv precisely because an ' +
+    'option-shaped value becomes a git option — say so where authors are told to build one');
+});

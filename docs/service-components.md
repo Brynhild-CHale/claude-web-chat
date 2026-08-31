@@ -192,6 +192,19 @@ service ──setStore({ git: {...} })──►  store  ──subscribe('git')�
   pane  ──store.set({ git_ctl:{...} })─►  store  ──SSE store events──►  service
 ```
 
+**A control key is untrusted input.** The store is a shared bus: every pane
+script in the page can write your control key, and so can any local process that
+reaches the daemon. Pane code is compiled with `new Function` in the surface's
+own realm, so "the pane I shipped" is not a claim about who wrote the value.
+Never let one reach a command line or a filesystem path unchecked — allowlist it
+against something the service itself just produced, or against a narrow grammar,
+and fall back to a default when it does not match. `build()` in
+`templates/components/git-dashboard/service.js` is the pattern: `viewing` is
+accepted only if it is one of the branch names that same call just read, and
+`open` only if it looks like a git object name, because otherwise an
+option-shaped value (`--output=<path>` makes `git log` write a host file) becomes
+a git argument. Paths get `ctx.fence` (above); argv gets this.
+
 The service observes control writes over SSE (`driver.streamEvents({ kinds:['store'] })`)
 and reacts. Because the SSE stream has **no auto-reconnect** and isn't live during
 the spawn window, read the control key with `getStore` on startup and re-read it on
