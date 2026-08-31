@@ -638,3 +638,32 @@ test('any count of the constructs the ratchet enforces equals the number it bans
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Managed-file conflicts.
+//
+// The README and the CHANGELOG promise four surfaces report a pending sidecar;
+// extending.md's paragraph named two. Which commands consume the engine is not
+// prose — it is a require away.
+test('extending.md names every command that reports a managed-file conflict', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  const dir = path.join(REPO_ROOT, 'lib/cli/commands');
+  const consumers = fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.js') && /conflictAdvice|conflictSummary/.test(fs.readFileSync(path.join(dir, f), 'utf8')))
+    .map((f) => f.replace(/\.js$/, ''));
+  assert.ok(consumers.length >= 3, 'nothing consumes conflictAdvice/conflictSummary any more — re-read the paragraph');
+
+  // Bounded by the blank line, so the NEXT paragraph (which happens to name
+  // `update` for an unrelated reason) cannot answer for this one.
+  const block = read('docs/extending.md').split(/\n\n+/).map(flatten)
+    .find((b) => b.includes('Consumers therefore have two questions'));
+  assert.ok(block, 'docs/extending.md no longer carries the conflict-reporting paragraph');
+  const para = block;
+  for (const name of consumers) {
+    assert.ok(para.includes(`\`${name}\``),
+      `\`claude-web-chat ${name}\` reports a managed-file conflict but extending.md's paragraph omits it — ` +
+      'the README and CHANGELOG both promise the full set');
+  }
+});

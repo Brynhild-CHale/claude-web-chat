@@ -643,8 +643,10 @@ beside a file that still differs from shipped, the row carries `pending: true`,
 and deleting the sidecar is the entire resolution ritual. Consumers therefore
 have two questions to answer, not one — "is this a fresh conflict?" and "is
 there an offer still open?" — and each one states its answer in a comment
-(`status`/`init` report both; the MCP startup nudge reports only the first,
-because it tells the user to run `install` and `install` cannot merge for them).
+(`install`, `update`, `status` and `init` all report both — the first three
+through `conflictAdvice`, `status` through `conflictSummary`; the MCP startup
+nudge reports only the first, because it tells the user to run `install` and
+`install` cannot merge for them).
 
 `update` loads this module out of `versions/<target>` (the same reason
 `loadRestart` exists), so **the export surface is a cross-version contract**:
