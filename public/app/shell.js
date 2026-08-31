@@ -1,8 +1,8 @@
 // The Console shell interactions: settings (theme switcher) + new-graph / wipe
 // popovers, the More menu, the ⌘K command palette, the ONE dismiss layer that
 // closes every chrome panel, the global keyboard layer, and
-// the proximity queue rail. The queue is a reserved forward-hook (channels /
-// "what wakes Claude") — inert until that lands.
+// the proximity queue rail — live since channels landed: it shows the queued
+// wake items public/app/queue.js maintains, and Q pins it open.
 import { $ } from './state.js';
 import { toggleMode } from './theme.js';
 import {
