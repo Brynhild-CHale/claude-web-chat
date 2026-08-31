@@ -65,9 +65,56 @@ test('uninstall removes every managed file, sidecars, baselines, and prunes empt
   assert.deepEqual(mcp.mcpServers.other, { command: 'foo' }, 'other mcp entries must survive');
 });
 
-test('uninstall on a bare project is a no-op that does not throw', () => {
+// A no-op has to be an ACTUAL no-op. uninstall used to resolve its root
+// tolerantly (falling back to the cwd) so that `--self` would work anywhere —
+// and `remove()` un-registers the LOCAL-scope entry by running `claude mcp
+// remove web-chat --scope local` in that directory. So typing it in a directory
+// that is not a project, and has no installed parent, wrote to Claude Code's own
+// config on behalf of a project that never existed.
+test('uninstall on a bare project is a no-op that does not throw, and tells `claude` nothing', () => {
   const root = tmpRoot();
-  uninstall([], { cwd: root, runClaude: fakeClaude().fn });
+  const claude = fakeClaude();
+  const lines = [];
+  const prevLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    uninstall([], { cwd: root, runClaude: claude.fn });
+  } finally {
+    console.log = prevLog;
+  }
+  assert.deepEqual(claude.calls, [], 'nothing may be un-registered for a directory web-chat was never installed in');
+  assert.match(lines.join('\n'), /Nothing to uninstall/);
+  assert.doesNotMatch(lines.join('\n'), /uninstalled from/, 'and no removal is reported');
+});
+
+// The other side of that rule: `.web-chat/` deleted by hand leaves the hooks and
+// the .mcp.json entry behind, still making Claude Code spawn the MCP server —
+// which is exactly what uninstall is for. Refusing on a missing state directory
+// would strand it, so the wiring itself decides.
+test('a project whose .web-chat/ was deleted by hand is still uninstallable', () => {
+  const root = tmpRoot();
+  write(path.join(root, '.claude', 'settings.json'), JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-end' }] }] },
+  }, null, 2));
+  write(path.join(root, '.mcp.json'), JSON.stringify({
+    mcpServers: { 'web-chat': { command: 'node', args: ['/x.js'] } },
+  }, null, 2));
+  assert.equal(fs.existsSync(path.join(root, '.web-chat')), false, 'no state directory to find');
+
+  const claude = fakeClaude();
+  const prevLog = console.log;
+  console.log = () => {};
+  try {
+    uninstall([], { cwd: root, runClaude: claude.fn });
+  } finally {
+    console.log = prevLog;
+  }
+  assert.deepEqual(claude.calls, [['mcp', 'remove', 'web-chat', '--scope', 'local']]);
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
+  assert.ok(!settings.hooks, 'the hooks that made Claude Code spawn web-chat are gone');
+  const mcpFile = path.join(root, '.mcp.json');
+  const mcp = fs.existsSync(mcpFile) ? JSON.parse(fs.readFileSync(mcpFile, 'utf8')) : { mcpServers: {} };
+  assert.ok(!mcp.mcpServers['web-chat'], 'and so is the entry that registered the server');
 });
 
 // From a subdirectory this printed "web-chat uninstalled from <subdir>" with

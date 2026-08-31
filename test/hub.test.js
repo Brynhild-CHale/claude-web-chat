@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const net = require('net');
+const http = require('http');
 const { spawn } = require('child_process');
 
 // ~/.web-chat (the registry + the hub portfile) is redirected by
@@ -242,4 +243,101 @@ test('hub: ensureHub bounces a stale (old-protocol) hub; a current one takes ove
   } finally {
     try { fake.kill('SIGKILL'); } catch {}
   }
+});
+
+// An in-process stale hub: answers /api/health as an OLD protocol version, so
+// ensureHub's self-heal branch is entered. `pid` is what the bounce signals —
+// the pid the answering process reports about itself, not one read out of a file.
+function staleHub(t, { pid = process.pid } = {}) {
+  const server = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: true, role: 'hub', version: 1, pid, port: server.address().port }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      t.after(() => new Promise((r) => { try { server.closeAllConnections(); } catch {} server.close(() => r()); }));
+      resolve({ server, port: server.address().port });
+    });
+  });
+}
+
+// Point ensureHub (and anything it spawns) at a port, and put it back after.
+function withHubPort(t, port, { idleMs = null } = {}) {
+  const prev = { port: process.env.WEB_CHAT_HUB_PORT, idle: process.env.WEB_CHAT_HUB_IDLE_MS };
+  process.env.WEB_CHAT_HUB_PORT = String(port);
+  if (idleMs != null) process.env.WEB_CHAT_HUB_IDLE_MS = String(idleMs);
+  t.after(() => {
+    if (prev.port === undefined) delete process.env.WEB_CHAT_HUB_PORT; else process.env.WEB_CHAT_HUB_PORT = prev.port;
+    if (prev.idle === undefined) delete process.env.WEB_CHAT_HUB_IDLE_MS; else process.env.WEB_CHAT_HUB_IDLE_MS = prev.idle;
+  });
+}
+
+function captureStderr(t) {
+  const lines = [];
+  const prev = console.error;
+  console.error = (...a) => lines.push(a.map(String).join(' '));
+  t.after(() => { console.error = prev; });
+  return () => lines.join('\n');
+}
+
+// The two arms of the failed-signal branch. Neither could be exercised before —
+// process.kill was called inline, and EPERM needs a hub owned by a second uid —
+// so a regression that widened the bail back to "any error" would have been
+// invisible: every machine whose stale hub merely exited between the probe and
+// the signal would be left with no hub at all until the next daemon booted.
+test('hub: ensureHub bails immediately when the stale hub cannot be signalled (EPERM)', async (t) => {
+  withTempHome(t);
+  // A pid that cannot be alive: if the injected `kill` is ever dropped, the real
+  // signal lands on nothing instead of on this test process.
+  const DEAD = 2 ** 30;
+  const { port } = await staleHub(t, { pid: DEAD });
+  withHubPort(t, port);
+  const stderr = captureStderr(t);
+
+  const calls = [];
+  const started = Date.now();
+  const info = await ensureHub({
+    maxMs: 8000,
+    kill: (pid, signal) => {
+      calls.push([pid, signal]);
+      const e = new Error('operation not permitted');
+      e.code = 'EPERM';
+      throw e;
+    },
+  });
+
+  assert.equal(info, null, 'EPERM proves the port can never free from here — bail, do not spin');
+  assert.ok(Date.now() - started < 4000, 'and bail at once rather than waiting out maxMs twice');
+  assert.deepEqual(calls, [[DEAD, 'SIGTERM']], 'it signalled the pid /api/health reported');
+  assert.match(stderr(), /another user/, 'and said why, with the WEB_CHAT_HUB_PORT way out');
+  const still = await probeHubHealth(port);
+  assert.equal(still && still.version, 1, 'nothing was spawned over the hub it could not bounce');
+});
+
+test('hub: ensureHub waits and respawns when the stale hub is already gone (ESRCH)', async (t) => {
+  withTempHome(t);
+  const stale = await staleHub(t, { pid: 2 ** 30 });
+  // 30s idle so the real hub ensureHub spawns stays up for the assertions.
+  withHubPort(t, stale.port, { idleMs: 30000 });
+
+  const info = await ensureHub({
+    maxMs: 8000,
+    // ESRCH is the stale hub having exited between the probe and the signal —
+    // the port frees on its own, which is exactly when respawning WORKS.
+    kill: () => {
+      try { stale.server.closeAllConnections(); } catch {}
+      stale.server.close();
+      const e = new Error('no such process');
+      e.code = 'ESRCH';
+      throw e;
+    },
+  });
+
+  assert.ok(info, 'a failure that is not EPERM falls through to the wait-and-respawn');
+  const after = await probeHubHealth(stale.port);
+  assert.equal(after && after.version, HUB_PROTOCOL_VERSION, 'and a current-protocol hub answers there now');
+
+  const real = readHubEntry();
+  if (real && real.pid) { try { process.kill(real.pid, 'SIGTERM'); } catch {} }
+  await waitUntil(async () => !(await probeHub(stale.port)), { timeout: 4000, interval: 50 });
 });

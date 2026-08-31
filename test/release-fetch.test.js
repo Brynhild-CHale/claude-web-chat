@@ -131,6 +131,25 @@ test('download → verify → unpack lands a complete version directory', async 
   assert.deepEqual(fs.readdirSync(store), ['0.5.0']);
 });
 
+// The other half of distribution-3: a download killed with Ctrl-C never runs the
+// `finally`, so its whole tarball is stranded in the staging dir forever. The
+// next fetch sweeps its OWN prefix, and only entries old enough that they cannot
+// belong to an update running right now.
+test('a stale staging directory is swept; a fresh one (a concurrent update) is not', () => {
+  const stage = tmpDir('wc-stage-');
+  const old = path.join(stage, 'wc-release-Ab12Cd');
+  const fresh = path.join(stage, 'wc-release-Zz98Yy');
+  const theirs = path.join(stage, 'someone-elses');
+  for (const d of [old, fresh, theirs]) fs.mkdirSync(d);
+  fs.writeFileSync(path.join(old, 'claude-web-chat-9.9.9.tar.gz'), 'a whole download');
+  const longAgo = Date.now() - release.STALE_STAGING_MS - 60_000;
+  fs.utimesSync(old, longAgo / 1000, longAgo / 1000);
+  fs.utimesSync(theirs, longAgo / 1000, longAgo / 1000);
+
+  release.sweepStaleStaging(stage);
+  assert.deepEqual(fs.readdirSync(stage).sort(), ['someone-elses', 'wc-release-Zz98Yy']);
+});
+
 test('a tampered tarball is refused, and nothing is written to the version store', async (t) => {
   const state = releaseState('0.5.0');
   // Corrupt the asset AFTER its checksum was published — a tampered mirror, or

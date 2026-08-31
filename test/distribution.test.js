@@ -162,6 +162,26 @@ test('the release workflow builds the artifact and publishes it, and never publi
   assert.match(wf, /npm test/, 'a release that fails its own suite is not a release');
 });
 
+// Both workflows explain the shape of `npm test` in a comment, and the shape
+// changed under them: the timeout and the HOME sandbox --import landed while
+// release.yml still called it "a bare `node --test`". A CI comment is the last
+// place anyone looks for a stale fact, so the one it turns on is asserted here
+// against package.json rather than left to the next reader to notice.
+test('the CI comments describe `npm test` as it actually is', () => {
+  const script = JSON.parse(read('package.json')).scripts.test;
+  const flags = script.split(/\s+/).slice(2);
+  assert.ok(script.startsWith('node --test') && flags.length > 0,
+    'the test script is `node --test` PLUS flags — if that ever stops being true, revisit the comments below');
+  for (const f of ['.github/workflows/test.yml', '.github/workflows/release.yml']) {
+    const wf = read(f);
+    assert.match(wf, /npm test/, `${f} must run the suite`);
+    assert.doesNotMatch(wf, /bare `node --test`/,
+      `${f} calls npm test a bare \`node --test\`, but it is \`${script}\``);
+    assert.match(wf, /NO path argument|no path argument/i,
+      `${f} must keep the fact that matters: npm test takes no path argument`);
+  }
+});
+
 test('the three bin names are minted in one place and used everywhere', () => {
   const { BIN_NAMES } = require('../lib/core/paths');
   const pkg = JSON.parse(read('package.json'));
@@ -297,14 +317,23 @@ test('install.sh moves `current` to the new version when it is re-run over an ex
   assert.equal(fs.readlinkSync(current), 'versions/9.9.1');
   assert.match(fs.readFileSync(cli, 'utf8'), /9\.9\.1/, 'the bin symlink must resolve into the installed version');
 
+  // Debris exactly where the broken `mv` used to deposit it: a dangling link
+  // INSIDE the version directory, which no sweep reached — so an install
+  // upgraded through that installer carried it forever, and the write bumped
+  // that directory's mtime, which is what the prune sorts on.
+  const debris = path.join(home, '.web-chat', 'versions', '9.9.1', 'current.incoming');
+  fs.symlinkSync('versions/9.9.1', debris);
+
   // The re-run. This is the case the installer promises is "always safe".
   state.version = '9.9.2';
   await install();
+  assert.equal(fs.existsSync(debris) || fs.lstatSync(debris, { throwIfNoEntry: false }) != null, false,
+    'the re-run must sweep the debris an older installer left inside a version dir');
   assert.equal(fs.readlinkSync(current), 'versions/9.9.2', '`current` must point at the version just installed');
   assert.match(fs.readFileSync(cli, 'utf8'), /9\.9\.2/, 'the bins resolve through `current`, so they move with it');
   assert.deepEqual(
     fs.readdirSync(path.join(home, '.web-chat', 'versions', '9.9.1')).sort(),
     ['bin', 'package.json'],
-    'the swap must not deposit anything inside the version it replaced',
+    'the swap must not deposit anything inside the version it replaced, and must sweep what an older one did',
   );
 });
