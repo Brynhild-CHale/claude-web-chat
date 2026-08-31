@@ -46,6 +46,19 @@ test('isPrivateAddress covers both families and the v4-mapped middle ground', ()
     ['::ffff:0808:0808', false, '…and the hex form of a public one is still public'],
     ['0:0:0:0:0:0:0:1', true, 'uncompressed loopback'],
     ['0:0:0:0:0:0:0:0', true, 'uncompressed unspecified'],
+    // NAT64 (RFC 6052 §2.1): the well-known prefix embeds a v4 address in the
+    // low 32 bits, and on a host with NAT64 connectivity that IS the address the
+    // socket reaches. Both spellings, because WHATWG URL re-serialises the
+    // dotted one into hex before any dotted-tail test could see it.
+    ['64:ff9b::7f00:1', true, 'NAT64 well-known prefix wrapping 127.0.0.1'],
+    ['64:ff9b::127.0.0.1', true, '…and its dotted spelling'],
+    ['64:ff9b::a9fe:a9fe', true, 'NAT64 wrapping the cloud metadata address'],
+    ['64:ff9b::8.8.8.8', false, 'a public v4 through NAT64 is still public'],
+    ['64:ff9b:1::7f00:1', true, 'the RFC 8215 local-use prefix: refused whole'],
+    ['64:ff9b:1::8.8.8.8', true, '…including a public v4, since the embedding length is unknown'],
+    ['::127.0.0.1', true, 'deprecated IPv4-compatible loopback'],
+    ['::7f00:1', true, '…in its hex spelling, which the dotted shortcut never saw'],
+    ['::8.8.8.8', false, 'a public v4-compatible address is still public'],
     ['2606:4700:4700::1111', false],
     ['1:2:3:4:5:6:7:8', false, 'a full public literal'],
     ['1:2:3:4:5:6:7:8:9', true, 'nine groups is not an address — fail closed'],
