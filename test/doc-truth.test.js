@@ -373,3 +373,30 @@ test('CLAUDE.md\'s engines table is a subset of docs/extending.md\'s', () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// The turn lifecycle.
+//
+// Since fold-forward, a turn that leaves the surface byte-identical to the
+// active node commits NO node — it accumulates on `pendingFolded` and rides onto
+// the next node that does commit. Both the rules file (which tells Claude it may
+// point the user at "the node from that turn") and CLAUDE.md's lifecycle
+// paragraph described the pre-fold behaviour for two releases. Checked in both
+// directions: if `skipTurn` ever leaves domain/turns.js, this test says so
+// rather than silently permitting the old prose back.
+
+test('the turn-lifecycle prose says a no-change turn commits no node', () => {
+  const turns = read('lib/server/domain/turns.js');
+  assert.ok(/function skipTurn\(/.test(turns) && /function applyFolded\(/.test(turns),
+    'lib/server/domain/turns.js no longer implements the no-change skip — the doc sentences this test guards ' +
+    'were written against skipTurn/applyFolded, so re-read them before dropping this assertion');
+
+  for (const rel of ['CLAUDE.md', '.claude/rules/web-chat.md', 'templates/rules/web-chat.md']) {
+    const flat = flatten(read(rel));
+    assert.ok(/\bStop\b/.test(flat) || /turn-end/.test(flat),
+      `${rel} no longer describes the Stop hook — it is where the commit rule is stated`);
+    assert.ok(/folded_count|pending_folded|folds onto|commits nothing/.test(flat),
+      `${rel} describes the turn commit but never the no-change skip: a chat-only turn commits nothing, so telling ` +
+      'Claude (or a contributor) that every turn produces a node promises a node that will not exist');
+  }
+});
