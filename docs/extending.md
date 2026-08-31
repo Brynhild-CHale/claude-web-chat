@@ -139,7 +139,7 @@ were the only places they lived.
 | remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
 | list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
-| call the daemon over HTTP | `lib/client` `get` / `post` / `request` / `api` | `http.request` |
+| call the daemon over HTTP | `lib/client` `get` / `post` / `api` — a non-2xx is a typed `HttpError` `{status, body}`; the low-level `request` (never throws on a status) only where the status is RELAYED onward | `http.request`, or `client.request` plus a hopeful read of the body |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
 | write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
@@ -235,18 +235,31 @@ This engine also unifies the reading/discovery *code*.
 
 The single way to make an HTTP call to a web-chat daemon.
 
-- `get(path, opts)` / `post(path, body, opts)` — throw on HTTP ≥ 400, one
-  respawn-and-retry on connection-refused.
+- `get(path, opts)` / `post(path, body, opts)` — **the default idiom.** Resolve
+  with the parsed body, or throw: an HTTP ≥ 400 is a typed **`HttpError`**
+  carrying `{status, body, method, path}`, so a caller branches on
+  `e instanceof client.HttpError && e.status === 404` rather than parsing the
+  message. One respawn-and-retry on connection-refused.
 - `request(port, method, path, body, {headers, timeout})` — low-level; returns
-  `{status, body}`, never throws on an HTTP status (for callers that inspect the
-  status themselves, e.g. the CLI).
+  `{status, body}` and never throws on an HTTP status. Correct **only** for a
+  caller that *relays* the status onward rather than acting on it (the hub's
+  `forward`, the export CLI). Three sites use it and the conventions ratchet
+  holds it there — everything else takes the throwing path.
 - `subscribeSSE({port, root, since, kinds, onEvent, onGap, onClose, onError})` —
   the live event stream. A long-lived stream, so it must **not** go through
   `request()` (which buffers to end).
 - `probeReachable` / `probeHealth` (re-exported from `core/portfiles`),
-  `discoverPort`, `ensureDaemon`, `NoServerError`.
+  `discoverPort`, `ensureDaemon`, `NoServerError`, `HttpError`.
 
-Two policies are load-bearing — preserve them:
+Three policies are load-bearing — preserve them:
+
+- **Every call settles.** A socket that dies is *always* a rejection, including a
+  response cut off mid-body: `request()` used to settle only on the response's
+  `end`, so a daemon dying after the headers left the promise pending forever and
+  — with no default socket timeout, below — hung the MCP tool, hook or command
+  behind it. The premature-close rejection is coded `ECONNRESET` on purpose, so
+  `isConnRefused` folds it into `api()`'s existing respawn-and-retry instead of
+  making a mid-response death a new error class every caller must learn.
 
 - **`spawn` defaults `false`.** Only `lib/mcp/client.js` (a spawn-injecting shim)
   opts in, so the 23 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
@@ -775,6 +788,7 @@ Current homes (baselines can only shrink toward these):
 | Construct | Allowed home | Phase that finishes the collapse |
 | --- | --- | --- |
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
+| `client.request(` (the non-throwing low-level idiom) | `lib/client` `get`/`post`, which throw a typed `HttpError` on a non-2xx — plus the three genuine **relays**, which hand a status onward rather than acting on it: `lib/cli/commands/export.js`, `lib/cli/commands/pack.js` (a best-effort ping that shrugs at every outcome) and `lib/hub/index.js`'s `forward` | landed with the client outcome contract ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
 | `getPrototypeOf(async function` | `public/mount-runtime.js` (`runSeed`) — the AsyncFunction spelling of the same eval, added when `drawer.js` grew a second eval site the `new Function(` pattern could not see | Phase 4 ✅ |
