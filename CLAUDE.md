@@ -82,6 +82,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
 | decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab grammar, or re-list the builtin names |
 | read/write a browser storage key in the chrome | `public/app/storage.js` (`getLocal`/`setLocal`/`getSession`/`getLocalJson`, all fail open) | touch `localStorage`/`sessionStorage` directly (the accessor throws in a private window) |
+| apply a full-surface snapshot frame in the chrome (`hello`, `reset`, `branch-here`, the restored live surface) | `public/app/mounts.js` (`applySnapshot(frame, {mode})` — owns the preview fold and the reconcile) | hand-roll `mountAll` + `fullReset` beside a frame handler (that is how `hello` lost the preview fork) |
 | leave the detached node preview | `public/app/topbar.js` (`leavePreview({activeId, restoreSnapshot, flushForms})`) | hand-copy the `previewing = false` transition |
 | walk the graph as DRAWN (nav, forks, lineage, layout) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`) | `labels.childrenOf` — raw commit children, for the ⑃ branch picker only |
 | dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
