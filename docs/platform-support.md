@@ -120,8 +120,9 @@ else's.
 alive and then unlink the portfile — no `/api/shutdown` ask, so every reaped
 project lost its uncommitted surface, and `~/.web-chat/instances.json` is a
 user-scope file whose pids belong to unrelated processes after a reboot. It now
-reaps through `lib/cli/reap.js`, and **nothing it does sends a signal**. The rule
-has four arms:
+reaps through `lib/cli/reap.js`, and **it never signals mid-drain, and never a
+pid that has not answered `/api/health` as the pid the registry listed**. The
+rule has four arms:
 - a row whose daemon **answers on its port and reports the pid the registry
   named** is stopped through the same acknowledged-shutdown engine `stop` uses
   (so its `draft.json` is written), with a **5 s per-row ack budget** rather
@@ -138,7 +139,12 @@ has four arms:
   was for and leaving the portfile behind. A second trigger now **awaits** the
   in-flight shutdown, which is safe because every step of it is bounded.)
   `claude-web-chat stop` waits the full ~37 s worst case and so keeps the
-  escalation;
+  escalation. The one signal a reap can still send lives here: `signalAfterAck:
+  false` covers the *acknowledged* branch only, so a daemon that answered
+  `/api/health` as our pid and then failed to acknowledge the shutdown request
+  (a request error, a non-ok body, a daemon too old to have the route) still
+  falls through to `stop`'s SIGTERM. That signal is draft-safe — nothing is
+  draining, and the handler runs a full `gracefulShutdown`;
 - a row whose **pid is alive but whose port is silent** is printed with its pid
   and a `kill` hint and is **never signalled**. This is the deliberate change of
   behaviour: a genuinely wedged daemon is no longer stopped by `ls --reap`,

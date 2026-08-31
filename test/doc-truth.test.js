@@ -693,3 +693,33 @@ test('docs/platform-support.md does not call install.sh structurally uncovered',
     `docs/platform-support.md still lists install.sh as structurally uncovered ("${uncovered}"), but the suite ` +
     'runs it end to end against a scratch HOME and a loopback GitHub stand-in, on both CI platforms');
 });
+
+// ---------------------------------------------------------------------------
+// What `ls --reap` promises about signals.
+//
+// "nothing it does sends a signal" was the headline of a deliberate behaviour
+// change, and it overstated what the code keeps: `signalAfterAck:false` gates
+// the ACKNOWLEDGED branch alone, so a daemon that answered /api/health as our
+// pid and then failed to acknowledge the shutdown request still takes stop's
+// SIGTERM. A safety claim that is stronger than the code is the kind a reader
+// builds on.
+test('no doc claims the reaper never signals while stop can still escalate', () => {
+  const stop = read('lib/cli/commands/stop.js');
+  const fallback = stop.indexOf('falling back to SIGTERM');
+  const signal = stop.indexOf("process.kill(info.pid, 'SIGTERM')");
+  assert.ok(fallback >= 0 && signal > fallback,
+    "lib/cli/commands/stop.js no longer falls back to SIGTERM on an unacknowledged shutdown — if that branch is " +
+    'gone or gated, the absolute claim is true again and this test should go');
+  assert.ok(!/signalAfterAck/.test(stop.slice(fallback, signal)),
+    'the unacknowledged branch consults signalAfterAck now — a reap can no longer signal, so the docs may make ' +
+    'the stronger claim and this test should go');
+
+  const ABSOLUTE = /nothing (?:it does|here) (?:ever )?sends? a signal|nothing here ever signals/i;
+  const sources = [...DOCS, { rel: 'lib/cli/reap.js', body: read('lib/cli/reap.js') }];
+  for (const { rel, body } of sources) {
+    const m = flatten(body).match(ABSOLUTE);
+    assert.ok(!m,
+      `${rel} claims "${m && m[0]}". A reap never signals mid-drain and never a pid that did not answer ` +
+      '/api/health as the listed pid — but an unacknowledged shutdown still falls through to stop\'s SIGTERM');
+  }
+});
