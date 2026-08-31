@@ -266,7 +266,7 @@ test('no chrome surface is painted from a colour the palette does not hold', () 
   assert.deepEqual(stray.sort(), [
     '.depth-grid { -webkit-mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
     '.depth-grid { mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
-    '.update-banner .ub-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--wc-gold) 85%, #fff) }',
+    '.update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff) }',
   ], 'literal colours outside the palette blocks');
 });
 
