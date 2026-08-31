@@ -106,3 +106,21 @@ test('the release note about a private embed target matches what the pane does',
     'the embed-check note says a private target reports unreachable; the pane frames it',
   );
 });
+
+test('every flag `trust` accepts is documented in the README', () => {
+  // `trust` is the one command that decides whether host code runs, so a flag it
+  // accepts and nothing documents is a path the user never learns exists —
+  // `--all` shipped in 0.7.0 and appeared in no doc at all. The parser is the
+  // truth source; the README's command reference and trust section are where a
+  // reader looks.
+  const src = read('lib/cli/commands/trust.js');
+  const parse = src.slice(src.indexOf('function parseArgs('));
+  assert.ok(parse.length > 0, 'trust.js no longer has a parseArgs — re-point this check');
+  const flags = new Set();
+  for (const m of parse.matchAll(/a === '(--[a-z-]+)'/g)) flags.add(m[1]);
+  for (const m of parse.matchAll(/a\.startsWith\('(--[a-z-]+)='\)/g)) flags.add(m[1]);
+  assert.ok(flags.size >= 3, `expected trust to accept several flags, found ${[...flags].join(', ')}`);
+  for (const flag of flags) {
+    assert.ok(README.includes(flag), `\`claude-web-chat trust ${flag}\` is accepted but appears nowhere in README.md`);
+  }
+});
