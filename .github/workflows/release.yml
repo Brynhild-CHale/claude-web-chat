@@ -62,7 +62,8 @@ jobs:
           ! grep -q 'npm i -g' install.sh
 
       # A release that fails its own suite is not a release.
-      # `npm test` is a bare `node --test`: passing the directory misresolves.
+      # `npm test` takes NO path argument (passing the directory misresolves) and
+      # carries a per-test timeout, so a leaked handle fails instead of hanging CI.
       - run: npm test
 
       - run: node scripts/build-release.js

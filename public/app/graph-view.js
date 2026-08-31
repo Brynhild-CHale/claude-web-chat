@@ -320,6 +320,14 @@ function graphIndex() {
   return idx;
 }
 
+// The turns the graph DRAWS, in commit order — for a surface that lists nodes
+// rather than walking them. The ⌘K palette used to map `view.graphCache.nodes`
+// straight, i.e. the RAW commit list: it was the last graphCache reader outside
+// this file, so a collapsed no-change turn still had a row, and picking one
+// previewed a node the DAG does not draw (displayChildrenOf returns [] there, so
+// the topbar's ↓ is dead and only displayParentOf's raw fallback gets you out).
+export function displayNodeList() { return graphIndex().nodes; }
+
 // The topbar's ↓ button steps to the next turn the graph DRAWS, which is the
 // same gesture ArrowDown performs in the overlay. (Its ⑃ branch picker asks a
 // different question and stays on labels.childrenOf's raw commit children.)

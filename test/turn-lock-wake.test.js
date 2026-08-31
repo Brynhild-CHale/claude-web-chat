@@ -211,3 +211,40 @@ test('an immediate (unlocked) re-aim supersedes a stale queued intent', async (t
   assert.equal(te.json.skipped, 'no-lock');
   assert.equal((await api.get('/api/graph')).json.active, c2.json.node_id, 'no ghost re-aim re-applied');
 });
+
+// ── HTTP: the daemon-spawning turn (no lock, dirty surface) ──────────────────
+
+// The turn-begin hook cannot lock a daemon that is not running: it finds nothing
+// reachable, prints NO_SERVER_CONTEXT and returns. A tool call then auto-spawns
+// the daemon and renders. If turn-end answered `skipped:'no-lock'` there, that
+// work sat uncommitted until the NEXT prompt's turn-end swept it up under that
+// prompt's message — a node stamped with the wrong provenance, and a turn that
+// commits nothing despite the promise that every turn commits a node.
+test('turn-end with no lock commits the dirty surface as its own unlocked-turn node', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/render', { id: 'spawned', html: '<p>rendered before any lock</p>' });
+
+  assert.equal((await api.get('/api/graph')).json.lock, null, 'test premise: no lock was ever acquired');
+  const te = await api.post('/api/turn-end', {});
+  assert.equal(te.json.skipped, undefined, 'the work is not skipped');
+  assert.equal(te.json.unlocked, true);
+  assert.ok(te.json.node_id, 'the spawn turn committed its own node');
+
+  const node = (await api.get('/api/graph/node/' + te.json.node_id)).json;
+  assert.equal(node.trigger.kind, 'unlocked-turn');
+  assert.equal(node.trigger.message, '', 'no prompt to attribute it to');
+  assert.equal(node.mounts.length, 1);
+  assert.equal((await api.get('/api/graph')).json.active, te.json.node_id);
+
+  // …and the NEXT typed turn is clean: nothing left over to mis-attribute.
+  await api.post('/api/turn-begin', { message: 'the next prompt' });
+  const te2 = await api.post('/api/turn-end', {});
+  assert.equal(te2.json.skipped, 'no-change');
+});
+
+test('turn-end with no lock and an unchanged surface still skips', async (t) => {
+  const { api } = await withServer(t);
+  const te = await api.post('/api/turn-end', {});
+  assert.equal(te.json.skipped, 'no-lock');
+  assert.equal((await api.get('/api/graph')).json.nodes.length, 0, 'no empty node manufactured');
+});

@@ -18,13 +18,22 @@ const { pathToFileURL } = require('url');
 
 const REPO = path.resolve(__dirname, '..');
 
-// The park as the daemon reports it: the wake envelope, summary only (see
-// lib/channel/envelope.js — `content` is one string of `- [kind] summary` lines
-// with a header, and `meta.count` is the authoritative item count).
+// The park as the daemon reports it: the structured batch (summary-only fields —
+// GET /api/queue/pending reduces pendingWake.batch to exactly these) PLUS the
+// wake envelope, whose `content` is prose written for Claude.
+//
+// The two deliberately disagree here. The envelope folds source into each bullet
+// ('example.com — Pricing table'); the items keep `summary` and `source` apart,
+// as a queued item does. The rail used to regex-parse those bullets, so it can
+// only render the fields below if it is reading `items`.
 const PARK = {
   id: 'pw1',
   created_at: Date.now(),
   note: 'ship the second one',
+  items: [
+    { id: 'q1', kind: 'capture', source: 'example.com', summary: 'Pricing table', why_wake: 'a page you captured' },
+    { id: 'q2', kind: 'signal', source: 'plan-picker', summary: 'form_submit', why_wake: 'declared signal' },
+  ],
   envelope: {
     content: [
       'Context from the user: ship the second one',
@@ -138,16 +147,18 @@ test('a parked push is listed in the rail, not just announced', async () => {
     'counted from the envelope meta, which is authoritative for a capped batch');
 
   // ...and it shows WHAT is waiting, item by item — the note the user typed plus
-  // one row per signal, parsed back out of the envelope the daemon parked.
+  // one row per signal, read from the STRUCTURED batch the daemon parked.
   const rows = rowsUnder('Held for next prompt').map((r) => ({
     kind: r.querySelector('.qi-kind').textContent,
+    src: r.querySelector('.qi-src').textContent,
     summary: r.querySelector('.qi-summary').textContent,
   }));
   assert.deepEqual(rows, [
-    { kind: 'note', summary: 'ship the second one' },
-    { kind: 'capture', summary: 'example.com — Pricing table' },
-    { kind: 'signal', summary: 'form_submit · plan-picker' },
-  ], 'the held batch is itemised, not summarised as a count');
+    { kind: 'note', src: '', summary: 'ship the second one' },
+    { kind: 'capture', src: 'example.com', summary: 'Pricing table' },
+    { kind: 'signal', src: 'plan-picker', summary: 'form_submit' },
+  ], 'the held batch is itemised from `items`, not scraped back out of the envelope prose — '
+    + 'which is why the source is its own field here instead of folded into the summary line');
 
   // The header/summary lines of the envelope are prose, not signals.
   assert.ok(!rows.some((r) => /queued signals were pushed/.test(r.summary)),
@@ -157,6 +168,38 @@ test('a parked push is listed in the rail, not just announced', async () => {
   const note = rail().querySelector('.rail-parked');
   if (note) note.remove();
   assert.ok(section('Held for next prompt'), 'the held section outlives the transient note');
+});
+
+test('rewording the envelope cannot change what the rail shows', async () => {
+  // The envelope is prose for Claude and lib/channel/envelope.js is free to
+  // change it — a different bullet, a summary containing a newline, the 50-line
+  // cap on a large batch. None of that is the rail's business any more.
+  state.pending = {
+    ...PARK,
+    envelope: { content: 'Two things are waiting.\n• capture: example.com\n• signal: plan-picker', meta: { kind: 'batch', count: '2' } },
+  };
+  const { refreshPending } = await import(pathToFileURL(path.join(REPO, 'public/app/queue.js')).href);
+  await refreshPending();
+  await tick();
+  const rows = rowsUnder('Held for next prompt').map((r) => r.querySelector('.qi-summary').textContent);
+  assert.deepEqual(rows, ['ship the second one', 'Pricing table', 'form_submit'],
+    'the rows come from `items`; the old regex over `- [kind] …` bullets would have found none '
+    + 'here and silently degraded the whole batch to "2 signals awaiting delivery"');
+  state.pending = PARK;
+  await refreshPending();
+  await tick();
+});
+
+test('an envelope with no items degrades to a count, not an empty section', async () => {
+  state.pending = { id: 'pw2', created_at: Date.now(), note: null, envelope: { content: 'prose', meta: { count: '3' } } };
+  const { refreshPending } = await import(pathToFileURL(path.join(REPO, 'public/app/queue.js')).href);
+  await refreshPending();
+  await tick();
+  const rows = rowsUnder('Held for next prompt').map((r) => r.querySelector('.qi-summary').textContent);
+  assert.deepEqual(rows, ['3 signals awaiting delivery']);
+  state.pending = PARK;
+  await refreshPending();
+  await tick();
 });
 
 test('cancelling the delivery takes the held batch off the rail', async () => {

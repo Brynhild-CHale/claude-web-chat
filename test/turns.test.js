@@ -247,3 +247,45 @@ test('loadDraft: aside copies are capped, so a repeatedly-mismatched draft canno
   const aside = fs.readdirSync(dir).filter((f) => f.startsWith('draft.json.corrupt-'));
   assert.ok(aside.length <= 3, `expected at most 3 aside drafts, found ${aside.length}`);
 });
+
+// ── lock keep-alive ─────────────────────────────────────────────────────────
+// A TTL is a wedge-breaker for a turn that never Stops, not a budget on how long
+// a turn may take. Nothing re-stamped the clock during a turn, so a wake lock's
+// deliberately short TTL was a hard window measured from the Push — and an
+// agentic turn that outran it went stealable while it was still rendering.
+
+test('installLockKeepalive: Claude\'s writes re-stamp a held lock', (t) => {
+  const { graph } = tmpGraph(t);
+  const bus = require('../lib/core/bus').createBus();
+  turns.installLockKeepalive(graph, bus);
+
+  const started = Date.now() - 5000;
+  graph.lock = { base: null, started_at: started, author: 'wake', ttl_ms: 60_000 };
+  bus.emit({ event: { kind: 'render', id: 'p', source: 'claude' } });
+  assert.ok(graph.lock.started_at > started, 'the turn is demonstrably alive');
+});
+
+test('installLockKeepalive: a driver cannot hold a lock open, and a stale lock is not revived', (t) => {
+  const { graph } = tmpGraph(t);
+  const bus = require('../lib/core/bus').createBus();
+  turns.installLockKeepalive(graph, bus);
+
+  // A service-backed pane pushes continuously; if that kept the lock fresh, a
+  // turn that ended long ago would wedge every user re-aim behind it.
+  const started = Date.now() - 5000;
+  graph.lock = { base: null, started_at: started, author: 'wake', ttl_ms: 60_000 };
+  bus.emit({ event: { kind: 'render', id: 'p', source: 'service:git-dashboard' } });
+  bus.emit({ event: { kind: 'store', patch: {}, source: 'server' } });
+  bus.emit({ event: { kind: 'dom', source: 'browser' } });
+  assert.equal(graph.lock.started_at, started, 'only the turn holder re-stamps');
+
+  // Already stale: reviving it under a re-aim's feet is what the steal prevents.
+  graph.lock = { base: null, started_at: 0, author: 'wake', ttl_ms: 60_000 };
+  bus.emit({ event: { kind: 'render', id: 'p', source: 'claude' } });
+  assert.equal(graph.lock.started_at, 0, 'a stale lock stays stealable');
+
+  // No lock at all is simply not its business.
+  graph.lock = null;
+  bus.emit({ event: { kind: 'render', id: 'p', source: 'claude' } });
+  assert.equal(graph.lock, null);
+});

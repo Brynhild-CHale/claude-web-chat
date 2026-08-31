@@ -5,35 +5,22 @@
 // This script IS the source: run `node extensions/make-icons.js` and the PNGs
 // under extensions/<name>/icons/ are rewritten from the shape code below.
 //
-// Zero dependencies: zlib (for the IDAT stream) and a hand-rolled CRC32 are all
-// a valid PNG needs. Everything is drawn once at 4x into an RGBA buffer and
-// area-averaged down to each target size, which is where the antialiasing comes
-// from.
+// Zero dependencies: zlib (for the IDAT stream) and a CRC32 are all a valid PNG
+// needs — and the CRC32 comes from lib/core/zip, the one home for it, because a
+// PNG chunk and a ZIP entry carry the same IEEE checksum and this script used to
+// keep a second copy of it. Everything is drawn once at 4x into an RGBA buffer
+// and area-averaged down to each target size, which is where the antialiasing
+// comes from.
 
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { crc32 } = require('../lib/core/zip');
 
 const SIZES = [16, 32, 48, 128];
 const SUPER = 512; // master canvas; every size is an area-average of this
 
 // ---------------------------------------------------------------- PNG encoding
-
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c;
-  }
-  return t;
-})();
-
-function crc32(buf) {
-  let c = -1;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
-}
 
 function chunk(type, data) {
   const len = Buffer.alloc(4);

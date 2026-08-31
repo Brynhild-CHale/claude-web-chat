@@ -149,6 +149,20 @@ test('collectEntries is sorted and free of duplicates', () => {
   assert.equal(new Set(names).size, names.length, 'no path may appear twice');
 });
 
+// A `.gitkeep` exists to make git track an EMPTY directory. Seven of them
+// outlived their directories by many versions and rode into every release
+// tarball — dead weight a user unpacks, and a false hint that the directory
+// might be empty. The tarball is built from the `files` allowlist, so the fix is
+// deleting the placeholder, and the ratchet is here: a directory that needs one
+// has no real files, and a directory with no real files has no business in the
+// artifact.
+test('no vestigial .gitkeep rides into the release tarball', () => {
+  const entries = collectEntries(REPO_ROOT, 'p');
+  const keeps = entries.map((e) => e.name).filter((n) => n.endsWith('/.gitkeep'));
+  assert.deepEqual(keeps, [],
+    'these directories all hold real files — delete the placeholder rather than shipping it');
+});
+
 // ── the cross-version registration contract ─────────────────────────────────
 //
 // `update` (0.7.0 and every build after it) syncs a project's managed files

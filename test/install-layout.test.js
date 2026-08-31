@@ -143,6 +143,40 @@ test('listVersions orders semantically, not lexically', (t) => {
   assert.deepEqual(listVersions(paths), ['0.10.0', '0.9.0', '0.2.0']);
 });
 
+// distribution-3. A `wc-release-XXXXXX` staging dir used to be created INSIDE
+// versions/ and, when an update was Ctrl-C'd mid-download, stayed there: it was
+// listed as a version, `update --list` printed `vwc-release-…`, and
+// compareVersions' lexical fallback sorted it ABOVE every real release, so the
+// prune protected it and dropped a real one instead. Staging moved out of the
+// version store; this is the second half — a stray directory can never be a
+// version whatever put it there.
+test('a directory that is not a version name is never listed, ranked or protected', (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  for (const v of ['0.5.0', '0.6.0', '0.7.0']) fakeVersion(paths, v);
+  // Exactly what an interrupted `update` left behind, plus a hand-made folder.
+  fs.mkdirSync(path.join(paths.versions, 'wc-release-Ab12Cd'), { recursive: true });
+  fs.mkdirSync(path.join(paths.versions, 'backup'), { recursive: true });
+
+  const listed = listVersions(paths);
+  assert.deepEqual(listed, ['0.7.0', '0.6.0', '0.5.0'], 'only real versions, newest first');
+
+  // The consequence that made this more than cosmetic: with the stray ranked
+  // first, keep:2 kept it plus 0.7.0 and deleted 0.6.0 — a rollback target gone.
+  activate('0.7.0', paths);
+  const removed = pruneVersions({ keep: 2, paths });
+  assert.deepEqual(removed, ['0.5.0']);
+  assert.ok(fs.existsSync(paths.versionDir('0.6.0')), 'the second-newest real version survives');
+  assert.ok(fs.existsSync(path.join(paths.versions, 'wc-release-Ab12Cd')), 'a stray dir is left alone, not deleted from under someone');
+});
+
+test('a prerelease directory name is still a version', (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  for (const v of ['0.7.0', '0.8.0-rc1']) fakeVersion(paths, v);
+  assert.deepEqual(listVersions(paths), ['0.8.0-rc1', '0.7.0']);
+});
+
 test('removeInstall takes our bins and versions, and leaves foreign links alone', (t) => {
   withTempHome(t);
   const paths = installPaths();

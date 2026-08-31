@@ -80,6 +80,49 @@ test('theme: a re-render with a theme APPLIES it; without one the pane keeps its
   assert.equal((await api.get('/api/theme?scope=pane&target=p1')).json.tokens['--wc-accent'], '#bbbbbb', 'a re-render with no theme keeps the pane theme');
 });
 
+test('theme: a render-supplied pane theme goes through the SAME normalizer as set_theme', async (t) => {
+  const { api, wsHello } = await withServer(t);
+  // A `theme` on POST /api/render used to be stored on the mount record
+  // verbatim — it never met normalizeTheme/sanitizeTokens, which every theme
+  // arriving at POST /api/theme does. So the two doors onto one pane's theme
+  // disagreed: a token name that is not `--wc-`-prefixed, or a value carrying
+  // the structural characters that break out of `name: value;`, was accepted at
+  // the render door and refused at the theme door.
+  const dirty = {
+    tokens: {
+      '--wc-accent': '#aaaaaa} :host{display:none',   // breaks out of the declaration
+      '--wc-bg': 'red\n; color: blue',                // a newline starting a second one
+      'color': 'red',                                 // not a design token at all
+      '--wc-radius': 4,                               // a number is a legal value
+    },
+    name: 'dirty',
+  };
+  await api.post('/api/render', { id: 'p1', html: '<div>a</div>', theme: dirty });
+
+  // GET /api/theme already normalizes on the way OUT (routes/theme.js's
+  // mountTheme), so the read door has always looked clean — which is exactly why
+  // this went unnoticed. The record and the WS frame are what matter.
+  const resolved = (await api.get('/api/theme?scope=pane&target=p1')).json;
+  assert.equal(resolved.tokens['--wc-accent'], '#aaaaaa :hostdisplay:none', 'structural characters are stripped');
+  assert.equal(resolved.tokens['--wc-bg'], 'red  color: blue', 'the newline cannot start a second declaration');
+  assert.equal('color' in resolved.tokens, false, 'a non --wc- key is not a token');
+  assert.equal(resolved.tokens['--wc-radius'], '4', 'a numeric value is coerced, like everywhere else');
+
+  // And the pane record the surface is handed carries the SANITIZED theme, not
+  // the request's — the WS render frame writes theme.css straight into the
+  // pane's shadow <style>.
+  const paneTheme = (await wsHello()).mounts.find(m => m.id === 'p1').theme;
+  assert.equal(paneTheme.tokens['--wc-accent'], '#aaaaaa :hostdisplay:none');
+  assert.equal('color' in paneTheme.tokens, false);
+
+  // A theme the caller does not supply is still carried; an explicit null still
+  // clears (normalizing null into an empty theme would be a different answer).
+  await api.post('/api/render', { id: 'p1', html: '<div>b</div>' });
+  assert.equal((await api.get('/api/theme?scope=pane&target=p1')).json.tokens['--wc-radius'], '4');
+  await api.post('/api/render', { id: 'p1', html: '<div>c</div>', theme: null });
+  assert.deepEqual((await api.get('/api/theme?scope=pane&target=p1')).json.tokens, {}, 'null clears the pane theme');
+});
+
 test('theme: pane theme round-trips through set-active and reboot', async (t) => {
   const { root, api, graceful } = await withServer(t);
 

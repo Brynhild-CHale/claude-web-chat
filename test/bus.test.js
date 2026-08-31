@@ -118,3 +118,41 @@ test('bus: emit with both event and ws does both, event first', () => {
   assert.equal(built.seq, 1);
   assert.deepEqual(order, ['event', 'ws']);
 });
+
+// nextSeq resets to 1 on every daemon boot, so a cursor carried across a
+// `claude-web-chat restart` is AHEAD of the new ring. That used to answer
+// {events: [], gap: false} — "nothing happened since you last looked" — to every
+// consumer but the channel bridge, while get_events' description and the rules
+// file both promise a gap when a cursor is no longer usable.
+test('bus: a cursor AHEAD of the ring (a boot reset) is a gap, marked reset', () => {
+  const bus = createBus();
+  for (let i = 0; i < 5; i++) bus.emit({ event: { kind: 'store', i } });
+
+  const r = bus.read({ since: 900 });
+  assert.deepEqual(r.events, [], 'nothing to replay against a cursor from another boot');
+  assert.equal(r.latest, 5);
+  assert.equal(r.gap, true, 'the caller must resync, not trust the empty tail');
+  assert.equal(r.reset, true, 'and it is a reset, not a ring overflow');
+  assert.equal(r.dropped, 0, 'how many were missed is unknowable across a boot');
+
+  // The boundary: a cursor exactly AT latest is a caller that is up to date.
+  const at = bus.read({ since: 5 });
+  assert.equal(at.gap, false);
+  assert.equal(at.reset, undefined);
+  // …and an overflow gap is still an overflow gap, with its count.
+  const small = createBus({ maxEvents: 3 });
+  for (let i = 0; i < 6; i++) small.emit({ event: { kind: 'store', i } });
+  const ov = small.read({ since: 1 });
+  assert.equal(ov.gap, true);
+  assert.equal(ov.reset, undefined, 'the ring evicted — the daemon did not restart');
+  assert.ok(ov.dropped > 0);
+});
+
+test('bus: an empty ring after a restart still reports the reset', () => {
+  const bus = createBus(); // fresh boot, nothing emitted yet
+  const r = bus.read({ since: 42 });
+  assert.equal(r.gap, true);
+  assert.equal(r.reset, true);
+  assert.equal(r.oldest, null);
+  assert.equal(bus.read({ since: 0 }).gap, false, 'a cursor-less caller is not a gap');
+});

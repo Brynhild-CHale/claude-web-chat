@@ -144,6 +144,30 @@ test('satisfies understands the range shapes a pack author actually writes', () 
   assert.equal(satisfies('0.5.0', 'whatever-this-is').ok, true, 'an unparseable range must not make a pack uninstallable');
 });
 
+// The promise is "anything this grammar does not understand is SATISFIED, so a
+// pack cannot become uninstallable for using a range syntax we did not
+// implement". The only case pinned was a string with no digits in it — and the
+// dangerous ones are the opposite: shapes whose numeric core the clause regex
+// matches, so the range parses into something confident and wrong.
+test('an npm range shape this grammar does not implement never refuses a pack', () => {
+  // x-ranges: the numeric prefix matched, the default operator is `=`, so `1.x`
+  // pinned the pack to web-chat "1" and refused every real version.
+  for (const range of ['1.x', '1.X', '1.*', '1.2.x', '0.x']) {
+    assert.equal(satisfies('1.5.0', range).ok, true, `${range} must not refuse`);
+    assert.equal(satisfies('0.5.0', range).ok, true, `${range} must not refuse`);
+  }
+  // Disjunctions were read as conjunctions — a range NO version can satisfy.
+  assert.equal(satisfies('1.5.0', '^1.0.0 || ^2.0.0').ok, true);
+  assert.equal(satisfies('2.1.0', '^1.0.0 || ^2.0.0').ok, true);
+  // A hyphen range parsed as two exact pins, for the same reason.
+  assert.equal(satisfies('1.5.0', '1.2.0 - 2.0.0').ok, true);
+  // And the shapes that ARE implemented keep their meaning — a prerelease's
+  // hyphen is not a hyphen range.
+  assert.equal(satisfies('1.5.0', '>=2.0.0').ok, false);
+  assert.equal(satisfies('1.5.0-beta.1', '=1.5.0-beta.1').ok, true);
+  assert.equal(satisfies('1.5.0', '=1.5.0-beta.1').ok, false);
+});
+
 test('a range written with a SPACE after the operator still means what it says', () => {
   // ">= 1.2.0" is an ordinary way to write this. Splitting on whitespace alone
   // turned it into a bare ">=" (skipped as unknown) plus a bare "1.2.0" (an

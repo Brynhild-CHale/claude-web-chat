@@ -310,6 +310,44 @@ test('a component with a schema it cannot satisfy spawns the form first', async 
   assert.equal(calls.some((c) => c.url === '/api/components/deploy-board/use'), false, 'and the component waits for it');
 });
 
+test('spawning the same component twice arms ONE submit subscription', async () => {
+  routes['/api/components'] = { components: [
+    { name: 'deploy-board', description: 'd', location: 'local', params_schema: { properties: { env: {} }, required: ['env'] } },
+  ] };
+  const { invalidate } = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);
+  invalidate();
+  if (drawerOpen()) { key('Escape'); await tick(); }
+
+  // Two spawns of the SAME component — the row, then ⧉ — so two form-renderers
+  // are configured against the one stable signal key `__spawn_deploy-board`.
+  await openDrawer(); await tick();
+  press($('drawer-library').querySelector('.de-main'));
+  await tick();
+  await openDrawer(); await tick();
+  press($('drawer-library').querySelector('.de-dup'));
+  await tick();
+
+  // One submit. The subscription used to be released only from inside its own
+  // callback, so the first spawn's closure was still on the key: this single
+  // write ran BOTH, spawning twice (into two different slots) and clearing the
+  // form twice.
+  calls.length = 0;
+  const { store } = await import(pathToFileURL(path.join(REPO, 'public/app/store.js')).href);
+  store.set({ '__spawn_deploy-board': { env: 'prod' } });
+  await tick();
+
+  const spawns = calls.filter((c) => c.url === '/api/components/deploy-board/use');
+  assert.equal(spawns.length, 1, 'exactly one spawn per submit, not one per form ever opened');
+  assert.equal(spawns[0].body.id, 'spawn-deploy-board-2', 'and it is the slot the LAST spawn picked');
+  assert.equal(calls.filter((c) => c.url === '/api/clear').length, 1, 'and the form is torn down once');
+
+  // Disarmed: a second write to the same key (a stale pane, a driver) spawns nothing.
+  calls.length = 0;
+  store.set({ '__spawn_deploy-board': { env: 'prod' } });
+  await tick();
+  assert.equal(calls.filter((c) => c.url === '/api/components/deploy-board/use').length, 0);
+});
+
 test('a soft rejection is READ and reported, not discarded as success', async () => {
   routes['/api/components'] = { components: [{ name: 'owned-pane', description: 'd', location: 'local' }] };
   const { invalidate } = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);
@@ -318,9 +356,6 @@ test('a soft rejection is READ and reported, not discarded as success', async ()
   await openDrawer();
   await tick();
 
-  const warned = [];
-  const realWarn = console.warn;
-  console.warn = (...a) => warned.push(a.join(' '));
   await withFetch(
     async (url) => (url === '/api/components/owned-pane/use'
       ? jsonRes({ ok: false, rejected: true, owned: true, owner: 'service:git', hint: "pane 'x' is owned by 'service:git'" })
@@ -330,9 +365,16 @@ test('a soft rejection is READ and reported, not discarded as success', async ()
       await tick();
     },
   );
-  console.warn = realWarn;
-  assert.ok(warned.join(' ').includes("owned by 'service:git'"),
+  // ON SCREEN, not in the console. The report used to go to `#drawer-manage
+  // .pk-status` — the Manage tab of a drawer this very click had closed, absent
+  // entirely on a daemon without pack routes, and wiped by the next open — so
+  // the only observable output was a console.warn nobody has open.
+  const note = $('reaim-note');
+  assert.ok(note, 'the refusal reaches the shell notice, the one thing the user is looking at');
+  assert.ok(note.textContent.includes("owned by 'service:git'"),
     'the lockReject envelope used to be thrown away, so a refusal looked exactly like success');
+  assert.equal($('drawer-manage').querySelector('.pk-status').textContent, '',
+    'and it does NOT go to the pack status line, which is on a tab nobody is on');
 });
 
 // ── Manage ──────────────────────────────────────────────────────────────────

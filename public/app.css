@@ -90,6 +90,17 @@
   --wc-well-inset: inset 0 3px 34px rgba(0,0,0,.85), inset 0 0 0 1px rgba(255,255,255,.015);
   --wc-elev-rail: -22px 0 46px -12px rgba(0,0,0,.92);
 
+  /* --- chrome surfaces --- */
+  /* Painted from tokens so a saved theme reaches the chrome too; these used to
+     be hex literals with a hand-written :root[data-theme="light"] twin each,
+     i.e. a second palette living outside this block. */
+  --wc-topbar-top: #2c2519;        /* upper stop of the topbar gradient */
+  --wc-topbar-border: #3a3225;     /* the topbar's bottom hairline */
+  --wc-rail-bg: linear-gradient(90deg, #211c12, #1e1910);
+  --wc-hover-bg: #2c2519;          /* dock buttons, stepper */
+  --wc-row-active-bg: #30281b;     /* active row in the graph history list */
+  --wc-gold-fg: #1c1710;           /* ink on a gold fill */
+
   /* --- keycap chrome --- */
   --wc-key-bg: #1e1910;
   --wc-key-border: #4f4534;
@@ -146,6 +157,13 @@
   --wc-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 34px 60px -24px rgba(80,62,34,.3), 0 10px 22px -12px rgba(80,62,34,.22), 0 0 46px -20px var(--wc-glow-accent);
   --wc-well-inset: inset 0 3px 34px rgba(80,62,34,.13), inset 0 0 0 1px rgba(255,255,255,.4);
   --wc-elev-rail: -22px 0 46px -14px rgba(80,62,34,.16);
+
+  --wc-topbar-top: #fbf7ee;
+  --wc-topbar-border: var(--wc-border);   /* light tracks the border colour */
+  --wc-rail-bg: linear-gradient(90deg, #efe8d8, #e8e0cf);
+  --wc-hover-bg: #e6ddca;
+  --wc-row-active-bg: color-mix(in srgb, var(--wc-accent) 16%, transparent);
+  --wc-gold-fg: #1c1710;
 
   --wc-key-bg: #efe8d8;
   --wc-key-border: #bfb190;
@@ -255,12 +273,21 @@ html.wc-theming, html.wc-theming * {
 #topbar { position: relative; z-index: var(--z-topbar); }
 .body { position: relative; z-index: var(--z-content); }
 
+/* The ONE hide rule. It is `!important`, so it already beats every id- and
+   compound-selector rule in this sheet — the six per-component copies that used
+   to shadow it (#overlay.hidden, .drawer.hidden, .drawer-panel.hidden,
+   .tab-badge.hidden, .svc-trust-host.hidden, .ub-btn.hidden) were dead weight
+   that read like they were load-bearing. Give an element `hidden` and it hides;
+   there is nothing to add per component. */
 .hidden { display: none !important; }
 
 /* ===== update-available advisory (version.js) =====
    A full-width bar above the topbar. Gold = advisory (matches .rail-notice); it
    flows as the first flex row of #stage so it pushes the topbar/body down rather
-   than overlapping them. Flips to green (.ok) for the brief post-update flash. */
+   than overlapping them. It INFORMS and nothing more — the one-click "Update &
+   restart" flow it used to carry is gone (see the header of version.js), which
+   is why there is no success state and no disabled action here. The bar is also
+   borrowed, briefly, for the "…" menu's Check-for-updates answer. */
 .update-banner {
   position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -269,22 +296,15 @@ html.wc-theming, html.wc-theming * {
   background: color-mix(in srgb, var(--wc-gold) 16%, var(--wc-panel-bg));
   border-bottom: 1px solid color-mix(in srgb, var(--wc-gold) 55%, transparent);
 }
-.update-banner.ok {
-  background: color-mix(in srgb, var(--wc-green) 16%, var(--wc-panel-bg));
-  border-bottom-color: color-mix(in srgb, var(--wc-green) 55%, transparent);
-  color: var(--wc-green);
-}
 .update-banner .ub-msg { flex: 1 1 auto; }
 .update-banner .ub-msg code { font: 11px var(--wc-mono); }
 .update-banner .ub-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .update-banner .ub-btn {
   height: 26px; padding: 0 12px; border-radius: var(--wc-radius-sm);
-  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: #1c1710;
+  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-gold-fg);
   font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
 }
-.update-banner .ub-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
-.update-banner .ub-btn:disabled { opacity: .6; cursor: default; }
-.update-banner .ub-btn.hidden { display: none !important; }
+.update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
 .update-banner .ub-x {
   height: 24px; width: 24px; display: grid; place-items: center; padding: 0;
   border: none; background: transparent; color: var(--wc-muted);
@@ -296,17 +316,15 @@ html.wc-theming, html.wc-theming * {
 #topbar {
   display: flex; align-items: center; gap: 8px;
   height: 46px; padding: 0 12px; flex: 0 0 auto;
-  background: linear-gradient(180deg, #2c2519, var(--wc-header-bg));
-  border-bottom: 1px solid #3a3225;
+  background: linear-gradient(180deg, var(--wc-topbar-top), var(--wc-header-bg));
+  border-bottom: 1px solid var(--wc-topbar-border);
   box-shadow: var(--wc-elev-bar);
 }
-:root[data-theme="light"] #topbar { background: linear-gradient(180deg, #fbf7ee, var(--wc-header-bg)); border-bottom-color: var(--wc-border); }
 .brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
-.spacer { flex: 1; }
 
 /* command-palette trigger (centered) */
 .cmd-trigger {
@@ -334,8 +352,7 @@ kbd {
   transform: scale(var(--mag, 1)); transform-origin: center bottom;
   transition: transform .12s cubic-bezier(.2,.8,.2,1), background-color .15s, color .15s;
 }
-.dock-btn:hover { background: #2c2519; color: var(--wc-fg-bright); }
-:root[data-theme="light"] .dock-btn:hover { background: #e6ddca; }
+.dock-btn:hover { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
 /* toggle state — e.g. #btn-pin-mode while pin mode is armed (comments.js sets .active) */
 .dock-btn.active { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
 .dock-btn.active:hover { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 22%, transparent); }
@@ -343,9 +360,8 @@ kbd {
 /* node-nav stepper (bordered group) */
 .stepper { display: flex; align-items: center; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-panel-bg); overflow: hidden; }
 .stepper button { width: 28px; height: 26px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 13px; }
-.stepper button:hover:not(:disabled) { background: #2c2519; color: var(--wc-fg-bright); }
+.stepper button:hover:not(:disabled) { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
 .stepper button:disabled { opacity: .35; cursor: default; }
-:root[data-theme="light"] .stepper button:hover:not(:disabled) { background: #e6ddca; }
 
 /* view chip + active pill */
 .active-pill {
@@ -430,13 +446,12 @@ kbd {
 /* ===================== proximity queue rail ===================== */
 .rail {
   flex: 0 0 auto; width: 64px; position: relative;
-  background: linear-gradient(90deg, #211c12, #1e1910);
+  background: var(--wc-rail-bg);
   border-left: 1px solid var(--wc-key-border);
   box-shadow: var(--wc-elev-rail);
   transition: width .2s cubic-bezier(.2,.8,.2,1);
   overflow: hidden;
 }
-:root[data-theme="light"] .rail { background: linear-gradient(90deg, #efe8d8, #e8e0cf); }
 .rail::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--wc-accent); box-shadow: 0 0 12px var(--wc-glow-accent); }
 .rail.open { width: 256px; }
 .rail.open .rail-collapsed { opacity: 0; pointer-events: none; }
@@ -450,12 +465,6 @@ kbd {
 .rail-count { font: 700 22px var(--wc-mono); color: var(--wc-accent); }
 .rail-sub { font: 500 8px var(--wc-mono); letter-spacing: .12em; color: var(--wc-muted-dim); }
 .rail-chips { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.qchip { width: 26px; height: 11px; border-radius: var(--wc-radius); background: var(--wc-accent); opacity: .8; }
-.qchip.kind-capture { background: var(--wc-rust); }
-.qchip.kind-driver { background: var(--wc-gold); }
-.qchip.kind-comment { background: var(--wc-green); }
-.qchip.new { animation: qpulse 1.6s ease-in-out infinite; }
-@keyframes qpulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
 .rail-hint { margin-top: auto; font: 500 10px var(--wc-mono); color: var(--wc-muted-dim); }
 
 .rail-expanded {
@@ -466,7 +475,9 @@ kbd {
 .rail-head .title { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
 .rail-head .badge { font: 700 10px var(--wc-mono); color: var(--wc-accent-fg); background: var(--wc-accent); border-radius: var(--wc-radius); padding: 0 5px; }
 .rail-head .esc { margin-left: auto; }
-/* reserved "what wakes Claude" signal-policy slot (empty until channels lands) */
+/* the "what wakes Claude" signal-policy line — filled by wake-panel.js with the
+   live policy (GET /api/queue/policy): what is set to wake immediately, what
+   waits for a Push, and whether a channel is connected at all. */
 .wake-slot {
   display: flex; align-items: center; gap: 6px; margin: 8px 0; padding: 6px 8px;
   border: 1px dashed var(--wc-border); border-radius: var(--wc-radius);
@@ -474,7 +485,7 @@ kbd {
 }
 .wake-slot .gear { opacity: .6; }
 .wake-slot .wake-dot { color: var(--wc-muted-dim); }
-.wake-slot .wake-dot.on { color: var(--wc-green, #7bb661); }
+.wake-slot .wake-dot.on { color: var(--wc-green); }
 /* "channels not enabled" notice — shown when no bridge is connected (wake-panel
    toggles .hidden off channel_connected). Gold = advisory, not an error. */
 .rail-notice { margin: 8px 0 2px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--wc-gold) 45%, transparent); background: color-mix(in srgb, var(--wc-gold) 10%, transparent); border-radius: var(--wc-radius); }
@@ -531,9 +542,13 @@ kbd {
   border-radius: var(--wc-radius); position: relative;
 }
 .qi-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--wc-muted); box-shadow: 0 0 6px var(--wc-glow-accent); }
-.qi-dot.qi-capture { background: var(--wc-gold, #d8a24a); }
+.qi-dot.qi-capture { background: var(--wc-gold); }
+/* Per-kind dots. These class names are COMPOSED in queue.js ('qi-dot qi-' +
+   item.kind, and 'rail-chip qi-' + kind), so they never appear as literals in
+   the source — see the dead-selector guard in test/shell-chrome.test.js, which
+   allowlists exactly this family. */
 .qi-dot.qi-signal { background: var(--wc-accent); }
-.qi-dot.qi-activity { background: var(--wc-muted, #8c959f); }   /* ambient opt-out layer — quieter than a declared signal */
+.qi-dot.qi-activity { background: var(--wc-muted); }   /* ambient opt-out layer — quieter than a declared signal */
 
 /* pending re-aim notice — a user re-aim during a locked turn is queued, not
    rejected; this transient banner says "honored, applies at turn end". */
@@ -541,11 +556,11 @@ kbd {
   position: fixed; top: 52px; right: 16px; z-index: var(--z-notice);
   padding: 7px 12px; font: 500 12px var(--wc-font);
   color: var(--wc-fg); background: var(--wc-panel-bg);
-  border: 1px solid var(--wc-gold, #d4a72c); border-radius: var(--wc-radius-sm, 6px);
-  box-shadow: var(--wc-shadow, 0 2px 8px rgba(0,0,0,.12));
+  border: 1px solid var(--wc-gold); border-radius: var(--wc-radius-sm);
+  box-shadow: var(--wc-shadow);
 }
 .qi-dot.qi-comment { background: var(--wc-comment); }              /* B4: coral until Claude replies… */
-.qi-dot.qi-comment.answered { background: var(--wc-green, #7bb661); } /* …green once a Claude reply lands */
+.qi-dot.qi-comment.answered { background: var(--wc-green); } /* …green once a Claude reply lands */
 .qi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .qi-top { display: flex; align-items: baseline; gap: 6px; }
 .qi-kind { font: 700 9px var(--wc-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--wc-accent-text); }
@@ -557,7 +572,7 @@ kbd {
   flex: none; width: 18px; height: 18px; line-height: 16px; padding: 0; border: 1px solid transparent;
   background: transparent; color: var(--wc-muted-dim); font-size: 13px; cursor: pointer; border-radius: var(--wc-radius-sm);
 }
-.qi-stage:hover { color: var(--wc-fg-bright, #fff); border-color: var(--wc-border); }
+.qi-stage:hover { color: var(--wc-fg-bright); border-color: var(--wc-border); }
 .qi-revert:hover { color: var(--wc-comment); border-color: var(--wc-border); }
 /* staged/held sections + the dimmed look of a held item */
 .rail-sec { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
@@ -572,14 +587,14 @@ kbd {
    waiting is visible, not remembered. Read-only — the only action is Cancel
    delivery, on .rail-pending above. */
 .rail-sec.parked { margin-top: 8px; }
-.rail-sec.parked .rail-sec-cap { color: var(--wc-gold, #d8a24a); }
-.rail-sec.parked .rail-sec-cnt { background: var(--wc-gold, #d8a24a); color: #1c1710; }
-.rail-item.parked { opacity: .85; border-left: 2px solid color-mix(in srgb, var(--wc-gold, #d8a24a) 60%, transparent); padding-left: 6px; }
+.rail-sec.parked .rail-sec-cap { color: var(--wc-gold); }
+.rail-sec.parked .rail-sec-cnt { background: var(--wc-gold); color: var(--wc-gold-fg); }
+.rail-item.parked { opacity: .85; border-left: 2px solid color-mix(in srgb, var(--wc-gold) 60%, transparent); padding-left: 6px; }
 .rail-item.parked .qi-dot { box-shadow: none; }
 .rail-item.held .qi-dot { box-shadow: none; }
 .rail-chip.held { opacity: .4; }
 .rail-chip { width: 6px; height: 6px; border-radius: 50%; background: var(--wc-muted); }
-.rail-chip.qi-capture { background: var(--wc-gold, #d8a24a); }
+.rail-chip.qi-capture { background: var(--wc-gold); }
 .rail-chip.qi-signal { background: var(--wc-accent); }
 
 /* ===================== keyboard legend overlay ===================== */
@@ -636,7 +651,6 @@ kbd {
   display: grid; grid-template-columns: 288px 1fr 322px; grid-template-rows: 48px 1fr 26px;
   grid-template-areas: "header header header" "history canvas inspector" "status status status";
 }
-#overlay.hidden { display: none; }
 
 /* header */
 .gv-header { grid-area: header; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); box-shadow: var(--wc-elev-bar); }
@@ -664,8 +678,7 @@ kbd {
 .gv-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 8px; padding: 8px 8px; border-radius: var(--wc-radius); border: 1px solid transparent; cursor: pointer; }
 .gv-row:hover { background: color-mix(in srgb, var(--wc-accent) 8%, transparent); }
 .gv-row.selected { border-color: var(--wc-border-light); background: color-mix(in srgb, var(--wc-accent) 6%, transparent); }
-.gv-row.active { background: #30281b; border-color: var(--wc-border-light); box-shadow: inset 2px 0 0 var(--wc-accent); }
-:root[data-theme="light"] .gv-row.active { background: color-mix(in srgb, var(--wc-accent) 16%, transparent); }
+.gv-row.active { background: var(--wc-row-active-bg); border-color: var(--wc-border-light); box-shadow: inset 2px 0 0 var(--wc-accent); }
 .gv-row .glyph { font-size: 11px; color: var(--wc-muted); text-align: center; }
 .gv-row .glyph.active { color: var(--wc-accent); }
 .gv-row .glyph.marked { color: var(--wc-gold); }
@@ -673,11 +686,6 @@ kbd {
 .gv-row .main { min-width: 0; }
 .gv-row .lbl { font: 700 11px var(--wc-mono); color: var(--wc-fg-bright); }
 .gv-row .trig { font: 11px var(--wc-font); color: var(--wc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gv-row .rchip { font: 600 9px var(--wc-mono); padding: 1px 5px; border-radius: var(--wc-radius); letter-spacing: .04em; }
-.gv-row .rchip.active { color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent); }
-.gv-row .rchip.fork { color: var(--wc-accent-text); }
-.gv-row .rchip.marked { color: var(--wc-gold); }
-.gv-row .rchip.stack { color: var(--wc-muted); }
 .gv-row .time { font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
 
 /* center canvas */
@@ -699,7 +707,7 @@ kbd {
 .gv-zoom span { font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
 /* The readout is a real button (click = reset to 100% + centre) but must keep
    reading as a label between − and +, not as a third control. */
-#gv-zoom-pct { width: auto; height: auto; padding: 2px 4px; border-radius: var(--wc-radius-sm, 4px); cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
+#gv-zoom-pct { width: auto; height: auto; padding: 2px 4px; border-radius: var(--wc-radius-sm); cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
 #gv-zoom-pct:hover { color: var(--wc-fg); background: var(--wc-bg); }
 #gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 
@@ -732,7 +740,7 @@ kbd {
 .gv-folded { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow-y: auto; }
 .gv-folded .muted.small { margin-bottom: 3px; }
 .gv-folded-row { display: flex; align-items: baseline; gap: 6px; font: 11px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border); padding: 1px 0 1px 7px; }
-.gv-folded-tag { font: 600 10px var(--wc-mono); color: var(--wc-border-light, var(--wc-muted)); flex: none; }
+.gv-folded-tag { font: 600 10px var(--wc-mono); color: var(--wc-border-light); flex: none; }
 .gv-folded-who { font: 600 10px var(--wc-mono); flex: none; opacity: .75; }
 .gv-folded-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gv-diff { display: flex; gap: 14px; font: 12px var(--wc-mono); }
@@ -766,7 +774,6 @@ kbd {
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
-.drawer.hidden { display: none; }
 .drawer-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--wc-border); }
 .drawer-head .title { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
 .drawer-head .pane-btn { margin-left: auto; }
@@ -778,9 +785,7 @@ kbd {
   font: 700 9px var(--wc-mono); line-height: 14px; text-align: center;
   color: var(--wc-bg); background: var(--wc-gold); border-radius: 7px;
 }
-.drawer-tabs .tab-badge.hidden { display: none; }
 .drawer-panel { overflow: auto; padding: 6px 8px 10px; }
-.drawer-panel.hidden { display: none; }
 .de-group {
   font: 700 9.5px var(--wc-mono); letter-spacing: .12em; color: var(--wc-muted-dim);
   padding: 10px 4px 4px; text-transform: uppercase;
@@ -847,7 +852,7 @@ kbd {
 .pk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .pk-now.armed { border-color: var(--wc-gold); color: var(--wc-gold); }
 .pk-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; min-height: 14px; line-height: 1.4; }
-.pk-status.err { color: var(--wc-coral, #d05a4a); }
+.pk-status.err { color: var(--wc-comment); }
 .pk-status.warn { color: var(--wc-gold); }
 .pk-status.ok { color: var(--wc-green); }
 
@@ -862,7 +867,7 @@ kbd {
 .pk-unit { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .pk-unit-list { font: 11px var(--wc-mono); color: var(--wc-muted); margin-top: 5px; overflow-wrap: anywhere; }
 .pk-card-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 5px; }
-.pk-card-status.err { color: var(--wc-coral, #d05a4a); }
+.pk-card-status.err { color: var(--wc-comment); }
 
 /* SKILL.md, inline — the artefact nobody thinks to read, and the one that ends
    up in Claude's instructions */
@@ -945,8 +950,7 @@ body.pin-mode #main { cursor: crosshair; }
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
-.pin-anchor, .pin-menu-text { font: 12px var(--wc-mono); color: var(--wc-text-2); margin-bottom: 8px; word-break: break-word; }
-.pin-menu-text { font-family: var(--wc-font); color: var(--wc-text-1); }
+.pin-anchor { font: 12px var(--wc-mono); color: var(--wc-text-2); margin-bottom: 8px; word-break: break-word; }
 .pin-text { width: 100%; resize: vertical; background: var(--wc-content-bg); color: var(--wc-fg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); font: 13px var(--wc-font); padding: 6px 8px; }
 .pin-share { display: flex; align-items: center; gap: 6px; margin: 8px 0; font: 12px var(--wc-font); color: var(--wc-text-2); }
 .pin-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -976,15 +980,14 @@ body.pin-mode #main { cursor: crosshair; }
   max-width: min(420px, calc(100vw - 36px));
   max-height: calc(100vh - 36px); overflow-y: auto;
 }
-.svc-trust-host.hidden { display: none; }
 .svc-trust-card {
-  font-family: var(--wc-font, system-ui, sans-serif);
-  color: var(--wc-fg, #1a1a1a);
-  background: var(--wc-panel-bg, #fff);
-  border: 1px solid var(--wc-gold, #c99a00);
+  font-family: var(--wc-font);
+  color: var(--wc-fg);
+  background: var(--wc-panel-bg);
+  border: 1px solid var(--wc-gold);
   border-left-width: 3px;
-  border-radius: var(--wc-radius, 10px);
-  box-shadow: var(--wc-shadow, 0 8px 32px rgba(0, 0, 0, .22));
+  border-radius: var(--wc-radius);
+  box-shadow: var(--wc-shadow);
   padding: 14px 16px;
   position: relative;
 }
@@ -996,21 +999,21 @@ body.pin-mode #main { cursor: crosshair; }
   position: absolute; top: 8px; right: 9px;
   width: 22px; height: 22px; padding: 0;
   border: 0; background: transparent; cursor: pointer;
-  color: var(--wc-muted, #666); font: 16px/1 var(--wc-font, system-ui, sans-serif);
-  border-radius: var(--wc-radius-sm, 6px);
+  color: var(--wc-muted); font: 16px/1 var(--wc-font);
+  border-radius: var(--wc-radius-sm);
 }
-.svc-trust-x:hover { background: color-mix(in srgb, var(--wc-muted, #666) 18%, transparent); color: var(--wc-fg, #1a1a1a); }
+.svc-trust-x:hover { background: color-mix(in srgb, var(--wc-muted) 18%, transparent); color: var(--wc-fg); }
 .svc-trust-card h3 { margin: 0 22px 8px 0; font-size: 14px; }
-.svc-trust-card p { margin: 5px 0; font-size: 12.5px; line-height: 1.55; color: var(--wc-muted, #666); }
-.svc-trust-card code { font-family: var(--wc-mono, ui-monospace, monospace); font-size: 11.5px; }
+.svc-trust-card p { margin: 5px 0; font-size: 12.5px; line-height: 1.55; color: var(--wc-muted); }
+.svc-trust-card code { font-family: var(--wc-mono); font-size: 11.5px; }
 .svc-trust-cmd {
   margin: 9px 0 6px; padding: 8px 10px;
-  background: var(--wc-bg, #f6f6f4);
-  border: 1px solid var(--wc-border, #ddd);
-  border-radius: var(--wc-radius-sm, 6px);
+  background: var(--wc-bg);
+  border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius-sm);
   overflow-x: auto; user-select: all;
 }
-.svc-trust-cmd code { color: var(--wc-fg, #1a1a1a); font-size: 12px; white-space: pre; }
+.svc-trust-cmd code { color: var(--wc-fg); font-size: 12px; white-space: pre; }
 /* Two panes of one component with different params are two decisions, so each
    card names the params it is about — otherwise the pair reads identically. */
 .svc-trust-params { word-break: break-word; }
@@ -1026,27 +1029,27 @@ body.pin-mode #main { cursor: crosshair; }
   grid-column: 1 / -1; justify-self: center;
   max-width: 460px; margin: clamp(40px, 12vh, 120px) auto;
   padding: 26px 30px; text-align: left;
-  font-family: var(--wc-font, system-ui, sans-serif);
-  color: var(--wc-fg, #1a1a1a);
-  background: var(--wc-panel-bg, #fff);
-  border: 1px solid var(--wc-border, #ddd);
-  border-radius: var(--wc-radius-lg, var(--wc-radius, 12px));
-  box-shadow: var(--wc-shadow, 0 6px 24px rgba(0, 0, 0, .07));
+  font-family: var(--wc-font);
+  color: var(--wc-fg);
+  background: var(--wc-panel-bg);
+  border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius-lg);
+  box-shadow: var(--wc-shadow);
 }
 .zero-state h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
-.zero-state p { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--wc-muted, #666); }
+.zero-state p { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--wc-muted); }
 .zs-try { font-size: 12.5px; }
 .zs-quote {
-  font-family: var(--wc-mono, ui-monospace, monospace); font-size: 12px;
-  background: var(--wc-bg, #f6f6f4); border: 1px solid var(--wc-border-light, var(--wc-border, #e6e6e6));
-  border-radius: 4px; padding: 2px 6px; color: var(--wc-fg, #1a1a1a); user-select: all;
+  font-family: var(--wc-mono); font-size: 12px;
+  background: var(--wc-bg); border: 1px solid var(--wc-border-light);
+  border-radius: 4px; padding: 2px 6px; color: var(--wc-fg); user-select: all;
 }
 .zs-keys { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 7px; }
-.zs-keys li { font-size: 12.5px; color: var(--wc-muted, #666); display: flex; gap: 7px; align-items: baseline; }
+.zs-keys li { font-size: 12.5px; color: var(--wc-muted); display: flex; gap: 7px; align-items: baseline; }
 .zs-keys kbd {
-  font-family: var(--wc-mono, ui-monospace, monospace); font-size: 10.5px; line-height: 1;
-  padding: 3px 6px; border-radius: 4px; color: var(--wc-fg, #1a1a1a);
-  background: var(--wc-bg, #f6f6f4); border: 1px solid var(--wc-border, #ddd);
+  font-family: var(--wc-mono); font-size: 10.5px; line-height: 1;
+  padding: 3px 6px; border-radius: 4px; color: var(--wc-fg);
+  background: var(--wc-bg); border: 1px solid var(--wc-border);
   border-bottom-width: 2px;
 }
 

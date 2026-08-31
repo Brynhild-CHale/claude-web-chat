@@ -346,3 +346,147 @@ test('file-editor service: a persisted view action IS replayed on respawn', asyn
   await sleep(50);
   assert.equal(browsed.latest().listing.dir, 'sub', 'so was the persisted browse');
 });
+
+// ── the PANE, mounted for real against the service ──────────────────────────
+// The pane is the other half of this contract, and the half a user watches. It
+// used to call setDirty(false) at click time: the buffer read as saved the
+// instant Save was pressed, whether or not anything was written. One way nothing
+// is written is entirely ordinary — a Save clicked in the spawn window (a viewer
+// arrives, 200 ms debounce, fork, start()) is stamped before the service's own
+// start, so the start-time floor above refuses it exactly as it refuses a
+// persisted one. Silently, with the pane showing a clean buffer over unsaved
+// text. Dirty is now cleared by the service's echo instead (`ack`), the way the
+// buffer reload has always been driven by `load`.
+
+const { JSDOM } = require('jsdom');
+const mountRuntime = require('../public/mount-runtime.js');
+const PANE_HTML = fs.readFileSync(
+  path.join(__dirname, '..', 'templates', 'components', 'file-editor', 'component.html'), 'utf8');
+
+function withDom(t) {
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const saved = { window: global.window, document: global.document, CustomEvent: global.CustomEvent, Event: global.Event };
+  global.window = dom.window;
+  global.document = dom.window.document;
+  global.CustomEvent = dom.window.CustomEvent;
+  global.Event = dom.window.Event;
+  t.after(() => Object.assign(global, saved));
+  return dom.window.document;
+}
+
+// Mount the real component.html into a shadow root the way public/app/mounts.js
+// does, over a real store. Every editor_ctl the pane writes is relayed into the
+// service's event stream, and every `editor` the service pushes lands back in
+// the same store — the daemon's wiring, minus the socket.
+function mountPane(t, document, store) {
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const { root: shadow, scripts } = mountRuntime.attachAndExtract(host, PANE_HTML);
+  const errors = [];
+  mountRuntime.runScripts(shadow, scripts, store, { root: '.' }, 'm1', (e) => errors.push(e));
+  assert.deepEqual(errors, [], 'the pane script threw at mount');
+  return shadow;
+}
+
+function paneCtx(root, store) {
+  let handler = null;
+  const ctx = {
+    mountId: 'm1', name: 'file-editor', params: { root }, log() {},
+    webChatDir: path.join(root, '.web-chat'),
+    diff: (a, b, opts) => lineDiff(a, b, opts),
+    fence: (parent, child) => fence(parent, child),
+    driver: {
+      async setStore(patch) { store.set(patch); },
+      async getStore(keys) {
+        const all = store.get() || {};
+        const out = {};
+        for (const k of keys || Object.keys(all)) if (k in all) out[k] = all[k];
+        return out;
+      },
+      streamEvents({ onEvent }) { handler = onEvent; return { close() { handler = null; } }; },
+    },
+  };
+  return { ctx, wire: () => store.subscribe('editor_ctl', (v) => handler && handler({ patch: { editor_ctl: v } })) };
+}
+
+const dirtyShown = (shadow) => shadow.querySelector('[data-dirty]').style.visibility === 'visible';
+const errText = (shadow) => {
+  const el = shadow.querySelector('[data-error]');
+  return el.style.display === 'none' ? '' : el.textContent;
+};
+
+test('file-editor pane: a Save the service never ran is reported, not shown as saved', async (t) => {
+  withTempHome(t);
+  const document = withDom(t);
+  const root = tmpTree('wc-fileed-pane-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+
+  const store = mountRuntime.createStore({});
+  const shadow = mountPane(t, document, store);
+
+  // Type a path and some text, then hit Save BEFORE the service exists — the
+  // spawn window (viewer arrives, 200 ms debounce, fork, start()), and equally
+  // the case where the service has never been approved and so never starts.
+  shadow.querySelector('[data-pathin]').value = 'notes.txt';
+  shadow.querySelector('[data-ta]').value = 'typed but not saved\n';
+  shadow.querySelector('[data-ta]').dispatchEvent(new global.Event('input', { bubbles: true }));
+  assert.equal(dirtyShown(shadow), true, 'precondition: the buffer is dirty');
+  shadow.querySelector('[data-save]').dispatchEvent(new global.window.MouseEvent('click', { bubbles: true }));
+
+  assert.equal(dirtyShown(shadow), true,
+    'the dirty marker used to be cleared right here, at click time — before anything could '
+    + 'possibly have run, and whether or not anything ever would');
+
+  // The service starts now, so that click is stamped before its start: refused
+  // as persisted, which is what keeps a stale save off the disk (D8).
+  const { ctx, wire } = paneCtx(root, store);
+  wire();
+  const svc = loadService();
+  t.after(async () => { try { await svc.stop(); } catch {} });
+  await svc.start(ctx);
+  await sleep(60);
+  assert.equal(fs.existsSync(path.join(root, 'notes.txt')), false, 'nothing was written, as designed');
+
+  // ...and once the ack window closes the pane SAYS so, with both things that
+  // fix it. It used to say nothing at all.
+  await sleep(2600);
+  assert.match(errText(shadow), /nothing was written/i);
+  assert.match(errText(shadow), /click Save again/i);
+  assert.match(errText(shadow), /claude-web-chat trust file-editor/);
+});
+
+test('file-editor pane: dirty clears on the service\'s echo, and only when the write succeeded', async (t) => {
+  withTempHome(t);
+  const document = withDom(t);
+  const root = tmpTree('wc-fileed-echo-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+
+  const store = mountRuntime.createStore({});
+  const shadow = mountPane(t, document, store);
+  const { ctx, wire } = paneCtx(root, store);
+  wire();
+  const svc = loadService();
+  t.after(async () => { try { await svc.stop(); } catch {} });
+  await svc.start(ctx);
+  await sleep(60);
+
+  // A Save the service REFUSES (the path escapes the fence). The buffer holds
+  // work that is not on disk, so it must stay dirty — it used to go clean the
+  // moment the button was pressed, error and all.
+  shadow.querySelector('[data-pathin]').value = '../escaped.txt';
+  shadow.querySelector('[data-ta]').value = 'nope\n';
+  shadow.querySelector('[data-ta]').dispatchEvent(new global.Event('input', { bubbles: true }));
+  shadow.querySelector('[data-save]').dispatchEvent(new global.window.MouseEvent('click', { bubbles: true }));
+  await sleep(60);
+  assert.match(errText(shadow), /outside the project root/);
+  assert.equal(fs.existsSync(path.join(path.dirname(root), 'escaped.txt')), false);
+  assert.equal(dirtyShown(shadow), true, 'refused: the work is still only in the buffer');
+
+  // ...and a Save the service RUNS settles it, on the echo of the very seq it ran.
+  shadow.querySelector('[data-pathin]').value = 'notes.txt';
+  shadow.querySelector('[data-save]').dispatchEvent(new global.window.MouseEvent('click', { bubbles: true }));
+  await sleep(60);
+  assert.equal(fs.readFileSync(path.join(root, 'notes.txt'), 'utf8'), 'nope\n');
+  assert.equal(dirtyShown(shadow), false, 'the echo settled the buffer');
+  assert.equal(errText(shadow), '');
+});

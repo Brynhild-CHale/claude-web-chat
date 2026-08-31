@@ -27,7 +27,66 @@ import { bus } from './bus.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
-export function send(frame) { if (isOpen()) ws.send(JSON.stringify(frame)); }
+
+/* ── the outbox ──────────────────────────────────────────────────────────────
+   Every frame the chrome sends is state the DAEMON has to end up holding: a
+   store patch a pane wrote, a pane's geometry, an activity event, a script
+   error. `send` used to drop all of them on a closed socket and say nothing —
+   and a reconnect is server→client only (`hello` carries no client half), so
+   the reconcile then overwrote the local copy with the server's older picture
+   too. A store write or a resize made across a laptop sleep was destroyed at
+   BOTH ends, with no trace anywhere.
+
+   So queue instead of dropping. Frames that carry STATE coalesce — one entry
+   per key, last write wins, store patches merged — so a gap of any length costs
+   a bounded amount of memory; the append-only ones keep a capped tail. The
+   drain runs from `hello`, AFTER the snapshot has been applied: the server
+   built that snapshot before it heard any of this, so a frame sent ahead of it
+   would be contradicted by the very frame it was meant to correct.
+
+   `pane:form` is deliberately NOT queued — the reconcile calls flushFormStates(),
+   which re-reads every kept pane's live DOM, and that is strictly fresher than
+   anything stashed here. */
+const OUTBOX_LOG_MAX = 100;
+const pendingState = new Map();   // coalescing key → latest frame
+const pendingLog = [];            // event / script:error, in order, capped
+
+function queueFrame(frame) {
+  if (frame.type === 'store:set') {
+    const prev = pendingState.get('store:set');
+    // Last-write-wins per key, so the whole gap collapses into one patch. The
+    // newest frame's `mount`/`gesture` attribution rides along with it.
+    pendingState.set('store:set', prev ? { ...frame, patch: { ...prev.patch, ...frame.patch } } : frame);
+    return;
+  }
+  if (frame.type === 'pane:state') { pendingState.set(`pane:state:${frame.id}`, frame); return; }
+  if (frame.type === 'pane:form') return;  // see the block comment
+  pendingLog.push(frame);
+  if (pendingLog.length > OUTBOX_LOG_MAX) pendingLog.shift();
+}
+
+export function send(frame) {
+  if (!isOpen()) { queueFrame(frame); return false; }
+  ws.send(JSON.stringify(frame));
+  return true;
+}
+
+function flushOutbox() {
+  const frames = [...pendingState.values(), ...pendingLog];
+  pendingState.clear();
+  pendingLog.length = 0;
+  for (const f of frames) {
+    // Converge the LOCAL copy as well: the reconcile just replaced it with what
+    // the server believed before the gap. `fromServer` stops the store's publish
+    // hook sending a second frame for the same patch. While previewing the DOM
+    // belongs to a committed node, not the live surface, so only the wire half runs.
+    if (!view.previewing) {
+      if (f.type === 'store:set') store.set(f.patch, { fromServer: true });
+      else if (f.type === 'pane:state') applyRemotePaneState(f.id, f.pane_state || {});
+    }
+    send(f);   // a socket that closed again simply re-queues it
+  }
+}
 
 function setConnStatus(text, cls) {
   const s = $('status');
@@ -76,6 +135,9 @@ const HANDLERS = {
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
     applySnapshot(msg, { mode: 'reconcile' });
+    // …and now the client's half of the catch-up: everything we tried to send
+    // while the socket was down (see the outbox above).
+    flushOutbox();
     if (!view.previewing) applyNodeTheme(getActiveNodeTheme(), false);
     applyActive(msg.active);
     applyLock(msg.lock);

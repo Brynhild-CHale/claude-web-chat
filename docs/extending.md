@@ -136,6 +136,7 @@ were the only places they lived.
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
 | ask whether a pid is alive | `core/portfiles` `isPidAlive(pid)` | `try { process.kill(pid, 0) }` inline (the type guard is the point) |
+| start a detached child whose output goes to a log file | `lib/util/daemon` `spawnDetached({bin, args, log, cwd, env})` — opens the log once, closes the parent's copy of the descriptor, and derives the CLI bin from `core/paths` `PACKAGE_ROOT` | `spawn` + `openSync` at a call site (two spawners each leaked their log fd, and one opened it twice) |
 | remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
 | list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
@@ -158,6 +159,7 @@ were the only places they lived.
 | read, validate and require a capture-profile bundle | `capture/profiles` `loadBundle(dir)` / `validateMeta(meta)` | a second reader of `profile.json` with its own acceptance rules |
 | hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is NOT the alternative — extend the kit) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
+| pack a directory as a `.zip`, or checksum bytes with CRC-32 | `lib/core/zip` `writeZipStore(dir)` / `crc32(buf)` | a second ZIP encoder, or a hand-derived CRC-32 table |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
@@ -171,9 +173,10 @@ were the only places they lived.
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | read or write a browser storage key from the chrome | `public/app/storage.js` `getLocal` / `setLocal` / `getSession` / `getLocalJson` — every one fails open | touch `localStorage` / `sessionStorage` directly: the accessor itself throws in a private window and takes the whole module graph down with it |
+| send a frame to the daemon from the chrome (a store patch, pane state, an activity event) | `public/app/ws.js` `send(frame)` — it queues on a closed socket, coalescing per key, and drains after the reconnect's snapshot has landed | gate the call on `isOpen()` and drop the frame: `hello` catches the client up in one direction only, so the reconcile then overwrites the local copy too and the change is lost at both ends |
 | apply a full-surface snapshot frame in the chrome — `hello`, `reset`, `branch-here`, the restored live surface | `public/app/mounts.js` `applySnapshot(frame, {mode:'authoritative'|'reconcile'})` — it owns the preview fold and the remove-absentees / keep-unchanged reconcile | hand-roll `mountAll` + `fullReset` beside a frame handler: that is how `hello` ended up without the preview fork, overwriting a previewed node on every reconnect |
 | leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot, flushForms})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
-| walk the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses | `labels.childrenOf`, which is the RAW commit topology and has one consumer by design: the ⑃ branch picker |
+| walk or LIST the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts, the ⌘K palette | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses — and `displayNodeList()` for a surface that lists nodes rather than walking them | `view.graphCache.nodes`, the raw commit list (the palette read it, so a collapsed turn kept a row nothing could navigate out of), or `labels.childrenOf`, the RAW commit topology, which has one consumer by design: the ⑃ branch picker |
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
@@ -575,9 +578,13 @@ their baselines, the `.gitignore` line. Four functions:
   where there were five. `'existing'` requires an installed root at or above
   `cwd` and throws a `userFacing` refusal naming `claude-web-chat init` (`on`,
   `off`); `'install'` falls back to `cwd` when there is none (`install`,
-  `uninstall`, `doctor`, `status`, the MCP dispatcher); `'optional'` returns
-  `root: null` for a caller with nothing to do outside a project (`update`).
-  All three inherit `findProjectRoot`'s `$HOME` refusal.
+  `doctor`, `status`, the MCP dispatcher); `'optional'` returns
+  `root: null` for a caller with nothing to do outside a project (`update`,
+  and `uninstall`, which then treats the `cwd` as the project only when
+  web-chat's own wiring — the hooks or the `.mcp.json` entry — is actually
+  there, because `remove()` shells out to `claude mcp remove … --scope local`
+  and the tolerant fallback made that a write for a project that never
+  existed). All three inherit `findProjectRoot`'s `$HOME` refusal.
 - **`inspect(root)`** — pure read: `installed`, `hooks` per event
   (`ok` / `bare` / `missing`), `mcp` (`present`, `kind`, `resolvable`, `reason`,
   `channelEnv`), `managed` (the dry-run reconcile), `gitignore`. `doctor`,
@@ -892,7 +899,10 @@ Current homes (baselines can only shrink toward these):
 | `fullReset(` / `mountAll(` **in `public/app` only** | `public/app/mounts.js` — `applySnapshot` is the one snapshot path and these are its internals; the single grandfathered call outside it is `topbar.previewNode`, which puts a non-live node ON the DOM while `previewing` is already true | landed with the snapshot applier ✅ |
 | `view.liveSnapshot =` **in `public/app` only** | `public/app/mounts.js` (`applySnapshot`'s fold) · `public/app/topbar.js` (`previewNode` captures it, `leavePreview` drops it) — the other half of the same defect: who may replace the folded live surface | landed with the snapshot applier ✅ |
 | `=== 'li'` (the list-item walker) | `lib/capture/profiles/util.js` (`listItems(el)`) — required by `article`/`simplify`/`markdown`, and injected into capture bundles as `ctx.listItems`, which is the only way a bundle can reach it. A flat `querySelectorAll('li')` emits a nested item twice | landed with the ctx-kit list walker ✅ |
+| `0xedb88320` (the CRC-32 polynomial) | `lib/core/zip.js` (`crc32`) — `zlib.crc32` where Node has it, with ONE fallback table for the two 22.x point releases below it. It existed twice, in an Express route and in `extensions/make-icons.js`, for a checksum Node ships | landed with the zip engine ✅ |
+| `0x04034b50` (the ZIP local-file-header signature) | `lib/core/zip.js` (`writeZipStore`) — the store-only writer the extension download serves. It lived inline in `lib/server/routes/extensions.js`, where nothing could test it without standing up the router | landed with the zip engine ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
+| `isOpen` imported from `./ws.js` **in `public/app` only** | `public/app/ws.js` — `send(frame)` decides what happens on a closed socket (it queues, coalesced, and drains after the reconnect's snapshot). The one importer left is `mounts.js`'s `sendFormState`, which returns instead of queueing because the reconcile re-reads the live DOM | landed with the outbound frame queue ✅ |
 
 Working with it:
 

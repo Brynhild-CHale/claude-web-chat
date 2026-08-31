@@ -286,3 +286,47 @@ test('stopRow refuses an unreachable row outright, without probing identity', as
   assert.deepEqual({ ok: res.ok, reason: res.reason, pid: res.pid },
     { ok: false, reason: 'unreachable', pid: process.pid });
 });
+
+// A registry entry with no `root`. registerInstance always writes one, so this
+// is a hand-edited or legacy record — but `ls` kept printing it forever with the
+// "--reap clears" hint and --reap could never clear it: release({root:null})
+// went to instanceId(null) -> path.resolve(null), which throws
+// ERR_INVALID_ARG_TYPE into release()'s own catch, and to a deletePortfile that
+// resolved the null root to process.cwd() — reaching for the records of the
+// project the user is standing in.
+test('--reap clears a ghost registry entry that names no project root', async () => {
+  resetRegistry();
+  const file = path.join(FAKE_HOME, '.web-chat', 'instances.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({
+    instances: [{ id: 'deadbeef', role: 'instance', title: 'rootless', port: 5999, pid: DEAD_PID }],
+  }));
+
+  const rows = await registry.rows({ timeoutMs: 300 });
+  assert.equal(rows.length, 1, 'the row is listed (that is why it needs clearing)');
+
+  const out = await reap(rows, { here: null, log: sink(), ackWaitMs: 600 });
+  assert.equal(out.cleared, 1, 'the ghost was cleared by the id it carries');
+  assert.deepEqual(registry.readAllEntries(), [], 'and is gone from the registry for good');
+});
+
+// The same rootless entry with a LIVE pid may not be acted on at all: stop()
+// resolves a null root to process.cwd() too, so acting on it would ask the
+// daemon of whatever project the user happens to be standing in to shut down.
+test('--reap refuses to act on a rootless row whose pid is alive', async () => {
+  resetRegistry();
+  const file = path.join(FAKE_HOME, '.web-chat', 'instances.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({
+    instances: [{ id: 'deadbeef', role: 'instance', title: 'rootless-live', port: 1, pid: process.pid }],
+  }));
+
+  const rows = await registry.rows({ timeoutMs: 300 });
+  const log = sink();
+  const out = await reap(rows, { here: null, log, ackWaitMs: 600 });
+
+  assert.deepEqual({ stopped: out.stopped, cleared: out.cleared }, { stopped: 0, cleared: 0 });
+  assert.deepEqual(out.skipped.map((s) => [s.row.title, s.reason]), [['rootless-live', 'no-root']]);
+  assert.match(log.text(), /names no project root/);
+  assert.equal(registry.readAllEntries().length, 1, 'and the entry is left where it is');
+});

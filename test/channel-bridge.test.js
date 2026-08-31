@@ -106,6 +106,56 @@ test('health exposes the daemon boot token (bridge restart detection)', async (t
 // setTimeout.
 const microflush = () => new Promise((r) => setImmediate(r));
 
+// The ack is a DELIVERY confirmation: the daemon clears the retained batch when
+// one arrives (domain/queue.ackWake). The SDK's notification is async, so a dead
+// transport rejects rather than throwing — acking on the synchronous return
+// confirmed a send that had not happened, destroying the batch the retain/park
+// machinery exists to save.
+function ackHarness(notify) {
+  const connects = [];
+  const posts = [];
+  const logs = [];
+  const client = {
+    subscribeSSE(opts) { connects.push(opts); return { close() {} }; },
+    get: async () => ({ boot: 'B' }),
+    post: async (path, body) => { posts.push({ path, body }); return { ok: true }; },
+  };
+  const bridge = startChannelBridge({ notify, client, root: 'x', log: (m) => logs.push(m) });
+  const acks = () => posts.filter((p) => p.path === '/api/channel/ack');
+  return { connects, posts, logs, bridge, acks };
+}
+
+const WAKE = { kind: 'wake', seq: 4, boot: 'B', batch: [{ id: 'q1', kind: 'signal', summary: 's' }] };
+
+test('bridge: a notify that REJECTS is never acked', async () => {
+  const h = ackHarness(() => Promise.reject(new Error('transport closed')));
+  await microflush();
+  h.connects[0].onEvent(WAKE);
+  await microflush();
+  await microflush();
+
+  assert.equal(h.acks().length, 0, 'a send that failed must not confirm delivery');
+  assert.ok(h.logs.some((m) => /notify failed/.test(m)), 'the failure is logged');
+  h.bridge.stop();
+});
+
+test('bridge: the ack waits for the send to settle, then carries seq + boot', async () => {
+  let release;
+  const landed = new Promise((r) => { release = r; });
+  const h = ackHarness(() => landed);
+  await microflush();
+  h.connects[0].onEvent(WAKE);
+  await microflush();
+  assert.equal(h.acks().length, 0, 'not acked while the send is still in flight');
+
+  release();
+  await microflush();
+  await microflush();
+  assert.equal(h.acks().length, 1);
+  assert.deepEqual(h.acks()[0].body, { seq: 4, boot: 'B' });
+  h.bridge.stop();
+});
+
 test('bridge: cursor dedupes replays, delivers newer seqs', async () => {
   const connects = [];
   const client = { subscribeSSE(opts) { connects.push(opts); return { close() {} }; }, get: async () => ({}) };

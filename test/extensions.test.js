@@ -197,16 +197,30 @@ test('manifests stay MV3-shaped', () => {
 // Run the real service worker in a vm with a stub `chrome`, capturing the
 // listeners it registers and everything it does to the user-visible surfaces
 // (badge, injected script, storage).
-function loadBackground({ fetchImpl }) {
+function pick(area, defaults) {
+  const out = {};
+  for (const [k, v] of Object.entries(defaults || {})) out[k] = k in area ? area[k] : v;
+  return out;
+}
+
+function loadBackground({ fetchImpl, stored = { sync: {}, local: {} } }) {
   const listeners = {};
-  const calls = { badge: [], title: [], scripts: [], localSet: [], syncSet: [] };
+  const calls = {
+    badge: [], title: [], scripts: [], localSet: [], syncSet: [], syncRemoved: [],
+  };
   const chrome = {
     storage: {
+      // Both areas answer like the real ones: get() returns only the keys it was
+      // asked for, out of what the area actually holds.
       sync: {
-        get: async () => ({}),
-        set: (v) => { calls.syncSet.push(v); },
+        get: async (defaults) => pick(stored.sync, defaults),
+        set: (v) => { calls.syncSet.push(v); Object.assign(stored.sync, v); },
+        remove: async (k) => { calls.syncRemoved.push(k); delete stored.sync[k]; },
       },
-      local: { set: async (v) => { calls.localSet.push(v); } },
+      local: {
+        get: async (defaults) => pick(stored.local, defaults),
+        set: async (v) => { calls.localSet.push(v); Object.assign(stored.local, v); },
+      },
     },
     runtime: { onMessage: { addListener: (fn) => { listeners.message = fn; } } },
     contextMenus: {
@@ -233,7 +247,7 @@ function loadBackground({ fetchImpl }) {
   vm.createContext(sandbox);
   const src = fs.readFileSync(path.join(EXT_ROOT, 'tab-stream', 'background.js'), 'utf8');
   vm.runInContext(src, sandbox, { filename: 'background.js' });
-  return { listeners, calls, chrome };
+  return { listeners, calls, chrome, stored };
 }
 
 // Ask the background for something over the popup bridge and await its reply.
@@ -298,6 +312,68 @@ test('a right-click capture SUCCESS is reported too', async () => {
   const stored = calls.localSet.find((v) => v.lastResult);
   assert.ok(stored && stored.lastResult.ok, 'success recorded');
   assert.match(stored.lastResult.message, /demo/, 'names the instance it landed in');
+});
+
+// hub-extensions-7. The capture token is the ONLY authentication on the capture
+// path, and it is a secret about one machine: chrome.storage.sync uploads what
+// it holds to the user's Google account and replicates it to every profile
+// signed into it. Preferences may sync; this must not.
+test('the capture token is read from storage.local and sent as the header', async () => {
+  const seen = [];
+  const okHub = async (url, init) => {
+    seen.push((init && init.headers) || {});
+    return { ok: true, json: async () => ({ ok: true, instances: [] }) };
+  };
+  const { listeners, calls } = loadBackground({
+    fetchImpl: okHub,
+    stored: { sync: { endpoint: 'http://localhost:5170' }, local: { token: 'local-secret' } },
+  });
+  await ask(listeners, { type: 'list-instances' });
+  assert.equal(seen[0]['X-WC-Token'], 'local-secret');
+  assert.equal(calls.syncSet.some((v) => 'token' in v), false, 'and it is never written back to sync');
+});
+
+test('a token an older build left in storage.sync is migrated out of it', async () => {
+  const seen = [];
+  const okHub = async (url, init) => {
+    seen.push((init && init.headers) || {});
+    return { ok: true, json: async () => ({ ok: true, instances: [] }) };
+  };
+  const { listeners, calls, stored } = loadBackground({
+    fetchImpl: okHub,
+    stored: { sync: { endpoint: 'http://localhost:5170', token: 'synced-secret' }, local: {} },
+  });
+  await ask(listeners, { type: 'list-instances' });
+
+  assert.equal(seen[0]['X-WC-Token'], 'synced-secret', 'the existing setting keeps working');
+  assert.deepEqual(calls.localSet.filter((v) => 'token' in v), [{ token: 'synced-secret' }],
+    'it is adopted onto this machine');
+  assert.deepEqual(calls.syncRemoved, ['token'], 'and stops being replicated to every signed-in profile');
+  assert.equal('token' in stored.sync, false);
+});
+
+test('a machine that already has its own token keeps it, and still stops syncing the old one', async () => {
+  const seen = [];
+  const okHub = async (url, init) => {
+    seen.push((init && init.headers) || {});
+    return { ok: true, json: async () => ({ ok: true, instances: [] }) };
+  };
+  const { listeners, calls } = loadBackground({
+    fetchImpl: okHub,
+    stored: { sync: { token: 'synced-secret' }, local: { token: 'local-secret' } },
+  });
+  await ask(listeners, { type: 'list-instances' });
+  assert.equal(seen[0]['X-WC-Token'], 'local-secret', 'local wins — it is the one about this machine');
+  assert.deepEqual(calls.syncRemoved, ['token']);
+});
+
+test('neither extension source writes the token into storage.sync', () => {
+  for (const f of ['background.js', 'options.js', 'popup.js']) {
+    const src = fs.readFileSync(path.join(EXT_ROOT, 'tab-stream', f), 'utf8');
+    for (const m of src.match(/storage\.sync\.set\([^)]*/g) || []) {
+      assert.doesNotMatch(m, /token/, `${f} writes a token into chrome.storage.sync: ${m}`);
+    }
+  }
 });
 
 // ------------------------------------------------- `claude-web-chat open` front door

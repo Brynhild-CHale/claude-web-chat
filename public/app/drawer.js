@@ -38,6 +38,7 @@ import { store } from './store.js';
 import { bus } from './bus.js';
 import { components, invalidate } from './components.js';
 import { panes, unminimize } from './mounts.js';
+import { showReaimNote } from './topbar.js';
 
 const LIBRARY = 'library';
 const MANAGE = 'manage';
@@ -372,6 +373,24 @@ async function mountComponent(name, id, params) {
   return true;
 }
 
+// ONE armed submit subscription per component. The unsub used to live only in
+// the callback's closure, so it ran only if a value ever landed on the key: an
+// abandoned form (Claude cleared it, the node was navigated away, the drawer
+// spawned the same component again) left the subscription alive for the page's
+// lifetime. And since the signal key is STABLE per component, a second spawn
+// added a SECOND closure to the same key — one later submit then ran both, each
+// with its own `id` from its own slotFor(): two POST /api/clear and two spawns,
+// the older one landing in the slot nobody was looking at. Arming replaces;
+// submitting disarms.
+const armedSpawns = new Map();       // component name → unsubscribe
+
+function disarmSpawn(name) {
+  const off = armedSpawns.get(name);
+  if (!off) return;
+  armedSpawns.delete(name);
+  off();
+}
+
 export async function spawnComponent(c, { fresh = false } = {}) {
   const name = typeof c === 'string' ? c : c.name;
   const meta = typeof c === 'string' ? { name } : c;
@@ -407,8 +426,10 @@ export async function spawnComponent(c, { fresh = false } = {}) {
   // new store primitive across five files (and would move bus-golden), so the
   // key is collapsed rather than removed — see the plan's "left deliberately".
   const submitKey = `__spawn_${name}`;
+  disarmSpawn(name);                 // never two closures on one key — see armedSpawns
   const unsub = store.subscribe(submitKey, async (vals) => {
     if (!vals) return;               // our own null-out, echoing back
+    if (armedSpawns.get(name) === unsub) armedSpawns.delete(name);
     unsub();
     store.set({ [submitKey]: null });
     await fetch('/api/clear', {
@@ -417,6 +438,7 @@ export async function spawnComponent(c, { fresh = false } = {}) {
     });
     await mountComponent(name, id, vals);
   });
+  armedSpawns.set(name, unsub);
   await mountComponent('form-renderer', formMountId, {
     schema,
     submit_key: submitKey,
@@ -558,10 +580,22 @@ function status(text, kind) {
   s.textContent = text || '';
 }
 
-// Small transient message for anything that happens after the drawer closed.
+// Report something the user has to see even though the drawer is gone — in
+// practice the soft-rejected spawn (a locked or driver-owned pane answers 200
+// with {ok:false}, see mountComponent).
+//
+// This used to be `status(text,'err')` plus a console.warn, and status() writes
+// into `#drawer-manage .pk-status`: the MANAGE tab, of a drawer spawnComponent
+// itself had just closed, on a panel that does not exist at all when the daemon
+// has no pack routes — and the next openDrawer() rebuilds that panel from
+// scratch anyway. So the one observable output was the console. Send it to the
+// shell's ONE in-page transient notice instead (topbar.showReaimNote — the same
+// element graph-view.js puts "could not set active" in; the id is historical,
+// the element is generic), and keep the pack status line only for the case where
+// the user is actually looking at it.
 function flash(text) {
-  status(text, 'err');
-  if (!isOpen()) console.warn('[web-chat]', text);
+  showReaimNote(text);
+  if (isOpen() && tab === MANAGE) status(text, 'err');
 }
 
 function busy(on) {

@@ -69,6 +69,71 @@ function zOf(selector) {
   return Number(hit.value);
 }
 
+/* ================== dead selectors in the stylesheet ================== */
+// A class rule whose class nothing in the product ever sets is not inert
+// documentation: it reads like live chrome. app.css carried four such families
+// at once — .qchip (the rail's collapsed chips, renamed .rail-chip long ago,
+// keyframes and all), .rchip (the graph history row chips), .pin-menu-text and
+// .spacer — plus a .update-banner.ok success state for the one-click update
+// flow version.js's own header says was removed. Each described a surface that
+// does not exist, and one of them had a stale comment to match.
+//
+// The rule: every class this sheet styles must be a class something can
+// actually set. The allowlist below is for names COMPOSED at runtime, which is
+// the only legitimate way a class can be absent from the source.
+
+// Classes named by a selector in app.css. Walks the sheet, taking the text
+// before each `{` as a selector list and skipping at-rule preludes, so a
+// declaration value (`.35s`, `1.4`) can never be mistaken for a class.
+function cssClasses() {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out = new Set();
+  let depth = 0, buf = '';
+  for (const ch of css) {
+    if (ch === '{') {
+      const sel = buf.trim();
+      // At depth 1 the "selector" may be a nested rule inside @media — both are
+      // real selector lists; only an at-rule prelude (@media, @keyframes) is not.
+      if (sel && !sel.startsWith('@')) for (const m of sel.matchAll(/\.([A-Za-z][A-Za-z0-9_-]*)/g)) out.add(m[1]);
+      buf = ''; depth++;
+    } else if (ch === '}') { depth--; buf = ''; }
+    else buf += ch;
+  }
+  return [...out].sort();
+}
+
+// Everything that could set a class: the shell's own modules and markup, the
+// component templates, the server (export shell, capture panes, preview docs)
+// and the browser extension.
+function classSetters() {
+  const roots = ['public', 'templates', 'lib', 'extensions'].map((r) => path.join(REPO, r));
+  const texts = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules') continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (!p.endsWith('app.css')) { try { texts.push(fs.readFileSync(p, 'utf8')); } catch {} }
+    }
+  };
+  for (const r of roots) walk(r);
+  return texts.join('\n');
+}
+
+// Composed at runtime, so the literal never appears: queue.js builds these as
+// 'qi-dot qi-' + item.kind and 'rail-chip qi-' + kind.
+const COMPOSED_CLASSES = new Set(['qi-signal', 'qi-capture', 'qi-comment', 'qi-activity']);
+
+test('every class app.css styles is a class something can actually set', () => {
+  const hay = classSetters();
+  const dead = cssClasses().filter((c) => !COMPOSED_CLASSES.has(c)
+    && !new RegExp(`(?<![A-Za-z0-9_-])${c}(?![A-Za-z0-9_-])`).test(hay));
+  assert.deepEqual(dead, [],
+    'these classes are styled by public/app.css and set by nothing in public/, templates/, lib/ or '
+    + 'extensions/. Delete the rule, or — if the name is built at runtime — add it to '
+    + 'COMPOSED_CLASSES with the expression that builds it.');
+});
+
 test('the topbar sits above every surface artifact — including comment pins', () => {
   // The bug, stated as the assertion: #pin-layer is a full-stage layer on <body>
   // whose markers take pointer events, so anything it paints over is unclickable.
@@ -126,6 +191,83 @@ test('no z-index in the shell is a hand-picked number any more', () => {
     '.pane-resize-b { z-index: 3 }',
     '.pane-resize-r { z-index: 3 }',
   ], 'z-index declarations outside the --z-* scale');
+});
+
+/* ======================= (e) one palette ======================= */
+// The chrome used to carry a SECOND, literal two-mode palette: five surfaces
+// (the topbar gradient and its hairline, the dock-button hover, the stepper
+// hover, the queue rail, the active history row) were painted from hex with a
+// hand-written `:root[data-theme="light"]` twin each. A saved theme that set
+// --wc-header-bg still got #2c2519 at the top of the topbar, because the value
+// it needed to override lived outside the token blocks. Same static-audit style
+// as the z-index ratchet above: jsdom cascades no external sheet, and the
+// question is a pure source one.
+
+const CSS_RULES = (() => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, ''); // a commented-out rule is not a rule
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((r) => ({ selector: r[1].trim(), body: r[2] }));
+})();
+
+// The two blocks that ARE the palette: the base :root vocabulary and its
+// Earthy Light override. (`:root` alone is not enough — the --z-* stacking
+// scale above lives in a :root block of its own.)
+const isPaletteBlock = (r) =>
+  [':root', ':root[data-theme="light"]'].includes(r.selector) && /--wc-bg\s*:/.test(r.body);
+
+test('the sheet has exactly the two palette blocks it documents', () => {
+  assert.deepEqual(CSS_RULES.filter(isPaletteBlock).map((r) => r.selector),
+    [':root', ':root[data-theme="light"]']);
+});
+
+test('the Earthy Light palette block is the only place the sheet branches on mode', () => {
+  // Ratchet: a `:root[data-theme=...]` rule anywhere else is a second palette —
+  // a colour pair the token layer cannot reach, which is the defect.
+  const branches = CSS_RULES.filter((r) => r.selector.includes('data-theme')).map((r) => r.selector);
+  assert.deepEqual(branches, [':root[data-theme="light"]'],
+    'mode-branching rules outside the palette block');
+});
+
+test('every --wc-* the chrome references is a token that exists', () => {
+  // The pack panel's error text asked for --wc-coral, which no block has ever
+  // defined, so it painted from the literal fallback beside it and no theme
+  // could move it. An undefined token here is a colour that silently is not
+  // part of the palette.
+  const defined = new Set();
+  for (const r of CSS_RULES) {
+    if (!isPaletteBlock(r)) continue;
+    for (const m of r.body.matchAll(/(--wc-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
+  }
+  assert.ok(defined.has('--wc-accent'), 'the palette blocks were found');
+  const missing = new Set();
+  for (const r of CSS_RULES) {
+    for (const m of r.body.matchAll(/var\(\s*(--wc-[a-z0-9-]+)/g)) {
+      if (!defined.has(m[1])) missing.add(`${m[1]} (${r.selector})`);
+    }
+  }
+  assert.deepEqual([...missing].sort(), [], '--wc-* references with no definition');
+});
+
+test('no chrome surface is painted from a colour the palette does not hold', () => {
+  // Ratchet, in the shape of the fix: a hex literal outside the two palette
+  // blocks is a colour no theme can reach — including the never-firing
+  // `var(--wc-x, #hex)` fallbacks the chrome used to carry (app.css is loaded
+  // by public/index.html alone, where :root defines every one of those tokens,
+  // so each fallback was a second value for a token that always had one).
+  // rgba() is deliberately not covered: the sheet's shadows and scrims are
+  // black/white alphas, not palette entries.
+  const stray = [];
+  for (const r of CSS_RULES) {
+    if (isPaletteBlock(r)) continue;
+    for (const d of r.body.split(';')) {
+      if (/#[0-9a-fA-F]{3,8}\b/.test(d)) stray.push(`${r.selector} { ${d.trim()} }`);
+    }
+  }
+  assert.deepEqual(stray.sort(), [
+    '.depth-grid { -webkit-mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
+    '.depth-grid { mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
+    '.update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff) }',
+  ], 'literal colours outside the palette blocks');
 });
 
 /* ======================= the jsdom boot ======================= */

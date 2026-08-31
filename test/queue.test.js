@@ -543,6 +543,13 @@ test('queue domain: drainPending delivers the park as one wake, exactly once', (
   assert.equal(w.note, 'ctx');
   assert.equal(wakes.length, 1, 'exactly one wake emitted');
   assert.equal(state.pendingWake, null, 'the park is cleared');
+  // A drained wake is a live wake: retained until the bridge acks it, exactly as
+  // a flushed one is, so a second drop is still recoverable. Ack it (as the
+  // bridge does) and a second drain then finds nothing at all — un-acked, a
+  // second drain would fold it back into a park and redeliver, which is the
+  // reconnect path's deliberate duplicate-over-loss rule.
+  assert.equal(state.pendingAck && state.pendingAck.seq, w.seq, 'retained awaiting ack');
+  state.pendingAck = null;
   assert.equal(queue.drainPending(state, bus), null, 'a second drain finds nothing');
   assert.equal(wakes.length, 1, 'no second wake');
 });
@@ -581,6 +588,14 @@ test('queue: Push with no channel connected PARKS the batch', async (t) => {
   assert.ok(pending.json.pending, 'a park is pending for the hook (path A)');
   assert.equal(pending.json.pending.id, push.json.pending_id);
   assert.match(pending.json.pending.envelope.content, /example\.com/);
+  // The STRUCTURED batch rides along, summary-only. The route used to strip it,
+  // so the rail's "Held for next prompt" section had nothing to render from but
+  // the envelope prose — which it regex-parsed.
+  assert.equal(pending.json.pending.items.length, 1);
+  assert.deepEqual(Object.keys(pending.json.pending.items[0]).sort(),
+    ['id', 'kind', 'source', 'summary', 'why_wake'],
+    'summary-only: no capture body, no signal payload — the envelope contract holds here too');
+  assert.equal(pending.json.pending.items[0].kind, 'capture');
 });
 
 test('queue: re-push MERGES into one park; consume is id-checked', async (t) => {

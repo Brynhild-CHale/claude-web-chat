@@ -7,11 +7,37 @@
 // intentionally dumb: all distillation/storage lives server-side (so profiles
 // can be iterated in the repo, and the same backend serves the hosted product).
 
-const DEFAULTS = { endpoint: 'http://localhost:5170', token: '', profile: '', lastInstance: '' };
+// The endpoint, the forced profile and the last instance are preferences: harmless
+// to replicate, and nicer synced across the user's browsers. The TOKEN is not a
+// preference. It is the shared secret a web-chat daemon on THIS machine checks
+// (the only authentication the capture path has), and chrome.storage.sync uploads
+// what it holds to the user's Google account and pushes it to every profile signed
+// into it — the exact opposite of a per-machine secret, and what Chrome's own
+// storage docs warn against. So: preferences in sync, token in local, and a token
+// an older build put in sync is moved across the first time this reads it.
+const DEFAULTS = { endpoint: 'http://localhost:5170', profile: '', lastInstance: '' };
+const LOCAL_DEFAULTS = { token: '' };
 
 async function getConfig() {
-  const stored = await chrome.storage.sync.get(DEFAULTS);
-  return { ...DEFAULTS, ...stored };
+  const [synced, local] = await Promise.all([
+    // `token: ''` is asked for so a legacy value comes back at all — get() only
+    // returns the keys it was given.
+    chrome.storage.sync.get({ ...DEFAULTS, token: '' }),
+    chrome.storage.local.get(LOCAL_DEFAULTS),
+  ]);
+  const legacy = synced.token || '';
+  delete synced.token;
+  const cfg = { ...DEFAULTS, ...LOCAL_DEFAULTS, ...synced, ...local };
+  if (legacy) {
+    // Adopt it only if this machine has none of its own, but stop syncing it
+    // either way — leaving it there keeps replicating the secret.
+    if (!cfg.token) {
+      cfg.token = legacy;
+      await chrome.storage.local.set({ token: legacy });
+    }
+    await chrome.storage.sync.remove('token');
+  }
+  return cfg;
 }
 
 function hubBase(cfg) {
