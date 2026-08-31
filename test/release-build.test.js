@@ -82,6 +82,18 @@ test('the build is reproducible — same tree, same bytes, same checksum', () =>
   );
 });
 
+// Reproducible has to mean ACROSS MACHINES, not just twice on this one. The gzip
+// header carries two run/platform-dependent fields: MTIME (node writes 0) and OS
+// (RFC 1952 §2.3.1 — zlib stamps 3 on Linux, 19 on macOS). Left alone, the same
+// tree cut on Linux and on macOS differs at exactly byte 9, and a user verifying a
+// release by rebuilding it on another OS gets a mismatch that reads as tampering.
+test('the gzip header is platform-independent — OS byte pinned, no mtime', () => {
+  const gz = fs.readFileSync(build().tarPath);
+  assert.deepEqual([...gz.subarray(0, 3)], [0x1f, 0x8b, 0x08], 'not a gzip stream');
+  assert.deepEqual([...gz.subarray(4, 8)], [0, 0, 0, 0], 'MTIME must be zero, not the build time');
+  assert.equal(gz[9], 255, 'gzip OS byte must be 255 ("unknown") on every platform');
+});
+
 test('SHA256SUMS names the tarball in the format shasum -c reads', () => {
   const { sumsPath, tarPath, digest } = build();
   const text = fs.readFileSync(sumsPath, 'utf8');

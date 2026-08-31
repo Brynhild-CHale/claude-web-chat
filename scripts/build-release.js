@@ -203,6 +203,11 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
   const tar = makeTar(entries);
   // level 9 + no mtime in the gzip header (node writes 0) keeps the bytes stable.
   const gz = zlib.gzipSync(tar, { level: 9 });
+  // The OS field (RFC 1952 §2.3.1, byte 9) is the one remaining header byte that
+  // depends on the machine rather than the tree: zlib stamps 3 on Linux and 19 on
+  // macOS, so a tag rebuilt on another OS hashed differently and read as tampering.
+  // 255 = "unknown", the value reproducible-build toolchains pin it to.
+  gz[9] = 255;
 
   fs.mkdirSync(outDir, { recursive: true });
   const tarPath = path.join(outDir, tarName);
