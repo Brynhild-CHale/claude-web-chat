@@ -227,3 +227,27 @@ test('use_component tool: force and signals reach the route, signals nested unde
   assert.deepEqual(seen[0][1].params, { a: 1, signals: [{ key: 'form_submit', wake: 'queue' }] });
   assert.deepEqual(seen[1][1].params, { a: 1 }, 'no signals → params untouched');
 });
+
+// The description is the whole interface Claude has to this tool: it reads one
+// to decide what a call will give it back. `list_components` promised "all saved
+// components in this project" long after the list grew a user tier, the builtin
+// marker, `shadows` and — the field the rules file tells Claude to look for —
+// `has_service`. A payload field nothing announces is a field nothing uses.
+test('components: list_components describes every field the route returns', async (t) => {
+  const { api } = await withServer(t);
+  const { json } = await api.get('/api/components');
+  const fields = new Set();
+  for (const c of json.components) for (const k of Object.keys(c)) fields.add(k);
+  assert.ok(fields.has('has_service') && fields.has('location') && fields.has('builtin'),
+    'the seeded builtins should carry has_service/location/builtin — the route shape changed');
+  // `name` is the payload itself and `meta_name` only appears on a mismatched
+  // directory (a pack-authoring diagnostic for the drawer, not for Claude).
+  const desc = require('../lib/mcp/tools/list_components').description;
+  for (const field of fields) {
+    if (field === 'name' || field === 'meta_name') continue;
+    assert.ok(desc.includes(field),
+      `GET /api/components returns \`${field}\` but the list_components description never names it — ` +
+      'Claude only knows what the description tells it is there');
+  }
+  assert.ok(/shadows/.test(desc), 'the description should still name `shadows`, which only appears on a shadowed entry');
+});
