@@ -182,3 +182,45 @@ test('route: heartbeat stamps liveness; a wrong-seq ack no-ops', async (t) => {
   const ack = (await api.post('/api/channel/ack', { seq: 9999 })).json;
   assert.equal(ack.acked, false, 'no matching in-flight wake');
 });
+
+// ── the ONE liveness predicate, all the way out to the routes ────────────────
+
+// /api/queue/policy is what the rail panel, `claude-web-chat status` and `init`
+// read to tell the user whether a Push wakes Claude. It used to answer with the
+// raw `wakeConsumers` counter — the very definition the domain says is not
+// enough — so a zombie SSE socket had it announce "connected — a Push wakes
+// Claude now" while the very next flush PARKED. Mount the routes over a state
+// with a stale heartbeat: the answer must agree with flush's.
+async function policyHost(t, state) {
+  const express = require('express');
+  const http = require('http');
+  const app = express();
+  app.use(express.json());
+  const { mountQueueRoutes } = require('../lib/server/routes/queue');
+  mountQueueRoutes(app, { state, bus: createBus(), graph: null });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => server.close(r)));
+  const port = server.address().port;
+  const get = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`)).json();
+  const post = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  })).json();
+  return { get, post };
+}
+
+test('policy: a zombie stream (stale heartbeat) reports channel_connected false', async (t) => {
+  const state = liveState();
+  state.wakeConsumerSeenAt = Date.now() - (queue.CONSUMER_TTL_MS + 1000); // stream open, nobody reading
+  const { get, post } = await policyHost(t, state);
+
+  const policy = await get('/api/queue/policy');
+  assert.equal(queue.channelLive(state), false, 'test premise: flush would PARK this push');
+  assert.equal(policy.channel_connected, false, 'the panel agrees with flush');
+  assert.equal(policy.wake_consumers, 1, 'the raw count is still reported, as a diagnostic');
+
+  // The bridge's heartbeat is what revives it — and the reply says so.
+  const hb = await post('/api/channel/heartbeat');
+  assert.equal(hb.connected, true);
+  assert.equal((await get('/api/queue/policy')).channel_connected, true);
+});
