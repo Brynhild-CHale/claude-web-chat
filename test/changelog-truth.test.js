@@ -85,3 +85,24 @@ test('the version in package.json has its own section', () => {
     `package.json is at ${v} and CHANGELOG.md has no [${v}] section (release notes still under [Unreleased]?)`,
   );
 });
+
+test('the release note about a private embed target matches what the pane does', () => {
+  // The daemon refuses to FETCH a private target and labels that one refusal
+  // `private-target`; the website pane answers the label by framing the URL
+  // itself, because the browser has no such restriction. A note claiming the
+  // user is left with an unreachable pane describes the release the fix was
+  // in — as its opposite.
+  const pane = read('templates/components/website/component.html');
+  const branch = pane.slice(pane.indexOf("j.code === 'private-target'"));
+  assert.ok(branch.startsWith("j.code === 'private-target'"), 'the pane no longer answers the private-target label');
+  assert.ok(
+    branch.slice(0, 400).includes('frame.src = url'),
+    'the pane no longer frames a private target — re-word the 0.7.0 embed-check note before changing this',
+  );
+  const bullet = CHANGELOG.split('\n').find((l) => l.includes('/api/embed-check` can no longer be used to probe'));
+  assert.ok(bullet, 'the embed-check security note is gone from CHANGELOG.md');
+  assert.ok(
+    !/reports? unreachable/.test(bullet),
+    'the embed-check note says a private target reports unreachable; the pane frames it',
+  );
+});
