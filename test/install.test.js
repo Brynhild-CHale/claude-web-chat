@@ -285,6 +285,41 @@ test('install({nextSteps:false}) suppresses ONLY the trailing checklist', async 
   }
 });
 
+// One file, one paragraph. A `differs` row can also carry an unmerged `.new`:
+// the baseline is lost while a conflict is outstanding, the file still diverges
+// from shipped, and the reconcile deliberately keeps the sidecar. Both reporting
+// blocks then matched it, so the user was told to merge-and-delete the sidecar
+// AND, immediately below, that the file differs "with no recorded baseline" and
+// to run `install --force` — two next steps for one file, one of which discards
+// the very edits the other is preserving.
+test('a differs row with an unmerged .new sidecar is reported once, not twice', async () => {
+  const restore = sandboxHome();
+  try {
+    const mf = require('../lib/update/managed-files');
+    const rules = mf.MANAGED_FILES.find((f) => f.dest.endsWith('rules/web-chat.md'));
+    const shipped = fs.readFileSync(path.join(mf.templatesDir(), rules.tpl), 'utf8');
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+    // The staged state: locally edited, a sidecar beside it, no baseline.
+    const dest = path.join(root, rules.dest);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, shipped + '\n<!-- my edit -->\n');
+    fs.writeFileSync(dest + '.new', shipped);
+
+    const out = await captureInstall(root, { nextSteps: false });
+    const results = mf.reconcileManagedFiles(root, { dryRun: true });
+    const row = results.find((r) => r.dest === rules.dest);
+    assert.equal(row.action, 'differs', 'the case only exists for a differs row that kept its sidecar');
+    assert.equal(row.pending, true);
+
+    assert.match(out, /unmerged \.new sidecar/, 'the sidecar reminder — the step that terminates — is kept');
+    assert.doesNotMatch(out, /differ from the shipped template with no recorded baseline/,
+      'and the file is not ALSO reported as unexplained drift with `--force` as the way out');
+  } finally {
+    restore();
+  }
+});
+
 // ── the root install operates on ─────────────────────────────────────────────
 // Typed in a subdirectory, install used to create a SECOND nested install:
 // .web-chat/, .claude/settings.json and .mcp.json that Claude Code (which reads
