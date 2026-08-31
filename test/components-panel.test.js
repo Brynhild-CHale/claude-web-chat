@@ -310,6 +310,44 @@ test('a component with a schema it cannot satisfy spawns the form first', async 
   assert.equal(calls.some((c) => c.url === '/api/components/deploy-board/use'), false, 'and the component waits for it');
 });
 
+test('spawning the same component twice arms ONE submit subscription', async () => {
+  routes['/api/components'] = { components: [
+    { name: 'deploy-board', description: 'd', location: 'local', params_schema: { properties: { env: {} }, required: ['env'] } },
+  ] };
+  const { invalidate } = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);
+  invalidate();
+  if (drawerOpen()) { key('Escape'); await tick(); }
+
+  // Two spawns of the SAME component — the row, then ⧉ — so two form-renderers
+  // are configured against the one stable signal key `__spawn_deploy-board`.
+  await openDrawer(); await tick();
+  press($('drawer-library').querySelector('.de-main'));
+  await tick();
+  await openDrawer(); await tick();
+  press($('drawer-library').querySelector('.de-dup'));
+  await tick();
+
+  // One submit. The subscription used to be released only from inside its own
+  // callback, so the first spawn's closure was still on the key: this single
+  // write ran BOTH, spawning twice (into two different slots) and clearing the
+  // form twice.
+  calls.length = 0;
+  const { store } = await import(pathToFileURL(path.join(REPO, 'public/app/store.js')).href);
+  store.set({ '__spawn_deploy-board': { env: 'prod' } });
+  await tick();
+
+  const spawns = calls.filter((c) => c.url === '/api/components/deploy-board/use');
+  assert.equal(spawns.length, 1, 'exactly one spawn per submit, not one per form ever opened');
+  assert.equal(spawns[0].body.id, 'spawn-deploy-board-2', 'and it is the slot the LAST spawn picked');
+  assert.equal(calls.filter((c) => c.url === '/api/clear').length, 1, 'and the form is torn down once');
+
+  // Disarmed: a second write to the same key (a stale pane, a driver) spawns nothing.
+  calls.length = 0;
+  store.set({ '__spawn_deploy-board': { env: 'prod' } });
+  await tick();
+  assert.equal(calls.filter((c) => c.url === '/api/components/deploy-board/use').length, 0);
+});
+
 test('a soft rejection is READ and reported, not discarded as success', async () => {
   routes['/api/components'] = { components: [{ name: 'owned-pane', description: 'd', location: 'local' }] };
   const { invalidate } = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);

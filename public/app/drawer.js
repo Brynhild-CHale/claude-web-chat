@@ -372,6 +372,24 @@ async function mountComponent(name, id, params) {
   return true;
 }
 
+// ONE armed submit subscription per component. The unsub used to live only in
+// the callback's closure, so it ran only if a value ever landed on the key: an
+// abandoned form (Claude cleared it, the node was navigated away, the drawer
+// spawned the same component again) left the subscription alive for the page's
+// lifetime. And since the signal key is STABLE per component, a second spawn
+// added a SECOND closure to the same key — one later submit then ran both, each
+// with its own `id` from its own slotFor(): two POST /api/clear and two spawns,
+// the older one landing in the slot nobody was looking at. Arming replaces;
+// submitting disarms.
+const armedSpawns = new Map();       // component name → unsubscribe
+
+function disarmSpawn(name) {
+  const off = armedSpawns.get(name);
+  if (!off) return;
+  armedSpawns.delete(name);
+  off();
+}
+
 export async function spawnComponent(c, { fresh = false } = {}) {
   const name = typeof c === 'string' ? c : c.name;
   const meta = typeof c === 'string' ? { name } : c;
@@ -407,8 +425,10 @@ export async function spawnComponent(c, { fresh = false } = {}) {
   // new store primitive across five files (and would move bus-golden), so the
   // key is collapsed rather than removed — see the plan's "left deliberately".
   const submitKey = `__spawn_${name}`;
+  disarmSpawn(name);                 // never two closures on one key — see armedSpawns
   const unsub = store.subscribe(submitKey, async (vals) => {
     if (!vals) return;               // our own null-out, echoing back
+    if (armedSpawns.get(name) === unsub) armedSpawns.delete(name);
     unsub();
     store.set({ [submitKey]: null });
     await fetch('/api/clear', {
@@ -417,6 +437,7 @@ export async function spawnComponent(c, { fresh = false } = {}) {
     });
     await mountComponent(name, id, vals);
   });
+  armedSpawns.set(name, unsub);
   await mountComponent('form-renderer', formMountId, {
     schema,
     submit_key: submitKey,
