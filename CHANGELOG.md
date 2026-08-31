@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-08-31
+
+### Upgrading from 0.7.0
+
+`claude-web-chat update` is all it takes. No state migration runs, and — for the first
+time — the managed files arrive on the same hop: the 0.7.0 updater loads this build's
+registration engine, so the corrected rules file and skills sync without a separate
+`install` (`status` confirms). Four one-time notices:
+
+1. **A service-backed pane whose params carried `form_reset`, `routing` or `signals`
+   asks for approval once more.** Those render-control keys no longer count toward a
+   service's consent identity (see *Changed*) — approve it and it stays approved.
+2. **The capture extension's token must be re-entered once per machine.** It moves out
+   of `chrome.storage.sync`, which was replicating a local secret to every browser
+   signed into the profile; it is removed from sync storage on first use.
+3. **After a crash you may find `<name>.corrupt-<timestamp>` files in
+   `.web-chat/graph/`.** They are the bytes of records the daemon could not read —
+   kept instead of destroyed (see *Fixed*). Deleting them is safe once you no longer
+   want them.
+4. **Rebuilding a tagged tree now hashes identically on any supported OS.** If you
+   verify releases by rebuilding: hashes match from this release forward; earlier
+   tarballs keep their published checksums.
+
 ### Changed
 
 - **A service's consent no longer depends on how its pane was rendered.** The trust key covers (project root, `service.js` contents, params), and "params" now means the params the *service* gets: the three keys the shell reads for itself — `form_reset`, `routing`, `signals` — are stripped before the fingerprint, since they say how a render behaves and nothing about the host process. Re-rendering a service-backed pane with `params.form_reset:true` used to restart its child and ask you to approve a service that had not changed. **You will notice two things, once:** a pane whose params carried one of those keys asks for approval one more time after upgrading (a narrow echo of the 0.7.0 re-trust, upgrade step 3 — approve it and it stays approved), and `service.js` receives `ctx.params` without those keys (the pane script still sees them).
