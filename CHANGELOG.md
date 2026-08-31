@@ -244,6 +244,24 @@ Three more repairs are conditional — they apply only if they describe you, and
 - `status` reports the real channel state — connected, or parked-until-your-next-message — instead of inferring it from project wiring.
 - Server tests sandbox `HOME`, so the suite no longer writes the developer's real `~/.web-chat`.
 
+## [0.5.0] - 2026-08-24
+
+Written up after the fact. 0.5.0 was cut three hours before 0.6.0, its version bump carried the distribution rewrite and touched no changelog, and the `[Unreleased]` block it shipped was relabelled `[0.6.0]` that same evening — so everything else from 0.4.0 → 0.5.0 is recorded in the 0.6.0 section below, and what follows is what 0.5.0 added on top of it. Reconstructed from the commit that bumped the version and the tree it produced.
+
+### Added
+
+- **Distribution became GitHub Releases, and npm stopped being involved at any point.** `install.sh` is POSIX `sh` with no npm in it: resolve the latest release, download the tarball, **verify its SHA256 before unpacking anything**, stage it and move it into `~/.web-chat/versions/<version>/`, swap the `current` symlink atomically, link the three commands into `~/.local/bin`, prune to the three newest versions. No sudo, nothing outside your home, safe to re-run, and a download that dies midway leaves the previous `current` untouched. The motivating failure: a global npm install is a shared mutable directory, so an unrelated `npm i -g` silently replaced a maintainer's `npm link` with a copy of a 16-day-old build — on PATH, invisible, while every test in the checkout stayed green.
+- **`claude-web-chat version`** — the version, and *where it came from*: the install kind (a managed release, a git checkout, or an unmanaged leftover), the tree actually running, what `~/.web-chat/current` points at, and a MISMATCH block when the `claude-web-chat` on PATH resolves somewhere else. That last signal is precisely what was missing while the stale binary above went unnoticed for two weeks.
+- **`update --to <version>` rolls back from disk with no network**, `update --list` names the versions that are on disk, and **`update` refuses to run from a git checkout** — or any other copy it did not install — telling you to use git instead, because overwriting a checkout with a release tarball would throw the work away.
+- **`claude-web-chat uninstall --self`** removes the program itself rather than only this project's wiring, and preserves every project's graph while doing it.
+- **`scripts/build-release.js` and `.github/workflows/release.yml`.** The build produces a self-contained `claude-web-chat-<version>.tar.gz` — the `files` allowlist plus *production* `node_modules`, since there are four runtime dependencies and a source-only tarball dies on `Cannot find module 'express'` — alongside `SHA256SUMS`, with every varying field pinned (mtime, uid/gid, entry order, modes) so the checksum is reproducible. On a `v*` tag CI builds it, unpacks it into a scratch `HOME`, runs the CLI out of it, and only then attaches both files to the release.
+
+### Changed
+
+- **`stop` asks the daemon to shut down instead of signalling it and hoping.** `POST /api/shutdown` runs the same `gracefulShutdown` the idle timer uses — drain in-flight requests, wait out a live turn lock, stop services, snapshot uncommitted surface state to `draft.json` — and acknowledges *before* exiting, since responding after the drain deadlocks the shutdown on its own request. `stop` asks, waits up to 40 s and falls back to `SIGTERM` only if the request itself fails; escalating earlier would abort the snapshot it had just asked for. `restart` calls `stop` rather than carrying a second copy of kill-and-wait. The route is closed to browsers — it refuses anything carrying browser fetch metadata and requires a custom header — so no page script can stop your daemon.
+- **`update` loads the restart it is about to perform out of `versions/<target>/` explicitly.** Reaching it through `~/.web-chat/current` hands back the *old* module (Node caches by realpath, and `current` was already resolved when the bin was invoked), so every update would otherwise have restarted the code it had just replaced.
+- **Windows means WSL2, said plainly in the README** rather than half-supported.
+
 ## [0.4.0] - 2026-07-18
 
 ### Added
@@ -260,7 +278,7 @@ Three more repairs are conditional — they apply only if they describe you, and
 ### Added
 - **Channels are the wake path, and they work everywhere.** Wake-worthy activity — page captures, declared pane signals, and shared comment pins — collects in the surface's queue rail; hitting **Push → Claude** hands over the whole batch. With the Claude Code Channels capability a Push wakes Claude live and no-prompt; without it the batch is *parked* and delivered as context with your next message. Either way there are no background listeners to arm, so the loop works on every Claude Code.
 - **Bundled capture profiles.** The package now ships ready-to-use capture profiles — Gmail, Wikipedia, YouTube, Reddit, and a generic reader-lite article view — as a first-class package tier, so common sites distill cleanly the moment the browser extension is loaded, with no per-user setup. User-authored profiles still override the bundled ones.
-- **Public-repo distribution.** MIT-licensed and installable in one line: `curl -fsSL …/install.sh | sh` puts the `claude-web-chat` command on your PATH straight from the public repository — no npm registry. `claude-web-chat update` (now reporting the version before and after) and the 24-hour update check target the repo too. The README leads with the one-liner and documents loading the browser extension from the installed package.
+- **Public-repo distribution.** MIT-licensed and installable in one line: `curl -fsSL …/install.sh | sh` puts the `claude-web-chat` command on your PATH straight from the public repository — no npm *registry* involved, though npm itself still was: the installer, and `update` with it, ran `npm i -g git+https://…` against the repo. (0.5.0 replaced that with a checksum-verified release tarball and dropped npm entirely.) `claude-web-chat update` (now reporting the version before and after) and the 24-hour update check target the repo too. The README leads with the one-liner and documents loading the browser extension from the installed package.
 
 ### Changed
 - **Review hardening.** A pass over the queue / bridge / comment-policy substrate the wake path leans on: private comment pins no longer leak their text onto the wake bus, navigating the graph no longer strands queued items, and the surrounding fixes each landed with a test.
