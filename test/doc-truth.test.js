@@ -490,3 +490,42 @@ test('no doc places the service trust store inside the project', () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Identifiers a consolidation retired.
+//
+// The recurring doc defect is not a wrong path — it is the right path beside a
+// name the refactor deleted, which no existence check sees. A driver author sent
+// to `pushEvent` finds nothing and hand-pairs the broadcast the bus exists to
+// replace. Each entry is checked in BOTH directions: still undeclared in `lib/`,
+// still unnamed in the docs. A name that comes back fails as a stale entry
+// rather than silently exempting itself.
+const RETIRED = [
+  { name: 'pushEvent', now: 'lib/core/bus.js — `bus.emit({ event, ws })`, the one ring + WS pairing' },
+];
+
+test('no shipped doc names an identifier a consolidation retired', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  const sources = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.js')) sources.push(fs.readFileSync(p, 'utf8'));
+    }
+  })(path.join(REPO_ROOT, 'lib'));
+
+  for (const { name, now } of RETIRED) {
+    // Declared, not merely mentioned: the engines that replaced these names say
+    // so in their own comments, and a comment is not a re-introduction.
+    const declared = new RegExp(`(?:function|const|let|var)\\s+${name}\\b|\\b${name}\\s*[:(]\\s*(?:function|\\()`);
+    assert.ok(!sources.some((s) => declared.test(s)),
+      `\`${name}\` is declared under lib/ again — drop its RETIRED entry (it was replaced by ${now})`);
+    for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+      assert.ok(!new RegExp('`' + name + '`').test(body),
+        `${rel} names \`${name}\`, which nothing under lib/ defines any more. The engine is ${now}`);
+    }
+  }
+});

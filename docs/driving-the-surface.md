@@ -30,8 +30,9 @@ A driver is a **passive collaborator**: it writes the store and renders mounts,
 but never touches the graph routes (`/api/turn-begin`, `/api/turn-end`,
 `/api/unlock`, `/api/graph/active`). Those drive the per-server turn lock, and a
 driver that takes it blocks the user from navigating the graph for up to the lock
-TTL (default 15 min, `lib/server/routes/graph.js`). The graph belongs to Claude's
-turn lifecycle and the user.
+TTL (default 15 min, `lib/server/domain/turns.js`; `WEB_CHAT_LOCK_TTL_MS`
+overrides it, and `WEB_CHAT_WAKE_LOCK_TTL_MS` the shorter one a channel wake
+takes). The graph belongs to Claude's turn lifecycle and the user.
 
 ---
 
@@ -99,7 +100,7 @@ Every mutation endpoint emits an event with a monotonic `seq` and a `source`:
 - graph ops → `{kind:'graph', op, …}`
 
 `GET /api/events?since=<seq>` returns `{events, latest, oldest, gap, dropped}`.
-The log is a **lossy ring** (1000 entries, `lib/server/state.js`): a
+The log is a **lossy ring** (`MAX_EVENTS` = 1000, `lib/core/bus.js`): a
 high-frequency producer can push old events out. If your cursor predates the
 oldest retained event, `gap:true` / `dropped:N` tells you to resync from a full
 `getStore()` snapshot rather than trust an incomplete catch-up.
@@ -108,7 +109,7 @@ oldest retained event, `gap:true` / `dropped:N` tells you to resync from a full
 
 For lower latency than polling, subscribe to the **Server-Sent Events** stream.
 Each event arrives as an SSE frame (`id:` = seq, `event:` = the event `kind`,
-`data:` = the full event JSON) the instant `pushEvent` fires. Query: `?since=<seq>`
+`data:` = the full event JSON) the instant `bus.emit` fires. Query: `?since=<seq>`
 replays buffered events before going live; `?kinds=a,b` filters to those kinds. A
 reconnecting `EventSource` sends `Last-Event-ID` automatically, used as the
 catch-up cursor. The ring-eviction gap is surfaced as a dedicated `event: gap`
