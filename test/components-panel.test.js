@@ -356,9 +356,6 @@ test('a soft rejection is READ and reported, not discarded as success', async ()
   await openDrawer();
   await tick();
 
-  const warned = [];
-  const realWarn = console.warn;
-  console.warn = (...a) => warned.push(a.join(' '));
   await withFetch(
     async (url) => (url === '/api/components/owned-pane/use'
       ? jsonRes({ ok: false, rejected: true, owned: true, owner: 'service:git', hint: "pane 'x' is owned by 'service:git'" })
@@ -368,9 +365,16 @@ test('a soft rejection is READ and reported, not discarded as success', async ()
       await tick();
     },
   );
-  console.warn = realWarn;
-  assert.ok(warned.join(' ').includes("owned by 'service:git'"),
+  // ON SCREEN, not in the console. The report used to go to `#drawer-manage
+  // .pk-status` — the Manage tab of a drawer this very click had closed, absent
+  // entirely on a daemon without pack routes, and wiped by the next open — so
+  // the only observable output was a console.warn nobody has open.
+  const note = $('reaim-note');
+  assert.ok(note, 'the refusal reaches the shell notice, the one thing the user is looking at');
+  assert.ok(note.textContent.includes("owned by 'service:git'"),
     'the lockReject envelope used to be thrown away, so a refusal looked exactly like success');
+  assert.equal($('drawer-manage').querySelector('.pk-status').textContent, '',
+    'and it does NOT go to the pack status line, which is on a tab nobody is on');
 });
 
 // ── Manage ──────────────────────────────────────────────────────────────────

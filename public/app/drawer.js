@@ -38,6 +38,7 @@ import { store } from './store.js';
 import { bus } from './bus.js';
 import { components, invalidate } from './components.js';
 import { panes, unminimize } from './mounts.js';
+import { showReaimNote } from './topbar.js';
 
 const LIBRARY = 'library';
 const MANAGE = 'manage';
@@ -579,10 +580,22 @@ function status(text, kind) {
   s.textContent = text || '';
 }
 
-// Small transient message for anything that happens after the drawer closed.
+// Report something the user has to see even though the drawer is gone — in
+// practice the soft-rejected spawn (a locked or driver-owned pane answers 200
+// with {ok:false}, see mountComponent).
+//
+// This used to be `status(text,'err')` plus a console.warn, and status() writes
+// into `#drawer-manage .pk-status`: the MANAGE tab, of a drawer spawnComponent
+// itself had just closed, on a panel that does not exist at all when the daemon
+// has no pack routes — and the next openDrawer() rebuilds that panel from
+// scratch anyway. So the one observable output was the console. Send it to the
+// shell's ONE in-page transient notice instead (topbar.showReaimNote — the same
+// element graph-view.js puts "could not set active" in; the id is historical,
+// the element is generic), and keep the pack status line only for the case where
+// the user is actually looking at it.
 function flash(text) {
-  status(text, 'err');
-  if (!isOpen()) console.warn('[web-chat]', text);
+  showReaimNote(text);
+  if (isOpen() && tab === MANAGE) status(text, 'err');
 }
 
 function busy(on) {
