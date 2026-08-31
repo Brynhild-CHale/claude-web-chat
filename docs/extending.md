@@ -760,6 +760,22 @@ part of it, which is the whole argument for the module.
   without replacing it (the queue's activity Revert restores form values in
   place and needs every browser to remount).
 
+**The reserved-id set is DERIVED, all of it.** A mount id is agent-supplied text
+and `main` / `status` / `overlay` are plausible things for Claude to name a pane,
+so `RESERVED_IDS` names every id a host document resolves for itself. Nothing in
+it is transcribed by hand: `test/mount-engine.test.js` scans `public/index.html`
+for the static chrome, `public/app/*.js` for the `id="…"` / `.id = '…'` literals
+the shell builds lazily, and `lib/server/export.js` + `lib/server/routes/graph.js`
+for the chrome of the other two documents a pane host is written into — both do
+`host.id = m.id` with no free-id check of their own, so reserving `export-main`
+at the engine is what keeps a duplicate id out of an exported page. Any new
+chrome id fails the suite until it is added to the set. That derivation exists
+because the lazy half used to be a hand list pinned by a test repeating the same
+hand list, and it silently fell four behind. The only ids still listed by hand
+are the two a helper builds from a computed name (`wc-theme-global-css`,
+`wc-theme-node-css`) and the `cmd-opt-<n>` family, which is a pattern; if you add
+a chrome id a literal scan can see, it belongs to the derivation, not that list.
+
 **The carry rules are not uniform and must not be flattened.** `pane_state` and
 `theme` carry; `form_state` carries unless `params.form_reset`; a supplied
 `theme` wins over the pane's; and `component` is written only when the caller
