@@ -36,15 +36,21 @@ affect every platform* below, which is the honest part of this page.
 
 ## What "supported, with gaps" means for Linux
 
-CI runs the whole suite on `ubuntu-latest` and it passes. That proves a great
-deal about the daemon, the graph, the pack pipeline and the CLI.
+CI runs the whole suite on `ubuntu-latest` (and `macos-latest`) and it passes.
+That proves a great deal about the daemon, the graph, the pack pipeline and the
+CLI.
 
 It proves **nothing** about anything needing a desktop, because CI is a headless
 container with no browser, no display server, no login shell and no `systemd`
 session. Structurally uncovered: opening the surface, the Chrome extension and
-the whole capture path, `install.sh` itself (CI never runs it), and every distro
-that is not Ubuntu — notably Alpine, which is musl and BusyBox rather than glibc
-and GNU.
+the whole capture path, a real release download, and every distro that is not
+Ubuntu — notably Alpine, which is musl and BusyBox rather than glibc and GNU.
+
+`install.sh` itself is no longer in that list: `test/distribution.test.js` runs
+it end to end, twice, against a scratch `HOME` and a loopback stand-in for the
+GitHub API, so CI executes the installer on both supported platforms. What that
+does not prove is the download half — the real API, real assets, a real TLS
+handshake — or `curl`/`tar`/`shasum` as BusyBox spells them.
 
 The `platform/linux` branch carries a findings document and a test plan for
 someone with real hardware.

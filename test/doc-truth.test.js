@@ -667,3 +667,29 @@ test('extending.md names every command that reports a managed-file conflict', ()
       'the README and CHANGELOG both promise the full set');
   }
 });
+
+// ---------------------------------------------------------------------------
+// What CI actually covers.
+//
+// "Structurally uncovered" is a promise about the test suite, and the suite
+// changes underneath it. install.sh sat on that list for a release after the
+// suite started executing it end to end — which is worse than an ordinary stale
+// sentence, because it invites someone to write the coverage that already
+// exists, or to distrust the coverage they have.
+test('docs/platform-support.md does not call install.sh structurally uncovered', () => {
+  const suite = read('test/distribution.test.js');
+  assert.match(suite, /execFile\('\/bin\/sh', \[path\.join\(REPO_ROOT, 'install\.sh'\)\]/,
+    'the suite no longer EXECUTES install.sh — put it back on the uncovered list in docs/platform-support.md');
+  const ci = read('.github/workflows/test.yml');
+  assert.ok(/ubuntu-latest/.test(ci) && /macos-latest/.test(ci),
+    'the CI matrix has changed — docs/platform-support.md names the platforms it runs on');
+
+  // Bounded by the blank line: the paragraph that says what CI does NOT cover.
+  // (`install.sh` carries a period, so a sentence split on dots truncates it.)
+  const uncovered = read('docs/platform-support.md').split(/\n\n+/).map(flatten)
+    .find((b) => b.includes('Structurally uncovered:'));
+  assert.ok(uncovered, 'docs/platform-support.md no longer carries the "structurally uncovered" list');
+  assert.ok(!/install\.sh/.test(uncovered),
+    `docs/platform-support.md still lists install.sh as structurally uncovered ("${uncovered}"), but the suite ` +
+    'runs it end to end against a scratch HOME and a loopback GitHub stand-in, on both CI platforms');
+});

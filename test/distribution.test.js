@@ -213,8 +213,9 @@ test('the plugin manifest tracks the package version', () => {
 // renaming over it. The first install looked perfect; every upgrade after it
 // unpacked the new release, printed the new version number, and left `current`
 // (and therefore all three bins, which resolve through it) pointing at the old
-// code. CI has never run install.sh at all: release.yml's smoke test does its
+// code. Nothing had ever run install.sh in CI: release.yml's smoke test does its
 // own `ln -s` into a fresh scratch HOME, which is exactly the case that works.
+// This test is what closes that hole, on every platform in the matrix.
 
 const http = require('http');
 const os = require('os');
