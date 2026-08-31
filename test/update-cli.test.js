@@ -150,6 +150,37 @@ test('update downloads, activates, relinks, prunes and restarts', async (t) => {
   assert.match(d.log.text(), /Updated: v0\.5\.0 → v0\.6\.0/);
 });
 
+// distribution-3. Staging used to happen INSIDE versions/, so a download killed
+// with Ctrl-C (nothing in the CLI handles SIGINT, so fetchAndUnpack's `finally`
+// never runs) stranded a `wc-release-XXXXXX/` in the version list itself.
+test('the download is staged beside the version store, never inside it', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+
+  let stagedIn = null;
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir, tmpDir }) => {
+      stagedIn = tmpDir;
+      // What an interrupted download leaves behind, where it now leaves it.
+      fs.mkdirSync(path.join(tmpDir, 'wc-release-Ab12Cd'), { recursive: true });
+      fakeVersion(paths, release.version);
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  await update([], d);
+
+  assert.equal(stagedIn, paths.staging, 'staging is ~/.web-chat/staging — a sibling, so a rename into place is still same-filesystem');
+  assert.ok(fs.existsSync(paths.staging), 'and the caller creates it');
+  assert.deepEqual(listVersions(paths).sort(), ['0.5.0', '0.6.0'], 'debris cannot appear in the version list');
+});
+
 // cli-ops-2: the help text promises an update propagates the new release's
 // rules, skills and hook template. It never did — reconcileManagedFiles and
 // friends were required at module load from the tree this process started in
