@@ -88,6 +88,11 @@ test('refuseTarget: only public http(s) hosts survive', () => {
     'http://[::1]:5173/',
     'http://localhost:5173/',
     'http://anything.localhost/',
+    // Fully qualified, with the root label spelled out. Resolvers treat it as
+    // localhost and the DNS-time filter would catch the answer, but this layer
+    // is the cheap resolver-independent one and has to hold on its own.
+    'http://localhost./',
+    'http://anything.localhost./',
     'http://10.0.0.5/', 'http://192.168.0.1/', 'http://169.254.169.254/latest/meta-data/',
   ]) {
     assert.match(refuse(u), /not a public host/, u);
