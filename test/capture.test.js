@@ -361,6 +361,37 @@ test('capture: a capture over a user-LOCKED pane is soft-rejected, like every ot
   assert.ok(!/SECOND/.test(ms[0].html), 'the lock holds against a re-capture too');
 });
 
+test('capture: the response SAYS the pane was soft-rejected, rather than claiming success', async (t) => {
+  // The capture itself succeeded — the record is written and `tab_capture` is
+  // bumped — but the pane did not update. Answering a bare {ok:true} left the
+  // extension showing a green tick over a stale pane with nothing, anywhere,
+  // saying why.
+  const { api, port, wsHello } = await withServer(t, {
+    seed: async ({ root }) => {
+      putProfile(root, 'rich', { matchers: [{ type: 'domain', value: 'rich.test' }] });
+    },
+  });
+
+  const first = await api.post('/api/capture', { url: 'https://rich.test/a', html: '<p>1</p>' });
+  assert.equal(first.json.pane, 'rendered');
+
+  const id = paneMounts(await wsHello(), 'rich')[0].id;
+  await wsSetPaneState(port, id, { locked: true });
+
+  const second = await api.post('/api/capture', { url: 'https://rich.test/a', html: '<p>SECOND</p>' });
+  assert.equal(second.json.ok, true, 'the capture itself still succeeded');
+  assert.equal(second.json.capture_id != null, true);
+  assert.equal(second.json.pane.rejected, true, 'and the pane refusal is on the wire');
+  assert.equal(second.json.pane.locked, true);
+  assert.equal(second.json.pane.id, id);
+  assert.match(second.json.pane.hint, /locked/);
+
+  // A capture the caller asked NOT to render says so rather than reporting a
+  // pane that was never attempted.
+  const third = await api.post('/api/capture', { url: 'https://rich.test/b', html: '<p>3</p>', render: false });
+  assert.equal(third.json.pane, 'not-requested');
+});
+
 test('capture: a re-capture carries the pane form_state the user typed', async (t) => {
   const { api, port, wsHello } = await withServer(t, {
     seed: async ({ root }) => {
