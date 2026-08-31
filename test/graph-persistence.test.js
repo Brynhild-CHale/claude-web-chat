@@ -197,3 +197,30 @@ test('graph: a real render/turn-end round trip writes no gen into the node or th
     for (const k of Object.keys(m)) assert.ok(allowed.has(k), `draft mount key ${k} is not in id + SNAPSHOT_FIELDS`);
   }
 });
+
+test('graph: a capture id is claimed by its sidecar file, not only by a node that loaded', async (t) => {
+  // Same rule as nextSeq, one directory over: `capN.html` is written before the
+  // record reaches a node, and the node carrying it can be one graph.load
+  // declined to read. Seeding captureSeq only from the nodes that loaded handed
+  // the id back and the next capture overwrote the raw page.
+  const { api, webChatDir } = await withServer(t, {
+    seed: ({ webChatDir }) => {
+      const dir = path.join(webChatDir, 'captures');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'cap1.html'), '<p>an earlier capture</p>');
+      fs.writeFileSync(path.join(dir, 'cap7.html'), '<p>a later one</p>');
+      // The node that would have named it is unreadable, so nothing in memory
+      // knows cap7 exists.
+      fs.writeFileSync(path.join(graphDir(webChatDir), 'n0.json'), 'null');
+    },
+  });
+
+  const r = await api.post('/api/capture', { url: 'https://x/doc', html: '<html><body><p>new</p></body></html>' });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.capture_id, 'cap8', 'the counter starts past the highest sidecar on disk');
+  assert.equal(
+    fs.readFileSync(path.join(webChatDir, 'captures', 'cap1.html'), 'utf8'),
+    '<p>an earlier capture</p>',
+    'and the earlier captures are still on disk, untouched'
+  );
+});
