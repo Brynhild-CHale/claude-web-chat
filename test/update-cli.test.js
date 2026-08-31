@@ -288,6 +288,52 @@ test('a target version with no registration engine falls back LOUDLY', async (t)
     'the call site downgrades any failure to "sync skipped", so a silent fallback would be indistinguishable from success');
 });
 
+// The same fallback, in the other direction. `update --to <older>` is a
+// deliberate rollback, so "this build's templates, which may be older" is not
+// merely a wrong sentence: this build's templates are NEWER than the version
+// just activated, and running its apply() syncs the project FORWARD to files
+// the build now on `current` does not ship.
+test('a ROLLBACK to a version with no registration engine syncs nothing', async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.4.0');   // predates the engine
+  const errlog = sink();
+  const mod = update.loadRegistration(paths, '0.4.0', errlog, { from: '0.6.0' });
+  assert.equal(mod, null, 'there is nothing right to sync with going backwards');
+  assert.match(errlog.text(), /ships no registration engine/);
+  assert.match(errlog.text(), /NEWER than v0\.4\.0/);
+  assert.doesNotMatch(errlog.text(), /which may be older/, 'the forward wording must not be printed on a rollback');
+});
+
+test('--to an older build leaves the project\'s managed files where they are', async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-back-')));
+  fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  const prevCwd = process.cwd();
+  process.chdir(project);
+  t.after(() => process.chdir(prevCwd));
+
+  fakeVersion(paths, '0.4.0');   // predates the engine
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    fetchLatestRelease: async () => { throw new Error('a rollback must not touch the network'); },
+  });
+  const res = await update(['--to', '0.4.0'], d);
+
+  assert.equal(res.after, '0.4.0');
+  assert.equal(fs.existsSync(path.join(project, '.claude')), false,
+    "this build's rules and skills must not be written into a project rolled back to v0.4.0");
+  assert.match(d.log.text(), /Managed files left alone/);
+  assert.match(d.log.text(), /claude-web-chat install/, 'and the way to sync with v0.4.0 templates is named');
+  assert.doesNotMatch(d.log.text(), /Syncing managed files/, 'no heading over a sync that did not happen');
+});
+
 test('update does not downgrade when the latest release is older than this build', async (t) => {
   withTempHome(t);
   inScratchCwd(t);
