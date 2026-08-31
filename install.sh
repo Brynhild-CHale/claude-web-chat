@@ -155,6 +155,13 @@ if [ -d "$WC_HOME/current" ] && [ ! -L "$WC_HOME/current" ]; then
   rm -rf "$WC_HOME/current"
 fi
 rm -f "$WC_HOME/current.incoming"   # debris from an interrupted older install
+#    And the link the `mv` above used to deposit INSIDE the old version
+#    directory. It dangles there forever on any install upgraded through the
+#    broken installer, and — worse than untidy — writing it bumped that
+#    directory's mtime, which is what step 8 sorts on, so an older version can
+#    outlive a newer rollback target. The glob is unquoted so it expands; with
+#    no match `rm -f` is silent about the literal.
+rm -f "$WC_HOME/versions/"*/current.incoming 2>/dev/null || true
 ln -sfn "versions/$version" "$WC_HOME/current"
 
 # 7. Link the three bins into ~/.local/bin — no sudo. These may use the rename

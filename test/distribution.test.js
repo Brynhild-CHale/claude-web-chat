@@ -297,14 +297,23 @@ test('install.sh moves `current` to the new version when it is re-run over an ex
   assert.equal(fs.readlinkSync(current), 'versions/9.9.1');
   assert.match(fs.readFileSync(cli, 'utf8'), /9\.9\.1/, 'the bin symlink must resolve into the installed version');
 
+  // Debris exactly where the broken `mv` used to deposit it: a dangling link
+  // INSIDE the version directory, which no sweep reached — so an install
+  // upgraded through that installer carried it forever, and the write bumped
+  // that directory's mtime, which is what the prune sorts on.
+  const debris = path.join(home, '.web-chat', 'versions', '9.9.1', 'current.incoming');
+  fs.symlinkSync('versions/9.9.1', debris);
+
   // The re-run. This is the case the installer promises is "always safe".
   state.version = '9.9.2';
   await install();
+  assert.equal(fs.existsSync(debris) || fs.lstatSync(debris, { throwIfNoEntry: false }) != null, false,
+    'the re-run must sweep the debris an older installer left inside a version dir');
   assert.equal(fs.readlinkSync(current), 'versions/9.9.2', '`current` must point at the version just installed');
   assert.match(fs.readFileSync(cli, 'utf8'), /9\.9\.2/, 'the bins resolve through `current`, so they move with it');
   assert.deepEqual(
     fs.readdirSync(path.join(home, '.web-chat', 'versions', '9.9.1')).sort(),
     ['bin', 'package.json'],
-    'the swap must not deposit anything inside the version it replaced',
+    'the swap must not deposit anything inside the version it replaced, and must sweep what an older one did',
   );
 });
