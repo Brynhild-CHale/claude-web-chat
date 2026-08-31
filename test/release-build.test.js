@@ -82,6 +82,18 @@ test('the build is reproducible — same tree, same bytes, same checksum', () =>
   );
 });
 
+// Reproducible has to mean ACROSS MACHINES, not just twice on this one. The gzip
+// header carries two run/platform-dependent fields: MTIME (node writes 0) and OS
+// (RFC 1952 §2.3.1 — zlib stamps 3 on Linux, 19 on macOS). Left alone, the same
+// tree cut on Linux and on macOS differs at exactly byte 9, and a user verifying a
+// release by rebuilding it on another OS gets a mismatch that reads as tampering.
+test('the gzip header is platform-independent — OS byte pinned, no mtime', () => {
+  const gz = fs.readFileSync(build().tarPath);
+  assert.deepEqual([...gz.subarray(0, 3)], [0x1f, 0x8b, 0x08], 'not a gzip stream');
+  assert.deepEqual([...gz.subarray(4, 8)], [0, 0, 0, 0], 'MTIME must be zero, not the build time');
+  assert.equal(gz[9], 255, 'gzip OS byte must be 255 ("unknown") on every platform');
+});
+
 test('SHA256SUMS names the tarball in the format shasum -c reads', () => {
   const { sumsPath, tarPath, digest } = build();
   const text = fs.readFileSync(sumsPath, 'utf8');
@@ -135,4 +147,45 @@ test('collectEntries is sorted and free of duplicates', () => {
   const names = entries.map((e) => e.name);
   assert.deepEqual(names, [...names].sort(), 'entry order must be deterministic');
   assert.equal(new Set(names).size, names.length, 'no path may appear twice');
+});
+
+// ── the cross-version registration contract ─────────────────────────────────
+//
+// `update` (0.7.0 and every build after it) syncs a project's managed files
+// with the NEWLY INSTALLED build's engine: loadRegistration() in
+// lib/cli/commands/update.js resolves
+// `~/.web-chat/versions/<target>/lib/setup/registration.js` BY PATH and calls
+// `apply()` on it. That path and that export name are therefore frozen for
+// every future release — an updater already on a user's machine cannot be
+// changed. Renaming the file, moving it, dropping `apply`, or letting it fall
+// out of the `files` allowlist does not break THIS build; it breaks every
+// `update` already in the wild, which degrades to the loud fallback and syncs
+// managed files against its own stale templates — the exact 0.6.0-era trap the
+// version-directory resolution exists to remove.
+//
+// So this is a contract test, not a unit test: it fails the build at the moment
+// the rename happens, which is the only moment anyone can still undo it.
+test('lib/setup/registration.js still exports apply() — older updaters call it by path', () => {
+  const rel = path.join('lib', 'setup', 'registration.js');
+  const abs = path.join(REPO_ROOT, rel);
+  assert.ok(
+    fs.existsSync(abs),
+    `${rel} is gone — every shipped update resolves this exact path in the version it just installed`,
+  );
+  // Required BY PATH, the way loadRegistration requires it out of versions/<target>.
+  const mod = require(abs);
+  assert.equal(
+    typeof mod.apply, 'function',
+    'update calls mod.apply(...) on the target version\'s engine — renaming it silently breaks every updater in the wild',
+  );
+});
+
+test('the release artifact ships lib/setup/registration.js', () => {
+  const names = new Set(build().entries.map((e) => e.name));
+  const wanted = `claude-web-chat-${pkg.version}/lib/setup/registration.js`;
+  assert.ok(
+    names.has(wanted),
+    `${wanted} is not in the artifact — a "files" allowlist that stops shipping it makes the NEXT release`
+    + ' unloadable by every already-installed update, which then syncs with its own older templates',
+  );
 });

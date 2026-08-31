@@ -613,6 +613,9 @@ because it tells the user to run `install` and `install` cannot merge for them).
 `update` loads this module out of `versions/<target>` (the same reason
 `loadRestart` exists), so **the export surface is a cross-version contract**:
 keep it small and additive, and keep the fallback in `loadRegistration` loud.
+test/release-build.test.js pins both halves of that contract — the path and the
+`apply` export in the tree, and `lib/setup/registration.js` in the release
+artifact — so a rename fails the build instead of the updaters already shipped.
 
 ### Shared small homes
 

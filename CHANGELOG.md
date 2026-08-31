@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- The release tarball is now byte-reproducible across operating systems. `scripts/build-release.js` left the gzip header's OS field as zlib stamped it (3 on Linux, 19 on macOS), so rebuilding a tagged tree on a different OS than the one CI cut it on produced a different sha256 — a verifier's only reading of that is tampering. The byte is now pinned to 255 ("unknown", per RFC 1952). Already-published artifacts keep their published checksums; this affects builds cut from here on.
+
 ## [0.7.0] - 2026-08-28
 
 ### Upgrading from 0.6.0
