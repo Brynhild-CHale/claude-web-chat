@@ -81,9 +81,16 @@ async function boot() {
 const tick = () => new Promise((r) => setTimeout(r, 25));
 const host = () => W.document.getElementById('service-trust');
 const cards = () => [...(host() ? host().querySelectorAll('.svc-trust-card') : [])];
-const announce = (hash, name) => WS.onmessage({ data: JSON.stringify({
-  type: 'service:trust', hash, name, command: `claude-web-chat trust ${name}`,
+// The daemon addresses a request by the TRUST KEY it minted for it (project root
+// + service.js hash + service-facing params), not by the service.js hash: two
+// params-variants of one component are two decisions, and the hash alone cannot
+// tell them apart. See lib/server/services.js trustFrame().
+const announce = (key, name, params) => WS.onmessage({ data: JSON.stringify({
+  type: 'service:trust', key, name, hash: 'h-' + name, params: params || {},
+  command: `claude-web-chat trust ${name}`,
 }) });
+const clear = (key) => WS.onmessage({ data: JSON.stringify({ type: 'service:trust:clear', key }) });
+const keysOnScreen = () => cards().map((c) => c.getAttribute('data-key'));
 
 test('boot', async () => {
   await boot();
@@ -95,7 +102,7 @@ test('boot', async () => {
 });
 
 test('a waiting service raises a card, and the card offers a dismiss control', async () => {
-  announce('h-git', 'git-dashboard');
+  announce('k-git', 'git-dashboard');
   await tick();
   assert.equal(cards().length, 1, 'the notice appeared');
   assert.ok(!host().classList.contains('hidden'), 'and its host is visible');
@@ -115,22 +122,59 @@ test('dismissing hides the card without denying anything', async () => {
   assert.ok(host().classList.contains('hidden'), 'and the host with it');
   assert.deepEqual(calls, [], 'dismissing talks to the server not at all — the request stays pending');
   const stored = JSON.parse(W.sessionStorage.getItem('wc:svc-trust-dismissed') || '[]');
-  assert.deepEqual(stored, ['h-git'], 'the dismissal is remembered per REQUEST, for this session only');
+  assert.deepEqual(stored, ['k-git'], 'the dismissal is remembered per REQUEST, for this session only');
 });
 
 test('re-announcing the SAME request stays dismissed', async () => {
-  announce('h-git', 'git-dashboard');
+  announce('k-git', 'git-dashboard');
   await tick();
   assert.equal(cards().length, 0,
     'the server re-announces on every viewer connect; that must not defeat the dismissal');
 });
 
 test('a NEW request for a different component still speaks up', async () => {
-  announce('h-file', 'file-editor');
+  announce('k-file', 'file-editor');
   await tick();
   assert.equal(cards().length, 1, 'a different pending service is a different decision');
   assert.match(cards()[0].textContent, /file-editor/);
-  assert.equal(cards()[0].getAttribute('data-hash'), 'h-file');
+  assert.equal(cards()[0].getAttribute('data-key'), 'k-file');
+});
+
+// The defect this file's keying now closes (t1-B/holes-supervisor/review-minor-2):
+// two panes of ONE component with different params share a service.js hash, so a
+// map keyed by hash showed one card for two decisions — and the daemon's clear of
+// either one (a pane cleared, or one variant approved) removed the other's card
+// from every browser while its request was still pending on the server.
+test('two params-variants of one component are two cards, and clearing one leaves the other', async () => {
+  announce('k-file-fenced', 'file-editor', {});
+  announce('k-file-unfenced', 'file-editor', { unfenced: true });
+  await tick();
+  assert.ok(keysOnScreen().includes('k-file-fenced') && keysOnScreen().includes('k-file-unfenced'),
+    'same component, different params — two decisions, two cards');
+  const unfenced = cards().find((c) => c.getAttribute('data-key') === 'k-file-unfenced');
+  assert.match(unfenced.textContent, /unfenced=true/,
+    'and each card names the params it is about, or the pair is indistinguishable');
+
+  clear('k-file-fenced');
+  await tick();
+  assert.equal(keysOnScreen().includes('k-file-fenced'), false, 'the retired request is gone');
+  assert.ok(keysOnScreen().includes('k-file-unfenced'),
+    'retiring one request must not take the other request\u2019s card with it');
+});
+
+test('dismissing one variant does not dismiss the other', async () => {
+  cards().find((c) => c.getAttribute('data-key') === 'k-file-unfenced')
+    .querySelector('[data-dismiss]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(keysOnScreen().includes('k-file-unfenced'), false, 'the dismissed variant is hidden');
+  announce('k-file-fenced', 'file-editor', {});
+  await tick();
+  assert.ok(keysOnScreen().includes('k-file-fenced'),
+    'a dismissal is one decision — the sibling variant still speaks up');
+  // Leave only the two requests the next test counts on.
+  clear('k-file-fenced');
+  clear('k-file-unfenced');
+  await tick();
 });
 
 test('a blocked sessionStorage cannot kill the notice (private window)', async () => {
@@ -143,13 +187,13 @@ test('a blocked sessionStorage cannot kill the notice (private window)', async (
   });
   global.sessionStorage = undefined;
   try {
-    announce('h-boom', 'noisy');
+    announce('k-boom', 'noisy');
     await tick();
     // All three pending requests render: with storage unreadable there is no
-    // dismissal record to honour, so the earlier h-git dismissal quietly lapses.
+    // dismissal record to honour, so the earlier k-git dismissal quietly lapses.
     // Failing OPEN is the right direction for a consent prompt.
     assert.equal(cards().length, 3, 'the notice still renders when storage is unreadable');
-    cards().find((c) => c.getAttribute('data-hash') === 'h-boom')
+    cards().find((c) => c.getAttribute('data-key') === 'k-boom')
       .querySelector('[data-dismiss]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
     await tick();
     assert.equal(cards().length, 3,
