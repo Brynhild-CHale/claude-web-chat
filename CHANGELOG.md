@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Capture profiles get `listItems` on their injected helper kit.** A profile bundle lives outside the package and cannot `require` into it, so the bundled reddit extractor carried its own copy of the own-`<li>` list walker — the copy the ctx kit exists to prevent, and the one place the nested-list fix (a nested item emitted twice: once absorbed into its parent's bullet, once on its own) sat with no test pinning it. `listItems(el)` now rides `extract({...})` and `render(distilled, ctx)` alongside `esc`, `collapse`, `safeHref` and `absolutize`; use it instead of `querySelectorAll('li')` when flattening a list. No distillate bytes change for any profile.
+
 ### Fixed
 
 - The release tarball is now byte-reproducible across operating systems. `scripts/build-release.js` left the gzip header's OS field as zlib stamped it (3 on Linux, 19 on macOS), so rebuilding a tagged tree on a different OS than the one CI cut it on produced a different sha256 — a verifier's only reading of that is tampering. The byte is now pinned to 255 ("unknown", per RFC 1952). Already-published artifacts keep their published checksums; this affects builds cut from here on.
