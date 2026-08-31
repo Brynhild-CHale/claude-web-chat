@@ -114,48 +114,32 @@ export async function refreshPending() {
 
 /* ---------- the held batch, itemised ---------- */
 // How many signals the park holds. `meta.count` is authoritative (the envelope
-// caps its printed lines at 50 for a large batch); the parsed rows are the fallback.
-function parkedCount(pending) {
+// caps its printed lines at 50 for a large batch); the items are the fallback.
+function parkedMetaCount(pending) {
   const meta = (pending && pending.envelope && pending.envelope.meta) || {};
   const n = Number(meta.count);
-  return Number.isFinite(n) && n > 0 ? n : parkedRows(pending).length;
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
-// The envelope's `content` is the one place the park's per-item detail lives
-// (lib/channel/envelope.js emits `- [kind] summary` per signal, plus a header, an
-// optional user note and an optional "N earlier signals omitted" line — none of
-// which match this shape). Parse it back into rows so the rail can show the held
-// batch the same way it shows staged items.
+function parkedCount(pending) {
+  return parkedMetaCount(pending) || parkedRows(pending).length;
+}
+// What the park holds, item by item. The daemon serves it as `items` —
+// `pendingWake.batch` reduced to the summary-only fields the rail renders, which
+// is the same shape a queued item has. This used to be reconstructed by
+// regex-parsing `envelope.content`: prose that lib/channel/envelope.js writes for
+// CLAUDE (a header line, `- [kind] summary` bullets, an optional user note, an
+// optional "N earlier signals omitted"), with the structured batch stripped from
+// the response. That made the rail's rendering an implicit contract across three
+// modules, silently broken by any rewording — a different bullet, a summary
+// containing a newline, the 50-line cap.
+//
+// The fallback is now a COUNT, not a second parser: an envelope without items
+// says how many are waiting rather than pretending to itemise them.
 function parkedRows(pending) {
-  const env = (pending && pending.envelope) || {};
-  const rows = [];
-  for (const line of String(env.content || '').split('\n')) {
-    const m = /^- \[([^\]]+)\] ([\s\S]*)$/.exec(line);
-    if (m) rows.push({ kind: m[1].trim(), summary: m[2].trim() });
-  }
-  if (rows.length) return rows;
-  // No parseable lines (a leaner envelope) — say what we do know rather than
-  // printing an empty section under the header.
-  const n = Number((env.meta && env.meta.count) || 0);
+  const items = pending && pending.items;
+  if (Array.isArray(items) && items.length) return items.slice();  // copied: render() unshifts the note
+  const n = parkedMetaCount(pending);
   return n > 0 ? [{ kind: 'signal', summary: `${n} signal${n === 1 ? '' : 's'} awaiting delivery` }] : [];
-}
-// A parked row is read-only: the batch has already left the queue, so there is
-// nothing left to stage or revert — cancelling the whole delivery is the one
-// action, and it lives on .rail-pending above.
-function parkedRow(it) {
-  const row = document.createElement('div');
-  row.className = 'rail-item parked';
-  const dot = document.createElement('span');
-  dot.className = 'qi-dot qi-' + (it.kind || 'signal');
-  const body = document.createElement('div');
-  body.className = 'qi-body';
-  const top = document.createElement('div');
-  top.className = 'qi-top';
-  const kindEl = document.createElement('span'); kindEl.className = 'qi-kind'; kindEl.textContent = it.kind || 'signal';
-  top.appendChild(kindEl);
-  const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
-  body.append(top, sum);
-  row.append(dot, body);
-  return row;
 }
 // Take the park back. /api/queue/pending/consume is the same id-checked drain the
 // turn-begin hook uses, so cancelling is exactly "consume it and deliver nothing".
@@ -419,16 +403,21 @@ async function revertItem(id) {
   try { await fetch('/api/queue/' + encodeURIComponent(id) + '?revert=1', { method: 'DELETE' }); } catch {}
 }
 
-function itemRow(it) {
+// One row builder for both lists. A PARKED row is the read-only variant: that
+// batch has already left the queue, so there is nothing to stage or revert —
+// cancelling the whole delivery is the one action, and it lives on .rail-pending
+// above. It used to be a second, thinner copy of this function, which is why a
+// parked row dropped the source and why-wake lines a staged one shows.
+function itemRow(it, { parked = false } = {}) {
   const row = document.createElement('div');
-  const staged = isStaged(it);
-  row.className = 'rail-item' + (staged ? '' : ' held');
-  row.dataset.id = it.id;
+  const staged = !parked && isStaged(it);
+  row.className = parked ? 'rail-item parked' : ('rail-item' + (staged ? '' : ' held'));
+  if (it.id) row.dataset.id = it.id;
 
   const dot = document.createElement('span');
   // B4: a queued comment dot mirrors its marker — coral until Claude has replied,
   // then green. The item carries no answered flag, so derive from the comments cache.
-  const answered = it.kind === 'comment' && (it.answered || isCommentAnswered(it.comment_id));
+  const answered = !parked && it.kind === 'comment' && (it.answered || isCommentAnswered(it.comment_id));
   dot.className = 'qi-dot qi-' + (it.kind || 'signal') + (answered ? ' answered' : '');
 
   const body = document.createElement('div');
@@ -441,6 +430,7 @@ function itemRow(it) {
   const why = document.createElement('div'); why.className = 'qi-why'; why.textContent = it.why_wake || '';
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
   body.append(top, why, sum);
+  if (parked) { row.append(dot, body); return row; }
 
   const stage = document.createElement('button');
   stage.className = 'qi-stage';
@@ -525,7 +515,7 @@ function render() {
       if (parkedList.length) {
         list.appendChild(sectionHeader('Held for next prompt', parkedCount(parked), 'parked'));
         if (parked.note) parkedList.unshift({ kind: 'note', summary: parked.note });
-        for (const it of parkedList) list.appendChild(parkedRow(it));
+        for (const it of parkedList) list.appendChild(itemRow(it, { parked: true }));
       }
     }
   }

@@ -1,8 +1,13 @@
 // Host-side service for the file-editor component. Reads/writes a file on the
 // host, keeps a version history (one snapshot per save), and computes diffs
 // (reusing the daemon's line-diff engine via ctx.diff). The pane drives it with
-// a control key `editor_ctl { action, path, content, version, dir }`; the service
-// pushes state under the store key `editor`. v1 contract: store writes only.
+// a control key `editor_ctl { action, path, content, version, dir, seq }`, where
+// `seq` is wall-clock ms (Date.now() at click time) and a write stamped at or
+// before this service's own start is treated as PERSISTED, not clicked — it is
+// never executed, and only a view action is replayed from one (see below). The
+// service pushes state under the store key `editor`, echoing the seq it last
+// applied as `ack` so the pane can tell a write that landed from one that did
+// not. v1 contract: store writes only.
 //
 // Path fencing: by default paths resolve under `root` (params.root or the repo
 // the daemon runs in) and anything escaping it is rejected — through ctx.fence,
@@ -44,6 +49,13 @@ module.exports = {
 
     let seq = 0;
     let load = 0;          // bumped only when the pane should (re)load the buffer
+    // The seq of the last control write this service actually EXECUTED, echoed
+    // to the pane. A `save` is not guaranteed to run — the start-time floor
+    // below refuses one stamped before we started, which is right for a
+    // persisted write and also catches a real click made in the spawn window
+    // (viewer arrives -> 200 ms debounce -> fork -> start()). Without this echo
+    // the pane had no way to know, and cleared its dirty marker at click time.
+    let ack = null;
     // The control-key cursor. It starts at THIS SERVICE'S START TIME, not at
     // zero: the pane stamps `seq: Date.now()` at click time (component.html), so
     // a write stamped at or before we started is by construction not a click
@@ -102,7 +114,7 @@ module.exports = {
       return fs.readFileSync(path.join(verDir(abs), key), 'utf8');
     }
 
-    const push = () => { if (!stopped) ctx.driver.setStore({ editor: { ...st, seq: ++seq, load } }); };
+    const push = () => { if (!stopped) ctx.driver.setStore({ editor: { ...st, seq: ++seq, load, ack } }); };
 
     function doOpen(p) {
       const abs = resolveInput(p);
@@ -148,6 +160,7 @@ module.exports = {
     }
 
     function handle(c) {
+      ack = c.seq == null ? ack : c.seq;   // executed — the pane's Save can settle
       try {
         switch (c.action) {
           case 'open': doOpen(c.path); break;

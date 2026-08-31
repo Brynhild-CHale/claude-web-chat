@@ -255,12 +255,21 @@ html.wc-theming, html.wc-theming * {
 #topbar { position: relative; z-index: var(--z-topbar); }
 .body { position: relative; z-index: var(--z-content); }
 
+/* The ONE hide rule. It is `!important`, so it already beats every id- and
+   compound-selector rule in this sheet — the six per-component copies that used
+   to shadow it (#overlay.hidden, .drawer.hidden, .drawer-panel.hidden,
+   .tab-badge.hidden, .svc-trust-host.hidden, .ub-btn.hidden) were dead weight
+   that read like they were load-bearing. Give an element `hidden` and it hides;
+   there is nothing to add per component. */
 .hidden { display: none !important; }
 
 /* ===== update-available advisory (version.js) =====
    A full-width bar above the topbar. Gold = advisory (matches .rail-notice); it
    flows as the first flex row of #stage so it pushes the topbar/body down rather
-   than overlapping them. Flips to green (.ok) for the brief post-update flash. */
+   than overlapping them. It INFORMS and nothing more — the one-click "Update &
+   restart" flow it used to carry is gone (see the header of version.js), which
+   is why there is no success state and no disabled action here. The bar is also
+   borrowed, briefly, for the "…" menu's Check-for-updates answer. */
 .update-banner {
   position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -268,11 +277,6 @@ html.wc-theming, html.wc-theming * {
   font: 500 12px var(--wc-font); color: var(--wc-fg); line-height: 1.35;
   background: color-mix(in srgb, var(--wc-gold) 16%, var(--wc-panel-bg));
   border-bottom: 1px solid color-mix(in srgb, var(--wc-gold) 55%, transparent);
-}
-.update-banner.ok {
-  background: color-mix(in srgb, var(--wc-green) 16%, var(--wc-panel-bg));
-  border-bottom-color: color-mix(in srgb, var(--wc-green) 55%, transparent);
-  color: var(--wc-green);
 }
 .update-banner .ub-msg { flex: 1 1 auto; }
 .update-banner .ub-msg code { font: 11px var(--wc-mono); }
@@ -282,9 +286,7 @@ html.wc-theming, html.wc-theming * {
   border: 1px solid var(--wc-gold); background: var(--wc-gold); color: #1c1710;
   font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
 }
-.update-banner .ub-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
-.update-banner .ub-btn:disabled { opacity: .6; cursor: default; }
-.update-banner .ub-btn.hidden { display: none !important; }
+.update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
 .update-banner .ub-x {
   height: 24px; width: 24px; display: grid; place-items: center; padding: 0;
   border: none; background: transparent; color: var(--wc-muted);
@@ -306,7 +308,6 @@ html.wc-theming, html.wc-theming * {
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
-.spacer { flex: 1; }
 
 /* command-palette trigger (centered) */
 .cmd-trigger {
@@ -450,12 +451,6 @@ kbd {
 .rail-count { font: 700 22px var(--wc-mono); color: var(--wc-accent); }
 .rail-sub { font: 500 8px var(--wc-mono); letter-spacing: .12em; color: var(--wc-muted-dim); }
 .rail-chips { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.qchip { width: 26px; height: 11px; border-radius: var(--wc-radius); background: var(--wc-accent); opacity: .8; }
-.qchip.kind-capture { background: var(--wc-rust); }
-.qchip.kind-driver { background: var(--wc-gold); }
-.qchip.kind-comment { background: var(--wc-green); }
-.qchip.new { animation: qpulse 1.6s ease-in-out infinite; }
-@keyframes qpulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
 .rail-hint { margin-top: auto; font: 500 10px var(--wc-mono); color: var(--wc-muted-dim); }
 
 .rail-expanded {
@@ -466,7 +461,9 @@ kbd {
 .rail-head .title { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
 .rail-head .badge { font: 700 10px var(--wc-mono); color: var(--wc-accent-fg); background: var(--wc-accent); border-radius: var(--wc-radius); padding: 0 5px; }
 .rail-head .esc { margin-left: auto; }
-/* reserved "what wakes Claude" signal-policy slot (empty until channels lands) */
+/* the "what wakes Claude" signal-policy line — filled by wake-panel.js with the
+   live policy (GET /api/queue/policy): what is set to wake immediately, what
+   waits for a Push, and whether a channel is connected at all. */
 .wake-slot {
   display: flex; align-items: center; gap: 6px; margin: 8px 0; padding: 6px 8px;
   border: 1px dashed var(--wc-border); border-radius: var(--wc-radius);
@@ -532,6 +529,10 @@ kbd {
 }
 .qi-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--wc-muted); box-shadow: 0 0 6px var(--wc-glow-accent); }
 .qi-dot.qi-capture { background: var(--wc-gold, #d8a24a); }
+/* Per-kind dots. These class names are COMPOSED in queue.js ('qi-dot qi-' +
+   item.kind, and 'rail-chip qi-' + kind), so they never appear as literals in
+   the source — see the dead-selector guard in test/shell-chrome.test.js, which
+   allowlists exactly this family. */
 .qi-dot.qi-signal { background: var(--wc-accent); }
 .qi-dot.qi-activity { background: var(--wc-muted, #8c959f); }   /* ambient opt-out layer — quieter than a declared signal */
 
@@ -636,7 +637,6 @@ kbd {
   display: grid; grid-template-columns: 288px 1fr 322px; grid-template-rows: 48px 1fr 26px;
   grid-template-areas: "header header header" "history canvas inspector" "status status status";
 }
-#overlay.hidden { display: none; }
 
 /* header */
 .gv-header { grid-area: header; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); box-shadow: var(--wc-elev-bar); }
@@ -673,11 +673,6 @@ kbd {
 .gv-row .main { min-width: 0; }
 .gv-row .lbl { font: 700 11px var(--wc-mono); color: var(--wc-fg-bright); }
 .gv-row .trig { font: 11px var(--wc-font); color: var(--wc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gv-row .rchip { font: 600 9px var(--wc-mono); padding: 1px 5px; border-radius: var(--wc-radius); letter-spacing: .04em; }
-.gv-row .rchip.active { color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent); }
-.gv-row .rchip.fork { color: var(--wc-accent-text); }
-.gv-row .rchip.marked { color: var(--wc-gold); }
-.gv-row .rchip.stack { color: var(--wc-muted); }
 .gv-row .time { font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
 
 /* center canvas */
@@ -766,7 +761,6 @@ kbd {
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
-.drawer.hidden { display: none; }
 .drawer-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--wc-border); }
 .drawer-head .title { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
 .drawer-head .pane-btn { margin-left: auto; }
@@ -778,9 +772,7 @@ kbd {
   font: 700 9px var(--wc-mono); line-height: 14px; text-align: center;
   color: var(--wc-bg); background: var(--wc-gold); border-radius: 7px;
 }
-.drawer-tabs .tab-badge.hidden { display: none; }
 .drawer-panel { overflow: auto; padding: 6px 8px 10px; }
-.drawer-panel.hidden { display: none; }
 .de-group {
   font: 700 9.5px var(--wc-mono); letter-spacing: .12em; color: var(--wc-muted-dim);
   padding: 10px 4px 4px; text-transform: uppercase;
@@ -945,8 +937,7 @@ body.pin-mode #main { cursor: crosshair; }
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
-.pin-anchor, .pin-menu-text { font: 12px var(--wc-mono); color: var(--wc-text-2); margin-bottom: 8px; word-break: break-word; }
-.pin-menu-text { font-family: var(--wc-font); color: var(--wc-text-1); }
+.pin-anchor { font: 12px var(--wc-mono); color: var(--wc-text-2); margin-bottom: 8px; word-break: break-word; }
 .pin-text { width: 100%; resize: vertical; background: var(--wc-content-bg); color: var(--wc-fg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); font: 13px var(--wc-font); padding: 6px 8px; }
 .pin-share { display: flex; align-items: center; gap: 6px; margin: 8px 0; font: 12px var(--wc-font); color: var(--wc-text-2); }
 .pin-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -976,7 +967,6 @@ body.pin-mode #main { cursor: crosshair; }
   max-width: min(420px, calc(100vw - 36px));
   max-height: calc(100vh - 36px); overflow-y: auto;
 }
-.svc-trust-host.hidden { display: none; }
 .svc-trust-card {
   font-family: var(--wc-font, system-ui, sans-serif);
   color: var(--wc-fg, #1a1a1a);

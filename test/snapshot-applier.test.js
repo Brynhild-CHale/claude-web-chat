@@ -17,6 +17,10 @@
 //      pane whose spec is unchanged keeps its live DOM (so the typed value
 //      survives) and that value is re-sent, because the socket was down when the
 //      user typed it
+//   3. the CLIENT half of that catch-up: frames the chrome tried to send during
+//      the gap were dropped on the closed socket and never mentioned again, so a
+//      store write or a pane resize made while disconnected was destroyed at both
+//      ends. They queue in ws.js's outbox and drain once the snapshot has landed.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -204,6 +208,59 @@ test('a hello after a gap removes cleared panes and keeps what the user typed', 
     + 'replace() would otherwise leave a live subscriber on stale values');
   assert.ok(sent.some((f) => f.type === 'pane:form' && f.id === 'm-keep' && f.form_state['#f:0'].value === 'typed during the gap'),
     'and it was re-sent to the server, which never received it while the socket was down');
+});
+
+/* ── 3. the outbound half: nothing the user did during the gap is dropped ── */
+
+test('frames the chrome sent while the socket was down survive the reconnect', async () => {
+  const { store } = await import(pathToFileURL(path.join(REPO, 'public/app/store.js')).href);
+  const { unminimize } = await import(pathToFileURL(path.join(REPO, 'public/app/mounts.js')).href);
+  hello({ store: { k: 'server-value' } });
+  await tick();
+  WS.onmessage({ data: JSON.stringify({ type: 'pane:state', id: 'm-keep', pane_state: { minimized: true } }) });
+  await tick();
+
+  // The socket drops. Everything below used to be gated out on `isOpen()` and
+  // silently discarded — store.js's patch, mounts.js's pane:state — with no
+  // record kept anywhere and no second chance to send it.
+  WS.readyState = 3;
+  sent.length = 0;
+  store.set({ k: 'first' });
+  store.set({ k: 'second', other: 1 });      // coalesces: one frame, patches merged
+  unminimize('m-keep');                      // what clicking the minbar chip does
+  await new Promise((r) => setTimeout(r, 120));   // past emitPaneState's 80ms debounce
+  assert.equal(sent.length, 0, 'precondition: nothing reaches a closed socket');
+
+  // Reconnect. The server's snapshot is what it believed BEFORE the gap — the
+  // old value of k, and a pane it still thinks is minimized.
+  WS.readyState = 1;
+  hello({ store: { k: 'server-value' }, mounts: [{ ...NODE_MOUNTS.n1[0], pane_state: { minimized: true } }] });
+  await tick();
+
+  const paneFrames = sent.filter((f) => f.type === 'pane:state' && f.id === 'm-keep');
+  assert.equal(paneFrames.length, 1, 'the restore the user did during the gap reaches the server');
+  assert.equal(paneFrames[0].pane_state.minimized, false);
+
+  const patches = sent.filter((f) => f.type === 'store:set');
+  assert.equal(patches.length, 1, 'the gap collapses into ONE store frame, however long it lasted');
+  assert.deepEqual(patches[0].patch, { k: 'second', other: 1 },
+    'with the last write per key — the whole gap, not just its final call');
+  assert.equal(store.get('k'), 'second',
+    'and the LOCAL copy is the one we just re-sent: the reconcile had replaced it with the '
+    + "server's pre-gap value, which would have left the two ends disagreeing");
+});
+
+test('the outbox does not grow without bound while the socket stays down', async () => {
+  const { store } = await import(pathToFileURL(path.join(REPO, 'public/app/store.js')).href);
+  WS.readyState = 3;
+  sent.length = 0;
+  for (let i = 0; i < 500; i++) store.set({ ['k' + (i % 3)]: i });
+  WS.readyState = 1;
+  hello({ store: {} });
+  await tick();
+  const patches = sent.filter((f) => f.type === 'store:set');
+  assert.equal(patches.length, 1, '500 writes across a long gap are still one coalesced frame');
+  assert.deepEqual(Object.keys(patches[0].patch).sort(), ['k0', 'k1', 'k2']);
 
   await new Promise((r) => setTimeout(r, 400));
   restore();

@@ -85,7 +85,7 @@ function emitPaneState(id) {
   if (emitTimers.has(id)) clearTimeout(emitTimers.get(id));
   emitTimers.set(id, setTimeout(() => {
     emitTimers.delete(id);
-    if (isOpen()) send({ type: 'pane:state', id, pane_state: p.pane_state });
+    send({ type: 'pane:state', id, pane_state: p.pane_state }); // queued if the socket is down
   }, 80));
 }
 
@@ -118,6 +118,10 @@ function sendFormState(id) {
   // wire. Stamping before the gate recorded a value the server never received,
   // so a form edit made while the socket was down was silently dropped and never
   // re-sent on reconnect — the reconcile's flush would see it as already known.
+  // Returning here rather than letting ws.send queue the frame is deliberate:
+  // the reconcile calls flushFormStates(), which re-reads the LIVE DOM, and that
+  // is fresher than any snapshot we could stash (ws.js drops a queued pane:form
+  // for the same reason).
   if (!isOpen()) return;
   p._lastFormJson = json;
   send({ type: 'pane:form', id, form_state: fs });
@@ -616,7 +620,7 @@ function mountPane(m) {
     // Forward the failure to the daemon so it lands in the event ring
     // (get_events kind:'script-error') — a dead pane script must be observable
     // outside the browser console. Preview renders stay local.
-    if (view.previewing || !isOpen()) return;
+    if (view.previewing) return;
     send({
       type: 'script:error', id, script_index: scriptIndex,
       message: String((err && err.message) || err),
@@ -893,5 +897,5 @@ function reportEvent(type, e, mountId) {
     value: window.__wcMount.isValueExcluded(t) ? null : (t?.value ?? null),
     dataset: t?.dataset ? { ...t.dataset } : null,
   };
-  if (isOpen()) send({ type: 'event', payload });
+  send({ type: 'event', payload });   // queued while the socket is down
 }
