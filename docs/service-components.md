@@ -230,7 +230,7 @@ The result is a live, clickable history/branch browser with zero per-turn drivin
 | component tier resolution + `serviceInfo` (hash) | `lib/server/components-registry.js` |
 | authoring (`service`/`seed` params, `has_service`) | `lib/mcp/tools/save_component.js`, `lib/server/routes/components.js` |
 | viewer-count hook | `lib/server/ws.js` (`onViewersChanged`) |
-| trust store + services dir | `.web-chat/services/` (paths in `lib/core/paths.js`) |
+| trust store (per user, NOT per project) | `~/.web-chat/services/trusted.json` — `userPaths().trustedServices` in `lib/core/paths.js`, handed to the daemon as `TRUSTED_SERVICES_PATH` |
 | driver API the service uses | `lib/driver.js` (see [driving-the-surface.md](driving-the-surface.md)) |
 
 ## Failure modes & rules

@@ -449,3 +449,44 @@ test('the shadow-root rule bans document QUERIES, not document.createElement', (
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Where consent lives.
+//
+// The location of trusted.json is a security property, not a detail: a
+// project-local file let a hostile repo ship its own pre-approval, so the record
+// moved to the user tier. The doc that explains that move kept a Code map row
+// naming the removed location — the one row a maintainer scans for where consent
+// lives, pointing at the path the fix deleted.
+test('no doc places the service trust store inside the project', () => {
+  const { projectPaths, userPaths } = require('../lib/core/paths');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  assert.match(userPaths().trustedServices, /\/\.web-chat\/services\/trusted\.json$/,
+    'userPaths().trustedServices has moved — re-read every doc this test guards before changing it');
+  const project = Object.values(projectPaths(REPO_ROOT)).filter((v) => typeof v === 'string');
+  assert.ok(!project.some((v) => v.endsWith('trusted.json')),
+    'projectPaths now names a trusted.json — consent is back inside the project, which is the vulnerability the ' +
+    'user-tier move closed; this test and the docs it guards both need rewriting');
+
+  // A project-relative `.web-chat/services/` is only wrong where the doc is
+  // talking about CONSENT — the dir itself still exists in a project. So the
+  // window around each mention decides, and the one legitimate hit (the sentence
+  // describing the vulnerability the move closed) is on the allowlist.
+  for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+    const flat = flatten(body);
+    for (const m of flat.matchAll(/(?<!~\/)`?\.web-chat\/services\/(trusted\.json)?/g)) {
+      const near = flat.slice(Math.max(0, m.index - 120), m.index + 120);
+      if (!/trust|consent|approv/i.test(near)) continue;
+      // The allowance is per-OCCURRENCE, not per-file: its marker has to match
+      // this mention's own window, or one exempt sentence would exempt the
+      // whole document (which is how the stale Code map row survived beside the
+      // Trust section that contradicts it).
+      const allowed = allowFor('trustStore', rel, '.web-chat/services/trusted.json');
+      assert.ok(allowed && allowed.marker.test(near),
+        `${rel} points at a project-relative \`.web-chat/services/\` for the trust store (…${near.trim()}…); ` +
+        'consent lives at `~/.web-chat/services/trusted.json` (userPaths().trustedServices) precisely so a ' +
+        'repository cannot ship its own approval' +
+        (allowed ? ` — the only exempt mention is the one that ${allowed.reason}` : ''));
+    }
+  }
+});

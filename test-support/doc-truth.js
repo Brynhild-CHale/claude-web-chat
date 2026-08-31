@@ -230,6 +230,18 @@ const ALLOW = {
   ],
   // CLI subcommands a doc may cite before they are registered.
   cliCommand: [],
+  // Docs that may spell the service trust store as a PROJECT path. Consent moved
+  // to the user tier because a project-side file let a cloned repo ship its own
+  // approval, so the project spelling survives only where a doc is explaining
+  // that vulnerability.
+  trustStore: [
+    {
+      rel: 'docs/service-components.md',
+      claim: '.web-chat/services/trusted.json',
+      reason: 'names the location the fix REMOVED, in the sentence saying why consent cannot live in the project',
+      marker: /commit `\.web-chat\/services\/trusted\.json` and cloning the repo would run its `service\.js` unprompted/,
+    },
+  ],
   // Registered commands the README's command reference block may omit.
   readmeBlock: [
     { claim: 'start', reason: 'the foreground dev entry point, documented in CLAUDE.md instead' },
