@@ -305,9 +305,21 @@ test('install.sh moves `current` to the new version when it is re-run over an ex
   // ASYNC on purpose: the stand-in server shares this process's event loop, so a
   // synchronous spawn would block the thread the installer's own download is
   // waiting on.
+  //
+  // PATH is prepended with the running interpreter's directory because
+  // install.sh's step 1 is `command -v node` / `node -p`: a suite launched by an
+  // absolute node path with no node on PATH (a cron entry, a wrapper, a CI image
+  // that only exports the binary) aborted here with "needs Node.js" instead of
+  // testing the installer. The node that is demonstrably present is the one
+  // running this test.
   const install = () => new Promise((resolve, reject) => {
     execFile('/bin/sh', [path.join(REPO_ROOT, 'install.sh')], {
-      env: { ...process.env, HOME: home, WEB_CHAT_API_BASE: base },
+      env: {
+        ...process.env,
+        HOME: home,
+        WEB_CHAT_API_BASE: base,
+        PATH: path.dirname(process.execPath) + path.delimiter + (process.env.PATH || ''),
+      },
       encoding: 'utf8',
     }, (err, stdout, stderr) => (err ? reject(new Error(`install.sh failed: ${stderr || err.message}`)) : resolve(stdout)));
   });

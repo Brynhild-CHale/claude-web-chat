@@ -21,8 +21,6 @@ const { withTempHome, waitUntil: harnessWaitUntil } = require('../test-support/h
 
 const SERVICE = path.join(__dirname, '..', 'templates', 'components', 'git-dashboard', 'service.js');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 // The harness poll with this file's budget bound in — every wait here is on a
 // `git` subprocess, not an in-process assertion.
 const waitUntil = (fn, opts) => harnessWaitUntil(fn, { timeout: 4000, interval: 25, ...opts });
@@ -155,9 +153,16 @@ test('git-dashboard service: an option-shaped `viewing` never reaches git argv',
   assert.ok(Array.isArray(g.commits) && g.commits.length >= 1, 'the pane still gets a usable payload');
 
   // Same again through the live path — a pane can write the key at any moment.
+  //
+  // Wait for the rebuild the control write TRIGGERS, not for a fixed timer: a
+  // negative assertion behind `sleep(300)` passes vacuously whenever the box is
+  // slower than the guess, and this is the half of the security case that would
+  // then be reporting nothing. One new driver.setStore is the service saying it
+  // has finished handling the write.
   const live = path.join(repo.dir, 'pwned-live.txt');
+  const before = h.writes.length;
   h.fire({ git_ctl: { seq: 2, viewing: '--output=' + live, open: null } });
-  await sleep(300);
+  assert.ok(await waitUntil(() => h.writes.length > before), 'the live control write produced a rebuild');
   assert.equal(fs.existsSync(live), false, 'nor through a live control write');
   assert.equal(h.latest().viewing, repo.trunk);
 });

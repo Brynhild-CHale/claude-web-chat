@@ -42,6 +42,27 @@ function project(t) {
   return root;
 }
 
+// A stage dir that ALREADY holds components/<name>/component.html, so the name
+// grammar is the only reason planInstall has left to refuse.
+//
+// Against an empty stage every malformed name was refused for a different
+// reason — fileUnit found no files and plan reported "component.html is
+// missing" — so both planInstall rows passed with the kebab-case check in
+// plan.js reverted. The staged file removes that alibi. Names whose join
+// escapes components/ (or names it) cannot be staged and keep the old shape;
+// the four filesystem-legal ones ('Bad Name', '-leading', 'has.dot', 'UPPER',
+// plus the contained 'a/b') are the ones that make the grammar load-bearing.
+function stageWith(name) {
+  const stage = tmpDir('wc-stage-');
+  const components = path.resolve(stage, 'components');
+  const dir = path.resolve(components, String(name || ''));
+  if (dir !== components && (dir + path.sep).startsWith(components + path.sep)) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'component.html'), '<p>staged</p>');
+  }
+  return stage;
+}
+
 // A refusal is anything that did not write. Each entry reports { refused, detail }
 // so the failure message names the site AND what it actually did.
 const ENTRIES = [
@@ -97,17 +118,19 @@ const ENTRIES = [
     label: 'planInstall (the packs plan), tier local',
     // Quarantine deliberately plans packs that FAILED validation, so plan()
     // cannot lean on validateManifest having refused first.
+    grammarReason: /kebab-case/,
     async attempt(t, name) {
       const root = t.root || (t.root = project(t));
-      const p = planInstall({ stageDir: tmpDir('wc-stage-'), manifest: { name: 'acme-ops', components: [{ name }] }, root, tier: 'local', replace: true });
+      const p = planInstall({ stageDir: stageWith(name), manifest: { name: 'acme-ops', components: [{ name }] }, root, tier: 'local', replace: true });
       return { refused: p.errors.length > 0 && !p.units.some((u) => u.kind === 'component'), detail: p.errors.join('; ') || 'planned it' };
     },
   },
   {
     label: 'planInstall (the packs plan), tier system',
+    grammarReason: /kebab-case/,
     async attempt(t, name) {
       const root = t.root || (t.root = project(t));
-      const p = planInstall({ stageDir: tmpDir('wc-stage-'), manifest: { name: 'acme-ops', components: [{ name }] }, root, tier: 'system', replace: true });
+      const p = planInstall({ stageDir: stageWith(name), manifest: { name: 'acme-ops', components: [{ name }] }, root, tier: 'system', replace: true });
       return { refused: p.errors.length > 0 && !p.units.some((u) => u.kind === 'component'), detail: p.errors.join('; ') || 'planned it' };
     },
   },
@@ -145,6 +168,13 @@ for (const entry of ENTRIES) {
     for (const bad of MALFORMED) {
       const r = await entry.attempt(t, bad);
       assert.equal(r.refused, true, `${entry.label} accepted ${JSON.stringify(bad)} — ${r.detail}`);
+      // A refusal for some OTHER reason is not this policy holding. Where the
+      // entry declares the reason it owes, assert it: otherwise the row goes
+      // green on "component.html is missing" and the grammar check can be
+      // deleted without anything noticing.
+      if (entry.grammarReason) {
+        assert.match(r.detail, entry.grammarReason, `${entry.label} refused ${JSON.stringify(bad)} for the wrong reason — ${r.detail}`);
+      }
     }
   });
 }

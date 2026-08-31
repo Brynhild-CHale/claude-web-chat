@@ -318,7 +318,19 @@ async function withServer(t, opts, fn) {
     await new Promise((resolve, reject) => {
       const onError = (e) => { srv.server.off('error', onError); reject(e); };
       srv.server.once('error', onError);
-      srv.server.listen(0, () => { srv.server.off('error', onError); resolve(); });
+      // LISTEN_HOST, not a wildcard, and this is a correctness fix rather than
+      // tidiness: on macOS/BSD a `listen(0)` on the wildcard address is handed
+      // an ephemeral port that ANOTHER process already holds bound
+      // specifically to 127.0.0.1 (the allocator only consults the wildcard
+      // table). The bind succeeds, but every client here connects to
+      // 127.0.0.1/localhost, and the kernel routes that to the MORE SPECIFIC
+      // listener — the other process. Measured on a dev box with 92 such
+      // listeners: 17 collisions in 4000 wildcard binds, 0 in 4000 loopback
+      // binds. That is the source of the suite's HPE_INVALID_CONSTANT
+      // "Expected HTTP/" flakes — the bytes read were another server's
+      // greeting. Production binds LISTEN_HOST (lib/server/index.js); so does
+      // this now.
+      srv.server.listen(0, LISTEN_HOST, () => { srv.server.off('error', onError); resolve(); });
     });
   }
 
@@ -357,8 +369,11 @@ async function withServer(t, opts, fn) {
 // missing sibling. Four hand-rolled `createHub + listen(0)` boots (hub.test.js
 // twice, profile-match.test.js, doctor.test.js) had nowhere else to go, and each
 // stopped the hub at the END of the test body, so a failed assertion leaked a
-// listening handle. Binds LISTEN_HOST like the real `hub run`, so the loopback
-// bind is exercised here too.
+// listening handle. It binds LISTEN_HOST because a test hub should be reachable
+// exactly where a real one is — but the bind below is the HARNESS's, so asserting
+// on it says nothing about lib/hub's own start(). The production bind is pinned
+// by 'hub.start(): binds LISTEN_HOST' in test/harness.test.js, which drives the
+// real start() in-process.
 //   withHub(t)                 — ephemeral port
 //   withHub(t, { port: 5170 }) — the pinned port (doctor's hub-is-up branch)
 async function withHub(t, { port = 0, createHub } = {}) {

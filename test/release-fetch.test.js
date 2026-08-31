@@ -288,6 +288,48 @@ test('download enforces maxBytes mid-stream and leaves no .part behind', async (
   assert.deepEqual(fs.readdirSync(dir), [], 'neither the file nor its .part survives an overflow');
 });
 
+test('download cleans up its .part even when the fd has not opened yet', async (t) => {
+  // The case the test above cannot see. fs.createWriteStream opens its fd on the
+  // libuv threadpool; destroy() does not cancel a pending open, it waits for it
+  // and then closes — so the file is still CREATED, after the cleanup unlink has
+  // already come back ENOENT. The stray 0-byte `.part` then sits in the version
+  // cache forever, and the assertion above misses it entirely because it runs in
+  // the same tick as the rejection, before the open has landed.
+  //
+  // Reproduced by keeping the threadpool busy so the open is demonstrably behind
+  // the overflow. The pbkdf2 work is calibrated at runtime rather than pinned to
+  // an iteration count, so a fast box blocks for the same wall-clock window a
+  // slow one does.
+  const per = (() => {
+    const t0 = Date.now();
+    crypto.pbkdf2Sync('a', 'b', 100_000, 64, 'sha512');
+    return Math.max(1, Date.now() - t0);
+  })();
+  const iterations = Math.ceil(100_000 * (250 / per));
+  const poolJobs = (Number(process.env.UV_THREADPOOL_SIZE) || 4) + 2;
+
+  const big = Buffer.alloc(64 * 1024, 0x61);
+  const srv = await recordingServer(t, (req, res) => { res.writeHead(200); res.end(big); });
+  const dir = tmpDir('wc-cap-slow-');
+  const dest = path.join(dir, 'thing.tar.gz');
+
+  const busy = Array.from({ length: poolJobs }, () => new Promise((resolve) => {
+    crypto.pbkdf2('a', 'b', iterations, 64, 'sha512', () => resolve());
+  }));
+
+  await assert.rejects(
+    release.download(`${srv.base()}/big`, dest, { maxBytes: 1024 }),
+    /exceeded 1024 bytes/,
+  );
+  // Let the threadpool drain: a pending open lands here, and this is where the
+  // stray .part appeared before the fix.
+  await Promise.all(busy);
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 20));
+
+  assert.deepEqual(fs.readdirSync(dir), [],
+    'the cleanup must wait for the write stream to close, not race its open');
+});
+
 test('download under the cap still lands the whole file', async (t) => {
   const body = Buffer.from('small enough');
   const srv = await recordingServer(t, (req, res) => { res.writeHead(200); res.end(body); });
