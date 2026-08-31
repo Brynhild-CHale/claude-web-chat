@@ -643,7 +643,7 @@ beside a file that still differs from shipped, the row carries `pending: true`,
 and deleting the sidecar is the entire resolution ritual. Consumers therefore
 have two questions to answer, not one — "is this a fresh conflict?" and "is
 there an offer still open?" — and each one states its answer in a comment
-(`install`, `update`, `status` and `init` all report both — the first three
+(`install`, `update`, `init` and `status` all report both — the first three
 through `conflictAdvice`, `status` through `conflictSummary`; the MCP startup
 nudge reports only the first, because it tells the user to run `install` and
 `install` cannot merge for them).
