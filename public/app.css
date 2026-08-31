@@ -1011,6 +1011,9 @@ body.pin-mode #main { cursor: crosshair; }
   overflow-x: auto; user-select: all;
 }
 .svc-trust-cmd code { color: var(--wc-fg, #1a1a1a); font-size: 12px; white-space: pre; }
+/* Two panes of one component with different params are two decisions, so each
+   card names the params it is about — otherwise the pair reads identically. */
+.svc-trust-params { word-break: break-word; }
 .svc-trust-foot { opacity: .85; }
 
 /* ---- zero state -----------------------------------------------------------

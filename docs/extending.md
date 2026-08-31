@@ -789,6 +789,17 @@ paths read back (decision D18). That list is the authority for the WRITER as muc
 as the reader: a new persisted mount field goes in `SNAPSHOT_FIELDS`, never into
 the snapshot by widening it. `test/graph-persistence.test.js` pins the two ends
 together.
+**`params` is one bag, but three keys in it belong to the shell.**
+`RENDER_CONTROL_PARAMS` (exported here) names them: `form_reset` (the
+`form_state` carry above), `routing` and `signals` (the activity/wake layer in
+`lib/server/domain/signals.js`). They describe how a *render* behaves, never what
+the pane's code or a service-backed component's host process does — which is why
+`lib/server/services.js` strips them before it fingerprints a service's params
+for consent. Leaving them in made `params.form_reset:true` on a re-render, a
+purely visual choice, restart the service child and ask the user to re-approve a
+service that had not changed. A new shell-read params key must be added to that
+set; `test/service-trust-identity.test.js` scans both readers and fails on one
+that is missing.
 
 **Two named policies, and a third means the abstraction is wrong.** `default`
 covers Claude, `/use` and drivers. `capture` exists for one deviation: the
@@ -801,6 +812,25 @@ What stays OUTSIDE: `graph.restoreLiveToNode` and `turns.loadDraft` replace the
 whole surface and broadcast a `reset` instead of per-pane frames, and
 `routes/render.js`'s bulk clear owns a pin filter and two batched frame shapes.
 `test/conventions.test.js` ratchets exactly that boundary.
+
+### `lib/server/services.js` — the service-trust identity
+
+A consent is a triple: **(project root, `service.js` hash, service-facing params)**.
+`serviceParams` / `paramsFingerprint` / `trustKey` (module-scoped and pure) are the
+only place that triple becomes a value; `computeDesired` mints it once per pane and
+everything downstream QUOTES it — the trust-file key, `pendingTrust()`, the
+`service:trust` / `service:trust:clear` frames, the browser's card map
+(`public/app/service-trust.js`), the CLI's `--params-fp` selector, and the
+supervisor's own "did this child's identity change" test.
+
+Every lossy re-projection of that triple was a place two different consents were
+mistaken for one: the WS frames carried the `service.js` hash alone, so two
+params-variants of one component collapsed into a single card in every browser
+and retiring either request cleared both; and `trust <name>` recorded a decision
+for every request matching the name, so a pane mounting `file-editor` a second
+time with `unfenced:true` could ride along on the approval the user meant for the
+fenced one. **Address a request by its key. Do not re-derive it, and do not
+address it by any part of it.**
 
 ## The conventions tripwire
 
