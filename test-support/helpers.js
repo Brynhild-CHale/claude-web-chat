@@ -357,8 +357,11 @@ async function withServer(t, opts, fn) {
 // missing sibling. Four hand-rolled `createHub + listen(0)` boots (hub.test.js
 // twice, profile-match.test.js, doctor.test.js) had nowhere else to go, and each
 // stopped the hub at the END of the test body, so a failed assertion leaked a
-// listening handle. Binds LISTEN_HOST like the real `hub run`, so the loopback
-// bind is exercised here too.
+// listening handle. It binds LISTEN_HOST because a test hub should be reachable
+// exactly where a real one is — but the bind below is the HARNESS's, so asserting
+// on it says nothing about lib/hub's own start(). The production bind is pinned
+// by 'hub.start(): binds LISTEN_HOST' in test/harness.test.js, which drives the
+// real start() in-process.
 //   withHub(t)                 — ephemeral port
 //   withHub(t, { port: 5170 }) — the pinned port (doctor's hub-is-up branch)
 async function withHub(t, { port = 0, createHub } = {}) {

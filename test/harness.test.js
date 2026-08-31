@@ -7,7 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer, withHub, waitUntil, openSSE } = require('../test-support/helpers');
+const { withServer, withHub, withTempHome, waitUntil, openSSE } = require('../test-support/helpers');
 
 // ── waitUntil ────────────────────────────────────────────────────────────────
 
@@ -104,9 +104,53 @@ test('openSSE: awaitChannel waits for the server to COUNT the stream as a channe
 
 // ── withHub ──────────────────────────────────────────────────────────────────
 
-test('withHub: boots a hub on loopback and tears it down on t.after', async (t) => {
+test('withHub: boots a hub the harness bound to loopback, and tears it down on t.after', async (t) => {
+  // The bind asserted here is withHub's own `hub.server.listen(port, LISTEN_HOST)`
+  // — the harness matching production, not evidence about production. The real
+  // start() is pinned by the next test.
   const { api, server } = await withHub(t);
-  assert.equal(server.address().address, '127.0.0.1', 'the hub binds loopback, not a wildcard');
+  assert.equal(server.address().address, '127.0.0.1', 'the harness binds loopback, not a wildcard');
   const h = await api.get('/api/health');
   assert.equal(h.json.role, 'hub');
+});
+
+// lib/hub's own start(). Nothing in the tree called it: every hub test bound the
+// server itself, so deleting LISTEN_HOST from start() — the line that keeps the
+// capture hub off every interface on the machine — passed the whole suite. The
+// happy path does not process.exit (only the already-running and EADDRINUSE
+// branches do), so it can be driven in-process. registerHub-on-start gets its
+// first coverage here too.
+test('hub.start(): binds LISTEN_HOST and registers itself', async (t) => {
+  const net = require('node:net');
+  const { LISTEN_HOST } = require('../lib/core/cors');
+  const { createHub } = require('../lib/hub');
+  const { readHubEntry, deregisterHub } = require('../lib/util/registry');
+
+  const home = withTempHome(t);
+  assert.ok(home, 'registerHub writes under HOME — never the developer\'s');
+
+  const port = await new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  });
+
+  const hub = createHub({ port });
+  const say = console.log;
+  console.log = () => {};
+  try {
+    await hub.start();
+  } finally {
+    console.log = say;
+  }
+  try {
+    assert.equal(hub.server.address().address, LISTEN_HOST,
+      'start() must bind LISTEN_HOST — a wildcard bind exposes the capture hub to the network');
+    const entry = readHubEntry();
+    assert.ok(entry, 'start() registers the hub so ensureHub and doctor can find it');
+    assert.equal(entry.port, port);
+    assert.equal(entry.pid, process.pid);
+  } finally {
+    await hub.stop();
+    deregisterHub({ pid: process.pid });
+  }
 });
