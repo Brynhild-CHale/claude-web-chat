@@ -7,7 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer, withHub, waitUntil, openSSE } = require('../test-support/helpers');
+const { withServer, withHub, withTempHome, waitUntil, openSSE } = require('../test-support/helpers');
 
 // ── waitUntil ────────────────────────────────────────────────────────────────
 
@@ -58,10 +58,39 @@ test('openSSE: opens, collects events, and closes', async (t) => {
   assert.equal(ev.id, 'm1');
 });
 
-test('openSSE: REJECTS instead of hanging when nothing is listening', async () => {
+test('openSSE: REJECTS on the TRANSPORT error when nothing is listening', async () => {
   // The hole this engine closes: the three private copies passed onOpen only, so
   // a refused connection left the promise pending forever and the runner hung.
-  await assert.rejects(() => openSSE(1, { timeout: 2000 }));
+  //
+  // Both halves of this are load bearing. A bare `assert.rejects` passed with
+  // subscribeSSE's onError AND onClose rejections replaced by no-ops — it just
+  // took 2 s, because openSSE's own deadline fired. So the assertion said
+  // nothing about the paths it is named for. Name the error, and give the
+  // deadline enough rope (10 s) that reaching it is unmistakable in the elapsed
+  // time.
+  const t0 = Date.now();
+  await assert.rejects(
+    () => openSSE(1, { timeout: 10000 }),
+    /ECONNREFUSED|closed before it opened/,
+  );
+  const ms = Date.now() - t0;
+  assert.ok(ms < 1000, `rejected after ${ms}ms — that is the deadline, not the transport error path`);
+});
+
+test('openSSE: REJECTS on its own DEADLINE when the socket accepts and never answers', async (t) => {
+  // The third path, pinned separately so the two cannot cover for each other: a
+  // listener that completes the TCP handshake and then says nothing produces no
+  // error and no close, and only the deadline ends the wait.
+  const net = require('node:net');
+  const sockets = new Set();
+  const srv = net.createServer((sock) => { sockets.add(sock); sock.on('close', () => sockets.delete(sock)); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => { for (const s of sockets) s.destroy(); srv.close(r); }));
+
+  await assert.rejects(
+    () => openSSE(srv.address().port, { timeout: 300 }),
+    /did not open within 300ms/,
+  );
 });
 
 test('openSSE: awaitChannel waits for the server to COUNT the stream as a channel', async (t) => {
@@ -75,9 +104,53 @@ test('openSSE: awaitChannel waits for the server to COUNT the stream as a channe
 
 // ── withHub ──────────────────────────────────────────────────────────────────
 
-test('withHub: boots a hub on loopback and tears it down on t.after', async (t) => {
+test('withHub: boots a hub the harness bound to loopback, and tears it down on t.after', async (t) => {
+  // The bind asserted here is withHub's own listen on LISTEN_HOST
+  // — the harness matching production, not evidence about production. The real
+  // start() is pinned by the next test.
   const { api, server } = await withHub(t);
-  assert.equal(server.address().address, '127.0.0.1', 'the hub binds loopback, not a wildcard');
+  assert.equal(server.address().address, '127.0.0.1', 'the harness binds loopback, not a wildcard');
   const h = await api.get('/api/health');
   assert.equal(h.json.role, 'hub');
+});
+
+// lib/hub's own start(). Nothing in the tree called it: every hub test bound the
+// server itself, so deleting LISTEN_HOST from start() — the line that keeps the
+// capture hub off every interface on the machine — passed the whole suite. The
+// happy path does not process.exit (only the already-running and EADDRINUSE
+// branches do), so it can be driven in-process. registerHub-on-start gets its
+// first coverage here too.
+test('hub.start(): binds LISTEN_HOST and registers itself', async (t) => {
+  const net = require('node:net');
+  const { LISTEN_HOST } = require('../lib/core/cors');
+  const { createHub } = require('../lib/hub');
+  const { readHubEntry, deregisterHub } = require('../lib/util/registry');
+
+  const home = withTempHome(t);
+  assert.ok(home, 'registerHub writes under HOME — never the developer\'s');
+
+  const port = await new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  });
+
+  const hub = createHub({ port });
+  const say = console.log;
+  console.log = () => {};
+  try {
+    await hub.start();
+  } finally {
+    console.log = say;
+  }
+  try {
+    assert.equal(hub.server.address().address, LISTEN_HOST,
+      'start() must bind LISTEN_HOST — a wildcard bind exposes the capture hub to the network');
+    const entry = readHubEntry();
+    assert.ok(entry, 'start() registers the hub so ensureHub and doctor can find it');
+    assert.equal(entry.port, port);
+    assert.equal(entry.pid, process.pid);
+  } finally {
+    await hub.stop();
+    deregisterHub({ pid: process.pid });
+  }
 });

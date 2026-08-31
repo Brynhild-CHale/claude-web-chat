@@ -769,6 +769,27 @@ not scan `test/`, and adding these roots to its patterns would fire
 `process.env.HOME =` are deliberately **not** ratcheted — a good number of both
 are legitimate, so a count could never approach zero.
 
+Two checks in that file are correctness rules rather than second-copy counts,
+and both are there because they are exactly as invisible in review:
+
+- **Every `.listen(` in `test/` and `test-support/` must name a loopback host.**
+  `listen(0)` on the wildcard address can be handed an ephemeral port another
+  process already holds bound specifically to `127.0.0.1` — the allocator
+  consults the wildcard table only — and the kernel then routes this suite's own
+  `127.0.0.1` connections to that more-specific listener. That was the source of
+  the intermittent `HPE_INVALID_CONSTANT` / "Expected HTTP/" parse errors that
+  appeared on a different test every run (the bytes read were another server's
+  protocol greeting). Production binds `LISTEN_HOST` at every listen; the harness
+  must too.
+- **A shared jsdom shell boots in a `before` hook, not in a `test()`.** A boot
+  registered as a test is filtered out by `--test-name-pattern`, so no single
+  case in the file can be run on its own; and a fixture restored at the END of a
+  test body is skipped by the first failing assertion above it, so one real
+  failure cascades into unrelated ones. `test/components-panel.test.js` is the
+  worked example — `before` to boot, `beforeEach` to put the mutable state back,
+  `after` to tear down. Shrink-only, with a named baseline for the seven shell
+  files that still boot inside a test.
+
 ### `lib/server/domain/mounts.js` — the mount-set engine
 
 Putting a pane on the live surface is not one write. It is, in order: reserved-id

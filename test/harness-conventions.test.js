@@ -224,3 +224,145 @@ for (const p of PATTERNS) {
     }
   });
 }
+
+// ── the wildcard bind ────────────────────────────────────────────────────────
+//
+// Not a second-copy pattern like the ones above — a correctness one — and it
+// lives here because it is exactly as invisible in review.
+//
+// On macOS/BSD, `listen(0)` on the WILDCARD address can be handed an ephemeral
+// port that another process already holds bound specifically to 127.0.0.1: the
+// allocator consults the wildcard table only. The bind succeeds, so nothing
+// looks wrong — but every client in this suite connects to 127.0.0.1 or
+// localhost, and the kernel routes that to the MORE SPECIFIC listener. The test
+// then talks to a stranger's server. Measured on one dev box carrying 92 such
+// listeners: 17 collisions in 4000 wildcard binds, 0 in 4000 loopback binds.
+//
+// That is where the suite's intermittent
+//   Parse Error: Expected HTTP/, RTSP/ or ICE/  (HPE_INVALID_CONSTANT, bytesParsed 0)
+// came from — the bytes read were another server's protocol greeting (a MySQL
+// wire-protocol banner, in the run that was finally captured). It surfaced on a
+// different test every time, because which boot draws the unlucky port is pure
+// chance, which is why it read as several unrelated flakes.
+//
+// Production binds LISTEN_HOST at every listen (lib/server/index.js,
+// lib/hub/index.js). The harness must too.
+const HOST_ARG = /^(['"`])(?:127\.0\.0\.1|localhost|::1)\1$|HOST/;
+
+// Full-line comments only — this file's own prose quotes the banned call, and so
+// does helpers.js's header. Trailing-comment stripping would have to understand
+// `http://`, which is not worth the risk of eating a real call.
+const stripLineComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '');
+
+// The argument list of a call, split on TOP-LEVEL commas: an inline arrow
+// callback is one argument, not three.
+function callArgs(src, openIdx) {
+  const out = [];
+  let depth = 0;
+  let arg = '';
+  let quote = null;
+  for (let i = openIdx; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === '\\') { arg += c + src[++i]; continue; }
+      if (c === quote) quote = null;
+      arg += c;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; arg += c; continue; }
+    if (c === '(' || c === '[' || c === '{') {
+      depth++;
+      if (depth === 1) continue;
+    } else if (c === ')' || c === ']' || c === '}') {
+      depth--;
+      if (depth === 0) { out.push(arg.trim()); return out; }
+    } else if (c === ',' && depth === 1) { out.push(arg.trim()); arg = ''; continue; }
+    arg += c;
+  }
+  return out;
+}
+
+test('harness: every server a test binds names LOOPBACK, never the wildcard', () => {
+  const offenders = [];
+  for (const r of ROOTS) {
+    for (const f of walk(path.join(REPO_ROOT, r), [])) {
+      if (path.resolve(f) === path.resolve(__filename)) continue;
+      const src = stripLineComments(fs.readFileSync(f, 'utf8'));
+      const re = /\.listen\s*\(/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const open = src.indexOf('(', m.index);
+        const args = callArgs(src, open);
+        if (args.length >= 2 && HOST_ARG.test(args[1])) continue;
+        offenders.push(`${relPosix(f)}: .listen(${args.join(', ').replace(/\s+/g, ' ').slice(0, 60)})`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `a test bound the wildcard address. Pass the host: .listen(port, '127.0.0.1', cb) — or LISTEN_HOST from lib/core/cors — so the kernel cannot hand out a port another process already holds on loopback:\n  ${offenders.join('\n  ')}`);
+});
+
+// ── the shared-shell pseudo-test ─────────────────────────────────────────────
+//
+// A jsdom shell file boots ONCE (the ESM cache hands a second import the same
+// already-initialised modules), and several of them do that boot inside a
+// `test()` that asserts almost nothing and exists only to set up the tests
+// below it. Three things follow, and all three were live in
+// components-panel.test.js:
+//
+//   * `--test-name-pattern` cannot run a single case from the file. The pattern
+//     filters out the boot too, so every remaining test runs against an unbooted
+//     shell and fails. Measured before the fix: all 26 of components-panel's
+//     cases failed when run alone.
+//   * A test that mutates the shared fixture restores it at the END of its body,
+//     which is precisely where a failing assertion never reaches. One broken
+//     assertion in the cache test took the ⌘K palette test down with it — an
+//     innocent bystander reported as a second failure, burying the real cause.
+//   * Ordering becomes load-bearing invisibly: the palette case passed only
+//     because the test above it happened to leave `deploy-board` in the cache.
+//
+// The fix is not a bigger fixture, it is `before` (boot, not counted as a test)
+// + `beforeEach` (put the mutable state back BEFORE each test, so a throw cannot
+// skip it) + `after` (teardown). components-panel.test.js is the worked example.
+//
+// Shrink-only, with a named baseline: seven shell files still do it, converting
+// them is not this ratchet's job, and the baseline exists so the number can only
+// go down.
+const SHELL_BOOT = /^test\(\s*(['"`])(?:boot|set ?up)/gim;
+
+// Gated on the file actually building a jsdom shell, so a genuine test ABOUT
+// booting something else (lock-ttl's "boot clears a stale lock persisted in
+// _meta.json") is not swept up by the name alone.
+const SHELL_BOOT_BASELINE = {
+  'test/graph-collapse-chrome.test.js': 1,
+  'test/graph-nav-chrome.test.js': 1,
+  'test/graph-view-chrome.test.js': 1,
+  'test/leave-preview-chrome.test.js': 1,
+  'test/service-trust-dismiss.test.js': 1,
+  'test/shell-chrome.test.js': 1,
+  'test/snapshot-applier.test.js': 1,
+};
+
+test('harness: a shared jsdom shell boots in a `before` hook, not in a test', () => {
+  const actual = {};
+  for (const f of walk(path.join(REPO_ROOT, 'test'), [])) {
+    if (path.resolve(f) === path.resolve(__filename)) continue;
+    const src = fs.readFileSync(f, 'utf8');
+    if (!src.includes('new JSDOM(')) continue;
+    const m = src.match(SHELL_BOOT);
+    if (m && m.length) actual[relPosix(f)] = m.length;
+  }
+
+  for (const [file, n] of Object.entries(actual)) {
+    const allowed = SHELL_BOOT_BASELINE[file] || 0;
+    assert.ok(n <= allowed,
+      `${file} boots its shared shell inside a test() (${n}, baseline ${allowed}). A boot registered as a test is skipped by --test-name-pattern, so no single case in the file can be run on its own. Move it to before(), reset the mutable fixture in beforeEach(), tear down in after() — see test/components-panel.test.js.`);
+  }
+  for (const [file, n] of Object.entries(SHELL_BOOT_BASELINE)) {
+    const cur = actual[file] || 0;
+    assert.ok(cur >= n,
+      `STALE baseline: ${file} now has ${cur} shared-shell pseudo-tests but the baseline says ${n}. Lower or remove this entry in test/harness-conventions.test.js.`);
+  }
+});
