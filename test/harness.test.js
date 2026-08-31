@@ -58,10 +58,39 @@ test('openSSE: opens, collects events, and closes', async (t) => {
   assert.equal(ev.id, 'm1');
 });
 
-test('openSSE: REJECTS instead of hanging when nothing is listening', async () => {
+test('openSSE: REJECTS on the TRANSPORT error when nothing is listening', async () => {
   // The hole this engine closes: the three private copies passed onOpen only, so
   // a refused connection left the promise pending forever and the runner hung.
-  await assert.rejects(() => openSSE(1, { timeout: 2000 }));
+  //
+  // Both halves of this are load bearing. A bare `assert.rejects` passed with
+  // subscribeSSE's onError AND onClose rejections replaced by no-ops — it just
+  // took 2 s, because openSSE's own deadline fired. So the assertion said
+  // nothing about the paths it is named for. Name the error, and give the
+  // deadline enough rope (10 s) that reaching it is unmistakable in the elapsed
+  // time.
+  const t0 = Date.now();
+  await assert.rejects(
+    () => openSSE(1, { timeout: 10000 }),
+    /ECONNREFUSED|closed before it opened/,
+  );
+  const ms = Date.now() - t0;
+  assert.ok(ms < 1000, `rejected after ${ms}ms — that is the deadline, not the transport error path`);
+});
+
+test('openSSE: REJECTS on its own DEADLINE when the socket accepts and never answers', async (t) => {
+  // The third path, pinned separately so the two cannot cover for each other: a
+  // listener that completes the TCP handshake and then says nothing produces no
+  // error and no close, and only the deadline ends the wait.
+  const net = require('node:net');
+  const sockets = new Set();
+  const srv = net.createServer((sock) => { sockets.add(sock); sock.on('close', () => sockets.delete(sock)); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => { for (const s of sockets) s.destroy(); srv.close(r); }));
+
+  await assert.rejects(
+    () => openSSE(srv.address().port, { timeout: 300 }),
+    /did not open within 300ms/,
+  );
 });
 
 test('openSSE: awaitChannel waits for the server to COUNT the stream as a channel', async (t) => {
