@@ -133,3 +133,78 @@ test('an opt-in timeout still rejects with the timeout error, not the close erro
     (e) => e.message === 'request timeout',
   );
 });
+
+// ---------------------------------------------------------------------------
+// The callers that guessed wrong in both directions, now on the throwing path.
+//
+// `profile reload` and `unlock` used the never-throwing low-level request() and
+// then read fields off the body without looking at the status: a daemon that
+// predates the route answers 404 with an HTML body, which parses to a STRING, so
+// both printed a success line for something they had not reached. These two
+// drive the real commands against a stub daemon that 404s everything.
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { writePortfileAt } = require('../lib/core/portfiles');
+
+// Run a CLI command with console + process.exit captured. Returns
+// {out, err, exit} — exit is the code the command asked for, or null.
+async function runCli(fn) {
+  const out = [];
+  const err = [];
+  const realLog = console.log;
+  const realErr = console.error;
+  const realExit = process.exit;
+  let exit = null;
+  console.log = (...a) => out.push(a.join(' '));
+  console.error = (...a) => err.push(a.join(' '));
+  process.exit = (c) => { exit = c; throw new Error('__exit__'); };
+  try { await fn(); } catch (e) { if (e.message !== '__exit__') throw e; } finally {
+    console.log = realLog; console.error = realErr; process.exit = realExit;
+  }
+  return { out: out.join('\n'), err: err.join('\n'), exit };
+}
+
+test('`profile reload` reports a 404 as a failure instead of "reloaded undefined"', async (t) => {
+  const port = await stub(t, (req, res) => {
+    // What a daemon predating /api/profiles/reload actually sends: Express's
+    // default 404 page, which JSON.parse cannot read, so body is a STRING.
+    res.writeHead(404, { 'Content-Type': 'text/html' });
+    res.end('<!DOCTYPE html><p>Cannot POST /api/profiles/reload</p>');
+  });
+  const prev = process.env.WEB_CHAT_PORT;
+  process.env.WEB_CHAT_PORT = String(port);
+  t.after(() => { if (prev === undefined) delete process.env.WEB_CHAT_PORT; else process.env.WEB_CHAT_PORT = prev; });
+
+  const profile = require('../lib/cli/commands/profile');
+  const r = await runCli(() => profile(['reload']));
+  assert.equal(r.exit, 1, 'a 404 must be a non-zero exit');
+  assert.match(r.err, /reload failed/);
+  assert.doesNotMatch(r.out, /reloaded/, 'and must never print the success line');
+});
+
+test('`unlock` reports a 404 as a failure instead of "no lock was set"', async (t) => {
+  const port = await stub(t, (req, res) => {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'no such route' }));
+  });
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-unlock-'));
+  const webChatDir = path.join(root, '.web-chat');
+  fs.mkdirSync(webChatDir, { recursive: true });
+  // The record `unlock` reads: a live pid (ours) on the stub's port.
+  writePortfileAt(webChatDir, { pid: process.pid, port });
+  const prevCwd = process.cwd();
+  process.chdir(root);
+  t.after(() => {
+    try { process.chdir(prevCwd); } catch {}
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+  });
+
+  const unlock = require('../lib/cli/commands/unlock');
+  const r = await runCli(() => unlock());
+  assert.equal(r.exit, 1, 'a 404 must be a non-zero exit');
+  assert.match(r.err, /unlock failed/);
+  assert.doesNotMatch(r.out, /no lock was set|lock cleared/, 'and must never print a lock verdict it did not get');
+});
