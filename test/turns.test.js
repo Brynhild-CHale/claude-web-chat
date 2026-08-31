@@ -245,7 +245,12 @@ test('loadDraft: aside copies are capped, so a repeatedly-mismatched draft canno
     turns.loadDraft(draftFile, 'DIFFERENT', createState());
   }
   const aside = fs.readdirSync(dir).filter((f) => f.startsWith('draft.json.corrupt-'));
-  assert.ok(aside.length <= 3, `expected at most 3 aside drafts, found ${aside.length}`);
+  // EXACTLY 3, not "at most 3": five mismatches produce five distinct names
+  // (renameAside suffixes `-<i>` on a same-millisecond collision), so the cap
+  // must leave the newest 3 standing. `<= 3` also passed a reaper that
+  // over-reaped to 0/1/2 — and passed trivially on the old unlink-the-draft
+  // behaviour, which left none at all. Those are the regressions this pins.
+  assert.equal(aside.length, 3, `expected exactly 3 aside drafts, found ${aside.length}`);
 });
 
 // ── lock keep-alive ─────────────────────────────────────────────────────────
