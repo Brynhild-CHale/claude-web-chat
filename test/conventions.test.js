@@ -510,6 +510,37 @@ const PATTERNS = [
     baseline: {},
   },
   {
+    // A checksum and a container format, both of which had grown a second copy
+    // because each looked like four lines of arithmetic rather than a concept.
+    // CRC-32 (the IEEE polynomial, spelled 0xedb88320 by every reflected
+    // implementation) existed twice — a table-free loop inside
+    // lib/server/routes/extensions.js and a table-driven one in
+    // extensions/make-icons.js — for a checksum Node has shipped natively since
+    // 22.2. lib/core/zip.js is the home: it prefers zlib.crc32 and keeps ONE
+    // fallback table for the two point releases below the package's Node floor.
+    // That fallback is the single grandfathered occurrence; a third would mean
+    // someone re-derived the polynomial rather than importing it.
+    name: 'the CRC-32 polynomial (0xedb88320)',
+    home: 'lib/core/zip.js — `crc32`, zlib.crc32 with one fallback table',
+    what: 'checksumming a ZIP entry or a PNG chunk',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /0xedb88320/gi,
+    baseline: { 'lib/core/zip.js': 1 },
+  },
+  {
+    // The other half: the ZIP local-file-header signature, which is what a
+    // hand-rolled archive writer always starts with. The encoder used to live in
+    // an Express route file, where nothing could test it without standing up the
+    // router — which is why it shipped untested for as long as it did. One
+    // writer, one round-trip test (test/zip.test.js).
+    name: 'the ZIP local-file-header signature (0x04034b50)',
+    home: 'lib/core/zip.js — `writeZipStore`',
+    what: 'writing a ZIP container',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /0x04034b50/gi,
+    baseline: { 'lib/core/zip.js': 1 },
+  },
+  {
     // Replacing the WHOLE surface from a snapshot frame. `hello` and `reset`
     // carry the identical payload (mounts + store + active/lock/theme) and were
     // written as two separate appliers — so only one of them ever grew the
