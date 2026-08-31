@@ -72,7 +72,10 @@ function stubServer() {
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, () => resolve({
+    // Loopback, never the wildcard: a wildcard listen(0) can be given a port
+    // another process already holds on 127.0.0.1, and the hook then talks to
+    // that process. See test-support/helpers.js's withServer bind.
+    server.listen(0, '127.0.0.1', () => resolve({
       port: server.address().port,
       requests,
       close: () => new Promise((r) => server.close(r)),

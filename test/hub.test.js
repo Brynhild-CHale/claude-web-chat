@@ -154,7 +154,9 @@ test('hub: health reports role hub + protocol version; probes read it', async (t
 function freePort() {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
-    s.listen(0, () => { const p = s.address().port; s.close(() => resolve(p)); });
+    // Loopback: a wildcard bind can be handed a port that is already taken on
+    // 127.0.0.1, which is exactly the port this must NOT return.
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
     s.on('error', reject);
   });
 }
@@ -193,7 +195,7 @@ const dir=path.join(os.homedir(),'.web-chat');
 fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(path.join(dir,'hub.json'),JSON.stringify({pid:process.pid,port,url:'http://localhost:'+port}));
 const s=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,role:'hub',version:1,pid:process.pid,port}));});
-s.listen(port);
+s.listen(port,'127.0.0.1');
 process.on('SIGTERM',()=>{try{fs.unlinkSync(path.join(dir,'hub.json'));}catch(e){} s.close(()=>process.exit(0)); setTimeout(()=>process.exit(0),300);});
 `;
 

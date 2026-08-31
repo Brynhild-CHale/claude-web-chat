@@ -318,7 +318,19 @@ async function withServer(t, opts, fn) {
     await new Promise((resolve, reject) => {
       const onError = (e) => { srv.server.off('error', onError); reject(e); };
       srv.server.once('error', onError);
-      srv.server.listen(0, () => { srv.server.off('error', onError); resolve(); });
+      // LISTEN_HOST, not a wildcard, and this is a correctness fix rather than
+      // tidiness: on macOS/BSD a `listen(0)` on the wildcard address is handed
+      // an ephemeral port that ANOTHER process already holds bound
+      // specifically to 127.0.0.1 (the allocator only consults the wildcard
+      // table). The bind succeeds, but every client here connects to
+      // 127.0.0.1/localhost, and the kernel routes that to the MORE SPECIFIC
+      // listener — the other process. Measured on a dev box with 92 such
+      // listeners: 17 collisions in 4000 wildcard binds, 0 in 4000 loopback
+      // binds. That is the source of the suite's HPE_INVALID_CONSTANT
+      // "Expected HTTP/" flakes — the bytes read were another server's
+      // greeting. Production binds LISTEN_HOST (lib/server/index.js); so does
+      // this now.
+      srv.server.listen(0, LISTEN_HOST, () => { srv.server.off('error', onError); resolve(); });
     });
   }
 

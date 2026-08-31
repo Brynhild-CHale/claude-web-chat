@@ -105,7 +105,7 @@ test('openSSE: awaitChannel waits for the server to COUNT the stream as a channe
 // ── withHub ──────────────────────────────────────────────────────────────────
 
 test('withHub: boots a hub the harness bound to loopback, and tears it down on t.after', async (t) => {
-  // The bind asserted here is withHub's own `hub.server.listen(port, LISTEN_HOST)`
+  // The bind asserted here is withHub's own listen on LISTEN_HOST
   // — the harness matching production, not evidence about production. The real
   // start() is pinned by the next test.
   const { api, server } = await withHub(t);
