@@ -127,12 +127,56 @@ test('mounts engine: RESERVED_IDS covers every static id in public/index.html', 
   assert.deepEqual(missing, [], 'add these to RESERVED_IDS in lib/server/domain/mounts.js');
 });
 
+// Every id literal in a file that BUILDS chrome around a mount host. Two
+// spellings cover what the shell actually writes: `id="…"` inside an HTML
+// template string, and `.id = '…'` on a created element.
+function idLiteralsIn(file) {
+  const src = fs.readFileSync(file, 'utf8');
+  return [
+    ...[...src.matchAll(/\bid="([a-zA-Z][\w-]*)"/g)].map((m) => m[1]),
+    ...[...src.matchAll(/\.id\s*=\s*['"`]([a-zA-Z][\w-]*)['"`]/g)].map((m) => m[1]),
+  ];
+}
+
 test('mounts engine: RESERVED_IDS covers the ids the shell creates lazily', () => {
-  // Invisible to the derivation above — they exist only in the modules that
-  // build them, so they are listed by hand and pinned here.
+  // Derived, like the static half. This half used to be a hand list pinned by
+  // this test repeating the same hand list — circular, and no ratchet at all: it
+  // fell four behind (the graph inspector's gv-* ids) while the test passed.
+  // Scanning the modules that build the chrome is what makes it a ratchet.
+  const root = path.join(__dirname, '..');
+  const appDir = path.join(root, 'public', 'app');
+  const files = fs.readdirSync(appDir).filter((f) => f.endsWith('.js')).map((f) => path.join(appDir, f));
+  const found = new Map(); // id -> the module that builds it
+  for (const file of files) {
+    for (const id of idLiteralsIn(file)) if (!found.has(id)) found.set(id, path.relative(root, file));
+  }
+  assert.ok(found.size >= 10, `expected the shell modules to build chrome by id, found ${found.size}`);
+  const missing = [...found].filter(([id]) => !isReservedId(id)).map(([id, file]) => `${id} (${file})`);
+  assert.deepEqual(missing, [], 'add these to RESERVED_IDS in lib/server/domain/mounts.js');
+});
+
+test('mounts engine: RESERVED_IDS covers the export and glance-preview chrome', () => {
+  // The other two documents a mount host is written into. Neither applies the
+  // live shell's free-id check — both do `host.id = m.id` unconditionally — so
+  // this set is the only thing keeping a pane named `export-main` out of the
+  // exported page's own id space.
+  const root = path.join(__dirname, '..');
+  const found = new Map();
+  for (const rel of ['lib/server/export.js', 'lib/server/routes/graph.js']) {
+    for (const id of idLiteralsIn(path.join(root, rel))) if (!found.has(id)) found.set(id, rel);
+  }
+  assert.ok(found.has('export-main') && found.has('wc-export-data'),
+    'the export shell should still declare its own chrome by id');
+  const missing = [...found].filter(([id]) => !isReservedId(id)).map(([id, rel]) => `${id} (${rel})`);
+  assert.deepEqual(missing, [], 'add these to RESERVED_IDS in lib/server/domain/mounts.js');
+});
+
+test('mounts engine: the ids no literal scan can see stay pinned by hand', () => {
+  // The residue, and deliberately short: built by a helper from a computed
+  // string, so neither derivation above can see them. An id that CAN be scanned
+  // belongs to a derivation, never to this list.
   for (const id of [
-    'branch-picker', 'reaim-note', 'wc-theme-global-css', 'wc-theme-node-css',
-    'pk-url', 'pk-global', 'service-trust', 'pin-layer',
+    'wc-theme-global-css', 'wc-theme-node-css', // public/app/theme.js — setHeadStyle(<id>, css)
   ]) assert.ok(isReservedId(id), `${id} must be reserved`);
   assert.ok(isReservedId('cmd-opt-0'), 'the palette rows are a family, not a literal');
   assert.ok(isReservedId('cmd-opt-12'));
@@ -150,6 +194,13 @@ test('mounts engine: a reserved id is refused without touching the pane set', ()
   assert.equal(state.mounts.size, 0);
   // The capture policy is not an override: it forces past an OWNER, not the id.
   assert.equal(setMount(state, bus, { id: 'status', html: '<p>x</p>', policy: 'capture', force: true }).ok, false);
+  // Chrome of the exported page, refused at the same choke point — export.js
+  // writes `host.id = m.id` with no free-id check of its own, so this refusal is
+  // what keeps a duplicate id out of the export.
+  const e = setMount(state, bus, { id: 'export-main', html: '<p>x</p>' });
+  assert.equal(e.ok, false);
+  assert.equal(e.reserved, true);
+  assert.equal(state.mounts.size, 0);
 });
 
 test('mounts engine: render and use both refuse a reserved id with 200 + ok:false', async (t) => {
