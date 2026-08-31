@@ -54,6 +54,28 @@ test('diffNodes: store add/remove/change/unchanged classified', () => {
   assert.deepEqual(d.store.unchanged, ['keep']);
 });
 
+test('diffNodes: a store key named after an Object.prototype member still diffs', () => {
+  // state.store is a plain {}, so `'toString' in {}` is true: an `in` test made
+  // these keys invisible in BOTH loops — not reported as added, and not iterated
+  // as own keys of the other side either — so they vanished from diff_nodes
+  // entirely rather than being reported wrongly.
+  const shadowing = ['toString', 'constructor', 'valueOf', 'hasOwnProperty'];
+  const a = { mounts: [], store: {} };
+  const b = { mounts: [], store: Object.fromEntries(shadowing.map((k) => [k, 'x'])) };
+  const added = diffNodes(a, b).store.added;
+  for (const k of shadowing) assert.equal(added[k], 'x', `${k} must be reported as added`);
+
+  // …and the same in the other direction: removed, not silently dropped.
+  const removed = diffNodes(b, a).store.removed;
+  for (const k of shadowing) assert.equal(removed[k], 'x', `${k} must be reported as removed`);
+
+  // A theme token cannot collide today (every one is --wc- prefixed), but the
+  // loop is the same loop and must not depend on that.
+  const t = (tokens) => ({ mounts: [], store: {}, theme: { tokens } });
+  const td = diffNodes(t({}), t({ toString: '#fff' })).theme.tokens;
+  assert.deepEqual(td.added, { toString: '#fff' });
+});
+
 test('diffNodes: node-level theme token diff', () => {
   const a = { mounts: [], store: {}, theme: { tokens: { '--wc-bg': '#fff', '--wc-fg': '#000' } } };
   const b = { mounts: [], store: {}, theme: { tokens: { '--wc-bg': '#111', '--wc-accent': '#0af' } } };
