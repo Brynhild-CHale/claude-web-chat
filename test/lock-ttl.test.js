@@ -123,3 +123,40 @@ test('unlock clears a lock', async (t) => {
   const { json: g } = await api.get('/api/graph');
   assert.equal(g.lock, null);
 });
+
+// ── the turn holder keeps its lock; a stolen one keeps its work ─────────────
+
+test("Claude's own writes re-stamp the lock clock", async (t) => {
+  const { api } = await withServer(t);
+  const before = (await api.post('/api/turn-begin', { message: 'a long turn' })).json.lock.started_at;
+  await elapse(25);
+  await api.post('/api/render', { id: 'p', html: '<p>still working</p>' });
+  const after = (await api.get('/api/graph')).json.lock.started_at;
+  assert.ok(after > before, 'a render proves the turn is alive, so its TTL restarts');
+});
+
+// The wake lock's TTL is minutes, and an agentic turn routinely runs longer. Once
+// it went stale, a user click on a graph node stole the lock and restoreLiveToNode
+// threw away every render the woken turn had made — uncommitted, so with no undo.
+test('a re-aim that steals a stale lock preserves the abandoned turn\'s work', async (t) => {
+  const { api } = await withServer(t, { createServer: shortTtlServer(t) });
+  await api.post('/api/render', { id: 'a', html: '<p>committed</p>' });
+  const n1 = (await api.post('/api/commit', { message: 'seed' })).json.node_id;
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  await api.post('/api/render', { id: 'b', html: '<p>woken work</p>' });
+  await elapse(120); // exceed the 50ms TTL → the lock is stealable
+
+  const r = await api.post('/api/graph/active', { id: n1 });
+  assert.equal(r.status, 200, 'a stale lock does not block the user');
+  const g = (await api.get('/api/graph')).json;
+  assert.equal(g.active, n1, 'the user went where they clicked');
+
+  const preserved = g.nodes.find((n) => n.id !== n1);
+  assert.ok(preserved, 'the abandoned turn left a node behind');
+  const node = (await api.get('/api/graph/node/' + preserved.id)).json;
+  assert.equal(node.trigger.kind, 'preserve');
+  assert.match(node.trigger.summary, /abandoned/);
+  assert.equal(node.parent_id, n1, 'committed on the commit point the turn was working from');
+  assert.ok(node.mounts.some((m) => m.id === 'b'), 'the render survived the steal');
+});
