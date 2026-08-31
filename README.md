@@ -125,9 +125,10 @@ A few things worth knowing once you're past the first render:
 ```sh
 claude-web-chat trust                 # what's waiting
 claude-web-chat trust git-dashboard   # approve it (--deny refuses)
+claude-web-chat trust --all           # approve everything waiting, in one go
 ```
 
-The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`. See [`docs/service-components.md`](docs/service-components.md).
+The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. There is no `--yes`: the gate exists so that a human reads what is about to run. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`, so one name can have more than one request waiting; when it does, the listing prints a fingerprint for each and you pick one with `--params-fp <fingerprint>` (`--key` is the same flag, and either the fingerprint or the full trust key works). See [`docs/service-components.md`](docs/service-components.md).
 
 **Install a whole set at once — a component pack.** A pack is a git repository that installs as components *plus a Claude skill*, and the skill is the point: `list_components` is a **pull** (Claude only finds a component if it decides to look), while a skill's description sits in Claude's context from the start of the session. The same components shipped as a pack get used constantly instead of occasionally.
 
@@ -180,7 +181,9 @@ ls [--reap]         every web-chat surface running on this machine, and which
                     process is gone
 doctor              diagnose and repair daemon / lock / MCP / hook issues
 trust [name]        approve (or --deny) a component's host-side service.js;
-                    with no name, list what's waiting
+                    with no name, list what's waiting; --all takes everything
+                    waiting (or every variant of one name), --params-fp / --key
+                    picks one request when a name has several
 version             which version, and which tree it is actually running from
 stop | restart      stop or bounce the background server
 unlock              clear a turn lock orphaned by an interrupted turn
