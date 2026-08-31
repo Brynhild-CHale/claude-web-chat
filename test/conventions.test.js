@@ -577,6 +577,29 @@ const PATTERNS = [
       'public/app/storage.js': 6,
     },
   },
+  {
+    // Who may ask whether the socket is open — and therefore who may decide to
+    // DROP a frame. Every outbound site used to gate its own send on isOpen()
+    // and discard the frame otherwise, silently; since `hello` catches the
+    // client up in one direction only, the reconnect's reconcile then replaced
+    // the local copy with the daemon's pre-gap picture, so a store write or a
+    // pane restore made across a laptop sleep was lost at BOTH ends.
+    //
+    // ws.send() owns the decision now: it queues, coalesced, and drains after
+    // the reconnect's snapshot. The one importer left is deliberate and
+    // documented at the site — sendFormState returns rather than queueing,
+    // because the reconcile re-reads the live DOM, which is strictly fresher
+    // than any snapshot the queue could hold.
+    name: "isOpen imported from ws.js (deciding to drop a frame)",
+    home: 'public/app/ws.js — `send(frame)` queues on a closed socket and flushes from the `hello` handler',
+    what: 'gating an outbound frame on the socket and dropping it',
+    roots: ['public/app'],
+    re: /\bisOpen\b[^\n]*from '\.\/ws\.js'/g,
+    baseline: {
+      // sendFormState: NOT queued on purpose — see the comment there.
+      'public/app/mounts.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

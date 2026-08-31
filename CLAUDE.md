@@ -83,8 +83,9 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab grammar, or re-list the builtin names |
 | read/write a browser storage key in the chrome | `public/app/storage.js` (`getLocal`/`setLocal`/`getSession`/`getLocalJson`, all fail open) | touch `localStorage`/`sessionStorage` directly (the accessor throws in a private window) |
 | apply a full-surface snapshot frame in the chrome (`hello`, `reset`, `branch-here`, the restored live surface) | `public/app/mounts.js` (`applySnapshot(frame, {mode})` — owns the preview fold and the reconcile) | hand-roll `mountAll` + `fullReset` beside a frame handler (that is how `hello` lost the preview fork) |
+| send a frame to the daemon from the chrome | `public/app/ws.js` (`send(frame)` — queues on a closed socket, drains after the reconnect's snapshot) | gate on `isOpen()` and drop the frame (the loss is invisible at both ends) |
 | leave the detached node preview | `public/app/topbar.js` (`leavePreview({activeId, restoreSnapshot, flushForms})`) | hand-copy the `previewing = false` transition |
-| walk the graph as DRAWN (nav, forks, lineage, layout) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`) | `labels.childrenOf` — raw commit children, for the ⑃ branch picker only |
+| walk or LIST the graph as DRAWN (nav, forks, lineage, layout, the ⌘K palette) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`/`displayNodeList`) | `view.graphCache.nodes`, or `labels.childrenOf` — raw commit topology, for the ⑃ branch picker only |
 | dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |
