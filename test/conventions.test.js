@@ -189,6 +189,30 @@ const PATTERNS = [
     },
   },
   {
+    // The list walker. `querySelectorAll('li')` descends into nested lists, so a
+    // flat walk emits a nested item TWICE — once absorbed into its parent's
+    // text, once as an item of its own. The fix is one line and it was made
+    // three times: lib/capture/markdown.js filtered own children in two places,
+    // and reddit's bundled extractor carried a private `ownItems` copy because a
+    // bundle cannot require into the package. That copy is where the fix sat
+    // unpinned by any test.
+    //
+    // The home is lib/capture/profiles/util.js `listItems(el)`; article,
+    // simplify and markdown require it, and a bundle takes it off the injected
+    // ctx kit (CTX_HELPERS). The pattern matches the tag COMPARISON, so a walker
+    // spelled with its own tagOf() helper still trips it; the gmail block-tag
+    // list and the chrome's el('li') builder are not tag tests and do not.
+    name: "=== 'li' (the list-item walker)",
+    home: 'lib/capture/profiles/util.js — `listItems(el)`, injected into capture bundles as ctx.listItems',
+    what: 'walking a list\'s own <li> children',
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
+    re: /===\s*['"]li['"]/g,
+    baseline: {
+      'lib/capture/profiles/util.js': 1,
+    },
+  },
+  {
     // Hand-rolled path containment: `path.relative(...)` plus a `..` prefix
     // test. It is the wrong answer twice over — it says nothing about symlinks
     // (reads and writes follow them, so a link inside the fence walks out of
