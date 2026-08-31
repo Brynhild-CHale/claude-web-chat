@@ -502,6 +502,14 @@ test('no doc places the service trust store inside the project', () => {
 // rather than silently exempting itself.
 const RETIRED = [
   { name: 'pushEvent', now: 'lib/core/bus.js — `bus.emit({ event, ws })`, the one ring + WS pairing' },
+  // Not an identifier: a named emit that no longer exists. `literal` means the
+  // token must be absent from lib/ outright, not merely undeclared.
+  {
+    name: 'legacy-clear',
+    literal: true,
+    now: 'lib/server/domain/mounts.js — a capture clear goes through removeMount and DOES enter the ring, ' +
+      "so it is no longer an example of a ws-only emit (turns.js's reaim/lock frames are)",
+  },
 ];
 
 test('no shipped doc names an identifier a consolidation retired', () => {
@@ -517,15 +525,29 @@ test('no shipped doc names an identifier a consolidation retired', () => {
     }
   })(path.join(REPO_ROOT, 'lib'));
 
-  for (const { name, now } of RETIRED) {
+  for (const { name, literal, now } of RETIRED) {
     // Declared, not merely mentioned: the engines that replaced these names say
-    // so in their own comments, and a comment is not a re-introduction.
-    const declared = new RegExp(`(?:function|const|let|var)\\s+${name}\\b|\\b${name}\\s*[:(]\\s*(?:function|\\()`);
+    // so in their own comments, and a comment is not a re-introduction. A
+    // `literal` entry is a string rather than a binding, so any occurrence at all
+    // means it is back.
+    const declared = literal
+      ? new RegExp(name)
+      : new RegExp(`(?:function|const|let|var)\\s+${name}\\b|\\b${name}\\s*[:(]\\s*(?:function|\\()`);
     assert.ok(!sources.some((s) => declared.test(s)),
-      `\`${name}\` is declared under lib/ again — drop its RETIRED entry (it was replaced by ${now})`);
+      `\`${name}\` is back under lib/ — drop its RETIRED entry (it was replaced by ${now})`);
+    // A retired name may still be NAMED as the thing not to do — "hand-pair
+    // broadcast() + pushEvent()" is the engines table doing its job. What it may
+    // not be is presented as something a reader can reach for, so the window
+    // around each mention has to say it is gone or forbidden.
+    const excused = /hand-pair|no longer|used to|replaced by|retired|deleted|removed|is gone/i;
     for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
-      assert.ok(!new RegExp('`' + name + '`').test(body),
-        `${rel} names \`${name}\`, which nothing under lib/ defines any more. The engine is ${now}`);
+      const flat = flatten(body);
+      for (const m of flat.matchAll(new RegExp(`(?<![\\w-])${name}(?![\\w-])`, 'g'))) {
+        const near = flat.slice(Math.max(0, m.index - 120), m.index + 120);
+        assert.ok(excused.test(near),
+          `${rel} names \`${name}\` as something live (…${near.trim()}…), and nothing under lib/ has it any ` +
+          `more. The engine is ${now}`);
+      }
     }
   }
 });

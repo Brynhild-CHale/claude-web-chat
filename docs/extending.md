@@ -340,8 +340,8 @@ two can't drift — there is no projection layer between them to get out of sync
 - `emit({ event, ws, except })` — `event` (if given) becomes a ring entry (seq/ts
   assigned, spread last so a per-event `seq` can override) and fans out to
   subscribers; `ws` (a frame or an array of frames) broadcasts to sockets, skipping
-  `except`. Order is event → WS. A **ws-only** emit (e.g. capture's legacy-clear)
-  never enters the ring; an **event-only** emit (export) sends no frame.
+  `except`. Order is event → WS. A **ws-only** emit (e.g. `turns.js`'s
+  `reaim:pending` notice, or a lock frame) never enters the ring; an **event-only** emit (export) sends no frame.
 - `read({ since, kinds })` — the ONE catch-up/gap impl, shared by `GET /api/events`
   and the SSE replay (`gap`/`dropped` computed off the **full** ring's oldest, so a
   kind filter never hides a gap).
