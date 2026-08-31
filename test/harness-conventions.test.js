@@ -101,7 +101,7 @@ const PATTERNS = [
       // promise so the test can emit a wake only once the bridge is listening.
       // openSSE cannot stand in for a dependency of the code under test.
       'test/channel-ack.test.js': 2,
-      'test/channel-bridge.test.js': 7,
+      'test/channel-bridge.test.js': 8,
     },
   },
   {
