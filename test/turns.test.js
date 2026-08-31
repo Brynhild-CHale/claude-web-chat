@@ -172,7 +172,11 @@ test('commitNode (turn-end params): node + node-added frame carry label + unlock
   assert.equal(node.parent_id, null);
   assert.equal(node.trigger.kind, 'turn');
   assert.equal(node.trigger.summary, 'do it');
-  assert.deepEqual(node.mounts, [{ id: 'm1', html: '<p>a</p>', target: 'main' }]);
+  // Mounts are snapshotted THROUGH hydrateMount, so the record carries exactly
+  // id + SNAPSHOT_FIELDS — omitted fields present-but-undefined in memory, and
+  // dropped on the way to disk by JSON.stringify (see graph-persistence.test.js).
+  assert.deepEqual(Object.keys(node.mounts[0]), ['id', ...turns.SNAPSHOT_FIELDS]);
+  assert.deepEqual(JSON.parse(JSON.stringify(node.mounts)), [{ id: 'm1', html: '<p>a</p>', target: 'main' }]);
   const e = bus.emits[0];
   assert.deepEqual(e.event, { kind: 'graph', op: 'turn-end', id: 'n0' });
   assert.equal(e.ws.type, 'node-added');

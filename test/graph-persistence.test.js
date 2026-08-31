@@ -8,7 +8,10 @@
 //   * a node file that fails the read is MOVED ASIDE, and its id stays claimed,
 //     so the next commit can never land on top of it;
 //   * a torn graph/_meta.json is moved aside before the recovery rewrites it,
-//     and the rewrite is best-effort — boot does not depend on the heal.
+//     and the rewrite is best-effort — boot does not depend on the heal;
+//   * a committed mount carries exactly the fields hydrateMount reads back
+//     (id + SNAPSHOT_FIELDS), so the live-only `gen` never reaches node bytes
+//     (decision D18).
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -16,6 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { withServer, tmpRoot } = require('../test-support/helpers');
+const { SNAPSHOT_FIELDS } = require('../lib/server/domain/turns');
 
 let clock = 1000;
 function node(id, parent_id, extra = {}) {
@@ -124,4 +128,72 @@ test('graph: boot completes even when the meta heal cannot be written', (t) => {
   assert.doesNotThrow(() => graph.load());
   assert.equal(graph.active, 'n1', 'the recovery still ran; only its persistence failed');
   assert.equal(asideFor(dir, '_meta.json').length, 1, 'and the unreadable bytes were still kept');
+});
+
+// ── One field authority: writer == reader ──────────────────────────────────
+
+test('graph: a committed mount carries exactly id + SNAPSHOT_FIELDS (no live-only gen)', async (t) => {
+  const { createGraph } = require('../lib/server/graph');
+  const turns = require('../lib/server/domain/turns');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-graph-'));
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  const dir = graphDir(root);
+
+  // A live mount record as domain/mounts setMount builds one: every persisted
+  // field set, plus the live-only re-render counter.
+  const state = {
+    store: { k: 1 }, comments: [], captures: [], queue: [], commentSeq: 0, captureSeq: 0,
+    mounts: new Map([['m1', {
+      html: '<p>x</p>', target: 'main', params: { routing: 'none' }, component: 'form-signoff',
+      pane_state: { colSpan: 6 }, form_state: { '#a:0': { value: 'typed' } },
+      theme: { tokens: {} }, owner: 'claude', gen: 3,
+    }]]),
+  };
+  const graph = createGraph({ paths: { GRAPH_DIR: dir, META_PATH: path.join(dir, '_meta.json') }, state });
+  graph.load();
+
+  const bus = { emit() {} };
+  const r = turns.commitNode(graph, bus, {
+    draftPath: path.join(root, 'draft.json'), parentId: null, author: 'claude',
+    triggerKind: 'turn', message: 'm', summary: 's',
+    clearLock: false, op: 'commit', includeLabelAndUnlock: false,
+  });
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, `${r.node_id}.json`), 'utf8'));
+  assert.deepEqual(
+    Object.keys(onDisk.mounts[0]),
+    ['id', ...SNAPSHOT_FIELDS],
+    'the node file holds exactly what hydrateMount will read back'
+  );
+  assert.equal('gen' in onDisk.mounts[0], false, 'D18: gen is live-only and never reaches node bytes');
+  // The snapshot in memory agrees with the file (nothing is dropped only by
+  // JSON.stringify happening to skip an undefined).
+  assert.deepEqual(Object.keys(graph.snapshotLive().mounts[0]), ['id', ...SNAPSHOT_FIELDS]);
+});
+
+test('graph: a real render/turn-end round trip writes no gen into the node or the draft', async (t) => {
+  const { api, webChatDir, graceful } = await withServer(t);
+
+  await api.post('/api/render', { id: 'p1', html: '<p>one</p>' });
+  await api.post('/api/render', { id: 'p1', html: '<p>two</p>' }); // bumps gen to 1
+  await api.post('/api/turn-begin', { message: 'hi' });
+  const end = await api.post('/api/turn-end', {});
+  assert.equal(end.json.ok, true);
+
+  const dir = path.join(webChatDir, 'graph');
+  const nodeFile = fs.readdirSync(dir).find((f) => /^n\d+\.json$/.test(f));
+  const committed = JSON.parse(fs.readFileSync(path.join(dir, nodeFile), 'utf8'));
+  const allowed = new Set(['id', ...SNAPSHOT_FIELDS]);
+  for (const k of Object.keys(committed.mounts[0])) {
+    assert.ok(allowed.has(k), `committed mount key ${k} is not in id + SNAPSHOT_FIELDS`);
+  }
+  assert.equal(committed.mounts[0].html, '<p>two</p>');
+
+  // The draft takes the same projection — its reader (loadDraft) is hydrateMount too.
+  await api.post('/api/render', { id: 'p2', html: '<p>uncommitted</p>' });
+  await graceful();
+  const draft = JSON.parse(fs.readFileSync(path.join(webChatDir, 'draft.json'), 'utf8'));
+  for (const m of draft.mounts) {
+    for (const k of Object.keys(m)) assert.ok(allowed.has(k), `draft mount key ${k} is not in id + SNAPSHOT_FIELDS`);
+  }
 });
