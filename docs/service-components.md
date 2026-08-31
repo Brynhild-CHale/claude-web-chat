@@ -97,7 +97,7 @@ debounced `reconcile()` that diffs the *desired* set of children against the
 | State | When | How |
 | --- | --- | --- |
 | **running** | the pane is a live mount on the active node **and** ≥1 browser is connected | reconcile spawns it |
-| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, or `service.js` is edited | reconcile stops it |
+| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, or the pane is re-used with different params | reconcile stops it |
 | **respawned** | you navigate back / a viewer reconnects | reconcile spawns a fresh child |
 
 The desired set is derived from `state.mounts` — which *is* the active surface,
@@ -105,7 +105,9 @@ because `graph.restoreLiveToNode` repopulates it before the graph event fires. S
 navigating away (which empties or replaces `state.mounts`) stops the service, and
 navigating back restarts it. **Suspend == stop, resume == respawn**: v1 keeps no
 warm state, so a service must be cheap to start and idempotent. A crash is
-recorded and not hot-looped — the child won't respawn until `service.js` changes.
+recorded and not hot-looped — the child won't respawn until `service.js` changes
+or the pane leaves the surface: `prune()` drops the crash block with the pane, so
+a mount id is not held unusable once something else is mounted under it.
 
 ## Trust
 

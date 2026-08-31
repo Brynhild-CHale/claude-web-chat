@@ -552,3 +552,23 @@ test('the control-key section says a control value is untrusted input', () => {
     'the page or any local process, and git-dashboard allowlists it before it reaches argv precisely because an ' +
     'option-shaped value becomes a git option — say so where authors are told to build one');
 });
+
+test('the lifecycle table lists every stop trigger the supervisor has', () => {
+  const supervisor = read('lib/server/services.js');
+  // Identity is the trust key (hash + root + params fingerprint), so a re-use of
+  // the pane with different params stops the child exactly as an edit does.
+  assert.match(supervisor, /if \(!d \|\| d\.key !== entry\.key\) stop\(mountId\)/,
+    'the supervisor no longer stops on an identity change — the lifecycle table was written against that line');
+  assert.match(supervisor, /if \(!onSurface\.has\(mountId\)\) failed\.delete\(mountId\)/,
+    'prune() no longer drops the crash block with the pane — re-read the Lifecycle section');
+
+  const lifecycle = read('docs/service-components.md').match(/## Lifecycle[\s\S]*?## Trust/);
+  assert.ok(lifecycle, 'docs/service-components.md no longer has its Lifecycle section');
+  const flat = flatten(lifecycle[0]);
+  assert.match(flat, /different params/,
+    'the **stopped** row omits the params half of the identity: re-using a pane with different params stops the ' +
+    'child, which is the whole reason `file-editor --unfenced` cannot ride the fenced approval');
+  assert.match(flat, /leaves the surface|prune/,
+    "the crash paragraph still says a crashed child waits for a `service.js` edit; prune() also lifts the block " +
+    'when the pane leaves the surface');
+});
