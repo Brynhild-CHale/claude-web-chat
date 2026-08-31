@@ -97,3 +97,33 @@ test('owner survives a turn-end commit and restore', async (t) => {
   const rm = mounts.mounts.find((m) => m.id === 'owned');
   assert.equal(rm.owner, 'service:svc');
 });
+
+// ── guardDriver: a fire-and-forget rejection never kills the process ────────
+// The client contract rejects where it used to hang (dead socket, non-2xx), so
+// a service child's unawaited store push would become an unhandled rejection —
+// fatal in Node — and the supervisor would crash-block that service version.
+test('guardDriver: an unawaited rejection is contained, an awaited one still throws', async () => {
+  const { guardDriver } = require('../lib/driver');
+  const reported = [];
+  const fake = {
+    owner: 'svc:fake',
+    setStore: () => Promise.reject(new Error('boom')),
+    getStore: () => Promise.resolve({ ok: true }),
+  };
+  const guarded = guardDriver(fake, (method, e) => reported.push(`${method}:${e.message}`));
+
+  // Unawaited: without the guard this rejection is unhandled and Node exits 1.
+  let unhandled = null;
+  const trap = (e) => { unhandled = e; };
+  process.once('unhandledRejection', trap);
+  guarded.setStore({ k: 1 }); // fire-and-forget, the service-child idiom
+  await new Promise((r) => setImmediate(() => setImmediate(r)));
+  process.removeListener('unhandledRejection', trap);
+  assert.equal(unhandled, null, 'the guard consumed the rejection');
+  assert.deepEqual(reported, ['setStore:boom'], 'and reported it once, naming the method');
+
+  // Awaited: the caller's own handling still sees the rejection unchanged.
+  await assert.rejects(() => guarded.setStore({ k: 2 }), /boom/, 'await still rejects');
+  assert.deepEqual(await guarded.getStore(), { ok: true }, 'resolving calls pass through');
+  assert.equal(guarded.owner, 'svc:fake', 'non-function properties are copied');
+});
