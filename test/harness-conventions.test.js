@@ -303,3 +303,66 @@ test('harness: every server a test binds names LOOPBACK, never the wildcard', ()
   assert.deepEqual(offenders, [],
     `a test bound the wildcard address. Pass the host: .listen(port, '127.0.0.1', cb) — or LISTEN_HOST from lib/core/cors — so the kernel cannot hand out a port another process already holds on loopback:\n  ${offenders.join('\n  ')}`);
 });
+
+// ── the shared-shell pseudo-test ─────────────────────────────────────────────
+//
+// A jsdom shell file boots ONCE (the ESM cache hands a second import the same
+// already-initialised modules), and several of them do that boot inside a
+// `test()` that asserts almost nothing and exists only to set up the tests
+// below it. Three things follow, and all three were live in
+// components-panel.test.js:
+//
+//   * `--test-name-pattern` cannot run a single case from the file. The pattern
+//     filters out the boot too, so every remaining test runs against an unbooted
+//     shell and fails. Measured before the fix: all 26 of components-panel's
+//     cases failed when run alone.
+//   * A test that mutates the shared fixture restores it at the END of its body,
+//     which is precisely where a failing assertion never reaches. One broken
+//     assertion in the cache test took the ⌘K palette test down with it — an
+//     innocent bystander reported as a second failure, burying the real cause.
+//   * Ordering becomes load-bearing invisibly: the palette case passed only
+//     because the test above it happened to leave `deploy-board` in the cache.
+//
+// The fix is not a bigger fixture, it is `before` (boot, not counted as a test)
+// + `beforeEach` (put the mutable state back BEFORE each test, so a throw cannot
+// skip it) + `after` (teardown). components-panel.test.js is the worked example.
+//
+// Shrink-only, with a named baseline: seven shell files still do it, converting
+// them is not this ratchet's job, and the baseline exists so the number can only
+// go down.
+const SHELL_BOOT = /^test\(\s*(['"`])(?:boot|set ?up)/gim;
+
+// Gated on the file actually building a jsdom shell, so a genuine test ABOUT
+// booting something else (lock-ttl's "boot clears a stale lock persisted in
+// _meta.json") is not swept up by the name alone.
+const SHELL_BOOT_BASELINE = {
+  'test/graph-collapse-chrome.test.js': 1,
+  'test/graph-nav-chrome.test.js': 1,
+  'test/graph-view-chrome.test.js': 1,
+  'test/leave-preview-chrome.test.js': 1,
+  'test/service-trust-dismiss.test.js': 1,
+  'test/shell-chrome.test.js': 1,
+  'test/snapshot-applier.test.js': 1,
+};
+
+test('harness: a shared jsdom shell boots in a `before` hook, not in a test', () => {
+  const actual = {};
+  for (const f of walk(path.join(REPO_ROOT, 'test'), [])) {
+    if (path.resolve(f) === path.resolve(__filename)) continue;
+    const src = fs.readFileSync(f, 'utf8');
+    if (!src.includes('new JSDOM(')) continue;
+    const m = src.match(SHELL_BOOT);
+    if (m && m.length) actual[relPosix(f)] = m.length;
+  }
+
+  for (const [file, n] of Object.entries(actual)) {
+    const allowed = SHELL_BOOT_BASELINE[file] || 0;
+    assert.ok(n <= allowed,
+      `${file} boots its shared shell inside a test() (${n}, baseline ${allowed}). A boot registered as a test is skipped by --test-name-pattern, so no single case in the file can be run on its own. Move it to before(), reset the mutable fixture in beforeEach(), tear down in after() — see test/components-panel.test.js.`);
+  }
+  for (const [file, n] of Object.entries(SHELL_BOOT_BASELINE)) {
+    const cur = actual[file] || 0;
+    assert.ok(cur >= n,
+      `STALE baseline: ${file} now has ${cur} shared-shell pseudo-tests but the baseline says ${n}. Lower or remove this entry in test/harness-conventions.test.js.`);
+  }
+});

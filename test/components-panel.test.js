@@ -19,6 +19,7 @@
 //   * Spawning uses a STABLE slot, so panes stop stacking forever.
 
 const test = require('node:test');
+const { before, beforeEach, after } = test;
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
@@ -27,9 +28,19 @@ const { pathToFileURL } = require('url');
 
 const REPO = path.resolve(__dirname, '..');
 
-// ── one boot for the whole file (the ESM cache would hand a second import the
-// same already-initialised modules; node --test gives each FILE its own process)
-let W, $, tick, calls, routes, press, focusOn;
+// ── ONE boot for the whole file, in a `before` hook (the ESM cache would hand a
+// second import the same already-initialised modules; node --test gives each
+// FILE its own process). It is a hook and not a test on purpose: as a test it was
+// skipped by --test-name-pattern, so running any single case from this file
+// failed on an unbooted shell.
+//
+// Everything a test is allowed to mutate — `routes`, `fetchImpl`, the drawer, the
+// clipboard, the component cache — is put back by `beforeEach` BEFORE each test
+// rather than by a restore at the end of the body that wrote it. An end-of-body
+// restore is skipped the moment an assertion above it throws, so one real failure
+// used to cascade into unrelated ones and bury its own cause.
+let W, dom, $, tick, calls, routes, press, focusOn;
+let savedGlobals, savedTimers, componentsMod, baseFetch;
 // The modules capture the BARE global `fetch` at import time, so a test cannot
 // swap responses by reassigning window.fetch afterwards — the global still points
 // at the original. One indirection, and `withFetch` swaps what it delegates to.
@@ -44,23 +55,27 @@ function jsonRes(body) {
   return { ok: true, status: 200, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) };
 }
 
-test('boot the shell', async () => {
+// The routes every test starts from. A FACTORY, so a test that rewrites an entry
+// cannot reach into the next test's copy.
+const baselineRoutes = () => ({
+  '/api/graph': { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' },
+  '/api/components': { components: [] },
+  '/api/packs': { ok: true, packs: [], quarantined: [] },
+  '/api/services/pending': { ok: true, pending: [] },
+  '/api/themes': { themes: [] },
+});
+
+before(async () => {
   const html = fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8')
     .replace(/<script[^>]*><\/script>/g, '');
-  const dom = new JSDOM(html, { url: 'http://localhost:5173/', pretendToBeVisual: true });
+  dom = new JSDOM(html, { url: 'http://localhost:5173/', pretendToBeVisual: true });
   W = dom.window;
 
   W.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} };
 
   calls = [];
-  routes = {
-    '/api/graph': { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' },
-    '/api/components': { components: [] },
-    '/api/packs': { ok: true, packs: [], quarantined: [] },
-    '/api/services/pending': { ok: true, pending: [] },
-    '/api/themes': { themes: [] },
-  };
-  fetchImpl = async (url, opts) => {
+  routes = baselineRoutes();
+  baseFetch = async (url, opts) => {
     calls.push({ url, opts, body: opts && opts.body ? JSON.parse(opts.body) : null });
     for (const [k, v] of Object.entries(routes)) {
       if (url === k) return jsonRes(typeof v === 'function' ? v() : v);
@@ -68,9 +83,12 @@ test('boot the shell', async () => {
     if (url.startsWith('/api/theme')) return jsonRes({ name: 'web-chat' });
     return jsonRes({ ok: true });
   };
+  fetchImpl = baseFetch;
   W.fetch = (...a) => fetchImpl(...a);
 
   const saved = {};
+  savedGlobals = saved;
+  savedTimers = { setInterval: global.setInterval, requestAnimationFrame: global.requestAnimationFrame, cancelAnimationFrame: global.cancelAnimationFrame };
   // EventTarget/Event/CustomEvent must come from the SAME realm: public/app/bus.js
   // constructs an EventTarget at import time and dispatches CustomEvents at it,
   // and Node's EventTarget rejects a jsdom CustomEvent as "not an Event".
@@ -92,6 +110,7 @@ test('boot the shell', async () => {
   W.__wcMount = require(path.join(REPO, 'public/mount-runtime.js'));
 
   await import(pathToFileURL(path.join(REPO, 'public/app/main.js')).href);
+  componentsMod = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);
 
   $ = (id) => W.document.getElementById(id);
   tick = () => new Promise((r) => setTimeout(r, 25));
@@ -102,6 +121,25 @@ test('boot the shell', async () => {
   focusOn = (el) => { el.focus(); el.dispatchEvent(new W.FocusEvent('focusin', { bubbles: true })); };
   await tick();
   assert.ok($('drawer'), 'the drawer exists');
+});
+
+after(async () => {
+  // Cancel the shell's own pending timers FIRST. showReaimNote arms a 6-second
+  // dismissal that calls document.getElementById — it outlives the run, and once
+  // the globals below are restored it fires against Node's (absent) `document`
+  // and surfaces as an uncaughtException attributed to whichever test armed it.
+  const topbar = await import(pathToFileURL(path.join(REPO, 'public/app/topbar.js')).href);
+  clearTimeout(topbar.showReaimNote._t);
+
+  // Put the realm's globals back. The boot aliases a dozen of them onto `global`
+  // so the app modules see jsdom's, and a test file that leaves them there hands
+  // the next thing in this process a dead window.
+  for (const [k, v] of Object.entries(savedGlobals || {})) {
+    try { Object.defineProperty(global, k, { value: v, configurable: true, writable: true }); }
+    catch { try { global[k] = v; } catch {} }
+  }
+  Object.assign(global, savedTimers || {});
+  try { if (dom) dom.window.close(); } catch {}
 });
 
 const drawerOpen = () => !$('drawer').classList.contains('hidden');
@@ -116,6 +154,21 @@ const key = (k, target) => (target || W.document).dispatchEvent(new W.KeyboardEv
 async function openDrawer() {
   if (!drawerOpen()) { press($('btn-add')); await tick(); }
 }
+
+// Every test starts from the same shell: baseline routes, the un-wrapped fetch,
+// an empty call log, a cold component cache, a closed drawer on the Library tab,
+// and no clipboard override. Resetting BEFORE each test rather than after means a
+// test that throws half-way still leaves the next one a clean surface.
+beforeEach(async () => {
+  routes = baselineRoutes();
+  fetchImpl = baseFetch;
+  setClipboard(undefined);
+  componentsMod.invalidate();
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  press($('drawer-tab-library'));
+  await tick();
+  calls.length = 0;
+});
 
 // ── the button ──────────────────────────────────────────────────────────────
 
@@ -261,7 +314,6 @@ test('a service awaiting approval says so, and names the terminal command', asyn
   assert.ok([...row.querySelectorAll('.de-chip')].some((c) => /needs approval/.test(c.textContent)));
   const cmd = row.querySelector('.rn-cmd');
   assert.equal(cmd.textContent, 'claude-web-chat trust deploy-board');
-  routes['/api/services/pending'] = { ok: true, pending: [] };
 });
 
 // ── spawning ────────────────────────────────────────────────────────────────
@@ -560,7 +612,6 @@ test('with no pack routes on the daemon, Manage degrades to a sentence and a com
   assert.match(manage.textContent, /Not wired to this build yet/);
   assert.equal(manage.querySelector('.rn-cmd').textContent, 'claude-web-chat pack get <repository-url>');
   assert.equal(manage.querySelector('.pk-url'), null, 'and offers no form it could not honour');
-  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
 });
 
 // ── the shared cache ────────────────────────────────────────────────────────
@@ -586,13 +637,27 @@ test('a `components` WS frame invalidates the ONE cache the palette also reads',
 });
 
 test('the ⌘K palette offers Component packs… and lists components from that one cache', async () => {
-  if (drawerOpen()) { key('Escape'); await tick(); }
+  // Warm the shared cache the way the shell does, THEN install, THEN invalidate —
+  // the same sequence the test above pins, driven here rather than inherited from
+  // it. (This case used to read whatever cache the preceding test happened to
+  // leave behind, so it passed for a reason that had nothing to do with the
+  // palette and failed outright when run on its own.)
+  routes['/api/components'] = { components: [{ name: 'before-install', description: 'd', location: 'local' }] };
+  await componentsMod.components();
+  routes['/api/components'] = { components: [
+    { name: 'before-install', description: 'd', location: 'local' },
+    { name: 'deploy-board', description: 'from a pack', location: 'local' },
+  ] };
+  componentsMod.invalidate();   // what the ws `components` handler calls
+
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'k', metaKey: true }));
   await tick();
   const labels = [...$('cmd-list').querySelectorAll('.palette-item')].map((r) => r.textContent);
   assert.ok(labels.some((l) => l.includes('Component packs…')));
-  assert.ok(labels.some((l) => l.includes('deploy-board')), 'the freshly-installed component is here without a reload');
+  assert.ok(labels.some((l) => l.includes('deploy-board')),
+    'the palette reads the ONE shared cache, so a freshly-installed component is here without a reload');
   key('Escape');
+  await tick();
 });
 
 test('a transient fetch failure does NOT poison the component cache for the session', async () => {
@@ -621,8 +686,6 @@ test('a transient fetch failure does NOT poison the component cache for the sess
 // behalf), so the job is purely to make getting the command out of here trivial.
 
 test('installing a pack with services shows ONE command covering all of them', async () => {
-  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
-  if (drawerOpen()) { key('Escape'); await tick(); }
   await openDrawer();
   press($('drawer-tab-manage'));
   await tick();
@@ -655,8 +718,6 @@ test('installing a pack with services shows ONE command covering all of them', a
 });
 
 test('a single service names that service, rather than --all', async () => {
-  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
-  if (drawerOpen()) { key('Escape'); await tick(); }
   await openDrawer();
   press($('drawer-tab-manage'));
   await tick();
@@ -709,15 +770,10 @@ test('every command notice carries a copy button that puts it on the clipboard',
   await tick();
   assert.deepEqual(copied, ['claude-web-chat trust --all']);
   assert.match(copy.textContent, /copied/);
-
-  routes['/api/services/pending'] = { ok: true, pending: [] };
-  setClipboard(undefined);
 });
 
 test('a clipboard that refuses does not throw — the command is still selectable', async () => {
   setClipboard({ writeText: async () => { throw new Error('denied'); } });
-  routes['/api/packs'] = { ok: true, quarantined: [], packs: [] };
-  if (drawerOpen()) { key('Escape'); await tick(); }
   await openDrawer();
   press($('drawer-tab-manage'));
   await tick();
@@ -733,6 +789,4 @@ test('a clipboard that refuses does not throw — the command is still selectabl
   press(copy);
   await tick();
   assert.match(copy.textContent, /select it/, 'it says so rather than lying or throwing');
-  setClipboard(undefined);
-  routes['/api/packs'] = { ok: true, packs: [], quarantined: [] };
 });
