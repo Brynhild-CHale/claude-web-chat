@@ -156,7 +156,7 @@ were the only places they lived.
 | resolve + scheme-gate an href/src read out of a captured page | `capture/profiles/util` `safeHref(href, pageUrl)` | `new URL` plus your own `javascript:` regex |
 | render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `capture/pane` `renderProfilePane` / `renderSimplifiedPane` / `defaultReduce` | import them from `lib/server/routes/capture` |
 | read, validate and require a capture-profile bundle | `capture/profiles` `loadBundle(dir)` / `validateMeta(meta)` | a second reader of `profile.json` with its own acceptance rules |
-| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is the only alternative) |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is NOT the alternative — extend the kit) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
@@ -891,6 +891,7 @@ Current homes (baselines can only shrink toward these):
 | `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |
 | `fullReset(` / `mountAll(` **in `public/app` only** | `public/app/mounts.js` — `applySnapshot` is the one snapshot path and these are its internals; the single grandfathered call outside it is `topbar.previewNode`, which puts a non-live node ON the DOM while `previewing` is already true | landed with the snapshot applier ✅ |
 | `view.liveSnapshot =` **in `public/app` only** | `public/app/mounts.js` (`applySnapshot`'s fold) · `public/app/topbar.js` (`previewNode` captures it, `leavePreview` drops it) — the other half of the same defect: who may replace the folded live surface | landed with the snapshot applier ✅ |
+| `=== 'li'` (the list-item walker) | `lib/capture/profiles/util.js` (`listItems(el)`) — required by `article`/`simplify`/`markdown`, and injected into capture bundles as `ctx.listItems`, which is the only way a bundle can reach it. A flat `querySelectorAll('li')` emits a nested item twice | landed with the ctx-kit list walker ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 
 Working with it:
