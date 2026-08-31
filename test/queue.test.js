@@ -10,6 +10,7 @@ const path = require('path');
 const { withServer, waitUntil, openSSE } = require('../test-support/helpers');
 const { createBus } = require('../lib/core/bus');
 const queue = require('../lib/server/domain/queue');
+const { LAUNCH_COMMAND } = require('../lib/core/channels');
 
 const HTML = '<html><head><title>Doc</title></head><body><p>hi</p></body></html>';
 
@@ -338,7 +339,10 @@ test('queue: GET /api/queue/policy carries the server-sent activation hint (B8)'
   assert.ok(json.activation_hint, 'the rail notice text rides the policy response');
   assert.ok(json.activation_hint.title, 'has a title');
   assert.ok(json.activation_hint.body, 'has a body');
-  assert.match(json.activation_hint.command, /WEB_CHAT_CHANNEL=1/, 'carries the launch incantation');
+  // The WHOLE string, against lib/core/channels' constant. A prefix match on
+  // `WEB_CHAT_CHANNEL=1` was satisfied by the pre-fix command too — the one that
+  // dropped the `server:web-chat` argument and so activated nothing.
+  assert.equal(json.activation_hint.command, LAUNCH_COMMAND, 'carries the launch incantation verbatim');
 });
 
 test('queue: editing a queued shared pin refreshes its summary + emits update, no re-enqueue (F9)', async (t) => {
