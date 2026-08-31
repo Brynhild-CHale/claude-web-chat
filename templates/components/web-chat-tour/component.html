@@ -152,8 +152,9 @@
   // actually happening, a declared signal actually being written — never on a
   // "Next" button. Each also offers `skip →`, so no step can dead-end.
   //
-  // DOM access is through `root` (this pane's shadow root). `document.*` cannot
-  // see into a shadow root and would kill the script at mount.
+  // DOM queries go through `root` (this pane's shadow root): document.querySelector
+  // and getElementById cannot see into a shadow root and would kill the script at
+  // mount. (document.createElement is unaffected — only the lookups break.)
   var role = params.role === 'mirror' ? 'mirror' : 'guide';
   var $ = function (id) { return root.getElementById(id); };
   var read = function () { var v = store.get('tour_scratch'); return (v && typeof v === 'object') ? v : {}; };

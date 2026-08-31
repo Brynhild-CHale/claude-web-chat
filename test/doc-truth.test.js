@@ -27,6 +27,7 @@ const {
   flatten,
   cliCommands,
   mcpTools,
+  toolDescriptions,
   ctxKeys,
   patternNames,
   routePaths,
@@ -414,6 +415,37 @@ test('no doc tells anyone to reference a graph node by its stored id', () => {
       assert.fail(
         `${rel} names the node id \`${m[0]}\` (…${near}…). Nodes are referenced by the hierarchical LABEL the ` +
         'graph viewer shows (n1.4, n2.0); the stored id is opaque and the user never sees it');
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Pane scripts and the shadow root.
+//
+// Only document *queries* fail inside a shadow root. The wholesale ban that
+// stood in the rules file, `render`'s description and the pack checklist also
+// forbade `document.createElement` — which is how every shipped pane builds DOM
+// from data, and the alternative the pack doc's own §4 warns against is
+// `innerHTML` with interpolation, the bug class it says already shipped once.
+// So: a prohibition of `document` in the shipped prose has to name the queries.
+test('the shadow-root rule bans document QUERIES, not document.createElement', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('../test-support/doc-truth');
+  // The other direction: the ban is only wrong because the sanctioned API is in
+  // use. If no shipped pane builds DOM this way, re-read the rule before this.
+  const panes = fs.readdirSync(path.join(REPO_ROOT, 'templates/components'))
+    .map((d) => path.join(REPO_ROOT, 'templates/components', d, 'component.html'))
+    .filter((f) => fs.existsSync(f));
+  assert.ok(panes.some((f) => /document\.createElement/.test(fs.readFileSync(f, 'utf8'))),
+    'no shipped pane uses document.createElement any more — re-check the guidance this test protects');
+
+  for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+    const flat = flatten(body);
+    for (const m of flat.matchAll(/(?:never|no)\s+(?:\*\*)?`document([^`]*)`(.{0,80})/gi)) {
+      assert.ok(/quer|getElementById/i.test(m[1] + m[2]),
+        `${rel} forbids \`document${m[1]}\` without saying it is the QUERIES that break ("${m[0].trim()}"). ` +
+        'document.createElement/createTextNode work fine in a pane and are the safe way to build DOM from data');
     }
   }
 });

@@ -51,7 +51,7 @@ The activity layer tells you *that* the user interacted; a **declared signal** t
 - Give the pane an explicit affordance — an "Apply" / "Send" / "Next" / "Ask Claude" button — that writes **one signal key** to the store when clicked: e.g. `store.set({ form_submit: { seq: <n>, payload: {...} } })`. Bump `seq` (a counter or timestamp) on every click so repeats are distinguishable.
 - **Declare that key on the `render`** (or on the `use_component` — it takes the same `signals` and `force`) — `signals: [{ key: 'form_submit', wake: 'queue' }]`. A declared `wake:'queue'` key folds a browser write to it into the queue rail as a named item (delivered when the user hits Push); `wake:'immediate'` wakes you the instant the pane writes it, bypassing the queue — reserve it for explicit "Ask Claude now" affordances. Declaring the signal *is* the whole reactive primitive: no wait to arm, no loop to background.
 - Tell the user the signal key in chat ("the panel sends to `form_submit` when you hit Apply") so they know what's captured and what triggers you.
-- In pane scripts, query the DOM via the injected `root` (the pane's shadow root) — **never `document.*`**, which cannot see into the shadow DOM and kills the script at mount.
+- In pane scripts, query the DOM via the injected `root` (the pane's shadow root) — **never `document.querySelector`/`getElementById`**, which cannot see into the shadow DOM and kills the script at mount. Only the *queries* break: `document.createElement`/`createTextNode` are fine, and are the way to build DOM from data rather than interpolating it into `innerHTML`.
 
 ### How you get woken, and how you catch up
 

@@ -127,6 +127,23 @@ function mcpTools() {
     .sort();
 }
 
+// The prose the MCP tools ship. CLAUDE.md calls these descriptions load-bearing
+// because Claude picks and interprets a tool by reading one, so a wrong sentence
+// here is acted on exactly like a wrong line in the rules file — same doc set,
+// same claim checks. Required (not source-parsed): a tool module pulls in
+// lib/mcp/client, which has no side effects at require time.
+function toolDescriptions() {
+  return mcpTools().map((name) => {
+    const mod = require(path.join(REPO_ROOT, 'lib', 'mcp', 'tools', `${name}.js`));
+    const parts = [mod.description || ''];
+    const props = (mod.inputSchema && mod.inputSchema.properties) || {};
+    for (const key of Object.keys(props)) {
+      if (props[key] && props[key].description) parts.push(props[key].description);
+    }
+    return { rel: `lib/mcp/tools/${name}.js`, body: parts.join('\n\n') };
+  });
+}
+
 // The keys the route ctx literal in lib/server/index.js actually carries — the
 // contract CLAUDE.md tells a contributor to code a new route against.
 function ctxKeys() {
@@ -231,6 +248,7 @@ module.exports = {
   flatten,
   cliCommands,
   mcpTools,
+  toolDescriptions,
   ctxKeys,
   patternNames,
   routePaths,
