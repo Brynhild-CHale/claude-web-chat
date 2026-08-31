@@ -69,6 +69,71 @@ function zOf(selector) {
   return Number(hit.value);
 }
 
+/* ================== dead selectors in the stylesheet ================== */
+// A class rule whose class nothing in the product ever sets is not inert
+// documentation: it reads like live chrome. app.css carried four such families
+// at once — .qchip (the rail's collapsed chips, renamed .rail-chip long ago,
+// keyframes and all), .rchip (the graph history row chips), .pin-menu-text and
+// .spacer — plus a .update-banner.ok success state for the one-click update
+// flow version.js's own header says was removed. Each described a surface that
+// does not exist, and one of them had a stale comment to match.
+//
+// The rule: every class this sheet styles must be a class something can
+// actually set. The allowlist below is for names COMPOSED at runtime, which is
+// the only legitimate way a class can be absent from the source.
+
+// Classes named by a selector in app.css. Walks the sheet, taking the text
+// before each `{` as a selector list and skipping at-rule preludes, so a
+// declaration value (`.35s`, `1.4`) can never be mistaken for a class.
+function cssClasses() {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out = new Set();
+  let depth = 0, buf = '';
+  for (const ch of css) {
+    if (ch === '{') {
+      const sel = buf.trim();
+      // At depth 1 the "selector" may be a nested rule inside @media — both are
+      // real selector lists; only an at-rule prelude (@media, @keyframes) is not.
+      if (sel && !sel.startsWith('@')) for (const m of sel.matchAll(/\.([A-Za-z][A-Za-z0-9_-]*)/g)) out.add(m[1]);
+      buf = ''; depth++;
+    } else if (ch === '}') { depth--; buf = ''; }
+    else buf += ch;
+  }
+  return [...out].sort();
+}
+
+// Everything that could set a class: the shell's own modules and markup, the
+// component templates, the server (export shell, capture panes, preview docs)
+// and the browser extension.
+function classSetters() {
+  const roots = ['public', 'templates', 'lib', 'extensions'].map((r) => path.join(REPO, r));
+  const texts = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules') continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (!p.endsWith('app.css')) { try { texts.push(fs.readFileSync(p, 'utf8')); } catch {} }
+    }
+  };
+  for (const r of roots) walk(r);
+  return texts.join('\n');
+}
+
+// Composed at runtime, so the literal never appears: queue.js builds these as
+// 'qi-dot qi-' + item.kind and 'rail-chip qi-' + kind.
+const COMPOSED_CLASSES = new Set(['qi-signal', 'qi-capture', 'qi-comment', 'qi-activity']);
+
+test('every class app.css styles is a class something can actually set', () => {
+  const hay = classSetters();
+  const dead = cssClasses().filter((c) => !COMPOSED_CLASSES.has(c)
+    && !new RegExp(`(?<![A-Za-z0-9_-])${c}(?![A-Za-z0-9_-])`).test(hay));
+  assert.deepEqual(dead, [],
+    'these classes are styled by public/app.css and set by nothing in public/, templates/, lib/ or '
+    + 'extensions/. Delete the rule, or — if the name is built at runtime — add it to '
+    + 'COMPOSED_CLASSES with the expression that builds it.');
+});
+
 test('the topbar sits above every surface artifact — including comment pins', () => {
   // The bug, stated as the assertion: #pin-layer is a full-stage layer on <body>
   // whose markers take pointer events, so anything it paints over is unclickable.
