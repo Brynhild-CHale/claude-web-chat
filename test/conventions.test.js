@@ -47,6 +47,40 @@ const PATTERNS = [
     },
   },
   {
+    // The row above says WHICH client to use; this one says which of its two
+    // idioms. `get`/`post` are the default: they resolve with the body or throw,
+    // and a non-2xx is a typed HttpError carrying {status, body}. The low-level
+    // `request` returns {status, body} and never throws on a status — correct
+    // only for a caller that RELAYS the status rather than acting on it.
+    //
+    // The distinction was invisible at the call sites and three of them got it
+    // wrong: `profile reload` and `unlock` used request() and then read fields
+    // off the body, so a 404 (a daemon predating the route, whose HTML body
+    // parses to a string) printed "reloaded undefined user profile(s)" and "no
+    // lock was set" for something neither had reached. Both are on post() now.
+    // A new bare `client.request(` is that defect again, so it has to come
+    // through here and say why.
+    //
+    // The three grandfathered sites are the genuine relays — each hands the
+    // status onward rather than deciding on it:
+    name: 'client.request( (the non-throwing low-level idiom)',
+    home: 'lib/client `get`/`post` — `request` only where the STATUS is relayed onward',
+    what: 'calling the daemon without the typed non-2xx contract',
+    roots: ['lib'],
+    re: /client\.request\(/g,
+    baseline: {
+      // Prints the server's own error text and exits non-zero on any non-200,
+      // including the route's {error} body — it inspects r.status itself.
+      'lib/cli/commands/export.js': 1,
+      // Best-effort "the component set moved" ping. Every outcome, status or
+      // socket, is the same shrug — a status it must not act on.
+      'lib/cli/commands/pack.js': 1,
+      // The hub's forward(): the instance's status and JSON are relayed verbatim
+      // to the extension. A throw here would erase the status it exists to pass.
+      'lib/hub/index.js': 1,
+    },
+  },
+  {
     name: 'os.homedir()',
     home: 'lib/core/paths.js (extracted in Phase 1)',
     what: 'building the ~/.web-chat state dir',

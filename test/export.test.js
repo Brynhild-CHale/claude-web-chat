@@ -304,3 +304,40 @@ test('route: unknown ref → 404 with error', async (t) => {
   const body = res.json;
   assert.ok(body.error);
 });
+
+// --- the MCP tool handler ----------------------------------------------------
+//
+// The tool carried `if (r && r.error) return { error: r.error }` after a
+// client.get — a branch that could never run, because the one client engine
+// turns any status >= 400 into a throw and the route answers an unknown ref only
+// with a 404. So the tool's documented contract (a plain {error} result) was not
+// the contract it had: an unknown label reached Claude as a raw transport error.
+// These two pin the real one, end to end through the handler.
+
+test('tool: an unknown ref returns the documented {error, ref}, not a transport error', async (t) => {
+  const { port } = await withServer(t);
+  const prev = process.env.WEB_CHAT_PORT;
+  process.env.WEB_CHAT_PORT = String(port);
+  t.after(() => { if (prev === undefined) delete process.env.WEB_CHAT_PORT; else process.env.WEB_CHAT_PORT = prev; });
+
+  const tool = require('../lib/mcp/tools/export');
+  const r = await tool.handler({ node: 'n9.9' });
+  assert.equal(r.ok, undefined, 'not a success');
+  assert.ok(r.error, 'the route\'s 404 body reaches the caller as {error}');
+  assert.equal(r.ref, 'n9.9', 'and names the ref that was wrong');
+});
+
+test('tool: a known node still exports and reports its path', async (t) => {
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'p1', html: '<div>tooly</div>' });
+  await api.post('/api/commit', { message: 'seed' });
+  const prev = process.env.WEB_CHAT_PORT;
+  process.env.WEB_CHAT_PORT = String(port);
+  t.after(() => { if (prev === undefined) delete process.env.WEB_CHAT_PORT; else process.env.WEB_CHAT_PORT = prev; });
+
+  const tool = require('../lib/mcp/tools/export');
+  const r = await tool.handler({});
+  assert.ok(r.ok, 'the happy path is untouched by the new catch');
+  assert.ok(fs.existsSync(r.path));
+  assert.match(fs.readFileSync(r.path, 'utf8'), /tooly/);
+});
