@@ -90,6 +90,8 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |
 | wait on a condition in a test | `test-support/helpers` (`waitUntil`) | a private `waitFor`/`until` loop |
 | open an SSE stream in a test | `test-support/helpers` (`openSSE`) | `subscribeSSE` with only `onOpen` — it can never reject |
+| pin a socket open with a deaf WS client in a test | `test-support/helpers` (`deafWs`) | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` |
+| assert what the code contains (tool set, doc set, routes, CLI commands) in a test | `test-support/doc-truth` (`mcpTools`/`docFiles`/`routePaths`/`cliCommands`) | a literal count, or a hand-written list of docs to check |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, `core` imports nothing else from `lib/`, and entry points never reach into each other's internals — **`test/dependency-direction.test.js` enforces all three**, with a named, shrink-only baseline for the edges that legitimately remain. Every concept is consolidated behind one engine (paths, portfiles, durable JSON records, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 

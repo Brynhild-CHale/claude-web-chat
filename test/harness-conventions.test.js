@@ -5,14 +5,22 @@
 // conventions.test.js's patterns would fire `http.request(` and `os.homedir()`
 // across ~20 files at once and teach everyone to ignore the ratchet.
 //
-// What this file scans is much narrower — five constructs that HAVE a single
-// home in test-support/helpers.js and can therefore reach zero outside it:
+// What this file scans is much narrower — constructs that HAVE a single home and
+// can therefore reach zero outside it:
 //
 //   the deadline loop        -> waitUntil
 //   a poll helper definition -> waitUntil
 //   an SSE stream opener     -> openSSE
 //   booting the daemon       -> withServer
 //   listening on an owner    -> withServer / withHub
+//   a hand-written WS upgrade-> deafWs
+//   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
+//
+// The last two are a slightly different species from the first five: not a
+// primitive the harness re-implements, but a TRUTH the harness re-states when a
+// module already owns it. A test that hand-copies a number the code derives is
+// the same defect as a test that hand-rolls a poll — it goes stale silently, and
+// the stale copy passes.
 //
 // Each of those had between two and nine copies before the harness grew the
 // engine, and the copies were not merely redundant: three SSE openers could not
@@ -129,6 +137,39 @@ const PATTERNS = [
       // withServer's listen(0) and withHub's listen(port, LISTEN_HOST).
       'test-support/helpers.js': 2,
     },
+  },
+  {
+    // Hand-writing the WebSocket upgrade over a raw socket. There is exactly one
+    // legitimate reason to do it — you need a client that will NOT answer the
+    // close frame, which the `ws` client always does — and exactly one home for
+    // it. Two files carried the same twelve lines (grace-shutdown's
+    // pinConnection ws branch and stop-cli's deafBrowser), which is copy #2 of a
+    // construct whose whole subtlety is in the details it duplicated: the /101/
+    // sniff before resolving, and destroying on t.after rather than at the end
+    // of the body.
+    name: 'Sec-WebSocket-Key:',
+    home: 'test-support/helpers.js — `deafWs(t, port)`',
+    what: 'hand-writing a WebSocket upgrade over a raw socket',
+    roots: ROOTS,
+    re: /Sec-WebSocket-Key:/g,
+    baseline: {
+      'test-support/helpers.js': 1,
+    },
+  },
+  {
+    // A number the code already derives. `assert.equal(tools.length, 23)` stood
+    // in three tests beside doc-truth's mcpTools(), which reads lib/mcp/tools/ —
+    // so adding a tool tripped three literals plus the doc count, and a literal
+    // drifting from the directory is indistinguishable from the MCP server
+    // dropping tools on the floor, which is the failure the assertion is for.
+    // ZERO everywhere, including doc-truth: the engine counts a readdir, it does
+    // not spell a number.
+    name: 'tools.length, <n> (a hardcoded MCP tool count)',
+    home: "test-support/doc-truth.js — `mcpTools()` (compare against `mcpTools().length`, or deepEqual the names)",
+    what: 'restating the tool count the tools directory already answers',
+    roots: ROOTS,
+    re: /tools\.length\s*(?:,|===?|!==?|>=?|<=?)\s*\d/g,
+    baseline: {},
   },
 ];
 

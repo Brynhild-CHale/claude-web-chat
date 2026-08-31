@@ -15,8 +15,16 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, execFile } = require('child_process');
 
+const { docFiles } = require('../test-support/doc-truth');
+
 const REPO_ROOT = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+
+// The three spellings the docs actually use to forbid `npm link`: README's "the
+// one thing not to do here", extending.md's "Do not use `npm link`", and
+// CLAUDE.md's bolded "Do **not** `npm link` this package". A bare /not/ would
+// pass on any paragraph; each alternative here has to negate npm link itself.
+const FORBIDS_NPM_LINK = /not to do|do\s+(?:\*\*)?not(?:\*\*)?\s+(?:use\s+)?`?npm link|never\s+(?:use\s+)?`?npm link/i;
 
 // Everything a user's install or update actually executes or reads.
 const INSTALL_PATH_FILES = [
@@ -117,13 +125,16 @@ test('the docs describe the install that exists, not the npm one that does not',
   assert.match(readme, /~\/\.web-chat\/versions/, 'and where the program itself lives');
   assert.match(readme, /--to /, 'rollback is a documented feature');
 
-  // `npm link` may only appear as the thing NOT to do.
-  for (const rel of ['README.md', 'docs/extending.md']) {
-    const body = read(rel);
-    const idx = body.indexOf('npm link');
-    if (idx === -1) continue;
-    const context = body.slice(Math.max(0, idx - 220), idx + 220);
-    assert.match(context, /not to do|Do not use/i, `${rel} still presents \`npm link\` as the dev setup`);
+  // `npm link` may only appear as the thing NOT to do — in EVERY shipped doc,
+  // not the two that happened to mention it when this was written. docFiles()
+  // is the one home of "where a doc claim can live" (test-support/doc-truth),
+  // so a new doc that presents `npm link` as setup is caught the day it lands.
+  // Every occurrence is checked, not just the first: a file may name it twice.
+  for (const { rel, body } of docFiles()) {
+    for (let idx = body.indexOf('npm link'); idx !== -1; idx = body.indexOf('npm link', idx + 1)) {
+      const context = body.slice(Math.max(0, idx - 220), idx + 220);
+      assert.match(context, FORBIDS_NPM_LINK, `${rel} still presents \`npm link\` as the dev setup`);
+    }
   }
 });
 

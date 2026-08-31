@@ -17,12 +17,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
-const net = require('net');
-const crypto = require('crypto');
 const path = require('path');
 const { spawn } = require('child_process');
 const { once } = require('node:events');
-const { withServer } = require('../test-support/helpers');
+const { withServer, deafWs } = require('../test-support/helpers');
 const portfiles = require('../lib/core/portfiles');
 const client = require('../lib/client');
 
@@ -274,23 +272,6 @@ test('restart: refuses to start on top of a daemon it could not stop', async (t)
 // browser that never answers the close frame, which pins the final
 // server.close() — the same "still working" state, reachable in a second.
 
-// A tab that has gone deaf: a raw socket that completes the WebSocket upgrade
-// and then ignores everything, close frame included.
-function deafBrowser(t, port) {
-  return new Promise((resolve, reject) => {
-    const sock = net.connect(port, '127.0.0.1', () => {
-      const key = crypto.randomBytes(16).toString('base64');
-      sock.write(
-        'GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
-        + `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
-      );
-    });
-    sock.on('data', (d) => { if (/101/.test(d.toString().slice(0, 16))) resolve(sock); });
-    sock.on('error', reject);
-    t.after(() => { try { sock.destroy(); } catch {} });
-  });
-}
-
 function instancesIn(home) {
   try {
     return JSON.parse(fs.readFileSync(path.join(home, '.web-chat', 'instances.json'), 'utf8')).instances || [];
@@ -306,7 +287,7 @@ test('stop: a SIGTERM landing mid-shutdown must not truncate it — no stale rec
   await client.post('/api/render', { id: 'p1', html: '<div>unsaved work</div>' }, {
     port: info.port, root, noSpawn: true, timeout: 5_000,
   });
-  await deafBrowser(t, info.port);
+  await deafWs(t, info.port);
 
   const exited = once(child, 'exit');
   const log = collector();
