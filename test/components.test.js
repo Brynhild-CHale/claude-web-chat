@@ -20,6 +20,30 @@ test('components: list returns builtins with the {name,description,params_schema
   assert.equal(typeof fr.has_seed, 'boolean');
 });
 
+// A builtin's description is what Claude reads to decide whether the component
+// is appropriate — it is the component's only contract at the point of choosing.
+// node-render's promised "HTML previews of each mount (scripts stripped for
+// safety)" and a store snapshot. It has neither: the pane is an iframe onto the
+// LIVE /preview/node/<id> document, which splices in the mount runtime and runs
+// every mount's scripts, and the sandbox attribute grants allow-scripts. A reader
+// trusting that description to embed an untrusted node "safely" was misled.
+test('components: node-render describes the sandbox it has, not one it does not', async (t) => {
+  const { api } = await withServer(t);
+  const nr = (await api.get('/api/components')).json.components.find((c) => c.name === 'node-render');
+  assert.ok(nr, 'node-render is a seeded builtin');
+  assert.doesNotMatch(nr.description, /stripp?ed/i, 'nothing is stripped — say so');
+  assert.doesNotMatch(nr.description, /store snapshot/i, 'and no store snapshot is rendered anywhere');
+  assert.match(nr.description, /scripts run/i, 'the pane runs the node\'s scripts; that is the fact that matters');
+  assert.match(nr.description, /allow-scripts/, 'named exactly as the iframe spells it');
+  assert.match(nr.description, /same-origin/, 'and paired with the containment that actually holds');
+
+  // The component itself, so the description cannot drift back out of step.
+  const src = (await api.get('/api/components/node-render')).json.source;
+  assert.match(src, /sandbox="allow-scripts"/);
+  assert.ok(!/allow-same-origin/.test(src), 'no same-origin escape hatch');
+  assert.match(src, /\/preview\/node\//, 'it is the live preview document, not a re-render');
+});
+
 test('components: save validates kebab + persists; get returns {...meta, source}', async (t) => {
   const { api } = await withServer(t);
   const bad = await api.post('/api/components', { name: 'Bad Name', source: '<p>x</p>' });

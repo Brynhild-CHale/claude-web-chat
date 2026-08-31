@@ -1,6 +1,6 @@
 {
   "name": "node-render",
-  "description": "Render the contents of a graph node as a read-only preview pane: trigger summary, store snapshot, and HTML previews of each mount (scripts stripped for safety). Includes a 'set as active' button. Use for peeking at past nodes before navigating, or to anchor a reference to a specific node in the live view. Params: { node_id: string }.",
+  "description": "Browse the graph from a pane: a node picker, a meta strip (author \u00b7 time \u00b7 trigger), and that node's LIVE preview document loaded in an iframe, plus refresh, open-in-a-tab and 'set as active' buttons. The preview is the same document /preview/node/<id> serves, so the node's panes render and THEIR SCRIPTS RUN \u2014 the iframe is sandboxed allow-scripts WITHOUT allow-same-origin (an opaque origin, with no access to this page, the daemon or your cookies) and the document carries a CSP that blocks all network access. Use for peeking at past nodes beside the live surface, or to anchor a reference to a specific node. Params: { node_id: string }.",
   "params_schema": {
     "type": "object",
     "properties": {
