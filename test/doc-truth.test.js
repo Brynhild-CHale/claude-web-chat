@@ -723,3 +723,35 @@ test('no doc claims the reaper never signals while stop can still escalate', () 
       '/api/health as the listed pid — but an unacknowledged shutdown still falls through to stop\'s SIGTERM');
   }
 });
+
+// ---------------------------------------------------------------------------
+// Version attribution in a status header.
+//
+// A doc that specifies more than has been built carries a `Status: **…**`
+// header, and that header has exactly one job: tell a reader which half they can
+// use. docs/capture-profiles-and-panes.md's also pinned the built half to a
+// release — "capture dedupe and hot reload shipped in 0.3.0" — and the
+// CHANGELOG's [0.3.0] section names neither, so the one place a reader would
+// check the attribution does not corroborate it. Provenance is the CHANGELOG's
+// job; a release number in prose is a claim with no owner, and getting it wrong
+// misdates a feature for everyone who reads the spec instead of the history.
+test('a status header says what is built, not which release built it', () => {
+  // Anchored on the claim being TRUE: the numeral is what goes, not the feature.
+  assert.match(read('lib/server/routes/profiles.js'), /'\/api\/profiles\/reload'/,
+    'the profile hot-reload route is gone — the status header this test guards lists it as shipped');
+  assert.match(read('lib/cli/commands/profile.js'), /sub === 'reload'/,
+    "`claude-web-chat profile reload` is gone — the status header lists hot reload as shipped");
+
+  let found = 0;
+  for (const { rel, body } of DOCS) {
+    const header = body.match(/^Status: \*\*[\s\S]*?\n\n/m);
+    if (!header) continue;
+    found++;
+    const version = flatten(header[0]).match(/\b\d+\.\d+\.\d+\b/);
+    assert.ok(!version,
+      `${rel}'s status header dates its shipped half to ${version && version[0]}. The header answers ` +
+      'shipped-vs-unbuilt; which release shipped a thing is the CHANGELOG\'s claim to make, and nothing ' +
+      'reconciles a version written here against it');
+  }
+  assert.ok(found >= 1, 'no doc carries a `Status: **…**` header any more — this check has nothing to walk');
+});
