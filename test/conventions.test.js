@@ -486,6 +486,52 @@ const PATTERNS = [
     baseline: {},
   },
   {
+    // Replacing the WHOLE surface from a snapshot frame. `hello` and `reset`
+    // carry the identical payload (mounts + store + active/lock/theme) and were
+    // written as two separate appliers — so only one of them ever grew the
+    // preview fork the ws.js header states as an invariant, and a reconnect
+    // during a node preview re-mounted live panes over the previewed node. The
+    // second copy was also purely additive: no removal of panes the server had
+    // cleared, and a blind re-mount over whatever the user had typed.
+    //
+    // The home is mounts.applySnapshot — it owns the preview fork and the
+    // authoritative/reconcile split, so a third snapshot path cannot be written
+    // without one. `fullReset`/`mountAll` are its primitives and stay inside the
+    // engine; the ONE deliberate exception is topbar.previewNode, which renders a
+    // non-live node ONTO the DOM while `previewing` is already true (the applier
+    // would fold it aside instead) and says so at the call site.
+    name: 'fullReset( / mountAll( outside the mount engine',
+    home: 'public/app/mounts.js — applySnapshot(frame, {mode}) (fullReset/mountAll are its internals)',
+    what: 'applying a full-surface snapshot frame',
+    roots: ['public/app'],
+    re: /\b(?:fullReset|mountAll)\(/g,
+    baseline: {
+      // The engine: the header line naming both, fullReset's declaration + its
+      // mountAll call, and applySnapshot's authoritative branch.
+      'public/app/mounts.js': 5,
+      // previewNode — entering a preview IS putting a non-live node on the DOM.
+      'public/app/topbar.js': 1,
+    },
+  },
+  {
+    // The other half of the same defect: who may REPLACE the folded live surface.
+    // While detached, a snapshot must land in view.liveSnapshot instead of the
+    // DOM, and that assignment was hand-written at each frame handler that
+    // happened to remember it (ws.js's reset and branch-here) and simply missing
+    // from the one that did not (hello). It belongs to the applier now.
+    name: 'view.liveSnapshot = (replacing the folded live surface)',
+    home: 'public/app/mounts.js — applySnapshot (fold) · public/app/topbar.js — previewNode (capture) / leavePreview (drop)',
+    what: 'the detached preview fold',
+    roots: ['public/app'],
+    re: /view\.liveSnapshot\s*=/g,
+    baseline: {
+      // The fold itself.
+      'public/app/mounts.js': 1,
+      // Captured on the way into a preview, dropped on the way out.
+      'public/app/topbar.js': 2,
+    },
+  },
+  {
     // The one row scoped to the FRONT END, and the one that reaches a true zero
     // outside its home. `localStorage` / `sessionStorage` are getters on window:
     // in a private window or with site data blocked, reading the property throws

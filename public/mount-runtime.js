@@ -55,10 +55,12 @@
         subs.get(keyOrFn).add(maybeFn);
         return function () { subs.get(keyOrFn).delete(maybeFn); };
       },
-      // Silent bulk ops for the live client's full-surface reset (replace) and
-      // (re)hello (merge). They intentionally do NOT fire subscribers or publish —
-      // the client re-mounts every pane immediately after, which re-subscribes.
-      // The frozen export/preview stores never call these.
+      // Silent bulk ops for the live client's full-surface reset. They
+      // intentionally do NOT fire subscribers or publish — the authoritative
+      // path re-mounts every pane immediately after, which re-subscribes. A
+      // caller that does NOT re-mount (mounts.applySnapshot's reconcile) must
+      // publish the diff itself, or a kept pane keeps rendering values the store
+      // no longer holds. The frozen export/preview stores never call these.
       replace: function (next) {
         Object.keys(_state).forEach(function (k) { delete _state[k]; });
         Object.assign(_state, next || {});

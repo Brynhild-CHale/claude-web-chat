@@ -1,5 +1,7 @@
 // The mount system — pane chrome, layout (12-col grid), resize, drag/reorder,
-// minbar, and the core mount()/clearTarget()/fullReset(). The shadow-root mount +
+// minbar, and the core mount()/clearTarget()/fullReset()/applySnapshot(). The
+// last is the ONE applier of a full-surface snapshot frame (hello / reset /
+// branch-here / preview restore) and owns the preview fork. The shadow-root mount +
 // <script> extraction + execution stay in the shared runtime (window.__wcMount);
 // this never reimplements that contract (rewrite risk #1). Pane DOM order is
 // local-only — never persisted (the drag reorder is cosmetic).
@@ -110,10 +112,15 @@ function sendFormState(id) {
   const fs = window.__wcMount.captureFormState(p.root);
   const json = JSON.stringify(fs);
   if (json === p._lastFormJson) return; // unchanged — don't chat
-  p._lastFormJson = json;
   p.form_state = fs;
   p.spec.form_state = fs;
-  if (isOpen()) send({ type: 'pane:form', id, form_state: fs });
+  // Stamp the "server has this" marker ONLY once the frame is actually on the
+  // wire. Stamping before the gate recorded a value the server never received,
+  // so a form edit made while the socket was down was silently dropped and never
+  // re-sent on reconnect — the reconcile's flush would see it as already known.
+  if (!isOpen()) return;
+  p._lastFormJson = json;
+  send({ type: 'pane:form', id, form_state: fs });
 }
 // Immediate flush of every pane's current form values — called by the
 // branch-on-edit transition so the keystroke that triggered the branch isn't
@@ -692,7 +699,10 @@ export function clearTarget(target, frame = {}) {
 // uninitialised, so a single bad pane read as a dead surface. The failure is
 // logged rather than swallowed silently, and a pane script that throws is
 // already reported separately (get_events kind:'script-error').
-export function mountAll(mounts) {
+//
+// Internal to the engine: everything outside this module reaches the surface
+// through applySnapshot (below), mount() or removePane().
+function mountAll(mounts) {
   for (const m of (mounts || [])) {
     try { mount(m); }
     catch (e) { console.error('[web-chat] mount failed for', m && m.id, e); }
@@ -708,6 +718,111 @@ export function fullReset({ mounts, store: newStore }) {
   store.replace(newStore);
   mountAll(mounts);
   renderMinbar();
+}
+
+/* ── the ONE full-snapshot applier ───────────────────────────────────────────
+   Every full surface replacement lands here: the `hello` a (re)connect opens
+   with, the `reset` a wipe / node jump / turn-end re-aim broadcasts, the
+   `branch-here` adoption, the live surface restored on leaving a preview.
+
+   It owns the PREVIEW FORK. `previewing` is the flag state.js says gates all
+   writes, and `hello` was written without it — so a reconnect during a node
+   preview (a laptop waking, a restart, a self-update) re-mounted live panes
+   over the previewed node. Every other frame handler in ws.js carried the fork;
+   it lives here now, so the next snapshot path cannot be written without it.
+
+   Two modes, because a snapshot arrives for two different reasons:
+
+     authoritative  the SURFACE changed (reset / branch-here / preview restore).
+                    The frame is rendered verbatim — every pane re-mounted — which
+                    is what makes a node jump actually show the node. Notably a
+                    wipe preserves pinned mounts SERVER-SIDE and sends the
+                    survivors, so the client must not filter on top of it.
+
+     reconcile      the surface did NOT change; this client's picture of it may
+                    have. Panes absent from the frame are REMOVED (a purely
+                    additive hello kept panes the server had cleared), panes whose
+                    spec is unchanged keep their live DOM — including everything
+                    the user typed while the socket was down — and only
+                    pane_state/theme are applied over them.
+
+   Returns which path ran, for tests and for callers that need to know whether
+   the DOM moved. */
+export function applySnapshot(frame, { mode = 'authoritative' } = {}) {
+  const mounts = (frame && frame.mounts) || [];
+  const next = (frame && frame.store) || {};
+  if (view.previewing) {
+    // Detached: the snapshot IS the live surface, folded aside untouched. The
+    // DOM belongs to the previewed node until the user leaves the preview.
+    view.liveSnapshot = { mounts: mounts.map((m) => ({ ...m })), store: { ...next } };
+    return 'folded';
+  }
+  if (mode !== 'reconcile') {
+    fullReset({ mounts, store: next });
+    return 'replaced';
+  }
+  reconcileSurface(mounts, next);
+  return 'reconciled';
+}
+
+// Two mount records describe the same pane CONTENT. Anything else — a changed
+// title or `modes` in params, a different component, a moved target — re-mounts,
+// because those are baked into the pane chrome at mount time.
+function sameSpec(spec, m) {
+  return spec.html === m.html
+    && (spec.target || 'main') === (m.target || 'main')
+    && (spec.component || null) === (m.component || null)
+    && JSON.stringify(spec.params || {}) === JSON.stringify(m.params || {});
+}
+
+// The store half of a reconcile. `replace` is SILENT (see createStore in
+// mount-runtime.js) because its only caller re-mounts every pane immediately
+// after, which re-subscribes them. A reconcile deliberately does NOT re-mount,
+// so the kept panes' live subscriptions have to be told what moved — otherwise a
+// reconnect leaves a pane rendering values the store no longer holds.
+function syncStore(next) {
+  const cur = store.get();
+  const same = (a, b) => a === b
+    || (!!a && !!b && typeof a === 'object' && typeof b === 'object' && JSON.stringify(a) === JSON.stringify(b));
+  const patch = {};
+  for (const k of Object.keys(next)) if (!same(cur[k], next[k])) patch[k] = next[k];
+  // A key the snapshot does not carry is gone. The store has no delete-and-notify,
+  // so it is published as `undefined` — a subscriber sees the removal, and the key
+  // lingers valueless in the local map until the next authoritative replace.
+  for (const k of Object.keys(cur)) if (!(k in next)) patch[k] = undefined;
+  store.replace(next);
+  if (Object.keys(patch).length) store.set(patch, { fromServer: true });
+}
+
+function reconcileSurface(mounts, next) {
+  syncStore(next);
+  const wanted = new Set(mounts.map((m) => m.id));
+  for (const id of [...panes.keys()]) if (!wanted.has(id)) removePane(id);
+  for (const m of mounts) {
+    const p = panes.get(m.id);
+    if (!p || !sameSpec(p.spec, m)) {
+      try { mount(m); }
+      catch (e) { console.error('[web-chat] mount failed for', m && m.id, e); }
+      continue;
+    }
+    applyRemotePaneState(m.id, m.pane_state || {});
+    if (JSON.stringify(p.spec.theme || null) !== JSON.stringify(m.theme || null)) {
+      p.theme = m.theme || null;
+      p.spec.theme = m.theme || undefined;
+      applyPaneTheme(p, m.theme || null, false);
+    }
+    // form_state is deliberately NOT applied over a kept pane: the DOM in front
+    // of the user is at least as new as the server's copy (a value typed while
+    // the socket was down never reached it), so the local values win — and the
+    // flush below pushes them up rather than dropping them.
+  }
+  // mount() reconciles the minbar and the zero state on its way out — but a frame
+  // with ZERO mounts never runs it, which is exactly the first-open case the zero
+  // state exists for. Reconcile explicitly once the frame has settled.
+  renderMinbar();
+  // Re-publish what the user typed while the socket was down. sendFormState is a
+  // no-op for a pane whose values the server already has.
+  flushFormStates();
 }
 
 // Restore a minimized pane, locally and everywhere.
