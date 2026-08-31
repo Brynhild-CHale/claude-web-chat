@@ -156,6 +156,26 @@ test('the Earthy Light palette block is the only place the sheet branches on mod
     'mode-branching rules outside the palette block');
 });
 
+test('every --wc-* the chrome references is a token that exists', () => {
+  // The pack panel's error text asked for --wc-coral, which no block has ever
+  // defined, so it painted from the literal fallback beside it and no theme
+  // could move it. An undefined token here is a colour that silently is not
+  // part of the palette.
+  const defined = new Set();
+  for (const r of CSS_RULES) {
+    if (!PALETTE.includes(r.selector)) continue;
+    for (const m of r.body.matchAll(/(--wc-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
+  }
+  assert.ok(defined.has('--wc-accent'), 'the palette blocks were found');
+  const missing = new Set();
+  for (const r of CSS_RULES) {
+    for (const m of r.body.matchAll(/var\(\s*(--wc-[a-z0-9-]+)/g)) {
+      if (!defined.has(m[1])) missing.add(`${m[1]} (${r.selector})`);
+    }
+  }
+  assert.deepEqual([...missing].sort(), [], '--wc-* references with no definition');
+});
+
 /* ======================= the jsdom boot ======================= */
 const calls = [];
 const routes = {

@@ -860,7 +860,7 @@ kbd {
 .pk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .pk-now.armed { border-color: var(--wc-gold); color: var(--wc-gold); }
 .pk-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; min-height: 14px; line-height: 1.4; }
-.pk-status.err { color: var(--wc-coral, #d05a4a); }
+.pk-status.err { color: var(--wc-comment); }
 .pk-status.warn { color: var(--wc-gold); }
 .pk-status.ok { color: var(--wc-green); }
 
@@ -875,7 +875,7 @@ kbd {
 .pk-unit { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .pk-unit-list { font: 11px var(--wc-mono); color: var(--wc-muted); margin-top: 5px; overflow-wrap: anywhere; }
 .pk-card-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 5px; }
-.pk-card-status.err { color: var(--wc-coral, #d05a4a); }
+.pk-card-status.err { color: var(--wc-comment); }
 
 /* SKILL.md, inline — the artefact nobody thinks to read, and the one that ends
    up in Claude's instructions */
