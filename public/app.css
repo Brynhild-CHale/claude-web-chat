@@ -90,6 +90,17 @@
   --wc-well-inset: inset 0 3px 34px rgba(0,0,0,.85), inset 0 0 0 1px rgba(255,255,255,.015);
   --wc-elev-rail: -22px 0 46px -12px rgba(0,0,0,.92);
 
+  /* --- chrome surfaces --- */
+  /* Painted from tokens so a saved theme reaches the chrome too; these used to
+     be hex literals with a hand-written :root[data-theme="light"] twin each,
+     i.e. a second palette living outside this block. */
+  --wc-topbar-top: #2c2519;        /* upper stop of the topbar gradient */
+  --wc-topbar-border: #3a3225;     /* the topbar's bottom hairline */
+  --wc-rail-bg: linear-gradient(90deg, #211c12, #1e1910);
+  --wc-hover-bg: #2c2519;          /* dock buttons, stepper */
+  --wc-row-active-bg: #30281b;     /* active row in the graph history list */
+  --wc-gold-fg: #1c1710;           /* ink on a gold fill */
+
   /* --- keycap chrome --- */
   --wc-key-bg: #1e1910;
   --wc-key-border: #4f4534;
@@ -146,6 +157,13 @@
   --wc-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 34px 60px -24px rgba(80,62,34,.3), 0 10px 22px -12px rgba(80,62,34,.22), 0 0 46px -20px var(--wc-glow-accent);
   --wc-well-inset: inset 0 3px 34px rgba(80,62,34,.13), inset 0 0 0 1px rgba(255,255,255,.4);
   --wc-elev-rail: -22px 0 46px -14px rgba(80,62,34,.16);
+
+  --wc-topbar-top: #fbf7ee;
+  --wc-topbar-border: var(--wc-border);   /* light tracks the border colour */
+  --wc-rail-bg: linear-gradient(90deg, #efe8d8, #e8e0cf);
+  --wc-hover-bg: #e6ddca;
+  --wc-row-active-bg: color-mix(in srgb, var(--wc-accent) 16%, transparent);
+  --wc-gold-fg: #1c1710;
 
   --wc-key-bg: #efe8d8;
   --wc-key-border: #bfb190;
@@ -279,7 +297,7 @@ html.wc-theming, html.wc-theming * {
 .update-banner .ub-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .update-banner .ub-btn {
   height: 26px; padding: 0 12px; border-radius: var(--wc-radius-sm);
-  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: #1c1710;
+  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-gold-fg);
   font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
 }
 .update-banner .ub-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
@@ -296,11 +314,10 @@ html.wc-theming, html.wc-theming * {
 #topbar {
   display: flex; align-items: center; gap: 8px;
   height: 46px; padding: 0 12px; flex: 0 0 auto;
-  background: linear-gradient(180deg, #2c2519, var(--wc-header-bg));
-  border-bottom: 1px solid #3a3225;
+  background: linear-gradient(180deg, var(--wc-topbar-top), var(--wc-header-bg));
+  border-bottom: 1px solid var(--wc-topbar-border);
   box-shadow: var(--wc-elev-bar);
 }
-:root[data-theme="light"] #topbar { background: linear-gradient(180deg, #fbf7ee, var(--wc-header-bg)); border-bottom-color: var(--wc-border); }
 .brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
@@ -334,8 +351,7 @@ kbd {
   transform: scale(var(--mag, 1)); transform-origin: center bottom;
   transition: transform .12s cubic-bezier(.2,.8,.2,1), background-color .15s, color .15s;
 }
-.dock-btn:hover { background: #2c2519; color: var(--wc-fg-bright); }
-:root[data-theme="light"] .dock-btn:hover { background: #e6ddca; }
+.dock-btn:hover { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
 /* toggle state — e.g. #btn-pin-mode while pin mode is armed (comments.js sets .active) */
 .dock-btn.active { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
 .dock-btn.active:hover { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 22%, transparent); }
@@ -343,9 +359,8 @@ kbd {
 /* node-nav stepper (bordered group) */
 .stepper { display: flex; align-items: center; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-panel-bg); overflow: hidden; }
 .stepper button { width: 28px; height: 26px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 13px; }
-.stepper button:hover:not(:disabled) { background: #2c2519; color: var(--wc-fg-bright); }
+.stepper button:hover:not(:disabled) { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
 .stepper button:disabled { opacity: .35; cursor: default; }
-:root[data-theme="light"] .stepper button:hover:not(:disabled) { background: #e6ddca; }
 
 /* view chip + active pill */
 .active-pill {
@@ -430,13 +445,12 @@ kbd {
 /* ===================== proximity queue rail ===================== */
 .rail {
   flex: 0 0 auto; width: 64px; position: relative;
-  background: linear-gradient(90deg, #211c12, #1e1910);
+  background: var(--wc-rail-bg);
   border-left: 1px solid var(--wc-key-border);
   box-shadow: var(--wc-elev-rail);
   transition: width .2s cubic-bezier(.2,.8,.2,1);
   overflow: hidden;
 }
-:root[data-theme="light"] .rail { background: linear-gradient(90deg, #efe8d8, #e8e0cf); }
 .rail::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--wc-accent); box-shadow: 0 0 12px var(--wc-glow-accent); }
 .rail.open { width: 256px; }
 .rail.open .rail-collapsed { opacity: 0; pointer-events: none; }
@@ -573,7 +587,7 @@ kbd {
    delivery, on .rail-pending above. */
 .rail-sec.parked { margin-top: 8px; }
 .rail-sec.parked .rail-sec-cap { color: var(--wc-gold, #d8a24a); }
-.rail-sec.parked .rail-sec-cnt { background: var(--wc-gold, #d8a24a); color: #1c1710; }
+.rail-sec.parked .rail-sec-cnt { background: var(--wc-gold, #d8a24a); color: var(--wc-gold-fg); }
 .rail-item.parked { opacity: .85; border-left: 2px solid color-mix(in srgb, var(--wc-gold, #d8a24a) 60%, transparent); padding-left: 6px; }
 .rail-item.parked .qi-dot { box-shadow: none; }
 .rail-item.held .qi-dot { box-shadow: none; }
@@ -664,8 +678,7 @@ kbd {
 .gv-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 8px; padding: 8px 8px; border-radius: var(--wc-radius); border: 1px solid transparent; cursor: pointer; }
 .gv-row:hover { background: color-mix(in srgb, var(--wc-accent) 8%, transparent); }
 .gv-row.selected { border-color: var(--wc-border-light); background: color-mix(in srgb, var(--wc-accent) 6%, transparent); }
-.gv-row.active { background: #30281b; border-color: var(--wc-border-light); box-shadow: inset 2px 0 0 var(--wc-accent); }
-:root[data-theme="light"] .gv-row.active { background: color-mix(in srgb, var(--wc-accent) 16%, transparent); }
+.gv-row.active { background: var(--wc-row-active-bg); border-color: var(--wc-border-light); box-shadow: inset 2px 0 0 var(--wc-accent); }
 .gv-row .glyph { font-size: 11px; color: var(--wc-muted); text-align: center; }
 .gv-row .glyph.active { color: var(--wc-accent); }
 .gv-row .glyph.marked { color: var(--wc-gold); }

@@ -128,6 +128,34 @@ test('no z-index in the shell is a hand-picked number any more', () => {
   ], 'z-index declarations outside the --z-* scale');
 });
 
+/* ======================= (e) one palette ======================= */
+// The chrome used to carry a SECOND, literal two-mode palette: five surfaces
+// (the topbar gradient and its hairline, the dock-button hover, the stepper
+// hover, the queue rail, the active history row) were painted from hex with a
+// hand-written `:root[data-theme="light"]` twin each. A saved theme that set
+// --wc-header-bg still got #2c2519 at the top of the topbar, because the value
+// it needed to override lived outside the token blocks. Same static-audit style
+// as the z-index ratchet above: jsdom cascades no external sheet, and the
+// question is a pure source one.
+
+const CSS_RULES = (() => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, ''); // a commented-out rule is not a rule
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((r) => ({ selector: r[1].trim(), body: r[2] }));
+})();
+
+// The two blocks that ARE the palette: the base :root vocabulary and its
+// Earthy Light override.
+const PALETTE = [':root', ':root[data-theme="light"]'];
+
+test('the Earthy Light palette block is the only place the sheet branches on mode', () => {
+  // Ratchet: a `:root[data-theme=...]` rule anywhere else is a second palette —
+  // a colour pair the token layer cannot reach, which is the defect.
+  const branches = CSS_RULES.filter((r) => r.selector.includes('data-theme')).map((r) => r.selector);
+  assert.deepEqual(branches, [':root[data-theme="light"]'],
+    'mode-branching rules outside the palette block');
+});
+
 /* ======================= the jsdom boot ======================= */
 const calls = [];
 const routes = {
