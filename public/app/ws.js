@@ -10,7 +10,7 @@ import {
   applyGlobalTheme, applyNodeTheme, applyPaneTheme, setActiveNodeTheme, getActiveNodeTheme,
 } from './theme.js';
 import {
-  mount, mountAll, clearTarget, fullReset, renderMinbar, removePane, applyRemotePaneState, applyRemoteFormState, panes,
+  mount, clearTarget, applySnapshot, removePane, applyRemotePaneState, applyRemoteFormState, panes,
   survivesClear,
 } from './mounts.js';
 import {
@@ -61,16 +61,22 @@ function snapPaneState(id, ps) {
 }
 
 const HANDLERS = {
+  // The frame every (re)connection opens with — first open, and equally the
+  // reconnect after a laptop sleep, a `restart` or a self-update. It carries the
+  // same full snapshot `reset` does, so it goes through the same applier: this
+  // handler used to mount its panes itself, with no preview fork (a reconnect
+  // mid-preview overwrote the previewed node) and no removal of panes the server
+  // had cleared during the gap. RECONCILE, not authoritative: nothing about the
+  // surface changed, so a pane whose spec is unchanged keeps its live DOM.
   hello(msg) {
-    store.merge(msg.store);
+    // A re-aim that landed while this client was disconnected can put active
+    // exactly where it is previewing — attach rather than sit half-detached
+    // (previewing with viewedId === activeId), the same rule `reset` carries.
+    if (view.previewing && 'active' in msg && msg.active === view.viewedId) leavePreview();
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
-    mountAll(msg.mounts);
-    // mount() reconciles the minbar and the zero state on its way out — but with
-    // ZERO mounts it never runs, which is exactly the first-open case the zero
-    // state exists for. Reconcile explicitly once hello's mounts have settled.
-    renderMinbar();
-    applyNodeTheme(getActiveNodeTheme(), false);
+    applySnapshot(msg, { mode: 'reconcile' });
+    if (!view.previewing) applyNodeTheme(getActiveNodeTheme(), false);
     applyActive(msg.active);
     applyLock(msg.lock);
     if (msg.project) document.title = `${msg.project} — web-chat`;
@@ -127,11 +133,7 @@ const HANDLERS = {
       const r = await fetch('/api/graph/node/' + msg.id);
       if (r.ok) {
         const node = await r.json();
-        if (view.previewing) {
-          view.liveSnapshot = { mounts: (node.mounts || []).map(x => ({ ...x })), store: { ...(node.store || {}) } };
-        } else {
-          fullReset({ mounts: node.mounts || [], store: node.store || {} });
-        }
+        applySnapshot({ mounts: node.mounts || [], store: node.store || {} });
       }
     } catch {}
     applyActive(msg.active);
@@ -152,16 +154,10 @@ const HANDLERS = {
     if (view.previewing && 'active' in msg && msg.active === view.viewedId) {
       leavePreview();
     }
-    if (view.previewing) {
-      view.liveSnapshot = { mounts: (msg.mounts || []).map(x => ({ ...x })), store: { ...(msg.store || {}) } };
-      if ('active' in msg) view.activeId = msg.active;
-      applyLock(msg.lock);
-    } else {
-      fullReset(msg);
-      applyNodeTheme(getActiveNodeTheme(), true);
-      if ('active' in msg) applyActive(msg.active);
-      applyLock(msg.lock);
-    }
+    applySnapshot(msg); // authoritative: the surface itself moved
+    if (!view.previewing) applyNodeTheme(getActiveNodeTheme(), true);
+    if ('active' in msg) applyActive(msg.active); // no-ops viewedId while previewing
+    applyLock(msg.lock);
     onGraphChanged();
   },
   theme(msg) {

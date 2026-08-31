@@ -1,7 +1,8 @@
 // Commit 4 — the env-gated channel capability on the MCP entrypoint. A normal
 // session (WEB_CHAT_CHANNEL unset) must be byte-identical: no experimental
-// capability, all 23 tools intact. With WEB_CHAT_CHANNEL=1 the server declares
-// experimental['claude/channel'] (the right to push notifications/claude/channel).
+// capability, every registered tool intact. With WEB_CHAT_CHANNEL=1 the server
+// declares experimental['claude/channel'] (the right to push
+// notifications/claude/channel).
 //
 // Exercised as a real subprocess via the MCP SDK stdio client (index.js runs
 // main() on import), mirroring mcp-dispatch.test.js.
@@ -13,6 +14,10 @@ const path = require('path');
 const os = require('os');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+// The tool set is the DIRECTORY, read once by test-support/doc-truth. Pinning a
+// literal here made adding a tool a three-file edit, and the number drifting was
+// indistinguishable from the channel capability dropping tools on the floor.
+const { mcpTools } = require('../test-support/doc-truth');
 
 const MCP_BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
 
@@ -43,7 +48,7 @@ test('channel OFF (default): no experimental capability, tools intact', async (t
   const caps = client.getServerCapabilities();
   assert.ok(!(caps && caps.experimental && caps.experimental['claude/channel']), 'no channel capability when off');
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 23, 'tool set unchanged');
+  assert.equal(tools.length, mcpTools().length, 'tool set unchanged');
 });
 
 test('channel ON (WEB_CHAT_CHANNEL=1): declares experimental[claude/channel]', async (t) => {
@@ -53,5 +58,5 @@ test('channel ON (WEB_CHAT_CHANNEL=1): declares experimental[claude/channel]', a
   assert.deepEqual(caps.experimental['claude/channel'], {}, 'claude/channel declared');
   // Tools still work — the channel is additive to the existing MCP server.
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 23);
+  assert.equal(tools.length, mcpTools().length);
 });

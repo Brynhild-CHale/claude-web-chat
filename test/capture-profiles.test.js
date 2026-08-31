@@ -194,6 +194,14 @@ const SPECS = {
         d.bodyHtml.some((p) => /<a href="https:\/\/example\.com\/redpandas"/.test(p)),
         'self-text body link preserved',
       );
+      // Nested lists — the semantics of the shared walker (ctx.listItems), pinned
+      // where the bundle that used to carry its own copy can see it. A list is
+      // flattened to "• item" lines from its OWN <li> children: the outer bullet
+      // absorbs the nested item's text, and the nested item never gets a bullet
+      // of its own. Walking with querySelectorAll('li') emits it twice.
+      assert.ok(d.bodyHtml.includes('• outerinner'), 'outer bullet carries its nested list inline');
+      assert.ok(d.bodyHtml.includes('• sibling'), 'the sibling bullet of the outer list is emitted');
+      assert.ok(!d.bodyHtml.includes('• inner'), 'the nested item is NOT emitted as a bullet of its own');
       // 6 top-level comments + 1 nested reply → cap keeps 5, nesting drops the reply.
       assert.equal(d.comments.length, 5, 'top-comment cap of 5 honored (from 6 top-level)');
       const authors = d.comments.map((c) => c.author);

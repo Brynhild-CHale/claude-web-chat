@@ -139,7 +139,7 @@ were the only places they lived.
 | remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
 | list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
-| call the daemon over HTTP | `lib/client` `get` / `post` / `request` / `api` | `http.request` |
+| call the daemon over HTTP | `lib/client` `get` / `post` / `api` — a non-2xx is a typed `HttpError` `{status, body}`; the low-level `request` (never throws on a status) only where the status is RELAYED onward | `http.request`, or `client.request` plus a hopeful read of the body |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
 | write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
@@ -156,7 +156,7 @@ were the only places they lived.
 | resolve + scheme-gate an href/src read out of a captured page | `capture/profiles/util` `safeHref(href, pageUrl)` | `new URL` plus your own `javascript:` regex |
 | render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `capture/pane` `renderProfilePane` / `renderSimplifiedPane` / `defaultReduce` | import them from `lib/server/routes/capture` |
 | read, validate and require a capture-profile bundle | `capture/profiles` `loadBundle(dir)` / `validateMeta(meta)` | a second reader of `profile.json` with its own acceptance rules |
-| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is the only alternative) |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is NOT the alternative — extend the kit) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
@@ -171,6 +171,7 @@ were the only places they lived.
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | read or write a browser storage key from the chrome | `public/app/storage.js` `getLocal` / `setLocal` / `getSession` / `getLocalJson` — every one fails open | touch `localStorage` / `sessionStorage` directly: the accessor itself throws in a private window and takes the whole module graph down with it |
+| apply a full-surface snapshot frame in the chrome — `hello`, `reset`, `branch-here`, the restored live surface | `public/app/mounts.js` `applySnapshot(frame, {mode:'authoritative'|'reconcile'})` — it owns the preview fold and the remove-absentees / keep-unchanged reconcile | hand-roll `mountAll` + `fullReset` beside a frame handler: that is how `hello` ended up without the preview fork, overwriting a previewed node on every reconnect |
 | leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot, flushForms})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
 | walk the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses | `labels.childrenOf`, which is the RAW commit topology and has one consumer by design: the ⑃ branch picker |
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
@@ -178,6 +179,8 @@ were the only places they lived.
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
 | open an SSE stream in a test | `test-support/helpers` `openSSE(port, {kinds, since, onEvent, awaitChannel})` | `subscribeSSE` with only `onOpen` (it can never reject) |
+| pin a socket open with a client that never answers the close frame | `test-support/helpers` `deafWs(t, port)` | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` (`ws` always answers the close, so it cannot stand in) |
+| assert what the code contains — the tool set, the doc set, the routes, the CLI commands | `test-support/doc-truth` `mcpTools()` / `docFiles()` / `routePaths()` / `cliCommands()` | a literal count, or a hand-written list of files to check |
 
 ## The engines in detail
 
@@ -235,18 +238,31 @@ This engine also unifies the reading/discovery *code*.
 
 The single way to make an HTTP call to a web-chat daemon.
 
-- `get(path, opts)` / `post(path, body, opts)` — throw on HTTP ≥ 400, one
-  respawn-and-retry on connection-refused.
+- `get(path, opts)` / `post(path, body, opts)` — **the default idiom.** Resolve
+  with the parsed body, or throw: an HTTP ≥ 400 is a typed **`HttpError`**
+  carrying `{status, body, method, path}`, so a caller branches on
+  `e instanceof client.HttpError && e.status === 404` rather than parsing the
+  message. One respawn-and-retry on connection-refused.
 - `request(port, method, path, body, {headers, timeout})` — low-level; returns
-  `{status, body}`, never throws on an HTTP status (for callers that inspect the
-  status themselves, e.g. the CLI).
+  `{status, body}` and never throws on an HTTP status. Correct **only** for a
+  caller that *relays* the status onward rather than acting on it (the hub's
+  `forward`, the export CLI). Three sites use it and the conventions ratchet
+  holds it there — everything else takes the throwing path.
 - `subscribeSSE({port, root, since, kinds, onEvent, onGap, onClose, onError})` —
   the live event stream. A long-lived stream, so it must **not** go through
   `request()` (which buffers to end).
 - `probeReachable` / `probeHealth` (re-exported from `core/portfiles`),
-  `discoverPort`, `ensureDaemon`, `NoServerError`.
+  `discoverPort`, `ensureDaemon`, `NoServerError`, `HttpError`.
 
-Two policies are load-bearing — preserve them:
+Three policies are load-bearing — preserve them:
+
+- **Every call settles.** A socket that dies is *always* a rejection, including a
+  response cut off mid-body: `request()` used to settle only on the response's
+  `end`, so a daemon dying after the headers left the promise pending forever and
+  — with no default socket timeout, below — hung the MCP tool, hook or command
+  behind it. The premature-close rejection is coded `ECONNRESET` on purpose, so
+  `isConnRefused` folds it into `api()`'s existing respawn-and-retry instead of
+  making a mid-response death a new error class every caller must learn.
 
 - **`spawn` defaults `false`.** Only `lib/mcp/client.js` (a spawn-injecting shim)
   opts in, so the 23 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
@@ -281,15 +297,26 @@ from a missing one.
   not use out of the way instead of destroying it; `keep` caps how many such
   files accumulate.
 
-Two rules the engine deliberately keeps:
+Four rules the engine deliberately keeps:
 
 - **No type-specific knowledge.** Shape predicates are passed in as `validate`
   and live next to the type's owner (`isGraphNode` sits beside `graph.load`) —
   the same boundary `core/resources.js` draws.
 - **`invalid` is a returned state, never a throw and never a silent skip.** The
-  callers want three different things from it: `graph.load` skips the node,
-  `components-registry` surfaces a placeholder record, `seedBuiltins` repairs the
-  directory from the shipped copy.
+  callers want three different things from it: `graph.load` skips the node (and
+  renames it aside), `components-registry` surfaces a placeholder record,
+  `seedBuiltins` repairs the directory from the shipped copy.
+- **A skip must not become a delete on the next write.** `renameAside` is only
+  half of "I could not read this is not a licence to destroy it"; the other half
+  is that the name stays spoken for. `graph.load` seeds `nextSeq` from the node
+  FILENAMES in `graph/` — live files, their `.corrupt-<ts>` copies, and any
+  `.tmp` a crash left — not from the nodes that loaded, so the id of a file it
+  declined to read is never handed to the next commit. Any reader that skips a
+  numbered record owes the same.
+- **Healing an unreadable record is best-effort.** `graph.load` recovers `active`
+  from the latest commit and rewrites `_meta.json` inside a `try/catch`:
+  `createServer` calls `load()` unguarded, so a failed write there would be the
+  daemon refusing to boot over a file that only matters to the NEXT boot.
 
 Out of scope: cross-filesystem moves (the temp file is always a sibling, so
 `renameSync` cannot hit `EXDEV`), append-only logs (`packs`' NDJSON audit trail
@@ -684,6 +711,13 @@ count as a phantom passing test.
   sends no `Origin`, so every connection used to take the `!origin` branch and
   deleting `verifyClient` passed the suite). `wsHello` surfaces a refused upgrade
   as a rejection carrying `.statusCode`, not a hang.
+- `deafWs(t, port)` — a raw socket that completes the WebSocket upgrade by hand
+  and then goes **deaf**: it ignores everything, the polite close frame included.
+  That is the one connection `wsConnect` cannot be, because the `ws` client
+  answers a close — and it is what pins `gracefulShutdown`'s final
+  `server.close()`, so the daemon's own drain budget becomes the assertion.
+  Resolves on the `101` (genuinely upgraded before the test proceeds), destroys
+  on `t.after`. Two files carried the same twelve lines before.
 - `tmpRoot`, `makeApi(baseUrl)`, `safeStop`.
 
 `test-support/sandbox.js` is loaded by `npm test` through
@@ -706,10 +740,18 @@ Deliberately **not** `--test-force-exit`: that turns a leaked handle from a loud
 hang into a silent green, and `test/events-sse.test.js` has the suite's only
 structural leak detectors.
 
-`test/harness-conventions.test.js` ratchets the five constructs above back into
+`test/harness-conventions.test.js` ratchets the constructs above back into
 `test-support` — the deadline loop, a poll-helper definition, `subscribeSSE(`,
-`createServer({ root` and `.server.listen(` — with named exemptions (the two
-heredoc daemons, the fake clients injected into the channel bridge). It is a
+`createServer({ root`, `.server.listen(` and `Sec-WebSocket-Key:` — with named
+exemptions (the two heredoc daemons, the fake clients injected into the channel
+bridge). It also holds at **zero** a construct of a different species: a
+hardcoded MCP tool count (`tools.length, <n>`). That is not a primitive the
+harness re-implements but a truth it re-states — `test-support/doc-truth.js`'s
+`mcpTools()` reads `lib/mcp/tools/`, and a test that copies the number instead
+goes stale silently, with the stale copy passing. `doc-truth.js` is the home for
+that whole class: `docFiles()` is where a doc claim can ship, and `routePaths()`,
+`cliCommands()` and `ctxKeys()` are what the code actually mounts, registers and
+carries. It is a
 separate file from `conventions.test.js` on purpose: that one deliberately does
 not scan `test/`, and adding these roots to its patterns would fire
 `http.request(` and `os.homedir()` across ~20 files at once. Fixed sleeps and
@@ -735,11 +777,46 @@ part of it, which is the whole argument for the module.
   without replacing it (the queue's activity Revert restores form values in
   place and needs every browser to remount).
 
+**The reserved-id set is DERIVED, all of it.** A mount id is agent-supplied text
+and `main` / `status` / `overlay` are plausible things for Claude to name a pane,
+so `RESERVED_IDS` names every id a host document resolves for itself. Nothing in
+it is transcribed by hand: `test/mount-engine.test.js` scans `public/index.html`
+for the static chrome, `public/app/*.js` for the `id="…"` / `.id = '…'` literals
+the shell builds lazily, and `lib/server/export.js` + `lib/server/routes/graph.js`
+for the chrome of the other two documents a pane host is written into — both do
+`host.id = m.id` with no free-id check of their own, so reserving `export-main`
+at the engine is what keeps a duplicate id out of an exported page. Any new
+chrome id fails the suite until it is added to the set. That derivation exists
+because the lazy half used to be a hand list pinned by a test repeating the same
+hand list, and it silently fell four behind. The only ids still listed by hand
+are the two a helper builds from a computed name (`wc-theme-global-css`,
+`wc-theme-node-css`) and the `cmd-opt-<n>` family, which is a pattern; if you add
+a chrome id a literal scan can see, it belongs to the derivation, not that list.
+
 **The carry rules are not uniform and must not be flattened.** `pane_state` and
 `theme` carry; `form_state` carries unless `params.form_reset`; a supplied
 `theme` wins over the pane's; and `component` is written only when the caller
 passes one — never carried, because a plain render over a service-backed pane
 dropping `component` is exactly how the supervisor stops that pane's child.
+
+**`gen` is live-only, and the snapshot enforces it.** `graph.snapshotLive`
+projects every live mount through `turns.hydrateMount`, so a committed node and
+`draft.json` hold exactly `id + SNAPSHOT_FIELDS` — the same list the restore
+paths read back (decision D18). That list is the authority for the WRITER as much
+as the reader: a new persisted mount field goes in `SNAPSHOT_FIELDS`, never into
+the snapshot by widening it. `test/graph-persistence.test.js` pins the two ends
+together.
+**`params` is one bag, but three keys in it belong to the shell.**
+`RENDER_CONTROL_PARAMS` (exported here) names them: `form_reset` (the
+`form_state` carry above), `routing` and `signals` (the activity/wake layer in
+`lib/server/domain/signals.js`). They describe how a *render* behaves, never what
+the pane's code or a service-backed component's host process does — which is why
+`lib/server/services.js` strips them before it fingerprints a service's params
+for consent. Leaving them in made `params.form_reset:true` on a re-render, a
+purely visual choice, restart the service child and ask the user to re-approve a
+service that had not changed. A new shell-read params key must be added to that
+set; `test/service-trust-identity.test.js` scans both readers and fails on one
+that is missing.
 
 **Two named policies, and a third means the abstraction is wrong.** `default`
 covers Claude, `/use` and drivers. `capture` exists for one deviation: the
@@ -752,6 +829,25 @@ What stays OUTSIDE: `graph.restoreLiveToNode` and `turns.loadDraft` replace the
 whole surface and broadcast a `reset` instead of per-pane frames, and
 `routes/render.js`'s bulk clear owns a pin filter and two batched frame shapes.
 `test/conventions.test.js` ratchets exactly that boundary.
+
+### `lib/server/services.js` — the service-trust identity
+
+A consent is a triple: **(project root, `service.js` hash, service-facing params)**.
+`serviceParams` / `paramsFingerprint` / `trustKey` (module-scoped and pure) are the
+only place that triple becomes a value; `computeDesired` mints it once per pane and
+everything downstream QUOTES it — the trust-file key, `pendingTrust()`, the
+`service:trust` / `service:trust:clear` frames, the browser's card map
+(`public/app/service-trust.js`), the CLI's `--params-fp` selector, and the
+supervisor's own "did this child's identity change" test.
+
+Every lossy re-projection of that triple was a place two different consents were
+mistaken for one: the WS frames carried the `service.js` hash alone, so two
+params-variants of one component collapsed into a single card in every browser
+and retiring either request cleared both; and `trust <name>` recorded a decision
+for every request matching the name, so a pane mounting `file-editor` a second
+time with `unfenced:true` could ride along on the approval the user meant for the
+fenced one. **Address a request by its key. Do not re-derive it, and do not
+address it by any part of it.**
 
 ## The conventions tripwire
 
@@ -775,6 +871,7 @@ Current homes (baselines can only shrink toward these):
 | Construct | Allowed home | Phase that finishes the collapse |
 | --- | --- | --- |
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
+| `client.request(` (the non-throwing low-level idiom) | `lib/client` `get`/`post`, which throw a typed `HttpError` on a non-2xx — plus the three genuine **relays**, which hand a status onward rather than acting on it: `lib/cli/commands/export.js`, `lib/cli/commands/pack.js` (a best-effort ping that shrugs at every outcome) and `lib/hub/index.js`'s `forward` | landed with the client outcome contract ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
 | `getPrototypeOf(async function` | `public/mount-runtime.js` (`runSeed`) — the AsyncFunction spelling of the same eval, added when `drawer.js` grew a second eval site the `new Function(` pattern could not see | Phase 4 ✅ |
@@ -792,6 +889,9 @@ Current homes (baselines can only shrink toward these):
 | `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
 | `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
 | `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |
+| `fullReset(` / `mountAll(` **in `public/app` only** | `public/app/mounts.js` — `applySnapshot` is the one snapshot path and these are its internals; the single grandfathered call outside it is `topbar.previewNode`, which puts a non-live node ON the DOM while `previewing` is already true | landed with the snapshot applier ✅ |
+| `view.liveSnapshot =` **in `public/app` only** | `public/app/mounts.js` (`applySnapshot`'s fold) · `public/app/topbar.js` (`previewNode` captures it, `leavePreview` drops it) — the other half of the same defect: who may replace the folded live surface | landed with the snapshot applier ✅ |
+| `=== 'li'` (the list-item walker) | `lib/capture/profiles/util.js` (`listItems(el)`) — required by `article`/`simplify`/`markdown`, and injected into capture bundles as `ctx.listItems`, which is the only way a bundle can reach it. A flat `querySelectorAll('li')` emits a nested item twice | landed with the ctx-kit list walker ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 
 Working with it:

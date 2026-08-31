@@ -12,6 +12,8 @@ const path = require('path');
 const os = require('os');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+// lib/mcp/tools/ is the one home of "which tools exist"; doc-truth reads it.
+const { mcpTools } = require('../test-support/doc-truth');
 
 const MCP_BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
 
@@ -41,11 +43,10 @@ async function launchMcp(t, { cwd, home }) {
 test('tools/list returns the full tool set with well-formed entries', async (t) => {
   const client = await launchMcp(t, { cwd: installedProject(), home: mkTmp() });
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 23);
-  const names = new Set(tools.map((x) => x.name));
-  for (const n of ['render', 'clear', 'export', 'get_theme', 'get_captures', 'inspect_capture']) {
-    assert.ok(names.has(n), `missing tool ${n}`);
-  }
+  // Names, not just a count: what the SDK exposes IS lib/mcp/tools/, so a tool
+  // file that never made it into the `tools` array in lib/mcp/index.js fails
+  // here instead of shipping invisible.
+  assert.deepEqual(tools.map((x) => x.name).sort(), mcpTools());
   for (const x of tools) {
     assert.ok(x.name, 'tool has a name');
     assert.ok(x.description && x.description.length > 0, `${x.name} has a description`);

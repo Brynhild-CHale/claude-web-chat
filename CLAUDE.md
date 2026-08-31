@@ -64,7 +64,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | ask whether a pid is alive | `lib/core/portfiles` (`isPidAlive`) | inline `process.kill(pid, 0)` (no type guard) |
 | release a daemon's records, or classify the machine | `lib/util/registry` (`release({root,pid})` / `rows()` / `readAllEntries`) | delete a portfile and a registry entry separately, or re-derive liveness per caller |
 | stop or clear ANOTHER project's surface | `lib/cli/reap` (`reap` / `stopRow`) | signal a pid read out of a file |
-| call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`request`/`subscribeSSE`) | `http.request` / hand-rolled SSE (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
+| call the daemon over HTTP (incl. SSE) | `lib/client` (`get`/`post`/`subscribeSSE`; a non-2xx throws a typed `HttpError` carrying `{status, body}` — the never-throwing low-level `request` is only for relaying a status onward) | `http.request` / hand-rolled SSE / `client.request` + a hopeful read of the body (`/api/wait` is a driver-only long-poll — drivers reach it via `lib/driver` `waitFor`, never hand-rolled) |
 | write a small JSON record durably, or read one back honestly | `lib/core/fsjson` (`writeJsonAtomic`; `readJson` → `ok`/`absent`/`corrupt`/`invalid`, `readJsonOr`, `renameAside`) | `writeFileSync(JSON.stringify(...))`, a private tmp+rename, or a `catch` that collapses absent and torn |
 | notify the surface of a change (WS frame + event-log entry) | `lib/core/bus` (`emit({event, ws, except})`; one ring, one `read` gap/catch-up) | hand-pair `broadcast(...)` + `pushEvent(...)` |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` (`setMount` / `removeMount` / `emitMount` — lock, owner gate, reserved ids, carry rules, `gen`, one paired emit) | hand-write `state.mounts.set(...)` beside a render frame |
@@ -72,7 +72,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | resolve + scheme-gate an href/src read out of a captured page | `lib/capture/profiles/util` (`safeHref(href, pageUrl)`) | `new URL` plus your own `javascript:` regex |
 | render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `lib/capture/pane` | import them from `lib/server/routes/capture` |
 | read/validate/require a capture-profile bundle | `lib/capture/profiles` (`loadBundle` / `validateMeta`) | a second reader of `profile.json` with its own rules |
-| hand a capture profile a helper (`esc`, `collapse`, `safeHref`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle |
 | ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | unpack or inspect a `.tar.gz` | `lib/update/archive` (`extractTarGz`/`rootOf`/`listTarGz`) | a second `spawnSync('tar')` |
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |
@@ -82,6 +82,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | fetch / plan / install a component pack | `lib/packs/` (`source`→`fetch`→`manifest`→`plan`→`tree`→`install`) | a second install path beside the CLI's |
 | decide whether a name may become a component directory | `lib/core/names` (`assertComponentName`/`isComponentName`/`BUILTIN_COMPONENTS`) | re-declare the kebab grammar, or re-list the builtin names |
 | read/write a browser storage key in the chrome | `public/app/storage.js` (`getLocal`/`setLocal`/`getSession`/`getLocalJson`, all fail open) | touch `localStorage`/`sessionStorage` directly (the accessor throws in a private window) |
+| apply a full-surface snapshot frame in the chrome (`hello`, `reset`, `branch-here`, the restored live surface) | `public/app/mounts.js` (`applySnapshot(frame, {mode})` — owns the preview fold and the reconcile) | hand-roll `mountAll` + `fullReset` beside a frame handler (that is how `hello` lost the preview fork) |
 | leave the detached node preview | `public/app/topbar.js` (`leavePreview({activeId, restoreSnapshot, flushForms})`) | hand-copy the `previewing = false` transition |
 | walk the graph as DRAWN (nav, forks, lineage, layout) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`) | `labels.childrenOf` — raw commit children, for the ⑃ branch picker only |
 | dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
@@ -89,6 +90,8 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |
 | wait on a condition in a test | `test-support/helpers` (`waitUntil`) | a private `waitFor`/`until` loop |
 | open an SSE stream in a test | `test-support/helpers` (`openSSE`) | `subscribeSSE` with only `onOpen` — it can never reject |
+| pin a socket open with a deaf WS client in a test | `test-support/helpers` (`deafWs`) | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` |
+| assert what the code contains (tool set, doc set, routes, CLI commands) in a test | `test-support/doc-truth` (`mcpTools`/`docFiles`/`routePaths`/`cliCommands`) | a literal count, or a hand-written list of docs to check |
 
 Dependency direction is one-way: `core` ← `client` ← everything else, `core` imports nothing else from `lib/`, and entry points never reach into each other's internals — **`test/dependency-direction.test.js` enforces all three**, with a named, shrink-only baseline for the edges that legitimately remain. Every concept is consolidated behind one engine (paths, portfiles, durable JSON records, the daemon HTTP client, the change bus, the mount runtime, the tiered resource registry, the turn lock, the service supervisor) — extend the engine, never add a parallel mechanism. Full concept→engine map: `docs/extending.md`.
 

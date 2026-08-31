@@ -7,6 +7,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { escapeHtml } = require('../lib/core/html');
+const {
+  CHANNEL_ENV, CHANNEL_ENV_VALUE, CHANNEL_NAME, LAUNCH_COMMAND,
+} = require('../lib/core/channels');
 
 // ── escapeHtml ──────────────────────────────────────────────────────────────
 
@@ -317,4 +320,30 @@ test('no source file under lib/ hardcodes the repo slug except its one home', ()
   // failure this consolidated: `update` downloaded from the override while the
   // very next line told the user to curl the original repo's install.sh.
   assert.deepEqual(offenders, ['lib/core/versions.js (1)']);
+});
+
+// ── channels: the launch incantation ────────────────────────────────────────
+//
+// Single-sourcing the string is only half the guarantee: install, init, doctor
+// and the queue rail all print whatever lib/core/channels says, so a wrong
+// string is wrong in four places at once. The audited regression was a
+// `--dangerously-load-development-channels` with no channel argument — a flag
+// that parses, runs, and activates nothing. Nothing in the suite named the
+// argument, so re-dropping it was invisible. It is named here.
+
+test('channels: LAUNCH_COMMAND loads the channel by name, not a bare flag', () => {
+  assert.equal(CHANNEL_NAME, 'server:web-chat');
+  assert.ok(
+    LAUNCH_COMMAND.endsWith(`--dangerously-load-development-channels ${CHANNEL_NAME}`),
+    `the flag takes the channel to load; without it the command is inert: ${LAUNCH_COMMAND}`,
+  );
+});
+
+test('channels: LAUNCH_COMMAND is composed from the env constants it exports', () => {
+  assert.equal(
+    LAUNCH_COMMAND,
+    `${CHANNEL_ENV}=${CHANNEL_ENV_VALUE} claude --dangerously-load-development-channels ${CHANNEL_NAME}`,
+  );
+  assert.ok(LAUNCH_COMMAND.startsWith('WEB_CHAT_CHANNEL=1 claude '),
+    'the env opt-in and the binary are what a user copies verbatim');
 });

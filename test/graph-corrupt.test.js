@@ -101,7 +101,9 @@ test('graph: a truncated _meta.json boots on the latest node and does NOT delete
   assert.deepEqual(mounts.json.mounts.map((m) => m.id), ['unsaved'], 'the uncommitted draft is restored, not discarded');
   assert.equal(fs.existsSync(path.join(webChatDir, 'draft.json')), true, 'and it is still on disk');
 
-  // The torn file is healed in place by the recovery's own saveMeta.
+  // The recovery's own saveMeta leaves a readable file in its place. (The torn
+  // BYTES are moved aside first rather than overwritten — that half is pinned in
+  // test/graph-persistence.test.js.)
   const meta = JSON.parse(fs.readFileSync(path.join(webChatDir, 'graph', '_meta.json'), 'utf8'));
   assert.equal(meta.active, 'n1');
 });

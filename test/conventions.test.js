@@ -47,6 +47,40 @@ const PATTERNS = [
     },
   },
   {
+    // The row above says WHICH client to use; this one says which of its two
+    // idioms. `get`/`post` are the default: they resolve with the body or throw,
+    // and a non-2xx is a typed HttpError carrying {status, body}. The low-level
+    // `request` returns {status, body} and never throws on a status — correct
+    // only for a caller that RELAYS the status rather than acting on it.
+    //
+    // The distinction was invisible at the call sites and three of them got it
+    // wrong: `profile reload` and `unlock` used request() and then read fields
+    // off the body, so a 404 (a daemon predating the route, whose HTML body
+    // parses to a string) printed "reloaded undefined user profile(s)" and "no
+    // lock was set" for something neither had reached. Both are on post() now.
+    // A new bare `client.request(` is that defect again, so it has to come
+    // through here and say why.
+    //
+    // The three grandfathered sites are the genuine relays — each hands the
+    // status onward rather than deciding on it:
+    name: 'client.request( (the non-throwing low-level idiom)',
+    home: 'lib/client `get`/`post` — `request` only where the STATUS is relayed onward',
+    what: 'calling the daemon without the typed non-2xx contract',
+    roots: ['lib'],
+    re: /client\.request\(/g,
+    baseline: {
+      // Prints the server's own error text and exits non-zero on any non-200,
+      // including the route's {error} body — it inspects r.status itself.
+      'lib/cli/commands/export.js': 1,
+      // Best-effort "the component set moved" ping. Every outcome, status or
+      // socket, is the same shrug — a status it must not act on.
+      'lib/cli/commands/pack.js': 1,
+      // The hub's forward(): the instance's status and JSON are relayed verbatim
+      // to the extension. A throw here would erase the status it exists to pass.
+      'lib/hub/index.js': 1,
+    },
+  },
+  {
     name: 'os.homedir()',
     home: 'lib/core/paths.js (extracted in Phase 1)',
     what: 'building the ~/.web-chat state dir',
@@ -186,6 +220,30 @@ const PATTERNS = [
       'public/app/esc.js': 1,
       'templates/components/file-editor/component.html': 1,
       'templates/components/git-dashboard/component.html': 1,
+    },
+  },
+  {
+    // The list walker. `querySelectorAll('li')` descends into nested lists, so a
+    // flat walk emits a nested item TWICE — once absorbed into its parent's
+    // text, once as an item of its own. The fix is one line and it was made
+    // three times: lib/capture/markdown.js filtered own children in two places,
+    // and reddit's bundled extractor carried a private `ownItems` copy because a
+    // bundle cannot require into the package. That copy is where the fix sat
+    // unpinned by any test.
+    //
+    // The home is lib/capture/profiles/util.js `listItems(el)`; article,
+    // simplify and markdown require it, and a bundle takes it off the injected
+    // ctx kit (CTX_HELPERS). The pattern matches the tag COMPARISON, so a walker
+    // spelled with its own tagOf() helper still trips it; the gmail block-tag
+    // list and the chrome's el('li') builder are not tag tests and do not.
+    name: "=== 'li' (the list-item walker)",
+    home: 'lib/capture/profiles/util.js — `listItems(el)`, injected into capture bundles as ctx.listItems',
+    what: 'walking a list\'s own <li> children',
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
+    re: /===\s*['"]li['"]/g,
+    baseline: {
+      'lib/capture/profiles/util.js': 1,
     },
   },
   {
@@ -450,6 +508,52 @@ const PATTERNS = [
     // is the same missing undo list. Both files are at zero for all of them.
     re: /\b(copyFileSync|cpSync|writeFileSync|renameSync|unlinkSync|rmSync|rmdirSync)\(/g,
     baseline: {},
+  },
+  {
+    // Replacing the WHOLE surface from a snapshot frame. `hello` and `reset`
+    // carry the identical payload (mounts + store + active/lock/theme) and were
+    // written as two separate appliers — so only one of them ever grew the
+    // preview fork the ws.js header states as an invariant, and a reconnect
+    // during a node preview re-mounted live panes over the previewed node. The
+    // second copy was also purely additive: no removal of panes the server had
+    // cleared, and a blind re-mount over whatever the user had typed.
+    //
+    // The home is mounts.applySnapshot — it owns the preview fork and the
+    // authoritative/reconcile split, so a third snapshot path cannot be written
+    // without one. `fullReset`/`mountAll` are its primitives and stay inside the
+    // engine; the ONE deliberate exception is topbar.previewNode, which renders a
+    // non-live node ONTO the DOM while `previewing` is already true (the applier
+    // would fold it aside instead) and says so at the call site.
+    name: 'fullReset( / mountAll( outside the mount engine',
+    home: 'public/app/mounts.js — applySnapshot(frame, {mode}) (fullReset/mountAll are its internals)',
+    what: 'applying a full-surface snapshot frame',
+    roots: ['public/app'],
+    re: /\b(?:fullReset|mountAll)\(/g,
+    baseline: {
+      // The engine: the header line naming both, fullReset's declaration + its
+      // mountAll call, and applySnapshot's authoritative branch.
+      'public/app/mounts.js': 5,
+      // previewNode — entering a preview IS putting a non-live node on the DOM.
+      'public/app/topbar.js': 1,
+    },
+  },
+  {
+    // The other half of the same defect: who may REPLACE the folded live surface.
+    // While detached, a snapshot must land in view.liveSnapshot instead of the
+    // DOM, and that assignment was hand-written at each frame handler that
+    // happened to remember it (ws.js's reset and branch-here) and simply missing
+    // from the one that did not (hello). It belongs to the applier now.
+    name: 'view.liveSnapshot = (replacing the folded live surface)',
+    home: 'public/app/mounts.js — applySnapshot (fold) · public/app/topbar.js — previewNode (capture) / leavePreview (drop)',
+    what: 'the detached preview fold',
+    roots: ['public/app'],
+    re: /view\.liveSnapshot\s*=/g,
+    baseline: {
+      // The fold itself.
+      'public/app/mounts.js': 1,
+      // Captured on the way into a preview, dropped on the way out.
+      'public/app/topbar.js': 2,
+    },
   },
   {
     // The one row scoped to the FRONT END, and the one that reaches a true zero

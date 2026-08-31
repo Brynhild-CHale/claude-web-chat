@@ -5,7 +5,7 @@
 import { view, $ } from './state.js';
 import { store } from './store.js';
 import { nodeById, labelFor, childrenOf } from './labels.js';
-import { fullReset, panes, flushFormStates } from './mounts.js';
+import { fullReset, applySnapshot, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
 import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf, requestSetActive } from './graph-view.js';
 
@@ -94,6 +94,10 @@ export async function previewNode(id) {
     $('main').classList.add('preview-readonly');
   }
   view.viewedId = id;
+  // The ONE surface replacement that deliberately does NOT go through
+  // applySnapshot: `previewing` is already true here, so the applier would fold
+  // this node aside as the live surface instead of rendering it. Entering a
+  // preview is the act of putting a non-live node ON the DOM.
   fullReset({ mounts: node.mounts || [], store: node.store || {} });
   applyNodeTheme(node.theme || null, true);
   updateChip();
@@ -171,7 +175,9 @@ export function leavePreview({ activeId = null, restoreSnapshot = false, flushFo
   if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
   if (restoreSnapshot) {
     view.viewedId = view.activeId;
-    if (snap) fullReset({ mounts: snap.mounts, store: snap.store });
+    // previewing is already false above, so this takes the applier's
+    // authoritative path — the captured live surface is re-rendered verbatim.
+    if (snap) applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
   if (flushForms) flushFormStates();
@@ -278,7 +284,7 @@ async function setActiveHere() {
   if (!await requestSetActive(target)) return;
   leavePreview({ activeId: target });
   const nr = await fetch('/api/graph/node/' + target);
-  if (nr.ok) { const node = await nr.json(); fullReset({ mounts: node.mounts || [], store: node.store || {} }); }
+  if (nr.ok) { const node = await nr.json(); applySnapshot({ mounts: node.mounts || [], store: node.store || {} }); }
   await onGraphChanged();
 }
 
