@@ -160,12 +160,40 @@ test('isInside: nothing imports the predicate from the shim — core/paths is th
       else if (e.isFile() && e.name.endsWith('.js')) files.push(f);
     }
   })(LIB);
+  // Matched against the WHOLE file, not line by line. The old scan required the
+  // require() and the name to share a source line, so the ordinary multi-line
+  // destructure —
+  //   const {
+  //     isInside,
+  //   } = require('../update/install-layout');
+  // — slipped straight through the check whose entire job is to catch it. Three
+  // spellings reach the shim's copy, and all three are the defect.
+  // No backreference in REQ: it is spliced into three larger patterns where its
+  // group number shifts, and a stale \1 silently stopped matching.
+  const REQ = String.raw`require\(\s*['"][^'"]*install-layout(?:\.js)?['"]\s*\)`;
+  const NAMES = String.raw`isInside|realpath`;
+  const SPELLINGS = [
+    // const { … isInside … } = require('…install-layout')  — newlines and all
+    new RegExp(String.raw`\{[^{}]*\b(?:${NAMES})\b[^{}]*\}\s*=\s*${REQ}`),
+    // require('…install-layout').isInside
+    new RegExp(`${REQ}\\s*\\.\\s*(?:${NAMES})\\b`),
+  ];
   const offenders = [];
   for (const f of files) {
     if (f.endsWith(path.join('update', 'install-layout.js'))) continue; // the shim itself
-    for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
-      if (!/require\((['"])[^'"]*install-layout\1\)/.test(line)) continue;
-      if (/\bisInside\b|\brealpath\b/.test(line)) offenders.push(`${path.relative(LIB, f)}: ${line.trim()}`);
+    const src = fs.readFileSync(f, 'utf8');
+    const rel = path.relative(LIB, f);
+    for (const re of SPELLINGS) {
+      const m = src.match(re);
+      if (m) offenders.push(`${rel}: ${m[0].replace(/\s+/g, ' ')}`);
+    }
+    // const layout = require('…install-layout')  …later…  layout.isInside(…).
+    // Not a blanket "file mentions both": lib/cli/commands/update.js legitimately
+    // requires the shim and says "realpath" in a comment about Node's cache.
+    const alias = src.match(new RegExp(String.raw`(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*${REQ}`));
+    if (alias) {
+      const use = src.match(new RegExp(String.raw`\b${alias[1]}\s*\.\s*(?:${NAMES})\b`));
+      if (use) offenders.push(`${rel}: ${use[0]}`);
     }
   }
   assert.deepEqual(offenders, [], `isInside/realpath live in lib/core/paths — import them from there, not through the install-layout shim:\n  ${offenders.join('\n  ')}`);
