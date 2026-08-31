@@ -145,8 +145,15 @@ const CSS_RULES = (() => {
 })();
 
 // The two blocks that ARE the palette: the base :root vocabulary and its
-// Earthy Light override.
-const PALETTE = [':root', ':root[data-theme="light"]'];
+// Earthy Light override. (`:root` alone is not enough — the --z-* stacking
+// scale above lives in a :root block of its own.)
+const isPaletteBlock = (r) =>
+  [':root', ':root[data-theme="light"]'].includes(r.selector) && /--wc-bg\s*:/.test(r.body);
+
+test('the sheet has exactly the two palette blocks it documents', () => {
+  assert.deepEqual(CSS_RULES.filter(isPaletteBlock).map((r) => r.selector),
+    [':root', ':root[data-theme="light"]']);
+});
 
 test('the Earthy Light palette block is the only place the sheet branches on mode', () => {
   // Ratchet: a `:root[data-theme=...]` rule anywhere else is a second palette —
@@ -163,7 +170,7 @@ test('every --wc-* the chrome references is a token that exists', () => {
   // part of the palette.
   const defined = new Set();
   for (const r of CSS_RULES) {
-    if (!PALETTE.includes(r.selector)) continue;
+    if (!isPaletteBlock(r)) continue;
     for (const m of r.body.matchAll(/(--wc-[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
   }
   assert.ok(defined.has('--wc-accent'), 'the palette blocks were found');
@@ -174,6 +181,28 @@ test('every --wc-* the chrome references is a token that exists', () => {
     }
   }
   assert.deepEqual([...missing].sort(), [], '--wc-* references with no definition');
+});
+
+test('no chrome surface is painted from a colour the palette does not hold', () => {
+  // Ratchet, in the shape of the fix: a hex literal outside the two palette
+  // blocks is a colour no theme can reach — including the never-firing
+  // `var(--wc-x, #hex)` fallbacks the chrome used to carry (app.css is loaded
+  // by public/index.html alone, where :root defines every one of those tokens,
+  // so each fallback was a second value for a token that always had one).
+  // rgba() is deliberately not covered: the sheet's shadows and scrims are
+  // black/white alphas, not palette entries.
+  const stray = [];
+  for (const r of CSS_RULES) {
+    if (isPaletteBlock(r)) continue;
+    for (const d of r.body.split(';')) {
+      if (/#[0-9a-fA-F]{3,8}\b/.test(d)) stray.push(`${r.selector} { ${d.trim()} }`);
+    }
+  }
+  assert.deepEqual(stray.sort(), [
+    '.depth-grid { -webkit-mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
+    '.depth-grid { mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
+    '.update-banner .ub-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--wc-gold) 85%, #fff) }',
+  ], 'literal colours outside the palette blocks');
 });
 
 /* ======================= the jsdom boot ======================= */
