@@ -162,6 +162,26 @@ test('the release workflow builds the artifact and publishes it, and never publi
   assert.match(wf, /npm test/, 'a release that fails its own suite is not a release');
 });
 
+// Both workflows explain the shape of `npm test` in a comment, and the shape
+// changed under them: the timeout and the HOME sandbox --import landed while
+// release.yml still called it "a bare `node --test`". A CI comment is the last
+// place anyone looks for a stale fact, so the one it turns on is asserted here
+// against package.json rather than left to the next reader to notice.
+test('the CI comments describe `npm test` as it actually is', () => {
+  const script = JSON.parse(read('package.json')).scripts.test;
+  const flags = script.split(/\s+/).slice(2);
+  assert.ok(script.startsWith('node --test') && flags.length > 0,
+    'the test script is `node --test` PLUS flags — if that ever stops being true, revisit the comments below');
+  for (const f of ['.github/workflows/test.yml', '.github/workflows/release.yml']) {
+    const wf = read(f);
+    assert.match(wf, /npm test/, `${f} must run the suite`);
+    assert.doesNotMatch(wf, /bare `node --test`/,
+      `${f} calls npm test a bare \`node --test\`, but it is \`${script}\``);
+    assert.match(wf, /NO path argument|no path argument/i,
+      `${f} must keep the fact that matters: npm test takes no path argument`);
+  }
+});
+
 test('the three bin names are minted in one place and used everywhere', () => {
   const { BIN_NAMES } = require('../lib/core/paths');
   const pkg = JSON.parse(read('package.json'));
