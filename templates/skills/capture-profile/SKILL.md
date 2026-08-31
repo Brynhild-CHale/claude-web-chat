@@ -11,7 +11,7 @@ bundle directory:
 ```
 <name>/
   profile.json   # { name, description, matchers[], pane?{default_mode,mount_suffix,dedupe_by} }
-  extract.js     # module.exports = ({ url, html, root, esc, collapse, safeHref, absolutize }) => distilled
+  extract.js     # module.exports = ({ url, html, root, esc, collapse, safeHref, absolutize, listItems }) => distilled
   pane.js        # OPTIONAL — module.exports = { render(distilled, ctx), reduce(distilled) }
 ```
 
@@ -25,6 +25,7 @@ package and cannot `require` into it, so both `extract({...})` and
 | `collapse(s)` | squeeze whitespace runs to single spaces and trim |
 | `safeHref(href, pageUrl)` | resolve a relative href/src against the page URL and refuse any scheme outside http/https/mailto/tel — returns `''`, so keep the link text and drop the href |
 | `absolutize(href, base)` | the lenient resolver: an unresolvable value comes back unchanged instead of empty. It refuses `javascript:`/`vbscript:`, but has no allowlist — prefer `safeHref` |
+| `listItems(el)` | a list's OWN `<li>` children. `el.querySelectorAll('li')` descends into nested lists and emits a nested item twice — once merged into its parent's text, once on its own. Recurse yourself if you want the inner list |
 
 Read `root.text` (decoded), never `root.rawText` (raw source text — entities like
 `&amp;` and `&nbsp;` survive it and land in the distillate).
@@ -91,7 +92,7 @@ shadowing is all-or-nothing (no field merge); offer to copy the global pane forw
 - Draft `pane.js`: `module.exports = { render(distilled, ctx), reduce(distilled) }`.
   - `render` runs **server-side, in Node** — its return value is a string the
     surface mounts. `ctx` carries `{ mode, reduced, mount_id, profile }` plus the
-    same `esc` / `collapse` / `safeHref` / `absolutize` helpers the extractor
+    same `esc` / `collapse` / `safeHref` / `absolutize` / `listItems` helpers the extractor
     gets; destructure them (`render(d, { esc, mode })`) instead of writing an
     escaper.
   - **One payload, two modes.** Mark elements `data-wc-when="expanded"` or

@@ -72,7 +72,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | resolve + scheme-gate an href/src read out of a captured page | `lib/capture/profiles/util` (`safeHref(href, pageUrl)`) | `new URL` plus your own `javascript:` regex |
 | render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `lib/capture/pane` | import them from `lib/server/routes/capture` |
 | read/validate/require a capture-profile bundle | `lib/capture/profiles` (`loadBundle` / `validateMeta`) | a second reader of `profile.json` with its own rules |
-| hand a capture profile a helper (`esc`, `collapse`, `safeHref`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle |
 | ask the user a question in the terminal | `lib/cli/prompt` (`createPrompt` → `confirm`/`line`/`close`; the non-TTY/CI/`--no-input`/`--yes` gate is inside the engine) | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | unpack or inspect a `.tar.gz` | `lib/update/archive` (`extractTarGz`/`rootOf`/`listTarGz`) | a second `spawnSync('tar')` |
 | compare two versions | `lib/core/versions.compareVersions` | a third dotted-number comparator |

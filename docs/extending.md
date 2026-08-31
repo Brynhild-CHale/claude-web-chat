@@ -156,7 +156,7 @@ were the only places they lived.
 | resolve + scheme-gate an href/src read out of a captured page | `capture/profiles/util` `safeHref(href, pageUrl)` | `new URL` plus your own `javascript:` regex |
 | render a capture pane (default reduce, mode wrapper, reader view, feedback card) | `capture/pane` `renderProfilePane` / `renderSimplifiedPane` / `defaultReduce` | import them from `lib/server/routes/capture` |
 | read, validate and require a capture-profile bundle | `capture/profiles` `loadBundle(dir)` / `validateMeta(meta)` | a second reader of `profile.json` with its own acceptance rules |
-| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is the only alternative) |
+| hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is NOT the alternative — extend the kit) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |

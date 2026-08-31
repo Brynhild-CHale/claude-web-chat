@@ -80,7 +80,8 @@ profile/
 ```
 
 Both entry points are handed the same helper kit — `esc` (the five-character
-HTML escaper), `collapse`, `safeHref(href, pageUrl)` and the lenient
+HTML escaper), `collapse`, `listItems(el)` (a list's own `<li>` children — the
+walker that does not double-emit a nested item), `safeHref(href, pageUrl)` and the lenient
 `absolutize(href, base)` (which hands an unresolvable value back unchanged rather
 than empty, and refuses `javascript:`/`vbscript:` but gates nothing else — reach
 for `safeHref` unless you specifically want that leniency). A bundle lives in `.web-chat/profiles/<name>/` or
@@ -156,7 +157,7 @@ The pane is paired to the profile and rendered by `pane.js` against the profile'
 ```js
 module.exports = {
   // full render — runs SERVER-SIDE; receives the complete distilled payload plus
-  // ctx { mode, reduced, mount_id, profile, esc, collapse, safeHref, absolutize }
+  // ctx { mode, reduced, mount_id, profile, esc, collapse, safeHref, absolutize, listItems }
   render(distilled, ctx) { /* returns HTML/JS string */ },
   // OPTIONAL: programmatic reduction of the SAME payload for reduced mode.
   // If omitted, reduced mode is a default summarization (title + first-N rows/lines).
