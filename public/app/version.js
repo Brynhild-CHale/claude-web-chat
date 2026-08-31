@@ -20,12 +20,20 @@ const RECHECK_MS = 20 * 60 * 1000; // long-open tabs re-check occasionally (serv
 const DISMISS_KEY = 'wc:update-dismissed';
 
 let currentBuild = null;
+// The version the bar is announcing RIGHT NOW, remembered here rather than
+// re-derived by regexing the message text back out of the DOM: the dismiss
+// handler parsed /web-chat (\S+) is available/ off `.ub-msg`, so a reworded
+// sentence, a translated one, or a version containing a space would have
+// dismissed nothing at all — silently, since hide() runs either way. It is also
+// null whenever the bar is borrowed for something else (see flash), which is the
+// honest answer to "what would × dismiss?" in that state.
+let announced = null;
 
 const banner = () => $('update-banner');
 const msgEl = () => { const b = banner(); return b && b.querySelector('.ub-msg'); };
 const linkEl = () => $('ub-release-link');
-const show = () => { const b = banner(); if (b) b.classList.remove('hidden'); };
-const hide = () => { const b = banner(); if (b) b.classList.add('hidden'); };
+const show = (latest = null) => { announced = latest; const b = banner(); if (b) b.classList.remove('hidden'); };
+const hide = () => { announced = null; const b = banner(); if (b) b.classList.add('hidden'); };
 
 function dismissedVersion() {
   return getSession(DISMISS_KEY);
@@ -52,7 +60,7 @@ export async function checkVersion() {
   }
   const a = linkEl();
   if (a && info.releaseUrl) a.href = info.releaseUrl;
-  show();
+  show(info.latest);
 }
 
 // The "…" menu's Check for updates. Forces past the daemon's 24h throttle AND
@@ -85,10 +93,8 @@ export function initVersion() {
   const x = $('btn-update-dismiss');
   if (x) {
     x.addEventListener('click', () => {
-      const m = msgEl();
       // Remember the version we were showing, so a LATER release still speaks up.
-      const shown = m && /web-chat (\S+) is available/.exec(m.textContent || '');
-      if (shown) rememberDismissal(shown[1]);
+      if (announced) rememberDismissal(announced);
       hide();
     });
   }

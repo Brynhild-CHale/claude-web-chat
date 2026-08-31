@@ -581,6 +581,14 @@ test('queue: Push with no channel connected PARKS the batch', async (t) => {
   assert.ok(pending.json.pending, 'a park is pending for the hook (path A)');
   assert.equal(pending.json.pending.id, push.json.pending_id);
   assert.match(pending.json.pending.envelope.content, /example\.com/);
+  // The STRUCTURED batch rides along, summary-only. The route used to strip it,
+  // so the rail's "Held for next prompt" section had nothing to render from but
+  // the envelope prose — which it regex-parsed.
+  assert.equal(pending.json.pending.items.length, 1);
+  assert.deepEqual(Object.keys(pending.json.pending.items[0]).sort(),
+    ['id', 'kind', 'source', 'summary', 'why_wake'],
+    'summary-only: no capture body, no signal payload — the envelope contract holds here too');
+  assert.equal(pending.json.pending.items[0].kind, 'capture');
 });
 
 test('queue: re-push MERGES into one park; consume is id-checked', async (t) => {
