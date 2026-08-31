@@ -281,15 +281,26 @@ from a missing one.
   not use out of the way instead of destroying it; `keep` caps how many such
   files accumulate.
 
-Two rules the engine deliberately keeps:
+Four rules the engine deliberately keeps:
 
 - **No type-specific knowledge.** Shape predicates are passed in as `validate`
   and live next to the type's owner (`isGraphNode` sits beside `graph.load`) —
   the same boundary `core/resources.js` draws.
 - **`invalid` is a returned state, never a throw and never a silent skip.** The
-  callers want three different things from it: `graph.load` skips the node,
-  `components-registry` surfaces a placeholder record, `seedBuiltins` repairs the
-  directory from the shipped copy.
+  callers want three different things from it: `graph.load` skips the node (and
+  renames it aside), `components-registry` surfaces a placeholder record,
+  `seedBuiltins` repairs the directory from the shipped copy.
+- **A skip must not become a delete on the next write.** `renameAside` is only
+  half of "I could not read this is not a licence to destroy it"; the other half
+  is that the name stays spoken for. `graph.load` seeds `nextSeq` from the node
+  FILENAMES in `graph/` — live files, their `.corrupt-<ts>` copies, and any
+  `.tmp` a crash left — not from the nodes that loaded, so the id of a file it
+  declined to read is never handed to the next commit. Any reader that skips a
+  numbered record owes the same.
+- **Healing an unreadable record is best-effort.** `graph.load` recovers `active`
+  from the latest commit and rewrites `_meta.json` inside a `try/catch`:
+  `createServer` calls `load()` unguarded, so a failed write there would be the
+  daemon refusing to boot over a file that only matters to the NEXT boot.
 
 Out of scope: cross-filesystem moves (the temp file is always a sibling, so
 `renameSync` cannot hit `EXDEV`), append-only logs (`packs`' NDJSON audit trail
@@ -740,6 +751,14 @@ part of it, which is the whole argument for the module.
 `theme` wins over the pane's; and `component` is written only when the caller
 passes one — never carried, because a plain render over a service-backed pane
 dropping `component` is exactly how the supervisor stops that pane's child.
+
+**`gen` is live-only, and the snapshot enforces it.** `graph.snapshotLive`
+projects every live mount through `turns.hydrateMount`, so a committed node and
+`draft.json` hold exactly `id + SNAPSHOT_FIELDS` — the same list the restore
+paths read back (decision D18). That list is the authority for the WRITER as much
+as the reader: a new persisted mount field goes in `SNAPSHOT_FIELDS`, never into
+the snapshot by widening it. `test/graph-persistence.test.js` pins the two ends
+together.
 
 **Two named policies, and a third means the abstraction is wrong.** `default`
 covers Claude, `/use` and drivers. `capture` exists for one deviation: the
