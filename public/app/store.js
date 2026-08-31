@@ -2,8 +2,10 @@
 // window.__wcMount.createStore (the shared runtime); here we inject the live
 // surface's ws-echo publish hook — skipped for a server-originated patch
 // (fromServer), during a detached preview, or with no open socket (rewrite risk
-// #2: this guard is what prevents a store→ws→store echo storm). Bulk reset/merge
-// (fullReset, hello) use the store's silent replace()/merge() to bypass pub/sub.
+// #2: this guard is what prevents a store→ws→store echo storm). The full-surface
+// appliers in mounts.js (fullReset, applySnapshot) use the store's silent
+// replace() to bypass pub/sub — and the one that does not re-mount republishes
+// the diff itself.
 //
 // mount-runtime.js is a classic script loaded before this module, so
 // window.__wcMount is guaranteed present at eval time.
