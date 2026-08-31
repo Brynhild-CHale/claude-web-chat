@@ -220,6 +220,16 @@ stream = ctx.driver.streamEvents({ kinds: ['store'],
 setInterval(async () => { applyCtl((await ctx.driver.getStore(['git_ctl'])).git_ctl); rebuild(); }, 5000);
 ```
 
+**Never execute a host-mutating action from that startup read.** The control key
+outlives your process: it sits in the store from before the service was spawned
+and is restored with a graph node, so what you read at startup may be a `save`
+clicked minutes ago, against a buffer that has since changed or a node the user
+has left. Replay **view** actions only (`open`, `browse`) and floor the cursor at
+your own start time, so a persisted write from before you existed can never
+re-fire. `templates/components/file-editor/service.js` is the pattern —
+`let lastCtlSeq = startedAt;` and a `VIEW_ACTIONS` set that the startup path
+checks and the live SSE path does not.
+
 A control key is not a wake signal — don't declare it in a `render`'s `signals`.
 Signals wake *Claude*; a control key drives the *service*.
 

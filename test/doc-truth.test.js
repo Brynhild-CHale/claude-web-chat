@@ -572,3 +572,18 @@ test('the lifecycle table lists every stop trigger the supervisor has', () => {
     "the crash paragraph still says a crashed child waits for a `service.js` edit; prune() also lifts the block " +
     'when the pane leaves the surface');
 });
+
+test('the startup-replay snippet says a mutating action must not be replayed', () => {
+  const editor = read('templates/components/file-editor/service.js');
+  assert.match(editor, /let lastCtlSeq = startedAt;/,
+    "file-editor no longer floors its control cursor at its own start time — that rule is what the doc now teaches");
+  assert.match(editor, /VIEW_ACTIONS/,
+    'file-editor no longer separates view actions from mutating ones at startup');
+
+  const section = read('docs/service-components.md').match(/## Talking to the pane[\s\S]*?## Worked example/);
+  assert.ok(section, 'docs/service-components.md no longer has the control-key section');
+  const flat = flatten(section[0]);
+  assert.ok(/mutat/i.test(flat) && /startup read/i.test(flat),
+    "the generic snippet still shows the naive startup replay (adopt anything with a newer seq) with nothing saying " +
+    'a host-mutating control action must not run from it — the shape that let a persisted `save` re-fire on respawn');
+});
