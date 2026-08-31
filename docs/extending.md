@@ -136,6 +136,7 @@ were the only places they lived.
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
 | ask whether a pid is alive | `core/portfiles` `isPidAlive(pid)` | `try { process.kill(pid, 0) }` inline (the type guard is the point) |
+| start a detached child whose output goes to a log file | `lib/util/daemon` `spawnDetached({bin, args, log, cwd, env})` — opens the log once, closes the parent's copy of the descriptor, and derives the CLI bin from `core/paths` `PACKAGE_ROOT` | `spawn` + `openSync` at a call site (two spawners each leaked their log fd, and one opened it twice) |
 | remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
 | list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
@@ -575,9 +576,13 @@ their baselines, the `.gitignore` line. Four functions:
   where there were five. `'existing'` requires an installed root at or above
   `cwd` and throws a `userFacing` refusal naming `claude-web-chat init` (`on`,
   `off`); `'install'` falls back to `cwd` when there is none (`install`,
-  `uninstall`, `doctor`, `status`, the MCP dispatcher); `'optional'` returns
-  `root: null` for a caller with nothing to do outside a project (`update`).
-  All three inherit `findProjectRoot`'s `$HOME` refusal.
+  `doctor`, `status`, the MCP dispatcher); `'optional'` returns
+  `root: null` for a caller with nothing to do outside a project (`update`,
+  and `uninstall`, which then treats the `cwd` as the project only when
+  web-chat's own wiring — the hooks or the `.mcp.json` entry — is actually
+  there, because `remove()` shells out to `claude mcp remove … --scope local`
+  and the tolerant fallback made that a write for a project that never
+  existed). All three inherit `findProjectRoot`'s `$HOME` refusal.
 - **`inspect(root)`** — pure read: `installed`, `hooks` per event
   (`ok` / `bare` / `missing`), `mcp` (`present`, `kind`, `resolvable`, `reason`,
   `channelEnv`), `managed` (the dry-run reconcile), `gitignore`. `doctor`,
