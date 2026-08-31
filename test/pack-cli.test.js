@@ -135,3 +135,33 @@ test('`pack get` never prompts — it is the scripted path', async (t) => {
   assert.match(r.stdout, /downloaded, NOT installed/);
   assert.doesNotMatch(r.stdout, /\[y\/N\]/, 'no question is asked, so none can be answered wrongly');
 });
+
+// `pack list --verify` had one word for every kind of disagreement: a pack whose
+// only problem is a unit its own RECORD describes impossibly (an unknown kind, a
+// path resolving outside its directory — verifyPack's 'refused') was reported as
+// "locally edited", i.e. as the user's doing. `pack info` and `pack remove`
+// already say what it is; only the list line did not.
+test('`pack list --verify` distinguishes a refused record from local edits', async (t) => {
+  const home = tmpDir('wc-home-');
+  const proj = tmpDir('wc-proj-');
+  fs.mkdirSync(path.join(proj, '.web-chat'), { recursive: true });
+  const forge = await fakeForge(t, {
+    repos: { 'acme/ops': repoWithArchive(packFixture({ components: [{ name: 'deploy-board' }] }), { sha: 'a'.repeat(40) }) },
+  });
+  assert.equal((await runCli(['pack', 'install', forge.url('acme', 'ops'), '--yes'], { home, cwd: proj })).status, 0);
+
+  const clean = await runCli(['pack', 'list', '--verify'], { home, cwd: proj });
+  assert.match(clean.stdout, /· unmodified/);
+
+  // Make the RECORD undescribable: a unit kind nothing can resolve a directory
+  // for. Nothing on disk is touched, so "locally edited" would be a lie.
+  const store = path.join(projectPaths(proj).dir, 'packs.json');
+  const data = JSON.parse(fs.readFileSync(store, 'utf8'));
+  data.packs[0].units[0].kind = 'not-a-kind';
+  fs.writeFileSync(store, JSON.stringify(data, null, 2));
+
+  const r = await runCli(['pack', 'list', '--verify'], { home, cwd: proj });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /· record refused/);
+  assert.doesNotMatch(r.stdout, /· locally edited/, 'the user did not edit anything');
+});
