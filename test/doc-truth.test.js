@@ -400,3 +400,20 @@ test('the turn-lifecycle prose says a no-change turn commits no node', () => {
       'Claude (or a contributor) that every turn produces a node promises a node that will not exist');
   }
 });
+
+// A stored node id really is `n<seq>` (n5, n11) and a label really is dotted
+// (n1.0, n1.1.0), so a bare `n11` in prose is an instruction to quote an id the
+// user cannot see — which is the confusion labels were introduced to end. The
+// rules file said both things, four lines apart. Measured over the whole doc
+// set: 2 true hits (both on the stale line), 0 false ones — every other `n<d>`
+// token in the docs is the leading segment of a label.
+test('no doc tells anyone to reference a graph node by its stored id', () => {
+  for (const { rel, body } of DOCS) {
+    for (const m of body.matchAll(/\bn\d+\b(?![.\dx])/g)) {
+      const near = body.slice(Math.max(0, m.index - 80), m.index + 40).replace(/\s+/g, ' ');
+      assert.fail(
+        `${rel} names the node id \`${m[0]}\` (…${near}…). Nodes are referenced by the hierarchical LABEL the ` +
+        'graph viewer shows (n1.4, n2.0); the stored id is opaque and the user never sees it');
+    }
+  }
+});
