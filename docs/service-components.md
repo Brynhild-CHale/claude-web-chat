@@ -97,7 +97,7 @@ debounced `reconcile()` that diffs the *desired* set of children against the
 | State | When | How |
 | --- | --- | --- |
 | **running** | the pane is a live mount on the active node **and** ≥1 browser is connected | reconcile spawns it |
-| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, or `service.js` is edited | reconcile stops it |
+| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, or the pane is re-used with different params | reconcile stops it |
 | **respawned** | you navigate back / a viewer reconnects | reconcile spawns a fresh child |
 
 The desired set is derived from `state.mounts` — which *is* the active surface,
@@ -105,7 +105,9 @@ because `graph.restoreLiveToNode` repopulates it before the graph event fires. S
 navigating away (which empties or replaces `state.mounts`) stops the service, and
 navigating back restarts it. **Suspend == stop, resume == respawn**: v1 keeps no
 warm state, so a service must be cheap to start and idempotent. A crash is
-recorded and not hot-looped — the child won't respawn until `service.js` changes.
+recorded and not hot-looped — the child won't respawn until `service.js` changes
+or the pane leaves the surface: `prune()` drops the crash block with the pane, so
+a mount id is not held unusable once something else is mounted under it.
 
 ## Trust
 
@@ -192,6 +194,19 @@ service ──setStore({ git: {...} })──►  store  ──subscribe('git')�
   pane  ──store.set({ git_ctl:{...} })─►  store  ──SSE store events──►  service
 ```
 
+**A control key is untrusted input.** The store is a shared bus: every pane
+script in the page can write your control key, and so can any local process that
+reaches the daemon. Pane code is compiled with `new Function` in the surface's
+own realm, so "the pane I shipped" is not a claim about who wrote the value.
+Never let one reach a command line or a filesystem path unchecked — allowlist it
+against something the service itself just produced, or against a narrow grammar,
+and fall back to a default when it does not match. `build()` in
+`templates/components/git-dashboard/service.js` is the pattern: `viewing` is
+accepted only if it is one of the branch names that same call just read, and
+`open` only if it looks like a git object name, because otherwise an
+option-shaped value (`--output=<path>` makes `git log` write a host file) becomes
+a git argument. Paths get `ctx.fence` (above); argv gets this.
+
 The service observes control writes over SSE (`driver.streamEvents({ kinds:['store'] })`)
 and reacts. Because the SSE stream has **no auto-reconnect** and isn't live during
 the spawn window, read the control key with `getStore` on startup and re-read it on
@@ -204,6 +219,16 @@ stream = ctx.driver.streamEvents({ kinds: ['store'],
   onEvent: (e) => { if (e && e.patch && applyCtl(e.patch.git_ctl)) rebuild(); } });
 setInterval(async () => { applyCtl((await ctx.driver.getStore(['git_ctl'])).git_ctl); rebuild(); }, 5000);
 ```
+
+**Never execute a host-mutating action from that startup read.** The control key
+outlives your process: it sits in the store from before the service was spawned
+and is restored with a graph node, so what you read at startup may be a `save`
+clicked minutes ago, against a buffer that has since changed or a node the user
+has left. Replay **view** actions only (`open`, `browse`) and floor the cursor at
+your own start time, so a persisted write from before you existed can never
+re-fire. `templates/components/file-editor/service.js` is the pattern —
+`let lastCtlSeq = startedAt;` and a `VIEW_ACTIONS` set that the startup path
+checks and the live SSE path does not.
 
 A control key is not a wake signal — don't declare it in a `render`'s `signals`.
 Signals wake *Claude*; a control key drives the *service*.
@@ -230,7 +255,7 @@ The result is a live, clickable history/branch browser with zero per-turn drivin
 | component tier resolution + `serviceInfo` (hash) | `lib/server/components-registry.js` |
 | authoring (`service`/`seed` params, `has_service`) | `lib/mcp/tools/save_component.js`, `lib/server/routes/components.js` |
 | viewer-count hook | `lib/server/ws.js` (`onViewersChanged`) |
-| trust store + services dir | `.web-chat/services/` (paths in `lib/core/paths.js`) |
+| trust store (per user, NOT per project) | `~/.web-chat/services/trusted.json` — `userPaths().trustedServices` in `lib/core/paths.js`, handed to the daemon as `TRUSTED_SERVICES_PATH` |
 | driver API the service uses | `lib/driver.js` (see [driving-the-surface.md](driving-the-surface.md)) |
 
 ## Failure modes & rules

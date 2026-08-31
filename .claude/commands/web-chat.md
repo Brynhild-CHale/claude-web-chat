@@ -73,7 +73,7 @@ Then `render` a single pane, mount id **`web-chat-start`** (a stable id, so runn
 Wire it up so a click writes **one** store key, `web_chat_start`, with a bumped
 `seq`, e.g. `store.set({ web_chat_start: { seq: Date.now(), choice: 'diagram', note } })`
 — and declare it on the render: `signals: [{ key: 'web_chat_start', wake: 'queue' }]`.
-Query the DOM through the injected `root` (the pane's shadow root), never `document`.
+Query the DOM through the injected `root` (the pane's shadow root), never `document.querySelector`/`getElementById` — building nodes with `document.createElement` is fine.
 
 ### 4. Say the short version in chat
 

@@ -833,7 +833,7 @@ with `--replace`. You cannot fix that from your side; just pick distinctive name
 - [ ] Every component directory name matches its `meta.json` `name`.
 - [ ] Every `description` answers *when to use this*, not just what it is.
 - [ ] `params_schema` is complete enough that the drawer's generated form is usable.
-- [ ] No `document.*` in any pane script — only `root`.
+- [ ] No `document` *queries* in any pane script — `root.querySelector`, never `document.querySelector`/`getElementById`. (`document.createElement` is fine; it is how you build DOM from data without `innerHTML`.)
 - [ ] No `<script src>`, no CDN, no external fetch you cannot justify.
 - [ ] No `innerHTML` on anything you did not author.
 - [ ] Colors reference `--wc-*` tokens; the pack looks right in light and dark.

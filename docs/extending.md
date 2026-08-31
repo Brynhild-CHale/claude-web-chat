@@ -74,9 +74,10 @@ that way:
 > (in `lib/core/` or a shared module) and consume it from your feature. A second
 > hand-rolled copy of anything below is a review-blocking defect.**
 
-Three of the most-copied primitives are enforced automatically by
-`test/conventions.test.js` (see [The tripwire](#the-conventions-tripwire)); the
-rest rely on this doc and review.
+The most-copied primitives are enforced automatically by
+`test/conventions.test.js` — one row of [the tripwire](#the-conventions-tripwire)
+per banned construct, and that table is the list; the rest rely on this doc and
+review.
 
 ## Dependency direction (what may import what)
 
@@ -149,6 +150,7 @@ were the only places they lived.
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
+| resolve a mount HOST element from a mount id (chrome side) | `public/app/state.js` `hostFor(id)` — scans `.mount-host` for `dataset.mountId`, because a mount id is arbitrary agent-supplied text | `document.getElementById(mountId)` / `$(mountId)`: an id like `main` or `drawer` hands you a chrome element instead of the pane |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
 | decide who may reach this server (bind host, `Host` gate, WS `Origin` gate, extension CORS, the preview document's CSP) | `core/cors` `LISTEN_HOST` / `requireLocalHost` / `isLocalHost` / `verifyUpgrade` / `isLocalOrigin` / `isBrowserRequest` / `setCors` / `mountCors` / `PREVIEW_CSP` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", read `req.headers.host` by hand, or copy the header block |
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
@@ -338,8 +340,8 @@ two can't drift — there is no projection layer between them to get out of sync
 - `emit({ event, ws, except })` — `event` (if given) becomes a ring entry (seq/ts
   assigned, spread last so a per-event `seq` can override) and fans out to
   subscribers; `ws` (a frame or an array of frames) broadcasts to sockets, skipping
-  `except`. Order is event → WS. A **ws-only** emit (e.g. capture's legacy-clear)
-  never enters the ring; an **event-only** emit (export) sends no frame.
+  `except`. Order is event → WS. A **ws-only** emit (e.g. `turns.js`'s
+  `reaim:pending` notice, or a lock frame) never enters the ring; an **event-only** emit (export) sends no frame.
 - `read({ since, kinds })` — the ONE catch-up/gap impl, shared by `GET /api/events`
   and the SSE replay (`gap`/`dropped` computed off the **full** ring's oldest, so a
   kind filter never hides a gap).
@@ -641,8 +643,10 @@ beside a file that still differs from shipped, the row carries `pending: true`,
 and deleting the sidecar is the entire resolution ritual. Consumers therefore
 have two questions to answer, not one — "is this a fresh conflict?" and "is
 there an offer still open?" — and each one states its answer in a comment
-(`status`/`init` report both; the MCP startup nudge reports only the first,
-because it tells the user to run `install` and `install` cannot merge for them).
+(`install`, `update`, `init` and `status` all report both — the first three
+through `conflictAdvice`, `status` through `conflictSummary`; the MCP startup
+nudge reports only the first, because it tells the user to run `install` and
+`install` cannot merge for them).
 
 `update` loads this module out of `versions/<target>` (the same reason
 `loadRestart` exists), so **the export surface is a cross-version contract**:
