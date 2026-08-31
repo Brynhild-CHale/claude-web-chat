@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The release tarball is now byte-reproducible across operating systems. `scripts/build-release.js` left the gzip header's OS field as zlib stamped it (3 on Linux, 19 on macOS), so rebuilding a tagged tree on a different OS than the one CI cut it on produced a different sha256 — a verifier's only reading of that is tampering. The byte is now pinned to 255 ("unknown", per RFC 1952). Already-published artifacts keep their published checksums; this affects builds cut from here on.
 
+### Internal
+
+- **Tests consume the one truth source instead of restating it.** Five assertions hand-copied a fact the code already owns, and each copy could go stale while still passing: three `tools.length === 23` literals now compare against `mcpTools()` (and the tools/list test deep-equals the SDK-exposed *names* against `lib/mcp/tools/`), the `npm link` prohibition walks `docFiles()` rather than a two-element list — so it now covers CLAUDE.md, which carried the warning but was never checked — and the channel activation hint is asserted against `LAUNCH_COMMAND` in full, with a new pin that the constant ends in the channel name (the audited regression was a `--dangerously-load-development-channels` with nothing to load, which the old prefix match accepted). The deaf raw-socket WebSocket client that two shutdown suites had each copied is now `deafWs(t, port)` in `test-support/helpers.js`. `test/harness-conventions.test.js` gains two shrink-only rows — a hand-written `Sec-WebSocket-Key:` upgrade outside `test-support`, and a hardcoded MCP tool count anywhere — so the class cannot recur silently.
+
 ## [0.7.0] - 2026-08-28
 
 ### Upgrading from 0.6.0

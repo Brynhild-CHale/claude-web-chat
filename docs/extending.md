@@ -178,6 +178,8 @@ were the only places they lived.
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
 | open an SSE stream in a test | `test-support/helpers` `openSSE(port, {kinds, since, onEvent, awaitChannel})` | `subscribeSSE` with only `onOpen` (it can never reject) |
+| pin a socket open with a client that never answers the close frame | `test-support/helpers` `deafWs(t, port)` | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` (`ws` always answers the close, so it cannot stand in) |
+| assert what the code contains — the tool set, the doc set, the routes, the CLI commands | `test-support/doc-truth` `mcpTools()` / `docFiles()` / `routePaths()` / `cliCommands()` | a literal count, or a hand-written list of files to check |
 
 ## The engines in detail
 
@@ -684,6 +686,13 @@ count as a phantom passing test.
   sends no `Origin`, so every connection used to take the `!origin` branch and
   deleting `verifyClient` passed the suite). `wsHello` surfaces a refused upgrade
   as a rejection carrying `.statusCode`, not a hang.
+- `deafWs(t, port)` — a raw socket that completes the WebSocket upgrade by hand
+  and then goes **deaf**: it ignores everything, the polite close frame included.
+  That is the one connection `wsConnect` cannot be, because the `ws` client
+  answers a close — and it is what pins `gracefulShutdown`'s final
+  `server.close()`, so the daemon's own drain budget becomes the assertion.
+  Resolves on the `101` (genuinely upgraded before the test proceeds), destroys
+  on `t.after`. Two files carried the same twelve lines before.
 - `tmpRoot`, `makeApi(baseUrl)`, `safeStop`.
 
 `test-support/sandbox.js` is loaded by `npm test` through
@@ -706,10 +715,18 @@ Deliberately **not** `--test-force-exit`: that turns a leaked handle from a loud
 hang into a silent green, and `test/events-sse.test.js` has the suite's only
 structural leak detectors.
 
-`test/harness-conventions.test.js` ratchets the five constructs above back into
+`test/harness-conventions.test.js` ratchets the constructs above back into
 `test-support` — the deadline loop, a poll-helper definition, `subscribeSSE(`,
-`createServer({ root` and `.server.listen(` — with named exemptions (the two
-heredoc daemons, the fake clients injected into the channel bridge). It is a
+`createServer({ root`, `.server.listen(` and `Sec-WebSocket-Key:` — with named
+exemptions (the two heredoc daemons, the fake clients injected into the channel
+bridge). It also holds at **zero** a construct of a different species: a
+hardcoded MCP tool count (`tools.length, <n>`). That is not a primitive the
+harness re-implements but a truth it re-states — `test-support/doc-truth.js`'s
+`mcpTools()` reads `lib/mcp/tools/`, and a test that copies the number instead
+goes stale silently, with the stale copy passing. `doc-truth.js` is the home for
+that whole class: `docFiles()` is where a doc claim can ship, and `routePaths()`,
+`cliCommands()` and `ctxKeys()` are what the code actually mounts, registers and
+carries. It is a
 separate file from `conventions.test.js` on purpose: that one deliberately does
 not scan `test/`, and adding these roots to its patterns would fire
 `http.request(` and `os.homedir()` across ~20 files at once. Fixed sleeps and
