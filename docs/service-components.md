@@ -34,7 +34,10 @@ module.exports = {
   async start(ctx) {
     // ctx.driver  — createDriver({ owner: 'service:<name>', port }) already wired.
     //               v1: WRITE THE STORE ONLY (ctx.driver.setStore({...})). No render.
-    // ctx.params  — the mount's params (same object the pane <script> sees).
+    // ctx.params  — the mount's params, minus the three keys the SHELL reads for
+    //               itself (`form_reset`, `routing`, `signals`; the pane <script>
+    //               still sees those). It is exactly the params the user was
+    //               asked to consent to — see Trust below.
     // ctx.mountId — the pane id; namespace per-pane store keys with it if needed.
     // ctx.name    — the component name.
     // ctx.log     — stdout logger (piped to the daemon log).
@@ -110,12 +113,21 @@ Running host code from a saved artifact is gated, and **the decision is made in
 your terminal, not on the surface**:
 
 ```sh
-claude-web-chat trust              # list what is waiting
+claude-web-chat trust              # list what is waiting (with each params fingerprint)
 claude-web-chat trust git-dashboard        # approve it
 claude-web-chat trust git-dashboard --deny # refuse it
+claude-web-chat trust file-editor --params-fp 9f2c…  # pick ONE of two variants
+claude-web-chat trust file-editor --all              # decide every variant of that name
 ```
 
-The surface shows a notice naming the component and the command to run. That
+Two panes of one component mounted with **different params** are two decisions,
+so a bare name that matches both refuses, prints each request, and asks for the
+`--params-fp` from the listing (the full trust key works there too). Nothing is
+written until the name resolves to one request or `--all` is given and confirmed.
+
+The surface shows a notice naming the component, its params and the command to
+run — one notice per waiting request, addressed by trust key, so two params
+shapes of one component are two cards. That
 notice grants nothing, and it deliberately cannot: pane scripts are compiled with
 `new Function` and run in the surface's own window realm with `document`, `fetch`
 and `WebSocket`, and no CSP is served. A pane can therefore synthesise a click on
@@ -143,8 +155,14 @@ It lives outside the project because a project could otherwise ship its own
 approval — commit `.web-chat/services/trusted.json` and cloning the repo would
 run its `service.js` unprompted.
 
-The trust key covers **(project root, `service.js` hash, params shape)**, so each
-of these asks again:
+The trust key covers **(project root, `service.js` hash, params shape)**. It is
+minted once, by the supervisor, and every consumer quotes it — the file above, the
+`trust` listing, the notice on the surface, and the CLI's selector all name the
+same value. "Params shape" means the params the SERVICE gets: the shell's own
+render-control keys (`form_reset`, `routing`, `signals`) are stripped first, so a
+re-render that only changes how the pane is painted is not a new consent.
+
+Each of these asks again:
 
 - **editing the service** — you always approve the exact bytes that will run;
 - **the same component in another project** — a service reads and writes the

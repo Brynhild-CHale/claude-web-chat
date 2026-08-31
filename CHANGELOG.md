@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **A service's consent no longer depends on how its pane was rendered.** The trust key covers (project root, `service.js` contents, params), and "params" now means the params the *service* gets: the three keys the shell reads for itself — `form_reset`, `routing`, `signals` — are stripped before the fingerprint, since they say how a render behaves and nothing about the host process. Re-rendering a service-backed pane with `params.form_reset:true` used to restart its child and ask you to approve a service that had not changed. **You will notice two things, once:** a pane whose params carried one of those keys asks for approval one more time after upgrading (a narrow echo of the 0.7.0 re-trust, upgrade step 3 — approve it and it stays approved), and `service.js` receives `ctx.params` without those keys (the pane script still sees them).
+- **`claude-web-chat trust <name>` decides one request, and says which.** The supervisor keeps `file-editor` fenced and `file-editor --unfenced` apart precisely so one approval cannot cover the other, but the by-name path recorded a decision for *every* pending request under that name, printed none of their params, and asked nothing — so a pane that mounted a component a second time with params of its own could ride along on the approval you meant for the first. A name matching more than one waiting request now prints each of them and refuses, and you pick one with `--params-fp <fingerprint>` (the listings print it; the full trust key works too) or take them all with `--all`. `--all` given a name is scoped to that name instead of every service on the machine, and a grant now names the params it granted.
+
 ### Fixed
+
+- **Two panes of one component with different params are two trust notices again.** The `service:trust` / `service:trust:clear` frames carried the `service.js` hash alone while consent is keyed to (root, hash, params), so two variants of one service collapsed into a single card in every connected browser — and clearing either pane, or approving just one variant, took the other's card away while its request was still pending on the server (the CLI still listed it). Every notice now carries the trust key the daemon minted, plus the params it is about, and the browser keys its cards and dismissals by that key.
 
 - The release tarball is now byte-reproducible across operating systems. `scripts/build-release.js` left the gzip header's OS field as zlib stamped it (3 on Linux, 19 on macOS), so rebuilding a tagged tree on a different OS than the one CI cut it on produced a different sha256 — a verifier's only reading of that is tampering. The byte is now pinned to 255 ("unknown", per RFC 1952). Already-published artifacts keep their published checksums; this affects builds cut from here on.
 
