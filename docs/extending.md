@@ -74,9 +74,10 @@ that way:
 > (in `lib/core/` or a shared module) and consume it from your feature. A second
 > hand-rolled copy of anything below is a review-blocking defect.**
 
-Three of the most-copied primitives are enforced automatically by
-`test/conventions.test.js` (see [The tripwire](#the-conventions-tripwire)); the
-rest rely on this doc and review.
+The most-copied primitives are enforced automatically by
+`test/conventions.test.js` — one row of [the tripwire](#the-conventions-tripwire)
+per banned construct, and that table is the list; the rest rely on this doc and
+review.
 
 ## Dependency direction (what may import what)
 

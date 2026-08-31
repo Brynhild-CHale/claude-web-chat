@@ -587,3 +587,32 @@ test('the startup-replay snippet says a mutating action must not be replayed', (
     "the generic snippet still shows the naive startup replay (adopt anything with a newer seq) with nothing saying " +
     'a host-mutating control action must not run from it — the shape that let a persisted `save` re-fire on respawn');
 });
+
+// ---------------------------------------------------------------------------
+// Counting prose.
+//
+// A numeral in prose is the least durable claim a doc can make: the tripwire
+// table grew from three rows to nineteen while the sentence introducing it still
+// said "Three of the most-copied primitives". The table itself is checked above,
+// so the honest fix is to state no number — and this makes any number that IS
+// stated have to be right.
+const NUMBER_WORDS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20,
+};
+
+test('any count of the constructs the ratchet enforces equals the number it bans', () => {
+  const n = patternNames().length;
+  const re = /\b(\d+|[a-z]+)\b(?:[^.]{0,120}?)(?:are|is) enforced automatically/gi;
+  for (const { rel, body } of DOCS) {
+    for (const m of flatten(body).matchAll(re)) {
+      const word = m[1].toLowerCase();
+      const stated = /^\d+$/.test(word) ? Number(word) : NUMBER_WORDS[word];
+      if (stated === undefined) continue; // "primitives are enforced automatically" — no count claimed
+      assert.equal(stated, n,
+        `${rel} says ${m[1]} constructs are enforced automatically, but test/conventions.test.js bans ${n}. ` +
+        'Prefer no number: point at the tripwire table, which this suite already checks row for row');
+    }
+  }
+});
