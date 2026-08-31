@@ -125,6 +125,20 @@ test('the diff names the parent the viewer actually draws', async () => {
     'not n1.2, which is hidden — the edge on screen goes to n1.0');
 });
 
+test('the ⌘K palette lists the turns the graph DRAWS, not every commit', async () => {
+  $('cmd-trigger').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  const rows = [...$('cmd-list').children]
+    .filter((r) => r.querySelector('.kind') && r.querySelector('.kind').textContent === 'node')
+    .map((r) => r.lastChild.textContent);
+  assert.deepEqual(rows, ['n1.0', 'n1.3'],
+    'the palette built its rows from view.graphCache.nodes — the RAW commit list — so a collapsed '
+    + 'turn kept a row, and selecting it previewed a node the DAG does not draw');
+  $('cmd-input').dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal($('cmd-palette').classList.contains('hidden'), true);
+});
+
 test('the chip reveals them, and revealing restores the full history', async () => {
   const chip = $('gv-show-collapsed');
   assert.equal(chip.classList.contains('hidden'), false, 'chip is offered when there is something to reveal');

@@ -3,12 +3,12 @@
 // closes every chrome panel, the global keyboard layer, and
 // the proximity queue rail. The queue is a reserved forward-hook (channels /
 // "what wakes Claude") — inert until that lands.
-import { view, $ } from './state.js';
+import { $ } from './state.js';
 import { toggleMode } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
-import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview } from './graph-view.js';
+import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList } from './graph-view.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
 import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
@@ -255,7 +255,11 @@ async function buildPalette(q) {
     { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
     { kind: 'cmd', label: 'Settings', run: openSettings },
   ];
-  const nodes = (view.graphCache?.nodes || []).map(n => ({
+  // The display topology (graph-view.displayNodeList), not view.graphCache.nodes:
+  // every other viewer surface reads what the DAG draws, and a palette row for a
+  // collapsed turn previewed a node with no drawn children — the topbar's ↓ dead,
+  // and only displayParentOf's raw fallback to get back out of it.
+  const nodes = displayNodeList().map(n => ({
     kind: 'node', label: `${labelFor(n.id)}${n.name ? ' · ' + n.name : ''}`, run: () => previewNode(n.id),
   }));
   // The ONE component cache (public/app/components.js). This module used to
