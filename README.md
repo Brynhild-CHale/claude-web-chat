@@ -2,6 +2,8 @@
 
 claude-web-chat gives Claude Code a second surface: a live page in your browser that Claude draws on while you talk in the terminal. Diagrams, forms, comparisons, working mockups — anything better shown than described lands on the page, stays interactive, and becomes a step in a graph you can walk back through and branch. Thanks for checking it out.
 
+![One web-chat cycle: Claude renders a question on the surface, the user answers in the page, and the answer flows back to Claude](.github/media/flow.gif)
+
 You get three things:
 
 - **Chat**, in your terminal, same as always — reasoning, narrative, quick answers.
@@ -112,6 +114,8 @@ A few things worth knowing once you're past the first render:
 
 **Use the graph like an undo tree.** Nodes are labeled hierarchically — `n1.7` is the seventh step on the first trunk, `n1.7.0` a branch off it. In the graph viewer you can preview any node, set it *active*, and send your next message from there. Only you move the active point; Claude never does.
 
+![The graph viewer: every turn is a node, and earlier states can be previewed and branched from](.github/media/graph.gif)
+
 **Let the project accumulate components.** When Claude builds a pane worth keeping, it saves it to the project's component library and reuses it later. Over time your project grows UI that matches how you work.
 
 **Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Ask Claude to theme the surface (and save the result), or swap saved themes yourself from the ⚙ button in the topbar.
@@ -141,6 +145,8 @@ claude-web-chat pack remove acme-ops                          # a component you 
 ```
 
 `pack install <url>` skips straight to installing; `--global` installs for every project instead of this one. The same thing lives behind the topbar's **＋** button, under **Manage**.
+
+![Installing a component pack from a GitHub URL through the topbar's ＋ → Manage panel](.github/media/component-install.gif)
 
 Installing a pack runs its code: panes are unsandboxed in the surface page, and any `service.js` is host code behind the `trust` gate above. **`pack get` is the right default for a pack you didn't write** — it downloads and verifies without installing, and `pack review` shows you the plan and the skill text before you commit. See [`docs/component-packs.md`](docs/component-packs.md).
 
