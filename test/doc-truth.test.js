@@ -174,10 +174,10 @@ test('every `claude-web-chat docs <name>` cited in a doc resolves to a bundled d
 // The other direction: a command the user is expected to reach for has to be
 // discoverable somewhere other than `--help`. `trust` — the ONLY way to approve
 // a component's service — and `ls` both shipped documented nowhere at all.
-test('the README command reference matches the CLI, in both directions', () => {
-  const readme = read('README.md');
-  const block = readme.match(/```\n(open {2,}[\s\S]*?)```/);
-  assert.ok(block, 'README no longer carries the plain command-reference block');
+test('the guide\'s command reference matches the CLI, in both directions', () => {
+  const guide = read('docs/guide.md');
+  const block = guide.match(/```\n(open {2,}[\s\S]*?)```/);
+  assert.ok(block, 'docs/guide.md no longer carries the plain command-reference block');
   const listed = [];
   for (const line of block[1].split('\n')) {
     // `open`, `stop | restart`, `trust [name]`, `ls [--reap]` — a name, optional
@@ -189,19 +189,19 @@ test('the README command reference matches the CLI, in both directions', () => {
   const known = cliCommands();
   const seen = new Set();
   for (const name of listed) {
-    assert.ok(known.includes(name), `the README command block lists \`${name}\`, which the CLI does not register`);
-    assert.ok(!seen.has(name), `the README command block lists \`${name}\` twice — one of the two rows is stale`);
+    assert.ok(known.includes(name), `the guide's command block lists \`${name}\`, which the CLI does not register`);
+    assert.ok(!seen.has(name), `the guide's command block lists \`${name}\` twice — one of the two rows is stale`);
     seen.add(name);
   }
 
-  const exempt = new Map(ALLOW.readmeBlock.map((e) => [e.claim, e.reason]));
+  const exempt = new Map(ALLOW.commandBlock.map((e) => [e.claim, e.reason]));
   for (const name of known) {
     if (exempt.has(name)) continue;
-    assert.ok(seen.has(name), `\`claude-web-chat ${name}\` is missing from the README command block`);
+    assert.ok(seen.has(name), `\`claude-web-chat ${name}\` is missing from the command block in docs/guide.md`);
   }
   for (const [name, reason] of exempt) {
-    assert.ok(known.includes(name), `README exemption for \`${name}\` (${reason}) names a command the CLI no longer has`);
-    assert.ok(!seen.has(name), `\`${name}\` is in the README command block now — drop its exemption (${reason})`);
+    assert.ok(known.includes(name), `command-block exemption for \`${name}\` (${reason}) names a command the CLI no longer has`);
+    assert.ok(!seen.has(name), `\`${name}\` is in the guide's command block now — drop its exemption (${reason})`);
   }
 });
 
@@ -642,7 +642,7 @@ test('any count of the constructs the ratchet enforces equals the number it bans
 // ---------------------------------------------------------------------------
 // Managed-file conflicts.
 //
-// The README and the CHANGELOG promise four surfaces report a pending sidecar;
+// docs/install.md and the CHANGELOG promise four surfaces report a pending sidecar;
 // extending.md's paragraph named two. Which commands consume the engine is not
 // prose — it is a require away.
 test('extending.md names every command that reports a managed-file conflict', () => {
@@ -664,7 +664,7 @@ test('extending.md names every command that reports a managed-file conflict', ()
   for (const name of consumers) {
     assert.ok(para.includes(`\`${name}\``),
       `\`claude-web-chat ${name}\` reports a managed-file conflict but extending.md's paragraph omits it — ` +
-      'the README and CHANGELOG both promise the full set');
+      'docs/install.md and the CHANGELOG both promise the full set');
   }
 });
 

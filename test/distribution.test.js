@@ -116,14 +116,18 @@ test('install.sh does not add Windows branches — WSL2 is the whole Windows sto
 });
 
 test('the docs describe the install that exists, not the npm one that does not', () => {
-  const readme = read('README.md');
   // The old quickstart claimed a global npm install and told users to find the
   // extension folder with `npm root -g` — a path that no longer exists.
-  assert.ok(!/npm root -g/.test(readme), 'npm root -g no longer resolves to anything');
-  assert.ok(!/npm i -g claude-web-chat|npm install -g claude-web-chat/.test(readme));
-  assert.match(readme, /~\/\.local\/bin/, 'the README must say where the command is installed');
-  assert.match(readme, /~\/\.web-chat\/versions/, 'and where the program itself lives');
-  assert.match(readme, /--to /, 'rollback is a documented feature');
+  for (const rel of ['README.md', 'docs/install.md', 'docs/guide.md']) {
+    const body = read(rel);
+    assert.ok(!/npm root -g/.test(body), `${rel}: npm root -g no longer resolves to anything`);
+    assert.ok(!/npm i -g claude-web-chat|npm install -g claude-web-chat/.test(body), `${rel}: there is no npm install`);
+  }
+  assert.match(read('README.md'), /~\/\.local\/bin/, 'the README must say where the command is installed');
+  const install = read('docs/install.md');
+  assert.match(install, /~\/\.local\/bin/, 'the install doc must say where the command is installed');
+  assert.match(install, /~\/\.web-chat\/versions/, 'and where the program itself lives');
+  assert.match(install, /--to /, 'rollback is a documented feature');
 
   // `npm link` may only appear as the thing NOT to do — in EVERY shipped doc,
   // not the two that happened to mention it when this was written. docFiles()

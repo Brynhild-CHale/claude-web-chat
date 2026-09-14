@@ -242,12 +242,12 @@ const ALLOW = {
       marker: /commit `\.web-chat\/services\/trusted\.json` and cloning the repo would run its `service\.js` unprompted/,
     },
   ],
-  // Registered commands the README's command reference block may omit.
-  readmeBlock: [
+  // Registered commands docs/guide.md's command reference block may omit.
+  commandBlock: [
     { claim: 'start', reason: 'the foreground dev entry point, documented in CLAUDE.md instead' },
     { claim: 'hub', reason: 'extension plumbing; never typed by a user' },
     { claim: 'profile', reason: 'driven by the capture-profile skill, documented there' },
-    { claim: 'pack', reason: 'has its own README section with the full `pack <verb>` reference' },
+    { claim: 'pack', reason: 'has its own section in docs/guide.md with the full `pack <verb>` reference' },
   ],
 };
 
