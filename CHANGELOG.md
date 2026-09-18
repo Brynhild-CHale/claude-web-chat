@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-09-18
+
+### Upgrading from 0.7.5
+
+`claude-web-chat update` is all it takes, and this time there is nothing else to
+say: no state migration runs, no service re-asks for approval, no managed file
+changes, and nothing you have installed behaves differently. The three changes
+below are internal to what the daemon hands Claude, plus one decoding fix. The
+only visible difference is in Claude's own tool results, described under
+*Changed*.
+
 ### Fixed
 
 - **A response body split across socket reads could lose characters, and nothing ever noticed.** `lib/client`'s `request()` accumulated the body with `chunks += c` and never called `setEncoding`, so every Buffer was decoded on its own and a multi-byte character straddling a socket read was replaced by U+FFFD on both sides of the seam. The failure is silent by construction: the replacement characters land inside a JSON string literal, so `JSON.parse` succeeds and every caller behind `api()` — every MCP tool, every hook, every CLI command, every driver method — believed it had the text. Corrupted store values and captured text then rode into committed graph nodes and exports with nothing to trace them back to. Multi-chunk bodies are ordinary rather than exotic here: the body limit is 200mb and `get_store`, `get_events` and `export` routinely exceed one socket read. `subscribeSSE` had always decoded as a stream; `request()` never did. **You may notice** nothing at all — this corrupts quietly or not at all — but any non-ASCII that round-tripped through a large response was at risk.
