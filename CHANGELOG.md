@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **A response body split across socket reads could lose characters, and nothing ever noticed.** `lib/client`'s `request()` accumulated the body with `chunks += c` and never called `setEncoding`, so every Buffer was decoded on its own and a multi-byte character straddling a socket read was replaced by U+FFFD on both sides of the seam. The failure is silent by construction: the replacement characters land inside a JSON string literal, so `JSON.parse` succeeds and every caller behind `api()` — every MCP tool, every hook, every CLI command, every driver method — believed it had the text. Corrupted store values and captured text then rode into committed graph nodes and exports with nothing to trace them back to. Multi-chunk bodies are ordinary rather than exotic here: the body limit is 200mb and `get_store`, `get_events` and `export` routinely exceed one socket read. `subscribeSSE` had always decoded as a stream; `request()` never did. **You may notice** nothing at all — this corrupts quietly or not at all — but any non-ASCII that round-tripped through a large response was at risk.
+
+### Changed
+
+- **`set_store` no longer hands Claude the entire store back.** `POST /api/store` echoes the whole store in its response, and `set_store` returned that response verbatim — so writing one key reported every key, measured at 288KB against a real project store and 14% of every byte this MCP surface had ever spent. Nothing reads the echo: `lib/driver.js`'s `setStore` returns the call result unread, and no browser code fetches `/api/store` at all (the surface takes `store:patch` over the WS). The tool now returns `{ok, keys_written, store_keys, store_bytes}` — what it wrote, plus enough to notice the store growing. `get_store` is unchanged and remains the read path. The **route** still echoes: its response is a wire shape an out-of-tree driver could depend on, and only the MCP tool's return value has exactly one reader.
+- **`get_active` and `get_graph` cap the turn lock's message at 200 characters.** `graph.lock.message` is the user's own prompt, stored unsliced and returned whole, so the largest MCP result ever recorded against this daemon was a `get_active` of 49,556 characters — 49,400 of them that one field, handed back to the model that had just read it. Its two neighbours were already capped (a folded message at 1000, a trigger summary at 100); this one was missed. When the message is cut, `lock.message_bytes` carries the true length beside it — the shape a capped capture read already uses — and when it is not, no `message_bytes` appears. Shaping happens at the MCP boundary (`lib/mcp/shape.js`), not at `/api/graph`, because the browser and out-of-tree drivers read that route too.
+
 ## [0.7.5] - 2026-08-31
 
 ### Upgrading from 0.7.0
