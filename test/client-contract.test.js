@@ -75,6 +75,39 @@ test('a mid-body death routes through api()\'s connection-refused path (no spawn
   );
 });
 
+test('request() decodes the body as a UTF-8 stream, so a character split across chunks survives', async (t) => {
+  // The third hole, and the quietest. request() accumulated with `chunks += c`
+  // and never called setEncoding, so each Buffer was toString()'d on its own and
+  // a multi-byte character straddling a socket read was destroyed — replaced by
+  // U+FFFD on both sides of the seam.
+  //
+  // Nothing ever noticed because nothing ever threw: the mojibake lands inside a
+  // JSON string literal, so JSON.parse SUCCEEDS and every caller behind api() —
+  // every MCP tool, hook, CLI command and driver method — believed it had the
+  // text. Corrupted store values and captured text then rode into committed
+  // graph nodes and exports with nothing to trace them back to.
+  //
+  // Multi-chunk bodies are ordinary here, not exotic: the daemon's body limit is
+  // 200mb and get_store/get_events/export routinely exceed one socket read.
+  const note = 'café λ 🎉 done';
+  const body = JSON.stringify({ note });
+  const buf = Buffer.from(body, 'utf8');
+  // Cut two bytes into the 4-byte emoji, i.e. deliberately on a continuation
+  // byte rather than a character boundary.
+  const cut = buf.indexOf(Buffer.from('🎉', 'utf8')) + 2;
+
+  const port = await stub(t, (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': String(buf.length) });
+    res.write(buf.subarray(0, cut));
+    setTimeout(() => res.end(buf.subarray(cut)), 10);
+  });
+
+  const r = await client.request(port, 'GET', '/api/health');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.note, note, 'the body must survive a chunk boundary mid-character');
+  assert.ok(!JSON.stringify(r.body).includes('\uFFFD'),
+    'and must carry no replacement characters — the failure here is silent, so assert on it directly');
+});
 test('a non-2xx through post() is an HttpError carrying the status and the parsed body', async (t) => {
   const port = await stub(t, (req, res) => {
     res.writeHead(404, { 'Content-Type': 'application/json' });
