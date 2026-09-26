@@ -506,7 +506,7 @@ The one process a Cloudflare tunnel reaches: loopback-only on a fixed port
 **not** the hub — the hub trusts localhost and idle-exits, the portal trusts
 nothing until a token proves otherwise and runs as long as the operator says.
 Every request walks the same fail-closed gate (`index.js`): the Host must be
-the configured picker hostname or a session hostname (`config.js` — flat
+the configured picker hostname or a session hostname (`lib/tunnel/config` — flat
 `wc-<id>.<domain>` by default, nested `<id>.wc.<domain>` optionally; anything
 else is 421, and a loopback Host reaches only `GET /api/health`) → the Access
 JWT (`access-jwt.js`: 401/403/503) → the picker, or the session's registry

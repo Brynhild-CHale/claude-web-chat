@@ -231,6 +231,9 @@ test('up starts a real portal that supervises cloudflared (token in env only); s
   assert.match(st.sessions[0].url, /^https:\/\/wc-[0-9a-f]{8}\.example\.test\/$/);
   await tunnel(['status'], { log: s.log, env });
   assert.match(s.text(), /cloudflared: running — pid \d+ · ready \(4 connections\)/);
+  assert.match(s.text(), st.jwks && Number.isFinite(st.jwks.loaded_at)
+    ? /access keys: last refreshed \d+[smhd] ago/
+    : /access keys: last refreshed never/);
   assert.match(s.text(), new RegExp(`sessions \\(1\\):\\n {2}[0-9a-f]{8} {2}${path.basename(projectRoot)} {2}→ {2}https://wc-`));
 
   const d = capture();
