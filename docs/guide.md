@@ -38,7 +38,7 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Ask Claude to theme the surface (and save the result), or swap saved themes yourself from the ⚙ button in the topbar.
 
-**Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use the topbar **⬇** button, or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
+**Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use **⋯ → ↧ Export node** in the topbar (or **↧** / `E` on a node in the graph viewer), or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
 
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`driving-the-surface.md`](driving-the-surface.md).
 
