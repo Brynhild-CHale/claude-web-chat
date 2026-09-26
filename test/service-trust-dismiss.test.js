@@ -112,6 +112,10 @@ test('a waiting service raises a card, and the card offers a dismiss control', a
     'the control says what it is NOT — hiding a consent prompt must never read as refusing it');
   assert.match(cards()[0].textContent, /--deny/,
     'and the card still names the only thing that actually refuses the request');
+  assert.equal(cards()[0].querySelector('h3').textContent, 'git-dashboard wants to run on this machine',
+    'the design\'s heading (Theme §4f): what is asking, and what it wants');
+  assert.match(cards()[0].querySelector('.svc-trust-cmd').textContent, /claude-web-chat trust git-dashboard/,
+    'with the terminal command that answers it');
   await tick();
   assert.doesNotMatch(cards()[0].textContent, /remotely/,
     'a local page (no remote:true from /api/health) never gets the remote-viewer wording');

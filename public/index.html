@@ -24,23 +24,30 @@
     <div class="depth depth-ambient"></div>
     <div class="depth depth-fog"></div>
 
-    <!-- topbar -->
+    <!-- topbar — the order is the design's (Layout Engine header / Theme §4a):
+         live dot + wordmark (brand.js puts the logotype in front) · node label ·
+         page title · ⌘K · ＋ ⚑ ✎ · ↑/↓ · ↩ active · status pill · ◑ · Graph · ⋯ -->
     <header id="topbar">
-      <div class="brand"><span class="status-dot off"></span>web-chat</div>
+      <div class="brand"><span class="status-dot off" id="status-dot" role="img" aria-label="connecting" title="connecting"></span>web-chat</div>
       <span class="tb-div" aria-hidden="true"></span>
       <span class="node-label" id="node-label">—</span>
+      <!-- the page's own title. Empty (and so not drawn) until the page model
+           gives a node a title to show; the slot is here so the topbar does not
+           reflow when it arrives. -->
+      <span class="page-title" id="page-title"></span>
 
-      <button class="cmd-trigger" id="cmd-trigger" title="Command palette (⌘K)" aria-label="Command palette (Cmd K)">
-        <span class="glyph" aria-hidden="true">⌕</span><span class="ph">Search commands, nodes, components…</span><kbd>⌘K</kbd>
+      <button class="cmd-trigger" id="cmd-trigger" title="Command palette (⌘K)" aria-label="Search commands, nodes, blocks (Cmd K)">
+        <span class="glyph" aria-hidden="true">⌕</span><span class="ph">Search commands, nodes, blocks…</span><kbd>⌘K</kbd>
       </button>
+      <span class="tb-spacer" aria-hidden="true"></span>
 
       <div class="dock" id="dock">
         <!-- aria-controls is not cosmetic here: it opts this button into the
              dismiss layer's owned-panel skip (public/app/shell.js), which is why
              ＋ can now TOGGLE. Without it, pointerdown closed the drawer and the
              button's own click reopened it, so it never closed anything. -->
-        <button class="dock-btn" id="btn-add" title="Components — spawn a pane, manage packs · N"
-                aria-label="Components — spawn a pane, manage packs (N)"
+        <button class="dock-btn" id="btn-add" title="Blocks — add from the library, manage packs · N"
+                aria-label="Blocks — add from the library, manage packs (N)"
                 aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">＋</button>
         <button class="dock-btn" id="btn-bookmark" title="Bookmark node · B" aria-label="Bookmark node (B)" aria-haspopup="dialog" aria-expanded="false" aria-controls="bookmark-pop">⚑</button>
         <button class="dock-btn" id="btn-pin-mode" title="Pin comment · C" aria-label="Pin comment (C)">✎</button>
@@ -50,23 +57,24 @@
       <div class="stepper">
         <button id="btn-up" title="Previous node · [" aria-label="Previous node ([)">↑</button>
         <button id="btn-down" title="Next node · ]" aria-label="Next node (])">↓</button>
-        <button id="btn-branch" title="Pick a branch" aria-label="Pick a branch" style="display:none">▾</button>
       </div>
-
-      <span class="tb-div" aria-hidden="true"></span>
-      <button class="dock-btn" id="btn-theme-toggle" title="Light / dark · T" aria-label="Toggle light / dark (T)">◑</button>
-      <button class="dock-btn" id="btn-more" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
-
-      <span class="tb-div" aria-hidden="true"></span>
       <button class="btn" id="btn-return-active" title="Return to the active node" style="display:none">↩ active</button>
-      <button class="btn" id="btn-set-active-here" title="Make the viewed node active" style="display:none">set active here</button>
-      <span class="active-pill" id="active-pill">active —</span>
+
+      <!-- ONE status pill: the connection while it is not live (connecting… /
+           reconnecting…), otherwise the node — active nX, locked nX, channel
+           turn nX, or the gold viewing nX while previewing (topbar.updateChip). -->
+      <span class="active-pill off" id="active-pill" role="status" aria-live="polite">connecting…</span>
+      <button class="dock-btn" id="btn-theme-toggle" title="Light / dark · T" aria-label="Toggle light / dark (T)">◑</button>
       <button class="btn-graph" id="btn-graph" title="View graph · G">Graph<kbd>G</kbd></button>
-      <span id="status" class="status-pill off">connecting…</span>
+      <button class="dock-btn" id="btn-more" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
     </header>
 
-    <!-- body: surface well + proximity queue rail -->
+    <!-- body: [contents] + surface well + proximity queue rail -->
     <div class="body">
+      <!-- the page's contents column (wide screens, ≥1100px). Empty — and so not
+           drawn — until the page model gives a node headings to list; the slot is
+           here so the well does not reflow when it arrives. -->
+      <nav id="contents-nav" class="contents-nav" aria-label="Contents"></nav>
       <div class="well-wrap">
         <main id="main"></main>
         <div id="minbar" class="minbar"></div>
@@ -86,7 +94,9 @@
           <div class="rail-head">
             <span class="title">QUEUE → CLAUDE</span>
             <span class="badge">0</span>
-            <kbd class="esc">ESC</kbd>
+            <!-- the design's ESC chip is a real control: it closes (unpins) the
+                 rail, the same as Escape. shell.js wires it. -->
+            <button type="button" class="rail-close" title="Close the queue (Esc)" aria-label="Close the queue (Escape)"><kbd class="esc">ESC</kbd></button>
           </div>
           <div class="wake-slot"><span class="gear">⚙</span> wakes: Push</div>
           <!-- B8: text is server-sent (GET /api/queue/policy activation_hint),
@@ -114,6 +124,22 @@
       </aside>
     </div>
 
+    <!-- narrow bottom bar (<760px, app.css): the topbar's ↑/↓, ↩ active and Graph
+         move down here under a thumb, beside Queue [n] — which opens the queue as
+         a full screen and reads "‹ Page" while it is open. The buttons drive the
+         topbar's own (shell.js initBottomBar); topbar.updateChip mirrors state. -->
+    <nav id="bottombar" class="bottombar" aria-label="Page navigation">
+      <div class="stepper bb-stepper">
+        <button id="bb-up" title="Previous node" aria-label="Previous node">↑</button>
+        <button id="bb-down" title="Next node" aria-label="Next node">↓</button>
+      </div>
+      <button class="btn bb-return" id="bb-return" title="Return to the active node" style="display:none">↩ active</button>
+      <span class="tb-spacer" aria-hidden="true"></span>
+      <button class="btn-graph bb-graph" id="bb-graph" title="View graph">Graph</button>
+      <button class="bb-queue" id="bb-queue" aria-controls="queue-rail" aria-expanded="false"
+              aria-label="Queue to Claude"><span class="bb-queue-label">Queue</span><span class="bb-count" id="bb-queue-count">0</span></button>
+    </nav>
+
     <!-- front glass (scanline + highlight), above content -->
     <div class="glass-scanline"></div>
 
@@ -124,14 +150,14 @@
          would push the hot path (spawn a pane) below the fold. -->
     <aside id="drawer" class="drawer hidden" role="dialog" aria-labelledby="drawer-title">
       <div class="drawer-head">
-        <span class="title" id="drawer-title">COMPONENTS</span>
-        <div class="gv-seg drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Components and packs">
+        <span class="title" id="drawer-title">BLOCKS</span>
+        <div class="gv-seg drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Blocks and packs">
           <button role="tab" type="button" data-tab="library" id="drawer-tab-library"
                   class="on" aria-selected="true" aria-controls="drawer-library">Library</button>
           <button role="tab" type="button" data-tab="manage" id="drawer-tab-manage"
                   aria-selected="false" aria-controls="drawer-manage">Manage<span class="tab-badge hidden"></span></button>
         </div>
-        <button class="pane-btn" id="drawer-close" title="Close components" aria-label="Close components">×</button>
+        <button class="pane-btn" id="drawer-close" title="Close blocks" aria-label="Close blocks">×</button>
       </div>
       <div id="drawer-library" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-library"></div>
       <div id="drawer-manage" class="drawer-panel hidden" role="tabpanel" aria-labelledby="drawer-tab-manage"></div>
@@ -139,8 +165,8 @@
 
     <!-- command palette -->
     <div id="cmd-palette" class="palette hidden" role="dialog" aria-modal="true" aria-label="Command palette">
-      <label class="sr-only" for="cmd-input">Search commands, nodes, components</label>
-      <input id="cmd-input" placeholder="Search commands, nodes, components…" autocomplete="off"
+      <label class="sr-only" for="cmd-input">Search commands, nodes, blocks</label>
+      <input id="cmd-input" placeholder="Search commands, nodes, blocks…" autocomplete="off"
              role="combobox" aria-controls="cmd-list" aria-expanded="true" aria-autocomplete="list">
       <div id="cmd-list" class="palette-list" role="listbox" aria-label="Results"></div>
     </div>
@@ -169,7 +195,15 @@
     <div id="settings-panel" class="popover hidden">
       <h4>Settings</h4>
       <div class="row"><label for="settings-theme">Theme</label><select id="settings-theme" class="wc-select"></select></div>
-      <div class="hint">Applies the web-chat-wide default. <span class="mono">earthy</span> is the built-in stock look.</div>
+      <!-- ◑ in words: the mode INSIDE the chosen pack. Same lever as the topbar
+           ◑ and T (theme.toggleMode); greyed when the pack has one mode. -->
+      <div class="row"><span id="settings-mode-label">Mode</span>
+        <div class="gv-seg settings-mode" id="settings-mode" role="group" aria-labelledby="settings-mode-label">
+          <button type="button" data-mode="light" aria-pressed="false">Light</button>
+          <button type="button" data-mode="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+      <div class="hint">Applies the web-chat-wide default. <span class="mono">earthy</span> is the built-in stock look; a pack marked <em>light only</em> has one mode.</div>
       <h4 class="settings-sub">Brand</h4>
       <!-- three drop targets, built by public/app/brand.js -->
       <div id="brand-slots" class="brand-slots"></div>
@@ -196,7 +230,7 @@
       <h4>Wipe surface</h4>
       <label class="sr-only" for="wipe-name">Bookmark name</label>
       <input type="text" id="wipe-name" placeholder="label this point (optional)…" maxlength="48" style="width:100%">
-      <div class="hint">Clears the panes and bookmarks this point so you can come back to it. Pinned panes stay.</div>
+      <div class="hint">Clears the blocks and bookmarks this point so you can come back to it. Pinned blocks stay.</div>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">
         <button class="btn" id="btn-wipe-cancel">Cancel</button>
         <button class="btn primary" id="btn-wipe-go">Wipe</button>
@@ -260,11 +294,11 @@
 
     <!-- keyboard legend -->
     <div id="key-legend" class="legend hidden">
-      <div class="legend-card">
+      <div class="legend-card" role="dialog" aria-label="Keyboard shortcuts">
         <h3>Keyboard</h3>
         <div class="legend-row"><span>Command palette</span><span class="keys"><kbd>⌘K</kbd></span></div>
         <div class="legend-row"><span>Open graph</span><span class="keys"><kbd>G</kbd></span></div>
-        <div class="legend-row"><span>Components · packs</span><span class="keys"><kbd>N</kbd></span></div>
+        <div class="legend-row"><span>Blocks · packs</span><span class="keys"><kbd>N</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
         <div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>
         <div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>
@@ -283,60 +317,91 @@
         <div class="legend-row"><span>Export node</span><span class="keys"><kbd>E</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
         <div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>
-        <div class="legend-row"><span>Close graph</span><span class="keys"><kbd>Esc</kbd></span></div>
+        <div class="legend-row"><span>Deselect · close graph</span><span class="keys"><kbd>Esc</kbd></span></div>
       </div>
     </div>
 
-    <!-- graph viewer: history ▸ DAG ▸ inspector (7b) -->
+    <!-- graph screen: canvas-first. The DAG gets the whole stage; every control
+         floats over it, and the inspector appears only while a node is selected. -->
     <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Turn graph" tabindex="-1">
-      <div class="gv-header">
-        <span class="gv-brand">◇ GRAPH</span>
-        <span class="gv-graphsel" id="gv-graphsel">graph —</span>
-        <label class="sr-only" for="gv-jump">Jump to node or trigger</label>
-        <input class="gv-jump" id="gv-jump" placeholder="Jump to node or trigger…" autocomplete="off">
-        <div class="gv-seg" id="gv-mode">
-          <button data-mode="graph" class="on">Graph</button>
-          <button data-mode="log" disabled title="commit-log view — coming in 7b">Log</button>
-        </div>
-        <button class="gv-icon" id="gv-compare" disabled title="compare two nodes — coming in 7b" aria-label="Compare two nodes">⇄</button>
-        <button class="gv-icon" id="overlay-fit" title="Fit to view" aria-label="Fit graph to view">⤢</button>
-        <button class="gv-icon" id="overlay-close" title="Close (Esc)" aria-label="Close graph (Escape)">✕</button>
-      </div>
-
-      <aside class="gv-history" aria-label="Turn history">
-        <div class="gv-history-head">HISTORY · <span id="gv-turncount">0</span> turns</div>
-        <div class="gv-filters" id="gv-filters">
-          <div class="gv-scope" id="gv-scope">
-            <button data-scope="all" class="on">All</button>
-            <button data-scope="graph" title="Just the selected node's graph">This graph</button>
-          </div>
-          <button class="gv-chip" data-filter="marked">⚑ Marked</button>
-          <button class="gv-chip" data-filter="forks">⑃ Forks</button>
-          <button class="gv-chip hidden" id="gv-show-collapsed" title="Turns that changed nothing are folded into the next turn that did. Show them anyway.">⋯ <span id="gv-collapsed-n">0</span> folded</button>
-        </div>
-        <div class="gv-history-list" id="gv-history-list" role="listbox" aria-label="Turns"></div>
-      </aside>
-
       <div class="graph-canvas-wrap">
         <svg id="graph-svg" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="gv-legend">
-          <span><i class="dot active"></i>active</span>
-          <span><i class="dot marked"></i>marked</span>
-          <span><i class="dot fork"></i>fork</span>
-          <span><i class="dot stack"></i>stack</span>
+        <!-- the HTML layer (expanded ×N sleeves) riding the same camera as the SVG -->
+        <div class="gv-world" id="gv-world"></div>
+      </div>
+
+      <div class="gv-float gv-head"><span class="gv-brand">◇ GRAPH</span><span class="gv-head-meta" id="gv-head-meta">—</span></div>
+      <div class="gv-float gv-search">
+        <label class="sr-only" for="gv-jump">Jump to node, trigger or bookmark</label>
+        <input class="gv-jump" id="gv-jump" placeholder="Jump to node, trigger or bookmark…  ↵" autocomplete="off">
+      </div>
+      <div class="gv-float gv-tools">
+        <div class="gv-filters" id="gv-filters" role="group" aria-label="Filter the graph">
+          <button class="gv-chip" data-filter="marked" aria-pressed="false" title="Dim everything but bookmarked turns">⚑ Marked</button>
+          <button class="gv-chip" data-filter="forks" aria-pressed="false" title="Dim everything but forks">⑃ Forks</button>
         </div>
-        <div class="gv-zoom"><button id="gv-zoom-out" aria-label="Zoom out">−</button><button id="gv-zoom-pct" title="Reset zoom — 100%, centred" aria-label="Reset zoom to 100% and center the graph">100%</button><button id="gv-zoom-in" aria-label="Zoom in">+</button></div>
+        <button class="gv-tool" id="gv-collapse-all" title="Collapse every expanded stack">⊟ Collapse all</button>
+        <button class="gv-tool" id="gv-new" title="Start a new graph">◇ New</button>
+        <button class="gv-icon" id="overlay-close" title="Close (Esc)" aria-label="Close graph (Escape)">✕</button>
+      </div>
+      <div class="gv-float gv-zoom">
+        <button id="gv-zoom-out" aria-label="Zoom out">−</button>
+        <button id="gv-zoom-pct" title="Reset zoom — 100%, centred" aria-label="Reset zoom to 100% and center the graph">100%</button>
+        <button id="gv-zoom-in" aria-label="Zoom in">+</button>
+        <span class="gv-zoom-sep"></span>
+        <button id="overlay-fit" title="Fit to view" aria-label="Fit graph to view">⤢</button>
+      </div>
+      <div class="gv-legend" aria-hidden="true">
+        <span><i class="dot active"></i>active</span>
+        <span><i class="dot marked"></i>bookmark · wipe</span>
+        <span><i class="dot stack"></i>stack</span>
+        <span><i class="dot ghost"></i>folded</span>
+        <span>? keys</span>
       </div>
 
-      <aside class="gv-inspector" id="gv-inspector">
-        <div class="gv-empty">Select a node to inspect it.</div>
-      </aside>
+      <aside class="gv-inspector hidden" id="gv-inspector" aria-label="Selected node"></aside>
 
-      <div class="gv-status">
-        <span class="gv-status-active" id="gv-status-active">—</span>
-        <span id="gv-status-counts"></span>
-        <span class="gv-status-keys">↑↓ select · ↵ open · A set active · Space glance · R replay · ? keys</span>
-      </div>
+      <!-- the PHONE graph (design "Graph Prototype", phone): a newest-first log of
+           one graph with a fork gutter computed from the display topology, in
+           place of the canvas. Shown only while #overlay has .log-mode
+           (graph-log.js). -->
+      <section class="gv-log" id="gv-log" aria-label="Turn log">
+        <div class="gv-log-head">
+          <div class="gv-log-top">
+            <span class="gv-brand">◇ GRAPH</span>
+            <label class="sr-only" for="gv-log-graph">Graph</label>
+            <select id="gv-log-graph" class="gv-log-graph"></select>
+            <span class="tb-spacer" aria-hidden="true"></span>
+            <button class="gv-log-icon" id="gv-log-new" title="New graph" aria-label="New graph">◇</button>
+            <button class="gv-log-icon" id="gv-log-close" title="Close" aria-label="Close graph">✕</button>
+          </div>
+          <label class="sr-only" for="gv-log-q">Jump to node, trigger or bookmark</label>
+          <input class="gv-log-q" id="gv-log-q" placeholder="Jump to node, trigger or bookmark…" autocomplete="off">
+          <div class="gv-log-filters" id="gv-log-filters" role="group" aria-label="Filter the log">
+            <button class="gv-chip" data-filter="marked" aria-pressed="false">⚑ Marked</button>
+            <button class="gv-chip" data-filter="forks" aria-pressed="false">⑃ Forks</button>
+            <button class="gv-chip gv-log-folded" data-folded aria-pressed="false" hidden>⋯ folded</button>
+          </div>
+        </div>
+        <div class="gv-log-list" id="gv-log-list"></div>
+        <div class="gv-log-bar">
+          <div class="gv-log-naming hidden" id="gv-log-naming">
+            <label class="sr-only" for="gv-log-name">Bookmark name</label>
+            <input type="text" id="gv-log-name" placeholder="bookmark name…" maxlength="48">
+            <button class="btn primary" id="gv-log-name-save">Save</button>
+          </div>
+          <div class="gv-log-acts" id="gv-log-acts">
+            <span class="gv-log-sel" id="gv-log-sel">—</span>
+            <span class="tb-spacer" aria-hidden="true"></span>
+            <button class="gv-log-act" data-act="glance" title="Glance" aria-label="Glance">◫</button>
+            <button class="gv-log-act bm" data-act="bookmark" title="Bookmark" aria-label="Bookmark">⚑</button>
+            <button class="gv-log-act" data-act="branch" title="Branch from here" aria-label="Branch from here">⑃</button>
+            <button class="gv-log-act" data-act="export" title="Export" aria-label="Export">↧</button>
+            <button class="gv-log-act primary" data-act="active" id="gv-log-active">Set active</button>
+          </div>
+        </div>
+      </section>
+      <div class="gv-toast hidden" id="gv-toast" role="status" aria-live="polite"></div>
     </div>
   </div>
 

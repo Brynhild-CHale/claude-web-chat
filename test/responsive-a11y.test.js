@@ -7,7 +7,8 @@
 // arithmetic, so re-introducing fixed side columns that starve the graph canvas
 // fails the build with a number. Before this, #overlay's fixed 288px/1fr/322px
 // left the canvas ~90px wide at 700px — the product's defining feature, unusable
-// in the product's own default layout.
+// in the product's own default layout. (The graph is canvas-first now; the guard
+// holds it there.)
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -80,13 +81,21 @@ const fixedPx = (v) => (v.match(/(\d+(?:\.\d+)?)px/g) || []).reduce((a, s) => a 
 
 test('the graph canvas stays usable at the widths this product is actually used at', () => {
   // ~700px is a terminal beside a browser on a laptop; 1000 and 1280 are wider setups.
+  // The canvas-first graph has NO side columns: the canvas is the whole stage at
+  // every width and the inspector floats over it. What could starve the canvas
+  // again is a grid on #overlay, or an inspector wider than the screen.
   for (const width of [700, 760, 860, 1000, 1280]) {
-    const cols = winningValue('#overlay.overlay', 'grid-template-columns', width);
-    assert.ok(cols, `#overlay.overlay declares grid-template-columns at ${width}px`);
-    const canvas = width - fixedPx(cols);
-    assert.ok(canvas >= 380,
-      `at ${width}px the graph canvas gets ${canvas}px (cols: ${cols}) — it must keep at least 380px`);
+    assert.equal(winningValue('#overlay.overlay', 'grid-template-columns', width), null,
+      `#overlay.overlay declares no grid columns at ${width}px — the canvas is not a column`);
+    const insp = winningValue('.gv-inspector', 'width', width);
+    assert.ok(insp, `.gv-inspector declares a width at ${width}px`);
+    if (/calc\(100%/.test(insp)) continue;           // full-bleed on a narrow screen
+    const px = fixedPx(insp);
+    assert.ok(width - px >= 380,
+      `at ${width}px a ${insp} inspector leaves the canvas ${width - px}px of visible width — it must keep at least 380px`);
   }
+  const wrap = winningValue('.graph-canvas-wrap', 'inset', 1280);
+  assert.equal(wrap, '0', 'the canvas wrap fills the overlay');
 });
 
 test('panes stop tiling once a column would be a sliver', () => {
@@ -101,6 +110,39 @@ test('panes stop tiling once a column would be a sliver', () => {
   // ...and it must NOT apply on a wide screen, where tiling is the point.
   assert.equal(winningValue('.pane', 'grid-column', 1440), 'span 12',
     'wide screens keep the default 12-column span so inline spans still tile');
+});
+
+test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide contents slot', () => {
+  // NARROW (<760): the bottom bar exists, the topbar's navigation moved into it,
+  // and the open rail is a full-screen queue rather than a 272px side column.
+  for (const width of [390, 700, 759]) {
+    assert.equal(winningValue('.bottombar', 'display', width), 'flex', `the bottom bar shows at ${width}px`);
+    assert.equal(winningValue('.rail', 'position', width), 'absolute', `the queue is a screen at ${width}px`);
+    assert.equal(winningValue('.rail.open', 'width', width), 'auto', `the open queue fills the width at ${width}px`);
+  }
+  // MEDIUM and WIDE: no bottom bar; the rail is the side column again.
+  for (const width of [760, 1000, 1280]) {
+    assert.equal(winningValue('.bottombar', 'display', width), 'none', `no bottom bar at ${width}px`);
+    assert.equal(winningValue('.rail.open', 'width', width), '272px', `the design's open rail at ${width}px`);
+  }
+  // The narrow queue screen covers the page, so the page's comment markers (on
+  // #pin-layer, which paints above the whole body) must go with it — they
+  // floated over the queue items (int3 visual QA). A wide rail is a column
+  // beside the panes, where the markers follow their panes and stay.
+  for (const width of [390, 759]) {
+    assert.equal(winningValue('body:has(.rail.open) #pin-layer', 'display', width), 'none',
+      `no comment markers over the queue screen at ${width}px`);
+  }
+  assert.equal(winningValue('body:has(.rail.open) #pin-layer', 'display', 1000), null,
+    'the markers stay beside a side-column rail');
+  // WIDE (≥1100) only: the contents column slot — and even there, only when filled.
+  assert.equal(winningValue('.contents-nav', 'display', 1000), 'none', 'no contents column below 1100px');
+  assert.equal(winningValue('.contents-nav', 'display', 1280), null, 'the contents column may show at 1280px');
+  assert.equal(winningValue('.contents-nav:empty', 'display', 1280), 'none', 'an empty contents column is not drawn');
+  const { window } = new JSDOM(HTML);
+  const body = window.document.querySelector('.body');
+  assert.equal(body.firstElementChild.id, 'contents-nav', 'the slot sits left of the well');
+  assert.equal(window.document.getElementById('contents-nav').childElementCount, 0, 'and ships empty');
 });
 
 test('every icon-only control in the shell has an accessible name', () => {
@@ -130,4 +172,14 @@ test('every form field in the shell has a real label', () => {
     bad.push(el.outerHTML.slice(0, 90)); // a placeholder is not a label
   }
   assert.deepEqual(bad, [], 'form fields with no label / aria-label');
+});
+
+test('the replay bar keeps ✕ in its corner however the controls wrap', () => {
+  // As the last item of a wrapping flex row, ✕ dropped onto a line of its own
+  // under ▶ REPLAY once the bar ran out of width — at 1440px already (int3
+  // visual QA). It is pinned to the popover's corner and the bar keeps room for it.
+  assert.equal(winningValue('#rpo-close', 'position', 1440), 'absolute');
+  assert.equal(winningValue('#rpo-close', 'right', 1440), '10px');
+  assert.equal(winningValue('.rpo-bar', 'padding-right', 1440), '40px', 'the bar never runs under it');
+  assert.equal(winningValue('.popover.replay-pop', 'position', 1440), 'fixed', '…a positioned popover it anchors to');
 });

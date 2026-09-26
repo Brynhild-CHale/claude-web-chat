@@ -297,15 +297,18 @@ html.wc-theming, html.wc-theming * {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 7px 14px 7px 16px;
   font: 500 12px var(--wc-font); color: var(--wc-fg); line-height: 1.35;
-  background: color-mix(in srgb, var(--wc-gold) 16%, var(--wc-panel-bg));
+  background: color-mix(in srgb, var(--wc-gold) 10%, var(--wc-panel-bg));
   border-bottom: 1px solid color-mix(in srgb, var(--wc-gold) 55%, transparent);
 }
 .update-banner .ub-msg { flex: 1 1 auto; }
 .update-banner .ub-msg code { font: 11px var(--wc-mono); }
 .update-banner .ub-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .update-banner .ub-btn {
-  height: 26px; padding: 0 12px; border-radius: var(--wc-radius-sm);
-  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-gold-fg);
+  display: inline-flex; align-items: center; text-decoration: none;
+  height: 26px; padding: 0 12px; border-radius: var(--wc-radius);
+  /* panel ink on the gold fill, not --wc-gold-fg: Georgetown's gold is a
+     burgundy that its navy gold-fg cannot be read on */
+  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-panel-bg);
   font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
 }
 .update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
@@ -324,7 +327,7 @@ html.wc-theming, html.wc-theming * {
   border-bottom: 1px solid var(--wc-topbar-border);
   box-shadow: var(--wc-elev-bar);
 }
-.brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
+.brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-display); color: var(--wc-fg-bright); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
@@ -332,18 +335,24 @@ html.wc-theming, html.wc-theming * {
 .brand-logo { flex: 0 0 auto; height: 22px; width: auto; max-width: 150px; object-fit: contain; object-position: left center; }
 .brand-logo[hidden], .brand-logo[hidden] + .brand-logo-div { display: none; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
+/* the page's own title — an empty slot until the page model fills it, and an
+   empty slot takes no room at all */
+.page-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12.5px var(--wc-font); color: var(--wc-fg); }
+.page-title:empty { display: none; }
+/* pushes the right-hand controls to the far edge, as the design lays them out */
+.tb-spacer { flex: 1 1 0; min-width: 0; }
 
 /* command-palette trigger (centered) */
 .cmd-trigger {
   display: flex; align-items: center; gap: 8px;
-  flex: 1; max-width: 430px; height: 30px; margin: 0 6px; padding: 0 10px;
+  flex: 1; max-width: 360px; height: 30px; margin: 0 6px; padding: 0 10px;
   background: var(--wc-content-bg); color: var(--wc-muted);
   border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
-  box-shadow: inset 0 1px 4px rgba(0,0,0,.4);
   font: 12px var(--wc-font); text-align: left;
 }
+.cmd-trigger:hover { border-color: var(--wc-accent); }
 .cmd-trigger .glyph { color: var(--wc-accent); }
-.cmd-trigger .ph { flex: 1; }
+.cmd-trigger .ph { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 kbd {
   font: 500 10px var(--wc-mono); color: var(--wc-key-fg);
   background: var(--wc-key-bg); border: 1px solid var(--wc-key-border);
@@ -372,13 +381,25 @@ kbd {
 .stepper button:hover:not(:disabled) { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
 .stepper button:disabled { opacity: .35; cursor: default; }
 
-/* view chip + active pill */
+/* the ONE status pill (topbar.pillState): green active · gold viewing · accent
+   locked / channel turn, with a pulsing dot while Claude holds the turn · rust
+   when the socket is not live */
 .active-pill {
+  display: inline-flex; align-items: center; gap: 6px;
   font: 600 11px var(--wc-mono); color: var(--wc-green);
   padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent);
   background: color-mix(in srgb, var(--wc-green) 8%, transparent); border-radius: var(--wc-radius);
 }
 .active-pill.viewing { color: var(--wc-gold); border-color: color-mix(in srgb, var(--wc-gold) 40%, transparent); background: color-mix(in srgb, var(--wc-gold) 8%, transparent); }
+.active-pill.locked { color: var(--wc-accent-text); border-color: color-mix(in srgb, var(--wc-accent) 45%, transparent); background: color-mix(in srgb, var(--wc-accent) 10%, transparent); }
+.active-pill.locked::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--wc-accent);
+  animation: wc-pill-pulse 1.6s ease-in-out infinite;
+}
+.active-pill.channel::before { background: var(--wc-gold); }
+.active-pill.off { color: var(--wc-rust); border-color: color-mix(in srgb, var(--wc-rust) 40%, transparent); background: color-mix(in srgb, var(--wc-rust) 8%, transparent); }
+@keyframes wc-pill-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce) { .active-pill.locked::before { animation: none; } }
 
 /* primary graph button (olive fill, ink text, glow + bottom edge) */
 .btn-graph {
@@ -389,10 +410,6 @@ kbd {
 }
 .btn-graph:hover { filter: brightness(1.08); }
 .btn-graph kbd { background: rgba(0,0,0,.22); color: var(--wc-accent-fg); border-color: rgba(0,0,0,.3); }
-
-.status-pill { font: 500 11px var(--wc-mono); color: var(--wc-muted); padding: 2px 8px; }
-.status-pill.live { color: var(--wc-green); }
-.status-pill.off { color: var(--wc-rust); }
 
 /* generic small button used in menus/popovers */
 .btn {
@@ -423,23 +440,39 @@ kbd {
 }
 .pane.minimized { display: none; }
 .pane.pinned { outline: 1px solid color-mix(in srgb, var(--wc-accent) 50%, transparent); outline-offset: -1px; }
-.pane.locked .pane-header { opacity: .85; }
 .pane.pane-dragging { opacity: .4; }
+/* The block header is the drag handle (⠿ + mono title); its buttons opt out. */
 .pane-header {
-  display: flex; align-items: center; gap: 6px; height: 31px; padding: 0 8px;
-  border-bottom: 1px solid var(--wc-border); cursor: default;
-  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent);
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 5px 0 8px; flex: none;
+  border-bottom: 1px solid var(--wc-border); cursor: grab; user-select: none; touch-action: none;
 }
-.pane-drag { cursor: grab; color: var(--wc-muted); font-size: 12px; user-select: none; }
-.pane-title { flex: 1; font: 500 12px var(--wc-mono); color: var(--wc-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pane-btn { width: 22px; height: 22px; border: 0; background: transparent; color: var(--wc-muted); border-radius: var(--wc-radius); font-size: 12px; }
-.pane-btn:hover { background: rgba(255,255,255,.06); color: var(--wc-fg); }
-.pane-btn.active, .pane-btn.lock-active { color: var(--wc-accent); }
+.pane-drag { color: var(--wc-muted); font-size: 12px; }
+.pane-title { flex: 1; min-width: 48px; font: 500 12px var(--wc-mono); color: var(--wc-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the block's type: params.type, else its component name (mounts.blockType) */
+.pane-type { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 9px var(--wc-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--wc-muted); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 1px 5px; }
+.pane-btn { flex: none; width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--wc-muted); border-radius: var(--wc-radius); font-size: 12px; line-height: 22px; cursor: pointer; }
+.pane-btn:hover { background: var(--wc-hover-bg); color: var(--wc-fg); }
+.pane-btn-pin, .pane-btn-lock { opacity: .8; }
+.pane-btn.active, .pane-btn.lock-active { color: var(--wc-accent); opacity: 1; }
+.pane-btn-close { font-size: 13px; }
+/* Under span 6 the chip, pin and lock fold away (a pin or lock that is ON stays,
+   so the state is never invisible); ⋯ shows pin/lock again. */
+.pane:not(.narrow) .pane-btn-more,
+.pane.narrow .pane-type,
+.pane.narrow:not(.more-open) .pane-btn-pin:not(.active),
+.pane.narrow:not(.more-open) .pane-btn-lock:not(.lock-active) { display: none; }
+.pane.narrow.more-open .pane-btn-more { color: var(--wc-fg); }
+/* A locked block refuses moves: no grab, no resize handles. */
+.pane.locked .pane-header { cursor: default; }
+.pane.locked :is(.pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
 .mount-host { flex: 1; overflow: auto; padding: 12px; color: var(--wc-fg); }
 
-/* resize handles — local to the pane stack inside .body (--z-content), not the shell scale */
+/* resize handles — local to the pane stack inside .body (--z-content), not the shell scale;
+   the corner (both axes) sits one above the two edges it overlaps */
 .pane-resize-r { position: absolute; z-index: 3; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; }
 .pane-resize-b { position: absolute; z-index: 3; left: 0; bottom: -3px; height: 6px; width: 100%; cursor: row-resize; }
+.pane-resize-rb { position: absolute; z-index: 4; right: -4px; bottom: -4px; width: 14px; height: 14px; cursor: nwse-resize; }
+.pane-resize-r, .pane-resize-b, .pane-resize-rb { touch-action: none; }
 
 /* drag ghost + drop indicator (appended to <body>) */
 .pane-ghost { position: fixed; z-index: var(--z-drag); pointer-events: none; opacity: .5; border: 1px dashed var(--wc-accent); border-radius: var(--wc-radius); background: var(--wc-panel-glass); }
@@ -462,7 +495,7 @@ kbd {
   overflow: hidden;
 }
 .rail::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--wc-accent); box-shadow: 0 0 12px var(--wc-glow-accent); }
-.rail.open { width: 256px; }
+.rail.open { width: 272px; }   /* the design's open rail */
 .rail.open .rail-collapsed { opacity: 0; pointer-events: none; }
 .rail.open .rail-expanded { opacity: 1; pointer-events: auto; }
 
@@ -477,13 +510,15 @@ kbd {
 .rail-hint { margin-top: auto; font: 500 10px var(--wc-mono); color: var(--wc-muted-dim); }
 
 .rail-expanded {
-  position: absolute; inset: 0; width: 256px; display: flex; flex-direction: column;
+  position: absolute; inset: 0; width: 272px; display: flex; flex-direction: column;
   padding: 14px; opacity: 0; pointer-events: none; transition: opacity .18s;
 }
 .rail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .rail-head .title { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
 .rail-head .badge { font: 700 10px var(--wc-mono); color: var(--wc-accent-fg); background: var(--wc-accent); border-radius: var(--wc-radius); padding: 0 5px; }
-.rail-head .esc { margin-left: auto; }
+/* the ESC chip closes the rail (shell.js) — a button wearing the kbd */
+.rail-close { margin-left: auto; border: 0; background: transparent; padding: 0; cursor: pointer; line-height: 0; }
+.rail-close:hover kbd { color: var(--wc-fg-bright); border-color: var(--wc-border); }
 /* the "what wakes Claude" signal-policy line — filled by wake-panel.js with the
    live policy (GET /api/queue/policy): what is set to wake immediately, what
    waits for a Push, and whether a channel is connected at all. */
@@ -493,6 +528,8 @@ kbd {
   font: 500 10px var(--wc-mono); color: var(--wc-muted-dim); letter-spacing: .04em;
 }
 .wake-slot .gear { opacity: .6; }
+.wake-slot .wake-keys { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--wc-muted); }
+.wake-slot .wake-dot { margin-left: auto; flex: none; }
 .wake-slot .wake-dot { color: var(--wc-muted-dim); }
 .wake-slot .wake-dot.on { color: var(--wc-green); }
 /* "channels not enabled" notice — shown when no bridge is connected (wake-panel
@@ -551,6 +588,13 @@ kbd {
   border-radius: var(--wc-radius); position: relative;
 }
 .qi-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; background: var(--wc-muted); box-shadow: 0 0 6px var(--wc-glow-accent); }
+/* a signal row's "▸ value" — the key's current value, read on request (queue.js
+   peekControls); never part of what reaches Claude. */
+.qi-peek { align-self: flex-start; margin-top: 2px; padding: 0; border: 0; background: transparent; cursor: pointer; font: 500 9.5px var(--wc-mono); letter-spacing: .04em; color: var(--wc-accent-text); }
+.qi-peek:hover { text-decoration: underline; }
+.qi-value { margin: 3px 0 0; padding: 5px 7px; max-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 10.5px/1.4 var(--wc-mono); color: var(--wc-fg); background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); }
+.qi-value.loading, .qi-value.absent { color: var(--wc-muted); font-style: italic; }
+.qi-value.err { color: var(--wc-comment); }
 .qi-dot.qi-capture { background: var(--wc-gold); }
 /* Per-kind dots. These class names are COMPOSED in queue.js ('qi-dot qi-' +
    item.kind, and 'rail-chip qi-' + kind), so they never appear as literals in
@@ -605,14 +649,15 @@ kbd {
 .rail-chip { width: 6px; height: 6px; border-radius: 50%; background: var(--wc-muted); }
 .rail-chip.qi-capture { background: var(--wc-gold); }
 .rail-chip.qi-signal { background: var(--wc-accent); }
+.rail-chip.qi-comment { background: var(--wc-comment); }
 
 /* ===================== keyboard legend overlay ===================== */
 .legend {
   position: absolute; inset: 0; z-index: var(--z-legend); display: flex; align-items: center; justify-content: center;
-  background: rgba(8,6,3,.5); backdrop-filter: blur(6px);
+  background: var(--wc-scrim); backdrop-filter: blur(6px);
 }
-.legend-card { background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow); padding: 22px 26px; min-width: 380px; max-height: 90vh; overflow-y: auto; }
-.legend-card h3 { margin: 0 0 14px; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
+.legend-card { background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow); padding: 22px 26px; min-width: 380px; max-width: calc(100vw - 32px); max-height: 90vh; overflow-y: auto; }
+.legend-card h3 { margin: 0 0 14px; font: 600 15px var(--wc-display); color: var(--wc-fg-bright); }
 .legend-card h3.legend-sub { margin-top: 16px; }
 .legend-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 5px 0; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .legend-row .keys { display: flex; gap: 4px; }
@@ -630,20 +675,30 @@ kbd {
 }
 .palette-list { max-height: 340px; overflow: auto; padding: 6px; }
 .palette-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--wc-radius); font: 13px var(--wc-font); color: var(--wc-text-1); cursor: pointer; }
-.palette-item .kind { font: 500 10px var(--wc-mono); color: var(--wc-muted); text-transform: uppercase; }
-.palette-item.sel, .palette-item:hover { background: color-mix(in srgb, var(--wc-accent) 16%, transparent); color: var(--wc-fg-bright); }
+.palette-item .kind { flex: none; width: 64px; font: 500 10px var(--wc-mono); color: var(--wc-muted); text-transform: uppercase; }
+.palette-item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the right-side hint: a node's time, a block's type, or a command's key (kbd) */
+.palette-item .hint { flex: none; margin-left: auto; font: 10px var(--wc-mono); color: var(--wc-muted); }
+.palette-item kbd.hint { color: var(--wc-key-fg); }
+/* a block jumped to from ⌘K flashes its outline once (shell.js revealBlock) */
+.pane.pane-flash { animation: pane-flash 1.2s ease-out; }
+@keyframes pane-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--wc-accent); } 100% { box-shadow: 0 0 0 2px transparent; } }
+@media (prefers-reduced-motion: reduce) { .pane.pane-flash { animation: none; outline: 2px solid var(--wc-accent); } }
+.palette-item.sel, .palette-item:hover { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); color: var(--wc-fg-bright); }
 .palette-empty { padding: 18px; text-align: center; color: var(--wc-muted-dim); font: 13px var(--wc-font); }
 
 /* ===================== popovers (settings / more / new-graph / branch) ===================== */
 .popover {
   position: absolute; z-index: var(--z-panel); top: 50px; right: 12px; min-width: 240px;
-  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg);
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
   box-shadow: var(--wc-shadow); padding: 12px;
 }
+/* the ⋯ menu is a list, not a form: tighter, like the design's */
+#more-menu { min-width: 200px; padding: 6px; display: flex; flex-direction: column; }
 .popover h4 { margin: 0 0 10px; font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
 .popover .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 8px; border: 0; background: transparent; text-align: left; color: var(--wc-text-1); font: 12px var(--wc-font); border-radius: var(--wc-radius); }
-.menu-item:hover { background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
+.menu-item:hover, .menu-item:focus-visible { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
 .wc-select, .popover input[type="text"] { height: 28px; padding: 0 8px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-fg); font: 12px var(--wc-font); }
 /* The one popover raised from INSIDE the graph overlay, so it needs the rung
    above it (the same one the glance uses) — every other popover lives under the
@@ -659,13 +714,19 @@ kbd {
   position: fixed; z-index: var(--z-glance); inset: 4vh 4vw; min-width: 0;
   display: flex; flex-direction: column; gap: 8px; padding: 10px; box-shadow: var(--wc-elev-stage);
 }
-.rpo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rpo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding-right: 40px; }
+/* ✕ holds the corner: as the last item of a wrapping bar it dropped onto a row
+   of its own under ▶ REPLAY once the bar ran out of width (at 1440px already). */
+#rpo-close { position: absolute; top: 10px; right: 10px; }
 .rpo-bar .btn { display: inline-flex; align-items: center; text-decoration: none; }
-.rpo-title { font: 700 12px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
+.rpo-title { font: 600 11px var(--wc-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--wc-accent-text); }
 .rpo-field { display: inline-flex; align-items: center; gap: 6px; font: 11px var(--wc-font); color: var(--wc-muted); }
 .rpo-note { flex: 1; min-width: 80px; font: 11px var(--wc-font); color: var(--wc-muted); }
+.rpo-note:empty { min-width: 0; }
 .rpo-frame { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-bg); }
 .hint { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; }
+/* Settings → Mode: the segmented Light | Dark (theme.syncModeToggle marks .on) */
+.settings-mode button { height: 24px; padding: 0 10px; }
 /* Settings → Brand: one row per slot — name, drop target (also a file button), Remove */
 .popover h4.settings-sub { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
 .brand-slots { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
@@ -691,7 +752,7 @@ kbd {
 .ss-list { display: flex; flex-direction: column; gap: 6px; max-height: min(60vh, 460px); overflow-y: auto; }
 .ss-row { padding: 8px 10px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-content-bg); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ss-row.link { cursor: pointer; }
-.ss-row.link:hover, .ss-row.link:focus-visible { border-color: var(--wc-accent); outline: none; }
+.ss-row.link:hover, .ss-row.link:focus-visible { border-color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 12%, var(--wc-content-bg)); outline: none; }
 .ss-row.current { border-color: color-mix(in srgb, var(--wc-accent) 60%, var(--wc-border)); background: color-mix(in srgb, var(--wc-accent) 8%, var(--wc-content-bg)); }
 .ss-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ss-title { font: 600 12.5px var(--wc-font); color: var(--wc-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -702,133 +763,223 @@ kbd {
 .ss-dot.warn { color: var(--wc-gold); }
 .ss-dot.off { color: var(--wc-muted); }
 .ss-muted { font: 11px var(--wc-font); color: var(--wc-muted); }
-.ss-badge { font: 500 10px var(--wc-mono); padding: 1px 6px; border-radius: 999px; border: 1px solid var(--wc-border); color: var(--wc-muted); }
+/* the same chip as the graph inspector's ACTIVE / FORK badges (.gv-badge) */
+.ss-badge { font: 600 9px var(--wc-mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--wc-radius); border: 1px solid var(--wc-border); color: var(--wc-muted); }
 .ss-badge.on { color: var(--wc-green); border-color: color-mix(in srgb, var(--wc-green) 50%, transparent); }
 .ss-badge.turn { color: var(--wc-gold); border-color: color-mix(in srgb, var(--wc-gold) 55%, transparent); }
 .ss-badge.here { color: var(--wc-accent); border-color: color-mix(in srgb, var(--wc-accent) 55%, transparent); }
 .ss-cmd { margin-top: 2px; }
 .mono { font-family: var(--wc-mono); }
 
-/* ===================== graph viewer (history ▸ DAG ▸ inspector, 7b) ===================== */
+/* ===================== graph screen (canvas-first) =====================
+   The DAG fills the stage; every control floats over it (design "Graph Canvas
+   Prototype"). Every glyph colour is a class reading a --wc-* token, so a pack or
+   a mode flip restyles the canvas without a relayout. */
 .muted { color: var(--wc-muted); }
 .small { font-size: 11px; }
 #overlay.overlay {
-  position: absolute; inset: 0; z-index: var(--z-overlay); background: var(--wc-bg); background-image: var(--wc-depth-radial);
-  display: grid; grid-template-columns: 288px 1fr 322px; grid-template-rows: 48px 1fr 26px;
-  grid-template-areas: "header header header" "history canvas inspector" "status status status";
+  position: absolute; inset: 0; z-index: var(--z-overlay); overflow: hidden;
+  background: var(--wc-bg); background-image: var(--wc-depth-radial);
 }
-
-/* header */
-.gv-header { grid-area: header; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); box-shadow: var(--wc-elev-bar); }
-.gv-brand { font: 700 12px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
-.gv-graphsel { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
-.gv-jump { flex: 1; max-width: 360px; height: 28px; margin: 0 auto; padding: 0 10px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-fg); font: 12px var(--wc-font); }
+/* segmented control — reused by the drawer tabs and Settings → Mode */
 .gv-seg { display: flex; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); overflow: hidden; }
 .gv-seg button { height: 26px; padding: 0 12px; border: 0; background: transparent; color: var(--wc-muted); font: 500 12px var(--wc-font); }
 .gv-seg button.on { background: var(--wc-accent); color: var(--wc-accent-fg); }
-.gv-icon { width: 30px; height: 28px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-text-2); border-radius: var(--wc-radius); font-size: 13px; }
+.gv-seg button:disabled { opacity: .4; cursor: default; }
+
+/* the canvas: the dot grid rides the camera (graph-view applyCamera sets its size + position) */
+.graph-canvas-wrap {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab;
+  background-image: radial-gradient(var(--wc-grid-line) 1px, transparent 1px); background-size: 22px 22px;
+}
+#graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.gv-world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; pointer-events: none; }
+
+/* floating chrome */
+.gv-float { position: absolute; }   /* no z-index: later siblings of the canvas, they paint over it in DOM order */
+.gv-head {
+  top: 12px; left: 12px; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
+.gv-brand { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
+.gv-head-meta { font: 11px var(--wc-mono); color: var(--wc-muted); white-space: nowrap; }
+.gv-search { top: 12px; left: max(50%, 300px); transform: translateX(-50%); width: min(340px, 30%); }
+.gv-jump {
+  width: 100%; box-sizing: border-box; height: 32px; padding: 0 12px;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  color: var(--wc-fg); font: 12px var(--wc-font); box-shadow: var(--wc-shadow);
+}
+.gv-tools { top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; }
+.gv-filters { display: flex; gap: 6px; }
+.gv-chip, .gv-tool {
+  flex: none; height: 32px; padding: 0 10px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg);
+  color: var(--wc-muted); border-radius: var(--wc-radius); font: 500 11.5px var(--wc-font); white-space: nowrap; box-shadow: var(--wc-shadow);
+}
+.gv-tool { color: var(--wc-text-2); font-size: 12px; }
+.gv-chip:hover, .gv-tool:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.gv-chip.on { border-color: var(--wc-accent); color: var(--wc-accent-text); background: color-mix(in srgb, var(--wc-accent) 12%, var(--wc-panel-bg)); }
+.gv-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-text-2);
+  border-radius: var(--wc-radius); font-size: 13px; box-shadow: var(--wc-shadow);
+}
 .gv-icon:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
-.gv-icon.on { background: var(--wc-accent); color: var(--wc-accent-fg); border-color: transparent; }
-.gv-icon:disabled, .gv-seg button:disabled { opacity: .4; cursor: default; }
-
-/* history column */
-.gv-history { grid-area: history; display: flex; flex-direction: column; background: var(--wc-panel-bg); border-right: 1px solid var(--wc-border); min-height: 0; }
-.gv-history-head { padding: 12px 14px 8px; font: 700 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-muted); }
-.gv-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 14px 10px; border-bottom: 1px solid var(--wc-border); }
-.gv-scope { display: flex; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); overflow: hidden; }
-.gv-scope button { height: 22px; padding: 0 9px; border: 0; background: transparent; color: var(--wc-muted); font: 500 11px var(--wc-font); }
-.gv-scope button.on { background: var(--wc-accent); color: var(--wc-accent-fg); }
-.gv-chip { height: 22px; padding: 0 9px; border: 1px solid var(--wc-border); background: transparent; color: var(--wc-muted); border-radius: var(--wc-radius); font: 500 11px var(--wc-font); }
-.gv-chip.on { border-color: var(--wc-accent); color: var(--wc-accent-text); background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
-.gv-history-list { flex: 1; overflow: auto; padding: 6px; }
-.gv-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 8px; padding: 8px 8px; border-radius: var(--wc-radius); border: 1px solid transparent; cursor: pointer; }
-.gv-row:hover { background: color-mix(in srgb, var(--wc-accent) 8%, transparent); }
-.gv-row.selected { border-color: var(--wc-border-light); background: color-mix(in srgb, var(--wc-accent) 6%, transparent); }
-.gv-row.active { background: var(--wc-row-active-bg); border-color: var(--wc-border-light); box-shadow: inset 2px 0 0 var(--wc-accent); }
-.gv-row .glyph { font-size: 11px; color: var(--wc-muted); text-align: center; }
-.gv-row .glyph.active { color: var(--wc-accent); }
-.gv-row .glyph.marked { color: var(--wc-gold); }
-.gv-row .glyph.fork { color: var(--wc-accent); }
-.gv-row .main { min-width: 0; }
-.gv-row .lbl { font: 700 11px var(--wc-mono); color: var(--wc-fg-bright); }
-.gv-row .trig { font: 11px var(--wc-font); color: var(--wc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gv-row .time { font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
-
-/* center canvas */
-.graph-canvas-wrap { grid-area: canvas; position: relative; overflow: hidden; touch-action: none; background-image: radial-gradient(var(--wc-grid-line) 1px, transparent 1px); background-size: 22px 22px; }
-#graph-svg { width: 100%; height: 100%; display: block; }
-.gv-legend { position: absolute; top: 12px; left: 12px; display: flex; gap: 12px; font: 500 11px var(--wc-font); color: var(--wc-muted); }
+.gv-zoom {
+  bottom: 12px; left: 12px; display: flex; align-items: center; gap: 2px; padding: 2px 4px;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
+.gv-zoom button { width: 24px; height: 24px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 14px; }
+.gv-zoom-sep { width: 1px; height: 16px; background: var(--wc-border); margin: 0 2px; }
+/* The percentage between − and + is a button: it resets the camera to a true
+   1:1, graph centred. */
+#gv-zoom-pct { width: auto; min-width: 40px; height: 24px; padding: 0 6px; cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); }
+#gv-zoom-pct:hover { color: var(--wc-fg); }
+#gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+#overlay-fit { font-size: 13px; }
+.gv-legend {
+  position: absolute; bottom: 14px; right: 14px; display: flex; gap: 14px;
+  font: 11px var(--wc-mono); color: var(--wc-muted-dim); pointer-events: none;
+}
 .gv-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .gv-legend .dot.active { background: var(--wc-accent); }
 .gv-legend .dot.marked { background: var(--wc-gold); }
-.gv-legend .dot.fork { background: var(--wc-accent); opacity: .6; }
-.gv-legend .dot.stack { background: var(--wc-muted); }
-/* A graph's heading is its handle: click to rename, drag to place. Make it read
-   as one — the pencil only shows on hover so the canvas stays quiet. */
-.gv-tree-title:hover .gv-tt-hit { fill: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
-.gv-tt-pencil { opacity: 0; transition: opacity .12s ease; }
-.gv-tree-title:hover .gv-tt-pencil { opacity: 1; }
-.gv-zoom { position: absolute; bottom: 12px; left: 12px; display: flex; align-items: center; gap: 6px; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 2px 4px; }
-.gv-zoom button { width: 22px; height: 22px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 14px; }
-.gv-zoom span { font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
-/* The readout is a real button (click = reset to 100% + centre) but must keep
-   reading as a label between − and +, not as a third control. */
-#gv-zoom-pct { width: auto; height: auto; padding: 2px 4px; border-radius: var(--wc-radius-sm); cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
-#gv-zoom-pct:hover { color: var(--wc-fg); background: var(--wc-bg); }
-#gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.gv-legend .dot.stack { width: 10px; height: 7px; border-radius: 2px; border: 1px solid var(--wc-muted-dim); }
+.gv-legend .dot.ghost { border: 1.5px dashed var(--wc-muted-dim); box-sizing: border-box; }
+.gv-toast {
+  position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%);
+  padding: 8px 14px; font: 500 12px var(--wc-font); color: var(--wc-fg); white-space: nowrap;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-gold); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
 
-/* inspector column */
-.gv-inspector { grid-area: inspector; overflow: auto; background: var(--wc-panel-bg); border-left: 1px solid var(--wc-border); padding: 14px; }
-.gv-empty { color: var(--wc-muted-dim); font: 13px var(--wc-font); padding: 20px 4px; }
-.gv-preview { height: 120px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-bg); position: relative; overflow: hidden; margin-bottom: 12px; }
-.gv-preview-frame { position: absolute; top: 0; left: 0; border: 0; transform-origin: top left; pointer-events: none; background: var(--wc-bg); }
-.gv-preview .cap { position: absolute; bottom: 3px; right: 5px; font: 9px var(--wc-mono); color: var(--wc-muted-dim); letter-spacing: .06em; background: color-mix(in srgb, var(--wc-bg) 72%, transparent); padding: 0 3px; border-radius: 2px; }
-.gv-preview .gv-preview-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 12px var(--wc-font); color: var(--wc-muted-dim); }
+/* glyphs (SVG) */
+.gv-edge { fill: none; stroke: var(--wc-edge); stroke-width: 2; }
+.gv-ghost-dot { fill: var(--wc-bg); stroke: var(--wc-muted-dim); stroke-width: 1.5; stroke-dasharray: 2 2; }
+.gv-node { cursor: pointer; }
+.gv-node .gv-body { fill: var(--wc-panel-bg); stroke: var(--wc-muted-dim); stroke-width: 1.5; }
+.gv-node.plain .gv-body { stroke-width: 1.2; }
+.gv-node.bm .gv-body { fill: var(--wc-gold-bg); stroke: var(--wc-gold); }
+.gv-node.active .gv-body { fill: var(--wc-accent); stroke: var(--wc-accent-dark); filter: drop-shadow(0 0 6px var(--wc-glow-accent)); }
+.gv-node .gv-lbl { font: 600 11px var(--wc-mono); fill: var(--wc-fg); }
+.gv-node.plain .gv-lbl { font: 500 9.5px var(--wc-mono); fill: var(--wc-muted-dim); }
+.gv-node.bm .gv-lbl { fill: var(--wc-gold); }
+.gv-node .gv-bm { font: 600 11px var(--wc-font); fill: var(--wc-gold); }
+.gv-node .gv-fold-n { font: 600 10px var(--wc-mono); fill: var(--wc-muted-dim); }
+.gv-sel-ring { fill: none; stroke: var(--wc-accent); stroke-width: 2; stroke-dasharray: 3 3; }
+.gv-viewed-ring { fill: none; stroke: var(--wc-gold); stroke-width: 3; }
+.gv-lock-ring { fill: none; stroke: color-mix(in srgb, var(--wc-gold) 55%, transparent); stroke-width: 4; }
+.gv-stack { cursor: pointer; }
+.gv-stack .gv-card-back { fill: var(--wc-panel-bg); stroke: var(--wc-border); stroke-width: 1; }
+.gv-stack .gv-card { fill: var(--wc-header-bg); stroke: var(--wc-muted-dim); stroke-width: 1.4; }
+.gv-stack:hover .gv-card { stroke: var(--wc-accent); }
+.gv-stack .gv-card-count { font: 700 12px var(--wc-mono); fill: var(--wc-fg); }
+.gv-stack .gv-card-range { font: 9.5px var(--wc-mono); fill: var(--wc-muted-dim); }
+.glyph.dim, .gv-ghost-dot.dim, .gv-sleeve.dim { opacity: .3; }
+/* the graph heading — the graph's handle (click: rename; drag: move the tree) */
+.gv-tree-title { cursor: grab; }
+.gv-tt-hit { fill: transparent; }
+.gv-tree-title:hover .gv-tt-hit { fill: var(--wc-hover-bg); }
+.gv-tt-name { font: 700 12px var(--wc-mono); fill: var(--wc-muted); }
+.gv-tree-title.named .gv-tt-name { fill: var(--wc-gold); }
+.gv-tt-sub { font: 10px var(--wc-mono); fill: var(--wc-muted-dim); }
+.gv-tt-pencil { font: 11px var(--wc-font); fill: var(--wc-muted-dim); opacity: .6; }
+
+/* sleeve: an expanded ×N stack, in place (HTML, it scrolls inside itself) */
+.gv-sleeve {
+  position: absolute; display: flex; flex-direction: column; box-sizing: border-box; pointer-events: auto;
+  border-radius: 8px; background: var(--wc-panel-92); border: 1px solid var(--wc-border); box-shadow: var(--wc-shadow); overflow: hidden;
+}
+.gv-sleeve-head {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border: 0;
+  border-bottom: 1px solid var(--wc-border-soft); background: transparent; text-align: left; white-space: nowrap;
+  font: 600 10px var(--wc-mono); letter-spacing: .04em; color: var(--wc-muted); cursor: pointer;
+}
+.gv-sleeve-head .ttl { overflow: hidden; text-overflow: ellipsis; }
+.gv-sleeve-head .sp { flex: 1; }
+.gv-sleeve-head .pos { color: var(--wc-muted-dim); }
+.gv-sleeve-body { flex: none; position: relative; min-height: 0; }
+.gv-sleeve-scroll { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--wc-border) transparent; }
+.gv-sleeve-list { position: relative; box-sizing: border-box; padding: 8px 0; }
+.gv-sleeve-rail { position: absolute; left: 29px; top: 0; bottom: 0; width: 2px; background: var(--wc-edge); }
+.gv-srow {
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 12px 0 24px;
+  border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left;
+}
+.gv-srow:hover { background: var(--wc-hover-bg); }
+.gv-srow.selected { background: color-mix(in srgb, var(--wc-accent) 10%, transparent); }
+.gv-srow.dim { opacity: .35; }
+.gv-srow .dot { flex: none; width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; background: var(--wc-panel-bg); border: 1.2px solid var(--wc-muted-dim); }
+.gv-srow.selected .dot { border: 2px solid var(--wc-accent); }
+.gv-srow .id { flex: none; width: 52px; font: 600 10.5px var(--wc-mono); color: var(--wc-fg-bright); }
+.gv-srow .trig { flex: 1; min-width: 0; font: 11px var(--wc-font); color: var(--wc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-srow .t { flex: none; font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
+/* a turn that changed nothing, folded onto the row above: faint, not selectable */
+.gv-ghost {
+  position: relative; display: flex; align-items: center; gap: 8px; height: 22px; padding: 0 12px 0 26px;
+  font: 11px var(--wc-font); color: var(--wc-muted-dim); opacity: .8;
+}
+.gv-ghost .gdot { flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px dashed var(--wc-muted-dim); background: var(--wc-panel-bg); }
+.gv-ghost .k { flex: none; font: 600 9.5px var(--wc-mono); letter-spacing: .04em; }
+.gv-ghost .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.gv-ghost.more .k { display: none; }
+.gv-fade { position: absolute; left: 0; right: 0; height: 16px; pointer-events: none; }
+.gv-fade.top { top: 0; background: linear-gradient(var(--wc-panel-bg), transparent); }
+.gv-fade.bot { bottom: 0; background: linear-gradient(transparent, var(--wc-panel-bg)); }
+.gv-sleeve-foot {
+  flex: none; display: flex; align-items: center; justify-content: center; height: 26px;
+  border-top: 1px solid var(--wc-border-soft); font: 500 10px var(--wc-mono); color: var(--wc-muted-dim);
+}
+
+/* inspector — only while a node is selected */
+.gv-inspector {
+  position: absolute; top: 54px; right: 12px; width: 300px; max-height: calc(100% - 108px); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: auto;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
+.gv-empty { color: var(--wc-muted-dim); font: 13px var(--wc-font); padding: 8px 2px; }
+.gv-insp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gv-insp-label { font: 700 18px var(--wc-mono); color: var(--wc-fg-bright); }
-.gv-chip-state { display: inline-block; font: 600 9px var(--wc-mono); padding: 2px 6px; border-radius: var(--wc-radius); letter-spacing: .06em; margin-left: 8px; vertical-align: middle; }
-.gv-chip-state.active { color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent); }
-.gv-chip-state.marked { color: var(--wc-gold); border: 1px solid color-mix(in srgb, var(--wc-gold) 40%, transparent); }
-.gv-chip-state.fork { color: var(--wc-accent-text); border: 1px solid color-mix(in srgb, var(--wc-accent) 40%, transparent); }
-.gv-chip-state.root { color: var(--wc-muted); border: 1px solid var(--wc-border); }
-.gv-lineage { font: 12px var(--wc-mono); color: var(--wc-muted); margin: 8px 0 12px; word-break: break-word; }
-.gv-lineage b { color: var(--wc-accent-text); }
-.gv-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 12px var(--wc-font); margin-bottom: 12px; }
+.gv-insp-close { margin-left: auto; border: 0; background: transparent; color: var(--wc-muted); font-size: 14px; padding: 0 2px; }
+.gv-insp-close:hover { color: var(--wc-fg); }
+.gv-badge { font: 600 9px var(--wc-mono); letter-spacing: .06em; padding: 2px 6px; border-radius: var(--wc-radius); }
+.gv-badge.active { color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent); }
+.gv-badge.fork { color: var(--wc-accent-text); border: 1px solid color-mix(in srgb, var(--wc-accent) 40%, transparent); }
+.gv-badge.stack { color: var(--wc-muted); border: 1px solid var(--wc-border); }
+.gv-insp-bm { font: 600 12px var(--wc-font); color: var(--wc-gold); }
+.gv-preview {
+  flex: none; height: 96px; position: relative; overflow: hidden; border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  background: repeating-linear-gradient(135deg, var(--wc-content-bg) 0 10px, transparent 10px 20px);
+}
+.gv-preview-frame { position: absolute; top: 0; left: 0; border: 0; transform-origin: top left; pointer-events: none; background: var(--wc-bg); }
+.gv-preview-empty { position: absolute; inset: 0; display: grid; place-items: center; font: 10.5px var(--wc-mono); color: var(--wc-muted); }
+.gv-trigger {
+  padding: 9px; background: var(--wc-content-bg); border-radius: var(--wc-radius); font: 12px/1.5 var(--wc-font);
+  color: var(--wc-content-fg); white-space: pre-wrap; max-height: 140px; overflow: auto; text-wrap: pretty;
+}
+.gv-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 12px var(--wc-font); }
 .gv-meta .k { font: 600 10px var(--wc-mono); letter-spacing: .06em; color: var(--wc-muted); }
-.gv-meta .v { color: var(--wc-text-1); }
-.gv-sect { font: 600 10px var(--wc-mono); letter-spacing: .08em; color: var(--wc-muted); margin: 12px 0 6px; }
-.gv-trigger { padding: 9px; background: var(--wc-content-bg); border-radius: var(--wc-radius); font: 12px var(--wc-font); color: var(--wc-content-fg); white-space: pre-wrap; max-height: 140px; overflow: auto; }
+.gv-meta .v { color: var(--wc-text-1); min-width: 0; overflow-wrap: anywhere; }
+/* Claude's reply summary: one quiet line under the trigger, full text on hover. */
 .gv-reply { padding: 0 9px; font: 12px var(--wc-font); color: var(--wc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gv-panes { display: flex; flex-direction: column; gap: 4px; }
-.gv-pane-row { display: flex; align-items: center; gap: 8px; font: 12px var(--wc-font); color: var(--wc-text-1); }
-.gv-pane-row .pd { width: 7px; height: 7px; border-radius: 50%; background: var(--wc-accent); }
-
-/* Turns that changed nothing: the run of no-change turns this node stands for.
-   Deliberately quieter than the pane list — it is provenance, not content. */
-.gv-folded { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow-y: auto; }
-.gv-folded .muted.small { margin-bottom: 3px; }
-.gv-folded-row { display: flex; align-items: baseline; gap: 6px; font: 11px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border); padding: 1px 0 1px 7px; }
-.gv-folded-tag { font: 600 10px var(--wc-mono); color: var(--wc-border-light); flex: none; }
-.gv-folded-who { font: 600 10px var(--wc-mono); flex: none; opacity: .75; }
-.gv-folded-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gv-diff { display: flex; gap: 14px; font: 12px var(--wc-mono); }
-.gv-diff .add { color: var(--wc-green); }
-.gv-diff .chg { color: var(--wc-gold); }
-.gv-diff .rm { color: var(--wc-muted); }
-.gv-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--wc-border); }
+.gv-reply::before { content: 'REPLY'; font: 600 10px var(--wc-mono); letter-spacing: .06em; margin-right: 8px; }
+.gv-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
 .gv-act { height: 30px; padding: 0 10px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font: 12px var(--wc-font); }
 .gv-act:hover:not(:disabled) { border-color: var(--wc-accent); }
 .gv-act:disabled { opacity: .4; cursor: default; }
-.gv-act.primary { background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; }
-.gv-act.primary:disabled { background: var(--wc-panel-bg); color: var(--wc-muted); }
+.gv-act.primary { background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; font-weight: 600; padding: 0 12px; }
+.gv-act.primary:disabled { background: var(--wc-panel-bg); color: var(--wc-muted); border-color: var(--wc-border); opacity: 1; }
 
-/* status line */
-.gv-status { grid-area: status; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-top: 1px solid var(--wc-border); background: var(--wc-header-bg); font: 11px var(--wc-mono); color: var(--wc-muted); }
-.gv-status-active { color: var(--wc-accent-text); }
-.gv-status-keys { margin-left: auto; }
-
-/* dim the surface while a detached preview is up */
-#main.preview-readonly { opacity: .96; }
-#main.preview-readonly::after { content: 'preview'; position: absolute; top: 8px; right: 8px; font: 600 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-gold); opacity: .7; pointer-events: none; }
+/* A detached preview is READ-ONLY (plan §2b D2): badge it, and take away every
+   block control that would write — pin, lock, minimize, close, drag, resize.
+   Form controls inside the panes are refused by mounts.js guardReadonly. */
+#main.preview-readonly { position: relative; }
+#main.preview-readonly::after {
+  content: 'PREVIEW · READ-ONLY'; position: absolute; top: 4px; right: 22px; pointer-events: none;
+  font: 600 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-gold);
+  border: 1px solid color-mix(in srgb, var(--wc-gold) 45%, transparent); border-radius: var(--wc-radius); padding: 2px 7px;
+  background: var(--wc-bg);
+}
+#main.preview-readonly .pane-header { cursor: default; }
+#main.preview-readonly :is(.pane-btn, .pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
 
 /* ============== components + packs drawer ==============
    Openness is `.hidden`, the lever every other chrome panel uses — the old
@@ -850,7 +1001,7 @@ kbd {
 .drawer-tabs .tab-badge {
   display: inline-block; margin-left: 5px; min-width: 14px; padding: 0 3px;
   font: 700 9px var(--wc-mono); line-height: 14px; text-align: center;
-  color: var(--wc-bg); background: var(--wc-gold); border-radius: 7px;
+  color: var(--wc-gold-fg); background: var(--wc-gold); border-radius: 7px;
 }
 .drawer-panel { overflow: auto; padding: 6px 8px 10px; }
 .de-group {
@@ -862,7 +1013,7 @@ kbd {
 /* a row: a real button plus a duplicate control, never role=option (an option
    must not contain interactive children) */
 .drawer-entry { display: grid; grid-template-columns: 1fr auto; gap: 2px; align-items: start; border-radius: var(--wc-radius); }
-.drawer-entry:hover { background: color-mix(in srgb, var(--wc-accent) 10%, transparent); }
+.drawer-entry:hover, .drawer-entry:focus-within { background: color-mix(in srgb, var(--wc-accent) 8%, transparent); }
 .de-main {
   grid-column: 1; text-align: left; width: 100%; padding: 8px 8px 9px;
   background: transparent; border: 0; border-radius: var(--wc-radius); cursor: pointer; color: inherit;
@@ -888,9 +1039,11 @@ kbd {
   overflow: hidden;
 }
 .de-from { font: 10px var(--wc-mono); color: var(--wc-muted-dim); margin-top: 4px; }
+/* tag chips, uppercase in the design (FORM · BUILT-IN · SERVICE); the text stays
+   as written, so a screen reader is not handed shouting */
 .de-chip {
-  font: 600 9px var(--wc-mono); letter-spacing: .04em; padding: 1px 5px;
-  border-radius: var(--wc-radius-sm); border: 1px solid var(--wc-border-light); color: var(--wc-muted);
+  font: 600 9px var(--wc-mono); letter-spacing: .04em; padding: 1px 5px; text-transform: uppercase;
+  border-radius: var(--wc-radius-sm); border: 1px solid var(--wc-border); color: var(--wc-muted);
 }
 .de-chip.builtin { border-color: color-mix(in srgb, var(--wc-accent) 45%, transparent); color: var(--wc-accent-text); }
 .de-chip.seed, .de-chip.form { border-color: var(--wc-border); }
@@ -999,11 +1152,12 @@ body.pin-mode #main { cursor: crosshair; }
 .pin-msg.claude .pin-who { color: var(--wc-green); }
 .pin-msg .pin-body { font: 12.5px var(--wc-font); color: var(--wc-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
 .pin-reply { display: flex; flex-direction: column; gap: 7px; }
-.pin-reply-text { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: var(--wc-bg); color: var(--wc-fg); font: 12px var(--wc-font); padding: 6px 8px; }
+.pin-reply-text { width: 100%; box-sizing: border-box; min-height: 44px; resize: vertical; border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: var(--wc-content-bg); color: var(--wc-fg); font: 12px var(--wc-font); padding: 6px 8px; }
 .pin-reply .pin-actions { display: flex; align-items: center; gap: 8px; }
 .pin-reply .pin-spacer { flex: 1; }
-.pin-reply-send { border: 0; border-radius: var(--wc-radius-sm); background: var(--wc-accent); color: var(--wc-accent-fg); font: 600 11px var(--wc-font); padding: 5px 12px; cursor: pointer; }
-.pin-reply .pin-del { border: 0; background: transparent; color: var(--wc-muted); font: 11px var(--wc-font); cursor: pointer; }
+/* (.pin-reply-scoped so it outranks the composer's generic .pin-actions button) */
+.pin-reply .pin-reply-send { height: auto; border: 0; border-radius: var(--wc-radius-sm); background: var(--wc-accent); color: var(--wc-accent-fg); font: 600 11px var(--wc-font); padding: 5px 12px; cursor: pointer; }
+.pin-reply .pin-del { height: auto; padding: 0 2px; border: 0; background: transparent; color: var(--wc-muted); font: 11px var(--wc-font); cursor: pointer; }
 .pin-reply .pin-del:hover { color: var(--wc-comment); }
 /* F10: inline hint when a reply fails to send — the draft stays in the textarea. */
 .pin-reply-err { font: 11px var(--wc-font); color: var(--wc-comment); }
@@ -1017,24 +1171,31 @@ body.pin-mode #main { cursor: crosshair; }
   background: var(--wc-panel-bg); border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow);
 }
+/* the anchor path — "block › element", mono, as the design's thread heads it */
 .pin-anchor { font: 12px var(--wc-mono); color: var(--wc-text-2); margin-bottom: 8px; word-break: break-word; }
+.pin-path-sep { color: var(--wc-muted-dim); }
 .pin-text { width: 100%; resize: vertical; background: var(--wc-content-bg); color: var(--wc-fg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); font: 13px var(--wc-font); padding: 6px 8px; }
 .pin-share { display: flex; align-items: center; gap: 6px; margin: 8px 0; font: 12px var(--wc-font); color: var(--wc-text-2); }
+.pin-share input { accent-color: var(--wc-accent); margin: 0; }
+.pin-reply .pin-share { margin: 0; }
 .pin-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .pin-actions button { height: 28px; padding: 0 12px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font: 12px var(--wc-font); }
 .pin-save { background: var(--wc-accent) !important; color: var(--wc-accent-fg) !important; border-color: transparent !important; }
 .pin-del { color: var(--wc-rust) !important; }
 
-/* ===================== glance / float preview (graph overlay) ===================== */
-.glance-backdrop { position: absolute; inset: 0; z-index: var(--z-glance); background: rgba(8,6,3,.72); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
-.glance-card { position: relative; display: flex; flex-direction: column; width: 82%; height: 82%; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-elev-stage); overflow: hidden; }
+/* ===================== glance (graph screen) =====================
+   A read-only render of the selected node in a modal card over the scrim. */
+.glance-backdrop { position: absolute; inset: 0; z-index: var(--z-glance); background: var(--wc-scrim); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+.glance-card { position: relative; display: flex; flex-direction: column; width: 82%; height: 82%; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow); overflow: hidden; }
 .glance-titlebar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); }
-.glance-title { font: 600 13px var(--wc-mono); color: var(--wc-fg-bright); }
-.glance-hint { margin-left: auto; font: 11px var(--wc-font); color: var(--wc-muted); }
+.glance-title { flex: none; font: 600 13px var(--wc-mono); color: var(--wc-fg-bright); }
+.glance-trigger { flex: 1; min-width: 0; font: 11px var(--wc-font); color: var(--wc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .glance-frame { flex: 1; width: 100%; border: 0; background: var(--wc-bg); }
-.glance-controls { position: absolute; top: 8%; right: 8%; display: flex; gap: 6px; z-index: 1; } /* local to .glance-backdrop */
-.glance-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font-size: 13px; box-shadow: var(--wc-shadow); }
-.glance-btn:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.glance-btn { flex: none; height: 28px; padding: 0 10px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font: 12px var(--wc-font); white-space: nowrap; }
+.glance-btn.icon { width: 30px; padding: 0; }
+.glance-btn.primary { background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; font-weight: 600; }
+.glance-btn:disabled { opacity: .4; cursor: default; }
+.glance-btn:hover:not(:disabled) { border-color: var(--wc-accent); }
 
 /* ---- service trust notice (chrome, informational only) --------------------
    Tells the user a component's service.js is waiting and which terminal command
@@ -1070,7 +1231,7 @@ body.pin-mode #main { cursor: crosshair; }
   border-radius: var(--wc-radius-sm);
 }
 .svc-trust-x:hover { background: color-mix(in srgb, var(--wc-muted) 18%, transparent); color: var(--wc-fg); }
-.svc-trust-card h3 { margin: 0 22px 8px 0; font-size: 14px; }
+.svc-trust-card h3 { margin: 0 22px 8px 0; font: 600 14px var(--wc-display); color: var(--wc-fg-bright); }
 .svc-trust-card p { margin: 5px 0; font-size: 12.5px; line-height: 1.55; color: var(--wc-muted); }
 .svc-trust-card code { font-family: var(--wc-mono); font-size: 11.5px; }
 .svc-trust-cmd {
@@ -1078,13 +1239,15 @@ body.pin-mode #main { cursor: crosshair; }
   background: var(--wc-bg);
   border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-sm);
-  overflow-x: auto; user-select: all;
+  overflow-x: auto; white-space: nowrap; user-select: all;
 }
 .svc-trust-cmd code { color: var(--wc-fg); font-size: 12px; white-space: pre; }
 /* Two panes of one component with different params are two decisions, so each
    card names the params it is about — otherwise the pair reads identically. */
 .svc-trust-params { word-break: break-word; }
 .svc-trust-foot { opacity: .85; }
+/* Through the tunnel portal: WHERE to run the command is the one thing that differs. */
+.svc-trust-card p.svc-trust-remote { color: var(--wc-fg); border-left: 2px solid var(--wc-gold); padding-left: 8px; }
 
 /* ---- zero state -----------------------------------------------------------
    Shown in #main whenever no pane is rendered. Every other panel in the app has
@@ -1100,22 +1263,22 @@ body.pin-mode #main { cursor: crosshair; }
   color: var(--wc-fg);
   background: var(--wc-panel-bg);
   border: 1px solid var(--wc-border);
-  border-radius: var(--wc-radius-lg);
+  border-radius: var(--wc-radius);
   box-shadow: var(--wc-shadow);
 }
-.zero-state h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.zero-state h2 { margin: 0 0 10px; font: 600 20px var(--wc-display); letter-spacing: -.01em; color: var(--wc-fg-bright); }
 .zero-state p { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--wc-muted); }
 .zs-try { font-size: 12.5px; }
 .zs-quote {
   font-family: var(--wc-mono); font-size: 12px;
-  background: var(--wc-bg); border: 1px solid var(--wc-border-light);
-  border-radius: 4px; padding: 2px 6px; color: var(--wc-fg); user-select: all;
+  display: inline-block; background: var(--wc-bg); border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius); padding: 2px 6px; color: var(--wc-fg); user-select: all;
 }
 .zs-keys { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 7px; }
 .zs-keys li { font-size: 12.5px; color: var(--wc-muted); display: flex; gap: 7px; align-items: baseline; }
 .zs-keys kbd {
   font-family: var(--wc-mono); font-size: 10.5px; line-height: 1;
-  padding: 3px 6px; border-radius: 4px; color: var(--wc-fg);
+  padding: 3px 6px; border-radius: var(--wc-radius); color: var(--wc-fg);
   background: var(--wc-bg); border: 1px solid var(--wc-border);
   border-bottom-width: 2px;
 }
@@ -1134,8 +1297,8 @@ body.pin-mode #main { cursor: crosshair; }
   outline-offset: 2px;
   border-radius: var(--wc-radius-sm);
 }
-/* history rows are role=option divs in a scroller — keep the ring inside it */
-.gv-row:focus-visible { outline-offset: -2px; }
+/* sleeve rows sit in a scroller — keep the ring inside it */
+.gv-srow:focus-visible { outline-offset: -2px; }
 
 /* ===================== responsive =====================
    The canonical layout for this product is a terminal BESIDE a browser — i.e.
@@ -1146,7 +1309,7 @@ body.pin-mode #main { cursor: crosshair; }
 
 /* --- topbar: shed chrome before anything overflows --- */
 #topbar { flex-wrap: nowrap; }
-.brand, .node-label, .active-pill, .status-pill, .btn-graph { flex: 0 0 auto; white-space: nowrap; }
+.brand, .node-label, .active-pill, .btn-graph { flex: 0 0 auto; white-space: nowrap; }
 .cmd-trigger { min-width: 0; }
 
 @media (max-width: 1100px) {
@@ -1159,12 +1322,10 @@ body.pin-mode #main { cursor: crosshair; }
   #topbar { gap: 6px; padding: 0 8px; }
   .cmd-trigger, .tb-div, .btn-graph kbd { display: none; }
   .brand-logo { max-width: 96px; }
-  .status-pill { padding: 2px 4px; }
 }
 @media (max-width: 760px) {
   .brand { font-size: 0; gap: 0; }   /* keep the connection dot, drop the wordmark */
   .brand .status-dot { font-size: 13px; }
-  .status-pill { display: none; }    /* the brand dot already reports connectedness */
 }
 
 /* --- surface: a 12-column grid inside ~500px is a row of slivers --- */
@@ -1174,35 +1335,181 @@ body.pin-mode #main { cursor: crosshair; }
   /* pane spans are set INLINE by the resize/drag mechanics, so overriding them
      needs !important. Below this width there is no room to tile anyway. */
   .pane { grid-column: 1 / -1 !important; }
-  .pane-resize-r { display: none; }
-}
-@media (max-width: 760px) {
-  .rail.open { width: 216px; }
+  .pane-resize-r, .pane-resize-rb { display: none; }
 }
 
-/* --- graph overlay: keep the canvas the biggest thing on screen --- */
-@media (max-width: 1200px) {
-  #overlay.overlay { grid-template-columns: 224px 1fr 268px; }
+/* --- graph screen: the canvas is always the whole stage; the floating chrome
+   gives way. (The phone graph — a log, not a canvas — is its own view.) --- */
+@media (max-width: 1100px) {
+  .gv-legend { display: none; }
+  .gv-search { left: 50%; width: min(300px, 34%); }
 }
-@media (max-width: 1000px) {
-  /* Move the inspector to a full-width bottom row rather than dropping it: the
-     canvas gets the whole remaining width and nothing is lost. */
-  #overlay.overlay {
-    grid-template-columns: 196px 1fr;
-    grid-template-rows: 48px minmax(0, 1fr) minmax(0, 34%) 26px;
-    grid-template-areas: "header header" "history canvas" "inspector inspector" "status status";
+@media (max-width: 900px) {
+  .gv-tool { padding: 0 8px; }
+  .gv-search { top: 54px; left: 12px; transform: none; width: min(300px, calc(100% - 24px)); }
+  .gv-inspector { top: 96px; max-height: calc(100% - 150px); }
+}
+@media (max-width: 760px) {
+  .gv-inspector { top: auto; bottom: 54px; right: 12px; width: calc(100% - 24px); max-height: 50%; }
+  .gv-chip { padding: 0 8px; }
+}
+
+/* ===================== contents column · bottom bar · queue screen · phone =====================
+   Breakpoints (design "Layout Engine" narrow + phone): WIDE ≥1100 keeps a
+   contents column slot beside the well and the rail; MEDIUM 760–1099 is the
+   well + rail; NARROW <760 stacks the panes in reading order, sheds the topbar
+   and moves ↑/↓ · ↩ active · Graph · Queue [n] into a 52px bottom bar, where
+   Queue opens the rail as a full screen. A PHONE (narrow + a finger —
+   public/app/viewport.js sets <html class="phone">) is on top of that the
+   read-only viewer, and its graph screen is a log (public/app/graph-log.js). */
+
+/* --- the contents column: a slot, drawn only when something fills it (the page
+   model's headings) and only when there is room for it --- */
+.contents-nav {
+  flex: 0 0 190px; box-sizing: border-box; overflow: auto;
+  padding: 26px 12px 20px 18px; border-right: 1px solid var(--wc-border); background: var(--wc-header-bg);
+}
+.contents-nav:empty { display: none; }
+@media (max-width: 1099px) {
+  .contents-nav { display: none; }
+}
+
+/* --- the bottom bar: only on a narrow screen --- */
+.bottombar { display: none; }
+.bb-queue {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+  border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg);
+  border-radius: var(--wc-radius); font: 600 12px var(--wc-font);
+}
+.bb-queue.on { border-color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+.bb-count { font: 700 10px var(--wc-mono); color: var(--wc-accent-fg); background: var(--wc-accent); border-radius: var(--wc-radius); padding: 1px 6px; }
+.min-chip.on { border-color: var(--wc-accent); color: var(--wc-fg); }
+
+@media (max-width: 759px) {
+  /* the topbar's navigation moved under the thumb (the inline display the
+     topbar sets on ↩ active is why this needs !important) */
+  #topbar .stepper, #btn-return-active, #btn-graph { display: none !important; }
+  .bottombar {
+    position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 10px;
+    border-top: 1px solid var(--wc-border); background: var(--wc-header-bg);
   }
-  .gv-inspector { border-left: 0; border-top: 1px solid var(--wc-border); padding: 10px 14px; }
-  .gv-graphsel, .gv-seg, #gv-compare { display: none; }
-  .gv-jump { max-width: none; }
-  .gv-status-keys { display: none; }
+  .bb-stepper button { width: 40px; height: 36px; font-size: 15px; }
+  .bb-return, .bb-graph { height: 36px; }
+
+  /* the queue screen: the open rail covers the page (the bottom bar stays, and
+     its "‹ Page" is the way back); the collapsed strip has no room here. No
+     z-index: a later positioned sibling of the well, it already paints over it. */
+  .rail { position: absolute; inset: 0; width: auto; display: none; border-left: 0; box-shadow: none; transition: none; }
+  .rail.open { display: block; width: auto; }
+  .rail::before, .rail-collapsed, .rail-close { display: none; }
+  /* the page's comment markers ride #pin-layer, which paints above the whole
+     body — over the queue screen they floated on the queue items */
+  body:has(.rail.open) #pin-layer { display: none; }
+  .rail-expanded { width: auto; right: 0; padding: 16px 16px 12px; }
+  /* 44px targets: a thumb, not a cursor */
+  .rail-item { padding: 12px 10px; }
+  .qi-summary { font-size: 13px; }
+  .qi-stage, .qi-revert { width: 44px; height: 44px; line-height: 42px; margin: -8px -4px -8px 0; font-size: 20px; }
+  .qi-peek { min-height: 32px; }
+  .rail-add { height: 44px; padding: 0 12px; font-size: 14px; }
+  .rail-push { height: 48px; font-size: 14px; }
+  .rail-pending .rp-cancel, .rail-error-actions button { height: 44px; }
 }
-@media (max-width: 720px) {
-  /* the history list is a second view of the same DAG; the canvas is the feature */
-  #overlay.overlay {
-    grid-template-columns: 1fr;
-    grid-template-areas: "header" "canvas" "inspector" "status";
-  }
-  .gv-history { display: none; }
-  .gv-header { gap: 6px; padding: 0 8px; }
+
+/* --- the phone: a read-only viewer. A block is its title and type chip; every
+   control that would write is gone (mounts.js refuses them too, and refuses form
+   edits inside the pane). Writes go through the queue and the graph screen. --- */
+.phone .pane :is(.pane-drag, .pane-btn, .pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
+.phone .pane-header { cursor: default; }
+.phone .pane.narrow .pane-type { display: inline-block; }
+.phone .pane.minimized.peek { display: flex; }      /* a minimized block, shown here only */
+.phone #dock, .phone #more-menu [data-act="wipe"] { display: none; }
+.phone .bottombar { height: 60px; padding: 0 12px env(safe-area-inset-bottom); }
+.phone .bb-stepper button { width: 44px; height: 44px; font-size: 16px; }
+.phone :is(.bb-return, .bb-graph, .bb-queue) { height: 44px; font-size: 13px; }
+/* the glance is a bottom sheet */
+.phone .glance-backdrop { align-items: flex-end; }
+.phone .glance-card { width: 100%; height: 78%; border-width: 1px 0 0; border-radius: 16px 16px 0 0; }
+.phone .glance-titlebar { flex-wrap: wrap; padding: 12px 14px; }
+.phone .glance-btn { height: 44px; }
+.phone .glance-btn.icon { width: 44px; }
+
+/* --- the phone graph: a log, not a canvas (design "Graph Prototype", phone) --- */
+.gv-log { display: none; }
+#overlay.log-mode .gv-log { position: absolute; inset: 0; display: flex; flex-direction: column; }
+#overlay.log-mode :is(.graph-canvas-wrap, .gv-float, .gv-legend, .gv-inspector) { display: none; }
+.gv-log-head {
+  flex: none; display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 10px;
+  background: var(--wc-header-bg); border-bottom: 1px solid var(--wc-border);
 }
+.gv-log-top { display: flex; align-items: center; gap: 10px; }
+.gv-log-graph {
+  min-width: 0; max-width: 60%; height: 36px; padding: 0 4px; border: 0; border-radius: var(--wc-radius);
+  background: transparent; color: var(--wc-text-2); font: 500 12px var(--wc-mono);
+}
+.gv-log-icon { flex: none; width: 44px; height: 36px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 15px; }
+.gv-log-q {
+  height: 40px; padding: 0 12px; box-sizing: border-box; background: var(--wc-content-bg); border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius); color: var(--wc-fg); font: 14px var(--wc-font);
+}
+.gv-log-filters { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.gv-log-filters .gv-chip { height: 34px; padding: 0 12px; font-size: 13px; box-shadow: none; }
+.gv-log-list { flex: 1; min-height: 0; overflow: auto; padding: 14px 12px 24px; }
+.gv-lrow { display: flex; align-items: stretch; }
+.gv-gutter { position: relative; flex: none; }
+.gv-gutter svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.gv-lane { fill: none; stroke: var(--wc-border); stroke-width: 2; }
+.gv-ldot {
+  position: absolute; top: 50%; width: 10px; height: 10px; margin-top: -5px; box-sizing: border-box;
+  border-radius: 50%; background: var(--wc-panel-bg); border: 2px solid var(--wc-muted);
+}
+.gv-ldot.bm { background: var(--wc-gold); border-color: var(--wc-gold); }
+.gv-ldot.active { background: var(--wc-accent); border-color: var(--wc-accent); box-shadow: 0 0 8px var(--wc-glow-accent); }
+.gv-ldot.selected { border-color: var(--wc-fg); }
+.gv-ldot.ghost { width: 8px; height: 8px; margin: -4px 0 0 1px; border: 1.5px dashed var(--wc-muted-dim); background: var(--wc-bg); }
+.gv-lcard {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; margin: 3px 0; padding: 10px 12px;
+  text-align: left; color: inherit; font: inherit; background: var(--wc-panel-glass);
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+}
+.gv-lcard.active { background: var(--wc-row-active-bg); box-shadow: inset 2px 0 0 var(--wc-accent); }
+.gv-lcard.selected { border-color: var(--wc-accent); }
+.gv-lcard-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gv-lcard-top .id { flex: none; font: 700 13px var(--wc-mono); color: var(--wc-fg-bright); }
+.gv-lcard-top .bm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px var(--wc-font); color: var(--wc-gold); }
+.gv-lcard-top .sp { flex: 1; }
+.gv-lcard-top .t { flex: none; font: 10.5px var(--wc-mono); color: var(--wc-muted-dim); }
+.gv-lcard-trig {
+  font: 14px/1.45 var(--wc-font); color: var(--wc-text-1); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; text-wrap: pretty;
+}
+.gv-lcard-folded { font: 500 11px var(--wc-mono); color: var(--wc-muted); }
+.gv-lghost {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; margin: 2px 0; padding: 8px 10px;
+  font: 12px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border);
+}
+.gv-lghost .k { flex: none; font: 600 10px var(--wc-mono); color: var(--wc-muted-dim); }
+.gv-lghost .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.gv-log-empty { padding: 24px 0 0 40px; font: 14px var(--wc-font); color: var(--wc-muted-dim); }
+.gv-log-bar {
+  flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--wc-border); background: var(--wc-header-bg);
+}
+.gv-log-naming { display: flex; gap: 6px; }
+.gv-log-naming input {
+  flex: 1; min-width: 0; height: 44px; padding: 0 12px; background: var(--wc-content-bg); border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius); color: var(--wc-fg); font: 14px var(--wc-font);
+}
+.gv-log-naming .btn { height: 44px; padding: 0 14px; }
+.gv-log-acts { display: flex; align-items: center; gap: 6px; }
+.gv-log-sel { font: 700 13px var(--wc-mono); color: var(--wc-fg-bright); }
+.gv-log-act {
+  flex: none; width: 44px; height: 44px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg);
+  color: var(--wc-fg); border-radius: var(--wc-radius); font-size: 16px;
+}
+.gv-log-act.bm { color: var(--wc-gold); }
+.gv-log-act.bm.on { background: color-mix(in srgb, var(--wc-gold) 14%, var(--wc-panel-bg)); }
+.gv-log-act.primary { width: auto; padding: 0 12px; background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; font: 600 13px var(--wc-font); }
+.gv-log-act:disabled { opacity: .4; cursor: default; }
+.gv-log-act.primary:disabled { background: var(--wc-panel-bg); color: var(--wc-muted); border-color: var(--wc-border); opacity: 1; }

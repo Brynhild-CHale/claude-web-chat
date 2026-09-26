@@ -1,46 +1,61 @@
-// --- Graph overlay ---
-// Faithful port of the graph overlay from the monolithic public/client.js
-// (overlay open/close/keys, node selection + float "glance" preview, the DAG
-// layout engine, SVG rendering, and pan&zoom). Behavior is byte-for-byte; the
-// overlay is not being redesigned in this step.
+// --- Graph screen ---
+// The canvas-first graph (plan §2b, design "Graph Canvas Prototype"): the DAG
+// gets the whole stage and every control floats over it — "◇ GRAPH · active nX"
+// top-left, the jump search top-centre, ⚑/⑃ filters + Collapse all + ◇ New + ✕
+// top-right, the zoom pill bottom-left, the legend bottom-right. The inspector is
+// NOT a column: it appears only while a node is selected. The history column,
+// Scope, the disabled Log / ⇄ compare placeholders and the inspector's lineage,
+// diff-vs-parent, folded-list and author sections are gone (maintainer ruling:
+// simplify now, bring back if missed).
+//
+// ×N stacks list REAL nodes (ruling D1): a run of plain trunk turns draws as one
+// three-card glyph, and clicking it expands IN PLACE into a "sleeve" — a capped,
+// internally scrolling column of those nodes, each selectable. Turns that
+// changed nothing committed no node at all; they are shown as faint "ghost" rows
+// under the node they folded onto (dashed dots on its edge, on the canvas).
 //
 // Two `view`s used to collide here: the state singleton and the SVG pan/zoom
-// transform. The transform is now `camera` ({tx, ty, scale}); the imported
-// `view` is the shared state (activeId/viewedId/lock/graphCache/…).
-import { view, $, cssVar } from './state.js';
-import { seqNum, nodeById, labelFor } from './labels.js';
+// transform. The transform is `camera` ({tx, ty, scale}); the imported `view` is
+// the shared state (activeId/viewedId/lock/graphCache/…).
+import { view, $ } from './state.js';
+import { seqNum, nodeById, labelFor, nodeTime } from './labels.js';
 import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
 import { openReplay } from './replay.js';
+import { isPhone } from './viewport.js';
+import { bus } from './bus.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
+const worldEl = $('gv-world');          // HTML layer (sleeves) riding the same camera
 let camera = { tx: 0, ty: 0, scale: 1 };
-let historyScope = 'all';              // 'all' | 'graph' (just the selected node's tree)
-const historyFilters = new Set();      // subset of {'marked','forks'} — independent toggles, union
+const filters = new Set();              // subset of {'marked','forks'} — independent toggles, union-dims
+let query = '';                         // the jump search; non-matches dim, ↵ selects the next hit
 
 /* ---------- the camera: ONE owner of "change the view transform" ----------
-   The +/− buttons went through zoomBy (which also wrote the % readout) while the
-   wheel handler set camera.scale itself — so scrolling zoomed the canvas and left
-   the badge sitting at 100%. Both now go through setZoom, and every camera change
-   ends in applyCamera, which is also the cheap path: panning used to call
-   layoutAndRender() on every mousemove, relaying out the whole DAG to move a
-   transform that the layout does not depend on. Moving the camera and recomputing
-   the layout are now separate operations. */
+   The +/− buttons, the wheel and the reset all go through setZoom/centerGraph,
+   and every camera change ends in applyCamera — the cheap path: panning moves a
+   transform the layout does not depend on, so it never relays the DAG out. The
+   SVG glyphs, the HTML sleeves and the dot grid all follow the one camera. */
 const ZOOM_MIN = 0.2, ZOOM_MAX = 3;
-let rootGEl = null;                    // the <g> layoutAndRender puts every glyph in
+const GRID = 22;                        // the dot grid's pitch, in graph units
+let rootGEl = null;                     // the <g> layoutAndRender puts every glyph in
 
 function updateZoomReadout() {
   const p = $('gv-zoom-pct');
   if (p) p.textContent = Math.round(camera.scale * 100) + '%';
 }
-// Push the current camera onto the existing SVG — no layout, no re-render.
+function cameraTransform() { return `translate(${camera.tx},${camera.ty}) scale(${camera.scale})`; }
+// Push the current camera onto the existing layers — no layout, no re-render.
 function applyCamera() {
-  if (rootGEl && rootGEl.isConnected) {
-    rootGEl.setAttribute('transform', `translate(${camera.tx},${camera.ty}) scale(${camera.scale})`);
-  } else {
-    layoutAndRender();
+  if (rootGEl && rootGEl.isConnected) rootGEl.setAttribute('transform', cameraTransform());
+  else { layoutAndRender(); return; }
+  if (worldEl) worldEl.style.transform = `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.scale})`;
+  const wrap = svgEl.parentElement;
+  if (wrap) {
+    wrap.style.backgroundSize = `${GRID * camera.scale}px ${GRID * camera.scale}px`;
+    wrap.style.backgroundPosition = `${camera.tx}px ${camera.ty}px`;
   }
   updateZoomReadout();
 }
@@ -57,18 +72,15 @@ function setZoom(scale, anchor) {
 }
 
 /* ---------- per-graph placement on the canvas ----------
-   Trees are auto-laid-out left-to-right and their placement was not the user's to
-   control; dragging a graph by its heading now nudges the whole tree, auto-layout
-   staying the base and the drag being a delta on top of it.
+   Trees are auto-laid-out left-to-right; dragging a graph by its heading nudges
+   the whole tree, auto-layout staying the base and the drag a delta on top.
 
    This lives CLIENT-SIDE, keyed by root node id, on purpose. Where a graph sits on
    one person's canvas is a viewport preference, not graph data: the server's
    .web-chat/ graph is turn history that migrations must keep append-only, a second
-   browser (or a second person on the same daemon) has its own viewport and its own
-   window size, and a shared position would make one viewer's tidy-up everybody's.
-   It also needs no route and no schema bump. Local, not session, storage —
-   because "survives a reload" is the whole point; it goes through storage.js,
-   which is where the private-window guard lives. */
+   browser has its own viewport, and a shared position would make one viewer's
+   tidy-up everybody's. Local, not session, storage — "survives a reload" is the
+   point; it goes through storage.js, which is where the private-window guard lives. */
 const POS_KEY = 'wc:gv-graph-pos';
 let graphOffsets = null;
 function offsets() {
@@ -88,30 +100,35 @@ function setOffset(rootId, dx, dy, persist = true) {
   if (persist) setLocalJson(POS_KEY, o);
 }
 
-// Open the overlay: refresh the graph, reveal it, and fit the view. Wired to the
-// topbar's Graph button by the topbar module (which also closes the drawer);
-// exported so that module can drive it without reaching into overlay internals.
+// Open the graph screen: refresh, reveal, fit. Canvas-first — nothing is
+// selected (so no inspector) unless the surface is previewing an older node, in
+// which case that node is selected: reopening the graph after ↵ puts you back on
+// the node you went to look at.
+//
+// On a PHONE (viewport.js) the same screen is a log, not a canvas: #overlay takes
+// .log-mode and graph-log.js draws the newest-first list with its fork gutter.
+// The log always has a selection — its action bar acts on one — so it starts on
+// the active node.
 export async function openOverlay() {
+  const log = isPhone();
+  overlayEl.classList.toggle('log-mode', log);
+  view.selectedNodeId = (view.previewing && view.viewedId) ? view.viewedId : (log ? view.activeId : null);
   await refreshGraph();
-  renderHistory();
-  updateStatus();
-  if (view.selectedNodeId && nodeById(view.selectedNodeId)) renderInspector(view.selectedNodeId);
-  else if (view.activeId) selectNode(view.activeId, { noRender: true });
   overlayEl.classList.remove('hidden');
-  // Focus management: the overlay covers the surface and owns ↑↓/↵/A/Space, but
-  // focus used to stay on whatever opened it — so a keyboard user was driving an
-  // element they had left behind. Move focus in (the container is tabindex="-1"),
-  // and remember where to hand it back on close.
+  // Focus management: the overlay covers the surface and owns the arrows / Space /
+  // ↵ / A — move focus in (the container is tabindex="-1") and remember where to
+  // hand it back on close.
   returnFocusTo = document.activeElement;
   overlayEl.focus({ preventScroll: true });
   fitView();
+  renderInspector(view.selectedNodeId);
 }
 
 // Where focus came from when the overlay opened, so closing returns it there.
 let returnFocusTo = null;
 // The single close path: hide + restore focus. Everything that dismisses the
-// overlay (✕, Escape, opening a node, a float-preview action) routes through here
-// so focus is never stranded on a display:none subtree.
+// overlay (✕, Escape, opening a node, a glance action) routes through here so
+// focus is never stranded on a display:none subtree.
 export function closeOverlay() {
   closeFloatPreview();
   closeNamePanel();   // raised from inside the overlay — it must not outlive it
@@ -122,36 +139,47 @@ export function closeOverlay() {
 }
 
 export function isOverlayOpen() { return !overlayEl.classList.contains('hidden'); }
+export function isLogMode() { return overlayEl.classList.contains('log-mode'); }
 
-/* The overlay's half of the ONE Escape owner (shell.js handleEscape). Escape used
-   to be claimed by two racing document listeners; the order between them was an
-   accident of module init order and neither could see the other's state. This
-   function is the overlay's layers in precedence order, and it reports whether it
-   consumed the key so the shell knows to stop.
+// The phone log (graph-log.js) registers its renderer here rather than being
+// imported: it reads this module's topology, so an import back would be a cycle.
+// Every redraw of the graph (layoutAndRender) redraws the log too while it shows.
+let logRenderer = null;
+export function setLogRenderer(fn) { logRenderer = typeof fn === 'function' ? fn : null; }
 
-     1. the glance / float preview   (raised from inside the overlay)
-     2. the rename / bookmark panel  (ditto — must never outlive its parent)
-     3. the overlay itself
+// A phone rotated wide (or a narrow window gaining a finger) flips the open graph
+// between log and canvas in place.
+bus.on('viewport', ({ phone }) => {
+  if (!isOverlayOpen()) return;
+  overlayEl.classList.toggle('log-mode', !!phone);
+  if (phone && !view.selectedNodeId) view.selectedNodeId = view.activeId;
+  if (!phone) fitView(); else layoutAndRender();
+  renderInspector(view.selectedNodeId);
+});
+
+/* The overlay's half of the ONE Escape owner (shell.js handleEscape): its layers
+   in precedence order, reporting whether it consumed the key.
+
+     1. the glance                  (raised from inside the overlay)
+     2. the rename / bookmark panel (ditto — must never outlive its parent)
+     3. the selection               (the inspector is only there while one exists;
+                                     not in the phone log, which always has one)
+     4. the overlay itself
 */
 export function escapeInOverlay() {
   if (floatEl) { closeFloatPreview(); return true; }
   if (isNamePanelOpen()) { closeNamePanel(); return true; }
+  // (The phone log always keeps a selection for its action bar: Escape closes it.)
+  if (isOverlayOpen() && view.selectedNodeId && !isLogMode()) { deselect(); return true; }
   if (isOverlayOpen()) { closeOverlay(); return true; }
   return false;
 }
 
-/* Same-origin preview iframes swallow the key. The inspector's "surface preview"
-   thumbnail and the glance card are both <iframe src="/preview/node/:id">, and
-   clicking either moves focus INTO that document — after which a real Escape
-   keypress is delivered to the iframe's document and never reaches ours at all
-   (document.activeElement reads back as the IFRAME element, and no keydown
-   listener on our document fires). That, not the listener race, is why Escape
-   looked dead in a real browser: the overlay's own preview is the easiest thing
-   on screen to click.
-
-   Both frames are same-origin, so forward the key back to the page that owns the
-   layers. This is transport, not a second Escape implementation — the forwarded
-   event runs the same one owner. */
+/* Same-origin preview iframes swallow the key. The inspector's thumbnail and the
+   glance are both <iframe src="/preview/node/:id">; clicking either moves focus
+   INTO that document, after which a real Escape is delivered there and never
+   reaches ours. Both are same-origin, so forward the key back to the page that
+   owns the layers. Transport, not a second Escape implementation. */
 export function forwardEscapeFrom(frame) {
   const bind = () => {
     let doc = null;
@@ -165,11 +193,7 @@ export function forwardEscapeFrom(frame) {
     });
   };
   // Three cheap, idempotent moments — a navigation swaps the child document out
-  // from under any single one of them:
-  //   now       the document that is already there
-  //   load      the one the src navigated to
-  //   focus     the moment it matters — focus is entering the frame, and whatever
-  //             document is live then is the one about to receive the keystrokes
+  // from under any single one: now, on load, and on focus entering the frame.
   if (!frame.__wcEscWired) {
     frame.__wcEscWired = true;
     frame.addEventListener('load', bind);
@@ -181,38 +205,49 @@ export function forwardEscapeFrom(frame) {
 export async function refreshGraph() {
   await ensureGraph(true);
   layoutAndRender();
+  updateHead();
 }
 
-// Keep the inspector's "Set active" action in sync (called on lock changes too).
+// Keep the inspector's Set active / Branch in sync (called on lock changes too).
 export function updateSidebarButtons() {
+  const id = view.selectedNodeId;
+  const isActive = !!id && id === view.activeId;
   const btn = $('gv-set-active');
-  if (!btn) return;
-  const canSet = view.selectedNodeId && view.selectedNodeId !== view.activeId && !view.lock;
-  btn.disabled = !canSet;
-  btn.textContent = view.lock ? 'locked — turn in progress'
-    : (view.selectedNodeId === view.activeId ? 'current node' : 'Set active');
+  if (btn) {
+    btn.disabled = !id || isActive || !!view.lock;
+    btn.textContent = view.lock ? 'locked — turn in progress'
+      : (isActive ? 'A · Active' : 'A · Set active here');
+  }
+  const br = $('gv-branch');
+  if (br) br.disabled = !id || isActive || !!view.lock;
 }
 
-// Click a node in the graph → SELECT it (highlight + sidebar). Selection never
-// reshapes the graph (a selected node is not a break-out), so clicking inside an
-// expanded serpentine no longer splits/collapses the downstream nodes.
-// Space = floating preview · double-click = full open · ↑↓←→ = move selection.
+// Select a node → highlight it and raise the inspector. Selecting a node inside a
+// collapsed stack expands that stack (and scrolls its sleeve to the row), so the
+// selection is always something on screen. Selection never reshapes the graph
+// otherwise. Space = glance · ↵ / double-click = open · arrows = move.
 export async function selectNode(id, opts = {}) {
   view.selectedNodeId = id;
-  await renderInspector(id);
-  renderHistory();                    // refresh the selected/active highlight
-  if (floatEl) openFloatPreview(id);  // keep the floating peek tracking the selection
+  if (id) {
+    const head = computeRuns().get(id);
+    if (head && !view.expandedStacks.has(head)) view.expandedStacks.add(head);
+    revealInSleeve(id);
+  }
   if (!opts.noRender) layoutAndRender();
+  if (id && opts.center) { centerOn(id); applyCamera(); }
+  if (floatEl && id) openFloatPreview(id);  // keep the glance tracking the selection
+  await renderInspector(id);
+}
+function deselect() {
+  view.selectedNodeId = null;
+  layoutAndRender();
+  renderInspector(null);
 }
 
-// --- lineage / state helpers ---
-// All three read the DISPLAY topology (graphIndex), not the raw commit graph:
-// the breadcrumb, the ⑃ glyph and the graph-scope filter describe what is on
-// screen. Reading raw parents here meant the breadcrumb listed nodes the history
-// list had hidden, and a surviving child of a collapsed node was labelled a fork
-// while the DAG drew it on the trunk.
-const lineageOf = (id) => graphIndex().lineageOf(id);
-function isFork(n) {
+// --- topology helpers ---
+// All read the DISPLAY topology (graphIndex), not the raw commit graph: the ⑃
+// badge, the forks filter and the stacks describe what is on screen.
+export function isFork(n) {
   if (!n) return false;
   const idx = graphIndex();
   const dn = idx.byId.get(n.id);          // the node AS DRAWN (its display parent)
@@ -220,32 +255,27 @@ function isFork(n) {
   const sibs = idx.childrenOf(dn.parent_id);
   return sibs.length > 1 && sibs[0] && sibs[0].id !== dn.id; // a non-trunk child of a branch point
 }
-function stateOf(n) {
-  if (!n) return { cls: 'root', text: 'NODE' };
-  if (n.id === view.activeId) return { cls: 'active', text: 'ACTIVE' };
-  if (n.name) return { cls: 'marked', text: '⚑ ' + n.name };
-  if (isFork(n)) return { cls: 'fork', text: '⑃ FORK' };
-  if (!n.parent_id) return { cls: 'root', text: 'ROOT' };
-  return { cls: 'root', text: 'TURN' };
-}
+// How many no-change turns a node stands for: turns that committed no node
+// (`folded_count`) plus legacy byte-identical nodes the server hides (`absorbed`).
+export const foldedCount = (n) => ((n && n.folded_count) || 0) + ((n && n.absorbed_count) || 0);
 
 // The top-level tree a node belongs to (walk display parents to the ancestor the
 // canvas draws a heading over).
 const rootOf = (id) => graphIndex().rootOf(id);
+export const graphNameOf = (id) => {
+  const r = nodeById(rootOf(id));
+  return r ? (r.name || 'graph ' + String(r.label || r.id).split('.')[0]) : '—';
+};
 
-// --- history list (left column) ---
-// Scope ('all' vs the selected node's graph) then the union of active toggle
-// filters (marked / forks); no filter active → everything in scope.
 // The graph AS DRAWN. Turns that changed nothing are dropped and each survivor's
-// parent is rewritten to the nearest survivor, so a run of no-change turns
-// closes up instead of stretching the trunk with copies of one surface. The
-// server decides what collapses (GET /api/graph -> collapsed / display_parent);
-// this is the one place the decision is applied, so every consumer below —
-// history list, runs, layout, keyboard nav, counts — agrees on what exists.
-// `view.showCollapsed` turns it off and shows the raw commit history.
+// parent is rewritten to the nearest survivor, so a run of no-change turns closes
+// up instead of stretching the trunk with copies of one surface. The server
+// decides what collapses (GET /api/graph -> collapsed / display_parent); this is
+// the one place the decision is applied, so every consumer below agrees on what
+// exists. The collapsed turns themselves are not lost: they are the ghost rows of
+// the node that absorbed them.
 function displayNodes() {
   const all = view.graphCache?.nodes || [];
-  if (view.showCollapsed) return all;
   return all
     .filter((n) => !n.collapsed)
     .map((n) => {
@@ -256,25 +286,16 @@ function displayNodes() {
 
 /* ---------- the display topology, built once per graph ----------
    displayNodes() decides what EXISTS; this decides what is connected to what.
-   The byId / childMap / per-parent sort / isBreakout block was verbatim in two
-   places (computeRuns and computeGraphLayout), and the breakout rule decides
-   both which nodes get their own glyph (layout) and which stacks keyboard
-   navigation expands and collapses (computeRuns) — so a change to one copy
-   silently desynchronised the drawn stacks from the keyboard's idea of them.
-
    Everything topological reads THIS: runs, layout, keyboard nav, fork
-   classification, the breadcrumb, the graph-scope filter and the counts. It is
-   rebuilt when — and only when — the graph payload, the show-collapsed toggle or
-   the active/viewed node changes, which is what isBreakout depends on; the same
-   index therefore serves a whole burst of arrow keys without rewalking.
+   classification and the counts. Rebuilt when — and only when — the graph
+   payload or the active/viewed node changes (isBreakout depends on those).
 
-   labels.js's childrenOf() stays RAW (commit topology) and keeps one consumer:
-   topbar's branch picker, which is asking a different question. */
+   labels.js's childrenOf() stays RAW (commit topology) for a question about the
+   commit graph, which is a different question. */
 let indexCache = null;
-function graphIndex() {
+export function graphIndex() {
   if (indexCache
     && indexCache.cache === view.graphCache
-    && indexCache.showCollapsed === view.showCollapsed
     && indexCache.activeId === view.activeId
     && indexCache.viewedId === view.viewedId) return indexCache.idx;
 
@@ -289,8 +310,7 @@ function graphIndex() {
   }
   const order = (a, b) => (byId.get(a).created_at - byId.get(b).created_at) || (seqNum(a) - seqNum(b));
   for (const arr of childMap.values()) arr.sort(order);
-  // A node whose parent is not in the display set is a top-level tree here —
-  // the same definition the layout has always used to pick its roots.
+  // A node whose parent is not in the display set is a top-level tree here.
   const roots = nodes.filter((n) => n.parent_id == null || !byId.has(n.parent_id)).map((n) => n.id).sort(order);
 
   // A break-out node (fork, bookmark, active, or viewed) gets its own glyph; a
@@ -308,41 +328,28 @@ function graphIndex() {
   const lineageOf = (id) => {
     const chain = [];
     let cur = byId.get(id), guard = 0;
-    while (cur && guard++ < 200) { chain.unshift(cur); cur = parentOf(cur.id); }
+    while (cur && guard++ < 10000) { chain.unshift(cur); cur = parentOf(cur.id); }
     return chain;
   };
   const rootOf = (id) => { const chain = lineageOf(id); return chain.length ? chain[0].id : null; };
 
   const idx = { nodes, byId, childMap, roots, isBreakout, childrenOf, parentOf, lineageOf, rootOf };
-  indexCache = {
-    cache: view.graphCache, showCollapsed: view.showCollapsed,
-    activeId: view.activeId, viewedId: view.viewedId, idx,
-  };
+  indexCache = { cache: view.graphCache, activeId: view.activeId, viewedId: view.viewedId, idx };
   return idx;
 }
 
 // The turns the graph DRAWS, in commit order — for a surface that lists nodes
-// rather than walking them. The ⌘K palette used to map `view.graphCache.nodes`
-// straight, i.e. the RAW commit list: it was the last graphCache reader outside
-// this file, so a collapsed no-change turn still had a row, and picking one
-// previewed a node the DAG does not draw (displayChildrenOf returns [] there, so
-// the topbar's ↓ is dead and only displayParentOf's raw fallback gets you out).
+// rather than walking them (the ⌘K palette), so a collapsed no-change turn never
+// gets a row that previews a node the DAG does not draw.
 export function displayNodeList() { return graphIndex().nodes; }
 
-// The topbar's ↓ button steps to the next turn the graph DRAWS, which is the
-// same gesture ArrowDown performs in the overlay. (Its ⑃ branch picker asks a
-// different question and stays on labels.childrenOf's raw commit children.)
+// The topbar's ↓ steps to the next turn the graph DRAWS, the same gesture
+// ArrowDown performs here…
 export function displayChildrenOf(id) { return graphIndex().childrenOf(id); }
 
-// ...and the topbar's ↑ is its mirror: the previous turn as DRAWN, the node
-// ArrowUp selects. The two buttons have to read the SAME topology or they are
-// not inverses — with ↓ on the display graph and ↑ on the raw one, ↑ landed on a
-// collapsed turn the DAG does not draw, and ↓ was disabled there: a dead end.
-//
-// One raw fallback: if the viewed node is not in the display set at all — the
-// user previewed a collapsed turn with show-collapsed on and then toggled it off
-// — there is no drawn parent to return, and the raw parent is the only way back
-// out of it.
+// …and ↑ is its mirror: the previous turn as DRAWN. The two buttons read the SAME
+// topology or they are not inverses. One raw fallback: a viewed node absent from
+// the display set has no drawn parent, and the raw parent is the only way out.
 export function displayParentOf(id) {
   const idx = graphIndex();
   if (idx.byId.has(id)) { const p = idx.parentOf(id); return p ? p.id : null; }
@@ -350,246 +357,171 @@ export function displayParentOf(id) {
   return (n && n.parent_id) || null;
 }
 
-function historyRows() {
-  let ns = graphIndex().nodes.slice().sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)));
-  if (historyScope === 'graph') {
-    const root = rootOf(view.selectedNodeId || view.activeId);
-    if (root) ns = ns.filter((n) => rootOf(n.id) === root);
+/* ---------- filters + jump search: dim, never hide ----------
+   ⚑ Marked and ⑃ Forks are independent toggles, the search is free text over
+   the label, trigger and bookmark name; together they DIM everything that does
+   not match (the graph keeps its shape — hiding nodes would redraw the DAG as
+   something it is not). ↵ in the search selects and centres the next match. */
+export function isFiltering() { return filters.size > 0 || !!query; }
+export function matches(n) {
+  if (!n) return false;
+  if (filters.has('marked') && !n.bookmarked) return false;
+  if (filters.has('forks') && !isFork(n)) return false;
+  if (query) {
+    const hay = `${n.label || n.id} ${n.trigger_summary || ''} ${n.name || ''}`.toLowerCase();
+    if (!hay.includes(query)) return false;
   }
-  if (historyFilters.size) {
-    ns = ns.filter((n) => (historyFilters.has('marked') && n.name) || (historyFilters.has('forks') && isFork(n)));
-  }
-  return ns;
+  return true;
 }
-function renderHistory() {
-  const list = $('gv-history-list');
-  if (!list) return;
-  const rows = historyRows();
-  const tc = $('gv-turncount'); if (tc) tc.textContent = graphIndex().nodes.length;
-  // A keyboard selection re-renders this list, which would destroy the focused row
-  // and drop focus to <body>. Remember which node had it and hand it back below.
-  const focused = document.activeElement;
-  const refocusId = focused && focused.classList && focused.classList.contains('gv-row') && list.contains(focused)
-    ? focused.dataset.id : null;
-  list.innerHTML = '';
-  for (const n of rows) {
-    const st = stateOf(n);
-    const glyph = n.id === view.activeId ? '●' : n.name ? '⚑' : isFork(n) ? '⑃' : '○';
-    const row = document.createElement('div');
-    row.className = 'gv-row' + (n.id === view.activeId ? ' active' : '') + (n.id === view.selectedNodeId ? ' selected' : '');
-    const trig = n.trigger_summary || n.name || '';
-    const time = n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-    row.innerHTML =
-      `<span class="glyph ${st.cls}">${glyph}</span>` +
-      `<span class="main"><span class="lbl">${esc(n.label || n.id)}</span>${trig ? ' <span class="trig">· ' + esc(trig) + '</span>' : ''}</span>` +
-      `<span class="time">${time}</span>`;
-    // The row is a clickable <div>, so it was invisible to tab and to Enter/Space.
-    // Give it button-ish option semantics and the same two actions the mouse gets:
-    // Enter/Space selects (single click), ⌘/Ctrl+Enter opens (double click).
-    row.tabIndex = 0;
-    row.dataset.id = n.id;
-    row.setAttribute('role', 'option');
-    row.setAttribute('aria-selected', String(n.id === view.selectedNodeId));
-    row.addEventListener('click', () => { selectNode(n.id); centerOn(n.id); });
-    row.addEventListener('dblclick', () => { openNode(n.id); });
-    row.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
-      e.preventDefault();
-      e.stopPropagation(); // don't also fire the overlay-wide ↵/Space handlers
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) openNode(n.id);
-      else { selectNode(n.id); centerOn(n.id); }
-    });
-    list.appendChild(row);
+// The one lever for both filter chip groups (the canvas's and the phone log's)
+// and the jump search, so the two surfaces never disagree about what is shown.
+export function toggleFilter(f) {
+  if (filters.has(f)) filters.delete(f); else filters.add(f);
+  for (const c of overlayEl.querySelectorAll(`[data-filter="${f}"]`)) {
+    c.classList.toggle('on', filters.has(f));
+    c.setAttribute('aria-pressed', String(filters.has(f)));
   }
-  if (refocusId) {
-    const again = [...list.children].find((el) => el.dataset && el.dataset.id === refocusId);
-    if (again) again.focus({ preventScroll: true });
-  }
+  layoutAndRender();
+}
+export function setQuery(q) {
+  query = String(q || '').toLowerCase().trim();
+  layoutAndRender();
+}
+function jumpToNextMatch() {
+  const hits = graphIndex().nodes.slice()
+    .sort((a, b) => (a.created_at - b.created_at) || (seqNum(a.id) - seqNum(b.id)))
+    .filter(matches);
+  if (!hits.length) return;
+  const at = hits.findIndex((n) => n.id === view.selectedNodeId);
+  const next = hits[(at + 1) % hits.length];
+  selectNode(next.id, { center: true });
 }
 
-// The turns this node stands for. Two sources, one list:
-//   node.folded    turns that ended with no surface change and committed no node
-//                  at all (domain/turns fold-forward) — recorded at commit time
-//   n.absorbed     nodes committed BEFORE fold-forward landed that are
-//                  byte-identical to their parent; the server marks them
-//                  collapsed and names this node as the one they belong to
-// Same thing to a reader — a turn that happened and changed nothing — so they
-// render as one chronological list. This is where a chat-only turn's trigger
-// text survives after its node stops being drawn.
-function foldedSection(id, node) {
-  const cached = nodeById(id) || {};
-  const rows = [];
-  for (const a of (cached.absorbed || [])) {
-    rows.push({ at: a.created_at || 0, who: a.author || 'claude', label: a.label || a.id, text: a.trigger_summary || '' });
-  }
-  for (const f of (Array.isArray(node.folded) ? node.folded : [])) {
-    rows.push({ at: f.at || 0, who: f.author || 'claude', label: '', text: f.summary || f.message || '', reply: f.reply || '' });
-  }
-  if (!rows.length) return '';
-  rows.sort((a, b) => a.at - b.at);
-  // folded_count counts turns the MAX_FOLDED cap dropped as well, so it can
-  // exceed what we can show. Say so rather than quietly under-reporting.
-  const total = (node.folded_count || (node.folded || []).length) + (cached.absorbed_count || 0);
-  const aged = total - rows.length;
-  const body = rows.map((r) => {
-    const when = (r.at ? new Date(r.at).toLocaleString() : '') + (r.reply ? `\nreply: ${r.reply}` : '');
-    const tag = r.label ? `<span class="gv-folded-tag">${esc(r.label)}</span>` : '';
-    return `<div class="gv-folded-row" title="${esc(when)}">${tag}<span class="gv-folded-who">${esc(r.who)}</span><span class="gv-folded-text">${esc(r.text || '(no trigger)')}</span></div>`;
-  }).join('');
-  const note = aged > 0 ? `<div class="muted small">+${aged} older turn${aged === 1 ? '' : 's'} aged out of the record</div>` : '';
-  return `<div class="gv-sect">COLLAPSED TURNS · ${total}</div>` +
-    `<div class="gv-folded"><div class="muted small">changed nothing on the surface; kept here instead of as nodes</div>${body}${note}</div>`;
+// The floating "◇ GRAPH · active nX · N turns" chip.
+function updateHead() {
+  const m = $('gv-head-meta');
+  if (!m) return;
+  const n = graphIndex().nodes.length;
+  const act = view.activeId ? 'active ' + labelFor(view.activeId) : 'no active node';
+  m.textContent = `${act} · ${n} turn${n === 1 ? '' : 's'}`;
 }
 
-// --- inspector (right column) ---
-// One request token for the whole panel. renderInspector and renderDiff each
-// await a fetch before painting, and the action footer below them acts on
-// view.selectedNodeId — which moves synchronously on every arrow key. Holding
-// an arrow down therefore raced: a slower earlier response could land last and
-// leave the inspector describing node A while ↵/A/⚑/↧ operated on node B. A
-// response is now painted only if it is still the one being asked for.
+// --- inspector (floating, 300px, only while a node is selected) ---
+// One request token for the whole panel: the inspector paints after an await
+// while view.selectedNodeId — which the action buttons read — moves synchronously
+// on every arrow key. A response is painted only if it is still the one asked for,
+// so held arrows can never leave the panel describing one node while A/⚑/↧ act on
+// another.
 let inspectorSeq = 0;
 async function renderInspector(id) {
   const box = $('gv-inspector');
   if (!box) return;
   const seq = ++inspectorSeq;
+  if (!id) { box.classList.add('hidden'); box.innerHTML = ''; return; }
   let node = null;
-  try { node = await fetch('/api/graph/node/' + id).then((r) => r.ok ? r.json() : null); } catch {}
+  try { node = await fetch('/api/graph/node/' + encodeURIComponent(id)).then((r) => r.ok ? r.json() : null); } catch {}
   if (seq !== inspectorSeq) return;   // a newer selection won the race
+  box.classList.remove('hidden');
   if (!node) { box.innerHTML = '<div class="gv-empty">Node unavailable.</div>'; return; }
-  const st = stateOf(nodeById(id) || node);
-  const lineage = lineageOf(id).map((n, i, a) => i === a.length - 1 ? `<b>${esc(n.label || n.id)}</b>` : esc(n.label || n.id)).join(' › ');
-  const mounts = node.mounts || [];
-  const paneRows = mounts.length
-    ? mounts.map((m) => `<div class="gv-pane-row"><span class="pd"></span>${esc((m.params && m.params.title) || m.id)}</div>`).join('')
-    : '<div class="muted small">no panes — narrative turn</div>';
+  const n = nodeById(id) || node;
+  const inStack = computeRuns().has(id);
+  const badges =
+    (id === view.activeId ? '<span class="gv-badge active">ACTIVE</span>' : '') +
+    (isFork(n) ? '<span class="gv-badge fork">FORK</span>' : '') +
+    (inStack ? '<span class="gv-badge stack">IN STACK</span>' : '');
+  const bm = n.bookmarked ? `<div class="gv-insp-bm">${esc(bookmarkCaption(n))}</div>` : '';
   const trigger = node.trigger?.message || node.trigger?.summary || node.trigger_summary || '(no trigger)';
-  const committed = node.created_at ? new Date(node.created_at).toLocaleString() : '—';
+  const when = node.created_at ? new Date(node.created_at).toLocaleString() : '—';
+  const marked = !!n.bookmarked;
   // Claude's side of the turn (the Stop hook's reply summary) — one line, full
-  // text on hover. Older nodes and manual commits have none; no section then.
+  // text on hover. Older nodes and manual commits have none; no line then.
   const reply = node.trigger?.reply || '';
-  const replyHtml = reply ? `<div class="gv-sect">REPLY</div><div class="gv-reply" title="${esc(reply)}">${esc(reply)}</div>` : '';
-  const foldedHtml = foldedSection(id, node);
 
   box.innerHTML =
+    `<div class="gv-insp-head"><span class="gv-insp-label">${esc(node.label || id)}</span>${badges}` +
+      `<button class="gv-insp-close" data-act="close" title="Close (Esc)" aria-label="Close the inspector">✕</button></div>` +
+    bm +
     `<div class="gv-preview" id="gv-preview"></div>` +
-    `<div><span class="gv-insp-label">${esc(node.label || id)}</span><span class="gv-chip-state ${st.cls}">${esc(st.text)}</span></div>` +
-    `<div class="gv-lineage">${lineage}</div>` +
-    `<div class="gv-meta"><span class="k">AUTHOR</span><span class="v">${esc(node.author || '—')}</span><span class="k">COMMITTED</span><span class="v">${esc(committed)}</span></div>` +
-    `<div class="gv-sect">TRIGGER</div><div class="gv-trigger">${esc(trigger)}</div>` +
-    replyHtml +
-    `<div class="gv-sect">RENDERED · ${mounts.length} pane${mounts.length === 1 ? '' : 's'}</div><div class="gv-panes">${paneRows}</div>` +
-    foldedHtml +
-    `<div class="gv-sect" id="gv-diff-sect">DIFF vs parent</div><div class="gv-diff" id="gv-diff"><span class="muted small">…</span></div>` +
+    `<div class="gv-trigger">${esc(trigger)}</div>` +
+    (reply ? `<div class="gv-reply" title="${esc(reply)}">${esc(reply)}</div>` : '') +
+    `<div class="gv-meta"><span class="k">GRAPH</span><span class="v">${esc(graphNameOf(id))}</span>` +
+      `<span class="k">WHEN</span><span class="v">${esc(when)}</span>` +
+      `<span class="k">CHANGED</span><span class="v" id="gv-changed">…</span></div>` +
     `<div class="gv-actions">` +
-      `<button class="gv-act primary" id="gv-set-active" data-act="active">Set active</button>` +
-      `<button class="gv-act" data-act="open" title="Open on the surface (↵)">⤢ Open</button>` +
-      `<button class="gv-act" data-act="glance" title="Glance preview (Space)" aria-label="Glance preview (Space)">◉</button>` +
-      `<button class="gv-act" data-act="bookmark" title="Bookmark (B)" aria-label="Bookmark (B)">⚑</button>` +
-      `<button class="gv-act" data-act="export" title="Export (E)" aria-label="Export (E)">↧</button>` +
-      `<button class="gv-act" data-act="replay" title="Replay up to this node (R)" aria-label="Replay up to this node (R)">▶ Replay</button>` +
+      `<button class="gv-act primary" id="gv-set-active" data-act="active" title="Make this the node the next turn commits onto (A)">A · Set active here</button>` +
+      `<button class="gv-act" id="gv-branch" data-act="branch" title="Set active here so the next commit forks from this node">⑃ Branch</button>` +
+      `<button class="gv-act" data-act="glance" title="Glance (Space)">Glance</button>` +
+      (marked
+        ? `<button class="gv-act" data-act="unmark" title="Remove the bookmark">⚑ Unmark</button>`
+        : `<button class="gv-act" data-act="bookmark" title="Bookmark (B)">⚑ Bookmark</button>`) +
+      `<button class="gv-act" data-act="export" title="Export (E)">↧ Export</button>` +
+      `<button class="gv-act" data-act="replay" title="Replay up to this node (R)">▶ Replay</button>` +
     `</div>`;
 
-  drawPreview($('gv-preview'), id, mounts.length);
-  renderDiff(id, node, seq);
+  drawPreview($('gv-preview'), id, (node.mounts || []).length);
+  renderChanged(id, node, seq);
   updateSidebarButtons();
-  updateStatus();
 }
 
 // The real node surface as a thumbnail: a scaled-down iframe of /preview/node/:id
-// (the same self-contained doc the glance uses — panes render off the shared
-// mount-runtime). Narrative (no-pane) turns show a placeholder instead of a blank.
+// (the same self-contained doc the glance uses). A turn with no blocks shows a
+// placeholder instead of a blank.
 const PREVIEW_W = 1160;
 function drawPreview(box, id, paneCount) {
   if (!box) return;
-  box.innerHTML = '<div class="cap">surface preview</div>';
+  box.innerHTML = '';
   if (!paneCount) {
     const ph = document.createElement('div');
-    ph.className = 'gv-preview-empty'; ph.textContent = 'no surface — narrative turn';
+    ph.className = 'gv-preview-empty'; ph.textContent = `no blocks at ${labelFor(id)}`;
     box.appendChild(ph);
     return;
   }
-  const scale = (box.clientWidth || 294) / PREVIEW_W;
+  const scale = (box.clientWidth || 274) / PREVIEW_W;
   const fr = document.createElement('iframe');
   fr.className = 'gv-preview-frame';
   fr.setAttribute('scrolling', 'no');
+  fr.setAttribute('title', 'page preview at ' + labelFor(id));
   fr.style.width = PREVIEW_W + 'px';
-  fr.style.height = Math.round((box.clientHeight || 120) / scale) + 'px';
+  fr.style.height = Math.round((box.clientHeight || 96) / scale) + 'px';
   fr.style.transform = 'scale(' + scale + ')';
   fr.src = '/preview/node/' + encodeURIComponent(id);
   forwardEscapeFrom(fr);
-  box.insertBefore(fr, box.firstChild);
+  box.appendChild(fr);
 }
 
-async function renderDiff(id, node, seq) {
-  const el = $('gv-diff');
-  const sect = $('gv-diff-sect');
+// The CHANGED row: one line, from the diff against the parent the canvas DRAWS
+// (every collapsed node is byte-identical to its own parent, so the counts are
+// the same either way — this only names the edge the user can see).
+async function renderChanged(id, node, seq) {
+  const el = $('gv-changed');
   if (!el) return;
   const n = nodeById(id) || node;
-  // Diff against the parent shown in the graph. With collapsed turns hidden the
-  // drawn parent is display_parent — and since every collapsed node is
-  // byte-identical to its own parent, the numbers are the same either way; this
-  // only makes the label name the edge the user can actually see.
-  const parentId = (!view.showCollapsed && n.display_parent !== undefined && n.display_parent !== null)
-    ? n.display_parent : n.parent_id;
-  if (!n || !parentId) { if (sect) sect.style.display = 'none'; el.style.display = 'none'; return; }
-  const parentLabel = labelFor(parentId);
-  if (sect) { sect.style.display = ''; sect.textContent = 'DIFF vs parent ' + parentLabel; }
-  el.style.display = '';
+  if (n.wipe) { el.textContent = 'surface wiped · pinned blocks kept'; return; }
+  const parentId = displayParentOf(id);
+  if (!parentId) { el.textContent = 'first turn of the graph'; return; }
   try {
     const d = await fetch(`/api/graph/diff?a=${encodeURIComponent(parentId)}&b=${encodeURIComponent(id)}`).then((r) => r.ok ? r.json() : null);
-    if (seq !== undefined && seq !== inspectorSeq) return;   // the selection moved on
+    if (seq !== inspectorSeq) return;   // the selection moved on
     const m = (d && d.mounts) || {};
+    const parts = [];
     const add = (m.added || []).length, chg = (m.changed || []).length, rm = (m.removed || []).length;
-    el.innerHTML = `<span class="add">+${add} pane${add === 1 ? '' : 's'}</span><span class="chg">~${chg} changed</span><span class="rm">${rm} removed</span>`;
-  } catch { el.innerHTML = '<span class="muted small">diff unavailable</span>'; }
+    if (add) parts.push(`${add} added`);
+    if (chg) parts.push(`${chg} changed`);
+    if (rm) parts.push(`${rm} removed`);
+    el.textContent = parts.length ? `blocks: ${parts.join(' · ')}` : 'no block changes';
+  } catch { el.textContent = '—'; }
 }
 
-function updateStatus() {
-  const a = $('gv-status-active'); if (a) a.textContent = (view.activeId ? labelFor(view.activeId) + ' active' : '—');
-  const c = $('gv-status-counts');
-  if (c) {
-    const nodes = graphIndex().nodes;
-    const forks = nodes.filter((n) => isFork(n)).length;
-    const marks = nodes.filter((n) => n.name).length;
-    c.textContent = `${nodes.length} turns · ${forks} fork${forks === 1 ? '' : 's'} · ${marks} mark${marks === 1 ? '' : 's'}`;
-  }
-  // The chip only exists when there is something to reveal.
-  const n = view.graphCache?.collapsed_count || 0;
-  const chip = $('gv-show-collapsed');
-  if (chip) {
-    chip.classList.toggle('hidden', n === 0);
-    chip.classList.toggle('on', !!view.showCollapsed);
-    const cn = $('gv-collapsed-n'); if (cn) cn.textContent = n;
-  }
-  const g = $('gv-graphsel');
-  if (g) { const root = lineageOf(view.selectedNodeId || view.activeId)[0]; g.textContent = 'graph ' + (root ? (root.label || root.id).split('.')[0] : '—'); }
-}
-
-// open a node fully on the surface (leaves the overlay)
+// open a node on the surface (a read-only preview; leaves the overlay)
 function openNode(id) { view.selectedNodeId = id; previewNode(id); closeOverlay(); }
 
 /* ---------- setting a node active: ONE POST, one failure path ----------
-   Three call sites move `active`: the inspector's "Set active" / the A key
-   (setActive), the glance card's ◉, and the topbar's "set active here". All
-   three carried the same block hand-copied, and the two in THIS file had quietly
-   lost the queued-re-aim branch topbar's copy carries — so pressing A during a
-   locked turn dropped this client out of preview while the server had only
-   QUEUED the move, leaving the surface showing an old node as if it were live.
-
-   All three also reported failure with alert(): a blocking browser dialog that
-   looks like nothing else in this chrome and wedges an automated driver — the
-   exact thing the naming panel below exists to avoid, argued twelve lines from a
-   call to it. The failure now goes to topbar's in-page notice, which is what the
-   queued case already used.
-
-   The POST and its two not-moved answers are requestSetActive, which all three
-   share. What comes AFTER differs and stays with each caller: the two here
-   restore the live surface and relay the DAG out (postSetActive); the topbar's
-   aims this client at the node and refetches that node's panes. One owner of the
-   request, two tails — not one function with a flag for the difference.
-
-   Both return true only when active actually moved. */
+   Set active, ⑃ Branch, the A key and the glance's "Set active here" all move
+   `active`, and all go through requestSetActive: the POST and its two not-moved
+   answers (refused → the reason; queued behind a locked turn → "Queued"). Both
+   are reported in the page (topbar.showReaimNote), never a blocking dialog, and
+   echoed on the graph's own toast while it is open — the page note paints under
+   the overlay. Returns true only when active actually moved. */
 export async function requestSetActive(id) {
   if (!id) return false;
   const r = await fetch('/api/graph/active', {
@@ -597,17 +529,29 @@ export async function requestSetActive(id) {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    showReaimNote('Could not set active: ' + (err.error || r.statusText));
+    note('Could not set active: ' + (err.error || r.statusText));
     return false;
   }
   const body = await r.json().catch(() => ({}));
   if (body.pending) {
     // Claude is mid-turn: the server queued the re-aim and applies it at
     // turn-end. Stay exactly where we are — the eventual reset frame lands it.
-    showReaimNote(`Queued — jumps to ${labelFor(id)} when Claude's turn ends.`);
+    note(`Queued — jumps to ${labelFor(id)} when Claude's turn ends.`);
     return false;
   }
   return true;
+}
+function note(text) {
+  showReaimNote(text);
+  if (isOverlayOpen()) toast(text);
+}
+function toast(text) {
+  const t = $('gv-toast');
+  if (!t) return;
+  t.textContent = text;
+  t.classList.remove('hidden');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.add('hidden'), 2600);
 }
 
 async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
@@ -615,31 +559,35 @@ async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
   leavePreview();
   if (alsoCloseOverlay) closeOverlay();
   await refreshGraph();
+  if (isOverlayOpen() && view.selectedNodeId) renderInspector(view.selectedNodeId);
   return true;
 }
 
-// set a node active (commits the next turn there / branches)
-async function setActive(id) {
-  if (await postSetActive(id)) renderHistory();
+export async function setActive(id) {
+  if (await postSetActive(id)) toast(`Active → ${labelFor(id)} · your next message commits here`);
+}
+// ⑃ Branch = make this node active; if it already has children, the next commit
+// is a sibling of them — a fork. (Branching only ever happens by making a node
+// active — ruling D2: editing a previewed node no longer does it.)
+export async function branchFrom(id) {
+  const kids = ((nodeById(id) || {}).children || []).length;
+  if (await postSetActive(id)) {
+    toast(kids ? `⑃ Next commit branches from ${labelFor(id)}` : `Active → ${labelFor(id)} · the next commit continues from it`);
+  }
 }
 
-function exportNode(id) {
+export function exportNode(id) {
   const a = document.createElement('a');
   a.href = '/api/export/' + encodeURIComponent(id); a.download = '';
   document.body.appendChild(a); a.click(); a.remove();
 }
 
 /* ---------- naming: the ONE name field, two callers ----------
-   A graph's name IS the `name` on its bookmarked ROOT node — that is exactly what
-   `new graph` writes (pendingBookmark labels the first committed node). Until now
-   only creation could set it, so a graph that was not named at birth read forever
-   as the fallback "graph n1" with no affordance anywhere to fix it. The canvas
-   heading is now that affordance, and it reuses POST /api/graph/bookmark — the
-   same endpoint the ⚑ inspector action uses, and the same one `new graph` ends at.
-
-   Both callers go through #gv-name-panel. `bookmarkNode` used to call the native
-   window.prompt(): a blocking browser dialog, unlike every other input in this
-   chrome, and one that wedges an automated driver. Never window.prompt. */
+   A graph's name IS the `name` on its bookmarked ROOT node — exactly what `new
+   graph` writes. The canvas heading is the affordance to (re)name a graph, and it
+   reuses POST /api/graph/bookmark — the same endpoint ⚑ uses. Both callers go
+   through #gv-name-panel. Never window.prompt: a blocking browser dialog, unlike
+   every other input in this chrome, and one that wedges an automated driver. */
 const namePanel = () => $('gv-name-panel');
 function isNamePanelOpen() { const p = namePanel(); return !!p && !p.classList.contains('hidden'); }
 function closeNamePanel() { const p = namePanel(); if (p) p.classList.add('hidden'); }
@@ -656,18 +604,20 @@ function openNamePanel({ id, title, hint, value }) {
   p.classList.remove('hidden');
   if (inp) setTimeout(() => { if (isNamePanelOpen()) { inp.focus(); inp.select(); } }, 0);
 }
+export async function saveName(id, name) {
+  await fetch('/api/graph/bookmark', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }),
+  });
+  await refreshGraph();
+  if (view.selectedNodeId) renderInspector(view.selectedNodeId);
+}
 async function commitName() {
   const id = nameTargetId;
   const inp = $('gv-name-input');
   const name = ((inp && inp.value) || '').trim();
   closeNamePanel();
   if (!id) return;
-  await fetch('/api/graph/bookmark', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }),
-  });
-  await refreshGraph();
-  renderHistory();
-  if (view.selectedNodeId) renderInspector(view.selectedNodeId);
+  await saveName(id, name);
 }
 
 function bookmarkNode(id) {
@@ -679,6 +629,7 @@ function bookmarkNode(id) {
     value: (n && n.name) || '',
   });
 }
+export function unmarkNode(id) { return saveName(id, ''); }
 
 // Rename a whole GRAPH: name its root node, which is what the canvas heading shows.
 function renameGraph(rootId) {
@@ -691,9 +642,8 @@ function renameGraph(rootId) {
   });
 }
 
-// --- Floating read-only preview: an Arc/Zen-style "glance" — a centered card
-// floating over a dimmed/blurred backdrop. A peek only; never touches the live
-// surface. Space (or Esc, or clicking the backdrop) closes it.
+// --- Glance: a read-only render of the node in a modal card over a scrim. A
+// peek only; never touches the live surface. Space, Esc or the scrim close it.
 let floatEl = null;
 function openFloatPreview(id) {
   if (!id) return;
@@ -701,49 +651,43 @@ function openFloatPreview(id) {
     floatEl = document.createElement('div');
     floatEl.className = 'glance-backdrop';
     floatEl.innerHTML =
-      '<div class="glance-card">' +
-        '<div class="glance-titlebar"><span class="glance-title"></span><span class="glance-hint">space to close</span></div>' +
+      '<div class="glance-card" role="dialog" aria-label="Glance">' +
+        '<div class="glance-titlebar"><span class="glance-title"></span><span class="glance-trigger"></span>' +
+          '<button class="glance-btn" data-act="open" title="Open on the surface (↵)">⤢ Open</button>' +
+          '<button class="glance-btn primary" data-act="active" title="Set this node active">Set active here</button>' +
+          '<button class="glance-btn icon" data-act="close" title="Close (Space)" aria-label="Close the glance">✕</button>' +
+        '</div>' +
         '<iframe class="glance-frame" title="node preview"></iframe>' +
-      '</div>' +
-      '<div class="glance-controls">' +
-        '<button class="glance-btn" data-act="close" title="close (space)">✕</button>' +
-        '<button class="glance-btn" data-act="open" title="open fully on the surface">⤢</button>' +
-        '<button class="glance-btn" data-act="active" title="set as active">◉</button>' +
       '</div>';
     document.body.appendChild(floatEl);
     floatEl.addEventListener('mousedown', (e) => { if (e.target === floatEl) closeFloatPreview(); });
     floatEl.querySelector('[data-act="close"]').addEventListener('click', closeFloatPreview);
     floatEl.querySelector('[data-act="open"]').addEventListener('click', () => {
       const nid = floatEl.dataset.nodeId; closeFloatPreview();
-      view.selectedNodeId = nid; previewNode(nid); closeOverlay();
+      openNode(nid);
     });
     floatEl.querySelector('[data-act="active"]').addEventListener('click', () => {
-      postSetActive(floatEl.dataset.nodeId, { alsoCloseOverlay: true });
+      const nid = floatEl.dataset.nodeId; closeFloatPreview();
+      postSetActive(nid, { alsoCloseOverlay: true });
     });
   }
+  const n = nodeById(id) || {};
   floatEl.dataset.nodeId = id;
-  floatEl.querySelector('.glance-title').textContent = 'preview ' + labelFor(id);
+  floatEl.querySelector('.glance-title').textContent = labelFor(id) + ' · glance';
+  floatEl.querySelector('.glance-trigger').textContent = n.trigger_summary || '';
+  const act = floatEl.querySelector('[data-act="active"]');
+  act.disabled = id === view.activeId || !!view.lock;
   const frame = floatEl.querySelector('.glance-frame');
   forwardEscapeFrom(frame);
-  const src = '/preview/node/' + id;
+  const src = '/preview/node/' + encodeURIComponent(id);
   if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
 }
 function closeFloatPreview() { if (floatEl) { floatEl.remove(); floatEl = null; } }
 // Read by the one Escape owner so it can tell a modal overlay layer is up.
 export function hasFloatPreview() { return !!floatEl; }
-function toggleFloatPreview() {
+export function toggleFloatPreview() {
   if (floatEl) closeFloatPreview();
   else if (view.selectedNodeId) openFloatPreview(view.selectedNodeId);
-}
-
-// Center the viewport on a node's glyph (used by keyboard navigation).
-function centerOn(id) {
-  const { glyphs } = computeGraphLayout();
-  const g = glyphs.find(gg => gg.id === id || (gg.kind === 'stack' && gg.ids.includes(id)));
-  if (!g) return;
-  const w = svgEl.clientWidth || 800, h = svgEl.clientHeight || 600;
-  camera.tx = w / 2 - g.x * camera.scale;
-  camera.ty = h / 2 - g.y * camera.scale;
 }
 
 // Map each node to the head of its multi-node trunk run (a collapsible stack).
@@ -768,18 +712,19 @@ function computeRuns() {
   return map;
 }
 
-// Move the selection node-to-node: ↑ parent, ↓ trunk child, ←→ siblings.
-// Leaving an expanded stack collapses it; entering a collapsed stack expands it.
+// Move the selection node-to-node: ↑ parent, ↓ trunk child, ←→ siblings. With
+// nothing selected, the first arrow selects the active node. Leaving an
+// expanded stack collapses it; entering a collapsed stack expands it.
 export function moveSelection(dir) {
   if (!view.graphCache) return;
-  // The DISPLAY topology, so every step lands on a node that has a glyph. It
-  // used to walk the raw graph: with a collapsed turn between two survivors,
-  // ArrowDown selected the hidden node — centerOn found no glyph, so the camera
-  // did not move and nothing highlighted — and a second press was needed to
-  // reach the child actually on screen.
+  // The DISPLAY topology, so every step lands on a node that is drawn.
   const idx = graphIndex();
-  const cur = idx.byId.get(view.selectedNodeId) || idx.byId.get(view.activeId) || idx.nodes[0];
-  if (!cur) return;
+  const cur = idx.byId.get(view.selectedNodeId);
+  if (!cur) {
+    const start = idx.byId.get(view.activeId) || idx.nodes[0];
+    if (start) selectNode(start.id, { center: true });
+    return;
+  }
   let targetId = null;
   if (dir === 'up') {
     const p = idx.parentOf(cur.id);
@@ -800,126 +745,161 @@ export function moveSelection(dir) {
   const fromHead = runs.get(view.selectedNodeId);
   const toHead = runs.get(targetId);
   if (fromHead && fromHead !== toHead) view.expandedStacks.delete(fromHead); // left a stack → collapse it
-  if (toHead) view.expandedStacks.add(toHead);                               // entered a stack → expand it
-  centerOn(targetId);
-  selectNode(targetId);
+  selectNode(targetId, { center: true });                                      // entering one expands it
 }
 
 // --- Topology-driven layout ---
-// The graph reads as collapsed *stacks* of changes. A break-out node (fork,
-// bookmark, active, or viewed) gets its own glyph; a maximal run of consecutive
-// trunk-linked non-break-out nodes collapses into one stack glyph with a count.
-// The trunk descends straight down one column; a branch claims the next free
-// column to the right and descends straight; trees lay out left-to-right.
-const DX = 130, DY = 66, NODE_R = 16, STACK_W = 40, STACK_H = 30;
-// Serpentine layout for long expanded stacks: a boustrophedon of vertical legs.
-// Nodes-per-leg is chosen per stack (legConfig) near SERP_TARGET_LEG, within
-// [SERP_MIN_LEG, SERP_MAX_LEG], so the leg count is odd and the snake ends down.
-const SERP_THRESHOLD = 8, SERP_TARGET_LEG = 6, SERP_MIN_LEG = 4, SERP_MAX_LEG = 9, SDX = 72, SDY = 46;
+// A break-out node (fork, bookmark, active, or viewed) gets its own glyph; a
+// maximal run of consecutive trunk-linked non-break-out nodes collapses into one
+// ×N stack. The trunk descends straight down one column; a branch claims the next
+// free column to the right; trees lay out left-to-right. An EXPANDED stack is a
+// sleeve: a fixed-width card in place of the stack, capped at SLEEVE_CAP rows and
+// scrolling inside itself, so a 30-turn run moves everything below it once, by a
+// bounded amount (design "Stack Expansion Options" 1a/2a — it replaced the old
+// serpentine, which read as a different graph).
+const DX = 130, DY = 66, NODE_R = 16, PLAIN_R = 9, STACK_W = 40, STACK_H = 30;
+const SLEEVE_W = 318, SLEEVE_INSET = 30, SLEEVE_HDR = 28, SLEEVE_PAD = 8, SLEEVE_FOOT = 26;
+const ROW_H = 30, GHOST_H = 22, SLEEVE_CAP = 8, GHOST_CAP = 3;
+const BM_ROOM = 16;                     // extra headroom above a node that carries a bookmark caption
+// The dashed ghost dots on a node's incoming edge must sit in the CLEAR part of
+// it — below the label under the glyph above, above the bookmark caption over
+// the node — so each dot buys the edge some length. Spread evenly over the edge
+// they sat on the parent's label and the caption, and two of them nearly touched.
+const GHOST_DOTS = 3, GHOST_DOT_ROOM = 12;
+const LABEL_CLEAR = 22;                 // a glyph's label runs to ~17px below it; a dot's radius is 4
+const CAPTION_CLEAR = 24, EDGE_CLEAR = 8;
+const foldRoom = (n) => Math.min(GHOST_DOTS, foldedCount(n)) * GHOST_DOT_ROOM;
+
+// Ghost rows for one node: the turns that folded onto it, oldest first, capped
+// at GHOST_CAP with the last row saying how many more there are.
+export function ghostRowsFor(n) {
+  const total = foldedCount(n);
+  if (!total) return [];
+  const texts = foldedTexts(n);
+  const rows = [];
+  const shown = total > GHOST_CAP ? GHOST_CAP - 1 : total;
+  for (let i = 0; i < shown; i++) {
+    const f = texts[i] || {};
+    rows.push({ kind: 'ghost', for: n.id, text: f.text || 'folded turn', reply: f.reply || '' });
+  }
+  if (total > shown) rows.push({ kind: 'ghost', for: n.id, more: total - shown, text: `⋯ ${total - shown} more folded turn${total - shown === 1 ? '' : 's'}` });
+  return rows;
+}
+
+// Folded trigger text. Legacy collapsed nodes ride /api/graph (`absorbed`); the
+// turns that committed no node live only on the node record (`folded`), fetched
+// once per node on demand and cached — a node's folded list never changes after
+// it commits. Each entry is { text, reply } — reply is Claude's summary of that
+// turn's answer, shown on hover (a folded turn is often exactly a chat-only reply).
+const foldedCache = new Map();          // id -> {text, reply}[] | null (in flight)
+function foldedTexts(n) {
+  const out = (n.absorbed || []).map((a) => ({ text: a.trigger_summary || '(no trigger)', reply: '' }));
+  if (n.folded_count) {
+    const got = foldedCache.get(n.id);
+    if (got) out.push(...got);
+    else if (!foldedCache.has(n.id)) fetchFolded(n.id);
+  }
+  return out;
+}
+async function fetchFolded(id) {
+  foldedCache.set(id, null);
+  let list = [];
+  try {
+    const node = await fetch('/api/graph/node/' + encodeURIComponent(id)).then((r) => r.ok ? r.json() : null);
+    list = ((node && node.folded) || []).map((f) => ({ text: f.summary || f.message || '(no trigger)', reply: f.reply || '' }));
+  } catch {}
+  foldedCache.set(id, list);
+  if (isOverlayOpen()) layoutAndRender();
+}
+
+// Per-sleeve scroll offset, keyed by the run head, so a re-render (a selection,
+// a graph refresh) does not throw the user back to the top of a long run.
+const sleeveScroll = new Map();
 
 function computeGraphLayout() {
   const { byId, childMap, roots, isBreakout } = graphIndex();
+  const runs = computeRuns();
 
   const glyphs = [];
   const edges = [];
+  const sleeves = [];
+  const pos = new Map();                 // id -> {x, y, sleeve?} for centring
   // frontier = x of the next free column; branches and new trees allocate here
-  // so they always sit to the right of everything placed so far (incl. snakes).
+  // so they always sit to the right of everything placed so far (incl. sleeves).
   let frontier = 0;
-  const bumpFrontier = (x) => { if (x + DX > frontier) frontier = x + DX; };
+  const bumpFrontier = (x) => { if (x > frontier) frontier = x; };
 
   const placeNode = (id, x, y, plain) => {
     const n = byId.get(id);
+    const r = plain ? PLAIN_R : NODE_R;
     const g = {
-      kind: 'node', id, label: n.label, x, y,
-      bookmarked: !!n.bookmarked, name: n.name || '', plain: !!plain,
-      childrenCount: (childMap.get(id) || []).length, trigger: n.trigger_summary || '',
+      kind: 'node', id, label: n.label, x, y, r, top: y - r, bottom: y + r,
+      bookmarked: !!n.bookmarked, name: n.name || '', wipe: !!n.wipe, plain: !!plain,
+      trigger: n.trigger_summary || '', folded: foldedCount(n), node: n,
     };
-    glyphs.push(g); bumpFrontier(x);
+    glyphs.push(g); bumpFrontier(x + DX); pos.set(id, { x, y });
     return g;
   };
   const placeStack = (ids, x, y) => {
     const g = {
-      kind: 'stack', ids: ids.slice(), head: ids[0], tail: ids[ids.length - 1],
+      kind: 'stack', ids: ids.slice(), head: ids[0],
       headLabel: byId.get(ids[0]).label, tailLabel: byId.get(ids[ids.length - 1]).label,
-      count: ids.length, x, y,
+      count: ids.length, x, y, top: y - STACK_H / 2 - 6, bottom: y + STACK_H / 2,
     };
-    glyphs.push(g); bumpFrontier(x);
+    glyphs.push(g); bumpFrontier(x + DX);
+    for (const id of ids) pos.set(id, { x, y });
     return g;
   };
-  // Header shown in place of an expanded stack; click it to re-collapse.
-  const placePill = (head, count, x, y) => {
-    const g = { kind: 'collapse', head, count, x, y };
-    glyphs.push(g); bumpFrontier(x);
-    return g;
+  const placeSleeve = (ids, x, y) => {
+    const rows = [];
+    let top = SLEEVE_PAD;
+    for (const id of ids) {
+      const n = byId.get(id);
+      rows.push({ kind: 'node', id, n, top }); top += ROW_H;
+      for (const gr of ghostRowsFor(n)) { rows.push({ ...gr, top }); top += GHOST_H; }
+    }
+    const contentH = top + SLEEVE_PAD;
+    const cap = SLEEVE_CAP * ROW_H + 2 * SLEEVE_PAD;
+    const scrolls = contentH > cap;
+    const viewH = Math.min(contentH, cap);
+    const h = SLEEVE_HDR + viewH + (scrolls ? SLEEVE_FOOT : 0);
+    const sTop = y - 16;
+    const s = {
+      kind: 'sleeve', head: ids[0], ids: ids.slice(), rows, x: x - SLEEVE_INSET, y: sTop, w: SLEEVE_W, h,
+      viewH, contentH, scrolls, trunkX: x, top: sTop, bottom: sTop + h,
+    };
+    sleeves.push(s); bumpFrontier(x - SLEEVE_INSET + SLEEVE_W + 40);
+    for (const r of rows) if (r.kind === 'node') pos.set(r.id, { x, y: sTop + SLEEVE_HDR + r.top + ROW_H / 2, sleeve: s, row: r });
+    return s;
   };
-  const vEdge = (a, b) => edges.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, elbow: Math.abs(a.x - b.x) > 0.5 });
-  const lineEdge = (a, b) => edges.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, line: true });
+  const straight = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, from: a, to: b });
+  const elbow = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, elbow: true, to: b });
 
-  // Choose nodes-per-leg near a target so the leg COUNT is odd → the snake's
-  // last leg points down and the trunk can continue straight beneath its exit.
-  const legConfig = (N) => {
-    let best = null;
-    for (let R = SERP_MIN_LEG; R <= SERP_MAX_LEG; R++) {
-      const legs = Math.ceil(N / R);
-      const score = (legs % 2 === 1 ? 0 : 1000) + Math.abs(R - SERP_TARGET_LEG);
-      if (!best || score < best.score) best = { R, legs, score };
+  // Does the trunk that starts here contain an expanded run? Then the column is
+  // a sleeve wide, and a branch taken ABOVE the sleeve must already clear it.
+  const trunkHasSleeve = (startId) => {
+    for (let cur = startId, guard = 0; cur != null && guard++ < 100000; cur = (childMap.get(cur) || [])[0]) {
+      const h = runs.get(cur);
+      if (h && view.expandedStacks.has(h)) return true;
     }
-    if (best.legs % 2 === 0) {
-      for (let R = SERP_MAX_LEG; R >= 2; R--) {
-        if (Math.ceil(N / R) % 2 === 1) { best = { R, legs: Math.ceil(N / R) }; break; }
-      }
-    }
-    return best;
+    return false;
   };
 
   function walk(startId, columnX, startY) {
     let x = columnX, y = startY, prev = null, first = null, pending = [];
+    if (trunkHasSleeve(startId)) bumpFrontier(x - SLEEVE_INSET + SLEEVE_W + 40);
+    const link = (g) => { if (prev) straight(prev, g); prev = g; if (!first) first = g; };
     const flush = () => {
       if (!pending.length) return;
       const run = pending; pending = [];
-      // single node → plain glyph inline on the trunk
       if (run.length === 1) {
-        const g = placeNode(run[0], x, y, true); y += DY;
-        if (prev) vEdge(prev, g); prev = g; if (!first) first = g;
-        return;
+        if (prev) y += foldRoom(byId.get(run[0]));   // room for its ghost dots
+        link(placeNode(run[0], x, y, true)); y += DY; return;
       }
-      // collapsed → one stack glyph
-      if (!view.expandedStacks.has(run[0])) {
-        const g = placeStack(run, x, y); y += DY;
-        if (prev) vEdge(prev, g); prev = g; if (!first) first = g;
-        return;
-      }
-      // expanded short run → collapse pill + an inline vertical column
-      if (run.length <= SERP_THRESHOLD) {
-        const pill = placePill(run[0], run.length, x, y); y += DY;
-        if (prev) vEdge(prev, pill); prev = pill; if (!first) first = pill;
-        let p = pill;
-        for (const id of run) { const g = placeNode(id, x, y, true); y += DY; lineEdge(p, g); p = g; }
-        prev = p;
-        return;
-      }
-      // expanded long run → serpentine: a header pill above a boustrophedon of
-      // full-height legs joined by rounded U-bends. The trunk then continues
-      // straight down from the snake's exit column.
-      const { R, legs } = legConfig(run.length);
-      const pill = placePill(run[0], run.length, x, y);
-      if (prev) vEdge(prev, pill); prev = pill; if (!first) first = pill;
-      const topY = y + DY;
-      let p = pill, exitX = x, exitY = topY;
-      run.forEach((id, i) => {
-        const leg = Math.floor(i / R), within = i % R;
-        const down = leg % 2 === 0;
-        const rowInCol = down ? within : (R - 1 - within);
-        const gx = x + leg * SDX, gy = topY + rowInCol * SDY;
-        const g = placeNode(id, gx, gy, true);
-        if (i === 0) lineEdge(pill, g);
-        else if (Math.floor((i - 1) / R) === leg) lineEdge(p, g);
-        else edges.push({ ax: p.x, ay: p.y, bx: gx, by: gy, turn: ((leg - 1) % 2 === 0) ? 'bottom' : 'top' });
-        p = g; exitX = gx; exitY = gy;
-      });
-      prev = p;
-      x = exitX;            // continuation aligns under the snake's exit node
-      y = exitY + DY;
+      if (!view.expandedStacks.has(run[0])) { link(placeStack(run, x, y)); y += DY; return; }
+      const s = placeSleeve(run, x, y);
+      link({ x, top: s.top, bottom: s.bottom });   // the trunk enters at its top, leaves at its bottom
+      y = s.bottom + 44;
     };
 
     let cur = startId;
@@ -927,11 +907,14 @@ function computeGraphLayout() {
       const kids = childMap.get(cur) || [];
       if (isBreakout(cur)) {
         flush();
+        const n = byId.get(cur);
+        if (prev && n.bookmarked) y += BM_ROOM;   // room for the caption above it
+        if (prev) y += foldRoom(n);               // and for its ghost dots
         const g = placeNode(cur, x, y, false); y += DY;
-        if (prev) vEdge(prev, g); prev = g; if (!first) first = g;
+        link(g);
         for (let i = 1; i < kids.length; i++) {
           const branchHead = walk(kids[i], frontier, y);
-          if (branchHead) edges.push({ ax: g.x, ay: g.y, bx: branchHead.x, by: branchHead.y, elbow: true });
+          if (branchHead) elbow(g, branchHead);
         }
         cur = kids[0] || null;
       } else {
@@ -943,15 +926,24 @@ function computeGraphLayout() {
     return first;
   }
 
-  // Each top-level tree is a "graph"; title it above its first glyph so graphs
-  // are scannable. Label = the root's bookmark name, falling back to its id.
+  // Which tree every node belongs to — one walk down from each root, not a
+  // lineage walk up per node.
+  const treeOf = new Map();
+  for (const r of roots) {
+    const stack = [r];
+    while (stack.length) { const id = stack.pop(); treeOf.set(id, r); stack.push(...(childMap.get(id) || [])); }
+  }
+
+  // Each top-level tree is a "graph"; title it above its first glyph.
   const treeTitles = [];
   for (const r of roots) {
-    const g0 = glyphs.length, e0 = edges.length;   // this tree's slice of the output
+    const g0 = glyphs.length, e0 = edges.length, s0 = sleeves.length;
     const first = walk(r, frontier, 0);
     const rn = byId.get(r);
+    let count = 0;
+    for (const t of treeOf.values()) if (t === r) count++;
     const tt = (first && rn)
-      ? { x: first.x, y: first.y, graphLabel: (rn.label || '').replace(/\.0$/, ''), name: rn.name || '', rootId: r }
+      ? { x: first.x, y: first.top != null ? first.top : first.y, graphLabel: (rn.label || '').replace(/\.0$/, ''), name: rn.name || '', rootId: r, count }
       : null;
     if (tt) treeTitles.push(tt);
     // The user's saved placement is a delta ON the auto-layout: shift everything
@@ -959,206 +951,166 @@ function computeGraphLayout() {
     // one graph never reflows the others.
     const [dx, dy] = offsetFor(r);
     if (dx || dy) {
-      for (let i = g0; i < glyphs.length; i++) { glyphs[i].x += dx; glyphs[i].y += dy; }
-      for (let i = e0; i < edges.length; i++) {
-        const e = edges[i]; e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy;
-      }
+      for (let i = g0; i < glyphs.length; i++) { const g = glyphs[i]; g.x += dx; g.y += dy; g.top += dy; g.bottom += dy; }
+      for (let i = s0; i < sleeves.length; i++) { const s = sleeves[i]; s.x += dx; s.y += dy; s.trunkX += dx; s.top += dy; s.bottom += dy; }
+      for (let i = e0; i < edges.length; i++) { const e = edges[i]; e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy; }
+      for (const [id, p] of pos) if (treeOf.get(id) === r) pos.set(id, { ...p, x: p.x + dx, y: p.y + dy });
       if (tt) { tt.x += dx; tt.y += dy; }
     }
   }
-  return { glyphs, edges, treeTitles };
+  return { glyphs, edges, sleeves, treeTitles, pos };
+}
+
+// Scroll a sleeve so a node's row is inside its window (a selection by key or
+// search lands on a row the user can see).
+function revealInSleeve(id) {
+  const head = computeRuns().get(id);
+  if (!head || !view.expandedStacks.has(head)) return;
+  const s = computeGraphLayout().sleeves.find((sl) => sl.head === head);
+  if (!s || !s.scrolls) return;
+  const row = s.rows.find((r) => r.kind === 'node' && r.id === id);
+  if (!row) return;
+  let cur = sleeveScroll.get(head) || 0;
+  if (row.top < cur + SLEEVE_PAD) cur = Math.max(0, row.top - SLEEVE_PAD);
+  else if (row.top + ROW_H > cur + s.viewH - SLEEVE_PAD) cur = row.top + ROW_H - s.viewH + SLEEVE_PAD;
+  sleeveScroll.set(head, Math.max(0, Math.min(cur, s.contentH - s.viewH)));
+}
+
+// Center the viewport on a node (used by keyboard navigation and the search).
+function centerOn(id) {
+  const p = computeGraphLayout().pos.get(id);
+  if (!p) return;
+  let y = p.y;
+  if (p.sleeve) y -= (sleeveScroll.get(p.sleeve.head) || 0);
+  const w = svgEl.clientWidth || 800, h = svgEl.clientHeight || 600;
+  camera.tx = w / 2 - p.x * camera.scale;
+  camera.ty = h / 2 - y * camera.scale;
 }
 
 const SVGNS = 'http://www.w3.org/2000/svg';
-function svgEl_(tag, attrs) {
+function svgEl_(tag, attrs, text) {
   const el = document.createElementNS(SVGNS, tag);
   for (const k in attrs) el.setAttribute(k, attrs[k]);
+  if (text != null) el.textContent = text;
   return el;
 }
+export const bookmarkCaption = (n) => n.wipe ? '⌫ wipe' + (n.name ? ' · ' + n.name : '') : '⚑ ' + (n.name || labelFor(n.id));
 
+// Every colour is a CSS class reading a --wc-* token (app.css, "graph screen"),
+// so a theme or a mode flip restyles the canvas without a relayout.
 export function layoutAndRender() {
-  const { glyphs, edges, treeTitles } = computeGraphLayout();
+  const { glyphs, edges, sleeves, treeTitles } = computeGraphLayout();
+  const filtering = isFiltering();
+  const dimNode = (n) => filtering && !matches(n);
   svgEl.innerHTML = '';
 
-  // SVG glyph colors are attributes, not CSS, so resolve each theme token against
-  // its own original literal via cssVar — unthemed it's pixel-identical; a theme
-  // that sets the token recolors the graph too.
-  const accent = (fb) => cssVar('--wc-accent', fb);
-  const accentDark = (fb) => cssVar('--wc-accent-dark', fb);
-  const gold = (fb) => cssVar('--wc-gold', fb);
-  const border = (fb) => cssVar('--wc-border', fb);
-  const muted = (fb) => cssVar('--wc-muted', fb);
-  const mono = (fb) => cssVar('--wc-mono', fb);
-
-  const rootG = svgEl_('g', { transform: `translate(${camera.tx},${camera.ty}) scale(${camera.scale})` });
+  const rootG = svgEl_('g', { transform: cameraTransform() });
   rootGEl = rootG;   // applyCamera moves THIS without recomputing the layout
   svgEl.appendChild(rootG);
 
-  // Edges first (under glyphs)
-  const edgesG = svgEl_('g', {});
+  // Edges first (under glyphs), then the folded ghost dots riding them.
+  const edgesG = svgEl_('g', { class: 'gv-edges' });
   rootG.appendChild(edgesG);
   for (const e of edges) {
-    let d;
-    if (e.turn) {
-      // rounded U-bend joining two serpentine legs at the shared top/bottom line
-      const r = 10, K = 30;
-      if (e.turn === 'bottom') {
-        d = `M ${e.ax} ${e.ay + r} C ${e.ax} ${e.ay + r + K}, ${e.bx} ${e.by + r + K}, ${e.bx} ${e.by + r}`;
-      } else {
-        d = `M ${e.ax} ${e.ay - r} C ${e.ax} ${e.ay - r - K}, ${e.bx} ${e.by - r - K}, ${e.bx} ${e.by - r}`;
+    const d = e.elbow
+      ? `M ${e.ax} ${e.ay} C ${e.ax} ${e.ay + DY * 0.55}, ${e.bx} ${e.by - DY * 0.55}, ${e.bx} ${e.by}`
+      : `M ${e.ax} ${e.ay} L ${e.bx} ${e.by}`;
+    edgesG.appendChild(svgEl_('path', { d, class: 'gv-edge' }));
+    const to = e.to;
+    if (!e.elbow && to && to.kind === 'node' && to.folded) {
+      const k = Math.min(GHOST_DOTS, to.folded);
+      // A node or stack above carries a label under it; a sleeve does not.
+      const top = e.ay + (e.from && e.from.kind ? LABEL_CLEAR : EDGE_CLEAR);
+      const bottom = e.by - (to.bookmarked ? CAPTION_CLEAR : EDGE_CLEAR);
+      const band = Math.max(0, bottom - top);
+      for (let i = 1; i <= k; i++) {
+        edgesG.appendChild(svgEl_('circle', {
+          cx: e.bx, cy: top + (band * (i - 0.5)) / k, r: 4, class: 'gv-ghost-dot' + (dimNode(to.node) ? ' dim' : ''),
+        }));
       }
-    } else if (e.line) {
-      // generic center-to-center connector (serpentine legs), any direction
-      const dx = e.bx - e.ax, dy = e.by - e.ay, len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len, uy = dy / len, gap = 11;
-      d = `M ${e.ax + ux * gap} ${e.ay + uy * gap} L ${e.bx - ux * gap} ${e.by - uy * gap}`;
-    } else if (e.elbow) {
-      d = `M ${e.ax} ${e.ay + NODE_R} C ${e.ax} ${e.ay + DY * 0.55}, ${e.bx} ${e.by - DY * 0.55}, ${e.bx} ${e.by - NODE_R}`;
-    } else {
-      d = `M ${e.ax} ${e.ay + NODE_R} L ${e.bx} ${e.by - NODE_R}`;
     }
-    edgesG.appendChild(svgEl_('path', { d, fill: 'none', stroke: muted('#8b949e'), 'stroke-width': '1.5' }));
   }
 
-  // Tree titles (one per top-level graph), above each column. The heading is the
-  // graph's handle: click it to rename the graph (it names the root node), drag it
-  // to place the graph on the canvas.
-  for (const tt of (treeTitles || [])) {
-    const grp = svgEl_('g', { class: 'gv-tree-title' });
+  // Tree titles: "◇ name" (or "◇ graph nX") + "N turns ✎". The heading is the
+  // graph's handle: click it to rename (it names the root node), drag to move.
+  for (const tt of treeTitles) {
+    const grp = svgEl_('g', { class: 'gv-tree-title' + (tt.name ? ' named' : '') });
     grp.dataset.graphRoot = tt.rootId;
-    grp.style.cursor = 'grab';
-    const caption = (tt.name ? '🔖 ' : '') + (tt.name || ('graph ' + tt.graphLabel));
-    // A transparent pad so the heading is a target, not a 12px glyph outline.
-    const hitW = Math.max(96, caption.length * 8 + 40);
-    grp.appendChild(svgEl_('rect', {
-      x: tt.x - hitW / 2, y: tt.y - 48, width: hitW, height: tt.name ? 34 : 20, rx: 10,
-      fill: 'transparent', class: 'gv-tt-hit',
-    }));
-    const hint = svgEl_('title', {});
-    hint.textContent = 'Click to rename this graph · drag to move it';
-    grp.appendChild(hint);
-    const t = svgEl_('text', {
-      x: tt.x, y: tt.y - 34, 'text-anchor': 'middle',
-      'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '12', 'font-weight': '700',
-      fill: tt.name ? gold('#9a6700') : muted('#57606a'),
-    });
-    t.textContent = caption;
+    const caption = '◇ ' + (tt.name || ('graph ' + tt.graphLabel));
+    const sub = `${tt.count} turn${tt.count === 1 ? '' : 's'}`;
+    const hitW = Math.max(120, (caption.length + sub.length) * 7 + 48);
+    const ty = tt.y - 22;
+    grp.appendChild(svgEl_('rect', { x: tt.x - hitW / 2, y: ty - 16, width: hitW, height: 24, rx: 4, class: 'gv-tt-hit' }));
+    grp.appendChild(svgEl_('title', {}, 'Click to rename this graph · drag to move it'));
+    const t = svgEl_('text', { x: tt.x, y: ty, 'text-anchor': 'middle', class: 'gv-tt' });
+    t.appendChild(svgEl_('tspan', { class: 'gv-tt-name' }, caption));
+    t.appendChild(svgEl_('tspan', { class: 'gv-tt-sub', dx: '8' }, sub));
+    t.appendChild(svgEl_('tspan', { class: 'gv-tt-pencil', dx: '6' }, '✎'));
     grp.appendChild(t);
-    const pencil = svgEl_('text', {
-      x: tt.x + hitW / 2 - 10, y: tt.y - 33, 'text-anchor': 'middle', class: 'gv-tt-pencil',
-      'font-family': 'ui-sans-serif, system-ui', 'font-size': '11', fill: muted('#8b949e'),
-    });
-    pencil.textContent = '✎';
-    grp.appendChild(pencil);
-    if (tt.name) {
-      const sub = svgEl_('text', {
-        x: tt.x, y: tt.y - 21, 'text-anchor': 'middle',
-        'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '9', fill: muted('#8b949e'),
-      });
-      sub.textContent = tt.graphLabel;
-      grp.appendChild(sub);
-    }
     rootG.appendChild(grp);
   }
 
+  const rootIds = new Set(treeTitles.map((t) => t.rootId));
   for (const g of glyphs) {
-    const grp = svgEl_('g', { class: 'glyph' });
-    grp.style.cursor = 'pointer';
-    if (g.kind === 'collapse') {
+    if (g.kind === 'stack') {
+      const members = g.ids.map((id) => nodeById(id)).filter(Boolean);
+      const dim = filtering && !members.some(matches);
+      const grp = svgEl_('g', { class: 'glyph gv-stack' + (dim ? ' dim' : '') });
       grp.dataset.stackHead = g.head;
-      const w = 50, h = 22;
-      grp.appendChild(svgEl_('rect', {
-        x: g.x - w / 2, y: g.y - h / 2, width: w, height: h, rx: 11,
-        fill: '#eef2f6', stroke: border('#6e7781'), 'stroke-width': '1.3',
-      }));
-      const t = svgEl_('text', {
-        x: g.x, y: g.y + 4, 'text-anchor': 'middle',
-        'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '11', 'font-weight': '700', fill: muted('#57606a'),
-      });
-      t.textContent = '⊟ ×' + g.count;
-      grp.appendChild(t);
+      grp.appendChild(svgEl_('title', {}, `${g.count} turns · ${g.headLabel} → ${g.tailLabel} · click to expand`));
+      for (let i = 2; i >= 1; i--) {
+        grp.appendChild(svgEl_('rect', {
+          x: g.x - STACK_W / 2 + i * 3, y: g.y - STACK_H / 2 - i * 3, width: STACK_W, height: STACK_H, rx: 6, class: 'gv-card-back',
+        }));
+      }
+      grp.appendChild(svgEl_('rect', { x: g.x - STACK_W / 2, y: g.y - STACK_H / 2, width: STACK_W, height: STACK_H, rx: 6, class: 'gv-card' }));
+      grp.appendChild(svgEl_('text', { x: g.x, y: g.y + 4, 'text-anchor': 'middle', class: 'gv-card-count' }, '×' + g.count));
+      grp.appendChild(svgEl_('text', { x: g.x, y: g.y + STACK_H / 2 + 14, 'text-anchor': 'middle', class: 'gv-card-range' },
+        g.headLabel === g.tailLabel ? g.headLabel : `${g.headLabel}…${g.tailLabel}`));
       rootG.appendChild(grp);
       continue;
     }
-    if (g.kind === 'stack') {
-      grp.dataset.stackHead = g.head;
-      // stacked-cards look: two offset shadow rects behind the front rect
-      for (let i = 2; i >= 1; i--) {
-        grp.appendChild(svgEl_('rect', {
-          x: g.x - STACK_W / 2 + i * 3, y: g.y - STACK_H / 2 - i * 3,
-          width: STACK_W, height: STACK_H, rx: 6,
-          fill: '#fff', stroke: border('#c4ccd4'), 'stroke-width': '1.2',
-        }));
-      }
-      grp.appendChild(svgEl_('rect', {
-        x: g.x - STACK_W / 2, y: g.y - STACK_H / 2, width: STACK_W, height: STACK_H, rx: 6,
-        fill: '#f6f8fa', stroke: border('#6e7781'), 'stroke-width': '1.4',
-      }));
-      const count = svgEl_('text', {
-        x: g.x, y: g.y + 4, 'text-anchor': 'middle',
-        'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '12', 'font-weight': '700', fill: '#24292f',
-      });
-      count.textContent = '×' + g.count;
-      grp.appendChild(count);
-      const sub = svgEl_('text', {
-        x: g.x, y: g.y + STACK_H / 2 + 14, 'text-anchor': 'middle',
-        'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '9.5', fill: muted('#8c959f'),
-      });
-      sub.textContent = g.headLabel === g.tailLabel ? g.headLabel : `${g.headLabel}…${g.tailLabel}`;
-      grp.appendChild(sub);
-    } else {
-      grp.dataset.id = g.id;
-      const isActive = g.id === view.activeId;
-      const isViewed = g.id === view.viewedId && g.id !== view.activeId;
-      const isSelected = g.id === view.selectedNodeId;
-      const isLocked = view.lock && g.id === view.activeId;
-      const r = g.plain ? 9 : NODE_R;
-
-      if (isLocked) {
-        const ring = svgEl_('circle', { cx: g.x, cy: g.y, r: r + 6, fill: 'none', stroke: '#bf870080', 'stroke-width': '4' });
-        ring.innerHTML = `<animate attributeName="r" values="${r + 6};${r + 12};${r + 6}" dur="1.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0.2;1" dur="1.4s" repeatCount="indefinite"/>`;
-        grp.appendChild(ring);
-      }
-      if (isViewed) {
-        grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r: r + 6, fill: 'none', stroke: gold('#d4a72c'), 'stroke-width': '3' }));
-      }
-      if (isSelected) {
-        grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r: r + 9, fill: 'none', stroke: accent('#0969da'), 'stroke-width': '2', 'stroke-dasharray': '3 3' }));
-      }
-
-      grp.appendChild(svgEl_('circle', {
-        cx: g.x, cy: g.y, r,
-        fill: isActive ? accent('#0969da') : (g.bookmarked ? '#fff8e6' : '#ffffff'),
-        stroke: isActive ? accentDark('#0550ae') : (g.bookmarked ? gold('#d4a72c') : border('#6e7781')),
-        'stroke-width': g.plain ? '1.2' : '1.5',
-      }));
-
-      const label = svgEl_('text', {
-        x: g.x, y: g.y + r + 14, 'text-anchor': 'middle',
-        'font-family': mono('ui-monospace, Menlo, monospace'), 'font-size': '10.5', fill: muted('#444'),
-      });
-      label.textContent = g.label;
-      grp.appendChild(label);
-
-      if (g.bookmarked && g.name) {
-        const badge = svgEl_('g', {});
-        const padX = 6, bw = Math.min(120, 7 * g.name.length + padX * 2), bx = g.x + r + 6, by = g.y - 9;
-        badge.appendChild(svgEl_('rect', { x: bx, y: by, width: bw, height: 18, rx: 9, fill: '#fff8e6', stroke: gold('#d4a72c'), 'stroke-width': '1' }));
-        const bt = svgEl_('text', { x: bx + padX, y: by + 13, 'font-family': 'ui-sans-serif, system-ui', 'font-size': '11', fill: gold('#9a6700') });
-        bt.textContent = '🔖 ' + g.name;
-        badge.appendChild(bt);
-        grp.appendChild(badge);
-      } else if (!g.plain && g.trigger) {
-        const sub = svgEl_('text', {
-          x: g.x, y: g.y + r + 26, 'text-anchor': 'middle',
-          'font-family': 'ui-sans-serif, system-ui', 'font-size': '9.5', fill: muted('#888'),
-        });
-        sub.textContent = g.trigger.length > 28 ? g.trigger.slice(0, 26) + '…' : g.trigger;
-        grp.appendChild(sub);
-      }
+    const isActive = g.id === view.activeId;
+    const isViewed = g.id === view.viewedId && !isActive;
+    const isSelected = g.id === view.selectedNodeId;
+    const isLocked = !!view.lock && isActive;
+    const cls = ['glyph', 'gv-node'];
+    if (isActive) cls.push('active');
+    if (g.bookmarked) cls.push('bm');
+    if (g.wipe) cls.push('wipe');
+    if (g.plain) cls.push('plain');
+    if (isViewed) cls.push('viewed');
+    if (isSelected) cls.push('selected');
+    if (dimNode(g.node)) cls.push('dim');
+    const grp = svgEl_('g', { class: cls.join(' ') });
+    grp.dataset.id = g.id;
+    // hover tooltip = the trigger (+ how many turns folded onto it)
+    grp.appendChild(svgEl_('title', {}, (g.trigger || g.label) + (g.folded ? ` · ${g.folded} folded turn${g.folded === 1 ? '' : 's'}` : '')));
+    const r = g.r;
+    if (isLocked) {
+      const ring = svgEl_('circle', { cx: g.x, cy: g.y, r: r + 6, class: 'gv-lock-ring' });
+      ring.innerHTML = `<animate attributeName="r" values="${r + 6};${r + 12};${r + 6}" dur="1.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0.2;1" dur="1.4s" repeatCount="indefinite"/>`;
+      grp.appendChild(ring);
+    }
+    if (isViewed) grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r: r + 5, class: 'gv-viewed-ring' }));
+    if (isSelected) grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r: r + 7, class: 'gv-sel-ring' }));
+    grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r, class: 'gv-body' }));
+    grp.appendChild(svgEl_('text', { x: g.x, y: g.y + r + 14, 'text-anchor': 'middle', class: 'gv-lbl' }, g.label));
+    // The bookmark caption sits ABOVE the node. A root's name is the tree title
+    // already, so it is not repeated there.
+    if (g.bookmarked && !rootIds.has(g.id)) {
+      grp.appendChild(svgEl_('text', { x: g.x, y: g.y - r - 7, 'text-anchor': 'middle', class: 'gv-bm' }, bookmarkCaption(g.node)));
+    }
+    if (g.folded) {
+      grp.appendChild(svgEl_('text', { x: g.x + r + 5, y: g.y + 4, class: 'gv-fold-n' }, '⋯' + g.folded));
     }
     rootG.appendChild(grp);
   }
+
+  renderSleeves(sleeves, filtering, dimNode);
+  applyCamera();
+  updateHead();
+  if (logRenderer && isLogMode()) logRenderer();
 
   const hitGlyph = (target) => {
     let el = target;
@@ -1168,46 +1120,102 @@ export function layoutAndRender() {
   svgEl.onclick = (e) => {
     const el = hitGlyph(e.target);
     if (!el) return;
-    if (el.dataset.stackHead) {
-      if (view.expandedStacks.has(el.dataset.stackHead)) view.expandedStacks.delete(el.dataset.stackHead);
-      else view.expandedStacks.add(el.dataset.stackHead);
-      layoutAndRender();
-    } else if (el.dataset.id) {
-      selectNode(el.dataset.id); // select only — no surface change, no stack split
-    }
+    if (el.dataset.stackHead) toggleStack(el.dataset.stackHead);
+    else if (el.dataset.id) selectNode(el.dataset.id); // select only — no surface change
   };
-  // double-click → fully open the node (detached read-only on the main surface)
+  // double-click → open the node on the surface (a read-only preview)
   svgEl.ondblclick = (e) => {
     const el = hitGlyph(e.target);
-    if (el && el.dataset.id) {
-      closeFloatPreview();
-      view.selectedNodeId = el.dataset.id;
-      previewNode(el.dataset.id);
-      closeOverlay();
-    }
+    if (el && el.dataset.id) { closeFloatPreview(); openNode(el.dataset.id); }
   };
 }
 
+function toggleStack(head) {
+  if (view.expandedStacks.has(head)) view.expandedStacks.delete(head);
+  else view.expandedStacks.add(head);
+  layoutAndRender();
+}
+
+/* ---------- sleeves: an expanded ×N stack, in place ----------
+   HTML, not SVG, because it scrolls inside itself; it lives in #gv-world, which
+   rides the same camera transform as the SVG. Header: ⊟ (collapse) + "N turns ·
+   first → last" + the window ("1–8 of N"); body: the trunk line continuing
+   through, one selectable row per real node and the faint ghost rows of the turns
+   folded onto it; footer (only when it scrolls): "N more ↓" / "end of run". The
+   copy never says "no surface change" — every row is a turn that DID change it. */
+function renderSleeves(sleeves, filtering, dimNode) {
+  if (!worldEl) return;
+  worldEl.innerHTML = '';
+  for (const s of sleeves) {
+    const first = s.rows.find((r) => r.kind === 'node'), last = [...s.rows].reverse().find((r) => r.kind === 'node');
+    const el = document.createElement('div');
+    el.className = 'gv-sleeve' + (filtering && !s.ids.some((id) => matches(nodeById(id))) ? ' dim' : '');
+    el.dataset.stackHead = s.head;
+    Object.assign(el.style, { left: s.x + 'px', top: s.y + 'px', width: s.w + 'px', height: s.h + 'px' });
+    const rows = s.rows.map((r) => {
+      if (r.kind === 'ghost') {
+        const tip = r.reply ? ` title="${esc('reply: ' + r.reply)}"` : '';
+        return `<div class="gv-ghost${r.more ? ' more' : ''}" data-for="${esc(r.for)}"${tip}><span class="gdot"></span>` +
+          `<span class="k">folded</span><span class="txt">${esc(r.text)}</span></div>`;
+      }
+      const n = r.n;
+      const cls = ['gv-srow'];
+      if (r.id === view.selectedNodeId) cls.push('selected');
+      if (dimNode(n)) cls.push('dim');
+      const t = nodeTime(n);
+      return `<button type="button" class="${cls.join(' ')}" data-id="${esc(r.id)}" title="${esc(n.trigger_summary || n.label)}">` +
+        `<span class="dot"></span><span class="id">${esc(n.label || r.id)}</span>` +
+        `<span class="trig">${esc(n.trigger_summary || '')}</span><span class="t">${esc(t)}</span></button>`;
+    }).join('');
+    el.innerHTML =
+      `<button type="button" class="gv-sleeve-head" data-collapse title="Collapse">` +
+        `<span>⊟</span><span class="ttl">${s.ids.length} turns · ${esc(first.n.label)} → ${esc(last.n.label)}</span>` +
+        `<span class="sp"></span><span class="pos"></span></button>` +
+      `<div class="gv-sleeve-body" style="height:${s.viewH}px">` +
+        `<div class="gv-sleeve-scroll"><div class="gv-sleeve-list" style="height:${s.contentH}px">` +
+          `<div class="gv-sleeve-rail"></div>${rows}</div></div>` +
+        (s.scrolls ? '<div class="gv-fade top"></div><div class="gv-fade bot"></div>' : '') +
+      `</div>` +
+      (s.scrolls ? '<div class="gv-sleeve-foot"></div>' : '');
+    worldEl.appendChild(el);
+
+    const scroller = el.querySelector('.gv-sleeve-scroll');
+    const nodeRows = s.rows.filter((r) => r.kind === 'node');
+    const updateWindow = () => {
+      if (!s.scrolls) return;
+      const top = scroller.scrollTop || 0;
+      const visible = nodeRows.map((r, i) => ({ r, i }))
+        .filter(({ r }) => r.top + ROW_H > top + SLEEVE_PAD - 1 && r.top < top + s.viewH - SLEEVE_PAD + 1);
+      const a = visible.length ? visible[0].i + 1 : 1;
+      const b = visible.length ? visible[visible.length - 1].i + 1 : Math.min(SLEEVE_CAP, nodeRows.length);
+      el.querySelector('.pos').textContent = `${a}–${b} of ${nodeRows.length}`;
+      const more = nodeRows.length - b;
+      el.querySelector('.gv-sleeve-foot').textContent = more > 0 ? `${more} more ↓` : `end of run${a > 1 ? ` · ${a - 1} above` : ''}`;
+    };
+    scroller.scrollTop = sleeveScroll.get(s.head) || 0;
+    updateWindow();
+    scroller.addEventListener('scroll', () => { sleeveScroll.set(s.head, scroller.scrollTop); updateWindow(); });
+    // The wheel scrolls the run, not the canvas zoom, while it is over a sleeve
+    // that has somewhere to scroll.
+    el.addEventListener('wheel', (e) => { if (s.scrolls) e.stopPropagation(); });
+  }
+}
+
 // The ONE place that decides where the camera goes to put the whole graph in the
-// middle of the viewport. `pickScale` is the only thing its two callers differ
-// on: Fit chooses a scale that makes everything visible, the zoom badge resets
-// to a true 1:1. Everything else — the bounds, the centring translate, the
-// re-render, the badge — is shared, so the two can never drift into centring
-// the graph differently.
-//
-// This does NOT route through setZoom: setZoom preserves an anchor point (what a
-// wheel zoom wants) whereas centring deliberately discards the existing pan.
-// Both still end at updateZoomReadout, which is the invariant that matters —
-// the badge always reflects camera.scale.
+// middle of the viewport. `pickScale` is the only thing its two callers differ on:
+// Fit chooses a scale that makes everything visible, the zoom badge resets to a
+// true 1:1. Bounds include sleeves (they are wider than a glyph).
 function centerGraph(pickScale) {
-  const { glyphs } = computeGraphLayout();
-  if (!glyphs.length) return;
-  const xs = glyphs.map(g => g.x), ys = glyphs.map(g => g.y);
+  const { glyphs, sleeves } = computeGraphLayout();
+  if (!glyphs.length && !sleeves.length) return;
+  const xs = [], ys = [];
+  for (const g of glyphs) { xs.push(g.x); ys.push(g.y); }
+  for (const s of sleeves) { xs.push(s.x, s.x + s.w); ys.push(s.y, s.y + s.h); }
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
   const w = svgEl.clientWidth || 800, h = svgEl.clientHeight || 600;
   const scale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pickScale({
-    w, h, contentW: (maxX - minX) + 160, contentH: (maxY - minY) + 160,
+    w, h, contentW: (maxX - minX) + 160, contentH: (maxY - minY) + 200,
   })));
   camera.scale = scale;
   camera.tx = w / 2 - ((minX + maxX) / 2) * scale;
@@ -1221,89 +1229,68 @@ export function fitView() {
     Math.min(1.4, Math.max(0.35, Math.min(w / contentW, h / contentH))));
 }
 
-// Clicking the zoom percentage between − and +: back to a true 1:1, graph
-// centred. The readout is the affordance — the number you are being shown is
-// also the button that undoes whatever pan and zoom you wandered into.
+// Clicking the zoom percentage: back to a true 1:1, graph centred.
 export function resetView() { centerGraph(() => 1); }
 
-// Wire the overlay-internal controls: fit/close buttons, the document keydown
-// handler (Escape/arrows/space, active only while the overlay is open), the
-// set-active sidebar button, and the pan&zoom on the canvas wrap. NOT wired here:
-// the topbar's Graph button that opens the overlay (it lives in the topbar module
-// and calls the exported openOverlay). Called once at bootstrap.
+// Wire the overlay-internal controls. NOT wired here: the topbar's Graph button
+// (topbar module → openOverlay) and ◇ New (shell.js, which owns the new-graph
+// panel). Called once at bootstrap.
 export function initGraph() {
   $('overlay-close').addEventListener('click', closeOverlay);
   $('overlay-fit').addEventListener('click', fitView);
   document.addEventListener('keydown', (e) => {
-    // Escape is NOT handled here. It has one owner (shell.js handleEscape), which
-    // calls this module's escapeInOverlay() for the overlay's own layers — two
-    // document listeners both claiming the key is what made it unpredictable.
+    // Escape is NOT handled here: it has one owner (shell.js handleEscape), which
+    // calls escapeInOverlay() for the overlay's own layers.
     if (e.key === 'Escape') return;
-    // graph navigation keys — only while the graph overlay is open and not typing
     if (overlayEl.classList.contains('hidden')) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const id = view.selectedNodeId;
     if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection('up'); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection('down'); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); moveSelection('left'); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); moveSelection('right'); }
     else if (e.key === ' ') { e.preventDefault(); toggleFloatPreview(); }
-    else if (e.key === 'Enter') { e.preventDefault(); if (view.selectedNodeId) openNode(view.selectedNodeId); }
-    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (view.selectedNodeId) setActive(view.selectedNodeId); }
-    else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); if (view.selectedNodeId) exportNode(view.selectedNodeId); }
-    else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (view.selectedNodeId) bookmarkNode(view.selectedNodeId); }
-    else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (view.selectedNodeId) openReplay({ to: view.selectedNodeId }); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (id) openNode(id); }
+    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (id) setActive(id); }
+    else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); if (id) exportNode(id); }
+    else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (id) bookmarkNode(id); }
+    else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (id) openReplay({ to: id }); }
   });
 
-  // inspector action footer (delegated — footer is re-rendered per selection)
+  // inspector actions (delegated — the inspector is re-rendered per selection)
   $('gv-inspector').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-act]'); if (!b) return;
+    const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+    if (b.dataset.act === 'close') { deselect(); return; }
     const id = view.selectedNodeId; if (!id) return;
-    ({ active: () => setActive(id), open: () => openNode(id), glance: () => toggleFloatPreview(),
-       bookmark: () => bookmarkNode(id), export: () => exportNode(id), replay: () => openReplay({ to: id }) })[b.dataset.act]?.();
+    ({ active: () => setActive(id), branch: () => branchFrom(id), glance: () => toggleFloatPreview(),
+       bookmark: () => bookmarkNode(id), unmark: () => unmarkNode(id), export: () => exportNode(id),
+       replay: () => openReplay({ to: id }) })[b.dataset.act]?.();
   });
 
-  // scope toggle (All ⟷ This graph) — mutually exclusive segment
-  $('gv-scope').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-scope]'); if (!b) return;
-    historyScope = b.dataset.scope;
-    [...$('gv-scope').children].forEach((x) => x.classList.toggle('on', x === b));
-    renderHistory();
-  });
-  // Show/hide the collapsed no-change turns. Not a history filter — it changes
-  // what the whole view considers to exist — so it redraws rather than just
-  // re-listing.
-  const collapsedChip = $('gv-show-collapsed');
-  if (collapsedChip) collapsedChip.addEventListener('click', () => {
-    view.showCollapsed = !view.showCollapsed;
-    collapsedChip.classList.toggle('on', view.showCollapsed);
-    layoutAndRender();
-    renderHistory();
-    updateStatus();
-  });
-  // marked / forks — independent toggle filters (one, both, or neither)
+  // ⚑ Marked / ⑃ Forks — independent toggles; they dim, never hide
   $('gv-filters').addEventListener('click', (e) => {
     const c = e.target.closest('[data-filter]'); if (!c) return;
-    const f = c.dataset.filter;
-    if (historyFilters.has(f)) historyFilters.delete(f); else historyFilters.add(f);
-    c.classList.toggle('on');
-    renderHistory();
+    toggleFilter(c.dataset.filter);
   });
+  $('gv-collapse-all').addEventListener('click', () => { view.expandedStacks.clear(); layoutAndRender(); });
 
-  // jump box: filter the history list by label / trigger text
-  $('gv-jump').addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase().trim();
-    for (const row of $('gv-history-list').children) {
-      const txt = row.textContent.toLowerCase();
-      row.style.display = !q || txt.includes(q) ? '' : 'none';
-    }
+  // jump search: dims non-matches as you type; ↵ selects + centres the next hit
+  const jump = $('gv-jump');
+  jump.addEventListener('input', () => setQuery(jump.value));
+  jump.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); jumpToNextMatch(); } });
+
+  // sleeves: ⊟ collapses, a row selects, a double-click opens
+  worldEl.addEventListener('click', (e) => {
+    const head = e.target.closest('[data-collapse]');
+    if (head) { toggleStack(head.closest('.gv-sleeve').dataset.stackHead); return; }
+    const row = e.target.closest('.gv-srow');
+    if (row) selectNode(row.dataset.id);
   });
-
-  // Graph / Log mode toggle
-  $('gv-mode').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-mode]'); if (!b) return;
-    [...$('gv-mode').children].forEach((x) => x.classList.toggle('on', x === b));
-    overlayEl.classList.toggle('log-mode', b.dataset.mode === 'log');
+  worldEl.addEventListener('dblclick', (e) => {
+    const row = e.target.closest('.gv-srow');
+    if (row) { closeFloatPreview(); openNode(row.dataset.id); }
   });
 
   // the one name field (graph rename + node bookmark) — see openNamePanel
@@ -1311,31 +1298,28 @@ export function initGraph() {
   onEl('btn-gv-name-go', 'click', commitName);
   onEl('btn-gv-name-cancel', 'click', closeNamePanel);
   onEl('gv-name-input', 'keydown', (e) => {
-    // Escape here is the field's own (an editable chrome field owns its Escape,
-    // like #bookmark-name / #new-graph-name); stop it before the document owner
-    // reads it as "close the overlay".
+    // Escape here is the field's own; stop it before the document owner reads it
+    // as "close the overlay".
     if (e.key === 'Enter') { e.preventDefault(); commitName(); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeNamePanel(); }
   });
 
-  // zoom controls — both go through setZoom, the one owner of "change the zoom"
+  // zoom controls — all go through setZoom / centerGraph
   $('gv-zoom-pct').addEventListener('click', resetView);
   $('gv-zoom-in').addEventListener('click', () => setZoom(camera.scale * 1.2));
   $('gv-zoom-out').addEventListener('click', () => setZoom(camera.scale / 1.2));
 
   // pan, graph placement & zoom
-  // Pointer events, not mouse events: a touch drag never produces mousemove, so
-  // the canvas could not be panned (or a graph placed) on a phone or tablet at
-  // all. One pointer drives it — the first one down; a second finger is ignored
-  // rather than yanking the camera between two contact points — and the canvas
-  // declares `touch-action: none` (app.css) so the browser hands the drag to us
-  // instead of scrolling or zooming the page with it.
+  // Pointer events, not mouse events: a touch drag never produces mousemove. One
+  // pointer drives it — the first one down; a second finger is ignored rather
+  // than yanking the camera between two contact points — and the canvas declares
+  // `touch-action: none` (app.css) so the browser hands the drag to us.
   (() => {
-    const wrap = document.querySelector('.graph-canvas-wrap');
+    const wrap = svgEl.parentElement;
     let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
     let dragPointer = null;   // the pointerId that owns the current pan / heading drag
-    // Dragging a graph HEADING moves that tree; dragging empty canvas still pans;
-    // a glyph still owns its own click. One pointerdown, three destinations.
+    // Dragging a graph HEADING moves that tree; dragging empty canvas pans; a
+    // glyph or a sleeve owns its own click. One pointerdown, three destinations.
     let titleDrag = null;
     const DRAG_SLOP = 4; // px before a press on the heading counts as a drag, not a click
     const mine = (e) => dragPointer == null || e.pointerId == null || e.pointerId === dragPointer;
@@ -1343,11 +1327,10 @@ export function initGraph() {
     wrap.addEventListener('pointerdown', (e) => {
       if (!e.target.closest) return;
       if (e.button != null && e.button > 0) return;     // primary button / touch / pen only
-      // A second finger mid-drag is ignored — the first one owns it. (Only a
-      // DIFFERENT pointer: a mouse whose pointerup was lost outside the window
-      // presses again with the same id, and must be able to start over.)
+      // A second finger mid-drag is ignored (only a DIFFERENT pointer: a mouse
+      // whose pointerup was lost presses again with the same id).
       if (dragPointer != null && e.pointerId !== dragPointer) return;
-      if (e.target.closest('.glyph')) return;
+      if (e.target.closest('.glyph') || e.target.closest('.gv-sleeve')) return;
       const heading = e.target.closest('.gv-tree-title');
       if (heading && heading.dataset.graphRoot) {
         const [ox, oy] = offsetFor(heading.dataset.graphRoot);
@@ -1358,8 +1341,6 @@ export function initGraph() {
       }
       panning = true; sx = e.clientX; sy = e.clientY; stx = camera.tx; sty = camera.ty;
       dragPointer = e.pointerId ?? null;
-      // Keep receiving this pointer's moves and its release even once it leaves
-      // the canvas (or the window), so a pan cannot be left stuck on.
       try { wrap.setPointerCapture(e.pointerId); } catch {}
     });
     const endDrag = (e, cancelled) => {

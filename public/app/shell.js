@@ -4,9 +4,10 @@
 // the proximity queue rail — live since channels landed: it shows the queued
 // wake items public/app/queue.js maintains, and Q pins it open.
 import { $ } from './state.js';
-import { toggleMode, modeToggleable } from './theme.js';
+import { toggleMode, modeToggleable, effectiveMode, syncModeToggle } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
+  returnToActive,
 } from './topbar.js';
 import { openOverlay, closeOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList, forwardEscapeFrom } from './graph-view.js';
 import { initReplay, openReplay, closeReplay, isReplayOpen, replayTargetLabel } from './replay.js';
@@ -14,7 +15,8 @@ import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './dra
 import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
-import { labelFor } from './labels.js';
+import { labelFor, nodeTime } from './labels.js';
+import { panes, unminimize, blockType } from './mounts.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
@@ -24,7 +26,7 @@ const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXT
 
 /* ---------- the dismiss layer (one engine for every chrome panel) ----------
    Every transient chrome panel — the More menu, Settings, New graph, Wipe, the
-   bookmark popover, the branch picker, the ⌘K palette, the shortcut legend and
+   bookmark popover, the ⌘K palette, the shortcut legend and
    the component drawer — is dismissed HERE. Before this each one had its own
    story (or none): clicking anywhere else, or moving focus away, left them open
    until the user happened to find Escape.
@@ -47,7 +49,6 @@ const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
 
 function closePanel(el) {
   if (!el) return;
-  if (el.id === 'branch-picker') { el.remove(); return; } // built per open, not reused
   // Same story: the comment composer / chooser / thread is built per open and
   // body-appended, so it is removed, not hidden — and comments.js owns the
   // reference, hence the hook rather than el.remove() here.
@@ -163,9 +164,17 @@ export function openSettings() {
   const p = $('settings-panel'); if (!p) return;
   closeAllPopovers(p); // one panel at a time (see the dismiss layer)
   p.classList.remove('hidden');
+  syncModeToggle();
   populateThemeSelect();
 }
 function initSettings() {
+  // Mode: the ◑ lever in words. toggleMode re-syncs both controls (theme.js
+  // syncModeToggle), and does nothing under a single-mode pack.
+  const seg = $('settings-mode');
+  if (seg) seg.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-mode]');
+    if (b && !b.disabled && b.dataset.mode !== effectiveMode()) toggleMode();
+  });
   const sel = $('settings-theme');
   if (sel) sel.addEventListener('change', async () => {
     await fetch('/api/theme/apply', {
@@ -199,6 +208,11 @@ function initNewGraph() {
   on('btn-new-graph-go', 'click', startNewGraph);
   on('btn-new-graph-cancel', 'click', () => $('new-graph-panel').classList.add('hidden'));
   on('new-graph-name', 'keydown', (e) => { if (e.key === 'Enter') startNewGraph(); else if (e.key === 'Escape') $('new-graph-panel').classList.add('hidden'); });
+  // The graph screen's ◇ New: the same panel (the name is optional — a graph can
+  // be named later by clicking its title on the canvas). The panel lives under the
+  // overlay on the stacking scale, so the graph closes first.
+  on('gv-new', 'click', () => { closeOverlay(); openNewGraph(); });
+  on('gv-log-new', 'click', () => { closeOverlay(); openNewGraph(); });   // the phone log's ◇
 }
 
 /* ---------- wipe surface ----------
@@ -206,13 +220,19 @@ function initNewGraph() {
    so the next committed node carries the label) — which was a bookmark nobody
    could name, because the wipe fired the instant the menu item was clicked.
    #wipe-panel is the same shape as #new-graph-panel: a name field, Cancel,
-   confirm. An EMPTY name still wipes and still bookmarks, just unlabelled. */
+   confirm. The field opens PREFILLED with a label that is true of every wipe
+   ("before cleanup") and selected, so ↵ takes it and typing replaces it. An
+   EMPTY name still wipes and still bookmarks, just unlabelled. */
+export const WIPE_DEFAULT_NAME = 'before cleanup';
 export function openWipe() {
   const panel = $('wipe-panel'); if (!panel) return;
   closeAllPopovers(panel);
   panel.classList.remove('hidden');
   const nameEl = $('wipe-name');
-  if (nameEl) { nameEl.value = ''; setTimeout(() => { if (!panel.classList.contains('hidden')) nameEl.focus(); }, 0); }
+  if (nameEl) {
+    nameEl.value = WIPE_DEFAULT_NAME;
+    setTimeout(() => { if (!panel.classList.contains('hidden')) { nameEl.focus(); nameEl.select(); } }, 0);
+  }
 }
 function closeWipe() { const p = $('wipe-panel'); if (p) p.classList.add('hidden'); }
 async function confirmWipe() {
@@ -261,37 +281,68 @@ function closePalette() {
   const p = $('cmd-palette'); if (p) p.classList.add('hidden');
   const inp = $('cmd-input'); if (inp) inp.blur(); // else focus lingers and swallows single-key shortcuts
 }
+// Jump to a block on the page: restore it if it was minimized, bring it into
+// view and flash its outline so the eye lands on it.
+function revealBlock(id) {
+  const p = panes.get(id);
+  if (!p) return;
+  unminimize(id);
+  const w = p.wrapper;
+  if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  w.classList.remove('pane-flash');
+  void w.offsetWidth;            // restart the animation on a repeat jump
+  w.classList.add('pane-flash');
+  setTimeout(() => w.classList.remove('pane-flash'), 1400);
+}
+
+// Typed rows, as the design draws them (Theme §4c): a KIND column (node / block
+// / command — "section" arrives with the page model), the label, and a hint on
+// the right — a node's time (labels.js nodeTime), a block's type, a command's key. Every field is
+// set as text (renderPalette), because node names and block titles are user- or
+// agent-supplied.
 async function buildPalette(q) {
   const ql = q.toLowerCase();
   const cmds = [
-    { kind: 'cmd', label: 'New pane', run: () => openDrawer() },
-    { kind: 'cmd', label: 'Component packs…', run: openDrawerManage },
-    { kind: 'cmd', label: 'Open graph', run: openOverlay },
-    { kind: 'cmd', label: 'New graph', run: openNewGraph },
-    { kind: 'cmd', label: 'Wipe surface', run: openWipe },
-    { kind: 'cmd', label: 'Export node', run: doExport },
-    ...(replayTargetLabel() ? [{ kind: 'cmd', label: `Replay to ${replayTargetLabel()}`, run: () => openReplay() }] : []),
-    { kind: 'cmd', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', run: toggleMode },
-    { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
-    { kind: 'cmd', label: 'Settings', run: openSettings },
-    { kind: 'cmd', label: 'Sessions…', run: openSessions },
+    { kind: 'command', label: 'Add a block…', key: 'N', run: () => openDrawer() },
+    { kind: 'command', label: 'Component packs…', run: openDrawerManage },
+    { kind: 'command', label: 'Open graph', key: 'G', run: openOverlay },
+    { kind: 'command', label: 'New graph', run: openNewGraph },
+    { kind: 'command', label: 'Wipe surface', run: openWipe },
+    { kind: 'command', label: 'Export node', run: doExport },
+    ...(replayTargetLabel() ? [{ kind: 'command', label: `Replay to ${replayTargetLabel()}`, key: 'R', run: () => openReplay() }] : []),
+    { kind: 'command', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', key: 'T', run: toggleMode },
+    { kind: 'command', label: 'Pin comment', key: 'C', run: togglePinMode },
+    { kind: 'command', label: 'Settings', run: openSettings },
+    { kind: 'command', label: 'Sessions…', key: 'S', run: openSessions },
   ];
+  // The blocks on the page now — the design's "block" rows. What is SHOWN
+  // (panes), so while previewing an older node these are that node's blocks.
+  const blocks = [...panes].map(([id, p]) => ({
+    kind: 'block',
+    label: p.title && p.title !== id ? `${id} · ${p.title}` : id,
+    hint: blockType(p.spec && p.spec.params, p.spec && p.spec.component) || (p.pane_state.minimized ? 'minimized' : ''),
+    run: () => revealBlock(id),
+  }));
   // The display topology (graph-view.displayNodeList), not view.graphCache.nodes:
   // every other viewer surface reads what the DAG draws, and a palette row for a
   // collapsed turn previewed a node with no drawn children — the topbar's ↓ dead,
   // and only displayParentOf's raw fallback to get back out of it.
-  const nodes = displayNodeList().map(n => ({
-    kind: 'node', label: `${labelFor(n.id)}${n.name ? ' · ' + n.name : ''}`, run: () => previewNode(n.id),
-  }));
+  const nodes = displayNodeList().map(n => {
+    const what = n.name || n.trigger_summary || '';
+    return { kind: 'node', label: `${labelFor(n.id)}${what ? ' · ' + what : ''}`, hint: nodeTime(n), run: () => previewNode(n.id) };
+  });
   // The ONE component cache (public/app/components.js). This module used to
   // memoise its own and never invalidate it, so a component saved mid-session —
   // or a whole pack installed from the drawer — stayed invisible here until the
-  // page was reloaded.
+  // page was reloaded. Spawning one is a command ("Add block · name").
   const comps = (await componentList()).map(c => ({
-    kind: 'component', label: c.name, run: () => spawnComponent(c),
+    kind: 'command', label: `Add block · ${c.name}`, hint: c.builtin ? 'built in' : '', run: () => spawnComponent(c),
   }));
-  const all = [...cmds, ...nodes, ...comps];
-  paletteItems = ql ? all.filter(i => i.label.toLowerCase().includes(ql)) : all;
+  const all = [...cmds, ...blocks, ...nodes, ...comps];
+  // The kind and hint are searchable too: "block" lists the page's blocks, a
+  // time finds a node, a type finds its blocks.
+  const hay = (i) => `${i.kind} ${i.label} ${i.hint || ''} ${i.key || ''}`.toLowerCase();
+  paletteItems = ql ? all.filter(i => hay(i).includes(ql)) : all;
   paletteSel = 0;
   renderPalette();
 }
@@ -313,6 +364,7 @@ function renderPalette() {
     row.id = `cmd-opt-${i}`;
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(i === paletteSel));
+    row.dataset.kind = it.kind;
     // textContent, not an innerHTML template: `it.label` carries a graph node's
     // `name`, which is user- or API-supplied text the server only trim()s. A
     // bookmark named `R&D <plan>` used to render half-swallowed, and one named
@@ -322,8 +374,15 @@ function renderPalette() {
     kindEl.className = 'kind';
     kindEl.textContent = it.kind;
     const labelEl = document.createElement('span');
+    labelEl.className = 'label';
     labelEl.textContent = it.label;
     row.append(kindEl, labelEl);
+    if (it.key || it.hint) {
+      const hint = document.createElement(it.key ? 'kbd' : 'span');
+      hint.className = 'hint';
+      hint.textContent = it.key || it.hint;
+      row.appendChild(hint);
+    }
     row.addEventListener('mousedown', (e) => { e.preventDefault(); runPalette(it); });
     list.appendChild(row);
   });
@@ -360,19 +419,54 @@ function toggleLegend(force) {
 // content (items, push, count) is owned by queue.js; this file only handles the
 // reveal/toggle chrome + the P shortcut.
 let railPinned = false;
-function setRail(open) { const r = $('queue-rail'); if (r) r.classList.toggle('open', open); }
+function setRail(open) {
+  const r = $('queue-rail'); if (r) r.classList.toggle('open', open);
+  // Under 760px the open rail IS the queue screen (app.css), so the bottom bar's
+  // Queue [n] turns into the way back: "‹ Page".
+  const bb = $('bb-queue');
+  if (bb) {
+    bb.setAttribute('aria-expanded', String(!!open));
+    bb.classList.toggle('on', !!open);
+    const label = bb.querySelector('.bb-queue-label'); if (label) label.textContent = open ? '‹ Page' : 'Queue';
+    bb.setAttribute('aria-label', open ? 'Back to the page' : 'Queue to Claude');
+  }
+}
 function initRail() {
   const rail = $('queue-rail');
   if (!rail) return;
-  rail.addEventListener('pointerenter', () => setRail(true));
-  rail.addEventListener('pointerleave', () => { if (!railPinned) setRail(false); });
+  // Hover is a mouse affordance. A finger "enters" on touchstart and "leaves"
+  // on lift, which opened and shut the rail inside one tap; touch takes the
+  // click-to-pin path below instead.
+  rail.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'touch') setRail(true); });
+  rail.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch' && !railPinned) setRail(false); });
   // queue.js raises push confirmations / rejections / recovery buttons inside
   // .rail-expanded. Give it the ability to PIN the rail open (not just reveal it —
   // the ack rejection lands 6s later, long after the pointer has left), so no
   // feedback is ever posted into a container the user can't see or click.
   setRailOpener(() => { railPinned = true; setRail(true); });
+  // The design's rail opens on a click as well as a hover (a touch screen has no
+  // hover), and its ESC chip is a real close — the same as Escape or Q.
+  const collapsed = rail.querySelector('.rail-collapsed');
+  if (collapsed) collapsed.addEventListener('click', () => { railPinned = true; setRail(true); });
+  const close = rail.querySelector('.rail-close');
+  if (close) close.addEventListener('click', () => { railPinned = false; setRail(false); });
 }
 function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
+
+/* ---------- the narrow bottom bar ----------
+   Under 760px (app.css) the topbar's ↑/↓, ↩ active and Graph move to a bar under
+   the thumb, beside Queue [n]. Nothing here decides anything of its own: ↑/↓ go
+   through stepNode (which clicks the topbar's buttons, so the drawn-topology rule
+   and the disabled state are theirs — topbar.updateChip mirrors them onto this
+   bar), ↩ active is returnToActive, and Queue is the rail's own pin toggle. */
+function initBottomBar() {
+  const on = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+  on('bb-up', () => stepNode('up'));
+  on('bb-down', () => stepNode('down'));
+  on('bb-return', () => returnToActive());
+  on('bb-graph', () => openOverlay());
+  on('bb-queue', () => toggleRail());
+}
 
 /* ---------- Escape: ONE owner, one precedence order ----------
    Escape used to be claimed by two document keydown listeners — this module's and
@@ -441,6 +535,7 @@ function initKeyboard() {
       case 'n': case 'N': e.preventDefault(); openDrawer(); break;   // still SPAWN — Library is the default tab
       case 't': case 'T': e.preventDefault(); toggleMode(); break;
       case 's': case 'S': e.preventDefault(); toggleSessions(); break;
+      case 'r': case 'R': e.preventDefault(); openReplay(); break;   // to the node on screen
       case 'c': case 'C': e.preventDefault(); togglePinMode(); break;
       case 'b': case 'B': e.preventDefault(); togglePopover('bookmark-pop', true); { const bm = $('bookmark-name'); if (bm) setTimeout(() => bm.focus(), 0); } break;
       case '[': e.preventDefault(); stepNode('up'); break;
@@ -464,6 +559,7 @@ export function initShell() {
   initMoreMenu();
   initPalette();
   initRail();
+  initBottomBar();
   initQueue();
   initWakePanel();
   // The replay overlay's two hand-offs, injected so it imports neither the

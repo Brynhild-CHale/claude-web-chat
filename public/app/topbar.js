@@ -1,13 +1,33 @@
-// Topbar: the view chip / node label, node navigation (up/down/branch), the
+// Topbar: the node label, the one status pill, node navigation (↑/↓), the
 // detached read-only preview (local to this browser, never broadcast), and the
 // bookmark / export / wipe actions. Owns the view-state transitions
 // (applyActive/applyLock/updateChip) every other module reads.
 import { view, $ } from './state.js';
 import { store } from './store.js';
-import { nodeById, labelFor, childrenOf } from './labels.js';
-import { fullReset, applySnapshot, panes, flushFormStates } from './mounts.js';
+import { nodeById, labelFor } from './labels.js';
+import { fullReset, applySnapshot, panes, syncReadonly } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
-import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf, requestSetActive } from './graph-view.js';
+import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
+import { isPhone } from './viewport.js';
+
+// The topbar's ONE status pill, in precedence order: the socket when it is not
+// live (a stale node label under a dead socket is worse than none), then the
+// gold "viewing nX" of a detached preview, then the turn lock — a 'wake' lock is
+// a channel-woken turn (turn-begin-on-push), labelled for what it is so the user
+// knows why the graph is briefly held — and otherwise "active nX".
+export function pillState() {
+  const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
+  if (view.conn !== 'live') {
+    return { cls: 'off', text: view.conn === 'reconnecting' ? 'reconnecting…' : 'connecting…' };
+  }
+  if (detached) return { cls: 'viewing', text: `viewing ${labelFor(view.viewedId)}` };
+  if (view.lock) {
+    return view.lock.author === 'wake'
+      ? { cls: 'locked channel', text: `channel turn ${labelFor(view.activeId)}` }
+      : { cls: 'locked', text: `locked ${labelFor(view.activeId)}` };
+  }
+  return { cls: '', text: `active ${labelFor(view.activeId)}` };
+}
 
 export function updateChip() {
   const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
@@ -16,37 +36,31 @@ export function updateChip() {
 
   const pill = $('active-pill');
   if (pill) {
-    if (detached) {
-      pill.className = 'active-pill viewing';
-      pill.textContent = `viewing ${labelFor(view.viewedId)}`;
-    } else {
-      pill.className = 'active-pill' + (view.lock ? ' locked' : '');
-      // A 'wake' lock is a channel-woken turn (turn-begin-on-push) — label it
-      // for what it is so the user knows why the graph is briefly held.
-      const lockLabel = view.lock ? (view.lock.author === 'wake' ? 'channel turn ' : 'locked ') : 'active ';
-      pill.textContent = lockLabel + labelFor(view.activeId);
-    }
+    const st = pillState();
+    pill.className = 'active-pill' + (st.cls ? ' ' + st.cls : '');
+    pill.textContent = st.text;
   }
-  const ra = $('btn-return-active'); if (rah(ra)) ra.style.display = detached ? '' : 'none';
-  const sa = $('btn-set-active-here'); if (rah(sa)) sa.style.display = detached ? '' : 'none';
+  const ra = $('btn-return-active'); if (ra) ra.style.display = detached ? '' : 'none';
+  // The narrow bottom bar carries the same ↩ active and ↑/↓ (shell.js wires them
+  // to these very buttons); it mirrors their state rather than deciding its own.
+  const bbReturn = $('bb-return'); if (bbReturn) bbReturn.style.display = detached ? '' : 'none';
 
   const cur = nodeById(view.viewedId);
-  // Two different questions, two topologies. ↑/↓ step to the previous/next turn
-  // the graph DRAWS — the same pair ArrowUp/ArrowDown performs in the overlay,
-  // and they used to disagree with it, navigating to nodes the DAG will not
-  // draw. ⑃ opens the raw commit children, which is what the branch picker is
-  // asking about.
+  // ↑/↓ step to the previous/next turn the graph DRAWS — the same pair
+  // ArrowUp/ArrowDown performs in the overlay, and they used to disagree with
+  // it, navigating to nodes the DAG will not draw. (The surface's old ▾ branch
+  // picker is gone: choosing among forks, and making a node active, happen on
+  // the graph screen — ⑃ Branch / Set active.)
   const drawnKids = displayChildrenOf(view.viewedId);
   const drawnParent = displayParentOf(view.viewedId);
-  const rawKids = childrenOf(view.viewedId);
   const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && drawnParent);
   const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = drawnKids.length === 0;
-  const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = rawKids.length > 1 ? '' : 'none';
+  const bbUp = $('bb-up'); if (bbUp) bbUp.disabled = !(cur && drawnParent);
+  const bbDown = $('bb-down'); if (bbDown) bbDown.disabled = drawnKids.length === 0;
 
   const bm = $('bookmark-name');
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
 }
-const rah = (el) => !!el; // small guard helper
 
 export function applyActive(id) {
   view.activeId = id;
@@ -99,50 +113,24 @@ export async function previewNode(id) {
   // this node aside as the live surface instead of rendering it. Entering a
   // preview is the act of putting a non-live node ON the DOM.
   fullReset({ mounts: node.mounts || [], store: node.store || {} });
+  syncReadonly();
   applyNodeTheme(node.theme || null, true);
   updateChip();
 }
 
-// ── branch-on-edit ──────────────────────────────────────────────────────────
-// The user edited a form while DETACHED on an older node (wc:edit-in-preview,
-// fired by the pane's delegated input/change/submit listeners). Silent re-aim:
-// the server auto-commits any dirty live state as a preserve node (nothing is
-// ever lost), then re-aims active onto the viewed node — so the user's edits
-// ride as uncommitted live state and the next commit lands as a BRANCH CHILD of
-// the node they were viewing, leaving the original and its downstream intact.
-// The on-screen DOM (the previewed node + the in-flight edit) IS the new live
-// state, so the transition is local — no re-render, no lost keystroke.
-let branchInFlight = false;
-export async function branchOnEdit() {
-  if (!view.previewing || branchInFlight) return;
-  const target = view.viewedId;
-  if (!target || target === view.activeId) return;
-  if (view.branchingTo === target) return; // already queued server-side; the 'branch-here' frame completes it
-  branchInFlight = true;
-  view.branchingTo = target;
-  let keepPending = false;
-  try {
-    const r = await fetch('/api/graph/branch-here', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: target }),
-    });
-    if (!r.ok) return; // 404 etc — cleared in finally
-    const body = await r.json().catch(() => ({}));
-    if (body.pending) {
-      // Claude is mid-turn: the server queued the re-aim (pending re-aim) and
-      // will apply it after the commit. Keep previewing; the eventual
-      // 'branch-here' WS frame completes the local transition.
-      keepPending = true;
-      showReaimNote("Claude is mid-turn — your edit branches here when the turn ends.");
-      return;
-    }
-    completeBranchTransition(target);
-  } catch {
-    // network hiccup: stay in preview; the next edit retries
-  } finally {
-    branchInFlight = false;
-    if (!keepPending && view.branchingTo === target && view.previewing) view.branchingTo = null;
-  }
+// ── the preview is read-only (plan §2b D2) ─────────────────────────────────
+// A previewed pane refuses edits (mounts.js guardReadonly) and says so here, in
+// the same in-page notice a queued re-aim uses. Editing an older node means
+// making it active on the graph screen (Set active / ⑃ Branch); the next edit or
+// render then commits as its child. This replaced branch-on-edit, which re-aimed
+// the graph the moment a previewed form was touched.
+export const READONLY_HINT = 'Read-only preview — set this node active in the graph to edit.';
+// A phone is a read-only viewer too (viewport.js); its writes go through the
+// queue, so that is where the note points.
+export const PHONE_READONLY_HINT = 'Read-only on a phone — add a comment and Push from the Queue.';
+function onReadonlyAttempt() {
+  if (view.previewing) showReaimNote(READONLY_HINT);
+  else if (isPhone()) showReaimNote(PHONE_READONLY_HINT);
 }
 
 /* ---------- leaving preview: ONE owner of the transition ----------
@@ -154,24 +142,24 @@ export async function branchOnEdit() {
    `previewing` is the flag state.js says GATES all writes, so a copy that drops
    out of step is a preview mutating the live node.
 
-   The core is unconditional; the three real variations are named options rather
-   than a switchboard:
-     activeId        this client now believes active is here (a set-active or a
-                     branch-here that has actually landed) — moves activeId AND
-                     viewedId with it.
+   The core is unconditional — including re-enabling the panes the read-only
+   preview marked (syncReadonly) — and the real variations are named options
+   rather than a switchboard:
+     activeId        this client now believes active is here (a set-active that
+                     has actually landed) — moves activeId AND viewedId with it.
      restoreSnapshot go back to the live surface captured on the way in:
                      re-render it, re-apply the active node's theme, aim viewed
                      at active. Consumes liveSnapshot before it is dropped.
-     flushForms      release the form values gated during the preview (the
-                     branch-on-edit path, whose on-screen DOM IS the new live
-                     state — so it deliberately does not re-render).
+   (A third, flushForms, released form values gated during the preview for
+   branch-on-edit; the preview is read-only now, so there are none to release.)
    Callers keep their own `body.pending` early return: whether a queued re-aim
    should leave preview AT ALL is the caller's question, not this one's. */
-export function leavePreview({ activeId = null, restoreSnapshot = false, flushForms = false } = {}) {
+export function leavePreview({ activeId = null, restoreSnapshot = false } = {}) {
   const snap = view.liveSnapshot;
   view.previewing = false;
   view.liveSnapshot = null;
   $('main').classList.remove('preview-readonly');
+  syncReadonly();
   if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
   if (restoreSnapshot) {
     view.viewedId = view.activeId;
@@ -180,53 +168,12 @@ export function leavePreview({ activeId = null, restoreSnapshot = false, flushFo
     if (snap) applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
-  if (flushForms) flushFormStates();
-}
-
-// The editing client's half of a branch-here: exit preview WITHOUT re-rendering
-// (the on-screen DOM — previewed node + in-flight edit — IS the new live
-// state), then flush the gated form values. Idempotent and shared by the
-// immediate path (POST response) and the deferred path (the 'branch-here' WS
-// frame after a pending re-aim applies) — whichever arrives first wins.
-export function completeBranchTransition(id) {
-  if (view.branchingTo !== id) return false;
-  view.branchingTo = null;
-  if (view.previewing && view.viewedId === id) {
-    leavePreview({ activeId: id, flushForms: true });
-    onGraphChanged();
-  }
-  return true;
 }
 
 export function returnToActive() {
   if (!view.previewing) { view.viewedId = view.activeId; updateChip(); return; }
   leavePreview({ restoreSnapshot: true });
   updateChip();
-}
-
-function showBranchPicker(kids, anchor) {
-  const existing = $('branch-picker');
-  if (existing) existing.remove();
-  if (!kids.length) return;
-  const pop = document.createElement('div');
-  pop.id = 'branch-picker';
-  pop.className = 'popover branch-picker';
-  const rect = anchor.getBoundingClientRect();
-  pop.style.left = rect.left + 'px';
-  pop.style.top = (rect.bottom + 4) + 'px';
-  pop.style.right = 'auto';
-  kids.forEach((k, i) => {
-    const b = document.createElement('button');
-    b.className = 'menu-item' + (i === 0 ? ' trunk' : '');
-    b.textContent = k.label + (i === 0 ? '  (trunk)' : '') + (k.name ? '  · ' + k.name : '');
-    b.addEventListener('click', () => { pop.remove(); previewNode(k.id); });
-    pop.appendChild(b);
-  });
-  document.body.appendChild(pop);
-  // Dismissal is the shell's one dismiss layer (shell.js initDismissLayer):
-  // #branch-picker carries `.popover`, so an outside pointerdown, a focus move
-  // or Escape removes it like every other chrome panel. It used to own a private
-  // mousedown listener — a second copy of the same concept.
 }
 
 // Export the node AS RENDERED: a detached preview exports that committed node,
@@ -272,22 +219,6 @@ export async function doWipe(name) {
   leavePreview();
 }
 
-// The third caller of the one set-active request. requestSetActive owns the POST
-// and both not-moved answers — the refusal note, and the queued re-aim that
-// stays detached because the turn-end apply broadcasts a reset landing
-// everywhere. The tail below is this caller's own: it aims THIS client at the
-// node and refetches that node's panes, where the overlay's two callers restore
-// the live surface and relay the DAG out.
-async function setActiveHere() {
-  const target = view.viewedId;
-  if (!target) return;
-  if (!await requestSetActive(target)) return;
-  leavePreview({ activeId: target });
-  const nr = await fetch('/api/graph/node/' + target);
-  if (nr.ok) { const node = await nr.json(); applySnapshot({ mounts: node.mounts || [], store: node.store || {} }); }
-  await onGraphChanged();
-}
-
 async function bookmark() {
   const id = view.viewedId || view.activeId;
   if (!id) return;
@@ -302,10 +233,8 @@ export function initTopbar() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
 
   on('btn-return-active', 'click', returnToActive);
-  on('btn-set-active-here', 'click', setActiveHere);
-  // Branch-on-edit: fired by a pane's delegated listeners (mounts.js) when the
-  // user edits a form while detached on an older node.
-  window.addEventListener('wc:edit-in-preview', branchOnEdit);
+  // A previewed pane refused an edit (mounts.js guardReadonly): say how to edit.
+  window.addEventListener('wc:readonly-attempt', onReadonlyAttempt);
 
   on('btn-up', 'click', async () => {
     await ensureGraph();
@@ -317,12 +246,6 @@ export function initTopbar() {
     const kids = displayChildrenOf(view.viewedId);   // the next turn as DRAWN — see updateChip
     if (kids.length) previewNode(kids[0].id);
   });
-  on('btn-branch', 'click', async (e) => {
-    await ensureGraph();
-    showBranchPicker(childrenOf(view.viewedId), $('btn-branch'));
-    e.stopPropagation();
-  });
-
   on('btn-graph', 'click', () => openOverlay());
   on('btn-theme-toggle', 'click', () => { toggleMode(); });
 

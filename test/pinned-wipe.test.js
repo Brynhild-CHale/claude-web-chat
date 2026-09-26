@@ -68,7 +68,7 @@ test('a wipe with surviving pinned panes STILL bookmarks the next node', async (
   assert.deepEqual(w.json.kept, ['keep'], 'a pane survived — the page is not empty');
 
   const g0 = (await api.get('/api/graph')).json;
-  assert.deepEqual(g0.pending_bookmark, { name: 'act two' }, 'the gesture bookmarked anyway');
+  assert.deepEqual(g0.pending_bookmark, { name: 'act two', wipe: true }, 'the gesture bookmarked anyway');
 
   await api.post('/api/turn-begin', { message: 'next' });
   await api.post('/api/render', { id: 'fresh', html: '<p>fresh</p>' });
@@ -85,12 +85,12 @@ test('wipe takes an optional label for the bookmark; absent still bookmarks unla
   await api.post('/api/render', { id: 'a', html: '<p>a</p>' });
   const named = await api.post('/api/graph/wipe', { name: '  release prep  ' });
   assert.equal(named.json.name, 'release prep', 'trimmed');
-  assert.deepEqual((await api.get('/api/graph')).json.pending_bookmark, { name: 'release prep' });
+  assert.deepEqual((await api.get('/api/graph')).json.pending_bookmark, { name: 'release prep', wipe: true });
 
   await api.post('/api/render', { id: 'b', html: '<p>b</p>' });
   const bare = await api.post('/api/graph/wipe', {});
   assert.equal(bare.json.name, '');
-  assert.deepEqual((await api.get('/api/graph')).json.pending_bookmark, { name: '' },
+  assert.deepEqual((await api.get('/api/graph')).json.pending_bookmark, { name: '', wipe: true },
     'an absent name still bookmarks — it just has no label');
 });
 
@@ -107,7 +107,7 @@ test('a wipe QUEUED during a turn carries its label through to the applied wipe'
   await api.post('/api/render', { id: 'b', html: '<p>b</p>' });
   const end = await api.post('/api/turn-end', { author: 'claude' });
   assert.deepEqual(end.json.reaim, { op: 'wipe', ok: true });
-  assert.deepEqual((await api.get('/api/graph')).json.pending_bookmark, { name: 'queued label' },
+  assert.deepEqual((await api.get('/api/graph')).json.pending_bookmark, { name: 'queued label', wipe: true },
     'the label survived the queue, not just the wipe');
 });
 

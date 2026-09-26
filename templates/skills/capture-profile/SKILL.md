@@ -98,7 +98,8 @@ shadowing is all-or-nothing (no field merge); offer to copy the global pane forw
   - **One payload, two modes.** Mark elements `data-wc-when="expanded"` or
     `data-wc-when="reduced"`; the platform collapses the off-mode ones. `render` gets
     the full `distilled` AND `ctx.reduced` (your `reduce()` output, or a default).
-    A fresh capture lands **reduced**; the user expands via the pane's ⊞ toggle.
+    A fresh capture lands **reduced**; the user expands via the pane's own "⊞ expand" control
+    (the platform adds it at the top of the pane — don't draw your own).
   - Reference `--wc-*` theme tokens so the pane themes with the surface.
 - `claude-web-chat profile dry-run <tmpdir> --capture <id> --mode reduced` and
   `--mode expanded` to see both renders. Optionally `render` each into a scratch

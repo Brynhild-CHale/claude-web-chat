@@ -150,8 +150,10 @@ function updateBadges(list) {
   const btn = $('btn-add');
   if (btn) {
     const n = (list || []).length;
-    btn.title = `Components — spawn a pane, manage packs · ${n}`;
-    btn.setAttribute('aria-label', `Components — spawn a pane, manage packs (${n}), shortcut N`);
+    // The topbar's copy (index.html), plus how many the library holds. The count
+    // is spelled out: "· 5" beside a shortcut read as a key to press.
+    btn.title = `Blocks — add from the library, manage packs · N · ${n} in the library`;
+    btn.setAttribute('aria-label', `Blocks — add from the library, manage packs (N), ${n} in the library`);
   }
   const badge = document.querySelector('#drawer-tabs [data-tab="manage"] .tab-badge');
   if (badge) {
@@ -234,10 +236,13 @@ function empty(text) { return el('div', 'palette-empty', text); }
 
 /* ── Library ──────────────────────────────────────────────────────────────── */
 
+// The design's order: what this project made first, the stock set last. A
+// builtin is seeded into the project tier (location 'local'), so THIS PROJECT
+// has to exclude it explicitly rather than rely on going second.
 const GROUPS = [
-  { key: 'builtin', label: 'BUILT-IN', match: (c) => c.builtin === true },
-  { key: 'local', label: 'THIS PROJECT', match: (c) => c.location === 'local' },
-  { key: 'system', label: 'ALL PROJECTS', match: (c) => c.location === 'system' },
+  { key: 'local', label: 'THIS PROJECT', match: (c) => c.location === 'local' && c.builtin !== true },
+  { key: 'system', label: 'ALL PROJECTS', match: (c) => c.location === 'system' && c.builtin !== true },
+  { key: 'builtin', label: 'BUILT IN', match: (c) => c.builtin === true },
 ];
 
 // Which pack (if any) installed this component — so a row can say where it came

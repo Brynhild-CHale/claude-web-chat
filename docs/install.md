@@ -68,7 +68,7 @@ Then **restart Claude Code** in the project: it reads `.mcp.json` at startup, an
 claude-web-chat open
 ```
 
-This starts the background server (if it isn't already running) and opens the surface in your browser. The port is per-project, starting at 5173 and walking upward, so a second project gets its own. It greets you with a **Nothing rendered yet** card — the empty state, listing the four keys worth knowing (`⌘K` commands, `N` components, `G` graph, `P` push). That's correct; nothing has been rendered yet.
+This starts the background server (if it isn't already running) and opens the surface in your browser. The port is per-project, starting at 5173 and walking upward, so a second project gets its own. It greets you with a **Nothing on the page yet** card — the empty state, with a prompt to try and the three keys worth knowing first (`G` the graph, `N` a block from the library, `?` every shortcut). That's correct; nothing has been rendered yet.
 
 > Prefer one command? `claude-web-chat launch` opens the surface *and* starts a Claude session together.
 
