@@ -28,6 +28,11 @@ user downloads and what Claude writes are the same bytes.
 - `'active'` — the default: where the next turn will commit;
 - `'live'` — the current *uncommitted* surface, mid-turn.
 
+Every place that takes a node ref — this export, `diff_nodes`
+(`GET /api/graph/diff`), and the replay path below — resolves it through one
+function, `resolveNodeRef` in `lib/server/domain/refs.js`, so the four forms
+mean the same thing everywhere. A stored id is tried before a label.
+
 An unknown ref is an error object, never a throw: the route answers 404 with
 `{ error }`, and the tool and the CLI report it.
 
@@ -54,6 +59,28 @@ still does so when the file is opened — documented, not solved.)
 
 Files land in `.web-chat/exports/<label>-<YYYYMMDD-HHMMSS>.html`, which is
 gitignored along with the rest of `.web-chat/`.
+
+## Replaying a lineage — which nodes, in what order
+
+A replay plays the surface forward node by node, from an earlier node down one
+lineage to a later one. Which nodes it plays is decided once, by
+`resolveReplayPath` (`lib/server/domain/replay-path.js`), and served read-only
+as `GET /api/replay/path?from=&to=&include_collapsed=1`:
+
+- `to` defaults to the active node; `from` defaults to the nearest **bookmarked**
+  node at or above `to`, else the root of its tree. Both take the ref forms
+  above except `live` — a replay is committed history. A `from` that is not an
+  ancestor of `to` is refused (400, `code:'not-ancestor'`).
+- It follows the graph **as the viewer draws it**: a node byte-identical to its
+  parent (the ones the viewer hides) is skipped, and its prompt — plus any turns
+  already folded onto it — rides in the next kept step's `folded[]`, so nothing
+  it said is lost. `include_collapsed=1` plays every commit instead. The two
+  endpoints are always played.
+- Each step is a caption: `{id, label, author, kind, prompt, reply, summary,
+  folded[], folded_count, created_at, dt_from_prev}`. `reply` is `null` on a
+  node that recorded no reply summary.
+- At most 200 steps; a longer lineage keeps the 200 nearest `to` and says
+  `truncated: true` with the full `total_steps`.
 
 ## Design history
 

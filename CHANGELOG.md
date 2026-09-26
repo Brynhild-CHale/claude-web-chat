@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /api/replay/path` — which nodes a replay plays, and what each one says.** The groundwork for replay: `resolveReplayPath` (`lib/server/domain/replay-path.js`) walks one lineage from `from` down to `to` (defaults: the active node, and the nearest bookmark at or above it, else the tree's root) the way the graph viewer draws it. A no-change node the viewer hides is skipped, and its prompt plus anything already folded onto it rides in the next kept step's `folded[]`, so nothing is lost. Each step is a caption — `{label, author, kind, prompt, reply, summary, folded[], created_at, dt_from_prev}` — capped at 200 steps (`truncated` says when). `from` must be an ancestor of `to`; `live` is refused.
+
+### Changed
+
+- **One node-reference resolver.** A label (`n1.7`), a stored id, `active` and `live` were resolved by two private copies — the export's `nodeForExport` and the diff route's `resolveRef` — each with its own label → id scan. Both now go through `resolveNodeRef` in `lib/server/domain/refs.js`, as does the new replay path. Behaviour is unchanged, error messages included.
+- **The node preview document moved to `lib/server/preview.js`.** `renderPreviewHtml` (what `/preview/node/:id`, graph thumbnails and the glance preview draw) now lives beside `themeLayers`, the one "global ⊕ node" theme resolution the preview and the export both used a copy of. `/preview/node/:id` serves through it unchanged; it is where replay frames will come from.
+
 ## [0.7.6] - 2026-09-18
 
 ### Upgrading from 0.7.5

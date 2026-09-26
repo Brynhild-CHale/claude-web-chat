@@ -180,6 +180,9 @@ were the only places they lived.
 | leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot, flushForms})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
 | walk or LIST the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts, the ⌘K palette | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses — and `displayNodeList()` for a surface that lists nodes rather than walking them | `view.graphCache.nodes`, the raw commit list (the palette read it, so a collapsed turn kept a row nothing could navigate out of), or `labels.childrenOf`, the RAW commit topology, which has one consumer by design: the ⑃ branch picker |
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
+| resolve a node reference (`n1.7`, a stored id, `active`, `live`) | `lib/server/domain/refs` `resolveNodeRef(graph, ref, {allowLive})` → `{ok, id, label, node}` \| `{ok:false, code, error}` (callers keep their own message per `code`), and `ancestorChain(graph, id)` for the raw lineage | a `computeLabels` scan for `label === ref`, or a private `resolveRef` in a route (export and diff each had one) |
+| draw a committed node as a page (graph thumbnails, glance, replay frames), or ask what theme it is drawn under | `lib/server/preview` `renderPreviewHtml(node, theme)` / `renderNodePreview(paths, node)` / `themeLayers(paths, node)` | a second preview document, or `resolveDefault` + `mergeTokens` re-derived at the call site |
+| decide which nodes a replay plays, and their captions | `lib/server/domain/replay-path` `resolveReplayPath(graph, {from, to, includeCollapsed})` | walk `parent_id` and re-apply `computeCollapse` yourself |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
@@ -814,7 +817,7 @@ and `main` / `status` / `overlay` are plausible things for Claude to name a pane
 so `RESERVED_IDS` names every id a host document resolves for itself. Nothing in
 it is transcribed by hand: `test/mount-engine.test.js` scans `public/index.html`
 for the static chrome, `public/app/*.js` for the `id="…"` / `.id = '…'` literals
-the shell builds lazily, and `lib/server/export.js` + `lib/server/routes/graph.js`
+the shell builds lazily, and `lib/server/export.js` + `lib/server/preview.js`
 for the chrome of the other two documents a pane host is written into — both do
 `host.id = m.id` with no free-id check of their own, so reserving `export-main`
 at the engine is what keeps a duplicate id out of an exported page. Any new
