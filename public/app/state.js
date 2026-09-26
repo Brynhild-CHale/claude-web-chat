@@ -6,6 +6,8 @@
 //   activeId       the committed active node (server-authoritative)
 //   viewedId       the node being viewed (null = viewing live/active)
 //   lock           the turn lock, or null (server-authoritative, read-only here)
+//   conn           the socket: 'connecting' | 'live' | 'reconnecting' (ws.js
+//                  writes it; the topbar's one status pill reads it)
 //   previewing     true while a detached node preview is up — GATES all writes
 //                  (store echo, pane:state, events) so a preview never mutates
 //                  the live node (risk #3)
@@ -17,6 +19,7 @@ export const view = {
   activeId: null,
   viewedId: null,
   lock: null,
+  conn: 'connecting',
   previewing: false,
   liveSnapshot: null,
   graphCache: null,

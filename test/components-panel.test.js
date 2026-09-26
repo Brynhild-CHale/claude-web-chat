@@ -176,7 +176,7 @@ test('the ＋ button declares the panel it controls — which is what makes it a
   const btn = $('btn-add');
   assert.equal(btn.getAttribute('aria-controls'), 'drawer');
   assert.equal(btn.getAttribute('aria-haspopup'), 'dialog');
-  assert.match(btn.getAttribute('title'), /spawn a pane, manage packs/);
+  assert.match(btn.getAttribute('title'), /add from the library, manage packs/);
   assert.equal(btn.textContent, '＋', 'the glyph stays — spawning is still the dominant action');
 });
 

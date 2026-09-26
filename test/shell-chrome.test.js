@@ -6,7 +6,7 @@
 //
 // Four defects are pinned here:
 //   (a) Every chrome panel — the ⋯ menu, Settings, New graph, the bookmark
-//       popover, the branch picker, the ⌘K palette, the shortcut legend, the
+//       popover, the ⌘K palette, the shortcut legend, the
 //       component drawer — opened and then stayed open forever. Clicking
 //       anywhere else, or moving focus away, dismissed none of them; only
 //       Escape did, and only if you knew.
@@ -590,7 +590,9 @@ test('declining to label still wipes, and still bookmarks', async () => {
   row.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
   await tick();
   assert.ok(open('wipe-panel'), 'the keyboard path lands on the same panel');
-  assert.equal($('wipe-name').value, '', 'with an empty name field');
+  assert.equal($('wipe-name').value, 'before cleanup',
+    'with the design\'s default label prefilled (selected, so typing replaces it)');
+  $('wipe-name').value = '';            // the user clears it: declining to label
   click($('btn-wipe-go'));
   await tick();
   const wiped = calls.find((c) => c.url === '/api/graph/wipe');

@@ -4,7 +4,7 @@
 //
 // Three lines — `view.previewing = false`, drop `liveSnapshot`, un-gate #main —
 // used to be hand-copied to EIGHT places: topbar.js x4 (completeBranchTransition,
-// returnToActive, doWipe, setActiveHere), graph-view.js x2 (setActive, the glance
+// returnToActive, doWipe, and the since-removed setActiveHere), graph-view.js x2 (setActive, the glance
 // "set as active"), ws.js's reset handler and shell.js's startNewGraph. They had
 // drifted, and `previewing` is the flag state.js says GATES all writes — so a
 // copy out of step is a preview mutating the live node.
@@ -198,13 +198,8 @@ test('a wipe queued behind a locked turn keeps the preview up', async () => {
   assert.match(noteText(), /mid-turn/, 'and the user is told the click was honoured, just deferred');
 });
 
-test('a set-active-here queued behind a locked turn keeps the preview up', async () => {
-  assert.equal(previewing(), true, 'precondition: still detached');
-  click('btn-set-active-here');
-  await tick();
-  assert.equal(previewing(), true, 'stay detached; the turn-end apply broadcasts a reset that lands everywhere');
-  assert.match(noteText(), /Queued/, 'the queued jump is announced');
-});
+// (The surface's own "set active here" is gone — set-active is a graph-screen
+// action now — so its queued-re-aim case is the overlay's, pinned below.)
 
 test('a new graph queued behind a locked turn keeps the preview up', async () => {
   assert.equal(previewing(), true, 'precondition: still detached');

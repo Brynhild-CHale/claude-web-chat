@@ -1,4 +1,4 @@
-// Graph label helpers shared by topbar (view chip, branch picker) and graph-view
+// Graph label helpers shared by topbar (node label, status pill) and graph-view
 // (DAG labels, nav). All read view.graphCache — the last /api/graph payload.
 import { view } from './state.js';
 
@@ -9,8 +9,10 @@ export function labelFor(id) {
   const n = nodeById(id);
   return (n && n.label) || id;
 }
-// RAW commit children — no collapse awareness. One consumer by design: topbar's
-// ⑃ branch picker, which is asking about the commit graph. Everything that
+// RAW commit children — no collapse awareness. Its one consumer was the
+// surface's ▾ branch picker, dropped with the chrome restyle (forks are chosen
+// on the graph screen now); it stays for a question about the COMMIT graph, and
+// only that. Everything that
 // describes what is ON SCREEN (keyboard nav, fork glyphs, the breadcrumb, the
 // scope filter, the ↑/↓ buttons) reads graph-view's graphIndex() instead, which is
 // built from displayNodes(). Reaching for this one from a display consumer is

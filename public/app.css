@@ -297,15 +297,18 @@ html.wc-theming, html.wc-theming * {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 7px 14px 7px 16px;
   font: 500 12px var(--wc-font); color: var(--wc-fg); line-height: 1.35;
-  background: color-mix(in srgb, var(--wc-gold) 16%, var(--wc-panel-bg));
+  background: color-mix(in srgb, var(--wc-gold) 10%, var(--wc-panel-bg));
   border-bottom: 1px solid color-mix(in srgb, var(--wc-gold) 55%, transparent);
 }
 .update-banner .ub-msg { flex: 1 1 auto; }
 .update-banner .ub-msg code { font: 11px var(--wc-mono); }
 .update-banner .ub-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .update-banner .ub-btn {
-  height: 26px; padding: 0 12px; border-radius: var(--wc-radius-sm);
-  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-gold-fg);
+  display: inline-flex; align-items: center; text-decoration: none;
+  height: 26px; padding: 0 12px; border-radius: var(--wc-radius);
+  /* panel ink on the gold fill, not --wc-gold-fg: Georgetown's gold is a
+     burgundy that its navy gold-fg cannot be read on */
+  border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-panel-bg);
   font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
 }
 .update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff); }
@@ -324,7 +327,7 @@ html.wc-theming, html.wc-theming * {
   border-bottom: 1px solid var(--wc-topbar-border);
   box-shadow: var(--wc-elev-bar);
 }
-.brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
+.brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-display); color: var(--wc-fg-bright); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
@@ -332,18 +335,24 @@ html.wc-theming, html.wc-theming * {
 .brand-logo { flex: 0 0 auto; height: 22px; width: auto; max-width: 150px; object-fit: contain; object-position: left center; }
 .brand-logo[hidden], .brand-logo[hidden] + .brand-logo-div { display: none; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
+/* the page's own title — an empty slot until the page model fills it, and an
+   empty slot takes no room at all */
+.page-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12.5px var(--wc-font); color: var(--wc-fg); }
+.page-title:empty { display: none; }
+/* pushes the right-hand controls to the far edge, as the design lays them out */
+.tb-spacer { flex: 1 1 0; min-width: 0; }
 
 /* command-palette trigger (centered) */
 .cmd-trigger {
   display: flex; align-items: center; gap: 8px;
-  flex: 1; max-width: 430px; height: 30px; margin: 0 6px; padding: 0 10px;
+  flex: 1; max-width: 360px; height: 30px; margin: 0 6px; padding: 0 10px;
   background: var(--wc-content-bg); color: var(--wc-muted);
   border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
-  box-shadow: inset 0 1px 4px rgba(0,0,0,.4);
   font: 12px var(--wc-font); text-align: left;
 }
+.cmd-trigger:hover { border-color: var(--wc-accent); }
 .cmd-trigger .glyph { color: var(--wc-accent); }
-.cmd-trigger .ph { flex: 1; }
+.cmd-trigger .ph { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 kbd {
   font: 500 10px var(--wc-mono); color: var(--wc-key-fg);
   background: var(--wc-key-bg); border: 1px solid var(--wc-key-border);
@@ -372,13 +381,25 @@ kbd {
 .stepper button:hover:not(:disabled) { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
 .stepper button:disabled { opacity: .35; cursor: default; }
 
-/* view chip + active pill */
+/* the ONE status pill (topbar.pillState): green active · gold viewing · accent
+   locked / channel turn, with a pulsing dot while Claude holds the turn · rust
+   when the socket is not live */
 .active-pill {
+  display: inline-flex; align-items: center; gap: 6px;
   font: 600 11px var(--wc-mono); color: var(--wc-green);
   padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent);
   background: color-mix(in srgb, var(--wc-green) 8%, transparent); border-radius: var(--wc-radius);
 }
 .active-pill.viewing { color: var(--wc-gold); border-color: color-mix(in srgb, var(--wc-gold) 40%, transparent); background: color-mix(in srgb, var(--wc-gold) 8%, transparent); }
+.active-pill.locked { color: var(--wc-accent-text); border-color: color-mix(in srgb, var(--wc-accent) 45%, transparent); background: color-mix(in srgb, var(--wc-accent) 10%, transparent); }
+.active-pill.locked::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--wc-accent);
+  animation: wc-pill-pulse 1.6s ease-in-out infinite;
+}
+.active-pill.channel::before { background: var(--wc-gold); }
+.active-pill.off { color: var(--wc-rust); border-color: color-mix(in srgb, var(--wc-rust) 40%, transparent); background: color-mix(in srgb, var(--wc-rust) 8%, transparent); }
+@keyframes wc-pill-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce) { .active-pill.locked::before { animation: none; } }
 
 /* primary graph button (olive fill, ink text, glow + bottom edge) */
 .btn-graph {
@@ -389,10 +410,6 @@ kbd {
 }
 .btn-graph:hover { filter: brightness(1.08); }
 .btn-graph kbd { background: rgba(0,0,0,.22); color: var(--wc-accent-fg); border-color: rgba(0,0,0,.3); }
-
-.status-pill { font: 500 11px var(--wc-mono); color: var(--wc-muted); padding: 2px 8px; }
-.status-pill.live { color: var(--wc-green); }
-.status-pill.off { color: var(--wc-rust); }
 
 /* generic small button used in menus/popovers */
 .btn {
@@ -609,10 +626,10 @@ kbd {
 /* ===================== keyboard legend overlay ===================== */
 .legend {
   position: absolute; inset: 0; z-index: var(--z-legend); display: flex; align-items: center; justify-content: center;
-  background: rgba(8,6,3,.5); backdrop-filter: blur(6px);
+  background: var(--wc-scrim); backdrop-filter: blur(6px);
 }
-.legend-card { background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-shadow); padding: 22px 26px; min-width: 380px; max-height: 90vh; overflow-y: auto; }
-.legend-card h3 { margin: 0 0 14px; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
+.legend-card { background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow); padding: 22px 26px; min-width: 380px; max-width: calc(100vw - 32px); max-height: 90vh; overflow-y: auto; }
+.legend-card h3 { margin: 0 0 14px; font: 600 15px var(--wc-display); color: var(--wc-fg-bright); }
 .legend-card h3.legend-sub { margin-top: 16px; }
 .legend-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 5px 0; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .legend-row .keys { display: flex; gap: 4px; }
@@ -637,13 +654,15 @@ kbd {
 /* ===================== popovers (settings / more / new-graph / branch) ===================== */
 .popover {
   position: absolute; z-index: var(--z-panel); top: 50px; right: 12px; min-width: 240px;
-  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg);
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
   box-shadow: var(--wc-shadow); padding: 12px;
 }
+/* the ⋯ menu is a list, not a form: tighter, like the design's */
+#more-menu { min-width: 200px; padding: 6px; display: flex; flex-direction: column; }
 .popover h4 { margin: 0 0 10px; font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
 .popover .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 8px; border: 0; background: transparent; text-align: left; color: var(--wc-text-1); font: 12px var(--wc-font); border-radius: var(--wc-radius); }
-.menu-item:hover { background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
+.menu-item:hover, .menu-item:focus-visible { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
 .wc-select, .popover input[type="text"] { height: 28px; padding: 0 8px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-fg); font: 12px var(--wc-font); }
 /* The one popover raised from INSIDE the graph overlay, so it needs the rung
    above it (the same one the glance uses) — every other popover lives under the
@@ -651,6 +670,8 @@ kbd {
    sit anywhere on a panned canvas. */
 .popover.gv-name-panel { z-index: var(--z-glance); top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); min-width: 280px; }
 .hint { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; }
+/* Settings → Mode: the segmented Light | Dark (theme.syncModeToggle marks .on) */
+.settings-mode button { height: 24px; padding: 0 10px; }
 /* Settings → Brand: one row per slot — name, drop target (also a file button), Remove */
 .popover h4.settings-sub { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
 .brand-slots { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
@@ -1030,7 +1051,7 @@ body.pin-mode #main { cursor: crosshair; }
   border-radius: var(--wc-radius-sm);
 }
 .svc-trust-x:hover { background: color-mix(in srgb, var(--wc-muted) 18%, transparent); color: var(--wc-fg); }
-.svc-trust-card h3 { margin: 0 22px 8px 0; font-size: 14px; }
+.svc-trust-card h3 { margin: 0 22px 8px 0; font: 600 14px var(--wc-display); color: var(--wc-fg-bright); }
 .svc-trust-card p { margin: 5px 0; font-size: 12.5px; line-height: 1.55; color: var(--wc-muted); }
 .svc-trust-card code { font-family: var(--wc-mono); font-size: 11.5px; }
 .svc-trust-cmd {
@@ -1038,7 +1059,7 @@ body.pin-mode #main { cursor: crosshair; }
   background: var(--wc-bg);
   border: 1px solid var(--wc-border);
   border-radius: var(--wc-radius-sm);
-  overflow-x: auto; user-select: all;
+  overflow-x: auto; white-space: nowrap; user-select: all;
 }
 .svc-trust-cmd code { color: var(--wc-fg); font-size: 12px; white-space: pre; }
 /* Two panes of one component with different params are two decisions, so each
@@ -1060,22 +1081,22 @@ body.pin-mode #main { cursor: crosshair; }
   color: var(--wc-fg);
   background: var(--wc-panel-bg);
   border: 1px solid var(--wc-border);
-  border-radius: var(--wc-radius-lg);
+  border-radius: var(--wc-radius);
   box-shadow: var(--wc-shadow);
 }
-.zero-state h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.zero-state h2 { margin: 0 0 10px; font: 600 20px var(--wc-display); letter-spacing: -.01em; color: var(--wc-fg-bright); }
 .zero-state p { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--wc-muted); }
 .zs-try { font-size: 12.5px; }
 .zs-quote {
   font-family: var(--wc-mono); font-size: 12px;
-  background: var(--wc-bg); border: 1px solid var(--wc-border-light);
-  border-radius: 4px; padding: 2px 6px; color: var(--wc-fg); user-select: all;
+  display: inline-block; background: var(--wc-bg); border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius); padding: 2px 6px; color: var(--wc-fg); user-select: all;
 }
 .zs-keys { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 7px; }
 .zs-keys li { font-size: 12.5px; color: var(--wc-muted); display: flex; gap: 7px; align-items: baseline; }
 .zs-keys kbd {
   font-family: var(--wc-mono); font-size: 10.5px; line-height: 1;
-  padding: 3px 6px; border-radius: 4px; color: var(--wc-fg);
+  padding: 3px 6px; border-radius: var(--wc-radius); color: var(--wc-fg);
   background: var(--wc-bg); border: 1px solid var(--wc-border);
   border-bottom-width: 2px;
 }
@@ -1106,7 +1127,7 @@ body.pin-mode #main { cursor: crosshair; }
 
 /* --- topbar: shed chrome before anything overflows --- */
 #topbar { flex-wrap: nowrap; }
-.brand, .node-label, .active-pill, .status-pill, .btn-graph { flex: 0 0 auto; white-space: nowrap; }
+.brand, .node-label, .active-pill, .btn-graph { flex: 0 0 auto; white-space: nowrap; }
 .cmd-trigger { min-width: 0; }
 
 @media (max-width: 1100px) {
@@ -1119,12 +1140,10 @@ body.pin-mode #main { cursor: crosshair; }
   #topbar { gap: 6px; padding: 0 8px; }
   .cmd-trigger, .tb-div, .btn-graph kbd { display: none; }
   .brand-logo { max-width: 96px; }
-  .status-pill { padding: 2px 4px; }
 }
 @media (max-width: 760px) {
   .brand { font-size: 0; gap: 0; }   /* keep the connection dot, drop the wordmark */
   .brand .status-dot { font-size: 13px; }
-  .status-pill { display: none; }    /* the brand dot already reports connectedness */
 }
 
 /* --- surface: a 12-column grid inside ~500px is a row of slivers --- */

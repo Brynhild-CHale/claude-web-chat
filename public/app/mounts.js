@@ -180,24 +180,18 @@ function syncZeroState() {
 
   const box = document.createElement('div');
   box.className = 'zero-state';
-  // `navigator` is guarded because this module is imported by the jsdom suite on
-  // Node 18/20, where globalThis.navigator does not exist (it landed in Node 21)
-  // — an unguarded read threw a ReferenceError out of the `hello` WS handler,
-  // taking the whole first paint with it. package.json says Node 18+, so the
-  // engine range is what has to be honoured here, not the newest runtime.
-  const platform = (typeof navigator !== 'undefined' && navigator && navigator.platform) || '';
-  const mod = /Mac/i.test(platform) ? '⌘' : 'Ctrl';
+  // Static markup only — nothing here is data. The suggestion is a chip the
+  // reader can select in one click and paste into their terminal; the three
+  // keys are the design's (G / N / ?), and ? lists the rest.
   box.innerHTML =
-    '<h2>Nothing rendered yet</h2>' +
-    '<p>This page is Claude\'s second surface. Ask for something visual in your terminal ' +
-    'and it appears here — diagrams, forms, comparisons, working mockups — and every turn ' +
-    'becomes a node you can walk back to.</p>' +
-    '<p class="zs-try">Try: <span class="zs-quote">sketch this project\'s architecture on the surface</span></p>' +
+    '<h2>Nothing on the page yet</h2>' +
+    '<p>Ask Claude for something visual in your terminal and it lands here as blocks — ' +
+    'a figure, a table, a form, a diagram — and every turn becomes a node you can walk back to. Try:</p>' +
+    '<p class="zs-try"><span class="zs-quote">Sketch this project\'s architecture on the page.</span></p>' +
     '<ul class="zs-keys">' +
-      '<li><kbd>' + mod + '</kbd><kbd>K</kbd> commands, nodes and components</li>' +
-      '<li><kbd>N</kbd> open the component library</li>' +
-      '<li><kbd>G</kbd> the graph of every turn</li>' +
-      '<li><kbd>P</kbd> push what you\'ve done here to Claude</li>' +
+      '<li><kbd>G</kbd> open the graph</li>' +
+      '<li><kbd>N</kbd> add a block from the library</li>' +
+      '<li><kbd>?</kbd> all shortcuts</li>' +
     '</ul>';
   main.appendChild(box);
 }

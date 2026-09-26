@@ -267,8 +267,8 @@ function displayNodes() {
    the active/viewed node changes, which is what isBreakout depends on; the same
    index therefore serves a whole burst of arrow keys without rewalking.
 
-   labels.js's childrenOf() stays RAW (commit topology) and keeps one consumer:
-   topbar's branch picker, which is asking a different question. */
+   labels.js's childrenOf() stays RAW (commit topology) for a question about
+   the commit graph, which is a different question. */
 let indexCache = null;
 function graphIndex() {
   if (indexCache
@@ -329,8 +329,7 @@ function graphIndex() {
 export function displayNodeList() { return graphIndex().nodes; }
 
 // The topbar's ↓ button steps to the next turn the graph DRAWS, which is the
-// same gesture ArrowDown performs in the overlay. (Its ⑃ branch picker asks a
-// different question and stays on labels.childrenOf's raw commit children.)
+// same gesture ArrowDown performs in the overlay.
 export function displayChildrenOf(id) { return graphIndex().childrenOf(id); }
 
 // ...and the topbar's ↑ is its mirror: the previous turn as DRAWN, the node

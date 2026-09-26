@@ -83,19 +83,18 @@ function repaint() {
       '<button class="svc-trust-x" type="button" data-dismiss="' + esc(key) + '"' +
         ' title="Hide for this session — this does NOT deny the request"' +
         ' aria-label="Hide this notice for this session (does not deny the request)">×</button>' +
-      '<h3>&ldquo;' + esc(p.name) + '&rdquo; is waiting for approval</h3>' +
-      '<p>This component ships a <code>service.js</code> that would run as a process ' +
-        'on your machine, with your permissions, while its pane is open.</p>' +
-      '<p>Approving is a terminal action — it cannot be done from this page, ' +
-        'because a component&rsquo;s own code runs here too. In your terminal:</p>' +
+      '<h3>' + esc(p.name) + ' wants to run on this machine</h3>' +
+      '<p>Its <code>service.js</code> is host code — a process with your permissions, ' +
+        'running while its block is open. Approve it in your terminal; this page ' +
+        'can&rsquo;t grant that for you, because a component&rsquo;s own code runs here too.</p>' +
       '<pre class="svc-trust-cmd"><code>' + esc(p.command) + '</code></pre>' +
       // Two panes of one component with different params are two decisions.
       // Without this the two cards read identically and the user cannot tell
       // which one the command in front of them is about.
       (p.params ? '<p class="svc-trust-params">params: <code>' + esc(p.params) + '</code></p>' : '') +
-      '<p class="svc-trust-foot">Run it with <code>--deny</code> to refuse and stop being asked. ' +
-        'The pane stays inert until you decide. Closing this card only hides it for ' +
-        'this browser session — it neither approves nor denies.</p>' +
+      '<p class="svc-trust-foot">Add <code>--deny</code> to refuse and stop being asked; the ' +
+        'block stays inert until you decide. Dismissing hides this for the session ' +
+        '&mdash; it isn&rsquo;t a denial.</p>' +
     '</div>'
   )).join('');
 }

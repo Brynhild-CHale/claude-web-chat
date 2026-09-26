@@ -177,4 +177,17 @@ export function syncModeToggle() {
   const label = ok ? 'Light / dark · T' : `${name} has only a ${effectiveMode()} mode`;
   btn.title = label;
   btn.setAttribute('aria-label', ok ? 'Toggle light / dark (T)' : label);
+  // Settings → Mode says the same thing in words: which mode is on, and — under
+  // a single-mode pack — that the other one does not exist.
+  const seg = $('settings-mode');
+  if (seg) {
+    const mode = effectiveMode();
+    for (const b of seg.querySelectorAll('button[data-mode]')) {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+      b.disabled = !ok && !on;
+      b.title = !ok && !on ? label : '';
+    }
+  }
 }

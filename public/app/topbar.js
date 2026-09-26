@@ -1,13 +1,32 @@
-// Topbar: the view chip / node label, node navigation (up/down/branch), the
+// Topbar: the node label, the one status pill, node navigation (↑/↓), the
 // detached read-only preview (local to this browser, never broadcast), and the
 // bookmark / export / wipe actions. Owns the view-state transitions
 // (applyActive/applyLock/updateChip) every other module reads.
 import { view, $ } from './state.js';
 import { store } from './store.js';
-import { nodeById, labelFor, childrenOf } from './labels.js';
+import { nodeById, labelFor } from './labels.js';
 import { fullReset, applySnapshot, panes, flushFormStates } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
-import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf, requestSetActive } from './graph-view.js';
+import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
+
+// The topbar's ONE status pill, in precedence order: the socket when it is not
+// live (a stale node label under a dead socket is worse than none), then the
+// gold "viewing nX" of a detached preview, then the turn lock — a 'wake' lock is
+// a channel-woken turn (turn-begin-on-push), labelled for what it is so the user
+// knows why the graph is briefly held — and otherwise "active nX".
+export function pillState() {
+  const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
+  if (view.conn !== 'live') {
+    return { cls: 'off', text: view.conn === 'reconnecting' ? 'reconnecting…' : 'connecting…' };
+  }
+  if (detached) return { cls: 'viewing', text: `viewing ${labelFor(view.viewedId)}` };
+  if (view.lock) {
+    return view.lock.author === 'wake'
+      ? { cls: 'locked channel', text: `channel turn ${labelFor(view.activeId)}` }
+      : { cls: 'locked', text: `locked ${labelFor(view.activeId)}` };
+  }
+  return { cls: '', text: `active ${labelFor(view.activeId)}` };
+}
 
 export function updateChip() {
   const detached = view.previewing && view.viewedId && view.viewedId !== view.activeId;
@@ -16,37 +35,26 @@ export function updateChip() {
 
   const pill = $('active-pill');
   if (pill) {
-    if (detached) {
-      pill.className = 'active-pill viewing';
-      pill.textContent = `viewing ${labelFor(view.viewedId)}`;
-    } else {
-      pill.className = 'active-pill' + (view.lock ? ' locked' : '');
-      // A 'wake' lock is a channel-woken turn (turn-begin-on-push) — label it
-      // for what it is so the user knows why the graph is briefly held.
-      const lockLabel = view.lock ? (view.lock.author === 'wake' ? 'channel turn ' : 'locked ') : 'active ';
-      pill.textContent = lockLabel + labelFor(view.activeId);
-    }
+    const st = pillState();
+    pill.className = 'active-pill' + (st.cls ? ' ' + st.cls : '');
+    pill.textContent = st.text;
   }
-  const ra = $('btn-return-active'); if (rah(ra)) ra.style.display = detached ? '' : 'none';
-  const sa = $('btn-set-active-here'); if (rah(sa)) sa.style.display = detached ? '' : 'none';
+  const ra = $('btn-return-active'); if (ra) ra.style.display = detached ? '' : 'none';
 
   const cur = nodeById(view.viewedId);
-  // Two different questions, two topologies. ↑/↓ step to the previous/next turn
-  // the graph DRAWS — the same pair ArrowUp/ArrowDown performs in the overlay,
-  // and they used to disagree with it, navigating to nodes the DAG will not
-  // draw. ⑃ opens the raw commit children, which is what the branch picker is
-  // asking about.
+  // ↑/↓ step to the previous/next turn the graph DRAWS — the same pair
+  // ArrowUp/ArrowDown performs in the overlay, and they used to disagree with
+  // it, navigating to nodes the DAG will not draw. (The surface's old ▾ branch
+  // picker is gone: choosing among forks, and making a node active, happen on
+  // the graph screen — ⑃ Branch / Set active.)
   const drawnKids = displayChildrenOf(view.viewedId);
   const drawnParent = displayParentOf(view.viewedId);
-  const rawKids = childrenOf(view.viewedId);
   const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && drawnParent);
   const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = drawnKids.length === 0;
-  const btnBranch = $('btn-branch'); if (btnBranch) btnBranch.style.display = rawKids.length > 1 ? '' : 'none';
 
   const bm = $('bookmark-name');
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
 }
-const rah = (el) => !!el; // small guard helper
 
 export function applyActive(id) {
   view.activeId = id;
@@ -204,31 +212,6 @@ export function returnToActive() {
   updateChip();
 }
 
-function showBranchPicker(kids, anchor) {
-  const existing = $('branch-picker');
-  if (existing) existing.remove();
-  if (!kids.length) return;
-  const pop = document.createElement('div');
-  pop.id = 'branch-picker';
-  pop.className = 'popover branch-picker';
-  const rect = anchor.getBoundingClientRect();
-  pop.style.left = rect.left + 'px';
-  pop.style.top = (rect.bottom + 4) + 'px';
-  pop.style.right = 'auto';
-  kids.forEach((k, i) => {
-    const b = document.createElement('button');
-    b.className = 'menu-item' + (i === 0 ? ' trunk' : '');
-    b.textContent = k.label + (i === 0 ? '  (trunk)' : '') + (k.name ? '  · ' + k.name : '');
-    b.addEventListener('click', () => { pop.remove(); previewNode(k.id); });
-    pop.appendChild(b);
-  });
-  document.body.appendChild(pop);
-  // Dismissal is the shell's one dismiss layer (shell.js initDismissLayer):
-  // #branch-picker carries `.popover`, so an outside pointerdown, a focus move
-  // or Escape removes it like every other chrome panel. It used to own a private
-  // mousedown listener — a second copy of the same concept.
-}
-
 // Export the node AS RENDERED: a detached preview exports that committed node,
 // otherwise export the live surface (which may hold uncommitted renders).
 export function doExport() {
@@ -272,22 +255,6 @@ export async function doWipe(name) {
   leavePreview();
 }
 
-// The third caller of the one set-active request. requestSetActive owns the POST
-// and both not-moved answers — the refusal note, and the queued re-aim that
-// stays detached because the turn-end apply broadcasts a reset landing
-// everywhere. The tail below is this caller's own: it aims THIS client at the
-// node and refetches that node's panes, where the overlay's two callers restore
-// the live surface and relay the DAG out.
-async function setActiveHere() {
-  const target = view.viewedId;
-  if (!target) return;
-  if (!await requestSetActive(target)) return;
-  leavePreview({ activeId: target });
-  const nr = await fetch('/api/graph/node/' + target);
-  if (nr.ok) { const node = await nr.json(); applySnapshot({ mounts: node.mounts || [], store: node.store || {} }); }
-  await onGraphChanged();
-}
-
 async function bookmark() {
   const id = view.viewedId || view.activeId;
   if (!id) return;
@@ -302,7 +269,6 @@ export function initTopbar() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
 
   on('btn-return-active', 'click', returnToActive);
-  on('btn-set-active-here', 'click', setActiveHere);
   // Branch-on-edit: fired by a pane's delegated listeners (mounts.js) when the
   // user edits a form while detached on an older node.
   window.addEventListener('wc:edit-in-preview', branchOnEdit);
@@ -317,12 +283,6 @@ export function initTopbar() {
     const kids = displayChildrenOf(view.viewedId);   // the next turn as DRAWN — see updateChip
     if (kids.length) previewNode(kids[0].id);
   });
-  on('btn-branch', 'click', async (e) => {
-    await ensureGraph();
-    showBranchPicker(childrenOf(view.viewedId), $('btn-branch'));
-    e.stopPropagation();
-  });
-
   on('btn-graph', 'click', () => openOverlay());
   on('btn-theme-toggle', 'click', () => { toggleMode(); });
 

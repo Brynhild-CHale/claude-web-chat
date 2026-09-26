@@ -36,7 +36,7 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Let the project accumulate components.** When Claude builds a pane worth keeping, it saves it to the project's component library and reuses it later. Over time your project grows UI that matches how you work.
 
-**Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Three packs ship — Earthy (the stock look, light and dark), Paper and Georgetown — and light/dark is a mode inside a pack, flipped with ◑ or `T`. Ask Claude to theme the surface (and save the result), or swap themes yourself from **⋯ → Settings**. More detail in [`themes.md`](themes.md).
+**Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Three packs ship — Earthy (the stock look, light and dark), Paper and Georgetown — and light/dark is a mode inside a pack, flipped with ◑, `T` or **⋯ → Settings → Mode**. Ask Claude to theme the surface (and save the result), or swap themes yourself from **⋯ → Settings**. More detail in [`themes.md`](themes.md).
 
 **Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use **⋯ → ↧ Export node** in the topbar (or **↧** / `E` on a node in the graph viewer), or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
 

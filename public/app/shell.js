@@ -4,7 +4,7 @@
 // the proximity queue rail — live since channels landed: it shows the queued
 // wake items public/app/queue.js maintains, and Q pins it open.
 import { $ } from './state.js';
-import { toggleMode, modeToggleable } from './theme.js';
+import { toggleMode, modeToggleable, effectiveMode, syncModeToggle } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
@@ -22,7 +22,7 @@ const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXT
 
 /* ---------- the dismiss layer (one engine for every chrome panel) ----------
    Every transient chrome panel — the More menu, Settings, New graph, Wipe, the
-   bookmark popover, the branch picker, the ⌘K palette, the shortcut legend and
+   bookmark popover, the ⌘K palette, the shortcut legend and
    the component drawer — is dismissed HERE. Before this each one had its own
    story (or none): clicking anywhere else, or moving focus away, left them open
    until the user happened to find Escape.
@@ -45,7 +45,6 @@ const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
 
 function closePanel(el) {
   if (!el) return;
-  if (el.id === 'branch-picker') { el.remove(); return; } // built per open, not reused
   // Same story: the comment composer / chooser / thread is built per open and
   // body-appended, so it is removed, not hidden — and comments.js owns the
   // reference, hence the hook rather than el.remove() here.
@@ -149,9 +148,17 @@ export function openSettings() {
   const p = $('settings-panel'); if (!p) return;
   closeAllPopovers(p); // one panel at a time (see the dismiss layer)
   p.classList.remove('hidden');
+  syncModeToggle();
   populateThemeSelect();
 }
 function initSettings() {
+  // Mode: the ◑ lever in words. toggleMode re-syncs both controls (theme.js
+  // syncModeToggle), and does nothing under a single-mode pack.
+  const seg = $('settings-mode');
+  if (seg) seg.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-mode]');
+    if (b && !b.disabled && b.dataset.mode !== effectiveMode()) toggleMode();
+  });
   const sel = $('settings-theme');
   if (sel) sel.addEventListener('change', async () => {
     await fetch('/api/theme/apply', {
@@ -192,13 +199,19 @@ function initNewGraph() {
    so the next committed node carries the label) — which was a bookmark nobody
    could name, because the wipe fired the instant the menu item was clicked.
    #wipe-panel is the same shape as #new-graph-panel: a name field, Cancel,
-   confirm. An EMPTY name still wipes and still bookmarks, just unlabelled. */
+   confirm. The field opens PREFILLED with a label that is true of every wipe
+   ("before cleanup") and selected, so ↵ takes it and typing replaces it. An
+   EMPTY name still wipes and still bookmarks, just unlabelled. */
+export const WIPE_DEFAULT_NAME = 'before cleanup';
 export function openWipe() {
   const panel = $('wipe-panel'); if (!panel) return;
   closeAllPopovers(panel);
   panel.classList.remove('hidden');
   const nameEl = $('wipe-name');
-  if (nameEl) { nameEl.value = ''; setTimeout(() => { if (!panel.classList.contains('hidden')) nameEl.focus(); }, 0); }
+  if (nameEl) {
+    nameEl.value = WIPE_DEFAULT_NAME;
+    setTimeout(() => { if (!panel.classList.contains('hidden')) { nameEl.focus(); nameEl.select(); } }, 0);
+  }
 }
 function closeWipe() { const p = $('wipe-panel'); if (p) p.classList.add('hidden'); }
 async function confirmWipe() {

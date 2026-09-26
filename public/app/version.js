@@ -35,6 +35,12 @@ const linkEl = () => $('ub-release-link');
 const show = (latest = null) => { announced = latest; const b = banner(); if (b) b.classList.remove('hidden'); };
 const hide = () => { announced = null; const b = banner(); if (b) b.classList.add('hidden'); };
 
+function code(text) {
+  const c = document.createElement('code');
+  c.textContent = String(text);
+  return c;
+}
+
 function dismissedVersion() {
   return getSession(DISMISS_KEY);
 }
@@ -56,7 +62,13 @@ export async function checkVersion() {
 
   const m = msgEl();
   if (m) {
-    m.textContent = `web-chat ${info.latest} is available — you're on ${info.current}. Update with: claude-web-chat update`;
+    // Built from nodes, not an innerHTML template: the two versions arrive from
+    // the daemon (ultimately from a GitHub API answer), and the <code> runs are
+    // the design's — the three things the reader may want to copy.
+    m.replaceChildren(
+      'web-chat ', code(info.latest), ' is available — you\u2019re on ', code(info.current),
+      '. Run ', code('claude-web-chat update'), ' in your terminal.',
+    );
   }
   const a = linkEl();
   if (a && info.releaseUrl) a.href = info.releaseUrl;
