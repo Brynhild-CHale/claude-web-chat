@@ -653,7 +653,7 @@ function mountPane(m) {
       type: 'script:error', id, script_index: scriptIndex,
       message: String((err && err.message) || err),
       stack: err && err.stack ? String(err.stack).split('\n').slice(0, 3).join('\n') : undefined,
-    }, paneApiFor(id));
+    });
   }, paneApiFor(id));
 
   // Rehydrate persisted form values AFTER scripts ran, so a restored user draft
