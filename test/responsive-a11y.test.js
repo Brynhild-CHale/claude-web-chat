@@ -112,6 +112,29 @@ test('panes stop tiling once a column would be a sliver', () => {
     'wide screens keep the default 12-column span so inline spans still tile');
 });
 
+test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide contents slot', () => {
+  // NARROW (<760): the bottom bar exists, the topbar's navigation moved into it,
+  // and the open rail is a full-screen queue rather than a 272px side column.
+  for (const width of [390, 700, 759]) {
+    assert.equal(winningValue('.bottombar', 'display', width), 'flex', `the bottom bar shows at ${width}px`);
+    assert.equal(winningValue('.rail', 'position', width), 'absolute', `the queue is a screen at ${width}px`);
+    assert.equal(winningValue('.rail.open', 'width', width), 'auto', `the open queue fills the width at ${width}px`);
+  }
+  // MEDIUM and WIDE: no bottom bar; the rail is the side column again.
+  for (const width of [760, 1000, 1280]) {
+    assert.equal(winningValue('.bottombar', 'display', width), 'none', `no bottom bar at ${width}px`);
+    assert.equal(winningValue('.rail.open', 'width', width), '272px', `the design's open rail at ${width}px`);
+  }
+  // WIDE (≥1100) only: the contents column slot — and even there, only when filled.
+  assert.equal(winningValue('.contents-nav', 'display', 1000), 'none', 'no contents column below 1100px');
+  assert.equal(winningValue('.contents-nav', 'display', 1280), null, 'the contents column may show at 1280px');
+  assert.equal(winningValue('.contents-nav:empty', 'display', 1280), 'none', 'an empty contents column is not drawn');
+  const { window } = new JSDOM(HTML);
+  const body = window.document.querySelector('.body');
+  assert.equal(body.firstElementChild.id, 'contents-nav', 'the slot sits left of the well');
+  assert.equal(window.document.getElementById('contents-nav').childElementCount, 0, 'and ships empty');
+});
+
 test('every icon-only control in the shell has an accessible name', () => {
   const { window } = new JSDOM(HTML);
   const doc = window.document;

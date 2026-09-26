@@ -42,6 +42,8 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Find anything with ⌘K.** The palette lists three kinds of row: **node** (a turn, with its time), **block** (a block on the page — choosing one scrolls to it and restores it if minimized) and **command** (with its key, where it has one), including *Add block · name* for every component in the library. Type a kind to list only those.
 
+**Narrow windows and phones.** Below 760px the blocks stack in reading order and a bar along the bottom carries ↑/↓, ↩ active (while you are viewing an older node), **Graph** and **Queue [n]** — which opens the queue as a full screen; **‹ Page** goes back. From 1100px up there is room for a contents column beside the page (it stays hidden until a page has headings). On a phone — a narrow screen you work with a finger — the surface is a read-only viewer: each block shows its title and type, nothing on it can be moved, closed or edited, and a minimized block's chip only shows it on that phone. You talk to Claude from the queue (stage or hold items, add a comment, Push) and act on the graph, which on a phone is a newest-first log of one graph with its forks drawn in a gutter: tap a turn, then ◫ Glance, ⚑ bookmark (with a name), ⑃ Branch, ↧ Export or **Set active**. The graph name at the top switches graphs, and **⋯ N folded** shows the turns that changed nothing.
+
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`driving-the-surface.md`](driving-the-surface.md).
 
 ## Service-backed components

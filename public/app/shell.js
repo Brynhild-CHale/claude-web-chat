@@ -7,6 +7,7 @@ import { $ } from './state.js';
 import { toggleMode, modeToggleable, effectiveMode, syncModeToggle } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
+  returnToActive,
 } from './topbar.js';
 import { openOverlay, closeOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList } from './graph-view.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
@@ -197,6 +198,7 @@ function initNewGraph() {
   // be named later by clicking its title on the canvas). The panel lives under the
   // overlay on the stacking scale, so the graph closes first.
   on('gv-new', 'click', () => { closeOverlay(); openNewGraph(); });
+  on('gv-log-new', 'click', () => { closeOverlay(); openNewGraph(); });   // the phone log's ◇
 }
 
 /* ---------- wipe surface ----------
@@ -403,7 +405,18 @@ function toggleLegend(force) {
 // content (items, push, count) is owned by queue.js; this file only handles the
 // reveal/toggle chrome + the P shortcut.
 let railPinned = false;
-function setRail(open) { const r = $('queue-rail'); if (r) r.classList.toggle('open', open); }
+function setRail(open) {
+  const r = $('queue-rail'); if (r) r.classList.toggle('open', open);
+  // Under 760px the open rail IS the queue screen (app.css), so the bottom bar's
+  // Queue [n] turns into the way back: "‹ Page".
+  const bb = $('bb-queue');
+  if (bb) {
+    bb.setAttribute('aria-expanded', String(!!open));
+    bb.classList.toggle('on', !!open);
+    const label = bb.querySelector('.bb-queue-label'); if (label) label.textContent = open ? '‹ Page' : 'Queue';
+    bb.setAttribute('aria-label', open ? 'Back to the page' : 'Queue to Claude');
+  }
+}
 function initRail() {
   const rail = $('queue-rail');
   if (!rail) return;
@@ -425,6 +438,21 @@ function initRail() {
   if (close) close.addEventListener('click', () => { railPinned = false; setRail(false); });
 }
 function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
+
+/* ---------- the narrow bottom bar ----------
+   Under 760px (app.css) the topbar's ↑/↓, ↩ active and Graph move to a bar under
+   the thumb, beside Queue [n]. Nothing here decides anything of its own: ↑/↓ go
+   through stepNode (which clicks the topbar's buttons, so the drawn-topology rule
+   and the disabled state are theirs — topbar.updateChip mirrors them onto this
+   bar), ↩ active is returnToActive, and Queue is the rail's own pin toggle. */
+function initBottomBar() {
+  const on = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+  on('bb-up', () => stepNode('up'));
+  on('bb-down', () => stepNode('down'));
+  on('bb-return', () => returnToActive());
+  on('bb-graph', () => openOverlay());
+  on('bb-queue', () => toggleRail());
+}
 
 /* ---------- Escape: ONE owner, one precedence order ----------
    Escape used to be claimed by two document keydown listeners — this module's and
@@ -514,6 +542,7 @@ export function initShell() {
   initMoreMenu();
   initPalette();
   initRail();
+  initBottomBar();
   initQueue();
   initWakePanel();
   initKeyboard();

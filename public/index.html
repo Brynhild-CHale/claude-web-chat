@@ -69,8 +69,12 @@
       <button class="dock-btn" id="btn-more" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
     </header>
 
-    <!-- body: surface well + proximity queue rail -->
+    <!-- body: [contents] + surface well + proximity queue rail -->
     <div class="body">
+      <!-- the page's contents column (wide screens, ≥1100px). Empty — and so not
+           drawn — until the page model gives a node headings to list; the slot is
+           here so the well does not reflow when it arrives. -->
+      <nav id="contents-nav" class="contents-nav" aria-label="Contents"></nav>
       <div class="well-wrap">
         <main id="main"></main>
         <div id="minbar" class="minbar"></div>
@@ -119,6 +123,22 @@
         </div>
       </aside>
     </div>
+
+    <!-- narrow bottom bar (<760px, app.css): the topbar's ↑/↓, ↩ active and Graph
+         move down here under a thumb, beside Queue [n] — which opens the queue as
+         a full screen and reads "‹ Page" while it is open. The buttons drive the
+         topbar's own (shell.js initBottomBar); topbar.updateChip mirrors state. -->
+    <nav id="bottombar" class="bottombar" aria-label="Page navigation">
+      <div class="stepper bb-stepper">
+        <button id="bb-up" title="Previous node" aria-label="Previous node">↑</button>
+        <button id="bb-down" title="Next node" aria-label="Next node">↓</button>
+      </div>
+      <button class="btn bb-return" id="bb-return" title="Return to the active node" style="display:none">↩ active</button>
+      <span class="tb-spacer" aria-hidden="true"></span>
+      <button class="btn-graph bb-graph" id="bb-graph" title="View graph">Graph</button>
+      <button class="bb-queue" id="bb-queue" aria-controls="queue-rail" aria-expanded="false"
+              aria-label="Queue to Claude"><span class="bb-queue-label">Queue</span><span class="bb-count" id="bb-queue-count">0</span></button>
+    </nav>
 
     <!-- front glass (scanline + highlight), above content -->
     <div class="glass-scanline"></div>
@@ -297,6 +317,47 @@
       </div>
 
       <aside class="gv-inspector hidden" id="gv-inspector" aria-label="Selected node"></aside>
+
+      <!-- the PHONE graph (design "Graph Prototype", phone): a newest-first log of
+           one graph with a fork gutter computed from the display topology, in
+           place of the canvas. Shown only while #overlay has .log-mode
+           (graph-log.js). -->
+      <section class="gv-log" id="gv-log" aria-label="Turn log">
+        <div class="gv-log-head">
+          <div class="gv-log-top">
+            <span class="gv-brand">◇ GRAPH</span>
+            <label class="sr-only" for="gv-log-graph">Graph</label>
+            <select id="gv-log-graph" class="gv-log-graph"></select>
+            <span class="tb-spacer" aria-hidden="true"></span>
+            <button class="gv-log-icon" id="gv-log-new" title="New graph" aria-label="New graph">◇</button>
+            <button class="gv-log-icon" id="gv-log-close" title="Close" aria-label="Close graph">✕</button>
+          </div>
+          <label class="sr-only" for="gv-log-q">Jump to node, trigger or bookmark</label>
+          <input class="gv-log-q" id="gv-log-q" placeholder="Jump to node, trigger or bookmark…" autocomplete="off">
+          <div class="gv-log-filters" id="gv-log-filters" role="group" aria-label="Filter the log">
+            <button class="gv-chip" data-filter="marked" aria-pressed="false">⚑ Marked</button>
+            <button class="gv-chip" data-filter="forks" aria-pressed="false">⑃ Forks</button>
+            <button class="gv-chip gv-log-folded" data-folded aria-pressed="false" hidden>⋯ folded</button>
+          </div>
+        </div>
+        <div class="gv-log-list" id="gv-log-list"></div>
+        <div class="gv-log-bar">
+          <div class="gv-log-naming hidden" id="gv-log-naming">
+            <label class="sr-only" for="gv-log-name">Bookmark name</label>
+            <input type="text" id="gv-log-name" placeholder="bookmark name…" maxlength="48">
+            <button class="btn primary" id="gv-log-name-save">Save</button>
+          </div>
+          <div class="gv-log-acts" id="gv-log-acts">
+            <span class="gv-log-sel" id="gv-log-sel">—</span>
+            <span class="tb-spacer" aria-hidden="true"></span>
+            <button class="gv-log-act" data-act="glance" title="Glance" aria-label="Glance">◫</button>
+            <button class="gv-log-act bm" data-act="bookmark" title="Bookmark" aria-label="Bookmark">⚑</button>
+            <button class="gv-log-act" data-act="branch" title="Branch from here" aria-label="Branch from here">⑃</button>
+            <button class="gv-log-act" data-act="export" title="Export" aria-label="Export">↧</button>
+            <button class="gv-log-act primary" data-act="active" id="gv-log-active">Set active</button>
+          </div>
+        </div>
+      </section>
       <div class="gv-toast hidden" id="gv-toast" role="status" aria-live="polite"></div>
     </div>
   </div>

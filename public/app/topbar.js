@@ -8,6 +8,7 @@ import { nodeById, labelFor } from './labels.js';
 import { fullReset, applySnapshot, panes, syncReadonly } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
 import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
+import { isPhone } from './viewport.js';
 
 // The topbar's ONE status pill, in precedence order: the socket when it is not
 // live (a stale node label under a dead socket is worse than none), then the
@@ -40,6 +41,9 @@ export function updateChip() {
     pill.textContent = st.text;
   }
   const ra = $('btn-return-active'); if (ra) ra.style.display = detached ? '' : 'none';
+  // The narrow bottom bar carries the same ↩ active and ↑/↓ (shell.js wires them
+  // to these very buttons); it mirrors their state rather than deciding its own.
+  const bbReturn = $('bb-return'); if (bbReturn) bbReturn.style.display = detached ? '' : 'none';
 
   const cur = nodeById(view.viewedId);
   // ↑/↓ step to the previous/next turn the graph DRAWS — the same pair
@@ -51,6 +55,8 @@ export function updateChip() {
   const drawnParent = displayParentOf(view.viewedId);
   const btnUp = $('btn-up'); if (btnUp) btnUp.disabled = !(cur && drawnParent);
   const btnDown = $('btn-down'); if (btnDown) btnDown.disabled = drawnKids.length === 0;
+  const bbUp = $('bb-up'); if (bbUp) bbUp.disabled = !(cur && drawnParent);
+  const bbDown = $('bb-down'); if (bbDown) bbDown.disabled = drawnKids.length === 0;
 
   const bm = $('bookmark-name');
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
@@ -119,8 +125,12 @@ export async function previewNode(id) {
 // render then commits as its child. This replaced branch-on-edit, which re-aimed
 // the graph the moment a previewed form was touched.
 export const READONLY_HINT = 'Read-only preview — set this node active in the graph to edit.';
+// A phone is a read-only viewer too (viewport.js); its writes go through the
+// queue, so that is where the note points.
+export const PHONE_READONLY_HINT = 'Read-only on a phone — add a comment and Push from the Queue.';
 function onReadonlyAttempt() {
   if (view.previewing) showReaimNote(READONLY_HINT);
+  else if (isPhone()) showReaimNote(PHONE_READONLY_HINT);
 }
 
 /* ---------- leaving preview: ONE owner of the transition ----------

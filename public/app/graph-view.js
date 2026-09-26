@@ -22,6 +22,8 @@ import { seqNum, nodeById, labelFor } from './labels.js';
 import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
+import { isPhone } from './viewport.js';
+import { bus } from './bus.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -101,8 +103,15 @@ function setOffset(rootId, dx, dy, persist = true) {
 // selected (so no inspector) unless the surface is previewing an older node, in
 // which case that node is selected: reopening the graph after ↵ puts you back on
 // the node you went to look at.
+//
+// On a PHONE (viewport.js) the same screen is a log, not a canvas: #overlay takes
+// .log-mode and graph-log.js draws the newest-first list with its fork gutter.
+// The log always has a selection — its action bar acts on one — so it starts on
+// the active node.
 export async function openOverlay() {
-  view.selectedNodeId = (view.previewing && view.viewedId) ? view.viewedId : null;
+  const log = isPhone();
+  overlayEl.classList.toggle('log-mode', log);
+  view.selectedNodeId = (view.previewing && view.viewedId) ? view.viewedId : (log ? view.activeId : null);
   await refreshGraph();
   overlayEl.classList.remove('hidden');
   // Focus management: the overlay covers the surface and owns the arrows / Space /
@@ -129,19 +138,38 @@ export function closeOverlay() {
 }
 
 export function isOverlayOpen() { return !overlayEl.classList.contains('hidden'); }
+export function isLogMode() { return overlayEl.classList.contains('log-mode'); }
+
+// The phone log (graph-log.js) registers its renderer here rather than being
+// imported: it reads this module's topology, so an import back would be a cycle.
+// Every redraw of the graph (layoutAndRender) redraws the log too while it shows.
+let logRenderer = null;
+export function setLogRenderer(fn) { logRenderer = typeof fn === 'function' ? fn : null; }
+
+// A phone rotated wide (or a narrow window gaining a finger) flips the open graph
+// between log and canvas in place.
+bus.on('viewport', ({ phone }) => {
+  if (!isOverlayOpen()) return;
+  overlayEl.classList.toggle('log-mode', !!phone);
+  if (phone && !view.selectedNodeId) view.selectedNodeId = view.activeId;
+  if (!phone) fitView(); else layoutAndRender();
+  renderInspector(view.selectedNodeId);
+});
 
 /* The overlay's half of the ONE Escape owner (shell.js handleEscape): its layers
    in precedence order, reporting whether it consumed the key.
 
      1. the glance                  (raised from inside the overlay)
      2. the rename / bookmark panel (ditto — must never outlive its parent)
-     3. the selection               (the inspector is only there while one exists)
+     3. the selection               (the inspector is only there while one exists;
+                                     not in the phone log, which always has one)
      4. the overlay itself
 */
 export function escapeInOverlay() {
   if (floatEl) { closeFloatPreview(); return true; }
   if (isNamePanelOpen()) { closeNamePanel(); return true; }
-  if (isOverlayOpen() && view.selectedNodeId) { deselect(); return true; }
+  // (The phone log always keeps a selection for its action bar: Escape closes it.)
+  if (isOverlayOpen() && view.selectedNodeId && !isLogMode()) { deselect(); return true; }
   if (isOverlayOpen()) { closeOverlay(); return true; }
   return false;
 }
@@ -218,7 +246,7 @@ function deselect() {
 // --- topology helpers ---
 // All read the DISPLAY topology (graphIndex), not the raw commit graph: the ⑃
 // badge, the forks filter and the stacks describe what is on screen.
-function isFork(n) {
+export function isFork(n) {
   if (!n) return false;
   const idx = graphIndex();
   const dn = idx.byId.get(n.id);          // the node AS DRAWN (its display parent)
@@ -228,12 +256,12 @@ function isFork(n) {
 }
 // How many no-change turns a node stands for: turns that committed no node
 // (`folded_count`) plus legacy byte-identical nodes the server hides (`absorbed`).
-const foldedCount = (n) => ((n && n.folded_count) || 0) + ((n && n.absorbed_count) || 0);
+export const foldedCount = (n) => ((n && n.folded_count) || 0) + ((n && n.absorbed_count) || 0);
 
 // The top-level tree a node belongs to (walk display parents to the ancestor the
 // canvas draws a heading over).
 const rootOf = (id) => graphIndex().rootOf(id);
-const graphNameOf = (id) => {
+export const graphNameOf = (id) => {
   const r = nodeById(rootOf(id));
   return r ? (r.name || 'graph ' + String(r.label || r.id).split('.')[0]) : '—';
 };
@@ -264,7 +292,7 @@ function displayNodes() {
    labels.js's childrenOf() stays RAW (commit topology) for a question about the
    commit graph, which is a different question. */
 let indexCache = null;
-function graphIndex() {
+export function graphIndex() {
   if (indexCache
     && indexCache.cache === view.graphCache
     && indexCache.activeId === view.activeId
@@ -333,8 +361,8 @@ export function displayParentOf(id) {
    the label, trigger and bookmark name; together they DIM everything that does
    not match (the graph keeps its shape — hiding nodes would redraw the DAG as
    something it is not). ↵ in the search selects and centres the next match. */
-function isFiltering() { return filters.size > 0 || !!query; }
-function matches(n) {
+export function isFiltering() { return filters.size > 0 || !!query; }
+export function matches(n) {
   if (!n) return false;
   if (filters.has('marked') && !n.bookmarked) return false;
   if (filters.has('forks') && !isFork(n)) return false;
@@ -343,6 +371,20 @@ function matches(n) {
     if (!hay.includes(query)) return false;
   }
   return true;
+}
+// The one lever for both filter chip groups (the canvas's and the phone log's)
+// and the jump search, so the two surfaces never disagree about what is shown.
+export function toggleFilter(f) {
+  if (filters.has(f)) filters.delete(f); else filters.add(f);
+  for (const c of overlayEl.querySelectorAll(`[data-filter="${f}"]`)) {
+    c.classList.toggle('on', filters.has(f));
+    c.setAttribute('aria-pressed', String(filters.has(f)));
+  }
+  layoutAndRender();
+}
+export function setQuery(q) {
+  query = String(q || '').toLowerCase().trim();
+  layoutAndRender();
 }
 function jumpToNextMatch() {
   const hits = graphIndex().nodes.slice()
@@ -515,20 +557,20 @@ async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
   return true;
 }
 
-async function setActive(id) {
+export async function setActive(id) {
   if (await postSetActive(id)) toast(`Active → ${labelFor(id)} · your next message commits here`);
 }
 // ⑃ Branch = make this node active; if it already has children, the next commit
 // is a sibling of them — a fork. (Branching only ever happens by making a node
 // active — ruling D2: editing a previewed node no longer does it.)
-async function branchFrom(id) {
+export async function branchFrom(id) {
   const kids = ((nodeById(id) || {}).children || []).length;
   if (await postSetActive(id)) {
     toast(kids ? `⑃ Next commit branches from ${labelFor(id)}` : `Active → ${labelFor(id)} · the next commit continues from it`);
   }
 }
 
-function exportNode(id) {
+export function exportNode(id) {
   const a = document.createElement('a');
   a.href = '/api/export/' + encodeURIComponent(id); a.download = '';
   document.body.appendChild(a); a.click(); a.remove();
@@ -556,7 +598,7 @@ function openNamePanel({ id, title, hint, value }) {
   p.classList.remove('hidden');
   if (inp) setTimeout(() => { if (isNamePanelOpen()) { inp.focus(); inp.select(); } }, 0);
 }
-async function saveName(id, name) {
+export async function saveName(id, name) {
   await fetch('/api/graph/bookmark', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }),
   });
@@ -581,7 +623,7 @@ function bookmarkNode(id) {
     value: (n && n.name) || '',
   });
 }
-function unmarkNode(id) { return saveName(id, ''); }
+export function unmarkNode(id) { return saveName(id, ''); }
 
 // Rename a whole GRAPH: name its root node, which is what the canvas heading shows.
 function renameGraph(rootId) {
@@ -637,7 +679,7 @@ function openFloatPreview(id) {
 function closeFloatPreview() { if (floatEl) { floatEl.remove(); floatEl = null; } }
 // Read by the one Escape owner so it can tell a modal overlay layer is up.
 export function hasFloatPreview() { return !!floatEl; }
-function toggleFloatPreview() {
+export function toggleFloatPreview() {
   if (floatEl) closeFloatPreview();
   else if (view.selectedNodeId) openFloatPreview(view.selectedNodeId);
 }
@@ -716,7 +758,7 @@ const BM_ROOM = 16;                     // extra headroom above a node that carr
 
 // Ghost rows for one node: the turns that folded onto it, oldest first, capped
 // at GHOST_CAP with the last row saying how many more there are.
-function ghostRowsFor(n) {
+export function ghostRowsFor(n) {
   const total = foldedCount(n);
   if (!total) return [];
   const texts = foldedTexts(n);
@@ -930,7 +972,7 @@ function svgEl_(tag, attrs, text) {
   if (text != null) el.textContent = text;
   return el;
 }
-const bookmarkCaption = (n) => n.wipe ? '⌫ wipe' + (n.name ? ' · ' + n.name : '') : '⚑ ' + (n.name || labelFor(n.id));
+export const bookmarkCaption = (n) => n.wipe ? '⌫ wipe' + (n.name ? ' · ' + n.name : '') : '⚑ ' + (n.name || labelFor(n.id));
 
 // Every colour is a CSS class reading a --wc-* token (app.css, "graph screen"),
 // so a theme or a mode flip restyles the canvas without a relayout.
@@ -1042,6 +1084,7 @@ export function layoutAndRender() {
   renderSleeves(sleeves, filtering, dimNode);
   applyCamera();
   updateHead();
+  if (logRenderer && isLogMode()) logRenderer();
 
   const hitGlyph = (target) => {
     let el = target;
@@ -1200,17 +1243,13 @@ export function initGraph() {
   // ⚑ Marked / ⑃ Forks — independent toggles; they dim, never hide
   $('gv-filters').addEventListener('click', (e) => {
     const c = e.target.closest('[data-filter]'); if (!c) return;
-    const f = c.dataset.filter;
-    if (filters.has(f)) filters.delete(f); else filters.add(f);
-    c.classList.toggle('on', filters.has(f));
-    c.setAttribute('aria-pressed', String(filters.has(f)));
-    layoutAndRender();
+    toggleFilter(c.dataset.filter);
   });
   $('gv-collapse-all').addEventListener('click', () => { view.expandedStacks.clear(); layoutAndRender(); });
 
   // jump search: dims non-matches as you type; ↵ selects + centres the next hit
   const jump = $('gv-jump');
-  jump.addEventListener('input', () => { query = jump.value.toLowerCase().trim(); layoutAndRender(); });
+  jump.addEventListener('input', () => setQuery(jump.value));
   jump.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); jumpToNextMatch(); } });
 
   // sleeves: ⊟ collapses, a row selects, a double-click opens

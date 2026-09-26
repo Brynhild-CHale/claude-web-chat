@@ -543,6 +543,8 @@ function render() {
 
   const countEl = rail.querySelector('.rail-count'); if (countEl) countEl.textContent = String(count);
   const badge = rail.querySelector('.rail-head .badge'); if (badge) badge.textContent = String(count);
+  // …and the narrow bottom bar's Queue [n], which opens this rail as a full screen.
+  const bb = $('bb-queue-count'); if (bb) bb.textContent = String(count);
 
   const chips = rail.querySelector('.rail-chips');
   if (chips) {

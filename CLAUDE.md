@@ -86,6 +86,7 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | send a frame to the daemon from the chrome | `public/app/ws.js` (`send(frame)` — queues on a closed socket, drains after the reconnect's snapshot) | gate on `isOpen()` and drop the frame (the loss is invisible at both ends) |
 | leave the detached node preview | `public/app/topbar.js` (`leavePreview({activeId, restoreSnapshot})`) | hand-copy the `previewing = false` transition |
 | walk or LIST the graph as DRAWN (nav, forks, lineage, layout, the ⌘K palette) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`/`displayNodeList`) | `view.graphCache.nodes`, or `labels.childrenOf` — raw commit topology, for the ⑃ branch picker only |
+| ask whether the chrome is on a phone (read-only viewer, graph as a log) | `public/app/viewport.js` (`isPhone()` + bus `'viewport'`; panes gate on `mounts.readOnlyNow()`) | a `matchMedia`/width check at a call site — width-only layout belongs in `app.css` |
 | dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |
