@@ -441,11 +441,12 @@ function itemRow(it, { parked = false } = {}) {
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
   body.append(top, why, sum);
   if (parked) { row.append(dot, body); return row; }
+  if (it.kind === 'signal' && it.signal_key) body.append(...peekControls(it));
 
   const stage = document.createElement('button');
   stage.className = 'qi-stage';
   stage.textContent = staged ? '−' : '+';
-  stage.title = staged ? 'hold back (unstage)' : 'stage for the next push';
+  stage.title = staged ? 'hold — keep for later' : 'stage — send with this push';
   stage.addEventListener('click', () => setStaged(it.id, !staged));
 
   const rev = document.createElement('button');
@@ -455,6 +456,59 @@ function itemRow(it, { parked = false } = {}) {
 
   row.append(dot, body, stage, rev);
   return row;
+}
+
+/* ---------- a signal's value, on request ----------
+   The item's summary carries the signal KEY only, by contract: that summary is
+   what reaches Claude, and a value there could be anything a pane wrote. The
+   user looking at the rail is another matter — "form_submit" says nothing about
+   WHAT they are about to hand off. So a signal row can show its key's value, read
+   when the user opens it (GET /api/store?keys=, the get_store read) and never
+   copied into the item. Keyed by item id so an open peek survives the rail's
+   re-renders; pruned in render() when its item leaves. */
+const peeks = new Map(); // item id → { state: 'loading'|'ok'|'absent'|'err', text }
+const PEEK_MAX = 600;    // characters of JSON shown; the store read is not capped
+
+function formatPeek(v) {
+  let text;
+  try { text = JSON.stringify(v, null, 1); } catch { text = String(v); }
+  if (text === undefined) text = String(v);
+  return text.length > PEEK_MAX ? text.slice(0, PEEK_MAX) + '…' : text;
+}
+
+async function togglePeek(it) {
+  if (peeks.has(it.id)) { peeks.delete(it.id); render(); return; }
+  peeks.set(it.id, { state: 'loading', text: '' });
+  render();
+  let entry;
+  try {
+    const r = await fetch('/api/store?keys=' + encodeURIComponent(it.signal_key));
+    const got = await r.json();
+    entry = got && Object.hasOwn(got, it.signal_key)
+      ? { state: 'ok', text: formatPeek(got[it.signal_key]) }
+      : { state: 'absent', text: 'not set — the key is not in the store now' };
+  } catch {
+    entry = { state: 'err', text: 'could not read the store' };
+  }
+  if (!peeks.has(it.id)) return; // closed again while the read was in flight
+  peeks.set(it.id, entry);
+  render();
+}
+
+function peekControls(it) {
+  const peek = peeks.get(it.id);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'qi-peek';
+  btn.textContent = (peek ? '▾ ' : '▸ ') + 'value';
+  btn.title = `show what ${it.signal_key} holds now (not sent to Claude)`;
+  btn.setAttribute('aria-expanded', String(!!peek));
+  btn.addEventListener('click', () => togglePeek(it));
+  if (!peek) return [btn];
+  const out = document.createElement('pre');
+  out.className = 'qi-value' + (peek.state === 'ok' ? '' : ' ' + peek.state);
+  out.textContent = peek.state === 'loading' ? 'reading…' : peek.text; // text, never markup
+  return [btn, out];
 }
 
 function updatePushLabel() {
@@ -485,6 +539,7 @@ function render() {
   const count = items.length;
   const staged = items.filter(isStaged);
   const held = items.filter((x) => !isStaged(x));
+  for (const id of peeks.keys()) if (!items.some((x) => x.id === id)) peeks.delete(id);
 
   const countEl = rail.querySelector('.rail-count'); if (countEl) countEl.textContent = String(count);
   const badge = rail.querySelector('.rail-head .badge'); if (badge) badge.textContent = String(count);

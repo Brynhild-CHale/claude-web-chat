@@ -276,7 +276,7 @@ test('a row is a real button with a duplicate control, grouped by tier, chipped 
 
   const lib = $('drawer-library');
   const groups = [...lib.querySelectorAll('.de-group')].map((g) => g.textContent);
-  assert.deepEqual(groups, ['BUILT-IN', 'THIS PROJECT', 'ALL PROJECTS']);
+  assert.deepEqual(groups, ['THIS PROJECT', 'ALL PROJECTS', 'BUILT IN'], 'the design\'s order: your own first, the stock set last');
 
   const rows = [...lib.querySelectorAll('.drawer-entry')];
   assert.equal(rows.length, 4);

@@ -130,7 +130,8 @@ test('the ⌘K palette lists the turns the graph DRAWS, not every commit', async
   await tick();
   const rows = [...$('cmd-list').children]
     .filter((r) => r.querySelector('.kind') && r.querySelector('.kind').textContent === 'node')
-    .map((r) => r.lastChild.textContent);
+    // the label leads with the node's label ("n1.3 · <trigger>" — the rows are typed now)
+    .map((r) => r.querySelector('.label').textContent.split(' · ')[0]);
   assert.deepEqual(rows, ['n1.0', 'n1.3'],
     'the palette built its rows from view.graphCache.nodes — the RAW commit list — so a collapsed '
     + 'turn kept a row, and selecting it previewed a node the DAG does not draw');

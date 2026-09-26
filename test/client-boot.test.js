@@ -148,7 +148,9 @@ test('front-end module graph boots and the core flows work under jsdom', async (
     // privileged chrome origin the moment the palette opened.
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', metaKey: true }));
     await tick();
-    const evilRow = [...$('cmd-list').querySelectorAll('.palette-item')]
+    // (the pane above carries the same title, so it is on the list as a BLOCK row
+    // too — the rows are typed now; this one is the node's)
+    const evilRow = [...$('cmd-list').querySelectorAll('.palette-item[data-kind="node"]')]
       .find((r) => r.textContent.includes('<img src=x'));
     assert.ok(evilRow, 'the palette lists the named node');
     assert.equal($('cmd-list').querySelector('img'), null, 'the name must not be parsed as markup');

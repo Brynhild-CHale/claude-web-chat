@@ -40,6 +40,8 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use **⋯ → ↧ Export node** in the topbar (or **↧** / `E` on a node in the graph viewer), or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
 
+**Find anything with ⌘K.** The palette lists three kinds of row: **node** (a turn, with its time), **block** (a block on the page — choosing one scrolls to it and restores it if minimized) and **command** (with its key, where it has one), including *Add block · name* for every component in the library. Type a kind to list only those.
+
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`driving-the-surface.md`](driving-the-surface.md).
 
 ## Service-backed components
@@ -72,7 +74,7 @@ Installing a pack runs its code: panes are unsandboxed in the surface page, and 
 
 ## Channels (experimental)
 
-Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch. A row's ⟲ takes it back: it undoes that interaction (your typed values since the last Push, and a pane's submitted signal) and never removes a pane Claude rendered.
+Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch. A row's ⟲ takes it back: it undoes that interaction (your typed values since the last Push, and a pane's submitted signal) and never removes a pane Claude rendered. A signal row's **▸ value** shows what that key holds right now, so you can check what you are about to hand off; Claude still receives only the key's name, and reads the value itself when it needs it.
 
 **It works with or without the Channels capability.** For a *live, no-prompt* wake, launch Claude Code with both the env var and the capability flag — they belong together on the launch line, so a session can never claim a channel it doesn't have:
 

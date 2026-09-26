@@ -43,7 +43,13 @@ with (currently) two producers:
 More producers can be added — the bridge only cares that *something* emitted
 `wake`. So "what wakes Claude" = "who emits `wake`" (see
 `lib/server/domain/queue.emitWake`), surfaced live at `GET /api/queue/policy` and
-in the rail's "what wakes Claude" panel.
+in the rail's "⚙ wakes" line, which names every declared key (⚡ for immediate).
+
+**A queue item's summary carries key names, never values** — it is exactly what
+reaches Claude. The rail can still show the *user* what a signal row is about to
+hand off: its **▸ value** reads the key's current value with
+`GET /api/store?keys=<key>` when opened, and that read is never copied into the
+item or the wake.
 
 ### The opt-out activity layer
 

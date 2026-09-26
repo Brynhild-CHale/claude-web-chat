@@ -14,6 +14,7 @@ import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
+import { panes, unminimize, blockType } from './mounts.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
@@ -260,35 +261,68 @@ function closePalette() {
   const p = $('cmd-palette'); if (p) p.classList.add('hidden');
   const inp = $('cmd-input'); if (inp) inp.blur(); // else focus lingers and swallows single-key shortcuts
 }
+// Typed rows, as the design draws them (Theme §4c): a KIND column (node / block
+// / command — "section" arrives with the page model), the label, and a hint on
+// the right — a node's time, a block's type, a command's key. Every field is
+// set as text (renderPalette), because node names and block titles are user- or
+// agent-supplied.
+const nodeTime = (n) => (n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+
+// Jump to a block on the page: restore it if it was minimized, bring it into
+// view and flash its outline so the eye lands on it.
+function revealBlock(id) {
+  const p = panes.get(id);
+  if (!p) return;
+  unminimize(id);
+  const w = p.wrapper;
+  if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  w.classList.remove('pane-flash');
+  void w.offsetWidth;            // restart the animation on a repeat jump
+  w.classList.add('pane-flash');
+  setTimeout(() => w.classList.remove('pane-flash'), 1400);
+}
+
 async function buildPalette(q) {
   const ql = q.toLowerCase();
   const cmds = [
-    { kind: 'cmd', label: 'New pane', run: () => openDrawer() },
-    { kind: 'cmd', label: 'Component packs…', run: openDrawerManage },
-    { kind: 'cmd', label: 'Open graph', run: openOverlay },
-    { kind: 'cmd', label: 'New graph', run: openNewGraph },
-    { kind: 'cmd', label: 'Wipe surface', run: openWipe },
-    { kind: 'cmd', label: 'Export node', run: doExport },
-    { kind: 'cmd', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', run: toggleMode },
-    { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
-    { kind: 'cmd', label: 'Settings', run: openSettings },
+    { kind: 'command', label: 'Add a block…', key: 'N', run: () => openDrawer() },
+    { kind: 'command', label: 'Component packs…', run: openDrawerManage },
+    { kind: 'command', label: 'Open graph', key: 'G', run: openOverlay },
+    { kind: 'command', label: 'New graph', run: openNewGraph },
+    { kind: 'command', label: 'Wipe surface', run: openWipe },
+    { kind: 'command', label: 'Export node', run: doExport },
+    { kind: 'command', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', key: 'T', run: toggleMode },
+    { kind: 'command', label: 'Pin comment', key: 'C', run: togglePinMode },
+    { kind: 'command', label: 'Settings', run: openSettings },
   ];
+  // The blocks on the page now — the design's "block" rows. What is SHOWN
+  // (panes), so while previewing an older node these are that node's blocks.
+  const blocks = [...panes].map(([id, p]) => ({
+    kind: 'block',
+    label: p.title && p.title !== id ? `${id} · ${p.title}` : id,
+    hint: blockType(p.spec && p.spec.params, p.spec && p.spec.component) || (p.pane_state.minimized ? 'minimized' : ''),
+    run: () => revealBlock(id),
+  }));
   // The display topology (graph-view.displayNodeList), not view.graphCache.nodes:
   // every other viewer surface reads what the DAG draws, and a palette row for a
   // collapsed turn previewed a node with no drawn children — the topbar's ↓ dead,
   // and only displayParentOf's raw fallback to get back out of it.
-  const nodes = displayNodeList().map(n => ({
-    kind: 'node', label: `${labelFor(n.id)}${n.name ? ' · ' + n.name : ''}`, run: () => previewNode(n.id),
-  }));
+  const nodes = displayNodeList().map(n => {
+    const what = n.name || n.trigger_summary || '';
+    return { kind: 'node', label: `${labelFor(n.id)}${what ? ' · ' + what : ''}`, hint: nodeTime(n), run: () => previewNode(n.id) };
+  });
   // The ONE component cache (public/app/components.js). This module used to
   // memoise its own and never invalidate it, so a component saved mid-session —
   // or a whole pack installed from the drawer — stayed invisible here until the
-  // page was reloaded.
+  // page was reloaded. Spawning one is a command ("Add block · name").
   const comps = (await componentList()).map(c => ({
-    kind: 'component', label: c.name, run: () => spawnComponent(c),
+    kind: 'command', label: `Add block · ${c.name}`, hint: c.builtin ? 'built in' : '', run: () => spawnComponent(c),
   }));
-  const all = [...cmds, ...nodes, ...comps];
-  paletteItems = ql ? all.filter(i => i.label.toLowerCase().includes(ql)) : all;
+  const all = [...cmds, ...blocks, ...nodes, ...comps];
+  // The kind and hint are searchable too: "block" lists the page's blocks, a
+  // time finds a node, a type finds its blocks.
+  const hay = (i) => `${i.kind} ${i.label} ${i.hint || ''} ${i.key || ''}`.toLowerCase();
+  paletteItems = ql ? all.filter(i => hay(i).includes(ql)) : all;
   paletteSel = 0;
   renderPalette();
 }
@@ -310,6 +344,7 @@ function renderPalette() {
     row.id = `cmd-opt-${i}`;
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(i === paletteSel));
+    row.dataset.kind = it.kind;
     // textContent, not an innerHTML template: `it.label` carries a graph node's
     // `name`, which is user- or API-supplied text the server only trim()s. A
     // bookmark named `R&D <plan>` used to render half-swallowed, and one named
@@ -319,8 +354,15 @@ function renderPalette() {
     kindEl.className = 'kind';
     kindEl.textContent = it.kind;
     const labelEl = document.createElement('span');
+    labelEl.className = 'label';
     labelEl.textContent = it.label;
     row.append(kindEl, labelEl);
+    if (it.key || it.hint) {
+      const hint = document.createElement(it.key ? 'kbd' : 'span');
+      hint.className = 'hint';
+      hint.textContent = it.key || it.hint;
+      row.appendChild(hint);
+    }
     row.addEventListener('mousedown', (e) => { e.preventDefault(); runPalette(it); });
     list.appendChild(row);
   });
@@ -361,13 +403,22 @@ function setRail(open) { const r = $('queue-rail'); if (r) r.classList.toggle('o
 function initRail() {
   const rail = $('queue-rail');
   if (!rail) return;
-  rail.addEventListener('pointerenter', () => setRail(true));
-  rail.addEventListener('pointerleave', () => { if (!railPinned) setRail(false); });
+  // Hover is a mouse affordance. A finger "enters" on touchstart and "leaves"
+  // on lift, which opened and shut the rail inside one tap; touch takes the
+  // click-to-pin path below instead.
+  rail.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'touch') setRail(true); });
+  rail.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch' && !railPinned) setRail(false); });
   // queue.js raises push confirmations / rejections / recovery buttons inside
   // .rail-expanded. Give it the ability to PIN the rail open (not just reveal it —
   // the ack rejection lands 6s later, long after the pointer has left), so no
   // feedback is ever posted into a container the user can't see or click.
   setRailOpener(() => { railPinned = true; setRail(true); });
+  // The design's rail opens on a click as well as a hover (a touch screen has no
+  // hover), and its ESC chip is a real close — the same as Escape or Q.
+  const collapsed = rail.querySelector('.rail-collapsed');
+  if (collapsed) collapsed.addEventListener('click', () => { railPinned = true; setRail(true); });
+  const close = rail.querySelector('.rail-close');
+  if (close) close.addEventListener('click', () => { railPinned = false; setRail(false); });
 }
 function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
 

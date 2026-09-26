@@ -90,7 +90,9 @@
           <div class="rail-head">
             <span class="title">QUEUE → CLAUDE</span>
             <span class="badge">0</span>
-            <kbd class="esc">ESC</kbd>
+            <!-- the design's ESC chip is a real control: it closes (unpins) the
+                 rail, the same as Escape. shell.js wires it. -->
+            <button type="button" class="rail-close" title="Close the queue (Esc)" aria-label="Close the queue (Escape)"><kbd class="esc">ESC</kbd></button>
           </div>
           <div class="wake-slot"><span class="gear">⚙</span> wakes: Push</div>
           <!-- B8: text is server-sent (GET /api/queue/policy activation_hint),
@@ -128,14 +130,14 @@
          would push the hot path (spawn a pane) below the fold. -->
     <aside id="drawer" class="drawer hidden" role="dialog" aria-labelledby="drawer-title">
       <div class="drawer-head">
-        <span class="title" id="drawer-title">COMPONENTS</span>
-        <div class="gv-seg drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Components and packs">
+        <span class="title" id="drawer-title">BLOCKS</span>
+        <div class="gv-seg drawer-tabs" id="drawer-tabs" role="tablist" aria-label="Blocks and packs">
           <button role="tab" type="button" data-tab="library" id="drawer-tab-library"
                   class="on" aria-selected="true" aria-controls="drawer-library">Library</button>
           <button role="tab" type="button" data-tab="manage" id="drawer-tab-manage"
                   aria-selected="false" aria-controls="drawer-manage">Manage<span class="tab-badge hidden"></span></button>
         </div>
-        <button class="pane-btn" id="drawer-close" title="Close components" aria-label="Close components">×</button>
+        <button class="pane-btn" id="drawer-close" title="Close blocks" aria-label="Close blocks">×</button>
       </div>
       <div id="drawer-library" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-library"></div>
       <div id="drawer-manage" class="drawer-panel hidden" role="tabpanel" aria-labelledby="drawer-tab-manage"></div>
@@ -143,8 +145,8 @@
 
     <!-- command palette -->
     <div id="cmd-palette" class="palette hidden" role="dialog" aria-modal="true" aria-label="Command palette">
-      <label class="sr-only" for="cmd-input">Search commands, nodes, components</label>
-      <input id="cmd-input" placeholder="Search commands, nodes, components…" autocomplete="off"
+      <label class="sr-only" for="cmd-input">Search commands, nodes, blocks</label>
+      <input id="cmd-input" placeholder="Search commands, nodes, blocks…" autocomplete="off"
              role="combobox" aria-controls="cmd-list" aria-expanded="true" aria-autocomplete="list">
       <div id="cmd-list" class="palette-list" role="listbox" aria-label="Results"></div>
     </div>
