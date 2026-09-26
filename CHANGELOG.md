@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`claude-web-chat ls` shows which projects have a Claude Code session attached.** Every session's web-chat MCP server now says so in the machine registry (`~/.web-chat/instances.json`, a `role:'mcp'` row per process) from the moment Claude Code starts it until it exits — no daemon needed, and a session that has not called a tool yet still counts. `ls` gains three columns: **CLAUDE** (`● 1`, `● 2 · channel` when a Push wakes one mid-session, `—`), **TURN** (`mid-turn`, or `wake` for a channel wake's turn) and **VIEWERS** (connected browsers), and lists a project that has a session but no surface too. `ls --json` prints the whole row. `--reap` is unchanged and never touches a session. The row goes when Claude Code hangs up, on SIGTERM, or at exit; a crashed session's row is dropped on the next read once its process (or the Claude Code process that spawned it) is gone.
+- **`claude-web-chat status` has a `Claude:` line** for the current project: how many sessions are attached, whether the channel is on, and when one last called a tool.
+- **`GET /api/health` reports `active_label`, `last_commit_at` and `lock_stale`**, so a cross-project listing can say where each surface is, and not call an expired lock a turn in progress, without pulling the whole graph.
+
 ### Fixed
 
 - **Queue ⟲ Revert could delete a pane Claude rendered.** One Apply click in a pane with a declared signal puts two rows on the rail — an `activity` row from the shell's click listener and a `signal` row from the pane's `store.set` — and reverting the `signal` row routed to the pane-removal path, deleting the pane and everything typed into it. A `signal` Revert now undoes the interaction like an `activity` one: the pane stays, its form values go back to the pre-run baseline, and the signal key goes back to its pre-write value (or is removed if it was absent) through a server-sourced `queue-revert` store write that can never enqueue or wake. Only a `capture` item's Revert removes a pane now; a `comment` whose pin is already gone reverts nothing instead of falling back to the pane. The ⟲ tooltip says what each kind actually does.
