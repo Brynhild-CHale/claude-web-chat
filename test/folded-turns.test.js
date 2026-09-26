@@ -151,7 +151,7 @@ test('new graph after skipped turns discards them too', async (t) => {
   assert.equal((await graph(api)).pending_folded, 0);
 });
 
-test('branch-here with dirty live state hands the skipped turns to the preserve node', async (t) => {
+test('set-active with dirty live state hands the skipped turns to the preserve node', async (t) => {
   const { api } = await withServer(t);
   await turn(api, 'first', () => api.post('/api/render', { id: 'p1', html: '<p>a</p>' }));
   const n0 = (await graph(api)).active;
@@ -161,7 +161,7 @@ test('branch-here with dirty live state hands the skipped turns to the preserve 
   // uncommitted work on the current context
   await api.post('/api/render', { id: 'p3', html: '<p>wip</p>' });
 
-  const r = await api.post('/api/graph/branch-here', { id: n0 });
+  const r = await api.post('/api/graph/active', { id: n0 });
   assert.ok(r.json.preserved, 'dirty live state was preserved');
   const preserved = await node(api, r.json.preserved);
   assert.equal(preserved.folded_count, 1, 'the preserve node IS this context’s commit');

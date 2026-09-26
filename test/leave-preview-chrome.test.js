@@ -9,12 +9,12 @@
 // drifted, and `previewing` is the flag state.js says GATES all writes — so a
 // copy out of step is a preview mutating the live node.
 //
-// This file pins the three behaviours that differ between the copies, which is
+// This file pins the behaviours that differ between the copies, which is
 // exactly what the engine's options have to keep true:
 //   1. restoreSnapshot — returnToActive re-renders the captured live surface
-//   2. flushForms      — branch-on-edit releases the gated form values, and does
-//                        so AFTER previewing drops (the flush is a no-op while it
-//                        is still set, so the ordering is the behaviour)
+//   2. read-only       — the preview is READ-ONLY (plan §2b D2): an edit in a
+//                        previewed pane is refused and never re-aims the graph
+//                        (branch-on-edit and its flushForms option are gone)
 //   3. body.pending    — a queued re-aim must NOT leave preview at all; the three
 //                        callers that carry that branch keep it
 const test = require('node:test');
@@ -77,7 +77,7 @@ async function boot() {
     if (u === '/api/graph/active' && ACTIVE_FAILS) {
       return { ok: false, status: 409, statusText: 'Conflict', json: async () => ({ error: 'the turn lock is held' }), text: async () => '' };
     }
-    if (u === '/api/graph/branch-here' || u === '/api/graph/wipe' || u === '/api/graph/new' || u === '/api/graph/active') {
+    if (u === '/api/graph/wipe' || u === '/api/graph/new' || u === '/api/graph/active') {
       return json({ ok: true, pending: PENDING });
     }
     if (u.startsWith('/api/graph/diff')) return json({ mounts: { added: [], changed: [], removed: [] } });
@@ -161,35 +161,34 @@ test('returnToActive restores the captured live surface', async () => {
   assert.ok($('active-pill').textContent.includes('n1.0'), 'and the chip is back on the active node');
 });
 
-/* ---------- 2. flushForms (and its ordering) ---------- */
+/* ---------- 2. the preview is read-only ---------- */
 
-test('branch-on-edit leaves preview and flushes the gated form values', async () => {
+test('an edit in a previewed pane is refused, says how to edit, and re-aims nothing', async () => {
   click('btn-down');            // detach onto n2 again
   await tick();
   assert.equal(previewing(), true, 'precondition: detached on n2');
   sent.length = 0;
+  const before = calls.length;
 
-  // What a pane's delegated input listener raises when the user edits a form
-  // while detached (mounts.js → topbar.branchOnEdit).
-  W.dispatchEvent(new W.CustomEvent('wc:edit-in-preview'));
+  const host = W.document.querySelector('#main .mount-host');
+  const input = host.shadowRoot.getElementById('f');
+  const key = new W.KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true, composed: true });
+  input.dispatchEvent(key);
   await tick();
 
-  assert.ok(calls.some((c) => c.url === '/api/graph/branch-here' && c.body && c.body.id === 'n2'),
-    'the re-aim was requested for the node being viewed');
-  assert.equal(previewing(), false, 'the transition completed locally — no re-render, the DOM IS the new live state');
-  assert.deepEqual(paneIds(), ['m-old'], 'and deliberately nothing was re-rendered over it');
-  assert.ok($('active-pill').textContent.includes('n1.1'), 'active moved with it (the activeId option)');
-  assert.ok(sent.some((f) => f.type === 'pane:form' && f.id === 'm-old'),
-    'the gated form values were flushed — and only because the flush runs AFTER previewing drops; ' +
-    'sendFormState is a no-op while it is still set');
+  assert.equal(key.defaultPrevented, true, 'the keystroke is refused');
+  assert.match(noteText(), /set this node active in the graph to edit/i, 'and the user is told how to edit');
+  assert.equal(previewing(), true, 'the preview stays up — editing no longer branches');
+  assert.ok(!calls.slice(before).some((c) => c.method === 'POST'),
+    'nothing was POSTed — no /api/graph/branch-here, no re-aim of any kind');
+  assert.ok(!sent.some((f) => f.type === 'pane:form' || f.type === 'pane:state'), 'and nothing reached the live surface');
+  assert.ok(host.hasAttribute('data-wc-readonly'), 'the pane is marked read-only for the faint-controls sheet');
 });
 
 /* ---------- 3. body.pending — a queued re-aim never leaves preview ---------- */
 
 test('a wipe queued behind a locked turn keeps the preview up', async () => {
-  click('btn-up');              // detach again: n2 is active now, so ↑ previews n1
-  await tick();
-  assert.equal(previewing(), true, 'precondition: detached on n1');
+  assert.equal(previewing(), true, 'precondition: still detached on n2');
 
   PENDING = true;
   click('btn-wipe-go');
@@ -243,15 +242,20 @@ test('a refused Set active surfaces in the page, never in a blocking dialog', as
 /* ---------- the server-driven copy ---------- */
 
 test('a reset that lands active where this client is previewing re-attaches it', async () => {
-  assert.equal(previewing(), true, 'precondition: detached on n1');
+  assert.equal(previewing(), true, 'precondition: detached on n2');
   WS.onmessage({ data: JSON.stringify({
-    type: 'reset', active: 'n1', lock: null, theme: null, activeTheme: null, store: {},
-    mounts: NODE_MOUNTS.n1.map((m) => ({ ...m })),
+    type: 'reset', active: 'n2', lock: null, theme: null, activeTheme: null, store: {},
+    mounts: NODE_MOUNTS.n2.map((m) => ({ ...m })),
   }) });
   await tick();
   assert.equal(previewing(), false,
     'the queued re-aim applied at turn-end — attach rather than sit half-detached (previewing with viewedId === activeId)');
-  assert.deepEqual(paneIds(), ['m-live'], 'and the authoritative frame is rendered verbatim');
+  assert.deepEqual(paneIds(), ['m-old'], 'and the authoritative frame is rendered verbatim');
+  const host = W.document.querySelector('#main .mount-host');
+  assert.equal(host.hasAttribute('data-wc-readonly'), false, 'the now-live pane is editable again');
+  const key = new W.KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true, composed: true });
+  host.shadowRoot.getElementById('f').dispatchEvent(key);
+  assert.equal(key.defaultPrevented, false, 'typing is no longer refused once the node is active');
   // Let the deferred 340ms theme-transition strip fire while the window is still
   // valid, so nothing runs against a torn-down document.
   await new Promise((r) => setTimeout(r, 400));

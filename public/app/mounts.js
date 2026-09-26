@@ -1,7 +1,7 @@
 // The mount system — pane chrome, layout (12-col grid), resize, drag/reorder,
 // minbar, and the core mount()/clearTarget()/fullReset()/applySnapshot(). The
 // last is the ONE applier of a full-surface snapshot frame (hello / reset /
-// branch-here / preview restore) and owns the preview fork. The shadow-root mount +
+// preview restore) and owns the preview fork. The shadow-root mount +
 // <script> extraction + execution stay in the shared runtime (window.__wcMount);
 // this never reimplements that contract (rewrite risk #1). Pane DOM order is
 // local-only — never persisted (the drag reorder is cosmetic).
@@ -85,7 +85,10 @@ function emitPaneState(id) {
   if (emitTimers.has(id)) clearTimeout(emitTimers.get(id));
   emitTimers.set(id, setTimeout(() => {
     emitTimers.delete(id);
-    send({ type: 'pane:state', id, pane_state: p.pane_state }); // queued if the socket is down
+    // A COPY: pane_state is merged in place (applyRemotePaneState), and a frame
+    // queued while the socket is down must carry what the user did, not whatever
+    // the reconnect's snapshot later merges into the live object.
+    send({ type: 'pane:state', id, pane_state: { ...p.pane_state } }); // queued if the socket is down
   }, 80));
 }
 
@@ -93,8 +96,7 @@ function emitPaneState(id) {
 // Debounce-capture a pane's form-element values (via the shared runtime's
 // captureFormState) into the mount record server-side, so typed state survives
 // refresh, node navigation, drafts, and exports. Skipped while previewing
-// (branch-on-edit flushes explicitly after the re-aim) and while a remote
-// apply is in flight (p._applyingForm gates the echo loop).
+// (a preview is read-only) and while a remote apply is in flight (p._applyingForm gates the echo loop).
 const formTimers = new Map();
 const FORM_DEBOUNCE_MS = 350;
 function emitFormState(id) {
@@ -126,10 +128,9 @@ function sendFormState(id) {
   p._lastFormJson = json;
   send({ type: 'pane:form', id, form_state: fs });
 }
-// Immediate flush of every pane's current form values — called by the
-// branch-on-edit transition so the keystroke that triggered the branch isn't
-// waiting out a debounce when publishing resumes.
-export function flushFormStates() {
+// Immediate flush of every pane's current form values — the reconcile's way of
+// re-publishing what the user typed while the socket was down.
+function flushFormStates() {
   for (const id of panes.keys()) {
     const t = formTimers.get(id);
     if (t) { clearTimeout(t); formTimers.delete(id); }
@@ -157,10 +158,29 @@ export function applyPaneState(wrapper, pane_state) {
   wrapper.classList.toggle('minimized', !!pane_state.minimized);
   wrapper.classList.toggle('locked', !!pane_state.locked);
   wrapper.classList.toggle('pinned', !!pane_state.pinned);
-  const expanded = pane_state.mode === 'expanded';
-  wrapper.dataset.mode = expanded ? 'expanded' : 'reduced';
-  const mb = wrapper.querySelector('.pane-btn-mode');
-  if (mb) { mb.textContent = expanded ? '⊟' : '⊞'; mb.classList.toggle('active', expanded); }
+  // Under half the grid the header is too short for the type chip, pin and lock
+  // (the design draws them only at span ≥ 6); ⋯ reveals pin/lock there. See
+  // NARROW_SPAN and the .pane.narrow rules in app.css.
+  wrapper.classList.toggle('narrow', (pane_state.colSpan || 12) < NARROW_SPAN);
+  wrapper.dataset.mode = pane_state.mode === 'expanded' ? 'expanded' : 'reduced';
+  // The pin/lock buttons show the pane's CURRENT state — a lock set in another
+  // viewer (pane:state) has to light up here too, not only a local click.
+  const pin = wrapper.querySelector('.pane-btn-pin');
+  if (pin) pin.classList.toggle('active', !!pane_state.pinned);
+  const lock = wrapper.querySelector('.pane-btn-lock');
+  if (lock) lock.classList.toggle('lock-active', !!pane_state.locked);
+}
+
+// The block header shows the type chip, pin and lock only when the pane spans at
+// least half the 12-column grid; narrower, they fold behind a ⋯ toggle.
+export const NARROW_SPAN = 6;
+
+// What the header's type chip says: the render's declared `params.type`, else
+// the component it was spawned from, else nothing (the chip is hidden).
+export function blockType(params, component) {
+  const t = params && typeof params.type === 'string' ? params.type.trim() : '';
+  if (t) return t;
+  return typeof component === 'string' && component ? component : '';
 }
 
 // The zero state. #main used to be literally empty on first open — every OTHER
@@ -223,11 +243,13 @@ export function renderMinbar() {
   }
 }
 
-function makePaneChrome(id, title, pane_state, params) {
+function makePaneChrome(id, title, pane_state, params, component) {
   const wrapper = document.createElement('div');
   wrapper.className = 'pane';
   wrapper.dataset.paneId = id;
 
+  // The header IS the drag handle (⠿ + mono title), as the design draws it; the
+  // buttons on it are excluded in attachDrag.
   const header = document.createElement('div');
   header.className = 'pane-header';
 
@@ -240,6 +262,15 @@ function makePaneChrome(id, title, pane_state, params) {
   titleEl.textContent = title || id;
   header.appendChild(titleEl);
 
+  // textContent, never innerHTML: params.type is agent-supplied text.
+  const type = blockType(params, component);
+  if (type) {
+    const chip = document.createElement('span');
+    chip.className = 'pane-type';
+    chip.textContent = type;
+    header.appendChild(chip);
+  }
+
   function mkBtn(label, tip, onClick, className = '') {
     const b = document.createElement('button');
     b.className = 'pane-btn' + (className ? ' ' + className : '');
@@ -248,83 +279,91 @@ function makePaneChrome(id, title, pane_state, params) {
     b.addEventListener('click', onClick);
     return b;
   }
+  // Every header control is a WRITE to the live surface. A detached preview is
+  // read-only (plan §2b D2), so they are hidden there (app.css) and refuse here.
+  const live = () => !view.previewing;
+
   // The pin's meaning, said out loud: it is not decoration, it is what keeps a
   // pane through a surface wipe and an agent-driven clear-all.
-  const btnPin = mkBtn('📌', 'pin — this pane survives wipes and re-arrangement', () => {
+  const btnPin = mkBtn('📌', 'pin — survives wipes and re-arrangement', () => {
+    if (!live()) return;
     pane_state.pinned = !pane_state.pinned;
-    btnPin.classList.toggle('active', pane_state.pinned);
     applyPaneState(wrapper, pane_state);
     emitPaneState(id);
-  });
-  btnPin.classList.toggle('active', !!pane_state.pinned);
+  }, 'pane-btn-pin');
 
-  const btnLock = mkBtn('🔒', 'lock (refuse re-renders)', () => {
+  const btnLock = mkBtn('🔒', 'lock — refuse re-renders and moves', () => {
+    if (!live()) return;
     pane_state.locked = !pane_state.locked;
-    btnLock.classList.toggle('lock-active', pane_state.locked);
     applyPaneState(wrapper, pane_state);
     emitPaneState(id);
-  });
-  btnLock.classList.toggle('lock-active', !!pane_state.locked);
+  }, 'pane-btn-lock');
+
+  // Below NARROW_SPAN pin/lock are folded away; ⋯ shows them in the header.
+  const btnMore = mkBtn('⋯', 'more — pin, lock', () => {
+    wrapper.classList.toggle('more-open');
+  }, 'pane-btn-more');
 
   const btnMin = mkBtn('—', 'minimize', () => {
+    if (!live()) return;
     pane_state.minimized = true;
     applyPaneState(wrapper, pane_state);
     renderMinbar();
     emitPaneState(id);
-  });
-
-  // Reduced/expanded toggle — only for panes that opt in via params.modes.
-  let btnMode = null;
-  if (params && params.modes) {
-    btnMode = mkBtn(
-      pane_state.mode === 'expanded' ? '⊟' : '⊞',
-      'toggle reduced / expanded',
-      () => {
-        pane_state.mode = pane_state.mode === 'expanded' ? 'reduced' : 'expanded';
-        applyPaneState(wrapper, pane_state);
-        const p = panes.get(id);
-        if (p && p.root) p.root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: pane_state.mode } }));
-        emitPaneState(id);
-      },
-      'pane-btn-mode',
-    );
-  }
+  }, 'pane-btn-min');
 
   const btnClose = mkBtn('×', 'close', async () => {
+    // Closing a pane in a preview would clear the LIVE pane of the same id.
+    if (!live()) return;
     await fetch('/api/clear', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       // force: the USER closing a pane outranks the clear clobber-guard — a
       // driver-owned pane must still close when they hit ×.
       body: JSON.stringify({ id, force: true }),
     });
-  });
+  }, 'pane-btn-close');
 
   header.appendChild(btnPin);
   header.appendChild(btnLock);
-  if (btnMode) header.appendChild(btnMode);
+  header.appendChild(btnMore);
   header.appendChild(btnMin);
   header.appendChild(btnClose);
   wrapper.appendChild(header);
 
+  // Right edge = columns, bottom edge = height, the corner = both.
   const resizeR = document.createElement('div'); resizeR.className = 'pane-resize-r';
+  resizeR.title = 'resize width (snaps to columns)';
   const resizeB = document.createElement('div'); resizeB.className = 'pane-resize-b';
+  resizeB.title = 'resize height';
+  const resizeRB = document.createElement('div'); resizeRB.className = 'pane-resize-rb';
+  resizeRB.title = 'resize';
   wrapper.appendChild(resizeR);
   wrapper.appendChild(resizeB);
+  wrapper.appendChild(resizeRB);
 
-  attachResize(wrapper, resizeR, resizeB, id, pane_state);
-  attachDrag(wrapper, drag, id);
+  attachResize(wrapper, { r: resizeR, b: resizeB, rb: resizeRB }, id, pane_state);
+  attachDrag(wrapper, header, id, pane_state);
 
   return { wrapper, titleEl };
 }
 
-function attachResize(wrapper, handleR, handleB, id, pane_state) {
+// A locked pane refuses moves as well as re-renders: no drag, no resize (the
+// server drops a locked pane's layout changes too, and re-sends the truth). A
+// detached preview refuses them as well — it is read-only.
+export function refusesLayout(pane_state) {
+  return !!(pane_state && pane_state.locked) || !!view.previewing;
+}
+
+function attachResize(wrapper, handles, id, pane_state) {
   function approxColWidth() {
     const mainEl = $('main');
     const w = mainEl.clientWidth - 44; // padding
     return (w - 11 * 18) / 12; // 11 gaps of 18px
   }
   function startResize(axis, handle, e) {
+    if (e.button != null && e.button !== 0) return;
     e.preventDefault();
+    if (refusesLayout(pane_state)) return;
     try { handle.setPointerCapture(e.pointerId); } catch {}
     const pointerId = e.pointerId;
     const startX = e.clientX;
@@ -383,8 +422,8 @@ function attachResize(wrapper, handleR, handleB, id, pane_state) {
       if (ev.pointerId !== pointerId) return;
       lastClientY = ev.clientY;
       lastPageY = ev.pageY;
-      if (axis === 'x') applyX(ev);
-      else { applyY(); ensureAutoScroll(); }
+      if (axis !== 'y') applyX(ev);
+      if (axis !== 'x') { applyY(); ensureAutoScroll(); }
     }
     function up(ev) {
       if (ev.pointerId !== pointerId) return;
@@ -399,12 +438,17 @@ function attachResize(wrapper, handleR, handleB, id, pane_state) {
     handle.addEventListener('pointerup', up);
     handle.addEventListener('pointercancel', up);
   }
-  handleR.addEventListener('pointerdown', (e) => startResize('x', handleR, e));
-  handleB.addEventListener('pointerdown', (e) => startResize('y', handleB, e));
+  handles.r.addEventListener('pointerdown', (e) => startResize('x', handles.r, e));
+  handles.b.addEventListener('pointerdown', (e) => startResize('y', handles.b, e));
+  handles.rb.addEventListener('pointerdown', (e) => startResize('xy', handles.rb, e));
 }
 
-function attachDrag(wrapper, handle, id) {
+function attachDrag(wrapper, handle, id, pane_state) {
   handle.addEventListener('pointerdown', (e) => {
+    if (e.button != null && e.button !== 0) return;
+    // The header's own buttons are clicks, not drags.
+    if (e.target && e.target.closest && e.target.closest('button')) return;
+    if (refusesLayout(pane_state)) return;
     e.preventDefault();
     try { handle.setPointerCapture(e.pointerId); } catch {}
     const pointerId = e.pointerId;
@@ -487,7 +531,9 @@ function attachDrag(wrapper, handle, id) {
       let dSpan = dPane.pane_state.colSpan;
       let tSpan = tPane.pane_state.colSpan;
       if (dSpan + tSpan > 12) {
-        if (tSpan >= 12) { dSpan = 6; tSpan = 6; }
+        // A locked neighbour keeps its size: only the dragged pane gives way.
+        if (tPane.pane_state.locked) dSpan = Math.max(2, 12 - tSpan);
+        else if (tSpan >= 12) { dSpan = 6; tSpan = 6; }
         else dSpan = Math.max(1, 12 - tSpan);
         dPane.pane_state.colSpan = dSpan;
         tPane.pane_state.colSpan = tSpan;
@@ -552,7 +598,7 @@ function mountPane(m) {
 
   const ps = applyPaneStateDefaults(pane_state);
   const titleFromParams = params && params.title;
-  const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params);
+  const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params, m.component);
 
   const host = document.createElement('div');
   // The mount id is agent-supplied, and the shell resolves its OWN chrome live
@@ -570,9 +616,10 @@ function mountPane(m) {
   slot.appendChild(wrapper);
 
   const { root, scripts } = window.__wcMount.attachAndExtract(host, html);
+  guardReadonly(root, host, id);
 
   // markGesture: a REAL user interaction in this pane (synthetic rehydrate
-  // events are gated out in reportEvent/editInPreview via _applyingForm, so
+  // events are gated out in reportEvent via _applyingForm, so
   // gesture-stamping lives with the same guard). Store writes that follow a
   // recent gesture are flagged user-driven for the activity layer — a script's
   // init/tick writes carry no gesture and never masquerade as user activity.
@@ -581,12 +628,23 @@ function mountPane(m) {
     if (p && !p._applyingForm) p._lastGestureAt = Date.now();
   };
   root.addEventListener('click', (e) => { markGesture(); reportEvent('click', e, id); });
-  root.addEventListener('change', (e) => { markGesture(); reportEvent('change', e, id); emitFormState(id); editInPreview(id); });
-  root.addEventListener('submit', (e) => { markGesture(); reportEvent('submit', e, id); editInPreview(id); });
+  root.addEventListener('change', (e) => { markGesture(); reportEvent('change', e, id); emitFormState(id); });
+  root.addEventListener('submit', (e) => { markGesture(); reportEvent('submit', e, id); });
   // 'input' is deliberately NOT forwarded to the event ring (per-keystroke
   // noise; 'change' carries the settled value on blur) — it only feeds the
-  // debounced form-state sync and the branch-on-edit trigger.
-  root.addEventListener('input', () => { markGesture(); emitFormState(id); editInPreview(id); });
+  // debounced form-state sync.
+  root.addEventListener('input', () => { markGesture(); emitFormState(id); });
+  // A pane's own reduced/expanded control (lib/capture/pane.js wrapModes — the
+  // header ⊞/⊟ is gone) asks for a mode; the chrome records it on pane_state so
+  // it persists, travels with the node, and reaches other viewers (pane:state).
+  root.addEventListener('wc:mode-request', (e) => {
+    const mode = e && e.detail && e.detail.mode === 'expanded' ? 'expanded' : 'reduced';
+    const p = panes.get(id);
+    if (!p || p.pane_state.mode === mode) return;
+    p.pane_state.mode = mode;
+    applyPaneState(p.wrapper, p.pane_state);
+    emitPaneState(id);   // a no-op while previewing: the toggle stays local there
+  });
 
   panes.set(id, {
     wrapper, host, root, pane_state: ps, form_state: form_state || null,
@@ -640,8 +698,9 @@ function mountPane(m) {
     panes.get(id).title = hostTitle;
   }
   // Re-assert the authoritative pane_state.mode after the bootstrap's wc:mode
-  // listener attaches (a remount carries live state; baked html is frozen).
-  if (params && params.modes && ps.mode === 'expanded') {
+  // listener attaches (a remount carries live state; baked html is frozen — and
+  // the pane's own toggle may have moved the mode since the html was rendered).
+  if (params && params.modes) {
     root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: ps.mode } }));
   }
   renderMinbar();
@@ -720,8 +779,8 @@ export function fullReset({ mounts, store: newStore }) {
 
 /* ── the ONE full-snapshot applier ───────────────────────────────────────────
    Every full surface replacement lands here: the `hello` a (re)connect opens
-   with, the `reset` a wipe / node jump / turn-end re-aim broadcasts, the
-   `branch-here` adoption, the live surface restored on leaving a preview.
+   with, the `reset` a wipe / node jump / turn-end re-aim broadcasts, the live
+   surface restored on leaving a preview.
 
    It owns the PREVIEW FORK. `previewing` is the flag state.js says gates all
    writes, and `hello` was written without it — so a reconnect during a node
@@ -731,7 +790,7 @@ export function fullReset({ mounts, store: newStore }) {
 
    Two modes, because a snapshot arrives for two different reasons:
 
-     authoritative  the SURFACE changed (reset / branch-here / preview restore).
+     authoritative  the SURFACE changed (reset / preview restore).
                     The frame is rendered verbatim — every pane re-mounted — which
                     is what makes a node jump actually show the node. Notably a
                     wipe preserves pinned mounts SERVER-SIDE and sends the
@@ -843,11 +902,16 @@ export function unminimize(id) {
 
 // Apply a remote client's pane:state (WS 'pane:state'): merge, re-layout, and
 // dispatch wc:mode into the shadow root if the mode changed remotely.
+//
+// Merged IN PLACE: the header's pin/lock/min/resize/drag closures hold this very
+// object (makePaneChrome), so replacing it left them toggling a stale copy — a
+// lock set in another viewer never stopped this one's drag, and a pin clicked
+// after any remote update sent the old state back.
 export function applyRemotePaneState(id, pane_state) {
   const p = panes.get(id);
   if (!p) return;
   const prevMode = p.pane_state.mode;
-  p.pane_state = { ...p.pane_state, ...pane_state };
+  Object.assign(p.pane_state, pane_state);
   applyPaneState(p.wrapper, p.pane_state);
   if (p.pane_state.mode !== prevMode && p.root) {
     p.root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: p.pane_state.mode } }));
@@ -855,20 +919,80 @@ export function applyRemotePaneState(id, pane_state) {
   renderMinbar();
 }
 
-// A form edit inside a pane while DETACHED on an older node triggers the
-// branch-on-edit flow (silent re-aim; see topbar.branchOnEdit). Decoupled via a
-// window event because topbar owns the preview state machine and already
-// imports from this module (avoids an import cycle). Clicks deliberately do NOT
-// trigger it — only genuine form edits (input/change/submit) branch.
-function editInPreview(mountId) {
-  // A rehydrate (applyFormState) dispatches synthetic input/change events that
-  // bubble here — without this gate, merely PREVIEWING a node with form_state
-  // would trigger a branch.
-  const p = panes.get(mountId);
-  if (p && p._applyingForm) return;
-  if (!view.previewing) return;
-  if (!view.viewedId || view.viewedId === view.activeId) return;
-  window.dispatchEvent(new CustomEvent('wc:edit-in-preview'));
+// ── read-only preview (plan §2b D2) ─────────────────────────────────────────
+// A detached preview shows a committed node; it is not an editing surface. Its
+// writes were always gated (store echo, pane:state, pane:form, events), but an
+// edit in a previewed pane used to silently re-aim the graph onto that node
+// (branch-on-edit). Now editing needs the node made active on the graph screen,
+// and a previewed pane refuses the gesture instead of swallowing it: form
+// controls do not take input, toggles do not toggle, submits do not submit, and
+// the user is told how to edit. Plain buttons and links still work — a tab
+// strip or a capture pane's reduced/expanded switch is viewing, not editing.
+//
+// The guards sit in the CAPTURE phase on the shadow root, so they run before the
+// pane's own listeners and can stop a submit/toggle from reaching its script.
+// They read view.previewing at event time — a kept pane re-attached by
+// leavePreview is editable again with no remount. Synthetic rehydrate events
+// (applyFormState's input/change) are not gestures and are never blocked.
+const TEXT_ENTRY = 'textarea, select, input:not([type=checkbox]):not([type=radio])'
+  + ':not([type=button]):not([type=submit]):not([type=reset]):not([type=image])';
+const TOGGLE = 'input[type=checkbox], input[type=radio]';
+const SUBMITTER = 'input[type=submit], input[type=image], input[type=reset], form button:not([type=button])';
+const matches = (el, sel) => !!(el && el.matches && el.matches(sel));
+const editable = (el) => matches(el, TEXT_ENTRY)
+  || !!(el && el.closest && el.closest('[contenteditable]:not([contenteditable="false"])'));
+// Keys that move focus or dismiss are navigation, not editing.
+const NAV_KEYS = new Set(['Tab', 'Escape', 'Shift', 'Control', 'Alt', 'Meta']);
+
+// Faint every form control while the host carries data-wc-readonly. A
+// constructable sheet adopted by the shadow root — not a <style> child — so the
+// pane's own DOM (child indices, comment-pin anchors, :last-child) is untouched.
+let readonlySheet;
+function adoptReadonlySheet(root) {
+  try {
+    if (readonlySheet === undefined) {
+      readonlySheet = new CSSStyleSheet();
+      readonlySheet.replaceSync(
+        ':host([data-wc-readonly]) :is(input, textarea, select, button[type=submit], [contenteditable]:not([contenteditable="false"]))'
+        + ' { cursor: not-allowed; opacity: .6; }');
+    }
+    if (readonlySheet) root.adoptedStyleSheets = [...root.adoptedStyleSheets, readonlySheet];
+  } catch { readonlySheet = null; } // no constructable sheets: the guards still hold
+}
+
+function refuse(e, id) {
+  e.preventDefault();
+  e.stopPropagation();
+  window.dispatchEvent(new CustomEvent('wc:readonly-attempt', { detail: { id } }));
+}
+
+function guardReadonly(root, host, id) {
+  host.toggleAttribute('data-wc-readonly', !!view.previewing);
+  adoptReadonlySheet(root);
+  // mousedown: a text field or select takes focus / opens on press.
+  root.addEventListener('mousedown', (e) => {
+    if (view.previewing && editable(e.target)) refuse(e, id);
+  }, true);
+  // keyboard focus still reaches a field (Tab stays navigation); typing does not.
+  root.addEventListener('keydown', (e) => {
+    if (view.previewing && editable(e.target) && !NAV_KEYS.has(e.key)) refuse(e, id);
+  }, true);
+  // paste, drop, IME — anything that would change a value.
+  root.addEventListener('beforeinput', (e) => { if (view.previewing) refuse(e, id); }, true);
+  // a checkbox/radio toggles on click (a label's click is re-dispatched to it);
+  // a submitter submits.
+  root.addEventListener('click', (e) => {
+    if (view.previewing && (matches(e.target, TOGGLE) || matches(e.target, SUBMITTER))) refuse(e, id);
+  }, true);
+  root.addEventListener('submit', (e) => { if (view.previewing) refuse(e, id); }, true);
+}
+
+// Re-mark every mounted pane after the preview gate flips (topbar previewNode /
+// leavePreview). A pane mounted while previewing is marked at mount time.
+export function syncReadonly() {
+  for (const p of panes.values()) {
+    if (p.host) p.host.toggleAttribute('data-wc-readonly', !!view.previewing);
+  }
 }
 
 function reportEvent(type, e, mountId) {

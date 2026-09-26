@@ -143,8 +143,9 @@ there is a real one.
 - `get_active`, name the label of the node your previous turn committed.
 - Ask them to press **`G`** and walk back one node, to see the surface as it was
   before beat A.
-- Explain branch-on-edit **only if it actually fires** — the instant a `user`-authored
-  preserve node appears. That is the only moment the concept is cheap to explain.
+- Explain the preserve node **only if one actually appears** — the instant a `user`-authored
+  preserve node shows up after they set an older node active. That is the only moment the
+  concept is cheap to explain.
 
 **Beat C — live host state, offered not forced.** Ask first; if they want it:
 

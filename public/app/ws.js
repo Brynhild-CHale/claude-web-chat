@@ -15,7 +15,7 @@ import {
 } from './mounts.js';
 import {
   applyActive, applyLock, ensureGraph, updateChip, onGraphChanged, syncThemeSelect,
-  completeBranchTransition, showReaimNote, leavePreview,
+  showReaimNote, leavePreview,
 } from './topbar.js';
 import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
 import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
@@ -188,28 +188,6 @@ const HANDLERS = {
       return;
     }
     applyRemoteFormState(msg.id, msg.form_state || {});
-  },
-  // Another client (or this one — see topbar.branchOnEdit, which transitions
-  // locally on the POST response and sets view.branchingTo so this frame is a
-  // no-op for the editor) re-aimed the surface onto a previewed node via
-  // branch-on-edit. Adopt the new live state; the editor client must NOT be
-  // re-rendered (its DOM — including the in-flight edit — IS the new live state).
-  async 'branch-here'(msg) {
-    // The editing client completes its transition here (deferred pending
-    // re-aim, or a race where the frame beats the POST response); if it already
-    // transitioned (attached on the new active), it's a no-op. A bystander is
-    // neither, since its active is the OLD id.
-    if (completeBranchTransition(msg.id)) return;
-    if (!view.previewing && view.activeId === msg.id) return;
-    try {
-      const r = await fetch('/api/graph/node/' + msg.id);
-      if (r.ok) {
-        const node = await r.json();
-        applySnapshot({ mounts: node.mounts || [], store: node.store || {} });
-      }
-    } catch {}
-    applyActive(msg.active);
-    onGraphChanged();
   },
   // A full surface replacement (wipe, new graph, node jump, turn-end re-aim).
   // The frame is AUTHORITATIVE and rendered VERBATIM: whatever mounts it carries

@@ -25,10 +25,6 @@ export const view = {
   graphCache: null,
   expandedStacks: new Set(),
   selectedNodeId: null,
-  // node id a branch-on-edit re-aim is in flight for (set before the POST,
-  // cleared after). Lets the ws 'branch-here' handler distinguish the editing
-  // client (local transition, DOM must not be re-rendered) from bystanders.
-  branchingTo: null,
   // Show the no-change turns the graph payload marks `collapsed`. Off by
   // default: those nodes are byte-identical copies of their parent and a run of
   // them buries the turns that changed something. See graph-view displayNodes().

@@ -183,8 +183,10 @@ test('the whole z-index inventory is one ordered scale', () => {
 });
 
 test('no z-index in the shell is a hand-picked number any more', () => {
-  // Ratchet: the two survivors are LOCAL to a stacking context of their own and
-  // are commented as such. A new bare number here means the scale was bypassed.
+  // Ratchet: the survivors are LOCAL to a stacking context of their own and
+  // are commented as such — the glance's controls, and the three resize handles
+  // inside a pane (the corner sits one above the two edges it overlaps). A new
+  // bare number here means the scale was bypassed.
   const bare = [];
   for (const d of zDeclarations()) {
     if (/^var\(--z-[a-z]+\)$/.test(d.value)) continue;
@@ -194,6 +196,7 @@ test('no z-index in the shell is a hand-picked number any more', () => {
     '.glance-controls { z-index: 1 }',
     '.pane-resize-b { z-index: 3 }',
     '.pane-resize-r { z-index: 3 }',
+    '.pane-resize-rb { z-index: 4 }',
   ], 'z-index declarations outside the --z-* scale');
 });
 

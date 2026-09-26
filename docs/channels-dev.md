@@ -274,7 +274,7 @@ emitter, the invariant is one-line-auditable. Cases:
 
 ### Pending re-aim
 
-A user re-aim (set-active / wipe / new-graph / branch-here) during a fresh lock
+A user re-aim (set-active / wipe / new-graph) during a fresh lock
 is **queued, not 409'd** — one in-memory slot (`graph.pendingReaim`, last intent
 wins), surfaced to clients as a `reaim:pending` WS frame ("queued — applies when
 the turn ends"). `turn-end` commits on the lock base first, then applies the

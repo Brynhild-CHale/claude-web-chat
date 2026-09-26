@@ -5,7 +5,7 @@
 import { view, $ } from './state.js';
 import { store } from './store.js';
 import { nodeById, labelFor } from './labels.js';
-import { fullReset, applySnapshot, panes, flushFormStates } from './mounts.js';
+import { fullReset, applySnapshot, panes, syncReadonly } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
 import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
 
@@ -107,50 +107,20 @@ export async function previewNode(id) {
   // this node aside as the live surface instead of rendering it. Entering a
   // preview is the act of putting a non-live node ON the DOM.
   fullReset({ mounts: node.mounts || [], store: node.store || {} });
+  syncReadonly();
   applyNodeTheme(node.theme || null, true);
   updateChip();
 }
 
-// ── branch-on-edit ──────────────────────────────────────────────────────────
-// The user edited a form while DETACHED on an older node (wc:edit-in-preview,
-// fired by the pane's delegated input/change/submit listeners). Silent re-aim:
-// the server auto-commits any dirty live state as a preserve node (nothing is
-// ever lost), then re-aims active onto the viewed node — so the user's edits
-// ride as uncommitted live state and the next commit lands as a BRANCH CHILD of
-// the node they were viewing, leaving the original and its downstream intact.
-// The on-screen DOM (the previewed node + the in-flight edit) IS the new live
-// state, so the transition is local — no re-render, no lost keystroke.
-let branchInFlight = false;
-export async function branchOnEdit() {
-  if (!view.previewing || branchInFlight) return;
-  const target = view.viewedId;
-  if (!target || target === view.activeId) return;
-  if (view.branchingTo === target) return; // already queued server-side; the 'branch-here' frame completes it
-  branchInFlight = true;
-  view.branchingTo = target;
-  let keepPending = false;
-  try {
-    const r = await fetch('/api/graph/branch-here', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: target }),
-    });
-    if (!r.ok) return; // 404 etc — cleared in finally
-    const body = await r.json().catch(() => ({}));
-    if (body.pending) {
-      // Claude is mid-turn: the server queued the re-aim (pending re-aim) and
-      // will apply it after the commit. Keep previewing; the eventual
-      // 'branch-here' WS frame completes the local transition.
-      keepPending = true;
-      showReaimNote("Claude is mid-turn — your edit branches here when the turn ends.");
-      return;
-    }
-    completeBranchTransition(target);
-  } catch {
-    // network hiccup: stay in preview; the next edit retries
-  } finally {
-    branchInFlight = false;
-    if (!keepPending && view.branchingTo === target && view.previewing) view.branchingTo = null;
-  }
+// ── the preview is read-only (plan §2b D2) ─────────────────────────────────
+// A previewed pane refuses edits (mounts.js guardReadonly) and says so here, in
+// the same in-page notice a queued re-aim uses. Editing an older node means
+// making it active on the graph screen (Set active / ⑃ Branch); the next edit or
+// render then commits as its child. This replaced branch-on-edit, which re-aimed
+// the graph the moment a previewed form was touched.
+export const READONLY_HINT = 'Read-only preview — set this node active in the graph to edit.';
+function onReadonlyAttempt() {
+  if (view.previewing) showReaimNote(READONLY_HINT);
 }
 
 /* ---------- leaving preview: ONE owner of the transition ----------
@@ -162,24 +132,24 @@ export async function branchOnEdit() {
    `previewing` is the flag state.js says GATES all writes, so a copy that drops
    out of step is a preview mutating the live node.
 
-   The core is unconditional; the three real variations are named options rather
-   than a switchboard:
-     activeId        this client now believes active is here (a set-active or a
-                     branch-here that has actually landed) — moves activeId AND
-                     viewedId with it.
+   The core is unconditional — including re-enabling the panes the read-only
+   preview marked (syncReadonly) — and the real variations are named options
+   rather than a switchboard:
+     activeId        this client now believes active is here (a set-active that
+                     has actually landed) — moves activeId AND viewedId with it.
      restoreSnapshot go back to the live surface captured on the way in:
                      re-render it, re-apply the active node's theme, aim viewed
                      at active. Consumes liveSnapshot before it is dropped.
-     flushForms      release the form values gated during the preview (the
-                     branch-on-edit path, whose on-screen DOM IS the new live
-                     state — so it deliberately does not re-render).
+   (A third, flushForms, released form values gated during the preview for
+   branch-on-edit; the preview is read-only now, so there are none to release.)
    Callers keep their own `body.pending` early return: whether a queued re-aim
    should leave preview AT ALL is the caller's question, not this one's. */
-export function leavePreview({ activeId = null, restoreSnapshot = false, flushForms = false } = {}) {
+export function leavePreview({ activeId = null, restoreSnapshot = false } = {}) {
   const snap = view.liveSnapshot;
   view.previewing = false;
   view.liveSnapshot = null;
   $('main').classList.remove('preview-readonly');
+  syncReadonly();
   if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
   if (restoreSnapshot) {
     view.viewedId = view.activeId;
@@ -188,22 +158,6 @@ export function leavePreview({ activeId = null, restoreSnapshot = false, flushFo
     if (snap) applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
-  if (flushForms) flushFormStates();
-}
-
-// The editing client's half of a branch-here: exit preview WITHOUT re-rendering
-// (the on-screen DOM — previewed node + in-flight edit — IS the new live
-// state), then flush the gated form values. Idempotent and shared by the
-// immediate path (POST response) and the deferred path (the 'branch-here' WS
-// frame after a pending re-aim applies) — whichever arrives first wins.
-export function completeBranchTransition(id) {
-  if (view.branchingTo !== id) return false;
-  view.branchingTo = null;
-  if (view.previewing && view.viewedId === id) {
-    leavePreview({ activeId: id, flushForms: true });
-    onGraphChanged();
-  }
-  return true;
 }
 
 export function returnToActive() {
@@ -269,9 +223,8 @@ export function initTopbar() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
 
   on('btn-return-active', 'click', returnToActive);
-  // Branch-on-edit: fired by a pane's delegated listeners (mounts.js) when the
-  // user edits a form while detached on an older node.
-  window.addEventListener('wc:edit-in-preview', branchOnEdit);
+  // A previewed pane refused an edit (mounts.js guardReadonly): say how to edit.
+  window.addEventListener('wc:readonly-attempt', onReadonlyAttempt);
 
   on('btn-up', 'click', async () => {
     await ensureGraph();
