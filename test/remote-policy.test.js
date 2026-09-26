@@ -130,7 +130,7 @@ const ALLOWED = [
   ['GET', '/api/queue'], ['GET', '/api/queue/policy'], ['POST', '/api/queue/push'], ['POST', '/api/queue/repush'],
   ['GET', '/api/queue/pending'], ['POST', '/api/queue/pending/consume'], ['PATCH', '/api/queue/q1'],
   ['DELETE', '/api/queue/q1'],
-  ['GET', '/api/theme?scope=global'], ['GET', '/api/themes'], ['POST', '/api/themes'], ['POST', '/api/theme/apply'],
+  ['GET', '/api/theme?scope=global'], ['GET', '/api/themes'], ['POST', '/api/theme/apply'],
   ['GET', '/api/components'], ['GET', '/api/components/git-dashboard'], ['GET', '/api/components/x/seed'],
   ['POST', '/api/components/git-dashboard/use'],
   ['GET', '/api/services/pending'], ['GET', '/api/version'], ['GET', '/api/health'], ['GET', '/api/embed-check?url=x'],
@@ -149,7 +149,7 @@ const REFUSED = [
   ['DELETE', '/api/packs/quarantine/p'], ['DELETE', '/api/packs/p'], ['POST', '/api/packs/announce'],
   // components / services / brand
   ['POST', '/api/components'], ['POST', '/api/services/refresh-trust'], ['POST', '/api/brand/logo'],
-  ['DELETE', '/api/brand/logo'], ['PUT', '/api/brand/logo'], ['POST', '/api/theme'],
+  ['DELETE', '/api/brand/logo'], ['PUT', '/api/brand/logo'], ['POST', '/api/theme'], ['POST', '/api/themes'],
   // Claude's markdown write path, and the machine-wide sessions feed
   ['POST', '/api/markdown'], ['GET', '/api/machine/sessions'], ['GET', '/api/machine/anything'],
   // turn / hook / channel internals and the event log
