@@ -332,4 +332,17 @@ test('panel: refreshes while open, stops once dismissed; empty and error states'
   sessionsBody = ROWS();
 });
 
+test('panel: viewed remotely, the portal\'s refusal hint is shown instead of a bare status', async () => {
+  const { classify, refusalBody } = require('../lib/core/remote-policy');
+  sessionsStatus = 403;
+  sessionsBody = refusalBody(classify('GET', '/api/machine/sessions'));
+  key('s');
+  await tick();
+  assert.match($('sessions-list').textContent, /Couldn't read sessions — .*run on the host: claude-web-chat ls/);
+  assert.doesNotMatch($('sessions-list').textContent, /HTTP 403/);
+  escape();
+  sessionsStatus = 200;
+  sessionsBody = ROWS();
+});
+
 test('panel: teardown', () => { restore(); });

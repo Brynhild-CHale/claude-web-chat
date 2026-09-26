@@ -31,7 +31,12 @@ browser ──https──▶ Cloudflare Access ──▶ tunnel ──▶ cloudf
 ## Hostnames
 
 You pick one hostname for the **picker** — the page listing your running
-projects — for example `wc.example.com`. Each project then gets its own
+projects — for example `wc.example.com`. It shows the same live picture as
+`claude-web-chat ls`: each running surface (viewers, the active node, a turn in
+progress) and whether a Claude Code session is attached (`×N`, channel on/off,
+when it last called a tool). A project with Claude attached but no surface
+running is listed as *Claude attached · surface stopped*, without a link — the
+portal never starts a surface; run `claude-web-chat open` on the host. Each project then gets its own
 hostname, derived from its instance id (eight hex characters, stable per
 project directory):
 
@@ -143,7 +148,13 @@ Remove buttons are disabled; a service waiting for approval says to run
 your hand. The page learns it is remote from the daemon's `/api/health`
 (`remote: true`), which the portal arranges by adding an `X-WC-Remote: 1`
 header to everything it forwards. That is a label for the page, never a
-permission — what a remote viewer may do is decided in the portal.
+permission — what a remote viewer may do is decided in the portal. It narrows
+one thing: a pane can still spawn a saved component remotely, but not a pane of
+raw HTML — that would be markup the remote viewer's page wrote, landing in your
+surface — so such a spawn is refused (the portal always sets the header and
+drops any copy a viewer sends). The ⋯ → **Sessions** panel says to run
+`claude-web-chat ls` on the host instead of listing anything: it names every
+project on the machine, so it is host-only.
 
 ## The remote access log
 
@@ -181,8 +192,11 @@ The portal is **access control**, so every step fails closed:
    graph, comments, the queue and Push, themes, exports as a download. Refused,
    with a hint naming what to run on the host instead: installing or removing
    packs, approving services, saving components from outside, the turn/hook
-   internals, shutting a daemon down, captures from the browser extension,
-   writing export files to disk, and wiping the graph (unless you opt in with
+   internals and Claude's own write paths (`render`, `write_markdown`), the
+   machine-wide Sessions list (it names every project on the machine), a pane
+   spawning raw HTML, shutting a daemon down, captures from the browser
+   extension, setting brand images, writing export files to disk, and wiping
+   the graph (unless you opt in with
    `"remote": {"allowDestructive": true}` in `tunnel.json`).
 4. **Cross-site requests.** A request that changes anything, and the live socket,
    must come from the project's own page (an exact `Origin` match); requests

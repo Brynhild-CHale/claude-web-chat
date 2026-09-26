@@ -159,6 +159,7 @@ were the only places they lived.
 | read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
+| write the shared store (Claude's `set_store`, a driver, a pane's `store:set`, the queue's Revert) | `lib/server/domain/store` `patchStore(state, bus, patch, {source, unset, mount, gesture, except})` — applies, emits once, hands subscribers the pre-write values as `meta.prior` | `Object.assign(state.store, …)` beside a hand-written emit |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
 | walk a node's ancestry, or list a pane's versions along it | `lib/server/domain/lineage` `ancestry(graph, id)` / `mountHistory(graph, {mountId, fromId, labels, live, includeLive})`; put a version back with `lib/server/domain/mounts` `restoreMount` | a private `parent_id` loop (no cycle guard, and a second walk for replay to diverge from) |
 | place an item in the page sequence, or put/remove a markdown item | `lib/server/domain/page` `place` / `drop` / `putMarkdown` / `removeMarkdown` (bulk: `restore` / `clearMarkdown` / `reconcile`); read a node's order with `pageOrder(node)` | push onto `state.order` by hand, or take a node's page order from its mounts array alone |
@@ -506,8 +507,12 @@ the 403 (`{ok:false, remote:true, hint}`).
 - **Adding a daemon route?** `test/remote-policy.test.js` parses every
   `app.<verb>(` under `lib/server/routes/` and fails until the route has a row.
   Decide on purpose: pack writes, service trust, the turn/hook internals,
-  process/disk actions and captures are refused; the surface the SPA drives is
-  allowed.
+  process/disk actions, captures and anything answering about OTHER projects
+  (`GET /api/machine/sessions`) are refused; the surface the SPA drives is allowed.
+- **Paths only.** The table decides by method + path. A rule that has to read
+  the BODY lives in the route and is recorded on the row as a `note` — today
+  exactly one: `POST /api/pane/spawn` is allowed, but the route refuses an
+  `html` body when `X-WC-Remote` is set (`lib/server/routes/spawn.js`).
 
 ### `lib/portal/` — the tunnel portal
 
@@ -545,10 +550,17 @@ upstream opened with no Origin, cut at the token's `exp` + 5s with close code
 - **`X-WC-Remote: 1`** (`core/cors` `REMOTE_HEADER`) is the one header the
   portal ADDS; the daemon's `/api/health` echoes it as `remote:true`, and the
   page (`public/app/remote.js` `isRemote`/`remoteNow`) swaps host-only controls
-  for "run this on the host". A UI label — never gate anything on it.
+  for "run this on the host". A UI label — never GRANT anything on it (a local
+  caller can send it). Refusing on it is sound only because the portal always
+  sets it and drops a viewer's copy; the one route that does is the raw-html
+  pane spawn.
 - **The picker** (`picker.js` + `public/`) is static under a CSP with no inline
   script; it builds its rows with `createElement`/`textContent` because a
-  project title is a directory name.
+  project title is a directory name. Its rows come from the ONE machine
+  classifier — `lib/util/registry` `sessions()` + `enrichSessions()`, the same
+  as `ls` and the Sessions panel — minus the hidden projects
+  (`createPortal({sessions, enrich})` are injectable); a Claude-only project is
+  listed without a link, and ports and pids never reach the page.
 - **cloudflared** runs as the portal's child (`createPortal({supervise})`, built
   once the port is bound), never detached from it: stopping the portal stops
   the connector first, so no tunnel is ever left answering 502s with nothing
