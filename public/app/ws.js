@@ -24,6 +24,7 @@ import { applyCommentsFrame } from './comments.js';
 import { onTrustPrompt, onTrustClear, resetTrustPrompts } from './service-trust.js';
 import { invalidate as invalidateComponents } from './components.js';
 import { bus } from './bus.js';
+import { applyBrand, refreshBrand } from './brand.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -276,6 +277,8 @@ const HANDLERS = {
   // Service consent. Chrome-level, never a mount — see service-trust.js for why.
   'service:trust'(msg) { onTrustPrompt(msg); },
   'service:trust:clear'(msg) { onTrustClear(msg); },
+  // A brand image slot was set or cleared (here or in another viewer).
+  brand(msg) { applyBrand(msg.slots); },
 };
 
 // The daemon's socket, on the page's own origin and scheme. A page served over
@@ -286,7 +289,7 @@ export const wsUrl = (loc = location) => `${loc.protocol === 'https:' ? 'wss' : 
 
 export function connect() {
   ws = new WebSocket(wsUrl());
-  ws.onopen = () => setConnStatus('live', 'live');
+  ws.onopen = () => { setConnStatus('live', 'live'); refreshBrand(); };
   ws.onclose = () => {
     setConnStatus('reconnecting…', 'off');
     // The server releases its outstanding-prompt memo when the last viewer

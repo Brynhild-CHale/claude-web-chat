@@ -168,8 +168,8 @@ test('theme: apply_theme by name at a scope', async (t) => {
 
 test('theme: apply resolves a builtin name case-insensitively (Phase 5 regression guard)', async (t) => {
   const { api } = await withServer(t);
-  // The builtin is 'web-chat'; getBuiltin is case-insensitive, so 'Web-Chat'
-  // must resolve it (apply stock), not 404. A case-sensitive registry lookup
+  // getBuiltin is case-insensitive (and resolves the retired 'web-chat'), so
+  // 'Web-Chat' must resolve it (apply stock), not 404. A case-sensitive registry lookup
   // would 404 here — the bug the adversarial review caught.
   const r = await api.post('/api/theme/apply', { name: 'Web-Chat', scope: 'global' });
   assert.equal(r.status, 200);
@@ -198,27 +198,29 @@ test('theme: clear removes the theme at each scope', async (t) => {
   assert.equal((await api.get('/api/theme?scope=node&target=n0')).json.tokens['--wc-fg'], undefined);
 });
 
-test('theme: web-chat built-in is listed, read-only, and resets to stock', async (t) => {
+test('theme: the packs are listed builtins, read-only, and web-chat still applies as earthy', async (t) => {
   withTempHome(t);
   const { api } = await withServer(t);
 
-  // listed as a builtin
   const { themes } = (await api.get('/api/themes')).json;
-  const builtin = themes.find(t => t.name === 'web-chat');
-  assert.ok(builtin, 'web-chat present');
-  assert.equal(builtin.location, 'builtin');
-  assert.deepEqual(builtin.tokens, {}, 'stock look = empty tokens');
+  const builtins = themes.filter(x => x.location === 'builtin');
+  assert.deepEqual(builtins.map(x => x.name), ['earthy', 'paper', 'georgetown'], 'the three packs, stock look first');
+  assert.deepEqual(builtins.map(x => x.modes), [['light', 'dark'], ['light'], ['light']], 'modes are named, not dumped');
+  assert.ok(!themes.some(x => x.name === 'web-chat'), 'the retired name is not listed');
 
-  // cannot be saved over
-  const save = await api.post('/api/themes', { name: 'web-chat', location: 'local', tokens: { '--wc-bg': '#000' } });
-  assert.equal(save.status, 400, 'saving over a builtin is rejected');
+  // no builtin name — current or retired — can be saved over
+  for (const name of ['web-chat', 'Paper']) {
+    const save = await api.post('/api/themes', { name, location: 'local', tokens: { '--wc-bg': '#000' } });
+    assert.equal(save.status, 400, `saving over builtin '${name}' is rejected`);
+  }
 
-  // applying it resets the global default to stock (empty tokens)
+  // the retired name resets to the stock look, which is now Earthy
   await api.post('/api/theme', { scope: 'global', tokens: { '--wc-accent': '#7c3aed' } });
   await api.post('/api/theme/apply', { name: 'web-chat', scope: 'global' });
   const g = (await api.get('/api/theme?scope=global')).json;
-  assert.deepEqual(g.tokens, {}, 'web-chat clears tokens back to fallbacks');
-  assert.equal(g.name, 'web-chat');
+  assert.equal(g.name, 'earthy');
+  assert.equal(g.tokens['--wc-accent'], '#5f7d33', "Earthy light's olive, not the custom accent");
+  assert.deepEqual(g.modes, ['light', 'dark']);
 });
 
 test('theme: tokens are sanitized (bad keys dropped, values stripped)', async (t) => {

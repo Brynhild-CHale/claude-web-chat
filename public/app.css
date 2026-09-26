@@ -11,21 +11,8 @@
    Saved themes still override per-token via applyTokens on :root/#main/.pane.
    ========================================================================== */
 
-/* ----- fonts (self-hosted; variable = full weight range) ----- */
-@font-face {
-  font-family: 'Geist';
-  src: url('/fonts/Geist-Variable.woff2') format('woff2-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('/fonts/GeistMono-Variable.woff2') format('woff2-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+/* Fonts: @font-face lives in ONE place, public/fonts/fonts.css (linked from
+   index.html ahead of this file) — the export engine reads it from there. */
 
 /* ===================== Earthy Dark (stock) ===================== */
 :root {
@@ -53,6 +40,8 @@
   --wc-radius-lg: 4px;
   --wc-font: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --wc-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --wc-display: var(--wc-font);    /* headings */
+  --wc-reading: var(--wc-font);    /* markdown prose; pane content opts in */
   --wc-theme-transition: 280ms;
 
   /* content wells (recessed inputs) */
@@ -100,6 +89,11 @@
   --wc-hover-bg: #2c2519;          /* dock buttons, stepper */
   --wc-row-active-bg: #30281b;     /* active row in the graph history list */
   --wc-gold-fg: #1c1710;           /* ink on a gold fill */
+  --wc-gold-bg: #2e2513;           /* bookmark fill behind gold ink */
+  --wc-panel-92: rgba(33, 28, 18, 0.94);  /* translucent panel over the graph canvas */
+  --wc-border-soft: #3a3225;       /* hairline quieter than --wc-border */
+  --wc-edge: #5a4e3b;              /* graph edges */
+  --wc-scrim: rgba(8, 6, 3, 0.72); /* modal backdrop */
 
   /* --- keycap chrome --- */
   --wc-key-bg: #1e1910;
@@ -164,6 +158,11 @@
   --wc-hover-bg: #e6ddca;
   --wc-row-active-bg: color-mix(in srgb, var(--wc-accent) 16%, transparent);
   --wc-gold-fg: #1c1710;
+  --wc-gold-bg: #f3e8cc;
+  --wc-panel-92: rgba(246, 240, 228, 0.94);
+  --wc-border-soft: #d9cfb7;
+  --wc-edge: #b8ab8e;
+  --wc-scrim: rgba(60, 45, 20, 0.5);
 
   --wc-key-bg: #efe8d8;
   --wc-key-border: #bfb190;
@@ -329,6 +328,9 @@ html.wc-theming, html.wc-theming * {
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
+/* the project's logotype (Settings → Brand), left of the wordmark; only present when set */
+.brand-logo { flex: 0 0 auto; height: 22px; width: auto; max-width: 150px; object-fit: contain; object-position: left center; }
+.brand-logo[hidden], .brand-logo[hidden] + .brand-logo-div { display: none; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
 
 /* command-palette trigger (centered) */
@@ -361,6 +363,8 @@ kbd {
 /* toggle state — e.g. #btn-pin-mode while pin mode is armed (comments.js sets .active) */
 .dock-btn.active { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
 .dock-btn.active:hover { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 22%, transparent); }
+/* ◑ under a single-mode theme pack: present, inert, and its title says why */
+.dock-btn.is-disabled, .dock-btn.is-disabled:hover { opacity: .38; cursor: default; background: transparent; color: var(--wc-text-2); }
 
 /* node-nav stepper (bordered group) */
 .stepper { display: flex; align-items: center; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-panel-bg); overflow: hidden; }
@@ -647,6 +651,23 @@ kbd {
    sit anywhere on a panned canvas. */
 .popover.gv-name-panel { z-index: var(--z-glance); top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); min-width: 280px; }
 .hint { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; }
+/* Settings → Brand: one row per slot — name, drop target (also a file button), Remove */
+.popover h4.settings-sub { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
+.brand-slots { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
+.brand-slot { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 8px; }
+.brand-slot-name { display: flex; flex-direction: column; font: 12px var(--wc-font); color: var(--wc-text-1); }
+.brand-slot-where { font: 10.5px var(--wc-font); color: var(--wc-muted); }
+.brand-drop { height: 40px; min-width: 0; padding: 4px 8px; display: flex; align-items: center; justify-content: center;
+  background: var(--wc-content-bg); border: 1px dashed var(--wc-border); border-radius: var(--wc-radius); cursor: pointer; }
+.brand-drop.set { border-style: solid; background: var(--wc-panel-bg); }
+.brand-drop.over, .brand-drop:hover { border-color: var(--wc-accent); }
+.brand-drop img { max-height: 30px; max-width: 100%; object-fit: contain; }
+.brand-drop-ph { font: 11px var(--wc-font); color: var(--wc-muted); }
+.brand-remove { height: 26px; padding: 0 8px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  background: transparent; color: var(--wc-text-2); font: 11px var(--wc-font); cursor: pointer; }
+.brand-remove:disabled { opacity: .4; cursor: default; }
+.brand-msg:empty { display: none; }
+.brand-msg.bad { color: var(--wc-comment, var(--wc-accent)); }
 .mono { font-family: var(--wc-mono); }
 
 /* ===================== graph viewer (history ▸ DAG ▸ inspector, 7b) ===================== */
@@ -1097,6 +1118,7 @@ body.pin-mode #main { cursor: crosshair; }
 @media (max-width: 900px) {
   #topbar { gap: 6px; padding: 0 8px; }
   .cmd-trigger, .tb-div, .btn-graph kbd { display: none; }
+  .brand-logo { max-width: 96px; }
   .status-pill { padding: 2px 4px; }
 }
 @media (max-width: 760px) {

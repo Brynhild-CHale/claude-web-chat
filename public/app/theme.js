@@ -3,12 +3,40 @@
 // gives the pane→node→global cascade for free. Raw CSS can't cross the shadow
 // boundary: global/node css → head <style> (chrome only); pane css → a <style>
 // inside that pane's shadow root (content only). (See rewrite risks #1, #11.)
+//
+// Light/dark is a MODE INSIDE a theme: a theme may carry
+// `modes: {light: {tokens, css}, dark: {tokens, css}}` over its mode-free
+// tokens/css, and every layer is applied flattened at ONE effective mode — the
+// viewer's stored preference if the global theme offers it, else the global
+// theme's only mode (a single-mode pack disables the ◑ toggle). These rules
+// mirror lib/server/theme.js (themeModes / pickMode / flattenTheme).
 import { $ } from './state.js';
 import { getLocal, setLocal } from './storage.js';
+import { panes } from './mounts.js';
 
 export const WC_TOKEN_RE = /^--wc-[\w-]+$/;
-let globalThemeObj = null;      // resolved web-chat-wide default ({tokens, css})
+let globalThemeObj = null;      // resolved web-chat-wide default ({tokens, css, modes?})
 let activeNodeThemeObj = null;  // the active node's own theme (re-applied on returnToActive)
+let shownNodeThemeObj = null;   // the node theme currently on #main (re-flattened on a mode flip)
+
+// --- modes ---
+export const MODES = ['light', 'dark'];
+export function themeModes(t) {
+  return (t && t.modes && typeof t.modes === 'object') ? MODES.filter(m => t.modes[m]) : [];
+}
+function pickMode(t, want) {
+  const ms = themeModes(t);
+  if (!ms.length) return want;
+  return ms.includes(want) ? want : ms[0];
+}
+export function flattenTheme(t, mode) {
+  if (!t) return { tokens: null, css: '' };
+  const layer = t.modes && t.modes[pickMode(t, mode)];
+  return {
+    tokens: { ...(t.tokens || {}), ...((layer && layer.tokens) || {}) },
+    css: [t.css, layer && layer.css].filter(c => typeof c === 'string' && c.trim()).join('\n'),
+  };
+}
 let _themeTimer = null;
 
 // Arm chrome transitions for ~340ms then strip the class so they never fight
@@ -45,16 +73,26 @@ export function setHeadStyle(id, css) {
 }
 
 export function applyGlobalTheme(theme, animate) {
+  const prevMode = effectiveMode();
   globalThemeObj = theme || null;
-  applyTokens(document.documentElement, theme && theme.tokens, { animate });
-  setHeadStyle('wc-theme-global-css', (theme && theme.css) || '');
+  const mode = effectiveMode();
+  setModeAttr(mode);
+  const flat = flattenTheme(theme, mode);
+  applyTokens(document.documentElement, flat.tokens, { animate });
+  setHeadStyle('wc-theme-global-css', flat.css);
+  syncModeToggle();
+  // A new global pack can move the effective mode (dark pref → a light-only
+  // pack); the node and pane layers follow it, as on a ◑ flip.
+  if (mode !== prevMode) reapplyLayers();
 }
 export const getGlobalTheme = () => globalThemeObj;
 
 // Node's OWN tokens/css at #main (global lives on :root; the node layer overrides).
 export function applyNodeTheme(theme, animate) {
-  applyTokens($('main'), theme && theme.tokens, { animate });
-  setHeadStyle('wc-theme-node-css', (theme && theme.css) || '');
+  shownNodeThemeObj = theme || null;
+  const flat = flattenTheme(theme, effectiveMode());
+  applyTokens($('main'), flat.tokens, { animate });
+  setHeadStyle('wc-theme-node-css', flat.css);
 }
 export const setActiveNodeTheme = (theme) => { activeNodeThemeObj = theme || null; };
 export const getActiveNodeTheme = () => activeNodeThemeObj;
@@ -72,32 +110,71 @@ export const WC_SHADOW_TRANSITION =
 export function applyPaneTheme(p, theme, animate) {
   if (!p) return;
   p.theme = theme || null;
-  applyTokens(p.wrapper, theme && theme.tokens, { animate });
+  const flat = flattenTheme(theme, effectiveMode());
+  applyTokens(p.wrapper, flat.tokens, { animate });
   if (!p.themeStyle && p.root) {
     p.themeStyle = document.createElement('style');
     p.root.appendChild(p.themeStyle);
   }
-  if (p.themeStyle) p.themeStyle.textContent = WC_SHADOW_TRANSITION + '\n' + ((theme && theme.css) || '');
+  if (p.themeStyle) p.themeStyle.textContent = WC_SHADOW_TRANSITION + '\n' + flat.css;
   if (p.spec) p.spec.theme = theme || undefined;
 }
 
-// --- Earthy light/dark mode (Earthy Light is the default; dark via stored pref) ---
-// Orthogonal to named themes: this only flips which set of --wc-* DEFAULTS :root
-// resolves to. A saved theme's tokens (applied inline) still override on top.
+// --- light/dark mode (a mode INSIDE the global theme) ---
+// `wc-mode` in localStorage is the viewer's preference; light is the default.
+// The effective mode is that preference when the global theme offers it (or
+// declares no modes — a pre-pack theme, where :root's data-theme picks the
+// stylesheet's Earthy light/dark fallbacks), else the theme's only mode.
 const MODE_KEY = 'wc-mode';
+// Held in memory too: where storage cannot keep a write (a private window) the
+// toggle must still flip for this page's lifetime.
+let modePref = null;
+const prefMode = () => modePref || (getLocal(MODE_KEY) === 'dark' ? 'dark' : 'light');
+export function effectiveMode() { return pickMode(globalThemeObj, prefMode()); }
+// Can the viewer flip modes under the current global theme?
+export function modeToggleable() { return themeModes(globalThemeObj).length !== 1; }
+function setModeAttr(mode) {
+  if (mode === 'dark') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = 'light';
+}
 export function initMode() {
   // Earthy Light is the default; only an explicit stored 'dark' opts back into
   // the dark look. index.html ships data-theme="light" so the first paint is
-  // already light — this just reconciles a returning user's dark preference.
+  // already light — this just reconciles a returning user's dark preference
+  // (the global theme, and so the final effective mode, arrives with `hello`).
   // Through storage.js: this is main.js's FIRST statement, so an unguarded read
   // in a private window would abort bootstrap and leave a dead page.
-  if (getLocal(MODE_KEY) === 'dark') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = 'light';
+  setModeAttr(prefMode());
 }
+// Re-flatten the node and pane layers at the current effective mode.
+function reapplyLayers() {
+  applyNodeTheme(shownNodeThemeObj, false);
+  for (const p of panes.values()) applyPaneTheme(p, p.theme, false);
+}
+// ◑ / T / the palette. Flips the stored preference and re-applies every layer
+// at the new mode. Under a single-mode pack it does nothing and returns null
+// (the button says why).
 export function toggleMode() {
-  const nowLight = document.documentElement.dataset.theme !== 'light';
+  if (!modeToggleable()) return null;
+  const next = effectiveMode() === 'light' ? 'dark' : 'light';
+  modePref = next;
+  setLocal(MODE_KEY, next);
   beginThemeTransition();
-  if (nowLight) { document.documentElement.dataset.theme = 'light'; setLocal(MODE_KEY, 'light'); }
-  else { delete document.documentElement.dataset.theme; setLocal(MODE_KEY, 'dark'); }
-  return nowLight;
+  applyGlobalTheme(globalThemeObj, false);
+  reapplyLayers();
+  return next === 'light';
+}
+// The ◑ button reflects whether the current pack has a second mode.
+export function syncModeToggle() {
+  const btn = $('btn-theme-toggle');
+  if (!btn) return;
+  const ok = modeToggleable();
+  // aria-disabled + a class, not `disabled`: a disabled button swallows the
+  // hover that shows its title in some browsers, and the title is the point.
+  btn.classList.toggle('is-disabled', !ok);
+  btn.setAttribute('aria-disabled', String(!ok));
+  const name = (globalThemeObj && globalThemeObj.name) || 'This theme';
+  const label = ok ? 'Light / dark · T' : `${name} has only a ${effectiveMode()} mode`;
+  btn.title = label;
+  btn.setAttribute('aria-label', ok ? 'Toggle light / dark (T)' : label);
 }

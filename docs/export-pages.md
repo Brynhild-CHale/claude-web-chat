@@ -41,7 +41,15 @@ downloads that node as rendered, not the active one. The graph viewer's **↧** 
 Inlined: each pane's HTML and its `<script>` bodies, the mount targets, the store
 snapshot, each pane's `pane_state` and `form_state` (so typed-but-unsent values
 survive into the export), and the theme resolved through the full pane → node →
-global cascade.
+global cascade. A theme with light and dark modes is baked in its **light** mode
+(a single-mode theme in its own) — the export has no viewer whose ◑ preference
+it could read; see [`themes.md`](themes.md). The bundled fonts that theme names
+(Geist, Geist Mono, Libre Caslon Text) are inlined too, as `data:` URIs, and
+nothing else is — an unthemed page carries no font and falls back to the
+reader's system stack. So are the project's brand images, when set (⋯ →
+Settings → Brand; see [`themes.md`](themes.md#brand-images)): the `lockup` heads
+the page and the `seal` sits in a footer, each an `<img>` with a `data:` URI. An
+unset slot adds nothing to the file.
 
 The page mounts its panes with **the same runtime the live surface uses** —
 `public/mount-runtime.js`, spliced in verbatim by
