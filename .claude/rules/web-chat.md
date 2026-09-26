@@ -2,11 +2,11 @@
 
 # web-chat
 
-This project has [claude-web-chat](https://github.com/) installed: a live browser surface paired with this terminal chat, accessed via 23 MCP tools, with every turn captured as a node in a persistent graph the user can navigate.
+This project has [claude-web-chat](https://github.com/) installed: a live browser surface paired with this terminal chat, accessed via 24 MCP tools, with every turn captured as a node in a persistent graph the user can navigate.
 
 ## What's available
 
-- **MCP tools** (loaded into your tool list): `render`, `clear`, `list_mounts`, `save_component`, `list_components`, `get_component`, `use_component`, `get_store`, `set_store`, `get_events`, `get_graph`, `get_active`, `diff_nodes`, `get_comments`, `reply_comment`, `get_captures`, `inspect_capture`, `set_theme`, `get_theme`, `save_theme`, `list_themes`, `apply_theme`, `export`.
+- **MCP tools** (loaded into your tool list): `render`, `clear`, `list_mounts`, `save_component`, `list_components`, `get_component`, `use_component`, `get_store`, `set_store`, `get_events`, `get_graph`, `get_active`, `diff_nodes`, `get_comments`, `reply_comment`, `get_captures`, `inspect_capture`, `set_theme`, `get_theme`, `save_theme`, `list_themes`, `apply_theme`, `export`, `write_markdown`.
 - **Browser surface** in the user's browser. The port is per-project and is NOT always 5173 — the daemon walks upward from 5173, so a second project lands on 5174, a third on 5175, and so on. Never tell the user a hardcoded port: `claude-web-chat open` opens the right one, and `claude-web-chat status` prints it. The user sees both this chat and that page.
 - **Graph**: a turn of yours commits a node when it changed the surface — a turn that leaves the surface byte-identical to the active node commits nothing, and its trigger folds onto the next node that does commit (`get_graph` reports the waiting count as `pending_folded`, and the eventual node carries `folded_count`). The user can revisit any prior node, branch from it, or set a new active point. Reference nodes by their hierarchical label (`n1.7`); the stored id is opaque. Labels read as collapsed stacks of changes — `n1.x`/`n2.x` are separate top-level trees, trunk increments the last segment (`n1.1 → n1.2`), and a branch appends a segment (`n1.1.0`). `get_graph`/`get_active` surface these labels. **Branch-on-edit**: if the user edits a form while viewing an older node, the surface silently re-aims there (auto-committing any uncommitted live work as a `user`-authored preserve node first — nothing is lost) and the next commit lands as a branch child; the original node and its downstream are always preserved. If you see an unexpected preserve node or a re-aimed active, that's what happened.
 - **Disabled state**: if MCP returns `{disabled, scope, reason, hint}`, the surface is off. Fall back to chat-only and pass on the hint — `reason:'not-installed'` means this project never ran `claude-web-chat init` (so `on` would do nothing); `reason:'marker'` means someone switched it off.
@@ -21,6 +21,18 @@ This project has [claude-web-chat](https://github.com/) installed: a live browse
 - **Anything worth revisiting** — every render is a graph-node-able artifact the user can come back to.
 - **Live demos / mockups** — when proposing UI, render it instead of describing it.
 - **Live host state** — git branches/history, test runs, log tails, file browsing/editing. A **service-backed component** (below) keeps the pane current between your turns; the user watches instead of re-asking. This trigger fires on the *task* ("what's on this branch?", "watch the tests"), not on any request to render.
+
+## Writing pages: markdown + panes
+
+The surface is one **page**: an ordered sequence of panes and markdown items. Consecutive panes form a grid run; markdown sits between and around runs. There are no stored sections — structure comes from the prose.
+
+- **`write_markdown({text, id?, after?})`** puts a markdown item on the page — headings and short connective prose ("## Options", a sentence of framing, a caption). Reuse `id` to rewrite one in place; omit it and the server assigns `md-<n>`.
+- **`#`/`##`/`###` headings build the page's Contents nav.** A page with several parts should open each with a heading.
+- **`after`** places an item: the id of any pane or markdown item on the page, or `"start"`. `render` and `use_component` take the same `after`. Omitted, a new item appends and a re-render keeps its place. `list_mounts` returns the page `order` (and each markdown item's headings) so you can pick an anchor.
+- Markdown is a small subset (paragraphs, headings, **strong**, *em*, `code`, fenced code, `-`/`1.` lists, links) and **everything is escaped** — raw HTML shows as text. Anything interactive or visual belongs in a pane.
+- **Keep prose short.** The reasoning still belongs in chat; the page carries labels and framing. Text is capped, and a longer write is refused with `too_large`.
+- **`place: {col, span, rows}`** on `render` / `use_component` sizes a pane on the page's 12-column grid: `col` 1–12 (omit for auto flow), `span` 2–12 columns (clamped to fit), `rows` 2–24 rows of 40px (omit for auto height). The applied placement comes back as `place`, and `list_mounts` reports every pane's current `place`. It is a *proposal*: the user can drag and resize freely (a re-render without `place` keeps their layout), and each grid run has a **↺ Claude's layout** that puts its panes back where you placed them. A pane the user has **locked** can't be moved or resized — not by them, not by you.
+- Markdown is part of the surface like a pane: it folds into the turn's node, `clear` removes one by id, a page-wide `clear {}` or Wipe takes all of it (pinned panes stay), and panes and markdown share one id space.
 
 ## Stay in chat for
 
@@ -64,6 +76,16 @@ The activity layer tells you *that* the user interacted; a **declared signal** t
 - **Refine loop** — render a proposal (plan, diagram, config) with a declared Apply signal; the user nudges controls and hits Apply; on the next Push you read the knobs and re-render the *same* mount. Iteration without retyping.
 - **Triage queue** — render N items, each with an approve/skip that bumps one declared signal; the user works the list and Pushes; you process the batch and update a progress pane.
 - **Live control panel** — declared toggles that gate what you do next ("include tests? target runtime?"); read them (`get_store`) at the start of each turn instead of re-asking in prose.
+
+### Panes can spawn panes
+
+A pane script gets `api` beside `store` and `root`: `api.spawn({id?, component?, params?, html?, after?, place?})` puts up a child pane (exactly one of `component` / `html`; by default it lands beneath its parent, after any earlier children, with id `<parent>-<n>`), and `api.close(id)` takes one down. Both return a promise of the daemon's envelope (`{ok, id}` or `{ok:false, …, hint}`) and never throw — in an export or a preview they answer `{ok:false}` and do nothing.
+
+- **A child is owned by its parent** (`owner: "pane:<parent>"`). A pane may re-spawn (replace) and close only its own children, or close itself — never your panes, a driver's, or another pane's children. A child the user **locked** refuses both.
+- **For you it is like a driver's pane:** re-rendering or clearing one is soft-rejected (`owned:true`) unless you pass `force:true`, and a bulk `clear` that would take one is rejected whole. Children outlive a closed parent.
+- **Caps:** 20 live children per parent, 60 pane-spawned panes in all, 3 generations deep, 30 spawn/close calls per parent per 10 s, 256 KB of html and 16 KB of params per spawn. A refusal names its `cap`.
+- **A spawned pane cannot declare wake signals** — `params.signals` is stripped (with a `warning`), so only you decide what wakes you.
+- Reach for it when one pane's content decides what else belongs on the page (a list that opens a detail pane per row, a launcher of saved components). Prefer `component` to raw `html`; raw-HTML spawn is the risky form and may be refused on a remote surface.
 
 ## Component discovery before rendering
 
@@ -116,6 +138,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 
 - Every `render`, `set_store`, `use_component`, and `clear` during your turn folds into that turn's commit when it ends.
 - Mid-turn user interactions (clicks, form submits, store writes from the page) also fold in. A user re-aim (jump/wipe/new-graph/branch) during your turn isn't rejected — it's **queued** and applied right after your turn's commit, so don't be surprised when `active` moves the moment your turn ends.
+- **Pane history.** The user can put an older version of one of your panes back (the pane's history → "make current"). It keeps you as the owner, shows in `get_events` as a `render` with `source:'history'`, and folds into the next commit like any user edit — so if a pane's content went backwards without you, that is why. Don't re-render over it unless asked.
 - You do **not** commit nodes — the harness's `Stop` hook does that. You do **not** change `active` — only the user does, via the graph viewer.
 - Reference prior nodes by the hierarchical label the user can see ("the form from `n1.4`", "let's pick up from `n2.0`") — the stored id is opaque and never on their screen. The user can jump to them from the graph viewer.
 - **What can wake you:** a new user prompt; a **channel wake** (the user hits **Push → Claude**, or a pane writes a key you declared `wake:'immediate'`) when a channel is connected; or a **parked delivery** folded into the user's next prompt when one isn't (see Interactive surfaces above). A user clicking a pane does **not** spontaneously start a turn — a browser signal reaches you only through the queue (on Push) or an immediate declared signal. Anything you didn't declare as a signal just accumulates in the store/event log until the user's next prompt (catch up then with `get_events({since})`).
@@ -128,7 +151,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 - Mounts persist until cleared. Don't accumulate cruft from old demos.
 - When mounting alongside existing UI, use a fresh id (or omit id and let the server generate). When replacing, reuse the id.
 - **The shell's own element ids are reserved.** `main`, `topbar`, `status`, `dock`, `stage`, `overlay`, `drawer`, `minbar`, `queue-rail`, `cmd-palette` and the rest of the chrome are refused with `{ok:false, reserved:true, hint}` on `render` and `use_component`. Prefix your mount ids and it never comes up.
-- **Respect pane ownership.** `list_mounts` reports an `owner` per pane: `null`/`"claude"` is yours; `"service:<name>"` means a local driver process owns it. Re-rendering over a driver-owned pane is **soft-rejected** (`{ok:false, owned:true, owner}`) unless you pass `force:true` — check before clobbering, and prefer a fresh id alongside it. `clear` is gated identically, and a bulk `clear` (`{}` or a whole `target`) that would take a driver-owned pane is rejected **whole**, not half-applied — clear your own panes by id instead. Your own renders are `"claude"`, so you never block yourself.
+- **Respect pane ownership.** `list_mounts` reports an `owner` per pane: `null`/`"claude"` is yours; `"service:<name>"` means a local driver process owns it; `"pane:<id>"` means another pane spawned it. Re-rendering over a driver-owned pane is **soft-rejected** (`{ok:false, owned:true, owner}`) unless you pass `force:true` — check before clobbering, and prefer a fresh id alongside it. `clear` is gated identically, and a bulk `clear` (`{}` or a whole `target`) that would take a driver-owned pane is rejected **whole**, not half-applied — clear your own panes by id instead. Your own renders are `"claude"`, so you never block yourself.
 
 ## Anti-patterns
 

@@ -24,7 +24,10 @@
 //      mount replays on every hello. And the mirror image: a comment pin anchored
 //      to such a pane still resolves, because anchors go through hostFor too;
 //   7. a clear-all sweeps panes rendered with ANY target, and a targeted clear
-//      sweeps only its own — the filter POST /api/clear applies server-side.
+//      sweeps only its own — the filter POST /api/clear applies server-side;
+//   8. a pane script's `api.spawn` / `api.close` post to the daemon with the
+//      MOUNT's id as `parent` — a script cannot re-aim it — and a preview does
+//      not post at all (panes spawning panes; policy in lib/server/domain/spawn).
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -35,6 +38,8 @@ const { pathToFileURL } = require('url');
 const REPO = path.resolve(__dirname, '..');
 
 let W = null, WS = null, restore = () => {};
+// Every POST the chrome makes to the pane-spawn routes, as {url, body}.
+const paneCalls = [];
 
 async function boot() {
   const html = fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8')
@@ -49,7 +54,11 @@ async function boot() {
     close() {}
   };
   const json = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
-  window.fetch = async (url) => {
+  window.fetch = async (url, init) => {
+    if (String(url).startsWith('/api/pane/')) {
+      paneCalls.push({ url: String(url), body: JSON.parse(init.body) });
+      return json({ ok: true, echoed: true });
+    }
     if (url === '/api/graph') return json({ nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' });
     if (url === '/api/components') return json({ components: [] });
     if (url === '/api/packs') return json({ ok: true, packs: [], quarantined: [] });
@@ -288,6 +297,35 @@ test('the previewed snapshot applies the same clear filter as the live surface',
   } finally {
     state.view.previewing = false;
     state.view.liveSnapshot = null;
+  }
+});
+
+test('a pane script\'s api stamps its own mount id as parent, and a preview posts nothing', async () => {
+  paneCalls.length = 0;
+  frame({
+    type: 'render', id: 'spawner', target: 'main', params: {},
+    html: '<script>window.__spawned = api.spawn({ id: "kid", html: "<p>k</p>", parent: "forged" });'
+      + 'window.__closed = api.close("kid");</script>',
+  });
+  await tick();
+  assert.deepEqual(paneCalls.map((c) => c.url), ['/api/pane/spawn', '/api/pane/close']);
+  assert.equal(paneCalls[0].body.parent, 'spawner', 'a spec naming another parent is overridden');
+  assert.equal(paneCalls[0].body.id, 'kid');
+  assert.deepEqual(paneCalls[1].body, { id: 'kid', parent: 'spawner' });
+  assert.equal((await W.__spawned).echoed, true, 'the daemon\'s envelope comes back to the script');
+
+  const state = await import(pathToFileURL(path.join(REPO, 'public/app/state.js')).href);
+  paneCalls.length = 0;
+  frame({ type: 'render', id: 'spawner', target: 'main', params: {}, html: '<script>window.__early = api;</script>' });
+  await tick();
+  state.view.previewing = true;
+  try {
+    const r = await W.__early.spawn({ html: 'x' });
+    assert.equal(r.ok, false);
+    assert.equal(r.previewing, true);
+    assert.deepEqual(paneCalls, [], 'a read-only preview never writes');
+  } finally {
+    state.view.previewing = false;
   }
 });
 

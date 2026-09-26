@@ -247,7 +247,7 @@ bodies by tool call.
   affordance-only clicks, value-leak guards, service-pane default opt-out.
 - `test/channel-bridge.test.js` — real-daemon SSE → exactly one notification;
   dedupe/reconnect.
-- `test/channel-mcp.test.js` — the env-gated capability (off = 23 tools, no
+- `test/channel-mcp.test.js` — the env-gated capability (off = 24 tools, no
   experimental; on = `experimental['claude/channel']`).
 - `test/conventions.test.js` — the meta vocabulary tripwire.
 

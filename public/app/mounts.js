@@ -542,6 +542,34 @@ export function mount(m) {
   }
 }
 
+// A pane script's surface API (panes spawning panes), bound to its mount id:
+// `api.spawn(spec)` puts up a child pane this pane owns, `api.close(id)` takes
+// down one of its children — or the pane itself. `parent` is stamped from the
+// same closure-bound id the per-pane store facade stamps, and AFTER the caller's
+// spec, so a script cannot re-aim it; who may do what (ownership, the lock, the
+// caps) is the daemon's call (lib/server/domain/spawn). Both verbs resolve to the
+// daemon's JSON envelope and never throw. A preview is read-only (D2), so there
+// they answer without writing.
+function paneApiFor(id) {
+  const call = async (path, body) => {
+    if (view.previewing) {
+      return { ok: false, previewing: true, hint: 'the surface is showing a preview; panes cannot spawn or close panes here' };
+    }
+    try {
+      const r = await fetch(path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return await r.json();
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  };
+  return {
+    spawn: (spec) => call('/api/pane/spawn', { ...(spec || {}), parent: id }),
+    close: (childId) => call('/api/pane/close', { id: childId, parent: id }),
+  };
+}
+
 function mountPane(m) {
   const { html, target, id, params, pane_state, form_state, theme } = m;
   const slot = slotFor(target);
@@ -626,7 +654,7 @@ function mountPane(m) {
       message: String((err && err.message) || err),
       stack: err && err.stack ? String(err.stack).split('\n').slice(0, 3).join('\n') : undefined,
     });
-  });
+  }, paneApiFor(id));
 
   // Rehydrate persisted form values AFTER scripts ran, so a restored user draft
   // wins over a script's own initialization; the runtime dispatches input/change

@@ -88,6 +88,14 @@ deliberately `force`. Claude sees the owner in `list_mounts` before rendering.
 Pick a namespaced `id` per driver surface (`tests_*`, `watch_*`) to avoid
 collisions in the first place.
 
+Pane history's "make current" (`POST /api/mounts/:id/restore`) never touches a
+driver's pane: it refuses a live pane a driver owns, and a version a driver wrote.
+
+A third kind of owner is `pane:<id>`: a pane that another pane's script spawned
+(`api.spawn`, via `POST /api/pane/spawn`). The same gate applies to a driver —
+a driver re-rendering or clearing one needs `force:true` — and a pane can never
+spawn over a driver's pane, because it never passes `force`.
+
 ---
 
 ## The event model
@@ -181,7 +189,7 @@ Any language can drive the surface — it's just HTTP. Discover the port from
 | `GET /api/health` | — | `{ok, pid, active, nodes, lock}` — liveness + graph state. |
 | `GET /api/store?keys=a,b` | — | Full store, or filtered. |
 | `POST /api/store` | `{patch}` | Merge + broadcast. Returns post-patch store. |
-| `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?}` | Mount/replace. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. `theme` normalized (below). |
+| `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?, after?, place?}` | Mount/replace. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. `theme` normalized (below). `after` positions the pane in the page sequence; `place: {col, span, rows}` sizes it on the 12-column grid (clamped; the applied value comes back as `place`). |
 | `POST /api/clear` | `{id?}` / `{target?}` / `{}` | Remove a pane / slot / everything. |
 | `GET /api/events?since=<seq>` | — | `{events, latest, oldest, gap, dropped}`. |
 | `POST /api/wait` | `{predicate, timeout_ms}` | Long-poll (**driver-only**; Claude uses the channel/queue). `{ok:false, timeout:true}` (HTTP 200) on miss. Counts against the 5s shutdown drain. |

@@ -149,6 +149,9 @@ were the only places they lived.
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
+| walk a node's ancestry, or list a pane's versions along it | `lib/server/domain/lineage` `ancestry(graph, id)` / `mountHistory(graph, {mountId, fromId, labels, live, includeLive})`; put a version back with `lib/server/domain/mounts` `restoreMount` | a private `parent_id` loop (no cycle guard, and a second walk for replay to diverge from) |
+| place an item in the page sequence, or put/remove a markdown item | `lib/server/domain/page` `place` / `drop` / `putMarkdown` / `removeMarkdown` (bulk: `restore` / `clearMarkdown` / `reconcile`); read a node's order with `pageOrder(node)` | push onto `state.order` by hand, or take a node's page order from its mounts array alone |
+| render markdown, or list its headings | `core/markdown` `renderMarkdown(text)` / `headings(text)` — the browser imports the same factory from `/app/markdown.js` | a second markdown parser on either side |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a mount HOST element from a mount id (chrome side) | `public/app/state.js` `hostFor(id)` — scans `.mount-host` for `dataset.mountId`, because a mount id is arbitrary agent-supplied text | `document.getElementById(mountId)` / `$(mountId)`: an id like `main` or `drawer` hands you a chrome element instead of the pane |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
@@ -274,7 +277,7 @@ Three policies are load-bearing — preserve them:
   making a mid-response death a new error class every caller must learn.
 
 - **`spawn` defaults `false`.** Only `lib/mcp/client.js` (a spawn-injecting shim)
-  opts in, so the 23 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
+  opts in, so the 24 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
   CLI must never resurrect a daemon the user closed. `opts.noSpawn` always wins.
 - **No default socket timeout.** A driver's `/api/wait` long-poll (`lib/driver`
   `waitFor`) runs for up to `timeout_ms`; a blanket socket timeout would break it.
@@ -794,6 +797,104 @@ and both are there because they are exactly as invisible in review:
   `after` to tear down. Shrink-only, with a named baseline for the seven shell
   files that still boot inside a test.
 
+### `lib/server/domain/page.js` — the page sequence
+
+The surface is one ordered sequence of items: panes (the mount engine's records)
+and markdown chunks (`write_markdown`, owned here). There is no stored section
+structure — consecutive panes form a grid run, markdown sits between runs, and
+the `#`–`###` headings in it build the Contents nav. Live state is
+`state.markdown` (`Map<id,{text, owner, gen}>`) and `state.order` (every pane and
+markdown id, once). One id space covers both kinds.
+
+- `place(state, id, after)` / `drop(state, id)` — called by `setMount` /
+  `removeMount`. `after` is an item id or `'start'`; omitted, a new item appends
+  and an existing one keeps its place; an unknown anchor appends with a `warning`.
+- `putMarkdown` / `removeMarkdown` — the markdown writes, with the mount
+  engine's soft-refusal envelopes (reserved id, owner gate, plus `conflict` for an
+  id a pane holds and `too_large` over `MARKDOWN_MAX_CHARS`).
+- `snapshot` / `nodeFields` / `restore` / `clearMarkdown` / `reconcile` — the bulk
+  side. A committed node carries `markdown` + `order` only when it has markdown;
+  otherwise its `mounts` array order IS its page order, which is also how every
+  node written before this module reads back — no migration.
+- `pageOrder(nodeLike)` — the one READING of a surface's order, used by the dirty
+  check (`snapshotView`: moving a pane or writing prose is a change), the diff,
+  the preview and the export.
+
+**Layout** is the same module's second half. A pane's placement lives in its
+`pane_state` (`col` 1–12, `colSpan` 2–12, `rows` 2–24 of `ROW_PX` = 40, plus
+`heightPx` kept in step for the current chrome and old nodes).
+
+- `normalizePlace` / `applyPlace` — `place:{col, span, rows}` on render /
+  use_component (setMount calls them): clamp into the grid, write the layout
+  keys, and record the proposal as `pane_state.claude_place`.
+- `placeOf(pane_state)` — the one READING of a placement; an old pane sized by
+  `heightPx` (or the legacy `rowSpan`) answers in rows without being rewritten.
+- `state.claudeOrder` — the page order as Claude last proposed it. `place()`
+  (every agent/driver write) moves an item in both sequences; `moveItem` (the
+  user's drag, `POST /api/page/move`) moves it in `order` only.
+- `resetLayout` (`POST /api/page/reset-layout {run_anchor}`) — ↺ Claude's
+  layout for one grid run (the panes after a markdown id, or `'start'`):
+  baseline sizes, un-minimized, re-sorted into `claudeOrder` within the run's
+  slots. `setRunFlag` (`POST /api/page/run {anchor, stacks}`) — the run's
+  narrow-screen flag, stored in `state.runs` only when `false`.
+- `patchPaneState` — the browser's `pane:state` merge: a LOCKED pane refuses
+  layout-key changes (the sender gets the authoritative state back), and
+  `rows`/`heightPx` follow each other.
+- `layoutFields(surface)` — `claude_order` / `runs`, present only off their
+  defaults; nodes, drafts, the no-change check and the diff all carry exactly
+  this, so a surface nobody rearranged has the bytes it always had.
+
+### `lib/server/domain/lineage.js` — ancestry and pane history
+
+A node's lineage is its parent chain to the root of its tree — the path the
+surface travelled to get where it is. `ancestry(graph, id)` is that walk, newest
+first, as a loop with a cycle guard (a trunk is thousands of turns deep; a
+hand-edited parent cycle ends the walk). Pane history is its first reader; the
+replay resolver (plan P5, `domain/refs.js`) is meant to be its second — one walk,
+not two.
+
+- `mountHistory(graph, {mountId, fromId, labels, live, includeLive})` — the
+  distinct versions of one pane along `fromId`'s ancestry, newest first. A
+  version is its CONTENT (`VERSION_FIELDS`: html, params, component — never
+  pane_state, form_state, theme or owner, so a resize or typing is not a new
+  version), hashed by `specHash`. Each version is attributed to the node that
+  INTRODUCED it (the oldest node of the unbroken run showing it; a node without
+  the pane breaks a run), and a version that comes back is listed once, at its
+  latest introduction. With `includeLive`, the entry matching the live pane is
+  `current:true`, or a `node_id:'live'` row leads when the live content is in no
+  node. `GET /api/mounts/:id/history[?from=<node id>]` serves it.
+- `GET /preview/pane/:node/:mount` (routes/graph.js) renders one version with the
+  `/preview/node` document and `PREVIEW_CSP`, narrowed to that pane.
+- `POST /api/mounts/:id/restore {node_id, with_form?, after?}` → `domain/mounts`
+  `restoreMount` — "make current".
+
+### `lib/server/domain/spawn.js` — panes spawning panes
+
+A pane script's `api.spawn(spec)` / `api.close(id)` (handed to every script by
+`runScripts` in `public/mount-runtime.js`; the live chrome binds it to the mount
+in `public/app/mounts.js` `paneApiFor`, the export and previews get a frozen
+stand-in) posts to `POST /api/pane/spawn` / `POST /api/pane/close`
+(`routes/spawn.js`, which only resolves a component name to its source). This
+module is the POLICY; the writes are `setMount` / `removeMount`, so reserved ids,
+the markdown id space, the user's lock, the owner gate and the gen bump are the
+engine's, not a copy.
+
+- `spawnPane(state, bus, {parent, id, html, params, component, after, place})` —
+  a child is `owner:'pane:<parent>'`, so setMount's existing owner gate is the
+  whole ownership rule: a parent replaces its own children and nothing else
+  (it never passes `force`). A new child defaults to `after` its parent's last
+  child (or the parent) and to id `<parent>-<n>`. `params.signals` is stripped —
+  the signal registry is derived from every live mount, so a pane-declared
+  `wake:'immediate'` would let a pane wake Claude.
+- `closePane(state, bus, {parent, id})` — a pane's own child, or itself; never
+  a locked pane.
+- Caps (`MAX_CHILDREN`, `MAX_SPAWNED_TOTAL`, `MAX_DEPTH`, `RATE_MAX` per
+  `RATE_WINDOW_MS`, `HTML_MAX_CHARS`, `PARAMS_MAX_CHARS`) bound a runaway script.
+  They are not a sandbox: `parent` is stamped by the chrome from the same
+  closure-bound id the store facade stamps, and the daemon checks only that it
+  is a live pane — every pane shares the page document and can reach the route
+  with any `parent`, as it can reach `/api/render`.
+
 ### `lib/server/domain/mounts.js` — the mount-set engine
 
 Putting a pane on the live surface is not one write. It is, in order: reserved-id
@@ -803,10 +904,19 @@ against, the owner stamp, and ONE `bus.emit` naming both the ring event and the
 WS frame. Four routes hand-copied that sequence and each dropped a different
 part of it, which is the whole argument for the module.
 
-- `setMount(state, bus, {id, html, target, params, owner, force, component, theme, pane_state_patch, policy})`
+- `setMount(state, bus, {id, html, target, params, owner, force, component, theme, pane_state_patch, policy, after, place, source, restore})`
   → `{ok:true, id, owner}` or a refusal envelope (`lockReject` / `ownerReject` /
   `reservedReject` — always HTTP 200 with `ok:false`, the tree's refusal
   convention; Claude's tools and the drawer read `.ok`, not the status).
+  `source` is the ring event's source when it is not the owner; `restore`
+  (`{pane_state, form_state}`) replaces both outright instead of carrying them —
+  both exist for `restoreMount`.
+- `restoreMount(state, bus, {id, version, withForm, after})` — pane history's
+  "make current": a USER write (`source:'history'`, so it never keeps Claude's
+  turn lock alive) of an older version's html/params/component/target and
+  layout, keeping the live pane's pinned/locked/minimized flags and typed
+  values (the version's with `withForm`). Refused on a locked pane, and on a
+  live pane or a version that Claude does not own.
 - `removeMount(state, bus, {id, source, originGen, target})` → whether a pane
   went. `originGen` is the queue's generation guard.
 - `emitMount(state, bus, id, {source})` — re-broadcast a pane as it stands,
@@ -930,6 +1040,8 @@ Current homes (baselines can only shrink toward these):
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
+| `state.order =` / `state.order.push/splice/unshift(` / `state.markdown.set/delete/clear(` | `lib/server/domain/page.js` — the one writer of the page sequence and its markdown items; the mount engine and the bulk paths call into it | landed with the page sequence ✅ |
+| `#{1,<n>}` (a markdown heading parser) | `lib/core/markdown.js` — host rendering for preview/export, and the browser module served at `/app/markdown.js` is built from the same factory's source | landed with the page sequence ✅ |
 | `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
 | `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
 | `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |
