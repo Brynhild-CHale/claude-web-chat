@@ -191,11 +191,13 @@ test('forwardHeaders: an allowlist, with Origin rewritten only when asked', () =
     accept: 'a', 'content-type': 'b', 'sec-fetch-site': 'same-origin', range: 'bytes=0-1',
     cookie: 'x', authorization: 'y', 'cf-connecting-ip': 'z', 'x-wc-token': 't',
     'x-wc-shutdown': '1', 'x-forwarded-for': 'f', origin: 'https://wc-x.example.test', host: 'h',
+    'x-wc-remote': '0',
   }, { port: 5999, origin: true });
   assert.deepEqual(out, {
     accept: 'a', 'content-type': 'b', 'sec-fetch-site': 'same-origin', range: 'bytes=0-1',
     origin: 'http://localhost:5999',
-  });
+    'x-wc-remote': '1',
+  }, 'the viewer\'s own x-wc-remote is dropped; the portal\'s label is always set');
   assert.equal(forwardHeaders({ origin: 'https://x' }, { port: 1 }).origin, undefined);
 });
 

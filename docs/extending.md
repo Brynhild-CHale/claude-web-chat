@@ -522,6 +522,20 @@ upstream opened with no Origin, cut at the token's `exp` + 5s with close code
   `proxy.js` deliberately. The allowlist is the point: the daemon trusts
   `X-WC-Token`, `X-WC-Shutdown` and the MCP-sighting headers because only local
   processes were meant to send them.
+- **Hiding a project** is `lib/tunnel/config` `hiddenReason(config, entry)`
+  (`expose.exclude` by id or directory, then the project's
+  `projectPaths().noRemote` marker), applied once per registry read in the
+  memo — so the picker, the session lookup and `tunnel status` all see the same
+  filtered list. A hidden session answers exactly like a stopped one.
+- **Before the JWT check**, `throttle.js` answers 429 to a client
+  (`Cf-Connecting-Ip`) with too many recent 401s; **after it**, every write and
+  upgrade — let through or refused — is one line in `access-log.js`
+  (`userPaths().remoteAccessLog`, 0600, rotated to `.1` at 1 MB). Both are
+  injectable (`createPortal({throttle, accessLog})`, `withPortal` passes them).
+- **`X-WC-Remote: 1`** (`core/cors` `REMOTE_HEADER`) is the one header the
+  portal ADDS; the daemon's `/api/health` echoes it as `remote:true`, and the
+  page (`public/app/remote.js` `isRemote`/`remoteNow`) swaps host-only controls
+  for "run this on the host". A UI label — never gate anything on it.
 - **The picker** (`picker.js` + `public/`) is static under a CSP with no inline
   script; it builds its rows with `createElement`/`textContent` because a
   project title is a directory name.

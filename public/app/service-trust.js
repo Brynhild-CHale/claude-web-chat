@@ -37,6 +37,7 @@
 // bootstrap and leave a dead page).
 import { esc } from './esc.js';
 import { getSessionJson, setSessionJson } from './storage.js';
+import { isRemote, remoteNow } from './remote.js';
 
 const DISMISS_KEY = 'wc:svc-trust-dismissed';
 
@@ -88,6 +89,10 @@ function repaint() {
         'on your machine, with your permissions, while its pane is open.</p>' +
       '<p>Approving is a terminal action — it cannot be done from this page, ' +
         'because a component&rsquo;s own code runs here too. In your terminal:</p>' +
+      // Through the tunnel portal "your terminal" is ambiguous — the device in
+      // hand has one too, and running the command there does nothing.
+      (remoteNow() ? '<p class="svc-trust-remote">You are viewing this surface remotely: ' +
+        'run it on <strong>the machine running web-chat</strong>, not on this device.</p>' : '') +
       '<pre class="svc-trust-cmd"><code>' + esc(p.command) + '</code></pre>' +
       // Two panes of one component with different params are two decisions.
       // Without this the two cards read identically and the user cannot tell
@@ -130,6 +135,9 @@ export function onTrustPrompt(msg) {
     params: describeParams(msg.params),
   });
   repaint();
+  // The first card of a page load asks whether the page is remote (answered
+  // once, remembered); a remote answer repaints with the host-side wording.
+  isRemote().then((remote) => { if (remote) repaint(); });
 }
 
 export function onTrustClear(msg) {

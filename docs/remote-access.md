@@ -92,12 +92,14 @@ in one project cannot read another's.
 tunnel setup       ask for (or take as flags) the hostname, style, Access team,
                    AUD tag, allowed email(s) and the tunnel; verify; write config
 tunnel up          preflight, then start the portal (port 5171 —
-                   WEB_CHAT_PORTAL_PORT to move it) which runs cloudflared
+                   WEB_CHAT_PORTAL_PORT to move it) which runs cloudflared;
+                   a portal left running by an older build is restarted
 tunnel down        stop the portal; cloudflared stops with it
 tunnel status      config, portal pid, whether the connector is READY, when the
-                   Access keys were last refreshed, and every exposed project
-tunnel logs        the portal and cloudflared logs (--follow, --portal,
-                   --cloudflared, --lines <n>)
+                   Access keys were last refreshed, every exposed project, and
+                   every hidden one with the reason
+tunnel logs        the portal, cloudflared and remote access logs (--follow,
+                   --portal, --cloudflared, --access, --lines <n>)
 ```
 
 `claude-web-chat doctor` has a tunnel section once setup has run.
@@ -105,7 +107,58 @@ tunnel logs        the portal and cloudflared logs (--follow, --portal,
 The portal restarts cloudflared if it exits (waiting 1s, then 2s, 4s … up to a
 minute; a run that lasted five minutes starts the ladder again) and stops it
 when the portal stops. Nothing starts at login — run `tunnel up` again after a
-reboot.
+reboot. After `claude-web-chat update`, run `tunnel up` too: a portal still
+running from the previous build keeps enforcing that build's rules until it is
+restarted, and `up` restarts one it finds older (nothing restarts it behind your
+back).
+
+## Keeping a project off the tunnel
+
+Every running project is reachable by default. Two ways to take one off —
+either makes the project vanish from the picker **and** refuses its hostname
+with the same "not running" page a stopped project gets:
+
+- **From the project:** create `.web-chat/no-remote` in it
+  (`touch .web-chat/no-remote`). Delete the file to put it back; the portal
+  notices within a second. A repository can ship this marker — it only ever
+  narrows what you expose.
+- **From `tunnel.json`:** list it under `expose.exclude`, by instance id (what
+  `tunnel status` prints) or by absolute directory — a directory hides every
+  project under it:
+
+  ```json
+  "expose": { "exclude": ["0a1b2c3d", "/Users/me/work/client-x"] }
+  ```
+
+`claude-web-chat tunnel status` lists hidden projects separately, with which of
+the two hid them.
+
+## What a remote viewer sees
+
+The surface looks and works the same, except where an action is host-only. The
+**Manage** tab of the ＋ drawer says packs are managed on the host (with the
+command) instead of showing the install form, and its Install / Discard /
+Remove buttons are disabled; a service waiting for approval says to run
+`claude-web-chat trust` on the machine running web-chat, not on the device in
+your hand. The page learns it is remote from the daemon's `/api/health`
+(`remote: true`), which the portal arranges by adding an `X-WC-Remote: 1`
+header to everything it forwards. That is a label for the page, never a
+permission — what a remote viewer may do is decided in the portal.
+
+## The remote access log
+
+`~/.web-chat/tunnel/remote-access.log` (0600) gets one JSON line for every
+remote request that could change something — every write, and every live-socket
+connection — from a signed-in account, whether it was let through or refused:
+
+```json
+{"ts":"2026-09-26T08:14:03.120Z","email":"you@gmail.com","instance":"0a1b2c3d","method":"POST","path":"/api/store","status":200}
+```
+
+Reads are not logged (a page load is dozens of them), and the path is logged
+without its query string. The file is capped at 1 MB: past that it moves to
+`remote-access.log.1`, replacing the previous one, and a new file starts.
+`claude-web-chat tunnel logs --access` prints it.
 
 ## The security model
 
@@ -120,7 +173,9 @@ The portal is **access control**, so every step fails closed:
    published set, issued by your team, for your application's AUD, not expired.
    The token must carry an email, and that email must be on the allowlist in
    `tunnel.json` — which no dashboard setting can widen. If the keys cannot be
-   fetched at all, requests are refused (503), not waved through.
+   fetched at all, requests are refused (503), not waved through. A client
+   (the address Cloudflare saw) that fails this check 20 times inside a minute
+   is answered 429 for the next minute without being checked at all.
 3. **What a remote viewer may reach** is a fixed, default-deny list of daemon
    routes. The surface the browser drives works — panes, the store, forms, the
    graph, comments, the queue and Push, themes, exports as a download. Refused,
@@ -162,8 +217,8 @@ Access, so nothing would check who is signing in.
   from an untrusted source is untrusted code in either place.
 - **Cloudflare sees the traffic** (TLS terminates at its edge). That is how every
   Cloudflare tunnel works.
-- **Every running project is listed** to an allowlisted account. Stop a
-  project's surface (`claude-web-chat stop`) to take it off the picker.
+- **Every running project is listed** to an allowlisted account unless you hid
+  it (see *Keeping a project off the tunnel*) — hiding is opt-out, not opt-in.
 - **A portal killed with `SIGKILL`** cannot stop its cloudflared; the orphaned
   connector answers visitors with an error until you stop it (`tunnel status`
   shows the portal as down; check for a stray `cloudflared` process).
@@ -176,3 +231,5 @@ Access, so nothing would check who is signing in.
 | `~/.web-chat/tunnel/token` | the connector token (0600), token tunnels only |
 | `~/.web-chat/tunnel/cloudflared.yml` | the generated ingress, local tunnels only — rewritten on every start |
 | `~/.web-chat/tunnel/portal.log`, `cloudflared.log` | what `tunnel logs` prints |
+| `~/.web-chat/tunnel/remote-access.log` (+ `.1`) | one line per remote write / socket, 0600, capped at 1 MB |
+| `<project>/.web-chat/no-remote` | this project is never served through the tunnel |

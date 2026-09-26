@@ -24,9 +24,9 @@ const doctor = require('../lib/cli/commands/doctor');
 const { main } = require('../lib/cli');
 const { withTempHome, waitUntil, freePort, fakeCloudflared } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
-const { userPaths } = require('../lib/core/paths');
+const { userPaths, projectPaths } = require('../lib/core/paths');
 const { isPidAlive } = require('../lib/core/portfiles');
-const { registerInstance, deregisterRole } = require('../lib/util/registry');
+const { registerInstance, deregisterRole, instanceId } = require('../lib/util/registry');
 
 const NO_OUTBOUND = path.join(__dirname, '..', 'test-support', 'no-outbound.js');
 
@@ -248,6 +248,85 @@ test('up starts a real portal that supervises cloudflared (token in env only); s
   assert.match(d2.text(), /tunnel is not up/);
 });
 
+test('status lists hidden projects apart from the exposed ones, with why; and says when remote wipe is on', async (t) => {
+  withTempHome(t);
+  const access = createFakeAccess();
+  const mk = (name) => {
+    const dir = fs.mkdtempSync(path.join(userPaths().root, '..', `${name}-`));
+    fs.mkdirSync(path.join(dir, '.web-chat'), { recursive: true });
+    return dir;
+  };
+  const shown = mk('shown');
+  const marked = mk('marked');
+  const excluded = mk('excluded');
+  fs.writeFileSync(projectPaths(marked).noRemote, '');
+  let port = 40001;
+  for (const root of [shown, marked, excluded]) registerInstance({ root, port: port++, pid: process.pid });
+  writeConfig(access.config({ expose: { exclude: [instanceId(excluded)] }, remote: { allowDestructive: true } }));
+  const env = { WEB_CHAT_PORTAL_PORT: String(await freePort()) };
+
+  const st = await tunnel(['status'], { log: () => {}, env });
+  assert.deepEqual(st.sessions.map((x) => x.id), [instanceId(shown)], 'only what a remote viewer can open');
+  assert.deepEqual(st.hidden.map((x) => [x.id, x.reason]).sort(), [
+    [instanceId(excluded), 'excluded'],
+    [instanceId(marked), 'no-remote'],
+  ].sort());
+  const c = capture();
+  await tunnel(['status'], { log: c.log, env });
+  assert.match(c.text(), /remote wipe: ALLOWED/);
+  assert.match(c.text(), /hidden \(2\):/);
+  assert.match(c.text(), new RegExp(`${instanceId(marked)} {2}${path.basename(marked)} {2}— {2}the project's \\.web-chat/no-remote marker`));
+  assert.match(c.text(), /expose\.exclude in tunnel\.json/);
+});
+
+test('up restarts a portal from an older build instead of calling it "already up"', async (t) => {
+  withTempHome(t);
+  const http = require('http');
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  fakeCloudflared(t);
+  writeConfig(goodRaw(access, { metricsPort: await freePort() }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port), NODE_OPTIONS: `--require ${JSON.stringify(NO_OUTBOUND)}` };
+  delete env.WEB_CHAT_HOST;
+
+  // The stale portal: answers health as a portal with no portal_protocol (a
+  // build from before the field — protocol 1). "Killing" it closes it.
+  const old = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: true, role: 'portal', pid: 424242 }));
+  });
+  await new Promise((r) => old.listen(port, '127.0.0.1', r));
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); old.close(); old.closeAllConnections(); };
+
+  let health = null;
+  t.after(async () => {
+    try { old.close(); } catch {}
+    // SIGTERM first so the portal takes its cloudflared down with it.
+    try { await tunnel(['down'], { log: () => {}, env }); } catch {}
+    for (const pid of [health && health.pid, health && health.cloudflared && health.cloudflared.pid]) {
+      if (pid && isPidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    deregisterRole('portal', {});
+  });
+
+  const c = capture();
+  const r = await tunnel(['up'], { log: c.log, env, kill, waitMs: 15000 });
+  health = r.health;
+  assert.deepEqual(killed, [[424242, 'SIGTERM']], 'the pid the old portal reported, signalled once');
+  assert.match(c.text(), new RegExp(`restarting an older portal \\(pid 424242, protocol 1 → ${PORTAL_PROTOCOL_VERSION}\\)`));
+  assert.equal(r.already, false);
+  assert.equal(health.portal_protocol, PORTAL_PROTOCOL_VERSION, 'this build\'s portal is the one running now');
+  assert.notEqual(health.pid, 424242);
+
+  // A CURRENT portal is left alone.
+  const again = await tunnel(['up'], { log: () => {}, env, kill });
+  assert.equal(again.already, true);
+  assert.equal(killed.length, 1);
+});
+
 // ── logs ────────────────────────────────────────────────────────────────────
 
 test('logs prints both tails; --follow streams what is appended until aborted', async (t) => {
@@ -269,6 +348,20 @@ test('logs prints both tails; --follow streams what is appended until aborted', 
   ac.abort();
   await done;
   assert.ok(!f.text().includes('p3'), '--cloudflared shows only that log');
+});
+
+test('logs includes the remote access log; --access shows only it', async (t) => {
+  withTempHome(t);
+  fs.mkdirSync(userPaths().tunnelDir, { recursive: true });
+  fs.writeFileSync(userPaths().portalLog, 'p1\n');
+  fs.writeFileSync(userPaths().remoteAccessLog, '{"method":"POST"}\n');
+  const all = capture();
+  await tunnel(['logs'], { log: all.log });
+  assert.match(all.text(), /── access \(.*remote-access\.log\)\n\{"method":"POST"\}/);
+  const only = capture();
+  await tunnel(['logs', '--access'], { log: only.log });
+  assert.deepEqual(only.lines.filter((l) => !l.startsWith('──')), ['{"method":"POST"}']);
+  assert.equal(only.lines.filter((l) => l.startsWith('──')).length, 1);
 });
 
 // ── doctor ──────────────────────────────────────────────────────────────────

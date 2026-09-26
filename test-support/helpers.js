@@ -402,16 +402,16 @@ async function withHub(t, { port = 0, createHub } = {}) {
 // Stand up the tunnel PORTAL (lib/portal) for a test and own its teardown —
 // withHub's sibling. Loopback, ephemeral port, never start(): no registry
 // entry for the portal itself, no JWKS warm-up against anything real.
-//   withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs })
+//   withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs, accessLog, throttle })
 // `config` is tunnel.json's raw shape (normalised here, so a test can hand in
 // fake-access's config()). Returns { portal, port, config, request } where
 // `request(path, {host, method, headers, body})` is a RAW request — the portal
 // routes on Host, which fetch refuses to set.
-async function withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs } = {}) {
+async function withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs, accessLog, throttle } = {}) {
   const { createPortal } = require('../lib/portal');
   const { normalizeConfig } = require('../lib/tunnel/config');
   const cfg = normalizeConfig(config);
-  const portal = createPortal({ port: 0, config: cfg, fetchJwks, now, instances, probe, wsGraceMs });
+  const portal = createPortal({ port: 0, config: cfg, fetchJwks, now, instances, probe, wsGraceMs, accessLog, throttle });
   await new Promise((resolve, reject) => {
     const onError = (e) => { portal.server.off('error', onError); reject(e); };
     portal.server.once('error', onError);
