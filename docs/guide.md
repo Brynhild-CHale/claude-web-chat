@@ -72,7 +72,7 @@ Installing a pack runs its code: panes are unsandboxed in the surface page, and 
 
 ## Channels (experimental)
 
-Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch.
+Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch. A row's ⟲ takes it back: it undoes that interaction (your typed values since the last Push, and a pane's submitted signal) and never removes a pane Claude rendered.
 
 **It works with or without the Channels capability.** For a *live, no-prompt* wake, launch Claude Code with both the env var and the capability flag — they belong together on the launch line, so a session can never claim a channel it doesn't have:
 

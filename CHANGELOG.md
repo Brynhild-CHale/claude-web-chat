@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Queue ⟲ Revert could delete a pane Claude rendered.** One Apply click in a pane with a declared signal puts two rows on the rail — an `activity` row from the shell's click listener and a `signal` row from the pane's `store.set` — and reverting the `signal` row routed to the pane-removal path, deleting the pane and everything typed into it. A `signal` Revert now undoes the interaction like an `activity` one: the pane stays, its form values go back to the pre-run baseline, and the signal key goes back to its pre-write value (or is removed if it was absent) through a server-sourced `queue-revert` store write that can never enqueue or wake. Only a `capture` item's Revert removes a pane now; a `comment` whose pin is already gone reverts nothing instead of falling back to the pane. The ⟲ tooltip says what each kind actually does.
+- **A signal item named the wrong pane.** When two panes declared the same signal key, the item's `origin_mount` was the last pane to declare it, not the pane that wrote it — so a Revert acted on a pane the user never touched. It is now the writing pane (the per-pane store facade's stamp), with the declarer only as a fallback for an unattributed write.
+- **Revert restored the typed values it was meant to undo.** The activity baseline was stamped when the item was enqueued, after the debounced form snapshot had already carried the new typing. The baseline is now the pane's form values from before the first change since the last Push.
+
 ## [0.7.6] - 2026-09-18
 
 ### Upgrading from 0.7.5

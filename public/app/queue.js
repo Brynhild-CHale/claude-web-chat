@@ -395,8 +395,10 @@ async function setStaged(id, staged) {
   } catch {}
 }
 
-// Revert — remove the item from the queue AND its web-chat artifact (a comment's
-// pin, a capture/signal's origin pane). ?revert=1 drives the server side.
+// Revert — remove the item from the queue AND undo its web-chat artifact: a
+// comment's pin is deleted, a capture's pane is dropped, and an activity/signal
+// item's interaction is undone (form values and the signal key go back; the pane,
+// which Claude or a driver rendered, stays). ?revert=1 drives the server side.
 async function revertItem(id) {
   items = items.filter((x) => x.id !== id);
   render();
@@ -408,6 +410,14 @@ async function revertItem(id) {
 // cancelling the whole delivery is the one action, and it lives on .rail-pending
 // above. It used to be a second, thinner copy of this function, which is why a
 // parked row dropped the source and why-wake lines a staged one shows.
+// What ⟲ actually does, per kind (lib/server/domain/queue revertArtifact). Only a
+// capture's own pane is ever removed — never promise that for anything else.
+function revertTitle(kind) {
+  if (kind === 'comment') return 'revert — remove from queue and delete this comment pin';
+  if (kind === 'capture') return 'revert — remove from queue and drop the captured pane';
+  return 'revert — remove from queue and undo this interaction (the pane stays)';
+}
+
 function itemRow(it, { parked = false } = {}) {
   const row = document.createElement('div');
   const staged = !parked && isStaged(it);
@@ -440,7 +450,7 @@ function itemRow(it, { parked = false } = {}) {
 
   const rev = document.createElement('button');
   rev.className = 'qi-revert'; rev.textContent = '⟲';
-  rev.title = 'revert — remove from queue and web-chat';
+  rev.title = revertTitle(it.kind);
   rev.addEventListener('click', () => revertItem(it.id));
 
   row.append(dot, body, stage, rev);

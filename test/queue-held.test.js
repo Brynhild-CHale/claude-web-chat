@@ -211,6 +211,25 @@ test('cancelling the delivery takes the held batch off the rail', async () => {
   assert.ok(rail().querySelector('.rail-empty'), 'the rail is genuinely empty again');
 });
 
+// ⟲ used to read "remove from queue and web-chat" on every row — a promise to
+// delete the pane, which the server now keeps only for a capture's own pane. An
+// activity/signal Revert undoes the interaction and the pane (Claude's) stays.
+test('the revert button says what it does for each kind, and only a capture drops a pane', async () => {
+  const add = (item) => WS.onmessage({ data: JSON.stringify({ type: 'queue', op: 'add', item }) });
+  add({ id: 'q7', kind: 'activity', summary: 'form · 1 click', enqueued_at: 7 });
+  add({ id: 'q8', kind: 'signal', summary: 'form_submit · seq 1', enqueued_at: 8 });
+  add({ id: 'q9', kind: 'comment', summary: 'note', enqueued_at: 9 });
+  add({ id: 'q10', kind: 'capture', summary: 'captured a.com', enqueued_at: 10 });
+  const title = (id) => rail().querySelector(`.rail-item[data-id="${id}"] .qi-revert`).title;
+  for (const id of ['q7', 'q8']) {
+    assert.match(title(id), /undo this interaction/, id + ' promises to undo the interaction');
+    assert.match(title(id), /pane stays/, id + ' says the pane stays');
+  }
+  assert.match(title('q9'), /comment pin/);
+  assert.match(title('q10'), /drop the captured pane/);
+  for (const id of ['q7', 'q8', 'q9']) assert.doesNotMatch(title(id), /drop|web-chat$/, id + ' never promises pane removal');
+});
+
 // The push raised the 6s transient parked banner, whose expiry timer touches
 // `document`. Let it fire while the window is still valid, then tear down.
 test.after(async () => { await new Promise((r) => setTimeout(r, 6200)); restore(); });
