@@ -14,6 +14,7 @@ import { send, isOpen } from './ws.js';
 import { applyPaneTheme } from './theme.js';
 import { isPhone } from './viewport.js';
 import { bus } from './bus.js';
+import { togglePaneHistory } from './pane-history.js';
 import {
   layoutPage, setPage, pageFromFrame, placeOf, runOf, commitRunOrder,
   COLS, ROW_PX, GAP_PX, ROWS_MIN, ROWS_MAX, SPAN_MIN,
@@ -199,7 +200,15 @@ export function blockType(params, component) {
   return typeof component === 'string' && component ? component : '';
 }
 
-function makePaneChrome(id, title, pane_state, params, component) {
+// A pane that another pane spawned (owner `pane:<parent>`, lib/server/domain/
+// spawn) names its parent on its header. The parent id, or null.
+export const PANE_OWNER = 'pane:';
+export function spawnParentOf(owner) {
+  return typeof owner === 'string' && owner.startsWith(PANE_OWNER) && owner.length > PANE_OWNER.length
+    ? owner.slice(PANE_OWNER.length) : null;
+}
+
+function makePaneChrome(id, title, pane_state, params, component, owner) {
   const wrapper = document.createElement('div');
   wrapper.className = 'pane';
   wrapper.dataset.paneId = id;
@@ -225,6 +234,21 @@ function makePaneChrome(id, title, pane_state, params, component) {
     chip.className = 'pane-type';
     chip.textContent = type;
     header.appendChild(chip);
+  }
+
+  // ↳ parent — who put this pane up. A child outlives its parent (the daemon's
+  // rule: no cascade), so the chip says so once the parent is gone rather than
+  // leaving an orphan that looks like any other block (syncOwnerChips). A click
+  // shows the parent.
+  const parent = spawnParentOf(owner);
+  if (parent) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'pane-owner';
+    chip.dataset.parent = parent;
+    chip.addEventListener('click', () => revealPane(parent));
+    header.appendChild(chip);
+    paintOwnerChip(chip);
   }
 
   function mkBtn(label, tip, onClick, className = '') {
@@ -256,8 +280,20 @@ function makePaneChrome(id, title, pane_state, params, component) {
     emitPaneState(id);
   }, 'pane-btn-lock');
 
-  // Below NARROW_SPAN pin/lock are folded away; ⋯ shows them in the header.
-  const btnMore = mkBtn('⋯', 'more — pin, lock', () => {
+  // The block's history: the versions the page has shown on the way to the
+  // active node, each previewable, with "Make current" (public/app/pane-history).
+  // Viewing only until the user picks a version and says so. aria-controls is the
+  // dismiss layer's trigger contract (shell.js ownedPanel): without it the
+  // popover would be dismissed out from under this very click.
+  const btnHistory = mkBtn('◷', 'history — earlier versions of this block', () => {
+    if (!live()) return;
+    togglePaneHistory(id, btnHistory);
+  }, 'pane-btn-history');
+  btnHistory.setAttribute('aria-controls', 'pane-history');
+  btnHistory.setAttribute('aria-haspopup', 'dialog');
+
+  // Below NARROW_SPAN history/pin/lock are folded away; ⋯ shows them in the header.
+  const btnMore = mkBtn('⋯', 'more — history, pin, lock', () => {
     wrapper.classList.toggle('more-open');
   }, 'pane-btn-more');
 
@@ -280,6 +316,7 @@ function makePaneChrome(id, title, pane_state, params, component) {
     });
   }, 'pane-btn-close');
 
+  header.appendChild(btnHistory);
   header.appendChild(btnPin);
   header.appendChild(btnLock);
   header.appendChild(btnMore);
@@ -565,7 +602,7 @@ function mountPane(m) {
 
   const ps = applyPaneStateDefaults(pane_state);
   const titleFromParams = params && params.title;
-  const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params, m.component);
+  const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params, m.component, m.owner);
 
   const host = document.createElement('div');
   // The mount id is agent-supplied, and the shell resolves its OWN chrome live
@@ -589,7 +626,8 @@ function mountPane(m) {
     wrapper, host, root: null, pane_state: ps, form_state: form_state || null,
     title: titleFromParams || id, paneTarget: target || 'main',
     theme: theme || null,
-    spec: { id, html, target: target || 'main', params: params || {}, component: m.component, pane_state: ps, form_state: form_state || undefined, theme: theme || undefined },
+    owner: m.owner || null,
+    spec: { id, html, target: target || 'main', params: params || {}, component: m.component, owner: m.owner || undefined, pane_state: ps, form_state: form_state || undefined, theme: theme || undefined },
   };
   panes.set(id, rec);
   layoutPage();
@@ -813,6 +851,7 @@ function sameSpec(spec, m) {
   return spec.html === m.html
     && (spec.target || 'main') === (m.target || 'main')
     && (spec.component || null) === (m.component || null)
+    && (spec.owner || null) === (m.owner || null)
     && JSON.stringify(spec.params || {}) === JSON.stringify(m.params || {});
 }
 
@@ -864,6 +903,44 @@ function reconcileSurface(mounts, next) {
   // Re-publish what the user typed while the socket was down. sendFormState is a
   // no-op for a pane whose values the server already has.
   flushFormStates();
+}
+
+// ── pane-spawned panes: the parent chip ────────────────────────────────────
+// The chip's text follows the parent: `↳ parent`, or `↳ parent · closed` once the
+// parent has left the page (its children stay — lib/server/domain/spawn
+// closePane). Re-painted on every layout (page.js layoutPage calls this), since
+// a parent can go or come back without its child re-mounting.
+function paintOwnerChip(chip) {
+  const parent = chip.dataset.parent;
+  const gone = !panes.has(parent);
+  chip.classList.toggle('orphan', gone);
+  chip.textContent = `↳ ${parent}${gone ? ' · closed' : ''}`;
+  const tip = gone
+    ? `Spawned by block '${parent}', which has been closed. This block stays until you close it (×).`
+    : `Spawned by block '${parent}' — show it`;
+  chip.title = tip;
+  chip.setAttribute('aria-label', tip);
+}
+export function syncOwnerChips() {
+  for (const p of panes.values()) {
+    const chip = p.wrapper.querySelector('.pane-owner');
+    if (chip) paintOwnerChip(chip);
+  }
+}
+// Jump to a block on the page: restore it if it was minimized (a write, so not
+// on a read-only view), bring it into view and flash its outline so the eye
+// lands on it. The ⌘K block rows and a spawned pane's parent chip.
+export function revealPane(id) {
+  const p = panes.get(id);
+  if (!p) return false;
+  if (!readOnlyNow()) unminimize(id);
+  const w = p.wrapper;
+  if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  w.classList.remove('pane-flash');
+  void w.offsetWidth;            // restart the animation on a repeat jump
+  w.classList.add('pane-flash');
+  setTimeout(() => w.classList.remove('pane-flash'), 1400);
+  return true;
 }
 
 // Restore a minimized pane, locally and everywhere.

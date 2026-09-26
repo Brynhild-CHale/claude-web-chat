@@ -22,7 +22,7 @@
 // markdown chunk written between two panes) re-parents the panes it moves.
 import { $, view } from './state.js';
 import { renderMarkdown, headings } from './markdown.js';
-import { panes, readOnlyNow, unminimize, blockType } from './mounts.js';
+import { panes, readOnlyNow, unminimize, blockType, syncOwnerChips } from './mounts.js';
 import { isPhone } from './viewport.js';
 import { labelFor, nodeById, nodeTime } from './labels.js';
 
@@ -473,6 +473,7 @@ export function layoutPage() {
   }
   syncPageMeta();
   renderContents();
+  syncOwnerChips();   // a spawned pane's parent may have come or gone
 }
 
 // ── title, meta line, contents nav ─────────────────────────────────────────

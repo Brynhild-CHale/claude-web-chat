@@ -16,12 +16,13 @@ import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor, nodeTime } from './labels.js';
-import { panes, unminimize } from './mounts.js';
+import { panes, revealPane } from './mounts.js';
 import { paletteSections, blockHint } from './page.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
 import { openSessions, toggleSessions } from './sessions.js';
+import { closePaneHistory } from './pane-history.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 
@@ -58,6 +59,7 @@ function closePanel(el) {
   if (el.id === 'drawer') { closeDrawer(); return; }
   if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
   if (el.id === 'replay-pop') { closeReplay(); return; }    // also unloads the player
+  if (el.id === 'pane-history') { closePaneHistory(); return; }   // also unloads the version preview
   el.classList.add('hidden');
   // keep any aria-expanded trigger honest — togglePopover does this on the
   // normal path, but this bulk close bypasses it.
@@ -282,20 +284,6 @@ function closePalette() {
   const p = $('cmd-palette'); if (p) p.classList.add('hidden');
   const inp = $('cmd-input'); if (inp) inp.blur(); // else focus lingers and swallows single-key shortcuts
 }
-// Jump to a block on the page: restore it if it was minimized, bring it into
-// view and flash its outline so the eye lands on it.
-function revealBlock(id) {
-  const p = panes.get(id);
-  if (!p) return;
-  unminimize(id);
-  const w = p.wrapper;
-  if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  w.classList.remove('pane-flash');
-  void w.offsetWidth;            // restart the animation on a repeat jump
-  w.classList.add('pane-flash');
-  setTimeout(() => w.classList.remove('pane-flash'), 1400);
-}
-
 // Typed rows, as the design draws them (Theme §4c): a KIND column (node /
 // section / block / command), the label, and a hint on the right — a node's time
 // (labels.js nodeTime), a section's block count, a block's section number and
@@ -323,7 +311,7 @@ async function buildPalette(q) {
     kind: 'block',
     label: p.title && p.title !== id ? `${id} · ${p.title}` : id,
     hint: blockHint(id),
-    run: () => revealBlock(id),
+    run: () => revealPane(id),
   }));
   // The page's # / ## headings (page.js outline) — a row scrolls to its heading.
   const sections = paletteSections();

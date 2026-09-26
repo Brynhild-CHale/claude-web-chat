@@ -205,7 +205,7 @@ were the only places they lived.
 | ask whether the chrome is on a PHONE (the read-only viewer, the graph as a log) | `public/app/viewport.js` `isPhone()` + the bus `'viewport'` event (`<html class="phone">` for CSS); a pane's read-only gate is `mounts.readOnlyNow()` (preview OR phone) | a `matchMedia`/`innerWidth` check at a call site, or reading width alone — a narrow DESKTOP window (a terminal beside a browser) stays editable; width-only layout belongs in `app.css` |
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
 | resolve a node reference (`n1.7`, a stored id, `active`, `live`) | `lib/server/domain/refs` `resolveNodeRef(graph, ref, {allowLive})` → `{ok, id, label, node}` \| `{ok:false, code, error}` (callers keep their own message per `code`); the parent-chain walk itself is `lib/server/domain/lineage` `ancestry` (row above) | a `computeLabels` scan for `label === ref`, or a private `resolveRef` in a route (export and diff each had one) |
-| draw a committed node as a page (graph thumbnails, glance, `/preview/pane`, replay frames), read its page sequence with the markdown rendered, or ask what theme it is drawn under | `lib/server/preview` `renderPreviewHtml(node, theme)` / `renderNodePreview(paths, node)` / `pageItems(node)` (the export reads it too) / `themeLayers(paths, node)` | a second preview document, a second `pageOrder` + `renderMarkdown` loop, or `resolveDefault` + `mergeTokens` re-derived at the call site |
+| draw a committed node as a page (graph thumbnails, glance, `/preview/pane`, replay frames), read its page sequence with the markdown rendered, or ask what theme it is drawn under | `lib/server/preview` `renderPreviewHtml(node, theme)` / `renderNodePreview(paths, node, {mode})` / `pageItems(node)` (the export reads it too) / `themeLayers(paths, node, mode)` (`mode` is the viewer's, from a `?mode=` the routes read through `modeParam`) | a second preview document, a second `pageOrder` + `renderMarkdown` loop, or `resolveDefault` + `mergeTokens` re-derived at the call site |
 | decide which nodes a replay plays, and their captions | `lib/server/domain/replay-path` `resolveReplayPath(graph, {from, to, includeCollapsed})` | walk `parent_id` and re-apply `computeCollapse` yourself |
 | draw a replay (the player document, `replay.html`, a renderer's frames) | `lib/server/replay/document` `assembleReplay` / `buildReplay(ctx, query)` — frames filled from `lib/server/preview` `previewTemplate` + `previewThemeCss` / `previewNodeJson`; the controller is `lib/server/replay/player.js` | a second player, or a frame built by escaping node JSON anywhere but `previewNodeJson` |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
@@ -1003,6 +1003,20 @@ lives in `domain/refs` (`resolveNodeRef`); refs does no walking of its own.
   that pane.
 - `POST /api/mounts/:id/restore {node_id, with_form?, after?}` → `domain/mounts`
   `restoreMount` — "make current".
+- The chrome half is `public/app/pane-history.js`: the block header's ◷ opens
+  one `.popover` (`#pane-history`) that lists the versions, frames the hovered
+  or chosen one from `/preview/pane`, and posts the restore. Its Make current is
+  disabled — with the reason — wherever `restoreMount` would refuse
+  (`restoreBlocker`), but the daemon stays the authority and its refusal hint
+  is shown.
+- `sectionChanges(node, parent)` — what a node changed per `#`/`##` section of
+  its page against its parent: `[{h, sec, add?, chg?, rm?}]`, sections read off
+  the markdown headings in page order (`page.pageOrder` + `lib/core/markdown`
+  `headings`), panes compared by `specHash`, markdown by text, removals counted
+  where the item sat in the parent; `[]` when neither page has a heading.
+  Cached on the node object. `GET /api/graph/changes` serves every node's
+  (only the non-empty ones) for the phone graph log's chips — its own route,
+  because `/api/graph` is `get_graph`'s payload verbatim.
 
 ### `lib/server/domain/spawn.js` — panes spawning panes
 
@@ -1024,6 +1038,10 @@ engine's, not a copy.
   `wake:'immediate'` would let a pane wake Claude.
 - `closePane(state, bus, {parent, id})` — a pane's own child, or itself; never
   a locked pane.
+- The render frame carries `owner` (as the hello/reset snapshot always did), so
+  the chrome draws a child's parent on its header (`↳ parent`, and
+  `↳ parent · closed` once the parent has gone — children are not cascaded) and
+  re-mounts a pane whose owner changed (`sameSpec` reads it).
 - Caps (`MAX_CHILDREN`, `MAX_SPAWNED_TOTAL`, `MAX_DEPTH`, `RATE_MAX` per
   `RATE_WINDOW_MS`, `HTML_MAX_CHARS`, `PARAMS_MAX_CHARS`) bound a runaway script.
   They are not a sandbox: `parent` is stamped by the chrome from the same

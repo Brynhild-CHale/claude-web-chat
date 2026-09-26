@@ -40,6 +40,9 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //  - p34c (the page renderer): the full-surface frames also carry
 //    `claude_order`, Claude's baseline page order, which the chrome compares a
 //    run against to decide whether ↺ Claude's layout has anything to restore.
+//  - p34c c2 (the parent chip): the per-pane render frame carries `owner`, as
+//    the full-surface frames' mount records always did, so the chrome can name
+//    a pane-spawned pane's parent on a single render.
 const GOLDEN = {
   frames: [
     {
@@ -56,7 +59,7 @@ const GOLDEN = {
       theme: { tokens: {} },
       activeTheme: null,
     },
-    { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1' },
+    { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude' },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
     {
       type: 'theme',
@@ -101,6 +104,7 @@ const GOLDEN = {
       id: 'tab-capture:tables:bf705e83',
       params: { title: 'Capture · tables — Example', mode: 'reduced' },
       pane_state: { mode: 'reduced' },
+      owner: 'service:tab-stream',
     },
     {
       type: 'node-added',

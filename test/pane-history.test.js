@@ -191,6 +191,20 @@ test('preview/pane: one version of one pane under PREVIEW_CSP — no other pane,
   }
 });
 
+test('preview/pane (and preview/node) draw in the viewer\'s ?mode=, else the server default', async (t) => {
+  const { api } = await withServer(t);
+  const applied = await api.post('/api/theme/apply', { name: 'earthy', scope: 'global' });
+  assert.equal(applied.status, 200, JSON.stringify(applied.json));
+  await render(api, 'p', '<p>x</p>');
+  const a = await turn(api);
+  const bg = (html) => (html.match(/--wc-bg:\s*([^;]+);/) || [])[1];
+  for (const path of [`/preview/pane/${a.node_id}/p`, `/preview/node/${a.node_id}`]) {
+    assert.equal(bg((await api.get(path)).text), '#e4dccb', `${path}: light by default`);
+    assert.equal(bg((await api.get(`${path}?mode=dark`)).text), '#151109', `${path}: dark when asked`);
+    assert.equal(bg((await api.get(`${path}?mode=sepia`)).text), '#e4dccb', `${path}: an unknown mode is ignored`);
+  }
+});
+
 // ── POST /api/mounts/:id/restore ────────────────────────────────────────────
 
 test('restore: copies the version\'s content into the live slot as a `history` write that folds into the next commit', async (t) => {

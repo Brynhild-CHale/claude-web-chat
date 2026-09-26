@@ -193,6 +193,28 @@
       <div class="hint">Every web-chat surface on this computer, and which have a Claude Code session attached. Refreshes every 5s.</div>
     </div>
 
+    <!-- a block's history: the versions of one pane on the way to the active node
+         (public/app/pane-history.js; rows are built there, as text). Placed under
+         the ◷ that opened it. -->
+    <div id="pane-history" class="popover pane-history hidden" role="dialog" aria-labelledby="ph-head">
+      <div class="ph-head">
+        <h4 id="ph-head">History <span id="ph-title" class="ph-title"></span></h4>
+        <span id="ph-count" class="ph-count"></span>
+        <button type="button" class="pane-btn" id="ph-close" title="Close history" aria-label="Close history">×</button>
+      </div>
+      <div class="ph-body">
+        <div id="ph-list" class="ph-list" role="listbox" aria-label="Versions, newest first"></div>
+        <div class="ph-view">
+          <iframe id="ph-frame" class="ph-frame" title="The selected version, read-only" hidden></iframe>
+          <div id="ph-empty" class="ph-empty"></div>
+        </div>
+      </div>
+      <div class="ph-foot">
+        <span id="ph-note" class="ph-note"></span>
+        <button type="button" class="btn primary" id="ph-restore" disabled>Make current</button>
+      </div>
+    </div>
+
     <!-- settings -->
     <div id="settings-panel" class="popover hidden">
       <h4>Settings</h4>

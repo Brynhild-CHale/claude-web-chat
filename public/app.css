@@ -483,9 +483,20 @@ kbd {
    so the state is never invisible); ⋯ shows pin/lock again. */
 .pane:not(.narrow) .pane-btn-more,
 .pane.narrow .pane-type,
+.pane.narrow:not(.more-open) .pane-btn-history,
 .pane.narrow:not(.more-open) .pane-btn-pin:not(.active),
 .pane.narrow:not(.more-open) .pane-btn-lock:not(.lock-active) { display: none; }
 .pane.narrow.more-open .pane-btn-more { color: var(--wc-fg); }
+/* ↳ parent: a block another block spawned (public/app/mounts.js ownerChip);
+   faded, and "· closed", once that parent has left the page. */
+.pane-owner {
+  flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  font: 500 10.5px var(--wc-mono); color: var(--wc-accent-text, var(--wc-accent));
+  border: 1px solid color-mix(in srgb, var(--wc-accent) 40%, transparent); border-radius: var(--wc-radius);
+  background: transparent; padding: 1px 6px; height: 20px;
+}
+.pane-owner:hover { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+.pane-owner.orphan { color: var(--wc-muted); border-color: var(--wc-border); border-style: dashed; cursor: help; }
 /* A locked block refuses moves: no grab, no resize handles. */
 .pane.locked .pane-header { cursor: default; }
 .pane.locked :is(.pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
@@ -765,6 +776,47 @@ kbd {
 .brand-remove:disabled { opacity: .4; cursor: default; }
 .brand-msg:empty { display: none; }
 .brand-msg.bad { color: var(--wc-comment, var(--wc-accent)); }
+/* A block's history (public/app/pane-history.js): versions on the left, the
+   chosen one drawn read-only by /preview/pane on the right, Make current below.
+   position:fixed because it is placed under the ◷ that opened it, which can sit
+   anywhere on a scrolled page. */
+.popover.pane-history {
+  position: fixed; top: 60px; right: auto; left: 12px;
+  width: min(640px, calc(100vw - 24px)); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.ph-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ph-head h4 { margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-title { font: 500 12px var(--wc-mono); color: var(--wc-muted); margin-left: 4px; }
+.ph-count { font: 11px var(--wc-mono); color: var(--wc-muted); white-space: nowrap; }
+.ph-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 10px; height: min(52vh, 360px); }
+.ph-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
+.ph-row {
+  display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 7px 9px; text-align: left; cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-content-bg); color: var(--wc-text-1);
+}
+.ph-row.shown { border-color: var(--wc-border-light); }
+.ph-row:hover, .ph-row:focus-visible { border-color: var(--wc-accent); outline: none; }
+.ph-row.chosen { border-color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 12%, var(--wc-content-bg)); }
+.ph-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ph-label { font: 700 12px var(--wc-mono); color: var(--wc-fg-bright); }
+.ph-badge { font: 600 9px var(--wc-mono); letter-spacing: .06em; color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 45%, transparent); border-radius: var(--wc-radius); padding: 1px 5px; }
+.ph-sp { flex: 1; }
+.ph-when { font: 10.5px var(--wc-mono); color: var(--wc-muted); white-space: nowrap; }
+.ph-trig { font: 12px/1.4 var(--wc-font); color: var(--wc-text-2, var(--wc-muted)); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-clamp: 2; }
+.ph-view { position: relative; min-width: 0; min-height: 0; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-bg); overflow: hidden; }
+.ph-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--wc-bg); }
+.ph-frame[hidden] { display: none; }
+.ph-empty { padding: 14px; font: 12px var(--wc-font); color: var(--wc-muted); }
+.ph-empty[hidden] { display: none; }
+.ph-foot { display: flex; align-items: center; gap: 10px; }
+.ph-note { flex: 1; min-width: 0; font: 11.5px var(--wc-font); color: var(--wc-muted); }
+.ph-note.bad { color: var(--wc-comment, var(--wc-accent)); }
+#ph-restore:disabled { opacity: .45; cursor: default; }
+@media (max-width: 560px) {
+  .ph-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(160px, 1fr); height: min(70vh, 520px); }
+  .ph-list { max-height: 150px; }
+}
+
 /* Sessions panel (public/app/sessions.js): every surface on this computer and
    its Claude Code state. Self-contained on --wc-* tokens so a chrome restyle
    only has to re-point the tokens. */
@@ -1518,6 +1570,19 @@ body.pin-mode #main { cursor: crosshair; }
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; text-wrap: pretty;
 }
 .gv-lcard-folded { font: 500 11px var(--wc-mono); color: var(--wc-muted); }
+/* the sections a turn changed (graph-log.js changeChips; design "Graph Prototype") */
+.gv-lcard-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.gv-chg {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  font: 500 11px var(--wc-mono); color: var(--wc-text-2, var(--wc-muted));
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 3px 7px; background: var(--wc-content-bg);
+}
+.gv-chg .h { color: var(--wc-accent-text, var(--wc-accent)); font-weight: 600; }
+.gv-chg .sec { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-chg .n { font-weight: 600; }
+.gv-chg .n.add { color: var(--wc-green); }
+.gv-chg .n.chg { color: var(--wc-gold); }
+.gv-chg .n.rm { color: var(--wc-muted); }
 .gv-lghost {
   flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; margin: 2px 0; padding: 8px 10px;
   font: 12px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border);
