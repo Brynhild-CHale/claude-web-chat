@@ -184,7 +184,7 @@ test('the whole z-index inventory is one ordered scale', () => {
 
 test('no z-index in the shell is a hand-picked number any more', () => {
   // Ratchet: the survivors are LOCAL to a stacking context of their own and
-  // are commented as such — the glance's controls, and the three resize handles
+  // are commented as such — the three resize handles
   // inside a pane (the corner sits one above the two edges it overlaps). A new
   // bare number here means the scale was bypassed.
   const bare = [];
@@ -193,7 +193,6 @@ test('no z-index in the shell is a hand-picked number any more', () => {
     bare.push(`${d.selectors.join(', ')} { z-index: ${d.value} }`);
   }
   assert.deepEqual(bare.sort(), [
-    '.glance-controls { z-index: 1 }',
     '.pane-resize-b { z-index: 3 }',
     '.pane-resize-r { z-index: 3 }',
     '.pane-resize-rb { z-index: 4 }',

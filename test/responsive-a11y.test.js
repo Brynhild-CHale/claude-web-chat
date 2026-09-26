@@ -7,7 +7,8 @@
 // arithmetic, so re-introducing fixed side columns that starve the graph canvas
 // fails the build with a number. Before this, #overlay's fixed 288px/1fr/322px
 // left the canvas ~90px wide at 700px — the product's defining feature, unusable
-// in the product's own default layout.
+// in the product's own default layout. (The graph is canvas-first now; the guard
+// holds it there.)
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -80,13 +81,21 @@ const fixedPx = (v) => (v.match(/(\d+(?:\.\d+)?)px/g) || []).reduce((a, s) => a 
 
 test('the graph canvas stays usable at the widths this product is actually used at', () => {
   // ~700px is a terminal beside a browser on a laptop; 1000 and 1280 are wider setups.
+  // The canvas-first graph has NO side columns: the canvas is the whole stage at
+  // every width and the inspector floats over it. What could starve the canvas
+  // again is a grid on #overlay, or an inspector wider than the screen.
   for (const width of [700, 760, 860, 1000, 1280]) {
-    const cols = winningValue('#overlay.overlay', 'grid-template-columns', width);
-    assert.ok(cols, `#overlay.overlay declares grid-template-columns at ${width}px`);
-    const canvas = width - fixedPx(cols);
-    assert.ok(canvas >= 380,
-      `at ${width}px the graph canvas gets ${canvas}px (cols: ${cols}) — it must keep at least 380px`);
+    assert.equal(winningValue('#overlay.overlay', 'grid-template-columns', width), null,
+      `#overlay.overlay declares no grid columns at ${width}px — the canvas is not a column`);
+    const insp = winningValue('.gv-inspector', 'width', width);
+    assert.ok(insp, `.gv-inspector declares a width at ${width}px`);
+    if (/calc\(100%/.test(insp)) continue;           // full-bleed on a narrow screen
+    const px = fixedPx(insp);
+    assert.ok(width - px >= 380,
+      `at ${width}px a ${insp} inspector leaves the canvas ${width - px}px of visible width — it must keep at least 380px`);
   }
+  const wrap = winningValue('.graph-canvas-wrap', 'inset', 1280);
+  assert.equal(wrap, '0', 'the canvas wrap fills the overlay');
 });
 
 test('panes stop tiling once a column would be a sliver', () => {

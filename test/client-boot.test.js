@@ -109,16 +109,17 @@ test('front-end module graph boots and the core flows work under jsdom', async (
     assert.ok(!$('overlay').classList.contains('hidden'), 'G opened the graph overlay');
     assert.equal(window.document.activeElement, $('overlay'), 'focus moved into the overlay');
 
-    // history rows are clickable <div>s — they must be tabbable and Enter/Space-operable
-    const gvRow = $('gv-history-list').querySelector('.gv-row');
-    assert.ok(gvRow, 'the history list rendered a row');
-    assert.equal(gvRow.tabIndex, 0, 'a history row is reachable by keyboard');
-    assert.equal(gvRow.getAttribute('role'), 'option', 'and exposes an option role');
-    gvRow.focus();
-    gvRow.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    // canvas-first: nothing is selected on open, so there is no inspector yet…
+    assert.ok($('gv-inspector').classList.contains('hidden'), 'the inspector waits for a selection');
+    // …and the first arrow key selects the active node, keyboard-only
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     await tick();
-    assert.equal($('gv-history-list').querySelectorAll('.gv-row.selected').length, 1,
-      'Enter on a focused row selects it, like a click');
+    assert.equal(window.document.querySelectorAll('#graph-svg g.gv-node.selected').length, 1,
+      'an arrow selects a node without a mouse');
+    assert.ok(!$('gv-inspector').classList.contains('hidden'), 'and the inspector appears with it');
+    window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    assert.ok(!$('overlay').classList.contains('hidden'), 'the first Escape only deselects');
 
     window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
     await tick();

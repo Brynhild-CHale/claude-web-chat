@@ -32,7 +32,7 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Ask for the page, not prose.** Multi-option decisions, comparison tables, forms, live UI mockups — say "on the surface" and Claude renders them instead of describing them. Panes persist across turns, so Claude (and you) can refer back to one without re-rendering it.
 
-**Use the graph like an undo tree.** Nodes are labeled hierarchically — `n1.7` is the seventh step on the first trunk, `n1.7.0` a branch off it. In the graph viewer you can preview any node, set it *active*, and send your next message from there. Only you move the active point; Claude never does.
+**Use the graph like an undo tree.** Nodes are labeled hierarchically — `n1.7` is the seventh step on the first trunk, `n1.7.0` a branch off it. In the graph viewer (`G`) you can preview any node, set it *active* (or **⑃ Branch** from it), and send your next message from there. Only you move the active point; Claude never does. A run of plain turns draws as one **×N** stack — click it to open the run in place and pick any turn in it; turns that changed nothing show as faint *folded* rows under the turn they folded onto. **⚑ Marked**, **⑃ Forks** and the search box dim everything else; click a graph's title to name it, drag it to move it.
 
 **Let the project accumulate components.** When Claude builds a pane worth keeping, it saves it to the project's component library and reuses it later. Over time your project grows UI that matches how you work.
 

@@ -214,8 +214,8 @@ test('the graph overlay honours a queued re-aim instead of dropping the preview'
   assert.equal(previewing(), true, 'precondition: still detached');
   click('btn-graph');
   await tick(); await tick();
-  const row = [...$('gv-history-list').children].find((r) => r.dataset.id === 'n2');
-  row.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  const glyph = W.document.querySelector('#graph-svg g[data-id="n2"], #gv-world .gv-srow[data-id="n2"]');
+  glyph.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick();
 
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'a', bubbles: true }));

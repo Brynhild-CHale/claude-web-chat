@@ -8,7 +8,7 @@ import { toggleMode, modeToggleable, effectiveMode, syncModeToggle } from './the
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
-import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList } from './graph-view.js';
+import { openOverlay, closeOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList } from './graph-view.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
 import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
@@ -193,6 +193,10 @@ function initNewGraph() {
   on('btn-new-graph-go', 'click', startNewGraph);
   on('btn-new-graph-cancel', 'click', () => $('new-graph-panel').classList.add('hidden'));
   on('new-graph-name', 'keydown', (e) => { if (e.key === 'Enter') startNewGraph(); else if (e.key === 'Escape') $('new-graph-panel').classList.add('hidden'); });
+  // The graph screen's ◇ New: the same panel (the name is optional — a graph can
+  // be named later by clicking its title on the canvas). The panel lives under the
+  // overlay on the stacking scale, so the graph closes first.
+  on('gv-new', 'click', () => { closeOverlay(); openNewGraph(); });
 }
 
 /* ---------- wipe surface ----------

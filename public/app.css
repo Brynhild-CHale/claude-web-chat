@@ -727,121 +727,199 @@ kbd {
 .brand-msg.bad { color: var(--wc-comment, var(--wc-accent)); }
 .mono { font-family: var(--wc-mono); }
 
-/* ===================== graph viewer (history ▸ DAG ▸ inspector, 7b) ===================== */
+/* ===================== graph screen (canvas-first) =====================
+   The DAG fills the stage; every control floats over it (design "Graph Canvas
+   Prototype"). Every glyph colour is a class reading a --wc-* token, so a pack or
+   a mode flip restyles the canvas without a relayout. */
 .muted { color: var(--wc-muted); }
 .small { font-size: 11px; }
 #overlay.overlay {
-  position: absolute; inset: 0; z-index: var(--z-overlay); background: var(--wc-bg); background-image: var(--wc-depth-radial);
-  display: grid; grid-template-columns: 288px 1fr 322px; grid-template-rows: 48px 1fr 26px;
-  grid-template-areas: "header header header" "history canvas inspector" "status status status";
+  position: absolute; inset: 0; z-index: var(--z-overlay); overflow: hidden;
+  background: var(--wc-bg); background-image: var(--wc-depth-radial);
 }
-
-/* header */
-.gv-header { grid-area: header; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); box-shadow: var(--wc-elev-bar); }
-.gv-brand { font: 700 12px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
-.gv-graphsel { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
-.gv-jump { flex: 1; max-width: 360px; height: 28px; margin: 0 auto; padding: 0 10px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-fg); font: 12px var(--wc-font); }
+/* segmented control — reused by the drawer tabs and Settings → Mode */
 .gv-seg { display: flex; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); overflow: hidden; }
 .gv-seg button { height: 26px; padding: 0 12px; border: 0; background: transparent; color: var(--wc-muted); font: 500 12px var(--wc-font); }
 .gv-seg button.on { background: var(--wc-accent); color: var(--wc-accent-fg); }
-.gv-icon { width: 30px; height: 28px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-text-2); border-radius: var(--wc-radius); font-size: 13px; }
+.gv-seg button:disabled { opacity: .4; cursor: default; }
+
+/* the canvas: the dot grid rides the camera (graph-view applyCamera sets its size + position) */
+.graph-canvas-wrap {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab;
+  background-image: radial-gradient(var(--wc-grid-line) 1px, transparent 1px); background-size: 22px 22px;
+}
+#graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.gv-world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; pointer-events: none; }
+
+/* floating chrome */
+.gv-float { position: absolute; }   /* no z-index: later siblings of the canvas, they paint over it in DOM order */
+.gv-head {
+  top: 12px; left: 12px; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
+.gv-brand { font: 700 11px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
+.gv-head-meta { font: 11px var(--wc-mono); color: var(--wc-muted); white-space: nowrap; }
+.gv-search { top: 12px; left: max(50%, 300px); transform: translateX(-50%); width: min(340px, 30%); }
+.gv-jump {
+  width: 100%; box-sizing: border-box; height: 32px; padding: 0 12px;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  color: var(--wc-fg); font: 12px var(--wc-font); box-shadow: var(--wc-shadow);
+}
+.gv-tools { top: 12px; right: 12px; display: flex; align-items: center; gap: 6px; }
+.gv-filters { display: flex; gap: 6px; }
+.gv-chip, .gv-tool {
+  flex: none; height: 32px; padding: 0 10px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg);
+  color: var(--wc-muted); border-radius: var(--wc-radius); font: 500 11.5px var(--wc-font); white-space: nowrap; box-shadow: var(--wc-shadow);
+}
+.gv-tool { color: var(--wc-text-2); font-size: 12px; }
+.gv-chip:hover, .gv-tool:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.gv-chip.on { border-color: var(--wc-accent); color: var(--wc-accent-text); background: color-mix(in srgb, var(--wc-accent) 12%, var(--wc-panel-bg)); }
+.gv-icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-text-2);
+  border-radius: var(--wc-radius); font-size: 13px; box-shadow: var(--wc-shadow);
+}
 .gv-icon:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
-.gv-icon.on { background: var(--wc-accent); color: var(--wc-accent-fg); border-color: transparent; }
-.gv-icon:disabled, .gv-seg button:disabled { opacity: .4; cursor: default; }
-
-/* history column */
-.gv-history { grid-area: history; display: flex; flex-direction: column; background: var(--wc-panel-bg); border-right: 1px solid var(--wc-border); min-height: 0; }
-.gv-history-head { padding: 12px 14px 8px; font: 700 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-muted); }
-.gv-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 14px 10px; border-bottom: 1px solid var(--wc-border); }
-.gv-scope { display: flex; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); overflow: hidden; }
-.gv-scope button { height: 22px; padding: 0 9px; border: 0; background: transparent; color: var(--wc-muted); font: 500 11px var(--wc-font); }
-.gv-scope button.on { background: var(--wc-accent); color: var(--wc-accent-fg); }
-.gv-chip { height: 22px; padding: 0 9px; border: 1px solid var(--wc-border); background: transparent; color: var(--wc-muted); border-radius: var(--wc-radius); font: 500 11px var(--wc-font); }
-.gv-chip.on { border-color: var(--wc-accent); color: var(--wc-accent-text); background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
-.gv-history-list { flex: 1; overflow: auto; padding: 6px; }
-.gv-row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 8px; padding: 8px 8px; border-radius: var(--wc-radius); border: 1px solid transparent; cursor: pointer; }
-.gv-row:hover { background: color-mix(in srgb, var(--wc-accent) 8%, transparent); }
-.gv-row.selected { border-color: var(--wc-border-light); background: color-mix(in srgb, var(--wc-accent) 6%, transparent); }
-.gv-row.active { background: var(--wc-row-active-bg); border-color: var(--wc-border-light); box-shadow: inset 2px 0 0 var(--wc-accent); }
-.gv-row .glyph { font-size: 11px; color: var(--wc-muted); text-align: center; }
-.gv-row .glyph.active { color: var(--wc-accent); }
-.gv-row .glyph.marked { color: var(--wc-gold); }
-.gv-row .glyph.fork { color: var(--wc-accent); }
-.gv-row .main { min-width: 0; }
-.gv-row .lbl { font: 700 11px var(--wc-mono); color: var(--wc-fg-bright); }
-.gv-row .trig { font: 11px var(--wc-font); color: var(--wc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gv-row .time { font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
-
-/* center canvas */
-.graph-canvas-wrap { grid-area: canvas; position: relative; overflow: hidden; touch-action: none; background-image: radial-gradient(var(--wc-grid-line) 1px, transparent 1px); background-size: 22px 22px; }
-#graph-svg { width: 100%; height: 100%; display: block; }
-.gv-legend { position: absolute; top: 12px; left: 12px; display: flex; gap: 12px; font: 500 11px var(--wc-font); color: var(--wc-muted); }
+.gv-zoom {
+  bottom: 12px; left: 12px; display: flex; align-items: center; gap: 2px; padding: 2px 4px;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
+.gv-zoom button { width: 24px; height: 24px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 14px; }
+.gv-zoom-sep { width: 1px; height: 16px; background: var(--wc-border); margin: 0 2px; }
+/* The percentage between − and + is a button: it resets the camera to a true
+   1:1, graph centred. */
+#gv-zoom-pct { width: auto; min-width: 40px; height: 24px; padding: 0 6px; cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); }
+#gv-zoom-pct:hover { color: var(--wc-fg); }
+#gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+#overlay-fit { font-size: 13px; }
+.gv-legend {
+  position: absolute; bottom: 14px; right: 14px; display: flex; gap: 14px;
+  font: 11px var(--wc-mono); color: var(--wc-muted-dim); pointer-events: none;
+}
 .gv-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .gv-legend .dot.active { background: var(--wc-accent); }
 .gv-legend .dot.marked { background: var(--wc-gold); }
-.gv-legend .dot.fork { background: var(--wc-accent); opacity: .6; }
-.gv-legend .dot.stack { background: var(--wc-muted); }
-/* A graph's heading is its handle: click to rename, drag to place. Make it read
-   as one — the pencil only shows on hover so the canvas stays quiet. */
-.gv-tree-title:hover .gv-tt-hit { fill: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
-.gv-tt-pencil { opacity: 0; transition: opacity .12s ease; }
-.gv-tree-title:hover .gv-tt-pencil { opacity: 1; }
-.gv-zoom { position: absolute; bottom: 12px; left: 12px; display: flex; align-items: center; gap: 6px; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 2px 4px; }
-.gv-zoom button { width: 22px; height: 22px; border: 0; background: transparent; color: var(--wc-text-2); font-size: 14px; }
-.gv-zoom span { font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
-/* The readout is a real button (click = reset to 100% + centre) but must keep
-   reading as a label between − and +, not as a third control. */
-#gv-zoom-pct { width: auto; height: auto; padding: 2px 4px; border-radius: var(--wc-radius-sm); cursor: pointer; font: 500 11px var(--wc-mono); color: var(--wc-muted); min-width: 34px; text-align: center; }
-#gv-zoom-pct:hover { color: var(--wc-fg); background: var(--wc-bg); }
-#gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.gv-legend .dot.stack { width: 10px; height: 7px; border-radius: 2px; border: 1px solid var(--wc-muted-dim); }
+.gv-legend .dot.ghost { border: 1.5px dashed var(--wc-muted-dim); box-sizing: border-box; }
+.gv-toast {
+  position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%);
+  padding: 8px 14px; font: 500 12px var(--wc-font); color: var(--wc-fg); white-space: nowrap;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-gold); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
 
-/* inspector column */
-.gv-inspector { grid-area: inspector; overflow: auto; background: var(--wc-panel-bg); border-left: 1px solid var(--wc-border); padding: 14px; }
-.gv-empty { color: var(--wc-muted-dim); font: 13px var(--wc-font); padding: 20px 4px; }
-.gv-preview { height: 120px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-bg); position: relative; overflow: hidden; margin-bottom: 12px; }
-.gv-preview-frame { position: absolute; top: 0; left: 0; border: 0; transform-origin: top left; pointer-events: none; background: var(--wc-bg); }
-.gv-preview .cap { position: absolute; bottom: 3px; right: 5px; font: 9px var(--wc-mono); color: var(--wc-muted-dim); letter-spacing: .06em; background: color-mix(in srgb, var(--wc-bg) 72%, transparent); padding: 0 3px; border-radius: 2px; }
-.gv-preview .gv-preview-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 12px var(--wc-font); color: var(--wc-muted-dim); }
+/* glyphs (SVG) */
+.gv-edge { fill: none; stroke: var(--wc-edge); stroke-width: 2; }
+.gv-ghost-dot { fill: var(--wc-bg); stroke: var(--wc-muted-dim); stroke-width: 1.5; stroke-dasharray: 2 2; }
+.gv-node { cursor: pointer; }
+.gv-node .gv-body { fill: var(--wc-panel-bg); stroke: var(--wc-muted-dim); stroke-width: 1.5; }
+.gv-node.plain .gv-body { stroke-width: 1.2; }
+.gv-node.bm .gv-body { fill: var(--wc-gold-bg); stroke: var(--wc-gold); }
+.gv-node.active .gv-body { fill: var(--wc-accent); stroke: var(--wc-accent-dark); filter: drop-shadow(0 0 6px var(--wc-glow-accent)); }
+.gv-node .gv-lbl { font: 600 11px var(--wc-mono); fill: var(--wc-fg); }
+.gv-node.plain .gv-lbl { font: 500 9.5px var(--wc-mono); fill: var(--wc-muted-dim); }
+.gv-node.bm .gv-lbl { fill: var(--wc-gold); }
+.gv-node .gv-bm { font: 600 11px var(--wc-font); fill: var(--wc-gold); }
+.gv-node .gv-fold-n { font: 600 10px var(--wc-mono); fill: var(--wc-muted-dim); }
+.gv-sel-ring { fill: none; stroke: var(--wc-accent); stroke-width: 2; stroke-dasharray: 3 3; }
+.gv-viewed-ring { fill: none; stroke: var(--wc-gold); stroke-width: 3; }
+.gv-lock-ring { fill: none; stroke: color-mix(in srgb, var(--wc-gold) 55%, transparent); stroke-width: 4; }
+.gv-stack { cursor: pointer; }
+.gv-stack .gv-card-back { fill: var(--wc-panel-bg); stroke: var(--wc-border); stroke-width: 1; }
+.gv-stack .gv-card { fill: var(--wc-header-bg); stroke: var(--wc-muted-dim); stroke-width: 1.4; }
+.gv-stack:hover .gv-card { stroke: var(--wc-accent); }
+.gv-stack .gv-card-count { font: 700 12px var(--wc-mono); fill: var(--wc-fg); }
+.gv-stack .gv-card-range { font: 9.5px var(--wc-mono); fill: var(--wc-muted-dim); }
+.glyph.dim, .gv-ghost-dot.dim, .gv-sleeve.dim { opacity: .3; }
+/* the graph heading — the graph's handle (click: rename; drag: move the tree) */
+.gv-tree-title { cursor: grab; }
+.gv-tt-hit { fill: transparent; }
+.gv-tree-title:hover .gv-tt-hit { fill: var(--wc-hover-bg); }
+.gv-tt-name { font: 700 12px var(--wc-mono); fill: var(--wc-muted); }
+.gv-tree-title.named .gv-tt-name { fill: var(--wc-gold); }
+.gv-tt-sub { font: 10px var(--wc-mono); fill: var(--wc-muted-dim); }
+.gv-tt-pencil { font: 11px var(--wc-font); fill: var(--wc-muted-dim); opacity: .6; }
+
+/* sleeve: an expanded ×N stack, in place (HTML, it scrolls inside itself) */
+.gv-sleeve {
+  position: absolute; display: flex; flex-direction: column; box-sizing: border-box; pointer-events: auto;
+  border-radius: 8px; background: var(--wc-panel-92); border: 1px solid var(--wc-border); box-shadow: var(--wc-shadow); overflow: hidden;
+}
+.gv-sleeve-head {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border: 0;
+  border-bottom: 1px solid var(--wc-border-soft); background: transparent; text-align: left; white-space: nowrap;
+  font: 600 10px var(--wc-mono); letter-spacing: .04em; color: var(--wc-muted); cursor: pointer;
+}
+.gv-sleeve-head .ttl { overflow: hidden; text-overflow: ellipsis; }
+.gv-sleeve-head .sp { flex: 1; }
+.gv-sleeve-head .pos { color: var(--wc-muted-dim); }
+.gv-sleeve-body { flex: none; position: relative; min-height: 0; }
+.gv-sleeve-scroll { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--wc-border) transparent; }
+.gv-sleeve-list { position: relative; box-sizing: border-box; padding: 8px 0; }
+.gv-sleeve-rail { position: absolute; left: 29px; top: 0; bottom: 0; width: 2px; background: var(--wc-edge); }
+.gv-srow {
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 12px 0 24px;
+  border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left;
+}
+.gv-srow:hover { background: var(--wc-hover-bg); }
+.gv-srow.selected { background: color-mix(in srgb, var(--wc-accent) 10%, transparent); }
+.gv-srow.dim { opacity: .35; }
+.gv-srow .dot { flex: none; width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; background: var(--wc-panel-bg); border: 1.2px solid var(--wc-muted-dim); }
+.gv-srow.selected .dot { border: 2px solid var(--wc-accent); }
+.gv-srow .id { flex: none; width: 52px; font: 600 10.5px var(--wc-mono); color: var(--wc-fg-bright); }
+.gv-srow .trig { flex: 1; min-width: 0; font: 11px var(--wc-font); color: var(--wc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-srow .t { flex: none; font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
+/* a turn that changed nothing, folded onto the row above: faint, not selectable */
+.gv-ghost {
+  position: relative; display: flex; align-items: center; gap: 8px; height: 22px; padding: 0 12px 0 26px;
+  font: 11px var(--wc-font); color: var(--wc-muted-dim); opacity: .8;
+}
+.gv-ghost .gdot { flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px dashed var(--wc-muted-dim); background: var(--wc-panel-bg); }
+.gv-ghost .k { flex: none; font: 600 9.5px var(--wc-mono); letter-spacing: .04em; }
+.gv-ghost .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.gv-ghost.more .k { display: none; }
+.gv-fade { position: absolute; left: 0; right: 0; height: 16px; pointer-events: none; }
+.gv-fade.top { top: 0; background: linear-gradient(var(--wc-panel-bg), transparent); }
+.gv-fade.bot { bottom: 0; background: linear-gradient(transparent, var(--wc-panel-bg)); }
+.gv-sleeve-foot {
+  flex: none; display: flex; align-items: center; justify-content: center; height: 26px;
+  border-top: 1px solid var(--wc-border-soft); font: 500 10px var(--wc-mono); color: var(--wc-muted-dim);
+}
+
+/* inspector — only while a node is selected */
+.gv-inspector {
+  position: absolute; top: 54px; right: 12px; width: 300px; max-height: calc(100% - 108px); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow: auto;
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow);
+}
+.gv-empty { color: var(--wc-muted-dim); font: 13px var(--wc-font); padding: 8px 2px; }
+.gv-insp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gv-insp-label { font: 700 18px var(--wc-mono); color: var(--wc-fg-bright); }
-.gv-chip-state { display: inline-block; font: 600 9px var(--wc-mono); padding: 2px 6px; border-radius: var(--wc-radius); letter-spacing: .06em; margin-left: 8px; vertical-align: middle; }
-.gv-chip-state.active { color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent); }
-.gv-chip-state.marked { color: var(--wc-gold); border: 1px solid color-mix(in srgb, var(--wc-gold) 40%, transparent); }
-.gv-chip-state.fork { color: var(--wc-accent-text); border: 1px solid color-mix(in srgb, var(--wc-accent) 40%, transparent); }
-.gv-chip-state.root { color: var(--wc-muted); border: 1px solid var(--wc-border); }
-.gv-lineage { font: 12px var(--wc-mono); color: var(--wc-muted); margin: 8px 0 12px; word-break: break-word; }
-.gv-lineage b { color: var(--wc-accent-text); }
-.gv-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 12px var(--wc-font); margin-bottom: 12px; }
+.gv-insp-close { margin-left: auto; border: 0; background: transparent; color: var(--wc-muted); font-size: 14px; padding: 0 2px; }
+.gv-insp-close:hover { color: var(--wc-fg); }
+.gv-badge { font: 600 9px var(--wc-mono); letter-spacing: .06em; padding: 2px 6px; border-radius: var(--wc-radius); }
+.gv-badge.active { color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 40%, transparent); }
+.gv-badge.fork { color: var(--wc-accent-text); border: 1px solid color-mix(in srgb, var(--wc-accent) 40%, transparent); }
+.gv-badge.stack { color: var(--wc-muted); border: 1px solid var(--wc-border); }
+.gv-insp-bm { font: 600 12px var(--wc-font); color: var(--wc-gold); }
+.gv-preview {
+  flex: none; height: 96px; position: relative; overflow: hidden; border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  background: repeating-linear-gradient(135deg, var(--wc-content-bg) 0 10px, transparent 10px 20px);
+}
+.gv-preview-frame { position: absolute; top: 0; left: 0; border: 0; transform-origin: top left; pointer-events: none; background: var(--wc-bg); }
+.gv-preview-empty { position: absolute; inset: 0; display: grid; place-items: center; font: 10.5px var(--wc-mono); color: var(--wc-muted); }
+.gv-trigger {
+  padding: 9px; background: var(--wc-content-bg); border-radius: var(--wc-radius); font: 12px/1.5 var(--wc-font);
+  color: var(--wc-content-fg); white-space: pre-wrap; max-height: 140px; overflow: auto; text-wrap: pretty;
+}
+.gv-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 12px var(--wc-font); }
 .gv-meta .k { font: 600 10px var(--wc-mono); letter-spacing: .06em; color: var(--wc-muted); }
-.gv-meta .v { color: var(--wc-text-1); }
-.gv-sect { font: 600 10px var(--wc-mono); letter-spacing: .08em; color: var(--wc-muted); margin: 12px 0 6px; }
-.gv-trigger { padding: 9px; background: var(--wc-content-bg); border-radius: var(--wc-radius); font: 12px var(--wc-font); color: var(--wc-content-fg); white-space: pre-wrap; max-height: 140px; overflow: auto; }
-.gv-panes { display: flex; flex-direction: column; gap: 4px; }
-.gv-pane-row { display: flex; align-items: center; gap: 8px; font: 12px var(--wc-font); color: var(--wc-text-1); }
-.gv-pane-row .pd { width: 7px; height: 7px; border-radius: 50%; background: var(--wc-accent); }
-
-/* Turns that changed nothing: the run of no-change turns this node stands for.
-   Deliberately quieter than the pane list — it is provenance, not content. */
-.gv-folded { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow-y: auto; }
-.gv-folded .muted.small { margin-bottom: 3px; }
-.gv-folded-row { display: flex; align-items: baseline; gap: 6px; font: 11px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border); padding: 1px 0 1px 7px; }
-.gv-folded-tag { font: 600 10px var(--wc-mono); color: var(--wc-border-light); flex: none; }
-.gv-folded-who { font: 600 10px var(--wc-mono); flex: none; opacity: .75; }
-.gv-folded-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gv-diff { display: flex; gap: 14px; font: 12px var(--wc-mono); }
-.gv-diff .add { color: var(--wc-green); }
-.gv-diff .chg { color: var(--wc-gold); }
-.gv-diff .rm { color: var(--wc-muted); }
-.gv-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--wc-border); }
+.gv-meta .v { color: var(--wc-text-1); min-width: 0; overflow-wrap: anywhere; }
+.gv-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
 .gv-act { height: 30px; padding: 0 10px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font: 12px var(--wc-font); }
 .gv-act:hover:not(:disabled) { border-color: var(--wc-accent); }
 .gv-act:disabled { opacity: .4; cursor: default; }
-.gv-act.primary { background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; }
-.gv-act.primary:disabled { background: var(--wc-panel-bg); color: var(--wc-muted); }
-
-/* status line */
-.gv-status { grid-area: status; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-top: 1px solid var(--wc-border); background: var(--wc-header-bg); font: 11px var(--wc-mono); color: var(--wc-muted); }
-.gv-status-active { color: var(--wc-accent-text); }
-.gv-status-keys { margin-left: auto; }
+.gv-act.primary { background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; font-weight: 600; padding: 0 12px; }
+.gv-act.primary:disabled { background: var(--wc-panel-bg); color: var(--wc-muted); border-color: var(--wc-border); opacity: 1; }
 
 /* A detached preview is READ-ONLY (plan §2b D2): badge it, and take away every
    block control that would write — pin, lock, minimize, close, drag, resize.
@@ -1058,16 +1136,19 @@ body.pin-mode #main { cursor: crosshair; }
 .pin-save { background: var(--wc-accent) !important; color: var(--wc-accent-fg) !important; border-color: transparent !important; }
 .pin-del { color: var(--wc-rust) !important; }
 
-/* ===================== glance / float preview (graph overlay) ===================== */
-.glance-backdrop { position: absolute; inset: 0; z-index: var(--z-glance); background: rgba(8,6,3,.72); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
-.glance-card { position: relative; display: flex; flex-direction: column; width: 82%; height: 82%; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-lg); box-shadow: var(--wc-elev-stage); overflow: hidden; }
+/* ===================== glance (graph screen) =====================
+   A read-only render of the selected node in a modal card over the scrim. */
+.glance-backdrop { position: absolute; inset: 0; z-index: var(--z-glance); background: var(--wc-scrim); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+.glance-card { position: relative; display: flex; flex-direction: column; width: 82%; height: 82%; background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); box-shadow: var(--wc-shadow); overflow: hidden; }
 .glance-titlebar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--wc-border); background: var(--wc-header-bg); }
-.glance-title { font: 600 13px var(--wc-mono); color: var(--wc-fg-bright); }
-.glance-hint { margin-left: auto; font: 11px var(--wc-font); color: var(--wc-muted); }
+.glance-title { flex: none; font: 600 13px var(--wc-mono); color: var(--wc-fg-bright); }
+.glance-trigger { flex: 1; min-width: 0; font: 11px var(--wc-font); color: var(--wc-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .glance-frame { flex: 1; width: 100%; border: 0; background: var(--wc-bg); }
-.glance-controls { position: absolute; top: 8%; right: 8%; display: flex; gap: 6px; z-index: 1; } /* local to .glance-backdrop */
-.glance-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font-size: 13px; box-shadow: var(--wc-shadow); }
-.glance-btn:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.glance-btn { flex: none; height: 28px; padding: 0 10px; border: 1px solid var(--wc-border); background: var(--wc-panel-bg); color: var(--wc-fg); border-radius: var(--wc-radius); font: 12px var(--wc-font); white-space: nowrap; }
+.glance-btn.icon { width: 30px; padding: 0; }
+.glance-btn.primary { background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; font-weight: 600; }
+.glance-btn:disabled { opacity: .4; cursor: default; }
+.glance-btn:hover:not(:disabled) { border-color: var(--wc-accent); }
 
 /* ---- service trust notice (chrome, informational only) --------------------
    Tells the user a component's service.js is waiting and which terminal command
@@ -1167,8 +1248,8 @@ body.pin-mode #main { cursor: crosshair; }
   outline-offset: 2px;
   border-radius: var(--wc-radius-sm);
 }
-/* history rows are role=option divs in a scroller — keep the ring inside it */
-.gv-row:focus-visible { outline-offset: -2px; }
+/* sleeve rows sit in a scroller — keep the ring inside it */
+.gv-srow:focus-visible { outline-offset: -2px; }
 
 /* ===================== responsive =====================
    The canonical layout for this product is a terminal BESIDE a browser — i.e.
@@ -1211,29 +1292,18 @@ body.pin-mode #main { cursor: crosshair; }
   .rail.open, .rail-expanded { width: 216px; }
 }
 
-/* --- graph overlay: keep the canvas the biggest thing on screen --- */
-@media (max-width: 1200px) {
-  #overlay.overlay { grid-template-columns: 224px 1fr 268px; }
+/* --- graph screen: the canvas is always the whole stage; the floating chrome
+   gives way. (The phone graph — a log, not a canvas — is its own view.) --- */
+@media (max-width: 1100px) {
+  .gv-legend { display: none; }
+  .gv-search { left: 50%; width: min(300px, 34%); }
 }
-@media (max-width: 1000px) {
-  /* Move the inspector to a full-width bottom row rather than dropping it: the
-     canvas gets the whole remaining width and nothing is lost. */
-  #overlay.overlay {
-    grid-template-columns: 196px 1fr;
-    grid-template-rows: 48px minmax(0, 1fr) minmax(0, 34%) 26px;
-    grid-template-areas: "header header" "history canvas" "inspector inspector" "status status";
-  }
-  .gv-inspector { border-left: 0; border-top: 1px solid var(--wc-border); padding: 10px 14px; }
-  .gv-graphsel, .gv-seg, #gv-compare { display: none; }
-  .gv-jump { max-width: none; }
-  .gv-status-keys { display: none; }
+@media (max-width: 900px) {
+  .gv-tool { padding: 0 8px; }
+  .gv-search { top: 54px; left: 12px; transform: none; width: min(300px, calc(100% - 24px)); }
+  .gv-inspector { top: 96px; max-height: calc(100% - 150px); }
 }
-@media (max-width: 720px) {
-  /* the history list is a second view of the same DAG; the canvas is the feature */
-  #overlay.overlay {
-    grid-template-columns: 1fr;
-    grid-template-areas: "header" "canvas" "inspector" "status";
-  }
-  .gv-history { display: none; }
-  .gv-header { gap: 6px; padding: 0 8px; }
+@media (max-width: 760px) {
+  .gv-inspector { top: auto; bottom: 54px; right: 12px; width: calc(100% - 24px); max-height: 50%; }
+  .gv-chip { padding: 0 8px; }
 }

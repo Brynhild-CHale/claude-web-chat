@@ -13,8 +13,8 @@
 //                  the live node (risk #3)
 //   liveSnapshot   folded live surface captured while previewing
 //   graphCache     last /api/graph payload
-//   expandedStacks stacks expanded in the graph DAG
-//   selectedNodeId currently selected node in the graph overlay
+//   expandedStacks ×N stacks expanded into sleeves on the graph screen (by run head)
+//   selectedNodeId the node selected on the graph screen (null = none, no inspector)
 export const view = {
   activeId: null,
   viewedId: null,
@@ -25,10 +25,6 @@ export const view = {
   graphCache: null,
   expandedStacks: new Set(),
   selectedNodeId: null,
-  // Show the no-change turns the graph payload marks `collapsed`. Off by
-  // default: those nodes are byte-identical copies of their parent and a run of
-  // them buries the turns that changed something. See graph-view displayNodes().
-  showCollapsed: false,
 };
 
 // DOM by id — one short helper, used everywhere.
@@ -52,9 +48,3 @@ export function hostFor(id) {
   }
   return null;
 }
-
-// Read a resolved --wc-* token off :root (SVG needs literal values, not var()).
-export const cssVar = (name, fallback) => {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-};

@@ -233,7 +233,7 @@ test('accumulated turns (and a pending bookmark) survive a daemon restart', asyn
 
   const meta = JSON.parse(fs.readFileSync(metaPath(root), 'utf8'));
   assert.equal(meta.pending_folded.length, 2, 'the accumulator is persisted in graph/_meta.json');
-  assert.deepEqual(meta.pending_bookmark, { name: 'take two' });
+  assert.deepEqual(meta.pending_bookmark, { name: 'take two', wipe: true });
 
   await graceful();
   const { api: api2 } = await withServer(t, { root });

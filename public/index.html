@@ -254,60 +254,50 @@
         <div class="legend-row"><span>Set active</span><span class="keys"><kbd>A</kbd></span></div>
         <div class="legend-row"><span>Export node</span><span class="keys"><kbd>E</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
-        <div class="legend-row"><span>Close graph</span><span class="keys"><kbd>Esc</kbd></span></div>
+        <div class="legend-row"><span>Deselect · close graph</span><span class="keys"><kbd>Esc</kbd></span></div>
       </div>
     </div>
 
-    <!-- graph viewer: history ▸ DAG ▸ inspector (7b) -->
+    <!-- graph screen: canvas-first. The DAG gets the whole stage; every control
+         floats over it, and the inspector appears only while a node is selected. -->
     <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Turn graph" tabindex="-1">
-      <div class="gv-header">
-        <span class="gv-brand">◇ GRAPH</span>
-        <span class="gv-graphsel" id="gv-graphsel">graph —</span>
-        <label class="sr-only" for="gv-jump">Jump to node or trigger</label>
-        <input class="gv-jump" id="gv-jump" placeholder="Jump to node or trigger…" autocomplete="off">
-        <div class="gv-seg" id="gv-mode">
-          <button data-mode="graph" class="on">Graph</button>
-          <button data-mode="log" disabled title="commit-log view — coming in 7b">Log</button>
-        </div>
-        <button class="gv-icon" id="gv-compare" disabled title="compare two nodes — coming in 7b" aria-label="Compare two nodes">⇄</button>
-        <button class="gv-icon" id="overlay-fit" title="Fit to view" aria-label="Fit graph to view">⤢</button>
-        <button class="gv-icon" id="overlay-close" title="Close (Esc)" aria-label="Close graph (Escape)">✕</button>
-      </div>
-
-      <aside class="gv-history" aria-label="Turn history">
-        <div class="gv-history-head">HISTORY · <span id="gv-turncount">0</span> turns</div>
-        <div class="gv-filters" id="gv-filters">
-          <div class="gv-scope" id="gv-scope">
-            <button data-scope="all" class="on">All</button>
-            <button data-scope="graph" title="Just the selected node's graph">This graph</button>
-          </div>
-          <button class="gv-chip" data-filter="marked">⚑ Marked</button>
-          <button class="gv-chip" data-filter="forks">⑃ Forks</button>
-          <button class="gv-chip hidden" id="gv-show-collapsed" title="Turns that changed nothing are folded into the next turn that did. Show them anyway.">⋯ <span id="gv-collapsed-n">0</span> folded</button>
-        </div>
-        <div class="gv-history-list" id="gv-history-list" role="listbox" aria-label="Turns"></div>
-      </aside>
-
       <div class="graph-canvas-wrap">
         <svg id="graph-svg" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="gv-legend">
-          <span><i class="dot active"></i>active</span>
-          <span><i class="dot marked"></i>marked</span>
-          <span><i class="dot fork"></i>fork</span>
-          <span><i class="dot stack"></i>stack</span>
+        <!-- the HTML layer (expanded ×N sleeves) riding the same camera as the SVG -->
+        <div class="gv-world" id="gv-world"></div>
+      </div>
+
+      <div class="gv-float gv-head"><span class="gv-brand">◇ GRAPH</span><span class="gv-head-meta" id="gv-head-meta">—</span></div>
+      <div class="gv-float gv-search">
+        <label class="sr-only" for="gv-jump">Jump to node, trigger or bookmark</label>
+        <input class="gv-jump" id="gv-jump" placeholder="Jump to node, trigger or bookmark…  ↵" autocomplete="off">
+      </div>
+      <div class="gv-float gv-tools">
+        <div class="gv-filters" id="gv-filters" role="group" aria-label="Filter the graph">
+          <button class="gv-chip" data-filter="marked" aria-pressed="false" title="Dim everything but bookmarked turns">⚑ Marked</button>
+          <button class="gv-chip" data-filter="forks" aria-pressed="false" title="Dim everything but forks">⑃ Forks</button>
         </div>
-        <div class="gv-zoom"><button id="gv-zoom-out" aria-label="Zoom out">−</button><button id="gv-zoom-pct" title="Reset zoom — 100%, centred" aria-label="Reset zoom to 100% and center the graph">100%</button><button id="gv-zoom-in" aria-label="Zoom in">+</button></div>
+        <button class="gv-tool" id="gv-collapse-all" title="Collapse every expanded stack">⊟ Collapse all</button>
+        <button class="gv-tool" id="gv-new" title="Start a new graph">◇ New</button>
+        <button class="gv-icon" id="overlay-close" title="Close (Esc)" aria-label="Close graph (Escape)">✕</button>
+      </div>
+      <div class="gv-float gv-zoom">
+        <button id="gv-zoom-out" aria-label="Zoom out">−</button>
+        <button id="gv-zoom-pct" title="Reset zoom — 100%, centred" aria-label="Reset zoom to 100% and center the graph">100%</button>
+        <button id="gv-zoom-in" aria-label="Zoom in">+</button>
+        <span class="gv-zoom-sep"></span>
+        <button id="overlay-fit" title="Fit to view" aria-label="Fit graph to view">⤢</button>
+      </div>
+      <div class="gv-legend" aria-hidden="true">
+        <span><i class="dot active"></i>active</span>
+        <span><i class="dot marked"></i>bookmark · wipe</span>
+        <span><i class="dot stack"></i>stack</span>
+        <span><i class="dot ghost"></i>folded</span>
+        <span>? keys</span>
       </div>
 
-      <aside class="gv-inspector" id="gv-inspector">
-        <div class="gv-empty">Select a node to inspect it.</div>
-      </aside>
-
-      <div class="gv-status">
-        <span class="gv-status-active" id="gv-status-active">—</span>
-        <span id="gv-status-counts"></span>
-        <span class="gv-status-keys">↑↓ select · ↵ open · A set active · Space glance · ? keys</span>
-      </div>
+      <aside class="gv-inspector hidden" id="gv-inspector" aria-label="Selected node"></aside>
+      <div class="gv-toast hidden" id="gv-toast" role="status" aria-live="polite"></div>
     </div>
   </div>
 

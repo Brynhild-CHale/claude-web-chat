@@ -15,7 +15,9 @@
 //   * The surviving child's raw siblings included the collapsed node, so it was
 //     labelled '⑃ FORK' in a list drawn from the display topology while the DAG
 //     drew it on the trunk.
-//   * The inspector breadcrumb listed nodes the history list had hidden.
+//   * The inspector breadcrumb listed nodes the history list had hidden. (The
+//     breadcrumb went with the canvas-first redesign; its CHANGED row now diffs
+//     against the drawn parent, pinned below.)
 //
 // Plus the race the memoized index made visible: the inspector paints after an
 // await while view.selectedNodeId — which the action footer reads — moves on the
@@ -108,18 +110,20 @@ async function boot() {
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 const $ = (id) => W.document.getElementById(id);
 const key = (k) => W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: k, bubbles: true }));
+// The canvas draws a node either as a glyph or as a row of an expanded sleeve.
+const drawnEl = (id) => W.document.querySelector(`#graph-svg g[data-id="${id}"], #gv-world .gv-srow[data-id="${id}"]`);
 const selectedId = () => {
-  const row = $('gv-history-list').querySelector('.gv-row.selected');
-  return row ? row.dataset.id : null;
+  const el = W.document.querySelector('#graph-svg g.gv-node.selected, #gv-world .gv-srow.selected');
+  return el ? el.dataset.id : null;
 };
-const drawnIds = () => [...$('gv-history-list').children].map((r) => r.dataset.id);
+const drawnIds = () => [...W.document.querySelectorAll('#graph-svg g[data-id], #gv-world .gv-srow')].map((el) => el.dataset.id);
 const inspectorLabel = () => {
   const el = $('gv-inspector').querySelector('.gv-insp-label');
   return el ? el.textContent : '';
 };
+const badges = () => [...$('gv-inspector').querySelectorAll('.gv-badge')].map((b) => b.textContent);
 const selectRow = async (id) => {
-  [...$('gv-history-list').children].find((r) => r.dataset.id === id)
-    .dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  drawnEl(id).dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick();
 };
 
@@ -169,31 +173,34 @@ test('ArrowRight/ArrowLeft walk the drawn siblings', async () => {
 /* ---------------- fork classification ---------------- */
 
 test('a surviving child of a collapsed node is not labelled a fork', async () => {
-  const row = [...$('gv-history-list').children].find((r) => r.dataset.id === 'n3');
-  assert.equal(row.querySelector('.glyph').textContent, '○',
-    'n3 is the trunk child as drawn; reading raw siblings saw [n2, n4] and called it ⑃ FORK');
-  const branch = [...$('gv-history-list').children].find((r) => r.dataset.id === 'n4');
-  assert.equal(branch.querySelector('.glyph').textContent, '⑃', 'the real branch still is one');
-  assert.match($('gv-status-counts').textContent, /1 fork/, 'and the count agrees — it read 2');
+  await selectRow('n3');
+  assert.ok(!badges().includes('FORK'),
+    'n3 is the trunk child as drawn; reading raw siblings saw [n2, n4] and called it a fork');
+  await selectRow('n4');
+  assert.ok(badges().includes('FORK'), 'the real branch still is one');
 });
 
-test('the forks filter lists the branch and only the branch', async () => {
-  $('gv-filters').querySelector('[data-filter="forks"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+test('the forks filter dims everything but the branch — and only the branch', async () => {
+  const forks = $('gv-filters').querySelector('[data-filter="forks"]');
+  forks.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick();
-  assert.deepEqual(drawnIds(), ['n4']);
-  $('gv-filters').querySelector('[data-filter="forks"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  const undimmed = [...W.document.querySelectorAll('#graph-svg g.gv-node:not(.dim)')].map((g) => g.dataset.id);
+  assert.deepEqual(undimmed, ['n4']);
+  assert.deepEqual(drawnIds().sort(), ['n1', 'n3', 'n4'], 'dimmed, not hidden: the graph keeps its shape');
+  forks.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick();
+  assert.equal(W.document.querySelectorAll('#graph-svg g.dim').length, 0, 'toggled off, nothing is dimmed');
 });
 
-/* ---------------- the breadcrumb ---------------- */
+/* ---------------- the CHANGED row names the drawn edge ---------------- */
 
-test('the inspector breadcrumb lists only the turns the viewer draws', async () => {
+test('the inspector diffs a node against the parent the canvas DRAWS', async () => {
+  W.__calls.length = 0;
   await selectRow('n3');
   await tick();
-  const crumbs = $('gv-inspector').querySelector('.gv-lineage').textContent;
-  assert.match(crumbs, /n1\.0/, 'the drawn root');
-  assert.match(crumbs, /n1\.2/, 'and the node itself');
-  assert.ok(!crumbs.includes('n1.1 '), 'not the collapsed turn between them, which is hidden everywhere else');
+  assert.ok(W.__calls.includes('/api/graph/diff?a=n1&b=n3'),
+    `the diff is against n1 (the drawn edge), not n2, which is hidden; got ${W.__calls.filter((c) => c.includes('diff'))}`);
+  assert.match($('gv-changed').textContent, /no block changes/);
 });
 
 /* ---------------- the topbar's ↓, the other "next turn" gesture ---------------- */
@@ -225,32 +232,6 @@ test('the topbar ↑ comes back the way ↓ went, instead of stranding the viewe
   assert.equal($('btn-down').disabled, false,
     '↓ still works from here — landing on n2 disabled it (n2 is absent from the display index, ' +
     'so displayChildrenOf(n2) is empty): a dead end ↑ itself created');
-});
-
-test('with the collapsed turns shown, ↑/↓ walk them — the pair follows whatever is drawn', async () => {
-  $('btn-graph').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick(); await tick();
-  $('gv-show-collapsed').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.ok(drawnIds().includes('n2'), 'precondition: n2 is drawn now');
-  key('Escape');                       // back to the topbar
-  await tick();
-
-  W.__calls.length = 0;
-  $('btn-down').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.equal($('node-label').textContent, 'n1.1', '↓ steps onto the no-change turn, which is on screen now');
-  $('btn-up').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.equal($('node-label').textContent, 'n1.0', 'and ↑ is its exact inverse');
-
-  $('btn-graph').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick(); await tick();
-  $('gv-show-collapsed').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.ok(!drawnIds().includes('n2'), 'restored: collapsed again for the tests below');
-  key('Escape');
-  await tick();
 });
 
 /* ---------------- the inspector/footer race ---------------- */
