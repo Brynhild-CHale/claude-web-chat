@@ -125,6 +125,16 @@ test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide
     assert.equal(winningValue('.bottombar', 'display', width), 'none', `no bottom bar at ${width}px`);
     assert.equal(winningValue('.rail.open', 'width', width), '272px', `the design's open rail at ${width}px`);
   }
+  // The narrow queue screen covers the page, so the page's comment markers (on
+  // #pin-layer, which paints above the whole body) must go with it — they
+  // floated over the queue items (int3 visual QA). A wide rail is a column
+  // beside the panes, where the markers follow their panes and stay.
+  for (const width of [390, 759]) {
+    assert.equal(winningValue('body:has(.rail.open) #pin-layer', 'display', width), 'none',
+      `no comment markers over the queue screen at ${width}px`);
+  }
+  assert.equal(winningValue('body:has(.rail.open) #pin-layer', 'display', 1000), null,
+    'the markers stay beside a side-column rail');
   // WIDE (≥1100) only: the contents column slot — and even there, only when filled.
   assert.equal(winningValue('.contents-nav', 'display', 1000), 'none', 'no contents column below 1100px');
   assert.equal(winningValue('.contents-nav', 'display', 1280), null, 'the contents column may show at 1280px');
@@ -162,4 +172,14 @@ test('every form field in the shell has a real label', () => {
     bad.push(el.outerHTML.slice(0, 90)); // a placeholder is not a label
   }
   assert.deepEqual(bad, [], 'form fields with no label / aria-label');
+});
+
+test('the replay bar keeps ✕ in its corner however the controls wrap', () => {
+  // As the last item of a wrapping flex row, ✕ dropped onto a line of its own
+  // under ▶ REPLAY once the bar ran out of width — at 1440px already (int3
+  // visual QA). It is pinned to the popover's corner and the bar keeps room for it.
+  assert.equal(winningValue('#rpo-close', 'position', 1440), 'absolute');
+  assert.equal(winningValue('#rpo-close', 'right', 1440), '10px');
+  assert.equal(winningValue('.rpo-bar', 'padding-right', 1440), '40px', 'the bar never runs under it');
+  assert.equal(winningValue('.popover.replay-pop', 'position', 1440), 'fixed', '…a positioned popover it anchors to');
 });

@@ -761,6 +761,14 @@ const DX = 130, DY = 66, NODE_R = 16, PLAIN_R = 9, STACK_W = 40, STACK_H = 30;
 const SLEEVE_W = 318, SLEEVE_INSET = 30, SLEEVE_HDR = 28, SLEEVE_PAD = 8, SLEEVE_FOOT = 26;
 const ROW_H = 30, GHOST_H = 22, SLEEVE_CAP = 8, GHOST_CAP = 3;
 const BM_ROOM = 16;                     // extra headroom above a node that carries a bookmark caption
+// The dashed ghost dots on a node's incoming edge must sit in the CLEAR part of
+// it — below the label under the glyph above, above the bookmark caption over
+// the node — so each dot buys the edge some length. Spread evenly over the edge
+// they sat on the parent's label and the caption, and two of them nearly touched.
+const GHOST_DOTS = 3, GHOST_DOT_ROOM = 12;
+const LABEL_CLEAR = 22;                 // a glyph's label runs to ~17px below it; a dot's radius is 4
+const CAPTION_CLEAR = 24, EDGE_CLEAR = 8;
+const foldRoom = (n) => Math.min(GHOST_DOTS, foldedCount(n)) * GHOST_DOT_ROOM;
 
 // Ghost rows for one node: the turns that folded onto it, oldest first, capped
 // at GHOST_CAP with the last row saying how many more there are.
@@ -864,7 +872,7 @@ function computeGraphLayout() {
     for (const r of rows) if (r.kind === 'node') pos.set(r.id, { x, y: sTop + SLEEVE_HDR + r.top + ROW_H / 2, sleeve: s, row: r });
     return s;
   };
-  const straight = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, to: b });
+  const straight = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, from: a, to: b });
   const elbow = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, elbow: true, to: b });
 
   // Does the trunk that starts here contain an expanded run? Then the column is
@@ -884,7 +892,10 @@ function computeGraphLayout() {
     const flush = () => {
       if (!pending.length) return;
       const run = pending; pending = [];
-      if (run.length === 1) { link(placeNode(run[0], x, y, true)); y += DY; return; }
+      if (run.length === 1) {
+        if (prev) y += foldRoom(byId.get(run[0]));   // room for its ghost dots
+        link(placeNode(run[0], x, y, true)); y += DY; return;
+      }
       if (!view.expandedStacks.has(run[0])) { link(placeStack(run, x, y)); y += DY; return; }
       const s = placeSleeve(run, x, y);
       link({ x, top: s.top, bottom: s.bottom });   // the trunk enters at its top, leaves at its bottom
@@ -898,6 +909,7 @@ function computeGraphLayout() {
         flush();
         const n = byId.get(cur);
         if (prev && n.bookmarked) y += BM_ROOM;   // room for the caption above it
+        if (prev) y += foldRoom(n);               // and for its ghost dots
         const g = placeNode(cur, x, y, false); y += DY;
         link(g);
         for (let i = 1; i < kids.length; i++) {
@@ -1006,10 +1018,14 @@ export function layoutAndRender() {
     edgesG.appendChild(svgEl_('path', { d, class: 'gv-edge' }));
     const to = e.to;
     if (!e.elbow && to && to.kind === 'node' && to.folded) {
-      const k = Math.min(3, to.folded), span = e.by - e.ay;
+      const k = Math.min(GHOST_DOTS, to.folded);
+      // A node or stack above carries a label under it; a sleeve does not.
+      const top = e.ay + (e.from && e.from.kind ? LABEL_CLEAR : EDGE_CLEAR);
+      const bottom = e.by - (to.bookmarked ? CAPTION_CLEAR : EDGE_CLEAR);
+      const band = Math.max(0, bottom - top);
       for (let i = 1; i <= k; i++) {
         edgesG.appendChild(svgEl_('circle', {
-          cx: e.bx, cy: e.ay + (span * i) / (k + 1), r: 4, class: 'gv-ghost-dot' + (dimNode(to.node) ? ' dim' : ''),
+          cx: e.bx, cy: top + (band * (i - 0.5)) / k, r: 4, class: 'gv-ghost-dot' + (dimNode(to.node) ? ' dim' : ''),
         }));
       }
     }

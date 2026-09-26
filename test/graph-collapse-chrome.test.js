@@ -125,6 +125,23 @@ test('the node shows the turns it stands for, as ghosts on its edge', async () =
     'one faint dashed dot per folded turn on the edge that leads into it');
 });
 
+test('the ghost dots sit in the clear stretch of the edge — off the label above, apart from each other', async () => {
+  // Spread over the whole edge they sat on the parent's "n1.0" label (drawn
+  // under its glyph) and nearly touched each other (int3 visual QA).
+  const num = (el, a) => Number(el.getAttribute(a));
+  const lbl = W.document.querySelector('#graph-svg g[data-id="n1"] .gv-lbl');
+  const body = W.document.querySelector('#graph-svg g[data-id="n4"] .gv-body');
+  const dots = [...W.document.querySelectorAll('#graph-svg .gv-ghost-dot')].map((d) => num(d, 'cy')).sort((x, y) => x - y);
+  assert.equal(dots.length, 2);
+  const labelBottom = num(lbl, 'y') + 3;            // baseline + descent
+  const nodeTop = num(body, 'cy') - num(body, 'r');
+  for (const cy of dots) {
+    assert.ok(cy - 4 > labelBottom, `a dot (cy ${cy}) clears the label above it (bottom ${labelBottom})`);
+    assert.ok(cy + 4 < nodeTop, `a dot (cy ${cy}) clears the node it folded onto (top ${nodeTop})`);
+  }
+  assert.ok(dots[1] - dots[0] >= 12, `the dots are apart (${dots[1] - dots[0]}px), not touching`);
+});
+
 test('the CHANGED row diffs against the parent the viewer actually draws', async () => {
   W.document.querySelector('#graph-svg g[data-id="n4"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick(); await tick();

@@ -47,7 +47,7 @@ const NODES = [
   ...run,
   { id: 'n5x', label: 'n1.4x', parent_id: 'n4', created_at: 4.5, collapsed: true, display_parent: 'n4', trigger_summary: 'legacy chat' },
   { id: 'n12', label: 'n1.11', parent_id: 'n11', created_at: 12, trigger_summary: 'the active turn', children: ['n13', 'n14'] },
-  { id: 'n13', label: 'n1.12', parent_id: 'n12', created_at: 13, bookmarked: true, wipe: true, name: 'before cleanup', trigger_summary: 'wiped' },
+  { id: 'n13', label: 'n1.12', parent_id: 'n12', created_at: 13, bookmarked: true, wipe: true, name: 'before cleanup', trigger_summary: 'wiped', folded_count: 2 },
   { id: 'n14', label: 'n1.11.0', parent_id: 'n12', created_at: 14, trigger_summary: 'a fork' },
   { id: 'n20', label: 'n2.0', parent_id: null, created_at: 20, trigger_summary: 'scratch' },
   { id: 'n21', label: 'n2.1', parent_id: 'n20', created_at: 21, trigger_summary: 'more scratch' },
@@ -306,6 +306,24 @@ test('⚑ Marked and the jump search DIM what does not match — they never hide
 test('a wipe\'s bookmark reads "⌫ wipe · <name>"; an ordinary one "⚑ <name>"', () => {
   assert.equal(glyph('n13').querySelector('.gv-bm').textContent, '⌫ wipe · before cleanup');
   assert.equal(glyph('n1').querySelector('.gv-bm'), null, 'a root\'s name is its tree title, not repeated');
+});
+
+test('ghost dots on the edge into a bookmarked node stay clear of its caption and of the label above', () => {
+  // n12 → n13: n13 carries "⌫ wipe · before cleanup" over its glyph and two
+  // folded turns; the dots once sat on the caption (int3 visual QA).
+  const num = (el, a) => Number(el.getAttribute(a));
+  const body = glyph('n13').querySelector('.gv-body');
+  const x = num(body, 'cx');
+  const dots = [...W.document.querySelectorAll('#graph-svg .gv-ghost-dot')]
+    .filter((d) => num(d, 'cx') === x && num(d, 'cy') < num(body, 'cy') && num(d, 'cy') > num(glyph('n12').querySelector('.gv-body'), 'cy'))
+    .map((d) => num(d, 'cy'));
+  assert.equal(dots.length, 2, 'two dots ride the edge into n13');
+  const captionTop = num(glyph('n13').querySelector('.gv-bm'), 'y') - 10;   // baseline − cap height
+  const labelBottom = num(glyph('n12').querySelector('.gv-lbl'), 'y') + 3;
+  for (const cy of dots) {
+    assert.ok(cy + 4 < captionTop, `a dot (cy ${cy}) is above the caption (top ${captionTop})`);
+    assert.ok(cy - 4 > labelBottom, `a dot (cy ${cy}) is below n1.11's label (bottom ${labelBottom})`);
+  }
 });
 
 test('⑃ Branch sets the node active through the one POST, and says the next commit forks', async () => {
