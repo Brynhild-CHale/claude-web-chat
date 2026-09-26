@@ -130,11 +130,13 @@ documents.
   and caption only — what a renderer captures), `speed` (0.25–4), `autoplay=1`,
   `at=<step index>`.
 - **Captions carry only what their mode shows.** `prompt` shows the prompt and
-  Claude's reply summary; `summary` the prompt's short summary and the reply;
-  `none` neither — and the payload holds nothing more than that. A node's
-  trigger never enters it, so a `replay.html` made with `captions=none` does
-  not contain the prompts at all. The prompt is the only thing a replay carries
-  that a page export does not; choose `summary` or `none` before sending one on.
+  Claude's reply summary; `summary` the trigger's short summary (for a typed
+  turn, the prompt's first 100 characters) and the reply; `none` neither — and
+  the payload holds nothing more than that. A node's trigger never enters it,
+  so a `replay.html` made with `captions=none` does not contain the prompts or
+  replies at all. The prompt and Claude's reply are the only things a replay
+  carries that a page export does not; choose `summary` or `none` before
+  sending one on.
 
 The document exposes `window.__wcReplay` — `steps`, `duration()`, `seek(ms)`,
 `play()`, `pause()`, `ready()`, `stepBy(n)`, `setSpeed(x)`, `state()`,
@@ -225,8 +227,9 @@ How a render works (`lib/server/replay/render.js`):
   is a small rectangle — or, when ffmpeg is there, into ffmpeg as above. The GIF
   loops forever.
 - **Captions default to `summary`** for anything written this way — a file is
-  made to be sent on, and a prompt is the one thing a replay carries that a page
-  export does not. `captions: 'prompt'` includes them; the player's **↧ GIF** /
+  made to be sent on, and the prompt (with Claude's reply) is what a replay
+  carries that a page export does not; `summary` still shows the reply and the
+  prompt's first 100 characters, so pick `none` for a file with neither. `captions: 'prompt'` includes them; the player's **↧ GIF** /
   **↧ MP4** / **↧ WebM** follow the player's caption choice, and with `prompt`
   selected the first click only warns that the prompts will be in the file.
 - Options: `width` (320–1920, default 960; the height follows the 16:10 frame),

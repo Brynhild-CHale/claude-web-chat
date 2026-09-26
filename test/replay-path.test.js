@@ -286,6 +286,9 @@ test('GET /api/replay/path: defaults, refs, include_collapsed and honest errors'
   assert.equal(all.json.steps.length, 8);
   const drawn = await api.get('/api/replay/path?from=n1.0&to=active&include_collapsed=0');
   assert.equal(drawn.json.steps.length, 5);
+  // The same flag reader as GET /replay and the render body (document.flag).
+  assert.equal((await api.get('/api/replay/path?from=n1.0&to=n1.7&include_collapsed=yes')).json.steps.length, 8);
+  assert.equal((await api.get('/api/replay/path?from=n1.0&to=n1.7&include_collapsed=off')).json.steps.length, 5);
   const blank = await api.get('/api/replay/path?from=&to=');
   assert.deepEqual(blank.json.steps.map((s) => s.id), ['n4', 'n5', 'n7'], 'an empty param means the default');
 
