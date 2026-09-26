@@ -338,3 +338,81 @@ test('X-WC-Remote: through the portal a pane cannot spawn raw html, whatever lab
   assert.equal(comp.status, 200, comp.text);
   assert.equal(comp.json.ok, true);
 });
+
+// ── theme library writes ────────────────────────────────────────────────────
+
+test('themes: a remote viewer cannot save a theme — the picker still lists and applies', async (t) => {
+  withTempHome(t);
+  const r = await rig(t);
+  const evil = { name: 'x', location: 'system', set_default: true, css: '@import url(https://attacker.example/x.css);' };
+  const res = await r.req('/api/themes', { method: 'POST', body: evil, headers: { origin: r.origin } });
+  assert.equal(res.status, 403, res.text);
+  assert.equal(res.json.remote, true);
+  assert.match(res.json.hint, /save_theme/);
+  assert.equal(fs.existsSync(userPaths().theme), false, 'nothing reached ~/.web-chat/theme.json');
+  assert.equal(fs.existsSync(path.join(userPaths().themesDir, 'x.json')), false, 'nor the system library');
+  const list = await r.req('/api/themes');
+  assert.equal(list.status, 200);
+  assert.ok(Array.isArray(list.json.themes));
+});
+
+test('themes: the daemon itself refuses a labelled remote save that reaches past the project', async (t) => {
+  withTempHome(t);
+  const { api } = await withServer(t);
+  const remote = { 'x-wc-remote': '1' };
+  for (const body of [
+    { name: 'sys', location: 'system', tokens: { '--wc-bg': '#000' } },
+    { name: 'def', location: 'local', set_default: true, tokens: { '--wc-bg': '#000' } },
+  ]) {
+    const res = await api.post('/api/themes', body, remote);
+    assert.equal(res.status, 403, JSON.stringify(body));
+    assert.equal(res.json.remote, true);
+  }
+  assert.equal(fs.existsSync(userPaths().theme), false);
+  assert.equal(fs.existsSync(path.join(userPaths().themesDir, 'sys.json')), false);
+  assert.equal((await api.post('/api/themes', { name: 'mine', tokens: { '--wc-bg': '#000' } }, remote)).status, 200, 'a plain local save is not refused by the daemon');
+  assert.equal((await api.post('/api/themes', { name: 'sys', location: 'system', set_default: true, tokens: {} })).status, 200, 'nor is the host\'s own call');
+});
+
+// ── the host's directory layout ─────────────────────────────────────────────
+
+test('host paths: remote-allowed reads name no absolute root, home or binary path; the host still sees them', async (t) => {
+  const r = await rig(t);
+  const home = require('../lib/core/paths').homeDir();
+  const leaks = (text) => text.includes(r.srv.root) || text.includes(fs.realpathSync(r.srv.root)) || text.includes(home);
+  for (const p of ['/api/services/pending', '/api/packs', '/api/packs/audit', '/api/replay/capabilities']) {
+    const res = await r.req(p);
+    assert.equal(res.status, 200, `${p}: ${res.text}`);
+    assert.equal(leaks(res.text), false, `${p} leaked a host path: ${res.text}`);
+  }
+  assert.equal((await r.req('/api/services/pending')).json.root, '<project>');
+  assert.equal((await r.req('/api/packs')).json.root, '<project>');
+  const caps = (await r.req('/api/replay/capabilities')).json;
+  assert.equal(typeof caps.chrome, 'boolean', 'whether, not where');
+  assert.equal(typeof caps.ffmpeg, 'boolean');
+  // Locally nothing changes.
+  assert.equal((await r.srv.api.get('/api/services/pending')).json.root, r.srv.root);
+  assert.equal((await r.srv.api.get('/api/packs')).json.root, r.srv.root);
+});
+
+test('redactHostPaths: masks the root and home at any depth, root first; leaves everything else', () => {
+  const { redactHostPaths } = require('../lib/core/paths');
+  const home = '/Users/someone';
+  const root = '/Users/someone/work/proj';
+  const input = {
+    root,
+    n: 3,
+    ok: true,
+    list: [`${root}/.web-chat/packs/backup`, `${home}/.web-chat/tunnel`, '/opt/other'],
+    deep: { error: `could not write ${root}/x.json` },
+  };
+  const out = redactHostPaths(input, { root, home });
+  assert.deepEqual(out, {
+    root: '<project>',
+    n: 3,
+    ok: true,
+    list: ['<project>/.web-chat/packs/backup', '~/.web-chat/tunnel', '/opt/other'],
+    deep: { error: 'could not write <project>/x.json' },
+  });
+  assert.equal(input.root, root, 'the input is not touched');
+});

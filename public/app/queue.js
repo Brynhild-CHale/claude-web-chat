@@ -100,6 +100,15 @@ export async function refreshPending() {
   parked = pending;
   const box = rail.querySelector('.rail-pending');
   rail.classList.toggle('has-pending', !!pending);
+  // The narrow bottom bar's counterpart of the collapsed rail's ⇢ (the rail is
+  // hidden below 760px): Queue [n] counts queued items only, and a parked push
+  // has already left them, so without this a phone read 'Queue 0' while a
+  // delivery waited on the next message.
+  const bb = $('bb-queue');
+  if (bb) {
+    bb.classList.toggle('has-pending', !!pending);
+    bb.setAttribute('aria-label', pending ? 'Queue to Claude — a push is parked; it delivers with your next message' : 'Queue to Claude');
+  }
   render(); // the held batch is part of the item list, not just a badge
   if (!box) return;
   box.classList.toggle('hidden', !pending);

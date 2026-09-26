@@ -182,7 +182,7 @@ were the only places they lived.
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | pack a directory as a `.zip`, or checksum bytes with CRC-32 | `lib/core/zip` `writeZipStore(dir)` / `crc32(buf)` | a second ZIP encoder, or a hand-derived CRC-32 table |
 | decode a PNG, or write an animated GIF | `lib/core/png` `decodePng(buf)` / `lib/core/gif` `createGifEncoder({width, height, loop})` · `encodeGif(frames, {w, h})` | a second decoder or encoder, or a dependency for either |
-| find a system Chrome / ffmpeg, or drive Chrome headless | `lib/replay/find` (`findChrome` / `findFfmpeg`) · `lib/replay/chrome` (`captureFrames` — CDP over `--remote-debugging-pipe`, throwaway profile, bounded teardown of the browser's whole process group on every way out incl. an `AbortSignal` and process exit) | Puppeteer/Playwright, a debugging PORT, or a second finder with its own candidate list |
+| find a system Chrome / ffmpeg, or drive Chrome headless | `lib/replay/find` (`findChrome` / `findFfmpeg`) · `lib/replay/chrome` (`captureFrames` — CDP over `--remote-debugging-pipe`, throwaway profile, bounded teardown of the browser's whole process group on every way out incl. an `AbortSignal` and process exit) · `lib/replay/tmp` (`makeTmpDir` / `sweepStaleTmp` — the `<kind>-<pid>-<hex>` render dirs under the project tmp dir, and the dead-pid sweep) | Puppeteer/Playwright, a debugging PORT, a second finder with its own candidate list, or a render dir named by hand |
 | turn captured replay frames into a GIF / MP4 / WebM | `lib/replay/encode` (`createFrameEncoder({format, ffmpegPath, …})` → `addFrame(png, delay)` / `finish()` / `dispose()` — ffmpeg when found, else the built-in GIF encoder; `pickEncoder` says which) | a second `spawn('ffmpeg')`, or choosing between the encoders at the call site |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
@@ -935,9 +935,12 @@ and both are there because they are exactly as invisible in review:
 The surface is one ordered sequence of items: panes (the mount engine's records)
 and markdown chunks (`write_markdown`, owned here). There is no stored section
 structure — consecutive panes form a grid run, markdown sits between runs, and
-the `#`–`###` headings in it build the Contents nav. Live state is
+the `#`/`##` headings in it build the Contents nav (`###` is a sub-heading
+with no row). Live state is
 `state.markdown` (`Map<id,{text, owner, gen}>`) and `state.order` (every pane and
-markdown id, once). One id space covers both kinds.
+markdown id, once). One id space covers both kinds, and `'start'`
+(`page.PAGE_START`, the page-top anchor) is never an id in it —
+`mounts.isReservedId` refuses it for panes and markdown alike.
 
 - `place(state, id, after)` / `drop(state, id)` — called by `setMount` /
   `removeMount`. `after` is an item id or `'start'`; omitted, a new item appends
@@ -1193,7 +1196,7 @@ Current homes (baselines can only shrink toward these):
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
-| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces and `tunnel down`, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
+| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces and `tunnel down`, which signal only the pid `/api/health` reported, and the portal's reap of a stray cloudflared (`lib/tunnel/cloudflared`, identity-gated by `isStrayConnector`) | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
 | `state.order =` / `state.order.push/splice/unshift(` / `state.markdown.set/delete/clear(` | `lib/server/domain/page.js` — the one writer of the page sequence and its markdown items; the mount engine and the bulk paths call into it | landed with the page sequence ✅ |
 | `#{1,<n>}` (a markdown heading parser) | `lib/core/markdown.js` — host rendering for preview/export, and the browser module served at `/app/markdown.js` is built from the same factory's source | landed with the page sequence ✅ |

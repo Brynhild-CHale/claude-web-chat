@@ -17,6 +17,10 @@
 //                     screenshot waits FAKE_CHROME_SLOW_MS, default 400)
 //                     | 'wrong-size' (screenshots 1 px narrower than asked)
 //                     | 'ignore-close' (never exit on Browser.close)
+//                     | 'die-on-load' (answer Page.navigate, then exit before
+//                     the load event) | 'crash-on-load' (answer Page.navigate,
+//                     then report Inspector.targetCrashed and stay up, pipe
+//                     open, never firing the load event)
 //   FAKE_CHROME_STUBBORN '1' — a WEDGED browser, on top of any mode: ignores
 //                     SIGTERM, Browser.close and its pipe closing, and starts a
 //                     helper process (same process group, also deaf to SIGTERM)
@@ -69,6 +73,7 @@ async function handle(msg) {
       width = msg.params.width; height = msg.params.height;
       return reply(msg);
     case 'Page.enable': return reply(msg);
+    case 'Inspector.enable': return reply(msg);
     case 'Page.navigate': {
       let status = 0; let csp = null;
       try {
@@ -78,6 +83,8 @@ async function handle(msg) {
       } catch (e) { status = -1; }
       log({ fetched: msg.params.url, status, csp });
       reply(msg, { frameId: 'F1', loaderId: 'L1' });
+      if (MODE === 'die-on-load') { setTimeout(() => process.exit(3), 20); return undefined; }
+      if (MODE === 'crash-on-load') { send({ method: 'Inspector.targetCrashed', params: {}, sessionId: msg.sessionId }); return undefined; }
       send({ method: 'Page.loadEventFired', params: { timestamp: 1 }, sessionId: msg.sessionId });
       return undefined;
     }

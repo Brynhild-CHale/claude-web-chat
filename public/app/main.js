@@ -5,7 +5,7 @@
 import './store.js'; // establishes the store singleton + window.store
 import { initMode } from './theme.js';
 import { initTopbar } from './topbar.js';
-import { initGraph } from './graph-view.js';
+import { initGraph, forwardEscapeFrom } from './graph-view.js';
 import { initGraphLog } from './graph-log.js';
 import { initViewport } from './viewport.js';
 import { initDrawer } from './drawer.js';
@@ -26,5 +26,5 @@ initComments();
 initShell();
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // topbar logotype + Settings → Brand drop targets
-initPaneHistory(); // a block's ◷ history popover (Make current)
+initPaneHistory({ forwardEscapeFrom }); // a block's ◷ history popover (Make current)
 connect();

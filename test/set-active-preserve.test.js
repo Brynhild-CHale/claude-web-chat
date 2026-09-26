@@ -99,3 +99,50 @@ test('the branch-on-edit route is gone — a preview edit can no longer re-aim',
   const r = await api.post('/api/graph/branch-here', { id: c1.json.node_id });
   assert.equal(r.status, 404, 'POST /api/graph/branch-here was retired with branch-on-edit (D2)');
 });
+
+// data-1: Set active onto the node that is already active is a no-op. Before,
+// the preserve commit stepped active onto the preserve node and the re-aim
+// stepped it straight back — the live work left the surface and the next commit
+// forked off the old node.
+test('set-active on the already-active node: no preserve, no move, live work untouched', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
+  const c1 = await api.post('/api/commit', { message: 'one' });
+  await api.post('/api/render', { id: 'b', html: '<p>wip</p>' });
+
+  const r = await api.post('/api/graph/active', { id: c1.json.node_id });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.unchanged, true);
+  assert.equal(r.json.preserved, null);
+  assert.equal(r.json.active, c1.json.node_id);
+
+  const { nodes, active } = await nodesById(api);
+  assert.equal(active, c1.json.node_id);
+  assert.equal(nodes.size, 1, 'no preserve node was committed');
+  const m = await api.get('/api/mounts');
+  assert.deepEqual(m.json.mounts.map((x) => x.id).sort(), ['a', 'b'], 'the uncommitted pane is still live');
+
+  // the next commit continues from the active node with the live work in it
+  const c2 = await api.post('/api/commit', { message: 'two' });
+  assert.equal((await nodesById(api)).nodes.get(c2.json.node_id).parent_id, c1.json.node_id);
+});
+
+test('set-active on the already-active node mid-turn is not queued — the turn lands and stays', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
+  const c1 = await api.post('/api/commit', { message: 'one' });
+
+  await api.post('/api/turn-begin', { message: 'working' });
+  const r = await api.post('/api/graph/active', { id: c1.json.node_id });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.unchanged, true);
+  assert.ok(!r.json.pending, 'a no-op is never queued');
+
+  await api.post('/api/render', { id: 'b', html: '<p>claude</p>' });
+  const te = await api.post('/api/turn-end', {});
+  assert.ok(te.json.node_id);
+  assert.equal(te.json.reaim, undefined, 'nothing queued to apply');
+  assert.equal((await api.get('/api/graph')).json.active, te.json.node_id, "active stays on Claude's turn");
+  const m = await api.get('/api/mounts');
+  assert.deepEqual(m.json.mounts.map((x) => x.id).sort(), ['a', 'b']);
+});

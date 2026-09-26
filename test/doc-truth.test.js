@@ -755,3 +755,108 @@ test('a status header says what is built, not which release built it', () => {
   }
   assert.ok(found >= 1, 'no doc carries a `Status: **…**` header any more — this check has nothing to walk');
 });
+
+// ---------------------------------------------------------------------------
+// Pages: what builds the Contents nav, what a pane script is handed, and who
+// else can own a pane. Each of these shipped wrong in a tool description (the
+// text Claude picks a tool by) while the rules file had it right.
+
+// The deepest heading level the chrome's Contents outline keeps, read off the
+// outline itself (`if (h.level > N) continue`).
+function contentsDepth() {
+  const src = read('public/app/page.js');
+  const m = src.match(/if \(h\.level > (\d)\) continue;/);
+  assert.ok(m, 'public/app/page.js no longer skips deep headings in its outline — re-point this check');
+  return Number(m[1]);
+}
+
+test('no doc or tool description says a heading below the Contents depth gets a Contents row', () => {
+  const tooDeep = '#'.repeat(contentsDepth() + 1);
+  for (const { rel, body } of [...DOCS, ...toolDescriptions()]) {
+    for (const sentence of flatten(body).split(/(?<=[.;])\s+/)) {
+      if (!/Contents/.test(sentence) || !sentence.includes(tooDeep)) continue;
+      assert.match(sentence, /no row|sub-heading/,
+        `${rel} names ${tooDeep} headings as building the Contents nav, but the outline stops at ` +
+        `level ${contentsDepth()}: "${sentence.slice(0, 160)}"`);
+    }
+  }
+});
+
+test('render names every global the mount runtime injects into a pane script', () => {
+  const src = read('public/mount-runtime.js');
+  const m = src.match(/new Function\(((?:'[A-Za-z]+',\s*)+)scripts\[i\]\)/);
+  assert.ok(m, 'public/mount-runtime.js no longer builds pane scripts with new Function — re-point this check');
+  const globals = [...m[1].matchAll(/'([A-Za-z]+)'/g)].map((x) => x[1]);
+  assert.ok(globals.length >= 5, `expected the injected globals, found ${globals.join(', ')}`);
+  const render = toolDescriptions().find((t) => t.rel.endsWith('/render.js'));
+  const sentence = render.body.split(/(?<=\.)\s+/).find((s) => /injected as globals/.test(s));
+  assert.ok(sentence, 'render\'s description no longer says which globals a pane script gets');
+  for (const g of globals) {
+    assert.ok(sentence.includes(`\`${g}\``), `render's description omits the injected \`${g}\` global`);
+  }
+});
+
+test('every tool sentence about who else owns a pane names the pane-spawn owner too', () => {
+  const src = read('lib/server/domain/spawn.js');
+  const m = src.match(/const OWNER_PREFIX = '([^']+)'/);
+  assert.ok(m, 'lib/server/domain/spawn.js no longer declares OWNER_PREFIX — re-point this check');
+  let seen = 0;
+  for (const { rel, body } of toolDescriptions()) {
+    for (const sentence of body.split(/(?<=[.!?])\s+|\n+/)) {
+      if (!/service:/.test(sentence) || !/\bpanes?\b/i.test(sentence) || !/own/.test(sentence)) continue;
+      seen++;
+      assert.ok(sentence.includes(`"${m[1]}`),
+        `${rel} says a driver ("service:<name>") can own a pane but not that a parent pane ("${m[1]}<id>") ` +
+        `can — the owner gate refuses both: "${sentence.slice(0, 160)}"`);
+    }
+  }
+  assert.ok(seen >= 3, 'no tool description talks about pane ownership any more — this check has nothing to walk');
+});
+
+test('the rules files\' turn-lifecycle list names every tool that says it folds into the turn', () => {
+  const folding = toolDescriptions()
+    .filter((t) => /folds into this turn/.test(t.body))
+    .map((t) => t.rel.match(/tools\/(\w+)\.js$/)[1]);
+  assert.ok(folding.length >= 1, 'no tool description says its write folds into the turn — re-point this check');
+  for (const rel of ['templates/rules/web-chat.md', '.claude/rules/web-chat.md']) {
+    const line = read(rel).split('\n').find((l) => /during your turn folds into that turn's commit/.test(l));
+    assert.ok(line, `${rel} lost its turn-lifecycle "folds into that turn's commit" line`);
+    for (const name of folding) {
+      assert.ok(line.includes(`\`${name}\``), `${rel}'s turn-lifecycle list omits \`${name}\`, which folds into the turn`);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The README's documentation table and install.md's inventory of what is
+// written to disk — both are the first place a reader looks, and both missed
+// what this release added.
+
+test('the README\'s documentation table links every doc `claude-web-chat docs` serves', () => {
+  const readme = read('README.md');
+  const docs = DOCS.filter((d) => /^docs\/[^/]+\.md$/.test(d.rel)).map((d) => d.rel);
+  assert.ok(docs.length >= 10, `expected the bundled docs, found ${docs.length}`);
+  for (const rel of docs) {
+    assert.ok(readme.includes(`](${rel})`), `README.md's documentation table does not link ${rel}`);
+  }
+});
+
+test('install.md\'s "What it writes" names the tunnel, brand and replay scratch directories', () => {
+  const { projectPaths, userPaths } = require('../lib/core/paths');
+  const path = require('path');
+  const body = read('docs/install.md');
+  const start = body.indexOf('## What it writes to your machine');
+  assert.ok(start >= 0, 'docs/install.md lost its "What it writes to your machine" section');
+  const end = body.indexOf('\n## ', start + 1);
+  const section = body.slice(start, end < 0 ? undefined : end);
+  const p = projectPaths('/proj');
+  const u = userPaths();
+  for (const [what, claim] of [
+    ['projectPaths().brandDir', `\`${path.basename(p.brandDir)}/\``],
+    ['projectPaths().tmp', `\`${path.basename(p.tmp)}/\``],
+    ['userPaths().tunnelDir', `\`~/${path.relative(path.dirname(u.root), u.tunnelDir)}/\``],
+  ]) {
+    assert.ok(section.includes(claim), `docs/install.md's inventory does not name ${claim} (${what})`);
+  }
+  assert.match(section, /tunnel down/, 'the inventory must say to run `tunnel down` before `uninstall --self`');
+});

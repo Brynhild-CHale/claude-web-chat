@@ -1467,6 +1467,9 @@ body.pin-mode #main { cursor: crosshair; }
   border-radius: var(--wc-radius); font: 600 12px var(--wc-font);
 }
 .bb-queue.on { border-color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+/* the standing parked-delivery signal, as the collapsed rail's ⇢ carries it */
+.bb-parked { display: none; font: 700 13px var(--wc-mono); color: var(--wc-gold); }
+.bb-queue.has-pending .bb-parked { display: inline; }
 .bb-count { font: 700 10px var(--wc-mono); color: var(--wc-accent-fg); background: var(--wc-accent); border-radius: var(--wc-radius); padding: 1px 6px; }
 .min-chip.on { border-color: var(--wc-accent); color: var(--wc-fg); }
 

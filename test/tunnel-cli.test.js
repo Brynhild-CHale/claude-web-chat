@@ -139,6 +139,32 @@ test('setup refuses an unreachable team and an empty allowlist — and writes no
   assert.equal(fs.existsSync(userPaths().tunnelConfig), false);
 });
 
+test('setup: a corrupt tunnel.json is moved aside and named, never silently overwritten', async (t) => {
+  withTempHome(t);
+  const access = createFakeAccess();
+  // A trailing comma inside the hand-edited exclude list.
+  const torn = '{"hostname":"wc.example.test","expose":{"exclude":["/Users/me/work/client-x",]}}';
+  fs.mkdirSync(userPaths().tunnelDir, { recursive: true });
+  fs.writeFileSync(userPaths().tunnelConfig, torn);
+  const base = ['setup', '--hostname', 'wc.example.test', '--team', access.team, '--aud', access.aud,
+    '--email', 'me@example.com', '--kind', 'local', '--name', 'wc-home', '--skip-verify'];
+
+  // A setup that fails before writing leaves the file exactly where it was.
+  await assert.rejects(tunnel([...base, '--style', 'sideways'], { log: () => {}, prompt: quietPrompt() }), (e) => e.userFacing);
+  assert.equal(fs.readFileSync(userPaths().tunnelConfig, 'utf8'), torn);
+
+  const c = capture();
+  await tunnel(base, { log: c.log, prompt: quietPrompt() });
+  const asides = fs.readdirSync(userPaths().tunnelDir).filter((f) => f.startsWith('tunnel.json.corrupt-'));
+  assert.equal(asides.length, 1, 'the unreadable file was kept');
+  assert.equal(fs.readFileSync(path.join(userPaths().tunnelDir, asides[0]), 'utf8'), torn, 'byte for byte');
+  assert.match(c.text(), /is there but unreadable/);
+  assert.match(c.text(), new RegExp(`Moved aside, untouched, to .*${asides[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(c.text(), /expose\.exclude/);
+  const written = JSON.parse(fs.readFileSync(userPaths().tunnelConfig, 'utf8'));
+  assert.equal(written.hostname, 'wc.example.test', 'and the new file was written');
+});
+
 // ── up: the refusals ────────────────────────────────────────────────────────
 
 test('up refuses: no config, empty allowlist, quick tunnel, no tunnel, non-loopback host, no/old cloudflared, no token', async (t) => {
@@ -328,6 +354,100 @@ test('up restarts a portal from an older build instead of calling it "already up
   const again = await tunnel(['up'], { log: () => {}, env, kill });
   assert.equal(again.already, true);
   assert.equal(killed.length, 1);
+});
+
+// A stand-in portal on `port` whose /api/health says what `health` says;
+// closing it is what "killing" it means.
+async function fakePortal(t, port, health) {
+  const http = require('http');
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: true, role: 'portal', pid: 424242, ...health }));
+  });
+  await new Promise((r) => srv.listen(port, '127.0.0.1', r));
+  t.after(() => { try { srv.close(); srv.closeAllConnections(); } catch {} });
+  return { kill: () => { srv.close(); srv.closeAllConnections(); } };
+}
+
+test('status says when the running portal enforces an older tunnel.json than the file', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const { configFingerprint, normalizeConfig } = require('../lib/tunnel/config');
+  const access = createFakeAccess();
+  const raw = access.config();
+  writeConfig(raw);
+  const port = await freePort();
+  const env = { WEB_CHAT_PORTAL_PORT: String(port) };
+  await fakePortal(t, port, { portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: 'from-an-older-file' });
+
+  const st = await tunnel(['status'], { log: () => {}, env });
+  assert.equal(st.portal.running, true);
+  assert.equal(st.portal.config_current, false);
+  const c = capture();
+  await tunnel(['status'], { log: c.log, env });
+  assert.match(c.text(), /the running portal still enforces the tunnel\.json it started with/);
+  assert.match(c.text(), /tunnel up` restarts it/);
+
+  // The same file, merely reformatted, is the same config: no warning.
+  const port2 = await freePort();
+  await fakePortal(t, port2, { portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: configFingerprint(normalizeConfig(raw)) });
+  fs.writeFileSync(userPaths().tunnelConfig, JSON.stringify(raw, null, 4));
+  const c2 = capture();
+  const st2 = await tunnel(['status'], { log: c2.log, env: { WEB_CHAT_PORTAL_PORT: String(port2) } });
+  assert.equal(st2.portal.config_current, true);
+  assert.doesNotMatch(c2.text(), /still enforces/);
+});
+
+test('up restarts a current portal that enforces an older tunnel.json instead of calling it "already up"', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  fakeCloudflared(t);
+  writeConfig(goodRaw(access, { metricsPort: await freePort() }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port), NODE_OPTIONS: `--require ${JSON.stringify(NO_OUTBOUND)}` };
+  delete env.WEB_CHAT_HOST;
+  const stale = await fakePortal(t, port, { portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: 'from-an-older-file' });
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); stale.kill(); };
+
+  let health = null;
+  t.after(async () => {
+    try { await tunnel(['down'], { log: () => {}, env }); } catch {}
+    for (const pid of [health && health.pid, health && health.cloudflared && health.cloudflared.pid]) {
+      if (pid && isPidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    deregisterRole('portal', {});
+  });
+
+  const c = capture();
+  const r = await tunnel(['up'], { log: c.log, env, kill, waitMs: 15000 });
+  health = r.health;
+  assert.deepEqual(killed, [[424242, 'SIGTERM']]);
+  assert.match(c.text(), /restarting the portal \(pid 424242\): .*tunnel\.json changed since it started/);
+  assert.equal(r.already, false);
+  const again = await tunnel(['up'], { log: () => {}, env, kill });
+  assert.equal(again.already, true, 'the portal it started enforces the file as it is');
+  assert.equal(killed.length, 1);
+});
+
+test('up refuses when an unrecorded process holds cloudflared\'s metrics port and no portal is up', async (t) => {
+  withTempHome(t);
+  const http = require('http');
+  const access = createFakeAccess();
+  const fake = fakeCloudflared(t);
+  const metricsPort = await freePort();
+  writeConfig(goodRaw(access, { metricsPort }));
+  writeToken();
+  const squatter = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"readyConnections":1}'); });
+  await new Promise((r) => squatter.listen(metricsPort, '127.0.0.1', r));
+  t.after(() => { squatter.close(); squatter.closeAllConnections(); });
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(await freePort()) };
+  delete env.WEB_CHAT_HOST;
+  await assert.rejects(tunnel(['up'], { log: () => {}, env, waitMs: 2000 }),
+    (e) => e.userFacing && new RegExp(`metrics port 127\\.0\\.0\\.1:${metricsPort}.*left behind by a portal that was killed`).test(e.message));
+  assert.equal(fake.calls().length, 0, 'no second connector was started beside it');
 });
 
 // ── logs ────────────────────────────────────────────────────────────────────

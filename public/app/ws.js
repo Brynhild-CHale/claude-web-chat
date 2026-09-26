@@ -107,9 +107,15 @@ function setConnStatus(state) {
 }
 
 // --- preview fold helpers (operate on the captured live surface) ---
+// The whole render frame is folded, minus its envelope (`type`) and the page
+// fields that ride it (`order`/`claude_order` — pageFrame folds those onto the
+// captured page). A hand-picked field list here once dropped `owner`, so a pane
+// spawned during a preview came back from ↩ active as Claude's: no ↳ parent
+// chip, and a pane-history "Make current" the daemon then refused.
 function snapUpsertMount(m) {
   if (!view.liveSnapshot) return;
-  const entry = { id: m.id, html: m.html, target: m.target || 'main', params: m.params || {}, component: m.component, pane_state: m.pane_state, form_state: m.form_state, theme: m.theme };
+  const { type, order, claude_order, ...rest } = m;
+  const entry = { ...rest, target: rest.target || 'main', params: rest.params || {} };
   const i = view.liveSnapshot.mounts.findIndex(x => x.id === m.id);
   if (i >= 0) view.liveSnapshot.mounts[i] = entry; else view.liveSnapshot.mounts.push(entry);
 }

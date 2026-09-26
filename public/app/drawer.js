@@ -37,7 +37,7 @@ import { $ } from './state.js';
 import { store } from './store.js';
 import { bus } from './bus.js';
 import { components, invalidate } from './components.js';
-import { panes, unminimize } from './mounts.js';
+import { panes, unminimize, readOnlyNow } from './mounts.js';
 import { showReaimNote } from './topbar.js';
 import { isRemote, remoteNow } from './remote.js';
 
@@ -398,6 +398,18 @@ function disarmSpawn(name) {
 }
 
 export async function spawnComponent(c, { fresh = false } = {}) {
+  // A read-only surface (a preview, or a phone) adds no blocks. Every spawn path
+  // lands here — a Library tile, its ⧉ duplicate, ⌘K "Add block · x" — and each
+  // used to POST straight to the LIVE surface while an older node was on screen:
+  // nothing appeared until ↩ active, the slot was computed from the previewed
+  // node's panes, and a params form was rendered where nobody could fill it. The
+  // refusal goes through the same event a refused pane edit raises, so the note
+  // (preview vs phone) is the one topbar.js already words.
+  if (readOnlyNow()) {
+    closeDrawer();
+    window.dispatchEvent(new CustomEvent('wc:readonly-attempt', { detail: { spawn: typeof c === 'string' ? c : c && c.name } }));
+    return;
+  }
   const name = typeof c === 'string' ? c : c.name;
   const meta = typeof c === 'string' ? { name } : c;
 

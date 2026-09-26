@@ -27,6 +27,11 @@ stores a reference, so a pack's later refinements reach projects that applied
 it. With no theme set at all the surface shows Earthy. (`web-chat`, the name of
 the stock look before packs, still applies — as `earthy`.)
 
+A theme saved before a builtin took its name (a 0.7.6 `paper.json`, say) is
+left on disk but never applied: the builtin wins in `list_themes` too, whose
+row for it carries `shadows` (the library the file is in) and a `hint`. To keep
+using the saved tokens, save them under another name.
+
 ## Light and dark are a mode inside a theme
 
 A theme may carry per-mode layers over its mode-free tokens:

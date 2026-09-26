@@ -253,6 +253,29 @@ test('responseHeaders: preview documents may be framed by their own origin only'
   const api = responseHeaders({}, '/api/store');
   assert.equal(api['x-frame-options'], 'DENY');
   assert.equal(api['cache-control'], 'no-store');
+  // The replay player is framed by the replay overlay, like a preview.
+  const replay = responseHeaders({ 'content-security-policy': "default-src 'none'" }, '/replay');
+  assert.equal(replay['x-frame-options'], 'SAMEORIGIN');
+  assert.deepEqual(replay['content-security-policy'], ["default-src 'none'", "frame-ancestors 'self'"]);
+  assert.equal(responseHeaders({}, '/replayer')['x-frame-options'], 'DENY', 'only /replay itself');
+  // Framed documents carry a node's HTML and store: never cached remotely,
+  // whatever the daemon said.
+  assert.equal(responseHeaders({ 'cache-control': 'max-age=60' }, '/preview/node/abc')['cache-control'], 'no-store');
+  assert.equal(pane['cache-control'], 'no-store');
+  assert.equal(replay['cache-control'], 'no-store');
+  assert.equal(responseHeaders({}, '/app/main.js')['cache-control'], undefined, 'static assets stay cacheable');
+});
+
+test('portal proxy: /replay and the preview documents come back frameable by self and no-store', async (t) => {
+  const r = await rig(t);
+  for (const p of ['/replay', '/preview/node/nope', '/preview/pane/nope/m1']) {
+    const res = await r.req(p);
+    assert.ok(res.status < 500, `${p} reached the daemon (${res.status})`);
+    assert.equal(res.headers['x-frame-options'], 'SAMEORIGIN', `${p} may be framed by the surface`);
+    assert.match(String(res.headers['content-security-policy']), /frame-ancestors 'self'/, p);
+    assert.doesNotMatch(String(res.headers['content-security-policy']), /frame-ancestors 'none'/, p);
+    assert.equal(res.headers['cache-control'], 'no-store', `${p} never lands in the remote disk cache`);
+  }
 });
 
 test('parseHost: flat and nested hostnames', () => {

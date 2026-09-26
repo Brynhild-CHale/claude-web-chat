@@ -342,6 +342,11 @@ const PATTERNS = [
       // Chrome this module spawned itself (signalGroup) — a child handle, never
       // a pid read out of a file. proc.kill cannot address a group.
       'lib/replay/chrome.js': 1,
+      // The portal's reap of a cloudflared a KILLED portal left running — the
+      // one signal to a pid read out of a file, so it is identity-gated three
+      // ways first (isStrayConnector): alive, its recorded portal dead, and
+      // `ps` still showing cloudflared with the recorded --metrics address.
+      'lib/tunnel/cloudflared.js': 1,
     },
   },
   {

@@ -40,7 +40,7 @@ The surface is one **page**: an ordered sequence of panes and markdown items. Co
 - Quick acknowledgments, status updates, one-line answers.
 - Reasoning narrative — the "why" usually belongs here even when the "what" is rendered.
 - A short pointer at what you just rendered, so the user knows where to look.
-- Pure text the user can't interact with.
+- Pure text the user can't interact with — except the short headings and framing lines that organise a page, which go on it with `write_markdown` (see "Writing pages" above).
 
 ## Interactive surfaces: reading the user back
 
@@ -137,7 +137,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 
 ## Turn lifecycle
 
-- Every `render`, `set_store`, `use_component`, and `clear` during your turn folds into that turn's commit when it ends.
+- Every `render`, `write_markdown`, `set_store`, `use_component`, and `clear` during your turn folds into that turn's commit when it ends.
 - Mid-turn user interactions (clicks, form submits, store writes from the page) also fold in. A user re-aim (jump/wipe/new-graph/branch) during your turn isn't rejected — it's **queued** and applied right after your turn's commit, so don't be surprised when `active` moves the moment your turn ends.
 - **Pane history.** The user can put an older version of one of your panes back (◷ on the pane's header → pick a version → "Make current"). It keeps you as the owner, shows in `get_events` as a `render` with `source:'history'`, and folds into the next commit like any user edit — so if a pane's content went backwards without you, that is why. Don't re-render over it unless asked.
 - You do **not** commit nodes — the harness's `Stop` hook does that. You do **not** change `active` — only the user does, via the graph viewer.

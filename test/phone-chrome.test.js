@@ -57,6 +57,7 @@ const PHONE_QUERY = '(max-width: 759px) and (pointer: coarse)';
 const calls = [];
 let W = null, WS = null, sent = [], restore = () => {};
 let phone = true;
+let PARKED = null;   // GET /api/queue/pending's answer
 const mqListeners = [];
 const setPhone = (v) => { phone = v; for (const fn of mqListeners) fn(); };
 
@@ -90,7 +91,7 @@ before(async () => {
     if (u === '/api/components') return json({ components: [] });
     if (u === '/api/themes') return json({ themes: [] });
     if (u === '/api/queue') return json({ items: [], count: 0 });
-    if (u === '/api/queue/pending') return json({ pending: null });
+    if (u === '/api/queue/pending') return json({ pending: PARKED });
     if (u === '/api/queue/policy') return json({ channel_connected: false, immediate_signals: [], queue_signals: [], activation_hint: {}, parked_delivery: 'held' });
     if (u.startsWith('/api/version')) return json({ ok: true, current: '0.7.5', updateAvailable: false });
     if (u.startsWith('/api/theme')) return json({ name: 'earthy' });
@@ -265,6 +266,28 @@ test('Queue [n] opens the queue screen, reads "‹ Page" while open, and counts'
   assert.equal(q.querySelector('.bb-queue-label').textContent, 'Queue', 'Escape closing the rail resets the label too');
   frame({ type: 'queue', op: 'clear' });
   assert.equal($('bb-queue-count').textContent, '0');
+});
+
+// chrome-6: the collapsed rail (and its ⇢) is hidden below 760px, and Queue [n]
+// counts queued items only — a parked push has left them. So the bar carries the
+// standing parked-delivery signal itself.
+test('a parked push shows on the bottom bar: Queue 0 still says a delivery is waiting', async () => {
+  const { refreshPending } = await import(pathToFileURL(path.join(REPO, 'public/app/queue.js')).href);
+  const q = $('bb-queue');
+  assert.ok(q.querySelector('.bb-parked'), 'the bar carries the ⇢ glyph');
+  assert.equal(q.classList.contains('has-pending'), false, 'precondition: nothing parked');
+  PARKED = { id: 'w1', envelope: { meta: { count: 2 } }, items: [] };
+  try {
+    await refreshPending();
+    assert.equal($('bb-queue-count').textContent, '0', 'the queue itself is empty');
+    assert.ok(q.classList.contains('has-pending'), 'but the bar is marked parked');
+    assert.match(q.getAttribute('aria-label'), /parked/, 'and says so to a screen reader');
+  } finally { PARKED = null; }
+  await refreshPending();
+  assert.equal(q.classList.contains('has-pending'), false, 'delivered: the mark goes');
+  assert.equal(q.getAttribute('aria-label'), 'Queue to Claude');
+  const css = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
+  assert.match(css, /\.bb-queue\.has-pending \.bb-parked\s*\{\s*display:\s*inline/, 'the mark is what shows the glyph');
 });
 
 /* ---------------- the phone graph: a log ---------------- */

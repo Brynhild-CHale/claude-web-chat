@@ -124,3 +124,34 @@ test('every flag `trust` accepts is documented in the guide', () => {
     assert.ok(GUIDE.includes(flag), `\`claude-web-chat trust ${flag}\` is accepted but appears nowhere in docs/guide.md`);
   }
 });
+
+// The notes being written for the next release. `[Unreleased]` ends up as the
+// release's section verbatim, so the two claims below are checked while it is
+// still being written, not after it has shipped.
+function unreleased(text) {
+  const start = text.indexOf('## [Unreleased]');
+  const next = text.indexOf('\n## [', start + 1);
+  return text.slice(start, next < 0 ? undefined : next);
+}
+
+test('pending release notes open with how to upgrade from the newest release', () => {
+  // Every release since 0.7.0 has told its reader what to do on update — and the
+  // one release that most needed it (a new MCP tool, read-only previews, a removed
+  // endpoint) was about to ship without. The version it upgrades from is the
+  // newest released section, so the heading cannot drift either.
+  const body = unreleased(CHANGELOG);
+  const firstSub = body.split('\n').find((l) => l.startsWith('### '));
+  if (!firstSub) return; // nothing pending
+  assert.equal(firstSub, `### Upgrading from ${SECTIONS[0].version}`,
+    `[Unreleased] has notes but opens with "${firstSub}" — say how to upgrade from ${SECTIONS[0].version} first`);
+});
+
+test('every portal protocol version the pending notes state is the one the code carries', () => {
+  // The number went 3 → 4 → 5 inside one release, and the notes kept all three.
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const re = /portal(?:'s)? protocol(?: version)?(?: is)?(?: now)? (\d+)/gi;
+  for (const m of unreleased(CHANGELOG).matchAll(re)) {
+    assert.equal(Number(m[1]), PORTAL_PROTOCOL_VERSION,
+      `[Unreleased] says "${m[0]}" but lib/core/versions has PORTAL_PROTOCOL_VERSION = ${PORTAL_PROTOCOL_VERSION}`);
+  }
+});

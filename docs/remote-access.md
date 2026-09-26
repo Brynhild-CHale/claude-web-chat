@@ -96,9 +96,12 @@ in one project cannot read another's.
 ```
 tunnel setup       ask for (or take as flags) the hostname, style, Access team,
                    AUD tag, allowed email(s) and the tunnel; verify; write config
+                   (an existing tunnel.json it cannot read is moved aside to
+                   tunnel.json.corrupt-<time> and named, never overwritten)
 tunnel up          preflight, then start the portal (port 5171 —
                    WEB_CHAT_PORTAL_PORT to move it) which runs cloudflared;
-                   a portal left running by an older build is restarted
+                   a portal left running by an older build, or enforcing an
+                   older tunnel.json, is restarted
 tunnel down        stop the portal; cloudflared stops with it
 tunnel status      config, portal pid, whether the connector is READY, when the
                    Access keys were last refreshed, every exposed project, and
@@ -117,6 +120,14 @@ running from the previous build keeps enforcing that build's rules until it is
 restarted, and `up` restarts one it finds older (nothing restarts it behind your
 back).
 
+**The portal reads `tunnel.json` once, when it starts.** An edit — an email
+added or revoked, a project put under `expose.exclude`, `allowDestructive` — is
+not in force until the portal restarts: run `claude-web-chat tunnel up`, which
+restarts a portal whose config differs from the file (`tunnel setup` says so
+too). Until then `tunnel status` warns that the running portal still enforces
+the file it started with. (The per-project `no-remote` marker is different: it
+is read live, see below.)
+
 ## Keeping a project off the tunnel
 
 Every running project is reachable by default. Two ways to take one off —
@@ -125,8 +136,9 @@ with the same "not running" page a stopped project gets:
 
 - **From the project:** create `.web-chat/no-remote` in it
   (`touch .web-chat/no-remote`). Delete the file to put it back; the portal
-  notices within a second. A repository can ship this marker — it only ever
-  narrows what you expose.
+  notices within a second — including a viewer who already has the surface
+  open: their live socket is closed (code 4403) and reconnecting finds nothing.
+  A repository can ship this marker — it only ever narrows what you expose.
 - **From `tunnel.json`:** list it under `expose.exclude`, by instance id (what
   `tunnel status` prints) or by absolute directory — a directory hides every
   project under it:
@@ -134,6 +146,9 @@ with the same "not running" page a stopped project gets:
   ```json
   "expose": { "exclude": ["0a1b2c3d", "/Users/me/work/client-x"] }
   ```
+
+  Then run `claude-web-chat tunnel up`, which restarts the portal so the new
+  list is in force (and closes any open socket into a project it now hides).
 
 `claude-web-chat tunnel status` lists hidden projects separately, with which of
 the two hid them.
@@ -189,9 +204,11 @@ The portal is **access control**, so every step fails closed:
    is answered 429 for the next minute without being checked at all.
 3. **What a remote viewer may reach** is a fixed, default-deny list of daemon
    routes. The surface the browser drives works — panes, the store, forms, the
-   graph, comments, the queue and Push, themes, exports as a download. Refused,
-   with a hint naming what to run on the host instead: installing or removing
-   packs, approving services, saving components from outside, the turn/hook
+   graph, comments, the queue and Push, picking and applying a theme, exports as
+   a download, the replay player. Refused, with a hint naming what to run on the
+   host instead: installing or removing packs, approving services, saving
+   components or themes from outside (a saved theme's raw CSS reaches the
+   chrome, and a system default reaches every project), the turn/hook
    internals and Claude's own write paths (`render`, `write_markdown`), the
    machine-wide Sessions list (it names every project on the machine), a pane
    spawning raw HTML, shutting a daemon down, captures from the browser
@@ -205,10 +222,16 @@ The portal is **access control**, so every step fails closed:
 5. **Headers.** Only an allowlist of request headers reaches a daemon. Cookies,
    Cloudflare's headers, and the headers a daemon trusts because only local
    programs send them (the capture token, the shutdown header, the MCP-sighting
-   headers) never do. Responses are marked no-store, not framable by other
-   sites, and no-referrer; the daemon cannot set a cookie through the portal.
-6. **Expiry.** The live socket is closed when your sign-in token expires; the
-   page reconnects, which needs a fresh one.
+   headers) never do. API responses and the framed documents (node and pane
+   previews, the replay player) are marked no-store; nothing is framable by
+   other sites, and everything is no-referrer; the daemon cannot set a cookie
+   through the portal. The few readable routes that would name where things
+   live on the host — the service-approval list, the pack listings, the replay
+   capabilities — answer a remote viewer with the project root as `<project>`,
+   your home as `~`, and only *whether* Chrome and ffmpeg are installed.
+6. **Expiry and hiding.** The live socket is closed when your sign-in token
+   expires (code 4401) — the page reconnects, which needs a fresh one — and when
+   its project is hidden or stops (code 4403).
 7. **The tunnel's own credential** (the connector token) lives in a 0600 file and
    is handed to cloudflared in its environment, never on its command line.
    A local tunnel's generated config also makes cloudflared itself require a
@@ -234,8 +257,12 @@ Access, so nothing would check who is signing in.
 - **Every running project is listed** to an allowlisted account unless you hid
   it (see *Keeping a project off the tunnel*) — hiding is opt-out, not opt-in.
 - **A portal killed with `SIGKILL`** cannot stop its cloudflared; the orphaned
-  connector answers visitors with an error until you stop it (`tunnel status`
-  shows the portal as down; check for a stray `cloudflared` process).
+  connector answers visitors with an error until something stops it. The next
+  `tunnel up` does: the portal records its connector's pid, and a new portal
+  stops one whose portal is gone (after checking it is still that cloudflared).
+  A connector it has no record of (one from before this was recorded) is not
+  signalled — `tunnel up` refuses while it holds the metrics port and says how
+  to find it.
 
 ## Files
 
@@ -245,5 +272,6 @@ Access, so nothing would check who is signing in.
 | `~/.web-chat/tunnel/token` | the connector token (0600), token tunnels only |
 | `~/.web-chat/tunnel/cloudflared.yml` | the generated ingress, local tunnels only — rewritten on every start |
 | `~/.web-chat/tunnel/portal.log`, `cloudflared.log` | what `tunnel logs` prints |
+| `~/.web-chat/tunnel/cloudflared.pid.json` | the connector the portal runs — how the next portal recognises one a killed portal left behind |
 | `~/.web-chat/tunnel/remote-access.log` (+ `.1`) | one line per remote write / socket, 0600, capped at 1 MB |
 | `<project>/.web-chat/no-remote` | this project is never served through the tunnel |

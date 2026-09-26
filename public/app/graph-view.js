@@ -1253,7 +1253,9 @@ export function initGraph() {
     else if (e.key === 'ArrowRight') { e.preventDefault(); moveSelection('right'); }
     else if (e.key === ' ') { e.preventDefault(); toggleFloatPreview(); }
     else if (e.key === 'Enter') { e.preventDefault(); if (id) openNode(id); }
-    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (id) setActive(id); }
+    // Guarded exactly as the Set active button is (updateSidebarButtons): not on
+    // the node that is already active, and not while a turn holds the lock.
+    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (id && id !== view.activeId && !view.lock) setActive(id); }
     else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); if (id) exportNode(id); }
     else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (id) bookmarkNode(id); }
     else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (id) openReplay({ to: id }); }

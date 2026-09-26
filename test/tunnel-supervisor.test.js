@@ -232,3 +232,75 @@ test('the portal owns its connector: supervise(port) starts it after listen, hea
   await portal.stop();
   assert.equal(isPidAlive(h.pid), false, 'stopping the portal stopped cloudflared — no connector left answering with nothing behind it');
 });
+
+// ── a connector outliving a portal that was killed outright ─────────────────
+
+// A pid that was alive and is not any more (a portal that was SIGKILLed).
+async function deadPid() {
+  const { spawn } = require('child_process');
+  const c = spawn(process.execPath, ['-e', '']);
+  await new Promise((r) => c.once('exit', r));
+  return c.pid;
+}
+
+// A cloudflared (the fake, through its PATH shim) started the way the
+// supervisor starts one — but by nobody who will stop it.
+function strayConnector(t, fake, metricsPort) {
+  const { spawn } = require('child_process');
+  const c = spawn(path.join(fake.dir, 'cloudflared'), ['tunnel', '--no-autoupdate', '--metrics', `127.0.0.1:${metricsPort}`, 'run'], { stdio: 'ignore' });
+  t.after(() => { try { c.kill('SIGKILL'); } catch {} });
+  return c;
+}
+
+test('supervisor: records its connector, and forgets it on stop', async (t) => {
+  fakeCloudflared(t);
+  const metricsPort = await freePort();
+  const { sup, dir } = await supervised(t, cfg({}, { kind: 'local', name: 'x', metricsPort }));
+  const pidFile = path.join(os.homedir(), '.web-chat', 'tunnel', 'cloudflared.pid.json');
+  await sup.start();
+  const rec = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+  assert.equal(rec.pid, sup.status().pid);
+  assert.equal(rec.portal_pid, process.pid);
+  assert.equal(rec.metrics, `127.0.0.1:${metricsPort}`);
+  assert.ok(dir);
+  await sup.stop();
+  assert.equal(fs.existsSync(pidFile), false, 'an orderly stop leaves no record behind');
+});
+
+test('supervisor: a connector left by a portal that was killed outright is stopped before the new one starts', async (t) => {
+  const fake = fakeCloudflared(t);
+  const metricsPort = await freePort();
+  const { sup } = await supervised(t, cfg({}, { kind: 'local', name: 'x', metricsPort }));
+  const stray = strayConnector(t, fake, metricsPort);
+  await waitUntil(async () => (await cf.probeReady(metricsPort)).ready, { timeout: 5000, what: 'the stray holds the metrics port' });
+  const pidFile = path.join(os.homedir(), '.web-chat', 'tunnel', 'cloudflared.pid.json');
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, JSON.stringify({ pid: stray.pid, portal_pid: await deadPid(), metrics: `127.0.0.1:${metricsPort}` }));
+
+  await sup.start();
+  assert.equal(isPidAlive(stray.pid) && stray.exitCode === null, false, 'the stray is gone');
+  const pid = sup.status().pid;
+  assert.ok(pid && pid !== stray.pid, 'and a fresh connector runs in its place');
+  await waitUntil(async () => (await cf.probeReady(metricsPort)).ready, { timeout: 5000, what: 'the new connector holds the metrics port' });
+  assert.equal(JSON.parse(fs.readFileSync(pidFile, 'utf8')).pid, pid, 'the record names the new one');
+});
+
+test('isStrayConnector: never a pid whose portal lives, whose argv is not that connector, or that is gone', async (t) => {
+  const alive = (pid) => pid === 100 || pid === 200;
+  const command = (pid) => (pid === 100 ? '/usr/local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:5172 run' : 'vim notes.txt');
+  const rec = { pid: 100, portal_pid: 300, metrics: '127.0.0.1:5172' };
+  assert.equal(cf.isStrayConnector(rec, { self: 1, alive, command }), true);
+  assert.equal(cf.isStrayConnector({ ...rec, portal_pid: 200 }, { self: 1, alive, command }), false, 'its portal still runs');
+  assert.equal(cf.isStrayConnector({ ...rec, portal_pid: 1 }, { self: 1, alive, command }), false, 'ours');
+  assert.equal(cf.isStrayConnector({ ...rec, pid: 200 }, { self: 1, alive, command }), false, 'a reused pid running something else');
+  assert.equal(cf.isStrayConnector({ ...rec, metrics: '127.0.0.1:6000' }, { self: 1, alive, command }), false, 'another connector');
+  assert.equal(cf.isStrayConnector({ ...rec, pid: 400 }, { self: 1, alive, command }), false, 'gone');
+  assert.equal(cf.isStrayConnector(null, { self: 1, alive, command }), false);
+
+  // The real `ps` reads a real command line.
+  const fake = fakeCloudflared(t);
+  const port = await freePort();
+  const stray = strayConnector(t, fake, port);
+  await waitUntil(() => (cf.commandOf(stray.pid) || '').includes(`--metrics 127.0.0.1:${port}`), { timeout: 5000, what: 'ps sees the connector' });
+  assert.equal(cf.commandOf(await deadPid()), null);
+});

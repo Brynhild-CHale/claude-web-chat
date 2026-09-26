@@ -15,7 +15,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const { PassThrough } = require('stream');
 const { withServer, fakeBin, waitUntil } = require('../test-support/helpers');
 const { isPidAlive } = require('../lib/core/portfiles');
 const { decodeGif } = require('../test-support/gif-decode');
@@ -24,7 +25,8 @@ const { projectPaths } = require('../lib/core/paths');
 const { frameSchedule, normalizeRenderRequest, LIMITS } = require('../lib/server/replay/render');
 const { timeline } = require('../lib/server/replay/player');
 const { findChrome, findFfmpeg, chromeCandidates } = require('../lib/replay/find');
-const { captureFrames, CHROME_FLAGS, liveBrowsers } = require('../lib/replay/chrome');
+const { captureFrames, createPipeConnection, CHROME_FLAGS, liveBrowsers } = require('../lib/replay/chrome');
+const { sweepStaleTmp, makeTmpDir } = require('../lib/replay/tmp');
 
 const FAKE = path.join(__dirname, '..', 'test-support', 'fake-chrome.js');
 // These tests pin the BUILT-IN GIF encoder: an explicit WEB_CHAT_FFMPEG is the
@@ -178,7 +180,7 @@ test('captureFrames: launches with the pipe flags on a throwaway profile, seeks 
   const udd = argv.find((a) => a.startsWith('--user-data-dir='));
   assert.ok(udd && udd.slice('--user-data-dir='.length).startsWith(tmpDir), 'the profile lives under the tmp dir given');
   const methods = log.filter((l) => l.method).map((l) => l.method);
-  assert.deepEqual(methods.slice(0, 6), ['Target.createTarget', 'Target.attachToTarget', 'Emulation.setDeviceMetricsOverride', 'Page.enable', 'Page.navigate', 'Runtime.evaluate']);
+  assert.deepEqual(methods.slice(0, 7), ['Target.createTarget', 'Target.attachToTarget', 'Inspector.enable', 'Emulation.setDeviceMetricsOverride', 'Page.enable', 'Page.navigate', 'Runtime.evaluate']);
   const metrics = log.find((l) => l.method === 'Emulation.setDeviceMetricsOverride').params;
   assert.deepEqual(metrics, { width: 64, height: 40, deviceScaleFactor: 1, mobile: false });
   const seeks = log.filter((l) => l.method === 'Runtime.evaluate' && /seek\(/.test(l.params.expression)).map((l) => l.params.expression);
@@ -319,6 +321,120 @@ test('captureFrames: a Chrome that dies mid-render rejects with chrome-exited', 
     times: [0], tmpDir, timeoutMs: 20000, onFrame: () => {},
   }), (e) => e.code === 'chrome-exited');
   assert.deepEqual(fs.readdirSync(tmpDir), []);
+});
+
+// A pipe that closes fails what is waiting on it — an event waiter included.
+// Before, once() was rejected only if the pipe was ALREADY closed when it was
+// called, so a Chrome that died between Page.navigate's reply and the load event
+// held the render (and its route's single flight) for the full five minutes.
+test('createPipeConnection: a closed pipe rejects an outstanding once() waiter, not only send()', async () => {
+  const out = new PassThrough();
+  const inp = new PassThrough();
+  const cdp = createPipeConnection(out, inp);
+  const cmd = cdp.send('Page.navigate', { url: 'about:blank' });
+  const evt = cdp.once('Page.loadEventFired', { sessionId: 'S1' });
+  inp.emit('close');
+  await assert.rejects(cmd, (e) => e.code === 'chrome-exited');
+  await assert.rejects(evt, (e) => e.code === 'chrome-exited');
+  // …and one asked for after the close is refused at once, as before.
+  await assert.rejects(cdp.once('Page.loadEventFired'), (e) => e.code === 'chrome-exited');
+});
+
+test('createPipeConnection: an event that arrives settles its waiter and is not failed again on close', async () => {
+  const out = new PassThrough();
+  const inp = new PassThrough();
+  const cdp = createPipeConnection(out, inp);
+  const evt = cdp.once('Page.loadEventFired', { sessionId: 'S1' });
+  inp.write(JSON.stringify({ method: 'Page.loadEventFired', params: { timestamp: 7 }, sessionId: 'S1' }) + '\0');
+  assert.deepEqual(await evt, { timestamp: 7 });
+  inp.emit('close');
+});
+
+test('captureFrames: a Chrome that exits during the page load fails at once with chrome-exited, not the timeout', async (t) => {
+  const fake = fakeChrome(t, { mode: 'die-on-load' });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const started = Date.now();
+  await assert.rejects(captureFrames({
+    chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+    times: [0], tmpDir, timeoutMs: 30000, onFrame: () => {},
+  }), (e) => e.code === 'chrome-exited');
+  assert.ok(Date.now() - started < 10000, `failed on the exit, not the 30 s timeout (${Date.now() - started} ms)`);
+  assert.deepEqual(fs.readdirSync(tmpDir), []);
+});
+
+test('captureFrames: a page that crashes (browser still up, pipe open) fails at once with page-crashed', async (t) => {
+  const fake = fakeChrome(t, { mode: 'crash-on-load' });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const started = Date.now();
+  await assert.rejects(captureFrames({
+    chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+    times: [0], tmpDir, timeoutMs: 30000, onFrame: () => {}, grace: QUICK,
+  }), (e) => e.code === 'page-crashed');
+  assert.ok(Date.now() - started < 10000, `failed on the crash, not the 30 s timeout (${Date.now() - started} ms)`);
+  await assertNoSurvivors(fake, 'after a page crash');
+  assert.deepEqual(fs.readdirSync(tmpDir), []);
+});
+
+// ── the tmp sweep ───────────────────────────────────────────────────────────
+// A pid that is certainly dead: a child that has already exited.
+function deadPid() {
+  const r = spawnSync(process.execPath, ['-e', '0']);
+  assert.ok(r.pid && !isPidAlive(r.pid), 'precondition: the pid is dead');
+  return r.pid;
+}
+// Plant a render directory as a process `pid` would have named it.
+function plant(tmpDir, kind, pid) {
+  const dir = path.join(tmpDir, `${kind}-${pid}-${'0123abcd'}`);
+  fs.mkdirSync(path.join(dir, 'Default'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'Default', 'Preferences'), '{}');
+  return path.basename(dir);
+}
+
+test('sweepStaleTmp: removes a dead pid\'s chrome/frames dirs, never a live pid\'s, never a name that is not ours', (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-sweep-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const dead = deadPid();
+  const staleChrome = plant(tmpDir, 'chrome', dead);
+  const staleFrames = plant(tmpDir, 'frames', dead);
+  const mine = path.basename(makeTmpDir(tmpDir, 'chrome'));
+  const otherLive = plant(tmpDir, 'frames', process.ppid);
+  fs.mkdirSync(path.join(tmpDir, `other-${dead}-0123abcd`));
+  fs.mkdirSync(path.join(tmpDir, `chrome-${dead}-not-hex!`));
+  fs.writeFileSync(path.join(tmpDir, `chrome-${dead}-89abcdef`), 'a file, not a render dir');
+
+  const removed = sweepStaleTmp(tmpDir);
+  assert.deepEqual(removed.sort(), [staleChrome, staleFrames].sort());
+  assert.deepEqual(fs.readdirSync(tmpDir).sort(), [
+    `chrome-${dead}-89abcdef`, `chrome-${dead}-not-hex!`, mine, otherLive, `other-${dead}-0123abcd`,
+  ].sort());
+  assert.match(mine, new RegExp(`^chrome-${process.pid}-[0-9a-f]{8}$`), 'makeTmpDir names by this pid');
+  assert.deepEqual(sweepStaleTmp(path.join(tmpDir, 'absent')), [], 'no tmp dir is nothing to sweep');
+});
+
+test('the daemon sweeps a dead daemon\'s render dirs at boot, and again before a render', async (t) => {
+  const fake = fakeChrome(t);
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const dead = deadPid();
+  let planted;
+  const { api, port, root } = await withServer(t, {
+    seed: ({ root: r }) => {
+      const tmp = projectPaths(r).tmp;
+      fs.mkdirSync(tmp, { recursive: true });
+      planted = [plant(tmp, 'chrome', dead), plant(tmp, 'frames', dead)];
+    },
+  });
+  const tmp = projectPaths(root).tmp;
+  assert.equal(planted.length, 2);
+  assert.deepEqual(fs.readdirSync(tmp), [], 'boot removed both');
+
+  await seed(api);
+  plant(tmp, 'chrome', dead);
+  const r = await postJson(port, { width: 320 });
+  assert.equal(r.status, 200);
+  await r.json();
+  assert.deepEqual(fs.readdirSync(tmp), [], 'the render swept it (and removed its own)');
 });
 
 test('captureFrames: a program that is not there rejects with chrome-launch-failed', async (t) => {
@@ -482,6 +598,20 @@ test('POST /api/replay/render: a Chrome that dies mid-render is a 502 with its c
   assert.deepEqual(fs.existsSync(tmp) ? fs.readdirSync(tmp) : [], [], 'no profile left behind');
   const again = await postJson(port, { format: 'replay' });
   assert.equal(again.status, 200);
+});
+
+test('POST /api/replay/render: a Chrome that exits during the page load answers 502 at once and frees the flight', async (t) => {
+  const fake = fakeChrome(t, { mode: 'die-on-load' });
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const { api, port } = await withServer(t);
+  await seed(api);
+  const started = Date.now();
+  const r = await postJson(port, { width: 320 });
+  assert.equal(r.status, 502);
+  assert.equal((await r.json()).code, 'chrome-exited');
+  assert.ok(Date.now() - started < 10000, `answered on the exit, not the render timeout (${Date.now() - started} ms)`);
+  const again = await postJson(port, { format: 'replay' });
+  assert.equal(again.status, 200, 'the single flight is free again');
 });
 
 test('POST /api/replay/render: a frame of the wrong size is refused, not stretched', async (t) => {

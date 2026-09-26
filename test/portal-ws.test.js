@@ -12,7 +12,9 @@ const { withServer, withPortal, waitUntil } = require('../test-support/helpers')
 const { createFakeAccess } = require('../test-support/fake-access');
 const { registerInstance, instanceId } = require('../lib/util/registry');
 const { sessionHost } = require('../lib/tunnel/config');
-const { CLOSE_EXPIRED, armDeadline } = require('../lib/portal/ws-relay');
+const fs = require('fs');
+const { projectPaths } = require('../lib/core/paths');
+const { CLOSE_EXPIRED, CLOSE_HIDDEN, armDeadline } = require('../lib/portal/ws-relay');
 
 async function rig(t, { wsGraceMs } = {}) {
   const srv = await withServer(t);
@@ -88,6 +90,28 @@ test('portal ws: the relay is cut when the admitting token expires', async (t) =
   const code = await new Promise((resolve) => ws.on('close', (c) => resolve(c)));
   assert.equal(code, CLOSE_EXPIRED);
   assert.ok(Date.now() >= exp * 1000 - 50, 'not before exp');
+});
+
+test('portal ws: hiding a project cuts the relays already open into it (4403); another project\'s relay stays', async (t) => {
+  const r = await rig(t);
+  const other = await withServer(t);
+  registerInstance({ root: other.root, port: other.port, pid: process.pid });
+  const otherHost = sessionHost(r.p.config, instanceId(other.root));
+  const { ws } = await open(t, r);
+  const kept = await open(t, r, { host: otherHost, origin: `https://${otherHost}` });
+  const closed = new Promise((resolve) => ws.on('close', (c) => resolve(c)));
+  let keptClosed = null;
+  kept.ws.on('close', (c) => { keptClosed = c; });
+
+  fs.writeFileSync(projectPaths(r.srv.root).noRemote, '');
+  const started = Date.now();
+  const code = await Promise.race([closed, new Promise((resolve) => setTimeout(() => resolve('still open'), 4000))]);
+  assert.equal(code, CLOSE_HIDDEN, 'the viewer is cut with the policy close code');
+  assert.ok(Date.now() - started < 3000, `closed within the sweep (${Date.now() - started}ms)`);
+  // A reconnect is a fresh handshake, answered like a stopped project.
+  await assert.rejects(open(t, r), (e) => e.statusCode === 404);
+  assert.equal(keptClosed, null, 'the project that is still served keeps its relay');
+  assert.equal(kept.ws.readyState, WebSocket.OPEN);
 });
 
 test('portal ws: a token a month from expiry keeps the relay open (no setTimeout overflow)', async (t) => {

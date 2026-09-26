@@ -1,6 +1,6 @@
 # claude-web-chat
 
-A live page in your browser that Claude Code draws on while you talk in the terminal. Diagrams, forms, comparisons, and working mockups land on the page and stay interactive. What you click and type there flows back to Claude as data, and every turn becomes a node in a graph you can walk back through and branch.
+A live page in your browser that Claude Code draws on while you talk in the terminal. Diagrams, forms, comparisons, and working mockups land on the page and stay interactive, with short headings and prose between them so a page reads top to bottom. What you click and type there flows back to Claude as data, and every turn becomes a node in a graph you can walk back through and branch.
 
 ![One web-chat cycle: Claude renders a question on the surface, the user answers in the page, and the answer flows back to Claude](.github/media/flow.gif)
 
@@ -35,7 +35,7 @@ claude-web-chat open
 
 ## History is a graph
 
-Every turn that changes the surface is saved as a node. Preview any earlier state, set it active, and your next message branches from there, so trying a different direction never loses the first one.
+Every turn that changes the surface is saved as a node. Preview any earlier state (read-only), set it active on the graph screen, and your next message branches from there, so trying a different direction never loses the first one. Replay plays a stretch of history forward node by node, and exports it as an offline page, a GIF or (with ffmpeg) a video.
 
 ![The graph viewer: every turn is a node, and earlier states can be previewed and branched from](.github/media/graph.gif)
 
@@ -56,7 +56,10 @@ claude-web-chat pack get https://github.com/acme/ops-pack    # download and revi
 | [Using web-chat](docs/guide.md) | everyday use, service components and `trust`, packs, channels, the browser extension, the command line, security, troubleshooting |
 | [Installing and updating](docs/install.md) | what `install.sh` and `init` do, updates and rollback, turning it off, what it writes to your machine |
 | [Component packs](docs/component-packs.md) · [Service components](docs/service-components.md) | building and shipping your own components |
-| [Channels](docs/channels-dev.md) · [Driving the surface](docs/driving-the-surface.md) · [Exporting pages](docs/export-pages.md) | the wake path, external processes, self-contained `.html` exports |
+| [Channels](docs/channels-dev.md) · [Driving the surface](docs/driving-the-surface.md) · [Exporting pages](docs/export-pages.md) | the wake path, external processes, self-contained `.html` exports and replays |
+| [Themes](docs/themes.md) | the builtin packs (Earthy, Paper, Georgetown), light and dark modes, the design tokens, brand images |
+| [Remote access](docs/remote-access.md) | `claude-web-chat tunnel`: your surfaces from a phone or another computer, behind Cloudflare Access |
+| [Capture profiles](docs/capture-profiles-and-panes.md) | how the browser extension distils a captured page, and the pane it lands in |
 | [Platform support](docs/platform-support.md) | macOS, Linux, and WSL2 |
 | [Contributing](docs/extending.md) | development setup and architecture (also [`CLAUDE.md`](CLAUDE.md)); run the tests with `npm test` |
 

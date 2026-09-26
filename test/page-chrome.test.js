@@ -401,6 +401,40 @@ test('markdown:remove merges the runs around it; a page with no headings has no 
     'a page without markdown is one grid run, as it always was');
 });
 
+// chrome-4: a page with no `#` — only `##` sections, a common shape for a page
+// Claude writes — numbers them 1, 2 (top level, not indented), not 0.1, 0.2; a
+// `#` that comes later is the next top-level number, and `##` nests under it.
+test('a page with only ## sections numbers them from 1, in Contents, ⌘K and block hints', async () => {
+  frame({ type: 'reset', store: {}, active: 'n1', lock: null, mounts: MOUNTS.map((m) => ({ ...m, pane_state: { ...m.pane_state } })),
+    markdown: [
+      { id: 'md-r', text: '## Results', owner: 'claude' },
+      { id: 'md-n', text: '## Next steps', owner: 'claude' },
+      { id: 'md-x', text: '# Appendix\n\n## Raw data', owner: 'claude' },
+    ],
+    order: ['md-r', 'a', 'md-n', 'c', 'md-x', 'd'], runs: {} });
+  await tick(60);
+  const rows = [...$('contents-nav').querySelectorAll('.cn-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.cn-num').textContent), ['1', '2', '3', '3.1']);
+  assert.deepEqual(rows.map((r) => r.classList.contains('sub')), [false, false, false, true],
+    'a ## with no # above it is a top-level row');
+
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+  await tick();
+  const input = $('cmd-input');
+  input.value = 'next';
+  input.dispatchEvent(new W.Event('input', { bubbles: true }));
+  await tick();
+  const section = [...$('cmd-list').querySelectorAll('.palette-item')].find((r) => r.dataset.kind === 'section');
+  assert.equal(section.querySelector('.label').textContent, '2  Next steps');
+  input.value = 'figure';
+  input.dispatchEvent(new W.Event('input', { bubbles: true }));
+  await tick();
+  const block = [...$('cmd-list').querySelectorAll('.palette-item')].find((r) => r.dataset.kind === 'block');
+  assert.equal(block.querySelector('.hint').textContent, '§2 · figure');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+});
+
 // ── the node preview draws the page the same way ────────────────────────────
 // lib/server/preview.js (graph thumbnails, the glance, pane history, replay
 // frames) inlines the SAME stylesheet (public/page.css) and cuts the sequence
