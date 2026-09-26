@@ -252,6 +252,21 @@ test('the live row is not restorable; ◷ again closes; the dismiss layer and Es
   assert.equal(isOpen(), false, 'Escape closes it');
 });
 
+// chrome-5: a click into the version preview moves focus into that same-origin
+// document, where a real Escape is then delivered — the window-blur rule keeps
+// the panel open for that move, so the key has to be forwarded back.
+test('Escape from inside the version preview IFRAME still closes the panel', async () => {
+  await openFor('fig');
+  assert.ok(isOpen(), 'precondition: open');
+  const frame = $('ph-frame');
+  frame.dispatchEvent(new W.FocusEvent('focus', { bubbles: false }));
+  const inner = frame.contentDocument;
+  assert.ok(inner, 'precondition: the preview frame is same-origin and readable');
+  inner.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal(isOpen(), false, 'the key was forwarded to the one Escape owner');
+});
+
 test('a read-only view does not open it — neither the button nor the module', async () => {
   const history = await import(pathToFileURL(path.join(REPO, 'public/app/pane-history.js')).href);
   stateMod.view.previewing = true;

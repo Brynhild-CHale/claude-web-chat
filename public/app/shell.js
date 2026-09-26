@@ -491,8 +491,17 @@ export function handleEscape() {
 function initKeyboard() {
   document.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
-    // ⌘K opens the palette from anywhere (even inside a field).
-    if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); openPalette(); return; }
+    // ⌘K opens the palette from anywhere (even inside a field) — except under a
+    // modal layer. The palette paints BELOW the graph overlay, the glance and the
+    // replay player, so opening it there hid a focused #cmd-input under them: it
+    // stole the graph's keys, and ↵ ran a row nobody could see. The graph has its
+    // own jump box, so ⌘K there does nothing (and the browser's own ⌘K is still
+    // suppressed).
+    if (meta && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      if (!(isOverlayOpen() || hasFloatPreview() || isReplayOpen())) openPalette();
+      return;
+    }
     // Focus ownership: panes are shadow-rooted mounts, so a keystroke whose real
     // target lives in a shadow root belongs to that pane — but only stand down when
     // that target is EDITABLE (B5: a focused pane BUTTON must not swallow single-key

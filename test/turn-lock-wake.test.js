@@ -142,6 +142,8 @@ test('a parked push (no channel) stays lock-less', async (t) => {
 
 test('set-active during a turn queues; turn-end commits on base THEN applies (last intent wins)', async (t) => {
   const { api } = await withServer(t);
+  await api.post('/api/render', { id: 'a', html: '<p>zero</p>' });
+  const c0 = await api.post('/api/commit', { message: 'zero' });
   await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
   const c1 = await api.post('/api/commit', { message: 'one' });
   await api.post('/api/render', { id: 'a', html: '<p>two</p>' });
@@ -150,22 +152,45 @@ test('set-active during a turn queues; turn-end commits on base THEN applies (la
   await api.post('/api/turn-begin', { message: 'working' });
   await api.post('/api/render', { id: 'b', html: '<p>turn work</p>' });
 
-  const p1 = await api.post('/api/graph/active', { id: c1.json.node_id });
+  const p1 = await api.post('/api/graph/active', { id: c0.json.node_id });
   assert.equal(p1.status, 200);
   assert.equal(p1.json.pending, true);
-  const p2 = await api.post('/api/graph/active', { id: c2.json.node_id });
+  const p2 = await api.post('/api/graph/active', { id: c1.json.node_id });
   assert.equal(p2.json.pending, true);
   assert.equal((await api.get('/api/graph')).json.active, c2.json.node_id, 'active untouched mid-turn');
 
   const te = await api.post('/api/turn-end', {});
   assert.equal(te.json.reaim.op, 'set-active');
-  assert.equal(te.json.reaim.id, c2.json.node_id, 'last queued intent wins');
+  assert.equal(te.json.reaim.id, c1.json.node_id, 'last queued intent wins');
   const g = await api.get('/api/graph');
   // the turn's node committed as a child of the lock base…
   const committed = g.json.nodes.find((n) => n.id === te.json.node_id);
   assert.equal(committed.parent_id, c2.json.node_id);
   // …and then the queued jump applied
-  assert.equal(g.json.active, c2.json.node_id);
+  assert.equal(g.json.active, c1.json.node_id);
+});
+
+// Set active onto the node that is ALREADY active is a no-op and is never
+// queued (it would pull active back off the turn's node at turn-end) — but it
+// is still the user's latest intent, so it cancels a re-aim queued before it.
+test('set-active onto the active node mid-turn cancels an earlier queued re-aim (last intent wins)', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
+  const c1 = await api.post('/api/commit', { message: 'one' });
+  await api.post('/api/render', { id: 'a', html: '<p>two</p>' });
+  const c2 = await api.post('/api/commit', { message: 'two' });
+
+  await api.post('/api/turn-begin', { message: 'working' });
+  await api.post('/api/render', { id: 'b', html: '<p>turn work</p>' });
+  assert.equal((await api.post('/api/graph/active', { id: c1.json.node_id })).json.pending, true);
+  const stay = await api.post('/api/graph/active', { id: c2.json.node_id });
+  assert.equal(stay.json.unchanged, true);
+  assert.ok(!stay.json.pending, 'not queued');
+
+  const te = await api.post('/api/turn-end', {});
+  assert.equal(te.json.reaim, undefined, 'the earlier queued jump was superseded');
+  const g = await api.get('/api/graph');
+  assert.equal(g.json.active, te.json.node_id, "active stays on the turn's node");
 });
 
 test('a queued wipe applies at turn-end', async (t) => {

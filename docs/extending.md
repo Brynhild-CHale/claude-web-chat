@@ -937,7 +937,9 @@ and markdown chunks (`write_markdown`, owned here). There is no stored section
 structure — consecutive panes form a grid run, markdown sits between runs, and
 the `#`–`###` headings in it build the Contents nav. Live state is
 `state.markdown` (`Map<id,{text, owner, gen}>`) and `state.order` (every pane and
-markdown id, once). One id space covers both kinds.
+markdown id, once). One id space covers both kinds, and `'start'`
+(`page.PAGE_START`, the page-top anchor) is never an id in it —
+`mounts.isReservedId` refuses it for panes and markdown alike.
 
 - `place(state, id, after)` / `drop(state, id)` — called by `setMount` /
   `removeMount`. `after` is an item id or `'start'`; omitted, a new item appends

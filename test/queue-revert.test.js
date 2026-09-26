@@ -134,3 +134,27 @@ test('typed, paused, then clicked: Revert restores the value from BEFORE the typ
   await api.del('/api/queue/' + it.id + '?revert=1');
   assert.deepEqual((await mountsById(api)).get('p').form_state, { '#a:0': { value: 'before' } });
 });
+
+// data-2: a dismiss (× without Revert) keeps what the user typed during that
+// run, so it ends the run. The pane's baseline used to outlive the dismissed
+// item, the next item inherited it, and ITS Revert wiped the kept values too.
+test('dismiss keeps the typed values: a later Revert goes back to them, not past them', async (t) => {
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'p', html: HTML });
+  const b = await browser(t, port);
+  b.send({ type: 'pane:form', id: 'p', form_state: { '#a:0': { value: 'abc' } } });
+  b.send({ type: 'event', payload: { type: 'click', mountId: 'p', tag: 'BUTTON' } });
+  const [q1] = await queueItems(api, 1);
+  assert.equal((await api.del('/api/queue/' + q1.id)).status, 200);
+  await waitUntil(async () => (await api.get('/api/queue')).json.items.length === 0);
+  assert.deepEqual((await mountsById(api)).get('p').form_state, { '#a:0': { value: 'abc' } }, 'the dismiss kept them');
+
+  b.send({ type: 'pane:form', id: 'p', form_state: { '#a:0': { value: 'abcdef' } } });
+  await waitUntil(async () => ((await mountsById(api)).get('p').form_state || {})['#a:0']?.value === 'abcdef');
+  b.send({ type: 'event', payload: { type: 'click', mountId: 'p', tag: 'BUTTON' } });
+  const [q2] = await queueItems(api, 1);
+  assert.deepEqual(q2.origin_form_state, { '#a:0': { value: 'abc' } }, 'the new run starts from the kept values');
+  await api.del('/api/queue/' + q2.id + '?revert=1');
+  assert.deepEqual((await mountsById(api)).get('p').form_state, { '#a:0': { value: 'abc' } },
+    "Revert undoes only this run's typing");
+});

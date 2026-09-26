@@ -128,6 +128,26 @@ test('page: markdown refusals — shared id space, reserved ids, size cap, owner
   assert.equal((await md(api, { remove: true })).status, 400, 'remove needs an id');
 });
 
+// data-3: 'start' is the page-top anchor (`after:'start'`, the opening run's
+// key), so an item holding that id would make both ambiguous. Refused for a
+// markdown item, a render and a use_component, with a hint that says why.
+test("page: 'start' is the page-top anchor, never an item id", async (t) => {
+  const { api } = await withServer(t);
+  for (const r of [
+    await md(api, { id: 'start', text: '## Intro' }),
+    await render(api, 'start'),
+    await api.post('/api/components/git-dashboard/use', { id: 'start' }),
+  ]) {
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.reserved, true);
+    assert.match(r.json.hint, /page-top anchor/);
+  }
+  assert.deepEqual(await order(api), [], 'nothing landed');
+  await render(api, 'a');
+  await render(api, 'b', { after: 'start' });
+  assert.deepEqual(await order(api), ['b', 'a'], "after:'start' still means the top of the page");
+});
+
 test('page: list_mounts summarises markdown by its headings, never echoing the text', async (t) => {
   const { api } = await withServer(t);
   await md(api, { id: 'intro', text: '# Plan\n\nsome prose\n\n## Risks' });
@@ -219,8 +239,10 @@ test('page: a node without markdown carries neither field (old-node shape), and 
   assert.equal('markdown' in node, false);
   assert.equal('order' in node, false);
   assert.deepEqual(node.mounts.map((m) => m.id), ['b', 'a']);
-  // Restoring it (a node exactly like every pre-page node) is not dirt.
+  // Restoring it (a node exactly like every pre-page node) is not dirt. (Set
+  // active from ANOTHER node: onto the active one it is a no-op.)
   await render(api, 'c');
+  await turn(api);
   await api.post('/api/graph/active', { id: r.node_id });
   assert.deepEqual(await order(api), ['b', 'a']);
   assert.equal((await turn(api)).skipped, 'no-change');
@@ -274,6 +296,8 @@ test('page: set active preserves uncommitted markdown into the preserve node', a
   const { api, webChatDir } = await withServer(t);
   await render(api, 'a');
   const base = await turn(api);
+  await render(api, 'b');
+  await turn(api);   // active moves on, so the set-active below is a real move
   await md(api, { id: 'wip', text: 'unsent prose' });
   const r = await api.post('/api/graph/active', { id: base.node_id });
   assert.ok(r.json.preserved, 'dirty markdown forced a preserve node');

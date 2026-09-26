@@ -238,7 +238,15 @@ async function makeCurrent() {
   return res;
 }
 
-export function initPaneHistory() {
+// `forwardEscapeFrom` (graph-view.js) is injected, the way initReplay gets it,
+// so this module does not import the graph viewer. Clicking into the version
+// preview moves focus into that same-origin document, and a real Escape is then
+// delivered THERE — the window-blur rule deliberately keeps the panel open for
+// that move — so without the forwarder Escape never reached the one Escape
+// owner and the panel stayed up. It rebinds on every load, so wiring it once
+// covers every version the frame is later pointed at.
+export function initPaneHistory({ forwardEscapeFrom } = {}) {
+  const frame = $('ph-frame'); if (frame && forwardEscapeFrom) forwardEscapeFrom(frame);
   const btn = $('ph-restore'); if (btn) btn.addEventListener('click', makeCurrent);
   const close = $('ph-close'); if (close) close.addEventListener('click', closePaneHistory);
   // Leaving the list puts the frame back on the kept version.

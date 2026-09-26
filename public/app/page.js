@@ -215,17 +215,23 @@ export function runDirty(ids) {
 }
 
 // ── the outline: #/## headings, numbered, with the panes under each ─────────
+// A row's `level` is its depth in the OUTLINE, not the heading's: a `##` with no
+// `#` above it is top level (1, 2, …), since there is nothing for it to sit
+// under. A page Claude writes with only `## Results` / `## Next steps` used to
+// number them 0.1, 0.2. Once a `#` appears, `##` nests under it as before.
 export function outline() {
   const rows = [];
   let cur = null;
-  let n1 = 0, n2 = 0;
+  let n1 = 0, n2 = 0, seenH1 = false;
   for (const id of sequence()) {
     const md = page.markdown.get(id);
     if (md) {
       for (const h of headings(md.text)) {
         if (h.level > 2) continue;
-        if (h.level === 1) { n1++; n2 = 0; } else n2++;
-        cur = { level: h.level, text: h.text, slug: h.slug, md: id, num: h.level === 1 ? String(n1) : `${n1}.${n2}`, panes: [] };
+        const level = h.level === 1 || !seenH1 ? 1 : 2;
+        if (h.level === 1) seenH1 = true;
+        if (level === 1) { n1++; n2 = 0; } else n2++;
+        cur = { level, text: h.text, slug: h.slug, md: id, num: level === 1 ? String(n1) : `${n1}.${n2}`, panes: [] };
         rows.push(cur);
       }
     } else if (cur) cur.panes.push(id);

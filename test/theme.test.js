@@ -223,6 +223,40 @@ test('theme: the packs are listed builtins, read-only, and web-chat still applie
   assert.deepEqual(g.modes, ['light', 'dark']);
 });
 
+// data-4: a theme saved as `paper` in 0.7.6, before paper was a builtin. Apply
+// always took the builtin and save refused the name, but the listing showed the
+// saved file — list_themes described a theme apply_theme never applied. One rule
+// now: the builtin wins everywhere, and the file shows as a shadow with a hint.
+test('theme: a saved theme under a builtin name — listing and apply agree the builtin wins', async (t) => {
+  withTempHome(t);
+  const { root, api } = await withServer(t);
+  const dir = path.join(root, '.web-chat', 'themes');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'paper.json'), JSON.stringify({ name: 'paper', tokens: { '--wc-bg': '#123456' } }));
+  fs.writeFileSync(path.join(dir, 'Georgetown.json'), JSON.stringify({ name: 'Georgetown', tokens: { '--wc-bg': '#654321' } }));
+
+  const { themes } = (await api.get('/api/themes')).json;
+  const named = (n) => themes.filter((x) => x.name.toLowerCase() === n);
+  for (const n of ['paper', 'georgetown']) {
+    assert.equal(named(n).length, 1, `one '${n}' row, not the file and the builtin`);
+    const row = named(n)[0];
+    assert.equal(row.name, n);
+    assert.equal(row.location, 'builtin', 'the row describes what apply applies');
+    assert.deepEqual(row.shadows, ['local']);
+    assert.match(row.hint, /not applied/);
+    assert.match(row.hint, /another name/);
+    assert.ok(!Object.values(row.tokens).includes('#123456') && !Object.values(row.tokens).includes('#654321'),
+      'the tokens listed are the pack\'s');
+  }
+  assert.ok(fs.existsSync(path.join(dir, 'paper.json')), 'the saved file is left on disk');
+
+  await api.post('/api/theme/apply', { name: 'paper', scope: 'global' });
+  const g = (await api.get('/api/theme?scope=global')).json;
+  assert.equal(g.name, 'paper');
+  assert.notEqual(g.tokens['--wc-bg'], '#123456', 'and apply agrees: the builtin');
+  assert.equal(named('earthy')[0].shadows, undefined, 'an unshadowed builtin carries no shadows');
+});
+
 test('theme: tokens are sanitized (bad keys dropped, values stripped)', async (t) => {
   const { api } = await withServer(t);
   await api.post('/api/theme', { scope: 'global', tokens: {
