@@ -17,6 +17,13 @@
 //                     screenshot waits FAKE_CHROME_SLOW_MS, default 400)
 //                     | 'wrong-size' (screenshots 1 px narrower than asked)
 //                     | 'ignore-close' (never exit on Browser.close)
+//   FAKE_CHROME_STUBBORN '1' — a WEDGED browser, on top of any mode: ignores
+//                     SIGTERM, Browser.close and its pipe closing, and starts a
+//                     helper process (same process group, also deaf to SIGTERM)
+//                     the way Chrome starts renderers. Only SIGKILL ends either.
+//                     Logs {helper: pid} and {signal: 'SIGTERM'} on receipt.
+//   FAKE_CHROME_HELPER '1' — only the deaf helper: the browser itself behaves,
+//                     exits on Browser.close, and leaves the helper behind.
 
 const fs = require('fs');
 const net = require('net');
@@ -24,8 +31,21 @@ const { encodePng, solid } = require('./png-encode');
 
 const LOG = process.env.FAKE_CHROME_LOG;
 const MODE = process.env.FAKE_CHROME_MODE || 'ok';
+const STUBBORN = process.env.FAKE_CHROME_STUBBORN === '1';
 const log = (o) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify(o) + '\n'); };
 log({ argv: process.argv.slice(2), pid: process.pid });
+
+if (STUBBORN || process.env.FAKE_CHROME_HELPER === '1') {
+  const helper = require('child_process').spawn(process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1 << 30);"], { stdio: 'ignore' });
+  helper.unref();
+  log({ helper: helper.pid });
+}
+if (STUBBORN) {
+  process.on('SIGTERM', () => log({ signal: 'SIGTERM' }));
+  setInterval(() => {}, 1 << 30);
+}
+const exitsOnClose = MODE !== 'ignore-close' && !STUBBORN;
 
 // net.Socket, not fs streams: an fs.ReadStream on a pipe parks a threadpool
 // thread in a blocking read(), and process.exit then waits on it forever.
@@ -81,7 +101,7 @@ async function handle(msg) {
     }
     case 'Browser.close':
       reply(msg);
-      if (MODE === 'ignore-close') return undefined;
+      if (!exitsOnClose) return undefined;
       setTimeout(() => process.exit(0), 20);
       return undefined;
     default:
@@ -99,4 +119,4 @@ inp.on('data', (chunk) => {
     handle(JSON.parse(raw));
   }
 });
-inp.on('end', () => { if (MODE !== 'ignore-close') process.exit(0); });
+inp.on('end', () => { if (exitsOnClose) process.exit(0); });

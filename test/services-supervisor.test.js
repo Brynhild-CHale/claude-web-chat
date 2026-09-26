@@ -358,10 +358,22 @@ test('services: a crashing service is recorded and not respawned', async (t) => 
   await useApproved(ctx, 'crasher', 'm1');
 
   // It spawns, crashes, is removed, and does not come back.
-  assert.ok(await waitUntil(() => !children(ctx).has('m1'), { timeout: 4000 }), 'crashed child removed');
-  // Nudge another reconcile; it must stay dead (failed set blocks respawn of this hash).
+  //
+  // Wait on the CRASH BEING RECORDED, not on "no child tracked": the approval's
+  // reconcile is still inside its debounce when useApproved returns, so no child
+  // exists yet and `!has('m1')` held before anything had spawned. The test then
+  // passed only if the child the NEXT reconcile forked could boot, crash and be
+  // reaped inside a fixed 400ms sleep minus the 200ms debounce — ~100ms of
+  // headroom, which a loaded machine (parallel suites) now and then ate.
+  const services = ctx.srv.services;
+  assert.ok(await waitUntil(() => services._failed.get('m1') === hashOf(CRASH_SERVICE) && !children(ctx).has('m1')),
+    'the child spawned, crashed, and was recorded against its version');
+
+  // Nudge a reconcile through the real event path, then run one directly:
+  // reconcile() is synchronous down to children.set(), so a respawn would be
+  // tracked the moment it returns — the check needs no sleep to mean something.
   await api.post('/api/render', { id: 'noop', html: '<p>noop</p>' });
-  await sleep(400);
+  services.reconcile('test');
   assert.equal(children(ctx).has('m1'), false, 'not respawned after crash');
 });
 

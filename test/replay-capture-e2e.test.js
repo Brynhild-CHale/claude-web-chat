@@ -17,6 +17,17 @@ const { spawnSync } = require('child_process');
 const { withServer } = require('../test-support/helpers');
 const { decodeGif } = require('../test-support/gif-decode');
 const { findChrome, findFfmpeg } = require('../lib/replay/find');
+const { closeAllBrowsers, liveBrowsers } = require('../lib/replay/chrome');
+
+// A REAL browser is the one that leaked from test runs. withServer's teardown
+// stops the server, which aborts an in-flight render; this backstop closes
+// anything still up (each through the bounded close), and the check makes a
+// leak a failure of THIS file rather than a stray process on the machine.
+test.after(async () => {
+  const up = liveBrowsers();
+  await closeAllBrowsers();
+  assert.equal(up, 0, `${up} browser(s) were still up when the file finished`);
+});
 
 const chrome = findChrome();
 const ffmpeg = findFfmpeg();
