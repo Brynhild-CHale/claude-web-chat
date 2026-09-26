@@ -16,6 +16,7 @@ import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
+import { openSessions, toggleSessions } from './sessions.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 
@@ -219,7 +220,7 @@ function initMoreMenu() {
     menu.classList.add('hidden');
     ({
       export: doExport, wipe: openWipe, newgraph: openNewGraph,
-      settings: openSettings, shortcuts: () => toggleLegend(true),
+      settings: openSettings, sessions: openSessions, shortcuts: () => toggleLegend(true),
       checkupdate: checkForUpdatesNow,
     })[act.dataset.act]?.();
   });
@@ -254,6 +255,7 @@ async function buildPalette(q) {
     { kind: 'cmd', label: 'Toggle light / dark', run: toggleMode },
     { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
     { kind: 'cmd', label: 'Settings', run: openSettings },
+    { kind: 'cmd', label: 'Sessions…', run: openSessions },
   ];
   // The display topology (graph-view.displayNodeList), not view.graphCache.nodes:
   // every other viewer surface reads what the DAG draws, and a palette row for a
@@ -418,6 +420,7 @@ function initKeyboard() {
       case 'g': case 'G': e.preventDefault(); openOverlay(); break;
       case 'n': case 'N': e.preventDefault(); openDrawer(); break;   // still SPAWN — Library is the default tab
       case 't': case 'T': e.preventDefault(); toggleMode(); break;
+      case 's': case 'S': e.preventDefault(); toggleSessions(); break;
       case 'c': case 'C': e.preventDefault(); togglePinMode(); break;
       case 'b': case 'B': e.preventDefault(); togglePopover('bookmark-pop', true); { const bm = $('bookmark-name'); if (bm) setTimeout(() => bm.focus(), 0); } break;
       case '[': e.preventDefault(); stepNode('up'); break;

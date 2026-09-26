@@ -181,7 +181,7 @@ function trustCommand(names) {
   return waiting.length === 1 ? `claude-web-chat trust ${waiting[0]}` : 'claude-web-chat trust --all';
 }
 
-async function copyText(text) {
+export async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
