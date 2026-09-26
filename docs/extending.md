@@ -513,7 +513,7 @@ must carry one; cross-site and same-site requests are refused except a
 top-level navigation to `/`) → the streamed proxy (`proxy.js`, over
 `lib/client` `pipe`) or the WebSocket relay (`ws-relay.js`: two sockets, the
 upstream opened with no Origin, cut at the token's `exp` + 5s with close code
-4401 so the reconnect must present a fresh token).
+4401 so the reconnect must present a fresh token; `armDeadline` waits out an exp past setTimeout's 2^31-1 ms ceiling in capped steps).
 
 - **Adding a header the daemon should see remotely?** Add it to `FORWARD` in
   `proxy.js` deliberately. The allowlist is the point: the daemon trusts

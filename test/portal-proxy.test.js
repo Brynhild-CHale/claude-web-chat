@@ -109,6 +109,10 @@ test('portal proxy: CSRF — foreign or missing Origin on a write, and cross-sit
   assert.equal(xs.status, 403, 'a cross-site read');
   const xsNav = await r.req('/api/graph', { headers: { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' } });
   assert.equal(xsNav.status, 403, 'a cross-site navigation anywhere but /');
+  // same-site is ANOTHER session under the same apex (wc-<a> vs wc-<b>): the
+  // isolation line between sessions, so it is refused like cross-site.
+  const ss = await r.req('/api/graph', { headers: { 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors' } });
+  assert.equal(ss.status, 403, 'a same-site (other session) read');
   const foreignGet = await r.req('/api/graph', { headers: { origin: 'https://evil.example' } });
   assert.equal(foreignGet.status, 403, 'a foreign Origin on a read');
   const sameOrigin = await r.req('/api/graph', { headers: { 'sec-fetch-site': 'same-origin', origin: r.origin } });

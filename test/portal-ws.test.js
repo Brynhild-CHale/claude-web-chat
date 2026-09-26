@@ -12,7 +12,7 @@ const { withServer, withPortal, waitUntil } = require('../test-support/helpers')
 const { createFakeAccess } = require('../test-support/fake-access');
 const { registerInstance, instanceId } = require('../lib/util/registry');
 const { sessionHost } = require('../lib/portal/config');
-const { CLOSE_EXPIRED } = require('../lib/portal/ws-relay');
+const { CLOSE_EXPIRED, armDeadline } = require('../lib/portal/ws-relay');
 
 async function rig(t, { wsGraceMs } = {}) {
   const srv = await withServer(t);
@@ -88,4 +88,40 @@ test('portal ws: the relay is cut when the admitting token expires', async (t) =
   const code = await new Promise((resolve) => ws.on('close', (c) => resolve(c)));
   assert.equal(code, CLOSE_EXPIRED);
   assert.ok(Date.now() >= exp * 1000 - 50, 'not before exp');
+});
+
+test('portal ws: a token a month from expiry keeps the relay open (no setTimeout overflow)', async (t) => {
+  // Access offers a one-month session; exp 30 days out is past setTimeout's
+  // 2^31-1 ms ceiling, which Node would clamp to 1ms and cut the relay at once.
+  const warnings = [];
+  const onWarning = (w) => warnings.push(w.name);
+  process.on('warning', onWarning);
+  t.after(() => process.off('warning', onWarning));
+  const r = await rig(t, { wsGraceMs: 0 });
+  const exp = Math.ceil(Date.now() / 1000) + 30 * 24 * 60 * 60;
+  const { ws } = await open(t, r, { token: r.access.mint({ exp }) });
+  let closed = null;
+  ws.on('close', (c) => { closed = c; });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(closed, null, 'the relay is still open a second later');
+  assert.equal(ws.readyState, WebSocket.OPEN);
+  assert.deepEqual(warnings.filter((n) => n === 'TimeoutOverflowWarning'), [], 'no delay was clamped');
+});
+
+test('armDeadline: a wait longer than the cap is taken in steps and fires at the deadline, not the cap', async () => {
+  const start = Date.now();
+  const firedAt = await new Promise((resolve) => {
+    armDeadline(start + 300, () => resolve(Date.now()), { maxMs: 40 });
+  });
+  assert.ok(firedAt - start >= 290, `fired after ${firedAt - start}ms, not at the 40ms cap`);
+
+  let fired = false;
+  const h = armDeadline(Date.now() + 200, () => { fired = true; }, { maxMs: 30 });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  h.clear();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(fired, false, 'clear() cancels a later step too');
+
+  const now = await new Promise((resolve) => armDeadline(NaN, () => resolve(true)));
+  assert.equal(now, true, 'a non-number deadline fires at once');
 });

@@ -118,6 +118,26 @@ test('portal auth: an unknown kid refetches the key set, at most once a minute',
   assert.equal(p.access.state.calls, 3, 'unknown kids inside the window never reach Cloudflare');
 });
 
+test('portal auth: a key set older than an hour is refetched, so a withdrawn key stops admitting', async (t) => {
+  const p = await boot(t);
+  assert.equal((await p.withToken(p.access.mint())).status, 200);
+  assert.equal(p.access.state.calls, 1);
+
+  // Cloudflare withdraws k1 (and signs with k2). k1 is still in the cache, so
+  // inside the hour a k1 token is admitted without a fetch…
+  p.access.addKey('k2');
+  p.access.removeKey('k1');
+  p.now.advance(30 * 60 * 1000);
+  assert.equal((await p.withToken(p.access.mint({}, { signWith: p.access.keyPair(0).privateKey }))).status, 200);
+  assert.equal(p.access.state.calls, 1, 'a known kid inside the hour never refetches');
+
+  // …but once the cache is an hour old it refreshes before trusting k1 again.
+  p.now.advance(31 * 60 * 1000);
+  const k1Tok = p.access.mint({}, { kid: 'k1', signWith: p.access.keyPair(0).privateKey });
+  assert.equal((await p.withToken(k1Tok)).status, 401, 'the withdrawn key no longer admits');
+  assert.equal(p.access.state.calls, 2, 'the stale cache was refetched');
+});
+
 test('portal auth: the email allowlist — exact, case-insensitive; no email is refused', async (t) => {
   const now = clock();
   const access = createFakeAccess({ now });
