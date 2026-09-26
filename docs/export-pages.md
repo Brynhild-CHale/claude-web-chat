@@ -112,8 +112,8 @@ as `trigger.reply`, so a caption can show both sides:
 - Additive and optional: a node or folded entry with no reply has **no
   `reply` key** — older nodes, manual commits, preserves, and a payload that
   carried nothing. No migration.
-- Where it shows: one line under TRIGGER in the graph inspector, and replay
-  captions. It is stored only under `.web-chat/` (private, gitignored). The
+- Where it shows: one line under the trigger in the graph inspector (a folded
+  turn's reply is the tooltip on its ghost row), and replay captions. It is stored only under `.web-chat/` (private, gitignored). The
   page export does not include it — an export does not carry prompts either.
 
 ## Playing a replay — the player and `replay.html`
@@ -161,8 +161,8 @@ whatever was shown before.
 **In the browser**, the player is an overlay over the surface
 (`public/app/replay.js`): it frames `/replay` and never touches the live
 surface. Open it from the graph inspector (**▶ Replay**, or `R` on a selected
-node), from ⌘K (**Replay to …** the node you are viewing), or from ⋯ →
-**Replay…**. It plays from the nearest bookmark down to the node you are viewing
+node), from ⌘K (**Replay to …** the node you are viewing), from ⋯ →
+**Replay…**, or `R` on the surface. It plays from the nearest bookmark down to the node you are viewing
 (else the active one); the `from` / `to` pickers choose any stretch of that
 lineage. `Space` plays and pauses, `←` / `→` step, the scrubber seeks (hover a
 tick for its label), and speed (0.5–4×), transition and captions are remembered

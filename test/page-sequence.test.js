@@ -2,7 +2,7 @@
 // markdown items, written by write_markdown and positioned by `after` on
 // render / use_component / write_markdown. Pinned here: the order invariants,
 // markdown's put/replace/remove and refusals, and that markdown + order travel
-// with the surface everywhere a pane does — commit, restore, draft, branch-here,
+// with the surface everywhere a pane does — commit, restore, draft, set-active's preserve,
 // wipe, the no-change check, the diff, the preview, the export and the WS
 // snapshot frames.
 
@@ -268,12 +268,14 @@ test('page: a markdown-only surface still drafts', async (t) => {
   assert.ok(fs.existsSync(path.join(webChatDir, 'draft.json')));
 });
 
-test('page: branch-here preserves uncommitted markdown into the preserve node', async (t) => {
+// POST /api/graph/branch-here was retired with branch-on-edit (plan §2b D2);
+// its guarantee moved to Set active, which must count markdown as dirty too.
+test('page: set active preserves uncommitted markdown into the preserve node', async (t) => {
   const { api, webChatDir } = await withServer(t);
   await render(api, 'a');
   const base = await turn(api);
   await md(api, { id: 'wip', text: 'unsent prose' });
-  const r = await api.post('/api/graph/branch-here', { id: base.node_id });
+  const r = await api.post('/api/graph/active', { id: base.node_id });
   assert.ok(r.json.preserved, 'dirty markdown forced a preserve node');
   const node = JSON.parse(fs.readFileSync(path.join(webChatDir, 'graph', `${r.json.preserved}.json`), 'utf8'));
   assert.deepEqual(node.markdown.map((m) => m.id), ['wip']);

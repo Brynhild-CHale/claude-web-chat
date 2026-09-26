@@ -166,7 +166,7 @@ export function initComments() {
     const el = document.createElement('div');
     el.className = 'popover pin-pop';
     el.innerHTML =
-      '<div class="pin-anchor">📌 ' + esc(anchor.mount) + (anchor.text ? ' · “' + esc(anchor.text.slice(0, 40)) + '”' : '') + '</div>'
+      '<div class="pin-anchor">' + anchorPath(anchor, 40) + '</div>'
       + '<textarea class="pin-text" rows="3" placeholder="Comment…"></textarea>'
       + '<label class="pin-share"><input type="checkbox" class="pin-share-cb" checked> Share with Claude</label>'
       + '<div class="pin-actions"><button class="pin-cancel">Cancel</button><button class="pin-save">Pin</button></div>';
@@ -201,6 +201,19 @@ export function initComments() {
     const i = liveComments.findIndex((c) => c.id === pin.id);
     if (i >= 0) liveComments[i] = pin; else liveComments.push(pin);
   }
+  // Where a pin sits, as the design's breadcrumb — "open-questions › item 2":
+  // the block (mount id), then the element's own text, or its tag when it has
+  // none. Escaped HTML: the mount id is agent-supplied and the text is whatever
+  // the pane rendered.
+  function anchorPath(a, max) {
+    const mount = esc((a && a.mount) || 'block');
+    const text = a && a.text ? String(a.text) : '';
+    const tail = text
+      ? (text.length > max ? text.slice(0, max) + '…' : text)
+      : String((a && a.selector) || '').split('.')[0];
+    return mount + (tail ? '<span class="pin-path-sep"> › </span>' + esc(tail) : '');
+  }
+
   // A pin's thread as message rows: the root note (a user message) then each reply.
   function threadMessages(pin) {
     const msgs = [{ author: 'user', text: pin.text || '' }];
@@ -240,20 +253,19 @@ export function initComments() {
     if (!pin) { closePop(); return; }
     const el = document.createElement('div');
     el.className = 'popover pin-pop pin-thread';
-    const anchorLabel = esc(pin.anchor && pin.anchor.mount ? pin.anchor.mount : 'pane')
-      + (pin.anchor && pin.anchor.text ? ' · “' + esc(String(pin.anchor.text).slice(0, 32)) + '”' : '');
     const msgs = threadMessages(pin).map((mmsg) =>
       '<div class="pin-msg ' + (mmsg.author === 'claude' ? 'claude' : 'user') + '">'
       + '<div class="pin-who">' + (mmsg.author === 'claude' ? 'Claude' : 'You') + '</div>'
       + '<div class="pin-body">' + esc(mmsg.text || '') + '</div></div>').join('');
     el.innerHTML =
-      '<div class="pin-anchor">📌 ' + anchorLabel + '</div>'
+      '<div class="pin-anchor">' + anchorPath(pin.anchor, 32) + '</div>'
       + '<div class="pin-thread-msgs">' + msgs + '</div>'
       + '<div class="pin-reply"><textarea class="pin-reply-text" rows="2" placeholder="Reply…"></textarea>'
-      + '<div class="pin-actions"><label class="pin-share"><input type="checkbox" class="pin-share-cb" '
-      + (pin.shared ? 'checked' : '') + '> Shared</label><span class="pin-spacer"></span>'
+      + '<div class="pin-actions"><label class="pin-share" title="Claude reads only shared comments (get_comments)">'
+      + '<input type="checkbox" class="pin-share-cb" ' + (pin.shared ? 'checked' : '') + '> Shared with Claude</label>'
+      + '<span class="pin-spacer"></span>'
       + '<button class="pin-del" title="Delete this comment">Delete</button>'
-      + '<button class="pin-reply-send">Reply</button></div></div>';
+      + '<button class="pin-reply-send" title="Send reply (↵)">Send</button></div></div>';
     openPop(el, x, y, 300, 260);
     const ta = el.querySelector('.pin-reply-text');
     ta.focus();

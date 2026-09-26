@@ -6,7 +6,7 @@
 //
 // Four defects are pinned here:
 //   (a) Every chrome panel — the ⋯ menu, Settings, New graph, the bookmark
-//       popover, the branch picker, the ⌘K palette, the shortcut legend, the
+//       popover, the ⌘K palette, the shortcut legend, the
 //       component drawer — opened and then stayed open forever. Clicking
 //       anywhere else, or moving focus away, dismissed none of them; only
 //       Escape did, and only if you knew.
@@ -183,17 +183,19 @@ test('the whole z-index inventory is one ordered scale', () => {
 });
 
 test('no z-index in the shell is a hand-picked number any more', () => {
-  // Ratchet: the two survivors are LOCAL to a stacking context of their own and
-  // are commented as such. A new bare number here means the scale was bypassed.
+  // Ratchet: the survivors are LOCAL to a stacking context of their own and
+  // are commented as such — the three resize handles
+  // inside a pane (the corner sits one above the two edges it overlaps). A new
+  // bare number here means the scale was bypassed.
   const bare = [];
   for (const d of zDeclarations()) {
     if (/^var\(--z-[a-z]+\)$/.test(d.value)) continue;
     bare.push(`${d.selectors.join(', ')} { z-index: ${d.value} }`);
   }
   assert.deepEqual(bare.sort(), [
-    '.glance-controls { z-index: 1 }',
     '.pane-resize-b { z-index: 3 }',
     '.pane-resize-r { z-index: 3 }',
+    '.pane-resize-rb { z-index: 4 }',
   ], 'z-index declarations outside the --z-* scale');
 });
 
@@ -590,7 +592,9 @@ test('declining to label still wipes, and still bookmarks', async () => {
   row.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
   await tick();
   assert.ok(open('wipe-panel'), 'the keyboard path lands on the same panel');
-  assert.equal($('wipe-name').value, '', 'with an empty name field');
+  assert.equal($('wipe-name').value, 'before cleanup',
+    'with the design\'s default label prefilled (selected, so typing replaces it)');
+  $('wipe-name').value = '';            // the user clears it: declining to label
   click($('btn-wipe-go'));
   await tick();
   const wiped = calls.find((c) => c.url === '/api/graph/wipe');

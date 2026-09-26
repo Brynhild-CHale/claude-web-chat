@@ -122,7 +122,7 @@ const ALLOWED = [
   ['GET', '/ws'],
   ['GET', '/api/graph'], ['GET', '/api/graph/node/abc'], ['GET', '/api/graph/diff?a=1&b=2'],
   ['GET', '/preview/node/abc'],
-  ['POST', '/api/graph/active'], ['POST', '/api/graph/branch-here'], ['POST', '/api/graph/bookmark'],
+  ['POST', '/api/graph/active'], ['POST', '/api/graph/bookmark'],
   ['POST', '/api/graph/new'],
   ['GET', '/api/store'], ['POST', '/api/store'], ['GET', '/api/mounts'], ['POST', '/api/clear'],
   ['GET', '/api/comments'], ['POST', '/api/comments'], ['PATCH', '/api/comments/c1'],

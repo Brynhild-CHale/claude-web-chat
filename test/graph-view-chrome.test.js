@@ -4,7 +4,8 @@
 // each file its own process and the ESM cache would hand a second import the
 // already-initialised modules).
 //
-// Eight defects are pinned here:
+// Eight defects are pinned here (the canvas-first redesign's own behaviour is in
+// test/graph-canvas-chrome.test.js):
 //   (1) Escape did not close the overlay. Two document keydown listeners both
 //       claimed the key (shell.js and graph-view.js), and — the actual cause,
 //       reproduced in Chrome — the overlay's own same-origin preview IFRAMEs
@@ -21,7 +22,7 @@
 //   (6) A graph (a whole tree) could not be placed on the canvas, and panning
 //       relaid out the entire DAG on every mousemove.
 //   (7) Pan listened to mouse events only, so the canvas never moved on touch.
-//   (8) `?` — advertised in the overlay's own status line — did nothing there.
+//   (8) `?` — advertised in the overlay's legend — did nothing there.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -171,15 +172,22 @@ test('Escape still reaches the overlay from its own jump field', async () => {
     'the overlay is modal — its filter field does not get to keep Escape');
 });
 
-test('Escape from inside the overlay\'s preview IFRAME still closes it', async () => {
+const selectGlyph = async (id) => {
+  W.document.querySelector(`#graph-svg g[data-id="${id}"]`).dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+};
+const inspectorUp = () => !$('gv-inspector').classList.contains('hidden');
+
+test('Escape from inside the inspector\'s preview IFRAME still reaches the page', async () => {
   // THE bug, as observed in Chrome: the inspector renders the node as a
   // same-origin <iframe>; clicking it moves focus into that document, and a real
   // Escape keypress is then delivered THERE. document.activeElement reads back as
   // the IFRAME element and not one listener on our document fires.
   await openGraph();
+  await selectGlyph('n1');
   const frame = W.document.querySelector('.gv-preview-frame');
   assert.ok(frame, 'precondition: the inspector rendered a surface-preview iframe');
-  assert.ok(overlayOpen(), 'precondition: the overlay is open');
+  assert.ok(inspectorUp(), 'precondition: a node is selected, so the inspector is up');
   // focus entering the frame is the moment the forwarder binds (a navigation has
   // by then swapped the child document out from under the initial bind)
   frame.dispatchEvent(new W.FocusEvent('focus', { bubbles: false }));
@@ -187,11 +195,16 @@ test('Escape from inside the overlay\'s preview IFRAME still closes it', async (
   assert.ok(inner, 'precondition: the preview frame is same-origin and readable');
   inner.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await tick();
-  assert.equal(overlayOpen(), false, 'the key was forwarded back to the page that owns the overlay');
+  assert.equal(inspectorUp(), false,
+    'the key was forwarded back to the page that owns the layers — it closed the selection first');
+  assert.ok(overlayOpen(), 'and only that layer: the graph stays open under it');
+  esc();
+  assert.equal(overlayOpen(), false, 'a second Escape closes the graph');
 });
 
-test('precedence: glance ▸ rename panel ▸ overlay ▸ chrome panels', async () => {
+test('precedence: glance ▸ rename panel ▸ selection ▸ overlay ▸ chrome panels', async () => {
   await openGraph();
+  await selectGlyph('n1a');
   // glance first
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: ' ', bubbles: true }));
   await tick();
@@ -209,6 +222,11 @@ test('precedence: glance ▸ rename panel ▸ overlay ▸ chrome panels', async 
   esc();
   assert.ok($('gv-name-panel').classList.contains('hidden'), 'Escape closed the panel…');
   assert.ok(overlayOpen(), '…before the overlay that raised it');
+  // then the selection (and with it the inspector)
+  assert.ok(inspectorUp(), 'precondition: the node is still selected');
+  esc();
+  assert.equal(inspectorUp(), false, 'Escape deselected…');
+  assert.ok(overlayOpen(), '…and left the graph open');
   // then the overlay
   esc();
   assert.equal(overlayOpen(), false, 'and finally the overlay itself');
@@ -312,6 +330,7 @@ test('a graph heading renames the graph through /api/graph/bookmark', async () =
 
 test('the inspector ⚑ action uses the same in-page field, never window.prompt', async () => {
   await openGraph();
+  await selectGlyph('n1a');
   const bm = $('gv-inspector').querySelector('[data-act="bookmark"]');
   assert.ok(bm, 'precondition: the inspector offers a bookmark action');
   // window.prompt throws in this harness — reaching it fails the test outright.

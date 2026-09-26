@@ -46,18 +46,28 @@ export async function refreshWakePanel() {
     set('.rn-parked', p.parked_delivery);
   }
 
-  const imm = (p.immediate_signals || []).length;
   el.innerHTML = '';
   el.title = tooltip(p);
 
+  // The design's line names what is armed — "⚙ wakes: Push · next_run" — so the
+  // declared signal KEYS are listed, not counted; a key that wakes at once
+  // carries ⚡. Key names only (they are what a pane declared, never a value),
+  // and set as text: a key is agent-supplied.
   const gear = document.createElement('span'); gear.className = 'gear'; gear.textContent = '⚙';
   const label = document.createElement('span');
-  label.textContent = ` wakes: Push${imm ? ` · ⚡${imm}` : ''} · `;
+  label.textContent = 'wakes: Push';
+  const keys = [
+    ...(p.immediate_signals || []).map((s) => '⚡' + s.key),
+    ...(p.queue_signals || []).map((s) => s.key),
+  ];
+  const keysEl = document.createElement('span');
+  keysEl.className = 'wake-keys';
+  keysEl.textContent = keys.length ? ' · ' + keys.join(' · ') : '';
   const dot = document.createElement('span');
   dot.className = 'wake-dot' + (p.channel_connected ? ' on' : '');
   dot.textContent = p.channel_connected ? '● channel' : '○ manual';
 
-  el.append(gear, label, dot);
+  el.append(gear, label, keysEl, dot);
 }
 
 export function initWakePanel() {

@@ -76,6 +76,19 @@ test('dismissing the bar remembers the version it was announcing', async () => {
   assert.equal(hidden(), false, '0.9.0 is not the version that was dismissed');
 });
 
+test('the announcement sets the two versions and the command as code runs', async () => {
+  const { checkVersion } = await import(pathToFileURL(path.join(REPO, 'public/app/version.js')).href);
+  W.sessionStorage.clear();
+  info = { ok: true, current: '0.7.0', latest: '0.9.2', updateAvailable: true, releaseUrl: 'https://example.invalid/r' };
+  await checkVersion();
+  await tick();
+  const msg = $('update-banner').querySelector('.ub-msg');
+  assert.deepEqual([...msg.querySelectorAll('code')].map((c) => c.textContent),
+    ['0.9.2', '0.7.0', 'claude-web-chat update'],
+    'the design\'s banner: what is out, what you run, and the one command — each copyable');
+  assert.match(msg.textContent, /web-chat 0\.9\.2 is available — you’re on 0\.7\.0\. Run claude-web-chat update in your terminal\./);
+});
+
 test('dismissing a borrowed bar does not mute a version nobody was shown', async () => {
   const { checkForUpdatesNow, checkVersion } = await import(pathToFileURL(path.join(REPO, 'public/app/version.js')).href);
   info = { ok: true, current: '0.7.0', latest: '0.7.0', updateAvailable: false };

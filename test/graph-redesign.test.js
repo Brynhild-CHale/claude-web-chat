@@ -81,6 +81,8 @@ test('wipe: clears panes but stays on the same graph and bookmarks the next node
   const fresh = g.nodes.find(n => n.label === 'n1.2');
   assert.ok(fresh, 'next node continues the trunk');
   assert.equal(fresh.bookmarked, true, 'the fresh-start node is bookmarked');
+  assert.equal(fresh.wipe, true, 'and marked as a wipe\'s, so the graph screen draws it "⌫ wipe"');
+  assert.equal(g.nodes.filter((n) => n.wipe).length, 1, 'only that node carries the mark');
 });
 
 test('new graph: starts a new top-level tree and bookmarks its root with the given name', async (t) => {
@@ -104,6 +106,7 @@ test('new graph: starts a new top-level tree and bookmarks its root with the giv
   const newRoot = roots.find(n => !(n.id in before));
   assert.equal(newRoot.label, 'n2.0');
   assert.equal(newRoot.bookmarked, true);
+  assert.equal(newRoot.wipe, undefined, 'a new graph\'s root bookmark is not a wipe\'s');
   assert.equal(newRoot.name, 'Research');
   // first tree unchanged
   for (const id of Object.keys(before)) {

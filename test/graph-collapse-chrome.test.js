@@ -1,6 +1,7 @@
 // The viewer half of collapse: nodes the payload marks `collapsed` are not
 // drawn, not listed, and not counted — and the turns they stood for are shown
-// on the node that absorbed them instead. Driven as real DOM against the REAL
+// on the node that absorbed them instead (as faint ghost dots on its edge; as
+// ghost rows inside a sleeve — see test/graph-canvas-chrome.test.js). Driven as real DOM against the REAL
 // front-end module graph in jsdom (same harness style as
 // test/graph-view-chrome.test.js; one boot per test FILE).
 
@@ -29,6 +30,7 @@ const NODES = [
 ];
 
 let W = null, WS = null, restore = () => {};
+const diffCalls = [];
 
 async function boot() {
   const html = fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8')
@@ -43,6 +45,7 @@ async function boot() {
   const json = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
   window.fetch = async (url) => {
     const u = String(url);
+    if (u.startsWith('/api/graph/diff')) diffCalls.push(u);
     if (u === '/api/graph') return json({ nodes: NODES.map((n) => ({ ...n })), active: 'n4', collapsed_count: 2 });
     if (u.startsWith('/api/graph/node/')) {
       const id = decodeURIComponent(u.split('/').pop());
@@ -101,25 +104,33 @@ test('boot the shell once for the collapse checks', async () => {
   assert.equal($('overlay').classList.contains('hidden'), false, 'graph overlay is open');
 });
 
-test('collapsed turns are not listed or counted', async () => {
-  assert.equal($('gv-turncount').textContent, '2', 'HISTORY counts what is drawn, not every commit');
-  const ids = [...$('gv-history-list').children].map((r) => r.dataset.id);
-  assert.deepEqual(ids.sort(), ['n1', 'n4'], 'only the turns that changed something');
-  assert.match($('gv-status-counts').textContent, /^2 turns/);
+test('collapsed turns are not counted', async () => {
+  assert.match($('gv-head-meta').textContent, /active n1\.3 · 2 turns$/,
+    'the graph chip counts what is drawn, not every commit');
 });
 
 test('collapsed turns are not drawn in the DAG', async () => {
+  const ids = [...W.document.querySelectorAll('#graph-svg g[data-id]')].map((g) => g.dataset.id);
+  assert.deepEqual(ids.sort(), ['n1', 'n4'], 'only the turns that changed something');
   const text = $('graph-svg').textContent;
   assert.ok(text.includes('n1.3'), 'the node that changed something is drawn');
-  assert.ok(!text.includes('n1.1'), 'a collapsed turn is not');
-  assert.ok(!text.includes('n1.2'), 'nor its neighbour');
+  assert.ok(!text.includes('n1.1 '), 'a collapsed turn is not');
 });
 
-test('the inspector shows the turns the node stands for', async () => {
-  const box = $('gv-inspector').textContent;
-  assert.match(box, /COLLAPSED TURNS · 2/);
-  assert.match(box, /asked about the audit/, 'the collapsed turn keeps its trigger text');
-  assert.match(box, /talked through the fix/);
+test('the node shows the turns it stands for, as ghosts on its edge', async () => {
+  const n4 = W.document.querySelector('#graph-svg g[data-id="n4"]');
+  assert.match(n4.querySelector('.gv-fold-n').textContent, /⋯2/, 'the count rides the node');
+  assert.match(n4.querySelector('title').textContent, /2 folded turns/, 'and its tooltip says what it is');
+  assert.equal(W.document.querySelectorAll('#graph-svg .gv-ghost-dot').length, 2,
+    'one faint dashed dot per folded turn on the edge that leads into it');
+});
+
+test('the CHANGED row diffs against the parent the viewer actually draws', async () => {
+  W.document.querySelector('#graph-svg g[data-id="n4"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick(); await tick();
+  assert.ok(diffCalls.some((u) => u === '/api/graph/diff?a=n1&b=n4'),
+    `not n1.2 (n3), which is hidden — the edge on screen goes to n1.0; got ${diffCalls}`);
+  assert.match($('gv-changed').textContent, /blocks: 1 added/);
 });
 
 test('the inspector shows Claude\'s reply summary as one line, and nothing for a node without one', async () => {
@@ -127,22 +138,11 @@ test('the inspector shows Claude\'s reply summary as one line, and nothing for a
   assert.ok(reply, 'n4 recorded a reply');
   assert.equal(reply.textContent, 'Rendered the <b>plan</b>.', 'shown as text, not markup');
   assert.equal(reply.getAttribute('title'), 'Rendered the <b>plan</b>.');
-  assert.match($('gv-inspector').textContent, /REPLY/);
 
-  const row = (id) => [...$('gv-history-list').children].find((r) => r.dataset.id === id);
-  row('n1').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
+  W.document.querySelector('#graph-svg g[data-id="n1"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick(); await tick();
   assert.match($('gv-inspector').querySelector('.gv-insp-label').textContent, /n1\.0/);
   assert.equal($('gv-inspector').querySelector('.gv-reply'), null, 'an older node has no reply line');
-  assert.doesNotMatch($('gv-inspector').textContent, /REPLY/);
-  row('n4').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.ok($('gv-inspector').querySelector('.gv-reply'), 'back on n4 for the tests below');
-});
-
-test('the diff names the parent the viewer actually draws', async () => {
-  assert.match($('gv-diff-sect').textContent, /DIFF vs parent n1\.0$/,
-    'not n1.2, which is hidden — the edge on screen goes to n1.0');
 });
 
 test('the ⌘K palette lists the turns the graph DRAWS, not every commit', async () => {
@@ -150,7 +150,8 @@ test('the ⌘K palette lists the turns the graph DRAWS, not every commit', async
   await tick();
   const rows = [...$('cmd-list').children]
     .filter((r) => r.querySelector('.kind') && r.querySelector('.kind').textContent === 'node')
-    .map((r) => r.lastChild.textContent);
+    // the label leads with the node's label ("n1.3 · <trigger>" — the rows are typed now)
+    .map((r) => r.querySelector('.label').textContent.split(' · ')[0]);
   assert.deepEqual(rows, ['n1.0', 'n1.3'],
     'the palette built its rows from view.graphCache.nodes — the RAW commit list — so a collapsed '
     + 'turn kept a row, and selecting it previewed a node the DAG does not draw');
@@ -159,20 +160,4 @@ test('the ⌘K palette lists the turns the graph DRAWS, not every commit', async
   assert.equal($('cmd-palette').classList.contains('hidden'), true);
 });
 
-test('the chip reveals them, and revealing restores the full history', async () => {
-  const chip = $('gv-show-collapsed');
-  assert.equal(chip.classList.contains('hidden'), false, 'chip is offered when there is something to reveal');
-  assert.equal($('gv-collapsed-n').textContent, '2');
-  chip.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.equal($('gv-turncount').textContent, '4', 'all four commits are back');
-  const ids = [...$('gv-history-list').children].map((r) => r.dataset.id).sort();
-  assert.deepEqual(ids, ['n1', 'n2', 'n3', 'n4']);
-  // The revealed run joins the trunk and the viewer's existing stack glyph draws
-  // it as one 3-node stack (head … tail) — so the tail label appears where
-  // nothing did before, and the stack marker with it.
-  const svg = $('graph-svg').textContent;
-  assert.match(svg, /×3/, 'the three trunk nodes are now drawn as a stack');
-  assert.ok(svg.includes('n1.2'), 'a turn that was hidden a moment ago is on the canvas');
-  restore();
-});
+test('teardown', () => { restore(); });

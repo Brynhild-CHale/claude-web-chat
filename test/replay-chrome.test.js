@@ -298,11 +298,25 @@ test('⌘K offers "Replay to <label>" for the node being viewed', async () => {
   assert.equal(frameQuery().get('to'), 'n1a', 'to the VIEWED node, not active');
 });
 
+test('R on the surface opens the player on the node being viewed — the key the legend lists', async () => {
+  assert.ok(W.document.querySelector('#key-legend').textContent.includes('Replay to node'), 'precondition: the legend advertises R');
+  key('r');
+  await tick();
+  assert.ok(replayOpen(), 'R opens the player');
+  assert.equal(frameQuery().get('to'), 'n1b', 'to the node on screen (active here)');
+});
+
 test('graph inspector: ▶ Replay and R open it above the overlay; Escape closes the player first', async () => {
   click($('btn-graph'));
   await tick();
   await tick();
   assert.ok(overlayOpen(), 'precondition: graph open');
+  // The inspector exists only while a node is selected (P2): select one on the canvas.
+  const glyph = W.document.querySelector('#graph-svg g[data-id]');
+  assert.ok(glyph, 'precondition: the canvas draws a node');
+  glyph.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  await tick();
   const btn = W.document.querySelector('#gv-inspector [data-act="replay"]');
   assert.ok(btn, 'the inspector carries ▶ Replay');
   click(btn);
@@ -315,6 +329,7 @@ test('graph inspector: ▶ Replay and R open it above the overlay; Escape closes
   key('r', $('overlay'));
   await tick();
   assert.ok(replayOpen(), 'R in the graph opens the player on the selected node');
+  assert.equal(frameQuery().get('to'), glyph.dataset.id, 'to the SELECTED node');
 });
 
 test('↧ GIF: prompt captions warn first (prompts may be private), a second click renders, and the note links the file', async () => {

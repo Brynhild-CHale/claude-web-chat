@@ -176,7 +176,7 @@ test('the ＋ button declares the panel it controls — which is what makes it a
   const btn = $('btn-add');
   assert.equal(btn.getAttribute('aria-controls'), 'drawer');
   assert.equal(btn.getAttribute('aria-haspopup'), 'dialog');
-  assert.match(btn.getAttribute('title'), /spawn a pane, manage packs/);
+  assert.match(btn.getAttribute('title'), /add from the library, manage packs/);
   assert.equal(btn.textContent, '＋', 'the glyph stays — spawning is still the dominant action');
 });
 
@@ -276,7 +276,7 @@ test('a row is a real button with a duplicate control, grouped by tier, chipped 
 
   const lib = $('drawer-library');
   const groups = [...lib.querySelectorAll('.de-group')].map((g) => g.textContent);
-  assert.deepEqual(groups, ['BUILT-IN', 'THIS PROJECT', 'ALL PROJECTS']);
+  assert.deepEqual(groups, ['THIS PROJECT', 'ALL PROJECTS', 'BUILT IN'], 'the design\'s order: your own first, the stock set last');
 
   const rows = [...lib.querySelectorAll('.drawer-entry')];
   assert.equal(rows.length, 4);

@@ -170,8 +170,10 @@ module.exports = {
   CSS-collapses via a `data-mode` attribute. Either way one payload, derived
   client-side — matching the user's directive.
 - **Mode** is a new `pane_state.mode: 'reduced' | 'expanded'` field, persisted and
-  threaded through commit/restore exactly like `minimized`. The pane ships a toggle
-  control that flips `mode` over the existing `pane:state` WS path.
+  threaded through commit/restore exactly like `minimized`. The toggle lives IN the
+  pane (`wrapModes` renders a "⊞ expand" / "⊟ reduce" control; the block header has
+  no mode switch): a click flips the view at once and raises `wc:mode-request`, which
+  the chrome records on `pane_state.mode` over the existing `pane:state` WS path.
 - **One pane per profile per scope.** The capture route renders into a per-profile
   stable mount id (`tab-capture:<mount_suffix>`), so each profile owns its pane and
   replaces in place. Project profile's pane shadows the global one (same profile

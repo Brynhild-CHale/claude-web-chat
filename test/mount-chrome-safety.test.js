@@ -110,7 +110,7 @@ let mainEl = null, topbarEl = null, statusEl = null, overlayEl = null;
 test('a mount whose id names chrome leaves the chrome standing', async () => {
   await boot();
   await tick();
-  mainEl = $('main'); topbarEl = $('topbar'); statusEl = $('status'); overlayEl = $('overlay');
+  mainEl = $('main'); topbarEl = $('topbar'); statusEl = $('active-pill'); overlayEl = $('overlay');
   assert.ok(mainEl && topbarEl && statusEl && overlayEl, 'precondition: the shell rendered its chrome');
 
   frame({
@@ -141,9 +141,11 @@ test('a render whose target names chrome lands in the surface, not in the chrome
 });
 
 test('a clear whose id names chrome removes nothing', async () => {
-  frame({ type: 'clear', id: 'status' });
+  // 'active-pill' is the topbar's one status pill (the connection state and the
+  // node state share it; there used to be a second, #status, for the socket).
+  frame({ type: 'clear', id: 'active-pill' });
   await tick();
-  assert.ok(statusEl.isConnected, 'the connection pill survived a clear that named it');
+  assert.ok(statusEl.isConnected, 'the status pill survived a clear that named it');
   assert.equal(statusEl.parentElement, topbarEl, 'and is still in the topbar');
 });
 

@@ -32,13 +32,17 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Ask for the page, not prose.** Multi-option decisions, comparison tables, forms, live UI mockups — say "on the surface" and Claude renders them instead of describing them. Panes persist across turns, so Claude (and you) can refer back to one without re-rendering it.
 
-**Use the graph like an undo tree.** Nodes are labeled hierarchically — `n1.7` is the seventh step on the first trunk, `n1.7.0` a branch off it. In the graph viewer you can preview any node, set it *active*, and send your next message from there. Only you move the active point; Claude never does.
+**Use the graph like an undo tree.** Nodes are labeled hierarchically — `n1.7` is the seventh step on the first trunk, `n1.7.0` a branch off it. In the graph viewer (`G`) you can preview any node, set it *active* (or **⑃ Branch** from it), and send your next message from there. Only you move the active point; Claude never does. A run of plain turns draws as one **×N** stack — click it to open the run in place and pick any turn in it; turns that changed nothing show as faint *folded* rows under the turn they folded onto. **⚑ Marked**, **⑃ Forks** and the search box dim everything else; click a graph's title to name it, drag it to move it.
 
 **Let the project accumulate components.** When Claude builds a pane worth keeping, it saves it to the project's component library and reuses it later. Over time your project grows UI that matches how you work.
 
-**Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Three packs ship — Earthy (the stock look, light and dark), Paper and Georgetown — and light/dark is a mode inside a pack, flipped with ◑ or `T`. Ask Claude to theme the surface (and save the result), or swap themes yourself from **⋯ → Settings**. More detail in [`themes.md`](themes.md).
+**Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Three packs ship — Earthy (the stock look, light and dark), Paper and Georgetown — and light/dark is a mode inside a pack, flipped with ◑, `T` or **⋯ → Settings → Mode**. Ask Claude to theme the surface (and save the result), or swap themes yourself from **⋯ → Settings**. More detail in [`themes.md`](themes.md).
 
 **Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use **⋯ → ↧ Export node** in the topbar (or **↧** / `E` on a node in the graph viewer), or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
+
+**Find anything with ⌘K.** The palette lists three kinds of row: **node** (a turn, with its time), **block** (a block on the page — choosing one scrolls to it and restores it if minimized) and **command** (with its key, where it has one), including *Add block · name* for every component in the library. Type a kind to list only those.
+
+**Narrow windows and phones.** Below 760px the blocks stack in reading order and a bar along the bottom carries ↑/↓, ↩ active (while you are viewing an older node), **Graph** and **Queue [n]** — which opens the queue as a full screen; **‹ Page** goes back. From 1100px up there is room for a contents column beside the page (it stays hidden until a page has headings). On a phone — a narrow screen you work with a finger — the surface is a read-only viewer: each block shows its title and type, nothing on it can be moved, closed or edited, and a minimized block's chip only shows it on that phone. You talk to Claude from the queue (stage or hold items, add a comment, Push) and act on the graph, which on a phone is a newest-first log of one graph with its forks drawn in a gutter: tap a turn, then ◫ Glance, ⚑ bookmark (with a name), ⑃ Branch, ↧ Export or **Set active**. The graph name at the top switches graphs, and **⋯ N folded** shows the turns that changed nothing.
 
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`driving-the-surface.md`](driving-the-surface.md).
 
@@ -72,7 +76,7 @@ Installing a pack runs its code: panes are unsandboxed in the surface page, and 
 
 ## Channels (experimental)
 
-Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch. A row's ⟲ takes it back: it undoes that interaction (your typed values since the last Push, and a pane's submitted signal) and never removes a pane Claude rendered.
+Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch. A row's ⟲ takes it back: it undoes that interaction (your typed values since the last Push, and a pane's submitted signal) and never removes a pane Claude rendered. A signal row's **▸ value** shows what that key holds right now, so you can check what you are about to hand off; Claude still receives only the key's name, and reads the value itself when it needs it.
 
 **It works with or without the Channels capability.** For a *live, no-prompt* wake, launch Claude Code with both the env var and the capability flag — they belong together on the launch line, so a session can never claim a channel it doesn't have:
 

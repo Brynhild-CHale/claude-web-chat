@@ -15,7 +15,7 @@ import {
 } from './mounts.js';
 import {
   applyActive, applyLock, ensureGraph, updateChip, onGraphChanged, syncThemeSelect,
-  completeBranchTransition, showReaimNote, leavePreview,
+  showReaimNote, leavePreview,
 } from './topbar.js';
 import { layoutAndRender, refreshGraph, isOverlayOpen } from './graph-view.js';
 import { foldQueueFrame, hydrateQueue, renderQueue, onWakeAck } from './queue.js';
@@ -89,11 +89,20 @@ function flushOutbox() {
   }
 }
 
-function setConnStatus(text, cls) {
-  const s = $('status');
-  if (s) { s.textContent = text; s.className = 'status-pill' + (cls ? ' ' + cls : ''); }
-  const dot = document.querySelector('.brand .status-dot');
-  if (dot) dot.classList.toggle('off', cls === 'off');
+// The socket's state is one input to the topbar's ONE status pill (it used to
+// own a second pill of its own, beside the node pill). While it is not live the
+// pill says so, and the brand dot goes grey; live, the green dot is the signal
+// and the pill goes back to naming the node.
+function setConnStatus(state) {
+  view.conn = state;
+  const dot = $('status-dot');
+  if (dot) {
+    dot.classList.toggle('off', state !== 'live');
+    const label = state === 'live' ? 'live' : state === 'reconnecting' ? 'reconnecting…' : 'connecting…';
+    dot.title = label;
+    dot.setAttribute('aria-label', label);
+  }
+  updateChip();
 }
 
 // --- preview fold helpers (operate on the captured live surface) ---
@@ -179,28 +188,6 @@ const HANDLERS = {
       return;
     }
     applyRemoteFormState(msg.id, msg.form_state || {});
-  },
-  // Another client (or this one — see topbar.branchOnEdit, which transitions
-  // locally on the POST response and sets view.branchingTo so this frame is a
-  // no-op for the editor) re-aimed the surface onto a previewed node via
-  // branch-on-edit. Adopt the new live state; the editor client must NOT be
-  // re-rendered (its DOM — including the in-flight edit — IS the new live state).
-  async 'branch-here'(msg) {
-    // The editing client completes its transition here (deferred pending
-    // re-aim, or a race where the frame beats the POST response); if it already
-    // transitioned (attached on the new active), it's a no-op. A bystander is
-    // neither, since its active is the OLD id.
-    if (completeBranchTransition(msg.id)) return;
-    if (!view.previewing && view.activeId === msg.id) return;
-    try {
-      const r = await fetch('/api/graph/node/' + msg.id);
-      if (r.ok) {
-        const node = await r.json();
-        applySnapshot({ mounts: node.mounts || [], store: node.store || {} });
-      }
-    } catch {}
-    applyActive(msg.active);
-    onGraphChanged();
   },
   // A full surface replacement (wipe, new graph, node jump, turn-end re-aim).
   // The frame is AUTHORITATIVE and rendered VERBATIM: whatever mounts it carries
@@ -289,9 +276,9 @@ export const wsUrl = (loc = location) => `${loc.protocol === 'https:' ? 'wss' : 
 
 export function connect() {
   ws = new WebSocket(wsUrl());
-  ws.onopen = () => { setConnStatus('live', 'live'); refreshBrand(); };
+  ws.onopen = () => { setConnStatus('live'); refreshBrand(); };
   ws.onclose = () => {
-    setConnStatus('reconnecting…', 'off');
+    setConnStatus('reconnecting');
     // The server releases its outstanding-prompt memo when the last viewer
     // drops, so any nonce we still hold is dead. Clear and let it re-prompt.
     resetTrustPrompts();
