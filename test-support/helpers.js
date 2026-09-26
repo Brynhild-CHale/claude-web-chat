@@ -490,8 +490,23 @@ function fakeCloudflared(t, { version, exit } = {}) {
   return { dir, callsFile, calls };
 }
 
+// A stand-in host program: an executable `name` in a fresh temp dir that runs
+// the Node script `script` (a test-support/fake-*.js) with `env` set — an
+// object, or `(dir) => object` when a variable names a file in that dir (a
+// call log) — removed when the test ends. `exec` keeps every inherited fd
+// (fake-chrome needs 3/4). → { bin, dir }
+function fakeBin(t, { name, script, env = {} }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wc-fake${name}-`));
+  const bin = path.join(dir, name);
+  const vars = Object.entries(typeof env === 'function' ? env(dir) : env).map(([k, v]) => `${k}=${JSON.stringify(String(v))} `).join('');
+  fs.writeFileSync(bin, `#!/bin/sh\nexec env ${vars}${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`);
+  fs.chmodSync(bin, 0o755);
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  return { bin, dir };
+}
+
 module.exports = {
-  freePort, fakeCloudflared,
+  freePort, fakeCloudflared, fakeBin,
   withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };

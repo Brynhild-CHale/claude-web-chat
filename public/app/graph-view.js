@@ -12,6 +12,7 @@ import { seqNum, nodeById, labelFor } from './labels.js';
 import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
+import { openReplay } from './replay.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -151,7 +152,7 @@ export function escapeInOverlay() {
    Both frames are same-origin, so forward the key back to the page that owns the
    layers. This is transport, not a second Escape implementation — the forwarded
    event runs the same one owner. */
-function forwardEscapeFrom(frame) {
+export function forwardEscapeFrom(frame) {
   const bind = () => {
     let doc = null;
     try { doc = frame.contentDocument; } catch { return; }   // cross-origin: nothing to do
@@ -422,7 +423,7 @@ function foldedSection(id, node) {
     rows.push({ at: a.created_at || 0, who: a.author || 'claude', label: a.label || a.id, text: a.trigger_summary || '' });
   }
   for (const f of (Array.isArray(node.folded) ? node.folded : [])) {
-    rows.push({ at: f.at || 0, who: f.author || 'claude', label: '', text: f.summary || f.message || '' });
+    rows.push({ at: f.at || 0, who: f.author || 'claude', label: '', text: f.summary || f.message || '', reply: f.reply || '' });
   }
   if (!rows.length) return '';
   rows.sort((a, b) => a.at - b.at);
@@ -431,7 +432,7 @@ function foldedSection(id, node) {
   const total = (node.folded_count || (node.folded || []).length) + (cached.absorbed_count || 0);
   const aged = total - rows.length;
   const body = rows.map((r) => {
-    const when = r.at ? new Date(r.at).toLocaleString() : '';
+    const when = (r.at ? new Date(r.at).toLocaleString() : '') + (r.reply ? `\nreply: ${r.reply}` : '');
     const tag = r.label ? `<span class="gv-folded-tag">${esc(r.label)}</span>` : '';
     return `<div class="gv-folded-row" title="${esc(when)}">${tag}<span class="gv-folded-who">${esc(r.who)}</span><span class="gv-folded-text">${esc(r.text || '(no trigger)')}</span></div>`;
   }).join('');
@@ -464,6 +465,10 @@ async function renderInspector(id) {
     : '<div class="muted small">no panes — narrative turn</div>';
   const trigger = node.trigger?.message || node.trigger?.summary || node.trigger_summary || '(no trigger)';
   const committed = node.created_at ? new Date(node.created_at).toLocaleString() : '—';
+  // Claude's side of the turn (the Stop hook's reply summary) — one line, full
+  // text on hover. Older nodes and manual commits have none; no section then.
+  const reply = node.trigger?.reply || '';
+  const replyHtml = reply ? `<div class="gv-sect">REPLY</div><div class="gv-reply" title="${esc(reply)}">${esc(reply)}</div>` : '';
   const foldedHtml = foldedSection(id, node);
 
   box.innerHTML =
@@ -472,6 +477,7 @@ async function renderInspector(id) {
     `<div class="gv-lineage">${lineage}</div>` +
     `<div class="gv-meta"><span class="k">AUTHOR</span><span class="v">${esc(node.author || '—')}</span><span class="k">COMMITTED</span><span class="v">${esc(committed)}</span></div>` +
     `<div class="gv-sect">TRIGGER</div><div class="gv-trigger">${esc(trigger)}</div>` +
+    replyHtml +
     `<div class="gv-sect">RENDERED · ${mounts.length} pane${mounts.length === 1 ? '' : 's'}</div><div class="gv-panes">${paneRows}</div>` +
     foldedHtml +
     `<div class="gv-sect" id="gv-diff-sect">DIFF vs parent</div><div class="gv-diff" id="gv-diff"><span class="muted small">…</span></div>` +
@@ -481,6 +487,7 @@ async function renderInspector(id) {
       `<button class="gv-act" data-act="glance" title="Glance preview (Space)" aria-label="Glance preview (Space)">◉</button>` +
       `<button class="gv-act" data-act="bookmark" title="Bookmark (B)" aria-label="Bookmark (B)">⚑</button>` +
       `<button class="gv-act" data-act="export" title="Export (E)" aria-label="Export (E)">↧</button>` +
+      `<button class="gv-act" data-act="replay" title="Replay up to this node (R)" aria-label="Replay up to this node (R)">▶ Replay</button>` +
     `</div>`;
 
   drawPreview($('gv-preview'), id, mounts.length);
@@ -1245,6 +1252,7 @@ export function initGraph() {
     else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (view.selectedNodeId) setActive(view.selectedNodeId); }
     else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); if (view.selectedNodeId) exportNode(view.selectedNodeId); }
     else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (view.selectedNodeId) bookmarkNode(view.selectedNodeId); }
+    else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (view.selectedNodeId) openReplay({ to: view.selectedNodeId }); }
   });
 
   // inspector action footer (delegated — footer is re-rendered per selection)
@@ -1252,7 +1260,7 @@ export function initGraph() {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const id = view.selectedNodeId; if (!id) return;
     ({ active: () => setActive(id), open: () => openNode(id), glance: () => toggleFloatPreview(),
-       bookmark: () => bookmarkNode(id), export: () => exportNode(id) })[b.dataset.act]?.();
+       bookmark: () => bookmarkNode(id), export: () => exportNode(id), replay: () => openReplay({ to: id }) })[b.dataset.act]?.();
   });
 
   // scope toggle (All ⟷ This graph) — mutually exclusive segment

@@ -8,7 +8,8 @@ import { toggleMode, modeToggleable } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
-import { openOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList } from './graph-view.js';
+import { openOverlay, closeOverlay, isOverlayOpen, escapeInOverlay, hasFloatPreview, displayNodeList, forwardEscapeFrom } from './graph-view.js';
+import { initReplay, openReplay, closeReplay, isReplayOpen, replayTargetLabel } from './replay.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
 import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
@@ -54,6 +55,7 @@ function closePanel(el) {
   // ONE closeDrawer: it also restores focus to ＋ and disarms a primed install.
   if (el.id === 'drawer') { closeDrawer(); return; }
   if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
+  if (el.id === 'replay-pop') { closeReplay(); return; }    // also unloads the player
   el.classList.add('hidden');
   // keep any aria-expanded trigger honest — togglePopover does this on the
   // normal path, but this bulk close bypasses it.
@@ -109,10 +111,21 @@ function initDismissLayer() {
     if (!el || el === document.body || el === document.documentElement) return;
     dismissFrom(el);
   });
-  // and the whole window losing focus closes them all, like a native menu
-  // …except while a native file chooser (Settings → Brand) holds focus: that
-  // blur is the user answering the panel, not leaving it.
-  window.addEventListener('blur', () => { if (!isPickingFile()) closeAllPopovers(); });
+  // and the whole window losing focus closes them all, like a native menu —
+  // except (a) while a native file chooser (Settings → Brand) holds focus: that
+  // blur is the user answering the panel, not leaving it; and (b) focus moving
+  // INTO an iframe blurs this window too. Clicking the replay player's own
+  // document is using the panel, not leaving it, so a panel holding the
+  // now-focused frame is kept. (Deferred a tick: activeElement names the frame
+  // only once the move has landed.)
+  window.addEventListener('blur', () => {
+    if (isPickingFile()) return;
+    setTimeout(() => {
+      const a = document.activeElement;
+      const keep = a && a.tagName === 'IFRAME' ? a.closest(OPEN_PANELS) : null;
+      closeAllPopovers(keep || undefined);
+    }, 0);
+  });
 }
 
 /* ---------- settings (theme switcher) ---------- */
@@ -224,7 +237,7 @@ function initMoreMenu() {
     const act = e.target.closest('[data-act]'); if (!act) return;
     menu.classList.add('hidden');
     ({
-      export: doExport, wipe: openWipe, newgraph: openNewGraph,
+      export: doExport, wipe: openWipe, newgraph: openNewGraph, replay: () => openReplay(),
       settings: openSettings, sessions: openSessions, shortcuts: () => toggleLegend(true),
       checkupdate: checkForUpdatesNow,
     })[act.dataset.act]?.();
@@ -257,6 +270,7 @@ async function buildPalette(q) {
     { kind: 'cmd', label: 'New graph', run: openNewGraph },
     { kind: 'cmd', label: 'Wipe surface', run: openWipe },
     { kind: 'cmd', label: 'Export node', run: doExport },
+    ...(replayTargetLabel() ? [{ kind: 'cmd', label: `Replay to ${replayTargetLabel()}`, run: () => openReplay() }] : []),
     { kind: 'cmd', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', run: toggleMode },
     { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
     { kind: 'cmd', label: 'Settings', run: openSettings },
@@ -377,6 +391,7 @@ function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
    over 0–3: the overlay is modal, and the jump box inside it holds a filter, not a
    draft, so Escape from there closes the overlay exactly as it always did. */
 export function handleEscape() {
+  if (isReplayOpen()) { closeReplay(); return; }  // raised above the overlay, so it goes first
   // The shortcut sheet summoned OVER the overlay is the topmost layer on screen,
   // so it closes first — the overlay under it survives that Escape.
   if (isOverlayOpen() && isLegendOpen()) { toggleLegend(false); return; }
@@ -408,7 +423,7 @@ function initKeyboard() {
     if (e.key === 'Escape' && !meta) {
       // …except the modal overlay layers, which take Escape even from a field
       // inside them. See handleEscape for the full precedence order.
-      if (hasFloatPreview() || isOverlayOpen() || !editable) handleEscape();
+      if (hasFloatPreview() || isOverlayOpen() || isReplayOpen() || !editable) handleEscape();
       return;
     }
     if (editable || meta) return;
@@ -451,6 +466,14 @@ export function initShell() {
   initRail();
   initQueue();
   initWakePanel();
+  // The replay overlay's two hand-offs, injected so it imports neither the
+  // graph viewer nor (through topbar) the mount engine: opening a node on the
+  // surface — a preview, and out of the graph overlay if it was raised there —
+  // and the Escape forwarder the graph viewer uses for its own preview frames.
+  initReplay({
+    openNode: (id) => { previewNode(id); if (isOverlayOpen()) closeOverlay(); },
+    forwardEscapeFrom,
+  });
   initKeyboard();
   initDismissLayer();
 }

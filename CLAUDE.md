@@ -88,6 +88,8 @@ There is no build step (plain CommonJS) and no lint config. `npm start` / `node 
 | send a frame to the daemon from the chrome | `public/app/ws.js` (`send(frame)` — queues on a closed socket, drains after the reconnect's snapshot) | gate on `isOpen()` and drop the frame (the loss is invisible at both ends) |
 | leave the detached node preview | `public/app/topbar.js` (`leavePreview({activeId, restoreSnapshot, flushForms})`) | hand-copy the `previewing = false` transition |
 | walk or LIST the graph as DRAWN (nav, forks, lineage, layout, the ⌘K palette) | `public/app/graph-view.js` (`graphIndex`/`displayChildrenOf`/`displayParentOf`/`displayNodeList`) | `view.graphCache.nodes`, or `labels.childrenOf` — raw commit topology, for the ⑃ branch picker only |
+| resolve a node ref (`n1.7`, a stored id, `active`, `live`) on the server, or walk a node's ancestry | `lib/server/domain/refs` (`resolveNodeRef`) / `lib/server/domain/lineage` (`ancestry` — the ONE parent-chain walk; pane history and the replay path both read it) | a `label === ref` scan, or a private `parent_id` loop |
+| draw a committed node as a page (glance, `/preview/pane`, replay frames) | `lib/server/preview` (`renderNodePreview` / `pageItems` — page order with the markdown rendered, which the export reads too) | a second preview document, or a second `pageOrder` + `renderMarkdown` loop |
 | dismiss a transient chrome panel | `public/app/shell.js` (give it `.popover`; `closeAllPopovers`/`handleEscape` own it) | a private outside-click or document-Escape listener |
 | boot a server in a test | `test-support/helpers` (`withServer`) | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` (`withHub`) | `createHub` + `server.listen` in the test body |

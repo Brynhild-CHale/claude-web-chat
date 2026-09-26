@@ -150,6 +150,7 @@
       <button class="menu-item" data-act="newgraph">◇ New graph</button>
       <button class="menu-item" data-act="wipe">⌫ Wipe surface</button>
       <button class="menu-item" data-act="export">↧ Export node</button>
+      <button class="menu-item" data-act="replay">▶ Replay…</button>
       <button class="menu-item" data-act="sessions">◉ Sessions</button>
       <button class="menu-item" data-act="settings">⚙ Settings</button>
       <button class="menu-item" data-act="shortcuts">⌨ Shortcuts</button>
@@ -228,6 +229,35 @@
       </div>
     </div>
 
+    <!-- replay player (public/app/replay.js): an iframe of the /replay
+         document — the surface is never touched. A .popover, so the dismiss
+         layer and the one Escape owner close it; it opens above the graph
+         overlay it can be raised from. -->
+    <div id="replay-pop" class="popover replay-pop hidden" role="dialog" aria-modal="true" aria-label="Replay">
+      <div class="rpo-bar">
+        <span class="rpo-title">▶ REPLAY</span>
+        <label class="rpo-field">from <select id="rpo-from" class="wc-select" aria-label="Replay from"></select></label>
+        <label class="rpo-field">to <select id="rpo-to" class="wc-select" aria-label="Replay to"></select></label>
+        <label class="rpo-field">speed <select id="rpo-speed" class="wc-select" aria-label="Speed">
+          <option value="0.5">0.5×</option><option value="1">1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="4">4×</option>
+        </select></label>
+        <label class="rpo-field">transition <select id="rpo-transition" class="wc-select" aria-label="Transition">
+          <option value="cut">cut</option><option value="fade">fade</option>
+        </select></label>
+        <label class="rpo-field">captions <select id="rpo-captions" class="wc-select" aria-label="Captions">
+          <option value="prompt">prompt</option><option value="summary">summary</option><option value="none">none</option>
+        </select></label>
+        <span class="rpo-note" id="rpo-note" role="status"></span>
+        <button class="btn" id="rpo-open" title="Open the node on screen (leaves the replay)">Open this node</button>
+        <a class="btn" id="rpo-download" download title="Download this replay as one self-contained .html">↧ replay.html</a>
+        <button class="btn" id="rpo-gif" title="Render this replay as an animated GIF (drawn by a headless Chrome on this machine)">↧ GIF</button>
+        <button class="btn" id="rpo-mp4" title="Render this replay as an MP4 video (drawn by a headless Chrome, encoded by ffmpeg)">↧ MP4</button>
+        <button class="btn" id="rpo-webm" title="Render this replay as a WebM video (drawn by a headless Chrome, encoded by ffmpeg)">↧ WebM</button>
+        <button class="btn" id="rpo-close" title="Close (Esc)" aria-label="Close replay (Escape)">✕</button>
+      </div>
+      <iframe id="rpo-frame" class="rpo-frame" title="Replay player"></iframe>
+    </div>
+
     <!-- keyboard legend -->
     <div id="key-legend" class="legend hidden">
       <div class="legend-card">
@@ -236,12 +266,14 @@
         <div class="legend-row"><span>Open graph</span><span class="keys"><kbd>G</kbd></span></div>
         <div class="legend-row"><span>Components · packs</span><span class="keys"><kbd>N</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
+        <div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>
         <div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>
         <div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>
         <div class="legend-row"><span>Toggle queue rail</span><span class="keys"><kbd>Q</kbd></span></div>
         <div class="legend-row"><span>Push queue → Claude</span><span class="keys"><kbd>P</kbd></span></div>
         <div class="legend-row"><span>Sessions on this computer</span><span class="keys"><kbd>S</kbd></span></div>
         <div class="legend-row"><span>Light / dark</span><span class="keys"><kbd>T</kbd></span></div>
+        <div class="legend-row"><span>Replay: play · step</span><span class="keys"><kbd>Space</kbd><kbd>←</kbd><kbd>→</kbd></span></div>
         <div class="legend-row"><span>Shortcuts · close</span><span class="keys"><kbd>?</kbd><kbd>Esc</kbd></span></div>
         <h3 class="legend-sub">In the graph</h3>
         <div class="legend-row"><span>Select node</span><span class="keys"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></span></div>
@@ -250,6 +282,7 @@
         <div class="legend-row"><span>Set active</span><span class="keys"><kbd>A</kbd></span></div>
         <div class="legend-row"><span>Export node</span><span class="keys"><kbd>E</kbd></span></div>
         <div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>
+        <div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>
         <div class="legend-row"><span>Close graph</span><span class="keys"><kbd>Esc</kbd></span></div>
       </div>
     </div>
@@ -302,7 +335,7 @@
       <div class="gv-status">
         <span class="gv-status-active" id="gv-status-active">—</span>
         <span id="gv-status-counts"></span>
-        <span class="gv-status-keys">↑↓ select · ↵ open · A set active · Space glance · ? keys</span>
+        <span class="gv-status-keys">↑↓ select · ↵ open · A set active · Space glance · R replay · ? keys</span>
       </div>
     </div>
   </div>

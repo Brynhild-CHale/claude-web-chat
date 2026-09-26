@@ -353,9 +353,12 @@ test('page: the glance preview renders markdown in page order, escaped', async (
   await md(api, { id: 'h', text: '## Hello <b>there</b>', after: 'start' });
   const r = await turn(api);
   const html = await (await fetch(`${baseUrl}/preview/node/${r.node_id}`)).text();
-  const m = html.match(/const PAGE = (\[.*?\]);\n/);
-  assert.ok(m, 'the preview carries its page sequence');
-  const items = JSON.parse(m[1]);
+  // The page sequence rides in the node the preview document is filled with
+  // (lib/server/preview previewNodeJson → NODE.page), markdown already rendered.
+  const m = html.match(/const NODE = (.*);\n/);
+  assert.ok(m, 'the preview carries its node');
+  const items = JSON.parse(m[1]).page;
+  assert.ok(Array.isArray(items), 'the preview carries its page sequence');
   assert.deepEqual(items.map((i) => i.md || i.pane), ['h', 'a']);
   assert.equal(items[0].html, '<h2 data-slug="hello-b-there-b">Hello &lt;b&gt;there&lt;/b&gt;</h2>');
 });
@@ -378,6 +381,16 @@ test('page: an export interleaves rendered markdown with the panes; a markdown-f
   assert.deepEqual(payload.page, [
     { md: 'h', html: '<h1 data-slug="title">Title</h1>' },
     { pane: 'a' },
+    { pane: 'b' },
+  ]);
+
+  // `live` resolves through domain/refs like every other ref, and its
+  // synthesized node carries the page: uncommitted prose exports in place.
+  await md(api, { id: 'wip', text: 'draft *prose*', after: 'a' });
+  assert.deepEqual((await readPayload('live')).page, [
+    { md: 'h', html: '<h1 data-slug="title">Title</h1>' },
+    { pane: 'a' },
+    { md: 'wip', html: '<p>draft <em>prose</em></p>' },
     { pane: 'b' },
   ]);
 });
