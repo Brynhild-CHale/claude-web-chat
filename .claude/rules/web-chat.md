@@ -77,6 +77,16 @@ The activity layer tells you *that* the user interacted; a **declared signal** t
 - **Triage queue** — render N items, each with an approve/skip that bumps one declared signal; the user works the list and Pushes; you process the batch and update a progress pane.
 - **Live control panel** — declared toggles that gate what you do next ("include tests? target runtime?"); read them (`get_store`) at the start of each turn instead of re-asking in prose.
 
+### Panes can spawn panes
+
+A pane script gets `api` beside `store` and `root`: `api.spawn({id?, component?, params?, html?, after?, place?})` puts up a child pane (exactly one of `component` / `html`; by default it lands beneath its parent, after any earlier children, with id `<parent>-<n>`), and `api.close(id)` takes one down. Both return a promise of the daemon's envelope (`{ok, id}` or `{ok:false, …, hint}`) and never throw — in an export or a preview they answer `{ok:false}` and do nothing.
+
+- **A child is owned by its parent** (`owner: "pane:<parent>"`). A pane may re-spawn (replace) and close only its own children, or close itself — never your panes, a driver's, or another pane's children. A child the user **locked** refuses both.
+- **For you it is like a driver's pane:** re-rendering or clearing one is soft-rejected (`owned:true`) unless you pass `force:true`, and a bulk `clear` that would take one is rejected whole. Children outlive a closed parent.
+- **Caps:** 20 live children per parent, 60 pane-spawned panes in all, 3 generations deep, 30 spawn/close calls per parent per 10 s, 256 KB of html and 16 KB of params per spawn. A refusal names its `cap`.
+- **A spawned pane cannot declare wake signals** — `params.signals` is stripped (with a `warning`), so only you decide what wakes you.
+- Reach for it when one pane's content decides what else belongs on the page (a list that opens a detail pane per row, a launcher of saved components). Prefer `component` to raw `html`; raw-HTML spawn is the risky form and may be refused on a remote surface.
+
 ## Component discovery before rendering
 
 - Before rendering non-trivial UI — **and before answering a live-host-state ask (git, tests, logs, files) with one-shot terminal output** — call `list_components`; a saved or builtin component may already do it, live.
@@ -140,7 +150,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 - Mounts persist until cleared. Don't accumulate cruft from old demos.
 - When mounting alongside existing UI, use a fresh id (or omit id and let the server generate). When replacing, reuse the id.
 - **The shell's own element ids are reserved.** `main`, `topbar`, `status`, `dock`, `stage`, `overlay`, `drawer`, `minbar`, `queue-rail`, `cmd-palette` and the rest of the chrome are refused with `{ok:false, reserved:true, hint}` on `render` and `use_component`. Prefix your mount ids and it never comes up.
-- **Respect pane ownership.** `list_mounts` reports an `owner` per pane: `null`/`"claude"` is yours; `"service:<name>"` means a local driver process owns it. Re-rendering over a driver-owned pane is **soft-rejected** (`{ok:false, owned:true, owner}`) unless you pass `force:true` — check before clobbering, and prefer a fresh id alongside it. `clear` is gated identically, and a bulk `clear` (`{}` or a whole `target`) that would take a driver-owned pane is rejected **whole**, not half-applied — clear your own panes by id instead. Your own renders are `"claude"`, so you never block yourself.
+- **Respect pane ownership.** `list_mounts` reports an `owner` per pane: `null`/`"claude"` is yours; `"service:<name>"` means a local driver process owns it; `"pane:<id>"` means another pane spawned it. Re-rendering over a driver-owned pane is **soft-rejected** (`{ok:false, owned:true, owner}`) unless you pass `force:true` — check before clobbering, and prefer a fresh id alongside it. `clear` is gated identically, and a bulk `clear` (`{}` or a whole `target`) that would take a driver-owned pane is rejected **whole**, not half-applied — clear your own panes by id instead. Your own renders are `"claude"`, so you never block yourself.
 
 ## Anti-patterns
 

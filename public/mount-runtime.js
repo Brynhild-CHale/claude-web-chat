@@ -82,9 +82,20 @@
     return { root: root, scripts: scripts };
   }
 
+  // The pane API a script gets beside store/root when its page cannot act on the
+  // surface — the frozen export and the read-only previews. Both verbs answer
+  // (never throw), so a pane that spawns children still mounts in a snapshot;
+  // they just do nothing there.
+  function frozenPaneApi() {
+    var no = function () {
+      return Promise.resolve({ ok: false, frozen: true, hint: 'this page is a read-only snapshot; panes cannot spawn or close panes here' });
+    };
+    return { spawn: no, close: no };
+  }
+
   // Compile each extracted inline-script body into its own function of
-  // (store, root, params, mountId) and invoke it as fn(store, shadowRoot,
-  // params||{}, mountId). Each script is isolated: one that throws is caught
+  // (store, root, params, mountId, api) and invoke it as fn(store, shadowRoot,
+  // params||{}, mountId, api). Each script is isolated: one that throws is caught
   // (console.error) and does not abort its siblings or the mount. THE ONLY
   // dynamic-eval site in the codebase (see the conventions tripwire).
   //
@@ -92,11 +103,16 @@
   // that forwards the failure to the daemon's event ring (a dead script is
   // otherwise invisible outside the browser console — the double-silent
   // failure). The frozen export/preview consumers pass nothing.
-  function runScripts(root, scripts, store, params, mountId, onError) {
+  //
+  // `api` is the pane's {spawn(spec), close(id)} (panes spawning panes): the live
+  // client passes one bound to this mount id (public/app/mounts.js paneApiFor);
+  // without one, a script gets frozenPaneApi().
+  function runScripts(root, scripts, store, params, mountId, onError, api) {
+    var paneApi = api || frozenPaneApi();
     for (var i = 0; i < scripts.length; i++) {
       try {
-        var fn = new Function('store', 'root', 'params', 'mountId', scripts[i]);
-        fn(store, root, params || {}, mountId);
+        var fn = new Function('store', 'root', 'params', 'mountId', 'api', scripts[i]);
+        fn(store, root, params || {}, mountId, paneApi);
       } catch (e) {
         console.error('component script error', mountId, e);
         if (onError) { try { onError(e, i); } catch (e2) {} }
@@ -242,7 +258,7 @@
     });
   }
 
-  var api = { createStore: createStore, attachAndExtract: attachAndExtract, runScripts: runScripts, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded };
+  var api = { createStore: createStore, frozenPaneApi: frozenPaneApi, attachAndExtract: attachAndExtract, runScripts: runScripts, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded };
   if (glob) glob.__wcMount = api;                                                 // browser global (before client.js)
   if (typeof module !== 'undefined' && module.exports) module.exports = api;      // node require() — createStore is testable
 })(typeof window !== 'undefined' ? window : null);

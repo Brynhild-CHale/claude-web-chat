@@ -223,6 +223,24 @@ test('runScripts: runs each body as new Function(store,root,params,mountId); a t
   assert.equal(host.dataset.paneTitle, 'T:m1', 'store / root.host / params / mountId are all wired');
 });
 
+// Panes spawning panes: a script gets `api` beside store/root. The live chrome
+// passes one bound to the mount; a frozen page (export, preview) passes none and
+// the script gets a stand-in whose verbs resolve to a refusal instead of throwing
+// — a pane that spawns children still mounts in a snapshot.
+test('runScripts: hands each script `api` — the caller\'s, or a frozen stand-in that never throws', async () => {
+  const seen = [];
+  const store = mount.createStore({});
+  const live = { spawn: (s) => Promise.resolve({ ok: true, spec: s }), close: () => Promise.resolve({ ok: true }) };
+  mount.runScripts(null, ['store.set({ got: api })'], store, {}, 'm1', (e) => seen.push(e), live);
+  assert.equal(store.get('got'), live, 'the live api is passed through as-is');
+  mount.runScripts(null, ['store.set({ p: api.spawn({ html: "x" }), c: api.close("m1") })'], store, {}, 'm1', (e) => seen.push(e));
+  assert.deepEqual(seen, [], 'calling the frozen api does not throw');
+  const p = await store.get('p');
+  assert.equal(p.ok, false);
+  assert.equal(p.frozen, true);
+  assert.equal((await store.get('c')).frozen, true);
+});
+
 test('the assembled export splices the shared runtime source verbatim', () => {
   const { assembleExport } = require('../lib/server/export');
   const html = assembleExport({ mounts: [{ id: 'm1', html: '<p>x</p>', params: {} }], store: { a: 1 } });

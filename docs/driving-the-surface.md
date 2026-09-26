@@ -91,6 +91,11 @@ collisions in the first place.
 Pane history's "make current" (`POST /api/mounts/:id/restore`) never touches a
 driver's pane: it refuses a live pane a driver owns, and a version a driver wrote.
 
+A third kind of owner is `pane:<id>`: a pane that another pane's script spawned
+(`api.spawn`, via `POST /api/pane/spawn`). The same gate applies to a driver —
+a driver re-rendering or clearing one needs `force:true` — and a pane can never
+spawn over a driver's pane, because it never passes `force`.
+
 ---
 
 ## The event model

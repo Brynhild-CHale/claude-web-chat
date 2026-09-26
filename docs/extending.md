@@ -864,6 +864,33 @@ not two.
 - `POST /api/mounts/:id/restore {node_id, with_form?, after?}` → `domain/mounts`
   `restoreMount` — "make current".
 
+### `lib/server/domain/spawn.js` — panes spawning panes
+
+A pane script's `api.spawn(spec)` / `api.close(id)` (handed to every script by
+`runScripts` in `public/mount-runtime.js`; the live chrome binds it to the mount
+in `public/app/mounts.js` `paneApiFor`, the export and previews get a frozen
+stand-in) posts to `POST /api/pane/spawn` / `POST /api/pane/close`
+(`routes/spawn.js`, which only resolves a component name to its source). This
+module is the POLICY; the writes are `setMount` / `removeMount`, so reserved ids,
+the markdown id space, the user's lock, the owner gate and the gen bump are the
+engine's, not a copy.
+
+- `spawnPane(state, bus, {parent, id, html, params, component, after, place})` —
+  a child is `owner:'pane:<parent>'`, so setMount's existing owner gate is the
+  whole ownership rule: a parent replaces its own children and nothing else
+  (it never passes `force`). A new child defaults to `after` its parent's last
+  child (or the parent) and to id `<parent>-<n>`. `params.signals` is stripped —
+  the signal registry is derived from every live mount, so a pane-declared
+  `wake:'immediate'` would let a pane wake Claude.
+- `closePane(state, bus, {parent, id})` — a pane's own child, or itself; never
+  a locked pane.
+- Caps (`MAX_CHILDREN`, `MAX_SPAWNED_TOTAL`, `MAX_DEPTH`, `RATE_MAX` per
+  `RATE_WINDOW_MS`, `HTML_MAX_CHARS`, `PARAMS_MAX_CHARS`) bound a runaway script.
+  They are not a sandbox: `parent` is stamped by the chrome from the same
+  closure-bound id the store facade stamps, and the daemon checks only that it
+  is a live pane — every pane shares the page document and can reach the route
+  with any `parent`, as it can reach `/api/render`.
+
 ### `lib/server/domain/mounts.js` — the mount-set engine
 
 Putting a pane on the live surface is not one write. It is, in order: reserved-id
