@@ -154,6 +154,71 @@ tick for its label), and speed (0.5–4×), transition and captions are remember
 per browser. **Open this node** previews the step on screen on the surface, and
 **↧ replay.html** downloads what you are watching.
 
+## Replays and GIFs — a replay as a file
+
+The same replay can be written to disk, to attach or post:
+
+| Route | Who uses it | What you get |
+| --- | --- | --- |
+| `export({ format: 'gif' \| 'replay', from, to, … })` MCP tool | Claude | the path of `replay-<from>_<to>-<stamp>.gif` / `.html` under `.web-chat/exports/` |
+| `claude-web-chat export [to] --gif \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions …]` | the user, from a terminal | the same write, path printed |
+| **↧ GIF** in the replay player | the user, from the surface | a render of what the player is showing, with a link to download it |
+| `POST /api/replay/render` | anything local, JSON body only | `{ ok, path, label, from, to, format, frames, encoder, bytes }` |
+
+`format: 'html'` (the default) is still the one-page export above, unchanged;
+`replay` writes the replay document as a self-contained `.html` player and needs
+nothing but the daemon. `mp4` / `webm` are named in the tool and the CLI and are
+refused with `code: 'format-unavailable'` until an ffmpeg encoder exists.
+
+**A GIF is drawn by a real browser — the user's own.** There is no bundled
+browser (the release keeps to its four runtime dependencies), so the daemon
+looks for one (`lib/replay/find.js`): `WEB_CHAT_CHROME` if set (then it is the
+only candidate, so a wrong path is reported rather than routed around), else on
+macOS the Chrome, Chromium, Edge and Brave app bundles in `/Applications`, else
+`google-chrome`, `chromium`, `microsoft-edge`, `brave-browser` and friends on
+`PATH`. With none, a GIF request answers `422` `code: 'chrome-not-found'` with a
+hint naming what to install; `GET /api/replay/capabilities` (`{ chrome, ffmpeg,
+formats }`, cached — `?refresh=1` looks again) says so up front, the player
+disables **↧ GIF**, and `claude-web-chat doctor` notes what it found.
+
+How a render works (`lib/server/replay/render.js`):
+
+- The browser runs headless on a **throwaway profile** under `.web-chat/tmp/`,
+  launched with `--remote-debugging-pipe` — the DevTools protocol over two
+  inherited file descriptors, so no debugging port is ever opened
+  (`lib/replay/chrome.js`). It is pointed at this daemon's own `/replay` document
+  over loopback with `chrome=0`, so a frame is drawn under the same
+  `PREVIEW_CSP` as every preview.
+- Frames are taken where `player.js`'s own timeline says: one per step for a
+  cut, and for a fade `fps` samples across the fade (default 10) then one held
+  frame. Each is `seek(t)` then a screenshot; the PNG is decoded by
+  `lib/core/png.js` and streamed into `lib/core/gif.js` — a per-frame median-cut
+  palette (exact when a frame has ≤ 256 colours, which UI often does), LZW, and
+  frame differencing, so a node held for 2.5 s is one frame and a caption change
+  is a small rectangle. The GIF loops forever.
+- **Captions default to `summary`** for anything written this way — a file is
+  made to be sent on, and a prompt is the one thing a replay carries that a page
+  export does not. `captions: 'prompt'` includes them; the player's **↧ GIF**
+  follows the player's caption choice, and with `prompt` selected its first
+  click only warns that the prompts will be in the image.
+- Options: `width` (320–1920, default 960; the height follows the 16:10 frame),
+  `hold_ms`, `pacing`, `transition`, `captions`, `fps` (1–30), `from` / `to` /
+  `include_collapsed` as for the player.
+- Bounded: one render at a time (a second is `409` `busy`), at most 1000 frames
+  (`413` `too-many-frames`), 64 MB of output (`413` `too-large`) and five minutes
+  of wall clock (`504` `timeout`). A browser that dies or draws a frame of the
+  wrong size is a `502` naming what happened. Every path out closes the browser —
+  `Browser.close`, then a kill — and removes its profile.
+- `GET /api/replay/file/:name` hands a rendered file back as a download. It
+  serves only `replay-*.{gif,mp4,webm,html}` names, resolved inside
+  `.web-chat/exports/` (a symlink pointing out is refused); page exports are not
+  its to serve.
+- The route's risk, and why it is accepted, is written at the head of
+  `lib/server/routes/replay.js`: any pane can ask for a render, but what it can
+  make the daemon do is exactly what the player can — one browser, fixed flags,
+  pointed at the daemon's own page, writing only under `exports/` — and a JSON
+  body is required, so a site the user is browsing cannot trigger one at all.
+
 ## Design history
 
 This file used to be the pre-implementation plan for the feature, and was linked

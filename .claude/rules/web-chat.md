@@ -109,6 +109,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 - `export({ node })` — `node` is a hierarchical label (`n1.7`), a stored id, `'active'` (default), or `'live'` (the current uncommitted surface). Returns the path of the written file under `.web-chat/exports/`.
 - The export is a **frozen snapshot**: interactions still work locally (sliders move, forms fill) but persist nowhere — correct for a shareable artifact, not a live link.
 - The user can also self-serve: the topbar **⬇** button downloads the node they're currently viewing (a previewed older node exports *that* node, as rendered), and `claude-web-chat export [node]` does the same from the CLI.
+- **To show how the work evolved**, `export({ format: 'gif' })` renders a *replay* — the surface played node by node from `from` (default: the nearest bookmark) down to `to` (default: active) — as an animated GIF, and `format: 'replay'` writes the same as a self-contained `.html` player. A GIF needs a Chrome-family browser on the machine; `{code:'chrome-not-found', hint}` means there is none — pass the hint on and offer `format: 'replay'`. Captions default to the prompt *summary*; use `captions: 'prompt'` only when the user wants their full prompts in the file.
 - Tell the user the path you wrote so they can grab and attach it.
 
 ## Turn lifecycle

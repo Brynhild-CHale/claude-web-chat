@@ -58,6 +58,8 @@ const lineage = (from, to) => {
 };
 
 const calls = [];
+// What GET /api/replay/capabilities answers; a test may flip it.
+let caps = { ok: true, chrome: '/x/chrome', ffmpeg: null, formats: { replay: true, gif: true, mp4: false, webm: false } };
 let W = null, WS = null, view = null, savedGlobals = null, savedTimers = null;
 
 async function boot() {
@@ -75,7 +77,11 @@ async function boot() {
   const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
   window.fetch = async (url, opts) => {
     const u = String(url);
-    calls.push({ url: u, method: (opts && opts.method) || 'GET' });
+    calls.push({ url: u, method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null });
+    if (u === '/api/replay/capabilities') return json(caps);
+    if (u === '/api/replay/render') {
+      return json({ ok: true, format: 'gif', path: '/p/.web-chat/exports/replay-n1-1_n1-2-20260101-000000.gif', label: 'n1.1 → n1.2', frames: 2, bytes: 4096, encoder: 'builtin' });
+    }
     if (u === '/api/graph') return json({ nodes: NODES.map((n) => ({ ...n })), active: 'n1b' });
     if (u.startsWith('/api/replay/path')) {
       const q = new URLSearchParams(u.split('?')[1]);
@@ -308,4 +314,50 @@ test('graph inspector: ▶ Replay and R open it above the overlay; Escape closes
   key('r', $('overlay'));
   await tick();
   assert.ok(replayOpen(), 'R in the graph opens the player on the selected node');
+});
+
+test('↧ GIF: prompt captions warn first (prompts may be private), a second click renders, and the note links the file', async () => {
+  await openFromMenu();
+  await tick();
+  assert.equal($('rpo-gif').disabled, false, 'Chrome found: the button is live');
+  calls.length = 0;
+  click($('rpo-gif'));
+  await tick();
+  assert.equal(calls.filter((c) => c.url === '/api/replay/render').length, 0, 'the first click with prompt captions renders nothing…');
+  assert.match($('rpo-note').textContent, /prompts.*private/i, '…it says the prompts will be in the image');
+  click($('rpo-gif'));
+  await tick();
+  await tick();
+  const r = calls.filter((c) => c.url === '/api/replay/render');
+  assert.equal(r.length, 1, 'the second click renders');
+  assert.equal(r[0].method, 'POST');
+  assert.deepEqual(r[0].body, { format: 'gif', transition: 'cut', captions: 'prompt', from: 'n1a', to: 'n1b' });
+  const link = $('rpo-gif-file');
+  assert.ok(link, 'the note links the rendered file');
+  assert.equal(link.getAttribute('href'), '/api/replay/file/replay-n1-1_n1-2-20260101-000000.gif');
+  assert.match($('rpo-note').textContent, /2 frames, 4 KB/);
+});
+
+test('↧ GIF: summary captions render on the first click; no Chrome disables the button', async () => {
+  W.localStorage.setItem('wc:replay-prefs', JSON.stringify({ captions: 'summary' }));
+  await openFromMenu();
+  await tick();
+  calls.length = 0;
+  click($('rpo-gif'));
+  await tick();
+  await tick();
+  const r = calls.filter((c) => c.url === '/api/replay/render');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].body.captions, 'summary');
+  key('Escape');
+
+  caps = { ...caps, chrome: null, formats: { ...caps.formats, gif: false } };
+  try {
+    await openFromMenu();
+    await tick();
+    assert.equal($('rpo-gif').disabled, true, 'no Chrome-family browser: nothing to draw a GIF with');
+    assert.match($('rpo-gif').title, /WEB_CHAT_CHROME/);
+  } finally {
+    caps = { ...caps, chrome: '/x/chrome', formats: { ...caps.formats, gif: true } };
+  }
 });

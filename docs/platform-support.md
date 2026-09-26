@@ -75,6 +75,27 @@ to check them.
 
 ---
 
+## Replay GIFs: the browser they borrow
+
+Rendering a replay to a GIF (`export` with `format: 'gif'`, `claude-web-chat
+export --gif`, the player's **↧ GIF**) drives a Chrome-family browser already on
+the machine; nothing is bundled. Everything else — including a replay exported
+as `.html` — works without one. Where it looks, per platform
+(`lib/replay/find.js`; `WEB_CHAT_CHROME` overrides everywhere):
+
+| Platform | Where the browser is found | Verified by |
+| --- | --- | --- |
+| **macOS** | `/Applications/{Google Chrome,Chromium,Microsoft Edge,Brave Browser}.app` | Developed against Chrome for Testing 151 via `WEB_CHAT_CHROME`; `test/replay-capture-e2e.test.js` runs wherever a browser is found |
+| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH` | The same e2e test, on a CI image that has Chrome; the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
+| **Windows (WSL2)** | A **Linux** Chrome installed inside the distro, as on Linux. A Windows Chrome under `/mnt/c` cannot share file-descriptor pipes with a Linux process and is not a candidate | Not run by anyone |
+
+The browser is launched with `--use-mock-keychain --password-store=basic`: on
+macOS, a headless Chrome whose `HOME` is not the login user's (a sandboxed test
+run, a daemon started from an unusual environment) otherwise opens its first
+connection and then waits forever on a Keychain lookup before sending a byte.
+`ffmpeg` (`WEB_CHAT_FFMPEG` or `PATH`) is detected and reported by
+`/api/replay/capabilities` and `doctor`, but nothing uses it yet.
+
 ## Known issues that affect every platform
 
 Surfaced by the Windows and Linux assessments. **These are not platform

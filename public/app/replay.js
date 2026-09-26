@@ -5,7 +5,9 @@
 // (lib/server/replay/document.js: stage, caption bar, scrubber, controller) —
 // and this module only frames it: an iframe of that document plus the choices
 // around it (from / to, speed, transition, captions), "Open this node", and a
-// download of the same document as replay.html.
+// download of the same document as replay.html, and ↧ GIF — a render of the
+// same replay by the daemon (POST /api/replay/render, a headless system Chrome),
+// linked in the note when it is done.
 //
 // It never touches the live surface. The frames are the node preview document
 // running inside the replay's own iframe, under PREVIEW_CSP, so nothing here
@@ -26,6 +28,10 @@ const SPEEDS = ['0.5', '1', '1.5', '2', '4'];
 const DEFAULT_PREFS = { speed: '1', transition: 'cut', captions: 'prompt' };
 
 let hooks = { openNode: null, forwardEscapeFrom: null };
+// The GIF export: whether a render is running, and whether the user has been
+// told — once, for this replay — that `prompt` captions burn their prompts
+// into an image they are about to send somewhere.
+let gif = { busy: false, promptOk: false, can: true };
 // The replay being shown: its endpoints and the lineage the pickers offer.
 let cur = { to: null, from: null, lineage: [] };
 
@@ -48,6 +54,76 @@ function player() {
 }
 
 function note(text) { const n = $('rpo-note'); if (n) n.textContent = text || ''; }
+
+// A finished render: a link to the file, built from nodes (the name comes from
+// the server, and textContent is the only thing that ever carries it).
+function noteFile(r) {
+  const n = $('rpo-note');
+  if (!n) return;
+  n.textContent = '';
+  const name = String(r.path || '').split(/[\\/]/).pop();
+  const a = document.createElement('a');
+  a.href = '/api/replay/file/' + encodeURIComponent(name);
+  a.setAttribute('download', name);
+  a.id = 'rpo-gif-file';
+  a.textContent = '↧ ' + name;
+  n.appendChild(document.createTextNode('GIF ready — '));
+  n.appendChild(a);
+  const kb = Math.max(1, Math.round((r.bytes || 0) / 1024));
+  n.appendChild(document.createTextNode(` (${r.frames} frame${r.frames === 1 ? '' : 's'}, ${kb} KB)`));
+}
+
+// Whether this machine can draw a GIF (a Chrome-family browser was found). The
+// button stays usable when the answer is unknown: the render route says why.
+async function checkCapabilities() {
+  const btn = $('rpo-gif');
+  if (!btn) return;
+  try {
+    const r = await fetch('/api/replay/capabilities');
+    const caps = await r.json().catch(() => ({}));
+    const can = !(caps && caps.formats && caps.formats.gif === false);
+    gif.can = can;
+    btn.disabled = !can || gif.busy;
+    btn.title = can
+      ? 'Render this replay as an animated GIF (drawn by a headless Chrome on this machine)'
+      : 'No Chrome-family browser found on this machine — install Chrome, Chromium, Edge or Brave (or set WEB_CHAT_CHROME) to render GIFs';
+  } catch { /* unknown: leave it enabled */ }
+}
+
+// Render the replay being watched to a GIF. Captions follow the overlay's
+// choice — but `prompt` shows the user's own prompts, which may be private, so
+// the first click only says so and a second click confirms.
+async function renderGif() {
+  if (gif.busy) return;
+  const p = prefs();
+  if (p.captions === 'prompt' && !gif.promptOk) {
+    gif.promptOk = true;
+    note('The GIF will show your prompts, which may be private — click ↧ GIF again to include them, or switch captions to summary or none.');
+    return;
+  }
+  const btn = $('rpo-gif');
+  gif.busy = true;
+  if (btn) btn.disabled = true;
+  note('Rendering GIF in a headless Chrome…');
+  try {
+    const body = { format: 'gif', transition: p.transition, captions: p.captions };
+    if (cur.from) body.from = cur.from;
+    if (cur.to) body.to = cur.to;
+    const r = await fetch('/api/replay/render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) note(`GIF failed: ${j.error || r.statusText}${j.hint ? ' — ' + j.hint : ''}`);
+    else noteFile(j);
+  } catch (e) {
+    note(`GIF failed: ${String((e && e.message) || e)}`);
+  } finally {
+    gif.busy = false;
+    if (btn) btn.disabled = !gif.can;
+  }
+}
 
 // The query both the frame and the download are built from.
 function query(extra = {}) {
@@ -131,6 +207,8 @@ export async function openReplay({ to = null, from = null } = {}) {
   window.dispatchEvent(new CustomEvent('wc:close-popovers', { detail: { keep: p } }));
   p.classList.remove('hidden');
   note('');
+  gif.promptOk = false;
+  checkCapabilities();
 
   const def = await getPath(from ? { to: target, from } : { to: target });
   if (def.error) {
@@ -209,7 +287,8 @@ export function initReplay(h = {}) {
     if (api) api.setSpeed(Number(e.target.value));   // live — no reload
   });
   on('rpo-transition', 'change', (e) => { savePrefs({ transition: e.target.value }); load({ at: stepIndex() }); });
-  on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); load({ at: stepIndex() }); });
+  on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); gif.promptOk = false; load({ at: stepIndex() }); });
+  on('rpo-gif', 'click', renderGif);
   on('rpo-from', 'change', (e) => { cur.from = e.target.value; renderPickers(); load(); });
   on('rpo-to', 'change', (e) => { cur.to = e.target.value; renderPickers(); load(); });
   window.addEventListener('keydown', onKey, true);

@@ -85,13 +85,13 @@ review.
 entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
                          │  import ↓ only      (never each other)
 shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · capture/* ·
-                   channel/*
+                   channel/* · replay/*
                          │  import ↓ only      (may import each OTHER — that is
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
-                   channels · resources · mcp-seen   (zero deps on the rest of lib/)
+                   channels · resources · mcp-seen · png · gif   (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -162,6 +162,8 @@ were the only places they lived.
 | hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is NOT the alternative — extend the kit) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | pack a directory as a `.zip`, or checksum bytes with CRC-32 | `lib/core/zip` `writeZipStore(dir)` / `crc32(buf)` | a second ZIP encoder, or a hand-derived CRC-32 table |
+| decode a PNG, or write an animated GIF | `lib/core/png` `decodePng(buf)` / `lib/core/gif` `createGifEncoder({width, height, loop})` · `encodeGif(frames, {w, h})` | a second decoder or encoder, or a dependency for either |
+| find a system Chrome / ffmpeg, or drive Chrome headless | `lib/replay/find` (`findChrome` / `findFfmpeg`) · `lib/replay/chrome` (`captureFrames` — CDP over `--remote-debugging-pipe`, throwaway profile, kill-on-timeout) | Puppeteer/Playwright, a debugging PORT, or a second finder with its own candidate list |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
@@ -930,6 +932,8 @@ Current homes (baselines can only shrink toward these):
 | `=== 'li'` (the list-item walker) | `lib/capture/profiles/util.js` (`listItems(el)`) — required by `article`/`simplify`/`markdown`, and injected into capture bundles as `ctx.listItems`, which is the only way a bundle can reach it. A flat `querySelectorAll('li')` emits a nested item twice | landed with the ctx-kit list walker ✅ |
 | `0xedb88320` (the CRC-32 polynomial) | `lib/core/zip.js` (`crc32`) — `zlib.crc32` where Node has it, with ONE fallback table for the two 22.x point releases below it. It existed twice, in an Express route and in `extensions/make-icons.js`, for a checksum Node ships | landed with the zip engine ✅ |
 | `0x04034b50` (the ZIP local-file-header signature) | `lib/core/zip.js` (`writeZipStore`) — the store-only writer the extension download serves. It lived inline in `lib/server/routes/extensions.js`, where nothing could test it without standing up the router | landed with the zip engine ✅ |
+| `paeth(` (the PNG Paeth predictor) | `lib/core/png.js` (`decodePng`) — 8-bit RGB/RGBA, non-interlaced, every filter, CRC-checked; the replay renderer decodes Chrome's screenshots with it | landed with replay GIFs ✅ |
+| `GIF89a` (the GIF signature) | `lib/core/gif.js` (`createGifEncoder` / `encodeGif`) — per-frame median-cut palette, LZW with clear codes, frame-diff rectangles; test-support holds the one independent decoder | landed with replay GIFs ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 | `isOpen` imported from `./ws.js` **in `public/app` only** | `public/app/ws.js` — `send(frame)` decides what happens on a closed socket (it queues, coalesced, and drains after the reconnect's snapshot). The one importer left is `mounts.js`'s `sendFormState`, which returns instead of queueing because the reconcile re-reads the live DOM | landed with the outbound frame queue ✅ |
 

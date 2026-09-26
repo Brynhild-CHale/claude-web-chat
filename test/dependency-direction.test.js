@@ -54,7 +54,11 @@ const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server']);
 // points and layered on lib/update's managed-file primitives. It must never
 // import an entry point — which is why resolveRoot takes no prompt of its own
 // and the `claude` shell-out is injectable rather than reaching for lib/cli.
-const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup']);
+// lib/replay is SHARED: the host-side half of rendering a replay to an image —
+// finding a system Chrome / ffmpeg and driving Chrome over its debugging pipe.
+// It knows nothing of the graph (the daemon hands it a URL and frame times), so
+// both the server's render route and `doctor` can use it.
+const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup', 'replay']);
 
 // ── the baseline: edges that legitimately remain ────────────────────────────
 // Each is `from => to` at FILE granularity, because the point of naming them is
