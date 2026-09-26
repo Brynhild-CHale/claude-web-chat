@@ -39,7 +39,9 @@ downloads that node as rendered, not the active one.
 Inlined: each pane's HTML and its `<script>` bodies, the mount targets, the store
 snapshot, each pane's `pane_state` and `form_state` (so typed-but-unsent values
 survive into the export), and the theme resolved through the full pane → node →
-global cascade.
+global cascade. A theme with light and dark modes is baked in its **light** mode
+(a single-mode theme in its own) — the export has no viewer whose ◑ preference
+it could read; see [`themes.md`](themes.md).
 
 The page mounts its panes with **the same runtime the live surface uses** —
 `public/mount-runtime.js`, spliced in verbatim by

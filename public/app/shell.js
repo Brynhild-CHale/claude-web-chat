@@ -4,7 +4,7 @@
 // the proximity queue rail — live since channels landed: it shows the queued
 // wake items public/app/queue.js maintains, and Q pins it open.
 import { $ } from './state.js';
-import { toggleMode } from './theme.js';
+import { toggleMode, modeToggleable } from './theme.js';
 import {
   previewNode, ensureGraph, doExport, doWipe, updateChip, togglePopover, showReaimNote, leavePreview,
 } from './topbar.js';
@@ -115,14 +115,14 @@ function initDismissLayer() {
 async function populateThemeSelect() {
   const sel = $('settings-theme');
   if (!sel) return;
-  let themes = [], current = 'web-chat';
+  let themes = [], current = 'earthy';
   try {
     const [list, g] = await Promise.all([
       fetch('/api/themes').then(r => r.json()),
       fetch('/api/theme?scope=global').then(r => r.json()),
     ]);
     themes = list.themes || [];
-    current = g.name || 'web-chat';
+    current = g.name || 'earthy'; // no theme.json = the stock look, Earthy
   } catch {}
   sel.innerHTML = '';
   const groups = { builtin: 'built-in', local: 'this project', system: 'system' };
@@ -133,7 +133,9 @@ async function populateThemeSelect() {
     og.label = groups[loc];
     for (const t of inLoc) {
       const o = document.createElement('option');
-      o.value = t.name; o.textContent = t.name;
+      o.value = t.name;
+      // a single-mode pack says so here, where the ◑ toggle's absence is chosen
+      o.textContent = t.name + (t.modes && t.modes.length === 1 ? ` (${t.modes[0]} only)` : '');
       if (t.name === current) o.selected = true;
       og.appendChild(o);
     }
@@ -251,7 +253,7 @@ async function buildPalette(q) {
     { kind: 'cmd', label: 'New graph', run: openNewGraph },
     { kind: 'cmd', label: 'Wipe surface', run: openWipe },
     { kind: 'cmd', label: 'Export node', run: doExport },
-    { kind: 'cmd', label: 'Toggle light / dark', run: toggleMode },
+    { kind: 'cmd', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', run: toggleMode },
     { kind: 'cmd', label: 'Pin comment', run: togglePinMode },
     { kind: 'cmd', label: 'Settings', run: openSettings },
   ];

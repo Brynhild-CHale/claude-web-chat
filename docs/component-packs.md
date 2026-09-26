@@ -305,9 +305,12 @@ inside your pane and the user's theme reaches you. Raw CSS injected at
 global/node scope styles chrome only. **Reference the tokens** — a pack that
 hardcodes `#1a1a1a` looks broken the moment the user switches theme.
 
-Vocabulary: `--wc-bg --wc-fg --wc-panel-bg --wc-header-bg --wc-muted --wc-border
---wc-border-light --wc-accent --wc-accent-dark --wc-gold --wc-green --wc-radius
---wc-radius-sm --wc-radius-lg --wc-shadow --wc-font --wc-mono`.
+Core vocabulary: `--wc-bg --wc-fg --wc-fg-bright --wc-panel-bg --wc-header-bg
+--wc-muted --wc-border --wc-accent --wc-accent-text --wc-gold --wc-green
+--wc-comment --wc-radius --wc-radius-sm --wc-radius-lg --wc-shadow --wc-font
+--wc-mono --wc-display --wc-reading`, plus `--wc-content-bg / -fg / -accent`
+for content wells. The full canonical table is in [`themes.md`](themes.md);
+every builtin pack defines all of it, in every mode it offers.
 
 ### Do not clobber panes you do not own
 
@@ -836,7 +839,7 @@ with `--replace`. You cannot fix that from your side; just pick distinctive name
 - [ ] No `document` *queries* in any pane script — `root.querySelector`, never `document.querySelector`/`getElementById`. (`document.createElement` is fine; it is how you build DOM from data without `innerHTML`.)
 - [ ] No `<script src>`, no CDN, no external fetch you cannot justify.
 - [ ] No `innerHTML` on anything you did not author.
-- [ ] Colors reference `--wc-*` tokens; the pack looks right in light and dark.
+- [ ] Colors reference `--wc-*` tokens; the pack looks right under every builtin theme (earthy light and dark, paper, georgetown).
 - [ ] Stable mount ids documented in `SKILL.md`.
 - [ ] Store keys and control keys documented in `SKILL.md`.
 - [ ] `service.js` has a `stop()` that genuinely releases everything, and

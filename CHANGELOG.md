@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Three theme packs ship as builtins: Earthy, Paper and Georgetown.** `list_themes` and ⋯ → Settings list them; `apply_theme` applies them. **Earthy** is today's look, both modes, value for value — `public/app.css`'s two token blocks verbatim — and stays the default, so nothing changes on upgrade. **Paper** is flat cream with Earthy's olive accent and every depth effect switched off. **Georgetown** is navy and Pantone 293 on a cross-hatched putty vellum, with Caslon headings (falling back to Georgia until the font is bundled) and a 2px blue rule under a white topbar. Paper and Georgetown are light-only. Applying a builtin stores a reference to it, so later refinements to a pack reach the projects that applied it. `web-chat`, the old name for the stock look, still applies — as `earthy` — but is no longer listed.
+- **Light/dark is now a mode inside a theme.** A theme may carry `modes: {light: {tokens, css}, dark: {tokens, css}}` over its mode-free `tokens`/`css`, through `set_theme`, `save_theme` and the theme file alike. ◑, `T` and the palette flip the mode within the current global theme, re-flattening node and pane themes along with it. When that theme declares one mode only, ◑ is greyed out and its tooltip says so, and the palette entry says so too. Your `wc-mode` preference is kept, so switching back to a two-mode pack restores it. A theme with no `modes` (every theme saved before this) behaves exactly as before. `get_theme` takes `mode` (light by default) and reports `mode`/`modes` when the global theme has modes. `list_themes` names each theme's modes without dumping the per-mode maps. Exports and glance previews bake the light mode.
+- **One canonical design-token table** (`lib/server/theme-packs.js`, documented in the new `docs/themes.md` — `claude-web-chat docs themes`). It merges the design's drifting token sets into 62 tokens. New are `--wc-display` (headings) and `--wc-reading` (prose), plus `--wc-gold-bg`, `--wc-edge`, `--wc-scrim`, `--wc-panel-92` and `--wc-border-soft`, now defined in `app.css` for both Earthy modes too. The design's single `--wc-r` maps onto the existing `--wc-radius`/`-sm`/`-lg`. Every pack defines every token in every mode it declares, and a test holds the rules file, `set_theme`'s description and the docs to the table.
+
 ## [0.7.6] - 2026-09-18
 
 ### Upgrading from 0.7.5

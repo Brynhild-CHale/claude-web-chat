@@ -53,6 +53,8 @@
   --wc-radius-lg: 4px;
   --wc-font: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --wc-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --wc-display: var(--wc-font);    /* headings */
+  --wc-reading: var(--wc-font);    /* markdown prose; pane content opts in */
   --wc-theme-transition: 280ms;
 
   /* content wells (recessed inputs) */
@@ -100,6 +102,11 @@
   --wc-hover-bg: #2c2519;          /* dock buttons, stepper */
   --wc-row-active-bg: #30281b;     /* active row in the graph history list */
   --wc-gold-fg: #1c1710;           /* ink on a gold fill */
+  --wc-gold-bg: #2e2513;           /* bookmark fill behind gold ink */
+  --wc-panel-92: rgba(33, 28, 18, 0.94);  /* translucent panel over the graph canvas */
+  --wc-border-soft: #3a3225;       /* hairline quieter than --wc-border */
+  --wc-edge: #5a4e3b;              /* graph edges */
+  --wc-scrim: rgba(8, 6, 3, 0.72); /* modal backdrop */
 
   /* --- keycap chrome --- */
   --wc-key-bg: #1e1910;
@@ -164,6 +171,11 @@
   --wc-hover-bg: #e6ddca;
   --wc-row-active-bg: color-mix(in srgb, var(--wc-accent) 16%, transparent);
   --wc-gold-fg: #1c1710;
+  --wc-gold-bg: #f3e8cc;
+  --wc-panel-92: rgba(246, 240, 228, 0.94);
+  --wc-border-soft: #d9cfb7;
+  --wc-edge: #b8ab8e;
+  --wc-scrim: rgba(60, 45, 20, 0.5);
 
   --wc-key-bg: #efe8d8;
   --wc-key-border: #bfb190;
@@ -356,6 +368,8 @@ kbd {
 /* toggle state — e.g. #btn-pin-mode while pin mode is armed (comments.js sets .active) */
 .dock-btn.active { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
 .dock-btn.active:hover { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 22%, transparent); }
+/* ◑ under a single-mode theme pack: present, inert, and its title says why */
+.dock-btn.is-disabled, .dock-btn.is-disabled:hover { opacity: .38; cursor: default; background: transparent; color: var(--wc-text-2); }
 
 /* node-nav stepper (bordered group) */
 .stepper { display: flex; align-items: center; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-panel-bg); overflow: hidden; }
