@@ -79,7 +79,7 @@ function offsetFor(rootId) {
   const o = offsets()[rootId];
   return (Array.isArray(o) && o.length === 2) ? o : [0, 0];
 }
-// persist:false keeps the drag cheap — one write on mouseup, not one per frame.
+// persist:false keeps the drag cheap — one write on pointerup, not one per frame.
 function setOffset(rootId, dx, dy, persist = true) {
   const o = offsets();
   const rx = Math.round(dx), ry = Math.round(dy);
@@ -1316,38 +1316,62 @@ export function initGraph() {
   $('gv-zoom-out').addEventListener('click', () => setZoom(camera.scale / 1.2));
 
   // pan, graph placement & zoom
+  // Pointer events, not mouse events: a touch drag never produces mousemove, so
+  // the canvas could not be panned (or a graph placed) on a phone or tablet at
+  // all. One pointer drives it — the first one down; a second finger is ignored
+  // rather than yanking the camera between two contact points — and the canvas
+  // declares `touch-action: none` (app.css) so the browser hands the drag to us
+  // instead of scrolling or zooming the page with it.
   (() => {
     const wrap = document.querySelector('.graph-canvas-wrap');
     let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
+    let dragPointer = null;   // the pointerId that owns the current pan / heading drag
     // Dragging a graph HEADING moves that tree; dragging empty canvas still pans;
-    // a glyph still owns its own click. One mousedown, three destinations.
+    // a glyph still owns its own click. One pointerdown, three destinations.
     let titleDrag = null;
     const DRAG_SLOP = 4; // px before a press on the heading counts as a drag, not a click
+    const mine = (e) => dragPointer == null || e.pointerId == null || e.pointerId === dragPointer;
 
-    wrap.addEventListener('mousedown', (e) => {
+    wrap.addEventListener('pointerdown', (e) => {
       if (!e.target.closest) return;
+      if (e.button != null && e.button > 0) return;     // primary button / touch / pen only
+      // A second finger mid-drag is ignored — the first one owns it. (Only a
+      // DIFFERENT pointer: a mouse whose pointerup was lost outside the window
+      // presses again with the same id, and must be able to start over.)
+      if (dragPointer != null && e.pointerId !== dragPointer) return;
       if (e.target.closest('.glyph')) return;
       const heading = e.target.closest('.gv-tree-title');
       if (heading && heading.dataset.graphRoot) {
         const [ox, oy] = offsetFor(heading.dataset.graphRoot);
         titleDrag = { rootId: heading.dataset.graphRoot, sx: e.clientX, sy: e.clientY, ox, oy, moved: false };
+        dragPointer = e.pointerId ?? null;
         e.preventDefault();
         return;
       }
       panning = true; sx = e.clientX; sy = e.clientY; stx = camera.tx; sty = camera.ty;
+      dragPointer = e.pointerId ?? null;
+      // Keep receiving this pointer's moves and its release even once it leaves
+      // the canvas (or the window), so a pan cannot be left stuck on.
+      try { wrap.setPointerCapture(e.pointerId); } catch {}
     });
-    window.addEventListener('mouseup', () => {
+    const endDrag = (e, cancelled) => {
+      if (!mine(e)) return;
+      dragPointer = null;
       if (titleDrag) {
         const d = titleDrag;
         titleDrag = null;
         // Moved → persist the placement. Didn't move → it was a click: rename.
+        // A cancelled pointer (the OS took the touch) is neither.
         if (d.moved) { const [dx, dy] = offsetFor(d.rootId); setOffset(d.rootId, dx, dy, true); }
-        else renameGraph(d.rootId);
+        else if (!cancelled) renameGraph(d.rootId);
         return;
       }
       panning = false;
-    });
-    window.addEventListener('mousemove', (e) => {
+    };
+    window.addEventListener('pointerup', (e) => endDrag(e, false));
+    window.addEventListener('pointercancel', (e) => endDrag(e, true));
+    window.addEventListener('pointermove', (e) => {
+      if (!mine(e)) return;
       if (titleDrag) {
         if (!titleDrag.moved && Math.hypot(e.clientX - titleDrag.sx, e.clientY - titleDrag.sy) < DRAG_SLOP) return;
         titleDrag.moved = true;
@@ -1361,7 +1385,7 @@ export function initGraph() {
       if (!panning) return;
       camera.tx = stx + (e.clientX - sx);
       camera.ty = sty + (e.clientY - sy);
-      applyCamera();                   // camera only — no relayout per mousemove
+      applyCamera();                   // camera only — no relayout per pointermove
     });
     wrap.addEventListener('wheel', (e) => {
       e.preventDefault();

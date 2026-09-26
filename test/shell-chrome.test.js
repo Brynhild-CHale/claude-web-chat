@@ -147,7 +147,7 @@ test('the topbar sits above every surface artifact — including comment pins', 
 test('the whole z-index inventory is one ordered scale', () => {
   const s = scale();
   const order = ['--z-depth', '--z-content', '--z-glass', '--z-drag', '--z-pins',
-    '--z-topbar', '--z-panel', '--z-notice', '--z-overlay', '--z-glance'];
+    '--z-topbar', '--z-panel', '--z-notice', '--z-overlay', '--z-glance', '--z-legend'];
   for (const k of order) assert.ok(k in s, `the scale declares ${k}`);
   for (let i = 1; i < order.length; i++) {
     assert.ok(s[order[i - 1]] < s[order[i]],
@@ -157,7 +157,6 @@ test('the whole z-index inventory is one ordered scale', () => {
   assert.ok(zOf('#topbar') < zOf('.popover'), 'popovers open above the topbar');
   assert.equal(zOf('.popover'), zOf('.palette'), 'every chrome panel shares one rung');
   assert.equal(zOf('.popover'), zOf('.drawer'));
-  assert.equal(zOf('.popover'), zOf('.legend'));
   assert.equal(zOf('.popover'), zOf('.pin-pop'));
   assert.ok(zOf('.popover') < zOf('#overlay.overlay'), 'the graph overlay covers the panels');
   // Host notices sit above ALL ordinary chrome so an advisory is never buried…
@@ -176,6 +175,11 @@ test('the whole z-index inventory is one ordered scale', () => {
   assert.ok(zOf('#overlay.overlay') < zOf('.glance-backdrop'));
   assert.ok(zOf('#overlay.overlay') < zOf('.popover.gv-name-panel'),
     'the graph rename panel opens above the overlay that raised it');
+  // The one panel off the shared rung: `?` summons the shortcut legend from
+  // anywhere — over the overlay, and over a glance raised inside it — and it sat
+  // at --z-panel, painted underneath the overlay the key was pressed in.
+  assert.ok(zOf('.glance-backdrop') < zOf('.legend'), 'the shortcut legend paints over the overlay and its glance');
+  assert.ok(zOf('.popover.gv-name-panel') < zOf('.legend'));
 });
 
 test('no z-index in the shell is a hand-picked number any more', () => {

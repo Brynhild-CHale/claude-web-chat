@@ -4,7 +4,7 @@
 // each file its own process and the ESM cache would hand a second import the
 // already-initialised modules).
 //
-// Six defects are pinned here:
+// Eight defects are pinned here:
 //   (1) Escape did not close the overlay. Two document keydown listeners both
 //       claimed the key (shell.js and graph-view.js), and — the actual cause,
 //       reproduced in Chrome — the overlay's own same-origin preview IFRAMEs
@@ -20,6 +20,8 @@
 //       rename affordance — and the ⚑ bookmark action used window.prompt().
 //   (6) A graph (a whole tree) could not be placed on the canvas, and panning
 //       relaid out the entire DAG on every mousemove.
+//   (7) Pan listened to mouse events only, so the canvas never moved on touch.
+//   (8) `?` — advertised in the overlay's own status line — did nothing there.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -131,7 +133,7 @@ const $ = (id) => W.document.getElementById(id);
 const esc = (target) => (target || W.document).dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 const overlayOpen = () => !$('overlay').classList.contains('hidden');
 const glanceUp = () => !!W.document.querySelector('.glance-backdrop');
-const mouse = (el, type, x, y) => el.dispatchEvent(new W.MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
+const mouse = (el, type, x, y) => el.dispatchEvent(new W.PointerEvent(type, { bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
 
 async function openGraph() {
   $('btn-graph').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
@@ -199,9 +201,9 @@ test('precedence: glance ▸ rename panel ▸ overlay ▸ chrome panels', async 
   assert.ok(overlayOpen(), '…and the overlay it was raised from survived that first Escape');
   // then the rename panel
   const heading = W.document.querySelector('#graph-svg .gv-tree-title');
-  mouse(heading, 'mousedown', 100, 100);
-  mouse(W.window || W, 'mouseup', 100, 100);
-  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 100, clientY: 100 }));
+  mouse(heading, 'pointerdown', 100, 100);
+  mouse(W.window || W, 'pointerup', 100, 100);
+  W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 100, clientY: 100 }));
   await tick();
   assert.ok(!$('gv-name-panel').classList.contains('hidden'), 'a click on the heading opened the name panel');
   esc();
@@ -251,9 +253,9 @@ test('clicking the zoom percentage resets to 100% and re-centres the graph', asy
 
   // Wander off: zoom somewhere that is not 100%, then pan away from centre.
   wrap.dispatchEvent(new W.WheelEvent('wheel', { deltaY: -400, bubbles: true, cancelable: true }));
-  mouse(wrap, 'mousedown', 500, 400);
-  W.dispatchEvent(new W.MouseEvent('mousemove', { bubbles: true, clientX: 260, clientY: 180 }));
-  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 260, clientY: 180 }));
+  mouse(wrap, 'pointerdown', 500, 400);
+  W.dispatchEvent(new W.PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 260, clientY: 180 }));
+  W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 260, clientY: 180 }));
   const wandered = xf();
   assert.notEqual(pct(), 100, 'precondition: we are not at 100%');
 
@@ -292,8 +294,8 @@ test('a graph heading renames the graph through /api/graph/bookmark', async () =
   assert.ok(unnamed, 'the UNNAMED graph still gets a heading, and the heading carries its root id');
   assert.match(unnamed.textContent, /graph n1/, 'precondition: it reads as the fallback label');
 
-  mouse(unnamed, 'mousedown', 40, 40);
-  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 40, clientY: 40 }));
+  mouse(unnamed, 'pointerdown', 40, 40);
+  W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 40, clientY: 40 }));
   await tick();
   assert.ok(!$('gv-name-panel').classList.contains('hidden'), 'clicking the heading opens the in-page name field');
 
@@ -337,9 +339,9 @@ test('a graph can be dragged by its heading, and the placement persists', async 
   const beforeMoved = glyphX('n2'), beforeOther = glyphX('n1');
   assert.ok(beforeMoved != null && beforeOther != null, 'precondition: both trees are on the canvas');
 
-  mouse(heading, 'mousedown', 200, 200);
-  W.dispatchEvent(new W.MouseEvent('mousemove', { bubbles: true, clientX: 320, clientY: 260 }));
-  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 320, clientY: 260 }));
+  mouse(heading, 'pointerdown', 200, 200);
+  W.dispatchEvent(new W.PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 320, clientY: 260 }));
+  W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 320, clientY: 260 }));
   await tick();
 
   assert.ok(glyphX('n2') > beforeMoved, 'the dragged graph moved');
@@ -372,21 +374,107 @@ test('dragging a heading does not pan, and panning does not relayout', async () 
   // empty canvas → pan. The camera moves…
   const gBefore = rootG();
   const tBefore = transform();
-  mouse(wrap, 'mousedown', 400, 400);
-  W.dispatchEvent(new W.MouseEvent('mousemove', { bubbles: true, clientX: 460, clientY: 430 }));
+  mouse(wrap, 'pointerdown', 400, 400);
+  W.dispatchEvent(new W.PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 460, clientY: 430 }));
   assert.notEqual(transform(), tBefore, 'dragging empty canvas still pans');
   // …but the DAG is NOT rebuilt: layoutAndRender wipes the svg and makes a new
   // <g>, so an unchanged node identity is proof the relayout did not happen.
   assert.equal(rootG(), gBefore, 'a pan moves the camera without relaying out the graph');
-  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 460, clientY: 430 }));
+  W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 460, clientY: 430 }));
 
   // a glyph keeps its own click — no pan, no graph move
   const glyph = W.document.querySelector('#graph-svg g[data-id="n1a"]');
   const tAfterPan = transform();
-  mouse(glyph, 'mousedown', 500, 500);
-  W.dispatchEvent(new W.MouseEvent('mousemove', { bubbles: true, clientX: 560, clientY: 560 }));
+  mouse(glyph, 'pointerdown', 500, 500);
+  W.dispatchEvent(new W.PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 560, clientY: 560 }));
   assert.equal(transform(), tAfterPan, 'dragging a node does not pan the canvas');
-  W.dispatchEvent(new W.MouseEvent('mouseup', { bubbles: true, clientX: 560, clientY: 560 }));
+  W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 560, clientY: 560 }));
+});
+
+/* ================= (7) touch: the canvas pans under a finger ================= */
+// Pan was wired to mousedown/mousemove/mouseup only. A touch drag never produces
+// mousemove, so on a phone or tablet the graph could not be panned at all.
+
+test('the canvas opts out of browser touch gestures, so a drag reaches the pan', () => {
+  const css = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
+  const rule = /\.graph-canvas-wrap\s*\{([^}]*)\}/.exec(css);
+  assert.ok(rule, 'precondition: app.css styles the canvas wrap');
+  assert.match(rule[1], /touch-action\s*:\s*none/,
+    'without touch-action:none the browser scrolls/zooms the page with the finger and cancels the pointer');
+});
+
+test('a touch drag pans the canvas; a second finger does not hijack it', async () => {
+  await openGraph();
+  const wrap = W.document.querySelector('.graph-canvas-wrap');
+  const transform = () => W.document.querySelector('#graph-svg > g').getAttribute('transform');
+  const touch = (el, type, id, x, y) => el.dispatchEvent(new W.PointerEvent(type,
+    { bubbles: true, pointerId: id, pointerType: 'touch', isPrimary: id === 7, clientX: x, clientY: y }));
+
+  const t0 = transform();
+  touch(wrap, 'pointerdown', 7, 300, 300);
+  touch(W, 'pointermove', 7, 340, 320);
+  const t1 = transform();
+  assert.notEqual(t1, t0, 'a finger dragged across empty canvas pans it');
+
+  // a second finger lands and moves: the first one still owns the pan
+  touch(wrap, 'pointerdown', 8, 100, 100);
+  touch(W, 'pointermove', 8, 0, 0);
+  assert.equal(transform(), t1, 'the second contact point is ignored rather than yanking the camera');
+  touch(W, 'pointerup', 8, 0, 0);
+  touch(W, 'pointermove', 7, 360, 330);
+  assert.notEqual(transform(), t1, 'and lifting it does not end the first finger\'s pan');
+
+  const t2 = transform();
+  touch(W, 'pointerup', 7, 360, 330);
+  touch(W, 'pointermove', 7, 500, 500);
+  assert.equal(transform(), t2, 'lifting the owning finger ends the pan');
+});
+
+test('a cancelled touch on a heading neither renames nor pans', async () => {
+  await openGraph();
+  const heading = W.document.querySelector('#graph-svg .gv-tree-title');
+  heading.dispatchEvent(new W.PointerEvent('pointerdown',
+    { bubbles: true, pointerId: 9, pointerType: 'touch', isPrimary: true, clientX: 50, clientY: 50 }));
+  W.dispatchEvent(new W.PointerEvent('pointercancel', { bubbles: true, pointerId: 9, pointerType: 'touch' }));
+  await tick();
+  assert.ok($('gv-name-panel').classList.contains('hidden'),
+    'the OS taking the touch back is not a tap — no rename panel');
+});
+
+/* ================= (8) `?` over the overlay ================= */
+// The overlay's own status line advertises "? keys", but the shell's keyboard
+// layer returned early while the overlay was open — so `?` did nothing there, and
+// the legend (at the chrome-panel rung) would have painted under the overlay anyway.
+
+test('? opens the shortcut legend over the graph, and it lists the graph\'s keys', async () => {
+  await openGraph();
+  const legend = $('key-legend');
+  assert.ok(legend.classList.contains('hidden'), 'precondition: legend closed');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: '?', bubbles: true }));
+  assert.ok(!legend.classList.contains('hidden'), '? opened the legend while the overlay is open');
+  assert.ok(overlayOpen(), 'and the overlay is still there underneath');
+
+  // every key graph-view.js handles while the overlay is open is on the sheet
+  const rows = [...legend.querySelectorAll('.legend-row')].map((r) => r.textContent);
+  for (const [what, keys] of [
+    ['Select node', ['←', '↑', '↓', '→']], ['Glance', ['Space']], ['Open node', ['↵']],
+    ['Set active', ['A']], ['Export node', ['E']], ['Bookmark node', ['B']],
+  ]) {
+    const row = rows.find((t) => t.startsWith(what));
+    assert.ok(row, `the legend has a "${what}" row`);
+    for (const k of keys) assert.ok(row.includes(k), `"${what}" shows ${k}`);
+  }
+
+  // Escape peels the legend first — the overlay under it survives
+  esc();
+  assert.ok(legend.classList.contains('hidden'), 'Escape closed the legend…');
+  assert.ok(overlayOpen(), '…and not the overlay it was summoned over');
+  // …and ? toggles it, like everywhere else
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: '?', bubbles: true }));
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: '?', bubbles: true }));
+  assert.ok(legend.classList.contains('hidden'), 'a second ? closes it again');
+  esc();
+  assert.equal(overlayOpen(), false, 'with no legend up, Escape closes the overlay as before');
 });
 
 test('teardown', () => { restore(); });
