@@ -815,6 +815,30 @@ markdown id, once). One id space covers both kinds.
   check (`snapshotView`: moving a pane or writing prose is a change), the diff,
   the preview and the export.
 
+**Layout** is the same module's second half. A pane's placement lives in its
+`pane_state` (`col` 1–12, `colSpan` 2–12, `rows` 2–24 of `ROW_PX` = 40, plus
+`heightPx` kept in step for the current chrome and old nodes).
+
+- `normalizePlace` / `applyPlace` — `place:{col, span, rows}` on render /
+  use_component (setMount calls them): clamp into the grid, write the layout
+  keys, and record the proposal as `pane_state.claude_place`.
+- `placeOf(pane_state)` — the one READING of a placement; an old pane sized by
+  `heightPx` (or the legacy `rowSpan`) answers in rows without being rewritten.
+- `state.claudeOrder` — the page order as Claude last proposed it. `place()`
+  (every agent/driver write) moves an item in both sequences; `moveItem` (the
+  user's drag, `POST /api/page/move`) moves it in `order` only.
+- `resetLayout` (`POST /api/page/reset-layout {run_anchor}`) — ↺ Claude's
+  layout for one grid run (the panes after a markdown id, or `'start'`):
+  baseline sizes, un-minimized, re-sorted into `claudeOrder` within the run's
+  slots. `setRunFlag` (`POST /api/page/run {anchor, stacks}`) — the run's
+  narrow-screen flag, stored in `state.runs` only when `false`.
+- `patchPaneState` — the browser's `pane:state` merge: a LOCKED pane refuses
+  layout-key changes (the sender gets the authoritative state back), and
+  `rows`/`heightPx` follow each other.
+- `layoutFields(surface)` — `claude_order` / `runs`, present only off their
+  defaults; nodes, drafts, the no-change check and the diff all carry exactly
+  this, so a surface nobody rearranged has the bytes it always had.
+
 ### `lib/server/domain/mounts.js` — the mount-set engine
 
 Putting a pane on the live surface is not one write. It is, in order: reserved-id

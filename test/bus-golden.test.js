@@ -35,7 +35,8 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    the page's `markdown` items and `order` beside `mounts` — deliberately
 //    additive, so a chrome that predates markdown ignores them. The per-pane
 //    render frame is unchanged: it carries `order` only when the render passed
-//    `after`, which the golden session does not.
+//    `after`, which the golden session does not. They also carry `runs`, the
+//    per-grid-run flags (b2) — `{}` at the default, equally additive.
 const GOLDEN = {
   frames: [
     {
@@ -44,6 +45,7 @@ const GOLDEN = {
       mounts: [],
       markdown: [],
       order: [],
+      runs: {},
       active: null,
       lock: null,
       project: '<v>',
@@ -182,7 +184,7 @@ test('bus: a tab capture is a triple-effect (store mutation + store:patch WS + o
   assert.equal(caps[0].capture_id, 'cap1');
 });
 
-test('bus: reset frame carries exactly {mounts,markdown,order,store,active,lock,theme,activeTheme}', async (t) => {
+test('bus: reset frame carries exactly {mounts,markdown,order,runs,store,active,lock,theme,activeTheme}', async (t) => {
   const { api, port } = await withServer(t);
   const WebSocket = require('ws');
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
@@ -199,7 +201,7 @@ test('bus: reset frame carries exactly {mounts,markdown,order,store,active,lock,
   assert.ok(reset, 'reset frame present');
   assert.deepEqual(
     Object.keys(reset).sort(),
-    ['active', 'activeTheme', 'lock', 'markdown', 'mounts', 'order', 'store', 'theme', 'type'].sort(),
+    ['active', 'activeTheme', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'theme', 'type'].sort(),
   );
 });
 

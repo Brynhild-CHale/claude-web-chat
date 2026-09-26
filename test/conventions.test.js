@@ -411,13 +411,15 @@ const PATTERNS = [
     // Wipe, the bulk clear) call restore()/clearMarkdown()/reconcile() — so a
     // second hand-maintained copy of the order, the thing that drifts the moment
     // one path forgets a pane, fails here instead.
+    // Claude's layout baseline (state.claudeOrder) and the per-run flags
+    // (state.runs) are page state too, with the same one writer.
     name: 'state.order = / state.markdown.set( (the page sequence)',
-    home: 'lib/server/domain/page.js (place / drop / putMarkdown / removeMarkdown / clearMarkdown / restore / reconcile)',
-    what: 'writing the page order or a markdown item',
+    home: 'lib/server/domain/page.js (place / drop / putMarkdown / removeMarkdown / clearMarkdown / restore / reconcile / resetLayout / setRunFlag / moveItem)',
+    what: 'writing the page order, Claude\'s baseline order, a run flag or a markdown item',
     roots: ['lib'],
-    re: /state\.(?:order\s*=[^=]|order\.(?:push|splice|unshift)\(|markdown\.(?:set|delete|clear)\()/g,
+    re: /state\.(?:(?:order|claudeOrder)\s*=[^=]|(?:order|claudeOrder)\.(?:push|splice|unshift)\(|markdown\.(?:set|delete|clear)\(|runs(?:\s*=[^=]|\[))/g,
     baseline: {
-      'lib/server/domain/page.js': 13,
+      'lib/server/domain/page.js': 24,
     },
   },
   {
