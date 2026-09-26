@@ -108,7 +108,7 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 
 - `export({ node })` — `node` is a hierarchical label (`n1.7`), a stored id, `'active'` (default), or `'live'` (the current uncommitted surface). Returns the path of the written file under `.web-chat/exports/`.
 - The export is a **frozen snapshot**: interactions still work locally (sliders move, forms fill) but persist nowhere — correct for a shareable artifact, not a live link.
-- The user can also self-serve: the topbar **⬇** button downloads the node they're currently viewing (a previewed older node exports *that* node, as rendered), and `claude-web-chat export [node]` does the same from the CLI.
+- The user can also self-serve: the topbar **⋯ → ↧ Export node** menu item (also in the ⌘K palette) downloads the node they're currently viewing (a previewed older node exports *that* node, as rendered), the graph viewer's **↧** inspector button (or `E`) downloads the selected node, and `claude-web-chat export [node]` does the same from the CLI.
 - Tell the user the path you wrote so they can grab and attach it.
 
 ## Turn lifecycle

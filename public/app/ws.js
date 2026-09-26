@@ -278,8 +278,14 @@ const HANDLERS = {
   'service:trust:clear'(msg) { onTrustClear(msg); },
 };
 
+// The daemon's socket, on the page's own origin and scheme. A page served over
+// https (a TLS proxy or tunnel in front of the daemon) must open wss: — a browser
+// refuses a plain ws: socket from a secure page as mixed content, and the surface
+// then sat on "reconnecting…" forever with nothing else to say why.
+export const wsUrl = (loc = location) => `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}/ws`;
+
 export function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws = new WebSocket(wsUrl());
   ws.onopen = () => setConnStatus('live', 'live');
   ws.onclose = () => {
     setConnStatus('reconnecting…', 'off');

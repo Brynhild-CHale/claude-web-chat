@@ -7,16 +7,17 @@ values and the resolved theme inlined — that opens in any browser with no
 server, no daemon and no network. It is the thing to reach for when the user
 wants to **share, save or send** something that was rendered.
 
-## The four ways to get one
+## The ways to get one
 
 | Route | Who uses it | What you get |
 | --- | --- | --- |
 | `export` MCP tool — `export({ node })` | Claude | the absolute path of a file written under `.web-chat/exports/` |
 | `claude-web-chat export [node]` | the user, from a terminal | the same write, path printed |
-| the topbar **⬇** button | the user, from the surface | a browser download of the node currently on screen |
+| the topbar **⋯ → ↧ Export node** menu item (also ⌘K → *Export node*) | the user, from the surface | a browser download of the node currently on screen |
+| the graph viewer's **↧** inspector button, or `E` | the user, from the graph | a browser download of the node selected in the graph |
 | `GET /api/export/:ref` | anything local | the html streamed as an attachment; add `?format=file` to write it and get back `{ path, label }` (non-browser callers only — see below) |
 
-All four assemble through the same builder in `lib/server/export.js`, so what a
+All of them assemble through the same builder in `lib/server/export.js`, so what a
 user downloads and what Claude writes are the same bytes.
 
 ## Which node — the `ref` forms
@@ -31,8 +32,9 @@ user downloads and what Claude writes are the same bytes.
 An unknown ref is an error object, never a throw: the route answers 404 with
 `{ error }`, and the tool and the CLI report it.
 
-The **⬇** button exports what the user is *looking at*: previewing an older node
-downloads that node as rendered, not the active one.
+**↧ Export node** exports what the user is *looking at*: previewing an older node
+downloads that node as rendered, not the active one. The graph viewer's **↧** (and
+`E`) exports whichever node is selected there instead.
 
 ## What is in the file, and what is frozen
 

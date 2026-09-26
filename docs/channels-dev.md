@@ -82,6 +82,31 @@ default:
 Activity items queue like everything else — they never wake on their own; the
 user's Push delivers them.
 
+### Revert (⟲) — undo the interaction, never the pane
+
+Each rail row's ⟲ (`DELETE /api/queue/:id?revert=1`) removes the item AND undoes
+what it stands for (`queue.revertArtifact`, dispatched on `kind`):
+
+- **`activity` / `signal`** — the artifact is the user's *interaction* with a pane
+  Claude or a driver rendered, so the pane always stays. Its `form_state` goes
+  back to the pre-run baseline (the values before the first change since the
+  last Push — `queue.noteFormBaseline`, taken when a run's first `pane:form`
+  arrives) and the pane is re-emitted so browsers remount it. A `signal` item
+  also puts its key back to the pre-write value, or removes it if it was absent
+  (`origin_store`, captured by `domain/store.patchStore` and handed to the
+  classifier as bus `meta`), through a `source:'queue-revert'` store write that
+  can never enqueue or wake — unless a later write of the same signal
+  superseded it (its `seq` moved on). One Apply click yields two rows (the
+  shell's click → `activity`, the pane's `store.set` → `signal`); reverting
+  either is safe.
+- **`comment`** — deletes the pin; a pin that is already gone reverts nothing.
+- **`capture`** — drops the pane the capture rendered, the one kind whose
+  artifact is a pane (`revertCapturePane`, gen-guarded).
+
+A `signal` item's `origin_mount` is the pane that WROTE the key (the facade's
+`mount` stamp), falling back to the declarer only for an unattributed write — two
+panes may declare the same key.
+
 ### Self-wake safety
 
 Only `browser`/`ext:*`-sourced events enqueue. Claude's `set_store` and drivers'

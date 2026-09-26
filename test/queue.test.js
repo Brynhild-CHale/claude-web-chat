@@ -164,14 +164,14 @@ test('queue domain: emitWake emits one wake with the batch, no ws', () => {
   assert.equal(wsFrames.length, 0, 'emitWake emits no WS frame');
 });
 
-test('queue domain: remove with revert drops the originating pane', () => {
+test('queue domain: remove with revert drops the pane a CAPTURE rendered', () => {
   const bus = createBus();
   const state = freshState();
   state.mounts.set('m1', { html: '<i>x</i>' });
   const wsFrames = [];
   bus.setBroadcaster((f) => wsFrames.push(f));
 
-  queue.enqueue(state, bus, { kind: 'signal', origin_mount: 'm1', summary: 's' });
+  queue.enqueue(state, bus, { kind: 'capture', origin_mount: 'm1', summary: 's' });
   const { removed, reverted } = queue.remove(state, bus, 'q1', { revert: true });
   assert.equal(removed.id, 'q1');
   assert.equal(reverted, true, 'the domain reports the pane was reverted');
@@ -428,7 +428,7 @@ test('queue domain: Revert no-ops on a same-id re-rendered pane (new gen) — B6
   const bus = createBus();
   const state = freshState();
   state.mounts.set('m1', { html: 'a', gen: 0 });
-  const it = queue.enqueue(state, bus, { kind: 'signal', origin_mount: 'm1', summary: 's' });
+  const it = queue.enqueue(state, bus, { kind: 'capture', origin_mount: 'm1', summary: 's' });
   assert.equal(it.origin_gen, 0, 'enqueue stamped the pane gen it saw at enqueue time');
   state.mounts.set('m1', { html: 'b', gen: 1 }); // a stable-id re-render bumps the gen
   const { reverted } = queue.remove(state, bus, it.id, { revert: true });
@@ -436,25 +436,26 @@ test('queue domain: Revert no-ops on a same-id re-rendered pane (new gen) — B6
   assert.ok(state.mounts.has('m1'), 'the fresh pane is NOT deleted');
 });
 
-test('queue domain: Revert deletes the pane when the gen still matches — B6', () => {
+test('queue domain: a capture Revert deletes the pane when the gen still matches — B6', () => {
   const bus = createBus();
   const state = freshState();
   state.mounts.set('m1', { html: 'a', gen: 0 });
-  const it = queue.enqueue(state, bus, { kind: 'signal', origin_mount: 'm1', summary: 's' });
+  const it = queue.enqueue(state, bus, { kind: 'capture', origin_mount: 'm1', summary: 's' });
   const { reverted } = queue.remove(state, bus, it.id, { revert: true });
   assert.equal(reverted, true);
   assert.equal(state.mounts.has('m1'), false, 'a same-gen pane is dropped');
 });
 
-test('queue domain: a comment Revert falls back to the pane when the pin is gone (F5/C1)', () => {
+test('queue domain: a comment Revert whose pin is gone reverts nothing — the pane stays (F5/C1)', () => {
   const bus = createBus();
   const state = freshState();
   state.comments = []; // the pin was stranded by navigation — already gone
   state.mounts.set('m1', { html: 'x', gen: 0 });
   queue.enqueue(state, bus, { kind: 'comment', comment_id: 'c1', origin_mount: 'm1', summary: 'note' }); // q1
   const { reverted } = queue.remove(state, bus, 'q1', { revert: true });
-  assert.equal(reverted, true, 'the fall-through dropped the origin pane');
-  assert.equal(state.mounts.has('m1'), false, 'the stranded comment item still reverted something');
+  assert.equal(reverted, false, 'nothing of the comment\'s was left to revert');
+  assert.equal(state.queue.length, 0, 'the item still leaves the queue');
+  assert.ok(state.mounts.has('m1'), 'the pane the pin sat on is Claude\'s — it is never removed');
 });
 
 // ── parked delivery (Push with no channel connected) ─────────────────────────
@@ -703,12 +704,97 @@ test('queue domain: reverting an activity item on a pane with no prior state kee
   assert.ok(state.mounts.has('m1'), 'nothing to restore is not a reason to delete');
 });
 
-test('queue domain: reverting a SIGNAL item still deletes its pane (unchanged)', () => {
+test('queue domain: reverting a SIGNAL item keeps the pane and undoes the interaction', () => {
+  const bus = createBus();
+  const state = freshState();
+  state.mounts.set('m1', { html: 'a', gen: 0, form_state: { '#a:0': { value: 'kept' } } });
+  state.store.form_submit = { seq: 1 }; // an earlier, already-handled submit
+  const it = queue.enqueue(state, bus, {
+    kind: 'signal', signal_key: 'form_submit', origin_mount: 'm1', summary: 's', payload_seq: 2,
+  }, { prior: { form_submit: { had: true, value: { seq: 1 } } } });
+  state.store.form_submit = { seq: 2, payload: { a: 'junk' } };
+  state.mounts.get('m1').form_state = { '#a:0': { value: 'junk' } };
+
+  const { reverted } = queue.remove(state, bus, it.id, { revert: true });
+  assert.equal(reverted, true);
+  assert.ok(state.mounts.has('m1'), 'a signal\'s pane was rendered by Claude — it stays');
+  assert.deepEqual(state.mounts.get('m1').form_state, { '#a:0': { value: 'kept' } }, 'typed values restored');
+  assert.deepEqual(state.store.form_submit, { seq: 1 }, 'the signal key is back at its pre-write value');
+});
+
+test('queue domain: a signal Revert removes a key that was absent before, via a server-sourced write', () => {
+  const bus = createBus();
+  const state = freshState();
+  const events = [];
+  const frames = [];
+  bus.subscribe((e) => events.push(e));
+  bus.setBroadcaster((f) => frames.push(f));
+  state.mounts.set('m1', { html: 'a', gen: 0 });
+  const it = queue.enqueue(state, bus, {
+    kind: 'signal', signal_key: 'form_submit', origin_mount: 'm1', summary: 's', payload_seq: 1,
+  }, { prior: { form_submit: { had: false } } });
+  state.store.form_submit = { seq: 1 };
+  queue.remove(state, bus, it.id, { revert: true });
+  assert.equal(Object.hasOwn(state.store, 'form_submit'), false, 'the daemon store drops the key');
+  const ev = events.find((e) => e.kind === 'store');
+  assert.equal(ev.source, 'queue-revert', 'a server-side source — never browser, so it cannot enqueue');
+  assert.deepEqual(ev.unset, ['form_submit']);
+  assert.ok(frames.some((f) => f.type === 'store:patch' && f.patch.form_submit === null),
+    'browsers are told the key is cleared');
+  assert.equal(state.queue.length, 0, 'the revert write enqueued nothing');
+});
+
+test('queue domain: a signal Revert leaves the key alone once a later write superseded it', () => {
   const bus = createBus();
   const state = freshState();
   state.mounts.set('m1', { html: 'a', gen: 0 });
-  const it = queue.enqueue(state, bus, { kind: 'signal', origin_mount: 'm1', summary: 's' });
+  const it = queue.enqueue(state, bus, {
+    kind: 'signal', signal_key: 'form_submit', origin_mount: 'm1', summary: 's', payload_seq: 1,
+  }, { prior: { form_submit: { had: false } } });
+  state.store.form_submit = { seq: 2 }; // the user clicked Apply again
+  queue.remove(state, bus, it.id, { revert: true });
+  assert.deepEqual(state.store.form_submit, { seq: 2 }, 'seq 2 is not this item\'s write to undo');
+});
+
+test('queue domain: an item kind with no revertable artifact never removes a pane', () => {
+  const bus = createBus();
+  const state = freshState();
+  state.mounts.set('m1', { html: 'a', gen: 0 });
+  const it = queue.enqueue(state, bus, { kind: 'mystery', origin_mount: 'm1', summary: 's' });
   const { reverted } = queue.remove(state, bus, it.id, { revert: true });
-  assert.equal(reverted, true);
-  assert.equal(state.mounts.has('m1'), false, 'a signal\'s artifact IS the pane');
+  assert.equal(reverted, false);
+  assert.ok(state.mounts.has('m1'));
+});
+
+test('queue domain: the Revert baseline is the form state from BEFORE the run, not at enqueue', () => {
+  const bus = createBus();
+  const state = freshState();
+  const mount = { html: 'a', gen: 0, form_state: { '#a:0': { value: 'handed off' } } };
+  state.mounts.set('m1', mount);
+  // What ws.js does on the run's first debounced pane:form: note, then replace.
+  queue.noteFormBaseline(state, mount);
+  mount.form_state = { '#a:0': { value: 'typed' } };
+  queue.noteFormBaseline(state, mount); // a later frame of the same run keeps the first baseline
+  mount.form_state = { '#a:0': { value: 'typed more' } };
+  // ...then the click/change that opens the activity item arrives.
+  const it = queue.enqueue(state, bus, { kind: 'activity', origin_mount: 'm1', summary: 'm1 · 1 edit' });
+  assert.deepEqual(it.origin_form_state, { '#a:0': { value: 'handed off' } });
+  queue.remove(state, bus, it.id, { revert: true });
+  assert.deepEqual(mount.form_state, { '#a:0': { value: 'handed off' } }, 'Revert undoes the typing');
+});
+
+test('queue domain: a Push is the baseline boundary — handed-off values survive a later Revert', () => {
+  const bus = createBus();
+  const state = freshState();
+  const mount = { html: 'a', gen: 0, form_state: {} };
+  state.mounts.set('m1', mount);
+  queue.noteFormBaseline(state, mount);
+  mount.form_state = { '#a:0': { value: 'first' } };
+  queue.enqueue(state, bus, { kind: 'activity', origin_mount: 'm1', summary: 's' });
+  queue.flush(state, bus, {}); // handed to Claude
+  queue.noteFormBaseline(state, mount);
+  mount.form_state = { '#a:0': { value: 'first + second' } };
+  const it = queue.enqueue(state, bus, { kind: 'activity', origin_mount: 'm1', summary: 's' });
+  queue.remove(state, bus, it.id, { revert: true });
+  assert.deepEqual(mount.form_state, { '#a:0': { value: 'first' } }, 'only the post-Push typing is undone');
 });

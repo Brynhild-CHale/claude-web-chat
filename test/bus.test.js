@@ -156,3 +156,16 @@ test('bus: an empty ring after a restart still reports the reset', () => {
   assert.equal(r.oldest, null);
   assert.equal(bus.read({ since: 0 }).gap, false, 'a cursor-less caller is not a gap');
 });
+
+test('bus: `meta` reaches live subscribers only — never the ring or a WS frame', () => {
+  const bus = createBus();
+  const seen = [];
+  const frames = [];
+  bus.subscribe((e, meta) => seen.push(meta));
+  bus.setBroadcaster((f) => frames.push(f));
+  bus.emit({ event: { kind: 'store', patch: { a: 1 } }, ws: { type: 'store:patch', patch: { a: 1 } }, meta: { prior: { a: { had: false } } } });
+  assert.deepEqual(seen, [{ prior: { a: { had: false } } }]);
+  assert.equal(Object.hasOwn(bus.read().events[0], 'meta'), false, 'the served event carries no meta');
+  assert.equal(Object.hasOwn(bus.read().events[0], 'prior'), false);
+  assert.deepEqual(frames, [{ type: 'store:patch', patch: { a: 1 } }]);
+});

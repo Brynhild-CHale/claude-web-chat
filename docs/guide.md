@@ -38,7 +38,7 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Restyle everything with themes.** Themes are design tokens that cascade from a single pane up to the whole surface. Ask Claude to theme the surface (and save the result), or swap saved themes yourself from the ⚙ button in the topbar.
 
-**Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use the topbar **⬇** button, or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
+**Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use **⋯ → ↧ Export node** in the topbar (or **↧** / `E` on a node in the graph viewer), or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
 
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`driving-the-surface.md`](driving-the-surface.md).
 
@@ -72,7 +72,7 @@ Installing a pack runs its code: panes are unsandboxed in the surface page, and 
 
 ## Channels (experimental)
 
-Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch.
+Normally Claude only acts when you send a message. The surface's queue rail collects wake-worthy activity — page captures, pane signals, and shared comment pins — and hitting **Push → Claude** hands Claude the whole batch. A row's ⟲ takes it back: it undoes that interaction (your typed values since the last Push, and a pane's submitted signal) and never removes a pane Claude rendered.
 
 **It works with or without the Channels capability.** For a *live, no-prompt* wake, launch Claude Code with both the env var and the capability flag — they belong together on the launch line, so a session can never claim a channel it doesn't have:
 

@@ -324,6 +324,7 @@ function initPalette() {
 }
 
 /* ---------- keyboard legend ---------- */
+const isLegendOpen = () => { const el = $('key-legend'); return !!el && !el.classList.contains('hidden'); };
 function toggleLegend(force) {
   const el = $('key-legend'); if (!el) return;
   const show = force === undefined ? el.classList.contains('hidden') : force;
@@ -358,6 +359,7 @@ function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
    other's state, and their order an accident of module init order. It now has a
    single owner, and the layers are closed most-specific-first:
 
+     0. the shortcut legend, when `?` summoned it over the overlay
      1. the glance / float preview      ┐ raised from INSIDE the overlay, so they
      2. the graph rename panel          ┘ must never outlive it   (escapeInOverlay)
      3. the graph overlay itself        ┘
@@ -365,9 +367,12 @@ function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
 
    An editable chrome field that owns its own Escape (a comment reply draft, the
    bookmark / new-graph / wipe name, the palette input) still wins over 4 — but not
-   over 1–3: the overlay is modal, and the jump box inside it holds a filter, not a
+   over 0–3: the overlay is modal, and the jump box inside it holds a filter, not a
    draft, so Escape from there closes the overlay exactly as it always did. */
 export function handleEscape() {
+  // The shortcut sheet summoned OVER the overlay is the topmost layer on screen,
+  // so it closes first — the overlay under it survives that Escape.
+  if (isOverlayOpen() && isLegendOpen()) { toggleLegend(false); return; }
   if (escapeInOverlay()) return;      // glance ▸ rename panel ▸ the overlay
   closeAllPopovers();                 // the palette, the legend and a comment thread are panels too
   setPinMode(false);                  // …and Escape leaves pin mode, armed or not
@@ -400,7 +405,13 @@ function initKeyboard() {
       return;
     }
     if (editable || meta) return;
-    if (isOverlayOpen()) return;
+    // The overlay owns every other single key while it is open (arrows, Space, ↵,
+    // A, E, B — graph-view.js) — but `?` is the one key its own status line
+    // advertises, so the shortcut sheet opens over it instead of doing nothing.
+    if (isOverlayOpen()) {
+      if (e.key === '?' || (e.key === '/' && e.shiftKey)) { e.preventDefault(); toggleLegend(); }
+      return;
+    }
     switch (e.key) {
       case 'q': case 'Q': e.preventDefault(); toggleRail(); break;
       case 'p': case 'P': e.preventDefault(); pushQueue(); break;

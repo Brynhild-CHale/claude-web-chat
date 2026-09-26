@@ -806,8 +806,16 @@ part of it, which is the whole argument for the module.
 - `removeMount(state, bus, {id, source, originGen, target})` → whether a pane
   went. `originGen` is the queue's generation guard.
 - `emitMount(state, bus, id, {source})` — re-broadcast a pane as it stands,
-  without replacing it (the queue's activity Revert restores form values in
-  place and needs every browser to remount).
+  without replacing it (the queue's activity/signal Revert restores form values
+  in place and needs every browser to remount). `removeMount` is reached from
+  the queue only for a `capture` item — a Revert never removes a pane Claude or
+  a driver rendered.
+
+A store write goes through `lib/server/domain/store.js` `patchStore(state, bus,
+patch, {source, unset, mount, gesture, except})` — the route, a pane's
+`store:set` and the queue's Revert. It hands the pre-write values to live bus
+subscribers as `meta.prior` (`bus.emit({…, meta})` — never in the ring or on the
+wire), which is how a signal item remembers what its Revert puts back.
 
 **The reserved-id set is DERIVED, all of it.** A mount id is agent-supplied text
 and `main` / `status` / `overlay` are plausible things for Claude to name a pane,
