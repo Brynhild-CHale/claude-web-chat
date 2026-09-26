@@ -174,8 +174,14 @@ export async function refreshSessions() {
   let data = null, error = null;
   try {
     const r = await fetch('/api/machine/sessions');
-    if (!r.ok) error = `HTTP ${r.status}`;
-    else data = await r.json();
+    if (!r.ok) {
+      // Viewed through the tunnel portal this route is refused on purpose (it
+      // names every project on the machine — lib/core/remote-policy), and the
+      // refusal says what to run on the host; show that, not a bare status.
+      let body = null;
+      try { body = await r.json(); } catch {}
+      error = body && body.remote === true && body.hint ? body.hint : `HTTP ${r.status}`;
+    } else data = await r.json();
   } catch (e) { error = (e && e.message) || 'network error'; }
   if (mine !== seq || !isOpen()) return;
   renderSessions(data, error);
