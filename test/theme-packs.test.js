@@ -209,3 +209,12 @@ test('the rules file and set_theme spell out the whole core vocabulary, and noth
   assert.ok(require('../lib/mcp/tools/save_theme').inputSchema.properties.modes, 'save_theme accepts modes');
   assert.deepEqual(require('../lib/mcp/tools/get_theme').inputSchema.properties.mode.enum, ['light', 'dark']);
 });
+
+test('the Settings theme hint names the stock pack as listed, never a retired alias', () => {
+  const { ALIASES } = require('../lib/server/theme-packs');
+  const hint = read('public/index.html').match(/<select id="settings-theme"[\s\S]*?<div class="hint">([\s\S]*?)<\/div>/);
+  assert.ok(hint, 'the Settings theme row has a hint');
+  const named = [...hint[1].matchAll(/<span class="mono">([^<]+)<\/span>/g)].map(m => m[1]);
+  assert.deepEqual(named, [BUILTIN_THEMES[0].name], 'the hint names the stock pack, earthy');
+  for (const alias of Object.keys(ALIASES)) assert.ok(!named.includes(alias), `the hint names retired ${alias}`);
+});
