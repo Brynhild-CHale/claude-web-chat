@@ -539,9 +539,10 @@ upstream opened with no Origin, cut at the token's `exp` + 5s with close code
   processes were meant to send them.
 - **Hiding a project** is `lib/tunnel/config` `hiddenReason(config, entry)`
   (`expose.exclude` by id or directory, then the project's
-  `projectPaths().noRemote` marker), applied once per registry read in the
-  memo — so the picker, the session lookup and `tunnel status` all see the same
-  filtered list. A hidden session answers exactly like a stopped one.
+  `projectPaths().noRemote` marker) — one predicate, asked by the session
+  lookup's registry memo, by the picker's `sessions()` rows (so a Claude-only
+  project hides too) and by `tunnel status`, so all three agree. A hidden
+  session answers exactly like a stopped one.
 - **Before the JWT check**, `throttle.js` answers 429 to a client
   (`Cf-Connecting-Ip`) with too many recent 401s; **after it**, every write and
   upgrade — let through or refused — is one line in `access-log.js`
