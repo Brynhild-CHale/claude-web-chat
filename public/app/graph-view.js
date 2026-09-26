@@ -12,6 +12,7 @@ import { seqNum, nodeById, labelFor } from './labels.js';
 import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
+import { openReplay } from './replay.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -151,7 +152,7 @@ export function escapeInOverlay() {
    Both frames are same-origin, so forward the key back to the page that owns the
    layers. This is transport, not a second Escape implementation — the forwarded
    event runs the same one owner. */
-function forwardEscapeFrom(frame) {
+export function forwardEscapeFrom(frame) {
   const bind = () => {
     let doc = null;
     try { doc = frame.contentDocument; } catch { return; }   // cross-origin: nothing to do
@@ -486,6 +487,7 @@ async function renderInspector(id) {
       `<button class="gv-act" data-act="glance" title="Glance preview (Space)" aria-label="Glance preview (Space)">◉</button>` +
       `<button class="gv-act" data-act="bookmark" title="Bookmark (B)" aria-label="Bookmark (B)">⚑</button>` +
       `<button class="gv-act" data-act="export" title="Export (E)" aria-label="Export (E)">↧</button>` +
+      `<button class="gv-act" data-act="replay" title="Replay up to this node (R)" aria-label="Replay up to this node (R)">▶ Replay</button>` +
     `</div>`;
 
   drawPreview($('gv-preview'), id, mounts.length);
@@ -1250,6 +1252,7 @@ export function initGraph() {
     else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (view.selectedNodeId) setActive(view.selectedNodeId); }
     else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); if (view.selectedNodeId) exportNode(view.selectedNodeId); }
     else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (view.selectedNodeId) bookmarkNode(view.selectedNodeId); }
+    else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (view.selectedNodeId) openReplay({ to: view.selectedNodeId }); }
   });
 
   // inspector action footer (delegated — footer is re-rendered per selection)
@@ -1257,7 +1260,7 @@ export function initGraph() {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const id = view.selectedNodeId; if (!id) return;
     ({ active: () => setActive(id), open: () => openNode(id), glance: () => toggleFloatPreview(),
-       bookmark: () => bookmarkNode(id), export: () => exportNode(id) })[b.dataset.act]?.();
+       bookmark: () => bookmarkNode(id), export: () => exportNode(id), replay: () => openReplay({ to: id }) })[b.dataset.act]?.();
   });
 
   // scope toggle (All ⟷ This graph) — mutually exclusive segment

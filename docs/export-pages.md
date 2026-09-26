@@ -106,6 +106,54 @@ as `trigger.reply`, so a caption can show both sides:
   captions. It is stored only under `.web-chat/` (private, gitignored). The
   page export does not include it — an export does not carry prompts either.
 
+## Playing a replay — the player and `replay.html`
+
+The replay itself is ONE self-contained document,
+`lib/server/replay/document.js` (`assembleReplay`): a stage, a caption bar, a
+scrubber with one tick per step, and a controller
+(`lib/server/replay/player.js`, spliced in as text). Every step's frame is the
+node preview document above — the same page `/preview/node/:id` serves — built
+as an `<iframe srcdoc>` when the step is about to be shown. The payload carries
+the preview template once plus each step's node and each distinct theme, not N
+copies of the page, and only the previous, current and next step are ever live
+documents.
+
+- `GET /replay?from=&to=&…` serves it under the same `PREVIEW_CSP` as the node
+  previews (`connect-src 'none'`, which the srcdoc frames inherit): pane
+  scripts run, nothing reaches the daemon. It names no network API itself.
+- `GET /api/replay/html?from=&to=&…` is the same document as a download,
+  `replay-<from>_<to>.html` — offline, no server, like a page export.
+- Options (query parameters): `hold_ms` (2500; 0.5–20 s) or `pacing=realtime`
+  (each step held for the real gap to the next, clamped 1–6 s), `transition`
+  `cut` (default) | `fade`, `captions` `prompt` (default) | `summary` | `none`,
+  `size` (`1280x800`; the logical frame size, scaled to fit), `chrome=0` (stage
+  and caption only — what a renderer captures), `speed` (0.25–4), `autoplay=1`,
+  `at=<step index>`.
+- **Captions carry only what their mode shows.** `prompt` shows the prompt and
+  Claude's reply summary; `summary` the prompt's short summary and the reply;
+  `none` neither — and the payload holds nothing more than that. A node's
+  trigger never enters it, so a `replay.html` made with `captions=none` does
+  not contain the prompts at all. The prompt is the only thing a replay carries
+  that a page export does not; choose `summary` or `none` before sending one on.
+
+The document exposes `window.__wcReplay` — `steps`, `duration()`, `seek(ms)`,
+`play()`, `pause()`, `ready()`, `stepBy(n)`, `setSpeed(x)`, `state()`,
+`subscribe(fn)`. `seek` is deterministic: it resolves once the frames visible
+at that time have loaded, their fonts are ready, two animation frames have run
+and a short settle has passed, and the same time always draws the same frame,
+whatever was shown before.
+
+**In the browser**, the player is an overlay over the surface
+(`public/app/replay.js`): it frames `/replay` and never touches the live
+surface. Open it from the graph inspector (**▶ Replay**, or `R` on a selected
+node), from ⌘K (**Replay to …** the node you are viewing), or from ⋯ →
+**Replay…**. It plays from the nearest bookmark down to the node you are viewing
+(else the active one); the `from` / `to` pickers choose any stretch of that
+lineage. `Space` plays and pauses, `←` / `→` step, the scrubber seeks (hover a
+tick for its label), and speed (0.5–4×), transition and captions are remembered
+per browser. **Open this node** previews the step on screen on the surface, and
+**↧ replay.html** downloads what you are watching.
+
 ## Design history
 
 This file used to be the pre-implementation plan for the feature, and was linked

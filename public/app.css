@@ -640,6 +640,21 @@ kbd {
    overlay by design. Centred, because it is anchored to an SVG heading that can
    sit anywhere on a panned canvas. */
 .popover.gv-name-panel { z-index: var(--z-glance); top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); min-width: 280px; }
+/* The replay player (public/app/replay.js). A popover by lever — the dismiss
+   layer and the Escape owner treat it like every other panel — but a
+   near-full-screen one, raised on the glance rung because the graph inspector's
+   ▶ Replay opens it from inside the overlay. The frame is the /replay document;
+   its own controls (play, scrubber, captions) live in there. */
+.popover.replay-pop {
+  position: fixed; z-index: var(--z-glance); inset: 4vh 4vw; min-width: 0;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; box-shadow: var(--wc-elev-stage);
+}
+.rpo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rpo-bar .btn { display: inline-flex; align-items: center; text-decoration: none; }
+.rpo-title { font: 700 12px var(--wc-mono); letter-spacing: .1em; color: var(--wc-accent-text); }
+.rpo-field { display: inline-flex; align-items: center; gap: 6px; font: 11px var(--wc-font); color: var(--wc-muted); }
+.rpo-note { flex: 1; min-width: 80px; font: 11px var(--wc-font); color: var(--wc-muted); }
+.rpo-frame { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-bg); }
 .hint { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; }
 .mono { font-family: var(--wc-mono); }
 
