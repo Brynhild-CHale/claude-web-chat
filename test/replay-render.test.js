@@ -15,14 +15,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withServer, fakeBin } = require('../test-support/helpers');
+const { spawn } = require('child_process');
+const { withServer, fakeBin, waitUntil } = require('../test-support/helpers');
+const { isPidAlive } = require('../lib/core/portfiles');
 const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
 const { frameSchedule, normalizeRenderRequest, LIMITS } = require('../lib/server/replay/render');
 const { timeline } = require('../lib/server/replay/player');
 const { findChrome, findFfmpeg, chromeCandidates } = require('../lib/replay/find');
-const { captureFrames, CHROME_FLAGS } = require('../lib/replay/chrome');
+const { captureFrames, CHROME_FLAGS, liveBrowsers } = require('../lib/replay/chrome');
 
 const FAKE = path.join(__dirname, '..', 'test-support', 'fake-chrome.js');
 // These tests pin the BUILT-IN GIF encoder: an explicit WEB_CHAT_FFMPEG is the
@@ -31,18 +33,49 @@ const FAKE = path.join(__dirname, '..', 'test-support', 'fake-chrome.js');
 const NO_FFMPEG = '/nonexistent/ffmpeg';
 
 // An executable wrapper around the fake (spawn needs a program, and the fake is
-// a node script). `exec` keeps fds 3 and 4 — the whole point.
-function fakeChrome(t, { mode = 'ok', env = {} } = {}) {
+// a node script). `exec` keeps fds 3 and 4 — the whole point. `stubborn` makes
+// it a wedged browser (test-support/fake-chrome.js FAKE_CHROME_STUBBORN).
+//
+// Teardown does not trust the code under test: whatever the test did, every
+// browser and helper the fake logged is SIGKILLed (its whole group first), so a
+// regressed teardown fails ITS test and leaks nothing into the rest of the run.
+// Registered before fakeBin's own after-hook, so it runs while the log exists.
+function fakeChrome(t, { mode = 'ok', env = {}, stubborn = false } = {}) {
   let logFile = null;
-  const { bin } = fakeBin(t, {
-    name: 'chrome',
-    script: FAKE,
-    env: (dir) => ({ FAKE_CHROME_LOG: (logFile = path.join(dir, 'log.jsonl')), FAKE_CHROME_MODE: mode, ...env }),
-  });
   const read = () => {
     try { return fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
   };
-  return { bin, read };
+  const pids = () => {
+    const log = read();
+    return { browsers: log.filter((l) => l.pid).map((l) => l.pid), helpers: log.filter((l) => l.helper).map((l) => l.helper) };
+  };
+  t.after(() => {
+    const { browsers, helpers } = pids();
+    for (const pid of browsers) { try { process.kill(-pid, 'SIGKILL'); } catch { /* not a group, or gone */ } }
+    for (const pid of [...browsers, ...helpers]) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone, as it should be */ } }
+  });
+  const { bin } = fakeBin(t, {
+    name: 'chrome',
+    script: FAKE,
+    env: (dir) => ({
+      FAKE_CHROME_LOG: (logFile = path.join(dir, 'log.jsonl')),
+      FAKE_CHROME_MODE: mode,
+      ...(stubborn ? { FAKE_CHROME_STUBBORN: '1' } : {}),
+      ...env,
+    }),
+  });
+  return { bin, read, pids };
+}
+
+// Every process the fake started is gone. A SIGKILLed helper can sit as a
+// zombie for a moment until its (also killed) parent is reaped, so poll.
+async function assertNoSurvivors(fake, what) {
+  const { browsers, helpers } = fake.pids();
+  assert.ok(browsers.length >= 1, 'precondition: the fake browser started');
+  const all = [...browsers, ...helpers];
+  const gone = await waitUntil(() => all.every((pid) => !isPidAlive(pid)), { timeout: 3000 });
+  assert.ok(gone, `${what}: still alive: ${all.filter(isPidAlive).join(', ')}`);
+  assert.equal(liveBrowsers(), 0, `${what}: the module still counts a browser as up`);
 }
 
 function setEnv(t, vars) {
@@ -186,6 +219,97 @@ test('captureFrames: a Chrome that ignores Browser.close is killed', async (t) =
   assert.deepEqual(fs.readdirSync(tmpDir), []);
 });
 
+// ── no Chrome outlives its render ───────────────────────────────────────────
+// The stubborn fake is the browser that leaked from real test runs: deaf to
+// Browser.close, to SIGTERM and to its pipe closing, with a helper process of
+// its own. Teardown must end both, on every way a render can end.
+// killMs is deliberately long: a SIGKILL ends the browser at once, so a test
+// that takes anywhere near it proves the escalation did not happen.
+const QUICK = { closeMs: 150, termMs: 150, killMs: 8000 };
+
+test('captureFrames: a timed-out render leaves no Chrome behind — nor its helper — even deaf to SIGTERM', async (t) => {
+  const fake = fakeChrome(t, { mode: 'hang', stubborn: true });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const started = Date.now();
+  await assert.rejects(captureFrames({
+    chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+    times: [0], tmpDir, timeoutMs: 400, onFrame: () => {}, grace: QUICK,
+  }), (e) => e.code === 'timeout');
+  const took = Date.now() - started;
+  assert.ok(took < 400 + QUICK.closeMs + QUICK.termMs + 2500, `teardown escalates to SIGKILL without waiting it out (${took} ms)`);
+  assert.equal(fake.pids().helpers.length, 1, 'precondition: the helper started');
+  assert.ok(fake.read().some((l) => l.signal === 'SIGTERM'), 'asked with SIGTERM before SIGKILL');
+  await assertNoSurvivors(fake, 'after a timeout');
+  assert.deepEqual(fs.readdirSync(tmpDir), [], 'and the profile is removed');
+});
+
+test('captureFrames: a helper the browser leaves behind on a clean close is swept with its group', async (t) => {
+  const fake = fakeChrome(t, { env: { FAKE_CHROME_HELPER: '1' } });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const r = await captureFrames({
+    chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+    times: [0], tmpDir, timeoutMs: 20000, onFrame: () => {}, grace: QUICK,
+  });
+  assert.equal(r.frames, 1, 'the render itself succeeded');
+  assert.equal(fake.pids().helpers.length, 1, 'precondition: the helper started');
+  await assertNoSurvivors(fake, 'after a successful render');
+});
+
+test('captureFrames: an aborted render (AbortSignal) tears the browser down the same way', async (t) => {
+  const fake = fakeChrome(t, { mode: 'hang', stubborn: true });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const ac = new AbortController();
+  const p = captureFrames({
+    chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+    times: [0], tmpDir, timeoutMs: 60000, onFrame: () => {}, grace: QUICK, signal: ac.signal,
+  });
+  await waitUntil(() => fake.read().some((l) => l.method === 'Page.captureScreenshot'), { timeout: 10000, what: 'the capture to start' });
+  ac.abort();
+  await assert.rejects(p, (e) => e.code === 'aborted');
+  await assertNoSurvivors(fake, 'after an abort');
+  assert.deepEqual(fs.readdirSync(tmpDir), []);
+  // An already-aborted signal launches nothing at all.
+  await assert.rejects(captureFrames({
+    chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+    times: [0], tmpDir, onFrame: () => {}, signal: ac.signal,
+  }), (e) => e.code === 'aborted');
+  assert.equal(fake.pids().browsers.length, 1, 'no second browser was started');
+});
+
+test('a process that exits mid-render takes its Chrome group with it (the exit hook)', async (t) => {
+  const fake = fakeChrome(t, { mode: 'hang', stubborn: true });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  // A child process starts a render, and exits the moment the capture is under
+  // way — no close(), no finally: only the 'exit' hook stands between the
+  // wedged browser and a leak.
+  const script = `
+    const { captureFrames } = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'replay', 'chrome'))});
+    captureFrames({ chromePath: process.env.BIN, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+      times: [0], tmpDir: process.env.TMPD, timeoutMs: 60000, onFrame: () => {} }).catch(() => {});
+    const fs = require('fs');
+    const iv = setInterval(() => {
+      let log = '';
+      try { log = fs.readFileSync(process.env.LOG, 'utf8'); } catch {}
+      if (log.includes('Page.captureScreenshot') && log.includes('"helper"')) { clearInterval(iv); process.exit(0); }
+    }, 20);`;
+  const logFile = path.join(path.dirname(fake.bin), 'log.jsonl');
+  const child = spawn(process.execPath, ['-e', script], {
+    env: { ...process.env, BIN: fake.bin, TMPD: tmpDir, LOG: logFile }, stdio: 'ignore',
+  });
+  const code = await new Promise((r) => child.on('exit', r));
+  assert.equal(code, 0, 'the child reached the capture and exited');
+  const { browsers, helpers } = fake.pids();
+  const all = [...browsers, ...helpers];
+  assert.equal(all.length, 2, 'precondition: a browser and its helper were up');
+  assert.ok(await waitUntil(() => all.every((pid) => !isPidAlive(pid)), { timeout: 3000 }),
+    `still alive after the parent exited: ${all.filter(isPidAlive).join(', ')}`);
+  assert.deepEqual(fs.readdirSync(tmpDir), [], 'the hook removes the profile too');
+});
+
 test('captureFrames: a Chrome that dies mid-render rejects with chrome-exited', async (t) => {
   const fake = fakeChrome(t, { mode: 'die' });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
@@ -322,6 +446,28 @@ test('POST /api/replay/render is single-flight: a second render while one runs i
   // …and the flag is released, success or not.
   const third = await postJson(port, { format: 'replay' });
   assert.equal(third.status, 200);
+});
+
+test('stopping the daemon mid-render aborts the render and leaves no Chrome behind', async (t) => {
+  const fake = fakeChrome(t, { mode: 'hang', stubborn: true });
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const { api, port, root, srv } = await withServer(t);
+  await seed(api);
+  const pending = postJson(port, { width: 320 });
+  await waitUntil(() => fake.read().some((l) => l.method === 'Page.captureScreenshot'), { timeout: 10000, what: 'the capture to start' });
+  // The server's own stop (not the harness's, which also cuts every socket):
+  // the render request must be answered, then the server closes.
+  const stopped = srv.stop();
+  const r = await pending;
+  assert.equal(r.status, 503);
+  assert.equal((await r.json()).code, 'aborted');
+  // The answered request's keep-alive socket went idle after close() began,
+  // so close() would sit out the keep-alive timeout for it.
+  srv.server.closeIdleConnections();
+  await stopped;
+  await assertNoSurvivors(fake, 'after the daemon stopped');
+  const tmp = projectPaths(root).tmp;
+  assert.deepEqual(fs.existsSync(tmp) ? fs.readdirSync(tmp) : [], [], 'no profile left behind');
 });
 
 test('POST /api/replay/render: a Chrome that dies mid-render is a 502 with its code, and releases the flight', async (t) => {

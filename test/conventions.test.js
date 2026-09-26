@@ -338,6 +338,10 @@ const PATTERNS = [
       // A comment quoting the hand-rolled kill restart dropped in favour of the
       // stop engine.
       'lib/cli/commands/restart.js': 1,
+      // The replay browser's teardown: SIGTERM/SIGKILL to the process GROUP of a
+      // Chrome this module spawned itself (signalGroup) — a child handle, never
+      // a pid read out of a file. proc.kill cannot address a group.
+      'lib/replay/chrome.js': 1,
     },
   },
   {

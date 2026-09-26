@@ -252,8 +252,14 @@ How a render works (`lib/server/replay/render.js`):
   (`413` `too-many-frames`), 64 MB of output (`413` `too-large`) and five minutes
   of wall clock, capture and encode together (`504` `timeout`). A browser that
   dies or draws a frame of the wrong size, or an ffmpeg that fails a video, is a
-  `502` naming what happened. Every path out closes the browser —
-  `Browser.close`, then a kill — and removes its profile.
+  `502` naming what happened. Every path out closes the browser — success,
+  failure, the timeout, and the daemon shutting down mid-render (that render
+  answers `503` `aborted`). The browser runs as the leader of its own process
+  group, and teardown is bounded: `Browser.close`, then SIGTERM to the whole
+  group (Chrome's helper processes included), then SIGKILL, each after a short
+  grace — a wedged Chrome that ignores the first two cannot outlive its render.
+  The profile is always removed, and a daemon that exits with a render still up
+  SIGKILLs the group on its way out.
 - `GET /api/replay/file/:name` hands a rendered file back as a download. It
   serves only `replay-*.{gif,mp4,webm,html}` names, resolved inside
   `.web-chat/exports/` (a symlink pointing out is refused); page exports are not
