@@ -149,6 +149,7 @@ were the only places they lived.
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
+| walk a node's ancestry, or list a pane's versions along it | `lib/server/domain/lineage` `ancestry(graph, id)` / `mountHistory(graph, {mountId, fromId, labels, live, includeLive})`; put a version back with `lib/server/domain/mounts` `restoreMount` | a private `parent_id` loop (no cycle guard, and a second walk for replay to diverge from) |
 | place an item in the page sequence, or put/remove a markdown item | `lib/server/domain/page` `place` / `drop` / `putMarkdown` / `removeMarkdown` (bulk: `restore` / `clearMarkdown` / `reconcile`); read a node's order with `pageOrder(node)` | push onto `state.order` by hand, or take a node's page order from its mounts array alone |
 | render markdown, or list its headings | `core/markdown` `renderMarkdown(text)` / `headings(text)` — the browser imports the same factory from `/app/markdown.js` | a second markdown parser on either side |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
@@ -839,6 +840,30 @@ markdown id, once). One id space covers both kinds.
   defaults; nodes, drafts, the no-change check and the diff all carry exactly
   this, so a surface nobody rearranged has the bytes it always had.
 
+### `lib/server/domain/lineage.js` — ancestry and pane history
+
+A node's lineage is its parent chain to the root of its tree — the path the
+surface travelled to get where it is. `ancestry(graph, id)` is that walk, newest
+first, as a loop with a cycle guard (a trunk is thousands of turns deep; a
+hand-edited parent cycle ends the walk). Pane history is its first reader; the
+replay resolver (plan P5, `domain/refs.js`) is meant to be its second — one walk,
+not two.
+
+- `mountHistory(graph, {mountId, fromId, labels, live, includeLive})` — the
+  distinct versions of one pane along `fromId`'s ancestry, newest first. A
+  version is its CONTENT (`VERSION_FIELDS`: html, params, component — never
+  pane_state, form_state, theme or owner, so a resize or typing is not a new
+  version), hashed by `specHash`. Each version is attributed to the node that
+  INTRODUCED it (the oldest node of the unbroken run showing it; a node without
+  the pane breaks a run), and a version that comes back is listed once, at its
+  latest introduction. With `includeLive`, the entry matching the live pane is
+  `current:true`, or a `node_id:'live'` row leads when the live content is in no
+  node. `GET /api/mounts/:id/history[?from=<node id>]` serves it.
+- `GET /preview/pane/:node/:mount` (routes/graph.js) renders one version with the
+  `/preview/node` document and `PREVIEW_CSP`, narrowed to that pane.
+- `POST /api/mounts/:id/restore {node_id, with_form?, after?}` → `domain/mounts`
+  `restoreMount` — "make current".
+
 ### `lib/server/domain/mounts.js` — the mount-set engine
 
 Putting a pane on the live surface is not one write. It is, in order: reserved-id
@@ -848,10 +873,19 @@ against, the owner stamp, and ONE `bus.emit` naming both the ring event and the
 WS frame. Four routes hand-copied that sequence and each dropped a different
 part of it, which is the whole argument for the module.
 
-- `setMount(state, bus, {id, html, target, params, owner, force, component, theme, pane_state_patch, policy})`
+- `setMount(state, bus, {id, html, target, params, owner, force, component, theme, pane_state_patch, policy, after, place, source, restore})`
   → `{ok:true, id, owner}` or a refusal envelope (`lockReject` / `ownerReject` /
   `reservedReject` — always HTTP 200 with `ok:false`, the tree's refusal
   convention; Claude's tools and the drawer read `.ok`, not the status).
+  `source` is the ring event's source when it is not the owner; `restore`
+  (`{pane_state, form_state}`) replaces both outright instead of carrying them —
+  both exist for `restoreMount`.
+- `restoreMount(state, bus, {id, version, withForm, after})` — pane history's
+  "make current": a USER write (`source:'history'`, so it never keeps Claude's
+  turn lock alive) of an older version's html/params/component/target and
+  layout, keeping the live pane's pinned/locked/minimized flags and typed
+  values (the version's with `withForm`). Refused on a locked pane, and on a
+  live pane or a version that Claude does not own.
 - `removeMount(state, bus, {id, source, originGen, target})` → whether a pane
   went. `originGen` is the queue's generation guard.
 - `emitMount(state, bus, id, {source})` — re-broadcast a pane as it stands,

@@ -88,6 +88,9 @@ deliberately `force`. Claude sees the owner in `list_mounts` before rendering.
 Pick a namespaced `id` per driver surface (`tests_*`, `watch_*`) to avoid
 collisions in the first place.
 
+Pane history's "make current" (`POST /api/mounts/:id/restore`) never touches a
+driver's pane: it refuses a live pane a driver owns, and a version a driver wrote.
+
 ---
 
 ## The event model
