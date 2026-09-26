@@ -11,21 +11,8 @@
    Saved themes still override per-token via applyTokens on :root/#main/.pane.
    ========================================================================== */
 
-/* ----- fonts (self-hosted; variable = full weight range) ----- */
-@font-face {
-  font-family: 'Geist';
-  src: url('/fonts/Geist-Variable.woff2') format('woff2-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('/fonts/GeistMono-Variable.woff2') format('woff2-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+/* Fonts: @font-face lives in ONE place, public/fonts/fonts.css (linked from
+   index.html ahead of this file) — the export engine reads it from there. */
 
 /* ===================== Earthy Dark (stock) ===================== */
 :root {

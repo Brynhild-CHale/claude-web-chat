@@ -1,0 +1,86 @@
+/* ==========================================================================
+   web-chat — bundled fonts. THE one place @font-face is declared.
+
+   Served same-origin (never hot-linked: the page must work offline, inside a
+   CSP, and in an export). index.html links this file ahead of app.css, and
+   lib/server/fonts.js reads it to inline the faces a theme names into a
+   self-contained export — so a face declared anywhere else would reach the
+   live chrome but silently not the export (test/fonts.test.js refuses one).
+
+   Rules the export engine relies on: one `font-family` and one
+   `src: url('/fonts/<file>')` per block, the file sitting in this directory.
+
+   Geist, Geist Mono — SIL OFL 1.1, Vercel (Geist-OFL.txt); variable woff2,
+     full weight range.
+   Libre Caslon Text — SIL OFL 1.1, The Libre Caslon Text Project Authors
+     (LibreCaslonText-OFL.txt); Regular 400, Bold 700, Italic 400, as the
+     Google Fonts woff2 builds, split latin / latin-ext by unicode-range so a
+     page downloads the second only when it has a character from it.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Libre Caslon Text — latin */
+@font-face {
+  font-family: 'Libre Caslon Text';
+  src: url('/fonts/LibreCaslonText-Regular.latin.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Libre Caslon Text';
+  src: url('/fonts/LibreCaslonText-Bold.latin.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Libre Caslon Text';
+  src: url('/fonts/LibreCaslonText-Italic.latin.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Libre Caslon Text — latin-ext */
+@font-face {
+  font-family: 'Libre Caslon Text';
+  src: url('/fonts/LibreCaslonText-Regular.latin-ext.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Libre Caslon Text';
+  src: url('/fonts/LibreCaslonText-Bold.latin-ext.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Libre Caslon Text';
+  src: url('/fonts/LibreCaslonText-Italic.latin-ext.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}

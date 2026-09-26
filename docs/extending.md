@@ -156,6 +156,7 @@ were the only places they lived.
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | name a design token, or ship a builtin theme pack | `lib/server/theme-packs` `CANONICAL_TOKENS` / `PACKS` (every pack defines every canonical token; Earthy = `public/app.css` verbatim, and the theme-packs test holds both) | a token only one stylesheet knows, or a pack that leaves one unset |
+| declare a bundled font face, or inline the ones a theme names into a document with no origin | public/fonts/fonts.css — THE @font-face list — and `lib/server/fonts` `inlineFontCss(strings)` / `fontFaces()`, which read it (test/fonts.test.js refuses a face declared anywhere else) | an `@font-face` in `app.css` or a pane, or a hot-linked font CDN |
 | resolve a theme's light/dark mode, or merge layers at one | `lib/server/theme` `flattenTheme(t, mode)` / `mergeTokensAt(mode, layers)` / `cascadeMode` (the chrome's mirror is `public/app/theme.js`) | read `theme.tokens` alone off a theme that may carry `modes` |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
 | resolve + scheme-gate an href/src read out of a captured page | `capture/profiles/util` `safeHref(href, pageUrl)` | `new URL` plus your own `javascript:` regex |

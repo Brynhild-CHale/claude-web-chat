@@ -57,6 +57,29 @@ A theme may carry per-mode layers over its mode-free tokens:
   always resolves to its own mode. `list_themes` names each theme's modes but
   not their per-mode token maps, to keep that listing small.
 
+## Fonts
+
+web-chat bundles three families under `public/fonts/`, each with its SIL Open
+Font License alongside it:
+
+| Family | Files | Used by |
+| --- | --- | --- |
+| Geist | one variable woff2, weights 100–900 | Earthy and Paper (`--wc-font`, and through it `--wc-display`/`--wc-reading`) |
+| Geist Mono | one variable woff2, weights 100–900 | every pack's `--wc-mono` |
+| Libre Caslon Text | Regular 400, Bold 700, Italic 400 — each split latin / latin-ext by `unicode-range` | Georgetown's `--wc-display` and `--wc-reading` |
+
+They are served same-origin from `/fonts/` — never hot-linked from a font CDN,
+so the surface works offline and an export carries them. `public/fonts/fonts.css`
+is the one place their `@font-face` rules are declared; a theme uses a face by
+naming its family in a font token (or in raw `css`), exactly as it would a
+system font, and the stack's fallbacks carry the text until it loads.
+
+An export inlines, as `data:` URIs, **only the bundled families its resolved
+theme names** — page, node and pane layers, tokens and raw css alike — so an
+unthemed export carries no font at all and a Georgetown one carries Caslon and
+Geist Mono (about 205KB inlined), not Geist; an Earthy or Paper one carries Geist and Geist Mono (about 185KB). A family the bundle lacks is left to
+the reader's machine.
+
 ## Canonical token table
 
 Every token the chrome reads, defined once in `lib/server/theme-packs.js`. Every
