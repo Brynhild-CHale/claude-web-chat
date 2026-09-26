@@ -14,7 +14,7 @@ import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './dra
 import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
-import { labelFor } from './labels.js';
+import { labelFor, nodeTime } from './labels.js';
 import { panes, unminimize, blockType } from './mounts.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
@@ -267,13 +267,6 @@ function closePalette() {
   const p = $('cmd-palette'); if (p) p.classList.add('hidden');
   const inp = $('cmd-input'); if (inp) inp.blur(); // else focus lingers and swallows single-key shortcuts
 }
-// Typed rows, as the design draws them (Theme §4c): a KIND column (node / block
-// / command — "section" arrives with the page model), the label, and a hint on
-// the right — a node's time, a block's type, a command's key. Every field is
-// set as text (renderPalette), because node names and block titles are user- or
-// agent-supplied.
-const nodeTime = (n) => (n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
-
 // Jump to a block on the page: restore it if it was minimized, bring it into
 // view and flash its outline so the eye lands on it.
 function revealBlock(id) {
@@ -288,6 +281,11 @@ function revealBlock(id) {
   setTimeout(() => w.classList.remove('pane-flash'), 1400);
 }
 
+// Typed rows, as the design draws them (Theme §4c): a KIND column (node / block
+// / command — "section" arrives with the page model), the label, and a hint on
+// the right — a node's time (labels.js nodeTime), a block's type, a command's key. Every field is
+// set as text (renderPalette), because node names and block titles are user- or
+// agent-supplied.
 async function buildPalette(q) {
   const ql = q.toLowerCase();
   const cmds = [

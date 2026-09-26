@@ -18,7 +18,7 @@
 // Shown only while #overlay has .log-mode (graph-view openOverlay, on a phone);
 // graph-view calls renderLog on every redraw through setLogRenderer.
 import { view, $ } from './state.js';
-import { labelFor, seqNum } from './labels.js';
+import { labelFor, seqNum, nodeTime } from './labels.js';
 import {
   graphIndex, matches, isFiltering, toggleFilter, setQuery, isFork, foldedCount, ghostRowsFor,
   graphNameOf, setActive, branchFrom, exportNode, saveName, unmarkNode, toggleFloatPreview,
@@ -42,7 +42,6 @@ function svg(tag, attrs) {
   return e;
 }
 const newestFirst = (a, b) => (b.created_at - a.created_at) || (seqNum(b.id) - seqNum(a.id));
-const timeOf = (n) => (n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
 
 // The graph the log shows: the selected turn's, else the active node's, else the
 // newest. The switcher moves the selection into another graph, so it follows.
@@ -148,7 +147,7 @@ export function renderLog() {
     if (isActive) top.appendChild(el('span', 'gv-badge active', 'ACTIVE'));
     if (isFork(n)) top.appendChild(el('span', 'gv-badge fork', '⑃'));
     top.appendChild(el('span', 'sp'));
-    top.appendChild(el('span', 't', timeOf(n)));
+    top.appendChild(el('span', 't', nodeTime(n)));
     card.appendChild(top);
     card.appendChild(el('div', 'gv-lcard-trig', n.trigger_summary || '(no trigger)'));
     const nf = foldedCount(n);

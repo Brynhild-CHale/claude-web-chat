@@ -18,7 +18,7 @@
 // transform. The transform is `camera` ({tx, ty, scale}); the imported `view` is
 // the shared state (activeId/viewedId/lock/graphCache/…).
 import { view, $ } from './state.js';
-import { seqNum, nodeById, labelFor } from './labels.js';
+import { seqNum, nodeById, labelFor, nodeTime } from './labels.js';
 import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
@@ -1135,7 +1135,7 @@ function renderSleeves(sleeves, filtering, dimNode) {
       const cls = ['gv-srow'];
       if (r.id === view.selectedNodeId) cls.push('selected');
       if (dimNode(n)) cls.push('dim');
-      const t = n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      const t = nodeTime(n);
       return `<button type="button" class="${cls.join(' ')}" data-id="${esc(r.id)}" title="${esc(n.trigger_summary || n.label)}">` +
         `<span class="dot"></span><span class="id">${esc(n.label || r.id)}</span>` +
         `<span class="trig">${esc(n.trigger_summary || '')}</span><span class="t">${esc(t)}</span></button>`;

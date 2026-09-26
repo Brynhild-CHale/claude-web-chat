@@ -160,6 +160,18 @@ test('the fork gutter is computed from the drawn parents, newest first', async (
   assert.deepEqual(computeLogLanes([{ id: 'a', parent: 'elsewhere' }]).rows[0].lines, []);
 });
 
+// The log card, the canvas sleeve row and the ⌘K node hint all print a node's
+// time: one formatter (labels.js nodeTime), not a private copy per unit.
+test('a node\'s clock time has one formatter, labels.js nodeTime', async () => {
+  const { nodeTime } = await import(pathToFileURL(path.join(REPO, 'public/app/labels.js')).href);
+  assert.match(nodeTime({ created_at: Date.UTC(2026, 0, 1, 9, 5) }), /\d{1,2}:05/);
+  assert.equal(nodeTime({}), '', 'no timestamp, no time');
+  const dir = path.join(REPO, 'public/app');
+  const homes = fs.readdirSync(dir).filter((f) => f.endsWith('.js'))
+    .filter((f) => fs.readFileSync(path.join(dir, f), 'utf8').includes('toLocaleTimeString'));
+  assert.deepEqual(homes, ['labels.js'], 'format a node\'s time with labels.js nodeTime, never a private copy');
+});
+
 /* ---------------- the phone: a read-only viewer ---------------- */
 
 test('a phone is marked on <html> and its panes are read-only', async () => {

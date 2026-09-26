@@ -9,6 +9,11 @@ export function labelFor(id) {
   const n = nodeById(id);
   return (n && n.label) || id;
 }
+// A node's clock time as the chrome shows it (HH:MM) — the palette's hint, a
+// sleeve row, a phone log card. '' for a node with no timestamp.
+export function nodeTime(n) {
+  return n && n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+}
 // RAW commit children — no collapse awareness. Its one consumer was the
 // surface's ▾ branch picker, dropped with the chrome restyle (forks are chosen
 // on the graph screen now); it stays for a question about the COMMIT graph, and
