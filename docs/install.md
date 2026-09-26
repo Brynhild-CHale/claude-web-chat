@@ -107,9 +107,10 @@ And since it's opt-in, projects you never ran `install` in are simply inert.
 
 ## What it writes to your machine
 
-- `<project>/.web-chat/` — the graph, saved components, exports, server portfile and log. `install` adds it to your `.gitignore` (unless a rule for it is already there).
+- `<project>/.web-chat/` — the graph, saved components, exports, server portfile and log; `brand/` holds the brand images you drop into ⋯ → Settings, and `tmp/` the scratch files of a replay render (a throwaway browser profile, video frames) while one runs. `install` adds it to your `.gitignore` (unless a rule for it is already there).
 - `<project>/.claude/` — hook entries merged into `settings.json`, plus the managed rules file, the `/web-chat` slash command, and two skills.
 - `~/.web-chat/` — the program itself (`versions/<version>/` plus the `current` symlink) and per-user state: disable markers, the update-check cache, saved themes, and `services/trusted.json` (which component services you've approved, and for which project).
+- `~/.web-chat/tunnel/` — only once you run `claude-web-chat tunnel setup`: `tunnel.json`, the cloudflared connector **token** (a secret, kept 0600), and the portal, cloudflared and remote-access logs. See [remote access](remote-access.md).
 - `~/.local/bin/` — three symlinks (`claude-web-chat`, `-mcp`, `-hook`) pointing at `~/.web-chat/current/bin/`.
 
-Nothing else — no system directories, and nothing needing sudo. `uninstall` removes this project's hooks while leaving your graph data alone; `claude-web-chat uninstall --self` also removes the program (the `~/.local/bin` links and every unpacked version), leaving per-user state and every project's graph in place.
+Nothing else — no system directories, and nothing needing sudo. `uninstall` removes this project's hooks while leaving your graph data alone; `claude-web-chat uninstall --self` also removes the program (the `~/.local/bin` links and every unpacked version), leaving per-user state and every project's graph in place. If you set up remote access, run `claude-web-chat tunnel down` **before** `uninstall --self` — it does not stop a running portal or cloudflared — and delete `~/.web-chat/tunnel/` afterwards to remove the connector token.

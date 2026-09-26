@@ -935,7 +935,8 @@ and both are there because they are exactly as invisible in review:
 The surface is one ordered sequence of items: panes (the mount engine's records)
 and markdown chunks (`write_markdown`, owned here). There is no stored section
 structure — consecutive panes form a grid run, markdown sits between runs, and
-the `#`–`###` headings in it build the Contents nav. Live state is
+the `#`/`##` headings in it build the Contents nav (`###` is a sub-heading
+with no row). Live state is
 `state.markdown` (`Map<id,{text, owner, gen}>`) and `state.order` (every pane and
 markdown id, once). One id space covers both kinds, and `'start'`
 (`page.PAGE_START`, the page-top anchor) is never an id in it —
