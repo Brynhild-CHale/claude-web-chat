@@ -102,6 +102,49 @@ test('registry: the hub entry carries the same guard', () => {
   assert.equal(registry.readHubEntry(), null);
 });
 
+test('registry: a singleton role (the tunnel portal) is its own entry, beside the hub and instances', () => {
+  reset();
+  const root = project('beside');
+  registry.registerInstance({ root, port: 5206, pid: process.pid, title: 'inst' });
+  registry.registerHub({ port: 5170, pid: process.pid });
+  const e = registry.registerRole('portal', { port: 5171, pid: process.pid });
+  assert.equal(e.id, 'portal');
+  assert.equal(e.role, 'portal');
+  assert.equal(e.root, null);
+  assert.equal(e.url, 'http://localhost:5171');
+
+  assert.equal(registry.readRoleEntry('portal').port, 5171);
+  assert.equal(registry.readRoleEntry('hub').port, 5170, 'the hub entry is untouched');
+  assert.equal(registry.readHubEntry().port, 5170, 'the hub wrapper reads the same entry');
+  assert.deepEqual(registry.readInstances().map((i) => i.title), ['inst'],
+    'neither singleton reads as an instance — the hub and resolveTarget must never route to the portal');
+
+  // Re-registering upserts: one entry per role, never two.
+  registry.registerRole('portal', { port: 5271, pid: process.pid });
+  assert.equal(registry.readAllEntries().filter((x) => x.role === 'portal').length, 1);
+  assert.equal(registry.readRoleEntry('portal').port, 5271);
+});
+
+test('registry: a singleton role carries the same removal guard, and drops a dead predecessor', () => {
+  reset();
+  registry.registerRole('portal', { port: 5171, pid: DEAD_PID });
+  assert.equal(registry.readRoleEntry('portal'), null, 'a dead-pid portal entry reads as absent');
+
+  registry.registerRole('portal', { port: 5171, pid: process.pid });
+  assert.equal(registry.deregisterRole('portal', { pid: DEAD_PID }), false, 'a foreign live portal entry is left alone');
+  assert.ok(registry.readRoleEntry('portal'));
+  assert.equal(registry.deregisterRole('hub', { pid: process.pid }), false, 'a role that is not there is false');
+  assert.equal(registry.deregisterRole('portal', { pid: process.pid }), true, 'its owner removes it');
+  assert.equal(registry.readRoleEntry('portal'), null);
+});
+
+test('registry: registerRole refuses the per-project role (instances are keyed by root, not by role)', () => {
+  reset();
+  assert.throws(() => registry.registerRole('instance', { port: 1, pid: process.pid }), /not a singleton role/);
+  assert.throws(() => registry.registerRole('', { port: 1, pid: process.pid }), /not a singleton role/);
+  assert.equal(registry.readAllEntries().length, 0);
+});
+
 test('registry: release() applies one rule to BOTH records and reports what it removed', () => {
   reset();
   const root = project('release');

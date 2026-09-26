@@ -91,7 +91,8 @@ shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · captu
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
-                   channels · resources · mcp-seen   (zero deps on the rest of lib/)
+                   channels · resources · mcp-seen · remote-policy
+                                                     (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -143,6 +144,9 @@ were the only places they lived.
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
 | call the daemon over HTTP | `lib/client` `get` / `post` / `api` — a non-2xx is a typed `HttpError` `{status, body}`; the low-level `request` (never throws on a status) only where the status is RELAYED onward | `http.request`, or `client.request` plus a hopeful read of the body |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
+| stream a request through to a daemon and relay the live response (a proxy) | `lib/client` `pipe(port, {method, path, headers}, reqStream)` | `http.request` + `res.pipe` in the proxy |
+| decide whether a REMOTE viewer (through the tunnel portal) may reach a daemon route | `core/remote-policy` `classify(method, url, {allowDestructive})` → `{allow, key, reason, hint}` + `refusalBody(v)` — default deny, and its ratchet test fails on any daemon route the table does not name | a per-route check in the portal, or a new route left unclassified |
+| register a one-per-machine process (the hub, the tunnel portal) | `lib/util/registry` `registerRole(role, {port, pid})` / `readRoleEntry(role)` / `deregisterRole(role, {pid})` (`registerHub`/`readHubEntry`/`deregisterHub` are its `'hub'` wrappers) | a second copy of `registerHub` with another name |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
 | write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
 | read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
@@ -256,6 +260,14 @@ The single way to make an HTTP call to a web-chat daemon.
 - `subscribeSSE({port, root, since, kinds, onEvent, onGap, onClose, onError})` —
   the live event stream. A long-lived stream, so it must **not** go through
   `request()` (which buffers to end).
+- `pipe(port, {method, path, headers, timeout}, reqStream)` → the live
+  `IncomingMessage` — the streaming pass-through the tunnel portal proxies
+  through (any method, binary bodies, downloads, SSE). Resolves at the response
+  headers and never throws on a status. The port is **required** (it never
+  discovers or spawns — a remote request must not resurrect a stopped daemon),
+  `Host` is always forced to `127.0.0.1:<port>`, and a body stream that dies
+  destroys the upstream request. Which of a remote client's headers to pass is
+  the caller's allowlist, not the transport's.
 - `probeReachable` / `probeHealth` (re-exported from `core/portfiles`),
   `discoverPort`, `ensureDaemon`, `NoServerError`, `HttpError`.
 
@@ -457,6 +469,29 @@ module. Facts that must never drift apart:
 `LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
 the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
 dual-stack machine.
+
+### `lib/core/remote-policy.js` — what a remote viewer may reach
+
+`cors.js` answers "is this request local?", and through the tunnel portal
+(`lib/portal`) every request *is*: the portal is a process on this machine
+dialling `127.0.0.1`. So the daemon cannot tell a remote, allowlisted viewer
+from the developer, and the line between "the surface" and "host-only" is drawn
+here instead, consulted by the portal per request: `classify(method, url,
+{allowDestructive})` → `{allow, key, reason, hint}`, and `refusalBody(v)` for
+the 403 (`{ok:false, remote:true, hint}`).
+
+- **Default deny.** A route no rule names is refused. Rules are
+  `{methods, path, allow, hint}` with `:param` and a trailing `*`; first match
+  wins.
+- **Matching mirrors Express** (HEAD is GET, case-insensitive, one trailing
+  slash ignored), and any path the two could read differently — an encoded
+  slash, a `.`/`..` or empty segment, a backslash, a control character, a bad
+  escape — is refused as `malformed` rather than guessed at.
+- **Adding a daemon route?** `test/remote-policy.test.js` parses every
+  `app.<verb>(` under `lib/server/routes/` and fails until the route has a row.
+  Decide on purpose: pack writes, service trust, the turn/hook internals,
+  process/disk actions and captures are refused; the surface the SPA drives is
+  allowed.
 
 ### `lib/packs/` — the component-pack pipeline
 
@@ -967,7 +1002,9 @@ Every planned consolidation has shipped — the current engines are below.
 `role:'hub'` entry alongside instances) + `lib/core/versions.js` (the three
 version facts: `packageVersion`, `SCHEMA_VERSION`, `PROTOCOL_VERSION` +
 `isProtocolCurrent`) (Phase 6). Register a running process with
-`registerInstance`/`registerHub`; read it with `readInstances`/`readHubEntry`;
+`registerInstance`/`registerHub` (or `registerRole(role, …)` for any other
+one-per-machine process — the tunnel portal is `role:'portal'`); read it with
+`readInstances`/`readHubEntry`/`readRoleEntry(role)`;
 release it with `release({root, pid})`, which removes the portfile and the
 registry entry under one ownership rule; classify the machine with `rows()`.
 `readInstances` prunes dead pids as it reads (the hub's idle monitor depends on

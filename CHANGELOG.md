@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Groundwork for remote access through a Cloudflare tunnel** (nothing is exposed yet — the portal that uses these lands next). `lib/core/remote-policy.js` is the default-deny table of which daemon routes a remote, allowlisted viewer may reach: the surface the browser drives is allowed; pack writes, service trust, the turn/hook internals, shutdown, `format=file` exports, captures and the extension downloads are refused with a hint naming what to run on the host; wiping the graph needs an explicit opt-in. `test/remote-policy.test.js` fails the build on any daemon route the table does not classify. `lib/client` gains `pipe()`, a streaming pass-through that never discovers or spawns a daemon and always dials it as `127.0.0.1:<port>`; the registry's hub helpers generalise to `registerRole`/`readRoleEntry`/`deregisterRole` for any one-per-machine process; and `userPaths()` names the `~/.web-chat/tunnel/` files (config, connector token, logs).
+
 ## [0.7.6] - 2026-09-18
 
 ### Upgrading from 0.7.5

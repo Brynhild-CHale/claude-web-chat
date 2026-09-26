@@ -42,7 +42,9 @@ const PATTERNS = [
     roots: ['lib'],
     re: /http\.request\(/g,
     baseline: {
-      'lib/client/index.js': 2,
+      // request, the SSE subscriber, and pipe — the streaming pass-through the
+      // tunnel portal proxies through (one idiom per shape of exchange).
+      'lib/client/index.js': 3,
       'lib/core/portfiles.js': 2,
     },
   },
