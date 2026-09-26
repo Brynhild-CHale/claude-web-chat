@@ -83,6 +83,32 @@ const PATTERNS = [
     },
   },
   {
+    // Reaching the PUBLIC internet. `http.request(` (above) polices calls to
+    // our own daemon; this is the other concept, and it has no engine yet. It
+    // was deliberately unratcheted while there were two requesters (the embed
+    // probe, the release download — docs/extending.md said a THIRD would be the
+    // moment to act). The tunnel portal's JWKS fetch is that third, and the
+    // middle ground taken is to count them: each lives alone in the one file
+    // that needs it, with its own fencing, and a FOURTH fails here — at which
+    // point extract lib/util/outbound.js rather than raising a baseline. The
+    // fingerprint is the module require, because the three spell the request
+    // itself three different ways (`lib.request(`, `agentFor(u).get(`, an
+    // injected `get(`).
+    name: "require('https')",
+    home: 'none yet — one per outbound requester; a fourth means extracting lib/util/outbound.js',
+    what: 'an outbound request to the public internet',
+    roots: ['lib'],
+    re: /require\(\s*['"](?:node:)?https['"]\s*\)/g,
+    baseline: {
+      // Probe a URL a pane named (refuseTarget / publicOnlyLookup fencing).
+      'lib/server/routes/embed.js': 1,
+      // Download a release tarball (checksum-verified).
+      'lib/update/release.js': 1,
+      // Cloudflare Access's signing keys (a fixed URL built from the team name).
+      'lib/portal/jwks.js': 1,
+    },
+  },
+  {
     name: 'os.homedir()',
     home: 'lib/core/paths.js (extracted in Phase 1)',
     what: 'building the ~/.web-chat state dir',

@@ -2,7 +2,7 @@
 //
 // docs/extending.md draws it:
 //
-//     entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
+//     entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/* · portal/*
 //                              │  import ↓ only      (never each other)
 //     shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
 //                              │  import ↓ only      (may import each other)
@@ -37,7 +37,7 @@ const LIB = path.join(REPO_ROOT, 'lib');
 
 // ── the layers ──────────────────────────────────────────────────────────────
 // core is the leaf; client sits on it; SHARED libraries implement one concern
-// each and are consumed by the entry points; ENTRY points are the six processes
+// each and are consumed by the entry points; ENTRY points are the seven processes
 // this package actually starts. Downward is always fine. What is forbidden:
 //
 //   core    → anything but core          (it is the leaf, by definition)
@@ -48,7 +48,7 @@ const LIB = path.join(REPO_ROOT, 'lib');
 // A shared library importing another shared library is allowed and expected —
 // lib/packs consumes lib/update's archive reader, and that is composition, not
 // a direction violation.
-const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server']);
+const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal']);
 // lib/setup is SHARED: the project-registration model (what it means for a
 // project to be registered with Claude Code), consumed by the cli and mcp entry
 // points and layered on lib/update's managed-file primitives. It must never
@@ -81,6 +81,14 @@ const BASELINE = {
   // `hub` is the CLI face of the hub process, same shape as `start`.
   'lib/cli/commands/hub.js => lib/hub/index.js':
     'the hub subcommand runs the hub in-process',
+
+  // `portal run` is the CLI face of the tunnel portal process, same shape as
+  // `hub run`; it also reads the config through the portal's own normaliser,
+  // so `run` and the portal cannot disagree about what a valid config is.
+  'lib/cli/commands/portal.js => lib/portal/index.js':
+    'the portal subcommand runs the portal in-process',
+  'lib/cli/commands/portal.js => lib/portal/config.js':
+    'portal run validates tunnel.json with the portal\'s own normaliser',
 
   // The two hooks are MCP-adjacent by construction: they talk to the same daemon
   // through the same spawn-injecting shim the 23 tools use.

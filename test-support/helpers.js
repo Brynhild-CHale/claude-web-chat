@@ -399,7 +399,52 @@ async function withHub(t, { port = 0, createHub } = {}) {
   return { hub, server: hub.server, port: bound, baseUrl, api: makeApi(baseUrl), stop };
 }
 
+// Stand up the tunnel PORTAL (lib/portal) for a test and own its teardown —
+// withHub's sibling. Loopback, ephemeral port, never start(): no registry
+// entry for the portal itself, no JWKS warm-up against anything real.
+//   withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs })
+// `config` is tunnel.json's raw shape (normalised here, so a test can hand in
+// fake-access's config()). Returns { portal, port, config, request } where
+// `request(path, {host, method, headers, body})` is a RAW request — the portal
+// routes on Host, which fetch refuses to set.
+async function withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs } = {}) {
+  const { createPortal } = require('../lib/portal');
+  const { normalizeConfig } = require('../lib/portal/config');
+  const cfg = normalizeConfig(config);
+  const portal = createPortal({ port: 0, config: cfg, fetchJwks, now, instances, probe, wsGraceMs });
+  await new Promise((resolve, reject) => {
+    const onError = (e) => { portal.server.off('error', onError); reject(e); };
+    portal.server.once('error', onError);
+    portal.server.listen(0, '127.0.0.1', () => { portal.server.off('error', onError); resolve(); });
+  });
+  const port = portal.server.address().port;
+  t.after(() => portal.stop());
+  function request(pathStr, { host = cfg.hostname, method = 'GET', headers = {}, body } = {}) {
+    const http = require('http');
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port, path: pathStr, method, setHost: false,
+        headers: { ...(host === null ? {} : { host }), ...headers },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let json = null;
+          try { json = text ? JSON.parse(text) : null; } catch {}
+          resolve({ status: res.statusCode, headers: res.headers, text, json });
+        });
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      if (body != null) req.write(typeof body === 'string' ? body : JSON.stringify(body));
+      req.end();
+    });
+  }
+  return { portal, server: portal.server, port, config: cfg, request };
+}
+
 module.exports = {
-  withServer, withHub, tmpRoot, withTempHome, makeApi,
+  withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };

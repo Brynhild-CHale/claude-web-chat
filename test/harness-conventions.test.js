@@ -129,13 +129,14 @@ const PATTERNS = [
     // http/net stubs several tests legitimately stand up. Four hub boots and
     // three server boots used to spell it; the two remaining are the engine.
     name: '.server.listen(',
-    home: 'test-support/helpers.js — `withServer` (daemon) / `withHub` (capture hub)',
+    home: 'test-support/helpers.js — `withServer` (daemon) / `withHub` (capture hub) / `withPortal` (tunnel portal)',
     what: 'listening on a server/hub owner object by hand',
     roots: ROOTS,
     re: /\.server\.listen\(/g,
     baseline: {
-      // withServer's listen(0) and withHub's listen(port, LISTEN_HOST).
-      'test-support/helpers.js': 2,
+      // withServer's listen(0), withHub's listen(port, LISTEN_HOST) and
+      // withPortal's listen(0) on loopback.
+      'test-support/helpers.js': 3,
     },
   },
   {
