@@ -91,7 +91,7 @@ function createFakeAccess({ team = 'testteam', aud = 'test-aud-0123456789', emai
   }
 
   // A config object in tunnel.json's shape (normalise it with
-  // lib/portal/config normalizeConfig).
+  // lib/tunnel/config normalizeConfig).
   function config(over = {}) {
     return {
       hostname: 'wc.example.test',

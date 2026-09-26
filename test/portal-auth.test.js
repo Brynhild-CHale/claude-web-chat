@@ -15,8 +15,8 @@ const http = require('http');
 const { withPortal } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
 const { createVerifier, tokenFrom, emailAllowed } = require('../lib/portal/access-jwt');
-const { createJwksCache, fetchJson, parseJwks, jwksUrl } = require('../lib/portal/jwks');
-const { normalizeConfig } = require('../lib/portal/config');
+const { createJwksCache, fetchJson, parseJwks, jwksUrl } = require('../lib/tunnel/jwks');
+const { normalizeConfig } = require('../lib/tunnel/config');
 
 // A clock a test can move. Both the fake's token times and the portal read it.
 function clock(start = Date.now()) {

@@ -105,7 +105,7 @@ const PATTERNS = [
       // Download a release tarball (checksum-verified).
       'lib/update/release.js': 1,
       // Cloudflare Access's signing keys (a fixed URL built from the team name).
-      'lib/portal/jwks.js': 1,
+      'lib/tunnel/jwks.js': 1,
     },
   },
   {
@@ -332,6 +332,9 @@ const PATTERNS = [
       // pid read out of a file.
       'lib/util/hub.js': 1,
       'lib/cli/commands/hub.js': 1,
+      // `tunnel down`: the same identity gate — the pid the live portal just
+      // reported on its /api/health, never one read out of a file.
+      'lib/cli/commands/tunnel.js': 1,
       // A comment quoting the hand-rolled kill restart dropped in favour of the
       // stop engine.
       'lib/cli/commands/restart.js': 1,

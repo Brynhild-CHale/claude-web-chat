@@ -4,7 +4,7 @@
 //
 //     entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/* · portal/*
 //                              │  import ↓ only      (never each other)
-//     shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/*
+//     shared libraries   util/* · toggle/* · update/* · packs/* · capture/* · channel/* · tunnel/*
 //                              │  import ↓ only      (may import each other)
 //     lib/client/        the one daemon HTTP client
 //                              │  import ↓ only
@@ -54,7 +54,12 @@ const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal
 // points and layered on lib/update's managed-file primitives. It must never
 // import an entry point — which is why resolveRoot takes no prompt of its own
 // and the `claude` shell-out is injectable rather than reaching for lib/cli.
-const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup']);
+// lib/tunnel is SHARED: what the portal process, `tunnel setup|up|status` and
+// doctor all need to agree on — tunnel.json's one normaliser, Cloudflare
+// Access's key set, and cloudflared (finding, launching, supervising it). It
+// lived inside lib/portal until the CLI needed it too; an entry point cannot
+// import another's internals, so it moved down a layer.
+const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup', 'tunnel']);
 
 // ── the baseline: edges that legitimately remain ────────────────────────────
 // Each is `from => to` at FILE granularity, because the point of naming them is
@@ -83,12 +88,10 @@ const BASELINE = {
     'the hub subcommand runs the hub in-process',
 
   // `portal run` is the CLI face of the tunnel portal process, same shape as
-  // `hub run`; it also reads the config through the portal's own normaliser,
-  // so `run` and the portal cannot disagree about what a valid config is.
+  // `hub run`. (It reads tunnel.json through lib/tunnel/config, a shared
+  // library, so that is no longer an edge into the portal.)
   'lib/cli/commands/portal.js => lib/portal/index.js':
     'the portal subcommand runs the portal in-process',
-  'lib/cli/commands/portal.js => lib/portal/config.js':
-    'portal run validates tunnel.json with the portal\'s own normaliser',
 
   // The two hooks are MCP-adjacent by construction: they talk to the same daemon
   // through the same spawn-injecting shim the 23 tools use.

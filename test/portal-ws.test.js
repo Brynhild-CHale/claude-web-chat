@@ -11,7 +11,7 @@ const WebSocket = require('ws');
 const { withServer, withPortal, waitUntil } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
 const { registerInstance, instanceId } = require('../lib/util/registry');
-const { sessionHost } = require('../lib/portal/config');
+const { sessionHost } = require('../lib/tunnel/config');
 const { CLOSE_EXPIRED, armDeadline } = require('../lib/portal/ws-relay');
 
 async function rig(t, { wsGraceMs } = {}) {

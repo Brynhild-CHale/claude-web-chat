@@ -15,7 +15,7 @@ const { registerInstance, instanceId } = require('../lib/util/registry');
 const { readMcpSeen } = require('../lib/core/mcp-seen');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { forwardHeaders, responseHeaders } = require('../lib/portal/proxy');
-const { parseHost, sessionHost, normalizeConfig } = require('../lib/portal/config');
+const { parseHost, sessionHost, normalizeConfig } = require('../lib/tunnel/config');
 
 // One daemon + one portal, the daemon registered under its real instance id.
 async function rig(t, { config } = {}) {
@@ -228,7 +228,7 @@ test('parseHost: flat and nested hostnames', () => {
 test('portal lifecycle: start() binds loopback and registers role:portal; portal run needs a config', async (t) => {
   const { createPortal } = require('../lib/portal');
   const { readRoleEntry, deregisterRole } = require('../lib/util/registry');
-  const { loadConfig } = require('../lib/cli/commands/portal');
+  const { loadConfig } = require('../lib/tunnel/config');
   withTempHome(t);
   const access = createFakeAccess();
   const portal = createPortal({ port: 0, config: normalizeConfig(access.config()), fetchJwks: access.fetchJwks });
