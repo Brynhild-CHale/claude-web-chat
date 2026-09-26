@@ -59,7 +59,11 @@ const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal
 // Access's key set, and cloudflared (finding, launching, supervising it). It
 // lived inside lib/portal until the CLI needed it too; an entry point cannot
 // import another's internals, so it moved down a layer.
-const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup', 'tunnel']);
+// lib/replay is SHARED: the host-side half of rendering a replay to an image —
+// finding a system Chrome / ffmpeg and driving Chrome over its debugging pipe.
+// It knows nothing of the graph (the daemon hands it a URL and frame times), so
+// both the server's render route and `doctor` can use it.
+const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup', 'tunnel', 'replay']);
 
 // ── the baseline: edges that legitimately remain ────────────────────────────
 // Each is `from => to` at FILE granularity, because the point of naming them is

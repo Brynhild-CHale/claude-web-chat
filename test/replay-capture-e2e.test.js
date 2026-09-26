@@ -1,0 +1,105 @@
+// End to end against a REAL browser: POST /api/replay/render with the Chrome
+// lib/replay/find locates (or WEB_CHAT_CHROME), a real replay document, real
+// screenshots, the built-in PNG decoder and GIF encoder, and an independent GIF
+// decoder reading the result back — then the same through a REAL ffmpeg, as a
+// GIF and an MP4.
+//
+// SKIPS when no Chrome-family browser is found — CI images and most dev boxes
+// without Chrome — and the ffmpeg half also when no ffmpeg is. To run it
+// anywhere, point WEB_CHAT_CHROME (and WEB_CHAT_FFMPEG) at binaries (a Chrome
+// for Testing download works) and run this file on its own.
+
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const { spawnSync } = require('child_process');
+
+const { withServer } = require('../test-support/helpers');
+const { decodeGif } = require('../test-support/gif-decode');
+const { findChrome, findFfmpeg } = require('../lib/replay/find');
+
+const chrome = findChrome();
+const ffmpeg = findFfmpeg();
+
+// An explicit WEB_CHAT_FFMPEG is the only ffmpeg candidate, so a missing one
+// pins the built-in encoder; restored when the test ends.
+function pinFfmpeg(t, value) {
+  const prev = process.env.WEB_CHAT_FFMPEG;
+  process.env.WEB_CHAT_FFMPEG = value;
+  t.after(() => { if (prev === undefined) delete process.env.WEB_CHAT_FFMPEG; else process.env.WEB_CHAT_FFMPEG = prev; });
+}
+
+async function seedColours(api) {
+  await api.post('/api/render', { id: 'm1', html: '<div style="height:300px;background:#c0392b;color:#fff;font:40px sans-serif">one</div>' });
+  await api.post('/api/commit', { message: 'make it red' });
+  await api.post('/api/render', { id: 'm1', html: '<div style="height:300px;background:#2471a3;color:#fff;font:40px sans-serif">two</div>' });
+  await api.post('/api/commit', { message: 'now blue' });
+}
+
+const render = (port, body) => fetch(`http://127.0.0.1:${port}/api/replay/render`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+// Somewhere in the image is the colour — the pane really rendered.
+const has = (img, [r, gg, b], stride = 4) => {
+  for (let o = 0; o + 2 < img.length; o += stride) {
+    if (Math.abs(img[o] - r) < 24 && Math.abs(img[o + 1] - gg) < 24 && Math.abs(img[o + 2] - b) < 24) return true;
+  }
+  return false;
+};
+
+test('a real Chrome renders a two-step replay into a GIF whose frames differ', { skip: chrome ? false : 'no Chrome-family browser found (set WEB_CHAT_CHROME to run it)', timeout: 120000 }, async (t) => {
+  pinFfmpeg(t, '/nonexistent/ffmpeg');
+  const { api, port } = await withServer(t);
+  await seedColours(api);
+
+  const res = await render(port, { format: 'gif', width: 480, hold_ms: 1000 });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.encoder, 'builtin');
+  const g = decodeGif(fs.readFileSync(body.path));
+  assert.equal(g.width, 480);
+  assert.equal(g.height, 300);
+  assert.equal(g.frames.length, 2, 'one frame per cut step');
+  assert.deepEqual(g.frames.map((f) => f.delay), [100, 100]);
+  assert.ok(!g.frames[0].image.equals(g.frames[1].image), 'the two nodes draw differently');
+
+  assert.ok(has(g.frames[0].image, [0xc0, 0x39, 0x2b]), 'frame 1 shows the red pane');
+  assert.ok(has(g.frames[1].image, [0x24, 0x71, 0xa3]), 'frame 2 shows the blue pane');
+});
+
+test('a real Chrome and a real ffmpeg render the same replay as a GIF and an MP4', {
+  skip: !chrome ? 'no Chrome-family browser found (set WEB_CHAT_CHROME to run it)'
+    : !ffmpeg ? 'no ffmpeg found (set WEB_CHAT_FFMPEG to run it)' : false,
+  timeout: 180000,
+}, async (t) => {
+  pinFfmpeg(t, ffmpeg);
+  const { api, port } = await withServer(t);
+  await seedColours(api);
+
+  const gres = await render(port, { format: 'gif', width: 480, hold_ms: 1000 });
+  const gb = await gres.json();
+  assert.equal(gres.status, 200, JSON.stringify(gb));
+  assert.equal(gb.encoder, 'ffmpeg', `a GIF prefers ffmpeg when there is one (${gb.fallback})`);
+  assert.equal(gb.fallback, undefined);
+  const g = decodeGif(fs.readFileSync(gb.path));
+  assert.deepEqual([g.width, g.height], [480, 300]);
+  assert.equal(g.loop, 0, 'loops forever');
+  assert.deepEqual(g.frames.map((f) => f.delay), [100, 100], 'each node held for hold_ms, the last one too');
+  assert.ok(has(g.frames[0].image, [0xc0, 0x39, 0x2b]));
+  assert.ok(has(g.frames[1].image, [0x24, 0x71, 0xa3]));
+
+  const mres = await render(port, { format: 'mp4', width: 480, hold_ms: 1000, fps: 10 });
+  const mb = await mres.json();
+  assert.equal(mres.status, 200, JSON.stringify(mb));
+  assert.match(mb.path, /\.mp4$/);
+  const raw = spawnSync(ffmpeg, ['-v', 'error', '-i', mb.path, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 256 * 1024 * 1024 });
+  assert.equal(raw.status, 0, String(raw.stderr));
+  const size = 480 * 300 * 3;
+  const n = raw.stdout.length / size;
+  assert.ok(Math.abs(n - 20) <= 1, `2 s at 10 fps is ~20 frames, got ${n}`);
+  assert.ok(has(raw.stdout.subarray(0, size), [0xc0, 0x39, 0x2b], 3), 'it opens on the red node');
+  assert.ok(has(raw.stdout.subarray((Math.floor(n) - 1) * size, Math.floor(n) * size), [0x24, 0x71, 0xa3], 3), 'and ends on the blue one');
+});

@@ -607,6 +607,44 @@ const PATTERNS = [
     baseline: { 'lib/core/zip.js': 1 },
   },
   {
+    // Two more binary formats, each with one home beside zip.js, for the same
+    // reason: each looks like "a few lines of arithmetic", and a second copy is
+    // a second place for an off-by-one in a spec nobody rereads. The replay GIF
+    // renderer reads Chrome's PNG screenshots and writes a GIF; the Paeth
+    // predictor is what every PNG decoder must implement (filter 4), and the
+    // GIF signature is what every GIF writer starts with.
+    name: 'the PNG Paeth predictor (paeth()',
+    home: 'lib/core/png.js — `decodePng`',
+    what: 'decoding PNG scanlines',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /\bpaeth\s*\(/gi,
+    // The declaration and its one call.
+    baseline: { 'lib/core/png.js': 2 },
+  },
+  {
+    name: 'the GIF signature (GIF89a)',
+    home: 'lib/core/gif.js — `createGifEncoder` / `encodeGif`',
+    what: 'writing a GIF',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /GIF8[79]a/g,
+    // The header comment naming the format, and the header bytes.
+    baseline: { 'lib/core/gif.js': 2 },
+  },
+  {
+    // Running ffmpeg: the replay encoder builds its argv — concat input, the
+    // two-pass palette, the codec settings — in one place, so a second caller
+    // (a thumbnail, a clip) extends ffmpegPasses rather than growing a second
+    // command line whose flags drift from the first. palettegen is the part a
+    // copy always carries.
+    name: 'an ffmpeg palette pass (palettegen)',
+    home: 'lib/replay/encode.js — `createFrameEncoder` / `ffmpegPasses`',
+    what: 'encoding frames with ffmpeg',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /palettegen/g,
+    // The header comment naming it, and the argv.
+    baseline: { 'lib/replay/encode.js': 2 },
+  },
+  {
     // Replacing the WHOLE surface from a snapshot frame. `hello` and `reset`
     // carry the identical payload (mounts + store + active/lock/theme) and were
     // written as two separate appliers — so only one of them ever grew the

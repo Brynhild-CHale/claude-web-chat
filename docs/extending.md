@@ -85,13 +85,13 @@ review.
 entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/* · portal/*
                          │  import ↓ only      (never each other)
 shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · capture/* ·
-                   channel/* · tunnel/*
+                   channel/* · tunnel/* · replay/*
                          │  import ↓ only      (may import each OTHER — that is
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
-                   channels · resources · mcp-seen · remote-policy
+                   channels · resources · mcp-seen · remote-policy · png · gif
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -181,6 +181,9 @@ were the only places they lived.
 | hand a capture profile a helper (`esc`, `collapse`, `safeHref`, `absolutize`, `listItems`) | the injected extract/pane ctx — `CTX_HELPERS` in `capture/profiles` | declare one inside the bundle (it cannot import, so a copy is NOT the alternative — extend the kit) |
 | unpack, list or find the root of a `.tar.gz` | `lib/update/archive` `extractTarGz` / `rootOf` / `listTarGz` | a second `spawnSync('tar')` |
 | pack a directory as a `.zip`, or checksum bytes with CRC-32 | `lib/core/zip` `writeZipStore(dir)` / `crc32(buf)` | a second ZIP encoder, or a hand-derived CRC-32 table |
+| decode a PNG, or write an animated GIF | `lib/core/png` `decodePng(buf)` / `lib/core/gif` `createGifEncoder({width, height, loop})` · `encodeGif(frames, {w, h})` | a second decoder or encoder, or a dependency for either |
+| find a system Chrome / ffmpeg, or drive Chrome headless | `lib/replay/find` (`findChrome` / `findFfmpeg`) · `lib/replay/chrome` (`captureFrames` — CDP over `--remote-debugging-pipe`, throwaway profile, kill-on-timeout) | Puppeteer/Playwright, a debugging PORT, or a second finder with its own candidate list |
+| turn captured replay frames into a GIF / MP4 / WebM | `lib/replay/encode` (`createFrameEncoder({format, ffmpegPath, …})` → `addFrame(png, delay)` / `finish()` / `dispose()` — ffmpeg when found, else the built-in GIF encoder; `pickEncoder` says which) | a second `spawn('ffmpeg')`, or choosing between the encoders at the call site |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
 | gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
@@ -199,6 +202,10 @@ were the only places they lived.
 | leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot, flushForms})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
 | walk or LIST the graph AS DRAWN — nav, fork glyphs, lineage, layout, counts, the ⌘K palette | `public/app/graph-view.js` `graphIndex()` (memoized) / `displayChildrenOf(id)` / `displayParentOf(id)` — the ↑/↓ pair reads both, so they stay inverses — and `displayNodeList()` for a surface that lists nodes rather than walking them | `view.graphCache.nodes`, the raw commit list (the palette read it, so a collapsed turn kept a row nothing could navigate out of), or `labels.childrenOf`, the RAW commit topology, which has one consumer by design: the ⑃ branch picker |
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
+| resolve a node reference (`n1.7`, a stored id, `active`, `live`) | `lib/server/domain/refs` `resolveNodeRef(graph, ref, {allowLive})` → `{ok, id, label, node}` \| `{ok:false, code, error}` (callers keep their own message per `code`); the parent-chain walk itself is `lib/server/domain/lineage` `ancestry` (row above) | a `computeLabels` scan for `label === ref`, or a private `resolveRef` in a route (export and diff each had one) |
+| draw a committed node as a page (graph thumbnails, glance, `/preview/pane`, replay frames), read its page sequence with the markdown rendered, or ask what theme it is drawn under | `lib/server/preview` `renderPreviewHtml(node, theme)` / `renderNodePreview(paths, node)` / `pageItems(node)` (the export reads it too) / `themeLayers(paths, node)` | a second preview document, a second `pageOrder` + `renderMarkdown` loop, or `resolveDefault` + `mergeTokens` re-derived at the call site |
+| decide which nodes a replay plays, and their captions | `lib/server/domain/replay-path` `resolveReplayPath(graph, {from, to, includeCollapsed})` | walk `parent_id` and re-apply `computeCollapse` yourself |
+| draw a replay (the player document, `replay.html`, a renderer's frames) | `lib/server/replay/document` `assembleReplay` / `buildReplay(ctx, query)` — frames filled from `lib/server/preview` `previewTemplate` + `previewThemeCss` / `previewNodeJson`; the controller is `lib/server/replay/player.js` | a second player, or a frame built by escaping node JSON anywhere but `previewNodeJson` |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | run cloudflared in a test | `test-support/helpers` `fakeCloudflared(t, {version, exit})` (a real spawn of `test-support/fake-cloudflared.js`, which records argv + `TUNNEL_TOKEN` and serves `/ready`) + `freePort()` for the ports a detached process must be told; preload `test-support/no-outbound.js` into a detached portal | a real cloudflared, or a fixed port |
@@ -973,9 +980,11 @@ markdown id, once). One id space covers both kinds.
 A node's lineage is its parent chain to the root of its tree — the path the
 surface travelled to get where it is. `ancestry(graph, id)` is that walk, newest
 first, as a loop with a cycle guard (a trunk is thousands of turns deep; a
-hand-edited parent cycle ends the walk). Pane history is its first reader; the
-replay resolver (plan P5, `domain/refs.js`) is meant to be its second — one walk,
-not two.
+hand-edited parent cycle ends the walk). It is the daemon's ONLY parent-chain
+walk: pane history reads it, and so does the replay path
+(`domain/replay-path`, which reverses it to play root → `to`). Resolving a node
+*reference* — a label, a stored id, `active`, `live` — is the other half, and
+lives in `domain/refs` (`resolveNodeRef`); refs does no walking of its own.
 
 - `mountHistory(graph, {mountId, fromId, labels, live, includeLive})` — the
   distinct versions of one pane along `fromId`'s ancestry, newest first. A
@@ -988,7 +997,8 @@ not two.
   `current:true`, or a `node_id:'live'` row leads when the live content is in no
   node. `GET /api/mounts/:id/history[?from=<node id>]` serves it.
 - `GET /preview/pane/:node/:mount` (routes/graph.js) renders one version with the
-  `/preview/node` document and `PREVIEW_CSP`, narrowed to that pane.
+  `/preview/node` document (`lib/server/preview`) and `PREVIEW_CSP`, narrowed to
+  that pane.
 - `POST /api/mounts/:id/restore {node_id, with_form?, after?}` → `domain/mounts`
   `restoreMount` — "make current".
 
@@ -1060,7 +1070,7 @@ and `main` / `status` / `overlay` are plausible things for Claude to name a pane
 so `RESERVED_IDS` names every id a host document resolves for itself. Nothing in
 it is transcribed by hand: `test/mount-engine.test.js` scans `public/index.html`
 for the static chrome, `public/app/*.js` for the `id="…"` / `.id = '…'` literals
-the shell builds lazily, and `lib/server/export.js` + `lib/server/routes/graph.js`
+the shell builds lazily, and `lib/server/export.js` + `lib/server/preview.js`
 for the chrome of the other two documents a pane host is written into — both do
 `host.id = m.id` with no free-id check of their own, so reserving `export-main`
 at the engine is what keeps a duplicate id out of an exported page. Any new
@@ -1175,6 +1185,9 @@ Current homes (baselines can only shrink toward these):
 | `=== 'li'` (the list-item walker) | `lib/capture/profiles/util.js` (`listItems(el)`) — required by `article`/`simplify`/`markdown`, and injected into capture bundles as `ctx.listItems`, which is the only way a bundle can reach it. A flat `querySelectorAll('li')` emits a nested item twice | landed with the ctx-kit list walker ✅ |
 | `0xedb88320` (the CRC-32 polynomial) | `lib/core/zip.js` (`crc32`) — `zlib.crc32` where Node has it, with ONE fallback table for the two 22.x point releases below it. It existed twice, in an Express route and in `extensions/make-icons.js`, for a checksum Node ships | landed with the zip engine ✅ |
 | `0x04034b50` (the ZIP local-file-header signature) | `lib/core/zip.js` (`writeZipStore`) — the store-only writer the extension download serves. It lived inline in `lib/server/routes/extensions.js`, where nothing could test it without standing up the router | landed with the zip engine ✅ |
+| `paeth(` (the PNG Paeth predictor) | `lib/core/png.js` (`decodePng`) — 8-bit RGB/RGBA, non-interlaced, every filter, CRC-checked; the replay renderer decodes Chrome's screenshots with it | landed with replay GIFs ✅ |
+| `GIF89a` (the GIF signature) | `lib/core/gif.js` (`createGifEncoder` / `encodeGif`) — per-frame median-cut palette, LZW with clear codes, frame-diff rectangles; test-support holds the one independent decoder | landed with replay GIFs ✅ |
+| `palettegen` (an ffmpeg palette pass) | `lib/replay/encode.js` (`createFrameEncoder` / `ffmpegPasses`) — the one ffmpeg command line: an ffconcat list with per-frame holds, a two-pass GIF palette, H.264 / VP9 in yuv420p, killed at the render's deadline | landed with replay video ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 | `isOpen` imported from `./ws.js` **in `public/app` only** | `public/app/ws.js` — `send(frame)` decides what happens on a closed socket (it queues, coalesced, and drains after the reconnect's snapshot). The one importer left is `mounts.js`'s `sendFormState`, which returns instead of queueing because the reconcile re-reads the live DOM | landed with the outbound frame queue ✅ |
 

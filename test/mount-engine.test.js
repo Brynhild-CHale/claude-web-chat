@@ -162,7 +162,7 @@ test('mounts engine: RESERVED_IDS covers the export and glance-preview chrome', 
   // exported page's own id space.
   const root = path.join(__dirname, '..');
   const found = new Map();
-  for (const rel of ['lib/server/export.js', 'lib/server/routes/graph.js']) {
+  for (const rel of ['lib/server/export.js', 'lib/server/preview.js']) {
     for (const id of idLiteralsIn(path.join(root, rel))) if (!found.has(id)) found.set(id, rel);
   }
   assert.ok(found.has('export-main') && found.has('wc-export-data'),

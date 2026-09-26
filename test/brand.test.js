@@ -340,11 +340,16 @@ test('chrome: a native file chooser taking focus does not dismiss Settings', asy
   const panel = doc.getElementById('settings-panel');
   panel.classList.remove('hidden');
   doc.querySelector('#brand-slots .brand-slot[data-slot="seal"] .brand-drop').click(); // opens the chooser
+  // The shell's blur dismissal runs a tick late (it first looks at where focus
+  // went — the replay player's frame keeps its panel), so every assert waits it out.
+  const tick = () => new Promise((r) => setTimeout(r, 0));
   window.dispatchEvent(new window.Event('blur'));
+  await tick();
   assert.ok(!panel.classList.contains('hidden'), 'the pick keeps the panel open');
   // the chooser closes: focus comes back, and an ordinary blur dismisses again
   window.dispatchEvent(new window.Event('focus'));
   await new Promise((r) => setTimeout(r, 350));
   window.dispatchEvent(new window.Event('blur'));
+  await tick();
   assert.ok(panel.classList.contains('hidden'), 'after the pick, blur dismisses as before');
 });
