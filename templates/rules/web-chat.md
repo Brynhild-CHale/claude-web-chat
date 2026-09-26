@@ -2,11 +2,11 @@
 
 # web-chat
 
-This project has [claude-web-chat](https://github.com/) installed: a live browser surface paired with this terminal chat, accessed via 23 MCP tools, with every turn captured as a node in a persistent graph the user can navigate.
+This project has [claude-web-chat](https://github.com/) installed: a live browser surface paired with this terminal chat, accessed via 24 MCP tools, with every turn captured as a node in a persistent graph the user can navigate.
 
 ## What's available
 
-- **MCP tools** (loaded into your tool list): `render`, `clear`, `list_mounts`, `save_component`, `list_components`, `get_component`, `use_component`, `get_store`, `set_store`, `get_events`, `get_graph`, `get_active`, `diff_nodes`, `get_comments`, `reply_comment`, `get_captures`, `inspect_capture`, `set_theme`, `get_theme`, `save_theme`, `list_themes`, `apply_theme`, `export`.
+- **MCP tools** (loaded into your tool list): `render`, `clear`, `list_mounts`, `save_component`, `list_components`, `get_component`, `use_component`, `get_store`, `set_store`, `get_events`, `get_graph`, `get_active`, `diff_nodes`, `get_comments`, `reply_comment`, `get_captures`, `inspect_capture`, `set_theme`, `get_theme`, `save_theme`, `list_themes`, `apply_theme`, `export`, `write_markdown`.
 - **Browser surface** in the user's browser. The port is per-project and is NOT always 5173 — the daemon walks upward from 5173, so a second project lands on 5174, a third on 5175, and so on. Never tell the user a hardcoded port: `claude-web-chat open` opens the right one, and `claude-web-chat status` prints it. The user sees both this chat and that page.
 - **Graph**: a turn of yours commits a node when it changed the surface — a turn that leaves the surface byte-identical to the active node commits nothing, and its trigger folds onto the next node that does commit (`get_graph` reports the waiting count as `pending_folded`, and the eventual node carries `folded_count`). The user can revisit any prior node, branch from it, or set a new active point. Reference nodes by their hierarchical label (`n1.7`); the stored id is opaque. Labels read as collapsed stacks of changes — `n1.x`/`n2.x` are separate top-level trees, trunk increments the last segment (`n1.1 → n1.2`), and a branch appends a segment (`n1.1.0`). `get_graph`/`get_active` surface these labels. **Branch-on-edit**: if the user edits a form while viewing an older node, the surface silently re-aims there (auto-committing any uncommitted live work as a `user`-authored preserve node first — nothing is lost) and the next commit lands as a branch child; the original node and its downstream are always preserved. If you see an unexpected preserve node or a re-aimed active, that's what happened.
 - **Disabled state**: if MCP returns `{disabled, scope, reason, hint}`, the surface is off. Fall back to chat-only and pass on the hint — `reason:'not-installed'` means this project never ran `claude-web-chat init` (so `on` would do nothing); `reason:'marker'` means someone switched it off.
@@ -21,6 +21,17 @@ This project has [claude-web-chat](https://github.com/) installed: a live browse
 - **Anything worth revisiting** — every render is a graph-node-able artifact the user can come back to.
 - **Live demos / mockups** — when proposing UI, render it instead of describing it.
 - **Live host state** — git branches/history, test runs, log tails, file browsing/editing. A **service-backed component** (below) keeps the pane current between your turns; the user watches instead of re-asking. This trigger fires on the *task* ("what's on this branch?", "watch the tests"), not on any request to render.
+
+## Writing pages: markdown + panes
+
+The surface is one **page**: an ordered sequence of panes and markdown items. Consecutive panes form a grid run; markdown sits between and around runs. There are no stored sections — structure comes from the prose.
+
+- **`write_markdown({text, id?, after?})`** puts a markdown item on the page — headings and short connective prose ("## Options", a sentence of framing, a caption). Reuse `id` to rewrite one in place; omit it and the server assigns `md-<n>`.
+- **`#`/`##`/`###` headings build the page's Contents nav.** A page with several parts should open each with a heading.
+- **`after`** places an item: the id of any pane or markdown item on the page, or `"start"`. `render` and `use_component` take the same `after`. Omitted, a new item appends and a re-render keeps its place. `list_mounts` returns the page `order` (and each markdown item's headings) so you can pick an anchor.
+- Markdown is a small subset (paragraphs, headings, **strong**, *em*, `code`, fenced code, `-`/`1.` lists, links) and **everything is escaped** — raw HTML shows as text. Anything interactive or visual belongs in a pane.
+- **Keep prose short.** The reasoning still belongs in chat; the page carries labels and framing. Text is capped, and a longer write is refused with `too_large`.
+- Markdown is part of the surface like a pane: it folds into the turn's node, `clear` removes one by id, a page-wide `clear {}` or Wipe takes all of it (pinned panes stay), and panes and markdown share one id space.
 
 ## Stay in chat for
 

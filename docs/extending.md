@@ -149,6 +149,8 @@ were the only places they lived.
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
+| place an item in the page sequence, or put/remove a markdown item | `lib/server/domain/page` `place` / `drop` / `putMarkdown` / `removeMarkdown` (bulk: `restore` / `clearMarkdown` / `reconcile`); read a node's order with `pageOrder(node)` | push onto `state.order` by hand, or take a node's page order from its mounts array alone |
+| render markdown, or list its headings | `core/markdown` `renderMarkdown(text)` / `headings(text)` — the browser imports the same factory from `/app/markdown.js` | a second markdown parser on either side |
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a mount HOST element from a mount id (chrome side) | `public/app/state.js` `hostFor(id)` — scans `.mount-host` for `dataset.mountId`, because a mount id is arbitrary agent-supplied text | `document.getElementById(mountId)` / `$(mountId)`: an id like `main` or `drawer` hands you a chrome element instead of the pane |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
@@ -270,7 +272,7 @@ Three policies are load-bearing — preserve them:
   making a mid-response death a new error class every caller must learn.
 
 - **`spawn` defaults `false`.** Only `lib/mcp/client.js` (a spawn-injecting shim)
-  opts in, so the 23 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
+  opts in, so the 24 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
   CLI must never resurrect a daemon the user closed. `opts.noSpawn` always wins.
 - **No default socket timeout.** A driver's `/api/wait` long-poll (`lib/driver`
   `waitFor`) runs for up to `timeout_ms`; a blanket socket timeout would break it.
@@ -790,6 +792,29 @@ and both are there because they are exactly as invisible in review:
   `after` to tear down. Shrink-only, with a named baseline for the seven shell
   files that still boot inside a test.
 
+### `lib/server/domain/page.js` — the page sequence
+
+The surface is one ordered sequence of items: panes (the mount engine's records)
+and markdown chunks (`write_markdown`, owned here). There is no stored section
+structure — consecutive panes form a grid run, markdown sits between runs, and
+the `#`–`###` headings in it build the Contents nav. Live state is
+`state.markdown` (`Map<id,{text, owner, gen}>`) and `state.order` (every pane and
+markdown id, once). One id space covers both kinds.
+
+- `place(state, id, after)` / `drop(state, id)` — called by `setMount` /
+  `removeMount`. `after` is an item id or `'start'`; omitted, a new item appends
+  and an existing one keeps its place; an unknown anchor appends with a `warning`.
+- `putMarkdown` / `removeMarkdown` — the markdown writes, with the mount
+  engine's soft-refusal envelopes (reserved id, owner gate, plus `conflict` for an
+  id a pane holds and `too_large` over `MARKDOWN_MAX_CHARS`).
+- `snapshot` / `nodeFields` / `restore` / `clearMarkdown` / `reconcile` — the bulk
+  side. A committed node carries `markdown` + `order` only when it has markdown;
+  otherwise its `mounts` array order IS its page order, which is also how every
+  node written before this module reads back — no migration.
+- `pageOrder(nodeLike)` — the one READING of a surface's order, used by the dirty
+  check (`snapshotView`: moving a pane or writing prose is a change), the diff,
+  the preview and the export.
+
 ### `lib/server/domain/mounts.js` — the mount-set engine
 
 Putting a pane on the live surface is not one write. It is, in order: reserved-id
@@ -918,6 +943,8 @@ Current homes (baselines can only shrink toward these):
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
+| `state.order =` / `state.order.push/splice/unshift(` / `state.markdown.set/delete/clear(` | `lib/server/domain/page.js` — the one writer of the page sequence and its markdown items; the mount engine and the bulk paths call into it | landed with the page sequence ✅ |
+| `#{1,<n>}` (a markdown heading parser) | `lib/core/markdown.js` — host rendering for preview/export, and the browser module served at `/app/markdown.js` is built from the same factory's source | landed with the page sequence ✅ |
 | `findProjectRoot(` **in the eight registration consumers only** | `lib/setup/registration.js` (`resolveRoot(cwd, {mode})`) — `install`, `uninstall`, `on`, `off`, `doctor`, `status`, `update` and `lib/mcp/index.js` are held at zero; every other command legitimately walks up to find a *daemon* | landed with the registration engine ✅ |
 | `'settings.hooks.json'` (the quoted filename) | `lib/update/managed-files.js` — `hookTemplate()`, exposed to the CLI as `hookEvents()`. The pattern matches the file being *opened*, not the four places that name it in prose, so a comment or a user-facing warning citing the template is free | landed with the registration engine ✅ |
 | `copyFileSync/cpSync/writeFileSync/renameSync/unlinkSync/rmSync/rmdirSync` **in two named files only** | `lib/packs/tree.js` — `applyPlan`/`removeUnits`, under `beginJournal`. `lib/packs/install.js` (the orchestrator) and `lib/packs/plan.js` (pure by contract) are held at zero for every one of them, so nothing mutates the installed tree outside the undo journal — a second apply path spelled `cpSync` or `renameSync` is the same defect | landed with the pack transaction ✅ |

@@ -340,7 +340,7 @@ test('doctor warns that a configured capture token gates every ingest', async (t
 
 // ---------------------------------------------------------------------------
 // Restart detection: install rewrote .mcp.json, but Claude Code reads that file
-// only at startup — so until the user restarts, none of the 23 tools exist.
+// only at startup — so until the user restarts, none of the 24 tools exist.
 // ---------------------------------------------------------------------------
 
 function registerMcp(root) {

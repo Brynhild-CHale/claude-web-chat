@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Pages: markdown between and around panes — `write_markdown`, the 24th MCP tool.** The surface is now one ordered page sequence of panes and markdown items (no stored sections: consecutive panes form a grid run, prose sits between runs, and `#`–`###` headings are what the Contents nav will be built from). `write_markdown({text, id?, after?})` puts a chunk of prose on the page and replaces it by id like `render`; `render` and `use_component` gain `after` (an item id or `"start"`) to position a pane, with an unknown anchor still writing (appended) and returning a `warning`. Markdown travels with the surface exactly like a pane — committed into nodes, restored on navigation, drafted on shutdown, auto-preserved by branch-on-edit, cleared by Wipe and a page-wide `clear` (pinned panes still stay) — and a markdown edit or a reorder now counts as a surface change for the no-change check. `list_mounts` returns the page `order` and each markdown item's headings; `diff_nodes` reports `markdown` and page `order` changes; the glance preview and page exports render the prose in place. Nodes written before this need no migration: a node without markdown reads its page order off its mounts, as it always did. The current chrome ignores the new frames until the page UI lands; it already gets its panes in page order on every snapshot.
+- **One markdown renderer, host and browser.** `lib/core/markdown` renders the subset (paragraphs, headings, strong/em, code and fenced code, flat lists, links) with every character escaped and links gated to http/https/mailto/relative, and exposes `headings(text)` with the same slugs the rendered elements carry. The chrome gets the identical implementation as an ES module at `/app/markdown.js`, built from the renderer's own source rather than copied; a conventions tripwire fails the build if a second markdown parser appears, and another holds every write to the page order and markdown items inside `lib/server/domain/page`.
+
 ## [0.7.6] - 2026-09-18
 
 ### Upgrading from 0.7.5

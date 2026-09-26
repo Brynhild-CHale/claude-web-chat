@@ -2,7 +2,7 @@
 // (lib/core/mcp-seen.js) plus the daemon-side recording that feeds it.
 //
 // Why it exists: Claude Code reads .mcp.json only at process start. `install`
-// writes that file mid-session, so until the user restarts NONE of the 23 MCP
+// writes that file mid-session, so until the user restarts NONE of the 24 MCP
 // tools exist — while every other health check stays green. The only evidence a
 // restart happened is the start time of the MCP SERVER process Claude Code
 // spawned, which lib/mcp/client stamps onto its daemon requests.
@@ -146,7 +146,7 @@ test('a restarted daemon still remembers the last MCP sighting', async (t) => {
 });
 
 // The wiring, end to end: the real lib/mcp/client shim (the one every one of the
-// 23 tools goes through) must stamp the identity headers when it is running
+// 24 tools goes through) must stamp the identity headers when it is running
 // inside the MCP server process — and must NOT when it is a CLI or hook call
 // sharing the same shim.
 async function callThroughMcpShim(port, { asMcpServer }) {

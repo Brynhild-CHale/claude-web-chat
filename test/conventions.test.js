@@ -405,6 +405,39 @@ const PATTERNS = [
     },
   },
   {
+    // The page sequence (panes + markdown, one order) and the markdown items in
+    // it have ONE writer: lib/server/domain/page. setMount/removeMount call its
+    // place()/drop(), and the bulk paths (restore to a node, the boot draft,
+    // Wipe, the bulk clear) call restore()/clearMarkdown()/reconcile() — so a
+    // second hand-maintained copy of the order, the thing that drifts the moment
+    // one path forgets a pane, fails here instead.
+    name: 'state.order = / state.markdown.set( (the page sequence)',
+    home: 'lib/server/domain/page.js (place / drop / putMarkdown / removeMarkdown / clearMarkdown / restore / reconcile)',
+    what: 'writing the page order or a markdown item',
+    roots: ['lib'],
+    re: /state\.(?:order\s*=[^=]|order\.(?:push|splice|unshift)\(|markdown\.(?:set|delete|clear)\()/g,
+    baseline: {
+      'lib/server/domain/page.js': 13,
+    },
+  },
+  {
+    // A markdown RENDERER. The page's prose is rendered by lib/core/markdown on
+    // the host (preview, export) and by the same factory's source in the browser
+    // (/app/markdown.js), so the live surface cannot drift from what a node
+    // previews or exports as. The fingerprint is the heading-level quantifier
+    // every hand-rolled renderer writes; lib/capture/markdown.js goes the other
+    // way (HTML → markdown) and has none.
+    name: '#{1,<n>} (a markdown heading parser)',
+    home: 'lib/core/markdown.js (renderMarkdown / headings; the browser gets it at /app/markdown.js)',
+    what: 'parsing markdown into HTML',
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
+    re: /#\{1,\d\}/g,
+    baseline: {
+      'lib/core/markdown.js': 1,
+    },
+  },
+  {
     // Resolving "which project does this command operate on" INSIDE a command
     // that registers, un-registers or reports on a project. Not a lib-wide ban:
     // `open`, `start`, `stop`, `export`, `unlock`, `trust`, `pack`, `profile`,

@@ -46,7 +46,7 @@ test('parked: daemon down (no policy observable) reads the same way', () => {
 // --------------------------------------------------------------------------
 // The MCP restart line. `install` rewrites .mcp.json mid-session, Claude Code
 // reads it only at startup, so "registered in .mcp.json" alone is a lie of
-// omission — none of the 23 tools exist until the user restarts.
+// omission — none of the 24 tools exist until the user restarts.
 // --------------------------------------------------------------------------
 
 const fs = require('fs');

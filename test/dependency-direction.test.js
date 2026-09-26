@@ -83,7 +83,7 @@ const BASELINE = {
     'the hub subcommand runs the hub in-process',
 
   // The two hooks are MCP-adjacent by construction: they talk to the same daemon
-  // through the same spawn-injecting shim the 23 tools use.
+  // through the same spawn-injecting shim the 24 tools use.
   'lib/hooks/turn-begin.js => lib/mcp/client.js':
     'hooks reach the daemon through the same auto-spawning client the tools use',
   'lib/hooks/turn-end.js => lib/mcp/client.js':

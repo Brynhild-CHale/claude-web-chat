@@ -31,12 +31,19 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    ring `render` event at seq 7 — which is what makes a capture pane visible
 //    in /api/events and to the service supervisor's reconcile subscriber — and
 //    turn-end moves to seq 8.
+//  - p34b (the page sequence): the full-surface frames (`hello`, `reset`) carry
+//    the page's `markdown` items and `order` beside `mounts` — deliberately
+//    additive, so a chrome that predates markdown ignores them. The per-pane
+//    render frame is unchanged: it carries `order` only when the render passed
+//    `after`, which the golden session does not.
 const GOLDEN = {
   frames: [
     {
       type: 'hello',
       store: {},
       mounts: [],
+      markdown: [],
+      order: [],
       active: null,
       lock: null,
       project: '<v>',
@@ -175,7 +182,7 @@ test('bus: a tab capture is a triple-effect (store mutation + store:patch WS + o
   assert.equal(caps[0].capture_id, 'cap1');
 });
 
-test('bus: reset frame carries exactly {mounts,store,active,lock,theme,activeTheme}', async (t) => {
+test('bus: reset frame carries exactly {mounts,markdown,order,store,active,lock,theme,activeTheme}', async (t) => {
   const { api, port } = await withServer(t);
   const WebSocket = require('ws');
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
@@ -192,7 +199,7 @@ test('bus: reset frame carries exactly {mounts,store,active,lock,theme,activeThe
   assert.ok(reset, 'reset frame present');
   assert.deepEqual(
     Object.keys(reset).sort(),
-    ['active', 'activeTheme', 'lock', 'mounts', 'store', 'theme', 'type'].sort(),
+    ['active', 'activeTheme', 'lock', 'markdown', 'mounts', 'order', 'store', 'theme', 'type'].sort(),
   );
 });
 
