@@ -731,6 +731,7 @@ kbd {
 .gv-meta .v { color: var(--wc-text-1); }
 .gv-sect { font: 600 10px var(--wc-mono); letter-spacing: .08em; color: var(--wc-muted); margin: 12px 0 6px; }
 .gv-trigger { padding: 9px; background: var(--wc-content-bg); border-radius: var(--wc-radius); font: 12px var(--wc-font); color: var(--wc-content-fg); white-space: pre-wrap; max-height: 140px; overflow: auto; }
+.gv-reply { padding: 0 9px; font: 12px var(--wc-font); color: var(--wc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gv-panes { display: flex; flex-direction: column; gap: 4px; }
 .gv-pane-row { display: flex; align-items: center; gap: 8px; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .gv-pane-row .pd { width: 7px; height: 7px; border-radius: 50%; background: var(--wc-accent); }

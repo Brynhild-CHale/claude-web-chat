@@ -422,7 +422,7 @@ function foldedSection(id, node) {
     rows.push({ at: a.created_at || 0, who: a.author || 'claude', label: a.label || a.id, text: a.trigger_summary || '' });
   }
   for (const f of (Array.isArray(node.folded) ? node.folded : [])) {
-    rows.push({ at: f.at || 0, who: f.author || 'claude', label: '', text: f.summary || f.message || '' });
+    rows.push({ at: f.at || 0, who: f.author || 'claude', label: '', text: f.summary || f.message || '', reply: f.reply || '' });
   }
   if (!rows.length) return '';
   rows.sort((a, b) => a.at - b.at);
@@ -431,7 +431,7 @@ function foldedSection(id, node) {
   const total = (node.folded_count || (node.folded || []).length) + (cached.absorbed_count || 0);
   const aged = total - rows.length;
   const body = rows.map((r) => {
-    const when = r.at ? new Date(r.at).toLocaleString() : '';
+    const when = (r.at ? new Date(r.at).toLocaleString() : '') + (r.reply ? `\nreply: ${r.reply}` : '');
     const tag = r.label ? `<span class="gv-folded-tag">${esc(r.label)}</span>` : '';
     return `<div class="gv-folded-row" title="${esc(when)}">${tag}<span class="gv-folded-who">${esc(r.who)}</span><span class="gv-folded-text">${esc(r.text || '(no trigger)')}</span></div>`;
   }).join('');
@@ -464,6 +464,10 @@ async function renderInspector(id) {
     : '<div class="muted small">no panes — narrative turn</div>';
   const trigger = node.trigger?.message || node.trigger?.summary || node.trigger_summary || '(no trigger)';
   const committed = node.created_at ? new Date(node.created_at).toLocaleString() : '—';
+  // Claude's side of the turn (the Stop hook's reply summary) — one line, full
+  // text on hover. Older nodes and manual commits have none; no section then.
+  const reply = node.trigger?.reply || '';
+  const replyHtml = reply ? `<div class="gv-sect">REPLY</div><div class="gv-reply" title="${esc(reply)}">${esc(reply)}</div>` : '';
   const foldedHtml = foldedSection(id, node);
 
   box.innerHTML =
@@ -472,6 +476,7 @@ async function renderInspector(id) {
     `<div class="gv-lineage">${lineage}</div>` +
     `<div class="gv-meta"><span class="k">AUTHOR</span><span class="v">${esc(node.author || '—')}</span><span class="k">COMMITTED</span><span class="v">${esc(committed)}</span></div>` +
     `<div class="gv-sect">TRIGGER</div><div class="gv-trigger">${esc(trigger)}</div>` +
+    replyHtml +
     `<div class="gv-sect">RENDERED · ${mounts.length} pane${mounts.length === 1 ? '' : 's'}</div><div class="gv-panes">${paneRows}</div>` +
     foldedHtml +
     `<div class="gv-sect" id="gv-diff-sect">DIFF vs parent</div><div class="gv-diff" id="gv-diff"><span class="muted small">…</span></div>` +

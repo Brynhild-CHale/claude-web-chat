@@ -47,7 +47,9 @@ async function boot() {
     if (u.startsWith('/api/graph/node/')) {
       const id = decodeURIComponent(u.split('/').pop());
       const n = NODES.find((x) => x.id === id) || NODES[0];
-      return json({ ...n, author: 'claude', trigger: { message: 'the turn that changed something' }, mounts: [{ id: 'm1', params: { title: 'plan' } }], store: {} });
+      // Only n4 recorded Claude's reply (D7); n1 is an older node without one.
+      const trigger = { message: 'the turn that changed something', ...(id === 'n4' ? { reply: 'Rendered the <b>plan</b>.' } : {}) };
+      return json({ ...n, author: 'claude', trigger, mounts: [{ id: 'm1', params: { title: 'plan' } }], store: {} });
     }
     if (u.startsWith('/api/graph/diff')) return json({ mounts: { added: [1], changed: [], removed: [] } });
     if (u === '/api/components') return json({ components: [] });
@@ -118,6 +120,24 @@ test('the inspector shows the turns the node stands for', async () => {
   assert.match(box, /COLLAPSED TURNS · 2/);
   assert.match(box, /asked about the audit/, 'the collapsed turn keeps its trigger text');
   assert.match(box, /talked through the fix/);
+});
+
+test('the inspector shows Claude\'s reply summary as one line, and nothing for a node without one', async () => {
+  const reply = $('gv-inspector').querySelector('.gv-reply');
+  assert.ok(reply, 'n4 recorded a reply');
+  assert.equal(reply.textContent, 'Rendered the <b>plan</b>.', 'shown as text, not markup');
+  assert.equal(reply.getAttribute('title'), 'Rendered the <b>plan</b>.');
+  assert.match($('gv-inspector').textContent, /REPLY/);
+
+  const row = (id) => [...$('gv-history-list').children].find((r) => r.dataset.id === id);
+  row('n1').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.match($('gv-inspector').querySelector('.gv-insp-label').textContent, /n1\.0/);
+  assert.equal($('gv-inspector').querySelector('.gv-reply'), null, 'an older node has no reply line');
+  assert.doesNotMatch($('gv-inspector').textContent, /REPLY/);
+  row('n4').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.ok($('gv-inspector').querySelector('.gv-reply'), 'back on n4 for the tests below');
 });
 
 test('the diff names the parent the viewer actually draws', async () => {

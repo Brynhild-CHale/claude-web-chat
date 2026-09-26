@@ -78,9 +78,33 @@ as `GET /api/replay/path?from=&to=&include_collapsed=1`:
   endpoints are always played.
 - Each step is a caption: `{id, label, author, kind, prompt, reply, summary,
   folded[], folded_count, created_at, dt_from_prev}`. `reply` is `null` on a
-  node that recorded no reply summary.
+  node that recorded no reply summary (see below); folded entries carry theirs
+  the same way.
 - At most 200 steps; a longer lineage keeps the 200 nearest `to` and says
   `truncated: true` with the full `total_steps`.
+
+### Claude's side of the turn — `trigger.reply`
+
+A node has always recorded the prompt that started its turn
+(`trigger.message`). It now records a short summary of what Claude said back,
+as `trigger.reply`, so a caption can show both sides:
+
+- The `Stop` hook (`lib/hooks/turn-end.js`) reads Claude's final message from
+  its payload — `last_assistant_message`, or, on Claude Code versions without
+  it, the tail of `transcript_path` (the final assistant text of the current
+  turn only; the file is never read whole) — and sends it with
+  `/api/turn-end` as `reply`.
+- The summary is `summarizeReply` (`lib/core/reply.js`): whitespace collapsed,
+  at most 280 characters, a trailing `…` when cut. The daemon re-applies it to
+  whatever the request carried, so a node can never hold more.
+- A turn that changed nothing commits no node; its reply rides in its
+  `folded[]` entry onto the next node that does, beside its prompt.
+- Additive and optional: a node or folded entry with no reply has **no
+  `reply` key** — older nodes, manual commits, preserves, and a payload that
+  carried nothing. No migration.
+- Where it shows: one line under TRIGGER in the graph inspector, and replay
+  captions. It is stored only under `.web-chat/` (private, gitignored). The
+  page export does not include it — an export does not carry prompts either.
 
 ## Design history
 
