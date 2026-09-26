@@ -77,8 +77,9 @@ to check them.
 
 ## Replay GIFs: the browser they borrow
 
-Rendering a replay to a GIF (`export` with `format: 'gif'`, `claude-web-chat
-export --gif`, the player's **↧ GIF**) drives a Chrome-family browser already on
+Rendering a replay to a GIF or video (`export` with `format: 'gif' | 'mp4' |
+'webm'`, `claude-web-chat export --gif`/`--mp4`/`--webm`, the player's **↧ GIF**
+/ **↧ MP4** / **↧ WebM**) drives a Chrome-family browser already on
 the machine; nothing is bundled. Everything else — including a replay exported
 as `.html` — works without one. Where it looks, per platform
 (`lib/replay/find.js`; `WEB_CHAT_CHROME` overrides everywhere):
@@ -93,8 +94,15 @@ The browser is launched with `--use-mock-keychain --password-store=basic`: on
 macOS, a headless Chrome whose `HOME` is not the login user's (a sandboxed test
 run, a daemon started from an unusual environment) otherwise opens its first
 connection and then waits forever on a Keychain lookup before sending a byte.
-`ffmpeg` (`WEB_CHAT_FFMPEG` or `PATH`) is detected and reported by
-`/api/replay/capabilities` and `doctor`, but nothing uses it yet.
+`ffmpeg` (`WEB_CHAT_FFMPEG` or `PATH`, 4.4 or later) is optional: it is the
+only encoder for MP4/WebM replays, and when present it also encodes GIFs
+(`lib/replay/encode.js`). It is found the same way everywhere:
+
+| Platform | Where ffmpeg is found | Verified by |
+| --- | --- | --- |
+| **macOS** | `ffmpeg` on `PATH` (Homebrew: `brew install ffmpeg`) | Developed against ffmpeg 9.0.1 (Homebrew, with libx264 and libvpx); the real-ffmpeg halves of `test/replay-encode.test.js` and `test/replay-capture-e2e.test.js` run wherever it is found |
+| **Linux** | `ffmpeg` on `PATH` (`apt install ffmpeg` / the distro's package) | The same tests, where the image has ffmpeg; the spawn plumbing is covered everywhere by a fake (`test-support/fake-ffmpeg.js`). A distro build without libx264 fails MP4 with ffmpeg's own "Unknown encoder" in a `502`; WebM and GIF are unaffected |
+| **Windows (WSL2)** | A Linux ffmpeg inside the distro, as on Linux | Not run by anyone |
 
 ## Known issues that affect every platform
 

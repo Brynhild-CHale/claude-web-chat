@@ -15,7 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withServer } = require('../test-support/helpers');
+const { withServer, fakeBin } = require('../test-support/helpers');
 const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
@@ -25,18 +25,20 @@ const { findChrome, findFfmpeg, chromeCandidates } = require('../lib/replay/find
 const { captureFrames, CHROME_FLAGS } = require('../lib/replay/chrome');
 
 const FAKE = path.join(__dirname, '..', 'test-support', 'fake-chrome.js');
+// These tests pin the BUILT-IN GIF encoder: an explicit WEB_CHAT_FFMPEG is the
+// only ffmpeg candidate (lib/replay/find), so a missing one means none, even on
+// a machine with ffmpeg on PATH. The ffmpeg path is test/replay-encode.test.js.
+const NO_FFMPEG = '/nonexistent/ffmpeg';
 
 // An executable wrapper around the fake (spawn needs a program, and the fake is
 // a node script). `exec` keeps fds 3 and 4 — the whole point.
 function fakeChrome(t, { mode = 'ok', env = {} } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-fakechrome-'));
-  const bin = path.join(dir, 'chrome');
-  const logFile = path.join(dir, 'log.jsonl');
-  const vars = { FAKE_CHROME_LOG: logFile, FAKE_CHROME_MODE: mode, ...env };
-  const exports = Object.entries(vars).map(([k, v]) => `${k}=${JSON.stringify(String(v))} `).join('');
-  fs.writeFileSync(bin, `#!/bin/sh\nexec env ${exports}${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE)} "$@"\n`);
-  fs.chmodSync(bin, 0o755);
-  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
+  let logFile = null;
+  const { bin } = fakeBin(t, {
+    name: 'chrome',
+    script: FAKE,
+    env: (dir) => ({ FAKE_CHROME_LOG: (logFile = path.join(dir, 'log.jsonl')), FAKE_CHROME_MODE: mode, ...env }),
+  });
   const read = () => {
     try { return fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
   };
@@ -98,8 +100,8 @@ test('normalizeRenderRequest: defaults, clamps and honest refusals', () => {
   assert.equal(normalizeRenderRequest({ captions: 'prompt' }).docQuery.captions, 'prompt');
   assert.equal(normalizeRenderRequest({ width: 99999 }).width, LIMITS.width.max);
   assert.equal(normalizeRenderRequest({ width: 641 }).width % 2, 0, 'even width');
-  assert.equal(normalizeRenderRequest({ format: 'mp4' }).code, 'format-unavailable');
-  assert.equal(normalizeRenderRequest({ format: 'webm' }).code, 'format-unavailable');
+  assert.equal(normalizeRenderRequest({ format: 'mp4' }).format, 'mp4', 'video formats are named — whether ffmpeg is there is the render\'s question');
+  assert.equal(normalizeRenderRequest({ format: 'WebM' }).format, 'webm');
   assert.equal(normalizeRenderRequest({ format: 'bmp' }).code, 'bad-format');
   assert.equal(normalizeRenderRequest({ format: 'replay' }).format, 'replay');
 });
@@ -209,7 +211,7 @@ test('captureFrames: a program that is not there rejects with chrome-launch-fail
 
 test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay and writes a real GIF', async (t) => {
   const fake = fakeChrome(t);
-  setEnv(t, { WEB_CHAT_CHROME: fake.bin });
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
   const { api, port, root } = await withServer(t);
   await seed(api);
 
@@ -253,7 +255,7 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
 });
 
 test('POST /api/replay/render: chrome-not-found is an honest refusal with a hint; format replay needs no browser', async (t) => {
-  setEnv(t, { WEB_CHAT_CHROME: '/nonexistent/chrome' });
+  setEnv(t, { WEB_CHAT_CHROME: '/nonexistent/chrome', WEB_CHAT_FFMPEG: NO_FFMPEG });
   const { api, port, root } = await withServer(t);
   await seed(api);
 
@@ -284,8 +286,8 @@ test('POST /api/replay/render: chrome-not-found is an honest refusal with a hint
   assert.equal(await f.text(), doc);
 
   const mp4 = await postJson(port, { format: 'mp4' });
-  assert.equal(mp4.status, 400);
-  assert.equal((await mp4.json()).code, 'format-unavailable');
+  assert.equal(mp4.status, 422, 'no ffmpeg: mp4 is refused by name (test/replay-encode.test.js covers it with one)');
+  assert.equal((await mp4.json()).code, 'ffmpeg-not-found');
 
   const bad = await postJson(port, { format: 'gif', to: 'nope' });
   assert.equal(bad.status, 404, 'a bad ref is refused before any browser is looked for');
@@ -303,7 +305,7 @@ test('POST /api/replay/render takes JSON only', async (t) => {
 
 test('POST /api/replay/render is single-flight: a second render while one runs is 409 busy', async (t) => {
   const fake = fakeChrome(t, { mode: 'slow', env: { FAKE_CHROME_SLOW_MS: 700 } });
-  setEnv(t, { WEB_CHAT_CHROME: fake.bin });
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
   const { api, port } = await withServer(t);
   await seed(api);
 
@@ -324,7 +326,7 @@ test('POST /api/replay/render is single-flight: a second render while one runs i
 
 test('POST /api/replay/render: a Chrome that dies mid-render is a 502 with its code, and releases the flight', async (t) => {
   const fake = fakeChrome(t, { mode: 'die' });
-  setEnv(t, { WEB_CHAT_CHROME: fake.bin });
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
   const { api, port, root } = await withServer(t);
   await seed(api);
   const r = await postJson(port, { width: 320 });
@@ -338,7 +340,7 @@ test('POST /api/replay/render: a Chrome that dies mid-render is a 502 with its c
 
 test('POST /api/replay/render: a frame of the wrong size is refused, not stretched', async (t) => {
   const fake = fakeChrome(t, { mode: 'wrong-size' });
-  setEnv(t, { WEB_CHAT_CHROME: fake.bin });
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
   const { api, port } = await withServer(t);
   await seed(api);
   const r = await postJson(port, { width: 320 });
@@ -427,7 +429,7 @@ test('export CLI: --replay/--gif/--mp4/--webm with --from/--hold/--fade/--width 
   assert.equal(parseExportArgs(['--mp4']).body.format, 'mp4');
   assert.equal(parseExportArgs(['--webm', '--captions', 'none']).body.captions, 'none');
   assert.match(parseExportArgs(['--gif', '--replay']).error, /pick one/);
-  assert.match(parseExportArgs(['--from', 'n1']).error, /need --replay or --gif/);
+  assert.match(parseExportArgs(['--from', 'n1']).error, /need --replay, --gif, --mp4 or --webm/);
   assert.match(parseExportArgs(['--gif', '--hold']).error, /needs a value/);
   assert.match(parseExportArgs(['--bogus']).error, /unknown option/);
 });

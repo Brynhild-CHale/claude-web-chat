@@ -80,7 +80,8 @@ async function boot() {
     calls.push({ url: u, method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null });
     if (u === '/api/replay/capabilities') return json(caps);
     if (u === '/api/replay/render') {
-      return json({ ok: true, format: 'gif', path: '/p/.web-chat/exports/replay-n1-1_n1-2-20260101-000000.gif', label: 'n1.1 → n1.2', frames: 2, bytes: 4096, encoder: 'builtin' });
+      const format = (opts && opts.body && JSON.parse(opts.body).format) || 'gif';
+      return json({ ok: true, format, path: `/p/.web-chat/exports/replay-n1-1_n1-2-20260101-000000.${format}`, label: 'n1.1 → n1.2', frames: 2, bytes: 4096, encoder: caps.ffmpeg ? 'ffmpeg' : 'builtin' });
     }
     if (u === '/api/graph') return json({ nodes: NODES.map((n) => ({ ...n })), active: 'n1b' });
     if (u.startsWith('/api/replay/path')) {
@@ -332,7 +333,7 @@ test('↧ GIF: prompt captions warn first (prompts may be private), a second cli
   assert.equal(r.length, 1, 'the second click renders');
   assert.equal(r[0].method, 'POST');
   assert.deepEqual(r[0].body, { format: 'gif', transition: 'cut', captions: 'prompt', from: 'n1a', to: 'n1b' });
-  const link = $('rpo-gif-file');
+  const link = $('rpo-render-file');
   assert.ok(link, 'the note links the rendered file');
   assert.equal(link.getAttribute('href'), '/api/replay/file/replay-n1-1_n1-2-20260101-000000.gif');
   assert.match($('rpo-note').textContent, /2 frames, 4 KB/);
@@ -359,5 +360,39 @@ test('↧ GIF: summary captions render on the first click; no Chrome disables th
     assert.match($('rpo-gif').title, /WEB_CHAT_CHROME/);
   } finally {
     caps = { ...caps, chrome: '/x/chrome', formats: { ...caps.formats, gif: true } };
+  }
+});
+
+test('↧ MP4 / ↧ WebM: disabled without ffmpeg (the title says what to install); with it they render video', async () => {
+  // The default capabilities: Chrome found, no ffmpeg.
+  await openFromMenu();
+  await tick();
+  for (const id of ['rpo-mp4', 'rpo-webm']) {
+    assert.equal($(id).disabled, true, `${id}: no ffmpeg, no video`);
+    assert.match($(id).title, /ffmpeg.*WEB_CHAT_FFMPEG/);
+  }
+  assert.equal($('rpo-gif').disabled, false, 'a GIF needs no ffmpeg');
+  assert.doesNotMatch($('rpo-gif').title, /ffmpeg/, 'and is drawn by the built-in encoder');
+  key('Escape');
+
+  caps = { ...caps, ffmpeg: '/x/ffmpeg', formats: { ...caps.formats, mp4: true, webm: true } };
+  try {
+    W.localStorage.setItem('wc:replay-prefs', JSON.stringify({ captions: 'none' }));
+    await openFromMenu();
+    await tick();
+    assert.equal($('rpo-mp4').disabled, false);
+    assert.equal($('rpo-webm').disabled, false);
+    assert.match($('rpo-gif').title, /encoded by ffmpeg/);
+    calls.length = 0;
+    click($('rpo-mp4'));
+    await tick();
+    await tick();
+    const r = calls.filter((c) => c.url === '/api/replay/render');
+    assert.equal(r.length, 1);
+    assert.deepEqual(r[0].body, { format: 'mp4', transition: 'cut', captions: 'none', from: 'n1a', to: 'n1b' });
+    assert.equal($('rpo-render-file').getAttribute('href'), '/api/replay/file/replay-n1-1_n1-2-20260101-000000.mp4');
+    assert.match($('rpo-note').textContent, /^MP4 ready \(ffmpeg\)/);
+  } finally {
+    caps = { ...caps, ffmpeg: null, formats: { ...caps.formats, mp4: false, webm: false } };
   }
 });

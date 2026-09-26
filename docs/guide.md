@@ -113,7 +113,7 @@ trust [name]        approve (or --deny) a component's host-side service.js;
 version             which version, and which tree it is actually running from
 stop | restart      stop or bounce the background server
 unlock              clear a turn lock orphaned by an interrupted turn
-export [node]       write a node to a self-contained .html (--replay / --gif: a replay of its lineage)
+export [node]       write a node to a self-contained .html (--replay / --gif / --mp4 / --webm: a replay of its lineage)
 docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see install.md, “Turning it off”)
 install             the setup step on its own, and how updates reach a project

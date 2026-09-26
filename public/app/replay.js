@@ -5,9 +5,11 @@
 // (lib/server/replay/document.js: stage, caption bar, scrubber, controller) —
 // and this module only frames it: an iframe of that document plus the choices
 // around it (from / to, speed, transition, captions), "Open this node", and a
-// download of the same document as replay.html, and ↧ GIF — a render of the
-// same replay by the daemon (POST /api/replay/render, a headless system Chrome),
-// linked in the note when it is done.
+// download of the same document as replay.html, and ↧ GIF / ↧ MP4 / ↧ WebM — a
+// render of the same replay by the daemon (POST /api/replay/render: a headless
+// system Chrome draws it, ffmpeg encodes it when the machine has one), linked in
+// the note when it is done. Each button is disabled when
+// /api/replay/capabilities says this machine cannot make that format.
 //
 // It never touches the live surface. The frames are the node preview document
 // running inside the replay's own iframe, under PREVIEW_CSP, so nothing here
@@ -28,10 +30,13 @@ const SPEEDS = ['0.5', '1', '1.5', '2', '4'];
 const DEFAULT_PREFS = { speed: '1', transition: 'cut', captions: 'prompt' };
 
 let hooks = { openNode: null, forwardEscapeFrom: null };
-// The GIF export: whether a render is running, and whether the user has been
+// The file exports: whether a render is running, whether the user has been
 // told — once, for this replay — that `prompt` captions burn their prompts
-// into an image they are about to send somewhere.
-let gif = { busy: false, promptOk: false, can: true };
+// into an image they are about to send somewhere, and which formats this
+// machine can make (unknown = allowed: the render route says why not).
+const RENDER_FORMATS = ['gif', 'mp4', 'webm'];
+const FORMAT_NAME = { gif: 'GIF', mp4: 'MP4', webm: 'WebM' };
+let fileExport = { busy: false, promptOk: false, can: { gif: true, mp4: true, webm: true } };
 // The replay being shown: its endpoints and the lineage the pickers offer.
 let cur = { to: null, from: null, lineage: [] };
 
@@ -65,48 +70,71 @@ function noteFile(r) {
   const a = document.createElement('a');
   a.href = '/api/replay/file/' + encodeURIComponent(name);
   a.setAttribute('download', name);
-  a.id = 'rpo-gif-file';
+  a.id = 'rpo-render-file';
   a.textContent = '↧ ' + name;
-  n.appendChild(document.createTextNode('GIF ready — '));
+  const what = FORMAT_NAME[r.format] || 'File';
+  n.appendChild(document.createTextNode(`${what} ready${r.encoder === 'ffmpeg' ? ' (ffmpeg)' : ''} — `));
   n.appendChild(a);
   const kb = Math.max(1, Math.round((r.bytes || 0) / 1024));
   n.appendChild(document.createTextNode(` (${r.frames} frame${r.frames === 1 ? '' : 's'}, ${kb} KB)`));
 }
 
-// Whether this machine can draw a GIF (a Chrome-family browser was found). The
-// button stays usable when the answer is unknown: the render route says why.
+const renderButtons = () => RENDER_FORMATS.map((f) => $('rpo-' + f)).filter(Boolean);
+function syncButtons() {
+  for (const f of RENDER_FORMATS) { const b = $('rpo-' + f); if (b) b.disabled = fileExport.busy || !fileExport.can[f]; }
+}
+
+// What each format's button says it will do, or why it cannot.
+function buttonTitle(f, caps) {
+  const chrome = !!caps.chrome;
+  const ffmpeg = !!caps.ffmpeg;
+  if (!chrome) {
+    return `No Chrome-family browser found on this machine — install Chrome, Chromium, Edge or Brave (or set WEB_CHAT_CHROME) to render a ${FORMAT_NAME[f]}`;
+  }
+  if (f === 'gif') {
+    return ffmpeg
+      ? 'Render this replay as an animated GIF (drawn by a headless Chrome, encoded by ffmpeg)'
+      : 'Render this replay as an animated GIF (drawn by a headless Chrome on this machine)';
+  }
+  return ffmpeg
+    ? `Render this replay as ${f === 'mp4' ? 'an MP4 (H.264)' : 'a WebM (VP9)'} video (drawn by a headless Chrome, encoded by ffmpeg)`
+    : `${FORMAT_NAME[f]} needs ffmpeg, which was not found — install it (or set WEB_CHAT_FFMPEG) to render video`;
+}
+
+// Which formats this machine can make (a browser to draw; ffmpeg for video).
+// A button stays usable when the answer is unknown: the render route says why.
 async function checkCapabilities() {
-  const btn = $('rpo-gif');
-  if (!btn) return;
+  if (!renderButtons().length) return;
   try {
     const r = await fetch('/api/replay/capabilities');
     const caps = await r.json().catch(() => ({}));
-    const can = !(caps && caps.formats && caps.formats.gif === false);
-    gif.can = can;
-    btn.disabled = !can || gif.busy;
-    btn.title = can
-      ? 'Render this replay as an animated GIF (drawn by a headless Chrome on this machine)'
-      : 'No Chrome-family browser found on this machine — install Chrome, Chromium, Edge or Brave (or set WEB_CHAT_CHROME) to render GIFs';
-  } catch { /* unknown: leave it enabled */ }
+    const formats = (caps && caps.formats) || {};
+    for (const f of RENDER_FORMATS) {
+      fileExport.can[f] = formats[f] !== false;
+      const b = $('rpo-' + f);
+      if (b && caps && ('chrome' in caps)) b.title = buttonTitle(f, caps);
+    }
+    syncButtons();
+  } catch { /* unknown: leave them enabled */ }
 }
 
-// Render the replay being watched to a GIF. Captions follow the overlay's
+// Render the replay being watched to a file. Captions follow the overlay's
 // choice — but `prompt` shows the user's own prompts, which may be private, so
 // the first click only says so and a second click confirms.
-async function renderGif() {
-  if (gif.busy) return;
+async function renderFile(format) {
+  if (fileExport.busy) return;
   const p = prefs();
-  if (p.captions === 'prompt' && !gif.promptOk) {
-    gif.promptOk = true;
-    note('The GIF will show your prompts, which may be private — click ↧ GIF again to include them, or switch captions to summary or none.');
+  const what = FORMAT_NAME[format];
+  if (p.captions === 'prompt' && !fileExport.promptOk) {
+    fileExport.promptOk = true;
+    note(`The ${what} will show your prompts, which may be private — click ↧ ${what} again to include them, or switch captions to summary or none.`);
     return;
   }
-  const btn = $('rpo-gif');
-  gif.busy = true;
-  if (btn) btn.disabled = true;
-  note('Rendering GIF in a headless Chrome…');
+  fileExport.busy = true;
+  syncButtons();
+  note(`Rendering ${what} in a headless Chrome…`);
   try {
-    const body = { format: 'gif', transition: p.transition, captions: p.captions };
+    const body = { format, transition: p.transition, captions: p.captions };
     if (cur.from) body.from = cur.from;
     if (cur.to) body.to = cur.to;
     const r = await fetch('/api/replay/render', {
@@ -115,13 +143,13 @@ async function renderGif() {
       body: JSON.stringify(body),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || !j.ok) note(`GIF failed: ${j.error || r.statusText}${j.hint ? ' — ' + j.hint : ''}`);
-    else noteFile(j);
+    if (!r.ok || !j.ok) note(`${what} failed: ${j.error || r.statusText}${j.hint ? ' — ' + j.hint : ''}`);
+    else noteFile({ format, ...j });
   } catch (e) {
-    note(`GIF failed: ${String((e && e.message) || e)}`);
+    note(`${what} failed: ${String((e && e.message) || e)}`);
   } finally {
-    gif.busy = false;
-    if (btn) btn.disabled = !gif.can;
+    fileExport.busy = false;
+    syncButtons();
   }
 }
 
@@ -207,7 +235,7 @@ export async function openReplay({ to = null, from = null } = {}) {
   window.dispatchEvent(new CustomEvent('wc:close-popovers', { detail: { keep: p } }));
   p.classList.remove('hidden');
   note('');
-  gif.promptOk = false;
+  fileExport.promptOk = false;
   checkCapabilities();
 
   const def = await getPath(from ? { to: target, from } : { to: target });
@@ -287,8 +315,8 @@ export function initReplay(h = {}) {
     if (api) api.setSpeed(Number(e.target.value));   // live — no reload
   });
   on('rpo-transition', 'change', (e) => { savePrefs({ transition: e.target.value }); load({ at: stepIndex() }); });
-  on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); gif.promptOk = false; load({ at: stepIndex() }); });
-  on('rpo-gif', 'click', renderGif);
+  on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); fileExport.promptOk = false; load({ at: stepIndex() }); });
+  for (const f of RENDER_FORMATS) on('rpo-' + f, 'click', () => renderFile(f));
   on('rpo-from', 'change', (e) => { cur.from = e.target.value; renderPickers(); load(); });
   on('rpo-to', 'change', (e) => { cur.to = e.target.value; renderPickers(); load(); });
   window.addEventListener('keydown', onKey, true);

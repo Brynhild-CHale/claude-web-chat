@@ -530,7 +530,7 @@ test('doctor notes whether a replay GIF can be drawn (Chrome) and whether ffmpeg
   });
   const notes = found.checks.filter((c) => c.status === 'note').map((c) => c.m);
   assert.ok(notes.some((m) => /replay GIFs: Chrome found at \/opt\/chrome\/chrome/.test(m)), notes.join('\n'));
-  assert.ok(notes.some((m) => /ffmpeg found at \/usr\/bin\/ffmpeg/.test(m)));
+  assert.ok(notes.some((m) => /ffmpeg found at \/usr\/bin\/ffmpeg — MP4\/WebM available/.test(m)));
 
   const missing = await doctor([], {
     cwd: root, runClaude: claude.fn, log: silent,
@@ -540,5 +540,6 @@ test('doctor notes whether a replay GIF can be drawn (Chrome) and whether ffmpeg
   assert.equal(m2.length, 2);
   assert.ok(m2.every((c) => c.status === 'note'), 'an optional renderer missing is not a problem');
   assert.ok(m2.some((c) => /no Chrome-family browser found .*WEB_CHAT_CHROME/.test(c.m)));
+  assert.ok(m2.some((c) => /ffmpeg not found .*needed for MP4\/WebM.*WEB_CHAT_FFMPEG/.test(c.m)));
   assert.equal(missing.problems, found.problems, 'and does not change the problem count');
 });

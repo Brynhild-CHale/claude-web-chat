@@ -565,6 +565,20 @@ const PATTERNS = [
     baseline: { 'lib/core/gif.js': 2 },
   },
   {
+    // Running ffmpeg: the replay encoder builds its argv — concat input, the
+    // two-pass palette, the codec settings — in one place, so a second caller
+    // (a thumbnail, a clip) extends ffmpegPasses rather than growing a second
+    // command line whose flags drift from the first. palettegen is the part a
+    // copy always carries.
+    name: 'an ffmpeg palette pass (palettegen)',
+    home: 'lib/replay/encode.js — `createFrameEncoder` / `ffmpegPasses`',
+    what: 'encoding frames with ffmpeg',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /palettegen/g,
+    // The header comment naming it, and the argv.
+    baseline: { 'lib/replay/encode.js': 2 },
+  },
+  {
     // Replacing the WHOLE surface from a snapshot frame. `hello` and `reset`
     // carry the identical payload (mounts + store + active/lock/theme) and were
     // written as two separate appliers — so only one of them ever grew the

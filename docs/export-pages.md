@@ -160,15 +160,15 @@ The same replay can be written to disk, to attach or post:
 
 | Route | Who uses it | What you get |
 | --- | --- | --- |
-| `export({ format: 'gif' \| 'replay', from, to, … })` MCP tool | Claude | the path of `replay-<from>_<to>-<stamp>.gif` / `.html` under `.web-chat/exports/` |
-| `claude-web-chat export [to] --gif \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions …]` | the user, from a terminal | the same write, path printed |
-| **↧ GIF** in the replay player | the user, from the surface | a render of what the player is showing, with a link to download it |
+| `export({ format: 'gif' \| 'mp4' \| 'webm' \| 'replay', from, to, … })` MCP tool | Claude | the path of `replay-<from>_<to>-<stamp>.gif` / `.mp4` / `.webm` / `.html` under `.web-chat/exports/` |
+| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions …]` | the user, from a terminal | the same write, path printed |
+| **↧ GIF** / **↧ MP4** / **↧ WebM** in the replay player | the user, from the surface | a render of what the player is showing, with a link to download it |
 | `POST /api/replay/render` | anything local, JSON body only | `{ ok, path, label, from, to, format, frames, encoder, bytes }` |
 
 `format: 'html'` (the default) is still the one-page export above, unchanged;
 `replay` writes the replay document as a self-contained `.html` player and needs
-nothing but the daemon. `mp4` / `webm` are named in the tool and the CLI and are
-refused with `code: 'format-unavailable'` until an ffmpeg encoder exists.
+nothing but the daemon. `mp4` (H.264) and `webm` (VP9) are the same frames as a
+video, and need ffmpeg as well as a browser (below).
 
 **A GIF is drawn by a real browser — the user's own.** There is no bundled
 browser (the release keeps to its four runtime dependencies), so the daemon
@@ -178,8 +178,35 @@ macOS the Chrome, Chromium, Edge and Brave app bundles in `/Applications`, else
 `google-chrome`, `chromium`, `microsoft-edge`, `brave-browser` and friends on
 `PATH`. With none, a GIF request answers `422` `code: 'chrome-not-found'` with a
 hint naming what to install; `GET /api/replay/capabilities` (`{ chrome, ffmpeg,
-formats }`, cached — `?refresh=1` looks again) says so up front, the player
-disables **↧ GIF**, and `claude-web-chat doctor` notes what it found.
+formats, gif_encoder }`, cached — `?refresh=1` looks again) says so up front,
+the player disables the buttons it cannot serve, and `claude-web-chat doctor`
+notes what it found.
+
+**ffmpeg is optional, and used when it is there** (`WEB_CHAT_FFMPEG`, same
+override rule, else `ffmpeg` on `PATH`; version 4.4 or later). It encodes every
+format (`lib/replay/encode.js`):
+
+- **MP4 / WebM exist only through it.** Without it, `format: 'mp4' | 'webm'`
+  answers `422` `code: 'ffmpeg-not-found'` with a hint — before any browser is
+  started — and the player's **↧ MP4** / **↧ WebM** are disabled with a title
+  saying what to install. MP4 is H.264 and WebM VP9, both `yuv420p` (what every
+  player decodes; the frame is always an even size) at a constant `fps`
+  (default 10), cut to the replay's exact length.
+- **A GIF prefers it.** ffmpeg computes one palette over the whole replay
+  (`palettegen`) and applies it with error diffusion (`paletteuse`,
+  `sierra2_4a`, limited to each frame's changed rectangle so a held frame does
+  not shimmer) — smoother gradients and images than the built-in encoder's
+  per-frame, undithered palette. Holds are exact to the centisecond, the last
+  one included. If ffmpeg fails on a GIF, the frames already captured go through
+  the built-in encoder instead and the answer carries `encoder: 'builtin'` plus
+  `fallback` (ffmpeg's error); a failed MP4/WebM is a `502` `ffmpeg-failed`
+  naming ffmpeg's last line of stderr. The answer's `encoder` is always the one
+  that wrote the file.
+- It is run with an argv this package builds (never a shell, never a value from
+  the request but clamped numbers), on an `ffconcat` list of the distinct frames
+  written under `.web-chat/tmp/` — a node held for 2.5 s is one image with a
+  2.5 s duration — which is removed when the render ends, and it shares the
+  render's wall-clock budget.
 
 How a render works (`lib/server/replay/render.js`):
 
@@ -195,19 +222,21 @@ How a render works (`lib/server/replay/render.js`):
   `lib/core/png.js` and streamed into `lib/core/gif.js` — a per-frame median-cut
   palette (exact when a frame has ≤ 256 colours, which UI often does), LZW, and
   frame differencing, so a node held for 2.5 s is one frame and a caption change
-  is a small rectangle. The GIF loops forever.
+  is a small rectangle — or, when ffmpeg is there, into ffmpeg as above. The GIF
+  loops forever.
 - **Captions default to `summary`** for anything written this way — a file is
   made to be sent on, and a prompt is the one thing a replay carries that a page
-  export does not. `captions: 'prompt'` includes them; the player's **↧ GIF**
-  follows the player's caption choice, and with `prompt` selected its first
-  click only warns that the prompts will be in the image.
+  export does not. `captions: 'prompt'` includes them; the player's **↧ GIF** /
+  **↧ MP4** / **↧ WebM** follow the player's caption choice, and with `prompt`
+  selected the first click only warns that the prompts will be in the file.
 - Options: `width` (320–1920, default 960; the height follows the 16:10 frame),
-  `hold_ms`, `pacing`, `transition`, `captions`, `fps` (1–30), `from` / `to` /
-  `include_collapsed` as for the player.
+  `hold_ms`, `pacing`, `transition`, `captions`, `fps` (1–30: fade sampling, and
+  a video's frame rate), `from` / `to` / `include_collapsed` as for the player.
 - Bounded: one render at a time (a second is `409` `busy`), at most 1000 frames
   (`413` `too-many-frames`), 64 MB of output (`413` `too-large`) and five minutes
-  of wall clock (`504` `timeout`). A browser that dies or draws a frame of the
-  wrong size is a `502` naming what happened. Every path out closes the browser —
+  of wall clock, capture and encode together (`504` `timeout`). A browser that
+  dies or draws a frame of the wrong size, or an ffmpeg that fails a video, is a
+  `502` naming what happened. Every path out closes the browser —
   `Browser.close`, then a kill — and removes its profile.
 - `GET /api/replay/file/:name` hands a rendered file back as a download. It
   serves only `replay-*.{gif,mp4,webm,html}` names, resolved inside
@@ -216,7 +245,8 @@ How a render works (`lib/server/replay/render.js`):
 - The route's risk, and why it is accepted, is written at the head of
   `lib/server/routes/replay.js`: any pane can ask for a render, but what it can
   make the daemon do is exactly what the player can — one browser, fixed flags,
-  pointed at the daemon's own page, writing only under `exports/` — and a JSON
+  pointed at the daemon's own page, then at most one ffmpeg with an argv built
+  from its own paths, writing only under `exports/` — and a JSON
   body is required, so a site the user is browsing cannot trigger one at all.
 
 ## Design history

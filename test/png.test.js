@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const { decodePng, PngError, paeth } = require('../lib/core/png');
+const { decodePng, pngSize, PngError, paeth } = require('../lib/core/png');
 const { encodePng, chunk } = require('../test-support/png-encode');
 
 const REPO = path.resolve(__dirname, '..');
@@ -112,4 +112,15 @@ test('it refuses what it does not fully understand, naming it', () => {
   // Fewer scanlines than declared.
   const short = Buffer.concat([good.subarray(0, 8), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw.subarray(0, 17))), chunk('IEND', Buffer.alloc(0))]);
   refuses(short, /fewer scanlines/);
+});
+
+test('pngSize reads the dimensions from IHDR without decoding, and refuses what is not a PNG', () => {
+  const rgba = Buffer.alloc(7 * 3 * 4, 200);
+  assert.deepEqual(pngSize(encodePng(rgba, 7, 3)), { width: 7, height: 3 });
+  assert.throws(() => pngSize(Buffer.from('GIF89a…')), (e) => e instanceof PngError && /signature/.test(e.message));
+  const png = encodePng(rgba, 7, 3);
+  const noIhdr = Buffer.from(png);
+  noIhdr.write('IHDX', 12, 'latin1');
+  assert.throws(() => pngSize(noIhdr), (e) => e instanceof PngError && /IHDR/.test(e.message));
+  assert.throws(() => pngSize(png.subarray(0, 20)), PngError, 'truncated before the dimensions');
 });
