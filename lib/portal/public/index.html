@@ -12,15 +12,16 @@
 <main>
   <header>
     <h1>web-chat</h1>
-    <p class="sub">Surfaces running on this machine right now</p>
+    <p class="sub">Surfaces and Claude sessions on this machine right now</p>
     <p class="who" id="who" hidden></p>
   </header>
   <p class="state" id="state">Loading…</p>
   <ul class="sessions" id="sessions"></ul>
   <footer>
     <p>A surface appears here while its project's web-chat daemon is running, and
-    stops a few seconds after its last viewer leaves. Start one on the host with
-    <code>claude-web-chat open</code>.</p>
+    stops a few seconds after its last viewer leaves. A project with Claude
+    attached but no surface is listed without a link — start its surface on the
+    host with <code>claude-web-chat open</code>.</p>
   </footer>
 </main>
 </body>

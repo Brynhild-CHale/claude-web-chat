@@ -162,6 +162,26 @@ test('component spawn: resolves the component, records it, and refuses a name th
   assert.equal(hostile.not_found, true, 'the name grammar is the containment rule');
 });
 
+test('remote (X-WC-Remote: 1): an html spawn is refused 403 before anything lands; a component spawn still works', async (t) => {
+  const { api } = await withServer(t);
+  await render(api, 'p');
+  const remote = { 'x-wc-remote': '1' };
+  const r = await api.post('/api/pane/spawn', { parent: 'p', id: 'kid', html: '<script>1</script>' }, remote);
+  assert.equal(r.status, 403);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.remote, true);
+  assert.match(r.json.hint, /component/);
+  assert.equal(await paneOf(api, 'kid'), undefined, 'nothing mounted');
+  // Even a malformed body with html in it is refused as remote, not argued with.
+  const both = await api.post('/api/pane/spawn', { parent: 'p', html: '<p>x</p>', component: 'website' }, remote);
+  assert.equal(both.status, 403);
+  const comp = await api.post('/api/pane/spawn', { parent: 'p', component: 'website', params: { url: 'https://example.com' } }, remote);
+  assert.equal(comp.json.ok, true, JSON.stringify(comp.json));
+  // Any other value of the label is not the portal's, and the local path is unchanged.
+  const local = await api.post('/api/pane/spawn', { parent: 'p', id: 'kid', html: '<p>x</p>' }, { 'x-wc-remote': '0' });
+  assert.equal(local.json.ok, true, JSON.stringify(local.json));
+});
+
 test('a spawned pane is surface content: it commits with the turn, owner and all', async (t) => {
   const { api } = await withServer(t);
   await api.post('/api/turn-begin', { message: 'go' });

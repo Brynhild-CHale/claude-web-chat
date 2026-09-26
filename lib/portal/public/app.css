@@ -21,11 +21,17 @@ h1 { font-size: 22px; margin: 0; }
 .who { margin: 2px 0 0; font-size: 13px; }
 header { margin-bottom: 24px; }
 .sessions { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.session a {
+.session a, .session .card {
   display: block; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px;
   background: var(--panel); color: inherit; text-decoration: none;
 }
 .session a:hover, .session a:focus-visible { border-color: var(--accent); outline: none; }
+.session.stopped .card { border-style: dashed; }
+.claude { margin-top: 4px; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.badge { font-size: 11px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+.badge.on { color: var(--ok); border-color: var(--ok); }
+.badge.turn { color: var(--accent); border-color: var(--accent); }
+.muted { color: var(--muted); }
 .row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .title { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
 .id { font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }

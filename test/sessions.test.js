@@ -58,8 +58,8 @@ function sink() {
   return fn;
 }
 
-function spawnMcp(t, { cwd, home, channel = false }) {
-  const child = spawn(process.execPath, [MCP_BIN], {
+function spawnMcp(t, { cwd, home, channel = false, preload = null }) {
+  const child = spawn(process.execPath, preload ? ['--require', preload, MCP_BIN] : [MCP_BIN], {
     cwd,
     env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_CHANNEL: channel ? '1' : '', WEB_CHAT_PORT: '' },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -106,6 +106,22 @@ test('MCP server: SIGTERM removes the row and still exits', async (t) => {
   // Read RAW: a pruning read would drop a dead pid's row anyway and prove nothing.
   assert.equal(registry.readAllEntries().some((e) => e.pid === child.pid), false,
     'the row was removed by the process on its way out, not pruned after');
+});
+
+test('MCP server: a SIGTERM the instant the row lands is still caught — the handler is armed before the row is written', async (t) => {
+  const home = withTempHome(t);
+  const root = project(t, 'mcp-term-race');
+  // Deterministic stand-in for "the harness saw the row and killed at once":
+  // signal ourselves synchronously inside registerMcp. With no listener armed
+  // yet, the OS default kills the process (code null) and the row outlives it.
+  const preload = path.join(root, 'term-on-register.js');
+  fs.writeFileSync(preload, `const reg = require(${JSON.stringify(require.resolve('../lib/util/registry'))});
+const orig = reg.registerMcp;
+reg.registerMcp = function (...a) { const r = orig.apply(this, a); process.kill(process.pid, 'SIGTERM'); return r; };\n`);
+  const { child, exited } = spawnMcp(t, { cwd: root, home, preload });
+  const { code } = await exited;
+  assert.equal(code, 143, 'the SIGTERM handler ran, not the default action');
+  assert.equal(registry.readAllEntries().some((e) => e.pid === child.pid), false, 'no orphaned presence row');
 });
 
 // The channel end to end, and the reason stdin closing is its own trigger: with

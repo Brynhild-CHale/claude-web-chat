@@ -113,6 +113,26 @@ test('expose.exclude: an instance id hides that project; the others stay', async
   assert.deepEqual(list.json.sessions.map((s) => s.id), []);
 });
 
+test('hidden projects stay off the picker even when they are Claude-only (no surface to route)', async (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-hidden-claude-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const marked = path.join(base, 'marked');
+  const excluded = path.join(base, 'excluded');
+  const shown = path.join(base, 'shown');
+  for (const d of [marked, excluded, shown]) fs.mkdirSync(path.join(d, '.web-chat'), { recursive: true });
+  fs.writeFileSync(projectPaths(marked).noRemote, '');
+  const claude = { sessions: 1, channel: true, pids: [1], started_at: 1, last_tool_at: 2 };
+  const access = createFakeAccess();
+  const p = await withPortal(t, {
+    config: access.config({ expose: { exclude: [excluded] } }),
+    fetchJwks: access.fetchJwks,
+    instances: () => [],
+    sessions: () => [marked, excluded, shown].map((root) => ({ root, title: path.basename(root), surface: null, claude })),
+  });
+  const list = await p.request('/api/sessions', { headers: { 'cf-access-jwt-assertion': access.mint() } });
+  assert.deepEqual(list.json.sessions.map((s) => s.title), ['shown']);
+});
+
 test('expose.exclude: a directory hides every project under it', async (t) => {
   const r = await rig(t, { config: (srv) => ({ expose: { exclude: [path.dirname(srv.root)] } }) });
   assert.equal((await r.req('/api/graph')).status, 404);
@@ -296,4 +316,25 @@ test('X-WC-Remote: the daemon reports remote:true through the portal and false d
   assert.equal(via.json.remote, true);
   const direct = await r.srv.api.get('/api/health');
   assert.equal(direct.json.remote, false);
+});
+
+test('X-WC-Remote: through the portal a pane cannot spawn raw html, whatever label the viewer sends; a component spawn goes through', async (t) => {
+  const r = await rig(t);
+  await r.srv.api.post('/api/render', { id: 'host-pane', html: '<p>host</p>' });
+  for (const spoof of [{}, { 'x-wc-remote': '0' }, { 'X-WC-Remote': '' }]) {
+    const res = await r.req('/api/pane/spawn', {
+      method: 'POST', body: { parent: 'host-pane', id: 'evil', html: '<script>alert(1)</script>' },
+      headers: { origin: r.origin, ...spoof },
+    });
+    assert.equal(res.status, 403, JSON.stringify(spoof));
+    assert.equal(res.json.remote, true);
+  }
+  const mounts = (await r.srv.api.get('/api/mounts')).json.mounts;
+  assert.equal(mounts.some((m) => m.id === 'evil'), false, 'nothing reached the surface');
+  const comp = await r.req('/api/pane/spawn', {
+    method: 'POST', body: { parent: 'host-pane', component: 'website', params: { url: 'https://example.com' } },
+    headers: { origin: r.origin },
+  });
+  assert.equal(comp.status, 200, comp.text);
+  assert.equal(comp.json.ok, true);
 });

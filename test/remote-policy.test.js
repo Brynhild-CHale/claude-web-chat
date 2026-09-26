@@ -99,7 +99,18 @@ test('ratchet: every rule is well-formed (methods, path, and a hint on every ref
     assert.match(r.path, /^\/[a-z0-9/:*._-]*$/, `lowercase literal path: ${r.path}`);
     if (r.path.includes('*')) assert.ok(r.path.endsWith('/*'), `* only as the final segment: ${r.path}`);
     if (!r.allow || r.destructive) assert.ok(r.hint, `a refusal says what to do instead: ${r.path}`);
+    if ('note' in r) assert.ok(typeof r.note === 'string' && r.note, `a note is prose: ${r.path}`);
   }
+});
+
+test('verdicts: the machine-wide sessions feed is refused with the ls hint; pane spawn carries its body-level note', () => {
+  const v = classify('GET', '/api/machine/sessions');
+  assert.equal(v.reason, 'refused');
+  assert.match(v.hint, /claude-web-chat ls/);
+  const spawn = RULES.find((r) => r.path === '/api/pane/spawn');
+  assert.ok(spawn && spawn.allow, 'the path is allowed');
+  assert.match(spawn.note, /html/, 'the raw-html refusal is recorded on the row (the route enforces it)');
+  assert.match(classify('POST', '/api/markdown').hint, /harness/);
 });
 
 // ── verdicts ────────────────────────────────────────────────────────────────
@@ -126,6 +137,10 @@ const ALLOWED = [
   ['GET', '/api/export/n1.4'], ['GET', '/api/export/active?format=html'],
   ['GET', '/api/packs'], ['GET', '/api/packs/audit'], ['GET', '/api/packs/quarantine/p/review?file=a'],
   ['GET', '/replay'], ['GET', '/api/replay/n1'],
+  ['GET', '/api/brand'], ['GET', '/preview/pane/n1/m1'],
+  ['GET', '/api/mounts/m1/history'], ['POST', '/api/mounts/m1/restore'],
+  ['POST', '/api/page/reset-layout'], ['POST', '/api/page/run'], ['POST', '/api/page/move'],
+  ['POST', '/api/pane/spawn'], ['POST', '/api/pane/close'],
 ];
 
 const REFUSED = [
@@ -134,7 +149,9 @@ const REFUSED = [
   ['DELETE', '/api/packs/quarantine/p'], ['DELETE', '/api/packs/p'], ['POST', '/api/packs/announce'],
   // components / services / brand
   ['POST', '/api/components'], ['POST', '/api/services/refresh-trust'], ['POST', '/api/brand/logo'],
-  ['DELETE', '/api/brand/logo'], ['POST', '/api/theme'],
+  ['DELETE', '/api/brand/logo'], ['PUT', '/api/brand/logo'], ['POST', '/api/theme'],
+  // Claude's markdown write path, and the machine-wide sessions feed
+  ['POST', '/api/markdown'], ['GET', '/api/machine/sessions'], ['GET', '/api/machine/anything'],
   // turn / hook / channel internals and the event log
   ['POST', '/api/turn-begin'], ['POST', '/api/turn-end'], ['POST', '/api/commit'], ['POST', '/api/unlock'],
   ['POST', '/api/wait'], ['POST', '/api/render'], ['POST', '/api/channel/heartbeat'], ['POST', '/api/channel/ack'],

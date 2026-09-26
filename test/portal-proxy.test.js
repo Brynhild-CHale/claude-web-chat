@@ -11,7 +11,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const { withServer, withPortal, withTempHome, waitUntil } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
-const { registerInstance, instanceId } = require('../lib/util/registry');
+const { registerInstance, instanceId, registerMcp, updateMcp } = require('../lib/util/registry');
 const { readMcpSeen } = require('../lib/core/mcp-seen');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { forwardHeaders, responseHeaders } = require('../lib/portal/proxy');
@@ -156,9 +156,11 @@ test('portal proxy: unknown session is a friendly 404; the apex is the picker; a
   const row = list.json.sessions.find((s) => s.id === r.id);
   assert.ok(row, 'the running instance is listed');
   assert.equal(row.url, `https://${r.host}/`);
-  assert.equal(row.reachable, true);
-  assert.equal(row.viewers, 0);
+  assert.equal(row.surface.reachable, true);
+  assert.equal(row.surface.viewers, 0);
+  assert.equal(row.claude, null, 'no Claude session registered for this project');
   assert.equal(row.root, undefined, 'full roots only when showRoots is on');
+  assert.equal(JSON.stringify(row).includes(String(r.srv.port)), false, 'no port on the remote page');
 
   for (const bad of ['evil.example.test', `wc-${r.id}.other.test`, `${r.id}.wc.example.test`, 'wc.example.test.evil.test']) {
     const res = await r.p.request('/api/graph', { host: bad, headers: r.auth });
@@ -173,6 +175,43 @@ test('portal proxy: showRoots lists the full path', async (t) => {
   const r = await rig(t, { config: { showRoots: true } });
   const list = await r.req('/api/sessions', { h: 'wc.example.test' });
   assert.equal(list.json.sessions.find((s) => s.id === r.id).root, r.srv.root);
+});
+
+test('picker: live Claude presence from the registry — connected ×N, channel, the turn in flight', async (t) => {
+  const r = await rig(t);
+  const kid = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], { stdio: 'ignore' });
+  t.after(() => kid.kill());
+  registerMcp({ root: r.srv.root, pid: process.pid, ppid: process.ppid });
+  registerMcp({ root: r.srv.root, pid: kid.pid, ppid: process.pid, channel: true });
+  updateMcp(kid.pid, { last_tool_at: 1234 });
+  const lock = await r.srv.api.post('/api/turn-begin', { trigger: 'test prompt' });
+  assert.equal(lock.status, 200, lock.text);
+  const list = await r.req('/api/sessions', { h: 'wc.example.test' });
+  const row = list.json.sessions.find((s) => s.id === r.id);
+  assert.deepEqual(row.claude, { sessions: 2, channel: true, last_tool_at: 1234 });
+  assert.equal(row.surface.turn, 'mid-turn');
+  assert.equal(row.claude_seen_at, undefined, 'the old "Claude seen <ago>" field is gone');
+  assert.equal(JSON.stringify(row).includes(String(kid.pid)), false, 'no pids on the remote page');
+});
+
+test('picker: a project with Claude attached but no surface is listed WITHOUT a link; the portal starts nothing', async (t) => {
+  const access = createFakeAccess();
+  const root = '/nowhere/claude-only-project';
+  const p = await withPortal(t, {
+    config: access.config(),
+    fetchJwks: access.fetchJwks,
+    instances: () => [],
+    sessions: () => [{ root, title: 'claude-only-project', surface: null, claude: { sessions: 1, channel: false, pids: [4242], started_at: 1, last_tool_at: null } }],
+  });
+  const list = await p.request('/api/sessions', { headers: { 'cf-access-jwt-assertion': access.mint() } });
+  assert.equal(list.status, 200, list.text);
+  assert.deepEqual(list.json.sessions, [{
+    id: instanceId(root), title: 'claude-only-project', url: null, surface: null,
+    claude: { sessions: 1, channel: false, last_tool_at: null },
+  }]);
+  // Its hostname is still the friendly 404 — listing it did not make it routable.
+  const page = await p.request('/', { host: sessionHost(p.config, instanceId(root)), headers: { 'cf-access-jwt-assertion': access.mint() } });
+  assert.equal(page.status, 404);
 });
 
 test('portal: a loopback Host reaches only the health probe', async (t) => {
@@ -207,6 +246,10 @@ test('responseHeaders: preview documents may be framed by their own origin only'
   assert.equal(prev['x-frame-options'], 'SAMEORIGIN');
   assert.equal(prev['set-cookie'], undefined);
   assert.equal(prev.connection, undefined);
+  const pane = responseHeaders({}, '/preview/pane/n1/m1');
+  assert.equal(pane['x-frame-options'], 'SAMEORIGIN', 'one pane\'s preview is framed like a node\'s');
+  assert.equal(pane['content-security-policy'], "frame-ancestors 'self'");
+  assert.equal(responseHeaders({}, '/previewx/node/a')['x-frame-options'], 'DENY');
   const api = responseHeaders({}, '/api/store');
   assert.equal(api['x-frame-options'], 'DENY');
   assert.equal(api['cache-control'], 'no-store');
