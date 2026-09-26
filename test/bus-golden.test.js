@@ -37,6 +37,12 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    render frame is unchanged: it carries `order` only when the render passed
 //    `after`, which the golden session does not. They also carry `runs`, the
 //    per-grid-run flags (b2) — `{}` at the default, equally additive.
+//  - p34c (the page renderer): the full-surface frames also carry
+//    `claude_order`, Claude's baseline page order, which the chrome compares a
+//    run against to decide whether ↺ Claude's layout has anything to restore.
+//  - p34c c2 (the parent chip): the per-pane render frame carries `owner`, as
+//    the full-surface frames' mount records always did, so the chrome can name
+//    a pane-spawned pane's parent on a single render.
 const GOLDEN = {
   frames: [
     {
@@ -45,6 +51,7 @@ const GOLDEN = {
       mounts: [],
       markdown: [],
       order: [],
+      claude_order: [],
       runs: {},
       active: null,
       lock: null,
@@ -52,7 +59,7 @@ const GOLDEN = {
       theme: { tokens: {} },
       activeTheme: null,
     },
-    { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1' },
+    { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude' },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
     {
       type: 'theme',
@@ -97,6 +104,7 @@ const GOLDEN = {
       id: 'tab-capture:tables:bf705e83',
       params: { title: 'Capture · tables — Example', mode: 'reduced' },
       pane_state: { mode: 'reduced' },
+      owner: 'service:tab-stream',
     },
     {
       type: 'node-added',
@@ -184,7 +192,7 @@ test('bus: a tab capture is a triple-effect (store mutation + store:patch WS + o
   assert.equal(caps[0].capture_id, 'cap1');
 });
 
-test('bus: reset frame carries exactly {mounts,markdown,order,runs,store,active,lock,theme,activeTheme}', async (t) => {
+test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,store,active,lock,theme,activeTheme}', async (t) => {
   const { api, port } = await withServer(t);
   const WebSocket = require('ws');
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
@@ -201,7 +209,7 @@ test('bus: reset frame carries exactly {mounts,markdown,order,runs,store,active,
   assert.ok(reset, 'reset frame present');
   assert.deepEqual(
     Object.keys(reset).sort(),
-    ['active', 'activeTheme', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'theme', 'type'].sort(),
+    ['active', 'activeTheme', 'claude_order', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'theme', 'type'].sort(),
   );
 });
 

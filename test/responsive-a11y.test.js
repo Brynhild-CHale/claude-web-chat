@@ -16,7 +16,10 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const REPO = path.resolve(__dirname, '..');
-const CSS = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
+// The chrome's stylesheet, then the page's (linked after it — the page sequence,
+// its grid runs and their narrow-screen rules live in public/page.css).
+const CSS = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8')
+  + '\n' + fs.readFileSync(path.join(REPO, 'public/page.css'), 'utf8');
 const HTML = fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8');
 
 // Walk the stylesheet in source order and collect every declaration of `prop` on
@@ -98,18 +101,25 @@ test('the graph canvas stays usable at the widths this product is actually used 
   assert.equal(wrap, '0', 'the canvas wrap fills the overlay');
 });
 
-test('panes stop tiling once a column would be a sliver', () => {
-  // #main is a 12-column grid; at half-screen widths a span-4 pane is ~160px.
-  const cols = winningValue('#main', 'grid-template-columns', 700);
-  assert.match(cols, /repeat\(12/, '#main keeps its 12-column grid (the resize mechanics depend on it)');
-  const pane = winningValue('.pane', 'grid-column', 760);
-  assert.ok(pane && /1\s*\/\s*-1/.test(pane),
-    `at 760px a pane must span the full row, got: ${pane}`);
-  assert.match(pane, /!important/,
-    'pane spans are set inline by the drag/resize mechanics, so the override has to win');
-  // ...and it must NOT apply on a wide screen, where tiling is the point.
-  assert.equal(winningValue('.pane', 'grid-column', 1440), 'span 12',
-    'wide screens keep the default 12-column span so inline spans still tile');
+test('panes stop tiling once a column would be a sliver — unless the run is a fixed grid', () => {
+  // Each grid run is its own 12-column grid; at half-screen widths a span-4 pane
+  // is ~160px, so a STACKED run (the default) folds to one column there, and a
+  // FIXED run keeps its grid at a readable width and scrolls sideways instead.
+  assert.match(winningValue('.run-grid', 'grid-template-columns', 1440), /repeat\(12/,
+    'a run is a 12-column grid (the resize and drag mechanics depend on it)');
+  for (const width of [700, 760, 900]) {
+    assert.match(winningValue('.page-run.stacks .run-grid', 'grid-template-columns', width) || '', /^minmax\(0, 1fr\)$/,
+      `a stacked run is one column at ${width}px`);
+    assert.match(winningValue('.page-run.stacks .run-grid > .pane', 'grid-column', width) || '', /1\s*\/\s*-1/,
+      `and each of its panes spans it at ${width}px`);
+    assert.equal(winningValue('.page-run.fixed .run-grid', 'min-width', width), '720px', `a fixed run keeps 720px at ${width}px`);
+    assert.equal(winningValue('.page-run.fixed', 'overflow-x', width), 'auto', `and scrolls sideways at ${width}px`);
+  }
+  // ...and none of it applies on a wide screen, where tiling is the point. The
+  // placement is custom properties, never an inline grid-column, so the narrow
+  // rules need no !important to win.
+  assert.equal(winningValue('.page-run.stacks .run-grid', 'grid-template-columns', 1440), null);
+  assert.equal(winningValue('.run-grid > .pane', 'grid-column', 1440), 'var(--col, auto) / span var(--span, 12)');
 });
 
 test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide contents slot', () => {

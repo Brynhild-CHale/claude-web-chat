@@ -424,10 +424,34 @@ kbd {
 /* ===================== body / well ===================== */
 .body { flex: 1; display: flex; min-height: 0; }
 .well-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: auto; box-shadow: var(--wc-well-inset); }
-/* #main keeps the 12-column grid the pane resize/drag mechanics depend on */
-#main {
-  display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px;
-  align-content: start; padding: 22px; flex: 1;
+/* #main is the page (public/page.css lays out its sequence: prose + grid runs,
+   each run its own 12-column grid). This is only where it sits in the well. */
+#main { padding: 26px 28px 90px; flex: 1; width: 100%; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
+
+/* a run's controls — only drawn when they would do something (page.js) */
+.run-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.run-head[hidden], .run-min[hidden] { display: none; }
+.run-reset, .run-stacks { height: 22px; padding: 0 9px; border-radius: var(--wc-radius); font: 500 11px var(--wc-font); cursor: pointer; }
+.run-reset {
+  border: 1px solid color-mix(in srgb, var(--wc-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--wc-accent) 10%, transparent); color: var(--wc-accent-text);
+}
+.run-stacks { border: 1px solid var(--wc-border); background: transparent; color: var(--wc-muted); }
+.run-stacks.fixed {
+  border-color: color-mix(in srgb, var(--wc-gold) 55%, transparent);
+  background: color-mix(in srgb, var(--wc-gold) 10%, transparent); color: var(--wc-gold);
+}
+.run-min { display: flex; gap: 6px; flex-wrap: wrap; }
+/* the page's end: where Claude's next turn lands */
+.page-tail {
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+  border: 1px dashed var(--wc-border); border-radius: var(--wc-radius);
+  color: var(--wc-muted); font: 12px var(--wc-font);
+}
+.page-tail .pt-hash { font: 600 12px var(--wc-mono); color: var(--wc-accent-text); }
+.page-badge {
+  font: 600 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-gold);
+  border: 1px solid color-mix(in srgb, var(--wc-gold) 45%, transparent); border-radius: var(--wc-radius); padding: 2px 7px;
 }
 
 /* ===================== pane cards ===================== */
@@ -459,9 +483,20 @@ kbd {
    so the state is never invisible); ⋯ shows pin/lock again. */
 .pane:not(.narrow) .pane-btn-more,
 .pane.narrow .pane-type,
+.pane.narrow:not(.more-open) .pane-btn-history,
 .pane.narrow:not(.more-open) .pane-btn-pin:not(.active),
 .pane.narrow:not(.more-open) .pane-btn-lock:not(.lock-active) { display: none; }
 .pane.narrow.more-open .pane-btn-more { color: var(--wc-fg); }
+/* ↳ parent: a block another block spawned (public/app/mounts.js ownerChip);
+   faded, and "· closed", once that parent has left the page. */
+.pane-owner {
+  flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  font: 500 10.5px var(--wc-mono); color: var(--wc-accent-text, var(--wc-accent));
+  border: 1px solid color-mix(in srgb, var(--wc-accent) 40%, transparent); border-radius: var(--wc-radius);
+  background: transparent; padding: 1px 6px; height: 20px;
+}
+.pane-owner:hover { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+.pane-owner.orphan { color: var(--wc-muted); border-color: var(--wc-border); border-style: dashed; cursor: help; }
 /* A locked block refuses moves: no grab, no resize handles. */
 .pane.locked .pane-header { cursor: default; }
 .pane.locked :is(.pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
@@ -474,13 +509,10 @@ kbd {
 .pane-resize-rb { position: absolute; z-index: 4; right: -4px; bottom: -4px; width: 14px; height: 14px; cursor: nwse-resize; }
 .pane-resize-r, .pane-resize-b, .pane-resize-rb { touch-action: none; }
 
-/* drag ghost + drop indicator (appended to <body>) */
+/* drag ghost (appended to <body>) */
 .pane-ghost { position: fixed; z-index: var(--z-drag); pointer-events: none; opacity: .5; border: 1px dashed var(--wc-accent); border-radius: var(--wc-radius); background: var(--wc-panel-glass); }
-.pane-drop-indicator { position: fixed; z-index: var(--z-drag); pointer-events: none; background: var(--wc-accent); box-shadow: 0 0 8px var(--wc-glow-accent); display: none; }
 
-/* minbar (minimized panes) */
-.minbar { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 22px 10px; }
-.minbar:empty { display: none; }
+/* minimized panes: chips under their run (.run-min) */
 .min-chip { display: inline-flex; align-items: center; gap: 6px; font: 500 11px var(--wc-mono); color: var(--wc-text-2); padding: 3px 8px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-panel-bg); }
 .min-chip:hover { border-color: var(--wc-accent); color: var(--wc-fg); }
 .min-chip .restore { color: var(--wc-muted); }
@@ -744,6 +776,47 @@ kbd {
 .brand-remove:disabled { opacity: .4; cursor: default; }
 .brand-msg:empty { display: none; }
 .brand-msg.bad { color: var(--wc-comment, var(--wc-accent)); }
+/* A block's history (public/app/pane-history.js): versions on the left, the
+   chosen one drawn read-only by /preview/pane on the right, Make current below.
+   position:fixed because it is placed under the ◷ that opened it, which can sit
+   anywhere on a scrolled page. */
+.popover.pane-history {
+  position: fixed; top: 60px; right: auto; left: 12px;
+  width: min(640px, calc(100vw - 24px)); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.ph-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ph-head h4 { margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-title { font: 500 12px var(--wc-mono); color: var(--wc-muted); margin-left: 4px; }
+.ph-count { font: 11px var(--wc-mono); color: var(--wc-muted); white-space: nowrap; }
+.ph-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 10px; height: min(52vh, 360px); }
+.ph-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 0; }
+.ph-row {
+  display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 7px 9px; text-align: left; cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-content-bg); color: var(--wc-text-1);
+}
+.ph-row.shown { border-color: var(--wc-border-light); }
+.ph-row:hover, .ph-row:focus-visible { border-color: var(--wc-accent); outline: none; }
+.ph-row.chosen { border-color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 12%, var(--wc-content-bg)); }
+.ph-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ph-label { font: 700 12px var(--wc-mono); color: var(--wc-fg-bright); }
+.ph-badge { font: 600 9px var(--wc-mono); letter-spacing: .06em; color: var(--wc-green); border: 1px solid color-mix(in srgb, var(--wc-green) 45%, transparent); border-radius: var(--wc-radius); padding: 1px 5px; }
+.ph-sp { flex: 1; }
+.ph-when { font: 10.5px var(--wc-mono); color: var(--wc-muted); white-space: nowrap; }
+.ph-trig { font: 12px/1.4 var(--wc-font); color: var(--wc-text-2, var(--wc-muted)); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-clamp: 2; }
+.ph-view { position: relative; min-width: 0; min-height: 0; border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-bg); overflow: hidden; }
+.ph-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--wc-bg); }
+.ph-frame[hidden] { display: none; }
+.ph-empty { padding: 14px; font: 12px var(--wc-font); color: var(--wc-muted); }
+.ph-empty[hidden] { display: none; }
+.ph-foot { display: flex; align-items: center; gap: 10px; }
+.ph-note { flex: 1; min-width: 0; font: 11.5px var(--wc-font); color: var(--wc-muted); }
+.ph-note.bad { color: var(--wc-comment, var(--wc-accent)); }
+#ph-restore:disabled { opacity: .45; cursor: default; }
+@media (max-width: 560px) {
+  .ph-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(160px, 1fr); height: min(70vh, 520px); }
+  .ph-list { max-height: 150px; }
+}
+
 /* Sessions panel (public/app/sessions.js): every surface on this computer and
    its Claude Code state. Self-contained on --wc-* tokens so a chrome restyle
    only has to re-point the tokens. */
@@ -972,6 +1045,8 @@ kbd {
    block control that would write — pin, lock, minimize, close, drag, resize.
    Form controls inside the panes are refused by mounts.js guardReadonly. */
 #main.preview-readonly { position: relative; }
+/* a page with a title carries the badge on its meta line instead (page.js) */
+#main.preview-readonly.has-title::after { display: none; }
 #main.preview-readonly::after {
   content: 'PREVIEW · READ-ONLY'; position: absolute; top: 4px; right: 22px; pointer-events: none;
   font: 600 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-gold);
@@ -1254,9 +1329,8 @@ body.pin-mode #main { cursor: crosshair; }
    an empty state; the first thing a new user sees had none, and the README had
    to explain that a blank page was correct. */
 .zero-state {
-  /* #main is a 12-column grid; without this the card lands in one column and
-     renders as a squeezed strip down the left edge. */
-  grid-column: 1 / -1; justify-self: center;
+  /* #main is the page, a column; the card sits centred in it */
+  align-self: center; width: 100%; box-sizing: border-box;
   max-width: 460px; margin: clamp(40px, 12vh, 120px) auto;
   padding: 26px 30px; text-align: left;
   font-family: var(--wc-font);
@@ -1330,12 +1404,10 @@ body.pin-mode #main { cursor: crosshair; }
 
 /* --- surface: a 12-column grid inside ~500px is a row of slivers --- */
 @media (max-width: 900px) {
-  #main { gap: 12px; padding: 14px; }
-  .minbar { padding: 0 14px 10px; }
-  /* pane spans are set INLINE by the resize/drag mechanics, so overriding them
-     needs !important. Below this width there is no room to tile anyway. */
-  .pane { grid-column: 1 / -1 !important; }
-  .pane-resize-r, .pane-resize-rb { display: none; }
+  #main { padding: 14px 14px 60px; }
+  /* A STACKED run folds to one column here (public/page.css) — no width to
+     resize into. A FIXED run keeps its grid, and its handles. */
+  .page-run.stacks :is(.pane-resize-r, .pane-resize-rb) { display: none; }
 }
 
 /* --- graph screen: the canvas is always the whole stage; the floating chrome
@@ -1370,6 +1442,19 @@ body.pin-mode #main { cursor: crosshair; }
   padding: 26px 12px 20px 18px; border-right: 1px solid var(--wc-border); background: var(--wc-header-bg);
 }
 .contents-nav:empty { display: none; }
+.cn-label { font: 600 10px var(--wc-mono); letter-spacing: .12em; color: var(--wc-muted); padding: 0 8px 8px; }
+.cn-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline;
+  width: 100%; margin-bottom: 2px; text-align: left; padding: 7px 8px; border: 0; background: transparent; border-radius: var(--wc-radius);
+  color: var(--wc-text-1); cursor: pointer;
+}
+.cn-row.sub { padding-left: 22px; }
+.cn-row:hover { background: var(--wc-hover-bg); }
+.cn-num { font: 600 10.5px var(--wc-mono); color: var(--wc-accent-text); }
+.cn-name { font: 500 12.5px var(--wc-font); color: var(--wc-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cn-count { font: 10.5px var(--wc-mono); color: var(--wc-muted); }
+.cn-tip { margin-top: 8px; padding: 8px; border: 1px dashed var(--wc-border); border-radius: var(--wc-radius); font: 11px/1.45 var(--wc-font); color: var(--wc-muted); }
+.cn-tip kbd { font: 500 10px var(--wc-mono); color: var(--wc-key-fg); background: var(--wc-key-bg); border: 1px solid var(--wc-key-border); border-radius: var(--wc-radius); padding: 1px 4px; }
 @media (max-width: 1099px) {
   .contents-nav { display: none; }
 }
@@ -1485,6 +1570,19 @@ body.pin-mode #main { cursor: crosshair; }
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; text-wrap: pretty;
 }
 .gv-lcard-folded { font: 500 11px var(--wc-mono); color: var(--wc-muted); }
+/* the sections a turn changed (graph-log.js changeChips; design "Graph Prototype") */
+.gv-lcard-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.gv-chg {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  font: 500 11px var(--wc-mono); color: var(--wc-text-2, var(--wc-muted));
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius); padding: 3px 7px; background: var(--wc-content-bg);
+}
+.gv-chg .h { color: var(--wc-accent-text, var(--wc-accent)); font-weight: 600; }
+.gv-chg .sec { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-chg .n { font-weight: 600; }
+.gv-chg .n.add { color: var(--wc-green); }
+.gv-chg .n.chg { color: var(--wc-gold); }
+.gv-chg .n.rm { color: var(--wc-muted); }
 .gv-lghost {
   flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; margin: 2px 0; padding: 8px 10px;
   font: 12px var(--wc-font); color: var(--wc-muted); border-left: 2px solid var(--wc-border);

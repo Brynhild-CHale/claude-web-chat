@@ -195,6 +195,18 @@ test('a spawned pane is surface content: it commits with the turn, owner and all
   assert.equal(pc.owner, 'pane:p', 'the owner travels with the node');
 });
 
+test('the render frame names the writer, so the chrome can show a child\'s parent', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const b = await browser(ctx);
+  await render(api, 'p');
+  await doSpawn(api, 'p', { id: 'pc' });
+  await waitUntil(() => b.frames.some((f) => f.type === 'render' && f.id === 'pc'));
+  assert.equal(b.frames.find((f) => f.type === 'render' && f.id === 'p').owner, 'claude');
+  assert.equal(b.frames.find((f) => f.type === 'render' && f.id === 'pc').owner, 'pane:p');
+  b.sock.close();
+});
+
 test('caps: children per parent, pane-spawned total, spawn depth', () => {
   const { state, bus } = fixture();
   for (let i = 0; i < spawn.MAX_CHILDREN; i++) {

@@ -40,6 +40,12 @@ const NODES = [
   { id: 'n20', label: 'n2.0', parent_id: null, created_at: 20, trigger_summary: 'protocol draft', children: ['n21'] },
   { id: 'n21', label: 'n2.1', parent_id: 'n20', created_at: 21, trigger_summary: 'safety steps', children: [] },
 ];
+// What the daemon says each turn changed, per section (GET /api/graph/changes).
+// A section name is agent text: the chip must set it as text.
+const CHANGES = {
+  n6: [{ h: '##', sec: 'Against the <b>literature</b>', add: 2 }, { h: '#', sec: 'Results', chg: 1, rm: 1 }],
+  n1: [{ h: '', sec: 'top of page', add: 1 }],
+};
 const FOLDED = { n6: [{ at: 6.1, summary: 'check the form' }, { at: 6.2, summary: 'looks good, thanks' }] };
 const MOUNTS = [
   { id: 'form', html: '<input id="t"><button type="button" id="plain">p</button>'
@@ -79,6 +85,7 @@ before(async () => {
       return json({ ...n, author: 'claude', mounts: [], store: {}, ...(FOLDED[id] ? { folded: FOLDED[id] } : {}) });
     }
     if (u.startsWith('/api/graph/diff')) return json({ mounts: { added: [], changed: [], removed: [] } });
+    if (u === '/api/graph/changes') return json({ changes: CHANGES });
     if (u === '/api/graph/active') return json({ ok: true, active: JSON.parse(opts.body).id });
     if (u === '/api/components') return json({ components: [] });
     if (u === '/api/themes') return json({ themes: [] });
@@ -196,7 +203,7 @@ test('a phone is marked on <html> and its panes are read-only', async () => {
 });
 
 test("a minimized block's chip only peeks at it on a phone", async () => {
-  const chip = W.document.querySelector('#minbar .min-chip');
+  const chip = W.document.querySelector('#main .min-chip');
   assert.ok(chip, 'the minimized block keeps its chip');
   sent.length = 0;
   click(chip);
@@ -204,8 +211,25 @@ test("a minimized block's chip only peeks at it on a phone", async () => {
   assert.ok(pane('tucked').classList.contains('peek'), 'shown here…');
   assert.ok(pane('tucked').classList.contains('minimized'), '…but still minimized on the live surface');
   assert.deepEqual(sent.filter((f) => f.type === 'pane:state'), [], 'restoring it would have been a write');
-  click(W.document.querySelector('#minbar .min-chip'));
+  click(W.document.querySelector('#main .min-chip'));
   assert.equal(pane('tucked').classList.contains('peek'), false, 'a second tap tucks it away again');
+});
+
+test('⌘K jumping to a minimized block on a phone shows it but restores nothing', async () => {
+  sent.length = 0;
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+  await tick();
+  const input = $('cmd-input');
+  input.value = 'tucked';
+  input.dispatchEvent(new W.Event('input', { bubbles: true }));
+  await tick();
+  const block = [...$('cmd-list').querySelectorAll('.palette-item')].find((r) => r.dataset.kind === 'block');
+  assert.ok(block, 'the block row');
+  block.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
+  await tick(120);
+  assert.ok(pane('tucked').classList.contains('pane-flash'), 'the jump still lands on it');
+  assert.ok(pane('tucked').classList.contains('minimized'), 'still minimized on the live surface');
+  assert.deepEqual(sent.filter((f) => f.type === 'pane:state'), [], 'un-minimizing would have been a write');
 });
 
 /* ---------------- the bottom bar ---------------- */
@@ -268,6 +292,23 @@ test("the phone's graph screen is a newest-first log of one graph, behind a comp
 
   assert.equal($('gv-log-sel').textContent, 'n1.3', 'the log starts on the active node');
   assert.equal($('gv-log-active').disabled, true, 'which is already active');
+});
+
+test('a card names the sections its turn changed, from the daemon, as text — and asks once', async () => {
+  await tick(30);
+  const chips = (id) => [...row(id).querySelectorAll('.gv-lcard-chips .gv-chg')].map((c) => c.textContent);
+  assert.deepEqual(chips('n6'), ['##Against the <b>literature</b>+2', '#Results~1 −1']);
+  assert.equal(row('n6').querySelector('.gv-chg b'), null, 'a section name is text, never markup');
+  assert.equal(row('n6').querySelector('.gv-chg .n.add').textContent, '+2');
+  assert.equal(row('n6').querySelectorAll('.gv-chg')[1].querySelector('.n').className, 'n chg', 'coloured by its first kind');
+  assert.match(row('n6').querySelector('.gv-chg').title, /2 added/);
+  assert.deepEqual(chips('n1'), ['top of page+1'], 'above the first heading: no # mark');
+  assert.equal(row('n2').querySelector('.gv-lcard-chips'), null, 'a turn that changed no section has no chip row');
+  const asked = calls.filter((c) => c.url === '/api/graph/changes').length;
+  assert.equal(asked, 1, 'the log asked the daemon once');
+  click(row('n5').querySelector('.gv-lcard'));   // a redraw over the same turns
+  await tick(10);
+  assert.equal(calls.filter((c) => c.url === '/api/graph/changes').length, asked, 'and not again for turns it already covered');
 });
 
 test('⋯ N folded shows the ghost rows; filters and search hide what does not match', async () => {

@@ -13,6 +13,7 @@ import { initComments } from './comments.js';
 import { initShell } from './shell.js';
 import { initVersion } from './version.js';
 import { initBrand } from './brand.js';
+import { initPaneHistory } from './pane-history.js';
 import { connect } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -25,4 +26,5 @@ initComments();
 initShell();
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // topbar logotype + Settings → Brand drop targets
+initPaneHistory(); // a block's ◷ history popover (Make current)
 connect();

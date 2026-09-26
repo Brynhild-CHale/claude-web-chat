@@ -227,7 +227,7 @@ test('frames the chrome sent while the socket was down survive the reconnect', a
   sent.length = 0;
   store.set({ k: 'first' });
   store.set({ k: 'second', other: 1 });      // coalesces: one frame, patches merged
-  unminimize('m-keep');                      // what clicking the minbar chip does
+  unminimize('m-keep');                      // what clicking the minimized chip does
   await new Promise((r) => setTimeout(r, 120));   // past emitPaneState's 80ms debounce
   assert.equal(sent.length, 0, 'precondition: nothing reaches a closed socket');
 

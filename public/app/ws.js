@@ -25,6 +25,7 @@ import { onTrustPrompt, onTrustClear, resetTrustPrompts } from './service-trust.
 import { invalidate as invalidateComponents } from './components.js';
 import { bus } from './bus.js';
 import { applyBrand, refreshBrand } from './brand.js';
+import { page, applyPageFrame, layoutPage } from './page.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -123,6 +124,17 @@ function snapClearMount(id, target, frame = {}) {
     return kept ? kept.has(x.id) : survivesClear(x.pane_state, frame);
   });
 }
+// A page frame (markdown, markdown:remove, page:order, page:run, a render's
+// order): onto the folded live page while previewing, else onto the live page
+// and laid out.
+function pageFrame(msg) {
+  if (view.previewing) {
+    if (view.liveSnapshot && view.liveSnapshot.page) applyPageFrame(view.liveSnapshot.page, msg);
+    return;
+  }
+  applyPageFrame(page, msg);
+  layoutPage();
+}
 function snapPaneState(id, ps) {
   if (!view.liveSnapshot) return;
   const m = view.liveSnapshot.mounts.find(x => x.id === id);
@@ -167,9 +179,18 @@ const HANDLERS = {
     else store.set(msg.patch, { fromServer: true });
   },
   render(msg) {
-    if (view.previewing) snapUpsertMount(msg);
-    else mount(msg);
+    // A pane placed with `after` carries the resulting page order; take it first
+    // so the pane mounts straight into its slot.
+    if (view.previewing) { snapUpsertMount(msg); pageFrame(msg); return; }
+    applyPageFrame(page, msg);
+    mount(msg);
   },
+  // The page sequence (lib/server/domain/page): a markdown item put / replaced /
+  // removed, a user's reorder or ↺ Claude's layout, a run's narrow-screen flag.
+  markdown(msg) { pageFrame(msg); },
+  'markdown:remove'(msg) { pageFrame(msg); },
+  'page:order'(msg) { pageFrame(msg); },
+  'page:run'(msg) { pageFrame(msg); },
   clear(msg) {
     if (view.previewing) { snapClearMount(msg.id, msg.target, msg); return; }
     if (msg.id) removePane(msg.id);

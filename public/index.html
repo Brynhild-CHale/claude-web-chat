@@ -6,6 +6,8 @@
   <title>web-chat</title>
   <link rel="stylesheet" href="/fonts/fonts.css">
   <link rel="stylesheet" href="/app.css">
+  <!-- the page sequence (runs, prose) — shared with the node preview and the export -->
+  <link rel="stylesheet" href="/page.css">
 </head>
 <body>
   <div id="stage" tabindex="0">
@@ -31,9 +33,8 @@
       <div class="brand"><span class="status-dot off" id="status-dot" role="img" aria-label="connecting" title="connecting"></span>web-chat</div>
       <span class="tb-div" aria-hidden="true"></span>
       <span class="node-label" id="node-label">—</span>
-      <!-- the page's own title. Empty (and so not drawn) until the page model
-           gives a node a title to show; the slot is here so the topbar does not
-           reflow when it arrives. -->
+      <!-- the page's own title: its first # heading (public/app/page.js). Empty
+           — and so not drawn — on a page without one. -->
       <span class="page-title" id="page-title"></span>
 
       <button class="cmd-trigger" id="cmd-trigger" title="Command palette (⌘K)" aria-label="Search commands, nodes, blocks (Cmd K)">
@@ -71,13 +72,14 @@
 
     <!-- body: [contents] + surface well + proximity queue rail -->
     <div class="body">
-      <!-- the page's contents column (wide screens, ≥1100px). Empty — and so not
-           drawn — until the page model gives a node headings to list; the slot is
-           here so the well does not reflow when it arrives. -->
+      <!-- the page's contents column (wide screens, ≥1100px): one row per # / ##
+           heading in the page's markdown (public/app/page.js). Empty — and so not
+           drawn — when the page has no headings. -->
       <nav id="contents-nav" class="contents-nav" aria-label="Contents"></nav>
       <div class="well-wrap">
-        <main id="main"></main>
-        <div id="minbar" class="minbar"></div>
+        <!-- the page: markdown between grid runs of panes (public/app/page.js);
+             minimized blocks sit as chips under their own run -->
+        <main id="main" class="page"></main>
       </div>
       <aside id="queue-rail" class="rail" aria-label="Queue to Claude">
         <div class="rail-collapsed">
@@ -189,6 +191,28 @@
       <h4>Sessions <span id="sessions-meta" class="ss-meta"></span></h4>
       <div id="sessions-list" class="ss-list" role="list"></div>
       <div class="hint">Every web-chat surface on this computer, and which have a Claude Code session attached. Refreshes every 5s.</div>
+    </div>
+
+    <!-- a block's history: the versions of one pane on the way to the active node
+         (public/app/pane-history.js; rows are built there, as text). Placed under
+         the ◷ that opened it. -->
+    <div id="pane-history" class="popover pane-history hidden" role="dialog" aria-labelledby="ph-head">
+      <div class="ph-head">
+        <h4 id="ph-head">History <span id="ph-title" class="ph-title"></span></h4>
+        <span id="ph-count" class="ph-count"></span>
+        <button type="button" class="pane-btn" id="ph-close" title="Close history" aria-label="Close history">×</button>
+      </div>
+      <div class="ph-body">
+        <div id="ph-list" class="ph-list" role="listbox" aria-label="Versions, newest first"></div>
+        <div class="ph-view">
+          <iframe id="ph-frame" class="ph-frame" title="The selected version, read-only" hidden></iframe>
+          <div id="ph-empty" class="ph-empty"></div>
+        </div>
+      </div>
+      <div class="ph-foot">
+        <span id="ph-note" class="ph-note"></span>
+        <button type="button" class="btn primary" id="ph-restore" disabled>Make current</button>
+      </div>
     </div>
 
     <!-- settings -->

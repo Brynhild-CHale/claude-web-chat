@@ -11,7 +11,8 @@
 //   - the block header's reduced/expanded ⊞/⊟ switch is gone — a capture pane
 //     carries its own toggle (lib/capture/pane.js wrapModes), and the chrome
 //     still persists the mode it asks for;
-//   - resize from the right edge, the bottom edge, and the new corner (both);
+//   - resize from the right edge, the bottom edge, and the corner (both),
+//     snapping to whole columns and 40px rows;
 //   - a LOCKED block refuses drags and resizes, including a lock set remotely;
 //   - a detached preview is READ-ONLY (plan §2b D2): toggles do not toggle,
 //     submits do not submit, the header's write controls refuse — and a pane
@@ -199,30 +200,34 @@ test('a capture pane toggles in-pane, and the chrome persists the mode it asks f
   assert.match(toggle.textContent, /expand/);
 });
 
-test('the corner resizes width AND height; the right edge only width', async () => {
+test('the corner resizes width AND height, snapped to columns and 40px rows; the right edge only width', async () => {
   const p = pane('plain');
   sent.length = 0;
   const rb = p.querySelector('.pane-resize-rb');
   assert.ok(rb, 'the corner handle exists');
+  // jsdom lays nothing out, so the run grid measures 0 wide and the chrome falls
+  // back to a nominal 60px column: one column step is 60 + 14 (the gap) = 74px,
+  // one row step 40 + 14 = 54px.
   pointer(rb, 'pointerdown', 500, 300);
-  pointer(rb, 'pointermove', 703, 450);   // +2 columns, +150px
-  pointer(rb, 'pointerup', 703, 450);
+  pointer(rb, 'pointermove', 648, 462);   // +2 columns, +3 rows
+  pointer(rb, 'pointerup', 648, 462);
   await tick(120);
   const f = lastState('plain');
   assert.ok(f, 'the resize was published');
   assert.equal(f.pane_state.colSpan, 8, 'two columns wider');
-  // (jsdom lays nothing out, so the drag starts from a 0px-tall rect.)
-  assert.equal(f.pane_state.heightPx, 150, '150px taller');
+  assert.equal(f.pane_state.rows, 3, 'three rows tall (the drag started from a 0px rect)');
+  assert.equal(f.pane_state.heightPx, 120, 'heightPx stays rows × 40 for readers that size in pixels');
+  assert.ok(p.classList.contains('has-rows') && p.style.getPropertyValue('--rows') === '3', 'and the pane is drawn that tall');
 
   sent.length = 0;
   const r = p.querySelector('.pane-resize-r');
   pointer(r, 'pointerdown', 500, 300);
-  pointer(r, 'pointermove', 297, 600);    // -2 columns; the vertical travel is ignored
-  pointer(r, 'pointerup', 297, 600);
+  pointer(r, 'pointermove', 352, 600);    // -2 columns; the vertical travel is ignored
+  pointer(r, 'pointerup', 352, 600);
   await tick(120);
   const g = lastState('plain');
   assert.equal(g.pane_state.colSpan, 6);
-  assert.equal(g.pane_state.heightPx, 150, 'the right edge never touches the height');
+  assert.equal(g.pane_state.rows, 3, 'the right edge never touches the height');
 });
 
 test('a locked block refuses drag and resize', async () => {
@@ -236,7 +241,7 @@ test('a locked block refuses drag and resize', async () => {
   pointer(rb, 'pointerup', 703, 450);
   await tick(120);
   assert.equal(lastState('locked'), undefined, 'nothing moved, so nothing was published');
-  assert.equal(p.style.gridColumn, 'span 6');
+  assert.equal(p.style.getPropertyValue('--span'), '6');
 
   // An unlocked block does start a drag from its header (not from its buttons).
   const w = pane('wide');

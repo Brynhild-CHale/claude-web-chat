@@ -201,23 +201,23 @@ test('one mount that throws does not abort the rest of a hello', async () => {
 });
 
 test('a mount whose id names chrome does not hijack the shell\'s live lookups', async () => {
-  const minbarEl = $('minbar'), drawerEl = $('drawer'), railEl = $('queue-rail');
-  assert.ok(minbarEl && drawerEl && railEl, 'precondition: the chrome after <main> exists');
+  const drawerEl = $('drawer'), railEl = $('queue-rail'), pillEl = $('active-pill');
+  assert.ok(drawerEl && railEl && pillEl, 'precondition: the chrome exists');
 
   frame({
     type: 'hello', store: {}, theme: null, activeTheme: null, active: 'n1', lock: null, project: 'hijack',
     mounts: [
-      { id: 'minbar', html: '<p>shadow the minbar</p>', target: 'main', params: {}, pane_state: {} },
+      { id: 'active-pill', html: '<p>shadow the pill</p>', target: 'main', params: {}, pane_state: {} },
       { id: 'drawer', html: '<p>shadow the drawer</p>', target: 'main', params: {}, pane_state: {} },
       { id: 'queue-rail', html: '<p>shadow the rail</p>', target: 'main', params: {}, pane_state: {} },
     ],
   });
   await tick();
 
-  // These ids all sit AFTER <main> in document order, so a host that took the id
-  // would be the one getElementById returns — and $ in state.js is a live
-  // getElementById, called on every renderMinbar / drawer open / rail update.
-  for (const [id, el] of [['minbar', minbarEl], ['drawer', drawerEl], ['queue-rail', railEl]]) {
+  // A host that took one of these ids could be the one getElementById returns —
+  // and $ in state.js is a live getElementById, called on every status update /
+  // drawer open / rail update.
+  for (const [id, el] of [['active-pill', pillEl], ['drawer', drawerEl], ['queue-rail', railEl]]) {
     assert.equal(W.document.getElementById(id), el, `#${id} still resolves to the chrome, not a pane host`);
     assert.ok(mainEl.querySelector(`[data-pane-id="${id}"]`), `the pane named ${id} mounted anyway`);
   }
@@ -225,7 +225,7 @@ test('a mount whose id names chrome does not hijack the shell\'s live lookups', 
   // The functional half: the chrome those lookups drive still works.
   frame({ type: 'render', id: 'chip', html: '<p>minimized</p>', target: 'main', params: {}, pane_state: { minimized: true } });
   await tick();
-  assert.ok(minbarEl.querySelector('.min-chip'), 'the minbar still gets the minimized pane\'s chip');
+  assert.ok(mainEl.querySelector('.run-min .min-chip'), 'the minimized pane still gets its chip');
 
   $('btn-add').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
   await tick();

@@ -1,16 +1,24 @@
-// The mount system — pane chrome, layout (12-col grid), resize, drag/reorder,
-// minbar, and the core mount()/clearTarget()/fullReset()/applySnapshot(). The
-// last is the ONE applier of a full-surface snapshot frame (hello / reset /
-// preview restore) and owns the preview fork. The shadow-root mount +
-// <script> extraction + execution stay in the shared runtime (window.__wcMount);
-// this never reimplements that contract (rewrite risk #1). Pane DOM order is
-// local-only — never persisted (the drag reorder is cosmetic).
+// The mount system — pane chrome, pane placement (col/span/rows on its run's
+// 12-col grid), resize, drag-within-a-run, and the core mount()/clearTarget()/
+// fullReset()/applySnapshot(). The last is the ONE applier of a full-surface
+// snapshot frame (hello / reset / preview restore) and owns the preview fork —
+// for the page record (markdown, order, run flags; public/app/page.js) as much
+// as for the panes. The shadow-root mount + <script> extraction + execution stay
+// in the shared runtime (window.__wcMount); this never reimplements that
+// contract (rewrite risk #1). WHERE a pane's wrapper sits is page.js's
+// layoutPage(); a drag's new order is a user move the daemon persists
+// (page.commitRunOrder → POST /api/page/move).
 import { $, hostFor, view } from './state.js';
 import { store } from './store.js';
 import { send, isOpen } from './ws.js';
 import { applyPaneTheme } from './theme.js';
 import { isPhone } from './viewport.js';
 import { bus } from './bus.js';
+import { togglePaneHistory } from './pane-history.js';
+import {
+  layoutPage, setPage, pageFromFrame, placeOf, runOf, commitRunOrder,
+  COLS, ROW_PX, GAP_PX, ROWS_MIN, ROWS_MAX, SPAN_MIN,
+} from './page.js';
 
 // pane records keyed by mount id: { wrapper, host, root, pane_state, title, paneTarget, theme, themeStyle, spec }
 export const panes = new Map();
@@ -52,14 +60,19 @@ function dropOrphanDom(id) {
   }
 }
 
+// The pane_state the chrome works on. Keys it does not interpret — `rows`,
+// `claude_place` (Claude's baseline, which ↺ and the run's dirty check read) —
+// ride along untouched.
 function applyPaneStateDefaults(s) {
   s = s || {};
   // Legacy rowSpan → heightPx so old nodes look about right.
   let heightPx = s.heightPx;
   if (heightPx == null && s.rowSpan && s.rowSpan > 1) heightPx = s.rowSpan * 60;
+  const pl = placeOf(s);
   return {
-    col: s.col || 'auto',
-    colSpan: s.colSpan || 12,
+    ...s,
+    col: pl.col,
+    colSpan: s.colSpan || COLS,
     heightPx: heightPx || null,
     pinned: !!s.pinned,
     locked: !!s.locked,
@@ -67,17 +80,6 @@ function applyPaneStateDefaults(s) {
     mode: s.mode === 'expanded' ? 'expanded' : 'reduced',
   };
 }
-
-const COL_SNAPS = [2, 3, 4, 6, 8, 9, 12];
-function snapColSpan(n) {
-  let best = COL_SNAPS[0], bestD = Infinity;
-  for (const s of COL_SNAPS) {
-    const d = Math.abs(s - n);
-    if (d < bestD) { best = s; bestD = d; }
-  }
-  return best;
-}
-const MIN_HEIGHT_PX = 80;
 
 const emitTimers = new Map();
 function emitPaneState(id) {
@@ -90,7 +92,9 @@ function emitPaneState(id) {
     // A COPY: pane_state is merged in place (applyRemotePaneState), and a frame
     // queued while the socket is down must carry what the user did, not whatever
     // the reconnect's snapshot later merges into the live object.
-    send({ type: 'pane:state', id, pane_state: { ...p.pane_state } }); // queued if the socket is down
+    // claude_place is the daemon's (Claude's baseline) — never echoed back.
+    const { claude_place: _baseline, ...ps } = p.pane_state;
+    send({ type: 'pane:state', id, pane_state: ps }); // queued if the socket is down
   }, 80));
 }
 
@@ -153,10 +157,21 @@ export function applyRemoteFormState(id, form_state) {
   finally { p._applyingForm = false; }
 }
 
+// A pane's place on its run's grid (public/page.css): three custom properties,
+// never an inline grid-column — so the narrow-screen rules can fold a stacked
+// run to one column without fighting an inline style. A pane with `rows` is
+// exactly that tall; one sized in pixels before rows existed keeps a min-height,
+// as it always had.
 export function applyPaneState(wrapper, pane_state) {
-  wrapper.style.gridColumn = `span ${pane_state.colSpan}`;
-  wrapper.style.gridRow = '';
-  wrapper.style.minHeight = pane_state.heightPx ? pane_state.heightPx + 'px' : '';
+  const pl = placeOf(pane_state);
+  const span = pl.col != null ? Math.min(pl.span, COLS - pl.col + 1) : pl.span;
+  wrapper.style.setProperty('--col', pl.col != null ? String(pl.col) : 'auto');
+  wrapper.style.setProperty('--span', String(span));
+  const rows = Number.isFinite(Number(pane_state.rows)) && pane_state.rows != null ? Number(pane_state.rows) : null;
+  wrapper.classList.toggle('has-rows', rows != null);
+  if (rows != null) wrapper.style.setProperty('--rows', String(rows));
+  else wrapper.style.removeProperty('--rows');
+  wrapper.style.minHeight = rows == null && pane_state.heightPx ? pane_state.heightPx + 'px' : '';
   wrapper.classList.toggle('minimized', !!pane_state.minimized);
   wrapper.classList.toggle('locked', !!pane_state.locked);
   wrapper.classList.toggle('pinned', !!pane_state.pinned);
@@ -185,70 +200,15 @@ export function blockType(params, component) {
   return typeof component === 'string' && component ? component : '';
 }
 
-// The zero state. #main used to be literally empty on first open — every OTHER
-// panel in this app has a considered empty state (the queue rail, the graph
-// inspector, the command palette, the node preview), and the one surface every
-// new user sees first had none. The README had to apologise for it.
-//
-// Reconciled from renderMinbar because that is already the "the set of panes
-// changed" hook, called from mount / removePane / clearTarget / fullReset.
-function syncZeroState() {
-  const main = $('main');
-  if (!main) return;
-  const hasPanes = main.querySelector('.pane');
-  const existing = main.querySelector('.zero-state');
-  if (hasPanes) { if (existing) existing.remove(); return; }
-  if (existing) return;
-
-  const box = document.createElement('div');
-  box.className = 'zero-state';
-  // Static markup only — nothing here is data. The suggestion is a chip the
-  // reader can select in one click and paste into their terminal; the three
-  // keys are the design's (G / N / ?), and ? lists the rest.
-  box.innerHTML =
-    '<h2>Nothing on the page yet</h2>' +
-    '<p>Ask Claude for something visual in your terminal and it lands here as blocks — ' +
-    'a figure, a table, a form, a diagram — and every turn becomes a node you can walk back to. Try:</p>' +
-    '<p class="zs-try"><span class="zs-quote">Sketch this project\'s architecture on the page.</span></p>' +
-    '<ul class="zs-keys">' +
-      '<li><kbd>G</kbd> open the graph</li>' +
-      '<li><kbd>N</kbd> add a block from the library</li>' +
-      '<li><kbd>?</kbd> all shortcuts</li>' +
-    '</ul>';
-  main.appendChild(box);
+// A pane that another pane spawned (owner `pane:<parent>`, lib/server/domain/
+// spawn) names its parent on its header. The parent id, or null.
+export const PANE_OWNER = 'pane:';
+export function spawnParentOf(owner) {
+  return typeof owner === 'string' && owner.startsWith(PANE_OWNER) && owner.length > PANE_OWNER.length
+    ? owner.slice(PANE_OWNER.length) : null;
 }
 
-export function renderMinbar() {
-  syncZeroState();
-  const minbarEl = $('minbar');
-  if (!minbarEl) return;
-  minbarEl.innerHTML = '';
-  for (const [id, p] of panes) {
-    if (!p.pane_state.minimized) continue;
-    const chip = document.createElement('button');
-    chip.className = 'min-chip';
-    // textContent, never innerHTML: a pane title can be attacker-controlled (a
-    // captured page's <title> flows into params.title via routes/capture.js).
-    const chipLabel = document.createElement('span');
-    chipLabel.textContent = p.title || id;
-    const chipRestore = document.createElement('span');
-    chipRestore.className = 'restore';
-    chipRestore.textContent = '↗';
-    chip.append(chipLabel, chipRestore);
-    chip.addEventListener('click', () => {
-      // A phone is a read-only viewer: restoring a block would be a write to the
-      // live surface, so the chip only shows it HERE (toggles a local peek).
-      if (isPhone()) { chip.classList.toggle('on', p.wrapper.classList.toggle('peek')); return; }
-      p.pane_state.minimized = false;
-      applyPaneState(p.wrapper, p.pane_state);
-      renderMinbar();
-      emitPaneState(id);
-    });
-    minbarEl.appendChild(chip);
-  }
-}
-
-function makePaneChrome(id, title, pane_state, params, component) {
+function makePaneChrome(id, title, pane_state, params, component, owner) {
   const wrapper = document.createElement('div');
   wrapper.className = 'pane';
   wrapper.dataset.paneId = id;
@@ -274,6 +234,21 @@ function makePaneChrome(id, title, pane_state, params, component) {
     chip.className = 'pane-type';
     chip.textContent = type;
     header.appendChild(chip);
+  }
+
+  // ↳ parent — who put this pane up. A child outlives its parent (the daemon's
+  // rule: no cascade), so the chip says so once the parent is gone rather than
+  // leaving an orphan that looks like any other block (syncOwnerChips). A click
+  // shows the parent.
+  const parent = spawnParentOf(owner);
+  if (parent) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'pane-owner';
+    chip.dataset.parent = parent;
+    chip.addEventListener('click', () => revealPane(parent));
+    header.appendChild(chip);
+    paintOwnerChip(chip);
   }
 
   function mkBtn(label, tip, onClick, className = '') {
@@ -305,8 +280,20 @@ function makePaneChrome(id, title, pane_state, params, component) {
     emitPaneState(id);
   }, 'pane-btn-lock');
 
-  // Below NARROW_SPAN pin/lock are folded away; ⋯ shows them in the header.
-  const btnMore = mkBtn('⋯', 'more — pin, lock', () => {
+  // The block's history: the versions the page has shown on the way to the
+  // active node, each previewable, with "Make current" (public/app/pane-history).
+  // Viewing only until the user picks a version and says so. aria-controls is the
+  // dismiss layer's trigger contract (shell.js ownedPanel): without it the
+  // popover would be dismissed out from under this very click.
+  const btnHistory = mkBtn('◷', 'history — earlier versions of this block', () => {
+    if (!live()) return;
+    togglePaneHistory(id, btnHistory);
+  }, 'pane-btn-history');
+  btnHistory.setAttribute('aria-controls', 'pane-history');
+  btnHistory.setAttribute('aria-haspopup', 'dialog');
+
+  // Below NARROW_SPAN history/pin/lock are folded away; ⋯ shows them in the header.
+  const btnMore = mkBtn('⋯', 'more — history, pin, lock', () => {
     wrapper.classList.toggle('more-open');
   }, 'pane-btn-more');
 
@@ -314,7 +301,7 @@ function makePaneChrome(id, title, pane_state, params, component) {
     if (!live()) return;
     pane_state.minimized = true;
     applyPaneState(wrapper, pane_state);
-    renderMinbar();
+    layoutPage();
     emitPaneState(id);
   }, 'pane-btn-min');
 
@@ -329,6 +316,7 @@ function makePaneChrome(id, title, pane_state, params, component) {
     });
   }, 'pane-btn-close');
 
+  header.appendChild(btnHistory);
   header.appendChild(btnPin);
   header.appendChild(btnLock);
   header.appendChild(btnMore);
@@ -360,12 +348,22 @@ export function refusesLayout(pane_state) {
   return !!(pane_state && pane_state.locked) || readOnlyNow();
 }
 
+// The run grid a pane sits in, measured: its rect and one column's width. A grid
+// that has not been laid out (a hidden tab, jsdom) falls back to a nominal 60px
+// column so the arithmetic stays finite.
+function gridMetrics(wrapper) {
+  const grid = wrapper.parentElement;
+  const rect = grid && grid.getBoundingClientRect ? grid.getBoundingClientRect() : { left: 0, top: 0, width: 0 };
+  const colW = rect.width > 0 ? (rect.width - GAP_PX * (COLS - 1)) / COLS : 60;
+  return { rect, colW };
+}
+const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// Edge and corner resize, snapping to the grid the way the design draws it: the
+// right edge to whole columns (2 up to the columns left of the pane's start),
+// the bottom edge to whole 40px rows (2–24), the corner both. What persists is
+// `colSpan` and `rows` (the daemon keeps heightPx = rows × 40 beside it).
 function attachResize(wrapper, handles, id, pane_state) {
-  function approxColWidth() {
-    const mainEl = $('main');
-    const w = mainEl.clientWidth - 44; // padding
-    return (w - 11 * 18) / 12; // 11 gaps of 18px
-  }
   function startResize(axis, handle, e) {
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
@@ -374,9 +372,12 @@ function attachResize(wrapper, handles, id, pane_state) {
     const pointerId = e.pointerId;
     const startX = e.clientX;
     const startPageY = e.pageY;
-    const startCol = pane_state.colSpan;
-    const startH = pane_state.heightPx || wrapper.getBoundingClientRect().height;
-    const cw = approxColWidth();
+    const { colW } = gridMetrics(wrapper);
+    const now = placeOf(pane_state);
+    const r0 = wrapper.getBoundingClientRect();
+    const w0 = r0.width > 0 ? r0.width : now.span * colW + (now.span - 1) * GAP_PX;
+    const h0 = r0.height > 0 ? r0.height : (now.rows ? now.rows * ROW_PX + (now.rows - 1) * GAP_PX : 0);
+    const maxSpan = now.col != null ? COLS - now.col + 1 : COLS;
 
     let lastClientY = e.clientY;
     let lastPageY = e.pageY;
@@ -384,18 +385,18 @@ function attachResize(wrapper, handles, id, pane_state) {
 
     function applyY() {
       const dy = lastPageY - startPageY;
-      const target = Math.max(MIN_HEIGHT_PX, Math.round(startH + dy));
-      if (target !== pane_state.heightPx) {
-        pane_state.heightPx = target;
+      const rows = clampN(Math.round((h0 + dy + GAP_PX) / (ROW_PX + GAP_PX)), ROWS_MIN, ROWS_MAX);
+      if (rows !== pane_state.rows) {
+        pane_state.rows = rows;
+        pane_state.heightPx = rows * ROW_PX;
         applyPaneState(wrapper, pane_state);
       }
     }
     function applyX(ev) {
       const dx = ev.clientX - startX;
-      const target = startCol + dx / (cw + 18);
-      const snapped = snapColSpan(Math.max(2, Math.min(12, target)));
-      if (snapped !== pane_state.colSpan) {
-        pane_state.colSpan = snapped;
+      const span = clampN(Math.round((w0 + dx + GAP_PX) / (colW + GAP_PX)), SPAN_MIN, maxSpan);
+      if (span !== pane_state.colSpan) {
+        pane_state.colSpan = span;
         applyPaneState(wrapper, pane_state);
       }
     }
@@ -439,6 +440,7 @@ function attachResize(wrapper, handles, id, pane_state) {
       try { handle.releasePointerCapture(pointerId); } catch {}
       if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
       emitPaneState(id);
+      layoutPage();   // the run may now be off Claude's layout (↺)
     }
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
@@ -449,20 +451,39 @@ function attachResize(wrapper, handles, id, pane_state) {
   handles.rb.addEventListener('pointerdown', (e) => startResize('xy', handles.rb, e));
 }
 
+// Drag a block by its header WITHIN its run (the design's grid mechanics): the
+// start column follows the pointer, snapped to the grid; hovering another block
+// of the same run takes its place in the run's order (CSS `order`, so nothing is
+// re-parented mid-drag); on drop the run is normalised to READING order — top to
+// bottom, left to right, as it actually rendered — which is also the order it
+// stacks in on a narrow screen. The column persists through pane:state, the
+// order through the daemon's user move (page.commitRunOrder). A block never
+// leaves its run: runs are cut by the markdown between them, which is Claude's.
+export function readingOrder(ids, rectOf) {
+  const at = new Map(ids.map((id, i) => [id, i]));
+  return ids.slice().sort((a, b) => {
+    const ra = rectOf(a), rb = rectOf(b);
+    return (Math.round(ra.top / 10) - Math.round(rb.top / 10)) || (ra.left - rb.left) || (at.get(a) - at.get(b));
+  });
+}
+
 function attachDrag(wrapper, handle, id, pane_state) {
   handle.addEventListener('pointerdown', (e) => {
     if (e.button != null && e.button !== 0) return;
     // The header's own buttons are clicks, not drags.
     if (e.target && e.target.closest && e.target.closest('button')) return;
     if (refusesLayout(pane_state)) return;
+    const run = runOf(id);
+    if (!run) return;
     e.preventDefault();
     try { handle.setPointerCapture(e.pointerId); } catch {}
     const pointerId = e.pointerId;
-    const mainEl = $('main');
 
     const startRect = wrapper.getBoundingClientRect();
     const offX = e.clientX - startRect.left;
     const offY = e.clientY - startRect.top;
+    const colBefore = pane_state.col;
+    const seq = run.panes.slice();
 
     const ghost = document.createElement('div');
     ghost.className = 'pane-ghost';
@@ -471,86 +492,34 @@ function attachDrag(wrapper, handle, id, pane_state) {
     ghost.style.left = startRect.left + 'px';
     ghost.style.top = startRect.top + 'px';
     document.body.appendChild(ghost);
-
-    const indicator = document.createElement('div');
-    indicator.className = 'pane-drop-indicator';
-    document.body.appendChild(indicator);
-
     wrapper.classList.add('pane-dragging');
 
-    let targetPane = null;
-    let side = null;
+    const wrapperOf = (pid) => { const p = panes.get(pid); return p && p.wrapper; };
+    const restyleOrder = () => seq.forEach((pid, i) => { const w = wrapperOf(pid); if (w) w.style.order = String(i); });
 
-    function updateIndicator(ev) {
+    function onMove(ev) {
+      if (ev.pointerId !== pointerId) return;
       ghost.style.left = (ev.clientX - offX) + 'px';
       ghost.style.top = (ev.clientY - offY) + 'px';
-
-      const candidates = [...mainEl.querySelectorAll(':scope > .pane')]
-        .filter(p => p !== wrapper && !p.classList.contains('minimized'));
-      targetPane = null;
-      side = null;
-
-      let under = null;
-      const elBelow = document.elementFromPoint(ev.clientX, ev.clientY);
-      if (elBelow && elBelow.closest) under = elBelow.closest('.pane');
-      if (under && candidates.includes(under)) {
-        targetPane = under;
-      } else if (candidates.length) {
-        let best = null, bestD = Infinity;
-        for (const c of candidates) {
-          const r = c.getBoundingClientRect();
-          const cx = r.left + r.width / 2;
-          const cy = r.top + r.height / 2;
-          const d = Math.hypot(ev.clientX - cx, ev.clientY - cy);
-          if (d < bestD) { bestD = d; best = c; }
+      const { rect, colW } = gridMetrics(wrapper);
+      if (rect.width > 0) {
+        const span = placeOf(pane_state).span;
+        const col = clampN(Math.round((ev.clientX - offX - rect.left) / (colW + GAP_PX)) + 1, 1, COLS - span + 1);
+        if (col !== pane_state.col) { pane_state.col = col; applyPaneState(wrapper, pane_state); }
+      }
+      // splice by hover: the block under the pointer gives up its slot
+      const i = seq.indexOf(id);
+      for (let j = 0; j < seq.length; j++) {
+        if (seq[j] === id) continue;
+        const p = panes.get(seq[j]);
+        if (!p || p.pane_state.minimized) continue;
+        const r = p.wrapper.getBoundingClientRect();
+        if (ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom && r.width > 0) {
+          if (j !== i) { seq.splice(i, 1); seq.splice(j, 0, id); restyleOrder(); }
+          break;
         }
-        targetPane = best;
-      }
-
-      if (!targetPane) { indicator.style.display = 'none'; return; }
-      const r = targetPane.getBoundingClientRect();
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      const nx = (ev.clientX - cx) / (r.width / 2);
-      const ny = (ev.clientY - cy) / (r.height / 2);
-      if (Math.abs(nx) > Math.abs(ny)) side = nx > 0 ? 'right' : 'left';
-      else side = ny > 0 ? 'bottom' : 'top';
-
-      indicator.style.display = 'block';
-      if (side === 'left' || side === 'right') {
-        indicator.style.height = r.height + 'px';
-        indicator.style.width = '4px';
-        indicator.style.top = r.top + 'px';
-        indicator.style.left = ((side === 'right' ? r.right : r.left) - 2) + 'px';
-      } else {
-        indicator.style.height = '4px';
-        indicator.style.width = r.width + 'px';
-        indicator.style.left = r.left + 'px';
-        indicator.style.top = ((side === 'bottom' ? r.bottom : r.top) - 2) + 'px';
       }
     }
-
-    function applySideResize(draggedId, targetId) {
-      const dPane = panes.get(draggedId);
-      const tPane = panes.get(targetId);
-      if (!dPane || !tPane) return;
-      let dSpan = dPane.pane_state.colSpan;
-      let tSpan = tPane.pane_state.colSpan;
-      if (dSpan + tSpan > 12) {
-        // A locked neighbour keeps its size: only the dragged pane gives way.
-        if (tPane.pane_state.locked) dSpan = Math.max(2, 12 - tSpan);
-        else if (tSpan >= 12) { dSpan = 6; tSpan = 6; }
-        else dSpan = Math.max(1, 12 - tSpan);
-        dPane.pane_state.colSpan = dSpan;
-        tPane.pane_state.colSpan = tSpan;
-        applyPaneState(dPane.wrapper, dPane.pane_state);
-        applyPaneState(tPane.wrapper, tPane.pane_state);
-        emitPaneState(draggedId);
-        emitPaneState(targetId);
-      }
-    }
-
-    function onMove(ev) { if (ev.pointerId === pointerId) updateIndicator(ev); }
     function onUp(ev) {
       if (ev.pointerId !== pointerId) return;
       handle.removeEventListener('pointermove', onMove);
@@ -558,16 +527,17 @@ function attachDrag(wrapper, handle, id, pane_state) {
       handle.removeEventListener('pointercancel', onUp);
       try { handle.releasePointerCapture(pointerId); } catch {}
       ghost.remove();
-      indicator.remove();
       wrapper.classList.remove('pane-dragging');
-      if (targetPane && side) {
-        const targetId = targetPane.dataset.paneId;
-        if (side === 'left' || side === 'right') applySideResize(id, targetId);
-        const insertAfter = (side === 'right' || side === 'bottom');
-        mainEl.insertBefore(wrapper, insertAfter ? targetPane.nextSibling : targetPane);
-      }
+      // Reading order over the VISIBLE blocks, dealt back into their slots; a
+      // minimized block keeps its place in the sequence.
+      const visible = seq.filter((pid) => { const p = panes.get(pid); return p && !p.pane_state.minimized; });
+      const sorted = readingOrder(visible, (pid) => wrapperOf(pid).getBoundingClientRect());
+      let k = 0;
+      const next = seq.map((pid) => (visible.includes(pid) ? sorted[k++] : pid));
+      if (pane_state.col !== colBefore) emitPaneState(id);
+      commitRunOrder(run.anchor, next);
+      layoutPage();
     }
-    updateIndicator(e);
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onUp);
     handle.addEventListener('pointercancel', onUp);
@@ -583,7 +553,7 @@ export function mount(m) {
     const id = m && m.id;
     panes.delete(id);
     dropOrphanDom(id);
-    renderMinbar();
+    layoutPage();
     throw e;
   }
 }
@@ -632,13 +602,13 @@ function mountPane(m) {
 
   const ps = applyPaneStateDefaults(pane_state);
   const titleFromParams = params && params.title;
-  const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params, m.component);
+  const { wrapper, titleEl } = makePaneChrome(id, titleFromParams || id, ps, params, m.component, m.owner);
 
   const host = document.createElement('div');
   // The mount id is agent-supplied, and the shell resolves its OWN chrome live
   // ($ in state.js is document.getElementById): a host that claimed an id the
-  // chrome already owns would win every later lookup of it — renderMinbar's
-  // $('minbar'), the drawer's open/close, the queue rail, the palette — and,
+  // chrome already owns would win every later lookup of it — the contents nav's
+  // $('contents-nav'), the drawer's open/close, the queue rail, the palette — and,
   // because the mount replays on every hello, would keep winning. The id always
   // lives in the dataset; it is mirrored onto the DOM id only when it is free.
   host.dataset.mountId = id;
@@ -649,7 +619,21 @@ function mountPane(m) {
   applyPaneState(wrapper, ps);
   slot.appendChild(wrapper);
 
+  // The record goes in BEFORE the content attaches, so the page puts the wrapper
+  // in its run first: content attached and THEN moved would load an <iframe> in
+  // it twice.
+  const rec = {
+    wrapper, host, root: null, pane_state: ps, form_state: form_state || null,
+    title: titleFromParams || id, paneTarget: target || 'main',
+    theme: theme || null,
+    owner: m.owner || null,
+    spec: { id, html, target: target || 'main', params: params || {}, component: m.component, owner: m.owner || undefined, pane_state: ps, form_state: form_state || undefined, theme: theme || undefined },
+  };
+  panes.set(id, rec);
+  layoutPage();
+
   const { root, scripts } = window.__wcMount.attachAndExtract(host, html);
+  rec.root = root;
   guardReadonly(root, host, id);
 
   // markGesture: a REAL user interaction in this pane (synthetic rehydrate
@@ -680,13 +664,7 @@ function mountPane(m) {
     emitPaneState(id);   // a no-op while previewing: the toggle stays local there
   });
 
-  panes.set(id, {
-    wrapper, host, root, pane_state: ps, form_state: form_state || null,
-    title: titleFromParams || id, paneTarget: target || 'main',
-    theme: theme || null,
-    spec: { id, html, target: target || 'main', params: params || {}, component: m.component, pane_state: ps, form_state: form_state || undefined, theme: theme || undefined },
-  });
-  applyPaneTheme(panes.get(id), theme || null, false);
+  applyPaneTheme(rec, theme || null, false);
 
   // Per-pane store facade: same store, but writes are stamped with this mount's
   // id so the server can attribute an undeclared write to its pane (opt-out
@@ -737,7 +715,7 @@ function mountPane(m) {
   if (params && params.modes) {
     root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: ps.mode } }));
   }
-  renderMinbar();
+  layoutPage();
 }
 
 // Remove a single pane by id (WS 'clear' with an explicit id).
@@ -745,7 +723,7 @@ export function removePane(id) {
   const p = panes.get(id);
   if (p) { if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
   else dropOrphanDom(id); // a legacy bare host, or a failed mount's leftovers
-  renderMinbar();
+  layoutPage();
 }
 
 // A clear-all (a `clear` frame with no id) SPARES PINNED PANES — pinning means
@@ -781,7 +759,7 @@ export function clearTarget(target, frame = {}) {
     if (id) panes.delete(id);
     p.remove();
   });
-  renderMinbar();
+  layoutPage();
 }
 
 // Mount a whole frame's worth of mounts, isolating failures. One mount that
@@ -800,15 +778,18 @@ function mountAll(mounts) {
   }
 }
 
-export function fullReset({ mounts, store: newStore }) {
+// `page` is the page record the mounts sit in (page.js pageFromFrame: markdown,
+// order, run flags), set FIRST so every pane mounts straight into its run.
+export function fullReset({ mounts, store: newStore, page: pageRec, updatedAt = null }) {
   for (const [, p] of panes) {
     if (p.wrapper.parentElement) p.wrapper.parentElement.removeChild(p.wrapper);
   }
   panes.clear();
   document.querySelectorAll('.mount-host').forEach(h => h.remove());
   store.replace(newStore);
+  setPage(pageRec || pageFromFrame({ mounts }), updatedAt);
   mountAll(mounts);
-  renderMinbar();
+  layoutPage();
 }
 
 /* ── the ONE full-snapshot applier ───────────────────────────────────────────
@@ -837,21 +818,28 @@ export function fullReset({ mounts, store: newStore }) {
                     the user typed while the socket was down — and only
                     pane_state/theme are applied over them.
 
+   The page record (markdown, order, Claude's baseline order, run flags) rides
+   the same frame and takes the same path: folded aside with the panes, replaced
+   with them, or — reconciling — swapped in before the panes are, so a kept
+   pane is re-seated rather than re-mounted.
+
    Returns which path ran, for tests and for callers that need to know whether
    the DOM moved. */
 export function applySnapshot(frame, { mode = 'authoritative' } = {}) {
   const mounts = (frame && frame.mounts) || [];
   const next = (frame && frame.store) || {};
+  const pageRec = pageFromFrame(frame || {});
   if (view.previewing) {
     // Detached: the snapshot IS the live surface, folded aside untouched. The
     // DOM belongs to the previewed node until the user leaves the preview.
-    view.liveSnapshot = { mounts: mounts.map((m) => ({ ...m })), store: { ...next } };
+    view.liveSnapshot = { mounts: mounts.map((m) => ({ ...m })), store: { ...next }, page: pageRec };
     return 'folded';
   }
   if (mode !== 'reconcile') {
-    fullReset({ mounts, store: next });
+    fullReset({ mounts, store: next, page: pageRec });
     return 'replaced';
   }
+  setPage(pageRec);
   reconcileSurface(mounts, next);
   return 'reconciled';
 }
@@ -863,6 +851,7 @@ function sameSpec(spec, m) {
   return spec.html === m.html
     && (spec.target || 'main') === (m.target || 'main')
     && (spec.component || null) === (m.component || null)
+    && (spec.owner || null) === (m.owner || null)
     && JSON.stringify(spec.params || {}) === JSON.stringify(m.params || {});
 }
 
@@ -907,13 +896,51 @@ function reconcileSurface(mounts, next) {
     // the socket was down never reached it), so the local values win — and the
     // flush below pushes them up rather than dropping them.
   }
-  // mount() reconciles the minbar and the zero state on its way out — but a frame
-  // with ZERO mounts never runs it, which is exactly the first-open case the zero
+  // mount() lays the page out on its way out — but a frame with ZERO mounts
+  // never runs it, which is exactly the first-open case the zero
   // state exists for. Reconcile explicitly once the frame has settled.
-  renderMinbar();
+  layoutPage();
   // Re-publish what the user typed while the socket was down. sendFormState is a
   // no-op for a pane whose values the server already has.
   flushFormStates();
+}
+
+// ── pane-spawned panes: the parent chip ────────────────────────────────────
+// The chip's text follows the parent: `↳ parent`, or `↳ parent · closed` once the
+// parent has left the page (its children stay — lib/server/domain/spawn
+// closePane). Re-painted on every layout (page.js layoutPage calls this), since
+// a parent can go or come back without its child re-mounting.
+function paintOwnerChip(chip) {
+  const parent = chip.dataset.parent;
+  const gone = !panes.has(parent);
+  chip.classList.toggle('orphan', gone);
+  chip.textContent = `↳ ${parent}${gone ? ' · closed' : ''}`;
+  const tip = gone
+    ? `Spawned by block '${parent}', which has been closed. This block stays until you close it (×).`
+    : `Spawned by block '${parent}' — show it`;
+  chip.title = tip;
+  chip.setAttribute('aria-label', tip);
+}
+export function syncOwnerChips() {
+  for (const p of panes.values()) {
+    const chip = p.wrapper.querySelector('.pane-owner');
+    if (chip) paintOwnerChip(chip);
+  }
+}
+// Jump to a block on the page: restore it if it was minimized (a write, so not
+// on a read-only view), bring it into view and flash its outline so the eye
+// lands on it. The ⌘K block rows and a spawned pane's parent chip.
+export function revealPane(id) {
+  const p = panes.get(id);
+  if (!p) return false;
+  if (!readOnlyNow()) unminimize(id);
+  const w = p.wrapper;
+  if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  w.classList.remove('pane-flash');
+  void w.offsetWidth;            // restart the animation on a repeat jump
+  w.classList.add('pane-flash');
+  setTimeout(() => w.classList.remove('pane-flash'), 1400);
+  return true;
 }
 
 // Restore a minimized pane, locally and everywhere.
@@ -922,14 +949,14 @@ function reconcileSurface(mounts, next) {
 // component twice replaces the pane in place. If that pane happened to be
 // minimized, the re-spawn lands inside a collapsed chip and the click reads as a
 // no-op — the user asked for a pane and nothing appeared. Same restore the
-// minbar chip does, exported so the spawn path can share it rather than reach
+// minimized chip does, exported so the spawn path can share it rather than reach
 // into pane_state itself.
 export function unminimize(id) {
   const p = panes.get(id);
   if (!p || !p.pane_state.minimized) return false;
   p.pane_state.minimized = false;
   applyPaneState(p.wrapper, p.pane_state);
-  renderMinbar();
+  layoutPage();
   emitPaneState(id);
   return true;
 }
@@ -950,7 +977,7 @@ export function applyRemotePaneState(id, pane_state) {
   if (p.pane_state.mode !== prevMode && p.root) {
     p.root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: p.pane_state.mode } }));
   }
-  renderMinbar();
+  layoutPage();
 }
 
 // ── read-only preview (plan §2b D2) ─────────────────────────────────────────
@@ -1037,7 +1064,8 @@ export function syncReadonly() {
     // a phone's local peek at a minimized block does not outlive the phone
     if (!isPhone()) p.wrapper.classList.remove('peek');
   }
-  if (!isPhone()) renderMinbar();
+  // the run controls are writes, so they come and go with the read-only gate
+  layoutPage();
 }
 bus.on('viewport', syncReadonly);
 

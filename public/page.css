@@ -1,0 +1,98 @@
+/* ==========================================================================
+   The PAGE — the one stylesheet for how a page sequence is laid out and how its
+   prose reads. Linked by the live chrome (public/index.html, beside app.css)
+   and inlined verbatim into the node preview document (lib/server/preview.js —
+   graph thumbnails, the glance, pane history, every replay frame) and into the
+   page export (lib/server/export.js), so the three cannot drift apart. Read on
+   the host through lib/server/runtime/page-css-src.js.
+
+   The page model (plan §2b D3): one ordered sequence of markdown chunks and
+   panes. Consecutive panes form a GRID RUN — its own 12-column grid, 40px rows,
+   14px gap — and a markdown chunk sits between runs at reading width.
+
+     .page                    the sequence, a column
+       .md-block              one markdown item (rendered + escaped by
+                              lib/core/markdown before it gets here)
+       .page-run              one grid run   (.stacks | .fixed — narrow screens)
+         .run-grid            the 12-column grid
+           .pane              placed by three custom properties the page code
+                              sets from pane_state:
+                                --col   start column 1–12, or auto
+                                --span  columns wide, 2–12
+                                --rows  rows of 40px, 2–24 (.has-rows only)
+
+   Everything here is token-driven with a literal fallback, because the preview
+   and the export carry no app.css: an unthemed preview still reads right.
+   ========================================================================== */
+
+.page { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+
+/* ---- prose ---- */
+.md-block {
+  max-width: 72ch; min-width: 0;
+  font: 14px/1.6 var(--wc-reading, var(--wc-font, ui-sans-serif, system-ui, sans-serif));
+  color: var(--wc-text-1, var(--wc-fg, #24292f));
+  text-wrap: pretty;
+}
+.md-block > :first-child { margin-top: 0; }
+.md-block > :last-child { margin-bottom: 0; }
+.md-block p, .md-block ul, .md-block ol { margin: 0 0 8px; }
+.md-block ul, .md-block ol { padding-left: 22px; }
+.md-block strong { font-weight: 600; color: var(--wc-fg-bright, var(--wc-fg, #111)); }
+.md-block code {
+  font: 0.9em var(--wc-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  background: var(--wc-content-bg, #f3f1ec); padding: 1px 4px; border-radius: 3px;
+}
+.md-block pre {
+  background: var(--wc-content-bg, #f3f1ec); border: 1px solid var(--wc-border, #e3e3e3);
+  border-radius: var(--wc-radius, 4px); padding: 8px 10px; overflow: auto;
+}
+.md-block pre code { background: none; padding: 0; }
+.md-block a { color: var(--wc-accent-text, var(--wc-accent, #0969da)); text-decoration: underline; text-underline-offset: 2px; }
+/* # and ## are the page's sections (the Contents nav is built from them); ###
+   is a sub-heading inside one. */
+.md-block h1, .md-block h2, .md-block h3 {
+  font-family: var(--wc-display, var(--wc-font, ui-sans-serif, system-ui, sans-serif));
+  color: var(--wc-fg-bright, var(--wc-fg, #111)); margin: 22px 0 8px; scroll-margin-top: 14px;
+}
+.md-block h1 { font-size: 17px; font-weight: 600; letter-spacing: -.01em; padding-bottom: 8px; border-bottom: 1px solid var(--wc-border, #e3e3e3); }
+.md-block h2 { font-size: 14px; font-weight: 600; }
+.md-block h3 { font-size: 13px; font-weight: 600; color: var(--wc-text-2, var(--wc-muted, #57606a)); }
+/* The page's title: its first # heading (public/app/page.js marks it). */
+.md-block h1.page-h1 { font-size: 22px; line-height: 1.2; letter-spacing: -.015em; border-bottom: 0; padding-bottom: 0; margin-bottom: 6px; }
+.page-meta {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px;
+  font: 11.5px var(--wc-mono, ui-monospace, SFMono-Regular, Menlo, monospace); color: var(--wc-muted, #57606a);
+}
+
+/* ---- grid runs ---- */
+.page-run { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.run-grid {
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: minmax(40px, auto); gap: 14px; min-width: 0;
+}
+.run-grid > .pane { grid-column: var(--col, auto) / span var(--span, 12); min-width: 0; }
+/* A pane with rows is exactly that tall; its content scrolls inside. A pane
+   without (every pane older than rows, or never sized) takes its content's
+   height, as it always did. */
+.run-grid > .pane.has-rows {
+  grid-row: span var(--rows, 2);
+  height: calc(var(--rows, 2) * 40px + (var(--rows, 2) - 1) * 14px);
+}
+
+/* Narrow: a STACKED run (the default) folds to one column in reading order; a
+   FIXED run keeps its grid at 720px and scrolls sideways. The breakpoint is the
+   width below which the old single grid stopped tiling too (a span-4 pane is a
+   ~160px sliver at half a laptop screen). */
+.run-fixed-hint { display: none; }
+@media (max-width: 900px) {
+  .page-run.stacks .run-grid { grid-template-columns: minmax(0, 1fr); }
+  .page-run.stacks .run-grid > .pane { grid-column: 1 / -1; }
+  .page-run.fixed { overflow-x: auto; }
+  .page-run.fixed .run-grid { min-width: 720px; }
+  .page-run.fixed .run-fixed-hint {
+    display: block; align-self: flex-end;
+    font: 600 9px var(--wc-mono, ui-monospace, SFMono-Regular, Menlo, monospace); letter-spacing: .06em;
+    color: var(--wc-gold, #a9752a);
+  }
+}

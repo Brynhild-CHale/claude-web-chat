@@ -45,4 +45,15 @@ if (!process.env.WEB_CHAT_TEST_SANDBOX) {
   process.on('exit', () => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
 }
 
+// The chrome modules the daemon serves rather than ships as files (/app/markdown.js
+// — see served-modules.js), resolvable by the jsdom tests that import
+// public/app off the disk. Once per process (the flag is process-local: a child
+// process inherits the env but not the hooks, so it is not an env var).
+if (!global.__wcServedModules) {
+  global.__wcServedModules = true;
+  const mod = require('node:module');
+  if (typeof mod.registerHooks === 'function') mod.registerHooks(require('./served-modules'));
+  else mod.register('./served-modules.js', require('node:url').pathToFileURL(__filename));
+}
+
 module.exports = { home: process.env.WEB_CHAT_TEST_SANDBOX };

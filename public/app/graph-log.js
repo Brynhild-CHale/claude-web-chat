@@ -4,8 +4,9 @@
 //   header   ◇ GRAPH · the graph switcher ("name ▾") · ◇ new · ✕
 //            the jump search (hides non-matches) · ⚑ Marked / ⑃ Forks / ⋯ N folded
 //   list     one card per drawn turn — id, ⚑ name, ACTIVE, ⑃, time, a two-line
-//            trigger, "⋯ N folded" — behind a fork gutter; ⋯ N folded shows the
-//            faint ghost rows of the turns that folded onto each card
+//            trigger, the sections it changed ("# Results +2 ~1"), "⋯ N folded" —
+//            behind a fork gutter; ⋯ N folded shows the faint ghost rows of the
+//            turns that folded onto each card
 //   bar      the selected turn · ◫ Glance (a bottom sheet) · ⚑ with a name field
 //            (Unmark on a marked turn) · ⑃ Branch · ↧ Export · Set active
 //
@@ -28,6 +29,48 @@ import { computeLogLanes, laneX, gutterWidth } from './log-lanes.js';
 
 let showFolded = false;   // ⋯ N folded: the ghost rows under every card
 let naming = false;       // the bar's bookmark-name field is open
+
+// Section-change chips: what each turn changed, per #/## heading of its page,
+// against its parent — computed by the daemon from the pages it holds
+// (GET /api/graph/changes; lib/server/domain/lineage sectionChanges). A
+// committed node never changes, so an answer is kept; the log asks again only
+// when it shows a turn the last answer did not cover (a new commit).
+const changesById = new Map();
+const changesCovered = new Set();
+let changesInFlight = null;
+function loadChanges(ids) {
+  if (changesInFlight || ids.every((id) => changesCovered.has(id))) return;
+  changesInFlight = (async () => {
+    try {
+      const r = await fetch('/api/graph/changes');
+      const body = r.ok ? await r.json() : null;
+      const got = (body && body.changes && typeof body.changes === 'object') ? body.changes : {};
+      for (const id of ids) changesCovered.add(id);   // asked: an absent id changed no section
+      for (const [id, c] of Object.entries(got)) { changesById.set(id, Array.isArray(c) ? c : []); changesCovered.add(id); }
+    } catch {
+      for (const id of ids) changesCovered.add(id);   // no chips beats a request per redraw
+    } finally { changesInFlight = null; }
+    renderLog();
+  })();
+}
+// "+2 ~1 −1": added, changed, removed.
+export function changeCounts(c) {
+  return [c.add ? '+' + c.add : '', c.chg ? '~' + c.chg : '', c.rm ? '−' + c.rm : ''].filter(Boolean).join(' ');
+}
+function changeChips(id) {
+  const list = changesById.get(id);
+  if (!list || !list.length) return null;
+  const box = el('div', 'gv-lcard-chips');
+  for (const c of list) {
+    const chip = el('span', 'gv-chg');
+    if (c.h) chip.appendChild(el('span', 'h', c.h));
+    chip.appendChild(el('span', 'sec', c.sec || ''));
+    chip.appendChild(el('span', 'n ' + (c.add ? 'add' : c.chg ? 'chg' : 'rm'), changeCounts(c)));
+    chip.title = `${c.h ? c.h + ' ' : ''}${c.sec}: ${[c.add && `${c.add} added`, c.chg && `${c.chg} changed`, c.rm && `${c.rm} removed`].filter(Boolean).join(', ')}`;
+    box.appendChild(chip);
+  }
+  return box;
+}
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 function el(tag, cls, text) {
@@ -150,6 +193,8 @@ export function renderLog() {
     top.appendChild(el('span', 't', nodeTime(n)));
     card.appendChild(top);
     card.appendChild(el('div', 'gv-lcard-trig', n.trigger_summary || '(no trigger)'));
+    const chips = changeChips(n.id);
+    if (chips) card.appendChild(chips);
     const nf = foldedCount(n);
     if (nf) card.appendChild(el('div', 'gv-lcard-folded', `⋯ ${nf} folded`));
     row.appendChild(card);
@@ -170,6 +215,7 @@ export function renderLog() {
     }
   }
   if (!shown.length) list.appendChild(el('div', 'gv-log-empty', filtering ? 'No turns match.' : 'No turns yet.'));
+  loadChanges(nodes.map((n) => n.id));
   renderBar();
 }
 

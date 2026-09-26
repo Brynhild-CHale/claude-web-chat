@@ -273,14 +273,14 @@ test('choosing a block row takes you to that block, restoring it if minimized', 
   await typeInto('notes');
   const row = rows().find((r) => r.dataset.kind === 'block');
   const pane = [...$('main').querySelectorAll('.pane')].find((p) => p.dataset.paneId === 'notes');
-  assert.ok(pane.classList.contains('minimized') || $('minbar').querySelector('.min-chip'),
+  assert.ok(pane.classList.contains('minimized') || $('main').querySelector('.min-chip'),
     'precondition: the block is minimized');
   let scrolled = false;
   pane.scrollIntoView = () => { scrolled = true; };
   row.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
   await tick();
   assert.ok($('cmd-palette').classList.contains('hidden'), 'the palette closed');
-  assert.equal($('minbar').querySelector('.min-chip'), null, 'the block was restored from the minbar');
+  assert.equal($('main').querySelector('.min-chip'), null, 'the block was restored from its chip');
   assert.ok(scrolled, 'brought into view');
   assert.ok(pane.classList.contains('pane-flash'), 'and flashed so the eye lands on it');
 });

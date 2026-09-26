@@ -9,6 +9,7 @@ import { fullReset, applySnapshot, panes, syncReadonly } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
 import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
 import { isPhone } from './viewport.js';
+import { page, clonePage, pageFromFrame, syncPageMeta } from './page.js';
 
 // The topbar's ONE status pill, in precedence order: the socket when it is not
 // live (a stale node label under a dead socket is worse than none), then the
@@ -60,6 +61,8 @@ export function updateChip() {
 
   const bm = $('bookmark-name');
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
+  // the page's title slot and its H1 meta line name the node shown
+  syncPageMeta();
 }
 
 export function applyActive(id) {
@@ -103,6 +106,7 @@ export async function previewNode(id) {
     view.liveSnapshot = {
       mounts: [...panes.values()].map(p => ({ ...p.spec, pane_state: { ...p.pane_state } })),
       store: store.get(),
+      page: clonePage(page),
     };
     view.previewing = true;
     $('main').classList.add('preview-readonly');
@@ -112,7 +116,7 @@ export async function previewNode(id) {
   // applySnapshot: `previewing` is already true here, so the applier would fold
   // this node aside as the live surface instead of rendering it. Entering a
   // preview is the act of putting a non-live node ON the DOM.
-  fullReset({ mounts: node.mounts || [], store: node.store || {} });
+  fullReset({ mounts: node.mounts || [], store: node.store || {}, page: pageFromFrame(node), updatedAt: node.created_at || null });
   syncReadonly();
   applyNodeTheme(node.theme || null, true);
   updateChip();
