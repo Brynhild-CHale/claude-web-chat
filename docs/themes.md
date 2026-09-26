@@ -80,6 +80,38 @@ unthemed export carries no font at all and a Georgetown one carries Caslon and
 Geist Mono (about 205KB inlined), not Geist; an Earthy or Paper one carries Geist and Geist Mono (about 185KB). A family the bundle lacks is left to
 the reader's machine.
 
+## Brand images
+
+A theme applies colour and type only. A project's own artwork goes in three
+**brand image slots**, set from ⋯ → Settings → Brand (drop a file on a slot, or
+click it to choose one):
+
+| Slot | Shown | Drawn at |
+| --- | --- | --- |
+| `logotype` | the topbar, left of the web-chat wordmark | 150 × 22 |
+| `lockup` | an exported page's header | 260 × 52 |
+| `seal` | an exported page's footer, beside "made with web-chat" | 44 × 44 |
+
+Each slot is one SVG or PNG of at most 256 KB, stored under
+`.web-chat/brand/` with the project (so, like the rest of `.web-chat/`, it is
+gitignored). The format is decided by the file's bytes, not its name. An SVG
+carrying anything active — a `<script>`, an `on…=` handler, a `javascript:` url,
+a `<foreignObject>`, an entity declaration — is refused rather than cleaned.
+An unset slot draws nothing at all: no empty box in the topbar, no header rule
+or footer in the export.
+
+The images are only ever loaded as `<img>` — `/brand/<slot>` in the chrome, a
+`data:` URI in an export — never inlined as markup. `/brand/<slot>` is served
+with its own `Content-Type`, `X-Content-Type-Options: nosniff` and a
+`Content-Security-Policy` that forbids script and sandboxes the document, for
+the case where someone opens the url directly.
+
+The HTTP surface, for scripting it: `GET /api/brand` (each slot's type, size and
+a `version` that changes with the file), `PUT /api/brand/:slot` with the raw
+image as the body and `Content-Type: image/png` or `image/svg+xml`, and
+`DELETE /api/brand/:slot`. Refusals: 404 not a slot, 413 too big, 415 not a
+PNG/SVG, 422 an active SVG.
+
 ## Canonical token table
 
 Every token the chrome reads, defined once in `lib/server/theme-packs.js`. Every

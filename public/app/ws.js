@@ -24,6 +24,7 @@ import { applyCommentsFrame } from './comments.js';
 import { onTrustPrompt, onTrustClear, resetTrustPrompts } from './service-trust.js';
 import { invalidate as invalidateComponents } from './components.js';
 import { bus } from './bus.js';
+import { applyBrand, refreshBrand } from './brand.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -276,11 +277,13 @@ const HANDLERS = {
   // Service consent. Chrome-level, never a mount — see service-trust.js for why.
   'service:trust'(msg) { onTrustPrompt(msg); },
   'service:trust:clear'(msg) { onTrustClear(msg); },
+  // A brand image slot was set or cleared (here or in another viewer).
+  brand(msg) { applyBrand(msg.slots); },
 };
 
 export function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => setConnStatus('live', 'live');
+  ws.onopen = () => { setConnStatus('live', 'live'); refreshBrand(); };
   ws.onclose = () => {
     setConnStatus('reconnecting…', 'off');
     // The server releases its outstanding-prompt memo when the last viewer

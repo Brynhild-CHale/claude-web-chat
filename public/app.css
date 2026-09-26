@@ -323,6 +323,9 @@ html.wc-theming, html.wc-theming * {
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
 .status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
+/* the project's logotype (Settings → Brand), left of the wordmark; only present when set */
+.brand-logo { flex: 0 0 auto; height: 22px; width: auto; max-width: 150px; object-fit: contain; object-position: left center; }
+.brand-logo[hidden], .brand-logo[hidden] + .brand-logo-div { display: none; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
 
 /* command-palette trigger (centered) */
@@ -642,6 +645,23 @@ kbd {
    sit anywhere on a panned canvas. */
 .popover.gv-name-panel { z-index: var(--z-glance); top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); min-width: 280px; }
 .hint { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 6px; }
+/* Settings → Brand: one row per slot — name, drop target (also a file button), Remove */
+.popover h4.settings-sub { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
+.brand-slots { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
+.brand-slot { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 8px; }
+.brand-slot-name { display: flex; flex-direction: column; font: 12px var(--wc-font); color: var(--wc-text-1); }
+.brand-slot-where { font: 10.5px var(--wc-font); color: var(--wc-muted); }
+.brand-drop { height: 40px; min-width: 0; padding: 4px 8px; display: flex; align-items: center; justify-content: center;
+  background: var(--wc-content-bg); border: 1px dashed var(--wc-border); border-radius: var(--wc-radius); cursor: pointer; }
+.brand-drop.set { border-style: solid; background: var(--wc-panel-bg); }
+.brand-drop.over, .brand-drop:hover { border-color: var(--wc-accent); }
+.brand-drop img { max-height: 30px; max-width: 100%; object-fit: contain; }
+.brand-drop-ph { font: 11px var(--wc-font); color: var(--wc-muted); }
+.brand-remove { height: 26px; padding: 0 8px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  background: transparent; color: var(--wc-text-2); font: 11px var(--wc-font); cursor: pointer; }
+.brand-remove:disabled { opacity: .4; cursor: default; }
+.brand-msg:empty { display: none; }
+.brand-msg.bad { color: var(--wc-comment, var(--wc-accent)); }
 .mono { font-family: var(--wc-mono); }
 
 /* ===================== graph viewer (history ▸ DAG ▸ inspector, 7b) ===================== */
@@ -1092,6 +1112,7 @@ body.pin-mode #main { cursor: crosshair; }
 @media (max-width: 900px) {
   #topbar { gap: 6px; padding: 0 8px; }
   .cmd-trigger, .tb-div, .btn-graph kbd { display: none; }
+  .brand-logo { max-width: 96px; }
   .status-pill { padding: 2px 4px; }
 }
 @media (max-width: 760px) {

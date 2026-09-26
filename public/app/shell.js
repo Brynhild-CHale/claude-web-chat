@@ -16,6 +16,7 @@ import { checkForUpdatesNow } from './version.js';
 import { labelFor } from './labels.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
+import { isPickingFile } from './brand.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 
@@ -108,7 +109,9 @@ function initDismissLayer() {
     dismissFrom(el);
   });
   // and the whole window losing focus closes them all, like a native menu
-  window.addEventListener('blur', () => closeAllPopovers());
+  // …except while a native file chooser (Settings → Brand) holds focus: that
+  // blur is the user answering the panel, not leaving it.
+  window.addEventListener('blur', () => { if (!isPickingFile()) closeAllPopovers(); });
 }
 
 /* ---------- settings (theme switcher) ---------- */

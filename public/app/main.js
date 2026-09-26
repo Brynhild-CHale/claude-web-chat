@@ -10,6 +10,7 @@ import { initDrawer } from './drawer.js';
 import { initComments } from './comments.js';
 import { initShell } from './shell.js';
 import { initVersion } from './version.js';
+import { initBrand } from './brand.js';
 import { connect } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -19,4 +20,5 @@ initDrawer();
 initComments();
 initShell();
 initVersion();    // update-available banner; re-checked on every WS (re)connect
+initBrand();      // topbar logotype + Settings → Brand drop targets
 connect();
