@@ -150,9 +150,18 @@
       <button class="menu-item" data-act="newgraph">◇ New graph</button>
       <button class="menu-item" data-act="wipe">⌫ Wipe surface</button>
       <button class="menu-item" data-act="export">↧ Export node</button>
+      <button class="menu-item" data-act="sessions">◉ Sessions</button>
       <button class="menu-item" data-act="settings">⚙ Settings</button>
       <button class="menu-item" data-act="shortcuts">⌨ Shortcuts</button>
       <button class="menu-item" data-act="checkupdate">⟳ Check for updates</button>
+    </div>
+
+    <!-- sessions: every surface on this computer + its Claude Code state
+         (public/app/sessions.js; rows are built there, as text) -->
+    <div id="sessions-panel" class="popover sessions-panel hidden" role="dialog" aria-label="Sessions on this computer">
+      <h4>Sessions <span id="sessions-meta" class="ss-meta"></span></h4>
+      <div id="sessions-list" class="ss-list" role="list"></div>
+      <div class="hint">Every web-chat surface on this computer, and which have a Claude Code session attached. Refreshes every 5s.</div>
     </div>
 
     <!-- settings -->
@@ -231,6 +240,7 @@
         <div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>
         <div class="legend-row"><span>Toggle queue rail</span><span class="keys"><kbd>Q</kbd></span></div>
         <div class="legend-row"><span>Push queue → Claude</span><span class="keys"><kbd>P</kbd></span></div>
+        <div class="legend-row"><span>Sessions on this computer</span><span class="keys"><kbd>S</kbd></span></div>
         <div class="legend-row"><span>Light / dark</span><span class="keys"><kbd>T</kbd></span></div>
         <div class="legend-row"><span>Shortcuts · close</span><span class="keys"><kbd>?</kbd><kbd>Esc</kbd></span></div>
         <h3 class="legend-sub">In the graph</h3>

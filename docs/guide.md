@@ -100,11 +100,14 @@ Sideloading is how you run it today; a Web Store listing is a planned follow-up.
 open                open the surface in your browser (starts the server if needed)
 launch              open the surface and start a Claude session together
 init                set up web-chat here, or check and tidy an existing install
-status              show version, daemon state, and install health for this project
-ls [--reap]         every web-chat surface running on this machine, and which
-                    project each one is; --reap asks the others to shut down
-                    (uncommitted surface saved) and clears entries whose
-                    process is gone
+status              show version, daemon state, attached Claude Code sessions,
+                    and install health for this project
+ls [--reap|--json]  every web-chat surface on this machine, which project each
+                    one is, and which have a Claude Code session attached
+                    (CLAUDE ● N · channel, TURN mid-turn / wake, VIEWERS);
+                    --json prints the whole row; --reap asks the others to
+                    shut down (uncommitted surface saved) and clears entries
+                    whose process is gone
 doctor              diagnose and repair daemon / lock / MCP / hook issues
 trust [name]        approve (or --deny) a component's host-side service.js;
                     with no name, list what's waiting; --all takes everything
@@ -142,3 +145,4 @@ Start with `claude-web-chat doctor` — it checks the daemon, portfile, MCP regi
 - **The graph won't let you navigate.** An interrupted turn can orphan the turn lock; `claude-web-chat unlock` clears it.
 - **A dashboard pane is sitting there empty.** Its component ships a `service.js` that hasn't been approved. `claude-web-chat trust` lists what's waiting.
 - **You've lost track of which port is which project.** `claude-web-chat ls` maps every running surface back to its project; `--reap` asks the ones you're done with to shut down cleanly.
+- **You don't know which projects Claude is actually attached to.** The CLAUDE column in `claude-web-chat ls` counts the Claude Code sessions that have web-chat loaded in each project — a project with a session but no surface is listed too — and `· channel` marks one a Push wakes mid-session. It is the live process, not the last tool call: a session appears the moment it starts and goes when it exits. TURN says whether one is mid-turn right now. The same view is in the browser: **⋯ → Sessions** (or `S`, or ⌘K *Sessions…*) lists every project with its surface and Claude state, refreshes every few seconds while open, opens another project's surface in a new tab, and gives a stopped one's `claude-web-chat open` command to copy — the page never starts a surface itself.
