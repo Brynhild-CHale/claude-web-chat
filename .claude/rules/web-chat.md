@@ -27,7 +27,7 @@ This project has [claude-web-chat](https://github.com/) installed: a live browse
 The surface is one **page**: an ordered sequence of panes and markdown items. Consecutive panes form a grid run; markdown sits between and around runs. There are no stored sections — structure comes from the prose.
 
 - **`write_markdown({text, id?, after?})`** puts a markdown item on the page — headings and short connective prose ("## Options", a sentence of framing, a caption). Reuse `id` to rewrite one in place; omit it and the server assigns `md-<n>`.
-- **`#`/`##`/`###` headings build the page's Contents nav.** A page with several parts should open each with a heading.
+- **`#`/`##` headings build the page's Contents nav** (numbered, `##` nested under the `#` before it; `###` is a sub-heading inside a section and gets no row), and **the first `#` heading is the page's title** — shown in the topbar and as the page's H1. A page with several parts should open with a `#` title and head each part with a heading.
 - **`after`** places an item: the id of any pane or markdown item on the page, or `"start"`. `render` and `use_component` take the same `after`. Omitted, a new item appends and a re-render keeps its place. `list_mounts` returns the page `order` (and each markdown item's headings) so you can pick an anchor.
 - Markdown is a small subset (paragraphs, headings, **strong**, *em*, `code`, fenced code, `-`/`1.` lists, links) and **everything is escaped** — raw HTML shows as text. Anything interactive or visual belongs in a pane.
 - **Keep prose short.** The reasoning still belongs in chat; the page carries labels and framing. Text is capped, and a longer write is refused with `too_large`.

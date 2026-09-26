@@ -16,7 +16,8 @@ import { components as componentList } from './components.js';
 import { togglePinMode, setPinMode, closePinPop } from './comments.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor, nodeTime } from './labels.js';
-import { panes, unminimize, blockType } from './mounts.js';
+import { panes, unminimize } from './mounts.js';
+import { paletteSections, blockHint } from './page.js';
 import { initQueue, pushQueue, setRailOpener } from './queue.js';
 import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
@@ -295,9 +296,10 @@ function revealBlock(id) {
   setTimeout(() => w.classList.remove('pane-flash'), 1400);
 }
 
-// Typed rows, as the design draws them (Theme §4c): a KIND column (node / block
-// / command — "section" arrives with the page model), the label, and a hint on
-// the right — a node's time (labels.js nodeTime), a block's type, a command's key. Every field is
+// Typed rows, as the design draws them (Theme §4c): a KIND column (node /
+// section / block / command), the label, and a hint on the right — a node's time
+// (labels.js nodeTime), a section's block count, a block's section number and
+// type, a command's key. Every field is
 // set as text (renderPalette), because node names and block titles are user- or
 // agent-supplied.
 async function buildPalette(q) {
@@ -320,9 +322,11 @@ async function buildPalette(q) {
   const blocks = [...panes].map(([id, p]) => ({
     kind: 'block',
     label: p.title && p.title !== id ? `${id} · ${p.title}` : id,
-    hint: blockType(p.spec && p.spec.params, p.spec && p.spec.component) || (p.pane_state.minimized ? 'minimized' : ''),
+    hint: blockHint(id),
     run: () => revealBlock(id),
   }));
+  // The page's # / ## headings (page.js outline) — a row scrolls to its heading.
+  const sections = paletteSections();
   // The display topology (graph-view.displayNodeList), not view.graphCache.nodes:
   // every other viewer surface reads what the DAG draws, and a palette row for a
   // collapsed turn previewed a node with no drawn children — the topbar's ↓ dead,
@@ -338,7 +342,7 @@ async function buildPalette(q) {
   const comps = (await componentList()).map(c => ({
     kind: 'command', label: `Add block · ${c.name}`, hint: c.builtin ? 'built in' : '', run: () => spawnComponent(c),
   }));
-  const all = [...cmds, ...blocks, ...nodes, ...comps];
+  const all = [...cmds, ...sections, ...blocks, ...nodes, ...comps];
   // The kind and hint are searchable too: "block" lists the page's blocks, a
   // time finds a node, a type finds its blocks.
   const hay = (i) => `${i.kind} ${i.label} ${i.hint || ''} ${i.key || ''}`.toLowerCase();

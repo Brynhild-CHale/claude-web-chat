@@ -329,8 +329,12 @@ test('page: hello carries markdown + order; markdown frames carry the order; ren
   assert.equal('order' in rb, false, 'a plain append puts the frame it always did');
   const rc = frames.find((f) => f.type === 'render' && f.id === 'c');
   assert.deepEqual(rc.order, ['h', 'c', 'a', 'b']);
+  assert.deepEqual(rc.claude_order, ['h', 'c', 'a', 'b'], "Claude's baseline order rides beside it (the chrome's ↺ reads it)");
   const mf = frames.find((f) => f.type === 'markdown');
-  assert.deepEqual(mf, { type: 'markdown', id: 'h2', text: 'x', owner: 'claude', order: ['h', 'c', 'a', 'h2', 'b'] });
+  assert.deepEqual(mf, {
+    type: 'markdown', id: 'h2', text: 'x', owner: 'claude',
+    order: ['h', 'c', 'a', 'h2', 'b'], claude_order: ['h', 'c', 'a', 'h2', 'b'],
+  });
   assert.deepEqual(frames.find((f) => f.type === 'markdown:remove'), { type: 'markdown:remove', id: 'h' });
 
   const { json } = await api.get('/api/events');

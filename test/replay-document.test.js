@@ -354,9 +354,10 @@ function runFrame(payload, i) {
   const s = payload.steps[i];
   const dom = new JSDOM(a + payload.themes[s.theme] + b + s.node + c, { runScripts: 'dangerously' });
   const main = dom.window.document.getElementById('main');
-  const items = [...main.children].map((el) => (el.classList.contains('md-block')
-    ? { md: el.getAttribute('data-md-id'), html: el.innerHTML }
-    : { pane: el.querySelector('.mount-host').id }));
+  // markdown blocks, and the panes of each grid run (.page-run) in turn
+  const items = [...main.children].flatMap((el) => (el.classList.contains('md-block')
+    ? [{ md: el.getAttribute('data-md-id'), html: el.innerHTML }]
+    : [...el.querySelectorAll('.mount-host')].map((h) => ({ pane: h.id }))));
   dom.window.close();
   return items;
 }

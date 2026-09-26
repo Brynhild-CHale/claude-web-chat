@@ -196,7 +196,7 @@ test('a phone is marked on <html> and its panes are read-only', async () => {
 });
 
 test("a minimized block's chip only peeks at it on a phone", async () => {
-  const chip = W.document.querySelector('#minbar .min-chip');
+  const chip = W.document.querySelector('#main .min-chip');
   assert.ok(chip, 'the minimized block keeps its chip');
   sent.length = 0;
   click(chip);
@@ -204,7 +204,7 @@ test("a minimized block's chip only peeks at it on a phone", async () => {
   assert.ok(pane('tucked').classList.contains('peek'), 'shown here…');
   assert.ok(pane('tucked').classList.contains('minimized'), '…but still minimized on the live surface');
   assert.deepEqual(sent.filter((f) => f.type === 'pane:state'), [], 'restoring it would have been a write');
-  click(W.document.querySelector('#minbar .min-chip'));
+  click(W.document.querySelector('#main .min-chip'));
   assert.equal(pane('tucked').classList.contains('peek'), false, 'a second tap tucks it away again');
 });
 

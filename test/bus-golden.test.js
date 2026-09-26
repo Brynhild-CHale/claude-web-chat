@@ -37,6 +37,9 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    render frame is unchanged: it carries `order` only when the render passed
 //    `after`, which the golden session does not. They also carry `runs`, the
 //    per-grid-run flags (b2) — `{}` at the default, equally additive.
+//  - p34c (the page renderer): the full-surface frames also carry
+//    `claude_order`, Claude's baseline page order, which the chrome compares a
+//    run against to decide whether ↺ Claude's layout has anything to restore.
 const GOLDEN = {
   frames: [
     {
@@ -45,6 +48,7 @@ const GOLDEN = {
       mounts: [],
       markdown: [],
       order: [],
+      claude_order: [],
       runs: {},
       active: null,
       lock: null,
@@ -184,7 +188,7 @@ test('bus: a tab capture is a triple-effect (store mutation + store:patch WS + o
   assert.equal(caps[0].capture_id, 'cap1');
 });
 
-test('bus: reset frame carries exactly {mounts,markdown,order,runs,store,active,lock,theme,activeTheme}', async (t) => {
+test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,store,active,lock,theme,activeTheme}', async (t) => {
   const { api, port } = await withServer(t);
   const WebSocket = require('ws');
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
@@ -201,7 +205,7 @@ test('bus: reset frame carries exactly {mounts,markdown,order,runs,store,active,
   assert.ok(reset, 'reset frame present');
   assert.deepEqual(
     Object.keys(reset).sort(),
-    ['active', 'activeTheme', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'theme', 'type'].sort(),
+    ['active', 'activeTheme', 'claude_order', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'theme', 'type'].sort(),
   );
 });
 
