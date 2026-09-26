@@ -399,7 +399,99 @@ async function withHub(t, { port = 0, createHub } = {}) {
   return { hub, server: hub.server, port: bound, baseUrl, api: makeApi(baseUrl), stop };
 }
 
+// Stand up the tunnel PORTAL (lib/portal) for a test and own its teardown —
+// withHub's sibling. Loopback, ephemeral port, never start(): no registry
+// entry for the portal itself, no JWKS warm-up against anything real.
+//   withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs, accessLog, throttle })
+// `config` is tunnel.json's raw shape (normalised here, so a test can hand in
+// fake-access's config()). Returns { portal, port, config, request } where
+// `request(path, {host, method, headers, body})` is a RAW request — the portal
+// routes on Host, which fetch refuses to set.
+async function withPortal(t, { config, fetchJwks, now, instances, probe, wsGraceMs, accessLog, throttle } = {}) {
+  const { createPortal } = require('../lib/portal');
+  const { normalizeConfig } = require('../lib/tunnel/config');
+  const cfg = normalizeConfig(config);
+  const portal = createPortal({ port: 0, config: cfg, fetchJwks, now, instances, probe, wsGraceMs, accessLog, throttle });
+  await new Promise((resolve, reject) => {
+    const onError = (e) => { portal.server.off('error', onError); reject(e); };
+    portal.server.once('error', onError);
+    portal.server.listen(0, '127.0.0.1', () => { portal.server.off('error', onError); resolve(); });
+  });
+  const port = portal.server.address().port;
+  t.after(() => portal.stop());
+  function request(pathStr, { host = cfg.hostname, method = 'GET', headers = {}, body } = {}) {
+    const http = require('http');
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port, path: pathStr, method, setHost: false,
+        headers: { ...(host === null ? {} : { host }), ...headers },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let json = null;
+          try { json = text ? JSON.parse(text) : null; } catch {}
+          resolve({ status: res.statusCode, headers: res.headers, text, json });
+        });
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      if (body != null) req.write(typeof body === 'string' ? body : JSON.stringify(body));
+      req.end();
+    });
+  }
+  return { portal, server: portal.server, port, config: cfg, request };
+}
+
+// A loopback port nothing is listening on right now, for a process that has to
+// be TOLD its port (the detached portal, cloudflared's metrics server). Bound
+// and released, so there is a small race — acceptable for ports the test then
+// owns, never a fixed number.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+// Put test-support/fake-cloudflared.js on PATH as `cloudflared` (the fakeGh
+// pattern) and own the env it reads. Returns { dir, callsFile, calls() } where
+// calls() is every non --version invocation, parsed.
+//   fakeCloudflared(t, { version, exit })
+function fakeCloudflared(t, { version, exit } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-fakecf-'));
+  const callsFile = path.join(dir, 'calls.log');
+  fs.writeFileSync(callsFile, '');
+  fs.writeFileSync(path.join(dir, 'cloudflared'),
+    `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, 'fake-cloudflared.js')}" "$@"\n`);
+  fs.chmodSync(path.join(dir, 'cloudflared'), 0o755);
+  const keys = ['PATH', 'FAKE_CF_CALLS', 'FAKE_CF_VERSION', 'FAKE_CF_EXIT'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.PATH = `${dir}${path.delimiter}${prev.PATH}`;
+  process.env.FAKE_CF_CALLS = callsFile;
+  if (version) process.env.FAKE_CF_VERSION = version; else delete process.env.FAKE_CF_VERSION;
+  if (exit != null) process.env.FAKE_CF_EXIT = String(exit); else delete process.env.FAKE_CF_EXIT;
+  const calls = () => fs.readFileSync(callsFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  t.after(() => {
+    // Reap every fake this test launched. A regression that leaks the
+    // connector (a supervisor that forgets to stop it) must fail the test, not
+    // hang the whole run on a live child holding the event loop open.
+    let launched = [];
+    try { launched = calls(); } catch {}
+    for (const c of launched) { try { process.kill(c.pid, 'SIGKILL'); } catch {} }
+    for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  });
+  return { dir, callsFile, calls };
+}
+
 module.exports = {
-  withServer, withHub, tmpRoot, withTempHome, makeApi,
+  freePort, fakeCloudflared,
+  withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };

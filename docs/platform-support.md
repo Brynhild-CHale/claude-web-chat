@@ -114,6 +114,13 @@ else's.
   refusing on *every* platform: a pack that installs on Linux and cannot install
   on Windows is worse for the ecosystem than one refused everywhere.
 
+- **The tunnel portal's port is machine-wide too** — the same shape as the hub.
+  The portal binds one fixed port (5171) and registers in the per-user
+  registry, so two users on one host cannot both run `tunnel up` without a
+  per-user `WEB_CHAT_PORTAL_PORT` (and a tunnel ingress pointed at it). The
+  metrics port cloudflared is told (5172 by default, `tunnel.metricsPort`) has
+  the same property.
+
 ### Changed deliberately, not a bug
 
 **`ls --reap` is conservative on purpose.** It used to `SIGTERM` any row whose registry pid was
@@ -154,6 +161,17 @@ rule has four arms:
   under the "reap only what names a dead process" rule.
 
 Only the first arm counts toward the "stopped N surfaces" line.
+
+## Remote access (`tunnel`) per platform
+
+`claude-web-chat tunnel` never installs cloudflared; `tunnel up` and `doctor`
+print the install line for the platform they run on. macOS: `brew install
+cloudflared`. Linux: Cloudflare's package repository (pkg.cloudflare.com).
+**WSL2:** install the *Linux* cloudflared inside the distro — a Windows
+`cloudflared.exe` dials the Windows loopback, not WSL's, and never reaches the
+portal. CI proves the tunnel commands only against a fake cloudflared
+(`test-support/fake-cloudflared.js`); no test reaches Cloudflare. See
+[`remote-access.md`](remote-access.md).
 
 ## Reporting a platform problem
 

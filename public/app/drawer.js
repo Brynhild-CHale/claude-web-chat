@@ -39,6 +39,7 @@ import { bus } from './bus.js';
 import { components, invalidate } from './components.js';
 import { panes, unminimize } from './mounts.js';
 import { showReaimNote } from './topbar.js';
+import { isRemote, remoteNow } from './remote.js';
 
 const LIBRARY = 'library';
 const MANAGE = 'manage';
@@ -139,7 +140,7 @@ async function loadPendingTrust() {
 }
 
 async function refresh() {
-  const [list] = await Promise.all([components(), loadPacks(), loadPendingTrust()]);
+  const [list] = await Promise.all([components(), loadPacks(), loadPendingTrust(), isRemote()]);
   renderLibrary(list);
   renderManage();
   updateBadges(list);
@@ -474,7 +475,14 @@ function renderManage() {
     return;
   }
 
-  body.appendChild(installForm());
+  // Viewed through the tunnel portal: every pack write is refused remotely
+  // (lib/core/remote-policy), so say where to do it instead of offering a form
+  // that would 403. The lists below stay — reading them is allowed.
+  body.appendChild(remoteNow() ? notice(
+    'Manage packs on the host',
+    'You are viewing this surface remotely. Installing, approving and removing packs happen in a terminal on the machine running it.',
+    'claude-web-chat pack get <repository-url>',
+  ) : installForm());
 
   if (postInstall) {
     const p = trustPrompt(postInstall);
@@ -502,6 +510,17 @@ function renderManage() {
   const installed = packsState.packs || [];
   if (!installed.length) body.appendChild(empty('No packs installed here.'));
   for (const p of installed) body.appendChild(installedCard(p));
+}
+
+// A pack WRITE control. Remotely it is disabled with the reason on it — the
+// portal would refuse the request anyway, and a button that only ever errors
+// is worse than one that says why it is off.
+function hostOnly(btn) {
+  if (remoteNow()) {
+    btn.disabled = true;
+    btn.title = 'Run this on the host — pack changes are not available remotely';
+  }
+  return btn;
 }
 
 function installForm() {
@@ -746,7 +765,7 @@ function quarantineCard(q) {
     const approve = el('button', 'btn primary', 'Install it');
     approve.type = 'button';
     approve.addEventListener('click', () => approvePack(q.name, approve));
-    actions.appendChild(approve);
+    actions.appendChild(hostOnly(approve));
   }
   const view = el('button', 'btn', 'Files…');
   view.type = 'button';
@@ -754,7 +773,7 @@ function quarantineCard(q) {
   const drop = el('button', 'btn', 'Discard');
   drop.type = 'button';
   drop.addEventListener('click', () => discardPack(q.name, drop));
-  actions.append(view, drop);
+  actions.append(view, hostOnly(drop));
   card.appendChild(actions);
   card.appendChild(el('div', 'pk-card-status'));
   return card;
@@ -941,7 +960,7 @@ function installedCard(p) {
   const rm = el('button', 'btn', 'Remove');
   rm.type = 'button';
   rm.addEventListener('click', () => removePack(p.name, rm));
-  actions.appendChild(rm);
+  actions.appendChild(hostOnly(rm));
   card.appendChild(actions);
   card.appendChild(el('div', 'pk-card-status'));
   return card;

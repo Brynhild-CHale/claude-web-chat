@@ -375,3 +375,23 @@ test('channels: LAUNCH_COMMAND is composed from the env constants it exports', (
   assert.ok(LAUNCH_COMMAND.startsWith('WEB_CHAT_CHANNEL=1 claude '),
     'the env opt-in and the binary are what a user copies verbatim');
 });
+
+// ── userPaths: the remote-access tier ───────────────────────────────────────
+
+test('userPaths: the tunnel/portal files live under ~/.web-chat/tunnel, and nowhere in a project', () => {
+  const { userPaths, projectPaths } = require('../lib/core/paths');
+  const u = userPaths();
+  const tunnel = path.join(u.root, 'tunnel');
+  assert.equal(u.tunnelDir, tunnel);
+  assert.equal(u.tunnelConfig, path.join(tunnel, 'tunnel.json'));
+  assert.equal(u.tunnelToken, path.join(tunnel, 'token'));
+  for (const k of ['cloudflaredConfig', 'cloudflaredLog', 'portalLog', 'remoteAccessLog']) {
+    assert.equal(path.dirname(u[k]), tunnel, `${k} is in the tunnel dir`);
+  }
+  // The token is its own file, not a key in the config — so the config can be
+  // printed and logged without leaking the connector secret.
+  assert.notEqual(u.tunnelToken, u.tunnelConfig);
+  // An access-control list must never be shippable by a repository.
+  const proj = Object.values(projectPaths(os.tmpdir())).filter((v) => typeof v === 'string');
+  assert.ok(!proj.some((v) => /[\\/]tunnel([\\/]|$)/.test(v)), 'projectPaths names no tunnel file');
+});

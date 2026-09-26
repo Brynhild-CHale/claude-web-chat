@@ -241,3 +241,93 @@ test('`unlock` reports a 404 as a failure instead of "no lock was set"', async (
   assert.match(r.err, /unlock failed/);
   assert.doesNotMatch(r.out, /no lock was set|lock cleared/, 'and must never print a lock verdict it did not get');
 });
+
+// ── pipe(): the streaming idiom the tunnel portal proxies through ───────────
+
+const { PassThrough, Readable } = require('stream');
+
+function drain(res) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    res.on('data', (c) => chunks.push(c));
+    res.on('end', () => resolve(Buffer.concat(chunks)));
+    res.on('error', reject);
+  });
+}
+
+test('pipe() streams a request body through and resolves with the live response', async (t) => {
+  let seen;
+  const port = await stub(t, (req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      seen = { method: req.method, url: req.url, type: req.headers['content-type'], body: Buffer.concat(chunks) };
+      res.writeHead(201, { 'Content-Type': 'application/octet-stream' });
+      res.end(Buffer.from([0, 255, 1, 254]));
+    });
+  });
+
+  const body = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+  const res = await client.pipe(port, {
+    method: 'PATCH', path: '/api/queue/x?y=1', headers: { 'content-type': 'application/octet-stream' },
+  }, Readable.from([body]));
+  assert.equal(res.statusCode, 201, 'a status is relayed, never thrown');
+  assert.deepEqual([...await drain(res)], [0, 255, 1, 254], 'binary bytes survive — no string decode');
+  assert.equal(seen.method, 'PATCH');
+  assert.equal(seen.url, '/api/queue/x?y=1');
+  assert.equal(seen.type, 'application/octet-stream');
+  assert.deepEqual([...seen.body], [...body]);
+});
+
+test('pipe() resolves at the headers, so a long-lived stream (SSE) flows through', async (t) => {
+  let hold;
+  const port = await stub(t, (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: 1\n\n');
+    hold = res; // never ended by the server
+  });
+  t.after(() => { try { hold && hold.end(); } catch {} });
+
+  const res = await client.pipe(port, { path: '/api/events/stream' });
+  assert.equal(res.statusCode, 200);
+  const first = await new Promise((r) => res.once('data', (c) => r(String(c))));
+  assert.equal(first, 'data: 1\n\n');
+  res.destroy();
+});
+
+test('pipe() always sends Host 127.0.0.1:<port>, whatever Host the caller passed', async (t) => {
+  let host;
+  const port = await stub(t, (req, res) => { host = req.headers.host; res.end('ok'); });
+  const res = await client.pipe(port, { path: '/', headers: { Host: 'wc-abc.example.com', HOST: 'evil' } });
+  await drain(res);
+  assert.equal(host, `127.0.0.1:${port}`,
+    "the daemon's Host gate is checked against this — a public hostname would be (rightly) refused");
+});
+
+test('pipe() never discovers or spawns: no explicit port is a rejection', async () => {
+  await assert.rejects(client.pipe(undefined, { path: '/' }), /explicit daemon port is required/);
+  await assert.rejects(client.pipe(0, { path: '/' }), /explicit daemon port is required/);
+});
+
+test('pipe() rejects on a refused connection instead of resolving', async () => {
+  // Take a port, then free it: nothing listens there now.
+  const server = http.createServer();
+  const free = await new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
+  await new Promise((r) => server.close(r));
+  await assert.rejects(client.pipe(free, { path: '/' }), (e) => e.code === 'ECONNREFUSED');
+});
+
+test('pipe() tears the upstream request down when the body stream dies', async (t) => {
+  let aborted;
+  const upstreamGone = new Promise((r) => { aborted = r; });
+  const port = await stub(t, (req) => {
+    req.on('data', () => {});
+    req.on('close', () => aborted(req.complete));
+  });
+  const body = new PassThrough();
+  const p = client.pipe(port, { method: 'POST', path: '/api/store', headers: { 'content-type': 'application/json' } }, body);
+  body.write('{"partial":');
+  setTimeout(() => body.destroy(new Error('remote client went away')), 20);
+  await assert.rejects(p, /remote client went away/);
+  assert.equal(await upstreamGone, false, 'the daemon saw an incomplete request, not a held-open socket');
+});

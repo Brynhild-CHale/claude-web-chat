@@ -246,6 +246,7 @@ const ALLOW = {
   commandBlock: [
     { claim: 'start', reason: 'the foreground dev entry point, documented in CLAUDE.md instead' },
     { claim: 'hub', reason: 'extension plumbing; never typed by a user' },
+    { claim: 'portal', reason: 'the tunnel portal process `tunnel up` spawns; never typed by a user' },
     { claim: 'profile', reason: 'driven by the capture-profile skill, documented there' },
     { claim: 'pack', reason: 'has its own section in docs/guide.md with the full `pack <verb>` reference' },
   ],

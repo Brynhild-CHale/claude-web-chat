@@ -82,16 +82,17 @@ review.
 ## Dependency direction (what may import what)
 
 ```
-entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/*
+entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/* · portal/*
                          │  import ↓ only      (never each other)
 shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · capture/* ·
-                   channel/*
+                   channel/* · tunnel/*
                          │  import ↓ only      (may import each OTHER — that is
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
-                   channels · resources · mcp-seen   (zero deps on the rest of lib/)
+                   channels · resources · mcp-seen · remote-policy
+                                                     (zero deps on the rest of lib/)
 ```
 
 - `lib/core/*` imports **nothing** from `lib/` except other `core/` modules
@@ -146,6 +147,13 @@ were the only places they lived.
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
 | call the daemon over HTTP | `lib/client` `get` / `post` / `api` — a non-2xx is a typed `HttpError` `{status, body}`; the low-level `request` (never throws on a status) only where the status is RELAYED onward | `http.request`, or `client.request` plus a hopeful read of the body |
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
+| stream a request through to a daemon and relay the live response (a proxy) | `lib/client` `pipe(port, {method, path, headers}, reqStream)` | `http.request` + `res.pipe` in the proxy |
+| decide whether a REMOTE viewer (through the tunnel portal) may reach a daemon route | `core/remote-policy` `classify(method, url, {allowDestructive})` → `{allow, key, reason, hint}` + `refusalBody(v)` — default deny, and its ratchet test fails on any daemon route the table does not name | a per-route check in the portal, or a new route left unclassified |
+| check a remote viewer's Cloudflare Access sign-in (the tunnel portal's mandatory JWT check) | `lib/portal/access-jwt` `createVerifier({team, aud, allow, jwks})` over `lib/tunnel/jwks` `createJwksCache({team, fetchJwks})` — RS256 only, the key set's refetch rate-limited, cold failure fails closed | a JWT library, a decode-and-trust, or an `alg` read off the token |
+| choose which of a remote request's headers may reach a daemon | `lib/portal/proxy` `forwardHeaders(headers, {port, origin})` — an allowlist, Origin rewritten to the daemon's own | a blocklist of the headers you happen to know the daemon trusts |
+| read or validate tunnel.json (hostname, style, Access team/AUD, allowlist, the named tunnel), or find the portal's port | `lib/tunnel/config` `loadConfig()` / `normalizeConfig(raw)` / `parseHost` / `sessionHost` / `portalPort(env)` — one normaliser for the portal, `tunnel`, and doctor | a second reader of `tunnel.json`, or `5171` written into a command |
+| find, launch or supervise cloudflared | `lib/tunnel/cloudflared` `checkBinary()` (PATH + min version + the platform's install line) / `buildLaunch` (token in `TUNNEL_TOKEN`, never argv) / `renderIngress` / `createSupervisor` (backoff 1s→60s, reset after 5 min) / `probeReady(metricsPort)` | spawning `cloudflared` from a command, or installing it for the user |
+| register a one-per-machine process (the hub, the tunnel portal) | `lib/util/registry` `registerRole(role, {port, pid})` / `readRoleEntry(role)` / `deregisterRole(role, {pid})` (`registerHub`/`readHubEntry`/`deregisterHub` are its `'hub'` wrappers) | a second copy of `registerHub` with another name |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
 | write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
 | read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
@@ -192,6 +200,8 @@ were the only places they lived.
 | dismiss a transient chrome panel | `public/app/shell.js` — give the element `.popover` and let `closeAllPopovers` / `handleEscape` own it | a private outside-click listener or a second document-level Escape handler |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
+| run cloudflared in a test | `test-support/helpers` `fakeCloudflared(t, {version, exit})` (a real spawn of `test-support/fake-cloudflared.js`, which records argv + `TUNNEL_TOKEN` and serves `/ready`) + `freePort()` for the ports a detached process must be told; preload `test-support/no-outbound.js` into a detached portal | a real cloudflared, or a fixed port |
+| boot the tunnel portal in a test | `test-support/helpers` `withPortal(t, {config, fetchJwks})` with `test-support/fake-access` `createFakeAccess()` (real RSA keys, fake JWKS, forgeable tokens) | `createPortal` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
 | open an SSE stream in a test | `test-support/helpers` `openSSE(port, {kinds, since, onEvent, awaitChannel})` | `subscribeSSE` with only `onOpen` (it can never reject) |
 | pin a socket open with a client that never answers the close frame | `test-support/helpers` `deafWs(t, port)` | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` (`ws` always answers the close, so it cannot stand in) |
@@ -266,6 +276,14 @@ The single way to make an HTTP call to a web-chat daemon.
 - `subscribeSSE({port, root, since, kinds, onEvent, onGap, onClose, onError})` —
   the live event stream. A long-lived stream, so it must **not** go through
   `request()` (which buffers to end).
+- `pipe(port, {method, path, headers, timeout}, reqStream)` → the live
+  `IncomingMessage` — the streaming pass-through the tunnel portal proxies
+  through (any method, binary bodies, downloads, SSE). Resolves at the response
+  headers and never throws on a status. The port is **required** (it never
+  discovers or spawns — a remote request must not resurrect a stopped daemon),
+  `Host` is always forced to `127.0.0.1:<port>`, and a body stream that dies
+  destroys the upstream request. Which of a remote client's headers to pass is
+  the caller's allowlist, not the transport's.
 - `probeReachable` / `probeHealth` (re-exported from `core/portfiles`),
   `discoverPort`, `ensureDaemon`, `NoServerError`, `HttpError`.
 
@@ -467,6 +485,89 @@ module. Facts that must never drift apart:
 `LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
 the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a
 dual-stack machine.
+
+### `lib/core/remote-policy.js` — what a remote viewer may reach
+
+`cors.js` answers "is this request local?", and through the tunnel portal
+(`lib/portal`) every request *is*: the portal is a process on this machine
+dialling `127.0.0.1`. So the daemon cannot tell a remote, allowlisted viewer
+from the developer, and the line between "the surface" and "host-only" is drawn
+here instead, consulted by the portal per request: `classify(method, url,
+{allowDestructive})` → `{allow, key, reason, hint}`, and `refusalBody(v)` for
+the 403 (`{ok:false, remote:true, hint}`).
+
+- **Default deny.** A route no rule names is refused. Rules are
+  `{methods, path, allow, hint}` with `:param` and a trailing `*`; first match
+  wins.
+- **Matching mirrors Express** (HEAD is GET, case-insensitive, one trailing
+  slash ignored), and any path the two could read differently — an encoded
+  slash, a `.`/`..` or empty segment, a backslash, a control character, a bad
+  escape — is refused as `malformed` rather than guessed at.
+- **Adding a daemon route?** `test/remote-policy.test.js` parses every
+  `app.<verb>(` under `lib/server/routes/` and fails until the route has a row.
+  Decide on purpose: pack writes, service trust, the turn/hook internals,
+  process/disk actions and captures are refused; the surface the SPA drives is
+  allowed.
+
+### `lib/portal/` — the tunnel portal
+
+The one process a Cloudflare tunnel reaches: loopback-only on a fixed port
+(`WEB_CHAT_PORTAL_PORT`, default 5171), a `role:'portal'` registry entry, and
+**not** the hub — the hub trusts localhost and idle-exits, the portal trusts
+nothing until a token proves otherwise and runs as long as the operator says.
+Every request walks the same fail-closed gate (`index.js`): the Host must be
+the configured picker hostname or a session hostname (`lib/tunnel/config` — flat
+`wc-<id>.<domain>` by default, nested `<id>.wc.<domain>` optionally; anything
+else is 421, and a loopback Host reaches only `GET /api/health`) → the Access
+JWT (`access-jwt.js`: 401/403/503) → the picker, or the session's registry
+entry (memoised 1s; none running → a friendly 404, never a spawn) →
+`core/remote-policy` → CSRF (an Origin must be exactly the session's; a write
+must carry one; cross-site and same-site requests are refused except a
+top-level navigation to `/`) → the streamed proxy (`proxy.js`, over
+`lib/client` `pipe`) or the WebSocket relay (`ws-relay.js`: two sockets, the
+upstream opened with no Origin, cut at the token's `exp` + 5s with close code
+4401 so the reconnect must present a fresh token; `armDeadline` waits out an exp past setTimeout's 2^31-1 ms ceiling in capped steps).
+
+- **Adding a header the daemon should see remotely?** Add it to `FORWARD` in
+  `proxy.js` deliberately. The allowlist is the point: the daemon trusts
+  `X-WC-Token`, `X-WC-Shutdown` and the MCP-sighting headers because only local
+  processes were meant to send them.
+- **Hiding a project** is `lib/tunnel/config` `hiddenReason(config, entry)`
+  (`expose.exclude` by id or directory, then the project's
+  `projectPaths().noRemote` marker), applied once per registry read in the
+  memo — so the picker, the session lookup and `tunnel status` all see the same
+  filtered list. A hidden session answers exactly like a stopped one.
+- **Before the JWT check**, `throttle.js` answers 429 to a client
+  (`Cf-Connecting-Ip`) with too many recent 401s; **after it**, every write and
+  upgrade — let through or refused — is one line in `access-log.js`
+  (`userPaths().remoteAccessLog`, 0600, rotated to `.1` at 1 MB). Both are
+  injectable (`createPortal({throttle, accessLog})`, `withPortal` passes them).
+- **`X-WC-Remote: 1`** (`core/cors` `REMOTE_HEADER`) is the one header the
+  portal ADDS; the daemon's `/api/health` echoes it as `remote:true`, and the
+  page (`public/app/remote.js` `isRemote`/`remoteNow`) swaps host-only controls
+  for "run this on the host". A UI label — never gate anything on it.
+- **The picker** (`picker.js` + `public/`) is static under a CSP with no inline
+  script; it builds its rows with `createElement`/`textContent` because a
+  project title is a directory name.
+- **cloudflared** runs as the portal's child (`createPortal({supervise})`, built
+  once the port is bound), never detached from it: stopping the portal stops
+  the connector first, so no tunnel is ever left answering 502s with nothing
+  behind it.
+
+### `lib/tunnel/` — what the portal, `tunnel` and doctor agree on
+
+Shared, not the portal's: an entry point cannot import another's internals, and
+three of them need these. `config.js` is `tunnel.json`'s one normaliser and
+loader (fails closed — an empty allowlist or a quick tunnel is an error, never
+a partial run) plus `portalPort(env)`; `jwks.js` is Access's key set (the
+portal verifies with it, `tunnel setup` proves the team name with it);
+`cloudflared.js` finds the binary (PATH walk, a version floor, the platform's
+install line — web-chat never installs it), builds the launch (the connector
+token in `TUNNEL_TOKEN`, **never argv**, which any local user can read), renders
+a local tunnel's ingress (our hostnames → the portal with
+`originRequest.access` required, everything else `http_status:404`) and
+supervises the child. `lib/cli/commands/tunnel.js` is the user's face of it
+(`setup|up|down|status|logs`); `docs/remote-access.md` is the operator's.
 
 ### `lib/packs/` — the component-pack pipeline
 
@@ -706,6 +807,13 @@ count as a phantom passing test.
   `LISTEN_HOST` bind + idempotent `t.after` stop. Returns `{ hub, server, port,
   baseUrl, api, stop }`. Four boots used to be hand-rolled with the stop at the
   end of the test body.
+- `withPortal(t, { config, fetchJwks, now, instances, wsGraceMs })` — the same
+  for the tunnel portal (loopback, port 0, never `start()`), with a raw
+  `request(path, {host, method, headers, body})` because the portal routes on
+  `Host`, which fetch refuses to set. Pair it with `test-support/fake-access`
+  `createFakeAccess()`: real RSA keys, a JWKS served through `fetchJwks`
+  (counting calls, able to go down) and tokens with any claim or header wrong —
+  including `alg: none` and HS256 signed with the public key.
 - `waitUntil(pred, { timeout = 2000, interval = 25, what })` — **the** deadline
   poll. Awaits the predicate, resolves with the **first truthy value** (not
   `true`, so a caller can read a nonce or a pid straight out), re-evaluates once
@@ -1029,6 +1137,7 @@ Current homes (baselines can only shrink toward these):
 | --- | --- | --- |
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
 | `client.request(` (the non-throwing low-level idiom) | `lib/client` `get`/`post`, which throw a typed `HttpError` on a non-2xx — plus the three genuine **relays**, which hand a status onward rather than acting on it: `lib/cli/commands/export.js`, `lib/cli/commands/pack.js` (a best-effort ping that shrugs at every outcome) and `lib/hub/index.js`'s `forward` | landed with the client outcome contract ✅ |
+| `require('https')` (an outbound request to the public internet) | none yet — one per requester, each alone in the file that needs it with its own fencing: `lib/server/routes/embed.js` (the embed probe), `lib/update/release.js` (the release download), `lib/tunnel/jwks.js` (Cloudflare Access's signing keys). A **fourth** means extracting `lib/util/outbound.js`, not raising a baseline | counted since the tunnel portal (the third requester) |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
 | `getPrototypeOf(async function` | `public/mount-runtime.js` (`runSeed`) — the AsyncFunction spelling of the same eval, added when `drawer.js` grew a second eval site the `new Function(` pattern could not see | Phase 4 ✅ |
@@ -1041,7 +1150,7 @@ Current homes (baselines can only shrink toward these):
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
-| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
+| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces and `tunnel down`, which signal only the pid `/api/health` reported | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
 | `state.order =` / `state.order.push/splice/unshift(` / `state.markdown.set/delete/clear(` | `lib/server/domain/page.js` — the one writer of the page sequence and its markdown items; the mount engine and the bulk paths call into it | landed with the page sequence ✅ |
 | `#{1,<n>}` (a markdown heading parser) | `lib/core/markdown.js` — host rendering for preview/export, and the browser module served at `/app/markdown.js` is built from the same factory's source | landed with the page sequence ✅ |
@@ -1066,18 +1175,22 @@ Working with it:
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
-- **Deliberately NOT ratcheted: the outbound requesters.** The `http.request(`
-  row above polices calls to *our own daemon*, whose home is `lib/client`. Two
+- **The outbound requesters: counted, not yet an engine.** The `http.request(`
+  row above polices calls to *our own daemon*, whose home is `lib/client`. Three
   places instead reach the **public internet**, and they are a different concept
   with no engine: `lib/server/routes/embed.js` (probe a URL a pane named — spelt
-  `lib.request(`, so the row does not see it) and `lib/update/release.js` (fetch a
-  release tarball — spelt `agentFor(u).get(`, which no `.request(` regex sees
-  either). A row here would have to name a home that does not exist, and routing
-  either through `lib/client` would be wrong: the client dials loopback and has
-  none of the fencing an outbound request needs (`refuseTarget` /
-  `publicOnlyLookup` in `embed.js`, checksum verification in `release.js`). If a
-  **third** outbound requester appears, that is the moment to extract the engine
-  and add the row — not before.
+  `lib.request(`), `lib/update/release.js` (fetch a release tarball — spelt
+  `agentFor(u).get(`) and `lib/tunnel/jwks.js` (Cloudflare Access's signing keys
+  for the tunnel portal — an injected `get(`). Routing any of them through
+  `lib/client` would be wrong: the client dials loopback and has none of the
+  fencing an outbound request needs (`refuseTarget` / `publicOnlyLookup` in
+  `embed.js`, checksum verification in `release.js`, a URL fixed by the team
+  name plus size and time bounds in `jwks.js`). This doc used to say a third
+  requester was the moment to extract the engine; the portal's JWKS fetch was
+  that third, and the middle ground taken is the `require('https')` row: each
+  requester stays alone in its file, and a **fourth** fails the build — that is
+  when `lib/util/outbound.js` gets extracted (whether to do it sooner is an
+  open maintainer call).
 - **A construct that is fine almost everywhere but must stay at zero in a few
   places?** Give the pattern a `files` list instead of `roots`. That is why
   `writeFileSync(` is not banned tree-wide: about eight of its ~35 sites in
@@ -1094,7 +1207,9 @@ Every planned consolidation has shipped — the current engines are below.
 `role:'hub'` entry alongside instances) + `lib/core/versions.js` (the three
 version facts: `packageVersion`, `SCHEMA_VERSION`, `PROTOCOL_VERSION` +
 `isProtocolCurrent`) (Phase 6). Register a running process with
-`registerInstance`/`registerHub`; read it with `readInstances`/`readHubEntry`;
+`registerInstance`/`registerHub` (or `registerRole(role, …)` for any other
+one-per-machine process — the tunnel portal is `role:'portal'`); read it with
+`readInstances`/`readHubEntry`/`readRoleEntry(role)`;
 release it with `release({root, pid})`, which removes the portfile and the
 registry entry under one ownership rule; classify the machine with `rows()`.
 `readInstances` prunes dead pids as it reads (the hub's idle monitor depends on

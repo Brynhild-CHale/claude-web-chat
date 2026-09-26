@@ -124,6 +124,9 @@ update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back
 uninstall           remove the hooks (your graph data is kept); --self also
                     removes the program itself
+tunnel [verb]       reach your surfaces from your phone or another machine:
+                    setup | up | down | status | logs, through a Cloudflare
+                    tunnel behind Google sign-in (see remote-access.md)
 ```
 
 Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start above.
@@ -136,6 +139,7 @@ The server binds **loopback only** (`127.0.0.1`) and is deliberately unauthentic
 - The WebSocket upgrade is gated on `Origin`, so a random web page you happen to visit can't open a socket to `ws://localhost:<port>` and read your store. Non-browser clients (drivers, the CLI) send no `Origin` and are unaffected.
 - Captures are only readable cross-origin by the browser extension, not by any site you're browsing.
 - `WEB_CHAT_HOST` overrides the bind address for the deliberate remote case (a dev container, a remote workstation). Setting it exposes all of the above to that interface with no authentication, and the server says so on startup.
+- To reach your surfaces from **outside** this machine, don't widen the bind — use `claude-web-chat tunnel`: the daemons stay on loopback, and a separate portal admits only a Google account you allowlisted, verified twice (by Cloudflare Access and again locally). The walkthrough and the security model are in [`remote-access.md`](remote-access.md).
 
 ## When something's stuck
 
