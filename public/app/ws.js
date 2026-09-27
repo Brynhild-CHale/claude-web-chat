@@ -26,6 +26,7 @@ import { invalidate as invalidateComponents } from './components.js';
 import { bus } from './bus.js';
 import { applyBrand, refreshBrand } from './brand.js';
 import { page, applyPageFrame, layoutPage } from './page.js';
+import { deviceKind } from './viewport.js';
 
 let ws = null;
 export const isOpen = () => ws && ws.readyState === 1;
@@ -63,6 +64,7 @@ function queueFrame(frame) {
   }
   if (frame.type === 'pane:state') { pendingState.set(`pane:state:${frame.id}`, frame); return; }
   if (frame.type === 'pane:form') return;  // see the block comment
+  if (frame.type === 'client') return;     // hello re-sends the current one
   pendingLog.push(frame);
   if (pendingLog.length > OUTBOX_LOG_MAX) pendingLog.shift();
 }
@@ -72,6 +74,14 @@ export function send(frame) {
   ws.send(JSON.stringify(frame));
   return true;
 }
+
+// The chrome's posture, for push provenance: a declared `wake:'immediate'` signal
+// wakes Claude straight from this socket's store:set, so the daemon has to know
+// whether this is the phone view (lib/server/domain/queue provenance). Sent on
+// every (re)connect — before the outbox drains, so a write made across the gap
+// is attributed — and whenever the viewport flips.
+function sendClientInfo() { send({ type: 'client', device: deviceKind() }); }
+bus.on('viewport', sendClientInfo);
 
 function flushOutbox() {
   const frames = [...pendingState.values(), ...pendingLog];
@@ -163,6 +173,7 @@ const HANDLERS = {
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
     applySnapshot(msg, { mode: 'reconcile' });
+    sendClientInfo();
     // …and now the client's half of the catch-up: everything we tried to send
     // while the socket was down (see the outbox above).
     flushOutbox();

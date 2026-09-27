@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>web-chat sessions</title>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/app.css">
 <script src="/app.js" defer></script>
 </head>
@@ -12,16 +14,30 @@
 <main>
   <header>
     <h1>web-chat</h1>
-    <p class="sub">Surfaces and Claude sessions on this machine right now</p>
+    <p class="sub">Projects on <span id="host">this machine</span></p>
     <p class="who" id="who" hidden></p>
   </header>
   <p class="state" id="state">Loading…</p>
-  <ul class="sessions" id="sessions"></ul>
+  <section id="confirm" class="confirm" hidden aria-live="polite">
+    <p class="confirm-q" id="confirm-q"></p>
+    <p class="confirm-note" id="confirm-note"></p>
+    <div class="confirm-actions">
+      <button type="button" class="btn primary" id="confirm-go">Start</button>
+      <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+    </div>
+  </section>
+  <section class="group" id="active-group" hidden>
+    <h2>Active</h2>
+    <ul class="sessions" id="active"></ul>
+  </section>
+  <section class="group" id="inactive-group" hidden>
+    <h2>Inactive</h2>
+    <ul class="sessions" id="inactive"></ul>
+  </section>
   <footer>
-    <p>A surface appears here while its project's web-chat daemon is running, and
-    stops a few seconds after its last viewer leaves. A project with Claude
-    attached but no surface is listed without a link — start its surface on the
-    host with <code>claude-web-chat open</code>.</p>
+    <p>Active projects have a running surface; open one to use it. Inactive
+    projects are known on this machine but stopped — pick one to start its
+    surface here. A surface stops a few seconds after its last viewer leaves.</p>
   </footer>
 </main>
 </body>

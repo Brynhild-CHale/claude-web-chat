@@ -109,6 +109,12 @@ const BASELINE = {
   'lib/server/service-runner.js => lib/driver.js':
     'the service runner injects the driver API a service.js is authored against',
 
+  // The portal picker wears Georgetown Blue from the pack's own token table,
+  // declared through the one token sanitiser, rather than a pasted palette
+  // that would drift. theme.js needs only fs + the pack data.
+  'lib/portal/picker.js => lib/server/theme.js':
+    'the picker themes itself from the canonical Georgetown Blue tokens via tokenDecls',
+
   // Still owed. The components registry is server-shaped; tier resolution is
   // not. The fix is to lift the registry, not to widen the rule.
   'lib/packs/plan.js => lib/server/components-registry.js':

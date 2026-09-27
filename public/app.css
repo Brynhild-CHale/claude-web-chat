@@ -852,6 +852,11 @@ kbd {
 .ss-badge.turn { color: var(--wc-gold); border-color: color-mix(in srgb, var(--wc-gold) 55%, transparent); }
 .ss-badge.here { color: var(--wc-accent); border-color: color-mix(in srgb, var(--wc-accent) 55%, transparent); }
 .ss-cmd { margin-top: 2px; }
+/* the collapsed Inactive group: known projects with nothing running */
+.ss-inactive { display: flex; flex-direction: column; gap: 6px; }
+.ss-inactive-head { cursor: pointer; font: 600 10.5px var(--wc-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--wc-muted); padding: 4px 2px; }
+.ss-inactive[open] > .ss-row { margin-top: 6px; }
+.ss-inactive > .ss-row { opacity: .8; }
 .mono { font-family: var(--wc-mono); }
 
 /* ===================== graph screen (canvas-first) =====================

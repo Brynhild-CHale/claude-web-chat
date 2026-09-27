@@ -57,13 +57,21 @@ instead is the *Manual walkthrough* further down. If something stops it, see
 
 ## Hostnames
 
-You pick one hostname for the **picker** — the page listing your running
-projects — for example `wc.example.com`. It shows the same live picture as
-`claude-web-chat ls`: each running surface (viewers, the active node, a turn in
-progress) and whether a Claude Code session is attached (`×N`, channel on/off,
-when it last called a tool). A project with Claude attached but no surface
-running is listed as *Claude attached · surface stopped*, without a link — the
-portal never starts a surface; run `claude-web-chat open` on the host. Each project then gets its own
+You pick one hostname for the **picker** — the page listing your projects —
+for example `wc.example.com`. It shows the same picture as `claude-web-chat ls
+--all`, in two sections. **Active**: each running surface (viewers, the active
+node, a turn in progress) and whether a Claude Code session is attached (`×N`,
+channel on/off, when it last called a tool) — click to open it. **Inactive**:
+projects whose surface is stopped. Clicking a stopped project that is **known on
+this machine** (its surface has booted here before; `~/.web-chat/projects.json`)
+asks *Start <project> on <host>?*, and on confirm the portal starts that
+project's daemon — the same detached start `claude-web-chat open` uses — waits
+for it to answer, and takes you there. The start names the project by its id
+only, never a path; a hidden project (below) is never listed or started; one
+start per project per 10 seconds; and every start is a line in the remote access
+log. A project that has never run a surface here can only be started on the host
+with `claude-web-chat open`. The picker wears the Georgetown Blue theme, light or
+dark with your device. Each project then gets its own
 hostname, derived from its instance id (eight hex characters, stable per
 project directory):
 
@@ -193,8 +201,9 @@ The same result, by hand in the dashboard.
    tunnel, `WEB_CHAT_HOST` has moved your daemons off loopback, cloudflared is
    missing or too old, or the token is missing.
 6. **Open** `https://wc.example.com/` from anywhere, sign in with Google, and
-   pick a project. Only projects whose surface is **running** are listed; the
-   portal never starts a daemon. Start one on this machine with `claude-web-chat open`.
+   pick a project. A running one opens; a stopped one this machine already
+   knows is started after you confirm. A project that has never run here is
+   started on this machine with `claude-web-chat open`.
 
 ## Troubleshooting
 
@@ -337,7 +346,10 @@ permission — what a remote viewer may do is decided in the portal. It narrows
 one thing: a pane can still spawn a saved component remotely, but not a pane of
 raw HTML — that would be markup the remote viewer's page wrote, landing in your
 surface — so such a spawn is refused (the portal always sets the header and
-drops any copy a viewer sends). The ⋯ → **Sessions** panel says to run
+drops any copy a viewer sends). A Push made remotely is marked
+`origin=remote` (and `device=mobile` from a phone) in what Claude receives, so
+it answers on the surface rather than asking you to run a command — see
+[channels-dev](channels-dev.md), "Push provenance". The ⋯ → **Sessions** panel says to run
 `claude-web-chat ls` on the host instead of listing anything: it names every
 project on the machine, so it is host-only.
 

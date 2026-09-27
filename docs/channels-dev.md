@@ -191,10 +191,28 @@ Constraints from the wire, enforced in `envelope.js`:
 | `mount`    | origin mount id (single-item only)                                |
 | `ids`      | comma list of queue item ids                                     |
 | `captures` | comma list of capture ids to fetch                               |
+| `push_origin` | `local` \| `remote` — remote = pushed through the tunnel portal |
+| `device`   | `desktop` \| `mobile` — mobile = the chrome's phone view          |
 
 > The harness stamps `source="<channel-name>"` on the `<channel>` tag itself, so we
 > use **`origin`** for the event source to avoid a collision. Do not add a meta
 > `source` key.
+
+**Push provenance.** Every wake producer records where the push came from:
+`POST /api/queue/push` and `/api/queue/repush` (a Retry re-stamps with its own),
+an immediate signal (from the writing socket), a park (the latest push that
+carries one wins) and its drain. `origin` is `remote` when the request arrived
+through the portal (`lib/core/cors` `isRemoteRequest`; the relay labels its
+socket the same way), else `local`. `device` is the chrome's claim — `mobile`
+while its phone view is active (`public/app/viewport.js`; sent in the push body,
+and on the socket as a `{type:'client', device}` frame at every (re)connect and
+view flip) — else the User-Agent's `Mobile` token. One reading lives in
+`lib/server/domain/queue` `provenance()`. The pair rides the `wake` event, the
+`flushed` queue-remove event (so a parked push is in the log too), the park
+(`GET /api/queue/pending`), the push response, and the envelope — as meta
+`push_origin`/`device` and a `Pushed from: origin=… device=…` content line, since
+a parked delivery reaches Claude as the content alone. It is a label only:
+nothing is granted or refused on it.
 
 Example wire:
 

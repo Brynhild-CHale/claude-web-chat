@@ -782,6 +782,28 @@ const BM_ROOM = 16;                     // extra headroom above a node that carr
 const GHOST_DOTS = 3, GHOST_DOT_ROOM = 12;
 const LABEL_CLEAR = 22;                 // a glyph's label runs to ~17px below it; a dot's radius is 4
 const CAPTION_CLEAR = 24, EDGE_CLEAR = 8;
+// An edge is DRAWN between the text around its ends, not glyph to glyph: it
+// starts under the label beneath the glyph above (11px mono, baseline 14px below
+// the glyph, descenders to ~17) and stops over the bookmark caption above the node
+// below (baseline 7px above it, cap height ~10). Drawn glyph to glyph, the trunk
+// struck the labels through (s2 visual QA). A gap, not a halo in --wc-bg: the
+// stage paints a radial ground under the canvas, so no flat colour matches it.
+const LABEL_GAP = 20, CAPTION_GAP = 19;
+const hasLabel = (g) => g.kind === 'node' || g.kind === 'stack';
+const hasCaption = (g) => g.kind === 'node' && g.bookmarked;   // an edge never ends on a root
+// Where the text around a glyph sits — the render draws it here, and a fork's
+// elbow is routed around the same boxes (routeElbow).
+const LBL_DY = 14, BM_DY = 7, RANGE_DY = STACK_H / 2 + 14;
+const TEXT_W = 6.6;                     // per character: an 11px mono advance, generous for the 11px sans caption
+const textBox = (text, x, base, start) => {
+  const w = String(text).length * TEXT_W, x0 = start ? x : x - w / 2;
+  return { x0, x1: x0 + w, y0: base - 10, y1: base + 4 };   // cap height above the baseline, descenders below
+};
+const treeTitleText = (tt) => ({
+  caption: '◇ ' + (tt.name || ('graph ' + tt.graphLabel)),
+  sub: `${tt.count} turn${tt.count === 1 ? '' : 's'}`,
+});
+const treeTitleW = (tt) => { const { caption, sub } = treeTitleText(tt); return Math.max(120, (caption.length + sub.length) * 7 + 48); };
 const foldRoom = (n) => Math.min(GHOST_DOTS, foldedCount(n)) * GHOST_DOT_ROOM;
 
 // Ghost rows for one node: the turns that folded onto it, oldest first, capped
@@ -824,6 +846,131 @@ async function fetchFolded(id) {
   } catch {}
   foldedCache.set(id, list);
   if (isOverlayOpen()) layoutAndRender();
+}
+
+// --- Fork elbows, routed around what is drawn ---
+// A fork's branch lands in the next free column, which can be several columns
+// away; its sideways run crosses every column between, and rows in those columns
+// need not line up with the fork's (a bookmark's room, ghost-dot room, a sleeve).
+// A fixed height struck their glyphs, labels and captions, and lay on top of
+// another fork's run leaving the same row — which then read as the wrong edge.
+// So each run is routed: it keeps one height across a column, may step to
+// another only in the empty gap between two columns, and prefers not to step at
+// all. Crossing a trunk or another elbow's drop is fine — that is a crossing;
+// striking text, a glyph, or running along another elbow's run is not.
+const EDGE_PAD = 3;                     // how far a run keeps off text and glyphs (the stroke is 2px)
+const LANE = 8;                         // two elbows' runs stay this far apart
+const JOG = 12, CORNER = 8;             // half a step's width; the turn down into the branch head
+const HIT = 1000, STEP = 30;            // cost of striking something; cost of a step
+
+// The boxes an elbow must not cross, for one tree's glyphs, sleeves and title.
+function layoutObstacles(glyphs, sleeves, tt, rootSet) {
+  const out = [];
+  const add = (owner, b, body) => out.push({ ...b, owner, body: !!body });
+  for (const g of glyphs) {
+    if (g.kind === 'node') {
+      add(g, { x0: g.x - g.r, x1: g.x + g.r, y0: g.top, y1: g.bottom }, true);
+      add(g, textBox(g.label, g.x, g.y + g.r + LBL_DY));
+      if (g.bookmarked && !rootSet.has(g.id)) add(g, textBox(bookmarkCaption(g.node), g.x, g.y - g.r - BM_DY));
+      if (g.folded) add(g, textBox('⋯' + g.folded, g.x + g.r + 5, g.y + 4, true));
+    } else if (g.kind === 'stack') {
+      add(g, { x0: g.x - STACK_W / 2, x1: g.x + STACK_W / 2 + 6, y0: g.top, y1: g.bottom }, true);
+      add(g, textBox(g.headLabel === g.tailLabel ? g.headLabel : `${g.headLabel}…${g.tailLabel}`, g.x, g.y + RANGE_DY));
+    }
+  }
+  for (const s of sleeves) add(s, { x0: s.x, x1: s.x + s.w, y0: s.top, y1: s.bottom }, true);
+  if (tt) { const w = treeTitleW(tt); add(tt, { x0: tt.x - w / 2, x1: tt.x + w / 2, y0: tt.y - 38, y1: tt.y - 14 }); }
+  return out;
+}
+
+// Route one elbow (e.ax,e.ay beside the fork → down into e.bx,e.by) through
+// `obs`, then add its runs to `obs` so the next elbow keeps off them. Levels are
+// whole pixels from a row above the fork down to the branch head's top; the
+// columns between are cut into slabs at every box edge; a small DP picks one
+// level per slab, stepping only inside a slab no box touches.
+function routeElbow(e, obs) {
+  const a = e.from, b = e.to;
+  const sx = e.ax, sy = e.ay, ex = e.bx, ey = e.by;
+  // (the lowest level still leaves a turn down into the head, not a run into its rim)
+  const yLo = sy - DY, yHi = Math.max(sy, ey - CORNER);
+  const near = obs.filter((o) => o.owner !== b && !(o.owner === a && o.body) && o.x1 > sx && o.x0 < ex
+    && (o.run ? o.y > yLo - LANE && o.y < yHi + LANE : o.y1 + EDGE_PAD > yLo && o.y0 - EDGE_PAD < yHi));
+  const levels = [sy];
+  for (let y = Math.ceil(yLo); y <= yHi; y++) if (y !== sy) levels.push(y);
+  const cuts = [...new Set([sx, ex, ...near.flatMap((o) => [o.x0, o.x1]).filter((x) => x > sx && x < ex)])].sort((p, q) => p - q);
+  const slabs = [];
+  for (let i = 1; i < cuts.length; i++) {
+    const u = cuts[i - 1], v = cuts[i];
+    const over = near.filter((o) => o.x0 < v && o.x1 > u);
+    slabs.push({ u, v, over, free: v - u >= 4 && over.every((o) => o.run) });
+  }
+  const cost = (slab, y) => {
+    let c = y < sy ? 3 : 0;   // the band BELOW the fork's row first; above it only to get past something
+    for (const o of slab.over) {
+      if (o.run) { if (Math.abs(y - o.y) < LANE) c += HIT; continue; }
+      if (y > o.y0 - EDGE_PAD && y < o.y1 + EDGE_PAD) { c += HIT; continue; }
+      c += Math.max(0, 8 - (y < o.y0 ? o.y0 - y : y - o.y1));   // keep off a near miss when there is room
+    }
+    return c;
+  };
+  const L = levels.length;
+  let dp = levels.map((y, l) => {
+    if (!slabs.length) return l ? Infinity : 0;
+    return l === 0 ? cost(slabs[0], sy) : slabs[0].free ? STEP + cost(slabs[0], y) : Infinity;
+  });
+  const back = [];
+  for (let i = 1; i < slabs.length; i++) {
+    let best = 0;
+    for (let l = 1; l < L; l++) if (dp[l] < dp[best]) best = l;
+    const from = new Array(L), next = new Array(L);
+    for (let l = 0; l < L; l++) {
+      const c = cost(slabs[i], levels[l]);
+      next[l] = dp[l] + c; from[l] = l;
+      if (slabs[i].free && best !== l && dp[best] + STEP + c < next[l]) { next[l] = dp[best] + STEP + c; from[l] = best; }
+    }
+    back.push(from); dp = next;
+  }
+  // the drop at the branch's column, from the run's level to the branch head
+  const drop = (y) => near.reduce((c, o) => c + (!o.run && o.x0 < ex && o.x1 > ex && o.y1 + EDGE_PAD > y && o.y0 - EDGE_PAD < ey ? HIT : 0), 0);
+  let end = 0;
+  for (let l = 0; l < L; l++) if (dp[l] + drop(levels[l]) < dp[end] + drop(levels[end])) end = l;
+  const lv = new Array(Math.max(1, slabs.length));
+  lv[lv.length - 1] = end;
+  for (let i = back.length - 1; i >= 0; i--) lv[i] = back[i][lv[i + 1]];
+
+  const pts = [{ x: sx, y: sy }];
+  let y = sy;
+  slabs.forEach((s, i) => {
+    const ny = levels[lv[i]];
+    if (ny === y) return;
+    const m = (s.u + s.v) / 2, j = Math.min(JOG, (s.v - s.u) / 2);
+    pts.push({ x: m - j, y }, { x: m + j, y: ny, jog: true });
+    y = ny;
+  });
+  pts.push({ x: ex, y, corner: true });
+  if (ey > y) pts.push({ x: ex, y: ey });
+  e.pts = pts;
+  // its runs: each stretch of the route at one height
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], q = pts[i];
+    if (p.y === q.y && q.x > p.x) obs.push({ run: true, owner: e, x0: p.x, x1: q.x, y: p.y });
+  }
+}
+
+// The path for a routed elbow: straight runs, an S-step between levels, a
+// rounded turn down into the branch head.
+function elbowPath(pts) {
+  const f = (v) => Math.round(v * 10) / 10;
+  let d = `M ${f(pts[0].x)} ${f(pts[0].y)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i], q = pts[i - 1], n = pts[i + 1];
+    if (p.jog) { const m = f((q.x + p.x) / 2); d += ` C ${m} ${f(q.y)}, ${m} ${f(p.y)}, ${f(p.x)} ${f(p.y)}`; }
+    else if (p.corner && n) {
+      const r = Math.min(CORNER, p.x - q.x, n.y - p.y);
+      d += ` L ${f(p.x - r)} ${f(p.y)} Q ${f(p.x)} ${f(p.y)}, ${f(p.x)} ${f(p.y + r)}`;
+    } else d += ` L ${f(p.x)} ${f(p.y)}`;
+  }
+  return d;
 }
 
 // Per-sleeve scroll offset, keyed by the run head, so a re-render (a selection,
@@ -886,8 +1033,24 @@ function computeGraphLayout() {
     for (const r of rows) if (r.kind === 'node') pos.set(r.id, { x, y: sTop + SLEEVE_HDR + r.top + ROW_H / 2, sleeve: s, row: r });
     return s;
   };
-  const straight = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, from: a, to: b });
-  const elbow = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, elbow: true, to: b });
+  // A fork's elbow leaves its node from the lower right, heading sideways, and
+  // turns down into the branch head: dropping out under the label first, its
+  // sideways run fell across the top of the glyph below instead. Its route is
+  // found once the whole tree is placed (routeElbow): what lies between the two
+  // columns — the trunk continuing under the fork too — is not all placed yet
+  // when the branch's walk returns.
+  const pendingElbows = [];
+  const edge = (a, b, elbow) => {
+    const ax = elbow ? a.x + a.r * 0.7 : a.x;
+    const ay = elbow ? a.y + a.r * 0.7 : a.bottom + (hasLabel(a) ? LABEL_GAP : 0);
+    const by = Math.max(ay, b.top - (hasCaption(b) ? CAPTION_GAP : 0));
+    // y0/y1: the glyph ends, which the ghost-dot band is measured from
+    const e = { ax, ay, bx: b.x, by, y0: a.bottom, y1: b.top, elbow, from: a, to: b };
+    edges.push(e);
+    if (elbow) pendingElbows.push(e);
+  };
+  const straight = (a, b) => edge(a, b, false);
+  const elbow = (a, b) => edge(a, b, true);
 
   // Does the trunk that starts here contain an expanded run? Then the column is
   // a sleeve wide, and a branch taken ABOVE the sleeve must already clear it.
@@ -899,7 +1062,8 @@ function computeGraphLayout() {
     return false;
   };
 
-  function walk(startId, columnX, startY) {
+  // forked: this column is a branch, so its head is entered by an elbow from above.
+  function walk(startId, columnX, startY, forked = false) {
     let x = columnX, y = startY, prev = null, first = null, pending = [];
     if (trunkHasSleeve(startId)) bumpFrontier(x - SLEEVE_INSET + SLEEVE_W + 40);
     const link = (g) => { if (prev) straight(prev, g); prev = g; if (!first) first = g; };
@@ -922,12 +1086,14 @@ function computeGraphLayout() {
       if (isBreakout(cur)) {
         flush();
         const n = byId.get(cur);
-        if (prev && n.bookmarked) y += BM_ROOM;   // room for the caption above it
+        // Room for the caption above it — a branch head's too, or its caption
+        // fills the band a fork's elbow crosses the columns in.
+        if ((prev || forked) && n.bookmarked) y += BM_ROOM;
         if (prev) y += foldRoom(n);               // and for its ghost dots
         const g = placeNode(cur, x, y, false); y += DY;
         link(g);
         for (let i = 1; i < kids.length; i++) {
-          const branchHead = walk(kids[i], frontier, y);
+          const branchHead = walk(kids[i], frontier, y, true);
           if (branchHead) elbow(g, branchHead);
         }
         cur = kids[0] || null;
@@ -950,6 +1116,7 @@ function computeGraphLayout() {
 
   // Each top-level tree is a "graph"; title it above its first glyph.
   const treeTitles = [];
+  const rootSet = new Set(roots);
   for (const r of roots) {
     const g0 = glyphs.length, e0 = edges.length, s0 = sleeves.length;
     const first = walk(r, frontier, 0);
@@ -960,6 +1127,11 @@ function computeGraphLayout() {
       ? { x: first.x, y: first.top != null ? first.top : first.y, graphLabel: (rn.label || '').replace(/\.0$/, ''), name: rn.name || '', rootId: r, count }
       : null;
     if (tt) treeTitles.push(tt);
+    if (pendingElbows.length) {
+      const obs = layoutObstacles(glyphs.slice(g0), sleeves.slice(s0), tt, rootSet);
+      for (const e of pendingElbows) routeElbow(e, obs);
+      pendingElbows.length = 0;
+    }
     // The user's saved placement is a delta ON the auto-layout: shift everything
     // this tree produced. `frontier` was advanced from the unshifted x, so moving
     // one graph never reflows the others.
@@ -967,7 +1139,11 @@ function computeGraphLayout() {
     if (dx || dy) {
       for (let i = g0; i < glyphs.length; i++) { const g = glyphs[i]; g.x += dx; g.y += dy; g.top += dy; g.bottom += dy; }
       for (let i = s0; i < sleeves.length; i++) { const s = sleeves[i]; s.x += dx; s.y += dy; s.trunkX += dx; s.top += dy; s.bottom += dy; }
-      for (let i = e0; i < edges.length; i++) { const e = edges[i]; e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy; }
+      for (let i = e0; i < edges.length; i++) {
+        const e = edges[i];
+        e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy; e.y0 += dy; e.y1 += dy;
+        if (e.pts) for (const p of e.pts) { p.x += dx; p.y += dy; }
+      }
       for (const [id, p] of pos) if (treeOf.get(id) === r) pos.set(id, { ...p, x: p.x + dx, y: p.y + dy });
       if (tt) { tt.x += dx; tt.y += dy; }
     }
@@ -1026,16 +1202,15 @@ export function layoutAndRender() {
   const edgesG = svgEl_('g', { class: 'gv-edges' });
   rootG.appendChild(edgesG);
   for (const e of edges) {
-    const d = e.elbow
-      ? `M ${e.ax} ${e.ay} C ${e.ax} ${e.ay + DY * 0.55}, ${e.bx} ${e.by - DY * 0.55}, ${e.bx} ${e.by}`
-      : `M ${e.ax} ${e.ay} L ${e.bx} ${e.by}`;
+    const d = e.elbow ? elbowPath(e.pts) : `M ${e.ax} ${e.ay} L ${e.bx} ${e.by}`;
     edgesG.appendChild(svgEl_('path', { d, class: 'gv-edge' }));
     const to = e.to;
     if (!e.elbow && to && to.kind === 'node' && to.folded) {
       const k = Math.min(GHOST_DOTS, to.folded);
-      // A node or stack above carries a label under it; a sleeve does not.
-      const top = e.ay + (e.from && e.from.kind ? LABEL_CLEAR : EDGE_CLEAR);
-      const bottom = e.by - (to.bookmarked ? CAPTION_CLEAR : EDGE_CLEAR);
+      // A node or stack above carries a label under it; a sleeve does not. (The
+      // band is measured from the glyphs, not from the drawn line's trimmed ends.)
+      const top = e.y0 + (e.from.kind ? LABEL_CLEAR : EDGE_CLEAR);
+      const bottom = e.y1 - (to.bookmarked ? CAPTION_CLEAR : EDGE_CLEAR);
       const band = Math.max(0, bottom - top);
       for (let i = 1; i <= k; i++) {
         edgesG.appendChild(svgEl_('circle', {
@@ -1050,9 +1225,8 @@ export function layoutAndRender() {
   for (const tt of treeTitles) {
     const grp = svgEl_('g', { class: 'gv-tree-title' + (tt.name ? ' named' : '') });
     grp.dataset.graphRoot = tt.rootId;
-    const caption = '◇ ' + (tt.name || ('graph ' + tt.graphLabel));
-    const sub = `${tt.count} turn${tt.count === 1 ? '' : 's'}`;
-    const hitW = Math.max(120, (caption.length + sub.length) * 7 + 48);
+    const { caption, sub } = treeTitleText(tt);
+    const hitW = treeTitleW(tt);
     const ty = tt.y - 22;
     grp.appendChild(svgEl_('rect', { x: tt.x - hitW / 2, y: ty - 16, width: hitW, height: 24, rx: 4, class: 'gv-tt-hit' }));
     grp.appendChild(svgEl_('title', {}, 'Click to rename this graph · drag to move it'));
@@ -1079,7 +1253,7 @@ export function layoutAndRender() {
       }
       grp.appendChild(svgEl_('rect', { x: g.x - STACK_W / 2, y: g.y - STACK_H / 2, width: STACK_W, height: STACK_H, rx: 6, class: 'gv-card' }));
       grp.appendChild(svgEl_('text', { x: g.x, y: g.y + 4, 'text-anchor': 'middle', class: 'gv-card-count' }, '×' + g.count));
-      grp.appendChild(svgEl_('text', { x: g.x, y: g.y + STACK_H / 2 + 14, 'text-anchor': 'middle', class: 'gv-card-range' },
+      grp.appendChild(svgEl_('text', { x: g.x, y: g.y + RANGE_DY, 'text-anchor': 'middle', class: 'gv-card-range' },
         g.headLabel === g.tailLabel ? g.headLabel : `${g.headLabel}…${g.tailLabel}`));
       rootG.appendChild(grp);
       continue;
@@ -1109,11 +1283,11 @@ export function layoutAndRender() {
     if (isViewed) grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r: r + 5, class: 'gv-viewed-ring' }));
     if (isSelected) grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r: r + 7, class: 'gv-sel-ring' }));
     grp.appendChild(svgEl_('circle', { cx: g.x, cy: g.y, r, class: 'gv-body' }));
-    grp.appendChild(svgEl_('text', { x: g.x, y: g.y + r + 14, 'text-anchor': 'middle', class: 'gv-lbl' }, g.label));
+    grp.appendChild(svgEl_('text', { x: g.x, y: g.y + r + LBL_DY, 'text-anchor': 'middle', class: 'gv-lbl' }, g.label));
     // The bookmark caption sits ABOVE the node. A root's name is the tree title
     // already, so it is not repeated there.
     if (g.bookmarked && !rootIds.has(g.id)) {
-      grp.appendChild(svgEl_('text', { x: g.x, y: g.y - r - 7, 'text-anchor': 'middle', class: 'gv-bm' }, bookmarkCaption(g.node)));
+      grp.appendChild(svgEl_('text', { x: g.x, y: g.y - r - BM_DY, 'text-anchor': 'middle', class: 'gv-bm' }, bookmarkCaption(g.node)));
     }
     if (g.folded) {
       grp.appendChild(svgEl_('text', { x: g.x + r + 5, y: g.y + 4, class: 'gv-fold-n' }, '⋯' + g.folded));
