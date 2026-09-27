@@ -579,8 +579,19 @@ upstream opened with no Origin, cut at the token's `exp` + 5s with close code
   project title is a directory name. Its rows come from the ONE machine
   classifier — `lib/util/registry` `sessions()` + `enrichSessions()`, the same
   as `ls` and the Sessions panel — minus the hidden projects
-  (`createPortal({sessions, enrich})` are injectable); a Claude-only project is
-  listed without a link, and ports and pids never reach the page.
+  (`createPortal({sessions, enrich})` are injectable); rows split Active /
+  Inactive, and ports and pids never reach the page. It is themed from the
+  Georgetown Blue pack itself (`/theme.css`, generated through `theme.js`
+  `tokenDecls`; the bundled fonts are served same-origin).
+- **Starting a project** is `start.js` — `POST /api/sessions/<id>/start` on the
+  APEX only (never a daemon route, so `core/remote-policy` does not list it and
+  a session hostname default-denies it). The id is looked up among the
+  `sessions()` rows with `known: true` (the per-user known list —
+  `lib/util/registry` `rememberProject`, upserted by `registerInstance` on every
+  boot, pruned on read, `sessions()` its only reader); a hidden project is 404
+  like an unknown one; the POST needs the apex's exact Origin; one start per id
+  per 10s; the spawn is `lib/util/daemon` `spawnDaemon` (injectable:
+  `createPortal({spawnDaemon})`, `withPortal` passes it).
 - **cloudflared** runs as the portal's child (`createPortal({supervise})`, built
   once the port is bound), never detached from it: stopping the portal stops
   the connector first, so no tunnel is ever left answering 502s with nothing

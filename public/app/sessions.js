@@ -15,6 +15,11 @@
 // shows the command that would start one, with a copy button; running it is the
 // user's call, in their terminal.
 //
+// A project known on this machine (its daemon has booted here before) with no
+// surface and no Claude session is INACTIVE: it sits in a collapsed "Inactive"
+// group under the live rows, with the same start-it command. The group's
+// open/closed state survives the 5s refresh.
+//
 // Every string that came from the registry — a project title, a root path — is
 // a directory name somebody chose, so it is set as textContent, never parsed.
 import { $ } from './state.js';
@@ -25,6 +30,10 @@ export const REFRESH_MS = 5000;
 
 let timer = null;
 let seq = 0; // drops a slow response that lands after a newer one
+let inactiveOpen = false; // the Inactive group, as the user last left it
+
+// The registry's inactive shape (lib/util/registry isInactive): known, nothing running.
+export const isInactive = (row) => !!(row && !row.surface && !row.claude && row.known);
 
 const isOpen = () => { const p = $(PANEL); return !!p && !p.classList.contains('hidden'); };
 
@@ -158,14 +167,24 @@ export function renderSessions(data, error) {
     if (meta) meta.textContent = '';
     return;
   }
-  const rows = data.sessions;
+  const rows = data.sessions.filter((r) => !isInactive(r));
+  const inactive = data.sessions.filter(isInactive);
   if (!rows.length) {
     list.append(el('div', 'palette-empty', 'No web-chat surfaces or Claude sessions on this computer.'));
   }
   for (const row of rows) list.append(rowEl(row, data.now));
+  if (inactive.length) {
+    const group = el('details', 'ss-inactive');
+    group.open = inactiveOpen;
+    group.addEventListener('toggle', () => { inactiveOpen = group.open; });
+    group.append(el('summary', 'ss-inactive-head', `Inactive · ${inactive.length}`));
+    for (const row of inactive) group.append(rowEl(row, data.now));
+    list.append(group);
+  }
   if (meta) {
     const attached = rows.filter((r) => r.claude).length;
-    meta.textContent = `${rows.length} project${rows.length === 1 ? '' : 's'} · ${attached} with Claude`;
+    meta.textContent = `${rows.length} project${rows.length === 1 ? '' : 's'} · ${attached} with Claude`
+      + (inactive.length ? ` · ${inactive.length} inactive` : '');
   }
 }
 

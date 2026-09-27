@@ -168,7 +168,9 @@ function patternNames() {
 // Every `/api/…` literal mounted by the instance server or the hub.
 function routePaths() {
   const files = [];
-  for (const dir of ['lib/server/routes', 'lib/hub']) {
+  // lib/portal: the tunnel portal answers its own apex routes (the picker's
+  // /api/sessions and the start route), which never reach a daemon.
+  for (const dir of ['lib/server/routes', 'lib/hub', 'lib/portal']) {
     for (const f of fs.readdirSync(path.join(REPO_ROOT, dir))) {
       if (f.endsWith('.js')) files.push(`${dir}/${f}`);
     }

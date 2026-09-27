@@ -194,7 +194,7 @@ test('picker: live Claude presence from the registry — connected ×N, channel,
   assert.equal(JSON.stringify(row).includes(String(kid.pid)), false, 'no pids on the remote page');
 });
 
-test('picker: a project with Claude attached but no surface is listed WITHOUT a link; the portal starts nothing', async (t) => {
+test('picker: a project with Claude attached but no surface is listed WITHOUT a link; listing it starts nothing', async (t) => {
   const access = createFakeAccess();
   const root = '/nowhere/claude-only-project';
   const p = await withPortal(t, {
@@ -208,6 +208,7 @@ test('picker: a project with Claude attached but no surface is listed WITHOUT a 
   assert.deepEqual(list.json.sessions, [{
     id: instanceId(root), title: 'claude-only-project', url: null, surface: null,
     claude: { sessions: 1, channel: false, last_tool_at: null },
+    known: false,
   }]);
   // Its hostname is still the friendly 404 — listing it did not make it routable.
   const page = await p.request('/', { host: sessionHost(p.config, instanceId(root)), headers: { 'cf-access-jwt-assertion': access.mint() } });

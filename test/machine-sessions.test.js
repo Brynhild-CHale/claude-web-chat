@@ -345,4 +345,34 @@ test('panel: viewed remotely, the portal\'s refusal hint is shown instead of a b
   sessionsBody = ROWS();
 });
 
+test('panel: known projects with nothing running sit in a collapsed Inactive group that survives a refresh', async () => {
+  const body = ROWS();
+  body.sessions.push({ root: '/home/me/asleep', display_root: '~/asleep', title: 'asleep', current: false,
+    open_cmd: 'cd /home/me/asleep && claude-web-chat open', surface: null, claude: null, known: true, last_seen_at: NOW - 3_600_000 });
+  // Known but with Claude attached is NOT inactive — it stays in the live list.
+  body.sessions[1].known = true;
+  sessionsBody = body;
+  longTimers.length = 0;
+  key('s');
+  await tick();
+  const group = $('sessions-list').querySelector('details.ss-inactive');
+  assert.ok(group, 'an Inactive group is drawn');
+  assert.equal(group.open, false, 'collapsed by default');
+  assert.match(group.querySelector('summary').textContent, /Inactive · 1/);
+  assert.ok(group.contains(rowFor('/home/me/asleep')), 'the known, stopped project is inside it');
+  assert.ok(!group.contains(rowFor('/home/me/solo')), 'a Claude-attached one is not');
+  assert.equal(rowFor('/home/me/asleep').querySelector('.rn-cmd').textContent, 'cd /home/me/asleep && claude-web-chat open');
+  assert.match($('sessions-meta').textContent, /4 projects · 2 with Claude · 1 inactive/);
+
+  group.open = true;
+  group.dispatchEvent(new W.Event('toggle'));
+  const refresh = longTimers.find((x) => x.ms === 5000);
+  longTimers.length = 0;
+  await refresh.fn();
+  await tick();
+  assert.equal($('sessions-list').querySelector('details.ss-inactive').open, true, 'the refresh keeps it open');
+  escape();
+  sessionsBody = ROWS();
+});
+
 test('panel: teardown', () => { restore(); });
