@@ -18,6 +18,11 @@
 //     zones; --account <id> is used without listing; a refusal names both the
 //     classic and the newer permission label; a wildcard on the zone apex is
 //     warned about in the plan, never refused.
+//   * (s4l-2) independent MFA goes on the way the live API takes it: the org is
+//     PUT back whole with only MFA changed (no read-only fields, no "" for an
+//     unset setting — the live run's 12062); an org that still refuses leaves
+//     MFA on the application alone; both refused → the PIN, with both reasons;
+//     a re-run after a PIN fallback turns MFA on in place, creating nothing.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -31,6 +36,7 @@ const { createFakeAccess } = require('../test-support/fake-access');
 const { userPaths } = require('../lib/core/paths');
 const { loadConfig } = require('../lib/tunnel/config');
 const { createCfApi, PERMS } = require('../lib/tunnel/cf-api');
+const { orgBody } = require('../lib/tunnel/cf-setup');
 const outbound = require('../lib/util/outbound');
 
 function capture() {
@@ -543,4 +549,97 @@ test('one token: a wildcard below the apex (nested style) carries no warning', a
   const r = await p;
   assert.deepEqual(r.plan.warnings, []);
   assert.doesNotMatch(c.text(), /catches every undefined subdomain/);
+});
+
+// ── s4l-2: independent MFA ──────────────────────────────────────────────────
+
+const orgPuts = (fake) => fake.calls.filter((c) => c.method === 'PUT' && /\/access\/organizations$/.test(c.path));
+
+test('one token: the organization is PUT back whole with only MFA changed — no read-only fields, no unset ones', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const before = { ...fake.db.org };
+  await (await run(fake)).p;
+  assert.deepEqual(fake.db.orgRefusals, [], 'the live API\'s 12062 never came');
+  const [put] = orgPuts(fake);
+  assert.ok(put, 'the organization was written once');
+  for (const k of ['created_at', 'updated_at']) assert.ok(!(k in put.body), `${k} is read-only and not sent`);
+  assert.ok(!Object.values(put.body).includes(''), 'an unset setting is left out, not sent as ""');
+  assert.equal(put.body.auth_domain, before.auth_domain);
+  assert.equal(put.body.name, before.name);
+  assert.equal(put.body.session_duration, before.session_duration, 'the org\'s own settings go back as they were');
+  assert.deepEqual(put.body.login_design, { background_color: '#112233', header_text: 'Team login' });
+  assert.deepEqual(put.body.mfa_config, { allowed_authenticators: ['biometrics', 'security_key'], session_duration: '720h' });
+  assert.equal(put.body.mfa_required_for_all_apps, false, 'top-level, and not forced on other apps');
+  assert.equal(fake.db.org.created_at, before.created_at);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+});
+
+test('orgBody: keeps what the org requires of every app, and an org\'s own MFA extras', () => {
+  const body = orgBody({
+    auth_domain: 't.cloudflareaccess.com', name: 't', mfa_required_for_all_apps: true,
+    mfa_config: { required_aaguids: 'aa-list', session_duration: '', allowed_authenticators: [] },
+    custom_pages: { forbidden: '', identity_denied: 'p1' }, id: 'x', uid: 'y', created_at: 'z',
+  }, { mfaSession: '12h' });
+  assert.deepEqual(body, {
+    auth_domain: 't.cloudflareaccess.com', name: 't', mfa_required_for_all_apps: true,
+    mfa_config: { required_aaguids: 'aa-list', allowed_authenticators: ['biometrics', 'security_key'], session_duration: '12h' },
+    custom_pages: { identity_denied: 'p1' },
+  });
+});
+
+test('one token: the organization refuses MFA (12062) → required on this application alone', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = 'org';
+  const { c, p } = await run(fake);
+  const config = await p;
+  assert.equal(fake.db.org.mfa_config, undefined, 'the organization is left as it was');
+  assert.deepEqual(fake.db.apps[0].mfa_config, { mfa_disabled: false, allowed_authenticators: ['biometrics', 'security_key'], session_duration: '720h' });
+  assert.equal(config.signin, 'pin+biometric');
+  assert.equal(loadConfig().signin, 'pin+biometric');
+  assert.match(c.text(), /independent MFA \(organization\) — refused — trying this application alone/);
+  assert.match(c.text(), /Sign-in: emailed one-time PIN \+ biometrics \(independent MFA\) — required on this application only; Cloudflare would not turn it on for the organization: .*invalid_org_config \(12062\)/);
+
+  // A re-run tries the organization again, and otherwise changes nothing.
+  const snap = snapshot(fake);
+  await (await run(fake)).p;
+  assert.equal(snapshot(fake), snap);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+});
+
+test('one token: organization AND application refuse MFA → the PIN, with both reasons', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = true;
+  const { c, p } = await run(fake);
+  await p;
+  assert.equal(loadConfig().signin, 'pin');
+  assert.equal(fake.db.apps[0].mfa_config, undefined);
+  assert.match(c.text(), /Sign-in: emailed one-time PIN — Cloudflare would not turn on independent MFA for the organization \(.*invalid_org_config \(12062\)\), nor require it on the application alone \(.*not available for this account \(12130\)\) — so sign-in is the emailed one-time PIN alone, with a 720h session\./);
+});
+
+test('one token: a re-run after a PIN fallback turns MFA on in place — nothing created, nothing else touched', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = true;
+  await (await run(fake)).p;
+  assert.equal(loadConfig().signin, 'pin');
+  const aud = fake.db.apps[0].aud;
+  const tunnelId = fake.db.tunnels[0].id;
+  const from = fake.calls.length;
+
+  fake.sim.mfaRefused = false;
+  const { c, p } = await run(fake);
+  await p;
+  const writes = fake.calls.slice(from).filter((x) => x.method !== 'GET').map((x) => `${x.method} ${x.path.replace(/^\/accounts\/[^/]+/, '')}`);
+  assert.deepEqual(writes, ['PUT /access/organizations', `PUT /access/apps/${fake.db.apps[0].id}`], 'only the org and the app were written');
+  assert.ok(fake.db.org.mfa_config, 'org-level MFA on');
+  assert.equal(fake.db.apps[0].mfa_config.mfa_disabled, false);
+  assert.equal(fake.db.apps[0].aud, aud, 'the same application — the portal config stays valid');
+  assert.equal(fake.db.tunnels.length, 1);
+  assert.equal(fake.db.tunnels[0].id, tunnelId);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+  assert.match(c.text(), /update\s+independent MFA \(organization\)/, 'the plan says it');
+  assert.match(c.text(), /independent MFA \(organization\) — turned on/);
 });
