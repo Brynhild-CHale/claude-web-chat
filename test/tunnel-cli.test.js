@@ -348,6 +348,7 @@ test('up restarts a portal from an older build instead of calling it "already up
   assert.match(c.text(), new RegExp(`restarting an older portal \\(pid 424242, protocol 1 → ${PORTAL_PROTOCOL_VERSION}\\)`));
   assert.equal(r.already, false);
   assert.equal(health.portal_protocol, PORTAL_PROTOCOL_VERSION, 'this build\'s portal is the one running now');
+  assert.deepEqual(health.config && [health.config.state, health.config.live], ['ok', true], '`portal run` follows tunnel.json');
   assert.notEqual(health.pid, 424242);
 
   // A CURRENT portal is left alone.
@@ -385,7 +386,7 @@ test('status says when the running portal enforces an older tunnel.json than the
   assert.equal(st.portal.config_current, false);
   const c = capture();
   await tunnel(['status'], { log: c.log, env });
-  assert.match(c.text(), /the running portal still enforces the tunnel\.json it started with/);
+  assert.match(c.text(), /the running portal does not enforce this tunnel\.json yet/);
   assert.match(c.text(), /tunnel up` restarts it/);
 
   // The same file, merely reformatted, is the same config: no warning.
@@ -395,7 +396,72 @@ test('status says when the running portal enforces an older tunnel.json than the
   const c2 = capture();
   const st2 = await tunnel(['status'], { log: c2.log, env: { WEB_CHAT_PORTAL_PORT: String(port2) } });
   assert.equal(st2.portal.config_current, true);
-  assert.doesNotMatch(c2.text(), /still enforces/);
+  assert.doesNotMatch(c2.text(), /does not enforce|restart needed|FAILING CLOSED/);
+});
+
+test('status says when the running portal needs a restart for a hostname change, or is failing closed', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  writeConfig(access.config({ hostname: 'new.example.test' }));
+  const port = await freePort();
+  await fakePortal(t, port, {
+    portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: 'the-old-hostname',
+    config: { state: 'restart-needed', error: null, restart: ['hostname'] },
+  });
+  const c = capture();
+  const st = await tunnel(['status'], { log: c.log, env: { WEB_CHAT_PORTAL_PORT: String(port) } });
+  assert.deepEqual(st.portal.config.restart, ['hostname']);
+  assert.match(c.text(), /restart needed: tunnel\.json changed hostname, which needs a new cloudflared/);
+  assert.match(c.text(), /tunnel up` restarts it/);
+  assert.doesNotMatch(c.text(), /does not enforce this tunnel\.json yet/, 'one warning, the specific one');
+
+  // The file is broken: status cannot read it, and says the portal is failing closed.
+  fs.writeFileSync(userPaths().tunnelConfig, '{ nope');
+  const port2 = await freePort();
+  await fakePortal(t, port2, {
+    portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: 'x',
+    config: { state: 'invalid', error: 'tunnel config: unreadable', restart: [] },
+  });
+  const c2 = capture();
+  await tunnel(['status'], { log: c2.log, env: { WEB_CHAT_PORTAL_PORT: String(port2) } });
+  assert.match(c2.text(), /tunnel: not configured/);
+  assert.match(c2.text(), /FAILING CLOSED: the portal cannot read this tunnel\.json, so it answers every remote request\s+503/);
+
+  // Fixed, but not re-read yet.
+  writeConfig(access.config());
+  const c3 = capture();
+  await tunnel(['status'], { log: c3.log, env: { WEB_CHAT_PORTAL_PORT: String(port2) } });
+  assert.match(c3.text(), /FAILING CLOSED until the portal re-reads tunnel\.json/);
+});
+
+test('up names the sections a running portal could not apply when it restarts it', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  fakeCloudflared(t);
+  writeConfig(goodRaw(access, { metricsPort: await freePort() }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port), NODE_OPTIONS: `--require ${JSON.stringify(NO_OUTBOUND)}` };
+  delete env.WEB_CHAT_HOST;
+  const stale = await fakePortal(t, port, {
+    portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: 'the-old-hostname',
+    config: { state: 'restart-needed', error: null, restart: ['hostname', 'tunnel'] },
+  });
+  let health = null;
+  t.after(async () => {
+    try { await tunnel(['down'], { log: () => {}, env }); } catch {}
+    for (const pid of [health && health.pid, health && health.cloudflared && health.cloudflared.pid]) {
+      if (pid && isPidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    deregisterRole('portal', {});
+  });
+  const c = capture();
+  const r = await tunnel(['up'], { log: c.log, env, kill: () => stale.kill(), waitMs: 15000 });
+  health = r.health;
+  assert.match(c.text(), /restarting the portal \(pid 424242\): .*tunnel\.json changed hostname, tunnel, which a running portal cannot apply/);
+  assert.equal(r.already, false);
 });
 
 test('up restarts a current portal that enforces an older tunnel.json instead of calling it "already up"', async (t) => {
@@ -425,7 +491,7 @@ test('up restarts a current portal that enforces an older tunnel.json instead of
   const r = await tunnel(['up'], { log: c.log, env, kill, waitMs: 15000 });
   health = r.health;
   assert.deepEqual(killed, [[424242, 'SIGTERM']]);
-  assert.match(c.text(), /restarting the portal \(pid 424242\): .*tunnel\.json changed since it started/);
+  assert.match(c.text(), /restarting the portal \(pid 424242\): .*tunnel\.json changed since it last read it/);
   assert.equal(r.already, false);
   const again = await tunnel(['up'], { log: () => {}, env, kill });
   assert.equal(again.already, true, 'the portal it started enforces the file as it is');

@@ -402,16 +402,24 @@ async function withHub(t, { port = 0, createHub } = {}) {
 // Stand up the tunnel PORTAL (lib/portal) for a test and own its teardown —
 // withHub's sibling. Loopback, ephemeral port, never start(): no registry
 // entry for the portal itself, no JWKS warm-up against anything real.
-//   withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle })
+//   withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
+//                   configFile, configPollMs, configDebounceMs, log })
 // `config` is tunnel.json's raw shape (normalised here, so a test can hand in
-// fake-access's config()). Returns { portal, port, config, request } where
+// fake-access's config()). `configFile` makes the portal watch that file the
+// way `portal run` watches tunnel.json (write `config` into it first). Returns { portal, port, config, request } where
 // `request(path, {host, method, headers, body})` is a RAW request — the portal
 // routes on Host, which fetch refuses to set.
-async function withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle } = {}) {
+async function withPortal(t, {
+  config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
+  configFile, configPollMs, configDebounceMs, log,
+} = {}) {
   const { createPortal } = require('../lib/portal');
   const { normalizeConfig } = require('../lib/tunnel/config');
   const cfg = normalizeConfig(config);
-  const portal = createPortal({ port: 0, config: cfg, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle });
+  const portal = createPortal({
+    port: 0, config: cfg, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
+    configFile, configPollMs, configDebounceMs, log,
+  });
   await new Promise((resolve, reject) => {
     const onError = (e) => { portal.server.off('error', onError); reject(e); };
     portal.server.once('error', onError);
@@ -419,6 +427,7 @@ async function withPortal(t, { config, fetchJwks, now, instances, sessions, enri
   });
   const port = portal.server.address().port;
   t.after(() => portal.stop());
+  portal.watchConfig();
   function request(pathStr, { host = cfg.hostname, method = 'GET', headers = {}, body } = {}) {
     const http = require('http');
     return new Promise((resolve, reject) => {

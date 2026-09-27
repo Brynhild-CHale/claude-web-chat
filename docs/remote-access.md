@@ -123,13 +123,33 @@ so, the update itself still succeeds, and `claude-web-chat tunnel up` is the fix
 With no portal running, `update` leaves the tunnel alone. (`up` also restarts a
 portal it finds from an older build.)
 
-**The portal reads `tunnel.json` once, when it starts.** An edit — an email
-added or revoked, a project put under `expose.exclude`, `allowDestructive` — is
-not in force until the portal restarts: run `claude-web-chat tunnel up`, which
-restarts a portal whose config differs from the file (`tunnel setup` says so
-too). Until then `tunnel status` warns that the running portal still enforces
-the file it started with. (The per-project `no-remote` marker is different: it
-is read live, see below.)
+**The portal follows `tunnel.json` while it runs.** It watches the file (and
+polls it every two seconds, in case the watch misses a save) and applies a
+valid edit at once:
+
+- `allow` — an email added gets in on its next request; an email **revoked**
+  is refused on its next request, and any live socket it has open is closed
+  within a second (code 4403 — the page's reconnect then meets the refusal).
+- `access` (team, AUD), `expose.exclude`, `remote.allowDestructive`,
+  `showRoots` — in force from the next request; a newly excluded project's
+  open sockets are closed the same way.
+- `hostname`, `style`, `tunnel` — **not** applied live: they name what
+  cloudflared routes, so they need a new connector. The portal keeps serving
+  the hostnames it started with (the rest of the same edit still applies), its
+  log says `restart needed`, and `tunnel status` says which sections changed
+  and to run `claude-web-chat tunnel up`, which restarts it.
+
+**A broken `tunnel.json` fails closed.** If the file goes missing, stops
+parsing, or no longer validates (an empty allowlist, say), the portal does not
+keep the last good copy: it answers every request except its own loopback
+health check with 503, closes every live socket (code 4503), and logs
+`FAILING CLOSED` with the reason; `tunnel status` says so too. Fix the file and
+the portal resumes within seconds, on its own. (`tunnel setup` over an
+unreadable file still moves it aside and writes a fresh one.)
+
+The connector token (`~/.web-chat/tunnel/token`) is not watched: a new one is
+used the next time cloudflared starts — `tunnel down`, then `tunnel up`. (The
+per-project `no-remote` marker is read live too, see below.)
 
 ## Keeping a project off the tunnel
 
