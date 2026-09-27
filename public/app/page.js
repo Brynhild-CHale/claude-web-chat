@@ -22,7 +22,7 @@
 // markdown chunk written between two panes) re-parents the panes it moves.
 import { $, view } from './state.js';
 import { renderMarkdown, headings } from './markdown.js';
-import { panes, readOnlyNow, unminimize, blockType, syncOwnerChips } from './mounts.js';
+import { panes, layoutLocked, unminimize, blockType, syncOwnerChips } from './mounts.js';
 import { isPhone } from './viewport.js';
 import { labelFor, nodeById, nodeTime } from './labels.js';
 
@@ -356,18 +356,18 @@ function runElement(seg) {
 // The run's controls, drawn only when they would do something: ↺ when the run is
 // off Claude's layout, the stacks/fixed chip when there is a row to keep (two or
 // more visible panes) or the run is already fixed (so it can be turned back).
-// Both are writes, so a read-only view (preview, phone) has neither.
+// Both are layout, so a layout-locked view (preview, phone) has neither.
 function renderRunHead(el, seg, fixed) {
   const head = el.querySelector('.run-head');
   head.textContent = '';
-  if (!readOnlyNow()) {
+  if (!layoutLocked()) {
     if (runDirty(seg.panes)) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'run-reset';
       b.textContent = "↺ Claude's layout";
       b.title = 'Restore the arrangement Claude proposed for these blocks';
-      b.addEventListener('click', () => { if (!readOnlyNow()) resetRun(seg.anchor); });
+      b.addEventListener('click', () => { if (!layoutLocked()) resetRun(seg.anchor); });
       head.appendChild(b);
     }
     const visible = seg.panes.filter((id) => !panes.get(id).pane_state.minimized).length;
@@ -378,7 +378,7 @@ function renderRunHead(el, seg, fixed) {
       b.textContent = fixed ? 'fixed grid' : 'stacks on narrow';
       b.setAttribute('aria-pressed', String(fixed));
       b.title = 'On a narrow screen these blocks either stack to one column in reading order, or keep their grid and scroll sideways';
-      b.addEventListener('click', () => { if (!readOnlyNow()) setRunStacks(seg.anchor, fixed); });
+      b.addEventListener('click', () => { if (!layoutLocked()) setRunStacks(seg.anchor, fixed); });
       head.appendChild(b);
     }
   }
@@ -405,10 +405,10 @@ function renderRunMin(el, seg) {
     restore.textContent = '↗';
     chip.append(label, restore);
     chip.addEventListener('click', () => {
-      // A phone is a read-only viewer: restoring a block would be a write to the
-      // live surface, so the chip only shows it HERE (a local peek).
+      // A phone's layout is fixed: restoring a block would re-arrange the live
+      // page, so the chip only shows it HERE (a local peek).
       if (isPhone()) { chip.classList.toggle('on', p.wrapper.classList.toggle('peek')); return; }
-      if (readOnlyNow()) return;
+      if (layoutLocked()) return;
       unminimize(id);
     });
     box.appendChild(chip);
@@ -465,7 +465,7 @@ export function layoutPage() {
   for (const a of [...runEls.keys()]) if (!liveRuns.has(a)) { runEls.get(a).remove(); runEls.delete(a); }
   if (!segs.length) want.push(zeroElement());
   else if (zeroEl) zeroEl.remove();
-  if (segs.length && !readOnlyNow()) want.push(tailElement());
+  if (segs.length && !layoutLocked()) want.push(tailElement());
   else if (tailEl) tailEl.remove();
 
   want.forEach((el, i) => {
@@ -562,8 +562,8 @@ export function renderContents() {
     b.addEventListener('click', () => scrollToHeading(r.md, r.slug));
     nav.appendChild(b);
   }
-  // The tip is about adding to the page — nothing a read-only view can do.
-  if (readOnlyNow()) return;
+  // The tip is about adding to the page — nothing a layout-locked view can do.
+  if (layoutLocked()) return;
   const tip = document.createElement('div');
   tip.className = 'cn-tip';
   tip.innerHTML = 'Ask Claude for a new section, or press <kbd>N</kbd> to add a block.';

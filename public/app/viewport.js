@@ -5,11 +5,13 @@
 // and Queue. That is layout, and a desktop window that narrow still wants it —
 // the product's own default posture is a terminal beside a browser.
 //
-// A PHONE is more than narrow: it is the read-only viewer (design, Layout Engine
+// A PHONE is more than narrow: its LAYOUT is fixed (design, Layout Engine
 // "Phone viewer" + Graph Prototype phone). Its panes show a title and type chip
-// and nothing that writes — no drag, resize, pin, lock, minimize or close, and
-// form fields refuse edits — so the phone's writes go through the queue (stage /
-// hold, comment, Push) and the graph's actions.
+// and no layout control — no drag, resize, pin, lock, minimize or close — while
+// what is INSIDE a pane works exactly as on the desktop (maintainer, 2026-09-27:
+// through the tunnel the phone can be the only way to reach a session). The two
+// gates live in mounts.js: contentReadOnly (a preview only) and layoutLocked
+// (a preview or a phone).
 //
 // The phone is chosen by SHAPE, not by pointer (maintainer ruling a11): narrow
 // AND portrait-tall, whatever the pointer. A phone held upright is ~9:19 (its
@@ -21,7 +23,7 @@
 // phone rules off <html class="phone">, never a media query of its own).
 //
 // The answer rides on <html class="phone"> for CSS, and `isPhone()` + a bus
-// 'viewport' event for the modules that change behaviour (mounts.js read-only,
+// 'viewport' event for the modules that change behaviour (mounts.js layout lock,
 // graph-view.js log vs canvas). No matchMedia (jsdom, very old engines) = not a
 // phone, which is the desktop everyone has today.
 import { bus } from './bus.js';

@@ -259,10 +259,15 @@ function makePaneChrome(id, title, pane_state, params, component, owner) {
     b.addEventListener('click', onClick);
     return b;
   }
-  // Every header control is a WRITE to the live surface. A detached preview is
-  // read-only (plan §2b D2), and so is a phone (viewport.js), so they are hidden
-  // there (app.css) and refuse here.
-  const live = () => !readOnlyNow();
+  // Every header control changes the page's LAYOUT. A detached preview is
+  // read-only (plan §2b D2) and a phone's layout is fixed (viewport.js), so they
+  // are hidden there (app.css) and refuse here — saying why, should a gesture
+  // reach one anyway.
+  const live = () => {
+    if (!layoutLocked()) return true;
+    refuseLayoutGesture({ id });
+    return false;
+  };
 
   // The pin's meaning, said out loud: it is not decoration, it is what keeps a
   // pane through a surface wipe and an agent-driven clear-all.
@@ -294,6 +299,7 @@ function makePaneChrome(id, title, pane_state, params, component, owner) {
 
   // Below NARROW_SPAN history/pin/lock are folded away; ⋯ shows them in the header.
   const btnMore = mkBtn('⋯', 'more — history, pin, lock', () => {
+    if (!live()) return;
     wrapper.classList.toggle('more-open');
   }, 'pane-btn-more');
 
@@ -343,9 +349,9 @@ function makePaneChrome(id, title, pane_state, params, component, owner) {
 
 // A locked pane refuses moves as well as re-renders: no drag, no resize (the
 // server drops a locked pane's layout changes too, and re-sends the truth). A
-// detached preview refuses them as well, and so does a phone — both read-only.
+// detached preview refuses them as well, and so does a phone — layoutLocked().
 export function refusesLayout(pane_state) {
-  return !!(pane_state && pane_state.locked) || readOnlyNow();
+  return !!(pane_state && pane_state.locked) || layoutLocked();
 }
 
 // The run grid a pane sits in, measured: its rect and one column's width. A grid
@@ -933,7 +939,7 @@ export function syncOwnerChips() {
 export function revealPane(id) {
   const p = panes.get(id);
   if (!p) return false;
-  if (!readOnlyNow()) unminimize(id);
+  if (!layoutLocked()) unminimize(id);
   const w = p.wrapper;
   if (w.scrollIntoView) w.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   w.classList.remove('pane-flash');
@@ -980,27 +986,43 @@ export function applyRemotePaneState(id, pane_state) {
   layoutPage();
 }
 
-// ── read-only preview (plan §2b D2) ─────────────────────────────────────────
-// A detached preview shows a committed node; it is not an editing surface. Its
-// writes were always gated (store echo, pane:state, pane:form, events), but an
-// edit in a previewed pane used to silently re-aim the graph onto that node
+// ── two gates: content read-only, layout locked ─────────────────────────────
+// CONTENT READ-ONLY — a detached preview, and nothing else (plan §2b D2). A
+// preview shows a committed node; it is not an editing surface. Its writes were
+// always gated (store echo, pane:state, pane:form, events), but an edit in a
+// previewed pane used to silently re-aim the graph onto that node
 // (branch-on-edit). Now editing needs the node made active on the graph screen,
 // and a previewed pane refuses the gesture instead of swallowing it: form
 // controls do not take input, toggles do not toggle, submits do not submit, and
 // the user is told how to edit. Plain buttons and links still work — a tab
 // strip or a capture pane's reduced/expanded switch is viewing, not editing.
 //
-// A PHONE is read-only the same way, for a different reason: it is a viewer
-// (viewport.js), whose writes go through the queue and the graph screen. One
-// predicate, readOnlyNow(), answers for both.
+// LAYOUT LOCKED — a preview OR a phone. It governs everything that arranges the
+// page rather than what is in a pane: drag, resize, pin, lock, minimize, close,
+// the ⋯ narrow menu, history ◷, ↺ Claude's layout, the stacks chip, adding a
+// block. A phone is NOT content read-only (maintainer, 2026-09-27): through the
+// tunnel it can be the only way to reach a session, so its panes' content works
+// exactly as on the desktop — typing, toggles, submits, declared signals,
+// api.spawn, form state, activity routing — and only the layout is fixed.
 //
-// The guards sit in the CAPTURE phase on the shadow root, so they run before the
-// pane's own listeners and can stop a submit/toggle from reaching its script.
-// They read the predicate at event time — a kept pane re-attached by
-// leavePreview, or a phone turned into a wide landscape, is editable again with
-// no remount. Synthetic rehydrate events (applyFormState's input/change) are not
-// gestures and are never blocked.
-export const readOnlyNow = () => !!view.previewing || isPhone();
+// These two predicates are the gates. (The one phone-only branch beside them is
+// drawer.js spawnComponent: a preview adds a block to the LIVE page instead of
+// refusing it, so adding a block cannot simply ask layoutLocked().)
+//
+// The content guards sit in the CAPTURE phase on the shadow root, so they run
+// before the pane's own listeners and can stop a submit/toggle from reaching
+// its script. They read the predicate at event time — a kept pane re-attached
+// by leavePreview is editable again with no remount. Synthetic rehydrate events
+// (applyFormState's input/change) are not gestures and are never blocked.
+export const contentReadOnly = () => !!view.previewing;
+export const layoutLocked = () => contentReadOnly() || isPhone();
+
+// A layout gesture refused: the topbar words the note (a preview's D2 hint, or
+// the phone's "larger screen" one).
+// `detail` names what was refused ({id} a block, {spawn} a component).
+export function refuseLayoutGesture(detail) {
+  window.dispatchEvent(new CustomEvent('wc:readonly-attempt', { detail: { ...detail, layout: true } }));
+}
 const TEXT_ENTRY = 'textarea, select, input:not([type=checkbox]):not([type=radio])'
   + ':not([type=button]):not([type=submit]):not([type=reset]):not([type=image])';
 const TOGGLE = 'input[type=checkbox], input[type=radio]';
@@ -1034,37 +1056,37 @@ function refuse(e, id) {
 }
 
 function guardReadonly(root, host, id) {
-  host.toggleAttribute('data-wc-readonly', readOnlyNow());
+  host.toggleAttribute('data-wc-readonly', contentReadOnly());
   adoptReadonlySheet(root);
   // mousedown: a text field or select takes focus / opens on press.
   root.addEventListener('mousedown', (e) => {
-    if (readOnlyNow() && editable(e.target)) refuse(e, id);
+    if (contentReadOnly() && editable(e.target)) refuse(e, id);
   }, true);
   // keyboard focus still reaches a field (Tab stays navigation); typing does not.
   root.addEventListener('keydown', (e) => {
-    if (readOnlyNow() && editable(e.target) && !NAV_KEYS.has(e.key)) refuse(e, id);
+    if (contentReadOnly() && editable(e.target) && !NAV_KEYS.has(e.key)) refuse(e, id);
   }, true);
   // paste, drop, IME — anything that would change a value.
-  root.addEventListener('beforeinput', (e) => { if (readOnlyNow()) refuse(e, id); }, true);
+  root.addEventListener('beforeinput', (e) => { if (contentReadOnly()) refuse(e, id); }, true);
   // a checkbox/radio toggles on click (a label's click is re-dispatched to it);
   // a submitter submits.
   root.addEventListener('click', (e) => {
-    if (readOnlyNow() && (matches(e.target, TOGGLE) || matches(e.target, SUBMITTER))) refuse(e, id);
+    if (contentReadOnly() && (matches(e.target, TOGGLE) || matches(e.target, SUBMITTER))) refuse(e, id);
   }, true);
-  root.addEventListener('submit', (e) => { if (readOnlyNow()) refuse(e, id); }, true);
+  root.addEventListener('submit', (e) => { if (contentReadOnly()) refuse(e, id); }, true);
 }
 
-// Re-mark every mounted pane after the gate flips (topbar previewNode /
+// Re-mark every mounted pane after a gate flips (topbar previewNode /
 // leavePreview, or the phone posture coming or going). A pane mounted while
 // read-only is marked at mount time.
 export function syncReadonly() {
-  const ro = readOnlyNow();
+  const ro = contentReadOnly();
   for (const p of panes.values()) {
     if (p.host) p.host.toggleAttribute('data-wc-readonly', ro);
     // a phone's local peek at a minimized block does not outlive the phone
     if (!isPhone()) p.wrapper.classList.remove('peek');
   }
-  // the run controls are writes, so they come and go with the read-only gate
+  // the run controls are layout, so they come and go with the layout gate
   layoutPage();
 }
 bus.on('viewport', syncReadonly);

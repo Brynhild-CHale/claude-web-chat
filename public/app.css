@@ -1060,7 +1060,8 @@ kbd {
 
 /* A detached preview is READ-ONLY (plan §2b D2): badge it, and take away every
    block control that would write — pin, lock, minimize, close, drag, resize.
-   Form controls inside the panes are refused by mounts.js guardReadonly. */
+   Form controls inside the panes are refused by mounts.js guardReadonly (the
+   content gate, contentReadOnly — a preview only, never a phone). */
 #main.preview-readonly { position: relative; }
 /* a page with a title carries the badge on its meta line instead (page.js) */
 #main.preview-readonly.has-title::after { display: none; }
@@ -1457,8 +1458,8 @@ body.pin-mode #main { cursor: crosshair; }
    well + rail; NARROW <760 stacks the panes in reading order, sheds the topbar
    and moves ↑/↓ · ↩ active · Graph · Queue [n] into a 52px bottom bar, where
    Queue opens the rail as a full screen. A PHONE (narrow + portrait-tall —
-   public/app/viewport.js, the one place that rule lives, sets <html class="phone">) is on top of that the
-   read-only viewer, and its graph screen is a log (public/app/graph-log.js). */
+   public/app/viewport.js, the one place that rule lives, sets <html class="phone">) on top of that
+   fixes the layout (pane content stays live), and its graph screen is a log (public/app/graph-log.js). */
 
 /* --- the contents column: a slot, drawn only when something fills it (the page
    model's headings) and only when there is room for it --- */
@@ -1530,9 +1531,9 @@ body.pin-mode #main { cursor: crosshair; }
   .rail-pending .rp-cancel, .rail-error-actions button { height: 44px; }
 }
 
-/* --- the phone: a read-only viewer. A block is its title and type chip; every
-   control that would write is gone (mounts.js refuses them too, and refuses form
-   edits inside the pane). Writes go through the queue and the graph screen. --- */
+/* --- the phone: pane CONTENT is live, the LAYOUT is fixed. A block's header is
+   its title and type chip; every layout control is gone (mounts.js layoutLocked
+   refuses them too). What is inside a pane works as on the desktop. --- */
 .phone .pane :is(.pane-drag, .pane-btn, .pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
 .phone .pane-header { cursor: default; }
 .phone .pane.narrow .pane-type { display: inline-block; }

@@ -11,9 +11,13 @@
 //   * The narrow bottom bar drives the topbar's own ↑/↓, ↩ active and Graph and
 //     mirrors their state; Queue [n] opens the rail as the queue screen, reads
 //     "‹ Page" while it is open, and carries the queue count.
-//   * A phone is a read-only viewer: form edits in a pane refuse with a note that
-//     points at the queue, header writes refuse, and a minimized block's chip only
-//     peeks at it locally — nothing reaches the live surface.
+//   * On a phone pane CONTENT is live and the LAYOUT is fixed (maintainer,
+//     2026-09-27 — through the tunnel the phone can be the only way in): typing,
+//     toggles, submits, declared-signal store writes (with the gesture flag),
+//     api.spawn, form state and activity events all work as on the desktop; the
+//     header's layout controls are hidden and refuse with "a larger screen", and
+//     a minimized block's chip only peeks at it locally. A preview on a phone is
+//     still content read-only (D2).
 //   * The phone's graph screen is a newest-first log of one graph: cards with
 //     ACTIVE / ⑃ / ⚑ / time / trigger, ⋯ N folded ghost rows, filters that hide,
 //     a graph switcher, and an action bar (Set active, ⚑ with a name field,
@@ -21,7 +25,7 @@
 //   * The phone is chosen by SHAPE (maintainer ruling a11): narrow AND portrait,
 //     whatever the pointer — a narrow-tall mouse window is a phone, a landscape
 //     phone and a terminal-beside-browser window are not.
-//   * Leaving the phone posture gives the canvas and editing back, in place.
+//   * Leaving the phone posture gives the canvas and layout editing back, in place.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -55,6 +59,15 @@ const FOLDED = { n6: [{ at: 6.1, summary: 'check the form' }, { at: 6.2, summary
 const MOUNTS = [
   { id: 'form', html: '<input id="t"><button type="button" id="plain">p</button>'
     + '<script>root.getElementById("plain").addEventListener("click", () => { window.__plain = (window.__plain || 0) + 1; });</script>', params: { title: 'Next run', type: 'form' }, pane_state: { colSpan: 4 } },
+  // A declared-signal form and a pane that spawns a child (api.spawn): the
+  // content a phone must be able to drive.
+  { id: 'signup', html: '<form id="f"><input id="nm" name="nm"><input type="checkbox" id="ok" name="ok"><button id="go">Send</button></form>'
+    + '<button type="button" id="kid">more</button>'
+    + '<script>root.getElementById("f").addEventListener("submit", (e) => { e.preventDefault();'
+    + ' window.__subs = (window.__subs || 0) + 1;'
+    + ' store.set({ signup_submit: { seq: window.__subs, name: root.getElementById("nm").value } }); });'
+    + ' root.getElementById("kid").addEventListener("click", async () => { window.__spawned = await api.spawn({ html: "<p>child</p>" }); });</script>',
+  params: { title: 'Sign up', type: 'form' }, pane_state: { colSpan: 6 } },
   { id: 'tucked', html: '<p>hidden</p>', params: { title: 'Tucked' }, pane_state: { minimized: true } },
 ];
 // Viewports, as the browser reports them (CSS px, the page's own box).
@@ -121,7 +134,7 @@ before(async () => {
     if (u.startsWith('/api/graph/node/')) {
       const id = decodeURIComponent(u.split('/').pop());
       const n = NODES.find((x) => x.id === id) || NODES[0];
-      return json({ ...n, author: 'claude', mounts: [], store: {}, ...(FOLDED[id] ? { folded: FOLDED[id] } : {}) });
+      return json({ ...n, author: 'claude', mounts: n.mounts || [], store: {}, ...(FOLDED[id] ? { folded: FOLDED[id] } : {}) });
     }
     if (u.startsWith('/api/graph/diff')) return json({ mounts: { added: [], changed: [], removed: [] } });
     if (u === '/api/graph/changes') return json({ changes: CHANGES });
@@ -218,27 +231,110 @@ test('a node\'s clock time has one formatter, labels.js nodeTime', async () => {
   assert.deepEqual(homes, ['labels.js'], 'format a node\'s time with labels.js nodeTime, never a private copy');
 });
 
-/* ---------------- the phone: a read-only viewer ---------------- */
+/* ---------------- the phone: content live, layout fixed ---------------- */
 
-test('a phone is marked on <html> and its panes are read-only', async () => {
+const typeInto = (input, text) => {
+  const key = new W.KeyboardEvent('keydown', { key: text.slice(-1), bubbles: true, cancelable: true, composed: true });
+  input.dispatchEvent(key);
+  const bi = new W.InputEvent('beforeinput', { data: text, inputType: 'insertText', bubbles: true, cancelable: true, composed: true });
+  input.dispatchEvent(bi);
+  if (!key.defaultPrevented && !bi.defaultPrevented) {
+    input.value = text;
+    input.dispatchEvent(new W.Event('input', { bubbles: true, composed: true }));
+  }
+  return { key, bi };
+};
+
+test('a phone is marked on <html>, and typing in a pane works as on the desktop', async () => {
   assert.ok(W.document.documentElement.classList.contains('phone'), '<html class="phone">');
   const host = pane('form').querySelector('.mount-host');
-  assert.ok(host.hasAttribute('data-wc-readonly'), 'the pane is marked read-only while not previewing');
+  assert.equal(host.hasAttribute('data-wc-readonly'), false, 'a live pane on a phone is not marked read-only');
   sent.length = 0;
-  const key = new W.KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true, composed: true });
-  host.shadowRoot.getElementById('t').dispatchEvent(key);
-  assert.equal(key.defaultPrevented, true, 'typing in a pane is refused on a phone');
-  assert.match(noteText(), /Read-only on a phone .* Queue/, 'the note points at the queue, not the graph');
+  const { key, bi } = typeInto(host.shadowRoot.getElementById('t'), 'a');
+  assert.equal(key.defaultPrevented, false, 'the keystroke is not refused');
+  assert.equal(bi.defaultPrevented, false, 'nor the edit it makes');
+  assert.doesNotMatch(noteText(), /Read-only/, 'no read-only note on a live phone pane');
+  await tick(400);   // the form-state debounce
+  const form = sent.find((f) => f.type === 'pane:form' && f.id === 'form');
+  assert.ok(form, 'what was typed persists as form state');
+  assert.match(JSON.stringify(form.form_state), /"a"/);
   click(host.shadowRoot.getElementById('plain'));
-  assert.equal(W.__plain, 1, 'a plain button still works — viewing is not editing');
+  assert.equal(W.__plain, 1, 'a plain button works');
+});
 
+test('on a phone a toggle toggles, a submit reaches the pane, and its signal write goes out with the gesture flag', async () => {
+  const sr = pane('signup').querySelector('.mount-host').shadowRoot;
+  sent.length = 0;
+  const box = sr.getElementById('ok');
+  click(box);
+  assert.equal(box.checked, true, 'the checkbox toggled');
+  typeInto(sr.getElementById('nm'), 'Ada');
+  click(sr.getElementById('go'));
+  await tick(20);
+  assert.equal(W.__subs, 1, "the submit reached the pane's own handler");
+  const write = sent.find((f) => f.type === 'store:set' && f.patch && f.patch.signup_submit);
+  assert.ok(write, 'the declared signal key was written to the daemon');
+  assert.deepEqual(write.patch.signup_submit, { seq: 1, name: 'Ada' });
+  assert.equal(write.mount, 'signup', 'attributed to its pane');
+  assert.equal(write.gesture, true, 'and flagged user-driven, so a declared signal queues or wakes');
+  const events = sent.filter((f) => f.type === 'event' && f.payload.mountId === 'signup').map((f) => f.payload.type);
+  assert.ok(events.includes('click') && events.includes('submit'), 'the activity layer hears the clicks and the submit');
+});
+
+test('on a phone a pane script can spawn a child pane (api.spawn)', async () => {
+  const sr = pane('signup').querySelector('.mount-host').shadowRoot;
+  calls.length = 0;
+  click(sr.getElementById('kid'));
+  await tick(20);
+  const post = calls.find((c) => c.url === '/api/pane/spawn');
+  assert.ok(post, 'the spawn POST went to the daemon');
+  assert.equal(post.body.parent, 'signup');
+  assert.deepEqual(W.__spawned, { ok: true }, "the daemon's envelope came back to the script");
+});
+
+test('on a phone the layout is fixed: the controls are hidden and refuse, saying where to go', async () => {
+  const css = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
+  assert.match(css, /\.phone \.pane :is\(\.pane-drag, \.pane-btn, \.pane-resize-r, \.pane-resize-b, \.pane-resize-rb\) \{ display: none; \}/,
+    'no layout control renders on a phone');
   const p = pane('form');
-  click(p.querySelector('.pane-btn-pin'));
-  click(p.querySelector('.pane-btn-min'));
+  sent.length = 0;
+  for (const cls of ['pin', 'lock', 'min', 'more']) click(p.querySelector('.pane-btn-' + cls));
+  click(p.querySelector('.pane-btn-close'));
   await tick(120);
   assert.equal(p.classList.contains('pinned'), false, 'pin refuses');
+  assert.equal(p.classList.contains('locked'), false, 'lock refuses');
   assert.equal(p.classList.contains('minimized'), false, 'minimize refuses');
-  assert.deepEqual(sent.filter((f) => f.type === 'pane:state'), [], 'no block write reached the live surface');
+  assert.equal(p.classList.contains('more-open'), false, '⋯ refuses');
+  assert.deepEqual(sent.filter((f) => f.type === 'pane:state'), [], 'no layout write reached the live surface');
+  assert.ok(!calls.some((c) => c.url === '/api/clear'), 'close refuses');
+  assert.match(noteText(), /Layout editing is available on a larger screen/);
+  assert.equal(W.document.querySelector('#main .run-reset, #main .run-stacks'), null, "no ↺ Claude's layout or stacks chip");
+});
+
+test('a preview on a phone is still read-only (D2)', async () => {
+  const { contentReadOnly, layoutLocked } = await import(pathToFileURL(path.join(REPO, 'public/app/mounts.js')).href);
+  assert.equal(contentReadOnly(), false, 'precondition: live');
+  assert.equal(layoutLocked(), true, 'a phone locks the layout');
+  const node = NODES.find((n) => n.id === 'n3');
+  const saved = node.mounts;
+  node.mounts = [{ id: 'old', html: '<input id="o">', params: { title: 'Old' }, pane_state: {} }];
+  try {
+    click($('btn-up'));
+    await tick(20);
+    assert.ok($('main').classList.contains('preview-readonly'), 'precondition: previewing');
+    assert.equal(contentReadOnly(), true);
+    const host = pane('old').querySelector('.mount-host');
+    assert.ok(host.hasAttribute('data-wc-readonly'), 'the previewed pane is marked read-only');
+    const { key } = typeInto(host.shadowRoot.getElementById('o'), 'x');
+    assert.equal(key.defaultPrevented, true, 'typing in a previewed pane is refused on a phone too');
+    assert.match(noteText(), /Read-only preview — set this node active/, "the preview's own note");
+  } finally {
+    if (saved === undefined) delete node.mounts; else node.mounts = saved;
+    click($('btn-return-active'));
+    await tick(20);
+  }
+  assert.equal($('main').classList.contains('preview-readonly'), false);
+  assert.equal(pane('form').querySelector('.mount-host').hasAttribute('data-wc-readonly'), false, 'live again, and editable');
 });
 
 test('adding a block on a phone is refused — previewing or not — and writes nothing', async () => {
@@ -247,7 +343,7 @@ test('adding a block on a phone is refused — previewing or not — and writes 
   await spawnComponent({ name: 'widget' });
   await tick();
   assert.ok(!calls.some((c) => c.method === 'POST'), 'nothing POSTed to the live surface');
-  assert.match(noteText(), /Read-only on a phone/, 'the phone note, not a live-page toast');
+  assert.match(noteText(), /Layout editing is available on a larger screen/, 'the phone\'s layout note, not a live-page toast');
   assert.equal(W.document.querySelector('#reaim-note .reaim-note-action'), null, 'with no Jump to live');
 
   // A preview on a phone is still a phone: the live-page path is desktop's.
@@ -255,10 +351,13 @@ test('adding a block on a phone is refused — previewing or not — and writes 
   await tick(20);
   assert.ok($('main').classList.contains('preview-readonly'), 'precondition: previewing');
   calls.length = 0;
+  $('reaim-note').replaceChildren();
   await spawnComponent({ name: 'widget' });
   await tick();
   assert.ok(!calls.some((c) => c.method === 'POST'), 'still nothing POSTed');
   assert.doesNotMatch(noteText(), /live page/);
+  assert.match(noteText(), /Layout editing is available on a larger screen/,
+    'the layout note, not the preview\'s — setting the node active would not let a phone add a block');
   click($('btn-return-active'));
   await tick(20);
   assert.equal($('main').classList.contains('preview-readonly'), false);
@@ -496,9 +595,14 @@ test('leaving the phone gives the canvas and editing back, in place', async () =
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));   // close
   assert.ok($('overlay').classList.contains('hidden'));
   const host = pane('form').querySelector('.mount-host');
-  assert.equal(host.hasAttribute('data-wc-readonly'), false, 'no longer read-only');
+  assert.equal(host.hasAttribute('data-wc-readonly'), false, 'not read-only');
   const key = new W.KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true, composed: true });
   host.shadowRoot.getElementById('t').dispatchEvent(key);
-  assert.equal(key.defaultPrevented, false, 'typing works again');
+  assert.equal(key.defaultPrevented, false, 'typing still works');
   assert.equal(pane('tucked').classList.contains('peek'), false, 'a phone peek does not outlive the phone');
+  sent.length = 0;
+  click(pane('form').querySelector('.pane-btn-pin'));
+  await tick(120);
+  assert.ok(pane('form').classList.contains('pinned'), 'the layout controls work again');
+  assert.equal(sent.filter((f) => f.type === 'pane:state').length, 1, 'and write to the live surface');
 });

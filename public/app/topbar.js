@@ -129,12 +129,13 @@ export async function previewNode(id) {
 // render then commits as its child. This replaced branch-on-edit, which re-aimed
 // the graph the moment a previewed form was touched.
 export const READONLY_HINT = 'Read-only preview — set this node active in the graph to edit.';
-// A phone is a read-only viewer too (viewport.js); its writes go through the
-// queue, so that is where the note points.
-export const PHONE_READONLY_HINT = 'Read-only on a phone — add a comment and Push from the Queue.';
-function onReadonlyAttempt() {
-  if (view.previewing) showReaimNote(READONLY_HINT);
-  else if (isPhone()) showReaimNote(PHONE_READONLY_HINT);
+// A phone's pane CONTENT is live; only its layout is fixed (mounts.js
+// layoutLocked). A layout gesture that reaches a control there says where to go
+// — previewing or not, since setting the node active would not unlock it.
+export const LAYOUT_HINT = 'Layout editing is available on a larger screen.';
+function onReadonlyAttempt(e) {
+  if (e && e.detail && e.detail.layout && isPhone()) showReaimNote(LAYOUT_HINT);
+  else if (view.previewing) showReaimNote(READONLY_HINT);
 }
 
 /* ---------- leaving preview: ONE owner of the transition ----------

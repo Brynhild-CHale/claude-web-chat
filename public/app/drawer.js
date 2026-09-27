@@ -37,7 +37,7 @@ import { $, view } from './state.js';
 import { store } from './store.js';
 import { bus } from './bus.js';
 import { components, invalidate } from './components.js';
-import { panes, unminimize, revealPane } from './mounts.js';
+import { panes, unminimize, revealPane, refuseLayoutGesture } from './mounts.js';
 import { showReaimNote, returnToActive } from './topbar.js';
 import { isPhone } from './viewport.js';
 import { isRemote, remoteNow } from './remote.js';
@@ -430,12 +430,13 @@ export async function spawnComponent(c, { fresh = false } = {}) {
   // Every spawn path lands here — a Library tile, its ⧉ duplicate, ⌘K "Add block
   // · x" — so here is where a read-only view is answered.
   //
-  // A PHONE adds no blocks: it is a viewer (viewport.js), and the refusal goes
-  // through the same event a refused pane edit raises, so the note is the one
-  // topbar.js already words.
+  // A PHONE adds no blocks from the chrome: what is on the page and where is
+  // layout, and a phone's layout is fixed (mounts.js layoutLocked — its panes'
+  // CONTENT, api.spawn included, stays live). The refusal is the one a refused
+  // layout gesture raises, so the note is the one topbar.js already words.
   if (isPhone()) {
     closeDrawer();
-    window.dispatchEvent(new CustomEvent('wc:readonly-attempt', { detail: { spawn: typeof c === 'string' ? c : c && c.name } }));
+    refuseLayoutGesture({ spawn: typeof c === 'string' ? c : c && c.name });
     return;
   }
   // A PREVIEW adds the block to the LIVE page, in the background: the previewed
