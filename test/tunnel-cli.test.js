@@ -871,7 +871,9 @@ test('down never signals a reported connector pid that `ps` no longer shows as t
   const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
   t.after(() => { try { other.kill('SIGKILL'); } catch {} });
   const portalPid = await deadPid();
-  const portal = await fakePortal(t, port, { pid: portalPid, cloudflared: { state: 'running', pid: other.pid, metrics: '127.0.0.1:5172' } });
+  // An ephemeral metrics port, never 5172 — a real connector may hold that one.
+  const metricsPort = await freePort();
+  const portal = await fakePortal(t, port, { pid: portalPid, cloudflared: { state: 'running', pid: other.pid, metrics: `127.0.0.1:${metricsPort}` } });
   const killed = [];
   const kill = (pid, sig) => { killed.push([pid, sig]); if (pid === portalPid) portal.kill(); };
   const r = await tunnel(['down'], { log: () => {}, env, kill, settleMs: 300 });
