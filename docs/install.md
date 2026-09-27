@@ -99,7 +99,7 @@ The surface also checks for new **GitHub releases** (once a day, cached in `~/.w
 
 Developing from a checkout? `git pull` (plus `npm install` if dependencies changed) is the whole package update.
 
-`claude-web-chat update --from <tarball>` installs a build that is already on disk instead of asking GitHub — verified against the `SHA256SUMS` beside it, and otherwise the same install. It exists for testing an unreleased build; see [Testing an unreleased build](extending.md#testing-an-unreleased-build).
+`claude-web-chat update --from <tarball>` installs a build that is already on disk instead of asking GitHub — verified against the `SHA256SUMS` beside it, and otherwise the same install. It exists for testing an unreleased build; see [Testing an unreleased build](extending.md#testing-an-unreleased-build). It needs an installed build that has it — the 0.8.0 dev builds or later. The `update` in 0.7.5 and 0.7.6 does not know the flag and silently ignores it (falling through to a normal GitHub update), so an older install takes the one-time manual bootstrap described there first.
 
 ## Turning it off
 

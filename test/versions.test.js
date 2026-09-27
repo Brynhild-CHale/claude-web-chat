@@ -37,7 +37,7 @@ test('HUB_PROTOCOL_VERSION alias still equals PROTOCOL_VERSION', () => {
 // below the release it is heading for (so 0.8.0 is offered when it ships), and
 // two of them by their stamp.
 
-const { compareVersions, isDevVersion } = require('../lib/core/versions');
+const { compareVersions, isDevVersion, isPrerelease } = require('../lib/core/versions');
 
 test('a dev build sorts below its own final release and above the last one', () => {
   const dev = '0.8.0-dev.202609271415.abc1234';
@@ -73,4 +73,13 @@ test('isDevVersion names a --dev stamp and nothing else', () => {
   assert.equal(isDevVersion('0.8.0-rc.1'), false);
   assert.equal(isDevVersion('0.8.0-devil'), false);
   assert.equal(isDevVersion(null), false);
+});
+
+test('isPrerelease reads the tail compareVersions orders by, never build metadata', () => {
+  assert.equal(isPrerelease('0.8.0-dev.202609271415.abc1234'), true);
+  assert.equal(isPrerelease('v1.0.0-rc.1'), true);
+  assert.equal(isPrerelease('0.7.5'), false);
+  assert.equal(isPrerelease('1.0.0+build-7'), false, 'a dash inside +build metadata is not a prerelease tail');
+  assert.equal(compareVersions('1.0.0+build-7', '1.0.0'), 0, 'and compareVersions agrees it is the release');
+  assert.equal(isPrerelease(null), false);
 });

@@ -18,7 +18,7 @@ const versionCmd = require('../lib/cli/commands/version');
 const { buildRelease, devVersion } = require('../scripts/build-release');
 const { installPaths } = require('../lib/core/paths');
 const { describeInstall, activate, linkBins, listVersions, readInstallRecord, pruneVersions } = require('../lib/update/install-layout');
-const { listTarGz } = require('../lib/update/archive');
+const { listTarGz, extractTarGz } = require('../lib/update/archive');
 const { withTempHome } = require('../test-support/helpers');
 
 function tmpDir(t, prefix) {
@@ -220,6 +220,38 @@ test('update --to the old release rolls a dev install back', async (t) => {
   assert.deepEqual(res, { before: b.version, after: '0.7.5' });
   assert.equal(fs.readlinkSync(paths.current), path.join('versions', '0.7.5'));
   assert.ok(listVersions(paths).includes(b.version), 'the dev build stays on disk to switch back to');
+});
+
+// The documented bootstrap for an install whose `update` predates --from (0.7.5
+// and 0.7.6 silently drop the flag and take the GitHub path): unpack the dev
+// tarball by hand into versions/<v> with --strip-components=1, then `update --to
+// <v>`. This pins that layout — the tarball's one prefix directory, stripped,
+// lands exactly where --to looks — and that --to activates it. With no provenance
+// record, `version` is a plain managed install until a later `update --from`.
+test('a dev tarball unpacked by hand into versions/<v> is activated by update --to <v>', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  managed075(paths);
+  const b = buildDev(t);
+
+  extractTarGz(b.tarPath, paths.versionDir(b.version), { strip: 1 });
+  assert.ok(listVersions(paths).includes(b.version), 'the hand-unpacked directory is a version on disk');
+
+  const res = await update(['--to', b.version], deps(paths));
+  assert.deepEqual(res, { before: '0.7.5', after: b.version });
+  assert.equal(fs.readlinkSync(paths.current), path.join('versions', b.version));
+  for (const n of paths.BIN_NAMES) {
+    assert.equal(fs.readlinkSync(paths.binLink(n)), paths.currentBin(n));
+    assert.ok(fs.existsSync(paths.binLink(n)), `${n} resolves into the unpacked build`);
+  }
+
+  const log = sink();
+  versionCmd([], { log, paths, describeInstall: () => describeInstall({ packageRoot: paths.versionDir(b.version), paths }) });
+  const text = log.text();
+  assert.equal(text.split('\n')[0], `claude-web-chat v${b.version}`);
+  assert.match(text, /kind {6}managed install \(a GitHub release/, 'no provenance record yet: a plain managed install');
+  assert.doesNotMatch(text, /installed from a local file/);
 });
 
 test('update --from refuses from a git checkout, before reading the file', async (t) => {
