@@ -32,7 +32,7 @@ The surface is one **page**: an ordered sequence of panes and markdown items. Co
 - Markdown is a small subset (paragraphs, headings, **strong**, *em*, `code`, fenced code, `-`/`1.` lists, links) and **everything is escaped** — raw HTML shows as text. Anything interactive or visual belongs in a pane.
 - **Keep prose short.** The reasoning still belongs in chat; the page carries labels and framing. Text is capped, and a longer write is refused with `too_large`.
 - **`place: {col, span, rows}`** on `render` / `use_component` sizes a pane on the page's 12-column grid: `col` 1–12 (omit for auto flow), `span` 2–12 columns (clamped to fit), `rows` 2–24 rows of 40px (omit for auto height). The applied placement comes back as `place`, and `list_mounts` reports every pane's current `place`. It is a *proposal*: the user can drag and resize freely (a re-render without `place` keeps their layout), and each grid run has a **↺ Claude's layout** that puts its panes back where you placed them. A pane the user has **locked** can't be moved or resized — not by them, not by you.
-- Markdown is part of the surface like a pane: it folds into the turn's node, `clear` removes one by id, a page-wide `clear {}` or Wipe takes all of it (pinned panes stay), and panes and markdown share one id space.
+- Markdown is part of the surface like a pane: it folds into the turn's node, `clear` removes one by id, a page-wide `clear {}` or Wipe takes it (pinned panes stay, and so does the markdown directly above each one — its heading/caption run, back to the previous pane or the page top; put a pinned pane's heading right above it), and panes and markdown share one id space.
 
 ## Stay in chat for
 

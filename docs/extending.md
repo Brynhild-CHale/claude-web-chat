@@ -952,6 +952,10 @@ markdown id, once). One id space covers both kinds, and `'start'`
   side. A committed node carries `markdown` + `order` only when it has markdown;
   otherwise its `mounts` array order IS its page order, which is also how every
   node written before this module reads back — no migration.
+- `markdownAbove(state, paneIds)` + `clearMarkdown(state, {keep})` — what a Wipe
+  or a page-wide clear keeps: the markdown run directly above each surviving
+  (pinned) pane. Read it BEFORE deleting any pane — "the previous pane" is the
+  page as it stood.
 - `pageOrder(nodeLike)` — the one READING of a surface's order, used by the dirty
   check (`snapshotView`: moving a pane or writing prose is a change), the diff,
   the preview and the export.
