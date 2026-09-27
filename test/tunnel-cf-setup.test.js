@@ -14,6 +14,15 @@
 //   * a token missing a permission is told which one.
 //   * --dry-run reads, prints the plan, writes nothing (not even tunnel.json).
 //   * a 429 is waited out; Google sign-in creates the IdP from the OAuth client.
+//   * (s4l-1) a token that cannot list /accounts finds its account through the
+//     zones; --account <id> is used without listing; a refusal names both the
+//     classic and the newer permission label; a wildcard on the zone apex is
+//     warned about in the plan, never refused.
+//   * (s4l-2) independent MFA goes on the way the live API takes it: the org is
+//     PUT back whole with only MFA changed (no read-only fields, no "" for an
+//     unset setting — the live run's 12062); an org that still refuses leaves
+//     MFA on the application alone; both refused → the PIN, with both reasons;
+//     a re-run after a PIN fallback turns MFA on in place, creating nothing.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -27,6 +36,7 @@ const { createFakeAccess } = require('../test-support/fake-access');
 const { userPaths } = require('../lib/core/paths');
 const { loadConfig } = require('../lib/tunnel/config');
 const { createCfApi, PERMS } = require('../lib/tunnel/cf-api');
+const { orgBody } = require('../lib/tunnel/cf-setup');
 const outbound = require('../lib/util/outbound');
 
 function capture() {
@@ -263,6 +273,9 @@ test('setup: a first run with no flags offers the one-token path, and a paste is
   await assert.rejects(tunnel(['setup'], { log: c.log, prompt: quietPrompt() }), /no Cloudflare API token/);
   assert.match(c.text(), /Create Custom Token, with these permissions:/);
   for (const perm of Object.values(PERMS)) assert.ok(c.text().includes(perm), perm);
+  assert.equal(Object.keys(PERMS).length, 5, 'five permissions, Account Settings › Read among them');
+  assert.match(c.text(), /Cloudflare Tunnel › Edit {3}\(newer dashboards: Cloudflare One Connector: cloudflared › Edit\)/);
+  assert.match(c.text(), /Account Settings › Read lets setup list your account; without it, it finds the account through your zone/);
 });
 
 test('cf-api: WEB_CHAT_CF_API cannot send the token in cleartext off this machine', async () => {
@@ -278,7 +291,9 @@ test('cf-api: WEB_CHAT_CF_API cannot send the token in cleartext off this machin
 // The account's state, minus bookkeeping — what a no-op re-run must leave alone.
 const snapshot = (fake) => JSON.stringify({ ...fake.db, configs: [...fake.db.configs] });
 
-for (const [key, perm] of Object.entries(PERMS)) {
+// Account Settings › Read is recommended, not required (setup finds the
+// account through the zones without it) — its own tests are below.
+for (const [key, perm] of Object.entries(PERMS).filter(([k]) => k !== 'account')) {
   test(`one token: a token without ${perm} is told so, before any write`, async (t) => {
     withTempHome(t);
     const fake = await withFakeCloudflare(t);
@@ -424,4 +439,207 @@ test('one token: a pasted token, and one passed as a flag value, are not stored 
     assert.ok(!fs.readFileSync(f, 'utf8').includes(fake.token), `${f} holds the API token`);
   }
   assert.equal(fake.db.apps.length, 1);
+});
+
+// ── s4l-1: account discovery, --account without listing, permission names,
+// the apex-wildcard warning ────────────────────────────────────────────────
+
+const ACC1 = 'acc0000000000000000000000000001';
+const ACC2 = 'acc0000000000000000000000000002';
+
+test('one token: /accounts empty (no Account Settings › Read) → the account is found through the zone', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['account'];
+  const { c, p } = await run(fake);
+  await p;
+  assert.ok(fake.calls.some((x) => x.path === '/accounts'), 'it tried to list accounts first');
+  assert.equal(fake.db.apps.length, 1, 'and set up on the zone\'s account');
+  assert.match(c.text(), /account Test Account · zone example\.test/);
+  assert.match(c.text(), /found through the zone — the token cannot list accounts without Account › Account Settings › Read/);
+});
+
+test('one token: an account-owned token without Account Settings › Read still verifies, against its zone\'s account', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['account'];
+  fake.sim.accountOwned = true;
+  await (await run(fake)).p;
+  assert.ok(fake.calls.some((x) => x.path === `/accounts/${ACC1}/tokens/verify`));
+  assert.equal(fake.db.apps.length, 1);
+});
+
+test('one token: zones on two accounts and no /accounts → needs --account, lists both', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, {
+    accounts: [{ id: ACC1, name: 'Test Account' }, { id: ACC2, name: 'Other Account' }],
+    zones: [
+      { id: 'zone000000000000000000000000001', name: 'example.test' },
+      { id: 'zone000000000000000000000000002', name: 'other.test', account: { id: ACC2, name: 'Other Account' } },
+    ],
+  });
+  fake.sim.missing = ['account'];
+  await assert.rejects((await run(fake)).p,
+    (e) => e.userFacing && /sees 2 accounts — pick one with --account <id>: Test Account \(acc0+1\), Other Account \(acc0+2\)/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: --account <id> is used directly, without listing accounts', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, { accounts: [{ id: ACC1, name: 'Test Account' }, { id: ACC2, name: 'Other Account' }] });
+  const { c, p } = await run(fake, ['--account', ACC1]);
+  await p;
+  assert.equal(fake.calls.filter((x) => x.path === '/accounts').length, 0, 'no GET /accounts');
+  assert.ok(fake.calls.some((x) => x.path === `/accounts/${ACC1}`), 'one cheap account-scoped read instead');
+  assert.equal(fake.db.apps.length, 1);
+  assert.match(c.text(), /account Test Account · zone example\.test/);
+});
+
+test('one token: --account <id> works without Account Settings › Read — a tunnel probe proves it, the zone names it', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['account'];
+  const { c, p } = await run(fake, ['--account', ACC1]);
+  await p;
+  assert.equal(fake.calls.filter((x) => x.path === '/accounts' || x.path === '/zones' && !x.query.name).length, 0, 'no listing of any kind');
+  assert.ok(fake.calls.some((x) => x.path === `/accounts/${ACC1}/cfd_tunnel` && x.query.per_page === '1'), 'the probe');
+  assert.match(c.text(), /account Test Account · zone example\.test/, 'the name, from the zone');
+  assert.equal(fake.db.apps.length, 1);
+});
+
+test('one token: an --account the token cannot reach says so, with what it does see', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  await assert.rejects((await run(fake, ['--account', 'f'.repeat(32)])).p,
+    (e) => e.userFacing && /cannot reach account "f{32}".*it sees: Test Account \(acc0+1\).*Copy account ID/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: a token that can see no account and no zone names Account Settings › Read and --account', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, { zones: [] });
+  fake.sim.missing = ['account'];
+  await assert.rejects((await run(fake)).p,
+    (e) => e.userFacing && e.message.includes(`give it ${PERMS.account}`) && /or pass --account <id>/.test(e.message));
+});
+
+test('cf-api: a refused permission names the classic and the newer dashboard label', async (t) => {
+  const { PERM_ALIASES } = require('../lib/tunnel/cf-api');
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['tunnel'];
+  const api = createCfApi({ token: fake.token, base: fake.base });
+  await assert.rejects(api.createTunnel(ACC1, 'x'), (e) => e.message.includes(
+    'missing a permission: Account › Cloudflare Tunnel › Edit (or, in newer dashboards: Account › Cloudflare One Connector: cloudflared › Edit)'));
+  for (const k of ['tunnel', 'apps', 'org', 'dns']) assert.ok(PERM_ALIASES[PERMS[k]], `${k} has its newer name`);
+});
+
+test('one token: a wildcard on the zone apex is warned about in the plan, not refused', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const { c, p } = await run(fake, ['--dry-run']);
+  const r = await p;
+  assert.deepEqual(r.plan.conflicts, []);
+  assert.match(c.text(), /⚠ {2}DNS \*\.example\.test catches every undefined subdomain of example\.test; the portal refuses them \(421\) but they reach this machine/);
+});
+
+test('one token: a wildcard below the apex (nested style) carries no warning', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const { c, p } = await run(fake, ['--dry-run', '--style', 'nested']);
+  const r = await p;
+  assert.deepEqual(r.plan.warnings, []);
+  assert.doesNotMatch(c.text(), /catches every undefined subdomain/);
+});
+
+// ── s4l-2: independent MFA ──────────────────────────────────────────────────
+
+const orgPuts = (fake) => fake.calls.filter((c) => c.method === 'PUT' && /\/access\/organizations$/.test(c.path));
+
+test('one token: the organization is PUT back whole with only MFA changed — no read-only fields, no unset ones', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const before = { ...fake.db.org };
+  await (await run(fake)).p;
+  assert.deepEqual(fake.db.orgRefusals, [], 'the live API\'s 12062 never came');
+  const [put] = orgPuts(fake);
+  assert.ok(put, 'the organization was written once');
+  for (const k of ['created_at', 'updated_at']) assert.ok(!(k in put.body), `${k} is read-only and not sent`);
+  assert.ok(!Object.values(put.body).includes(''), 'an unset setting is left out, not sent as ""');
+  assert.equal(put.body.auth_domain, before.auth_domain);
+  assert.equal(put.body.name, before.name);
+  assert.equal(put.body.session_duration, before.session_duration, 'the org\'s own settings go back as they were');
+  assert.deepEqual(put.body.login_design, { background_color: '#112233', header_text: 'Team login' });
+  assert.deepEqual(put.body.mfa_config, { allowed_authenticators: ['biometrics', 'security_key'], session_duration: '720h' });
+  assert.equal(put.body.mfa_required_for_all_apps, false, 'top-level, and not forced on other apps');
+  assert.equal(fake.db.org.created_at, before.created_at);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+});
+
+test('orgBody: keeps what the org requires of every app, and an org\'s own MFA extras', () => {
+  const body = orgBody({
+    auth_domain: 't.cloudflareaccess.com', name: 't', mfa_required_for_all_apps: true,
+    mfa_config: { required_aaguids: 'aa-list', session_duration: '', allowed_authenticators: [] },
+    custom_pages: { forbidden: '', identity_denied: 'p1' }, id: 'x', uid: 'y', created_at: 'z',
+  }, { mfaSession: '12h' });
+  assert.deepEqual(body, {
+    auth_domain: 't.cloudflareaccess.com', name: 't', mfa_required_for_all_apps: true,
+    mfa_config: { required_aaguids: 'aa-list', allowed_authenticators: ['biometrics', 'security_key'], session_duration: '12h' },
+    custom_pages: { identity_denied: 'p1' },
+  });
+});
+
+test('one token: the organization refuses MFA (12062) → required on this application alone', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = 'org';
+  const { c, p } = await run(fake);
+  const config = await p;
+  assert.equal(fake.db.org.mfa_config, undefined, 'the organization is left as it was');
+  assert.deepEqual(fake.db.apps[0].mfa_config, { mfa_disabled: false, allowed_authenticators: ['biometrics', 'security_key'], session_duration: '720h' });
+  assert.equal(config.signin, 'pin+biometric');
+  assert.equal(loadConfig().signin, 'pin+biometric');
+  assert.match(c.text(), /independent MFA \(organization\) — refused — trying this application alone/);
+  assert.match(c.text(), /Sign-in: emailed one-time PIN \+ biometrics \(independent MFA\) — required on this application only; Cloudflare would not turn it on for the organization: .*invalid_org_config \(12062\)/);
+
+  // A re-run tries the organization again, and otherwise changes nothing.
+  const snap = snapshot(fake);
+  await (await run(fake)).p;
+  assert.equal(snapshot(fake), snap);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+});
+
+test('one token: organization AND application refuse MFA → the PIN, with both reasons', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = true;
+  const { c, p } = await run(fake);
+  await p;
+  assert.equal(loadConfig().signin, 'pin');
+  assert.equal(fake.db.apps[0].mfa_config, undefined);
+  assert.match(c.text(), /Sign-in: emailed one-time PIN — Cloudflare would not turn on independent MFA for the organization \(.*invalid_org_config \(12062\)\), nor require it on the application alone \(.*not available for this account \(12130\)\) — so sign-in is the emailed one-time PIN alone, with a 720h session\./);
+});
+
+test('one token: a re-run after a PIN fallback turns MFA on in place — nothing created, nothing else touched', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = true;
+  await (await run(fake)).p;
+  assert.equal(loadConfig().signin, 'pin');
+  const aud = fake.db.apps[0].aud;
+  const tunnelId = fake.db.tunnels[0].id;
+  const from = fake.calls.length;
+
+  fake.sim.mfaRefused = false;
+  const { c, p } = await run(fake);
+  await p;
+  const writes = fake.calls.slice(from).filter((x) => x.method !== 'GET').map((x) => `${x.method} ${x.path.replace(/^\/accounts\/[^/]+/, '')}`);
+  assert.deepEqual(writes, ['PUT /access/organizations', `PUT /access/apps/${fake.db.apps[0].id}`], 'only the org and the app were written');
+  assert.ok(fake.db.org.mfa_config, 'org-level MFA on');
+  assert.equal(fake.db.apps[0].mfa_config.mfa_disabled, false);
+  assert.equal(fake.db.apps[0].aud, aud, 'the same application — the portal config stays valid');
+  assert.equal(fake.db.tunnels.length, 1);
+  assert.equal(fake.db.tunnels[0].id, tunnelId);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+  assert.match(c.text(), /update\s+independent MFA \(organization\)/, 'the plan says it');
+  assert.match(c.text(), /independent MFA \(organization\) — turned on/);
 });

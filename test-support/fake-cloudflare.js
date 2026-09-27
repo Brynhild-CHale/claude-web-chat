@@ -14,20 +14,35 @@
 //
 // Simulations (set on `fake.sim` at any time):
 //   missing: ['org', …]   token permissions the token lacks (PERMS keys in
-//                         cf-api: tunnel, apps, org, dns) → 403 code 10000
+//                         cf-api: account, tunnel, apps, org, dns) → 403 code
+//                         10000 — except 'account' (Account Settings › Read)
+//                         on GET /accounts, which answers an EMPTY list, as
+//                         the real API did in the maintainer's live run
 //   mfaRefused: true      org and app writes carrying mfa_config → 400 (a
-//                         plan without independent MFA); 'org' or 'app' refuses
-//                         only that one (the org takes it, the app does not)
+//                         plan without independent MFA): the org as the live
+//                         API answered, 12062 invalid_org_config; the app 12130.
+//                         'org' or 'app' refuses only that one
+//
+// PUT /access/organizations is checked the way the live API refused the
+// maintainer's first run (400, 12062 "access.api.error.invalid_org_config"):
+// the body must be the WHOLE organization (auth_domain and name present, and
+// no setting GET returned dropped), carry only the fields the Update endpoint
+// takes (no created_at / updated_at), and no "" for a duration (GET answers ""
+// for an unset one). Which of these the real API trips on is not known; each
+// is a way our body could differ from the documented one, so each is refused.
 //   rateLimit: n          the next n requests answer 429 (Retry-After: 0)
 //   zeroTrust: false      the account has no Zero Trust organization (404)
 //   badToken: true        every request is 401 "Invalid API Token" (1000)
+//   accountOwned: true    an ACCOUNT-owned token: /user/tokens/verify refuses
+//                         it (401, 1000); /accounts/<id>/tokens/verify takes it
 //   fail: [{ method, path, status, times }]
 //                         a matching request (path: a RegExp on the path
 //                         without /client/v4) answers `status` (500 default),
 //                         `times` times (1 default) — a run that dies half way
 //
 // A missing zone is not a simulation: pass `zones` without the hostname's zone
-// (`zones: []`).
+// (`zones: []`). Each zone carries its `account` ({ id, name }) as the real
+// API's do — the first account's, unless the zone says otherwise.
 
 const http = require('http');
 const crypto = require('crypto');
@@ -41,13 +56,23 @@ function createFakeCloudflare({
   zones = [{ id: 'zone000000000000000000000000001', name: 'example.test' }],
   team = 'testteam',
 } = {}) {
-  const sim = { missing: [], mfaRefused: false, rateLimit: 0, zeroTrust: true, badToken: false, fail: [] };
+  zones = zones.map((z) => ({ ...z, account: z.account || { id: accounts[0].id, name: accounts[0].name } }));
+  const sim = { missing: [], accountOwned: false, mfaRefused: false, rateLimit: 0, zeroTrust: true, badToken: false, fail: [] };
   const refuses = (what) => sim.mfaRefused === true || sim.mfaRefused === what;
   const db = {
     dns: [],
     tunnels: [],
     configs: new Map(),
-    org: { auth_domain: `${team}.cloudflareaccess.com`, name: team, is_ui_read_only: false, created_at: '2026-01-01T00:00:00Z' },
+    // As GET answers it: read-only timestamps, unset settings as "", and a
+    // setting of the user's own (login_design) a whole-object PUT must keep.
+    org: {
+      auth_domain: `${team}.cloudflareaccess.com`, name: team, is_ui_read_only: false, ui_read_only_toggle_reason: '',
+      auto_redirect_to_identity: false, allow_authenticate_via_warp: false, session_duration: '24h',
+      user_seat_expiration_inactive_time: '', warp_auth_session_duration: '',
+      login_design: { background_color: '#112233', header_text: 'Team login', logo_path: '' },
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z',
+    },
+    orgRefusals: [],   // why each refused org PUT was invalid (badOrg), for a test to read
     idps: [],
     apps: [],
     policies: [],
@@ -62,7 +87,35 @@ function createFakeCloudflare({
   }
   const err = (res, status, code, message) => send(res, status, { success: false, errors: [{ code, message }], messages: [], result: null });
 
+  // The Update endpoint's body fields (Cloudflare's "Zero Trust Organization ›
+  // Update" reference) — kept here on its own, not read from lib/, so a change
+  // to what setup sends is checked against the API, not against itself.
+  const ORG_FIELDS = new Set([
+    'allow_authenticate_via_warp', 'auth_domain', 'auto_redirect_to_identity', 'custom_pages',
+    'deny_unmatched_requests', 'deny_unmatched_requests_exempted_zone_names', 'is_ui_read_only',
+    'login_design', 'mfa_config', 'mfa_piv_key_requirements', 'mfa_required_for_all_apps', 'name',
+    'service_token_inactivity', 'session_duration', 'ui_read_only_toggle_reason',
+    'user_seat_expiration_inactive_time', 'warp_auth_non_browser_401', 'warp_auth_session_duration',
+  ]);
+  const ORG_DURATIONS = ['session_duration', 'user_seat_expiration_inactive_time', 'warp_auth_session_duration'];
+  // Why an org PUT body is invalid, or null.
+  function badOrg(body) {
+    if (!body || typeof body !== 'object') return 'no body';
+    const extra = Object.keys(body).filter((k) => !ORG_FIELDS.has(k));
+    if (extra.length) return `read-only or unknown: ${extra.join(', ')}`;
+    if (!body.auth_domain || !body.name) return 'partial: auth_domain and name are required';
+    const lost = Object.keys(db.org).filter((k) => ORG_FIELDS.has(k) && !(k in body) && db.org[k] !== '' && db.org[k] != null
+      && !(typeof db.org[k] === 'object' && !Object.values(db.org[k]).some((v) => v !== '' && v != null)));
+    if (lost.length) return `partial: drops ${lost.join(', ')}`;
+    const empty = ORG_DURATIONS.filter((k) => body[k] === '');
+    if (body.mfa_config && body.mfa_config.session_duration === '') empty.push('mfa_config.session_duration');
+    if (empty.length) return `empty duration: ${empty.join(', ')}`;
+    return null;
+  }
+  const invalidOrg = (res) => err(res, 400, 12062, 'access.api.error.invalid_org_config');
+
   function permFor(p) {
+    if (/^\/accounts\/[^/]+\/?$/.test(p)) return 'account';
     if (/^\/zones/.test(p)) return 'dns';
     if (/\/cfd_tunnel/.test(p)) return 'tunnel';
     if (/\/access\/(organizations|identity_providers)/.test(p)) return 'org';
@@ -72,11 +125,14 @@ function createFakeCloudflare({
 
   function route(method, p, q, body, res) {
     let m;
-    if (p === '/user/tokens/verify') return ok(res, { id: 'tok1', status: 'active' });
-    if (p === '/accounts') return list(res, accounts);
+    if (p === '/user/tokens/verify') return sim.accountOwned ? err(res, 401, 1000, 'Invalid API Token') : ok(res, { id: 'tok1', status: 'active' });
+    if (p === '/accounts') return list(res, sim.missing.includes('account') ? [] : accounts);
     if ((m = p.match(/^\/accounts\/([^/]+)\/tokens\/verify$/))) return ok(res, { id: 'tok1', status: 'active' });
 
-    if (p === '/zones') return list(res, zones.filter((z) => !q.get('name') || z.name === q.get('name')));
+    if (p === '/zones') {
+      return list(res, zones.filter((z) => (!q.get('name') || z.name === q.get('name'))
+        && (!q.get('account.id') || z.account.id === q.get('account.id'))));
+    }
     if ((m = p.match(/^\/zones\/([^/]+)\/dns_records$/))) {
       const zid = m[1];
       if (method === 'GET') return list(res, db.dns.filter((r) => r.zone_id === zid && (!q.get('name') || r.name === q.get('name'))));
@@ -94,9 +150,10 @@ function createFakeCloudflare({
       return ok(res, rec);
     }
 
-    if (!(m = p.match(/^\/accounts\/([^/]+)(\/.*)$/))) return err(res, 404, 7003, 'Could not route');
-    const [, acc, rest] = m;
-    if (!accounts.some((a) => a.id === acc)) return err(res, 404, 7003, 'No such account');
+    if (!(m = p.match(/^\/accounts\/([^/]+)(\/.*)?$/))) return err(res, 404, 7003, 'Could not route');
+    const [, acc, rest = ''] = m;
+    if (!accounts.some((a) => a.id === acc)) return err(res, 403, 9109, 'Unauthorized to access requested resource');
+    if (rest === '/' || rest === '') return ok(res, accounts.find((a) => a.id === acc));
 
     if (rest === '/cfd_tunnel') {
       if (method === 'GET') return list(res, db.tunnels.filter((t) => (!q.get('name') || t.name === q.get('name')) && !(q.get('is_deleted') === 'false' && t.deleted_at)));
@@ -124,8 +181,10 @@ function createFakeCloudflare({
       if (!sim.zeroTrust) return err(res, 404, 12106, 'organization not found');
       if (method === 'GET') return ok(res, db.org);
       if (method === 'PUT') {
-        if (refuses('org') && body.mfa_config) return err(res, 400, 12130, 'independent MFA is not available for this account');
-        db.org = { ...body };
+        const bad = badOrg(body);
+        if (bad) { db.orgRefusals.push(bad); return invalidOrg(res); }
+        if (refuses('org') && body.mfa_config) return invalidOrg(res);
+        db.org = { ...body, created_at: db.org.created_at, updated_at: new Date().toISOString() };
         return ok(res, db.org);
       }
     }

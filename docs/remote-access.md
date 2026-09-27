@@ -19,9 +19,10 @@ browser ──https──▶ Cloudflare Access ──▶ tunnel ──▶ cloudf
 ## Quick start — one API token
 
 1. In the Cloudflare dashboard, once: **turn on Zero Trust** (pick a team name,
-   Free plan) and **create an API token** with four permissions — Cloudflare
+   Free plan) and **create an API token** with five permissions — Cloudflare
    Tunnel, Access: Apps and Policies, Access: Organizations, Identity Providers,
-   and Groups (all Account › Edit) and DNS (Zone › Edit). Details below.
+   and Groups (all Account › Edit), Account Settings (Account › Read) and DNS
+   (Zone › Edit). Details below.
 2. `brew install cloudflared` (or see *What you need*).
 3. On this machine:
 
@@ -93,14 +94,22 @@ you do in the dashboard, once:
 2. **Create an API token** (https://dash.cloudflare.com/profile/api-tokens →
    Create Token → Create Custom Token) with these permissions:
 
-   | | permission |
-   | --- | --- |
-   | Account | Cloudflare Tunnel — Edit |
-   | Account | Access: Apps and Policies — Edit |
-   | Account | Access: Organizations, Identity Providers, and Groups — Edit |
-   | Zone | DNS — Edit |
+   | | permission | newer dashboards call it |
+   | --- | --- | --- |
+   | Account | Account Settings — Read | |
+   | Account | Cloudflare Tunnel — Edit | Cloudflare One Connector: cloudflared — Edit |
+   | Account | Access: Apps and Policies — Edit | … — Write |
+   | Account | Access: Organizations, Identity Providers, and Groups — Edit | … — Write |
+   | Zone | DNS — Edit | DNS — Write |
 
    Account Resources: your account. Zone Resources: the zone your hostname is in.
+
+   Cloudflare has been renaming these; the form shows one name or the other.
+   **Account Settings — Read** is the only read-only one: it lets the token list
+   its account. Without it Cloudflare answers that list *empty* (not with an
+   error), so setup finds the account through the zone your hostname is in, or
+   takes `--account <id>` (dashboard → Account home → ⋯ → Copy account ID)
+   directly — it works either way, the permission just makes it the plain path.
 
 Then, on this machine:
 
@@ -128,7 +137,15 @@ It stops, with nothing changed and the reason printed, when a DNS record
 already sits on one of those names (it never replaces a record you made), when a
 tunnel of that name exists but is managed from a local config file, or when an
 Access application of another type already covers the hostname. A refusal from
-Cloudflare that means the token lacks a permission names the permission.
+Cloudflare that means the token lacks a permission names the permission, under
+both its names.
+
+In the default flat style the wildcard DNS record sits on the zone apex
+(`*.example.com`), and the plan says so with one `⚠` line: it catches every
+subdomain of the zone you have not defined yourself. The portal refuses any
+hostname that is not a web-chat one (421), but those requests still reach this
+machine. That is a warning, not a stop — `--style nested` (which needs its own
+certificate, see *Hostnames*) or a domain of its own avoids it.
 
 **How you sign in.** By default: the emailed one-time PIN, **then Face ID /
 Touch ID / Windows Hello** (or a security key) — Cloudflare Access *independent
@@ -137,8 +154,14 @@ off (without requiring it for any other application) and requires it on this
 application, remembered for 30 days (`--mfa-session`). After the emailed code,
 Access asks for the second factor; register your device's biometrics when it
 offers to, or beforehand in the App Launcher at `https://<team>.cloudflareaccess.com`.
-If Cloudflare will not turn independent MFA on for your plan, setup falls back
-to the emailed PIN alone, with the long session, and says so. The result is
+To turn it on, setup reads the organization and writes it back whole with only
+the MFA settings changed — the organization endpoint replaces everything it is
+sent, so nothing else of yours is lost. If Cloudflare still refuses the
+organization, setup asks for MFA on the web-chat application alone (the least
+invasive place for it; it works when independent MFA is already on for the
+organization in the dashboard) and says so. If Cloudflare will not take it
+there either, setup falls back to the emailed PIN alone, with the long session,
+and gives both reasons. The result is
 recorded in `tunnel.json` as `"signin": "pin+biometric"`, `"pin"` or `"google"`.
 
 - `--signin pin` — the emailed PIN alone, on purpose.
@@ -213,14 +236,19 @@ that stops at a read has changed nothing; just fix the cause and run it again.
 | setup says | what to do |
 | --- | --- |
 | `Cloudflare did not accept the API token` | Paste the whole token (it is shown once, when you create it). It must be an **API token**, not the Global API Key and not a tunnel's connector token, and not expired or rolled. |
-| `the API token is missing a permission: …` | Edit the token in the dashboard (My Profile → API Tokens → ⋯ → Edit), add the permission it names, save, and run setup again with the same token. |
+| `the API token is missing a permission: …` | Edit the token in the dashboard (My Profile → API Tokens → ⋯ → Edit), add the permission it names, save, and run setup again with the same token. Your form may show the newer name the message gives in brackets — a refused `POST …/cfd_tunnel` with `Authentication error (10000)` is Cloudflare Tunnel — Edit, listed in newer dashboards as *Cloudflare One Connector: cloudflared — Edit*. |
+| `the API token can see no Cloudflare account` | The token can neither list accounts nor see a zone. Add **Account Settings — Read**, or pass `--account <id>`; and check its Account and Zone Resources include your account and zone. |
+| `the API token cannot reach account "…"` | The `--account` id is wrong or outside the token's Account Resources. The message lists the accounts it does see. |
 | `no zone on account "…" holds wc.example.com` | The domain is not on this Cloudflare account, or the token's **Zone Resources** leave that zone out. |
 | `Zero Trust is not turned on for this account yet` | Open https://one.dash.cloudflare.com once, pick a team name and the Free plan. |
 | `the token sees 2 accounts — pick one with --account` | Pass `--account <id>` (the ids are in the message), or run setup in a terminal and pick. |
 | `setup stopped before changing anything: a conflict` | Each `✗` line above it says what is in the way. A **DNS record** on the picker or the wildcard name: delete it (DNS → Records) or choose another `--hostname` — setup never replaces a record you made. A **tunnel of that name managed from a config file**: `--name <other>`, or keep that tunnel on the manual path (`--kind local`). An **Access application of another type** on the hostname: remove it or choose another hostname. `--dry-run` shows the same list without the rest of the run. |
 | `rate limited (HTTP 429)` | Cloudflare throttled the token. Setup already waited and retried; wait a minute and run it again. |
 | `Cloudflare API … (HTTP 5xx)` or a network error part way | Run setup again: it picks up from what the first run made. |
-| `Sign-in: emailed one-time PIN — Cloudflare would not turn on independent MFA …` | Your Zero Trust plan or account refused independent MFA; you have the emailed PIN with a long session instead. If your plan gains it, run setup again — it upgrades the same application in place (`--signin pin` asks for the PIN alone on purpose). |
+| `Authentication error (10000)` on a write (e.g. `POST …/cfd_tunnel`) | The token is missing the permission that write needs; setup names it (above). Nothing after the refused write was made — add the permission and run setup again. |
+| `access.api.error.invalid_org_config (12062)` on `PUT …/access/organizations` | Cloudflare refused the organization body that turns independent MFA on. Setup sends the organization back whole, without its read-only fields (`created_at`, `updated_at`) or unset (`""`) ones — the likely causes — and, if it is still refused, asks for MFA on the web-chat application alone. If the result is `required on this application only`, you have the PIN + biometrics already. To have it for the organization, turn on independent MFA once in the Zero Trust dashboard (its Access settings, "Independent MFA") and run setup again: it keeps what is on. |
+| `Sign-in: emailed one-time PIN + biometrics (independent MFA) — required on this application only; …` | The organization refused independent MFA (the reason follows), but the web-chat application took it: sign-in is PIN + biometrics for this application, and your other Access apps are unchanged. A re-run tries the organization again. |
+| `Sign-in: emailed one-time PIN — Cloudflare would not turn on independent MFA …` | Both the organization and the application refused independent MFA (the message gives both reasons); you have the emailed PIN with a long session instead. Once it can be had (your plan gains it, or you turn it on for the organization in the dashboard), run setup again — it turns it on and upgrades the same application in place, creating nothing (`--signin pin` asks for the PIN alone on purpose). |
 | `the Access signing keys for team "…" did not answer yet` | A brand-new Zero Trust organization can take a minute to publish them. `tunnel up` works once they answer. |
 
 **Signing in.**
