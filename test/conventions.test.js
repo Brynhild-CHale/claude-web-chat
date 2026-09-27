@@ -84,28 +84,28 @@ const PATTERNS = [
   },
   {
     // Reaching the PUBLIC internet. `http.request(` (above) polices calls to
-    // our own daemon; this is the other concept, and it has no engine yet. It
-    // was deliberately unratcheted while there were two requesters (the embed
-    // probe, the release download — docs/extending.md said a THIRD would be the
-    // moment to act). The tunnel portal's JWKS fetch is that third, and the
-    // middle ground taken is to count them: each lives alone in the one file
-    // that needs it, with its own fencing, and a FOURTH fails here — at which
-    // point extract lib/util/outbound.js rather than raising a baseline. The
-    // fingerprint is the module require, because the three spell the request
-    // itself three different ways (`lib.request(`, `agentFor(u).get(`, an
-    // injected `get(`).
+    // our own daemon; this is the other concept. It was counted while it had
+    // no engine (the embed probe, the release download, the tunnel portal's
+    // JWKS fetch), and the rule was that a FOURTH requester means extracting
+    // lib/util/outbound.js. The Cloudflare API client (`tunnel setup
+    // --api-token`) was that fourth: outbound.js is the home for a small JSON
+    // exchange (https only, bounded), and the JWKS fetch moved onto it. The
+    // two older requesters keep their own request because each fences
+    // something outbound does not (embed resolves and fences the address it
+    // dials; the release download streams to disk and follows redirects).
+    // Anything new goes through outbound.js — not a new baseline entry.
     name: "require('https')",
-    home: 'none yet — one per outbound requester; a fourth means extracting lib/util/outbound.js',
+    home: 'lib/util/outbound.js (plus the embed probe and the release download, each with its own fencing)',
     what: 'an outbound request to the public internet',
     roots: ['lib'],
     re: /require\(\s*['"](?:node:)?https['"]\s*\)/g,
     baseline: {
+      // The engine: small bounded JSON exchanges (Access's key set, the Cloudflare API).
+      'lib/util/outbound.js': 1,
       // Probe a URL a pane named (refuseTarget / publicOnlyLookup fencing).
       'lib/server/routes/embed.js': 1,
       // Download a release tarball (checksum-verified).
       'lib/update/release.js': 1,
-      // Cloudflare Access's signing keys (a fixed URL built from the team name).
-      'lib/tunnel/jwks.js': 1,
     },
   },
   {

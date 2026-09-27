@@ -256,7 +256,7 @@ test('jwks: fetchJson is bounded — non-200, oversize and timeout all reject', 
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  const opts = { get: http.get, timeoutMs: 300, maxBytes: 1024 };
+  const opts = { timeoutMs: 300, maxBytes: 1024 };
   assert.deepEqual(await fetchJson(`${base}/ok`, opts), { keys: [] });
   await assert.rejects(fetchJson(`${base}/err`, opts), /HTTP 500/);
   await assert.rejects(fetchJson(`${base}/big`, opts), /exceeds 1024 bytes/);
