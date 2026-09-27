@@ -1,9 +1,9 @@
 // lib/core/gif — the built-in GIF89a encoder a replay render writes with.
 //
 // Read back by an independent decoder written from the spec
-// (test-support/gif-decode.js, sharing no code with the writer), and — where the
-// machine has ffmpeg — by a third-party one too, so the output is a real GIF and
-// not merely self-consistent.
+// (test-support/gif-decode.js, sharing no code with the writer), and — opted in
+// with WEB_CHAT_E2E_FFMPEG=1 — by a third-party one too (a real ffmpeg), so the
+// output is a real GIF and not merely self-consistent.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const { createGifEncoder, encodeGif, lzwEncode, diffBox, GifError } = require('../lib/core/gif');
 const { decodeGif, lzwDecode } = require('../test-support/gif-decode');
 const { solid } = require('../test-support/png-encode');
-const { findFfmpeg } = require('../lib/replay/find');
+const { e2eGate } = require('../test-support/helpers');
 
 // An image with exactly `n` distinct colours, laid out so LZW has work to do.
 function fewColours(w, h, n) {
@@ -156,7 +156,9 @@ test('it refuses what would be a lie in the header', () => {
   assert.throws(() => ok.addFrame(solid(2, 2, [1, 1, 1]), 100), /after finish/);
 });
 
-test('a third-party decoder (ffmpeg) reads the same pixels back', { skip: findFfmpeg() ? false : 'ffmpeg not installed' }, () => {
+const real = e2eGate(['ffmpeg']);
+
+test('a third-party decoder (ffmpeg) reads the same pixels back', { skip: real.skip }, () => {
   const w = 64; const h = 48;
   const a = fewColours(w, h, 180);
   const b = noise(w, h, 7);
@@ -165,7 +167,7 @@ test('a third-party decoder (ffmpeg) reads the same pixels back', { skip: findFf
   try {
     const file = path.join(dir, 'x.gif');
     fs.writeFileSync(file, gif);
-    const r = spawnSync(findFfmpeg(), ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(real.ffmpeg, ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { maxBuffer: 64 * 1024 * 1024 });
     assert.equal(r.status, 0, String(r.stderr));
     const size = w * h * 4;
     assert.ok(r.stdout.length >= size * 2, `ffmpeg produced ${r.stdout.length} bytes`);

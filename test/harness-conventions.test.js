@@ -14,6 +14,7 @@
 //   booting the daemon       -> withServer
 //   listening on an owner    -> withServer / withHub
 //   a hand-written WS upgrade-> deafWs
+//   probing for a real Chrome/ffmpeg -> e2eGate (opt-in, WEB_CHAT_E2E_*)
 //   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
 //
 // The last two are a slightly different species from the first five: not a
@@ -156,6 +157,21 @@ const PATTERNS = [
     baseline: {
       'test-support/helpers.js': 1,
     },
+  },
+  {
+    // Probing THIS machine for a real Chrome or ffmpeg. A test that runs because
+    // a binary happened to be found makes the suite a different suite on every
+    // box — a dev machine with Chrome ran real headless renders nobody asked
+    // for. Real-program tests are opt-in (WEB_CHAT_E2E_CHROME / _FFMPEG), and the
+    // one place that decides is e2eGate, which probes only once opted in. ZERO
+    // everywhere: the gate calls the finders through a table, and a test that
+    // describes a machine passes { env, isExecutable } and so is not a bare call.
+    name: 'findChrome() / findFfmpeg() (a bare probe of this machine)',
+    home: "test-support/helpers.js — `e2eGate(['chrome'|'ffmpeg'])`",
+    what: 'running a test because a real host program was found',
+    roots: ROOTS,
+    re: /find(?:Chrome|Ffmpeg)\(\s*\)/g,
+    baseline: {},
   },
   {
     // A number the code already derives. `assert.equal(tools.length, 23)` stood

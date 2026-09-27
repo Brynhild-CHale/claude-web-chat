@@ -505,8 +505,42 @@ function fakeBin(t, { name, script, env = {} }) {
   return { bin, dir };
 }
 
+// The gate on a test that drives a REAL host program — a headless Chrome, a real
+// ffmpeg — rather than a fake from fakeBin. Such a test is OPT-IN: it runs only
+// when its env var is exactly `1`, however many browsers the machine happens to
+// have, so the suite is the same suite on every box. CI sets neither;
+// test/e2e-gate.test.js holds that, and test/harness-conventions.test.js holds
+// that no test probes for a real program any other way.
+//
+//   const e2e = e2eGate(['chrome', 'ffmpeg']);
+//   test('…', { skip: e2e.skip }, () => { … e2e.chrome … e2e.ffmpeg … });
+//
+// → { skip, chrome?, ffmpeg? }: `skip` is false or a reason that names the env
+// var to set. Nothing is probed until the test is opted in; opted in but the
+// program is missing still skips, naming the override (WEB_CHAT_CHROME /
+// WEB_CHAT_FFMPEG) that points at one. `env` and `find` are for the gate's own
+// tests.
+const E2E = {
+  chrome: { opt: 'WEB_CHAT_E2E_CHROME', what: 'a real Chrome', missing: 'no Chrome-family browser found — set WEB_CHAT_CHROME to one' },
+  ffmpeg: { opt: 'WEB_CHAT_E2E_FFMPEG', what: 'a real ffmpeg', missing: 'no ffmpeg found — set WEB_CHAT_FFMPEG to one' },
+};
+function e2eGate(needs, { env = process.env, find } = {}) {
+  const off = needs.filter((k) => env[E2E[k].opt] !== '1');
+  if (off.length) {
+    return { skip: `opt-in: drives ${off.map((k) => E2E[k].what).join(' and ')} — set ${off.map((k) => `${E2E[k].opt}=1`).join(' ')} to run it` };
+  }
+  // Lazy, so a run that opts into nothing never probes the machine at all.
+  const finders = find || (() => { const f = require('../lib/replay/find'); return { chrome: f.findChrome, ffmpeg: f.findFfmpeg }; })();
+  const out = { skip: false };
+  for (const k of needs) {
+    out[k] = finders[k]();
+    if (!out[k]) return { skip: `${E2E[k].opt}=1, but ${E2E[k].missing}` };
+  }
+  return out;
+}
+
 module.exports = {
-  freePort, fakeCloudflared, fakeBin,
+  freePort, fakeCloudflared, fakeBin, e2eGate,
   withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };

@@ -132,6 +132,7 @@ the new `after` and `place` are render arguments, not params. What you have to d
 
 ### Internal
 
+- **The real-Chrome and real-ffmpeg tests are opt-in.** `test/replay-capture-e2e.test.js`, the real-ffmpeg case in `test/replay-encode.test.js` and the ffmpeg read-back in `test/gif.test.js` used to run whenever the machine happened to have the program, so the suite changed with what was installed. They now skip unless `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1` is set, and each skip names the variable; the fake-binary tests run everywhere as before, and CI sets neither. One gate decides (`e2eGate` in `test-support/helpers.js`), and the harness ratchet holds a bare `findChrome()`/`findFfmpeg()` in a test at zero. Test-only; no product change.
 - **The "crashing service is not respawned" test failed now and then on a loaded machine.** Its first wait was already satisfied before any child had spawned (the approval's reconcile was still inside its 200ms debounce), so the test really asked a freshly forked child to boot, crash and be reaped inside a fixed 400ms sleep — about 100ms of headroom that parallel suites sometimes ate. The supervisor was never at fault, and the race was as old as the test: the pre-upgrade 0.7.6 tree fails the same way as soon as the crash takes 150ms longer. The test now waits for the crash to be recorded against its version and checks for a respawn right after a synchronous reconcile, with no sleep. Test-only; no product change.
 
 ## [0.7.6] - 2026-09-18

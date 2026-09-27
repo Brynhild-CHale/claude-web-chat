@@ -14,6 +14,7 @@ Note: `.claude/rules/web-chat.md` in this repo is the **end-user-facing rules fi
 npm install               # dev setup; run the CLI in place: node bin/claude-web-chat.js <cmd>
 npm test                  # run the full test suite (Node built-in runner, test/*.test.js)
 node --test --test-timeout=60000 test/root.test.js   # run a single test file
+WEB_CHAT_E2E_CHROME=1 WEB_CHAT_E2E_FFMPEG=1 npm test   # also run the real-Chrome/ffmpeg e2e tests (opt-in; skipped otherwise, CI never sets them)
 node scripts/build-release.js   # build the release tarball + SHA256SUMS into dist/
 ```
 
