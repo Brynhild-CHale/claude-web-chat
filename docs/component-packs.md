@@ -839,7 +839,7 @@ with `--replace`. You cannot fix that from your side; just pick distinctive name
 - [ ] No `document` *queries* in any pane script — `root.querySelector`, never `document.querySelector`/`getElementById`. (`document.createElement` is fine; it is how you build DOM from data without `innerHTML`.)
 - [ ] No `<script src>`, no CDN, no external fetch you cannot justify.
 - [ ] No `innerHTML` on anything you did not author.
-- [ ] Colors reference `--wc-*` tokens; the pack looks right under every builtin theme (earthy light and dark, paper, georgetown).
+- [ ] Colors reference `--wc-*` tokens; the pack looks right under every builtin theme (earthy light and dark, paper, georgetown-blue).
 - [ ] Stable mount ids documented in `SKILL.md`.
 - [ ] Store keys and control keys documented in `SKILL.md`.
 - [ ] `service.js` has a `stop()` that genuinely releases everything, and

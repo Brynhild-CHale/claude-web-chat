@@ -25,6 +25,7 @@ import { getLocalJson, setLocalJson } from './storage.js';
 import { openReplay } from './replay.js';
 import { isPhone } from './viewport.js';
 import { bus } from './bus.js';
+import { effectiveMode } from './theme.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -155,6 +156,17 @@ bus.on('viewport', ({ phone }) => {
   if (phone && !view.selectedNodeId) view.selectedNodeId = view.activeId;
   if (!phone) fitView(); else layoutAndRender();
   renderInspector(view.selectedNodeId);
+});
+
+// The inspector preview and the glance are /preview/node documents drawn in the
+// viewer's light/dark (the daemon has no mode of its own), so they read like
+// the chrome around them — and are redrawn when ◑ flips it.
+export const previewSrc = (id, mode = effectiveMode()) =>
+  '/preview/node/' + encodeURIComponent(id) + '?mode=' + encodeURIComponent(mode);
+bus.on('mode', () => {
+  for (const fr of document.querySelectorAll('iframe.gv-preview-frame, iframe.glance-frame')) {
+    if (fr.dataset.nodeId) fr.setAttribute('src', previewSrc(fr.dataset.nodeId));
+  }
 });
 
 /* The overlay's half of the ONE Escape owner (shell.js handleEscape): its layers
@@ -484,7 +496,8 @@ function drawPreview(box, id, paneCount) {
   fr.style.width = PREVIEW_W + 'px';
   fr.style.height = Math.round((box.clientHeight || 96) / scale) + 'px';
   fr.style.transform = 'scale(' + scale + ')';
-  fr.src = '/preview/node/' + encodeURIComponent(id);
+  fr.dataset.nodeId = id;
+  fr.src = previewSrc(id);
   forwardEscapeFrom(fr);
   box.appendChild(fr);
 }
@@ -679,7 +692,8 @@ function openFloatPreview(id) {
   act.disabled = id === view.activeId || !!view.lock;
   const frame = floatEl.querySelector('.glance-frame');
   forwardEscapeFrom(frame);
-  const src = '/preview/node/' + encodeURIComponent(id);
+  const src = previewSrc(id);
+  frame.dataset.nodeId = id;
   if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
 }
 function closeFloatPreview() { if (floatEl) { floatEl.remove(); floatEl = null; } }

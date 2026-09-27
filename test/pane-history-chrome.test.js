@@ -186,6 +186,18 @@ test('hovering previews a version without choosing it; leaving the list goes bac
   assert.equal($('ph-frame').getAttribute('src'), '/preview/pane/n3/fig?mode=light');
 });
 
+test('a light/dark flip redraws the version on show in the new mode (s2-3)', async () => {
+  const { toggleMode } = await import(pathToFileURL(path.join(REPO, 'public/app/theme.js')).href);
+  toggleMode();
+  try {
+    assert.equal($('ph-frame').getAttribute('src'), '/preview/pane/n3/fig?mode=dark', 'redrawn dark, same version');
+    assert.ok(isOpen(), 'the popover stays open');
+  } finally {
+    toggleMode();
+  }
+  assert.equal($('ph-frame').getAttribute('src'), '/preview/pane/n3/fig?mode=light');
+});
+
 test('Make current is refused before the click where the daemon would refuse — with the reason', () => {
   click(rowFor('n1'));
   assert.equal($('ph-restore').disabled, true, 'a version a driver wrote');

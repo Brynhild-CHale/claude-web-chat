@@ -18,19 +18,42 @@ or node scope it styles the chrome only, at pane scope that pane's content only.
 | Pack | Modes | Look |
 | --- | --- | --- |
 | `earthy` | light + dark | the stock look — olive on warm umber, depth and glass |
-| `paper` | light only | flat cream, olive accent, every depth effect off |
-| `georgetown` | light only | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar |
+| `paper` | light + dark | flat cream (dark: warm charcoal), olive accent, every depth effect off |
+| `georgetown-blue` (Georgetown Blue) | light + dark | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar; dark is navy surfaces, a lightened 293, 1205 gold bookmarks on burgundy and a faint cross-hatch |
+
+Every pack meets WCAG AA in every mode it declares — 4.5:1 for text, 3:1 for
+labels on fills, glyphs and large text — measured over the ink/fill pairs the
+chrome actually paints (`test/theme-contrast.test.js`). Earthy light has four
+older pairs below that (its accent labels and keycaps, and muted text on the
+stage); the test names them, and that list may only shrink.
 
 Builtins are read-only: a saved theme cannot take a builtin's name, and
 `apply_theme` resolves a builtin name before any saved theme. Applying one
 stores a reference, so a pack's later refinements reach projects that applied
-it. With no theme set at all the surface shows Earthy. (`web-chat`, the name of
-the stock look before packs, still applies — as `earthy`.)
+it. With no theme set at all, a project created on this version starts in
+**Georgetown Blue** and a project that existed before it keeps **Earthy** — see
+*The default look* below. (`web-chat`, the name of
+the stock look before packs, still applies — as `earthy` — and so does
+`georgetown`, Georgetown Blue's id before the rename.) ⋯ → Settings lists a pack
+by its display name.
 
 A theme saved before a builtin took its name (a 0.7.6 `paper.json`, say) is
 left on disk but never applied: the builtin wins in `list_themes` too, whose
 row for it carries `shadows` (the library the file is in) and a `hint`. To keep
 using the saved tokens, save them under another name.
+
+## The default look
+
+The global theme resolves: the project's `.web-chat/theme.json` → your
+`~/.web-chat/theme.json` → the project's **default pack** → Earthy (the
+stylesheet's own defaults). The default pack is `.web-chat/theme-default.json`
+(`{"name": "georgetown-blue"}`), written once, when a project's state is first
+created — so every new project starts in Georgetown Blue. A project that already
+had state before this version never gets the file and looks exactly as it did.
+The file only decides the last step: a theme you apply or set, at project or user
+level, still wins, and clearing the project's theme returns to the default pack.
+To put a project back on the stock look, apply `earthy`, or edit the file's
+`name` to another builtin pack (delete it for Earthy).
 
 ## Light and dark are a mode inside a theme
 
@@ -57,10 +80,19 @@ A theme may carry per-mode layers over its mode-free tokens:
 - Node and pane themes are flattened at the same mode as the global one (or
   their own only mode when they lack it).
 - The server has no viewer, so what it resolves on its own — `get_theme`,
-  exports, glance previews — is the **light** mode unless asked
-  (`get_theme {mode:'dark'}`, `GET /api/theme?mode=dark`); a single-mode theme
-  always resolves to its own mode. `list_themes` names each theme's modes but
-  not their per-mode token maps, to keep that listing small.
+  exports — is the **light** mode unless asked (`get_theme {mode:'dark'}`,
+  `GET /api/theme?mode=dark`); a single-mode theme always resolves to its own
+  mode. `list_themes` names each theme's modes but not their per-mode token
+  maps, to keep that listing small.
+- The documents the surface frames for you follow **your** mode: the graph
+  inspector's preview, the glance, pane history and the replay player pass
+  `?mode=` to `/preview/node`, `/preview/pane` and `/replay`, and redraw when ◑
+  flips it. Under a theme with no modes (the stock look of an older project) a
+  named mode draws it over Earthy at that mode, as the live page does.
+- **Files stay light**: a page export, a replay `.html` download and a rendered
+  GIF/MP4/WebM are drawn in light mode whatever the browser shows, unless the
+  request names one — `export {mode:'dark'}`, `GET /api/export/:ref?mode=dark`,
+  `GET /api/replay/html?…&mode=dark`, `POST /api/replay/render {mode:'dark'}`.
 
 ## Fonts
 
@@ -71,7 +103,7 @@ Font License alongside it:
 | --- | --- | --- |
 | Geist | one variable woff2, weights 100–900 | Earthy and Paper (`--wc-font`, and through it `--wc-display`/`--wc-reading`) |
 | Geist Mono | one variable woff2, weights 100–900 | every pack's `--wc-mono` |
-| Libre Caslon Text | Regular 400, Bold 700, Italic 400 — each split latin / latin-ext by `unicode-range` | Georgetown's `--wc-display` and `--wc-reading` |
+| Libre Caslon Text | Regular 400, Bold 700, Italic 400 — each split latin / latin-ext by `unicode-range` | Georgetown Blue's `--wc-display` and `--wc-reading` |
 
 They are served same-origin from `/fonts/` — never hot-linked from a font CDN,
 so the surface works offline and an export carries them. `public/fonts/fonts.css`
@@ -81,7 +113,7 @@ system font, and the stack's fallbacks carry the text until it loads.
 
 An export inlines, as `data:` URIs, **only the bundled families its resolved
 theme names** — page, node and pane layers, tokens and raw css alike — so an
-unthemed export carries no font at all and a Georgetown one carries Caslon and
+unthemed export carries no font at all and a Georgetown Blue one carries Caslon and
 Geist Mono (about 205KB inlined), not Geist; an Earthy or Paper one carries Geist and Geist Mono (about 185KB). A family the bundle lacks is left to
 the reader's machine.
 

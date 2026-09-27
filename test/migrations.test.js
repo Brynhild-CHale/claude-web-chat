@@ -158,5 +158,6 @@ test('_version.json is written atomically and keeps its trailing newline', () =>
   const { stateDir, versionFile } = tmpState();
   run(stateDir);
   assert.equal(fs.readFileSync(versionFile, 'utf8'), `{\n  "version": ${SCHEMA_VERSION}\n}\n`);
-  assert.deepEqual(fs.readdirSync(stateDir), ['_version.json'], 'no temp file left behind');
+  // A first touch also seeds the new-project look (theme-default.json).
+  assert.deepEqual(fs.readdirSync(stateDir).sort(), ['_version.json', 'theme-default.json'], 'no temp file left behind');
 });

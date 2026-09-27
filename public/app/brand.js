@@ -16,6 +16,11 @@ const TYPE_BY_EXT = { svg: 'image/svg+xml', png: 'image/png' };
 const ACCEPT = '.svg,.png,image/svg+xml,image/png';
 
 let current = {};   // slot -> {type, bytes, version} | null
+// What fills a slot the project left empty — the theme pack's per-user logos
+// (lib/server/brand.js explains; deliberately unmentioned anywhere a user
+// reads). slot -> {light, dark} (each {type, bytes, version} | null) | null.
+// Only the topbar reads it: Settings → Brand shows the project's own slots.
+let fill = {};
 
 // A native file chooser takes window focus, and the dismiss layer closes every
 // panel on window blur — which would shut Settings under the user's pick. The
@@ -24,6 +29,15 @@ let picking = false;
 export function isPickingFile() { return picking; }
 
 const src = (slot, meta) => `/brand/${slot}?v=${encodeURIComponent(meta.version || '')}`;
+// The chrome's effective mode, as theme.js leaves it on <html>.
+const viewMode = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+// The topbar's logotype: the project's own, else the fill for this mode.
+function topbarSrc() {
+  if (current.logotype) return src('logotype', current.logotype);
+  const mode = viewMode();
+  const f = fill.logotype && fill.logotype[mode];
+  return f ? `/brand/logotype?mode=${mode}&v=${encodeURIComponent(f.version || '')}` : null;
+}
 
 /* ---------- topbar ---------- */
 function applyTopbar() {
@@ -31,8 +45,8 @@ function applyTopbar() {
   const wordmark = bar && bar.querySelector('.brand');
   if (!wordmark) return;
   let logo = $('brand-logotype');
-  const meta = current.logotype;
-  if (!meta) {
+  const want = topbarSrc();
+  if (!want) {
     // Absent means absent: no empty <img>, no stray divider.
     if (logo) logo.remove();
     const div = bar.querySelector('.brand-logo-div');
@@ -53,7 +67,6 @@ function applyTopbar() {
     bar.insertBefore(logo, wordmark);
     bar.insertBefore(div, wordmark);
   }
-  const want = src('logotype', meta);
   if (logo.getAttribute('src') !== want) logo.setAttribute('src', want);
 }
 
@@ -80,7 +93,7 @@ async function upload(slot, file) {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { say(body.error || `Upload failed (${r.status}).`, true); return; }
     say('');
-    if (body.slots) applyBrand(body.slots);
+    if (body.slots) applyBrand(body.slots, body.fill);
   } catch { say('Upload failed — is the daemon running?', true); }
 }
 
@@ -90,7 +103,7 @@ async function clearSlot(slot) {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { say(body.error || `Remove failed (${r.status}).`, true); return; }
     say('');
-    if (body.slots) applyBrand(body.slots);
+    if (body.slots) applyBrand(body.slots, body.fill);
   } catch { say('Remove failed — is the daemon running?', true); }
 }
 
@@ -182,13 +195,23 @@ function applyRows() {
 
 // The one place slot state lands — the GET on boot, an upload's reply, and the
 // `brand` WS frame every viewer gets when any of them changes a slot.
-export function applyBrand(slots) {
+// `fillIn` absent (an older daemon, or a reply that does not carry it) keeps
+// the fill already known.
+export function applyBrand(slots, fillIn) {
   const next = {};
   for (const { slot } of SLOTS) {
     const m = slots && slots[slot];
     next[slot] = m && typeof m === 'object' && m.version ? m : null;
   }
   current = next;
+  if (fillIn !== undefined) {
+    const f = {};
+    for (const { slot } of SLOTS) {
+      const m = fillIn && fillIn[slot];
+      f[slot] = m && typeof m === 'object' ? m : null;
+    }
+    fill = f;
+  }
   applyTopbar();
   applyRows();
 }
@@ -198,11 +221,17 @@ export async function refreshBrand() {
     const r = await fetch('/api/brand');
     if (!r.ok) return;
     const body = await r.json();
-    applyBrand(body && body.slots);
+    applyBrand(body && body.slots, body && body.fill);
   } catch {}
 }
 
 export function initBrand() {
   buildRows();
   refreshBrand();
+  // A light/dark flip can swap the fill's logotype for its reversed variant.
+  // theme.js marks the mode on <html>; following the attribute keeps this
+  // module out of theme.js's import graph.
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(applyTopbar).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
 }

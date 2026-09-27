@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer } = require('../test-support/helpers');
+const { withServer, existingProject } = require('../test-support/helpers');
 const { driveGoldenSession } = require('../test-support/golden-session');
 
 // Byte-identity safety net for the Phase 2 change-bus migration. driveGoldenSession
@@ -143,7 +143,8 @@ const GOLDEN = {
 };
 
 test('bus golden: the whole wire is byte-identical to the pre-refactor server', async (t) => {
-  const ctx = await withServer(t);
+  // An existing project: the hello frame carries the stock (empty) global theme.
+  const ctx = await withServer(t, { seed: existingProject });
   const actual = await driveGoldenSession(ctx);
   assert.deepEqual(actual, GOLDEN);
 });

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, withTempHome } = require('../test-support/helpers');
+const { withServer, withTempHome, existingProject } = require('../test-support/helpers');
 
 test('theme: pane resolution applies global ⊕ node ⊕ pane cascade', async (t) => {
   const { api } = await withServer(t);
@@ -33,9 +33,10 @@ test('theme: most-specific layer wins on token conflict', async (t) => {
 
 test('theme: default fallback chain project → system → builtin', async (t) => {
   withTempHome(t);
-  const { api } = await withServer(t);
+  const { api } = await withServer(t, { seed: existingProject });
 
-  // builtin: nothing set → empty tokens
+  // builtin: nothing set → empty tokens (an existing project; a new one's last
+  // step is its default pack — test/theme-default.test.js)
   let g = (await api.get('/api/theme?scope=global')).json;
   assert.deepEqual(g.tokens, {});
 
@@ -81,7 +82,7 @@ test('theme: a re-render with a theme APPLIES it; without one the pane keeps its
 });
 
 test('theme: a render-supplied pane theme goes through the SAME normalizer as set_theme', async (t) => {
-  const { api, wsHello } = await withServer(t);
+  const { api, wsHello } = await withServer(t, { seed: existingProject }); // empty global
   // A `theme` on POST /api/render used to be stored on the mount record
   // verbatim — it never met normalizeTheme/sanitizeTokens, which every theme
   // arriving at POST /api/theme does. So the two doors onto one pane's theme
@@ -177,7 +178,9 @@ test('theme: apply resolves a builtin name case-insensitively (Phase 5 regressio
 });
 
 test('theme: clear removes the theme at each scope', async (t) => {
-  const { root, api } = await withServer(t);
+  // An existing project: clearing falls back to empty tokens (a new project's
+  // clear falls back to its default pack — test/theme-default.test.js).
+  const { root, api } = await withServer(t, { seed: existingProject });
 
   // global
   await api.post('/api/theme', { scope: 'global', tokens: { '--wc-accent': '#111111' } });
@@ -204,8 +207,8 @@ test('theme: the packs are listed builtins, read-only, and web-chat still applie
 
   const { themes } = (await api.get('/api/themes')).json;
   const builtins = themes.filter(x => x.location === 'builtin');
-  assert.deepEqual(builtins.map(x => x.name), ['earthy', 'paper', 'georgetown'], 'the three packs, stock look first');
-  assert.deepEqual(builtins.map(x => x.modes), [['light', 'dark'], ['light'], ['light']], 'modes are named, not dumped');
+  assert.deepEqual(builtins.map(x => x.name), ['earthy', 'paper', 'georgetown-blue'], 'the three packs, stock look first');
+  assert.deepEqual(builtins.map(x => x.modes), [['light', 'dark'], ['light', 'dark'], ['light', 'dark']], 'modes are named, not dumped');
   assert.ok(!themes.some(x => x.name === 'web-chat'), 'the retired name is not listed');
 
   // no builtin name — current or retired — can be saved over
@@ -237,7 +240,9 @@ test('theme: a saved theme under a builtin name — listing and apply agree the 
 
   const { themes } = (await api.get('/api/themes')).json;
   const named = (n) => themes.filter((x) => x.name.toLowerCase() === n);
-  for (const n of ['paper', 'georgetown']) {
+  // Georgetown.json is shadowed through the alias: `georgetown` now names
+  // georgetown-blue, so the file folds onto that row.
+  for (const n of ['paper', 'georgetown-blue']) {
     assert.equal(named(n).length, 1, `one '${n}' row, not the file and the builtin`);
     const row = named(n)[0];
     assert.equal(row.name, n);

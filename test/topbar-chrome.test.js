@@ -25,7 +25,10 @@ const { normalizeTheme } = require('../lib/server/theme');
 
 const REPO = path.resolve(__dirname, '..');
 const EARTHY = normalizeTheme({ name: 'earthy', builtin: true });
+// Every builtin pack is two-mode (s2-2); the single-mode case is a saved
+// theme — Paper's light layer alone.
 const PAPER = normalizeTheme({ name: 'paper', builtin: true });
+const SOLO = { name: 'solo', tokens: PAPER.tokens, modes: { light: PAPER.modes.light } };
 
 // n1 (active) ── n2
 const NODES = [
@@ -213,11 +216,11 @@ test('Settings says the ◑ mode in words, and switching it flips the mode', asy
   assert.equal(W.document.documentElement.dataset.theme, 'light');
 });
 
-test('under a single-mode pack the missing mode is greyed, not hidden', async () => {
-  await frame({ type: 'theme', scope: 'global', theme: PAPER });
+test('under a single-mode theme the missing mode is greyed, not hidden', async () => {
+  await frame({ type: 'theme', scope: 'global', theme: SOLO });
   const seg = $('settings-mode');
   const dark = seg.querySelector('[data-mode="dark"]');
-  assert.equal(dark.disabled, true, 'Paper has no dark mode to switch to');
+  assert.equal(dark.disabled, true, 'a light-only theme has no dark mode to switch to');
   assert.match(dark.title, /only a light mode/, 'and the control says why');
   assert.equal(seg.querySelector('[data-mode="light"]').disabled, false, 'the mode that IS on stays live');
   await frame({ type: 'theme', scope: 'global', theme: EARTHY });

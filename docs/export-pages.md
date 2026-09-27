@@ -20,6 +20,13 @@ wants to **share, save or send** something that was rendered.
 All of them assemble through the same builder in `lib/server/export.js`, so what a
 user downloads and what Claude writes are the same bytes.
 
+**An export is light.** A file that is sent on has no viewer, so it is drawn in
+the theme's light mode whatever mode the surface was showing, unless the request
+names one: `export({ node, mode: 'dark' })` or `GET /api/export/:ref?mode=dark`.
+The same holds for every replay file below (`mode` on the tool, on
+`POST /api/replay/render` and on `GET /api/replay/html`); only the live player
+and the graph's previews follow the viewer's mode.
+
 ## Which node — the `ref` forms
 
 `node` / `:ref` accepts, in the order you are most likely to want them:

@@ -360,7 +360,7 @@ test('Glance: Space opens a read-only render with "Set active here"', async () =
   const card = W.document.querySelector('.glance-backdrop');
   assert.ok(card, 'the glance is up');
   assert.match(card.querySelector('.glance-title').textContent, /^n1\.11\.0 · glance$/);
-  assert.equal(card.querySelector('.glance-frame').getAttribute('src'), '/preview/node/n14');
+  assert.equal(card.querySelector('.glance-frame').getAttribute('src'), '/preview/node/n14?mode=light', 'drawn in the viewer\'s mode');
   click(card.querySelector('[data-act="active"]'));
   await tick(); await tick();
   const post = calls.find((c) => c.url === '/api/graph/active');

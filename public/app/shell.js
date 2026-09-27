@@ -155,8 +155,10 @@ async function populateThemeSelect() {
     for (const t of inLoc) {
       const o = document.createElement('option');
       o.value = t.name;
-      // a single-mode pack says so here, where the ◑ toggle's absence is chosen
-      o.textContent = t.name + (t.modes && t.modes.length === 1 ? ` (${t.modes[0]} only)` : '');
+      // A builtin pack shows its display name (`georgetown-blue` reads as
+      // "Georgetown Blue"); the value stays the id apply_theme resolves. A
+      // single-mode pack says so here, where the ◑ toggle's absence is chosen.
+      o.textContent = (t.title || t.name) + (t.modes && t.modes.length === 1 ? ` (${t.modes[0]} only)` : '');
       if (t.name === current) o.selected = true;
       og.appendChild(o);
     }
@@ -570,6 +572,7 @@ export function initShell() {
   initReplay({
     openNode: (id) => { previewNode(id); if (isOverlayOpen()) closeOverlay(); },
     forwardEscapeFrom,
+    mode: effectiveMode,
   });
   initKeyboard();
   initDismissLayer();

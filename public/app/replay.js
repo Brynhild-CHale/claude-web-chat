@@ -25,6 +25,7 @@
 import { view, $ } from './state.js';
 import { nodeById, labelFor } from './labels.js';
 import { getLocalJson, setLocalJson } from './storage.js';
+import { bus } from './bus.js';
 
 const PREFS_KEY = 'wc:replay-prefs';
 const SPEEDS = ['0.5', '1', '1.5', '2', '4'];
@@ -32,7 +33,9 @@ const SPEEDS = ['0.5', '1', '1.5', '2', '4'];
 // then remembered, and every file saved from the player follows it.
 const DEFAULT_PREFS = { speed: '1', transition: 'cut', captions: 'on', prompts: false };
 
-let hooks = { openNode: null, forwardEscapeFrom: null };
+// `mode` answers the viewer's effective light/dark (theme.js effectiveMode,
+// injected: importing theme.js would reach mounts.js).
+let hooks = { openNode: null, forwardEscapeFrom: null, mode: null };
 // The file exports: whether a render is running, and which formats this
 // machine can make (unknown = allowed: the render route says why not).
 const RENDER_FORMATS = ['gif', 'mp4', 'webm'];
@@ -181,11 +184,13 @@ function query(extra = {}) {
 }
 
 // (Re)load the player. `at` keeps the step on screen across a reload (a
-// transition or caption change rebuilds the document).
+// transition, caption or light/dark change rebuilds the document). The player
+// is drawn in the viewer's mode; the download is not — a file sent on is light.
 function load({ at = null } = {}) {
   const fr = frame();
   if (!fr) return;
-  fr.src = '/replay?' + query({ chrome: 1, autoplay: at == null ? 1 : 0, speed: prefs().speed, at });
+  const mode = hooks.mode ? hooks.mode() : null;
+  fr.src = '/replay?' + query({ chrome: 1, autoplay: at == null ? 1 : 0, speed: prefs().speed, at, mode });
   if (hooks.forwardEscapeFrom) hooks.forwardEscapeFrom(fr);
   const dl = $('rpo-download');
   if (dl) dl.href = '/api/replay/html?' + query({ chrome: 1 });
@@ -338,6 +343,7 @@ export function initReplay(h = {}) {
   on('rpo-from', 'change', (e) => { cur.from = e.target.value; renderPickers(); load(); });
   on('rpo-to', 'change', (e) => { cur.to = e.target.value; renderPickers(); load(); });
   window.addEventListener('keydown', onKey, true);
+  bus.on('mode', () => { if (isReplayOpen() && cur.to) load({ at: stepIndex() }); });
 }
 
 // The ⌘K row and the ⋯ item name where the replay will arrive.

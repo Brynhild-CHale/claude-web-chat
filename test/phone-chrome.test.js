@@ -446,7 +446,7 @@ test('the action bar acts on the selected card: set active, bookmark with a name
   click(W.document.querySelector('#gv-log-acts [data-act="glance"]'));
   const sheet = W.document.querySelector('.glance-backdrop');
   assert.ok(sheet, 'Glance raises the preview (a bottom sheet on a phone)');
-  assert.equal(sheet.querySelector('.glance-frame').getAttribute('src'), '/preview/node/n5');
+  assert.equal(sheet.querySelector('.glance-frame').getAttribute('src'), '/preview/node/n5?mode=light', 'drawn in the viewer\'s mode');
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(W.document.querySelector('.glance-backdrop'), null);
   assert.ok(!$('overlay').classList.contains('hidden'), 'Escape closed the sheet, not the log');

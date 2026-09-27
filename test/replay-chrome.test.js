@@ -446,3 +446,48 @@ test('↧ MP4 / ↧ WebM: disabled without ffmpeg (the title says what to instal
     caps = { ...caps, ffmpeg: null, formats: { ...caps.formats, mp4: false, webm: false } };
   }
 });
+
+// s2-3: the documents the chrome frames follow the viewer's light/dark. The
+// daemon has no mode of its own, so the chrome names it (`?mode=`) and redraws
+// on a ◑ flip — while a download stays light (the render bodies above carry no
+// mode at all).
+test('the player and the glance are drawn in the viewer\'s mode and redraw on ◑; the download stays light', async () => {
+  // Called directly: a click on ◑ is outside the player, which closes it, and
+  // the player keeps T for itself — so what reaches an open player is a mode
+  // change from elsewhere (a pack swap arriving over the socket, say).
+  const { toggleMode } = await import(pathToFileURL(path.join(REPO, 'public/app/theme.js')).href);
+  const toggle = () => toggleMode();
+  const mode = () => (W.document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  assert.equal(mode(), 'light', 'precondition: light');
+  try {
+    await openFromMenu();
+    assert.equal(frameQuery().get('mode'), 'light', 'the player frame names the viewer\'s mode');
+    assert.equal(new URLSearchParams($('rpo-download').getAttribute('href').split('?')[1]).get('mode'), null,
+      'the replay.html download names none, so the file is light');
+    stubPlayer();
+    toggle();
+    assert.equal(mode(), 'dark');
+    assert.equal(frameQuery().get('mode'), 'dark', '◑ reloads the player in the new mode…');
+    assert.equal(frameQuery().get('at'), '1', '…on the same step');
+    assert.equal(new URLSearchParams($('rpo-download').getAttribute('href').split('?')[1]).get('mode'), null,
+      'and the download is still light');
+    key('Escape');
+    await tick();
+
+    click($('btn-graph'));
+    await tick();
+    await tick();
+    W.document.querySelector('#graph-svg g[data-id]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    await tick();
+    key(' ', $('overlay'));
+    await tick();
+    const glance = () => W.document.querySelector('iframe.glance-frame');
+    assert.ok(glance(), 'Space opens the glance');
+    assert.match(glance().getAttribute('src'), /^\/preview\/node\/[^?]+\?mode=dark$/, 'drawn in the viewer\'s (dark) mode');
+    toggle();
+    assert.match(glance().getAttribute('src'), /\?mode=light$/, '◑ redraws it in the new mode');
+  } finally {
+    if (mode() !== 'light') toggle();
+    for (let i = 0; i < 4; i++) { key('Escape'); await tick(); }
+  }
+});

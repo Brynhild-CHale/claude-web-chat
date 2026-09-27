@@ -289,6 +289,17 @@ async function safeStop(srv) {
 //               TTL tests); default is a LAZY require of lib/server
 // Returns ctx { srv, server, port, baseUrl, root, webChatDir, api, ws, wsHello,
 // stop, graceful }; also passed to fn if given.
+// A withServer `seed` that makes the project an EXISTING one — it has booted a
+// daemon before, so it carries a _version.json — rather than a project born on
+// this build. The difference is the look: a new project's migration run seeds
+// .web-chat/theme-default.json (Georgetown Blue), an existing one keeps the
+// stock Earthy fallback (empty global tokens). Use it where a test is about
+// something other than that default and was written against the empty one.
+function existingProject({ webChatDir }) {
+  const { SCHEMA_VERSION } = require('../lib/core/versions');
+  fs.writeFileSync(path.join(webChatDir, '_version.json'), JSON.stringify({ version: SCHEMA_VERSION }) + '\n');
+}
+
 async function withServer(t, opts, fn) {
   if (typeof opts === 'function') { fn = opts; opts = {}; }
   opts = opts || {};
@@ -550,6 +561,6 @@ function e2eGate(needs, { env = process.env, find } = {}) {
 
 module.exports = {
   freePort, fakeCloudflared, fakeBin, e2eGate,
-  withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi,
+  withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi, existingProject,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };
