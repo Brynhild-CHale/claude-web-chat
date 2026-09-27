@@ -85,6 +85,7 @@
      i.e. a second palette living outside this block. */
   --wc-topbar-top: #2c2519;        /* upper stop of the topbar gradient */
   --wc-topbar-border: #3a3225;     /* the topbar's bottom hairline */
+  --wc-topbar-rule-width: 1px;     /* …and its width (Georgetown Blue: a 2px rule) */
   --wc-rail-bg: linear-gradient(90deg, #211c12, #1e1910);
   --wc-hover-bg: #2c2519;          /* dock buttons, stepper */
   --wc-row-active-bg: #30281b;     /* active row in the graph history list */
@@ -108,14 +109,14 @@
   --wc-fg-bright: #2a2419;
   --wc-panel-bg: #f6f0e4;
   --wc-header-bg: #efe8d8;
-  --wc-muted: #776b57;
+  --wc-muted: #6b604e;
   --wc-muted-dim: #8c8069;
   --wc-border: #c6b99b;
   --wc-border-light: #fffdf6;
   --wc-accent: #5f7d33;
   --wc-accent-dark: #43571f;
   --wc-accent-fg: #e4dccb;
-  --wc-accent-text: #7d9b4e;
+  --wc-accent-text: #6b8543;
   --wc-gold: #a9752a;
   --wc-green: #3f8560;
   --wc-comment: #cf5a2f;
@@ -166,7 +167,7 @@
 
   --wc-key-bg: #efe8d8;
   --wc-key-border: #bfb190;
-  --wc-key-fg: #7d9b4e;
+  --wc-key-fg: #6b8543;
 }
 
 /* ===================== base / reset ===================== */
@@ -324,7 +325,7 @@ html.wc-theming, html.wc-theming * {
   display: flex; align-items: center; gap: 8px;
   height: 46px; padding: 0 12px; flex: 0 0 auto;
   background: linear-gradient(180deg, var(--wc-topbar-top), var(--wc-header-bg));
-  border-bottom: 1px solid var(--wc-topbar-border);
+  border-bottom: var(--wc-topbar-rule-width) solid var(--wc-topbar-border);
   box-shadow: var(--wc-elev-bar);
 }
 .brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-display); color: var(--wc-fg-bright); }

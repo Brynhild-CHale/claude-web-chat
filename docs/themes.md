@@ -25,9 +25,10 @@ or node scope it styles the chrome only, at pane scope that pane's content only.
 
 Every pack meets WCAG AA in every mode it declares — 4.5:1 for text, 3:1 for
 labels on fills, glyphs and large text — measured over the ink/fill pairs the
-chrome actually paints (`test/theme-contrast.test.js`). Earthy light has four
-older pairs below that (its accent labels and keycaps, and muted text on the
-stage); the test names them, and that list may only shrink.
+chrome actually paints (`test/theme-contrast.test.js`), with no exceptions.
+(Earthy light's accent labels, keycaps and muted text were darkened just past AA
+for this; they read a shade deeper than 0.7.6's.) No builtin carries raw CSS:
+Georgetown Blue's 2px topbar rule is the `--wc-topbar-rule-width` token.
 
 Builtins are read-only: a saved theme cannot take a builtin's name, and
 `apply_theme` resolves a builtin name before any saved theme. Applying one
@@ -87,9 +88,9 @@ A theme may carry per-mode layers over its mode-free tokens:
   mode. `list_themes` names each theme's modes but not their per-mode token
   maps, to keep that listing small.
 - The documents the surface frames for you follow **your** mode: the graph
-  inspector's preview, the glance, pane history and the replay player pass
-  `?mode=` to `/preview/node`, `/preview/pane` and `/replay`, and redraw when ◑
-  flips it. Under a theme with no modes (the stock look of an older project) a
+  inspector's preview, the glance, pane history, the replay player and the
+  `node-render` builtin pass `?mode=` to `/preview/node`, `/preview/pane` and
+  `/replay`, and redraw when ◑ flips it. Under a theme with no modes (the stock look of an older project) a
   named mode draws it over Earthy at that mode, as the live page does.
 - **Files stay light**: a page export, a replay `.html` download and a rendered
   GIF/MP4/WebM are drawn in light mode whatever the browser shows, unless the
@@ -320,6 +321,7 @@ content opts in by referencing it.
 | `--wc-elev-rail` | elevation | queue rail shadow |
 | `--wc-topbar-top` | chrome | topbar upper stop |
 | `--wc-topbar-border` | chrome | topbar bottom rule |
+| `--wc-topbar-rule-width` | chrome | topbar bottom rule width (a length: 1px hairline, 2px rule) |
 | `--wc-rail-bg` | chrome | queue rail fill |
 | `--wc-hover-bg` | chrome | hovered buttons and rows |
 | `--wc-row-active-bg` | chrome | the active row in a list |
