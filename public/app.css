@@ -179,7 +179,7 @@ html, body {
   font-family: var(--wc-font);
   -webkit-font-smoothing: antialiased;
 }
-body { overflow: hidden; }
+body { overflow: hidden; overscroll-behavior: none; }
 button { font-family: inherit; color: inherit; cursor: pointer; }
 ::selection { background: var(--wc-glow-accent); }
 
@@ -244,8 +244,18 @@ html.wc-theming, html.wc-theming * {
 /* ===================== the stage + depth layers ===================== */
 #stage {
   position: relative;
-  height: 100vh; width: 100vw;
+  /* The VISIBLE viewport, not the largest one. On a phone 100vh is the height
+     with the browser's toolbars retracted, so the page ran under Safari's and
+     Chrome's bottom toolbar (hiding the bottom bar), and the overflow let Safari
+     scroll the topbar up under the status bar. dvh tracks the toolbars;
+     100vh stays as the fallback for browsers without it. */
+  height: 100vh; height: 100dvh; width: 100vw;
   overflow: hidden;
+  /* The notch / home-indicator areas (viewport-fit=cover in index.html): 0 on
+     a desktop and in a phone browser's portrait tab, non-zero in landscape
+     beside a notch and in a home-screen web app. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  box-sizing: border-box;
   outline: none;
   background: var(--wc-bg);
   display: flex; flex-direction: column;
@@ -1307,7 +1317,7 @@ body.pin-mode #main { cursor: crosshair; }
   position: fixed; right: 18px; bottom: 18px; z-index: var(--z-notice);
   display: flex; flex-direction: column; gap: 10px;
   max-width: min(420px, calc(100vw - 36px));
-  max-height: calc(100vh - 36px); overflow-y: auto;
+  max-height: calc(100vh - 36px); max-height: calc(100dvh - 36px); overflow-y: auto;
 }
 .svc-trust-card {
   font-family: var(--wc-font);
@@ -1505,7 +1515,8 @@ body.pin-mode #main { cursor: crosshair; }
   #topbar .stepper, #btn-return-active, #btn-graph { display: none !important; }
   .bottombar {
     position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
-    display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 10px;
+    display: flex; align-items: center; gap: 8px; height: calc(52px + env(safe-area-inset-bottom)); padding: 0 10px env(safe-area-inset-bottom);
+    box-sizing: border-box;
     border-top: 1px solid var(--wc-border); background: var(--wc-header-bg);
   }
   .bb-stepper button { width: 40px; height: 36px; font-size: 15px; }
@@ -1539,7 +1550,7 @@ body.pin-mode #main { cursor: crosshair; }
 .phone .pane.narrow .pane-type { display: inline-block; }
 .phone .pane.minimized.peek { display: flex; }      /* a minimized block, shown here only */
 .phone #dock, .phone #more-menu [data-act="wipe"] { display: none; }
-.phone .bottombar { height: 60px; padding: 0 12px env(safe-area-inset-bottom); }
+.phone .bottombar { height: calc(60px + env(safe-area-inset-bottom)); padding: 0 12px env(safe-area-inset-bottom); }
 .phone .bb-stepper button { width: 44px; height: 44px; font-size: 16px; }
 .phone :is(.bb-return, .bb-graph, .bb-queue) { height: 44px; font-size: 13px; }
 /* the glance is a bottom sheet */
