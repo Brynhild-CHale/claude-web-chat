@@ -20,6 +20,28 @@ const RECHECK_MS = 20 * 60 * 1000; // long-open tabs re-check occasionally (serv
 const DISMISS_KEY = 'wc:update-dismissed';
 
 let currentBuild = null;
+// The build THIS page's code came from: the daemon's version at this page's
+// first successful check. When a later check (every WS reconnect) answers a
+// different version, `claude-web-chat update` swapped the daemon under an open
+// page: the socket reconnected, but the old modules are still what's running
+// (a phone left open through the tunnel kept refusing input with a hint the new
+// build no longer has). Reload once, so the page runs what the daemon serves.
+// Once per build per tab (sessionStorage), so a daemon that flaps between two
+// builds can't put the tab into a reload loop.
+let pageBuild = null;
+const RELOADED_KEY = 'wc:reloaded-for-build';
+let reloadPage = () => { try { location.reload(); } catch {} };
+// Tests swap the reload for a spy.
+export function setPageReloader(fn) { reloadPage = fn; }
+function reloadIfBuildChanged(build) {
+  if (pageBuild === null) { pageBuild = build; return false; }
+  if (build === pageBuild || getSession(RELOADED_KEY) === build) return false;
+  setSession(RELOADED_KEY, build);
+  // Give the debounced form-state write (350 ms) time to land first, so typed
+  // values survive the reload; they are rehydrated on the fresh page.
+  setTimeout(() => reloadPage(), 450);
+  return true;
+}
 // The version the bar is announcing RIGHT NOW, remembered here rather than
 // re-derived by regexing the message text back out of the DOM: the dismiss
 // handler parsed /web-chat (\S+) is available/ off `.ub-msg`, so a reworded
@@ -56,6 +78,7 @@ export async function checkVersion() {
   try { info = await fetch('/api/version').then((r) => r.json()); } catch { return; }
   if (!info || !info.ok || !info.current) return;
   currentBuild = info.current;
+  if (reloadIfBuildChanged(info.current)) return;
 
   if (!info.updateAvailable || !info.latest) { hide(); return; }
   if (info.latest === dismissedVersion()) { hide(); return; }

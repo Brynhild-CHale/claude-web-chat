@@ -146,6 +146,8 @@ the new `after` and `place` are render arguments, not params. What you have to d
 
 ### Fixed
 
+- **An open page kept running the previous build after `update`.** The update restarts the daemon and the page's socket reconnects, but the modules already loaded in the tab were still the old ones (a phone left open through the tunnel kept refusing taps with a hint the new build no longer has). On reconnect, the chrome now compares the daemon's version with the one the page loaded from, and reloads itself once when they differ. Typed form values are saved first and restored on the fresh page, and it is at most once per build per tab, so it cannot loop.
+
 - **After an update, a browser could keep running the previous build's chrome.** A release tarball pins every file's modified time (for byte-reproducible builds), so the daemon's static-file validators, a fixed `Last-Modified` and an ETag made of size + mtime, came out identical across builds, and a browser holding a cached `topbar.js` was answered `304 Not Modified` by the new version. It showed up on a phone through the tunnel, still printing a hint the new build no longer has. The chrome's files now carry an ETag that names the build, send no `Last-Modified`, and are served `Cache-Control: no-cache`, so every browser picks up a new build on its next load, with no cache clearing.
 
 - **The `node-render` builtin drew its node in light mode under a dark surface.** Its iframe loaded `/preview/node/<id>` with no `?mode=`, so the server's light default always won. It now passes the viewer's mode, as the graph inspector's preview and the glance do, redraws when ◑ flips it, and ↗ opens the node in that mode too.

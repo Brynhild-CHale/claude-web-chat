@@ -108,3 +108,24 @@ test('dismissing a borrowed bar does not mute a version nobody was shown', async
 // checkForUpdatesNow borrowed the bar through flash(), whose 6s expiry timer
 // touches `document`. Let it fire while the window is still valid, then tear down.
 test.after(async () => { await new Promise((r) => setTimeout(r, 6200)); restore(); });
+
+test('a page reloads itself once when it reconnects to a different build', async () => {
+  const { checkVersion, setPageReloader } = await import(pathToFileURL(path.join(REPO, 'public/app/version.js')).href);
+  let reloads = 0;
+  setPageReloader(() => { reloads++; });
+  // The module keeps its first-seen build across this file's tests; pin a fresh baseline.
+  info = { ok: true, current: '9.9.0-base', latest: null, updateAvailable: false };
+  await checkVersion();
+  const base = '9.9.0-base';
+  info = { ...info, current: base };
+  await checkVersion();
+  await new Promise((r) => setTimeout(r, 500));
+  const before = reloads;
+  info = { ...info, current: '9.9.1-new' };
+  await checkVersion();
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(reloads, before + 1, 'a different build under an open page reloads it');
+  await checkVersion();
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(reloads, before + 1, 'at most once per build in this tab: no reload loop');
+});
