@@ -482,20 +482,22 @@ function freePort() {
 // Put test-support/fake-cloudflared.js on PATH as `cloudflared` (the fakeGh
 // pattern) and own the env it reads. Returns { dir, callsFile, calls() } where
 // calls() is every non --version invocation, parsed.
-//   fakeCloudflared(t, { version, exit })
-function fakeCloudflared(t, { version, exit } = {}) {
+//   fakeCloudflared(t, { version, exit, lingerMs, ignoreTerm })
+function fakeCloudflared(t, { version, exit, lingerMs, ignoreTerm } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-fakecf-'));
   const callsFile = path.join(dir, 'calls.log');
   fs.writeFileSync(callsFile, '');
   fs.writeFileSync(path.join(dir, 'cloudflared'),
     `#!/bin/sh\nexec "${process.execPath}" "${path.join(__dirname, 'fake-cloudflared.js')}" "$@"\n`);
   fs.chmodSync(path.join(dir, 'cloudflared'), 0o755);
-  const keys = ['PATH', 'FAKE_CF_CALLS', 'FAKE_CF_VERSION', 'FAKE_CF_EXIT'];
+  const keys = ['PATH', 'FAKE_CF_CALLS', 'FAKE_CF_VERSION', 'FAKE_CF_EXIT', 'FAKE_CF_LINGER_MS', 'FAKE_CF_IGNORE_TERM'];
   const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   process.env.PATH = `${dir}${path.delimiter}${prev.PATH}`;
   process.env.FAKE_CF_CALLS = callsFile;
   if (version) process.env.FAKE_CF_VERSION = version; else delete process.env.FAKE_CF_VERSION;
   if (exit != null) process.env.FAKE_CF_EXIT = String(exit); else delete process.env.FAKE_CF_EXIT;
+  if (lingerMs) process.env.FAKE_CF_LINGER_MS = String(lingerMs); else delete process.env.FAKE_CF_LINGER_MS;
+  if (ignoreTerm) process.env.FAKE_CF_IGNORE_TERM = '1'; else delete process.env.FAKE_CF_IGNORE_TERM;
   const calls = () => fs.readFileSync(callsFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   t.after(() => {
     // Reap every fake this test launched. A regression that leaks the

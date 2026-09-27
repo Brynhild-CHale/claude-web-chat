@@ -334,7 +334,9 @@ const PATTERNS = [
       'lib/cli/commands/hub.js': 1,
       // `tunnel down` (lib/tunnel/control, shared by the CLI and the browser
       // setup page): the same identity gate — the pid the live portal just
-      // reported on its /api/health, never one read out of a file.
+      // reported on its /api/health, never one read out of a file. The same
+      // signal reaches that portal's reported connector if it outlives the
+      // portal (settleStopped), once `ps` shows it is still that cloudflared.
       'lib/tunnel/control.js': 1,
       // A comment quoting the hand-rolled kill restart dropped in favour of the
       // stop engine.

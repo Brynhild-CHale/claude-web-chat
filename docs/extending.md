@@ -692,8 +692,10 @@ a local tunnel's ingress (our hostnames → the portal with
 supervises the child. `api-setup.js` is the one-token setup RUN around
 `cf-setup` (read `tunnel.json`, build what setup wants, print the plan, stop on
 a conflict, apply, prove the keys, write the files) and `control.js` the
-lifecycle (`up`/`down`/`restartPortal`/`collectStatus`), shared by the two
-faces: `lib/cli/commands/tunnel.js` (`setup|up|down|status|logs`) and the ⌘K
+lifecycle (`up`/`down`/`restartPortal`/`collectStatus`; `down` returns only
+once the portal AND the connector it reported have exited — `settleStopped`,
+which every restart goes through, so no caller adds a wait of its own), shared
+by the two faces: `lib/cli/commands/tunnel.js` (`setup|up|down|status|logs`) and the ⌘K
 browser setup page, `lib/server/tunnel-setup` — a listener of its own on
 `127.0.0.1` at an ephemeral port, NOT the surface's origin, because the page
 takes the API token and panes run in the surface's origin (its header has the
@@ -1309,7 +1311,7 @@ Current homes (baselines can only shrink toward these):
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
 | `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
-| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces and `tunnel down`, which signal only the pid `/api/health` reported, and the portal's reap of a stray cloudflared (`lib/tunnel/cloudflared`, identity-gated by `isStrayConnector`) | landed with the daemon-record engine ✅ |
+| `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces and `tunnel down`, which signal only the pid `/api/health` reported, and the reap of a cloudflared (`lib/tunnel/cloudflared` `stopConnector`: a stray one the portal finds, identity-gated by `isStrayConnector`, or the one a portal `tunnel down` just stopped reported, gated by `isConnectorProcess`) | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
 | `state.order =` / `state.order.push/splice/unshift(` / `state.markdown.set/delete/clear(` | `lib/server/domain/page.js` — the one writer of the page sequence and its markdown items; the mount engine and the bulk paths call into it | landed with the page sequence ✅ |
 | `#{1,<n>}` (a markdown heading parser) | `lib/core/markdown.js` — host rendering for preview/export, and the browser module served at `/app/markdown.js` is built from the same factory's source | landed with the page sequence ✅ |

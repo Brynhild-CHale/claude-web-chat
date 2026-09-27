@@ -325,7 +325,9 @@ tunnel up          preflight, then start the portal (port 5171 —
                    WEB_CHAT_PORTAL_PORT to move it) which runs cloudflared;
                    a portal left running by an older build, or enforcing an
                    older tunnel.json, is restarted
-tunnel down        stop the portal; cloudflared stops with it
+tunnel down        stop the portal; cloudflared stops with it (waits until
+                   both have exited; a connector of that portal's still
+                   running after 10s is stopped too)
 tunnel status      config, portal pid, whether the connector is READY, when the
                    Access keys were last refreshed, every exposed project, and
                    every hidden one with the reason

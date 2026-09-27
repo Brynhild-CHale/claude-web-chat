@@ -9,7 +9,10 @@
 //                        none), `config` the text of any --config file — then:
 //                          FAKE_CF_EXIT=<n>  exits <n> at once (a crash loop);
 //                          otherwise serves `--metrics host:port` with /ready
-//                          → 200 {readyConnections: 4} until SIGTERM.
+//                          → 200 {readyConnections: 4} until SIGTERM, which
+//                          it obeys after $FAKE_CF_LINGER_MS (a slow shutdown,
+//                          serving meanwhile) — or never, with
+//                          FAKE_CF_IGNORE_TERM=1 (only SIGKILL ends it).
 //
 // It never touches the network beyond that loopback metrics port.
 
@@ -61,7 +64,11 @@ if (metrics) {
   server.listen(Number(metrics.slice(i + 1)), '127.0.0.1');
 }
 const bye = () => { server.close(); process.exit(0); };
-process.on('SIGTERM', bye);
+const linger = Number(process.env.FAKE_CF_LINGER_MS) || 0;
+process.on('SIGTERM', () => {
+  if (process.env.FAKE_CF_IGNORE_TERM) return;
+  if (linger > 0) setTimeout(bye, linger); else bye();
+});
 process.on('SIGINT', bye);
 // Stay alive even with no metrics server.
 setInterval(() => {}, 1 << 30);
