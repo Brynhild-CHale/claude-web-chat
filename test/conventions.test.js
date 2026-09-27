@@ -854,6 +854,7 @@ test('conventions: channel meta stays within the versioned vocabulary + wire sha
       { id: 'q1', kind: 'capture', capture_id: 'cap1', summary: 'a', seq: 1 },
       { id: 'q2', kind: 'signal', origin_mount: 'm2', summary: 'b', seq: 2 },
     ], { source: 'queue', note: 'ctx' }),
+    wakeEnvelope([{ id: 'q1', kind: 'signal', summary: 'c', seq: 4 }], { source: 'queue', origin: 'remote', device: 'mobile' }),
     wakeEnvelope([], {}),
   ];
   for (const env of envelopes) {

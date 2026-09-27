@@ -54,6 +54,21 @@ test('bridge: a real wake becomes exactly one notification with the sanitized en
   assert.doesNotMatch(content, /[<>]/);
 });
 
+test('bridge: a wake\'s push provenance reaches the <channel> as meta and a summary line', async (t) => {
+  const { api, root } = await withServer(t, { writePortfile: true });
+  const { client, ready } = readyClient();
+  const notified = [];
+  const bridge = startChannelBridge({ notify: (method, params) => notified.push(params), client, root });
+  t.after(() => bridge.stop());
+  await ready;
+  await api.post('/api/capture', { url: 'https://example.com/page', title: 'Ex', html: HTML });
+  assert.equal((await api.post('/api/queue/push', { device: 'mobile' })).json.mode, 'wake');
+  await waitUntil(() => notified.length >= 1, { what: 'the bridge notification' });
+  assert.equal(notified[0].meta.push_origin, 'local');
+  assert.equal(notified[0].meta.device, 'mobile');
+  assert.match(notified[0].content, /Pushed from: origin=local device=mobile/);
+});
+
 test('policy: channel_connected reflects only explicit wake subscribers (not all-kinds)', async (t) => {
   const { api, port } = await withServer(t);
 

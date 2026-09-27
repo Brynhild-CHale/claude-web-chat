@@ -27,11 +27,19 @@ async function boot() {
     .replace(/<script[^>]*><\/script>/g, '');
   const dom = new JSDOM(html, { url: 'http://localhost:5173/', pretendToBeVisual: true });
   const { window } = dom;
+  // The phone posture (public/app/viewport.js) is a matchMedia answer; jsdom has
+  // none. This one starts desktop and can be flipped like a rotating phone.
+  const phoneMql = {
+    matches: false, listeners: [],
+    addEventListener(_type, fn) { this.listeners.push(fn); },
+    flip(v) { this.matches = v; for (const fn of this.listeners) fn(); },
+  };
+  window.matchMedia = () => phoneMql;
 
   const wsInstances = [];
   window.WebSocket = class {
     constructor(url) { this.url = url; this.readyState = 1; wsInstances.push(this); setTimeout(() => this.onopen && this.onopen(), 0); }
-    send() {}
+    send(data) { (this.sent || (this.sent = [])).push(JSON.parse(data)); }
     close() {}
   };
 
@@ -86,7 +94,7 @@ async function boot() {
     global.setInterval = savedSetInterval;
     window.close();
   };
-  return { window, wsInstances, calls, state, restore };
+  return { window, wsInstances, calls, state, restore, phoneMql };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 25));
@@ -97,7 +105,7 @@ const pressP = (w) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { 
 const unpinRail = (w) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }));
 
 test('the queue rail makes Push legible: reveal, empty-push notice, standing park + cancel', async () => {
-  const { window, wsInstances, calls, state, restore } = await boot();
+  const { window, wsInstances, calls, state, restore, phoneMql } = await boot();
   try {
     await tick();
     const w = window;
@@ -171,6 +179,21 @@ test('the queue rail makes Push legible: reveal, empty-push notice, standing par
     assert.match(err.textContent, /Push failed/);
     assert.ok(r.classList.contains('open'), 'in a rail the user can actually see');
     assert.equal(r.querySelectorAll('.rail-item').length, 1, 'and the batch is kept');
+
+    /* --- push provenance: the chrome names its view on every push, and on the
+       socket (an immediate signal wakes Claude straight from a store:set) at
+       every (re)connect and whenever the view flips --- */
+    const pushes = () => calls.filter((c) => c.url === '/api/queue/push');
+    assert.ok(pushes().length >= 2 && pushes().every((c) => c.body.device === 'desktop'), 'the desktop view says so');
+    ws.onmessage({ data: JSON.stringify({ type: 'hello', store: {}, mounts: [], markdown: [], order: [], active: 'n1', lock: null }) });
+    const clientFrames = () => (ws.sent || []).filter((f) => f.type === 'client').map((f) => f.device);
+    assert.deepEqual(clientFrames(), ['desktop'], 'hello is answered with the posture');
+    phoneMql.flip(true);
+    assert.deepEqual(clientFrames(), ['desktop', 'mobile'], 'a flip to the phone view re-announces it');
+    pressP(w); // (still failing — the request body is what is under test)
+    await tick();
+    assert.equal(pushes().at(-1).body.device, 'mobile', 'and the next push is from mobile');
+    phoneMql.flip(false);
 
     await new Promise((res) => setTimeout(res, 400)); // drain deferred timers
   } finally { restore(); }

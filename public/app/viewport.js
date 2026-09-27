@@ -37,6 +37,9 @@ let mql = null;
 let phone = false;
 
 export function isPhone() { return phone; }
+// The same answer in the daemon's push-provenance vocabulary (lib/server/domain/
+// queue provenance): the phone view is `mobile`, everything else `desktop`.
+export function deviceKind() { return phone ? 'mobile' : 'desktop'; }
 
 function apply(next) {
   const changed = next !== phone;

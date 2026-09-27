@@ -199,7 +199,10 @@ permission — what a remote viewer may do is decided in the portal. It narrows
 one thing: a pane can still spawn a saved component remotely, but not a pane of
 raw HTML — that would be markup the remote viewer's page wrote, landing in your
 surface — so such a spawn is refused (the portal always sets the header and
-drops any copy a viewer sends). The ⋯ → **Sessions** panel says to run
+drops any copy a viewer sends). A Push made remotely is marked
+`origin=remote` (and `device=mobile` from a phone) in what Claude receives, so
+it answers on the surface rather than asking you to run a command — see
+[channels-dev](channels-dev.md), "Push provenance". The ⋯ → **Sessions** panel says to run
 `claude-web-chat ls` on the host instead of listing anything: it names every
 project on the machine, so it is host-only.
 

@@ -9,6 +9,7 @@
 // pinned), so we hydrate once via GET and stay live off the frames.
 import { $ } from './state.js';
 import { isCommentAnswered } from './comments.js';
+import { deviceKind } from './viewport.js';
 
 let items = [];
 const isStaged = (it) => it.staged !== false; // default staged; held is explicit
@@ -207,7 +208,7 @@ export async function pushQueue() {
   let result = null;
   try {
     const r = await fetch('/api/queue/push', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note, device: deviceKind() }),
     });
     ok = r.ok;
     if (ok) { try { result = await r.json(); } catch {} }
@@ -364,7 +365,7 @@ async function repush(seq, park) {
   let result = null, ok = false;
   try {
     const r = await fetch('/api/queue/repush', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seq, park }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seq, park, device: deviceKind() }),
     });
     ok = r.ok;
     if (ok) { try { result = await r.json(); } catch {} }
