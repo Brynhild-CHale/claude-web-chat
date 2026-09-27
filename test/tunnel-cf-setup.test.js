@@ -14,6 +14,10 @@
 //   * a token missing a permission is told which one.
 //   * --dry-run reads, prints the plan, writes nothing (not even tunnel.json).
 //   * a 429 is waited out; Google sign-in creates the IdP from the OAuth client.
+//   * (s4l-1) a token that cannot list /accounts finds its account through the
+//     zones; --account <id> is used without listing; a refusal names both the
+//     classic and the newer permission label; a wildcard on the zone apex is
+//     warned about in the plan, never refused.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -263,6 +267,9 @@ test('setup: a first run with no flags offers the one-token path, and a paste is
   await assert.rejects(tunnel(['setup'], { log: c.log, prompt: quietPrompt() }), /no Cloudflare API token/);
   assert.match(c.text(), /Create Custom Token, with these permissions:/);
   for (const perm of Object.values(PERMS)) assert.ok(c.text().includes(perm), perm);
+  assert.equal(Object.keys(PERMS).length, 5, 'five permissions, Account Settings › Read among them');
+  assert.match(c.text(), /Cloudflare Tunnel › Edit {3}\(newer dashboards: Cloudflare One Connector: cloudflared › Edit\)/);
+  assert.match(c.text(), /Account Settings › Read lets setup list your account; without it, it finds the account through your zone/);
 });
 
 test('cf-api: WEB_CHAT_CF_API cannot send the token in cleartext off this machine', async () => {
@@ -278,7 +285,9 @@ test('cf-api: WEB_CHAT_CF_API cannot send the token in cleartext off this machin
 // The account's state, minus bookkeeping — what a no-op re-run must leave alone.
 const snapshot = (fake) => JSON.stringify({ ...fake.db, configs: [...fake.db.configs] });
 
-for (const [key, perm] of Object.entries(PERMS)) {
+// Account Settings › Read is recommended, not required (setup finds the
+// account through the zones without it) — its own tests are below.
+for (const [key, perm] of Object.entries(PERMS).filter(([k]) => k !== 'account')) {
   test(`one token: a token without ${perm} is told so, before any write`, async (t) => {
     withTempHome(t);
     const fake = await withFakeCloudflare(t);
@@ -424,4 +433,114 @@ test('one token: a pasted token, and one passed as a flag value, are not stored 
     assert.ok(!fs.readFileSync(f, 'utf8').includes(fake.token), `${f} holds the API token`);
   }
   assert.equal(fake.db.apps.length, 1);
+});
+
+// ── s4l-1: account discovery, --account without listing, permission names,
+// the apex-wildcard warning ────────────────────────────────────────────────
+
+const ACC1 = 'acc0000000000000000000000000001';
+const ACC2 = 'acc0000000000000000000000000002';
+
+test('one token: /accounts empty (no Account Settings › Read) → the account is found through the zone', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['account'];
+  const { c, p } = await run(fake);
+  await p;
+  assert.ok(fake.calls.some((x) => x.path === '/accounts'), 'it tried to list accounts first');
+  assert.equal(fake.db.apps.length, 1, 'and set up on the zone\'s account');
+  assert.match(c.text(), /account Test Account · zone example\.test/);
+  assert.match(c.text(), /found through the zone — the token cannot list accounts without Account › Account Settings › Read/);
+});
+
+test('one token: an account-owned token without Account Settings › Read still verifies, against its zone\'s account', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['account'];
+  fake.sim.accountOwned = true;
+  await (await run(fake)).p;
+  assert.ok(fake.calls.some((x) => x.path === `/accounts/${ACC1}/tokens/verify`));
+  assert.equal(fake.db.apps.length, 1);
+});
+
+test('one token: zones on two accounts and no /accounts → needs --account, lists both', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, {
+    accounts: [{ id: ACC1, name: 'Test Account' }, { id: ACC2, name: 'Other Account' }],
+    zones: [
+      { id: 'zone000000000000000000000000001', name: 'example.test' },
+      { id: 'zone000000000000000000000000002', name: 'other.test', account: { id: ACC2, name: 'Other Account' } },
+    ],
+  });
+  fake.sim.missing = ['account'];
+  await assert.rejects((await run(fake)).p,
+    (e) => e.userFacing && /sees 2 accounts — pick one with --account <id>: Test Account \(acc0+1\), Other Account \(acc0+2\)/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: --account <id> is used directly, without listing accounts', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, { accounts: [{ id: ACC1, name: 'Test Account' }, { id: ACC2, name: 'Other Account' }] });
+  const { c, p } = await run(fake, ['--account', ACC1]);
+  await p;
+  assert.equal(fake.calls.filter((x) => x.path === '/accounts').length, 0, 'no GET /accounts');
+  assert.ok(fake.calls.some((x) => x.path === `/accounts/${ACC1}`), 'one cheap account-scoped read instead');
+  assert.equal(fake.db.apps.length, 1);
+  assert.match(c.text(), /account Test Account · zone example\.test/);
+});
+
+test('one token: --account <id> works without Account Settings › Read — a tunnel probe proves it, the zone names it', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['account'];
+  const { c, p } = await run(fake, ['--account', ACC1]);
+  await p;
+  assert.equal(fake.calls.filter((x) => x.path === '/accounts' || x.path === '/zones' && !x.query.name).length, 0, 'no listing of any kind');
+  assert.ok(fake.calls.some((x) => x.path === `/accounts/${ACC1}/cfd_tunnel` && x.query.per_page === '1'), 'the probe');
+  assert.match(c.text(), /account Test Account · zone example\.test/, 'the name, from the zone');
+  assert.equal(fake.db.apps.length, 1);
+});
+
+test('one token: an --account the token cannot reach says so, with what it does see', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  await assert.rejects((await run(fake, ['--account', 'f'.repeat(32)])).p,
+    (e) => e.userFacing && /cannot reach account "f{32}".*it sees: Test Account \(acc0+1\).*Copy account ID/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: a token that can see no account and no zone names Account Settings › Read and --account', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, { zones: [] });
+  fake.sim.missing = ['account'];
+  await assert.rejects((await run(fake)).p,
+    (e) => e.userFacing && e.message.includes(`give it ${PERMS.account}`) && /or pass --account <id>/.test(e.message));
+});
+
+test('cf-api: a refused permission names the classic and the newer dashboard label', async (t) => {
+  const { PERM_ALIASES } = require('../lib/tunnel/cf-api');
+  const fake = await withFakeCloudflare(t);
+  fake.sim.missing = ['tunnel'];
+  const api = createCfApi({ token: fake.token, base: fake.base });
+  await assert.rejects(api.createTunnel(ACC1, 'x'), (e) => e.message.includes(
+    'missing a permission: Account › Cloudflare Tunnel › Edit (or, in newer dashboards: Account › Cloudflare One Connector: cloudflared › Edit)'));
+  for (const k of ['tunnel', 'apps', 'org', 'dns']) assert.ok(PERM_ALIASES[PERMS[k]], `${k} has its newer name`);
+});
+
+test('one token: a wildcard on the zone apex is warned about in the plan, not refused', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const { c, p } = await run(fake, ['--dry-run']);
+  const r = await p;
+  assert.deepEqual(r.plan.conflicts, []);
+  assert.match(c.text(), /⚠ {2}DNS \*\.example\.test catches every undefined subdomain of example\.test; the portal refuses them \(421\) but they reach this machine/);
+});
+
+test('one token: a wildcard below the apex (nested style) carries no warning', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const { c, p } = await run(fake, ['--dry-run', '--style', 'nested']);
+  const r = await p;
+  assert.deepEqual(r.plan.warnings, []);
+  assert.doesNotMatch(c.text(), /catches every undefined subdomain/);
 });

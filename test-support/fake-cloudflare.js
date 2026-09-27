@@ -14,20 +14,26 @@
 //
 // Simulations (set on `fake.sim` at any time):
 //   missing: ['org', …]   token permissions the token lacks (PERMS keys in
-//                         cf-api: tunnel, apps, org, dns) → 403 code 10000
+//                         cf-api: account, tunnel, apps, org, dns) → 403 code
+//                         10000 — except 'account' (Account Settings › Read)
+//                         on GET /accounts, which answers an EMPTY list, as
+//                         the real API did in the maintainer's live run
 //   mfaRefused: true      org and app writes carrying mfa_config → 400 (a
 //                         plan without independent MFA); 'org' or 'app' refuses
 //                         only that one (the org takes it, the app does not)
 //   rateLimit: n          the next n requests answer 429 (Retry-After: 0)
 //   zeroTrust: false      the account has no Zero Trust organization (404)
 //   badToken: true        every request is 401 "Invalid API Token" (1000)
+//   accountOwned: true    an ACCOUNT-owned token: /user/tokens/verify refuses
+//                         it (401, 1000); /accounts/<id>/tokens/verify takes it
 //   fail: [{ method, path, status, times }]
 //                         a matching request (path: a RegExp on the path
 //                         without /client/v4) answers `status` (500 default),
 //                         `times` times (1 default) — a run that dies half way
 //
 // A missing zone is not a simulation: pass `zones` without the hostname's zone
-// (`zones: []`).
+// (`zones: []`). Each zone carries its `account` ({ id, name }) as the real
+// API's do — the first account's, unless the zone says otherwise.
 
 const http = require('http');
 const crypto = require('crypto');
@@ -41,7 +47,8 @@ function createFakeCloudflare({
   zones = [{ id: 'zone000000000000000000000000001', name: 'example.test' }],
   team = 'testteam',
 } = {}) {
-  const sim = { missing: [], mfaRefused: false, rateLimit: 0, zeroTrust: true, badToken: false, fail: [] };
+  zones = zones.map((z) => ({ ...z, account: z.account || { id: accounts[0].id, name: accounts[0].name } }));
+  const sim = { missing: [], accountOwned: false, mfaRefused: false, rateLimit: 0, zeroTrust: true, badToken: false, fail: [] };
   const refuses = (what) => sim.mfaRefused === true || sim.mfaRefused === what;
   const db = {
     dns: [],
@@ -63,6 +70,7 @@ function createFakeCloudflare({
   const err = (res, status, code, message) => send(res, status, { success: false, errors: [{ code, message }], messages: [], result: null });
 
   function permFor(p) {
+    if (/^\/accounts\/[^/]+\/?$/.test(p)) return 'account';
     if (/^\/zones/.test(p)) return 'dns';
     if (/\/cfd_tunnel/.test(p)) return 'tunnel';
     if (/\/access\/(organizations|identity_providers)/.test(p)) return 'org';
@@ -72,11 +80,14 @@ function createFakeCloudflare({
 
   function route(method, p, q, body, res) {
     let m;
-    if (p === '/user/tokens/verify') return ok(res, { id: 'tok1', status: 'active' });
-    if (p === '/accounts') return list(res, accounts);
+    if (p === '/user/tokens/verify') return sim.accountOwned ? err(res, 401, 1000, 'Invalid API Token') : ok(res, { id: 'tok1', status: 'active' });
+    if (p === '/accounts') return list(res, sim.missing.includes('account') ? [] : accounts);
     if ((m = p.match(/^\/accounts\/([^/]+)\/tokens\/verify$/))) return ok(res, { id: 'tok1', status: 'active' });
 
-    if (p === '/zones') return list(res, zones.filter((z) => !q.get('name') || z.name === q.get('name')));
+    if (p === '/zones') {
+      return list(res, zones.filter((z) => (!q.get('name') || z.name === q.get('name'))
+        && (!q.get('account.id') || z.account.id === q.get('account.id'))));
+    }
     if ((m = p.match(/^\/zones\/([^/]+)\/dns_records$/))) {
       const zid = m[1];
       if (method === 'GET') return list(res, db.dns.filter((r) => r.zone_id === zid && (!q.get('name') || r.name === q.get('name'))));
@@ -94,9 +105,10 @@ function createFakeCloudflare({
       return ok(res, rec);
     }
 
-    if (!(m = p.match(/^\/accounts\/([^/]+)(\/.*)$/))) return err(res, 404, 7003, 'Could not route');
-    const [, acc, rest] = m;
-    if (!accounts.some((a) => a.id === acc)) return err(res, 404, 7003, 'No such account');
+    if (!(m = p.match(/^\/accounts\/([^/]+)(\/.*)?$/))) return err(res, 404, 7003, 'Could not route');
+    const [, acc, rest = ''] = m;
+    if (!accounts.some((a) => a.id === acc)) return err(res, 403, 9109, 'Unauthorized to access requested resource');
+    if (rest === '/' || rest === '') return ok(res, accounts.find((a) => a.id === acc));
 
     if (rest === '/cfd_tunnel') {
       if (method === 'GET') return list(res, db.tunnels.filter((t) => (!q.get('name') || t.name === q.get('name')) && !(q.get('is_deleted') === 'false' && t.deleted_at)));
