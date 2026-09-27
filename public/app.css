@@ -635,15 +635,24 @@ kbd {
 .qi-dot.qi-signal { background: var(--wc-accent); }
 .qi-dot.qi-activity { background: var(--wc-muted); }   /* ambient opt-out layer — quieter than a declared signal */
 
-/* pending re-aim notice — a user re-aim during a locked turn is queued, not
-   rejected; this transient banner says "honored, applies at turn end". */
+/* the shell's one transient notice (topbar.showReaimNote) — first written for a
+   queued re-aim ("honored, applies at turn end"), now every out-of-panel note;
+   with an action it is a toast ("Added x to the live page · Jump to live"). */
 .reaim-note {
   position: fixed; top: 52px; right: 16px; z-index: var(--z-notice);
+  display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
   padding: 7px 12px; font: 500 12px var(--wc-font);
   color: var(--wc-fg); background: var(--wc-panel-bg);
   border: 1px solid var(--wc-gold); border-radius: var(--wc-radius-sm);
   box-shadow: var(--wc-shadow);
 }
+.reaim-note-action {
+  flex: none; padding: 3px 9px; font: 600 11.5px var(--wc-font); cursor: pointer;
+  color: var(--wc-fg); background: transparent;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm);
+}
+.reaim-note-action:hover { border-color: var(--wc-gold); }
+.reaim-note-action:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 .qi-dot.qi-comment { background: var(--wc-comment); }              /* B4: coral until Claude replies… */
 .qi-dot.qi-comment.answered { background: var(--wc-green); } /* …green once a Claude reply lands */
 .qi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

@@ -10,8 +10,11 @@
 //   3. A render that lands during a preview is folded into the captured live
 //      surface; that fold dropped `owner`, so a pane-spawned block came back
 //      from ↩ active as Claude's — no ↳ parent chip.
-//   4. Adding a block in a read-only preview POSTed to the LIVE surface, where
-//      nothing appeared until ↩ active. It is refused with the preview hint.
+//   4. Adding a block in a read-only preview adds it to the LIVE page in the
+//      background (plan §2b i8): the same POST a live spawn makes, the preview
+//      stays on screen, every live-page question (the free ⧉ slot, the seed's
+//      store) is asked of the captured live surface, and a toast — keyboard
+//      reachable, held while focused — says where it went, with "Jump to live".
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -59,6 +62,8 @@ async function boot() {
     }
     if (u.startsWith('/api/graph/diff')) return json({ mounts: { added: [], changed: [], removed: [] } });
     if (u === '/api/components') return json({ components: [{ name: 'widget', description: 'a widget' }] });
+    if (u === '/api/components/seeded/seed') return { ok: true, status: 200, text: async () => 'return { who: store.get("who") || "none" };' };
+    if (u === '/api/components/locked/use') return json({ ok: false, rejected: true, hint: "pane 'spawn-locked' is locked" });
     if (u === '/api/themes') return json({ themes: [] });
     if (u === '/api/queue') return json({ items: [], count: 0 });
     if (u === '/api/queue/pending') return json({ pending: null });
@@ -200,23 +205,119 @@ test('a pane-spawned block rendered during a preview keeps its owner on ↩ acti
   assert.equal(chip.dataset.parent, 'parent');
 });
 
-/* ---------- 4. adding a block in a read-only preview ---------- */
+/* ---------- 4. adding a block in a read-only preview → the live page ---------- */
 
-test('adding a block while previewing is refused with the preview hint, and writes nothing', async () => {
+const drawerMod = () => import(pathToFileURL(path.join(REPO, 'public/app/drawer.js')).href);
+const noteBtn = () => { const n = $('reaim-note'); return n ? n.querySelector('.reaim-note-action') : null; };
+const uses = (name) => posts(`/api/components/${name}/use`);
+
+test('adding a block while previewing goes to the live page, the preview stays, and a toast says so', async () => {
+  frame({ type: 'store:patch', patch: { who: 'live' } });
   click('btn-down');
   await tick();
   assert.equal(previewing(), true, 'precondition: previewing n2');
-  const { spawnComponent } = await import(pathToFileURL(path.join(REPO, 'public/app/drawer.js')).href);
-  const before = calls.length;
+  const { spawnComponent } = await drawerMod();
+
+  calls.length = 0;
   await spawnComponent({ name: 'widget' });
   await tick();
-  assert.ok(!calls.slice(before).some((c) => c.method === 'POST'), 'nothing POSTed to the live surface');
-  assert.match(noteText(), /Read-only preview — set this node active in the graph to edit/);
-  assert.equal(previewing(), true, 'and the preview stays up');
+  assert.equal(uses('widget').length, 1, 'the spawn POSTs to the live surface — the drawer path, so the daemon rules apply');
+  assert.equal(uses('widget')[0].body.id, 'spawn-widget');
+  assert.equal(previewing(), true, 'the preview stays on screen');
+  assert.ok(paneEl('m-old') && !paneEl('spawn-widget'), 'and the previewed page is untouched');
+  assert.match(noteText(), /Added widget to the live page/);
+  const note = $('reaim-note');
+  assert.equal(note.getAttribute('role'), 'status', 'announced politely');
+  assert.equal(note.previousElementSibling, $('topbar'), 'the next Tab stop after the topbar');
+  assert.equal(noteBtn().tagName, 'BUTTON');
+  assert.equal(noteBtn().textContent, 'Jump to live');
 
+  // The render lands on the socket — folded into the live surface, not shown.
+  frame({ type: 'render', id: 'spawn-widget', html: '<p>w</p>', target: 'main', params: {}, pane_state: { minimized: true } });
+  await tick();
+  assert.equal(paneEl('spawn-widget'), undefined, 'still not on the previewed page');
+
+  // A ⧉ duplicate takes the next slot free on the LIVE page (spawn-widget-2 is
+  // live, not on n2), and a seed reads the LIVE store (n2's has no `who`).
+  frame({ type: 'render', id: 'spawn-widget-2', html: '<p>w2</p>', target: 'main', params: {}, pane_state: {} });
+  await tick();
+  calls.length = 0;
+  await spawnComponent({ name: 'widget' }, { fresh: true });
+  assert.equal(uses('widget')[0].body.id, 'spawn-widget-3', 'the free slot is counted on the live page');
+  await spawnComponent({ name: 'seeded', has_seed: true });
+  assert.deepEqual(uses('seeded')[0].body.params, { who: 'live' }, 'the seed read the live store');
+  assert.equal(previewing(), true);
+
+  // A soft refusal (locked / owned) is reported, never toasted as added.
+  await spawnComponent({ name: 'locked' });
+  await tick();
+  assert.match(noteText(), /is locked/);
+  assert.equal(noteBtn(), null, 'no Jump to live for a block that did not land');
+
+  // Jump to live: leaves the preview, restores the minimized block, scrolls to it.
+  await spawnComponent({ name: 'widget' });
+  await tick();
+  noteBtn().dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(previewing(), false, 'Jump to live leaves the preview');
+  const w = paneEl('spawn-widget');
+  assert.ok(w, 'onto the live page, where the block is');
+  assert.ok(w.classList.contains('pane-flash'), 'and lands on it');
+  assert.equal(w.classList.contains('minimized'), false, 'restored if it was minimized');
+  assert.equal($('reaim-note'), null, 'the toast is dismissed');
+
+  calls.length = 0;
+  await spawnComponent({ name: 'widget' });
+  await tick();
+  assert.equal(uses('widget').length, 1, 'live, the same spawn goes through');
+  assert.doesNotMatch(noteText(), /live page/, 'with no toast — it is on screen');
+});
+
+test('a block that needs settings puts its settings form on the live page', async () => {
+  click('btn-down');
+  await tick();
+  assert.equal(previewing(), true);
+  const { spawnComponent } = await drawerMod();
+  calls.length = 0;
+  await spawnComponent({ name: 'cfg', params_schema: { properties: { x: { type: 'string' } }, required: ['x'] } });
+  await tick();
+  assert.equal(uses('form-renderer')[0].body.id, 'spawn-form-cfg');
+  assert.match(noteText(), /Added cfg's settings to the live page/);
+  assert.ok(noteBtn());
   click('btn-return-active');
   await tick();
-  await spawnComponent({ name: 'widget' });
-  await tick();
-  assert.equal(posts('/api/components/widget/use').length, 1, 'live, the same spawn goes through');
+});
+
+test('the toast goes by itself after ~6s, but not while focus is inside it', async () => {
+  const topbar = await import(pathToFileURL(path.join(REPO, 'public/app/topbar.js')).href);
+  const armed = [];
+  const cleared = new Set();
+  const realST = global.setTimeout, realCT = global.clearTimeout;
+  global.setTimeout = (fn, ms, ...rest) => {
+    if (ms === topbar.NOTE_MS) { const h = { fn }; armed.push(h); return h; }
+    return realST(fn, ms, ...rest);
+  };
+  global.clearTimeout = (h) => { if (h && h.fn) cleared.add(h); else realCT(h); };
+  try {
+    topbar.showReaimNote('Added x to the live page', { action: { label: 'Jump to live', run() {} } });
+    assert.equal(topbar.NOTE_MS, 6000);
+    const first = armed.at(-1);
+    assert.ok(first, 'a dismissal is armed');
+    noteBtn().dispatchEvent(new W.FocusEvent('focusin', { bubbles: true }));
+    assert.ok(cleared.has(first), 'focus inside holds it');
+    noteBtn().focus();
+    noteBtn().dispatchEvent(new W.FocusEvent('focusout', { bubbles: true }));
+    await tick();
+    assert.equal(armed.at(-1), first, 'still held while the button has focus');
+    noteBtn().blur();
+    noteBtn().dispatchEvent(new W.FocusEvent('focusout', { bubbles: true }));
+    await tick();
+    const again = armed.at(-1);
+    assert.notEqual(again, first, 'focus leaving re-arms it');
+    again.fn();
+    assert.equal($('reaim-note'), null, 'and it goes');
+  } finally {
+    global.setTimeout = realST;
+    global.clearTimeout = realCT;
+  }
 });

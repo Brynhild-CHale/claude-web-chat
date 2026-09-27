@@ -33,12 +33,13 @@
 // endpoint cannot tell a pane's fetch from a click. See the header of
 // lib/server/routes/packs.js. The copy must not imply it is a control.
 
-import { $ } from './state.js';
+import { $, view } from './state.js';
 import { store } from './store.js';
 import { bus } from './bus.js';
 import { components, invalidate } from './components.js';
-import { panes, unminimize, readOnlyNow } from './mounts.js';
-import { showReaimNote } from './topbar.js';
+import { panes, unminimize, revealPane } from './mounts.js';
+import { showReaimNote, returnToActive } from './topbar.js';
+import { isPhone } from './viewport.js';
 import { isRemote, remoteNow } from './remote.js';
 
 const LIBRARY = 'library';
@@ -348,15 +349,42 @@ function componentRow(c) {
 /* ── spawning ─────────────────────────────────────────────────────────────── */
 
 // A STABLE slot per component, so spawning the same thing twice replaces its
-// pane instead of stacking a new one forever. ⧉ takes the next free slot.
+// pane instead of stacking a new one forever. ⧉ takes the next free slot — free
+// on the LIVE page, which is where every spawn lands: while previewing, `panes`
+// holds the previewed node's blocks, and the live page is the folded snapshot.
+function liveIds() {
+  if (view.previewing && view.liveSnapshot) return new Set(view.liveSnapshot.mounts.map((m) => m.id));
+  return new Set(panes.keys());
+}
 function slotFor(name, fresh) {
   const base = `spawn-${name}`;
   if (!fresh) return base;
+  const taken = liveIds();
   for (let i = 2; i < 500; i++) {
     const id = `${base}-${i}`;
-    if (!panes.has(id)) return id;
+    if (!taken.has(id)) return id;
   }
   return `${base}-${Date.now()}`;
+}
+
+// A block added from a preview lands on the live page, out of sight, so say so —
+// with the way there. "Jump to live" is ↩ active (leavePreview, restoring the
+// live surface) and then the block itself, restored if minimized and scrolled to.
+// The render frame that carries the block can trail the POST that created it
+// (it rides the socket, the answer rides HTTP), so the reveal retries briefly
+// rather than jumping to a page the block has not reached yet.
+export const ADDED_TO_LIVE = (name) => `Added ${name} to the live page`;
+function announceLive(text, id) {
+  showReaimNote(text, { action: { label: 'Jump to live', run: () => jumpToLive(id) } });
+}
+function jumpToLive(id) {
+  returnToActive();
+  let tries = 0;
+  const reveal = () => {
+    if (revealPane(id) || ++tries > 10) return;
+    setTimeout(reveal, 100);
+  };
+  reveal();
 }
 
 async function mountComponent(name, id, params) {
@@ -374,8 +402,9 @@ async function mountComponent(name, id, params) {
     return false;
   }
   // A re-spawn into a MINIMIZED slot lands inside a collapsed chip and reads as
-  // a no-op. Restore it.
-  unminimize(id);
+  // a no-op. Restore it. Not from a preview: `panes` is the previewed node there
+  // (and a preview writes no pane state) — Jump to live restores it instead.
+  if (!view.previewing) unminimize(id);
   return true;
 }
 
@@ -398,18 +427,25 @@ function disarmSpawn(name) {
 }
 
 export async function spawnComponent(c, { fresh = false } = {}) {
-  // A read-only surface (a preview, or a phone) adds no blocks. Every spawn path
-  // lands here — a Library tile, its ⧉ duplicate, ⌘K "Add block · x" — and each
-  // used to POST straight to the LIVE surface while an older node was on screen:
-  // nothing appeared until ↩ active, the slot was computed from the previewed
-  // node's panes, and a params form was rendered where nobody could fill it. The
-  // refusal goes through the same event a refused pane edit raises, so the note
-  // (preview vs phone) is the one topbar.js already words.
-  if (readOnlyNow()) {
+  // Every spawn path lands here — a Library tile, its ⧉ duplicate, ⌘K "Add block
+  // · x" — so here is where a read-only view is answered.
+  //
+  // A PHONE adds no blocks: it is a viewer (viewport.js), and the refusal goes
+  // through the same event a refused pane edit raises, so the note is the one
+  // topbar.js already words.
+  if (isPhone()) {
     closeDrawer();
     window.dispatchEvent(new CustomEvent('wc:readonly-attempt', { detail: { spawn: typeof c === 'string' ? c : c && c.name } }));
     return;
   }
+  // A PREVIEW adds the block to the LIVE page, in the background: the previewed
+  // node stays on screen (it is read-only, and it is history), the POST is the
+  // same one a live spawn makes — so the daemon's ownership, lock and reserved-id
+  // rules all answer it — and its render frame folds into the captured live
+  // surface like any other live write (ws.js). A toast says where it went. Every
+  // live-page question on the way (the free ⧉ slot, the seed's store) is asked of
+  // that captured surface, never of the previewed node on screen.
+  const toLive = !!view.previewing;
   const name = typeof c === 'string' ? c : c.name;
   const meta = typeof c === 'string' ? { name } : c;
 
@@ -421,8 +457,12 @@ export async function spawnComponent(c, { fresh = false } = {}) {
         // The ONE eval home (public/mount-runtime.js). This used to build its own
         // AsyncFunction right here — a second dynamic-eval site in the window
         // realm, invisible to the conventions ratchet because it was spelled
-        // differently.
-        seed = await window.__wcMount.runSeed(await r.text(), store, (e) => console.error('seed failed', name, e));
+        // differently. From a preview the seed reads a detached copy of the LIVE
+        // store (no publish hook: a seed computes params, it does not write).
+        const seedStore = toLive && view.liveSnapshot
+          ? window.__wcMount.createStore(view.liveSnapshot.store || {})
+          : store;
+        seed = await window.__wcMount.runSeed(await r.text(), seedStore, (e) => console.error('seed failed', name, e));
       }
     } catch (e) { console.error('seed failed', name, e); }
   }
@@ -432,7 +472,7 @@ export async function spawnComponent(c, { fresh = false } = {}) {
 
   if (!schema || (seed && isParamsComplete(seed, schema))) {
     closeDrawer();
-    await mountComponent(name, id, seed || {});
+    if (await mountComponent(name, id, seed || {}) && toLive) announceLive(ADDED_TO_LIVE(name), id);
     return;
   }
 
@@ -457,7 +497,7 @@ export async function spawnComponent(c, { fresh = false } = {}) {
     await mountComponent(name, id, vals);
   });
   armedSpawns.set(name, unsub);
-  await mountComponent('form-renderer', formMountId, {
+  const ok = await mountComponent('form-renderer', formMountId, {
     schema,
     submit_key: submitKey,
     submit_label: `Spawn ${name}`,
@@ -466,6 +506,9 @@ export async function spawnComponent(c, { fresh = false } = {}) {
     emit_event: false,
     form_reset: true,
   });
+  // From a preview the settings form is what lands on the live page — it is
+  // filled there, and the block follows on submit, as it does live.
+  if (ok && toLive) announceLive(`Added ${name}'s settings to the live page`, formMountId);
 }
 
 function isParamsComplete(params, schema) {

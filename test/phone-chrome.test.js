@@ -241,6 +241,29 @@ test('a phone is marked on <html> and its panes are read-only', async () => {
   assert.deepEqual(sent.filter((f) => f.type === 'pane:state'), [], 'no block write reached the live surface');
 });
 
+test('adding a block on a phone is refused — previewing or not — and writes nothing', async () => {
+  const { spawnComponent } = await import(pathToFileURL(path.join(REPO, 'public/app/drawer.js')).href);
+  calls.length = 0;
+  await spawnComponent({ name: 'widget' });
+  await tick();
+  assert.ok(!calls.some((c) => c.method === 'POST'), 'nothing POSTed to the live surface');
+  assert.match(noteText(), /Read-only on a phone/, 'the phone note, not a live-page toast');
+  assert.equal(W.document.querySelector('#reaim-note .reaim-note-action'), null, 'with no Jump to live');
+
+  // A preview on a phone is still a phone: the live-page path is desktop's.
+  click($('btn-up'));
+  await tick(20);
+  assert.ok($('main').classList.contains('preview-readonly'), 'precondition: previewing');
+  calls.length = 0;
+  await spawnComponent({ name: 'widget' });
+  await tick();
+  assert.ok(!calls.some((c) => c.method === 'POST'), 'still nothing POSTed');
+  assert.doesNotMatch(noteText(), /live page/);
+  click($('btn-return-active'));
+  await tick(20);
+  assert.equal($('main').classList.contains('preview-readonly'), false);
+});
+
 test("a minimized block's chip only peeks at it on a phone", async () => {
   const chip = W.document.querySelector('#main .min-chip');
   assert.ok(chip, 'the minimized block keeps its chip');
