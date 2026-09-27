@@ -473,3 +473,225 @@ test('loadRestart falls back to this build\'s restart when the target has none',
   const fn = update.loadRestart(paths, '9.9.9');
   assert.equal(fn, require('../lib/cli/commands/restart'), 'a missing module must degrade to the running build, not throw');
 });
+
+// ── a running tunnel portal is restarted onto the new build ─────────────────
+//
+// A portal keeps enforcing the remote policy of the build it was started from.
+// `update` used to leave it running and ask, in the docs, for a `tunnel up`
+// afterwards; now it restarts a running one itself — with `tunnel up`'s own
+// bounce, loaded from the TARGET build (for loadRestart's reason: `portal run`
+// is spawned from the package root of the module that spawns it).
+
+// A target build whose tunnel command is the real one, marked so a test can tell
+// which build's copy ran, and able to hand the real bounce a stand-in `kill`.
+function shimTunnel(dir, version) {
+  const real = path.join(__dirname, '..', 'lib', 'cli', 'commands', 'tunnel.js');
+  fs.writeFileSync(path.join(dir, 'lib', 'cli', 'commands', 'tunnel.js'),
+    `const real = require(${JSON.stringify(real)});\n`
+    + 'module.exports = Object.assign((...a) => real(...a), real, {\n'
+    + '  restartPortal: (o) => {\n'
+    + `    (globalThis.__wcPortalRestarts ||= []).push({ version: '${version}', port: o.env.WEB_CHAT_PORTAL_PORT });\n`
+    + '    return real.restartPortal({ ...o, kill: globalThis.__wcPortalKill, waitMs: 15000 });\n'
+    + '  },\n'
+    + '});\n');
+}
+
+test('update restarts a running tunnel portal on the NEW build, and says viewers will reconnect', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const http = require('http');
+  const { userPaths } = require('../lib/core/paths');
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const { configFingerprint, normalizeConfig } = require('../lib/tunnel/config');
+  const { registerRole, deregisterRole } = require('../lib/util/registry');
+  const { isPidAlive } = require('../lib/core/portfiles');
+  const { freePort, fakeCloudflared } = require('../test-support/helpers');
+  const { createFakeAccess } = require('../test-support/fake-access');
+  const tunnel = require('../lib/cli/commands/tunnel');
+
+  fakeCloudflared(t);
+  const raw = createFakeAccess().config({ tunnel: { kind: 'token', metricsPort: await freePort() } });
+  fs.mkdirSync(userPaths().tunnelDir, { recursive: true });
+  fs.writeFileSync(userPaths().tunnelConfig, JSON.stringify(raw));
+  fs.writeFileSync(userPaths().tunnelToken, 'connector-token\n', { mode: 0o600 });
+
+  // The running portal: CURRENT by every measure `tunnel up` checks (protocol,
+  // config fingerprint), so only the update's forced bounce can restart it.
+  const port = await freePort();
+  const old = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: true, role: 'portal', pid: 424242, portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: configFingerprint(normalizeConfig(raw)) }));
+  });
+  await new Promise((r) => old.listen(port, '127.0.0.1', r));
+  registerRole('portal', { port, pid: process.pid });
+  const killed = [];
+  globalThis.__wcPortalKill = (pid, sig) => { killed.push([pid, sig]); old.close(); old.closeAllConnections(); };
+  globalThis.__wcPortalRestarts = [];
+  const env = { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(path.join(__dirname, '..', 'test-support', 'no-outbound.js'))}` };
+  delete env.WEB_CHAT_HOST;
+  delete env.WEB_CHAT_PORTAL_PORT;
+
+  let res = null;
+  t.after(async () => {
+    try { old.close(); old.closeAllConnections(); } catch {}
+    try { await tunnel(['down'], { log: () => {}, env: { ...env, WEB_CHAT_PORTAL_PORT: String(port) } }); } catch {}
+    const pid = res && res.portal && res.portal.pid;
+    if (pid && isPidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    deregisterRole('portal', {});
+    delete globalThis.__wcPortalKill;
+    delete globalThis.__wcPortalRestarts;
+  });
+
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+  const d = deps({
+    paths,
+    env,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      shimTunnel(fakeVersion(paths, release.version), release.version);
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  res = await update([], d);
+
+  assert.equal(res.after, '0.6.0', 'the update itself is unchanged');
+  assert.deepEqual(globalThis.__wcPortalRestarts, [{ version: '0.6.0', port: String(port) }],
+    "the bounce is the TARGET build's, on the port the portal is registered on");
+  assert.deepEqual(killed, [[424242, 'SIGTERM']], 'the running portal, by the pid its health reported, once');
+  assert.equal(res.portal.restarted, true);
+  assert.notEqual(res.portal.pid, 424242);
+  const { probeHealth } = require('../lib/client');
+  const now = await probeHealth(port);
+  assert.equal(now && now.role, 'portal', 'a portal answers on the same port');
+  assert.equal(now.pid, res.portal.pid);
+  assert.match(d.log.text(), new RegExp(`Restarted the tunnel portal on v0\\.6\\.0 \\(pid 424242 → ${res.portal.pid}\\).*remote viewers will reconnect`));
+  assert.equal(d.errlog.text(), '');
+});
+
+test('update leaves the tunnel alone when no portal is running', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+  let called = false;
+  const d = deps({
+    paths,
+    restartPortal: async () => { called = true; return { restarted: true, before: { pid: 1 }, health: { pid: 2 } }; },
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => { fakeVersion(paths, release.version); return { version: release.version, dir: versionDir }; },
+  });
+  const res = await update([], d);
+  assert.deepEqual(res, { before: '0.5.0', after: '0.6.0' });
+  assert.equal(called, false, 'no registered portal, no restart');
+  assert.doesNotMatch(d.log.text() + d.errlog.text(), /portal/);
+});
+
+test('a failed portal restart is reported with `tunnel up`, and the update still succeeds', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const { freePort } = require('../test-support/helpers');
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+  const port = await freePort();   // nothing answers here any more
+  const d = deps({
+    paths,
+    readPortal: () => ({ role: 'portal', pid: 4242, port }),
+    restartPortal: async () => { throw Object.assign(new Error('no connector token in ~/.web-chat/tunnel/token'), { userFacing: true }); },
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => { fakeVersion(paths, release.version); return { version: release.version, dir: versionDir }; },
+  });
+  const res = await update([], d);   // deps.exit throws: an exit here fails the test
+  assert.equal(res.after, '0.6.0');
+  assert.equal(fs.readlinkSync(paths.current), 'versions/0.6.0', 'the new build stays activated');
+  assert.deepEqual(res.portal, { restarted: false, error: 'no connector token in ~/.web-chat/tunnel/token' });
+  const text = d.errlog.text();
+  assert.match(text, /Could not restart the tunnel portal \(pid 4242\) on v0\.6\.0: no connector token/);
+  assert.match(text, /Remote access is down until the portal is started again/);
+  assert.match(text, /The update itself succeeded\. To restart it: claude-web-chat tunnel up/);
+  assert.match(d.log.text(), /Updated: v0\.5\.0 → v0\.6\.0/);
+});
+
+test('a failed portal restart that left the old portal up says it is still on the previous build', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const http = require('http');
+  const { freePort } = require('../test-support/helpers');
+  const port = await freePort();
+  const srv = http.createServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end('{"ok":true,"role":"portal","pid":4242}'); });
+  await new Promise((r) => srv.listen(port, '127.0.0.1', r));
+  t.after(() => { srv.close(); srv.closeAllConnections(); });
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  // A rollback bounces the portal too — and v0.5.0 here ships no tunnel command.
+  const d = deps({
+    paths,
+    readPortal: () => ({ role: 'portal', pid: 4242, port }),
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  const res = await update(['--to', '0.5.0'], d);
+  assert.equal(res.after, '0.5.0');
+  assert.equal(res.portal.restarted, false);
+  const text = d.errlog.text();
+  assert.match(text, /on v0\.5\.0: v0\.5\.0 has no tunnel command to restart it with/);
+  assert.match(text, /still running, on the previous build's code and remote policy/);
+  assert.match(text, /claude-web-chat tunnel up/);
+});
+
+test('--to restarts a running portal as well', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  const seen = [];
+  const d = deps({
+    paths,
+    env: { WEB_CHAT_PORTAL_PORT: '1' },
+    readPortal: () => ({ role: 'portal', pid: 11, port: 45678 }),
+    restartPortal: async (o) => { seen.push(o.env.WEB_CHAT_PORTAL_PORT); return { restarted: true, before: { pid: 11 }, health: { pid: 22 } }; },
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  const res = await update(['--to', '0.5.0'], d);
+  assert.deepEqual(res.portal, { restarted: true, pid: 22 });
+  assert.deepEqual(seen, ['45678'], 'the registered port wins over whatever the environment says');
+  assert.match(d.log.text(), /Restarted the tunnel portal on v0\.5\.0 \(pid 11 → 22\)/);
+});
+
+test("loadPortalRestart takes the target's restartPortal, a pre-restartPortal build's down + up, or nothing", async (t) => {
+  withTempHome(t);
+  const paths = installPaths();
+  // Current shape: the exported bounce, from versions/<target>.
+  const cur = fakeVersion(paths, '0.8.0');
+  fs.writeFileSync(path.join(cur, 'lib', 'cli', 'commands', 'tunnel.js'),
+    "module.exports = async () => {};\nmodule.exports.restartPortal = async () => ({ restarted: true, from: '0.8.0' });\n");
+  assert.deepEqual(await update.loadPortalRestart(paths, '0.8.0')({ env: {} }), { restarted: true, from: '0.8.0' });
+
+  // An older build: only the tunnel command. Its own down, then its own up.
+  const older = fakeVersion(paths, '0.7.9');
+  fs.writeFileSync(path.join(older, 'lib', 'cli', 'commands', 'tunnel.js'),
+    'module.exports = async (args, o) => { (globalThis.__wcTunnelCalls ||= []).push([args[0], o.env.WEB_CHAT_PORTAL_PORT]);\n'
+    + "  return args[0] === 'down' ? { stopped: true, health: { pid: 1 } } : { already: false, health: { pid: 2 } }; };\n");
+  t.after(() => { delete globalThis.__wcTunnelCalls; });
+  const r = await update.loadPortalRestart(paths, '0.7.9')({ env: { WEB_CHAT_PORTAL_PORT: '5999' } });
+  assert.deepEqual(r, { restarted: true, before: { pid: 1 }, health: { pid: 2 } });
+  assert.deepEqual(globalThis.__wcTunnelCalls, [['down', '5999'], ['up', '5999']]);
+
+  // No tunnel command at all: never this build's copy instead.
+  fakeVersion(paths, '0.4.0');
+  assert.equal(update.loadPortalRestart(paths, '0.4.0'), null);
+});

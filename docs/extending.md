@@ -18,6 +18,14 @@ reports a spurious failure. The timeout is load-bearing: without it one leaked
 handle or never-settling await hangs the whole run indefinitely. Do not add
 `--test-force-exit` — it would turn that hang into a silent pass.
 
+The tests that drive a **real** headless Chrome or a real ffmpeg are opt-in:
+they skip unless `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1` is set, however
+much the machine has installed, and each skip names the variable. Everything they
+cover also runs on every box against fakes (`test-support/fake-chrome.js`,
+`fake-ffmpeg.js`); CI sets neither. To run them, opt in (pointing
+`WEB_CHAT_CHROME` / `WEB_CHAT_FFMPEG` at a binary where discovery would miss it):
+`WEB_CHAT_E2E_CHROME=1 WEB_CHAT_E2E_FFMPEG=1 npm test`.
+
 **Do not use `npm link`.** npm's global prefix is a shared mutable directory: any
 later `npm i -g` of anything rewrites what lives there, and that is not
 hypothetical — it silently replaced this package's link to a dev checkout with a
@@ -151,7 +159,7 @@ were the only places they lived.
 | decide whether a REMOTE viewer (through the tunnel portal) may reach a daemon route | `core/remote-policy` `classify(method, url, {allowDestructive})` → `{allow, key, reason, hint}` + `refusalBody(v)` — default deny, and its ratchet test fails on any daemon route the table does not name | a per-route check in the portal, or a new route left unclassified |
 | check a remote viewer's Cloudflare Access sign-in (the tunnel portal's mandatory JWT check) | `lib/portal/access-jwt` `createVerifier({team, aud, allow, jwks})` over `lib/tunnel/jwks` `createJwksCache({team, fetchJwks})` — RS256 only, the key set's refetch rate-limited, cold failure fails closed | a JWT library, a decode-and-trust, or an `alg` read off the token |
 | choose which of a remote request's headers may reach a daemon | `lib/portal/proxy` `forwardHeaders(headers, {port, origin})` — an allowlist, Origin rewritten to the daemon's own | a blocklist of the headers you happen to know the daemon trusts |
-| read or validate tunnel.json (hostname, style, Access team/AUD, allowlist, the named tunnel), or find the portal's port | `lib/tunnel/config` `loadConfig()` / `normalizeConfig(raw)` / `parseHost` / `sessionHost` / `portalPort(env)` — one normaliser for the portal, `tunnel`, and doctor | a second reader of `tunnel.json`, or `5171` written into a command |
+| read or validate tunnel.json (hostname, style, Access team/AUD, allowlist, the named tunnel), or find the portal's port | `lib/tunnel/config` `loadConfig()` / `normalizeConfig(raw)` / `parseHost` / `sessionHost` / `portalPort(env)` — one normaliser for the portal, `tunnel`, and doctor; the running portal follows the file through `lib/portal/config-watch` `watchConfigFile` and reloads with the same `loadConfig` | a second reader of `tunnel.json`, a second watcher of it, or `5171` written into a command |
 | find, launch or supervise cloudflared | `lib/tunnel/cloudflared` `checkBinary()` (PATH + min version + the platform's install line) / `buildLaunch` (token in `TUNNEL_TOKEN`, never argv) / `renderIngress` / `createSupervisor` (backoff 1s→60s, reset after 5 min) / `probeReady(metricsPort)` | spawning `cloudflared` from a command, or installing it for the user |
 | register a one-per-machine process (the hub, the tunnel portal) | `lib/util/registry` `registerRole(role, {port, pid})` / `readRoleEntry(role)` / `deregisterRole(role, {pid})` (`registerHub`/`readHubEntry`/`deregisterHub` are its `'hub'` wrappers) | a second copy of `registerHub` with another name |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
@@ -210,6 +218,7 @@ were the only places they lived.
 | draw a replay (the player document, `replay.html`, a renderer's frames) | `lib/server/replay/document` `assembleReplay` / `buildReplay(ctx, query)` — frames filled from `lib/server/preview` `previewTemplate` + `previewThemeCss` / `previewNodeJson`; the controller is `lib/server/replay/player.js` | a second player, or a frame built by escaping node JSON anywhere but `previewNodeJson` |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
+| run a test against a REAL Chrome or ffmpeg | `test-support/helpers` `e2eGate(['chrome', 'ffmpeg'])` → `{skip, chrome, ffmpeg}` (opt-in via `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1`; the harness ratchet holds any other probe for a real program in a test at zero) | skip on whether `findChrome()` found something — the suite then changes with what is installed |
 | run cloudflared in a test | `test-support/helpers` `fakeCloudflared(t, {version, exit})` (a real spawn of `test-support/fake-cloudflared.js`, which records argv + `TUNNEL_TOKEN` and serves `/ready`) + `freePort()` for the ports a detached process must be told; preload `test-support/no-outbound.js` into a detached portal | a real cloudflared, or a fixed port |
 | boot the tunnel portal in a test | `test-support/helpers` `withPortal(t, {config, fetchJwks})` with `test-support/fake-access` `createFakeAccess()` (real RSA keys, fake JWKS, forgeable tokens) | `createPortal` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |

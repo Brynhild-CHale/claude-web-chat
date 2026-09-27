@@ -15,11 +15,10 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { withServer, fakeBin } = require('../test-support/helpers');
+const { withServer, fakeBin, e2eGate } = require('../test-support/helpers');
 const { decodeGif } = require('../test-support/gif-decode');
 const { encodePng, solid } = require('../test-support/png-encode');
 const { projectPaths } = require('../lib/core/paths');
-const { findFfmpeg } = require('../lib/replay/find');
 const {
   createFrameEncoder, pickEncoder, ffconcat, ffmpegPasses,
 } = require('../lib/replay/encode');
@@ -277,11 +276,13 @@ test('POST /api/replay/render mp4 with no ffmpeg is ffmpeg-not-found before any 
 });
 
 // ── a real ffmpeg ──────────────────────────────────────────────────────────
+// Opt-in (WEB_CHAT_E2E_FFMPEG=1); everything above runs against the fake.
 
-const realFfmpeg = findFfmpeg();
+const real = e2eGate(['ffmpeg']);
+const realFfmpeg = real.ffmpeg;
 
 test('a real ffmpeg: GIF holds are exact (last one too), MP4 and WebM decode to the right frames', {
-  skip: realFfmpeg ? false : 'no ffmpeg found (set WEB_CHAT_FFMPEG to run it)', timeout: 120000,
+  skip: real.skip, timeout: 120000,
 }, async (t) => {
   const W = 64; const H = 40;
   const frames = [[RED, 333], [BLUE, 1234], [GREEN, 2500]];

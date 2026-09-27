@@ -402,16 +402,24 @@ async function withHub(t, { port = 0, createHub } = {}) {
 // Stand up the tunnel PORTAL (lib/portal) for a test and own its teardown —
 // withHub's sibling. Loopback, ephemeral port, never start(): no registry
 // entry for the portal itself, no JWKS warm-up against anything real.
-//   withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle })
+//   withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
+//                   configFile, configPollMs, configDebounceMs, log })
 // `config` is tunnel.json's raw shape (normalised here, so a test can hand in
-// fake-access's config()). Returns { portal, port, config, request } where
+// fake-access's config()). `configFile` makes the portal watch that file the
+// way `portal run` watches tunnel.json (write `config` into it first). Returns { portal, port, config, request } where
 // `request(path, {host, method, headers, body})` is a RAW request — the portal
 // routes on Host, which fetch refuses to set.
-async function withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle } = {}) {
+async function withPortal(t, {
+  config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
+  configFile, configPollMs, configDebounceMs, log,
+} = {}) {
   const { createPortal } = require('../lib/portal');
   const { normalizeConfig } = require('../lib/tunnel/config');
   const cfg = normalizeConfig(config);
-  const portal = createPortal({ port: 0, config: cfg, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle });
+  const portal = createPortal({
+    port: 0, config: cfg, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
+    configFile, configPollMs, configDebounceMs, log,
+  });
   await new Promise((resolve, reject) => {
     const onError = (e) => { portal.server.off('error', onError); reject(e); };
     portal.server.once('error', onError);
@@ -419,6 +427,7 @@ async function withPortal(t, { config, fetchJwks, now, instances, sessions, enri
   });
   const port = portal.server.address().port;
   t.after(() => portal.stop());
+  portal.watchConfig();
   function request(pathStr, { host = cfg.hostname, method = 'GET', headers = {}, body } = {}) {
     const http = require('http');
     return new Promise((resolve, reject) => {
@@ -505,8 +514,42 @@ function fakeBin(t, { name, script, env = {} }) {
   return { bin, dir };
 }
 
+// The gate on a test that drives a REAL host program — a headless Chrome, a real
+// ffmpeg — rather than a fake from fakeBin. Such a test is OPT-IN: it runs only
+// when its env var is exactly `1`, however many browsers the machine happens to
+// have, so the suite is the same suite on every box. CI sets neither;
+// test/e2e-gate.test.js holds that, and test/harness-conventions.test.js holds
+// that no test probes for a real program any other way.
+//
+//   const e2e = e2eGate(['chrome', 'ffmpeg']);
+//   test('…', { skip: e2e.skip }, () => { … e2e.chrome … e2e.ffmpeg … });
+//
+// → { skip, chrome?, ffmpeg? }: `skip` is false or a reason that names the env
+// var to set. Nothing is probed until the test is opted in; opted in but the
+// program is missing still skips, naming the override (WEB_CHAT_CHROME /
+// WEB_CHAT_FFMPEG) that points at one. `env` and `find` are for the gate's own
+// tests.
+const E2E = {
+  chrome: { opt: 'WEB_CHAT_E2E_CHROME', what: 'a real Chrome', missing: 'no Chrome-family browser found — set WEB_CHAT_CHROME to one' },
+  ffmpeg: { opt: 'WEB_CHAT_E2E_FFMPEG', what: 'a real ffmpeg', missing: 'no ffmpeg found — set WEB_CHAT_FFMPEG to one' },
+};
+function e2eGate(needs, { env = process.env, find } = {}) {
+  const off = needs.filter((k) => env[E2E[k].opt] !== '1');
+  if (off.length) {
+    return { skip: `opt-in: drives ${off.map((k) => E2E[k].what).join(' and ')} — set ${off.map((k) => `${E2E[k].opt}=1`).join(' ')} to run it` };
+  }
+  // Lazy, so a run that opts into nothing never probes the machine at all.
+  const finders = find || (() => { const f = require('../lib/replay/find'); return { chrome: f.findChrome, ffmpeg: f.findFfmpeg }; })();
+  const out = { skip: false };
+  for (const k of needs) {
+    out[k] = finders[k]();
+    if (!out[k]) return { skip: `${E2E[k].opt}=1, but ${E2E[k].missing}` };
+  }
+  return out;
+}
+
 module.exports = {
-  freePort, fakeCloudflared, fakeBin,
+  freePort, fakeCloudflared, fakeBin, e2eGate,
   withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
 };

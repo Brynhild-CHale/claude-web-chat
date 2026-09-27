@@ -86,8 +86,8 @@ as `.html` — works without one. Where it looks, per platform
 
 | Platform | Where the browser is found | Verified by |
 | --- | --- | --- |
-| **macOS** | `/Applications/{Google Chrome,Chromium,Microsoft Edge,Brave Browser}.app` | Developed against Chrome for Testing 151 via `WEB_CHAT_CHROME`; `test/replay-capture-e2e.test.js` runs wherever a browser is found |
-| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH` | The same e2e test, on a CI image that has Chrome; the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
+| **macOS** | `/Applications/{Google Chrome,Chromium,Microsoft Edge,Brave Browser}.app` | Developed against Chrome for Testing 151 via `WEB_CHAT_CHROME`; `test/replay-capture-e2e.test.js` runs against it when opted in (`WEB_CHAT_E2E_CHROME=1`) |
+| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH` | The same e2e test, opted in by hand (CI never sets `WEB_CHAT_E2E_CHROME`); the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
 | **Windows (WSL2)** | A **Linux** Chrome installed inside the distro, as on Linux. A Windows Chrome under `/mnt/c` cannot share file-descriptor pipes with a Linux process and is not a candidate | Not run by anyone |
 
 The browser is launched with `--use-mock-keychain --password-store=basic`: on
@@ -100,8 +100,8 @@ only encoder for MP4/WebM replays, and when present it also encodes GIFs
 
 | Platform | Where ffmpeg is found | Verified by |
 | --- | --- | --- |
-| **macOS** | `ffmpeg` on `PATH` (Homebrew: `brew install ffmpeg`) | Developed against ffmpeg 9.0.1 (Homebrew, with libx264 and libvpx); the real-ffmpeg halves of `test/replay-encode.test.js` and `test/replay-capture-e2e.test.js` run wherever it is found |
-| **Linux** | `ffmpeg` on `PATH` (`apt install ffmpeg` / the distro's package) | The same tests, where the image has ffmpeg; the spawn plumbing is covered everywhere by a fake (`test-support/fake-ffmpeg.js`). A distro build without libx264 fails MP4 with ffmpeg's own "Unknown encoder" in a `502`; WebM and GIF are unaffected |
+| **macOS** | `ffmpeg` on `PATH` (Homebrew: `brew install ffmpeg`) | Developed against ffmpeg 9.0.1 (Homebrew, with libx264 and libvpx); the real-ffmpeg halves of `test/replay-encode.test.js`, `test/gif.test.js` and `test/replay-capture-e2e.test.js` run against it when opted in (`WEB_CHAT_E2E_FFMPEG=1`) |
+| **Linux** | `ffmpeg` on `PATH` (`apt install ffmpeg` / the distro's package) | The same tests, opted in by hand (CI never sets `WEB_CHAT_E2E_FFMPEG`); the spawn plumbing is covered everywhere by a fake (`test-support/fake-ffmpeg.js`). A distro build without libx264 fails MP4 with ffmpeg's own "Unknown encoder" in a `502`; WebM and GIF are unaffected |
 | **Windows (WSL2)** | A Linux ffmpeg inside the distro, as on Linux | Not run by anyone |
 
 ## Known issues that affect every platform

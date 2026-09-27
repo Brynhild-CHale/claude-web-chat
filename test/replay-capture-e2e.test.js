@@ -4,19 +4,21 @@
 // decoder reading the result back — then the same through a REAL ffmpeg, as a
 // GIF and an MP4.
 //
-// SKIPS when no Chrome-family browser is found — CI images and most dev boxes
-// without Chrome — and the ffmpeg half also when no ffmpeg is. To run it
-// anywhere, point WEB_CHAT_CHROME (and WEB_CHAT_FFMPEG) at binaries (a Chrome
-// for Testing download works) and run this file on its own.
+// OPT-IN: it SKIPS unless WEB_CHAT_E2E_CHROME=1 (and, for the ffmpeg half,
+// WEB_CHAT_E2E_FFMPEG=1) — however many browsers the machine has — and still
+// skips when opted in with nothing to run. CI sets neither. To run it, opt in
+// and, where discovery would not find them, point WEB_CHAT_CHROME (and
+// WEB_CHAT_FFMPEG) at binaries (a Chrome for Testing download works):
+//   WEB_CHAT_E2E_CHROME=1 WEB_CHAT_E2E_FFMPEG=1 node --test --test-timeout=60000 \
+//     --import ./test-support/sandbox.js test/replay-capture-e2e.test.js
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 
-const { withServer } = require('../test-support/helpers');
+const { withServer, e2eGate } = require('../test-support/helpers');
 const { decodeGif } = require('../test-support/gif-decode');
-const { findChrome, findFfmpeg } = require('../lib/replay/find');
 const { closeAllBrowsers, liveBrowsers } = require('../lib/replay/chrome');
 
 // A REAL browser is the one that leaked from test runs. withServer's teardown
@@ -29,8 +31,8 @@ test.after(async () => {
   assert.equal(up, 0, `${up} browser(s) were still up when the file finished`);
 });
 
-const chrome = findChrome();
-const ffmpeg = findFfmpeg();
+const builtin = e2eGate(['chrome']);
+const both = e2eGate(['chrome', 'ffmpeg']);
 
 // An explicit WEB_CHAT_FFMPEG is the only ffmpeg candidate, so a missing one
 // pins the built-in encoder; restored when the test ends.
@@ -61,7 +63,7 @@ const has = (img, [r, gg, b], stride = 4) => {
   return false;
 };
 
-test('a real Chrome renders a two-step replay into a GIF whose frames differ', { skip: chrome ? false : 'no Chrome-family browser found (set WEB_CHAT_CHROME to run it)', timeout: 120000 }, async (t) => {
+test('a real Chrome renders a two-step replay into a GIF whose frames differ', { skip: builtin.skip, timeout: 120000 }, async (t) => {
   pinFfmpeg(t, '/nonexistent/ffmpeg');
   const { api, port } = await withServer(t);
   await seedColours(api);
@@ -82,10 +84,10 @@ test('a real Chrome renders a two-step replay into a GIF whose frames differ', {
 });
 
 test('a real Chrome and a real ffmpeg render the same replay as a GIF and an MP4', {
-  skip: !chrome ? 'no Chrome-family browser found (set WEB_CHAT_CHROME to run it)'
-    : !ffmpeg ? 'no ffmpeg found (set WEB_CHAT_FFMPEG to run it)' : false,
+  skip: both.skip,
   timeout: 180000,
 }, async (t) => {
+  const { ffmpeg } = both;
   pinFfmpeg(t, ffmpeg);
   const { api, port } = await withServer(t);
   await seedColours(api);
