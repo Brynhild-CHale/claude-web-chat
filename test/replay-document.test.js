@@ -5,8 +5,9 @@
 //   - escaping: a prompt, a reply, a pane's html or a theme's css can carry
 //     `</script>`, `</style>`, `<!--` or U+2028 and the document still parses to
 //     exactly its own two scripts, with the payload decoding back byte-exact;
-//   - privacy: the payload carries only the caption text its mode shows, and
-//     never a node's trigger;
+//   - privacy: the payload carries only the caption text it shows, never a
+//     node's trigger, and — unless include_prompts — no prompt text at all
+//     (checked by grepping the document's bytes);
 //   - containment: /replay is served under PREVIEW_CSP (errors too) and the
 //     document names no network API of its own;
 //   - the controller is deterministic: seek(ms) draws the same thing whatever
@@ -54,7 +55,7 @@ test('replay doc: nasty prompts, replies, pane html and theme css cannot break o
     step(1),
   ];
   const themes = [{ tokens: { '--wc-bg': '#123456' }, css: `body{} ${NASTY}` }];
-  const html = assembleReplay({ steps, themes, opts: normalizeReplayOpts({}), meta: {} });
+  const html = assembleReplay({ steps, themes, opts: normalizeReplayOpts({ include_prompts: true }), meta: {} });
 
   const { scripts, payload, doc } = parse(html);
   assert.equal(scripts.length, 2, 'exactly the payload + the player — nothing injected');
@@ -73,23 +74,33 @@ test('replay doc: nasty prompts, replies, pane html and theme css cannot break o
   assert.equal(f.doc.querySelectorAll('style').length, 1, 'the theme css did not close the style element');
 });
 
-test('replay doc: the payload carries only the caption its mode shows, and never a trigger', () => {
-  const steps = [step(0, { prompt: 'SECRET-PROMPT', summary: 'short-sum', reply: 'the reply' })];
-  const node = { ...steps[0].node, trigger: { message: 'SECRET-PROMPT' } };
+test('replay doc: without include_prompts NO prompt text is anywhere in the bytes; with it, the caption shows it', () => {
+  const steps = [step(0, { prompt: 'SECRET-PROMPT and more', summary: 'SECRET-PROMPT', reply: 'the reply' })];
+  const node = { ...steps[0].node, trigger: { message: 'SECRET-PROMPT and more', summary: 'SECRET-PROMPT' } };
   steps[0].node = node;
-  const build = (captions) => assembleReplay({ steps, themes: [{}], opts: normalizeReplayOpts({ captions }) });
+  const build = (q) => assembleReplay({ steps, themes: [{}], opts: normalizeReplayOpts(q) });
 
-  const none = build('none');
-  assert.ok(!none.includes('SECRET-PROMPT'), 'captions:none ships the prompt nowhere — not even inside the node');
-  assert.ok(!none.includes('"trigger"'));
-  assert.ok(!none.includes('short-sum') && !none.includes('the reply'));
+  // Off — the default, and what every retired caption mode now means.
+  for (const q of [{}, { captions: 'on' }, { captions: 'prompt' }, { captions: 'summary' }, { include_prompts: '0' }]) {
+    const html = build(q);
+    assert.ok(!html.includes('SECRET-PROMPT'), `${JSON.stringify(q)}: no prompt, and no 100-char prefix of one, anywhere in the file`);
+    assert.ok(!html.includes('"trigger"'));
+    const { payload } = parse(html);
+    assert.deepEqual(payload.steps[0].caption, { reply: 'the reply' }, 'the caption is Claude\'s reply alone');
+    assert.equal(payload.opts.include_prompts, false);
+  }
+
+  const none = build({ captions: 'none', include_prompts: '1' });
+  assert.ok(!none.includes('SECRET-PROMPT'), 'captions:none ships the prompt nowhere — even with include_prompts');
+  assert.ok(!none.includes('the reply'));
   assert.match(none, /class="rp-nocap"/);
 
-  const sum = parse(build('summary')).payload.steps[0].caption;
-  assert.deepEqual(sum, { summary: 'short-sum', reply: 'the reply' });
-
-  const full = parse(build('prompt')).payload.steps[0].caption;
-  assert.deepEqual(full, { prompt: 'SECRET-PROMPT', reply: 'the reply' });
+  const full = parse(build({ include_prompts: '1' })).payload.steps[0].caption;
+  assert.deepEqual(full, { prompt: 'SECRET-PROMPT and more', reply: 'the reply' });
+  // a node with no prompt (a preserve) still captions from its trigger summary when prompts are on
+  const pre = [step(0, { prompt: '', summary: 'auto-preserved', reply: null })];
+  assert.deepEqual(parse(assembleReplay({ steps: pre, themes: [{}], opts: normalizeReplayOpts({ include_prompts: true }) })).payload.steps[0].caption, { prompt: 'auto-preserved' });
+  assert.deepEqual(parse(assembleReplay({ steps: pre, themes: [{}], opts: normalizeReplayOpts({}) })).payload.steps[0].caption, {});
 });
 
 test('replay doc: names no network API, and the player splices safely', () => {
@@ -104,23 +115,25 @@ test('replay doc: names no network API, and the player splices safely', () => {
 test('replay doc: options normalize to safe values', () => {
   const d = normalizeReplayOpts({});
   assert.deepEqual(
-    [d.hold_ms, d.pacing, d.transition, d.captions, d.size, d.chrome, d.speed, d.autoplay, d.at],
-    [2500, 'hold', 'cut', 'prompt', { w: 1280, h: 800 }, true, 1, false, null],
+    [d.hold_ms, d.pacing, d.transition, d.captions, d.include_prompts, d.size, d.chrome, d.speed, d.autoplay, d.at],
+    [2500, 'hold', 'cut', 'on', false, { w: 1280, h: 800 }, true, 1, false, null],
   );
   const o = normalizeReplayOpts({
-    hold_ms: '99', pacing: 'realtime', transition: 'fade', captions: 'summary',
+    hold_ms: '99', pacing: 'realtime', transition: 'fade', captions: 'none', include_prompts: '1',
     size: '9999x10', chrome: '0', speed: '9', autoplay: '1', at: '3',
   });
   assert.equal(o.hold_ms, 500, 'hold clamps to 0.5 s');
   assert.equal(o.pacing, 'realtime');
   assert.equal(o.transition, 'fade');
-  assert.equal(o.captions, 'summary');
+  assert.equal(o.captions, 'none');
+  assert.equal(o.include_prompts, true);
   assert.deepEqual(o.size, { w: 3840, h: 240 });
   assert.equal(o.chrome, false);
   assert.equal(o.speed, 4);
   assert.equal(o.autoplay, true);
   assert.equal(o.at, 3);
-  assert.equal(normalizeReplayOpts({ captions: '<x>', transition: 'wipe', pacing: 'x' }).captions, 'prompt');
+  assert.equal(normalizeReplayOpts({ captions: '<x>', transition: 'wipe', pacing: 'x' }).captions, 'on');
+  assert.equal(normalizeReplayOpts({ captions: 'prompt' }).include_prompts, false, 'the retired mode does not turn prompts on');
 });
 
 // ── the controller (pure, stubbed frames) ───────────────────────────────────
@@ -257,7 +270,7 @@ test('controller: play advances by the clock × speed and stops at the end; step
 
 test('replay doc boots in a DOM: __wcReplay drives seek, captions and the scrubber', async () => {
   const steps = [0, 1, 2].map((i) => step(i, { reply: i === 1 ? 'reply one' : null, folded_count: i === 2 ? 3 : 0 }));
-  const html = assembleReplay({ steps, themes: [{}], opts: normalizeReplayOpts({ hold_ms: 1000 }) });
+  const html = assembleReplay({ steps, themes: [{}], opts: normalizeReplayOpts({ hold_ms: 1000, include_prompts: '1' }) });
   const made = [];
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
@@ -283,6 +296,8 @@ test('replay doc boots in a DOM: __wcReplay drives seek, captions and the scrubb
   const $ = (id) => w.document.getElementById(id);
   assert.equal($('rp-cap-label').textContent, 'n1.1');
   assert.equal($('rp-cap-text').textContent, 'prompt 1');
+  assert.equal($('rp-cap-text').hidden, false);
+  assert.equal($('rp-cap-time').textContent, new Date(1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), "the node's time");
   assert.equal($('rp-cap-reply').textContent, 'reply one');
   assert.equal($('rp-cap-reply').hidden, false);
   assert.equal($('rp-count').textContent, '2 / 3');
@@ -291,6 +306,26 @@ test('replay doc boots in a DOM: __wcReplay drives seek, captions and the scrubb
   assert.equal($('rp-cap-folded').textContent, '+3 folded');
   assert.equal($('rp-cap-reply').hidden, true, 'a step with no reply shows no reply line');
   assert.ok(made.length <= 4 && made.filter((h) => !h.gone).length <= 3, 'frames stay windowed');
+  dom.window.close();
+});
+
+test('replay doc without prompts: the caption is the label, the time and Claude\'s reply — no prompt line', async () => {
+  const steps = [0, 1].map((i) => step(i, { reply: i === 1 ? 'reply one' : null }));
+  const html = assembleReplay({ steps, themes: [{}], opts: normalizeReplayOpts({ hold_ms: 1000 }) });
+  const dom = new JSDOM(html, {
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+    beforeParse(win) { win.__wcReplayFrameFactory = () => ({ ready: Promise.resolve(), show() {}, destroy() {} }); },
+  });
+  const w = dom.window;
+  const $ = (id) => w.document.getElementById(id);
+  await w.__wcReplay.seek(1500);
+  assert.equal($('rp-cap-label').textContent, 'n1.1');
+  assert.notEqual($('rp-cap-time').textContent, '', 'the time is shown');
+  assert.equal($('rp-cap-text').textContent, '');
+  assert.equal($('rp-cap-text').hidden, true, 'no prompt line at all');
+  assert.equal($('rp-cap-reply').textContent, 'reply one');
+  assert.equal($('rp-cap-reply').hidden, false);
   dom.window.close();
 });
 
@@ -306,7 +341,7 @@ async function seed(api) {
 test('GET /replay serves the document under PREVIEW_CSP — its errors too', async (t) => {
   const { api, port } = await withServer(t);
   await seed(api);
-  const res = await fetch(`http://localhost:${port}/replay?captions=summary&chrome=0`);
+  const res = await fetch(`http://localhost:${port}/replay?include_prompts=1&chrome=0`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('content-security-policy'), PREVIEW_CSP);
   assert.match(res.headers.get('content-type'), /text\/html/);
@@ -315,8 +350,7 @@ test('GET /replay serves the document under PREVIEW_CSP — its errors too', asy
   assert.equal(payload.steps.length, 2);
   assert.equal(payload.opts.chrome, false);
   assert.match(doc.body.className, /rp-bare/);
-  assert.equal(payload.steps[0].caption.summary, 'first </script> prompt');
-  assert.ok(!('prompt' in payload.steps[0].caption), 'summary mode ships no prompt field');
+  assert.equal(payload.steps[0].caption.prompt, 'first </script> prompt');
   assert.deepEqual(payload.frame, [...previewTemplate()]);
 
   const bad = await fetch(`http://localhost:${port}/replay?to=nope`);
@@ -340,6 +374,23 @@ test('GET /api/replay/html is the same document as an attachment', async (t) => 
   const missing = await fetch(`http://localhost:${port}/api/replay/html?to=nope`);
   assert.equal(missing.status, 404);
   assert.equal((await missing.json()).code, 'not-found');
+});
+
+test('/replay and /api/replay/html carry no prompt text unless include_prompts=1 — grepped in the bytes', async (t) => {
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'm1', html: '<p>one</p>' });
+  await api.post('/api/commit', { message: 'PRIVATE-ALPHA ' + 'x'.repeat(150) });
+  await api.post('/api/render', { id: 'm1', html: '<p>two</p>' });
+  await api.post('/api/commit', { message: 'PRIVATE-BETA' });
+  for (const route of ['/replay', '/api/replay/html']) {
+    for (const q of ['', '?captions=prompt', '?captions=summary', '?include_prompts=0']) {
+      const body = await (await fetch(`http://localhost:${port}${route}${q}`)).text();
+      assert.ok(!/PRIVATE-(ALPHA|BETA)/.test(body), `${route}${q}: no prompt text in the bytes`);
+    }
+    const on = await (await fetch(`http://localhost:${port}${route}?include_prompts=1`)).text();
+    assert.match(on, /PRIVATE-ALPHA/, `${route}: include_prompts=1 puts them in`);
+    assert.match(on, /PRIVATE-BETA/);
+  }
 });
 
 // ── markdown in the frames ──────────────────────────────────────────────────

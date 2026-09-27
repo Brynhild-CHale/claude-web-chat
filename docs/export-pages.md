@@ -138,18 +138,28 @@ next step are ever live documents.
   `replay-<from>_<to>.html` — offline, no server, like a page export.
 - Options (query parameters): `hold_ms` (2500; 0.5–20 s) or `pacing=realtime`
   (each step held for the real gap to the next, clamped 1–6 s), `transition`
-  `cut` (default) | `fade`, `captions` `prompt` (default) | `summary` | `none`,
-  `size` (`1280x800`; the logical frame size, scaled to fit), `chrome=0` (stage
-  and caption only — what a renderer captures), `speed` (0.25–4), `autoplay=1`,
+  `cut` (default) | `fade`, `captions` `on` (default) | `none`,
+  `include_prompts=1` (default off — see below), `size` (`1280x800`; the
+  logical frame size, scaled to fit), `chrome=0` (stage and caption only —
+  what a renderer captures), `speed` (0.25–4), `autoplay=1`,
   `at=<step index>`.
-- **Captions carry only what their mode shows.** `prompt` shows the prompt and
-  Claude's reply summary; `summary` the trigger's short summary (for a typed
-  turn, the prompt's first 100 characters) and the reply; `none` neither — and
-  the payload holds nothing more than that. A node's trigger never enters it,
-  so a `replay.html` made with `captions=none` does not contain the prompts or
-  replies at all. The prompt and Claude's reply are the only things a replay
-  carries that a page export does not; choose `summary` or `none` before
-  sending one on.
+- **Your prompts are in a replay only when you say so — "Include my prompts".**
+  A caption shows each node's label, its time and Claude's reply summary.
+  `include_prompts=1` adds the prompt that started the turn; without it there
+  is NO prompt text anywhere in the document — not the prompt, not the
+  trigger's 100-character summary of it, nothing in the embedded payload JSON
+  (the tests grep the bytes). `captions=none` drops the caption bar and ships
+  neither prompts nor replies. A node's trigger never enters the payload. The
+  retired `captions=prompt` / `captions=summary` now mean `captions=on`, and
+  neither turns prompts on.
+- **Where the choice lives.** The player's **Include my prompts** checkbox (off
+  until you tick it, then remembered per browser) drives what you watch and
+  every file you save from the player — **↧ replay.html**, **↧ GIF**, **↧ MP4**,
+  **↧ WebM**. A file saved with it on renders on the first click, and the note
+  that links it says *includes your prompts*. Everything else that writes a file
+  defaults it OFF: the `export` MCP tool (`include_prompts: true` to include
+  them), `claude-web-chat export` (`--prompts`; `--no-prompts` is the default
+  spelled out) and `POST /api/replay/render` (`include_prompts: true`).
 
 The document exposes `window.__wcReplay` — `steps`, `duration()`, `seek(ms)`,
 `play()`, `pause()`, `ready()`, `stepBy(n)`, `setSpeed(x)`, `state()`,
@@ -165,8 +175,8 @@ node), from ⌘K (**Replay to …** the node you are viewing), from ⋯ →
 **Replay…**, or `R` on the surface. It plays from the nearest bookmark down to the node you are viewing
 (else the active one); the `from` / `to` pickers choose any stretch of that
 lineage. `Space` plays and pauses, `←` / `→` step, the scrubber seeks (hover a
-tick for its label), and speed (0.5–4×), transition and captions are remembered
-per browser. **Open this node** previews the step on screen on the surface, and
+tick for its label), and speed (0.5–4×), transition, captions and **Include my
+prompts** are remembered per browser. **Open this node** previews the step on screen on the surface, and
 **↧ replay.html** downloads what you are watching.
 
 ## Replays and GIFs — a replay as a file
@@ -176,7 +186,7 @@ The same replay can be written to disk, to attach or post:
 | Route | Who uses it | What you get |
 | --- | --- | --- |
 | `export({ format: 'gif' \| 'mp4' \| 'webm' \| 'replay', from, to, … })` MCP tool | Claude | the path of `replay-<from>_<to>-<stamp>.gif` / `.mp4` / `.webm` / `.html` under `.web-chat/exports/` |
-| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions …]` | the user, from a terminal | the same write, path printed |
+| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions on\|none] [--prompts\|--no-prompts]` | the user, from a terminal | the same write, path printed |
 | **↧ GIF** / **↧ MP4** / **↧ WebM** in the replay player | the user, from the surface | a render of what the player is showing, with a link to download it |
 | `POST /api/replay/render` | anything local, JSON body only | `{ ok, path, label, from, to, format, frames, encoder, bytes }` |
 
@@ -239,14 +249,16 @@ How a render works (`lib/server/replay/render.js`):
   frame differencing, so a node held for 2.5 s is one frame and a caption change
   is a small rectangle — or, when ffmpeg is there, into ffmpeg as above. The GIF
   loops forever.
-- **Captions default to `summary`** for anything written this way — a file is
-  made to be sent on, and the prompt (with Claude's reply) is what a replay
-  carries that a page export does not; `summary` still shows the reply and the
-  prompt's first 100 characters, so pick `none` for a file with neither. `captions: 'prompt'` includes them; the player's **↧ GIF** /
-  **↧ MP4** / **↧ WebM** follow the player's caption choice, and with `prompt`
-  selected the first click only warns that the prompts will be in the file.
+- **Prompts are left out** of anything written this way unless
+  `include_prompts: true` — a file is made to be sent on, and the prompt is the
+  one thing a replay carries that a page export does not. The captions still
+  show each node's label, time and Claude's reply; `captions: 'none'` drops
+  them. The browser is pointed at `/replay?…&include_prompts=0`, so the page it
+  draws the frames from holds no prompt text either. The answer carries
+  `include_prompts`, and the player's **↧ GIF** / **↧ MP4** / **↧ WebM** follow
+  its **Include my prompts** checkbox (see above).
 - Options: `width` (320–1920, default 960; the height follows the 16:10 frame),
-  `hold_ms`, `pacing`, `transition`, `captions`, `fps` (1–30: fade sampling, and
+  `hold_ms`, `pacing`, `transition`, `captions`, `include_prompts`, `fps` (1–30: fade sampling, and
   a video's frame rate), `from` / `to` / `include_collapsed` as for the player.
 - Bounded: one render at a time (a second is `409` `busy`), at most 1000 frames
   (`413` `too-many-frames`), 64 MB of output (`413` `too-large`) and five minutes

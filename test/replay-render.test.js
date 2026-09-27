@@ -131,8 +131,11 @@ test('normalizeRenderRequest: defaults, clamps and honest refusals', () => {
   const d = normalizeRenderRequest({});
   assert.equal(d.format, 'gif');
   assert.equal(d.width, LIMITS.width.dflt);
-  assert.equal(d.docQuery.captions, 'summary', 'a rendered file defaults to SUMMARY captions');
-  assert.equal(normalizeRenderRequest({ captions: 'prompt' }).docQuery.captions, 'prompt');
+  assert.equal(d.docQuery.captions, 'on', 'a rendered file has captions…');
+  assert.equal(d.docQuery.include_prompts, false, '…without the user\'s prompts unless asked');
+  assert.equal(normalizeRenderRequest({ include_prompts: true }).docQuery.include_prompts, true);
+  assert.equal(normalizeRenderRequest({ captions: 'prompt' }).docQuery.include_prompts, false, 'the retired captions:"prompt" does not include them');
+  assert.equal(normalizeRenderRequest({ captions: 'none' }).docQuery.captions, 'none');
   assert.equal(normalizeRenderRequest({ width: 99999 }).width, LIMITS.width.max);
   assert.equal(normalizeRenderRequest({ width: 641 }).width % 2, 0, 'even width');
   assert.equal(normalizeRenderRequest({ format: 'mp4' }).format, 'mp4', 'video formats are named — whether ffmpeg is there is the render\'s question');
@@ -485,9 +488,12 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
   assert.equal(u.searchParams.get('chrome'), '0', 'the bare document, no player controls');
   assert.equal(u.searchParams.get('from'), 'n0', 'both ends pinned by id');
   assert.equal(u.searchParams.get('to'), 'n1');
-  assert.equal(u.searchParams.get('captions'), 'summary', 'summary captions by default');
+  assert.equal(u.searchParams.get('captions'), 'on', 'captions on by default');
+  assert.equal(u.searchParams.get('include_prompts'), '0', 'and the page the browser draws holds no prompts');
   const fetched = log.find((l) => l.fetched);
   assert.equal(fetched.status, 200, 'the URL the browser was sent really loads');
+  const drawn = await (await fetch(nav)).text();
+  assert.ok(!/maybe private|second prompt/.test(drawn), 'the document the GIF is drawn from carries no prompt text');
   assert.equal(fetched.csp, PREVIEW_CSP, 'under the preview CSP');
   const udd = log[0].argv.find((a) => a.startsWith('--user-data-dir=')).slice('--user-data-dir='.length);
   assert.ok(udd.startsWith(projectPaths(root).tmp + path.sep), 'the profile lives under .web-chat/tmp/');
@@ -514,8 +520,9 @@ test('POST /api/replay/render: chrome-not-found is an honest refusal with a hint
   const doc = fs.readFileSync(hb.path, 'utf8');
   assert.match(doc, /id="wc-replay-data"/);
   const payload = JSON.parse(/<script id="wc-replay-data" type="application\/json">([\s\S]*?)<\/script>/.exec(doc)[1]);
-  assert.equal(payload.opts.captions, 'summary', 'a written replay defaults to summary captions');
-  assert.ok(payload.steps.every((s) => !('prompt' in s.caption)), 'so no step carries a prompt field');
+  assert.equal(payload.opts.include_prompts, false, 'a written replay leaves the prompts out by default');
+  assert.ok(!/maybe private|second prompt/.test(doc), 'no prompt text anywhere in the file\'s bytes');
+  assert.equal(hb.include_prompts, false);
   assert.equal(payload.opts.chrome, true, 'a .html replay keeps its player controls');
 
   // …and the fenced file route hands it back, as a download, under the preview CSP.
@@ -685,6 +692,12 @@ test('export MCP tool: format html is unchanged; replay/gif go through the rende
   const rep = await tool.handler({ format: 'replay', to: 'n1', from: 'n0' });
   assert.equal(rep.ok, true, JSON.stringify(rep));
   assert.match(path.basename(rep.path), /^replay-n1-0_n1-1-/);
+  assert.equal(rep.include_prompts, false);
+  assert.ok(!/maybe private|second prompt/.test(fs.readFileSync(rep.path, 'utf8')), 'export tool: no prompts by default');
+  const withP = await tool.handler({ format: 'replay', to: 'n1', from: 'n0', include_prompts: true });
+  assert.equal(withP.include_prompts, true);
+  assert.match(withP.hint, /include the user's prompts/, 'the tool tells Claude the file has them');
+  assert.match(fs.readFileSync(withP.path, 'utf8'), /maybe private/, 'include_prompts: true puts them in');
 
   const gif = await tool.handler({ format: 'gif' });
   assert.equal(gif.code, 'chrome-not-found');
@@ -704,6 +717,12 @@ test('export CLI: --replay/--gif/--mp4/--webm with --from/--hold/--fade/--width 
   assert.deepEqual(parseExportArgs(['--replay']).body, { format: 'replay' });
   assert.equal(parseExportArgs(['--mp4']).body.format, 'mp4');
   assert.equal(parseExportArgs(['--webm', '--captions', 'none']).body.captions, 'none');
+  assert.equal(parseExportArgs(['--gif', '--prompts']).body.include_prompts, true);
+  assert.equal(parseExportArgs(['--gif', '--no-prompts']).body.include_prompts, false);
+  assert.equal('include_prompts' in parseExportArgs(['--gif']).body, false, 'unsaid: the daemon\'s default (off)');
+  assert.match(parseExportArgs(['--gif', '--prompts', '--no-prompts']).error, /pick one of --prompts/);
+  assert.match(parseExportArgs(['--gif', '--captions', 'prompt']).error, /--captions takes on or none.*--prompts/);
+  assert.match(parseExportArgs(['--prompts']).error, /need --replay/);
   assert.match(parseExportArgs(['--gif', '--replay']).error, /pick one/);
   assert.match(parseExportArgs(['--from', 'n1']).error, /need --replay, --gif, --mp4 or --webm/);
   assert.match(parseExportArgs(['--gif', '--hold']).error, /needs a value/);

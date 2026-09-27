@@ -80,8 +80,9 @@ async function boot() {
     calls.push({ url: u, method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null });
     if (u === '/api/replay/capabilities') return json(caps);
     if (u === '/api/replay/render') {
-      const format = (opts && opts.body && JSON.parse(opts.body).format) || 'gif';
-      return json({ ok: true, format, path: `/p/.web-chat/exports/replay-n1-1_n1-2-20260101-000000.${format}`, label: 'n1.1 → n1.2', frames: 2, bytes: 4096, encoder: caps.ffmpeg ? 'ffmpeg' : 'builtin' });
+      const b = (opts && opts.body && JSON.parse(opts.body)) || {};
+      const format = b.format || 'gif';
+      return json({ ok: true, format, path: `/p/.web-chat/exports/replay-n1-1_n1-2-20260101-000000.${format}`, label: 'n1.1 → n1.2', frames: 2, bytes: 4096, encoder: caps.ffmpeg ? 'ffmpeg' : 'builtin', include_prompts: !!b.include_prompts });
     }
     if (u === '/api/graph') return json({ nodes: NODES.map((n) => ({ ...n })), active: 'n1b' });
     if (u.startsWith('/api/replay/path')) {
@@ -209,8 +210,10 @@ test('⋯ → Replay… opens the player on the active node, from its bookmark, 
   assert.equal(q.get('chrome'), '1');
   assert.equal(q.get('autoplay'), '1');
   assert.equal(q.get('transition'), 'cut');
-  assert.equal(q.get('captions'), 'prompt');
-  assert.match($('rpo-download').getAttribute('href'), /^\/api\/replay\/html\?.*from=n1a.*to=n1b/);
+  assert.equal(q.get('captions'), 'on');
+  assert.equal(q.get('include_prompts'), '0', 'prompts are off until the viewer turns them on');
+  assert.equal($('rpo-prompts').checked, false);
+  assert.match($('rpo-download').getAttribute('href'), /^\/api\/replay\/html\?.*from=n1a.*to=n1b.*include_prompts=0/);
   // the pickers offer the whole drawn lineage above `to`
   assert.deepEqual([...$('rpo-from').options].map((o) => o.value), ['n1', 'n1a', 'n1b']);
   assert.equal($('rpo-from').value, 'n1a');
@@ -263,7 +266,7 @@ test('prefs persist; speed is live, transition reloads on the same step', async 
   assert.equal(frameQuery().get('at'), '1', 'the reload keeps the step on screen');
   assert.equal(frameQuery().get('autoplay'), '0');
   const saved = JSON.parse(W.localStorage.getItem('wc:replay-prefs'));
-  assert.deepEqual(saved, { speed: '2', transition: 'fade', captions: 'prompt' });
+  assert.deepEqual(saved, { speed: '2', transition: 'fade', captions: 'on', prompts: false });
   key('Escape');
   // …and the next open starts from them.
   await openFromMenu();
@@ -332,41 +335,73 @@ test('graph inspector: ▶ Replay and R open it above the overlay; Escape closes
   assert.equal(frameQuery().get('to'), glyph.dataset.id, 'to the SELECTED node');
 });
 
-test('↧ GIF: prompt captions warn first (prompts may be private), a second click renders, and the note links the file', async () => {
+test('↧ GIF: renders on the first click with prompts OFF by default, and the note links the file', async () => {
   await openFromMenu();
   await tick();
   assert.equal($('rpo-gif').disabled, false, 'Chrome found: the button is live');
   calls.length = 0;
   click($('rpo-gif'));
   await tick();
-  assert.equal(calls.filter((c) => c.url === '/api/replay/render').length, 0, 'the first click with prompt captions renders nothing…');
-  assert.match($('rpo-note').textContent, /prompts.*private/i, '…it says the prompts will be in the image');
-  click($('rpo-gif'));
-  await tick();
   await tick();
   const r = calls.filter((c) => c.url === '/api/replay/render');
-  assert.equal(r.length, 1, 'the second click renders');
+  assert.equal(r.length, 1, 'one click renders — no second-click warning');
   assert.equal(r[0].method, 'POST');
-  assert.deepEqual(r[0].body, { format: 'gif', transition: 'cut', captions: 'prompt', from: 'n1a', to: 'n1b' });
+  assert.deepEqual(r[0].body, { format: 'gif', transition: 'cut', captions: 'on', include_prompts: false, from: 'n1a', to: 'n1b' });
   const link = $('rpo-render-file');
   assert.ok(link, 'the note links the rendered file');
   assert.equal(link.getAttribute('href'), '/api/replay/file/replay-n1-1_n1-2-20260101-000000.gif');
-  assert.match($('rpo-note').textContent, /2 frames, 4 KB/);
+  assert.match($('rpo-note').textContent, /2 frames, 4 KB\)$/);
+  assert.doesNotMatch($('rpo-note').textContent, /prompts/, 'no reminder: the file has none');
 });
 
-test('↧ GIF: summary captions render on the first click; no Chrome disables the button', async () => {
-  W.localStorage.setItem('wc:replay-prefs', JSON.stringify({ captions: 'summary' }));
+test('"Include my prompts": remembered, reloads the player with them, and a file rendered with them says so in one line', async () => {
   await openFromMenu();
-  await tick();
+  const log = stubPlayer();
+  const cb = $('rpo-prompts');
+  cb.checked = true;
+  cb.dispatchEvent(new W.Event('change', { bubbles: true }));
+  assert.deepEqual(log, [], 'no player call: the document is rebuilt');
+  assert.equal(frameQuery().get('include_prompts'), '1', 'the player now shows them');
+  assert.equal(frameQuery().get('at'), '1', 'on the same step');
+  assert.match($('rpo-download').getAttribute('href'), /include_prompts=1/, 'replay.html follows the toggle');
+  assert.equal(JSON.parse(W.localStorage.getItem('wc:replay-prefs')).prompts, true, 'the choice is remembered');
+
   calls.length = 0;
   click($('rpo-gif'));
   await tick();
   await tick();
   const r = calls.filter((c) => c.url === '/api/replay/render');
-  assert.equal(r.length, 1);
-  assert.equal(r[0].body.captions, 'summary');
+  assert.equal(r.length, 1, 'still ONE click');
+  assert.equal(r[0].body.include_prompts, true);
+  assert.match($('rpo-note').textContent, /GIF ready .*— includes your prompts$/, 'a one-line reminder');
+
+  $('rpo-download').addEventListener('click', (e) => e.preventDefault(), { once: true }); // jsdom cannot navigate
+  click($('rpo-download'));
+  assert.equal($('rpo-note').textContent, 'replay.html includes your prompts', 'the download says so too');
   key('Escape');
 
+  // The next open starts from the remembered choice.
+  await openFromMenu();
+  assert.equal($('rpo-prompts').checked, true);
+  assert.equal(frameQuery().get('include_prompts'), '1');
+
+  // captions none: nothing to include, the toggle greys out and files carry none.
+  const sel = $('rpo-captions');
+  sel.value = 'none';
+  sel.dispatchEvent(new W.Event('change', { bubbles: true }));
+  assert.equal($('rpo-prompts').disabled, true);
+  assert.equal(frameQuery().get('include_prompts'), '0');
+});
+
+test('an old stored captions:"prompt" (the old select\'s default) does not turn prompts on', async () => {
+  W.localStorage.setItem('wc:replay-prefs', JSON.stringify({ speed: '1', transition: 'cut', captions: 'prompt' }));
+  await openFromMenu();
+  assert.equal($('rpo-captions').value, 'on');
+  assert.equal($('rpo-prompts').checked, false);
+  assert.equal(frameQuery().get('include_prompts'), '0');
+});
+
+test('↧ GIF: no Chrome disables the button', async () => {
   caps = { ...caps, chrome: null, formats: { ...caps.formats, gif: false } };
   try {
     await openFromMenu();
@@ -404,7 +439,7 @@ test('↧ MP4 / ↧ WebM: disabled without ffmpeg (the title says what to instal
     await tick();
     const r = calls.filter((c) => c.url === '/api/replay/render');
     assert.equal(r.length, 1);
-    assert.deepEqual(r[0].body, { format: 'mp4', transition: 'cut', captions: 'none', from: 'n1a', to: 'n1b' });
+    assert.deepEqual(r[0].body, { format: 'mp4', transition: 'cut', captions: 'none', include_prompts: false, from: 'n1a', to: 'n1b' });
     assert.equal($('rpo-render-file').getAttribute('href'), '/api/replay/file/replay-n1-1_n1-2-20260101-000000.mp4');
     assert.match($('rpo-note').textContent, /^MP4 ready \(ffmpeg\)/);
   } finally {
