@@ -3,7 +3,9 @@
 The surface is styled by **design tokens** — CSS custom properties, all `--wc-`
 prefixed — plus an optional raw-CSS escape hatch. Claude sets them with
 `set_theme` / `save_theme` / `apply_theme` (read them back with `get_theme` /
-`list_themes`); you pick a saved or builtin theme from **⋯ → Settings**.
+`list_themes`); you pick a saved, builtin or installed theme from **⋯ → Settings**.
+A theme can also be installed from a GitHub link — see
+[Sharing a theme as a pack](#sharing-a-theme-as-a-pack).
 
 ## Cascade
 
@@ -148,6 +150,106 @@ a `version` that changes with the file), `PUT /api/brand/:slot` with the raw
 image as the body and `Content-Type: image/png` or `image/svg+xml`, and
 `DELETE /api/brand/:slot`. Refusals: 404 not a slot, 413 too big, 415 not a
 PNG/SVG, 422 an active SVG.
+
+## Sharing a theme as a pack
+
+A theme travels the way a component pack does: push it to a GitHub repository,
+and anyone can install it by dropping the link into ＋ → **Manage** (or
+`claude-web-chat pack install <url>` in a terminal). It goes through the same
+download → review → install transaction as a component pack, so the full story
+— private repositories, `--ref` pinning, what `remove` keeps — is in
+[component-packs.md §8](component-packs.md#8-installing-a-pack). This is the
+theme-specific part.
+
+### Repository layout
+
+```
+harbor-themes/
+├─ web-chat-pack.json          { "name": "harbor-themes", "version": "1.0.0",
+│                                "description": "…", "themes": ["harbor"] }
+└─ themes/
+   └─ harbor/
+      ├─ theme.json            tokens, optional light/dark modes, optional fonts
+      ├─ logos/                optional — see below
+      └─ fonts/                optional — WOFF2 files plus their OFL licence
+```
+
+A pack may be **themes-only**: leave `components` out of the manifest and ship
+no `SKILL.md` — a theme is found through Settings → Theme and `list_themes`, so
+there is nothing for a skill to announce. It may also ship components beside its
+themes. The theme's name is its directory name (kebab-case); the built-in names
+`earthy`, `paper`, `georgetown-blue`, `georgetown` and `web-chat` are refused.
+
+### `theme.json`
+
+The same shape as a saved theme (`save_theme`): `tokens` from the
+[canonical table](#canonical-token-table), and optionally `modes` with a `light`
+and/or `dark` layer of tokens on top — declare one mode and the theme is
+single-mode, as described [above](#light-and-dark-are-a-mode-inside-a-theme).
+A `name`, if present, must match the directory.
+
+```json
+{
+  "tokens": { "--wc-radius": "6px", "--wc-mono": "'Geist Mono', ui-monospace, monospace" },
+  "modes": {
+    "light": { "tokens": { "--wc-bg": "#f4f1ea", "--wc-accent": "#0b5cad" } },
+    "dark":  { "tokens": { "--wc-bg": "#0e1622", "--wc-accent": "#5aa2f0" } }
+  },
+  "fonts": ["Geist Mono"]
+}
+```
+
+**No raw CSS yet.** A `css` string — top-level or in a mode — refuses the whole
+pack at review, with the reason on the card. Tokens reach every surface a theme
+needs; a stylesheet from somebody else's repository would reach the chrome with
+nothing checking it.
+
+### Logos
+
+A theme may carry the project's three [brand images](#brand-images). While it is
+the web-chat-wide theme, they fill any slot the project left empty — a project's
+own Settings → Brand image always wins — and they stop the moment another theme
+is applied.
+
+| File in `logos/` | Shown | Drawn at | PNG at 2× |
+| --- | --- | --- | --- |
+| `logotype.svg` or `.png` | the topbar | 150 × 22 | 300 × 44 |
+| `lockup.svg` or `.png` | an exported page's header | 260 × 52 | 520 × 104 |
+| `seal.svg` or `.png` | an exported page's footer | 44 × 44 | 88 × 88 |
+
+Each may also have a `-reversed` version (`logotype-reversed.svg`, …): a white
+mark for dark backgrounds, which dark mode uses instead. If a slot has both an
+`.svg` and a `.png`, the `.svg` is used. SVG is preferred — convert text to
+outlines, and use no external references (a linked image or font is never
+fetched, so it would not show); a PNG should be 2× on a transparent background.
+At most 256 KB each. Every logo passes the same check as a Settings → Brand
+upload when the pack is reviewed: SVG or PNG by its bytes (and the format its
+name says), and no `<script>`, `on…=` handler, `javascript:` URL,
+`<foreignObject>` or entity declaration. One that fails refuses the pack, and
+the review card says which; a file whose name is not one of the six is simply
+not installed.
+
+### Fonts
+
+`fonts` lists the families the theme's tokens name. A bundled family (`"Geist"`,
+`"Geist Mono"`, `"Libre Caslon Text"` — see [Fonts](#fonts)) works everywhere
+today. A pack may also ship its own as `{ "family": "Harbor Sans", "file":
+"HarborSans.woff2", "weight": "100 900", "style": "normal" }`: WOFF2 only, at
+most 1 MB each and 12 per theme, and only with the SIL Open Font License text
+beside them in `fonts/OFL.txt`. Such a font is installed with the theme but not
+yet loaded by the surface or exports, so name a fallback after it in the token
+(`'Harbor Sans', 'Geist', sans-serif`).
+
+### Reviewing, applying, removing
+
+The review card draws each mode's palette as a strip of swatches (background,
+panel, text, accent, green, gold), shows the logos, lists the fonts, and prints
+any refusal. After an install, **Apply now** makes the theme the web-chat-wide
+one; later, it is under **Installed** in ⋯ → Settings → Theme, next to the name
+of the pack it came from. `claude-web-chat pack list` lists a pack's themes, and
+`claude-web-chat pack remove <pack>` removes them with their logos and fonts — if
+the removed theme was the active one, the project goes back to its default
+theme and the command says so.
 
 ## Canonical token table
 

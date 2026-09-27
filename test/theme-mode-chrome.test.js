@@ -187,3 +187,28 @@ test('Settings lists a builtin pack by its display name, keyed by its id', async
   ]);
   assert.equal($('settings-theme').value, 'georgetown-blue', 'the current pack is selected by id');
 });
+
+// s3c-2: a theme a pack installed lists under "Installed" with the pack's name,
+// whichever library tier it landed in; the value stays the name apply resolves.
+test('Settings lists pack-installed themes under "Installed", naming the pack', async () => {
+  GLOBAL_NAME = 'harbor';
+  const added = [
+    { name: 'harbor', location: 'local', pack: 'harbor-themes', modes: ['light', 'dark'] },
+    { name: 'tide', location: 'system', pack: 'harbor-themes', modes: ['dark'] },
+  ];
+  THEME_ROWS.push(...added);
+  try {
+    const shell = await import(pathToFileURL(path.join(REPO, 'public/app/shell.js')).href);
+    shell.openSettings();
+    await tick();
+    const groups = [...$('settings-theme').querySelectorAll('optgroup')].map((g) => [g.label, [...g.querySelectorAll('option')].map((o) => [o.value, o.textContent])]);
+    assert.deepEqual(groups, [
+      ['built-in', [['earthy', 'Earthy'], ['georgetown-blue', 'Georgetown Blue']]],
+      ['Installed', [['harbor', 'harbor — harbor-themes'], ['tide', 'tide (dark only) — harbor-themes']]],
+      ['this project', [['night', 'night (dark only)'], ['mine', 'mine']]],
+    ]);
+    assert.equal($('settings-theme').value, 'harbor');
+  } finally {
+    THEME_ROWS.splice(THEME_ROWS.length - added.length, added.length);
+  }
+});

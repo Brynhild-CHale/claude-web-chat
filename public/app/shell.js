@@ -146,9 +146,13 @@ async function populateThemeSelect() {
     current = g.name || 'earthy'; // no theme.json = the stock look, Earthy
   } catch {}
   sel.innerHTML = '';
-  const groups = { builtin: 'built-in', local: 'this project', system: 'system' };
+  // A theme a pack installed (/api/themes tags it with the pack's name) lists
+  // under "Installed", whichever tier it landed in, and says which pack — the
+  // name `pack remove` takes. Everything else groups by where it lives.
+  const groups = { builtin: 'built-in', installed: 'Installed', local: 'this project', system: 'system' };
+  const groupOf = (t) => (t.pack && t.location !== 'builtin' ? 'installed' : t.location);
   for (const loc of Object.keys(groups)) {
-    const inLoc = themes.filter(t => t.location === loc);
+    const inLoc = themes.filter(t => groupOf(t) === loc);
     if (!inLoc.length) continue;
     const og = document.createElement('optgroup');
     og.label = groups[loc];
@@ -158,7 +162,8 @@ async function populateThemeSelect() {
       // A builtin pack shows its display name (`georgetown-blue` reads as
       // "Georgetown Blue"); the value stays the id apply_theme resolves. A
       // single-mode pack says so here, where the ◑ toggle's absence is chosen.
-      o.textContent = (t.title || t.name) + (t.modes && t.modes.length === 1 ? ` (${t.modes[0]} only)` : '');
+      o.textContent = (t.title || t.name) + (t.modes && t.modes.length === 1 ? ` (${t.modes[0]} only)` : '')
+        + (loc === 'installed' ? ` — ${t.pack}` : '');
       if (t.name === current) o.selected = true;
       og.appendChild(o);
     }

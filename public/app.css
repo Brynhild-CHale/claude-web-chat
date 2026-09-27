@@ -1173,6 +1173,14 @@ kbd {
 .pk-unit-list { font: 11px var(--wc-mono); color: var(--wc-muted); margin-top: 5px; overflow-wrap: anywhere; }
 .pk-card-status { font: 11px var(--wc-font); color: var(--wc-muted); margin-top: 5px; }
 .pk-card-status.err { color: var(--wc-comment); }
+/* a staged theme: its palette per mode, its logos */
+.pk-theme { margin-top: 6px; }
+.pk-swatches { display: flex; align-items: center; gap: 3px; margin-top: 3px; }
+.pk-swatch-mode { flex: none; width: 34px; font: 10px var(--wc-mono); color: var(--wc-muted-dim); }
+.pk-swatch { width: 18px; height: 14px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); }
+.pk-logos { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.pk-logo { max-width: 120px; max-height: 28px; object-fit: contain; padding: 3px; border: 1px solid var(--wc-border-light); border-radius: var(--wc-radius-sm); }
+.pk-apply .pk-actions { margin-top: 6px; }
 
 /* SKILL.md, inline — the artefact nobody thinks to read, and the one that ends
    up in Claude's instructions */

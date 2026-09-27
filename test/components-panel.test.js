@@ -790,3 +790,131 @@ test('a clipboard that refuses does not throw — the command is still selectabl
   await tick();
   assert.match(copy.textContent, /select it/, 'it says so rather than lying or throwing');
 });
+
+// ── theme packs (s3c-2) ─────────────────────────────────────────────────────
+// A theme pack goes through the same URL field and the same review card. The
+// card shows what a reviewer cannot read off a file list: each mode's palette as
+// swatches, the logos as images, the fonts — every value from somebody else's
+// repository, so colours go in as a style PROPERTY and a logo is an <img> on the
+// quarantine route, never markup.
+
+const themeRecord = (over = {}) => ({
+  name: 'harbor-themes', version: '1.0.0', tier: 'local', description: 'Harbor.',
+  source: { url: 'https://github.com/acme/harbor', via: 'archive', sha: 'c'.repeat(40) },
+  components: [], services: [], skill: null, errors: [], collisions: [], files: 4, present: true,
+  themes: [{
+    name: 'harbor', modes: ['light', 'dark'], css: false,
+    logos: ['logotype', 'seal'],
+    fonts: [{ family: 'Geist Mono', bundled: true }],
+    palette: {
+      light: { bg: '#f4f1ea', panel: '#ffffff', fg: '#1d2a3a', accent: '#0b5cad', green: '#2f7d4f', gold: '#b8860b' },
+      dark: { bg: '#0e1622', accent: '#5aa2f0' },
+    },
+    files: ['harbor.json', 'harbor/logos/logotype.svg', 'harbor/logos/seal.png'],
+  }],
+  ...over,
+});
+
+async function openManage() {
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  await openDrawer();
+  press($('drawer-tab-manage'));
+  await tick();
+}
+
+test('a theme pack\'s review card draws each mode\'s palette, its logos and its fonts', async () => {
+  routes['/api/packs'] = { ok: true, packs: [], quarantined: [themeRecord()] };
+  await openManage();
+  const card = $('drawer-manage').querySelector('.pk-quarantined');
+  const theme = card.querySelector('.pk-theme');
+  assert.ok(theme, 'the theme has its own section on the card');
+  assert.equal(theme.querySelector('.de-name').textContent, 'harbor');
+
+  const rows = [...theme.querySelectorAll('.pk-swatches')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.pk-swatch-mode').textContent), ['light', 'dark']);
+  const light = [...rows[0].querySelectorAll('.pk-swatch')];
+  assert.equal(light.length, 6, 'bg, panel, fg, accent, green, gold');
+  assert.equal(light[0].style.backgroundColor, 'rgb(244, 241, 234)');
+  assert.match(light[3].title, /accent #0b5cad/);
+  const dark = [...rows[1].querySelectorAll('.pk-swatch')];
+  assert.equal(dark[1].style.backgroundColor, '', 'a token the theme does not set draws an empty swatch');
+  assert.match(dark[1].title, /not set/);
+
+  const imgs = [...theme.querySelectorAll('img.pk-logo')].map((i) => i.getAttribute('src'));
+  assert.deepEqual(imgs, [
+    '/api/packs/quarantine/harbor-themes/logo?theme=harbor&file=logotype.svg',
+    '/api/packs/quarantine/harbor-themes/logo?theme=harbor&file=seal.png',
+  ]);
+  assert.match(theme.textContent, /fonts: Geist Mono/);
+  assert.equal(card.querySelector('.pk-skill'), null, 'a themes-only pack is not scolded for having no SKILL.md');
+  assert.ok([...card.querySelectorAll('.pk-actions button')].some((b) => b.textContent === 'Install it'));
+});
+
+test('a palette value is set as a colour property — markup in it goes nowhere', async () => {
+  routes['/api/packs'] = { ok: true, packs: [], quarantined: [themeRecord({ themes: [{
+    name: 'harbor', modes: [], palette: { default: { bg: 'red"><img src=x onerror=alert(1)>', accent: '#0b5cad' } }, files: [],
+  }] })] };
+  await openManage();
+  const theme = $('drawer-manage').querySelector('.pk-theme');
+  assert.equal(theme.querySelectorAll('img').length, 0, 'no element came out of a value');
+  const [bg, , , accent] = theme.querySelectorAll('.pk-swatch');
+  assert.equal(bg.style.backgroundColor, '', 'not a colour, so not applied');
+  assert.equal(accent.style.backgroundColor, 'rgb(11, 92, 173)');
+});
+
+test('a theme carrying raw CSS is chipped, its refusal shown, and there is no Install button', async () => {
+  const err = 'theme "harbor": carries raw CSS (css). An installed theme may not ship CSS yet';
+  const rec = themeRecord({ errors: [err] });
+  rec.themes[0].css = true;
+  routes['/api/packs'] = { ok: true, packs: [], quarantined: [rec] };
+  await openManage();
+  const card = $('drawer-manage').querySelector('.pk-quarantined');
+  assert.ok([...card.querySelectorAll('.de-chip')].some((c) => /raw CSS — refused/.test(c.textContent)));
+  assert.match(card.textContent, /may not ship CSS yet/);
+  assert.equal([...card.querySelectorAll('button')].some((b) => b.textContent === 'Install it'), false);
+});
+
+test('after a theme pack installs, "Apply now" makes it the global theme', async () => {
+  await openManage();
+  $('pk-url').value = 'https://github.com/acme/harbor';
+  await withFetch(
+    async (url) => (url === '/api/packs/install' ? jsonRes({
+      ok: true, pack: { name: 'harbor-themes', themes: ['harbor'], units: [{ kind: 'theme', name: 'harbor' }] },
+      tier: 'local', services: [], skill: null, results: [], warnings: [],
+    }) : null),
+    async () => {
+      const now = [...$('drawer-manage').querySelectorAll('.pk-actions button')][1];
+      press(now); await tick();
+      press(now); await tick();
+    },
+  );
+  const manage = $('drawer-manage');
+  assert.match(manage.querySelector('.pk-status').textContent, /installed harbor-themes — 1 theme/);
+  const prompt = manage.querySelector('.pk-apply');
+  assert.ok(prompt, 'the installed theme is offered right where the user is looking');
+  const apply = prompt.querySelector('button');
+  assert.equal(apply.textContent, 'Apply now');
+
+  let call = null;
+  await withFetch(
+    async (url, opts) => {
+      if (url !== '/api/theme/apply') return null;
+      call = { url, body: JSON.parse(opts.body) };
+      return jsonRes({ ok: true, name: 'harbor', scope: 'global' });
+    },
+    async () => { press(apply); await tick(); },
+  );
+  assert.ok(call, 'Apply now posts the apply');
+  assert.deepEqual(call.body, { name: 'harbor', scope: 'global' });
+  assert.match(prompt.textContent, /harbor is the theme now/);
+});
+
+test('an installed theme pack lists its themes on its card', async () => {
+  routes['/api/packs'] = { ok: true, quarantined: [], packs: [{
+    name: 'harbor-themes', version: '1.0.0', tier: 'system', drift: false,
+    source: { via: 'archive', sha: 'c'.repeat(40) }, components: [], themes: ['harbor', 'tide'], services: [], skill: null,
+  }] };
+  await openManage();
+  const card = [...$('drawer-manage').querySelectorAll('.pk-card')].find((c) => /harbor-themes/.test(c.textContent));
+  assert.match(card.textContent, /themes: harbor · tide/);
+});

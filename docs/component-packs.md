@@ -520,6 +520,14 @@ all-projects checkbox, and the same two options — *Download for review* is the
 primary button there, and *Install now* takes a second, deliberate click for a
 URL that was never reviewed.
 
+A theme pack goes in the same field. Its review card draws each theme's palette
+per mode as swatches, shows its logos and fonts, and prints any refusal; once it
+is installed, **Apply now** makes the theme the web-chat-wide one (Settings →
+Theme lists it afterwards under **Installed**, with the pack's name). Removing a
+pack whose theme is the active one puts the project back on its default theme,
+and says so. The theme side — layout, `theme.json`, logo and font rules — is
+[themes.md → Sharing a theme as a pack](themes.md#sharing-a-theme-as-a-pack).
+
 ### Private packs — `gh`
 
 A component library is often private, and the plain HTTPS path cannot reach one:
