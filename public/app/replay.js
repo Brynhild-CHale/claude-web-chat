@@ -4,7 +4,8 @@
 // that draws it lives in ONE document the daemon serves — /replay
 // (lib/server/replay/document.js: stage, caption bar, scrubber, controller) —
 // and this module only frames it: an iframe of that document plus the choices
-// around it (from / to, speed, transition, captions), "Open this node", and a
+// around it (from / to, speed, transition, captions, "Include my prompts"),
+// "Open this node", and a
 // download of the same document as replay.html, and ↧ GIF / ↧ MP4 / ↧ WebM — a
 // render of the same replay by the daemon (POST /api/replay/render: a headless
 // system Chrome draws it, ffmpeg encodes it when the machine has one), linked in
@@ -27,16 +28,16 @@ import { getLocalJson, setLocalJson } from './storage.js';
 
 const PREFS_KEY = 'wc:replay-prefs';
 const SPEEDS = ['0.5', '1', '1.5', '2', '4'];
-const DEFAULT_PREFS = { speed: '1', transition: 'cut', captions: 'prompt' };
+// `prompts` is the viewer's "Include my prompts": off until they turn it on,
+// then remembered, and every file saved from the player follows it.
+const DEFAULT_PREFS = { speed: '1', transition: 'cut', captions: 'on', prompts: false };
 
 let hooks = { openNode: null, forwardEscapeFrom: null };
-// The file exports: whether a render is running, whether the user has been
-// told — once, for this replay — that `prompt` captions burn their prompts
-// into an image they are about to send somewhere, and which formats this
+// The file exports: whether a render is running, and which formats this
 // machine can make (unknown = allowed: the render route says why not).
 const RENDER_FORMATS = ['gif', 'mp4', 'webm'];
 const FORMAT_NAME = { gif: 'GIF', mp4: 'MP4', webm: 'WebM' };
-let fileExport = { busy: false, promptOk: false, can: { gif: true, mp4: true, webm: true } };
+let fileExport = { busy: false, can: { gif: true, mp4: true, webm: true } };
 // The replay being shown: its endpoints and the lineage the pickers offer.
 let cur = { to: null, from: null, lineage: [] };
 
@@ -48,7 +49,11 @@ function prefs() {
   const p = { ...DEFAULT_PREFS, ...getLocalJson(PREFS_KEY, {}) };
   if (!SPEEDS.includes(String(p.speed))) p.speed = DEFAULT_PREFS.speed;
   if (!['cut', 'fade'].includes(p.transition)) p.transition = DEFAULT_PREFS.transition;
-  if (!['prompt', 'summary', 'none'].includes(p.captions)) p.captions = DEFAULT_PREFS.captions;
+  // 'none' is the one caption choice kept from the old prompt / summary / none
+  // select; a stored 'prompt' was that select's default, not a choice to
+  // include prompts, so it does not turn `prompts` on.
+  if (p.captions !== 'none') p.captions = DEFAULT_PREFS.captions;
+  p.prompts = p.prompts === true;
   return p;
 }
 function savePrefs(patch) { setLocalJson(PREFS_KEY, { ...prefs(), ...patch }); }
@@ -59,6 +64,10 @@ function player() {
 }
 
 function note(text) { const n = $('rpo-note'); if (n) n.textContent = text || ''; }
+
+// Whether a file saved now carries the viewer's prompts.
+const filePrompts = (p = prefs()) => p.prompts && p.captions !== 'none';
+const PROMPTS_REMINDER = 'includes your prompts';
 
 // A finished render: a link to the file, built from nodes (the name comes from
 // the server, and textContent is the only thing that ever carries it).
@@ -77,6 +86,7 @@ function noteFile(r) {
   n.appendChild(a);
   const kb = Math.max(1, Math.round((r.bytes || 0) / 1024));
   n.appendChild(document.createTextNode(` (${r.frames} frame${r.frames === 1 ? '' : 's'}, ${kb} KB)`));
+  if (r.include_prompts) n.appendChild(document.createTextNode(` — ${PROMPTS_REMINDER}`));
 }
 
 const renderButtons = () => RENDER_FORMATS.map((f) => $('rpo-' + f)).filter(Boolean);
@@ -118,23 +128,18 @@ async function checkCapabilities() {
   } catch { /* unknown: leave them enabled */ }
 }
 
-// Render the replay being watched to a file. Captions follow the overlay's
-// choice — but `prompt` shows the user's own prompts, which may be private, so
-// the first click only says so and a second click confirms.
+// Render the replay being watched to a file. It follows the overlay's choices
+// — "Include my prompts" too, which is off until the viewer turns it on; with
+// it on, the note that links the file says so in one line (no second click).
 async function renderFile(format) {
   if (fileExport.busy) return;
   const p = prefs();
   const what = FORMAT_NAME[format];
-  if (p.captions === 'prompt' && !fileExport.promptOk) {
-    fileExport.promptOk = true;
-    note(`The ${what} will show your prompts, which may be private — click ↧ ${what} again to include them, or switch captions to summary or none.`);
-    return;
-  }
   fileExport.busy = true;
   syncButtons();
   note(`Rendering ${what} in a headless Chrome…`);
   try {
-    const body = { format, transition: p.transition, captions: p.captions };
+    const body = { format, transition: p.transition, captions: p.captions, include_prompts: filePrompts(p) };
     if (cur.from) body.from = cur.from;
     if (cur.to) body.to = cur.to;
     const r = await fetch('/api/replay/render', {
@@ -153,6 +158,15 @@ async function renderFile(format) {
   }
 }
 
+// The checkbox mirrors the remembered choice; it means nothing with captions off.
+function syncPrompts() {
+  const cb = $('rpo-prompts');
+  if (!cb) return;
+  const p = prefs();
+  cb.checked = p.prompts;
+  cb.disabled = p.captions === 'none';
+}
+
 // The query both the frame and the download are built from.
 function query(extra = {}) {
   const p = prefs();
@@ -161,6 +175,7 @@ function query(extra = {}) {
   if (cur.to) q.set('to', cur.to);
   q.set('transition', p.transition);
   q.set('captions', p.captions);
+  q.set('include_prompts', filePrompts(p) ? '1' : '0');
   for (const [k, v] of Object.entries(extra)) if (v != null) q.set(k, String(v));
   return q.toString();
 }
@@ -235,7 +250,6 @@ export async function openReplay({ to = null, from = null } = {}) {
   window.dispatchEvent(new CustomEvent('wc:close-popovers', { detail: { keep: p } }));
   p.classList.remove('hidden');
   note('');
-  fileExport.promptOk = false;
   checkCapabilities();
 
   const def = await getPath(from ? { to: target, from } : { to: target });
@@ -255,6 +269,7 @@ export async function openReplay({ to = null, from = null } = {}) {
   const set = (id, v) => { const el = $(id); if (el) el.value = v; };
   const pr = prefs();
   set('rpo-speed', pr.speed); set('rpo-transition', pr.transition); set('rpo-captions', pr.captions);
+  syncPrompts();
   load();
   const fr = frame();
   if (fr) setTimeout(() => { if (isReplayOpen()) fr.focus(); }, 0);
@@ -315,7 +330,10 @@ export function initReplay(h = {}) {
     if (api) api.setSpeed(Number(e.target.value));   // live — no reload
   });
   on('rpo-transition', 'change', (e) => { savePrefs({ transition: e.target.value }); load({ at: stepIndex() }); });
-  on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); fileExport.promptOk = false; load({ at: stepIndex() }); });
+  on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); syncPrompts(); load({ at: stepIndex() }); });
+  on('rpo-prompts', 'change', (e) => { savePrefs({ prompts: !!e.target.checked }); note(''); load({ at: stepIndex() }); });
+  // replay.html is a plain link; with prompts on, say so as it downloads.
+  on('rpo-download', 'click', () => { if (filePrompts()) note(`replay.html ${PROMPTS_REMINDER}`); });
   for (const f of RENDER_FORMATS) on('rpo-' + f, 'click', () => renderFile(f));
   on('rpo-from', 'change', (e) => { cur.from = e.target.value; renderPickers(); load(); });
   on('rpo-to', 'change', (e) => { cur.to = e.target.value; renderPickers(); load(); });

@@ -147,8 +147,8 @@ export function isLogMode() { return overlayEl.classList.contains('log-mode'); }
 let logRenderer = null;
 export function setLogRenderer(fn) { logRenderer = typeof fn === 'function' ? fn : null; }
 
-// A phone rotated wide (or a narrow window gaining a finger) flips the open graph
-// between log and canvas in place.
+// A phone rotated wide (or a window dragged narrow and tall, or widened back)
+// flips the open graph between log and canvas in place.
 bus.on('viewport', ({ phone }) => {
   if (!isOverlayOpen()) return;
   overlayEl.classList.toggle('log-mode', !!phone);

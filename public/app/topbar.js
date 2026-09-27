@@ -192,21 +192,60 @@ export function doExport() {
   a.remove();
 }
 
-// Transient "your re-aim is queued" note. A re-aim during a locked turn is no
-// longer rejected — the server queues it and applies it when the turn ends
-// (pending re-aim); this tells the user their click was honored, just deferred.
-export function showReaimNote(text) {
+// The shell's ONE in-page transient notice (the id is historical: it began as
+// "your re-aim is queued" — a re-aim during a locked turn is queued, not
+// rejected, and applied when the turn ends). Everything that has to tell the
+// user something outside a panel says it here, and it goes by itself after 6s.
+//
+// `action` ({label, run}) adds one button — "Jump to live" on a block added to
+// the live page from a preview (drawer.js). A notice with a button is a toast,
+// so it must be reachable without a mouse: the note sits in the DOM directly
+// after the topbar (the next Tab stop after its controls), is announced politely
+// (role=status), and its dismissal is held while the pointer or focus is inside
+// it — a timer that pulls the button out from under a keyboard user is a button
+// a keyboard user cannot press. Running the action dismisses the note.
+export const NOTE_MS = 6000;
+export function showReaimNote(text, { action = null } = {}) {
   let el = $('reaim-note');
   if (!el) {
     el = document.createElement('div');
     el.id = 'reaim-note';
     el.className = 'reaim-note';
+    el.setAttribute('role', 'status');
     const tb = $('topbar');
-    (tb ? tb.parentElement || document.body : document.body).appendChild(el);
+    if (tb && tb.parentElement) tb.after(el); else document.body.appendChild(el);
+    const hold = () => clearTimeout(showReaimNote._t);
+    const release = () => {
+      if (!el.isConnected || el.matches(':hover') || el.contains(document.activeElement)) return;
+      armNoteDismiss();
+    };
+    el.addEventListener('mouseenter', hold);
+    el.addEventListener('focusin', hold);
+    el.addEventListener('mouseleave', release);
+    el.addEventListener('focusout', () => setTimeout(release, 0));
   }
-  el.textContent = text;
+  const msg = document.createElement('span');
+  msg.className = 'reaim-note-text';
+  msg.textContent = text;
+  el.replaceChildren(msg);
+  if (action && typeof action.run === 'function') {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'reaim-note-action';
+    b.textContent = action.label || 'Go';
+    b.addEventListener('click', () => { dismissNote(); action.run(); });
+    el.appendChild(b);
+  }
+  armNoteDismiss();
+}
+function armNoteDismiss() {
   clearTimeout(showReaimNote._t);
-  showReaimNote._t = setTimeout(() => { const n = $('reaim-note'); if (n) n.remove(); }, 6000);
+  showReaimNote._t = setTimeout(dismissNote, NOTE_MS);
+}
+function dismissNote() {
+  clearTimeout(showReaimNote._t);
+  const n = $('reaim-note');
+  if (n) n.remove();
 }
 
 // Wipe the live surface. The server keeps `active` and sets a pendingBookmark, so

@@ -206,6 +206,100 @@ test('page: wipe clears markdown and keeps pinned panes', async (t) => {
   assert.deepEqual(json.order, ['keep']);
 });
 
+// The markdown directly above a surviving pinned pane — the contiguous run back
+// to the previous pane or the top of the page — survives with it, in order.
+test('page: wipe keeps the markdown run directly above a pinned pane; other prose goes', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await md(api, { id: 'intro', text: '# Unrelated intro' });
+  await render(api, 'go');
+  await md(api, { id: 'h', text: '## Keep heading' });
+  await md(api, { id: 'cap', text: 'keep caption' });
+  await render(api, 'keep');
+  await md(api, { id: 'tail', text: 'unrelated tail' });
+  await pin(ctx, 'keep');
+  assert.deepEqual(await order(api), ['intro', 'go', 'h', 'cap', 'keep', 'tail']);
+  const r = await api.post('/api/graph/wipe', {});
+  assert.deepEqual(r.json.kept, ['keep']);
+  const { json } = await api.get('/api/mounts');
+  assert.deepEqual(json.order, ['h', 'cap', 'keep'], 'the run above the pin survives, in page order');
+  assert.deepEqual(json.markdown.map((m) => m.id), ['h', 'cap']);
+  // The next node carries the survivors, text intact, like any other page.
+  const { node_id } = await turn(api);
+  const node = JSON.parse(fs.readFileSync(path.join(ctx.webChatDir, 'graph', `${node_id}.json`), 'utf8'));
+  assert.deepEqual(node.markdown.map((m) => [m.id, m.text]), [['h', '## Keep heading'], ['cap', 'keep caption']]);
+  assert.deepEqual(node.order, ['h', 'cap', 'keep']);
+});
+
+test('page: wipe with two pinned panes keeps each one\'s own prose; an unpinned pane ends a run', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await md(api, { id: 'a-h', text: '## A' });
+  await render(api, 'a');
+  await md(api, { id: 'x-h', text: '## X (unpinned)' });
+  await render(api, 'x');
+  await md(api, { id: 'b-h', text: '## B' });
+  await render(api, 'b');
+  await pin(ctx, 'a');
+  await pin(ctx, 'b');
+  await api.post('/api/graph/wipe', {});
+  assert.deepEqual(await order(api), ['a-h', 'a', 'b-h', 'b'],
+    "x-h captions the cleared pane x, not b; it goes with x");
+});
+
+test('page: wipe with the pinned pane first on the page keeps no prose', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await render(api, 'keep');
+  await md(api, { id: 'below', text: '## below the pin' });
+  await render(api, 'keep2');
+  await pin(ctx, 'keep');
+  await pin(ctx, 'keep2');
+  await api.post('/api/graph/wipe', {});
+  const { json } = await api.get('/api/mounts');
+  assert.deepEqual(json.order, ['keep', 'below', 'keep2'], 'prose between two pins is the second pin\'s run');
+
+  await api.post('/api/clear', { id: 'below' });
+  await md(api, { id: 'after', text: 'trailing' });
+  await api.post('/api/graph/wipe', {});
+  assert.deepEqual(await order(api), ['keep', 'keep2'], 'prose BELOW the last pin is not kept');
+});
+
+test('page: a page-wide clear keeps the markdown above a pinned pane; force:true takes it all', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await md(api, { id: 'intro', text: 'unrelated' });
+  await render(api, 'go');
+  await md(api, { id: 'cap', text: '## caption' });
+  await render(api, 'keep');
+  await pin(ctx, 'keep');
+  const sock = ctx.ws();
+  const frames = [];
+  sock.on('message', (d) => frames.push(JSON.parse(String(d))));
+  await new Promise((resolve, reject) => { sock.on('open', resolve); sock.on('error', reject); });
+  const r = await api.post('/api/clear', {});
+  assert.deepEqual(r.json.kept, ['keep']);
+  assert.deepEqual(await order(api), ['cap', 'keep']);
+  await waitUntil(() => frames.some((f) => f.type === 'markdown:remove'));
+  assert.deepEqual(frames.filter((f) => f.type === 'markdown:remove').map((f) => f.id), ['intro'],
+    'the browser is told to drop only the prose that went');
+  const { json: ev } = await api.get('/api/events');
+  assert.equal(ev.events.filter((e) => e.kind === 'clear').pop().markdown, 1);
+  sock.close();
+
+  await api.post('/api/clear', { force: true });
+  assert.deepEqual(await order(api), [], 'no pin survives force, so no prose does');
+});
+
+test('page.markdownAbove: reads the run off the order, stops at a pane or the top', () => {
+  const state = { mounts: new Map([['p', {}], ['q', {}]]), markdown: new Map([['m1', {}], ['m2', {}], ['m3', {}]]), order: ['m1', 'p', 'm2', 'm3', 'q'] };
+  assert.deepEqual([...page.markdownAbove(state, ['q'])], ['m3', 'm2']);
+  assert.deepEqual([...page.markdownAbove(state, ['p'])], ['m1']);
+  assert.deepEqual([...page.markdownAbove(state, ['nope'])], []);
+  assert.deepEqual(page.clearMarkdown(state, { keep: page.markdownAbove(state, ['q']) }), ['m1']);
+  assert.deepEqual(state.order, ['p', 'm2', 'm3', 'q']);
+});
+
 // ── graph travel ───────────────────────────────────────────────────────────
 
 test('page: a commit carries markdown + order; set-active restores them', async (t) => {

@@ -155,6 +155,23 @@ test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide
   assert.equal(window.document.getElementById('contents-nav').childElementCount, 0, 'and ships empty');
 });
 
+test('the phone rule lives in one place: public/app/viewport.js', () => {
+  // The phone (the read-only viewer, the graph as a log) is chosen by shape —
+  // narrow AND portrait (maintainer ruling a11) — and reverting that is meant to
+  // be one line in viewport.js. That only holds while nothing else re-derives
+  // it: the stylesheets key their phone rules off <html class="phone"> and never
+  // a pointer/aspect media query of their own, and no other chrome module asks
+  // matchMedia.
+  const phoneMedia = /@media[^{]*(pointer|hover|aspect-ratio|orientation)/;
+  for (const f of ['public/app.css', 'public/page.css']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(REPO, f), 'utf8'), phoneMedia, `${f} re-derives the phone posture`);
+  }
+  const appDir = path.join(REPO, 'public/app');
+  const askers = fs.readdirSync(appDir).filter((f) => f.endsWith('.js')
+    && /\bmatchMedia\b/.test(fs.readFileSync(path.join(appDir, f), 'utf8')));
+  assert.deepEqual(askers, ['viewport.js'], 'only viewport.js asks matchMedia');
+});
+
 test('every icon-only control in the shell has an accessible name', () => {
   const { window } = new JSDOM(HTML);
   const doc = window.document;
