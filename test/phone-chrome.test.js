@@ -1,7 +1,9 @@
 // Narrow + phone (plan §2 P2 "Responsive"; design "Layout Engine" narrow/phone +
 // "Graph Prototype" phone), driven as real DOM events against the REAL front-end
 // module graph in jsdom. One boot per FILE, as a PHONE (a stubbed matchMedia
-// answers the phone query), flipped back to a desktop at the end.
+// EVALUATES whatever query viewport.js asks against a stubbed viewport — width,
+// height, pointer — so the phone RULE is under test, not a hard-coded string),
+// flipped back to a desktop at the end.
 //
 // Pinned here:
 //   * The fork gutter is COMPUTED from the drawn parents (log-lanes.js), not
@@ -16,6 +18,9 @@
 //     ACTIVE / ⑃ / ⚑ / time / trigger, ⋯ N folded ghost rows, filters that hide,
 //     a graph switcher, and an action bar (Set active, ⚑ with a name field,
 //     Glance) over the same routes the desktop canvas uses.
+//   * The phone is chosen by SHAPE (maintainer ruling a11): narrow AND portrait,
+//     whatever the pointer — a narrow-tall mouse window is a phone, a landscape
+//     phone and a terminal-beside-browser window are not.
 //   * Leaving the phone posture gives the canvas and editing back, in place.
 const test = require('node:test');
 const { before, after } = test;
@@ -52,22 +57,51 @@ const MOUNTS = [
     + '<script>root.getElementById("plain").addEventListener("click", () => { window.__plain = (window.__plain || 0) + 1; });</script>', params: { title: 'Next run', type: 'form' }, pane_state: { colSpan: 4 } },
   { id: 'tucked', html: '<p>hidden</p>', params: { title: 'Tucked' }, pane_state: { minimized: true } },
 ];
-const PHONE_QUERY = '(max-width: 759px) and (pointer: coarse)';
+// Viewports, as the browser reports them (CSS px, the page's own box).
+const VP = {
+  phone: { w: 390, h: 664, pointer: 'coarse' },           // an upright phone, less its browser bars
+  landscapePhone: { w: 740, h: 340, pointer: 'coarse' },  // the same phone on its side
+  mouseTall: { w: 560, h: 900, pointer: 'fine' },         // a desktop window dragged narrow and tall
+  besideTerminal: { w: 700, h: 860, pointer: 'fine' },    // the canonical terminal-beside-browser half
+  touchLaptop: { w: 700, h: 860, pointer: 'coarse' },     // the same, on a touchscreen laptop
+  desktop: { w: 1280, h: 800, pointer: 'fine' },
+};
+// A small media-query evaluator: `and`-joined features only, and it THROWS on a
+// feature it does not know, so a changed rule shows up here instead of silently
+// never matching.
+function mediaMatches(q, vp) {
+  return q.split(/\s+and\s+/).every((part) => {
+    const m = /^\(\s*([a-z-]+)\s*:\s*([^)]+?)\s*\)$/.exec(part.trim());
+    if (!m) throw new Error(`unparsed media query part: ${part}`);
+    const [, feat, val] = m;
+    const ratio = () => { const [a, b] = val.split('/').map(Number); return a / (b || 1); };
+    switch (feat) {
+      case 'max-width': return vp.w <= parseFloat(val);
+      case 'min-width': return vp.w >= parseFloat(val);
+      case 'max-aspect-ratio': return vp.w / vp.h <= ratio();
+      case 'min-aspect-ratio': return vp.w / vp.h >= ratio();
+      case 'orientation': return (vp.h >= vp.w ? 'portrait' : 'landscape') === val;
+      case 'pointer': return vp.pointer === val;
+      default: throw new Error(`unknown media feature: ${feat}`);
+    }
+  });
+}
 
 const calls = [];
 let W = null, WS = null, sent = [], restore = () => {};
-let phone = true;
+let viewport = VP.phone;
 let PARKED = null;   // GET /api/queue/pending's answer
 const mqListeners = [];
-const setPhone = (v) => { phone = v; for (const fn of mqListeners) fn(); };
+const setViewport = (vp) => { viewport = vp; for (const fn of mqListeners) fn(); };
+const isPhoneNow = () => W.document.documentElement.classList.contains('phone');
 
 before(async () => {
   const html = fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8').replace(/<script[^>]*><\/script>/g, '');
   const dom = new JSDOM(html, { url: 'http://localhost:5173/', pretendToBeVisual: true });
   const { window } = dom;
   window.matchMedia = (q) => ({
-    media: q, get matches() { return q === PHONE_QUERY ? phone : false; },
-    addEventListener: (t, fn) => { if (q === PHONE_QUERY) mqListeners.push(fn); }, removeEventListener() {},
+    media: q, get matches() { return mediaMatches(q, viewport); },
+    addEventListener: (t, fn) => { mqListeners.push(fn); }, removeEventListener() {},
   });
   const wsInstances = [];
   window.WebSocket = class {
@@ -399,10 +433,31 @@ test('the graph switcher shows another graph', async () => {
   assert.equal($('gv-log-sel').textContent, 'n2.1', "it lands on that graph's newest turn");
 });
 
+/* ---------------- which viewport is a phone ---------------- */
+
+test('the phone is chosen by shape — narrow and portrait — not by the pointer', async () => {
+  const cases = [
+    ['phone', true, 'an upright phone'],
+    ['mouseTall', true, 'a narrow, tall desktop window (accepted: "if it sucks, we\'ll revert")'],
+    ['landscapePhone', false, 'a phone on its side stays the canvas + editing'],
+    ['besideTerminal', false, 'the terminal-beside-browser half stays the editable desktop'],
+    ['touchLaptop', false, 'a finger on a laptop-shaped window is not a phone'],
+    ['desktop', false, 'a wide desktop'],
+  ];
+  for (const [name, want, why] of cases) {
+    setViewport(VP[name]);
+    await tick();
+    assert.equal(isPhoneNow(), want, `${name}: ${why}`);
+  }
+  setViewport(VP.phone);
+  await tick(20);
+  assert.ok(isPhoneNow(), 'and back to the phone');
+});
+
 /* ---------------- leaving the phone posture ---------------- */
 
 test('leaving the phone gives the canvas and editing back, in place', async () => {
-  setPhone(false);
+  setViewport(VP.desktop);
   await tick(20);
   assert.equal(W.document.documentElement.classList.contains('phone'), false);
   assert.equal($('overlay').classList.contains('log-mode'), false, 'the open graph is a canvas again');
