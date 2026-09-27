@@ -51,6 +51,41 @@ update` refuses outright on a checkout: a checkout is updated with `git pull`,
 and rewriting `~/.web-chat/versions/` would change nothing you actually run.
 Re-run `install.sh` to put the release links back.
 
+### Testing an unreleased build
+
+To run a build as the **managed** install — exactly what users get from a
+release, not the checkout — build a dev-versioned tarball and install it from the
+file:
+
+```sh
+node scripts/build-release.js --dev      # dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz + SHA256SUMS
+claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz
+claude-web-chat install                  # in each other web-chat project
+```
+
+Then `/exit` and reopen Claude Code (the MCP server loads its code at session
+start) and reload any open surface tab.
+
+`--dev` stamps `<next minor>-dev.<yyyymmddhhmm UTC>.<short sha>` into the
+artefact's own `package.json` only — the repo's is untouched — so a dev build can
+never land in a real release's directory under `~/.web-chat/versions/`, sorts
+above the release it was built after (the update banner does not offer that
+release back to it) and below the one it is heading for (which *is* offered when
+it ships). A dev build is reproducible only within the minute it was stamped; a
+normal build stays byte-reproducible.
+
+`update --from` runs a GitHub update's steps from the file: it verifies the
+tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is
+refused; no `SHA256SUMS` at all is refused unless you pass `--yes`), unpacks it
+with the same engine into `~/.web-chat/versions/<version>/`, swaps `current`,
+relinks the bins, syncs managed files and restarts the daemon and any tunnel
+portal. It never contacts GitHub, refuses on a checkout like `update` does, and
+will not overwrite a version already on disk without `--force`. `claude-web-chat
+version` then says `dev build (installed from a local file)` with the tarball's
+sha256, and `update --list` marks dev builds. Roll back with `claude-web-chat
+update --to <old version>` — pruning always keeps the newest real release on
+disk, however many dev builds you install on top of it.
+
 ### Loading the MCP tools when dogfooding this repo
 
 The committed `.mcp.json` is the plugin stub — it points at

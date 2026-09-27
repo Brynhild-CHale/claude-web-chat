@@ -99,6 +99,8 @@ The surface also checks for new **GitHub releases** (once a day, cached in `~/.w
 
 Developing from a checkout? `git pull` (plus `npm install` if dependencies changed) is the whole package update.
 
+`claude-web-chat update --from <tarball>` installs a build that is already on disk instead of asking GitHub — verified against the `SHA256SUMS` beside it, and otherwise the same install. It exists for testing an unreleased build; see [Testing an unreleased build](extending.md#testing-an-unreleased-build).
+
 ## Turning it off
 
 `claude-web-chat off` disables web-chat for the current project; `on` re-enables it. Add `--global` to toggle every project on the machine at once, or `--session=<id>` for a single Claude Code session. If any applicable scope says off, web-chat is off — hooks go quiet and Claude falls back to plain chat, telling you why.
