@@ -1,7 +1,19 @@
 #!/usr/bin/env node
 // Build the release artifact: a SELF-CONTAINED tarball plus its SHA256SUMS.
 //
-//   node scripts/build-release.js [--out dist]
+//   node scripts/build-release.js [--out dist] [--dev]
+//
+// `--dev` builds an UNRELEASED build for dogfooding (`claude-web-chat update
+// --from dist/<tarball>`): the artefact's own package.json — and so its tarball
+// name, its prefix directory and everything `claude-web-chat version` reads —
+// carries `<next minor>-dev.<yyyymmddhhmm UTC>.<short sha>`, e.g.
+// `0.8.0-dev.202609271415.5e9dc5d`. The repo's package.json is never touched.
+// The next MINOR, not the current number, so a dev build sorts above the release
+// it was built after and below the release it is heading for (see
+// compareVersions), and can never land in a real release's directory under
+// ~/.web-chat/versions/. A dev build is reproducible only within the minute it
+// was stamped — the stamp is the one input that is not the tree. The normal
+// build is untouched and stays byte-reproducible.
 //
 // Why self-contained: this package has four runtime dependencies
 // (@modelcontextprotocol/sdk, express, node-html-parser, ws). A source-only
@@ -90,7 +102,7 @@ function makeTar(entries) {
       parts.push(header({ name: e.name.replace(/\/?$/, '/'), mode: 0o755, size: 0, type: '5' }));
       continue;
     }
-    const data = fs.readFileSync(e.source);
+    const data = e.data || fs.readFileSync(e.source);
     parts.push(header({ name: e.name, mode: e.mode, size: data.length, type: '0' }), data, pad(data.length));
   }
   parts.push(Buffer.alloc(BLOCK * 2, 0)); // end-of-archive
@@ -136,7 +148,9 @@ function productionPackageDirs(root) {
     .map((p) => path.resolve(p));
 }
 
-function collectEntries(root, prefix) {
+// `version` (optional) overrides the version the artefact's package.json
+// carries — the --dev stamp. The file is rewritten in memory only.
+function collectEntries(root, prefix, { version = null } = {}) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const entries = [];
   const add = (abs, isDir) => {
@@ -153,6 +167,9 @@ function collectEntries(root, prefix) {
 
   // 1. package.json always (the runtime reads its own version out of it).
   add(path.join(root, 'package.json'), false);
+  if (version) {
+    entries[entries.length - 1].data = Buffer.from(`${JSON.stringify({ ...pkg, version }, null, 2)}\n`);
+  }
 
   // 2. The `files` allowlist — the same set an `npm pack` would ship.
   for (const item of pkg.files || []) {
@@ -191,15 +208,37 @@ function collectEntries(root, prefix) {
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
+// ─────────────────────────────────────────────────────────── the dev stamp ──
+
+// The short sha of the tree being built, or `nogit` outside a checkout.
+function shortSha(root) {
+  const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  const sha = r.status === 0 ? String(r.stdout).trim() : '';
+  return /^[0-9a-f]+$/.test(sha) ? sha : 'nogit';
+}
+
+// `<major>.<minor+1>.0-dev.<yyyymmddhhmm>.<sha>` from the repo's version. Pure.
+function devVersion(base, { now = new Date(), sha = 'nogit' } = {}) {
+  const m = String(base).replace(/^v/, '').match(/^(\d+)\.(\d+)/);
+  if (!m) throw new Error(`cannot derive a dev version from ${base}`);
+  const d = new Date(now);
+  const two = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}`
+    + `${two(d.getUTCHours())}${two(d.getUTCMinutes())}`;
+  return `${m[1]}.${Number(m[2]) + 1}.0-dev.${stamp}.${sha}`;
+}
+
 // ───────────────────────────────────────────────────────────────── the build ──
 
-function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'), log = console.log } = {}) {
+function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'), log = console.log, dev = false, now, sha } = {}) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  const version = pkg.version;
+  const version = dev
+    ? devVersion(pkg.version, { now: now || new Date(), sha: sha || shortSha(root) })
+    : pkg.version;
   const prefix = `claude-web-chat-${version}`;
   const tarName = `${prefix}.tar.gz`;
 
-  const entries = collectEntries(root, prefix);
+  const entries = collectEntries(root, prefix, { version: dev ? version : null });
   const tar = makeTar(entries);
   // level 9 + no mtime in the gzip header (node writes 0) keeps the bytes stable.
   const gz = zlib.gzipSync(tar, { level: 9 });
@@ -221,7 +260,7 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
 
   const files = entries.filter((e) => e.type === 'file').length;
   log(`built ${tarPath}`);
-  log(`  version   ${version}`);
+  log(`  version   ${version}${dev ? '  (DEV build — install with: claude-web-chat update --from ' + tarPath + ')' : ''}`);
   log(`  entries   ${files} files, ${entries.length - files} dirs`);
   log(`  size      ${(gz.length / 1024 / 1024).toFixed(2)} MB compressed`);
   log(`  sha256    ${digest}`);
@@ -234,11 +273,11 @@ if (require.main === module) {
   const i = args.indexOf('--out');
   const outDir = i >= 0 && args[i + 1] ? path.resolve(args[i + 1]) : path.join(REPO_ROOT, 'dist');
   try {
-    buildRelease({ outDir });
+    buildRelease({ outDir, dev: args.includes('--dev') });
   } catch (e) {
     console.error(`build-release: ${e.message}`);
     process.exit(1);
   }
 }
 
-module.exports = { buildRelease, collectEntries, makeTar, splitName, REPO_ROOT };
+module.exports = { buildRelease, collectEntries, makeTar, splitName, devVersion, REPO_ROOT };

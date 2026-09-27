@@ -40,6 +40,23 @@ test('resolveLatest: the same version reports no update', async (t) => {
   assert.equal(info.latest, '0.4.0');
 });
 
+// A dev build (`build-release.js --dev`) is ahead of the release it followed and
+// behind the one it is heading for: the banner must stay quiet about the first
+// and offer the second.
+test('resolveLatest: a dev build is not nagged about the release it followed', async (t) => {
+  withTempHome(t);
+  seedCache('0.7.6');
+  const info = await resolveLatest({ currentVersion: '0.8.0-dev.202609271415.abc1234' });
+  assert.equal(info.updateAvailable, false);
+});
+
+test('resolveLatest: a dev build IS offered the real release of its number', async (t) => {
+  withTempHome(t);
+  seedCache('0.8.0');
+  const info = await resolveLatest({ currentVersion: '0.8.0-dev.202609271415.abc1234' });
+  assert.equal(info.updateAvailable, true);
+});
+
 // ── GET /api/version ─────────────────────────────────────────────────────────
 
 test('GET /api/version reports current vs latest from the seeded cache', async (t) => {

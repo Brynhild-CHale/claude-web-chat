@@ -51,6 +51,69 @@ update` refuses outright on a checkout: a checkout is updated with `git pull`,
 and rewriting `~/.web-chat/versions/` would change nothing you actually run.
 Re-run `install.sh` to put the release links back.
 
+### Testing an unreleased build
+
+To run a build as the **managed** install — exactly what users get from a
+release, not the checkout — build a dev-versioned tarball and install it from the
+file:
+
+```sh
+node scripts/build-release.js --dev      # dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz + SHA256SUMS
+claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz
+claude-web-chat install                  # in each other web-chat project
+```
+
+Then `/exit` and reopen Claude Code (the MCP server loads its code at session
+start) and reload any open surface tab.
+
+**First time on an install that predates `--from` (0.7.5, 0.7.6): bootstrap by
+hand.** The `update` in those releases does not know `--from` — its argument
+parser silently drops a flag it does not recognise, so `update --from <tarball>`
+falls through to the ordinary GitHub path and installs the latest *release*, not
+your dev build. Nor can the checkout's CLI stand in: `update` refuses to run from
+a checkout (kind `dev`), and a copy unpacked anywhere outside `~/.web-chat` is
+refused as `unmanaged`. What those releases *do* have is `update --to <version>`,
+which activates any version directory already on disk (a dev stamp is a valid
+version name to them) and then syncs managed files and restarts the daemon like
+any update. So put the directory there yourself, once:
+
+```sh
+v=0.8.0-dev.<stamp>.<sha>                # the version in the tarball's name
+(cd dist && shasum -a 256 -c SHA256SUMS) # verify the tarball first
+mkdir -p ~/.web-chat/versions/$v
+tar -xzf dist/claude-web-chat-$v.tar.gz --strip-components=1 -C ~/.web-chat/versions/$v
+claude-web-chat update --to $v           # current swaps, bins relink, sync + restart
+```
+
+(`--strip-components=1` drops the tarball's one `claude-web-chat-<version>/`
+prefix directory, so `package.json` and `bin/` land directly in the version
+directory.) From then on you are running a build that has `--from`, and every
+later dev build installs with `update --from` as above. A hand-unpacked version
+has no provenance record, so `claude-web-chat version` shows a plain `managed
+install` for it rather than `dev build (installed from a local file)`; to write
+the record, optionally re-install the same file over itself with
+`claude-web-chat update --from dist/claude-web-chat-$v.tar.gz --force`.
+
+`--dev` stamps `<next minor>-dev.<yyyymmddhhmm UTC>.<short sha>` into the
+artefact's own `package.json` only — the repo's is untouched — so a dev build can
+never land in a real release's directory under `~/.web-chat/versions/`, sorts
+above the release it was built after (the update banner does not offer that
+release back to it) and below the one it is heading for (which *is* offered when
+it ships). A dev build is reproducible only within the minute it was stamped; a
+normal build stays byte-reproducible.
+
+`update --from` runs a GitHub update's steps from the file: it verifies the
+tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is
+refused; no `SHA256SUMS` at all is refused unless you pass `--yes`), unpacks it
+with the same engine into `~/.web-chat/versions/<version>/`, swaps `current`,
+relinks the bins, syncs managed files and restarts the daemon and any tunnel
+portal. It never contacts GitHub, refuses on a checkout like `update` does, and
+will not overwrite a version already on disk without `--force`. `claude-web-chat
+version` then says `dev build (installed from a local file)` with the tarball's
+sha256, and `update --list` marks dev builds. Roll back with `claude-web-chat
+update --to <old version>` — pruning always keeps the newest real release on
+disk, however many dev builds you install on top of it.
+
 ### Loading the MCP tools when dogfooding this repo
 
 The committed `.mcp.json` is the plugin stub — it points at
