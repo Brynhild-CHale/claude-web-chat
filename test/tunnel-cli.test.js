@@ -696,3 +696,186 @@ test('restartPortal: nothing running is a no-op; a refused preflight leaves the 
   assert.deepEqual(killed, [], 'the running portal is never stopped for a restart that cannot start its successor');
   assert.equal(fake.calls().length, 0);
 });
+
+// ── the stopped portal's own connector (down → settleStopped) ───────────────
+//
+// A portal closes its listener at once on SIGTERM but gives cloudflared up to
+// its stop grace to exit. A restart that moved on the moment /api/health went
+// quiet met the old connector still on the metrics port, its portal still
+// alive — indistinguishable to `up` from a connector someone else left there —
+// and refused ("something already answers on cloudflared's metrics port…").
+// Every restart is a `down`, so `down` waits for both to be gone, and stops a
+// connector of its own portal's that will not go.
+
+// A pid that WAS a process and is not one now.
+async function deadPid() {
+  const { spawn } = require('child_process');
+  const c = spawn(process.execPath, ['-e', '']);
+  await new Promise((r) => c.once('exit', r));
+  return c.pid;
+}
+
+// The fake connector, started the way the supervisor starts one.
+function connector(t, fake, metricsPort) {
+  const { spawn } = require('child_process');
+  const c = spawn(path.join(fake.dir, 'cloudflared'), ['tunnel', '--no-autoupdate', '--metrics', `127.0.0.1:${metricsPort}`, 'run'], { stdio: 'ignore' });
+  t.after(() => { try { c.kill('SIGKILL'); } catch {} });
+  return c;
+}
+
+// A real portal's end state, whatever the test did: nothing detached survives.
+function reapPortal(t, env, get) {
+  t.after(async () => {
+    try { await tunnel(['down'], { log: () => {}, env, settleMs: 2000 }); } catch {}
+    const h = get();
+    for (const pid of [h && h.pid, h && h.cloudflared && h.cloudflared.pid]) {
+      if (pid && isPidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    deregisterRole('portal', {});
+  });
+}
+
+test('restartPortal waits for the old portal\'s slow-to-exit cloudflared instead of refusing it as a stray', async (t) => {
+  withTempHome(t);
+  const access = createFakeAccess();
+  const fake = fakeCloudflared(t, { lingerMs: 1500 });
+  const metricsPort = await freePort();
+  writeConfig(goodRaw(access, { metricsPort }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port), NODE_OPTIONS: `--require ${JSON.stringify(NO_OUTBOUND)}` };
+  delete env.WEB_CHAT_HOST;
+  let latest = null;
+  reapPortal(t, env, () => latest);
+
+  const first = await tunnel(['up'], { log: () => {}, env, waitMs: 15000 });
+  latest = first.health;
+  await waitUntil(async () => (await tunnel(['status'], { log: () => {}, env })).cloudflared.ready, { timeout: 10000, what: 'the first connector is ready' });
+  const [old] = fake.calls();
+
+  const c = capture();
+  const r = await tunnel.restartPortal({ log: c.log, env, waitMs: 15000 });
+  latest = r.health;
+  assert.equal(r.restarted, true, c.text());
+  assert.notEqual(r.health.pid, first.health.pid);
+  assert.equal(isPidAlive(first.health.pid), false, 'the old portal had exited before the new one started');
+  assert.equal(isPidAlive(old.pid), false, 'and so had its connector');
+  assert.doesNotMatch(c.text(), /stopping it/, 'the portal\'s own stop was enough — nothing was reaped');
+  await waitUntil(() => fake.calls().length === 2, { timeout: 10000, what: 'the new portal launched its connector' });
+});
+
+test('down stops the stopped portal\'s own connector when it will not exit, and says so', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  const fake = fakeCloudflared(t, { ignoreTerm: true });
+  const metricsPort = await freePort();
+  writeConfig(goodRaw(access, { metricsPort }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port), NODE_OPTIONS: `--require ${JSON.stringify(NO_OUTBOUND)}` };
+  delete env.WEB_CHAT_HOST;
+
+  const cf = connector(t, fake, metricsPort);
+  await waitUntil(async () => (await require('../lib/tunnel/cloudflared').probeReady(metricsPort)).ready, { timeout: 5000, what: 'the old connector serves its metrics port' });
+  const portalPid = await deadPid();
+  const portal = await fakePortal(t, port, {
+    pid: portalPid, portal_protocol: PORTAL_PROTOCOL_VERSION,
+    cloudflared: { state: 'running', pid: cf.pid, metrics: `127.0.0.1:${metricsPort}` },
+  });
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); if (pid === portalPid) portal.kill(); else process.kill(pid, sig); };
+  let latest = null;
+  reapPortal(t, env, () => latest);
+
+  const c = capture();
+  const r = await tunnel.restartPortal({ log: c.log, env, kill, settleMs: 800, waitMs: 15000 });
+  latest = r.health;
+  assert.equal(r.restarted, true);
+  assert.deepEqual(killed, [[portalPid, 'SIGTERM'], [cf.pid, 'SIGTERM'], [cf.pid, 'SIGKILL']],
+    'the portal it stopped, then — once the wait ran out — that portal\'s connector, SIGTERM before SIGKILL');
+  assert.equal(isPidAlive(cf.pid), false);
+  assert.match(c.text(), new RegExp(`cloudflared \\(pid ${cf.pid}\\) was still running 1s after its portal \\(pid ${portalPid}\\) was stopped; stopping it`));
+  assert.notEqual(r.health.pid, portalPid, 'and a new portal runs');
+});
+
+test('down: a connector that survives even SIGKILL is a clear refusal, and no new portal starts beside it', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  const fake = fakeCloudflared(t, { ignoreTerm: true });
+  const metricsPort = await freePort();
+  writeConfig(goodRaw(access, { metricsPort }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port) };
+  delete env.WEB_CHAT_HOST;
+
+  const cf = connector(t, fake, metricsPort);
+  await waitUntil(async () => (await require('../lib/tunnel/cloudflared').probeReady(metricsPort)).ready, { timeout: 5000, what: 'the old connector serves its metrics port' });
+  const portalPid = await deadPid();
+  const portal = await fakePortal(t, port, {
+    pid: portalPid, portal_protocol: PORTAL_PROTOCOL_VERSION,
+    cloudflared: { state: 'running', pid: cf.pid, metrics: `127.0.0.1:${metricsPort}` },
+  });
+  // Signals that land nowhere: a connector nothing can stop.
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); if (pid === portalPid) portal.kill(); };
+
+  await assert.rejects(tunnel.restartPortal({ env, kill, settleMs: 500, waitMs: 5000 }),
+    (e) => e.userFacing
+      && new RegExp(`cloudflared \\(pid ${cf.pid}\\), the connector of the portal just stopped \\(pid ${portalPid}\\), is still running after SIGTERM and SIGKILL`).test(e.message)
+      && e.message.includes(`kill -9 ${cf.pid}`));
+  assert.deepEqual(killed, [[portalPid, 'SIGTERM'], [cf.pid, 'SIGTERM'], [cf.pid, 'SIGKILL']]);
+  assert.equal(fs.existsSync(userPaths().portalLog), false, 'no portal was spawned');
+  assert.equal(fake.calls().length, 1, 'no second connector');
+});
+
+test('restart: a connector the stopped portal did not report is not waited on or signalled — up refuses it as before', async (t) => {
+  withTempHome(t);
+  const http = require('http');
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  const fake = fakeCloudflared(t);
+  const metricsPort = await freePort();
+  writeConfig(goodRaw(access, { metricsPort }));
+  writeToken();
+  const squatter = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"readyConnections":1}'); });
+  await new Promise((r) => squatter.listen(metricsPort, '127.0.0.1', r));
+  t.after(() => { squatter.close(); squatter.closeAllConnections(); });
+  // A long-dead portal's record of some other connector: not this portal's.
+  fs.writeFileSync(userPaths().cloudflaredPid, JSON.stringify({ pid: await deadPid(), portal_pid: await deadPid(), metrics: `127.0.0.1:${metricsPort}` }));
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port) };
+  delete env.WEB_CHAT_HOST;
+  const portalPid = await deadPid();
+  const portal = await fakePortal(t, port, { pid: portalPid, portal_protocol: PORTAL_PROTOCOL_VERSION, cloudflared: null });
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); if (pid === portalPid) portal.kill(); };
+
+  const t0 = Date.now();
+  await assert.rejects(tunnel.restartPortal({ env, kill, waitMs: 5000 }),
+    (e) => e.userFacing && new RegExp(`metrics port 127\\.0\\.0\\.1:${metricsPort}.*left behind by a portal that was killed`).test(e.message));
+  assert.ok(Date.now() - t0 < 5000, 'no settle wait for a connector that was never the stopped portal\'s');
+  assert.deepEqual(killed, [[portalPid, 'SIGTERM']], 'only the portal was signalled');
+  assert.equal(squatter.listening, true);
+  assert.equal(fake.calls().length, 0);
+});
+
+test('down never signals a reported connector pid that `ps` no longer shows as that connector', async (t) => {
+  withTempHome(t);
+  const { spawn } = require('child_process');
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port) };
+  // The pid the portal reported, since reused by something else entirely.
+  const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
+  t.after(() => { try { other.kill('SIGKILL'); } catch {} });
+  const portalPid = await deadPid();
+  const portal = await fakePortal(t, port, { pid: portalPid, cloudflared: { state: 'running', pid: other.pid, metrics: '127.0.0.1:5172' } });
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); if (pid === portalPid) portal.kill(); };
+  const r = await tunnel(['down'], { log: () => {}, env, kill, settleMs: 300 });
+  assert.equal(r.stopped, true);
+  assert.deepEqual(killed, [[portalPid, 'SIGTERM']]);
+  assert.equal(isPidAlive(other.pid), true);
+});
