@@ -782,6 +782,15 @@ const BM_ROOM = 16;                     // extra headroom above a node that carr
 const GHOST_DOTS = 3, GHOST_DOT_ROOM = 12;
 const LABEL_CLEAR = 22;                 // a glyph's label runs to ~17px below it; a dot's radius is 4
 const CAPTION_CLEAR = 24, EDGE_CLEAR = 8;
+// An edge is DRAWN between the text around its ends, not glyph to glyph: it
+// starts under the label beneath the glyph above (11px mono, baseline 14px below
+// the glyph, descenders to ~17) and stops over the bookmark caption above the node
+// below (baseline 7px above it, cap height ~10). Drawn glyph to glyph, the trunk
+// struck the labels through (s2 visual QA). A gap, not a halo in --wc-bg: the
+// stage paints a radial ground under the canvas, so no flat colour matches it.
+const LABEL_GAP = 20, CAPTION_GAP = 19;
+const hasLabel = (g) => g.kind === 'node' || g.kind === 'stack';
+const hasCaption = (g) => g.kind === 'node' && g.bookmarked;   // an edge never ends on a root
 const foldRoom = (n) => Math.min(GHOST_DOTS, foldedCount(n)) * GHOST_DOT_ROOM;
 
 // Ghost rows for one node: the turns that folded onto it, oldest first, capped
@@ -886,8 +895,18 @@ function computeGraphLayout() {
     for (const r of rows) if (r.kind === 'node') pos.set(r.id, { x, y: sTop + SLEEVE_HDR + r.top + ROW_H / 2, sleeve: s, row: r });
     return s;
   };
-  const straight = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, from: a, to: b });
-  const elbow = (a, b) => edges.push({ ax: a.x, ay: a.bottom, bx: b.x, by: b.top, elbow: true, to: b });
+  // A fork's elbow leaves its node from the lower right, heading sideways, and
+  // turns down into the branch head: dropping out under the label first, its
+  // sideways run fell across the top of the glyph below instead.
+  const edge = (a, b, elbow) => {
+    const ax = elbow ? a.x + a.r * 0.7 : a.x;
+    const ay = elbow ? a.y + a.r * 0.7 : a.bottom + (hasLabel(a) ? LABEL_GAP : 0);
+    const by = Math.max(ay, b.top - (hasCaption(b) ? CAPTION_GAP : 0));
+    // y0/y1: the glyph ends, which the ghost-dot band is measured from
+    edges.push({ ax, ay, bx: b.x, by, y0: a.bottom, y1: b.top, elbow, from: a, to: b });
+  };
+  const straight = (a, b) => edge(a, b, false);
+  const elbow = (a, b) => edge(a, b, true);
 
   // Does the trunk that starts here contain an expanded run? Then the column is
   // a sleeve wide, and a branch taken ABOVE the sleeve must already clear it.
@@ -967,7 +986,7 @@ function computeGraphLayout() {
     if (dx || dy) {
       for (let i = g0; i < glyphs.length; i++) { const g = glyphs[i]; g.x += dx; g.y += dy; g.top += dy; g.bottom += dy; }
       for (let i = s0; i < sleeves.length; i++) { const s = sleeves[i]; s.x += dx; s.y += dy; s.trunkX += dx; s.top += dy; s.bottom += dy; }
-      for (let i = e0; i < edges.length; i++) { const e = edges[i]; e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy; }
+      for (let i = e0; i < edges.length; i++) { const e = edges[i]; e.ax += dx; e.ay += dy; e.bx += dx; e.by += dy; e.y0 += dy; e.y1 += dy; }
       for (const [id, p] of pos) if (treeOf.get(id) === r) pos.set(id, { ...p, x: p.x + dx, y: p.y + dy });
       if (tt) { tt.x += dx; tt.y += dy; }
     }
@@ -1027,15 +1046,16 @@ export function layoutAndRender() {
   rootG.appendChild(edgesG);
   for (const e of edges) {
     const d = e.elbow
-      ? `M ${e.ax} ${e.ay} C ${e.ax} ${e.ay + DY * 0.55}, ${e.bx} ${e.by - DY * 0.55}, ${e.bx} ${e.by}`
+      ? `M ${e.ax} ${e.ay} C ${e.bx} ${e.ay}, ${e.bx} ${e.ay}, ${e.bx} ${e.by}`
       : `M ${e.ax} ${e.ay} L ${e.bx} ${e.by}`;
     edgesG.appendChild(svgEl_('path', { d, class: 'gv-edge' }));
     const to = e.to;
     if (!e.elbow && to && to.kind === 'node' && to.folded) {
       const k = Math.min(GHOST_DOTS, to.folded);
-      // A node or stack above carries a label under it; a sleeve does not.
-      const top = e.ay + (e.from && e.from.kind ? LABEL_CLEAR : EDGE_CLEAR);
-      const bottom = e.by - (to.bookmarked ? CAPTION_CLEAR : EDGE_CLEAR);
+      // A node or stack above carries a label under it; a sleeve does not. (The
+      // band is measured from the glyphs, not from the drawn line's trimmed ends.)
+      const top = e.y0 + (e.from.kind ? LABEL_CLEAR : EDGE_CLEAR);
+      const bottom = e.y1 - (to.bookmarked ? CAPTION_CLEAR : EDGE_CLEAR);
       const band = Math.max(0, bottom - top);
       for (let i = 1; i <= k; i++) {
         edgesG.appendChild(svgEl_('circle', {

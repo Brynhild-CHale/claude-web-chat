@@ -326,6 +326,37 @@ test('ghost dots on the edge into a bookmarked node stay clear of its caption an
   }
 });
 
+test('the trunk stops short of the text on it — no edge strikes a label, a caption or a stack range through', () => {
+  // s2 visual QA: the vertical trunk ran straight through "n1.0", "n1.3" and the
+  // bookmark captions. An edge is now drawn from under the label below the glyph
+  // above to over the caption above the glyph below.
+  const num = (el, a) => Number(el.getAttribute(a));
+  const edges = [...W.document.querySelectorAll('#graph-svg .gv-edge')].map((e) => {
+    const n = e.getAttribute('d').match(/-?\d+(?:\.\d+)?/g).map(Number);
+    return { ax: n[0], ay: n[1], bx: n[n.length - 2], by: n[n.length - 1] };
+  });
+  assert.ok(edges.length > 3, 'the fixture draws edges');
+  const onColumn = (t) => edges.some((e) => e.ax === num(t, 'x') || e.bx === num(t, 'x'));
+  const texts = [...W.document.querySelectorAll('#graph-svg :is(.gv-lbl, .gv-bm, .gv-card-range)')].filter(onColumn);
+  const kinds = new Set(texts.map((t) => t.getAttribute('class')));
+  for (const k of ['gv-lbl', 'gv-bm', 'gv-card-range']) assert.ok(kinds.has(k), `the fixture puts a ${k} on a trunk column (got ${[...kinds]})`);
+  for (const t of texts) {
+    // the text's box: cap height ~10px above the baseline, descenders ~4px below
+    const x = num(t, 'x'), top = num(t, 'y') - 10, bottom = num(t, 'y') + 4;
+    for (const e of edges) {
+      const hit = (e.ax === x || e.bx === x) && Math.min(e.ay, e.by) < bottom && Math.max(e.ay, e.by) > top;
+      assert.ok(!hit, `the edge ${e.ay}→${e.by} at x=${x} runs through "${t.textContent}" (${top}..${bottom})`);
+    }
+  }
+  // A fork's elbow (n1.11 → n1.11.0) leaves its node sideways, ABOVE the label
+  // under it — it neither drops through the label nor runs across the glyph below.
+  const body = glyph('n12').querySelector('.gv-body');
+  const lblTop = num(glyph('n12').querySelector('.gv-lbl'), 'y') - 10;
+  const fork = edges.find((e) => e.bx === num(glyph('n14').querySelector('.gv-body'), 'cx'));
+  assert.ok(fork, 'the fixture draws the fork\'s elbow');
+  assert.ok(fork.ax > num(body, 'cx') && fork.ay < lblTop, `the elbow starts beside n1.11 (${fork.ax},${fork.ay}), above its label (${lblTop})`);
+});
+
 test('⑃ Branch sets the node active through the one POST, and says the next commit forks', async () => {
   click(glyph('n12'));
   await tick();
