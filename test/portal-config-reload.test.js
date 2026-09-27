@@ -202,6 +202,59 @@ test('style and tunnel changes also need a restart; an Access AUD change applies
   assert.ok(await waitUntil(async () => (await r.req('/api/graph')).status === 503), 'the new team\'s keys are what is asked for');
 });
 
+// The connector token is cloudflared's, handed over at its launch, so a new
+// one is never applied — the portal notices it (the same watcher as
+// tunnel.json) and says "restart needed" on its health, which `tunnel
+// status|up` read (test/tunnel-cli.test.js).
+test('a changed connector token is reported as restart-needed, never applied; putting it back clears it', async (t) => {
+  const { tokenFingerprint } = require('../lib/tunnel/cloudflared');
+  const access = createFakeAccess();
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'tunnel.json');
+  const tokenFile = path.join(dir, 'token');
+  const raw = access.config({ tunnel: { kind: 'token' } });
+  writeJsonAtomic(file, raw);
+  fs.writeFileSync(tokenFile, 'first-token\n', { mode: 0o600 });
+  const lines = [];
+  const p = await withPortal(t, {
+    config: raw, fetchJwks: access.fetchJwks, configFile: file, tokenFile,
+    configPollMs: 50, configDebounceMs: 10, log: (l) => lines.push(l),
+  });
+  const health = async () => (await p.request('/api/health', { host: `127.0.0.1:${p.port}` })).json;
+
+  let h = await health();
+  assert.deepEqual({ state: h.token.state, fp: h.token.fp, live: h.token.live },
+    { state: 'ok', fp: tokenFingerprint('first-token'), live: true });
+  assert.ok(!JSON.stringify(h).includes('first-token'), 'the token itself is never on health');
+  const fpBefore = h.config_fp;
+
+  fs.writeFileSync(tokenFile, 'second-token\n');
+  assert.ok(await waitUntil(async () => (await health()).token.state === 'restart-needed'));
+  h = await health();
+  assert.equal(h.token.fp, tokenFingerprint('first-token'), 'still the token cloudflared started with');
+  assert.equal(h.config.state, 'ok', 'tunnel.json is untouched — only the token needs the restart');
+  assert.equal(h.config_fp, fpBefore);
+  assert.ok(lines.some((l) => /connector token changed — restart needed/.test(l) && /tunnel up/.test(l)), lines.join('\n'));
+
+  fs.writeFileSync(tokenFile, 'first-token\n');
+  assert.ok(await waitUntil(async () => (await health()).token.state === 'ok'), 'the same token back is no change');
+
+  fs.rmSync(tokenFile);
+  assert.ok(await waitUntil(async () => (await health()).token.state === 'restart-needed'), 'a removed token is a change too');
+});
+
+test('a local tunnel (or none) follows no connector token: health.token is null', async (t) => {
+  const access = createFakeAccess();
+  const dir = tmpDir(t);
+  const tokenFile = path.join(dir, 'token');
+  fs.writeFileSync(tokenFile, 'x\n');
+  for (const raw of [access.config({ tunnel: { kind: 'local', name: 'wc' } }), access.config()]) {
+    const p = await withPortal(t, { config: raw, fetchJwks: access.fetchJwks, tokenFile, configPollMs: 50, configDebounceMs: 10 });
+    const h = (await p.request('/api/health', { host: `127.0.0.1:${p.port}` })).json;
+    assert.equal(h.token, null);
+  }
+});
+
 test('watchConfigFile: one call per real change, atomic renames seen, a directory that appears later is polled', async (t) => {
   const dir = tmpDir(t);
   const file = path.join(dir, 'later', 'tunnel.json');

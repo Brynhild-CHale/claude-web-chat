@@ -303,8 +303,12 @@ health check with 503, closes every live socket (code 4503), and logs
 the portal resumes within seconds, on its own. (`tunnel setup` over an
 unreadable file still moves it aside and writes a fresh one.)
 
-The connector token (`~/.web-chat/tunnel/token`) is not watched: a new one is
-used the next time cloudflared starts — `tunnel down`, then `tunnel up`. (The
+The connector token (`~/.web-chat/tunnel/token`) is watched too, but never
+applied live: it is cloudflared's credential, handed over when the connector
+starts. When the file holds a different token (a re-run `tunnel setup`) or
+none, the portal logs `restart needed`, its health reports it, and `tunnel
+status` says **restart needed (connector token changed)**; `claude-web-chat
+tunnel up` restarts the portal and cloudflared on the token in the file. (The
 per-project `no-remote` marker is read live too, see below.)
 
 ## Keeping a project off the tunnel
