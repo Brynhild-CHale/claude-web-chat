@@ -572,6 +572,7 @@ export function initShell() {
   initReplay({
     openNode: (id) => { previewNode(id); if (isOverlayOpen()) closeOverlay(); },
     forwardEscapeFrom,
+    mode: effectiveMode,
   });
   initKeyboard();
   initDismissLayer();

@@ -28,6 +28,7 @@ import { $ } from './state.js';
 import { panes, readOnlyNow, spawnParentOf } from './mounts.js';
 import { nodeTime } from './labels.js';
 import { effectiveMode } from './theme.js';
+import { bus } from './bus.js';
 
 const PANEL = 'pane-history';
 
@@ -51,6 +52,13 @@ const enc = encodeURIComponent;
 // reads like the page beside it.
 export const previewUrl = (nodeId, mountId, mode = effectiveMode()) =>
   `/preview/pane/${enc(nodeId)}/${enc(mountId)}?mode=${enc(mode)}`;
+
+// A ◑ flip (or a pack change that moves the mode) redraws the version on show.
+bus.on('mode', () => {
+  const frame = $('ph-frame');
+  const v = versionById(shown);
+  if (isOpen() && frame && v && v.node_id !== 'live') frame.src = previewUrl(v.node_id, forId);
+});
 
 // Why Make current cannot apply to version `v` of the open block — the same
 // rules restoreMount applies, said before the click. '' when it can.

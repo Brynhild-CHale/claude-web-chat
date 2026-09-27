@@ -15,7 +15,7 @@ const { pathToFileURL } = require('url');
 
 const brand = require('../lib/server/brand');
 const { projectPaths, userPaths } = require('../lib/core/paths');
-const { withServer, withTempHome } = require('../test-support/helpers');
+const { withServer, withTempHome, existingProject } = require('../test-support/helpers');
 
 const REPO = path.resolve(__dirname, '..');
 const PACK = 'georgetown-blue';
@@ -177,7 +177,8 @@ test('fill: the files go through the upload validation; a bad one is ignored wit
 // --- routes and export ------------------------------------------------------------
 
 test('routes: /api/brand reports the fill beside empty slots; /brand/:slot serves it per mode', async (t) => {
-  const { baseUrl: b0, root, api } = await withServer(t);
+  // An existing project, so it starts on Earthy (a new one starts on the pack).
+  const { baseUrl: b0, root, api } = await withServer(t, { seed: existingProject });
   const baseUrl = b0.replace('localhost', '127.0.0.1');
   drop('logotype.svg', NAVY);
   drop('logotype-reversed.svg', WHITE);

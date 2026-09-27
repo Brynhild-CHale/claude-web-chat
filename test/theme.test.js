@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, withTempHome } = require('../test-support/helpers');
+const { withServer, withTempHome, existingProject } = require('../test-support/helpers');
 
 test('theme: pane resolution applies global ⊕ node ⊕ pane cascade', async (t) => {
   const { api } = await withServer(t);
@@ -33,9 +33,10 @@ test('theme: most-specific layer wins on token conflict', async (t) => {
 
 test('theme: default fallback chain project → system → builtin', async (t) => {
   withTempHome(t);
-  const { api } = await withServer(t);
+  const { api } = await withServer(t, { seed: existingProject });
 
-  // builtin: nothing set → empty tokens
+  // builtin: nothing set → empty tokens (an existing project; a new one's last
+  // step is its default pack — test/theme-default.test.js)
   let g = (await api.get('/api/theme?scope=global')).json;
   assert.deepEqual(g.tokens, {});
 
@@ -81,7 +82,7 @@ test('theme: a re-render with a theme APPLIES it; without one the pane keeps its
 });
 
 test('theme: a render-supplied pane theme goes through the SAME normalizer as set_theme', async (t) => {
-  const { api, wsHello } = await withServer(t);
+  const { api, wsHello } = await withServer(t, { seed: existingProject }); // empty global
   // A `theme` on POST /api/render used to be stored on the mount record
   // verbatim — it never met normalizeTheme/sanitizeTokens, which every theme
   // arriving at POST /api/theme does. So the two doors onto one pane's theme
@@ -177,7 +178,9 @@ test('theme: apply resolves a builtin name case-insensitively (Phase 5 regressio
 });
 
 test('theme: clear removes the theme at each scope', async (t) => {
-  const { root, api } = await withServer(t);
+  // An existing project: clearing falls back to empty tokens (a new project's
+  // clear falls back to its default pack — test/theme-default.test.js).
+  const { root, api } = await withServer(t, { seed: existingProject });
 
   // global
   await api.post('/api/theme', { scope: 'global', tokens: { '--wc-accent': '#111111' } });

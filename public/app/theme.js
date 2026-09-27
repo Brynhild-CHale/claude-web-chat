@@ -13,6 +13,7 @@
 import { $ } from './state.js';
 import { getLocal, setLocal } from './storage.js';
 import { panes } from './mounts.js';
+import { bus } from './bus.js';
 
 export const WC_TOKEN_RE = /^--wc-[\w-]+$/;
 let globalThemeObj = null;      // resolved web-chat-wide default ({tokens, css, modes?})
@@ -83,8 +84,14 @@ export function applyGlobalTheme(theme, animate) {
   syncModeToggle();
   // A new global pack can move the effective mode (dark pref → a single-mode
   // pack); the node and pane layers follow it, as on a ◑ flip.
-  if (mode !== prevMode) reapplyLayers();
+  if (mode !== prevMode) { reapplyLayers(); announceMode(); }
 }
+// Every server-rendered document the chrome frames — the graph inspector's
+// preview, the glance, pane history, the replay player — is drawn in the
+// viewer's mode (`?mode=`), so each redraws when it moves. They listen on the
+// chrome bus ('mode', {mode}) rather than being imported here: replay.js must
+// not reach mounts.js, which this module imports.
+function announceMode() { bus.emit('mode', { mode: effectiveMode() }); }
 export const getGlobalTheme = () => globalThemeObj;
 
 // Node's OWN tokens/css at #main (global lives on :root; the node layer overrides).
@@ -162,6 +169,7 @@ export function toggleMode() {
   beginThemeTransition();
   applyGlobalTheme(globalThemeObj, false);
   reapplyLayers();
+  announceMode();
   return next === 'light';
 }
 // The ◑ button reflects whether the current pack has a second mode.
