@@ -491,3 +491,47 @@ test('the player and the glance are drawn in the viewer\'s mode and redraw on �
     for (let i = 0; i < 4; i++) { key('Escape'); await tick(); }
   }
 });
+
+test('Claude\'s replay: a replay:open frame opens the player on that script, and ↧ GIF renders the same script', async () => {
+  const pinned = { from: 'n1', to: 'n1b', title: 'How it grew', steps: [{ node: 'n1', caption: 'start' }, { nodes: ['n1a', 'n1b'], hold_ms: 4000 }] };
+  WS.onmessage({ data: JSON.stringify({
+    type: 'replay:open', script_id: 'abc123', script: pinned, title: 'How it grew', steps: 2,
+    from: { id: 'n1', label: 'n1' }, to: { id: 'n1b', label: 'n1.2' },
+  }) });
+  await tick();
+  await tick();
+  assert.ok(replayOpen(), 'the frame opens the player — no click');
+  const q = frameQuery();
+  assert.equal(q.get('script'), 'abc123', 'the document plays the script the daemon holds');
+  assert.equal(q.get('from'), null, 'not a from/to range');
+  assert.equal(q.get('to'), null);
+  assert.equal(q.get('autoplay'), '1');
+  assert.equal(q.get('include_prompts'), '0', 'the viewer\'s prompt choice still rides along');
+  assert.match($('rpo-download').getAttribute('href'), /^\/api\/replay\/html\?script=abc123&/);
+  assert.equal($('rpo-note').textContent, "Claude's replay: How it grew — 2 steps");
+  assert.equal($('rpo-from').value, 'n1', 'the pickers show the script\'s ends');
+  assert.equal($('rpo-to').value, 'n1b');
+
+  calls.length = 0;
+  click($('rpo-gif'));
+  await tick();
+  await tick();
+  const r = calls.find((c) => c.url === '/api/replay/render');
+  assert.deepEqual(r.body, { format: 'gif', transition: 'cut', captions: 'on', include_prompts: false, script: pinned },
+    'the render is of the same script, not its from/to');
+
+  // A new range is a plain replay of it.
+  const from = $('rpo-from');
+  from.value = 'n1a';
+  from.dispatchEvent(new W.Event('change', { bubbles: true }));
+  await tick();
+  assert.equal(frameQuery().get('script'), null, 'picking a range leaves the script');
+  assert.equal(frameQuery().get('from'), 'n1a');
+  assert.equal($('rpo-note').textContent, '');
+});
+
+test('a replay:open frame without a script id opens nothing', async () => {
+  WS.onmessage({ data: JSON.stringify({ type: 'replay:open', from: { id: 'n1' }, to: { id: 'n1b' } }) });
+  await tick();
+  assert.equal(replayOpen(), false);
+});

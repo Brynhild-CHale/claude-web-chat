@@ -186,6 +186,71 @@ tick for its label), and speed (0.5–4×), transition, captions and **Include m
 prompts** are remembered per browser. **Open this node** previews the step on screen on the surface, and
 **↧ replay.html** downloads what you are watching.
 
+## Replay scripts — a replay Claude directs
+
+A plain replay plays every drawn node at one pace. A **replay script** picks
+the two moments to play between and, optionally, the beats in between, each
+with its own timing and caption — for a walkthrough, a demo or a README GIF.
+There is no authoring UI: Claude writes the script (the rules file's
+**Replays** section teaches it when and how), or you write one as a JSON file.
+
+```json
+{
+  "from": "n1.2", "to": "n1.9", "title": "How the dashboard grew",
+  "default_hold_ms": 2000,
+  "steps": [
+    { "node": "n1.2", "hold_ms": 4000, "caption": "The first sketch" },
+    { "nodes": ["n1.3", "n1.4", "n1.5"], "hold_ms": 1500, "caption": "Layout passes" },
+    { "node": "n1.9", "hold_ms": 6000, "transition": "fade", "caption": "Shipped" }
+  ]
+}
+```
+
+- `from` / `to` — the two moments (a label, a stored id or `active`; the same
+  defaults as a plain replay). `from` must be an ancestor of `to`.
+- `steps` — the beats, in path order. `node` shows one node; `nodes` is a
+  GROUP of consecutive nodes played as one beat: it shows the group's LAST
+  node and its caption lists every node in it (`n1.3 · n1.4 · n1.5`). A
+  no-change node the graph hides may sit inside a group unnamed. Nodes no step
+  names are not shown. Omit `steps` and the script is the plain replay: every
+  drawn node at `default_hold_ms`.
+- `hold_ms` (per step, else `default_hold_ms`, else the replay's `hold_ms`)
+  is clamped to 500–20000 ms; `transition` (`cut` | `fade`) is how that beat
+  comes in; `caption` (cut to 280 characters) takes the place of the
+  automatic reply line; `title` (cut to 120) heads the caption bar and names
+  the document; `include_prompts`, when the script says it, wins over the
+  request's.
+- A script is checked, not guessed at: a node off the `from` → `to` path
+  (`off-path`), steps out of path order or naming a node twice
+  (`out-of-order`), a group with a drawn node missing from its run
+  (`not-contiguous`), more than 200 steps (`too-many-steps`) or a malformed
+  script (`bad-script`) is refused with `{ error, code, step }` naming the
+  step. `normalizeReplayScript` (`lib/server/domain/replay-path.js`) is the
+  one home of that check, and its answer is what the replay document, the
+  player and the renderer all play — a plain replay is the no-steps case of
+  the same model, not a second path.
+
+Where a script goes:
+
+| Route | Who | What happens |
+| --- | --- | --- |
+| `export({ script, format? })` | Claude | the script written as `replay` (the default with a script), `gif`, `mp4` or `webm` |
+| `export({ script, open: true })` | Claude | the player opens in every browser watching the surface, on that script — nothing is written (`viewers: 0` says nobody saw it) |
+| `claude-web-chat export --script <file.json> [--gif \| --mp4 \| --webm \| --replay \| --open]` | you, from a terminal | the same, from a JSON file (`.html` by default) |
+| `POST /api/replay/render { script, … }` | anything local, JSON only | the render, as for from/to |
+| `POST /api/replay/open { script } \| { from, to }` | MCP / CLI only | a `replay:open` WS frame; refused (403 `local-only`) to a browser and through the tunnel |
+
+A browser loads a script by id — `GET /replay?script=<id>` and
+`GET /api/replay/html?script=<id>` — because the headless Chrome a render
+drives and the overlay both navigate to the document, and a captioned script
+can outgrow a request line. The daemon holds the scripts it was given in
+memory (`lib/server/replay/scripts.js`: the id is a hash of the script with
+every node pinned to its stored id, the oldest of 64 goes first); after a
+restart an old id is a 404 that says to open the replay again. The overlay
+opened on a script keeps play / pause / scrub, speed, captions and
+**Include my prompts**; its ↧ buttons render the same script, and picking a
+different from / to leaves the script for a plain replay of that range.
+
 ## Replays and GIFs — a replay as a file
 
 The same replay can be written to disk, to attach or post:

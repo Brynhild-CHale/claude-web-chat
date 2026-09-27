@@ -22,6 +22,13 @@
 //
 // The panel is a `.popover`: the shell's dismiss layer and its one Escape owner
 // close it like every other chrome panel (shell.js closePanel → closeReplay).
+//
+// Claude can open it too, on a replay SCRIPT it directed (export({open:true})
+// → a `replay:open` frame, relayed by ws.js over the chrome bus): the frame
+// names the script the daemon holds, the document plays it — its title, beats,
+// holds and captions — and the ↧ buttons render that same script. There is no
+// authoring UI here (a script is Claude's to write); picking a different
+// from / to leaves the script for a plain replay of the new range.
 import { view, $ } from './state.js';
 import { nodeById, labelFor } from './labels.js';
 import { getLocalJson, setLocalJson } from './storage.js';
@@ -41,8 +48,10 @@ let hooks = { openNode: null, forwardEscapeFrom: null, mode: null };
 const RENDER_FORMATS = ['gif', 'mp4', 'webm'];
 const FORMAT_NAME = { gif: 'GIF', mp4: 'MP4', webm: 'WebM' };
 let fileExport = { busy: false, can: { gif: true, mp4: true, webm: true } };
-// The replay being shown: its endpoints and the lineage the pickers offer.
-let cur = { to: null, from: null, lineage: [] };
+// The replay being shown: its endpoints, the lineage the pickers offer, and —
+// when Claude opened it — the script: { id (the daemon's), body (the pinned
+// script, sent back with a render), title, steps }.
+let cur = { to: null, from: null, lineage: [], script: null };
 
 const pop = () => $('replay-pop');
 const frame = () => $('rpo-frame');
@@ -143,8 +152,11 @@ async function renderFile(format) {
   note(`Rendering ${what} in a headless Chrome…`);
   try {
     const body = { format, transition: p.transition, captions: p.captions, include_prompts: filePrompts(p) };
-    if (cur.from) body.from = cur.from;
-    if (cur.to) body.to = cur.to;
+    if (cur.script) body.script = cur.script.body;
+    else {
+      if (cur.from) body.from = cur.from;
+      if (cur.to) body.to = cur.to;
+    }
     const r = await fetch('/api/replay/render', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -174,8 +186,11 @@ function syncPrompts() {
 function query(extra = {}) {
   const p = prefs();
   const q = new URLSearchParams();
-  if (cur.from) q.set('from', cur.from);
-  if (cur.to) q.set('to', cur.to);
+  if (cur.script) q.set('script', cur.script.id);
+  else {
+    if (cur.from) q.set('from', cur.from);
+    if (cur.to) q.set('to', cur.to);
+  }
   q.set('transition', p.transition);
   q.set('captions', p.captions);
   q.set('include_prompts', filePrompts(p) ? '1' : '0');
@@ -245,10 +260,17 @@ function renderPickers() {
 
 // Open the player. `to` defaults to the node being viewed (else active);
 // `from` to the nearest bookmark at or above it (else its tree's root) — the
-// server's default, so the first replay needs no choices at all.
-export async function openReplay({ to = null, from = null } = {}) {
+// server's default, so the first replay needs no choices at all. `script` is a
+// `replay:open` frame ({ script_id, script, from, to, title, steps }): Claude's
+// directed replay, whose ends the frame names.
+export async function openReplay({ to = null, from = null, script = null } = {}) {
   const p = pop();
   if (!p) return;
+  if (script) {
+    if (!script.script_id || !script.to || !script.from) return;
+    to = script.to.id;
+    from = script.from.id;
+  }
   const target = to || view.viewedId || view.activeId;
   if (!target) return;
   // one panel at a time, like every other chrome panel
@@ -260,7 +282,7 @@ export async function openReplay({ to = null, from = null } = {}) {
   const def = await getPath(from ? { to: target, from } : { to: target });
   if (def.error) {
     note(def.error);
-    cur = { to: target, from: null, lineage: [] };
+    cur = { to: target, from: null, lineage: [], script: null };
     renderPickers();
     return;
   }
@@ -268,9 +290,15 @@ export async function openReplay({ to = null, from = null } = {}) {
   // own steps if the root cannot be named.
   const all = nodeById(def.to.id) ? await getPath({ to: def.to.id, from: rootOf(def.to.id) }) : def;
   const lineage = (all.error ? def.steps : all.steps).map((s) => ({ id: s.id, label: s.label }));
-  cur = { to: def.to.id, from: def.from.id, lineage };
+  cur = {
+    to: def.to.id, from: def.from.id, lineage,
+    script: script ? { id: script.script_id, body: script.script, title: script.title || null, steps: script.steps } : null,
+  };
   renderPickers();
-  if (def.truncated) note(`showing the last ${def.steps.length} of ${def.total_steps} steps`);
+  if (cur.script) {
+    const n = cur.script.steps;
+    note(`Claude's replay${cur.script.title ? ': ' + cur.script.title : ''}${Number.isFinite(n) ? ` — ${n} step${n === 1 ? '' : 's'}` : ''}`);
+  } else if (def.truncated) note(`showing the last ${def.steps.length} of ${def.total_steps} steps`);
   const set = (id, v) => { const el = $(id); if (el) el.value = v; };
   const pr = prefs();
   set('rpo-speed', pr.speed); set('rpo-transition', pr.transition); set('rpo-captions', pr.captions);
@@ -340,10 +368,12 @@ export function initReplay(h = {}) {
   // replay.html is a plain link; with prompts on, say so as it downloads.
   on('rpo-download', 'click', () => { if (filePrompts()) note(`replay.html ${PROMPTS_REMINDER}`); });
   for (const f of RENDER_FORMATS) on('rpo-' + f, 'click', () => renderFile(f));
-  on('rpo-from', 'change', (e) => { cur.from = e.target.value; renderPickers(); load(); });
-  on('rpo-to', 'change', (e) => { cur.to = e.target.value; renderPickers(); load(); });
+  // A new range is a plain replay of it: the script was for its own from / to.
+  on('rpo-from', 'change', (e) => { cur.from = e.target.value; cur.script = null; note(''); renderPickers(); load(); });
+  on('rpo-to', 'change', (e) => { cur.to = e.target.value; cur.script = null; note(''); renderPickers(); load(); });
   window.addEventListener('keydown', onKey, true);
   bus.on('mode', () => { if (isReplayOpen() && cur.to) load({ at: stepIndex() }); });
+  bus.on('replay:open', (frame) => { openReplay({ script: frame }); });
 }
 
 // The ⌘K row and the ⋯ item name where the replay will arrive.
