@@ -25,7 +25,7 @@
 // sessions panel's one-way trick — shell.js imports this module's importer).
 // Every string from the daemon — a trigger, a label, an owner — is set as text.
 import { $ } from './state.js';
-import { panes, readOnlyNow, spawnParentOf } from './mounts.js';
+import { panes, layoutLocked, spawnParentOf } from './mounts.js';
 import { nodeTime } from './labels.js';
 import { effectiveMode } from './theme.js';
 import { bus } from './bus.js';
@@ -106,7 +106,7 @@ function renderFoot() {
   const v = versionById(chosen);
   const why = restoreBlocker(v, panes.get(forId));
   if (btn) {
-    btn.disabled = !!why || readOnlyNow();
+    btn.disabled = !!why || layoutLocked();
     btn.textContent = !v || v.node_id === 'live' ? 'Make current' : v.current ? `${v.label} is current` : `Make ${v.label} current`;
   }
   if (note) { note.textContent = why; note.classList.remove('bad'); }
@@ -186,7 +186,7 @@ function place(p, anchor) {
 
 export function openPaneHistory(id, anchor) {
   const p = $(PANEL);
-  if (!p || readOnlyNow() || !panes.has(id)) return false;
+  if (!p || layoutLocked() || !panes.has(id)) return false;
   window.dispatchEvent(new CustomEvent('wc:close-popovers', { detail: { keep: p } }));
   forId = id;
   versions = [];
@@ -223,7 +223,7 @@ export function togglePaneHistory(id, anchor) {
 async function makeCurrent() {
   const id = forId;
   const v = versionById(chosen);
-  if (!id || restoreBlocker(v, panes.get(id)) || readOnlyNow()) return null;
+  if (!id || restoreBlocker(v, panes.get(id)) || layoutLocked()) return null;
   const btn = $('ph-restore'); if (btn) btn.disabled = true;
   let res = null;
   try {
