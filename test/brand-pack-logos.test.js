@@ -350,7 +350,12 @@ test('the folder is advertised nowhere a user reads: docs, rules, CHANGELOG, hel
   }
   walk('lib/cli', (f) => f.endsWith('.js'));
   walk('lib/mcp', (f) => f.endsWith('.js'));
+  // Narrowed when theme PACKS gained logos (docs/component-packs.md documents a
+  // pack's `themes/<name>/logos/` and its `-reversed` marks — the maintainer
+  // asked for exactly that). What stays unadvertised is the builtin pack's
+  // per-user folder: its path, in any spelling, and the idea of a logos folder
+  // a user drops files into.
   for (const [f, text] of texts) {
-    assert.doesNotMatch(text, /themes\/georgetown-blue|logos folder|logos\/|-reversed|themeLogosDir/i, f);
+    assert.doesNotMatch(text, /themes\/georgetown-blue|georgetown-blue\/logos|logos folder|themeLogosDir|\.web-chat\/themes\/[^\s`'")]*\/logos/i, f);
   }
 });
