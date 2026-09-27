@@ -351,10 +351,13 @@ test('adding a block on a phone is refused — previewing or not — and writes 
   await tick(20);
   assert.ok($('main').classList.contains('preview-readonly'), 'precondition: previewing');
   calls.length = 0;
+  $('reaim-note').replaceChildren();
   await spawnComponent({ name: 'widget' });
   await tick();
   assert.ok(!calls.some((c) => c.method === 'POST'), 'still nothing POSTed');
   assert.doesNotMatch(noteText(), /live page/);
+  assert.match(noteText(), /Layout editing is available on a larger screen/,
+    'the layout note, not the preview\'s — setting the node active would not let a phone add a block');
   click($('btn-return-active'));
   await tick(20);
   assert.equal($('main').classList.contains('preview-readonly'), false);

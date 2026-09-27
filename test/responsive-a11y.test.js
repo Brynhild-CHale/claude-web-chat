@@ -156,7 +156,7 @@ test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide
 });
 
 test('the phone rule lives in one place: public/app/viewport.js', () => {
-  // The phone (the read-only viewer, the graph as a log) is chosen by shape —
+  // The phone (layout fixed, the graph as a log) is chosen by shape —
   // narrow AND portrait (maintainer ruling a11) — and reverting that is meant to
   // be one line in viewport.js. That only holds while nothing else re-derives
   // it: the stylesheets key their phone rules off <html class="phone"> and never

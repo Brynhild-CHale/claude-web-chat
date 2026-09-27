@@ -130,11 +130,12 @@ export async function previewNode(id) {
 // the graph the moment a previewed form was touched.
 export const READONLY_HINT = 'Read-only preview — set this node active in the graph to edit.';
 // A phone's pane CONTENT is live; only its layout is fixed (mounts.js
-// layoutLocked). A layout gesture that reaches a control there says where to go.
+// layoutLocked). A layout gesture that reaches a control there says where to go
+// — previewing or not, since setting the node active would not unlock it.
 export const LAYOUT_HINT = 'Layout editing is available on a larger screen.';
 function onReadonlyAttempt(e) {
-  if (view.previewing) showReaimNote(READONLY_HINT);
-  else if (e && e.detail && e.detail.layout && isPhone()) showReaimNote(LAYOUT_HINT);
+  if (e && e.detail && e.detail.layout && isPhone()) showReaimNote(LAYOUT_HINT);
+  else if (view.previewing) showReaimNote(READONLY_HINT);
 }
 
 /* ---------- leaving preview: ONE owner of the transition ----------
