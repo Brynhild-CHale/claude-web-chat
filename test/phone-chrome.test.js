@@ -65,6 +65,10 @@ const VP = {
   besideTerminal: { w: 700, h: 860, pointer: 'fine' },    // the canonical terminal-beside-browser half
   touchLaptop: { w: 700, h: 860, pointer: 'coarse' },     // the same, on a touchscreen laptop
   desktop: { w: 1280, h: 800, pointer: 'fine' },
+  widePortrait: { w: 820, h: 1180, pointer: 'coarse' },   // a portrait tablet (iPad Air upright)
+  portraitMonitor: { w: 1080, h: 1920, pointer: 'fine' }, // a desktop monitor turned on its end
+  edgeNarrow: { w: 759, h: 1100, pointer: 'fine' },       // the last narrow width, portrait
+  edgeWide: { w: 760, h: 1100, pointer: 'fine' },         // one px past it, same height
 };
 // A small media-query evaluator: `and`-joined features only, and it THROWS on a
 // feature it does not know, so a changed rule shows up here instead of silently
@@ -443,6 +447,10 @@ test('the phone is chosen by shape — narrow and portrait — not by the pointe
     ['besideTerminal', false, 'the terminal-beside-browser half stays the editable desktop'],
     ['touchLaptop', false, 'a finger on a laptop-shaped window is not a phone'],
     ['desktop', false, 'a wide desktop'],
+    ['widePortrait', false, 'a portrait tablet is tall but not narrow: the width half of the rule holds'],
+    ['portraitMonitor', false, 'a portrait desktop monitor is not a phone'],
+    ['edgeNarrow', true, '759px wide and portrait is still narrow'],
+    ['edgeWide', false, '760px is past the narrow breakpoint (app.css <760px)'],
   ];
   for (const [name, want, why] of cases) {
     setViewport(VP[name]);
