@@ -115,10 +115,13 @@ tunnel logs        the portal, cloudflared and remote access logs (--follow,
 The portal restarts cloudflared if it exits (waiting 1s, then 2s, 4s … up to a
 minute; a run that lasted five minutes starts the ladder again) and stops it
 when the portal stops. Nothing starts at login — run `tunnel up` again after a
-reboot. After `claude-web-chat update`, run `tunnel up` too: a portal still
-running from the previous build keeps enforcing that build's rules until it is
-restarted, and `up` restarts one it finds older (nothing restarts it behind your
-back).
+reboot. `claude-web-chat update` (and `update --to <version>`) restarts a
+running portal on the build it just activated, so that build's remote policy is
+in force at once; it prints one line saying so, and remote viewers reconnect.
+If that restart fails — a `tunnel.json` or token `up` would refuse, say — it says
+so, the update itself still succeeds, and `claude-web-chat tunnel up` is the fix.
+With no portal running, `update` leaves the tunnel alone. (`up` also restarts a
+portal it finds from an older build.)
 
 **The portal reads `tunnel.json` once, when it starts.** An edit — an email
 added or revoked, a project put under `expose.exclude`, `allowDestructive` — is

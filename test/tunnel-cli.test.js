@@ -522,3 +522,29 @@ test('doctor: reports the tunnel config, cloudflared, the token and a down tunne
   assert.ok(has('problem', /allow\.emails is empty.*tunnel setup/));
   assert.ok(has('problem', /WEB_CHAT_HOST=0\.0\.0\.0/));
 });
+
+// restartPortal is what `claude-web-chat update` runs (from the new build) — the
+// bounce above, forced. It must do nothing without a portal, and a preflight
+// refusal must come BEFORE the running portal is stopped, never after.
+test('restartPortal: nothing running is a no-op; a refused preflight leaves the running portal alone', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const access = createFakeAccess();
+  const fake = fakeCloudflared(t);
+  writeConfig(goodRaw(access, { metricsPort: await freePort() }));
+  writeToken();
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port) };
+  delete env.WEB_CHAT_HOST;
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); };
+
+  assert.deepEqual(await tunnel.restartPortal({ env, kill }), { restarted: false });
+  assert.equal(fs.existsSync(userPaths().portalLog), false, 'no portal was spawned');
+
+  await fakePortal(t, port, { portal_protocol: PORTAL_PROTOCOL_VERSION });
+  fs.rmSync(userPaths().tunnelToken);
+  await assert.rejects(tunnel.restartPortal({ env, kill }), (e) => e.userFacing && /no connector token/.test(e.message));
+  assert.deepEqual(killed, [], 'the running portal is never stopped for a restart that cannot start its successor');
+  assert.equal(fake.calls().length, 0);
+});
