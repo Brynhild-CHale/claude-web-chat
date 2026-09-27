@@ -2,7 +2,8 @@
 
 `claude-web-chat tunnel` puts the web-chat surfaces running on this machine
 behind a Cloudflare tunnel, so you can open them from your phone or another
-computer — signed in with Google, and only as an account you allowlisted.
+computer — signed in through Cloudflare Access (an emailed code plus your
+device's biometrics by default, or Google), and only as an account you allowlisted.
 
 Nothing about the local setup changes. Every daemon still binds loopback only;
 what the tunnel reaches is a separate process, the **portal**, which checks
@@ -19,8 +20,9 @@ browser ──https──▶ Cloudflare Access ──▶ tunnel ──▶ cloudf
 - **A domain on Cloudflare** (its DNS managed there). The free plan is enough.
 - **Cloudflare Zero Trust**, free plan — that is where the tunnel and the Access
   application live. Your *team name* is the `<team>` in `<team>.cloudflareaccess.com`.
-- **Google** set up as a login method in Zero Trust (Settings → Authentication →
-  Login methods → Add → Google).
+- For the manual path only: a login method in Zero Trust (Google: Settings →
+  Authentication → Login methods → Add → Google). The one-token setup adds
+  Cloudflare's One-time PIN itself.
 - **cloudflared** on this machine, 2024.1.0 or newer. web-chat never installs it:
   - macOS: `brew install cloudflared`
   - Linux: Cloudflare's package repository, https://pkg.cloudflare.com/ (Debian/Ubuntu:
@@ -48,7 +50,79 @@ project directory):
 Each project on its own hostname means each is its own browser origin: a page
 in one project cannot read another's.
 
-## Walkthrough
+## One-token setup (recommended)
+
+`tunnel setup` can do the whole Cloudflare side itself from one API token. What
+you do in the dashboard, once:
+
+1. **Turn on Zero Trust** (https://one.dash.cloudflare.com): pick a team name
+   and the Free plan. That is all — no login method, tunnel or application.
+2. **Create an API token** (https://dash.cloudflare.com/profile/api-tokens →
+   Create Token → Create Custom Token) with these permissions:
+
+   | | permission |
+   | --- | --- |
+   | Account | Cloudflare Tunnel — Edit |
+   | Account | Access: Apps and Policies — Edit |
+   | Account | Access: Organizations, Identity Providers, and Groups — Edit |
+   | Zone | DNS — Edit |
+
+   Account Resources: your account. Zone Resources: the zone your hostname is in.
+
+Then, on this machine:
+
+```sh
+claude-web-chat tunnel setup --api-token-file ~/Downloads/cf-token.txt \
+  --hostname wc.example.com --email you@example.com
+# or just `claude-web-chat tunnel setup` and paste the token when asked
+claude-web-chat tunnel up
+```
+
+Setup reads your account first, prints its plan, and only then changes
+anything. It creates — or finds, so a re-run changes nothing — a remotely
+managed tunnel named `web-chat` (`--name` for another), routed to the portal
+(`wc.example.com` and `*.example.com` → `http://127.0.0.1:5171`; a route you
+added to that tunnel yourself is kept); proxied DNS records for those two names;
+Cloudflare's **One-time PIN** login method; an Access allow policy for your
+email(s); and a self-hosted Access application covering `wc.example.com` and
+`wc-*.example.com` with a 30-day session (`--session`). It reads back the team
+name and the application's AUD tag, writes `tunnel.json` and the connector token
+(0600) as the manual path does, and **does not keep the API token** — delete it
+in the dashboard afterwards if you like. `--dry-run` prints the plan and changes
+nothing.
+
+It stops, with nothing changed and the reason printed, when a DNS record
+already sits on one of those names (it never replaces a record you made), when a
+tunnel of that name exists but is managed from a local config file, or when an
+Access application of another type already covers the hostname. A refusal from
+Cloudflare that means the token lacks a permission names the permission.
+
+**How you sign in.** By default: the emailed one-time PIN, **then Face ID /
+Touch ID / Windows Hello** (or a security key) — Cloudflare Access *independent
+MFA*. Setup turns independent MFA on for your Zero Trust organization if it is
+off (without requiring it for any other application) and requires it on this
+application, remembered for 30 days (`--mfa-session`). After the emailed code,
+Access asks for the second factor; register your device's biometrics when it
+offers to, or beforehand in the App Launcher at `https://<team>.cloudflareaccess.com`.
+If Cloudflare will not turn independent MFA on for your plan, setup falls back
+to the emailed PIN alone, with the long session, and says so. The result is
+recorded in `tunnel.json` as `"signin": "pin+biometric"`, `"pin"` or `"google"`.
+
+- `--signin pin` — the emailed PIN alone, on purpose.
+- `--signin google` — Google login instead. Setup prints the Google Cloud steps
+  with your values filled in (Authorized JavaScript origin
+  `https://<team>.cloudflareaccess.com`, Authorized redirect URI
+  `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`), then asks for
+  the OAuth Client ID and secret (`--google-client-id`,
+  `--google-client-secret-file`) and creates the Google login method. A passkey
+  on that Google account is Google's own setting (Google Account → Security →
+  Passkeys), not something setup or Cloudflare configures.
+
+A token that sees more than one account asks which (or `--account <id>`).
+
+## Manual walkthrough
+
+The same result, by hand in the dashboard.
 
 1. **Create the tunnel.** Either:
    - **token** (dashboard-managed, simplest): Zero Trust → Networks → Tunnels →
@@ -94,8 +168,11 @@ in one project cannot read another's.
 ## Commands
 
 ```
-tunnel setup       ask for (or take as flags) the hostname, style, Access team,
-                   AUD tag, allowed email(s) and the tunnel; verify; write config
+tunnel setup       with an API token (--api-token-file, or paste): create the
+                   tunnel, DNS and Access app, then write config (--dry-run: plan only)
+                   manual (--team/--aud/--kind): ask for (or take as flags) the
+                   hostname, style, Access team, AUD tag, allowed email(s) and
+                   the tunnel; verify; write config
                    (an existing tunnel.json it cannot read is moved aside to
                    tunnel.json.corrupt-<time> and named, never overwritten)
 tunnel up          preflight, then start the portal (port 5171 —
@@ -291,7 +368,7 @@ Access, so nothing would check who is signing in.
 
 | file | what |
 | --- | --- |
-| `~/.web-chat/tunnel/tunnel.json` | the config (0600) — hostname, style, Access team + AUD, allowlist, the tunnel |
+| `~/.web-chat/tunnel/tunnel.json` | the config (0600) — hostname, style, Access team + AUD, allowlist, the tunnel, and the sign-in the one-token setup configured |
 | `~/.web-chat/tunnel/token` | the connector token (0600), token tunnels only |
 | `~/.web-chat/tunnel/cloudflared.yml` | the generated ingress, local tunnels only — rewritten on every start |
 | `~/.web-chat/tunnel/portal.log`, `cloudflared.log` | what `tunnel logs` prints |

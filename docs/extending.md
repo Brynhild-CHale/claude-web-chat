@@ -220,6 +220,9 @@ were the only places they lived.
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | run a test against a REAL Chrome or ffmpeg | `test-support/helpers` `e2eGate(['chrome', 'ffmpeg'])` → `{skip, chrome, ffmpeg}` (opt-in via `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1`; the harness ratchet holds any other probe for a real program in a test at zero) | skip on whether `findChrome()` found something — the suite then changes with what is installed |
+| talk to the Cloudflare API | `lib/tunnel/cf-api` `createCfApi({token, env})` (every call names the token permission a refusal means) — over `lib/util/outbound` | a hand-built `https.request` to api.cloudflare.com |
+| make a small JSON request to the public internet | `lib/util/outbound` `request` / `fetchJson` (https only, loopback http for a test fake, bounded in time and size) | `require('https')` in a new file |
+| fake the Cloudflare API in a test | `test-support/fake-cloudflare` `withFakeCloudflare(t)` (records every call, `writes()`; `sim` for missing permissions, MFA refused, 429, no Zero Trust, a bad token) + `WEB_CHAT_CF_API` / `createCfApi({base})` | the real API |
 | run cloudflared in a test | `test-support/helpers` `fakeCloudflared(t, {version, exit})` (a real spawn of `test-support/fake-cloudflared.js`, which records argv + `TUNNEL_TOKEN` and serves `/ready`) + `freePort()` for the ports a detached process must be told; preload `test-support/no-outbound.js` into a detached portal | a real cloudflared, or a fixed port |
 | boot the tunnel portal in a test | `test-support/helpers` `withPortal(t, {config, fetchJwks})` with `test-support/fake-access` `createFakeAccess()` (real RSA keys, fake JWKS, forgeable tokens) | `createPortal` + `server.listen` in the test body |
 | wait for a condition in a test | `test-support/helpers` `waitUntil(pred, {timeout, interval, what})` | a private `waitFor`/`until` loop, or a fixed sleep as synchronisation |
@@ -591,8 +594,15 @@ upstream opened with no Origin, cut at the token's `exp` + 5s with close code
 Shared, not the portal's: an entry point cannot import another's internals, and
 three of them need these. `config.js` is `tunnel.json`'s one normaliser and
 loader (fails closed — an empty allowlist or a quick tunnel is an error, never
-a partial run) plus `portalPort(env)`; `jwks.js` is Access's key set (the
-portal verifies with it, `tunnel setup` proves the team name with it);
+a partial run) plus `portalPort(env)` and `routeNames(config)` (the picker,
+the wildcard DNS/ingress name and the Access destination a style needs);
+`jwks.js` is Access's key set (the portal verifies with it, `tunnel setup`
+proves the team name with it); `cf-api.js` is the Cloudflare API v4 client
+(envelope, the permission a 403 means, 429 back-off, pagination — over
+`lib/util/outbound`, base URL overridable by `WEB_CHAT_CF_API` for the fake in
+`test-support/fake-cloudflare.js`) and `cf-setup.js` the one-token setup on
+top of it (`gather` reads, `plan` is pure and finds every conflict before a
+write, `apply` converges so a re-run changes nothing);
 `cloudflared.js` finds the binary (PATH walk, a version floor, the platform's
 install line — web-chat never installs it), builds the launch (the connector
 token in `TUNNEL_TOKEN`, **never argv**, which any local user can read), renders
@@ -1197,7 +1207,7 @@ Current homes (baselines can only shrink toward these):
 | --- | --- | --- |
 | `http.request(` | `lib/client/index.js` (+ `lib/core/portfiles.js` for the two probes — core can't import the client) | Phase 1 ✅ |
 | `client.request(` (the non-throwing low-level idiom) | `lib/client` `get`/`post`, which throw a typed `HttpError` on a non-2xx — plus the three genuine **relays**, which hand a status onward rather than acting on it: `lib/cli/commands/export.js`, `lib/cli/commands/pack.js` (a best-effort ping that shrugs at every outcome) and `lib/hub/index.js`'s `forward` | landed with the client outcome contract ✅ |
-| `require('https')` (an outbound request to the public internet) | none yet — one per requester, each alone in the file that needs it with its own fencing: `lib/server/routes/embed.js` (the embed probe), `lib/update/release.js` (the release download), `lib/tunnel/jwks.js` (Cloudflare Access's signing keys). A **fourth** means extracting `lib/util/outbound.js`, not raising a baseline | counted since the tunnel portal (the third requester) |
+| `require('https')` (an outbound request to the public internet) | `lib/util/outbound.js` (`request` / `fetchJson` — https only, bounded; Access's key set and the Cloudflare API go through it), plus the two requesters with fencing of their own: `lib/server/routes/embed.js` (the embed probe) and `lib/update/release.js` (the release download) | counted since the tunnel portal; the engine extracted with the fourth requester (the Cloudflare API client) ✅ |
 | `os.homedir()` | `lib/core/paths.js` | Phase 1 ✅ |
 | `new Function('…')` | `public/mount-runtime.js` (the one mount-runtime source) | Phase 4 ✅ |
 | `getPrototypeOf(async function` | `public/mount-runtime.js` (`runSeed`) — the AsyncFunction spelling of the same eval, added when `drawer.js` grew a second eval site the `new Function(` pattern could not see | Phase 4 ✅ |
@@ -1238,22 +1248,25 @@ Working with it:
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.
-- **The outbound requesters: counted, not yet an engine.** The `http.request(`
-  row above polices calls to *our own daemon*, whose home is `lib/client`. Three
-  places instead reach the **public internet**, and they are a different concept
-  with no engine: `lib/server/routes/embed.js` (probe a URL a pane named — spelt
-  `lib.request(`), `lib/update/release.js` (fetch a release tarball — spelt
-  `agentFor(u).get(`) and `lib/tunnel/jwks.js` (Cloudflare Access's signing keys
-  for the tunnel portal — an injected `get(`). Routing any of them through
-  `lib/client` would be wrong: the client dials loopback and has none of the
-  fencing an outbound request needs (`refuseTarget` / `publicOnlyLookup` in
-  `embed.js`, checksum verification in `release.js`, a URL fixed by the team
-  name plus size and time bounds in `jwks.js`). This doc used to say a third
-  requester was the moment to extract the engine; the portal's JWKS fetch was
-  that third, and the middle ground taken is the `require('https')` row: each
-  requester stays alone in its file, and a **fourth** fails the build — that is
-  when `lib/util/outbound.js` gets extracted (whether to do it sooner is an
-  open maintainer call).
+- **The outbound requesters: `lib/util/outbound.js`.** The `http.request(`
+  row above polices calls to *our own daemon*, whose home is `lib/client`.
+  Reaching the **public internet** is a different concept, and routing it
+  through `lib/client` would be wrong: the client dials loopback and has none of
+  the fencing an outbound request needs. The rule was that a **fourth**
+  requester means extracting an engine; the Cloudflare API client behind
+  `tunnel setup --api-token` (`lib/tunnel/cf-api.js`) was that fourth, so
+  `lib/util/outbound.js` now exists: `request(url, {method, headers, body,
+  timeoutMs, maxBytes})` resolves `{status, headers, text, json}` (a non-2xx is
+  the caller's to read, not a throw) and `fetchJson(url)` is the strict GET.
+  It is https only — plain http to a loopback host alone, which is how a test
+  points a requester at an in-process fake — and bounded in time and size.
+  Cloudflare Access's key set (`lib/tunnel/jwks.js`) moved onto it. Two older
+  requesters keep their own request because each fences something outbound
+  does not: `lib/server/routes/embed.js` (probe a URL a pane named —
+  `refuseTarget` / `publicOnlyLookup` resolve and fence the address it dials)
+  and `lib/update/release.js` (a tarball streamed to disk, redirects followed,
+  checksum-verified). The `require('https')` row counts exactly those three; a
+  new requester goes through `outbound.js`, never a new baseline entry.
 - **A construct that is fine almost everywhere but must stay at zero in a few
   places?** Give the pattern a `files` list instead of `roots`. That is why
   `writeFileSync(` is not banned tree-wide: about eight of its ~35 sites in
