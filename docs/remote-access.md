@@ -40,6 +40,45 @@ replace a DNS record or a tunnel of yours. Doing it by hand in the dashboard
 instead is the *Manual walkthrough* further down. If something stops it, see
 *Troubleshooting*.
 
+## Or set it up from the browser — ⌘K
+
+On the surface (on this computer), press ⌘K and choose **Set up remote access…**
+(or ⋯ → **Set up remote access…**). A setup page opens in a new tab and walks the
+same one-token setup without a terminal:
+
+1. **You need** a domain on Cloudflare and Zero Trust turned on (a link takes you there).
+2. **Create an API token** — the page lists the exact permissions and links to
+   the token page.
+3. **Run setup** — paste the token, enter the picker hostname and your email, pick
+   the sign-in (emailed PIN + Face ID / Touch ID, or the PIN alone), and press
+   **Show the plan**: the same plan `tunnel setup --dry-run` prints, with nothing
+   changed. **Apply** is offered for exactly that input; its progress is the
+   lines the CLI prints. A token that sees several Cloudflare accounts gets a
+   picker. Google sign-in needs an OAuth client first, so it stays in the
+   terminal (`tunnel setup --signin google`).
+4. **Bring it up** — the same as `claude-web-chat tunnel up`.
+5. **On your phone** — open the picker link and sign in; enrol Face ID when Access offers.
+
+A live checklist at the top ticks itself — setup done, portal running,
+connector ready, sign-in, picker — and on a machine already set up it shows that
+summary, a *restart needed* warning when there is one, and a hint that running
+setup again converges rather than duplicating anything. The terminal commands
+are on the page too, with copy buttons, for the manual path.
+
+**Why a new tab, and why its address is `127.0.0.1:<some port>`.** The page takes
+the API token that decides where your surfaces are published, and every pane on
+the surface runs code in the surface's own origin. So the page is served from a
+different origin that no pane can script: a separate listener on `127.0.0.1` at
+a port of its own (not the surface's port — the replay renderer draws pane code
+under `127.0.0.1:<surface port>`). It serves this page only, answers a setup call
+only from its own exact origin carrying the nonce minted into that page load, as
+JSON (a cross-origin call must be preflighted, and the preflight is refused with
+no CORS allowance), cannot be framed, and closes after 30 idle minutes or when
+the surface's daemon stops — an old tab then says it has expired; open it again
+from ⌘K. The API token is used for the one step that carries it and is never
+logged, stored or shown back. None of this is reachable through the tunnel, and
+the menu item is not offered to a remote viewer.
+
 ## What you need
 
 - **A domain on Cloudflare** (its DNS managed there). The free plan is enough.
@@ -418,7 +457,11 @@ The portal is **access control**, so every step fails closed:
 6. **Expiry and hiding.** The live socket is closed when your sign-in token
    expires (code 4401) — the page reconnects, which needs a fresh one — and when
    its project is hidden or stops (code 4403).
-7. **The tunnel's own credential** (the connector token) lives in a 0600 file and
+7. **Setting up is the host's.** The ⌘K setup page (*Or set it up from the
+   browser*) runs on its own loopback origin, refuses any call that is not from
+   that page with its per-load nonce, and is refused through the tunnel; no
+   pane can reach it.
+8. **The tunnel's own credential** (the connector token) lives in a 0600 file and
    is handed to cloudflared in its environment, never on its command line.
    A local tunnel's generated config also makes cloudflared itself require a
    valid Access token for your AUD, so there are two independent checks.

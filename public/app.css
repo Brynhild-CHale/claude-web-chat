@@ -740,6 +740,7 @@ kbd {
 .popover h4 { margin: 0 0 10px; font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
 .popover .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font: 12px var(--wc-font); color: var(--wc-text-1); }
 .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 8px; border: 0; background: transparent; text-align: left; color: var(--wc-text-1); font: 12px var(--wc-font); border-radius: var(--wc-radius); }
+.menu-item[hidden] { display: none; }
 .menu-item:hover, .menu-item:focus-visible { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
 .wc-select, .popover input[type="text"] { height: 28px; padding: 0 8px; background: var(--wc-content-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius); color: var(--wc-fg); font: 12px var(--wc-font); }
 /* The one popover raised from INSIDE the graph overlay, so it needs the rung

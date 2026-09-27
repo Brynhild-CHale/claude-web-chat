@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<!-- this load's setup nonce (lib/server/tunnel-setup) — read by setup.js, sent as X-WC-Setup -->
+<meta name="wc-setup-token" content="{{CSRF}}">
+<title>Remote access setup</title>
+<link rel="stylesheet" href="/setup/tunnel/theme.css">
+<link rel="stylesheet" href="/setup/tunnel/setup.css">
+<script src="/setup/tunnel/setup.js" defer></script>
+</head>
+<body>
+<main class="wrap">
+  <header class="head">
+    <h1>Remote access</h1>
+    <p class="lede">Reach this machine's web-chat surfaces from your phone, through a Cloudflare Tunnel with Cloudflare Access in front of it. This page runs only on this computer, on its own address, and never through the tunnel.</p>
+  </header>
+
+  <p id="expired" class="banner bad" hidden>This setup page has expired. Close it and open it again from ⌘K → <b>Set up remote access…</b></p>
+
+  <section class="card" aria-labelledby="st-h">
+    <h2 id="st-h">Status <span id="st-live" class="muted"></span></h2>
+    <ol class="checks" id="checks">
+      <li id="ck-config"><span class="tick" aria-hidden="true"></span><span class="what">Setup done</span> <span class="detail"></span></li>
+      <li id="ck-portal"><span class="tick" aria-hidden="true"></span><span class="what">Portal running</span> <span class="detail"></span></li>
+      <li id="ck-connector"><span class="tick" aria-hidden="true"></span><span class="what">Connector ready</span> <span class="detail"></span></li>
+      <li id="ck-signin"><span class="tick" aria-hidden="true"></span><span class="what">Sign-in</span> <span class="detail"></span></li>
+      <li id="ck-picker"><span class="tick" aria-hidden="true"></span><span class="what">Picker</span> <span class="detail"></span></li>
+    </ol>
+    <div id="st-warn" class="warn" hidden></div>
+    <p id="st-rerun" class="muted" hidden>Already set up. To change the hostname, the allowed email or the sign-in, run the setup below again — it converges on what is there and creates nothing twice.</p>
+  </section>
+
+  <section class="card" aria-labelledby="setup-h">
+    <h2 id="setup-h">Set up here</h2>
+    <ol class="steps">
+      <li>
+        <h3>You need</h3>
+        <p>A domain on Cloudflare, and Zero Trust turned on for the account (once: <a id="lnk-zt" target="_blank" rel="noopener noreferrer">open Zero Trust</a>, pick a team name and the Free plan).</p>
+      </li>
+      <li>
+        <h3>Create an API token</h3>
+        <p><a id="lnk-token" target="_blank" rel="noopener noreferrer">Cloudflare → API tokens</a> → Create Token → Create Custom Token, with these permissions:</p>
+        <ul id="perms" class="perms"></ul>
+        <p class="muted">Account Resources: your account. Zone Resources: the zone your hostname is in. The token is used for the one step you press and is never saved — delete it in Cloudflare afterwards if you like.</p>
+      </li>
+      <li>
+        <h3>Run setup</h3>
+        <div class="form">
+          <label for="f-token">Cloudflare API token</label>
+          <input id="f-token" type="password" autocomplete="off" spellcheck="false" data-no-persist>
+          <label for="f-host">Picker hostname</label>
+          <input id="f-host" type="text" autocomplete="off" spellcheck="false" placeholder="wc.example.com">
+          <label for="f-email">Your email (the one allowed in — the sign-in code goes there)</label>
+          <input id="f-email" type="text" inputmode="email" autocomplete="email" spellcheck="false" placeholder="you@example.com">
+          <fieldset class="signin">
+            <legend>Sign-in</legend>
+            <label><input type="radio" name="signin" value="pin+biometric" checked> Emailed PIN + Face ID / Touch ID (recommended)</label>
+            <label><input type="radio" name="signin" value="pin"> Emailed PIN only</label>
+            <p class="muted">Google sign-in needs an OAuth client first — use the terminal for it: <code>claude-web-chat tunnel setup --signin google</code></p>
+          </fieldset>
+          <div id="acct-row" hidden>
+            <label for="f-account">Cloudflare account</label>
+            <select id="f-account"></select>
+          </div>
+          <div class="buttons">
+            <button type="button" id="btn-plan">Show the plan</button>
+            <button type="button" id="btn-apply" class="primary" disabled>Apply</button>
+          </div>
+          <p id="form-msg" class="msg" role="status"></p>
+        </div>
+        <pre id="out-setup" class="out" hidden></pre>
+      </li>
+      <li>
+        <h3>Bring it up</h3>
+        <p>Starts the portal and cloudflared on this computer (the same as <code>claude-web-chat tunnel up</code>).</p>
+        <div class="buttons"><button type="button" id="btn-up">Bring it up</button></div>
+        <pre id="out-up" class="out" hidden></pre>
+      </li>
+      <li>
+        <h3>On your phone</h3>
+        <p>Open <a id="lnk-picker" target="_blank" rel="noopener noreferrer">the picker</a><span id="picker-none"> (its address appears here once setup is done)</span> and sign in with the emailed code. With PIN + biometrics, Access asks for your second factor next — enrol Face ID or Touch ID when it offers to.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="card" aria-labelledby="manual-h">
+    <h2 id="manual-h">Or in a terminal</h2>
+    <p class="muted">The same setup, step by step, for people who prefer the terminal. It asks for the token itself.</p>
+    <ol class="manual">
+      <li>See the plan, changing nothing: <span class="cmd"><code>claude-web-chat tunnel setup --dry-run</code><button type="button" class="copy" data-copy="claude-web-chat tunnel setup --dry-run">Copy</button></span></li>
+      <li>Apply it: <span class="cmd"><code>claude-web-chat tunnel setup</code><button type="button" class="copy" data-copy="claude-web-chat tunnel setup">Copy</button></span></li>
+      <li>Bring it up: <span class="cmd"><code>claude-web-chat tunnel up</code><button type="button" class="copy" data-copy="claude-web-chat tunnel up">Copy</button></span></li>
+      <li>Check it: <span class="cmd"><code>claude-web-chat tunnel status</code><button type="button" class="copy" data-copy="claude-web-chat tunnel status">Copy</button></span></li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

@@ -288,6 +288,8 @@ were the only places they lived.
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | run a test against a REAL Chrome or ffmpeg | `test-support/helpers` `e2eGate(['chrome', 'ffmpeg'])` → `{skip, chrome, ffmpeg}` (opt-in via `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1`; the harness ratchet holds any other probe for a real program in a test at zero) | skip on whether `findChrome()` found something — the suite then changes with what is installed |
+| run the one-token tunnel setup, or bring the tunnel up / down / read its status | `lib/tunnel/api-setup` (`readExisting` / `buildWant` / `runSetup` / `finishSetup` — the lines the CLI prints) and `lib/tunnel/control` (`up` / `down` / `restartPortal` / `collectStatus`) — the CLI and the ⌘K setup page both call these | a second gather→plan→apply loop, or spawning `claude-web-chat tunnel …` from the daemon |
+| serve a page that takes a secret the panes must never reach | its own listener on its own origin, like `lib/server/tunnel-setup` (exact `Origin` + a per-load nonce header + JSON + a refused preflight, strict CSP, COOP, no framing) | a route on the surface's origin — every pane runs there (routes/packs.js risk paragraph) |
 | talk to the Cloudflare API | `lib/tunnel/cf-api` `createCfApi({token, env})` (every call names the token permission a refusal means) — over `lib/util/outbound` | a hand-built `https.request` to api.cloudflare.com |
 | make a small JSON request to the public internet | `lib/util/outbound` `request` / `fetchJson` (https only, loopback http for a test fake, bounded in time and size) | `require('https')` in a new file |
 | fake the Cloudflare API in a test | `test-support/fake-cloudflare` `withFakeCloudflare(t)` (records every call, `writes()`; `sim` for missing permissions, MFA refused (`mfaRefused: true|'org'|'app'`), 429, no Zero Trust, a bad token, and `fail` — a matching request failing N times, a run that dies half way) + `WEB_CHAT_CF_API` / `createCfApi({base})` | the real API |
@@ -687,8 +689,16 @@ install line — web-chat never installs it), builds the launch (the connector
 token in `TUNNEL_TOKEN`, **never argv**, which any local user can read), renders
 a local tunnel's ingress (our hostnames → the portal with
 `originRequest.access` required, everything else `http_status:404`) and
-supervises the child. `lib/cli/commands/tunnel.js` is the user's face of it
-(`setup|up|down|status|logs`); `docs/remote-access.md` is the operator's.
+supervises the child. `api-setup.js` is the one-token setup RUN around
+`cf-setup` (read `tunnel.json`, build what setup wants, print the plan, stop on
+a conflict, apply, prove the keys, write the files) and `control.js` the
+lifecycle (`up`/`down`/`restartPortal`/`collectStatus`), shared by the two
+faces: `lib/cli/commands/tunnel.js` (`setup|up|down|status|logs`) and the ⌘K
+browser setup page, `lib/server/tunnel-setup` — a listener of its own on
+`127.0.0.1` at an ephemeral port, NOT the surface's origin, because the page
+takes the API token and panes run in the surface's origin (its header has the
+full gate: exact Origin, a per-load nonce, JSON, no CORS, no framing).
+`docs/remote-access.md` is the operator's.
 
 ### `lib/packs/` — the component-pack pipeline
 

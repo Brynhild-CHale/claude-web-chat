@@ -103,6 +103,16 @@ test('ratchet: every rule is well-formed (methods, path, and a hint on every ref
   }
 });
 
+test('verdicts: remote-access setup is refused remotely, and the hint names where to do it', () => {
+  for (const [m, u] of [['GET', '/tunnel/setup'], ['POST', '/setup/tunnel/apply'], ['GET', '/setup/tunnel']]) {
+    const v = classify(m, u);
+    assert.equal(v.allow, false, `${m} ${u}`);
+    assert.equal(v.reason, 'refused', `${m} ${u} is refused by a row, not by the default deny`);
+    assert.match(v.hint, /host/);
+    assert.match(v.hint, /tunnel setup/);
+  }
+});
+
 test('verdicts: the machine-wide sessions feed is refused with the ls hint; pane spawn carries its body-level note', () => {
   const v = classify('GET', '/api/machine/sessions');
   assert.equal(v.reason, 'refused');
@@ -159,6 +169,9 @@ const REFUSED = [
   // host process / disk
   ['POST', '/api/shutdown'], ['GET', '/api/export/n1?format=file'], ['POST', '/api/profiles/reload'],
   ['POST', '/api/replay/render'],
+  // remote-access setup: the daemon's launcher, and the setup page's own routes
+  ['GET', '/tunnel/setup'], ['GET', '/setup/tunnel'], ['POST', '/setup/tunnel/plan'], ['POST', '/setup/tunnel/apply'],
+  ['POST', '/setup/tunnel/up'], ['POST', '/setup/tunnel/status'],
   // captures and the extensions
   ['POST', '/api/capture'], ['GET', '/api/captures'], ['GET', '/api/captures/c1/raw'],
   ['GET', '/api/captures/c1/simplified'], ['GET', '/api/profile-match?url=x'], ['GET', '/api/profiles'],

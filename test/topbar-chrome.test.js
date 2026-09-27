@@ -240,9 +240,9 @@ test('Wipe opens prefilled with "before cleanup", and an untouched label rides t
   assert.deepEqual(wiped && wiped.body, { name: 'before cleanup' }, 'confirming without typing keeps the default label');
 });
 
-test('the ⋯ menu offers the design\'s six actions, in order, plus Replay… and Sessions', () => {
+test('the ⋯ menu offers the design\'s six actions, in order, plus Replay…, Sessions and (locally) remote-access setup', () => {
   const acts = [...$('more-menu').querySelectorAll('[data-act]')].map((b) => b.dataset.act);
-  assert.deepEqual(acts, ['newgraph', 'wipe', 'export', 'replay', 'sessions', 'settings', 'shortcuts', 'checkupdate']);
+  assert.deepEqual(acts, ['newgraph', 'wipe', 'export', 'replay', 'sessions', 'settings', 'remotesetup', 'shortcuts', 'checkupdate']);
 });
 
 test('the zero state: "Nothing on the page yet", a suggestion, and G / N / ?', () => {

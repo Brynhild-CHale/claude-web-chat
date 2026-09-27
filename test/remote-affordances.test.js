@@ -132,4 +132,15 @@ test('the Manage tab points pack changes at the host and disables the write butt
   assert.equal(byText('Files…').disabled, false, 'reading a quarantined pack\u2019s files is still allowed');
 });
 
+test('remote-access setup is not offered remotely: no ⌘K row, the ⋯ item stays hidden', async () => {
+  const shell = await import(pathToFileURL(path.join(REPO, 'public/app/shell.js')).href);
+  shell.openPalette();
+  await tick();
+  const labels = [...W.document.querySelectorAll('#cmd-list .palette-item .label')].map((l) => l.textContent);
+  assert.ok(labels.includes('Settings'), 'precondition: the palette listed its commands');
+  assert.ok(!labels.some((l) => /remote access/i.test(l)), 'no setup row for a remote viewer');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(W.document.getElementById('menu-remote-setup').hidden, true, 'the ⋯ item stays hidden');
+});
+
 after(() => { restore(); });

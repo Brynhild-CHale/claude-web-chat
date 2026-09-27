@@ -23,6 +23,7 @@ import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
 import { openSessions, toggleSessions } from './sessions.js';
 import { closePaneHistory } from './pane-history.js';
+import { isRemote } from './remote.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 
@@ -258,10 +259,26 @@ function initWipe() {
   on('wipe-name', 'keydown', (e) => { if (e.key === 'Enter') confirmWipe(); else if (e.key === 'Escape') closeWipe(); });
 }
 
+/* ---------- remote access setup ----------
+   ⌘K "Set up remote access…" and ⋯ → Set up remote access open the setup page
+   in a NEW TAB — not a pane, not a popover. The page takes a Cloudflare API
+   token, so it lives on its own origin (lib/server/tunnel-setup), where no pane
+   can script it; /tunnel/setup starts it and redirects there. `noopener`: this
+   tab keeps no handle on it (the page also sends COOP same-origin). Offered
+   only locally — setting up the tunnel is the host's act, and the portal
+   refuses the route to a remote viewer anyway. */
+export function openRemoteSetup() {
+  window.open('/tunnel/setup', '_blank', 'noopener');
+}
+
 /* ---------- More menu ---------- */
 function initMoreMenu() {
   const btn = $('btn-more');
   const menu = $('more-menu');
+  // Hidden in the markup, shown once the page knows it is local — so a remote
+  // viewer never sees it flash (remote.js fails closed to local).
+  const setupItem = $('menu-remote-setup');
+  if (setupItem) isRemote().then((remote) => { setupItem.hidden = remote; });
   if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); togglePopover('more-menu'); });
   if (menu) menu.addEventListener('click', (e) => {
     const act = e.target.closest('[data-act]'); if (!act) return;
@@ -269,7 +286,7 @@ function initMoreMenu() {
     ({
       export: doExport, wipe: openWipe, newgraph: openNewGraph, replay: () => openReplay(),
       settings: openSettings, sessions: openSessions, shortcuts: () => toggleLegend(true),
-      checkupdate: checkForUpdatesNow,
+      checkupdate: checkForUpdatesNow, remotesetup: openRemoteSetup,
     })[act.dataset.act]?.();
   });
 }
@@ -299,6 +316,7 @@ function closePalette() {
 // agent-supplied.
 async function buildPalette(q) {
   const ql = q.toLowerCase();
+  const remote = await isRemote();
   const cmds = [
     { kind: 'command', label: 'Add a block…', key: 'N', run: () => openDrawer() },
     { kind: 'command', label: 'Component packs…', run: openDrawerManage },
@@ -311,6 +329,7 @@ async function buildPalette(q) {
     { kind: 'command', label: 'Pin comment', key: 'C', run: togglePinMode },
     { kind: 'command', label: 'Settings', run: openSettings },
     { kind: 'command', label: 'Sessions…', key: 'S', run: openSessions },
+    ...(remote ? [] : [{ kind: 'command', label: 'Set up remote access…', run: openRemoteSetup }]),
   ];
   // The blocks on the page now — the design's "block" rows. What is SHOWN
   // (panes), so while previewing an older node these are that node's blocks.
