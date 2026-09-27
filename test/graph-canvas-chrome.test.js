@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
+const { strikes, sharedRuns } = require('../test-support/graph-geometry');
 
 const REPO = path.resolve(__dirname, '..');
 
@@ -308,48 +309,70 @@ test('a wipe\'s bookmark reads "⌫ wipe · <name>"; an ordinary one "⚑ <name>
   assert.equal(glyph('n1').querySelector('.gv-bm'), null, 'a root\'s name is its tree title, not repeated');
 });
 
-test('ghost dots on the edge into a bookmarked node stay clear of its caption and of the label above', () => {
+// Where a ghost dot lands: spread over the band from under the label of the
+// glyph above (LABEL_CLEAR 22) to over the caption of the node below (CAPTION_CLEAR
+// 24), measured from the GLYPHS — not from the drawn line, which stops short of both.
+const ghostDotsInto = (id, from) => {
+  const num = (el, a) => Number(el.getAttribute(a));
+  const b = glyph(id).querySelector('.gv-body'), a = glyph(from).querySelector('.gv-body');
+  const x = num(b, 'cx');
+  const dots = [...W.document.querySelectorAll('#graph-svg .gv-ghost-dot')]
+    .filter((d) => num(d, 'cx') === x && num(d, 'cy') < num(b, 'cy') && num(d, 'cy') > num(a, 'cy'))
+    .map((d) => num(d, 'cy'));
+  const top = num(a, 'cy') + num(a, 'r') + 22, bottom = num(b, 'cy') - num(b, 'r') - 24;
+  const want = dots.map((_, i) => top + ((bottom - top) * (i + 0.5)) / dots.length);
+  return { dots, want, cy: num(b, 'cy') };
+};
+
+test('ghost dots on the edge into a bookmarked node stay clear of its caption and of the label above', async () => {
   // n12 → n13: n13 carries "⌫ wipe · before cleanup" over its glyph and two
   // folded turns; the dots once sat on the caption (int3 visual QA).
   const num = (el, a) => Number(el.getAttribute(a));
-  const body = glyph('n13').querySelector('.gv-body');
-  const x = num(body, 'cx');
-  const dots = [...W.document.querySelectorAll('#graph-svg .gv-ghost-dot')]
-    .filter((d) => num(d, 'cx') === x && num(d, 'cy') < num(body, 'cy') && num(d, 'cy') > num(glyph('n12').querySelector('.gv-body'), 'cy'))
-    .map((d) => num(d, 'cy'));
+  const { dots, want, cy } = ghostDotsInto('n13', 'n12');
   assert.equal(dots.length, 2, 'two dots ride the edge into n13');
+  assert.deepEqual(dots, want, 'spread over the band between the glyphs');
   const captionTop = num(glyph('n13').querySelector('.gv-bm'), 'y') - 10;   // baseline − cap height
   const labelBottom = num(glyph('n12').querySelector('.gv-lbl'), 'y') + 3;
-  for (const cy of dots) {
-    assert.ok(cy + 4 < captionTop, `a dot (cy ${cy}) is above the caption (top ${captionTop})`);
-    assert.ok(cy - 4 > labelBottom, `a dot (cy ${cy}) is below n1.11's label (bottom ${labelBottom})`);
+  for (const d of dots) {
+    assert.ok(d + 4 < captionTop, `a dot (cy ${d}) is above the caption (top ${captionTop})`);
+    assert.ok(d - 4 > labelBottom, `a dot (cy ${d}) is below n1.11's label (bottom ${labelBottom})`);
+  }
+  // The same after the tree is dragged: the band moves with the glyphs.
+  const heading = [...W.document.querySelectorAll('#graph-svg .gv-tree-title')].find((h) => h.dataset.graphRoot === 'n1');
+  const drag = async (dx, dy) => {
+    heading.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 200, clientY: 200 }));
+    W.dispatchEvent(new W.PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 200 + dx, clientY: 200 + dy }));
+    W.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 200 + dx, clientY: 200 + dy }));
+    await tick();
+  };
+  await drag(31, 47);
+  try {
+    const moved = ghostDotsInto('n13', 'n12');
+    assert.notEqual(moved.cy, cy, 'the tree moved');
+    assert.equal(moved.dots.length, 2);
+    assert.deepEqual(moved.dots, moved.want, 'the dots moved with it');
+  } finally {
+    await drag(-31, -47);
   }
 });
 
 test('the trunk stops short of the text on it — no edge strikes a label, a caption or a stack range through', () => {
   // s2 visual QA: the vertical trunk ran straight through "n1.0", "n1.3" and the
   // bookmark captions. An edge is now drawn from under the label below the glyph
-  // above to over the caption above the glyph below.
+  // above to over the caption above the glyph below. (A fork's elbow crossing
+  // occupied columns: test/graph-edge-routing-chrome.test.js.)
   const num = (el, a) => Number(el.getAttribute(a));
+  const kinds = new Set([...W.document.querySelectorAll('#graph-svg :is(.gv-lbl, .gv-bm, .gv-card-range)')].map((t) => t.getAttribute('class')));
+  for (const k of ['gv-lbl', 'gv-bm', 'gv-card-range']) assert.ok(kinds.has(k), `the fixture draws a ${k} (got ${[...kinds]})`);
+  const hit = strikes(W.document);
+  assert.deepEqual(hit, [], hit.join('\n'));
+  assert.deepEqual(sharedRuns(W.document), []);
+  // A fork's elbow (n1.11 → n1.11.0) leaves its node sideways, ABOVE the label
+  // under it — it neither drops through the label nor runs across the glyph below.
   const edges = [...W.document.querySelectorAll('#graph-svg .gv-edge')].map((e) => {
     const n = e.getAttribute('d').match(/-?\d+(?:\.\d+)?/g).map(Number);
     return { ax: n[0], ay: n[1], bx: n[n.length - 2], by: n[n.length - 1] };
   });
-  assert.ok(edges.length > 3, 'the fixture draws edges');
-  const onColumn = (t) => edges.some((e) => e.ax === num(t, 'x') || e.bx === num(t, 'x'));
-  const texts = [...W.document.querySelectorAll('#graph-svg :is(.gv-lbl, .gv-bm, .gv-card-range)')].filter(onColumn);
-  const kinds = new Set(texts.map((t) => t.getAttribute('class')));
-  for (const k of ['gv-lbl', 'gv-bm', 'gv-card-range']) assert.ok(kinds.has(k), `the fixture puts a ${k} on a trunk column (got ${[...kinds]})`);
-  for (const t of texts) {
-    // the text's box: cap height ~10px above the baseline, descenders ~4px below
-    const x = num(t, 'x'), top = num(t, 'y') - 10, bottom = num(t, 'y') + 4;
-    for (const e of edges) {
-      const hit = (e.ax === x || e.bx === x) && Math.min(e.ay, e.by) < bottom && Math.max(e.ay, e.by) > top;
-      assert.ok(!hit, `the edge ${e.ay}→${e.by} at x=${x} runs through "${t.textContent}" (${top}..${bottom})`);
-    }
-  }
-  // A fork's elbow (n1.11 → n1.11.0) leaves its node sideways, ABOVE the label
-  // under it — it neither drops through the label nor runs across the glyph below.
   const body = glyph('n12').querySelector('.gv-body');
   const lblTop = num(glyph('n12').querySelector('.gv-lbl'), 'y') - 10;
   const fork = edges.find((e) => e.bx === num(glyph('n14').querySelector('.gv-body'), 'cx'));
