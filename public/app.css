@@ -306,8 +306,8 @@ html.wc-theming, html.wc-theming * {
 .update-banner .ub-btn {
   display: inline-flex; align-items: center; text-decoration: none;
   height: 26px; padding: 0 12px; border-radius: var(--wc-radius);
-  /* panel ink on the gold fill, not --wc-gold-fg: Georgetown Blue's gold is a
-     burgundy that its navy gold-fg cannot be read on */
+  /* panel ink on the gold fill: every pack × mode keeps it at AA for UI
+     (test/theme-contrast.test.js measures "panel-bg on gold") */
   border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-panel-bg);
   font: 600 11px var(--wc-font); cursor: pointer; white-space: nowrap;
 }

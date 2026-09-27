@@ -18,8 +18,14 @@ or node scope it styles the chrome only, at pane scope that pane's content only.
 | Pack | Modes | Look |
 | --- | --- | --- |
 | `earthy` | light + dark | the stock look — olive on warm umber, depth and glass |
-| `paper` | light only | flat cream, olive accent, every depth effect off |
-| `georgetown-blue` (Georgetown Blue) | light only | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar |
+| `paper` | light + dark | flat cream (dark: warm charcoal), olive accent, every depth effect off |
+| `georgetown-blue` (Georgetown Blue) | light + dark | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar; dark is navy surfaces, a lightened 293, 1205 gold bookmarks on burgundy and a faint cross-hatch |
+
+Every pack meets WCAG AA in every mode it declares — 4.5:1 for text, 3:1 for
+labels on fills, glyphs and large text — measured over the ink/fill pairs the
+chrome actually paints (`test/theme-contrast.test.js`). Earthy light has four
+older pairs below that (its accent labels and keycaps, and muted text on the
+stage); the test names them, and that list may only shrink.
 
 Builtins are read-only: a saved theme cannot take a builtin's name, and
 `apply_theme` resolves a builtin name before any saved theme. Applying one

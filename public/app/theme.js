@@ -81,7 +81,7 @@ export function applyGlobalTheme(theme, animate) {
   applyTokens(document.documentElement, flat.tokens, { animate });
   setHeadStyle('wc-theme-global-css', flat.css);
   syncModeToggle();
-  // A new global pack can move the effective mode (dark pref → a light-only
+  // A new global pack can move the effective mode (dark pref → a single-mode
   // pack); the node and pane layers follow it, as on a ◑ flip.
   if (mode !== prevMode) reapplyLayers();
 }

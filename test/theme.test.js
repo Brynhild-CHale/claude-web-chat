@@ -205,7 +205,7 @@ test('theme: the packs are listed builtins, read-only, and web-chat still applie
   const { themes } = (await api.get('/api/themes')).json;
   const builtins = themes.filter(x => x.location === 'builtin');
   assert.deepEqual(builtins.map(x => x.name), ['earthy', 'paper', 'georgetown-blue'], 'the three packs, stock look first');
-  assert.deepEqual(builtins.map(x => x.modes), [['light', 'dark'], ['light'], ['light']], 'modes are named, not dumped');
+  assert.deepEqual(builtins.map(x => x.modes), [['light', 'dark'], ['light', 'dark'], ['light', 'dark']], 'modes are named, not dumped');
   assert.ok(!themes.some(x => x.name === 'web-chat'), 'the retired name is not listed');
 
   // no builtin name — current or retired — can be saved over
