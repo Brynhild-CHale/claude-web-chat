@@ -3,8 +3,9 @@
 // slot the PROJECT left empty is filled from
 // userPaths().themeLogosDir('georgetown-blue') — the topbar logotype, and an
 // export's lockup and seal — with `<slot>-reversed.*` used in dark mode. The
-// folder is created holding only a README.txt the first time the pack is in
-// use, never rewritten, and deliberately advertised nowhere else.
+// folder is created holding only a README.txt by `install` and `update` (never
+// lazily on first use), never rewritten, and deliberately advertised nowhere
+// else.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -14,6 +15,7 @@ const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
 
 const brand = require('../lib/server/brand');
+const themeLogos = require('../lib/setup/theme-logos');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { withServer, withTempHome, existingProject } = require('../test-support/helpers');
 
@@ -55,18 +57,38 @@ test('the folder lives under the user tier, beside the system theme library', (t
   assert.equal(logos(), path.join(home, '.web-chat', 'themes', PACK, 'logos'));
 });
 
-test('the folder appears, holding only README.txt, the first time the pack is in use — and not before', (t) => {
-  withTempHome(t);
-  const earthy = project(t, 'earthy');
-  brand.fills(earthy);
-  brand.fills(project(t, null));
-  assert.ok(!fs.existsSync(logos()), 'no folder for a project on another pack, or on none');
+// `install` with its daemon pre-warm patched out — install destructures
+// spawnDaemon at module load, so the patch has to happen first — and its
+// console output captured.
+async function runInstall(t, root) {
+  const daemonMod = require('../lib/util/daemon');
+  const realSpawn = daemonMod.spawnDaemon;
+  daemonMod.spawnDaemon = async () => null;
+  const install = require('../lib/cli/commands/install');
+  daemonMod.spawnDaemon = realSpawn;
+  const lines = [];
+  const prevLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    await install([], { cwd: root, runClaude: () => ({ ok: false, stderr: 'not in a test' }) });
+  } finally {
+    console.log = prevLog;
+  }
+  return lines.join('\n');
+}
 
-  const gt = project(t, PACK);
-  brand.fills(gt);
-  assert.deepEqual(fs.readdirSync(logos()), ['README.txt']);
+test('`install` makes the folder, holding only README.txt, whatever theme the project is on — reading a fill never does', async (t) => {
+  withTempHome(t);
+  brand.fills(project(t, PACK));
+  brand.effective(project(t, PACK), 'logotype');
+  assert.ok(!fs.existsSync(logos()), 'first use of the pack creates nothing: the folder is made at install/update, not lazily');
+
+  const out = await runInstall(t, project(t, 'earthy'));
+  assert.deepEqual(fs.readdirSync(logos()), ['README.txt'], 'a project on another pack still gets it');
+  assert.doesNotMatch(out, /logos|georgetown/i, 'install says nothing about it');
   const readme = fs.readFileSync(path.join(logos(), 'README.txt'), 'utf8');
   assert.equal(readme, brand.LOGOS_README);
+  assert.equal(readme, themeLogos.LOGOS_README);
   // the exact specs
   for (const want of [
     /logotype\s+the topbar, drawn at 150 x 22/, /lockup\s+the header of an exported page, drawn at 260 x 52/,
@@ -78,32 +100,53 @@ test('the folder appears, holding only README.txt, the first time the pack is in
     /At most 256 KB each/, /#041E42 on light backgrounds/,
   ]) assert.match(readme, want);
   assert.ok(!/[^\x00-\x7f]/.test(readme), 'plain ASCII text');
+
+  // idempotent: a second install leaves an edited README as it is
+  fs.writeFileSync(path.join(logos(), 'README.txt'), 'my notes');
+  await runInstall(t, project(t, null));
+  assert.equal(fs.readFileSync(path.join(logos(), 'README.txt'), 'utf8'), 'my notes');
 });
 
 test('the old id `georgetown` counts as the pack too', (t) => {
   withTempHome(t);
-  brand.fills(project(t, 'georgetown'));
-  assert.ok(fs.existsSync(path.join(logos(), 'README.txt')));
+  drop('logotype.svg', NAVY);
+  const f = brand.fills(project(t, 'georgetown'));
+  assert.equal(f.logotype.light.type, 'image/svg+xml');
 });
 
 test('README.txt is never rewritten: an edited one, a folder with files, a deleted one', (t) => {
   withTempHome(t);
-  const gt = project(t, PACK);
-  brand.fills(gt);
+  themeLogos.seedThemeLogos();
   const readme = path.join(logos(), 'README.txt');
   fs.writeFileSync(readme, 'my notes');
-  brand.fills(gt);
+  themeLogos.seedThemeLogos();
   assert.equal(fs.readFileSync(readme, 'utf8'), 'my notes', 'an edit survives');
 
   fs.rmSync(readme);
   drop('seal.png', PNG);
-  brand.fills(gt);
+  themeLogos.seedThemeLogos();
   assert.deepEqual(fs.readdirSync(logos()), ['seal.png'], 'a folder the user filled is left as it is');
 
   // a crash between mkdir and write leaves it empty: then, and only then, again
   fs.rmSync(path.join(logos(), 'seal.png'));
-  brand.fills(gt);
+  themeLogos.seedThemeLogos();
   assert.deepEqual(fs.readdirSync(logos()), ['README.txt']);
+});
+
+test('a `gtown` theme PACK beside the seeded folder: its own logos fill through the pack path, the folder is not consulted', (t) => {
+  withTempHome(t);
+  themeLogos.seedThemeLogos();
+  drop('logotype.svg', NAVY);
+  const up = userPaths();
+  fs.mkdirSync(up.themeLogosDir('gtown'), { recursive: true });
+  fs.writeFileSync(path.join(up.themesDir, 'gtown.json'), JSON.stringify({ name: 'gtown', tokens: {} }));
+  fs.writeFileSync(path.join(up.themeLogosDir('gtown'), 'logotype.svg'), WHITE);
+  const root = project(t, null);
+  fs.writeFileSync(projectPaths(root).theme, JSON.stringify({ name: 'gtown', tokens: {} }));
+
+  assert.deepEqual(brand.fillSource(root), { name: 'gtown', dir: up.themeLogosDir('gtown') });
+  assert.deepEqual(brand.effective(root, 'logotype').bytes, WHITE, 'the pack\'s mark, not the builtin folder\'s');
+  assert.deepEqual(brand.effective(project(t, PACK), 'logotype').bytes, NAVY, 'Georgetown Blue itself still reads its folder');
 });
 
 // --- the fill -------------------------------------------------------------------

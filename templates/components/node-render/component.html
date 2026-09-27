@@ -81,6 +81,15 @@
   const btnOpen = root.getElementById('btn-open');
   const btnSetActive = root.getElementById('btn-set-active');
 
+  // The preview is drawn in the VIEWER's light/dark, as the graph inspector's
+  // preview and the glance are (public/app/graph-view.js previewSrc): the
+  // daemon has no mode of its own and would draw light. The chrome keeps the
+  // effective mode on <html> — data-theme="light", or no attribute for dark
+  // (public/app/theme.js setModeAttr) — which a pane script can read.
+  const viewerMode = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  const previewUrl = (id) => '/preview/node/' + encodeURIComponent(id) + '?mode=' + viewerMode();
+  let shownMode = null;
+
   function setTitle(id) { if (id) root.host.dataset.paneTitle = 'node ' + id; }
   setTitle(nodeId);
 
@@ -113,6 +122,7 @@
     if (!r.ok) {
       meta.textContent = `node '${nodeId}' not found`;
       frame.src = 'about:blank';
+      shownMode = null;
       return;
     }
     const node = await r.json();
@@ -131,7 +141,8 @@
 
     setTitle(nodeId);
     // Cache-bust so refresh shows up-to-date state after set-as-active / writes
-    frame.src = '/preview/node/' + encodeURIComponent(nodeId) + '?t=' + Date.now();
+    shownMode = viewerMode();
+    frame.src = previewUrl(nodeId) + '&t=' + Date.now();
   }
 
   select.addEventListener('change', async () => {
@@ -145,7 +156,7 @@
   });
   btnOpen.addEventListener('click', () => {
     if (!nodeId) return;
-    window.open('/preview/node/' + encodeURIComponent(nodeId), '_blank', 'noopener');
+    window.open(previewUrl(nodeId), '_blank', 'noopener');
   });
   btnSetActive.addEventListener('click', async () => {
     if (!nodeId) return;
@@ -163,6 +174,16 @@
       await loadNode();
     }
   });
+
+  // ◑ / T flips the mode: redraw the node in the new one. The observer lets
+  // itself go once this pane is gone (a pane script has no unmount hook).
+  const modeWatch = new MutationObserver(() => {
+    if (!root.host.isConnected) { modeWatch.disconnect(); return; }
+    if (!nodeId || shownMode === null || viewerMode() === shownMode) return;
+    shownMode = viewerMode();
+    frame.src = previewUrl(nodeId) + '&t=' + Date.now();
+  });
+  modeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   (async () => {
     await refreshList();

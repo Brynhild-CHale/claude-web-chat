@@ -54,6 +54,8 @@ const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal
 // points and layered on lib/update's managed-file primitives. It must never
 // import an entry point — which is why resolveRoot takes no prompt of its own
 // and the `claude` shell-out is injectable rather than reaching for lib/cli.
+// It also holds what `install` and `update` seed in the user tier
+// (setup/theme-logos), which the server's brand fill reads its pack list from.
 // lib/tunnel is SHARED: what the portal process, `tunnel setup|up|status` and
 // doctor all need to agree on — tunnel.json's one normaliser, Cloudflare
 // Access's key set, and cloudflared (finding, launching, supervising it). It

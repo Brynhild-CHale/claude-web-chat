@@ -435,6 +435,88 @@ test('status says when the running portal needs a restart for a hostname change,
   assert.match(c3.text(), /FAILING CLOSED until the portal re-reads tunnel\.json/);
 });
 
+test('status says "restart needed (connector token changed)" when the file holds another token than the running one', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const { configFingerprint, normalizeConfig } = require('../lib/tunnel/config');
+  const { tokenFingerprint } = require('../lib/tunnel/cloudflared');
+  const access = createFakeAccess();
+  const raw = goodRaw(access);
+  writeConfig(raw);
+  writeToken('the-new-token');
+  const fp = configFingerprint(normalizeConfig(raw));
+  const port = await freePort();
+  // The portal has not even noticed yet (state ok): the file is what counts.
+  await fakePortal(t, port, {
+    portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: fp,
+    token: { state: 'ok', fp: tokenFingerprint('the-old-token'), live: true },
+  });
+  const c = capture();
+  const st = await tunnel(['status'], { log: c.log, env: { WEB_CHAT_PORTAL_PORT: String(port) } });
+  assert.equal(st.portal.token_current, false);
+  assert.equal(st.portal.config_current, true);
+  assert.match(c.text(), /restart needed \(connector token changed\)/);
+  assert.match(c.text(), /tunnel up` restarts it/);
+  assert.doesNotMatch(c.text(), /the-new-token|the-old-token/, 'no token is ever printed');
+
+  // The same token: nothing to say.
+  const port2 = await freePort();
+  await fakePortal(t, port2, {
+    portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: fp,
+    token: { state: 'ok', fp: tokenFingerprint('the-new-token'), live: true },
+  });
+  const c2 = capture();
+  const st2 = await tunnel(['status'], { log: c2.log, env: { WEB_CHAT_PORTAL_PORT: String(port2) } });
+  assert.equal(st2.portal.token_current, true);
+  assert.doesNotMatch(c2.text(), /restart needed/);
+
+  // A portal that reports no token (an older build) is not second-guessed.
+  const port3 = await freePort();
+  await fakePortal(t, port3, { portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: fp });
+  const st3 = await tunnel(['status'], { log: () => {}, env: { WEB_CHAT_PORTAL_PORT: String(port3) } });
+  assert.equal('token_current' in st3.portal, false);
+});
+
+test('up restarts a portal whose cloudflared runs on a connector token the file no longer holds', async (t) => {
+  withTempHome(t);
+  const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const { configFingerprint, normalizeConfig } = require('../lib/tunnel/config');
+  const { tokenFingerprint } = require('../lib/tunnel/cloudflared');
+  const access = createFakeAccess();
+  fakeCloudflared(t);
+  const raw = goodRaw(access, { metricsPort: await freePort() });
+  writeConfig(raw);
+  writeToken('rotated-token');
+  const port = await freePort();
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(port), NODE_OPTIONS: `--require ${JSON.stringify(NO_OUTBOUND)}` };
+  delete env.WEB_CHAT_HOST;
+  const stale = await fakePortal(t, port, {
+    portal_protocol: PORTAL_PROTOCOL_VERSION, config_fp: configFingerprint(normalizeConfig(raw)),
+    token: { state: 'restart-needed', fp: tokenFingerprint('connector-token-123'), live: true },
+  });
+  const killed = [];
+  const kill = (pid, sig) => { killed.push([pid, sig]); stale.kill(); };
+  let health = null;
+  t.after(async () => {
+    try { await tunnel(['down'], { log: () => {}, env }); } catch {}
+    for (const pid of [health && health.pid, health && health.cloudflared && health.cloudflared.pid]) {
+      if (pid && isPidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    deregisterRole('portal', {});
+  });
+
+  const c = capture();
+  const r = await tunnel(['up'], { log: c.log, env, kill, waitMs: 15000 });
+  health = r.health;
+  assert.deepEqual(killed, [[424242, 'SIGTERM']]);
+  assert.match(c.text(), /restarting the portal \(pid 424242\): the connector token in .* changed since cloudflared started/);
+  assert.equal(r.already, false);
+  assert.equal(health.token.fp, tokenFingerprint('rotated-token'), 'the new portal runs on the token in the file');
+  const again = await tunnel(['up'], { log: () => {}, env, kill });
+  assert.equal(again.already, true, 'and is then "already up"');
+  assert.equal(killed.length, 1);
+});
+
 test('up names the sections a running portal could not apply when it restarts it', async (t) => {
   withTempHome(t);
   const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');

@@ -47,16 +47,11 @@ const UI = [
   ['key-fg', 'key-bg', 'a keycap'],
 ];
 
-// Earthy is today's look, held verbatim to public/app.css (theme-packs.test.js),
-// and these pairs of it fall short. Named here so the test says so instead of
-// hiding them; the list may only SHRINK — an entry that now passes fails the
-// test until it is removed. A new pack or mode gets no entries.
-const KNOWN_SHORTFALLS = new Set([
-  'earthy/light accent-text on bg',
-  'earthy/light accent-text on panel-bg',
-  'earthy/light key-fg on key-bg',
-  'earthy/light muted on bg',
-]);
+// There are no exceptions. Earthy light carried four shortfalls from before
+// the packs existed (accent labels and keycaps on the stage and panels, muted
+// text on the stage), named in a KNOWN_SHORTFALLS list that could only shrink;
+// those inks were darkened just past AA and the list is gone, so a new miss in
+// ANY pack fails below.
 
 // --- colour maths --------------------------------------------------------------
 function parseColor(v, tokens) {
@@ -130,19 +125,9 @@ test('every pair is measurable: the pack colours are ones the test can read', ()
 
 test('every pack × mode reaches WCAG AA: 4.5 for text, 3 for UI and large text', () => {
   const fails = MEASURED
-    .filter((m) => m.r !== null && m.r < m.min && !KNOWN_SHORTFALLS.has(m.key))
+    .filter((m) => m.r !== null && m.r < m.min)
     .map((m) => `${m.key} (${m.what}) = ${m.r.toFixed(2)} < ${m.min}`);
   assert.deepEqual(fails, []);
-});
-
-test('the known Earthy shortfalls only shrink', () => {
-  const keys = new Set(MEASURED.map((m) => m.key));
-  for (const k of KNOWN_SHORTFALLS) {
-    assert.ok(keys.has(k), `${k} names no measured pair`);
-    assert.ok(k.startsWith('earthy/'), `${k}: only Earthy (today's look, held to app.css) may fall short`);
-    const m = MEASURED.find((x) => x.key === k);
-    assert.ok(m.r < m.min, `${k} now passes (${m.r.toFixed(2)}) — remove it from KNOWN_SHORTFALLS`);
-  }
 });
 
 test('Paper and Georgetown Blue both have a dark mode, so ◑ works under them', () => {

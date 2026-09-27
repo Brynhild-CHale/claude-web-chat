@@ -285,6 +285,31 @@ test('choosing a block row takes you to that block, restoring it if minimized', 
   assert.ok(pane.classList.contains('pane-flash'), 'and flashed so the eye lands on it');
 });
 
+test('⌘K "Set up remote access…" (local) opens the setup page in a new tab, with no opener', async () => {
+  const opened = [];
+  W.open = (...a) => { opened.push(a); return null; };
+  await openPalette();
+  await typeInto('remote');
+  const row = rows().find((r) => r.querySelector('.label').textContent === 'Set up remote access…');
+  assert.ok(row && row.dataset.kind === 'command', 'a command row, offered on a local page');
+  assert.equal(row.querySelector('.hint'), null, 'it has no key');
+  row.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
+  await tick();
+  assert.deepEqual(opened, [['/tunnel/setup', '_blank', 'noopener']],
+    'the daemon\'s launcher, which redirects to the page on its own origin — never a pane');
+  assert.ok($('cmd-palette').classList.contains('hidden'));
+});
+
+test('⋯ → Set up remote access shows on a local page and opens the same tab', async () => {
+  const opened = [];
+  W.open = (...a) => { opened.push(a); return null; };
+  const item = $('menu-remote-setup');
+  assert.equal(item.hidden, false, 'unhidden once /api/health said local');
+  click(item);
+  await tick();
+  assert.deepEqual(opened, [['/tunnel/setup', '_blank', 'noopener']]);
+});
+
 /* ------------------------------- the drawer ------------------------------- */
 
 test('the drawer is headed BLOCKS, and ＋ names what its count counts', async () => {

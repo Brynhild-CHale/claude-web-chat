@@ -88,7 +88,27 @@ test('the design facts the packs carry', () => {
   assert.equal(gt.tokens['--wc-green'], '#3d7c2b');
   assert.match(gt.tokens['--wc-display'], /^'Libre Caslon Text'/);
   assert.match(gt.tokens['--wc-depth-radial'], /repeating-linear-gradient\(35deg, rgba\(4,30,66,\.155\)/, 'the 3c hatch at 80%');
-  assert.match(gt.css, /#topbar \{ border-bottom-width: 2px; \}/, 'the 2px blue topbar rule');
+  assert.equal(gt.tokens['--wc-topbar-rule-width'], '2px', 'the 2px blue topbar rule — a token, not raw CSS');
+  assert.equal(paper.tokens['--wc-topbar-rule-width'], '1px', 'every other pack keeps the 1px hairline');
+});
+
+// c17: the topbar rule's width is a token, so no builtin needs raw CSS — the
+// rule an installable pack is held to (lib/packs/themes.js THEME_CSS_POLICY
+// refuses a `css`), and what lets a private Georgetown pack install.
+test('no builtin pack carries raw CSS, in any mode; the topbar rule width is a token', () => {
+  for (const pack of BUILTIN_THEMES) {
+    assert.ok(!pack.css, `${pack.name} carries top-level css`);
+    for (const mode of themeModes(pack)) {
+      assert.ok(!(pack.modes[mode] && pack.modes[mode].css), `${pack.name}/${mode} carries css`);
+      assert.equal(flattenTheme(normalizeTheme(pack), mode).css, '', `${pack.name}/${mode} flattens to no css`);
+    }
+  }
+  const css = read('public/app.css');
+  const at = css.indexOf('\n#topbar {\n');
+  const topbar = css.slice(at, css.indexOf('\n}', at));
+  assert.match(topbar, /border-bottom:\s*var\(--wc-topbar-rule-width\) solid var\(--wc-topbar-border\);/,
+    'the chrome draws the rule at the token\'s width');
+  assert.equal(EARTHY_DARK_CSS['--wc-topbar-rule-width'], '1px', 'the stylesheet default is the 1px hairline');
 });
 
 // s2-2: the dark modes keep each pack's identity (drafts, pending the
@@ -109,7 +129,7 @@ test('the dark modes keep each pack\'s identity', () => {
   assert.match(gt.tokens['--wc-display'], /^'Libre Caslon Text'/, 'Caslon stays');
   assert.match(gt.tokens['--wc-depth-radial'], /repeating-linear-gradient\(35deg, rgba\(143,181,245,\.07\)/, 'the hatch, pale and faint');
   assert.match(gt.tokens['--wc-depth-radial'], /repeating-linear-gradient\(-35deg/);
-  assert.match(gt.css, /border-bottom-width: 2px/, 'the 2px rule in both modes');
+  assert.equal(gt.tokens['--wc-topbar-rule-width'], '2px', 'the 2px rule in both modes');
 });
 
 test('theme format: a flat (pre-mode) theme normalises and flattens unchanged', () => {

@@ -332,9 +332,10 @@ const PATTERNS = [
       // pid read out of a file.
       'lib/util/hub.js': 1,
       'lib/cli/commands/hub.js': 1,
-      // `tunnel down`: the same identity gate — the pid the live portal just
+      // `tunnel down` (lib/tunnel/control, shared by the CLI and the browser
+      // setup page): the same identity gate — the pid the live portal just
       // reported on its /api/health, never one read out of a file.
-      'lib/cli/commands/tunnel.js': 1,
+      'lib/tunnel/control.js': 1,
       // A comment quoting the hand-rolled kill restart dropped in favour of the
       // stop engine.
       'lib/cli/commands/restart.js': 1,

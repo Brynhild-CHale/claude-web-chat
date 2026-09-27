@@ -1,0 +1,132 @@
+/* The remote-access setup page. Every colour, radius and face is a --wc-*
+   token — theme.css (served beside this file) sets them from the project's
+   global theme — with Earthy's values as the fallback, so the page wears
+   whichever pack is active and still reads with none. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: light dark; }
+body {
+  margin: 0;
+  background: var(--wc-bg, #f4efe6);
+  color: var(--wc-fg, #2b2620);
+  font: 15px/1.5 var(--wc-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+}
+a { color: var(--wc-accent-text, var(--wc-accent, #6b8543)); }
+code, pre { font-family: var(--wc-mono, ui-monospace, "SF Mono", Menlo, monospace); font-size: 13px; }
+
+.wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+.head h1 {
+  margin: 0 0 6px;
+  font: 600 26px/1.2 var(--wc-display, var(--wc-font, system-ui, sans-serif));
+  color: var(--wc-fg-bright, var(--wc-fg, #2b2620));
+}
+.lede { margin: 0 0 20px; color: var(--wc-muted, #6b604e); }
+.muted { color: var(--wc-muted, #6b604e); }
+
+.card {
+  background: var(--wc-panel-bg, #fbf8f2);
+  border: 1px solid var(--wc-border, #d9cfbf);
+  border-radius: var(--wc-radius-lg, 10px);
+  box-shadow: var(--wc-shadow, none);
+  padding: 16px 18px;
+  margin: 0 0 16px;
+}
+.card h2 { margin: 0 0 10px; font-size: 17px; color: var(--wc-fg-bright, var(--wc-fg, #2b2620)); }
+.card h2 .muted { font-size: 12px; font-weight: 400; }
+h3 { margin: 0 0 4px; font-size: 15px; }
+
+.banner { padding: 10px 14px; border-radius: var(--wc-radius, 6px); margin: 0 0 16px; }
+.bad { color: var(--wc-comment, #b3412f); }
+.banner.bad { border: 1px solid var(--wc-comment, #b3412f); background: var(--wc-panel-bg, #fbf8f2); }
+.warn {
+  margin-top: 10px; padding: 8px 12px;
+  border-left: 3px solid var(--wc-gold, #b8892b);
+  background: var(--wc-gold-bg, transparent);
+  color: var(--wc-fg, #2b2620);
+}
+
+/* the live checklist */
+.checks { list-style: none; margin: 0; padding: 0; }
+.checks li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; flex-wrap: wrap; }
+.checks .what { min-width: 9em; }
+.checks .detail { color: var(--wc-muted, #6b604e); overflow-wrap: anywhere; }
+.checks .tick {
+  display: inline-block; width: 1.1em; text-align: center; flex: none;
+  color: var(--wc-muted-dim, var(--wc-muted, #6b604e));
+}
+.checks .tick::before { content: "○"; }
+.checks li.done .tick { color: var(--wc-green, #4f7a3a); }
+.checks li.done .tick::before { content: "✓"; }
+
+/* the guided steps */
+.steps { margin: 0; padding-left: 1.4em; }
+.steps > li { margin: 0 0 18px; }
+.steps > li:last-child { margin-bottom: 0; }
+.steps p { margin: 4px 0; }
+.perms { margin: 6px 0; padding-left: 1.2em; }
+.perms li { font-family: var(--wc-mono, ui-monospace, monospace); font-size: 13px; }
+
+.form { display: grid; gap: 6px; margin-top: 8px; }
+.form label { font-size: 13px; color: var(--wc-muted, #6b604e); }
+.form input[type="text"], .form input[type="password"], .form select {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--wc-content-fg, var(--wc-fg, #2b2620));
+  background: var(--wc-content-bg, #fff);
+  border: 1px solid var(--wc-border, #d9cfbf);
+  border-radius: var(--wc-radius-sm, 4px);
+}
+.form input:focus-visible, .form select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--wc-accent, #6b8543); outline-offset: 1px;
+}
+.signin { border: 1px solid var(--wc-border-soft, var(--wc-border, #d9cfbf)); border-radius: var(--wc-radius-sm, 4px); padding: 6px 10px; margin: 4px 0; }
+.signin legend { font-size: 13px; color: var(--wc-muted, #6b604e); padding: 0 4px; }
+.signin label { display: block; color: var(--wc-fg, #2b2620); font-size: 14px; padding: 2px 0; }
+.signin p { font-size: 13px; }
+
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+button {
+  font: inherit; cursor: pointer;
+  padding: 7px 14px;
+  color: var(--wc-fg, #2b2620);
+  background: var(--wc-header-bg, var(--wc-panel-bg, #efe7da));
+  border: 1px solid var(--wc-border, #d9cfbf);
+  border-radius: var(--wc-radius, 6px);
+}
+button.primary {
+  color: var(--wc-accent-fg, #fff);
+  background: var(--wc-accent, #6b8543);
+  border-color: var(--wc-accent-dark, var(--wc-accent, #6b8543));
+}
+button:disabled { opacity: .55; cursor: default; }
+.msg { margin: 6px 0 0; min-height: 1.5em; }
+
+.out {
+  margin: 10px 0 0;
+  max-height: 22em; overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--wc-content-bg, #fff);
+  color: var(--wc-content-fg, var(--wc-fg, #2b2620));
+  border: 1px solid var(--wc-border-soft, var(--wc-border, #d9cfbf));
+  border-radius: var(--wc-radius-sm, 4px);
+}
+
+/* the terminal path */
+.manual { margin: 0; padding-left: 1.4em; }
+.manual li { margin: 6px 0; }
+.cmd { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cmd code {
+  padding: 2px 6px;
+  background: var(--wc-content-bg, #fff);
+  border: 1px solid var(--wc-border-soft, var(--wc-border, #d9cfbf));
+  border-radius: var(--wc-radius-sm, 4px);
+  overflow-wrap: anywhere;
+}
+button.copy { padding: 2px 8px; font-size: 12px; }
+
+@media (max-width: 520px) {
+  .wrap { padding: 16px 16px 48px; }
+  .checks .what { min-width: 0; }
+}
