@@ -305,6 +305,10 @@ const HANDLERS = {
   'service:trust:clear'(msg) { onTrustClear(msg); },
   // A brand image slot was set or cleared (here or in another viewer).
   brand(msg) { applyBrand(msg.slots, msg.fill); },
+  // Claude opened a replay for the user (export({open:true}) → POST
+  // /api/replay/open): the player overlay shows that script. Relayed over the
+  // chrome bus, like packs:changed — replay.js listens (initReplay).
+  'replay:open'(msg) { bus.emit('replay:open', msg); },
 };
 
 // The daemon's socket, on the page's own origin and scheme. A page served over
