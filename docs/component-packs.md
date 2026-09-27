@@ -51,8 +51,17 @@ my-pack/
 │     ├─ component.html
 │     └─ meta.json
 └─ themes/                     # optional
-   └─ my-theme.json
+   └─ my-theme/
+      ├─ theme.json            # tokens, optional light/dark `modes`, optional `fonts`
+      ├─ logos/                # optional: logotype|lockup|seal[-reversed].svg|png
+      └─ fonts/                # optional: the WOFF2 files `fonts` names + OFL.txt
 ```
+
+A pack may be **themes-only**: leave `components` out, list `themes`, and ship no
+`SKILL.md` — a theme is found through `list_themes` and the Settings picker, so
+there is nothing for a skill to announce. (A bare `themes/<name>.json`, the
+layout before themes carried logos, still installs as a theme with nothing
+beside it.)
 
 Two rules that save pain later:
 
@@ -511,6 +520,14 @@ all-projects checkbox, and the same two options — *Download for review* is the
 primary button there, and *Install now* takes a second, deliberate click for a
 URL that was never reviewed.
 
+A theme pack goes in the same field. Its review card draws each theme's palette
+per mode as swatches, shows its logos and fonts, and prints any refusal; once it
+is installed, **Apply now** makes the theme the web-chat-wide one (Settings →
+Theme lists it afterwards under **Installed**, with the pack's name). Removing a
+pack whose theme is the active one puts the project back on its default theme,
+and says so. The theme side — layout, `theme.json`, logo and font rules — is
+[themes.md → Sharing a theme as a pack](themes.md#sharing-a-theme-as-a-pack).
+
 ### Private packs — `gh`
 
 A component library is often private, and the plain HTTPS path cannot reach one:
@@ -558,8 +575,31 @@ somewhere its components are not.
 
 A pack theme lands in the ordinary themes registry, so Claude applies it by name
 — `apply_theme({ name: 'acme-dark', scope: 'global' })` — and `list_themes`
-shows it. Removing the pack deletes that theme's own JSON file and never the
-shared `themes/` directory.
+shows it. Its logos and fonts land beside it, under `themes/acme-dark/`. While it
+is the project's **global** theme, its logos fill any brand slot the project left
+empty (the topbar logotype, an export's lockup and seal; a `-reversed` file is the
+dark-mode mark) — an image the project set in Settings → Brand always wins.
+Removing the pack deletes that theme's JSON file, its logos and fonts and the
+`themes/acme-dark/` folders they emptied, and never the shared `themes/`
+directory.
+
+What a pack theme may carry is checked when the pack is planned, so a problem
+shows in the review card and stops the install:
+
+- **No raw CSS.** A `css` (top-level or `modes.light|dark.css`) is refused — for
+  now. Tokens, light/dark modes, fonts and logos are all allowed.
+- **Logos** pass the same check as a Settings → Brand upload: SVG or PNG by their
+  bytes, at most 256 KB, and an SVG with a `<script>`, an `on*=` handler, a
+  `javascript:` URL, a `<foreignObject>` or an entity declaration is refused. A
+  `.png` must be a PNG and an `.svg` an SVG. A file in `logos/` whose name is not
+  a slot is not installed (the review says so).
+- **Fonts** are a list: a bundled family by name (`"Geist"`, `"Geist Mono"`,
+  `"Libre Caslon Text"`), or `{ "family", "file", "weight"?, "style"? }` naming a
+  `.woff2` in `fonts/` — WOFF2 by its bytes, at most 1 MB each, at most 12, and
+  only with the SIL Open Font License text beside them (`fonts/OFL.txt`).
+- **Names.** The theme's name is its directory; a `name` in `theme.json` must
+  match it. A built-in theme name — `earthy`, `paper`, `georgetown-blue`,
+  `georgetown`, `web-chat` — is refused with no override.
 
 Components install **flat** into the existing tier directories rather than
 nesting under `packs/<name>/components/` — a nested layout would need a third
@@ -819,7 +859,7 @@ Debugging:
 - [ ] `name` is not `capture-profile` or `respond-to-comment` — skills web-chat manages itself, and the next `install` would revert yours.
 - [ ] No component is named `form-renderer`, `node-render`, `website`, `git-dashboard`, `file-editor` or `web-chat-tour`. Built-in names are refused in either tier, for either actor, **with no override**.
 - [ ] Every component name is kebab-case, listed once, and has a real `components/<name>/component.html`.
-- [ ] Every theme listed in `themes` has a real `themes/<name>.json`.
+- [ ] Every theme listed in `themes` has a real `themes/<name>/theme.json`, is not a built-in theme name, and carries no raw CSS; its logos and fonts pass the checks in §8.
 - [ ] `requires` names a floor that exists — `>=0.6.0` or newer.
 - [ ] No symlinks or hard links anywhere in the repository; plain files and directories only.
 - [ ] If you publish a release with a `SHA256SUMS`, it lists the tarball by bare basename (see §8).

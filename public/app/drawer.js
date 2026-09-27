@@ -547,6 +547,8 @@ function renderManage() {
   if (postInstall) {
     const p = trustPrompt(postInstall);
     if (p) body.appendChild(p);
+    const a = applyPrompt(postInstall);
+    if (a) body.appendChild(a);
   }
 
   const waiting = (packsState.quarantined || []);
@@ -629,6 +631,7 @@ function installForm() {
     'Its panes run in this page, with your permissions and no sandbox.',
     'Any service.js is a process on your machine — inert until you run claude-web-chat trust.',
     'Its SKILL.md becomes part of Claude’s instructions in this project.',
+    'A theme it ships is colours, fonts and logos — no code, and raw CSS is refused.',
   ]) ul.appendChild(el('li', null, line));
   warn.appendChild(ul);
   warn.appendChild(el('div', 'pk-warn-foot', 'If you did not write it, download it for review first.'));
@@ -732,7 +735,9 @@ async function doInstall(btn) {
 
 function installedSummary(body) {
   const n = (body.pack.units || []).filter((u) => u.kind === 'component').length;
-  const bits = [`installed ${body.pack.name} — ${n} component${n === 1 ? '' : 's'}`];
+  const t = themesOf(body.pack).length;
+  const what = [n || !t ? `${n} component${n === 1 ? '' : 's'}` : null, t ? `${t} theme${t === 1 ? '' : 's'}` : null].filter(Boolean);
+  const bits = [`installed ${body.pack.name} — ${what.join(', ')}`];
   if (body.skill) bits.push('skill added');
   const svc = (body.services || []).length;
   if (svc) bits.push(`${svc} need${svc === 1 ? 's' : ''} approval`);
@@ -752,6 +757,57 @@ function trustPrompt(body) {
       + 'a pane script runs in this same page and could ask on its own behalf.',
     trustCommand(services),
   );
+}
+
+// The themes a pack record (or an install reply's `pack`) carries.
+function themesOf(pack) {
+  if (!pack) return [];
+  if (Array.isArray(pack.themes)) return pack.themes.map((t) => (typeof t === 'string' ? t : t.name));
+  return (pack.units || []).filter((u) => u.kind === 'theme').map((u) => u.name);
+}
+
+// Post-install: a pack that brought themes offers to switch to one, right
+// where the user is still looking. "Apply now" is the same request Settings →
+// Theme makes — the web-chat-wide default, which is also what lets the theme's
+// logos fill the brand slots this project left empty.
+function applyPrompt(body) {
+  const themes = themesOf(body.pack);
+  if (!themes.length) return null;
+  const box = el('div', 'rail-notice pk-apply');
+  box.appendChild(el('div', 'rn-title', themes.length === 1 ? `Theme installed: ${themes[0]}` : `${themes.length} themes installed`));
+  box.appendChild(el('div', 'rn-body', 'Switch to it now, or later from ⋯ → Settings → Theme.'));
+  const actions = el('div', 'pk-actions');
+  for (const name of themes) {
+    const b = el('button', 'btn primary', themes.length === 1 ? 'Apply now' : `Apply ${name}`);
+    b.type = 'button';
+    b.dataset.theme = name;
+    b.addEventListener('click', () => applyTheme(name, b));
+    actions.appendChild(b);
+  }
+  box.appendChild(actions);
+  box.appendChild(el('div', 'pk-card-status'));
+  return box;
+}
+
+async function applyTheme(name, btn) {
+  const box = btn.closest('.pk-apply');
+  const say = (text, kind) => {
+    const s = box && box.querySelector('.pk-card-status');
+    if (s) { s.className = `pk-card-status${kind ? ' ' + kind : ''}`; s.textContent = text; }
+  };
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/theme/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, scope: 'global' }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || !out.ok) { say(out.error || out.hint || `could not apply ${name}`, 'err'); btn.disabled = false; return; }
+    say(`${name} is the theme now.`);
+  } catch (e) {
+    say(`could not reach the daemon: ${e.message}`, 'err');
+    btn.disabled = false;
+  }
 }
 
 async function postJson(path, payload) {
@@ -799,9 +855,13 @@ function quarantineCard(q) {
   }
   if (units.childElementCount) card.appendChild(units);
 
+  // Every theme it would add: a swatch strip per mode, the logos, the fonts.
+  for (const th of q.themes || []) card.appendChild(themeReview(q, th));
+
   // SKILL.md, expandable inline. This is the artefact nobody thinks to read, and
-  // it is the one that ends up in Claude's instructions.
-  card.appendChild(skillDisclosure(q));
+  // it is the one that ends up in Claude's instructions. A themes-only pack has
+  // none and needs none (a theme is found through the picker, not a skill).
+  if (q.skill || componentsOf(q).length || !(q.themes || []).length) card.appendChild(skillDisclosure(q));
 
   for (const c of q.collisions || []) {
     if (c.severity === 'refused') {
@@ -837,6 +897,57 @@ function quarantineCard(q) {
   card.appendChild(actions);
   card.appendChild(el('div', 'pk-card-status'));
   return card;
+}
+
+// The palette strip's order, per mode — the review record's `palette` keys.
+const SWATCHES = ['bg', 'panel', 'fg', 'accent', 'green', 'gold'];
+
+// One staged theme, as a reviewer needs to see it before deciding. Every value
+// here came out of somebody else's repository: the colours are set as a style
+// PROPERTY (setProperty drops a value that is not a colour, and nothing is ever
+// interpolated into markup), and a logo is an <img> on the quarantine route,
+// which serves only a logo that passed the Brand check, sandboxed.
+function themeReview(q, th) {
+  const box = el('div', 'pk-theme');
+  const head = el('div', 'pk-unit');
+  head.appendChild(el('span', 'de-name', th.name));
+  head.appendChild(chip('theme', 'tier'));
+  const modes = th.modes || [];
+  if (modes.length === 1) head.appendChild(chip(`${modes[0]} only`, 'tier'));
+  if (th.css) head.appendChild(chip('raw CSS — refused', 'warn'));
+  box.appendChild(head);
+
+  const palette = th.palette || {};
+  for (const mode of Object.keys(palette)) {
+    const row = el('div', 'pk-swatches');
+    row.appendChild(el('span', 'pk-swatch-mode', mode === 'default' ? '' : mode));
+    for (const k of SWATCHES) {
+      const v = palette[mode] && palette[mode][k];
+      const sw = el('span', 'pk-swatch');
+      if (typeof v === 'string') sw.style.setProperty('background-color', v);
+      sw.title = `${k}${typeof v === 'string' ? ` ${v}` : ' — not set'}`;
+      row.appendChild(sw);
+    }
+    box.appendChild(row);
+  }
+
+  const prefix = `${th.name}/logos/`;
+  const logos = (th.files || []).filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length));
+  if (logos.length) {
+    const strip = el('div', 'pk-logos');
+    for (const file of logos) {
+      const img = document.createElement('img');
+      img.className = 'pk-logo';
+      img.alt = file;
+      img.title = file;
+      img.src = `/api/packs/quarantine/${encodeURIComponent(q.name)}/logo?theme=${encodeURIComponent(th.name)}&file=${encodeURIComponent(file)}`;
+      strip.appendChild(img);
+    }
+    box.appendChild(strip);
+  }
+  const fonts = (th.fonts || []).map((f) => f.family).filter(Boolean);
+  if (fonts.length) box.appendChild(el('div', 'pk-unit-list', `fonts: ${fonts.join(' · ')}`));
+  return box;
 }
 
 function componentsOf(q) {
@@ -994,6 +1105,8 @@ function installedCard(p) {
   if ((p.components || []).length) {
     card.appendChild(el('div', 'pk-unit-list', p.components.join(' · ')));
   }
+  const themes = themesOf(p);
+  if (themes.length) card.appendChild(el('div', 'pk-unit-list', `themes: ${themes.join(' · ')}`));
   if (p.skill) {
     const d = el('details', 'pk-skill');
     d.appendChild(el('summary', null, 'what this tells Claude'));
