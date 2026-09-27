@@ -695,3 +695,44 @@ test("loadPortalRestart takes the target's restartPortal, a pre-restartPortal bu
   fakeVersion(paths, '0.4.0');
   assert.equal(update.loadPortalRestart(paths, '0.4.0'), null);
 });
+
+// ── the builtin theme's per-user folder is seeded by the NEW build ──────────
+// (lib/setup/theme-logos.js — made at install and update, never lazily.) Like
+// the restart, the target build's copy decides it: a shim in versions/<v>
+// requires the real module and records which build ran.
+test('update seeds the per-user theme folders with the TARGET build\'s module; a target without one seeds nothing', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const { userPaths } = require('../lib/core/paths');
+  const real = path.join(__dirname, '..', 'lib', 'setup', 'theme-logos.js');
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+  const folder = userPaths().themeLogosDir('georgetown-blue');
+
+  const run = (version, shim) => update([], deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: `v${version}`, version, assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      const dir = fakeVersion(paths, release.version);
+      if (shim) {
+        fs.mkdirSync(path.join(dir, 'lib', 'setup'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'lib', 'setup', 'theme-logos.js'),
+          `const real = require(${JSON.stringify(real)});\n`
+          + `module.exports = { ...real, seedThemeLogos: () => { (globalThis.__wcSeeded ||= []).push('${version}'); real.seedThemeLogos(); } };\n`);
+      }
+      return { version: release.version, dir: versionDir };
+    },
+  }));
+
+  await run('0.5.5', false);
+  assert.equal(fs.existsSync(folder), false, 'a target with no module: nothing (and no fallback to this build)');
+  assert.equal(update.loadThemeLogos(paths, '0.5.5'), null);
+
+  const d = await run('0.6.0', true);
+  assert.deepEqual(d, { before: '0.5.0', after: '0.6.0' });
+  assert.deepEqual(globalThis.__wcSeeded, ['0.6.0'], 'the target build\'s copy ran');
+  assert.deepEqual(fs.readdirSync(folder), ['README.txt']);
+});
