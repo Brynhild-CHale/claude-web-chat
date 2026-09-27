@@ -272,3 +272,156 @@ test('cf-api: WEB_CHAT_CF_API cannot send the token in cleartext off this machin
   assert.equal(outbound.transportFor(new URL('http://127.0.0.1:1/')), require('http'));
   assert.equal(outbound.transportFor(new URL('https://api.cloudflare.com/')), require('https'));
 });
+
+// ── s3b-2: the rest of what the fake can simulate ───────────────────────────
+
+// The account's state, minus bookkeeping — what a no-op re-run must leave alone.
+const snapshot = (fake) => JSON.stringify({ ...fake.db, configs: [...fake.db.configs] });
+
+for (const [key, perm] of Object.entries(PERMS)) {
+  test(`one token: a token without ${perm} is told so, before any write`, async (t) => {
+    withTempHome(t);
+    const fake = await withFakeCloudflare(t);
+    fake.sim.missing = [key];
+    const { p } = await run(fake);
+    await assert.rejects(p, (e) => e.userFacing && e.message.includes(`missing a permission: ${perm}`)
+      && Object.values(PERMS).filter((x) => x !== perm).every((x) => !e.message.includes(x)));
+    assert.deepEqual(fake.writes(), []);
+    assert.equal(fs.existsSync(userPaths().tunnelConfig), false);
+  });
+}
+
+test('one token: a hostname in no zone on the account stops the run and says what to add', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t, { zones: [{ id: 'zone000000000000000000000000009', name: 'other.test' }] });
+  const { p } = await run(fake);
+  await assert.rejects(p, (e) => e.userFacing && /no zone on account "Test Account" holds wc\.example\.test — add the domain to Cloudflare first/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: Zero Trust never turned on is named, with where to turn it on', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.zeroTrust = false;
+  const { p } = await run(fake);
+  await assert.rejects(p, (e) => e.userFacing && /Zero Trust is not turned on.*one\.dash\.cloudflare\.com/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: a rate limit that does not lift stops the run and says to wait', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.rateLimit = 100;
+  const { p } = await run(fake);
+  await assert.rejects(p, (e) => e.userFacing && /rate limited \(HTTP 429\) — wait a minute/.test(e.message));
+  assert.equal(fake.calls.length, 4, 'three retries, then it gives up');
+  assert.deepEqual(fake.writes(), []);
+});
+
+test('one token: --dry-run with a conflict still prints it, and still writes nothing', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.db.dns.push({ id: 'r1', zone_id: 'zone000000000000000000000000001', type: 'CNAME', name: '*.example.test', content: 'elsewhere.example.net', proxied: true });
+  const { c, p } = await run(fake, ['--dry-run']);
+  await assert.rejects(p, /stopped before changing anything/);
+  assert.match(c.text(), /✗ DNS already has CNAME \*\.example\.test → elsewhere\.example\.net/);
+  assert.deepEqual(fake.writes(), []);
+  assert.equal(fs.existsSync(userPaths().tunnelToken), false);
+});
+
+test('one token: --dry-run against a set-up account plans only keeps', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  await (await run(fake)).p;
+  const before = fake.writes().length;
+  const { c, p } = await run(fake, ['--dry-run']);
+  const r = await p;
+  assert.deepEqual(r.plan.steps.map((s) => s.action).filter((a) => a !== 'keep' && a !== 'converge'), []);
+  assert.equal(fake.writes().length, before);
+  assert.match(c.text(), /--dry-run: nothing was changed/);
+});
+
+test('one token: MFA taken by the organization but refused on the application → the PIN, said and recorded', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = 'app';
+  const { c, p } = await run(fake);
+  await p;
+  assert.equal(loadConfig().signin, 'pin');
+  assert.equal(fake.db.apps.length, 1, 'one application, written once without MFA');
+  assert.equal(fake.db.apps[0].mfa_config, undefined);
+  assert.match(c.text(), /Sign-in: emailed one-time PIN — Cloudflare would not require independent MFA on the application:.*with a 720h session/);
+});
+
+test('one token: after an MFA refusal a re-run changes nothing, and a later plan that allows it upgrades in place', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.mfaRefused = true;
+  await (await run(fake)).p;
+  const snap = snapshot(fake);
+  const aud = loadConfig().access.aud;
+  await (await run(fake)).p;
+  assert.equal(snapshot(fake), snap, 'the refused re-run left the account as it was');
+  assert.equal(loadConfig().signin, 'pin');
+
+  fake.sim.mfaRefused = false;
+  const { c, p } = await run(fake);
+  await p;
+  assert.equal(fake.db.apps.length, 1, 'the same application, updated');
+  assert.equal(fake.db.apps[0].aud, aud, 'so its AUD tag — and the portal config — stays');
+  assert.equal(fake.db.apps[0].mfa_config.mfa_disabled, false);
+  assert.equal(loadConfig().signin, 'pin+biometric');
+  assert.match(c.text(), /Sign-in: emailed one-time PIN \+ biometrics/);
+});
+
+test('one token: a run that dies half way is finished by the next, with nothing duplicated', async (t) => {
+  withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  fake.sim.fail = [{ method: 'POST', path: /\/access\/policies$/ }];
+  await assert.rejects((await run(fake)).p, /simulated failure/);
+  assert.equal(fake.db.tunnels.length, 1, 'the tunnel was made before the failure');
+  assert.equal(fake.db.apps.length, 0);
+  assert.equal(fs.existsSync(userPaths().tunnelConfig), false, 'no config for a half-made setup');
+
+  await (await run(fake)).p;
+  assert.equal(fake.db.tunnels.length, 1);
+  assert.equal(fake.db.dns.length, 2);
+  assert.equal(fake.db.idps.length, 1);
+  assert.equal(fake.db.policies.length, 1);
+  assert.equal(fake.db.apps.length, 1);
+  assert.equal(loadConfig().access.aud, fake.db.apps[0].aud);
+});
+
+test('one token: a token that sees two accounts needs --account, and takes it', async (t) => {
+  withTempHome(t);
+  const accounts = [
+    { id: 'acc0000000000000000000000000001', name: 'Test Account' },
+    { id: 'acc0000000000000000000000000002', name: 'Other Account' },
+  ];
+  const fake = await withFakeCloudflare(t, { accounts });
+  await assert.rejects((await run(fake)).p, (e) => e.userFacing && /sees 2 accounts — pick one with --account/.test(e.message));
+  assert.deepEqual(fake.writes(), []);
+  await (await run(fake, ['--account', accounts[0].id])).p;
+  assert.equal(fake.db.apps.length, 1);
+});
+
+test('one token: a pasted token, and one passed as a flag value, are not stored either', async (t) => {
+  const home = withTempHome(t);
+  const fake = await withFakeCloudflare(t);
+  const env = { ...process.env, WEB_CHAT_CF_API: fake.base };
+  const access = createFakeAccess({ team: fake.team });
+  const base = ['setup', '--hostname', 'wc.example.test', '--email', 'me@example.test'];
+
+  const pasted = capture();
+  await tunnel(base, { log: pasted.log, env, fetchJwks: access.fetchJwks, prompt: quietPrompt({ 'Paste the Cloudflare API token': fake.token }) });
+  assert.match(pasted.text(), /the API token was not saved/);
+
+  const flagged = capture();
+  await tunnel([...base, '--api-token', fake.token], { log: flagged.log, env, fetchJwks: access.fetchJwks, prompt: quietPrompt() });
+  assert.match(flagged.text(), /--api-token puts the token in your shell history/);
+
+  for (const f of filesUnder(home, null)) {
+    assert.ok(!fs.readFileSync(f, 'utf8').includes(fake.token), `${f} holds the API token`);
+  }
+  assert.equal(fake.db.apps.length, 1);
+});

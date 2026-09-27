@@ -15,11 +15,19 @@
 // Simulations (set on `fake.sim` at any time):
 //   missing: ['org', …]   token permissions the token lacks (PERMS keys in
 //                         cf-api: tunnel, apps, org, dns) → 403 code 10000
-//   mfaRefused: true      org / app / policy writes carrying mfa_config → 400
-//                         (a plan without independent MFA)
+//   mfaRefused: true      org and app writes carrying mfa_config → 400 (a
+//                         plan without independent MFA); 'org' or 'app' refuses
+//                         only that one (the org takes it, the app does not)
 //   rateLimit: n          the next n requests answer 429 (Retry-After: 0)
 //   zeroTrust: false      the account has no Zero Trust organization (404)
 //   badToken: true        every request is 401 "Invalid API Token" (1000)
+//   fail: [{ method, path, status, times }]
+//                         a matching request (path: a RegExp on the path
+//                         without /client/v4) answers `status` (500 default),
+//                         `times` times (1 default) — a run that dies half way
+//
+// A missing zone is not a simulation: pass `zones` without the hostname's zone
+// (`zones: []`).
 
 const http = require('http');
 const crypto = require('crypto');
@@ -33,7 +41,8 @@ function createFakeCloudflare({
   zones = [{ id: 'zone000000000000000000000000001', name: 'example.test' }],
   team = 'testteam',
 } = {}) {
-  const sim = { missing: [], mfaRefused: false, rateLimit: 0, zeroTrust: true, badToken: false };
+  const sim = { missing: [], mfaRefused: false, rateLimit: 0, zeroTrust: true, badToken: false, fail: [] };
+  const refuses = (what) => sim.mfaRefused === true || sim.mfaRefused === what;
   const db = {
     dns: [],
     tunnels: [],
@@ -115,7 +124,7 @@ function createFakeCloudflare({
       if (!sim.zeroTrust) return err(res, 404, 12106, 'organization not found');
       if (method === 'GET') return ok(res, db.org);
       if (method === 'PUT') {
-        if (sim.mfaRefused && body.mfa_config) return err(res, 400, 12130, 'independent MFA is not available for this account');
+        if (refuses('org') && body.mfa_config) return err(res, 400, 12130, 'independent MFA is not available for this account');
         db.org = { ...body };
         return ok(res, db.org);
       }
@@ -145,7 +154,7 @@ function createFakeCloudflare({
     if (rest === '/access/apps') {
       if (method === 'GET') return list(res, db.apps);
       if (method === 'POST') {
-        if (sim.mfaRefused && body.mfa_config) return err(res, 400, 12130, 'independent MFA is not available for this account');
+        if (refuses('app') && body.mfa_config) return err(res, 400, 12130, 'independent MFA is not available for this account');
         const app = { ...body, id: uuid(), aud: hex(32), created_at: new Date().toISOString() };
         db.apps.push(app);
         return ok(res, app);
@@ -154,7 +163,7 @@ function createFakeCloudflare({
     if ((m = rest.match(/^\/access\/apps\/([^/]+)$/)) && method === 'PUT') {
       const i = db.apps.findIndex((x) => x.id === m[1]);
       if (i === -1) return err(res, 404, 12130, 'app not found');
-      if (sim.mfaRefused && body.mfa_config && body.mfa_config.mfa_disabled === false) return err(res, 400, 12130, 'independent MFA is not available for this account');
+      if (refuses('app') && body.mfa_config && body.mfa_config.mfa_disabled === false) return err(res, 400, 12130, 'independent MFA is not available for this account');
       for (const k of ['id', 'aud', 'created_at']) if (k in body) return err(res, 400, 12130, `${k} is read-only`);
       db.apps[i] = { ...body, id: db.apps[i].id, aud: db.apps[i].aud, created_at: db.apps[i].created_at };
       return ok(res, db.apps[i]);
@@ -173,6 +182,11 @@ function createFakeCloudflare({
       calls.push({ method: req.method, path: p, query: Object.fromEntries(u.searchParams), body, auth: req.headers.authorization || null });
       if (sim.rateLimit > 0) { sim.rateLimit--; return send(res, 429, { success: false, errors: [{ code: 971, message: 'Please wait and consider throttling your request speed' }] }, { 'retry-after': '0' }); }
       if (sim.badToken || req.headers.authorization !== `Bearer ${token}`) return err(res, 401, 1000, 'Invalid API Token');
+      const f = sim.fail.find((x) => x.times !== 0 && (!x.method || x.method === req.method) && x.path.test(p));
+      if (f) {
+        f.times = (f.times == null ? 1 : f.times) - 1;
+        return err(res, f.status || 500, 10001, 'simulated failure');
+      }
       const perm = permFor(p);
       if (perm && sim.missing.includes(perm)) return err(res, 403, 10000, 'Authentication error');
       try { route(req.method, p, u.searchParams, body, res); } catch (e) { err(res, 500, 10001, e.message); }
