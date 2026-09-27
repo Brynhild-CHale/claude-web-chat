@@ -241,6 +241,7 @@ const HANDLERS = {
     if (msg.scope === 'global') {
       applyGlobalTheme(msg.theme || null, true);
       if (msg.theme && msg.theme.name) syncThemeSelect(msg.theme.name);
+      refreshBrand(); // the pack can fill an empty brand slot (lib/server/brand.js)
     } else if (msg.scope === 'node') {
       if (msg.target === view.activeId) setActiveNodeTheme(msg.theme || null);
       if (msg.target === view.viewedId) applyNodeTheme(msg.theme || null, true);
@@ -292,7 +293,7 @@ const HANDLERS = {
   'service:trust'(msg) { onTrustPrompt(msg); },
   'service:trust:clear'(msg) { onTrustClear(msg); },
   // A brand image slot was set or cleared (here or in another viewer).
-  brand(msg) { applyBrand(msg.slots); },
+  brand(msg) { applyBrand(msg.slots, msg.fill); },
 };
 
 // The daemon's socket, on the page's own origin and scheme. A page served over

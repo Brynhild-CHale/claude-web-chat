@@ -57,7 +57,7 @@ claude-web-chat pack get https://github.com/acme/ops-pack    # download and revi
 | [Installing and updating](docs/install.md) | what `install.sh` and `init` do, updates and rollback, turning it off, what it writes to your machine |
 | [Component packs](docs/component-packs.md) · [Service components](docs/service-components.md) | building and shipping your own components |
 | [Channels](docs/channels-dev.md) · [Driving the surface](docs/driving-the-surface.md) · [Exporting pages](docs/export-pages.md) | the wake path, external processes, self-contained `.html` exports and replays |
-| [Themes](docs/themes.md) | the builtin packs (Earthy, Paper, Georgetown), light and dark modes, the design tokens, brand images |
+| [Themes](docs/themes.md) | the builtin packs (Earthy, Paper, Georgetown Blue), light and dark modes, the design tokens, brand images |
 | [Remote access](docs/remote-access.md) | `claude-web-chat tunnel`: your surfaces from a phone or another computer, behind Cloudflare Access |
 | [Capture profiles](docs/capture-profiles-and-panes.md) | how the browser extension distils a captured page, and the pane it lands in |
 | [Platform support](docs/platform-support.md) | macOS, Linux, and WSL2 |

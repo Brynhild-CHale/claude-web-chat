@@ -204,7 +204,7 @@ test('theme: the packs are listed builtins, read-only, and web-chat still applie
 
   const { themes } = (await api.get('/api/themes')).json;
   const builtins = themes.filter(x => x.location === 'builtin');
-  assert.deepEqual(builtins.map(x => x.name), ['earthy', 'paper', 'georgetown'], 'the three packs, stock look first');
+  assert.deepEqual(builtins.map(x => x.name), ['earthy', 'paper', 'georgetown-blue'], 'the three packs, stock look first');
   assert.deepEqual(builtins.map(x => x.modes), [['light', 'dark'], ['light'], ['light']], 'modes are named, not dumped');
   assert.ok(!themes.some(x => x.name === 'web-chat'), 'the retired name is not listed');
 
@@ -237,7 +237,9 @@ test('theme: a saved theme under a builtin name — listing and apply agree the 
 
   const { themes } = (await api.get('/api/themes')).json;
   const named = (n) => themes.filter((x) => x.name.toLowerCase() === n);
-  for (const n of ['paper', 'georgetown']) {
+  // Georgetown.json is shadowed through the alias: `georgetown` now names
+  // georgetown-blue, so the file folds onto that row.
+  for (const n of ['paper', 'georgetown-blue']) {
     assert.equal(named(n).length, 1, `one '${n}' row, not the file and the builtin`);
     const row = named(n)[0];
     assert.equal(row.name, n);

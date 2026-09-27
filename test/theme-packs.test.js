@@ -42,7 +42,8 @@ test('the canonical table: unique, well-formed names in known groups', () => {
 });
 
 test('every pack defines every canonical token — and nothing else — in every mode it declares', () => {
-  assert.deepEqual(BUILTIN_THEMES.map(t => t.name), ['earthy', 'paper', 'georgetown']);
+  assert.deepEqual(BUILTIN_THEMES.map(t => t.name), ['earthy', 'paper', 'georgetown-blue']);
+  assert.deepEqual(BUILTIN_THEMES.map(t => t.title), ['Earthy', 'Paper', 'Georgetown Blue'], 'each pack has a display name');
   for (const pack of BUILTIN_THEMES) {
     const modes = themeModes(pack);
     assert.ok(modes.length >= 1, `${pack.name} declares a mode`);
@@ -57,7 +58,7 @@ test('every pack defines every canonical token — and nothing else — in every
   }
   assert.deepEqual(themeModes(BUILTIN_THEMES[0]), ['light', 'dark'], 'Earthy is the light/dark pair');
   assert.deepEqual(themeModes(BUILTIN_THEMES[1]), ['light'], 'Paper is single-mode');
-  assert.deepEqual(themeModes(BUILTIN_THEMES[2]), ['light'], 'Georgetown is single-mode');
+  assert.deepEqual(themeModes(BUILTIN_THEMES[2]), ['light'], 'Georgetown Blue is single-mode');
 });
 
 test("Earthy is public/app.css verbatim, and app.css defines the whole canonical table", () => {
@@ -76,7 +77,7 @@ test('the design facts the packs carry', () => {
   assert.equal(paper.tokens['--wc-radius'], '4px');
   for (const k of ['--wc-ambient', '--wc-fog', '--wc-vignette']) assert.equal(paper.tokens[k], 'none', `Paper ${k} off`);
   for (const k of ['--wc-grid-line', '--wc-scanline']) assert.equal(paper.tokens[k], 'transparent', `Paper ${k} off`);
-  const gt = at('georgetown');
+  const gt = at('georgetown-blue');
   assert.equal(gt.tokens['--wc-fg-bright'], '#041E42');
   assert.equal(gt.tokens['--wc-topbar-border'], '#041E42');
   assert.equal(gt.tokens['--wc-accent'], '#003DA5');
@@ -149,12 +150,48 @@ test('applying a builtin stores a reference: the pack\'s current values win over
   const file = path.join(root, '.web-chat', 'theme.json');
   const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(stored.builtin, true);
-  assert.equal(stored.name, 'georgetown');
+  assert.equal(stored.name, 'georgetown-blue', 'the alias is stored as the id it resolves to');
   stored.modes.light.tokens['--wc-accent'] = '#badbad'; // a stale copy from an older release
   fs.writeFileSync(file, JSON.stringify(stored));
   const g = (await api.get('/api/theme?scope=global')).json;
   assert.equal(g.tokens['--wc-accent'], '#003DA5');
-  assert.equal(g.name, 'georgetown');
+  assert.equal(g.name, 'georgetown-blue');
+  assert.equal(g.title, 'Georgetown Blue');
+});
+
+// s2-1: the pack was `georgetown` before it was Georgetown Blue. Everything that
+// stored the old id — a project's theme.json, a node's theme, a saved call —
+// must keep resolving, and the old id is never listed or saveable.
+test('georgetown is an unlisted alias of georgetown-blue: stored references keep resolving', async (t) => {
+  const { root, api } = await withServer(t);
+  const file = path.join(root, '.web-chat', 'theme.json');
+  // a theme.json written by apply_theme before the rename
+  fs.writeFileSync(file, JSON.stringify({ name: 'georgetown', builtin: true, tokens: {} }));
+  let g = (await api.get('/api/theme?scope=global')).json;
+  assert.equal(g.name, 'georgetown-blue', 'reports as the pack under its new id');
+  assert.equal(g.title, 'Georgetown Blue');
+  assert.equal(g.tokens['--wc-fg-bright'], '#041E42', "and resolves the pack's tokens");
+
+  // a node theme (or any stored layer) naming the old id: every reader goes
+  // through normalizeTheme, which re-reads a builtin reference from the pack
+  const nt = normalizeTheme({ name: 'georgetown', builtin: true, tokens: {} });
+  assert.equal(nt.name, 'georgetown-blue');
+  assert.equal(flattenTheme(nt, 'light').tokens['--wc-accent'], '#003DA5');
+
+  // apply_theme with the old id, any case
+  const r = await api.post('/api/theme/apply', { name: 'GEORGETOWN', scope: 'global' });
+  assert.equal(r.status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).name, 'georgetown-blue');
+
+  // never listed, never saveable
+  const { themes } = (await api.get('/api/themes')).json;
+  assert.ok(!themes.some((x) => x.name === 'georgetown'), 'the old id is not listed');
+  const row = themes.find((x) => x.name === 'georgetown-blue');
+  assert.equal(row.title, 'Georgetown Blue', 'list_themes carries the display name');
+  for (const name of ['georgetown', 'georgetown-blue']) {
+    const save = await api.post('/api/themes', { name, location: 'local', tokens: { '--wc-bg': '#000' } });
+    assert.equal(save.status, 400, `saving over '${name}' is refused`);
+  }
 });
 
 test('a pre-pack theme.json naming the retired builtin reports as earthy and keeps its (empty) tokens', async (t) => {

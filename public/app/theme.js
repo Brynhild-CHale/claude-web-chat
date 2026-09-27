@@ -173,7 +173,7 @@ export function syncModeToggle() {
   // hover that shows its title in some browsers, and the title is the point.
   btn.classList.toggle('is-disabled', !ok);
   btn.setAttribute('aria-disabled', String(!ok));
-  const name = (globalThemeObj && globalThemeObj.name) || 'This theme';
+  const name = (globalThemeObj && (globalThemeObj.title || globalThemeObj.name)) || 'This theme';
   const label = ok ? 'Light / dark · T' : `${name} has only a ${effectiveMode()} mode`;
   btn.title = label;
   btn.setAttribute('aria-label', ok ? 'Toggle light / dark (T)' : label);

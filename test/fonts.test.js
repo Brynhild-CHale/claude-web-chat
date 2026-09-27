@@ -77,9 +77,9 @@ test('familiesIn: the packs name the faces they are drawn in', () => {
   const named = (name) => [...familiesIn(Object.values(flattenTheme(getBuiltin(name)).tokens))].sort();
   assert.deepEqual(named('earthy'), ['Geist', 'Geist Mono']);
   assert.deepEqual(named('paper'), ['Geist', 'Geist Mono']);
-  // Georgetown's UI stack is Helvetica (a system face) — only its mono and its
-  // Caslon display/reading are bundled.
-  assert.deepEqual(named('georgetown'), ['Geist Mono', CASLON]);
+  // Georgetown Blue's UI stack is Helvetica (a system face) — only its mono and
+  // its Caslon display/reading are bundled.
+  assert.deepEqual(named('georgetown-blue'), ['Geist Mono', CASLON]);
 });
 
 // --- inlining ------------------------------------------------------------------
@@ -130,10 +130,10 @@ test('resolveExportTheme: inlines the faces the resolved theme names, and none f
   const plain = resolveExportTheme(themeCtx(null), { mounts: [{ id: 'p', html: '' }], node: null });
   assert.equal(plain.page.fonts, '');
 
-  const gt = resolveExportTheme(themeCtx({ name: 'georgetown', builtin: true }), { mounts: [], node: null });
+  const gt = resolveExportTheme(themeCtx({ name: 'georgetown-blue', builtin: true }), { mounts: [], node: null });
   assert.match(gt.page.fonts, /font-family: 'Libre Caslon Text'/);
   assert.match(gt.page.fonts, /font-family: 'Geist Mono'/);
-  assert.ok(!/font-family: 'Geist';/.test(gt.page.fonts), 'Georgetown draws no Geist sans');
+  assert.ok(!/font-family: 'Geist';/.test(gt.page.fonts), 'Georgetown Blue draws no Geist sans');
 
   // A pane themed into a face the page does not use still gets it: @font-face
   // on the document reaches into the pane's shadow root.
@@ -157,9 +157,9 @@ test('assembleExport: page fonts land in the head style, self-contained', () => 
   assert.ok(!/url\('\/fonts\//.test(html), 'no server-relative font url');
 });
 
-test('route: a Georgetown export carries Caslon inline; the chrome serves the same files same-origin', async (t) => {
+test('route: a Georgetown Blue export carries Caslon inline; the chrome serves the same files same-origin', async (t) => {
   const { api } = await withServer(t);
-  await api.post('/api/theme/apply', { name: 'georgetown', scope: 'global' });
+  await api.post('/api/theme/apply', { name: 'georgetown-blue', scope: 'global' });
   await api.post('/api/render', { id: 'p1', html: '<h1>Title</h1>' });
   await api.post('/api/commit', { message: 'seed' });
   const dl = await api.get('/api/export/active');
