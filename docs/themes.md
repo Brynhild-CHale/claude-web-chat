@@ -23,14 +23,20 @@ or node scope it styles the chrome only, at pane scope that pane's content only.
 | `paper` | light + dark | flat cream (dark: warm charcoal), olive accent, every depth effect off |
 | `georgetown-blue` (Georgetown Blue) | light + dark | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar; dark is navy surfaces, a lightened 293, 1205 gold bookmarks on burgundy and a faint cross-hatch |
 
-Every pack is held to WCAG AA contrast in every mode it declares — 4.5:1 for
-running text, 3:1 for labels on fills, glyphs and large text — measured over the
-ink/fill pairs the chrome actually paints (`test/theme-contrast.test.js`). One
-ink is held only to the 3:1 line: the accent ink (`--wc-accent-text`), which
-colours accent labels and also the links in a page's markdown — so a link in
-body-size prose can fall short of AA's 4.5:1 for normal text (Earthy light's is
-3.04:1 on the stage). Earthy light's accent labels, keycaps and muted text were
-darkened just past their lines for this; they read a shade deeper than 0.7.6's.
+Every pack is held to contrast lines in every mode it declares — WCAG AA's
+4.5:1 for running text, 3:1 for glyphs, UI and large text — measured over the
+ink/fill pairs the chrome actually paints (`test/theme-contrast.test.js`). Small
+text that labels a control or sits on a fill — button labels, count badges,
+keycaps, tertiary glyphs, pins and error text — is held to the 3:1 line, not the
+4.5:1 AA asks of normal-size text; in Earthy and Paper light several of those
+sit between the two. So is the accent ink (`--wc-accent-text`), which colours
+accent labels and also the links in a page's markdown — so a link in body-size
+prose can fall short of AA's 4.5:1 for normal text (Earthy light's is 3.04:1 on
+the stage). Text that is running prose on the stage, such as the graph legend
+and the phone log's empty message, reads in `--wc-muted`, which is held to
+4.5:1. Earthy light's accent labels, keycaps, muted and tertiary text and comment
+pins were darkened just past their lines for this; they read a shade deeper than
+0.7.6's.
 No builtin carries raw CSS:
 Georgetown Blue's 2px topbar rule is the `--wc-topbar-rule-width` token.
 
@@ -123,6 +129,14 @@ theme names** — page, node and pane layers, tokens and raw css alike — so an
 unthemed export carries no font at all and a Georgetown Blue one carries Caslon and
 Geist Mono (about 205KB inlined), not Geist; an Earthy or Paper one carries Geist and Geist Mono (about 185KB). A family the bundle lacks is left to
 the reader's machine.
+
+Every document drawn from the node preview inlines them the same way: the graph
+inspector's preview and the glance, pane history, the `node-render` builtin,
+each replay frame, a downloaded `replay.html` and a rendered GIF, MP4 or WebM.
+Their CSP allows `data:` fonts and nothing else (`font-src data:`), so a replay
+of a Georgetown Blue page draws its headings in Caslon, not in whatever serif
+the rendering machine has. A preview whose theme names a bundled family grows by
+about 190–210KB.
 
 ## Brand images
 
