@@ -90,7 +90,7 @@ For your *other* installed projects, run `claude-web-chat init` (or `install`) i
 
 A failed or tampered download changes nothing: `current` only moves after a complete, verified unpack, so the install you have is the one you keep.
 
-Old versions stay unpacked (the newest three), which makes a rollback a symlink swap rather than a reinstall:
+Old versions stay unpacked (the newest three, plus the newest release), which makes a rollback a symlink swap rather than a reinstall:
 
 ```sh
 claude-web-chat update --list        # what's on disk, and which one is live
@@ -115,8 +115,10 @@ And since it's opt-in, projects you never ran `install` in are simply inert.
 
 - `<project>/.web-chat/` — the graph, saved components, exports, server portfile and log; `brand/` holds the brand images you drop into ⋯ → Settings, and `tmp/` the scratch files of a replay render (a throwaway browser profile, video frames) while one runs. `install` adds it to your `.gitignore` (unless a rule for it is already there).
 - `<project>/.claude/` — hook entries merged into `settings.json`, plus the managed rules file, the `/web-chat` slash command, and two skills.
-- `~/.web-chat/` — the program itself (`versions/<version>/` plus the `current` symlink) and per-user state: disable markers, the update-check cache, saved themes, and `services/trusted.json` (which component services you've approved, and for which project).
-- `~/.web-chat/tunnel/` — only once you run `claude-web-chat tunnel setup`: `tunnel.json`, the cloudflared connector **token** (a secret, kept 0600), and the portal, cloudflared and remote-access logs. See [remote access](remote-access.md).
+- `~/.web-chat/` — the program itself (`versions/<version>/` plus the `current` symlink) and per-user state: disable markers, the update-check cache, saved themes, `services/trusted.json` (which component services you've approved, and for which project), user-tier components, capture profiles and packs (`components/`, `profiles/`, `packs.json`, `packs/`), and which projects have been through `init` (`onboarded.json`).
+- `~/.web-chat/instances.json` — the machine registry: each running daemon, the capture hub and the tunnel portal, plus one row per Claude Code session's web-chat MCP server (its presence, recorded from the moment Claude Code starts it, even in a project where web-chat is switched off). Every write takes `instances.json.lock` beside it for a moment, so two writers cannot lose each other's rows.
+- `~/.web-chat/projects.json` — every project whose surface has booted on this machine: the known-projects list `ls --all`, the Sessions panel and the tunnel picker show, and the only projects the tunnel portal can start. An entry whose directory is gone, or no longer has `.web-chat/`, drops out on the next read.
+- `~/.web-chat/tunnel/` — only once you run `claude-web-chat tunnel setup`: `tunnel.json`, the cloudflared connector **token** (a secret, kept 0600), `cloudflared.yml` (the ingress generated for a `local` tunnel), `cloudflared.pid.json` (the connector the portal is running, so the next portal can stop one a killed portal left behind), and the portal, cloudflared and remote-access logs. See [remote access](remote-access.md).
 - `~/.local/bin/` — three symlinks (`claude-web-chat`, `-mcp`, `-hook`) pointing at `~/.web-chat/current/bin/`.
 
 Nothing else — no system directories, and nothing needing sudo. `uninstall` removes this project's hooks while leaving your graph data alone; `claude-web-chat uninstall --self` also removes the program (the `~/.local/bin` links and every unpacked version), leaving per-user state and every project's graph in place. If you set up remote access, run `claude-web-chat tunnel down` **before** `uninstall --self` — it does not stop a running portal or cloudflared — and delete `~/.web-chat/tunnel/` afterwards to remove the connector token.

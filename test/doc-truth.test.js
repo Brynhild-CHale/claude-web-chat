@@ -858,7 +858,7 @@ test('every image the README shows exists in .github/media/ and stays under 2.5 
   }
 });
 
-test('install.md\'s "What it writes" names the tunnel, brand and replay scratch directories', () => {
+test('install.md\'s "What it writes" names the tunnel, brand and replay scratch directories and the machine-wide lists', () => {
   const { projectPaths, userPaths } = require('../lib/core/paths');
   const path = require('path');
   const body = read('docs/install.md');
@@ -872,6 +872,11 @@ test('install.md\'s "What it writes" names the tunnel, brand and replay scratch 
     ['projectPaths().brandDir', `\`${path.basename(p.brandDir)}/\``],
     ['projectPaths().tmp', `\`${path.basename(p.tmp)}/\``],
     ['userPaths().tunnelDir', `\`~/${path.relative(path.dirname(u.root), u.tunnelDir)}/\``],
+    // The known-projects list decides which projects the tunnel portal may
+    // start, and the registry carries a row per Claude Code session — both
+    // written machine-wide, neither under any project.
+    ['userPaths().projects', `\`~/${path.relative(path.dirname(u.root), u.projects)}\``],
+    ['userPaths().instances', `\`~/${path.relative(path.dirname(u.root), u.instances)}\``],
   ]) {
     assert.ok(section.includes(claim), `docs/install.md's inventory does not name ${claim} (${what})`);
   }
