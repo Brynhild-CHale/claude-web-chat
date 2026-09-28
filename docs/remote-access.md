@@ -162,11 +162,11 @@ claude-web-chat tunnel setup --api-token-file ~/Downloads/cf-token.txt \
 claude-web-chat tunnel up
 ```
 
-A pasted token is **shown as you paste it** — the terminal prompt does not hide
-what you type — and stays in the scrollback. Where the screen is shared or
-recorded, prefer `--api-token-file` (and delete the file afterwards). The same
-goes for the connector token and the Google client secret when setup asks for
-them.
+A pasted token is **not shown** as you paste it — the terminal prompt hides what
+you type, so it does not stay in the scrollback. On a shared or recorded screen,
+still prefer `--api-token-file` (and delete the file afterwards); the same goes
+for the connector token (`--token-file`) and the Google client secret
+(`--google-client-secret-file`) when setup asks for them.
 
 Setup reads your account first, prints its plan, and only then changes
 anything. It creates — or finds, so a re-run changes nothing — a remotely
@@ -261,7 +261,7 @@ The same result, by hand in the dashboard.
    `~/.web-chat/tunnel/token` (0600), and prints the remaining dashboard steps
    with your hostnames filled in. The token is never a flag *value* — that would
    put it in your shell history — only a file to read it from, or a paste (which
-   the terminal shows as you paste it, so prefer the file on a shared screen).
+   the terminal does not show; a file is still the better choice on a recorded screen).
 4. **Route the hostnames to the portal.**
    - token tunnel: in the tunnel's Public Hostnames, add `wc.example.com` and
      `*.example.com` (or one per project — `claude-web-chat tunnel status` lists
