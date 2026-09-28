@@ -2,7 +2,7 @@
 
 A live page in your browser that Claude Code draws on while you talk in the terminal. Diagrams, forms, comparisons, and working mockups land on the page and stay interactive, with short headings and prose between them so a page reads top to bottom. What you click and type there flows back to Claude as data, and every turn becomes a node in a graph you can walk back through and branch.
 
-![One web-chat cycle: Claude renders a question on the surface, the user answers in the page, and the answer flows back to Claude](.github/media/flow.gif)
+![A page over three turns, as web-chat's own replay draws it: Claude puts a cache comparison and a constraints form on the page, the user applies the form and a recommendation appears, then a read-path diagram lands after two chat-only turns](.github/media/flow.gif)
 
 ## Quickstart
 
@@ -33,11 +33,25 @@ claude-web-chat open
 
 > Sketch this project's architecture as a diagram on the surface.
 
+## Pages
+
+A page is a sequence of panes and short markdown. Claude writes a `#` title and `##` headings between runs of panes, and the headings become the page's **Contents** column. Panes sit on a 12-column grid: drag one by its header or resize it, and **↺ Claude's layout** puts a run back. What you type in a pane is kept across refreshes and turns. Hit **Push → Claude** (`P`) to hand what you did back to Claude as data.
+
 ## History is a graph
 
-Every turn that changes the surface is saved as a node. Preview any earlier state (read-only), set it active on the graph screen, and your next message branches from there, so trying a different direction never loses the first one. Replay plays a stretch of history forward node by node, and exports it as an offline page, a GIF or (with ffmpeg) a video.
+Every turn that changes the surface is saved as a node. A turn that only answers in chat saves nothing, and is listed on the next node that does. Preview any earlier state (read-only), set it active on the graph screen, and your next message branches from there, so trying a different direction never loses the first one. A run of turns collapses into a ×N stack, and bookmarks name the moments that matter.
 
-![The graph viewer: every turn is a node, and earlier states can be previewed and branched from](.github/media/graph.gif)
+![The graph screen: the bookmarked node opens in the inspector, a ×2 branch stack expands into its two turns, and one of them opens in a read-only glance](.github/media/graph.gif)
+
+## Replay
+
+Replay plays a stretch of history forward, node by node, with Claude's reply under each one. Press `R` on the page or **▶ Replay** in the graph inspector. Claude can also direct one: it picks the nodes, how long each one holds and a caption for each, then opens it in your browser (`export({script, open: true})`). Any replay exports as an offline `.html` player, a GIF, or (with ffmpeg) an MP4 or WebM. The page at the top of this README is one of those GIFs, rendered by web-chat.
+
+![Claude opens a directed replay in the browser: the page steps from the question to the Redis recommendation, then down a branch that keeps the cache in-process](.github/media/replay.gif)
+
+## Looks
+
+Three theme packs are built in, each with a light and a dark mode: **Georgetown Blue** (navy and blue on vellum, Caslon headings), where new projects start, **Earthy** (the original look) and **Paper** (flat cream). Switch with ⋯ → Settings, or `◑` / `T` for light and dark. A theme pack from someone else installs from its GitHub link the same way a component pack does, logos and fonts included. Settings → Brand puts your own logo in the topbar and on exported pages. See [Themes](docs/themes.md).
 
 ## Components
 
@@ -47,7 +61,15 @@ Claude saves panes worth keeping to the project's component library and reuses t
 claude-web-chat pack get https://github.com/acme/ops-pack    # download and review first; installs nothing
 ```
 
-![Installing a component pack from a GitHub URL through the topbar's ＋ → Manage panel](.github/media/component-install.gif)
+![Installing a component pack from a GitHub URL through the topbar's ＋ → Manage panel: download for review, install, then add one of its blocks to the page from the Library tab](.github/media/component-install.gif)
+
+## Every project on this machine
+
+⋯ → **Sessions** (`S`) lists every web-chat project on this computer: whether its surface is running, and whether a Claude Code session is attached or in the middle of a turn. Click one to open it. `claude-web-chat ls` prints the same list in the terminal.
+
+## From your phone
+
+`claude-web-chat tunnel` puts this machine's surfaces behind a Cloudflare tunnel, so you can open them from a phone or another computer. You sign in through Cloudflare Access, and only accounts you allowlisted get in. Nothing is reachable from outside until you run `tunnel setup` and `tunnel up`. On a phone, blocks stay interactive and the layout stays fixed. See [Remote access](docs/remote-access.md).
 
 ## Documentation
 
