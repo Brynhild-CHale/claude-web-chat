@@ -20,11 +20,11 @@ Or just ask, in your own words:
 
 > Sketch this project's architecture as a diagram on the surface.
 
-Within a few seconds the diagram appears in the browser. Notice the graph rail: a node was committed for that turn. Now try something interactive:
+Within a few seconds the diagram appears in the browser, and the topbar's node label moved to the new node: a node was committed for that turn (`G` opens the graph). Now try something interactive:
 
 > Give me a small form on the surface to choose which module we refactor first, with a note field.
 
-Fill it in, hit the submit button, and tell Claude "check the form" — your choices arrive on Claude's side as data, not a screenshot. When a pane is meant to drive a longer back-and-forth, Claude will name a **signal key** in chat and wait on it, reacting each time you hit Apply.
+Fill it in, hit the submit button, and tell Claude "check the form" — your choices arrive on Claude's side as data, not a screenshot. When a pane is meant to drive a longer back-and-forth, Claude names a **signal key** in chat: hitting Apply queues it on the right-edge rail, and **Push → Claude** (`P`) hands it over — or, when Claude declared it immediate, Apply wakes Claude at once.
 
 That's the core loop: you talk in the terminal, Claude shows its work in the browser, and your clicks talk back.
 
