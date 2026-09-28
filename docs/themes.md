@@ -55,6 +55,14 @@ left on disk but never applied: the builtin wins in `list_themes` too, whose
 row for it carries `shadows` (the library the file is in) and a `hint`. To keep
 using the saved tokens, save them under another name.
 
+Only a stored theme marked `builtin: true` — what applying a pack writes — or the
+retired `web-chat` counts as the pack. So a builtin-named copy that 0.7.6 had
+already **applied** keeps painting its own tokens after the upgrade, and says so:
+`get_theme` reports it under its own name, with no pack title, plus
+`shadows_builtin` and a `hint`, and it draws none of the pack's logos. ⋯ →
+Settings still shows the pack selected for it; to put the pack itself on, pick
+another theme there first and then the pack, or `apply_theme` the pack.
+
 ## The default look
 
 The global theme resolves: the project's `.web-chat/theme.json` → your
@@ -153,8 +161,11 @@ click it to choose one):
 Each slot is one SVG or PNG of at most 256 KB, stored under
 `.web-chat/brand/` with the project (so, like the rest of `.web-chat/`, it is
 gitignored). The format is decided by the file's bytes, not its name. An SVG
-carrying anything active — a `<script>`, an `on…=` handler, a `javascript:` url,
-a `<foreignObject>`, an entity declaration — is refused rather than cleaned.
+carrying anything active — a `<script>`, `<foreignObject>`, `<iframe>`,
+`<embed>`, `<object>` or `<handler>` under any namespace prefix, an `on…=`
+handler, a `javascript:` url however its characters are referenced, an animation
+that sets a handler or a link, a namespace other than SVG's and XLink's, an
+entity declaration — is refused rather than cleaned.
 An unset slot draws nothing at all: no empty box in the topbar, no header rule
 or footer in the export.
 
@@ -252,10 +263,11 @@ outlines, and use no external references (a linked image or font is never
 fetched, so it would not show); a PNG should be 2× on a transparent background.
 At most 256 KB each. Every logo passes the same check as a Settings → Brand
 upload when the pack is reviewed: SVG or PNG by its bytes (and the format its
-name says), and no `<script>`, `on…=` handler, `javascript:` URL,
-`<foreignObject>` or entity declaration. One that fails refuses the pack, and
-the review card says which; a file whose name is not one of the six is simply
-not installed.
+name says), and nothing active — the same list as a Brand upload (see *Brand
+images*). One that fails refuses the pack, and the review card says which; a
+file whose name is not one of the six is simply not installed. A logo is read
+only from a regular file: a symlink in `logos/` is skipped (with a log line), so
+a committed link cannot show a file from elsewhere on the host.
 
 ### Fonts
 
@@ -265,8 +277,8 @@ today. A pack may also ship its own as `{ "family": "Harbor Sans", "file":
 "HarborSans.woff2", "weight": "100 900", "style": "normal" }`: WOFF2 only, at
 most 1 MB each and 12 per theme, and only with the SIL Open Font License text
 beside them in `fonts/OFL.txt`. Such a font is installed with the theme but not
-yet loaded by the surface or exports, so name a fallback after it in the token
-(`'Harbor Sans', 'Geist', sans-serif`).
+yet loaded by the surface or exports — the review warns about each one — so name
+a bundled fallback after it in the token (`'Harbor Sans', 'Geist', sans-serif`).
 
 ### Reviewing, applying, removing
 
@@ -277,7 +289,9 @@ one; later, it is under **Installed** in ⋯ → Settings → Theme, next to the
 of the pack it came from. `claude-web-chat pack list` lists a pack's themes, and
 `claude-web-chat pack remove <pack>` removes them with their logos and fonts — if
 the removed theme was the active one, the project goes back to its default
-theme and the command says so.
+theme and the command says so. Updating a pack (installing it again) to a
+version that no longer ships the active theme does the same, and every open
+surface repaints.
 
 ## Canonical token table
 

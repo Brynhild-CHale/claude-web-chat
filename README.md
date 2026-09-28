@@ -51,7 +51,7 @@ Replay plays a stretch of history forward, node by node, with Claude's reply und
 
 ## Looks
 
-Three theme packs are built in, each with a light and a dark mode: **Georgetown Blue** (navy and blue on vellum, Caslon headings), where new projects start, **Earthy** (the original look) and **Paper** (flat cream). Switch with ⋯ → Settings, or `◑` / `T` for light and dark. A theme pack from someone else installs from its GitHub link the same way a component pack does, logos and fonts included. Settings → Brand puts your own logo in the topbar and on exported pages. See [Themes](docs/themes.md).
+Three theme packs are built in, each with a light and a dark mode: **Georgetown Blue** (navy and blue on vellum, Caslon headings), where new projects start, **Earthy** (the original look) and **Paper** (flat cream). Switch with ⋯ → Settings, or `◑` / `T` for light and dark. A theme pack from someone else installs from its GitHub link the same way a component pack does, logos included (fonts it ships are installed but not loaded yet). Settings → Brand puts your own logo in the topbar and on exported pages. See [Themes](docs/themes.md).
 
 ## Components
 
