@@ -13,6 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const packs = require('../lib/packs/install');
 const { validateManifest, parseManifest } = require('../lib/packs/manifest');
@@ -25,7 +26,7 @@ const { classify } = require('../lib/core/remote-policy');
 const { REMOTE_HEADER, REMOTE_HEADER_VALUE } = require('../lib/core/cors');
 const { projectPaths, userPaths, PUBLIC_DIR } = require('../lib/core/paths');
 const { tmpDir, write, fakeForge, repoWithArchive } = require('../test-support/packs');
-const { withTempHome, withServer } = require('../test-support/helpers');
+const { withTempHome, withServer, wsConnect, waitUntil } = require('../test-support/helpers');
 
 const SHA = 'b'.repeat(40);
 const PNG = Buffer.from(
@@ -257,6 +258,109 @@ test('a file the user added beside the logos keeps its folder on remove', async 
   packs.removePackByName({ name: 'harbor-themes', root });
   assert.ok(fs.existsSync(path.join(logos, 'notes.txt')));
   assert.equal(fs.existsSync(path.join(logos, 'logotype.svg')), false);
+});
+
+// ── update: a version that drops the ACTIVE theme ───────────────────────────
+//
+// R6-3: re-installing a pack is the advertised update, and it prunes the whole
+// units the new version no longer ships — but only `pack remove` reset the
+// active theme. An update that dropped the applied theme left theme.json naming
+// a theme nothing could apply again, its logos gone, and no frame to tell open
+// surfaces.
+
+const SHA2 = 'c'.repeat(40);
+// v1 ships acme and acme-two; v2 only acme-two.
+async function acmeForges(t) {
+  const v1 = themePack({ name: 'acme-themes', themes: { acme: {}, 'acme-two': {} } });
+  const v2 = themePack({ name: 'acme-themes', themes: { 'acme-two': {} } });
+  const f1 = await fakeForge(t, { repos: { 'acme/themes': repoWithArchive(v1, { sha: SHA }) } });
+  const f2 = await fakeForge(t, { repos: { 'acme/themes': repoWithArchive(v2, { sha: SHA2 }) } });
+  return { v1: f1.url('acme', 'themes'), v2: f2.url('acme', 'themes') };
+}
+
+// A socket that records every frame the daemon broadcasts.
+async function listen(t, port) {
+  const frames = [];
+  const sock = wsConnect(port);
+  sock.on('message', (d) => { try { frames.push(JSON.parse(d.toString())); } catch {} });
+  await new Promise((resolve, reject) => { sock.once('open', resolve); sock.once('error', reject); });
+  t.after(() => { try { sock.terminate(); } catch {} });
+  await waitUntil(() => frames.some((f) => f.type === 'hello'), { what: 'hello' });
+  return frames;
+}
+
+test('an update that no longer ships the ACTIVE theme resets it, and the install route repaints every surface', async (t) => {
+  withTempHome(t);
+  const { root, baseUrl, port, api } = await withServer(t);
+  const urls = await acmeForges(t);
+  const lib = projectPaths(root).themesDir;
+  await packs.installPack({ url: urls.v1, root });
+  assert.equal((await api.post('/api/theme/apply', { name: 'acme', scope: 'global' })).json.ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(projectPaths(root).theme, 'utf8')).name, 'acme');
+  const frames = await listen(t, port);
+  const { cursor } = (await api.get('/api/events?since=0')).json;
+
+  const out = await (await fetch(`${baseUrl}/api/packs/install`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: urls.v2 }),
+  })).json();
+  assert.equal(out.ok, true, out.hint);
+  assert.ok(out.results.some((r) => r.kind === 'theme' && r.name === 'acme' && r.action === 'pruned'), 'the update pruned acme');
+  assert.deepEqual(out.theme_reset, { name: 'acme', scopes: ['project'] }, 'and says it reset the active theme');
+  assert.equal(fs.existsSync(path.join(lib, 'acme.json')), false);
+  assert.ok(fs.existsSync(path.join(lib, 'acme-two.json')), 'the theme v2 still ships is kept');
+  assert.equal(fs.existsSync(projectPaths(root).theme), false, 'theme.json no longer names a theme nothing can apply');
+  assert.notEqual((await api.get('/api/theme?scope=global')).json.name, 'acme');
+  assert.notEqual((brand.fillSource(root) || {}).name, 'acme', 'no fill from a theme that is gone');
+
+  const frame = await waitUntil(() => frames.find((f) => f.type === 'theme' && f.scope === 'global'), { what: 'a global theme frame' });
+  assert.notEqual(frame.resolved.name, 'acme', 'the frame carries what the project resolves to now');
+  const { events } = (await api.get(`/api/events?since=${cursor || 0}`)).json;
+  assert.ok(events.some((e) => e.kind === 'theme' && e.op === 'reset' && e.name === 'acme' && e.scope === 'global' && e.reason === 'pack-updated'),
+    'the event log names the reset and why');
+});
+
+test('an update resets nothing when the active theme is one it still ships, or another theme entirely', async (t) => {
+  for (const active of ['acme-two', 'mine']) {
+    const root = project(t);
+    const urls = await acmeForges(t);
+    await packs.installPack({ url: urls.v1, root });
+    fs.writeFileSync(projectPaths(root).theme, JSON.stringify({ name: active, tokens: {} }));
+    const out = await packs.installPack({ url: urls.v2, root });
+    assert.ok(out.results.some((r) => r.name === 'acme' && r.action === 'pruned'), active);
+    assert.equal(out.theme_reset, undefined, active);
+    assert.equal(JSON.parse(fs.readFileSync(projectPaths(root).theme, 'utf8')).name, active, `${active} stays applied`);
+  }
+});
+
+// ASYNC: the fake forge answers from THIS process. WEB_CHAT_PORT is dropped so
+// the CLI's announce can never reach a daemon outside the test.
+function runCli(args, { home, cwd }) {
+  return new Promise((resolve) => {
+    const env = { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_NO_GH: '1' };
+    delete env.WEB_CHAT_PORT;
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'claude-web-chat.js'), ...args], {
+      cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+test('`pack install` of such an update prints the line `pack remove` prints for a reset', async (t) => {
+  const home = tmpDir('wc-home-');
+  const proj = tmpDir('wc-proj-');
+  fs.mkdirSync(path.join(proj, '.web-chat'), { recursive: true });
+  const urls = await acmeForges(t);
+  const first = await runCli(['pack', 'install', urls.v1, '--yes'], { home, cwd: proj });
+  assert.equal(first.status, 0, first.stderr);
+  fs.writeFileSync(projectPaths(proj).theme, JSON.stringify({ name: 'acme', tokens: {} }));
+  const upd = await runCli(['pack', 'install', urls.v2, '--yes'], { home, cwd: proj });
+  assert.equal(upd.status, 0, upd.stderr);
+  assert.match(upd.stdout, /acme was the active theme — this project is back on the default theme/);
+  assert.equal(fs.existsSync(projectPaths(proj).theme), false);
 });
 
 // ── review (quarantine) ─────────────────────────────────────────────────────
