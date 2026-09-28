@@ -146,9 +146,13 @@ function stubEnv() {
       now: () => now,
       raf: (fn) => { q.push(fn); return q.length; },
       caf: () => {},
-      // unref'd: a seek whose stub frame is never loaded holds its 8 s
-      // frame-timeout open, and that must not hold the test process.
-      setTimeout: (fn, ms) => { const h = setTimeout(fn, ms); h.unref(); return h; },
+      // Only the 8 s frame-timeout is unref'd: a seek whose stub frame is never
+      // loaded holds it open, and that must not hold the test process. The
+      // short settle (SETTLE_MS) stays ref'd — an awaited seek resolves through
+      // it, and on Node 22 a promise held only by unref'd timers is abandoned
+      // (the test cancelled: "Promise resolution is still pending but the
+      // event loop has already resolved").
+      setTimeout: (fn, ms) => { const h = setTimeout(fn, ms); if (ms >= 1000) h.unref(); return h; },
       clearTimeout: (id) => clearTimeout(id),
     },
     advance(ms) { now += ms; const run = q.splice(0); run.forEach((fn) => fn(now)); },
