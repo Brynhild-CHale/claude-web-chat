@@ -91,6 +91,38 @@ function setEnv(t, vars) {
   });
 }
 
+// Every rejection nothing handled while the test ran. The daemon installs no
+// unhandledRejection listener, so in it any one of these exits the process —
+// no response, no draft.json, the uncommitted surface gone.
+function trapUnhandled(t) {
+  const seen = [];
+  const trap = (e) => { seen.push(e); };
+  process.on('unhandledRejection', trap);
+  t.after(() => process.removeListener('unhandledRejection', trap));
+  return seen;
+}
+
+// One captureFrames in a child Node run with --unhandled-rejections=strict and
+// no listener of its own: the daemon's position exactly, where a rejection
+// nothing handles ends the process (in this one the test runner's listener would
+// catch it). Asserts the child lived to report, then → its { ok, code, message }.
+const CHROME_MODULE = path.join(__dirname, '..', 'lib', 'replay', 'chrome');
+function captureInStrictChild(fake, tmpDir) {
+  const script = `
+    const { captureFrames } = require(${JSON.stringify(CHROME_MODULE)});
+    captureFrames({ chromePath: process.env.BIN, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
+      times: [0], tmpDir: process.env.TMPD, timeoutMs: 30000, onFrame: () => {} })
+      .then(() => ({ ok: true }), (e) => ({ ok: false, code: e.code, message: e.message }))
+      // A beat for anything the teardown left rejected to surface first.
+      .then((r) => setTimeout(() => process.stdout.write(JSON.stringify(r)), 100));`;
+  const r = spawnSync(process.execPath, ['--unhandled-rejections=strict', '-e', script], {
+    env: { ...process.env, BIN: fake.bin, TMPD: tmpDir }, encoding: 'utf8', timeout: 30000,
+  });
+  const err = String(r.stderr || '').trim().split('\n').slice(0, 8).join(' | ');
+  assert.equal(r.status, 0, `the capture's process died (${r.signal || `exit ${r.status}`}): ${err}`);
+  return JSON.parse(r.stdout);
+}
+
 async function seed(api) {
   await api.post('/api/render', { id: 'm1', html: '<p>one</p>' });
   await api.post('/api/commit', { message: 'first prompt, maybe private' });
@@ -353,6 +385,26 @@ test('createPipeConnection: an event that arrives settles its waiter and is not 
   inp.emit('close');
 });
 
+// A caller can make a waiter and then throw before it awaits it — Page.navigate
+// failing while the load-event waiter is out. The close that follows still fails
+// that waiter, and a rejection nobody handles would exit the daemon. So every
+// promise the connection hands out already carries a handler of its own…
+test('createPipeConnection: a waiter or command nobody awaits is failed on close without an unhandled rejection', async (t) => {
+  const unhandled = trapUnhandled(t);
+  const out = new PassThrough();
+  const inp = new PassThrough();
+  const cdp = createPipeConnection(out, inp);
+  const evt = cdp.once('Page.loadEventFired', { sessionId: 'S1' });
+  const cmd = cdp.send('Page.navigate', { url: 'about:blank' });
+  inp.emit('close');
+  const lateEvt = cdp.once('Page.loadEventFired');
+  const lateCmd = cdp.send('Page.enable');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(unhandled.map((e) => (e && e.code) || String(e)), [], 'no rejection went unhandled');
+  // …while whoever does await one still sees the reason.
+  for (const p of [evt, cmd, lateEvt, lateCmd]) await assert.rejects(p, (e) => e.code === 'chrome-exited');
+});
+
 test('captureFrames: a Chrome that exits during the page load fails at once with chrome-exited, not the timeout', async (t) => {
   const fake = fakeChrome(t, { mode: 'die-on-load' });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
@@ -377,6 +429,36 @@ test('captureFrames: a page that crashes (browser still up, pipe open) fails at 
   }), (e) => e.code === 'page-crashed');
   assert.ok(Date.now() - started < 10000, `failed on the crash, not the 30 s timeout (${Date.now() - started} ms)`);
   await assertNoSurvivors(fake, 'after a page crash');
+  assert.deepEqual(fs.readdirSync(tmpDir), []);
+});
+
+// Both used to kill the process running the capture: Page.navigate failing
+// threw before the load-event waiter was awaited, and the teardown then failed
+// that waiter with nothing listening — an unhandled rejection.
+test('captureFrames: a navigation Chrome refuses (errorText) rejects with page-error, and leaves no rejection unhandled', async (t) => {
+  const fake = fakeChrome(t, { mode: 'nav-error' });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const started = Date.now();
+  const r = captureInStrictChild(fake, tmpDir);
+  assert.equal(r.code, 'page-error', JSON.stringify(r));
+  assert.match(r.message, /ERR_BLOCKED_BY_ADMINISTRATOR/, 'the error names what Chrome said');
+  assert.ok(Date.now() - started < 10000, `failed on the refusal, not the 30 s timeout (${Date.now() - started} ms)`);
+  assert.ok(fake.read().some((l) => l.method === 'Page.navigate'), 'precondition: the navigation was asked for');
+  await assertNoSurvivors(fake, 'after a refused navigation');
+  assert.deepEqual(fs.readdirSync(tmpDir), []);
+});
+
+test('captureFrames: a Chrome that exits while Page.navigate is in flight rejects with chrome-exited, and leaves no rejection unhandled', async (t) => {
+  const fake = fakeChrome(t, { mode: 'die-in-navigate' });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const started = Date.now();
+  const r = captureInStrictChild(fake, tmpDir);
+  assert.equal(r.code, 'chrome-exited', JSON.stringify(r));
+  assert.ok(Date.now() - started < 10000, `failed on the exit, not the 30 s timeout (${Date.now() - started} ms)`);
+  assert.ok(fake.read().some((l) => l.method === 'Page.navigate'), 'precondition: it died on the navigation');
+  await assertNoSurvivors(fake, 'after an exit mid-navigate');
   assert.deepEqual(fs.readdirSync(tmpDir), []);
 });
 
@@ -622,6 +704,29 @@ test('POST /api/replay/render: a Chrome that exits during the page load answers 
   const again = await postJson(port, { format: 'replay' });
   assert.equal(again.status, 200, 'the single flight is free again');
 });
+
+// A navigation that fails (a policy blocking loopback, an unsafe port) or a
+// Chrome that exits during it used to take the whole daemon down: no answer to
+// the render, and the graceful shutdown that writes draft.json never ran.
+for (const [mode, code] of [['nav-error', 'page-error'], ['die-in-navigate', 'chrome-exited']]) {
+  test(`POST /api/replay/render: ${mode} answers 502 ${code}, and the daemon lives on`, async (t) => {
+    const unhandled = trapUnhandled(t);
+    const fake = fakeChrome(t, { mode });
+    setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
+    const { api, port, root } = await withServer(t);
+    await seed(api);
+    const r = await postJson(port, { width: 320 });
+    assert.equal(r.status, 502);
+    assert.equal((await r.json()).code, code);
+    await new Promise((res) => setTimeout(res, 100));
+    assert.deepEqual(unhandled.map((e) => (e && e.code) || String(e)), [], 'no rejection went unhandled (each would exit the daemon)');
+    assert.equal((await api.get('/api/health')).status, 200, 'the daemon still answers');
+    const tmp = projectPaths(root).tmp;
+    assert.deepEqual(fs.existsSync(tmp) ? fs.readdirSync(tmp) : [], [], 'no profile left behind');
+    const again = await postJson(port, { format: 'replay' });
+    assert.equal(again.status, 200, 'the single flight is free again');
+  });
+}
 
 test('POST /api/replay/render: a frame of the wrong size is refused, not stretched', async (t) => {
   const fake = fakeChrome(t, { mode: 'wrong-size' });
