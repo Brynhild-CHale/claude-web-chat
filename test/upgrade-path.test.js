@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 
-const { withServer, withTempHome, freePort } = require('../test-support/helpers');
+const { withServer, withTempHome, freePort, existingProject } = require('../test-support/helpers');
 const { userPaths } = require('../lib/core/paths');
 const { packageVersion } = require('../lib/core/versions');
 const stale = require('../lib/cli/stale-daemon');
@@ -147,4 +147,47 @@ test('a daemon boot seeds the builtin theme pack folder', async (t) => {
   await withServer(t);
   const folders = require('../lib/setup/theme-logos').FILL_PACKS.map((p) => userPaths().themeLogosDir(p));
   for (const dir of folders) assert.deepEqual(fs.readdirSync(dir), ['README.txt']);
+});
+
+// ── state a 0.7.x build left behind ─────────────────────────────────────────
+// No migration runs on the hop to 0.8, so a node or a draft 0.7.x wrote is
+// restored as-is. These fixtures are shaped exactly as 0.7.6 writes them.
+
+function seedGraph(webChatDir, nodes, extra = {}) {
+  const graphDir = path.join(webChatDir, 'graph');
+  fs.mkdirSync(graphDir, { recursive: true });
+  for (const n of nodes) fs.writeFileSync(path.join(graphDir, `${n.id}.json`), JSON.stringify(n));
+  fs.writeFileSync(path.join(graphDir, '_meta.json'), JSON.stringify({ active: nodes[nodes.length - 1].id, lock: null, ...extra }));
+}
+const pane = (id, html) => ({ id, html, target: 'main', params: {}, pane_state: {}, owner: 'claude' });
+
+// R3-5. 0.7.x did not reserve 'start', so a node it committed can hold a pane by
+// that name. The reservation was write-side only: such a pane came back live but
+// could be neither re-rendered nor restored from history.
+test('a 0.7.6 pane named \'start\' stays addressable; a new \'start\' is still refused, and after:\'start\' is still the top', async (t) => {
+  const node = {
+    id: 'n0', parent_id: null, created_at: 1000, author: 'claude',
+    trigger: { kind: 'turn', message: 'a start screen', summary: 'a start screen' },
+    mounts: [pane('x', '<p>x</p>'), pane('start', '<p>start screen</p>')],
+    store: {}, comments: [], captures: [],
+  };
+  const { api } = await withServer(t, {
+    seed: ({ webChatDir }) => { existingProject({ webChatDir }); seedGraph(webChatDir, [node]); },
+  });
+  assert.deepEqual((await api.get('/api/mounts')).json.order, ['x', 'start'], 'precondition: restored as-is');
+
+  const r = await api.post('/api/render', { id: 'start', html: '<p>start screen, v2</p>' });
+  assert.equal(r.json.ok, true, 'Claude can update the pane it already has');
+  const h = await api.post('/api/mounts/start/restore', { node_id: 'n0' });
+  assert.equal(h.json.ok, true, 'and the user can put an older version back');
+  assert.equal(h.json.restored_from, 'n0');
+
+  const top = await api.post('/api/render', { id: 'new', html: '<p>new</p>', after: 'start' });
+  assert.equal(top.json.ok, true);
+  assert.deepEqual((await api.get('/api/mounts')).json.order, ['new', 'x', 'start'], "after:'start' still means the page top");
+
+  await api.post('/api/clear', { id: 'start' });
+  const again = await api.post('/api/render', { id: 'start', html: '<p>a new one</p>' });
+  assert.equal(again.json.ok, false);
+  assert.equal(again.json.reserved, true, 'once it is gone the name is reserved again');
 });
