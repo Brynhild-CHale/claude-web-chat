@@ -21,6 +21,11 @@
 //                     the load event) | 'crash-on-load' (answer Page.navigate,
 //                     then report Inspector.targetCrashed and stay up, pipe
 //                     open, never firing the load event)
+//                     | 'nav-error' (answer Page.navigate with an errorText,
+//                     FAKE_CHROME_NAV_ERROR or net::ERR_BLOCKED_BY_ADMINISTRATOR,
+//                     and fire no load event — the page never loads)
+//                     | 'die-in-navigate' (exit on Page.navigate, before
+//                     answering it)
 //   FAKE_CHROME_STUBBORN '1' — a WEDGED browser, on top of any mode: ignores
 //                     SIGTERM, Browser.close and its pipe closing, and starts a
 //                     helper process (same process group, also deaf to SIGTERM)
@@ -75,6 +80,13 @@ async function handle(msg) {
     case 'Page.enable': return reply(msg);
     case 'Inspector.enable': return reply(msg);
     case 'Page.navigate': {
+      if (MODE === 'die-in-navigate') process.exit(3);
+      if (MODE === 'nav-error') {
+        // What Chrome answers when the navigation itself fails (a policy that
+        // blocks loopback, an unsafe port, a network error): a reply carrying
+        // errorText, and no load event for the page asked for.
+        return reply(msg, { frameId: 'F1', loaderId: 'L1', errorText: process.env.FAKE_CHROME_NAV_ERROR || 'net::ERR_BLOCKED_BY_ADMINISTRATOR' });
+      }
       let status = 0; let csp = null;
       try {
         const r = await fetch(msg.params.url);
