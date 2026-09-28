@@ -149,6 +149,79 @@ test('the boot hello publishes no form_state for panes nobody typed in', async (
   assert.deepEqual(sent.filter((f) => f.type === 'pane:form'), [], 'nor does a reconnect');
 });
 
+// The mount baseline above is taken synchronously after the pane's scripts run.
+// A value the pane's OWN script assigns later — from a store subscription (the
+// file-editor filling its buffer when the service pushes the file) or after an
+// awaited fetch (node-render filling its select) — fires no input event, so it
+// never moved that baseline, and the reconcile flush published it as if the
+// user had typed it: the surface read as changed, Set active added an empty
+// 'user' preserve node and a chat-only turn committed instead of folding.
+const SCRIPT_FILLED = [
+  { id: 'm-sub', target: 'main', params: {}, pane_state: {},
+    html: '<textarea id="ta"></textarea><script>store.subscribe("doc", (d) => { if (d) root.getElementById("ta").value = d.content; });</script>' },
+  { id: 'm-fetch', target: 'main', params: {}, pane_state: {},
+    html: '<select id="s"></select><script>(async () => {'
+      + ' const g = await (await fetch("/api/graph")).json();'
+      + ' const sel = root.getElementById("s");'
+      + ' for (const n of g.nodes) { const o = document.createElement("option"); o.value = n.id; o.textContent = n.label; sel.appendChild(o); }'
+      + ' sel.value = "n2"; })();</script>' },
+];
+const withFilled = () => [...liveMounts(), ...SCRIPT_FILLED.map((m) => ({ ...m }))];
+const shadowOf = (id) => hostFor(id).shadowRoot;
+const formFrames = () => sent.filter((f) => f.type === 'pane:form');
+
+test('a reconnect publishes nothing for fields a pane script filled after mount', async () => {
+  hello({ store: { k: 'one' }, mounts: withFilled() });
+  await tick();
+  // The service pushes the file — a server write, delivered after mount.
+  WS.onmessage({ data: JSON.stringify({ type: 'store:patch', patch: { doc: { content: 'version A' } } }) });
+  await tick();
+  assert.equal(shadowOf('m-sub').getElementById('ta').value, 'version A', 'precondition: the subscriber filled the textarea');
+  assert.equal(shadowOf('m-fetch').getElementById('s').value, 'n2', 'precondition: the awaited fetch filled the select');
+  assert.deepEqual(formFrames(), [], 'precondition: a script fill sends nothing on its own');
+
+  sent.length = 0;
+  hello({ store: { k: 'one', doc: { content: 'version A' } }, mounts: withFilled() }); // the laptop wakes
+  await tick();
+  assert.deepEqual(formFrames(), [],
+    'nobody typed, so the reconnect flush must publish nothing — it used to send the script-filled '
+    + 'textarea and select as pane:form, and the unchanged surface read as dirty server-side');
+});
+
+test('what the user typed in a script-filled pane still reaches the server on reconnect', async () => {
+  // The socket drops and the user edits the buffer the script filled.
+  WS.readyState = 3;
+  const ta = shadowOf('m-sub').getElementById('ta');
+  ta.value = 'version A, edited offline';
+  ta.dispatchEvent(new W.Event('input', { bubbles: true, composed: true }));
+  await new Promise((r) => setTimeout(r, 450)); // past the 350ms debounce, while down
+  sent.length = 0;
+
+  WS.readyState = 1;
+  hello({ store: { k: 'one', doc: { content: 'version A' } }, mounts: withFilled() });
+  await tick();
+  const frames = formFrames();
+  assert.deepEqual(frames.map((f) => f.id), ['m-sub'],
+    'only the pane the user edited is flushed — the select the fetch filled is still not published');
+  assert.equal(frames[0].form_state['#ta:0'].value, 'version A, edited offline',
+    'and it carries what the user typed during the gap');
+
+  // Sent, so the pane is clean again: a later script fill (the service pushing
+  // a newer file) followed by another reconnect publishes nothing.
+  WS.onmessage({ data: JSON.stringify({ type: 'store:patch', patch: { doc: { content: 'version B' } } }) });
+  await tick();
+  assert.equal(ta.value, 'version B', 'precondition: the subscriber replaced the buffer');
+  sent.length = 0;
+  hello({ store: { k: 'one', doc: { content: 'version B' } }, mounts: withFilled() });
+  await tick();
+  assert.deepEqual(formFrames(), [], 'the flag cleared once the frame went out');
+
+  // Back to the two-pane surface the rest of this file works on.
+  hello({ store: { k: 'one' } });
+  await tick();
+  assert.deepEqual(paneIds(), ['m-keep', 'm-gone']);
+});
+
 /* ── 1. a hello delivered while previewing must not touch the previewed DOM ── */
 
 test('a reconnect during a node preview folds instead of overwriting the surface', async () => {
