@@ -618,7 +618,9 @@ test('logs prints both tails; --follow streams what is appended until aborted', 
   await waitUntil(() => f.lines.includes('c2 new'), { what: 'the appended line' });
   ac.abort();
   await done;
-  assert.ok(!f.text().includes('p3'), '--cloudflared shows only that log');
+  // Header lines carry the temp HOME path, whose random suffix can hold "p3".
+  assert.ok(!f.lines.filter((l) => !l.startsWith('──')).includes('p3'), '--cloudflared shows only that log');
+  assert.equal(f.lines.filter((l) => l.startsWith('──')).length, 1);
 });
 
 test('logs includes the remote access log; --access shows only it', async (t) => {
