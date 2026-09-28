@@ -110,7 +110,7 @@
   --wc-panel-bg: #f6f0e4;
   --wc-header-bg: #efe8d8;
   --wc-muted: #6b604e;
-  --wc-muted-dim: #8c8069;
+  --wc-muted-dim: #867b65;
   --wc-border: #c6b99b;
   --wc-border-light: #fffdf6;
   --wc-accent: #5f7d33;
@@ -119,7 +119,7 @@
   --wc-accent-text: #6b8543;
   --wc-gold: #a9752a;
   --wc-green: #3f8560;
-  --wc-comment: #cf5a2f;
+  --wc-comment: #cc592e;
   --wc-green-fg: #f6f1e4;
   --wc-rust: #a85a33;
 
@@ -940,9 +940,12 @@ kbd {
 #gv-zoom-pct:hover { color: var(--wc-fg); }
 #gv-zoom-pct:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 #overlay-fit { font-size: 13px; }
+/* Legend and empty-log TEXT sit on the stage ground (--wc-bg), so they read in
+   --wc-muted (4.5:1 there in every pack); --wc-muted-dim is for the legend's
+   glyphs, held to the 3:1 line (test/theme-contrast.test.js). */
 .gv-legend {
   position: absolute; bottom: 14px; right: 14px; display: flex; gap: 14px;
-  font: 11px var(--wc-mono); color: var(--wc-muted-dim); pointer-events: none;
+  font: 11px var(--wc-mono); color: var(--wc-muted); pointer-events: none;
 }
 .gv-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .gv-legend .dot.active { background: var(--wc-accent); }
@@ -1633,7 +1636,7 @@ body.pin-mode #main { cursor: crosshair; }
 }
 .gv-lghost .k { flex: none; font: 600 10px var(--wc-mono); color: var(--wc-muted-dim); }
 .gv-lghost .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
-.gv-log-empty { padding: 24px 0 0 40px; font: 14px var(--wc-font); color: var(--wc-muted-dim); }
+.gv-log-empty { padding: 24px 0 0 40px; font: 14px var(--wc-font); color: var(--wc-muted); }
 .gv-log-bar {
   flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--wc-border); background: var(--wc-header-bg);

@@ -11,6 +11,8 @@
 // over the surface it sits on before it is measured.
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
 const { BUILTIN_THEMES, themeModes, flattenTheme, normalizeTheme } = require('../lib/server/theme');
 
 // [ink, fill, what it is] — fill may be `a over b` for a translucent layer.
@@ -36,6 +38,7 @@ const UI = [
   ['accent-fg', 'accent', 'a primary button label'],
   ['content-accent', 'content-bg', 'accent inside a content well'],
   ['muted-dim', 'panel-bg', 'tertiary glyphs'],
+  ['muted-dim', 'bg', 'tertiary glyphs and graph labels on the stage'],
   ['gold', 'panel-bg', 'viewing / lock / warning ink'],
   ['gold', 'gold-bg', 'a bookmark label on its fill'],
   ['gold-fg', 'gold', 'a count badge on the gold fill'],
@@ -43,6 +46,7 @@ const UI = [
   ['green', 'panel-bg', 'live / success ink'],
   ['green-fg', 'green', 'a commit button label'],
   ['comment', 'panel-bg', 'pins and errors'],
+  ['comment', 'bg', 'comment pins on the stage'],
   ['rust', 'panel-bg', 'capture ink'],
   ['key-fg', 'key-bg', 'a keycap'],
 ];
@@ -51,7 +55,10 @@ const UI = [
 // the packs existed (accent labels and keycaps on the stage and panels, muted
 // text on the stage), named in a KNOWN_SHORTFALLS list that could only shrink;
 // those inks were darkened just past AA and the list is gone, so a new miss in
-// ANY pack fails below.
+// ANY pack fails below. The two stage pairs (muted-dim and comment on --wc-bg)
+// went unmeasured until the 0.8.0 review, which found Earthy light drawing them
+// at 2.85 and 2.99: both inks were darkened a shade, and the tertiary TEXT on
+// the stage (the graph legend, the empty log) moved up to --wc-muted.
 
 // --- colour maths --------------------------------------------------------------
 function parseColor(v, tokens) {
@@ -128,6 +135,18 @@ test('every pack × mode reaches WCAG AA: 4.5 for text, 3 for UI and large text'
     .filter((m) => m.r !== null && m.r < m.min)
     .map((m) => `${m.key} (${m.what}) = ${m.r.toFixed(2)} < ${m.min}`);
   assert.deepEqual(fails, []);
+});
+
+test('the tertiary TEXT on the stage reads in --wc-muted, the ink the TEXT group measures on bg', () => {
+  // muted-dim on bg is held to the 3:1 line (glyphs, graph labels); running
+  // text on the stage ground must reach 4.5, so it may not be painted in it.
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public/app.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const sel of ['.gv-legend', '.gv-log-empty']) {
+    const m = new RegExp(`(?:^|\\})\\s*${sel.replace('.', '\\.')}\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(m, `app.css has a ${sel} rule`);
+    assert.match(m[1], /(?:^|;)\s*color:\s*var\(--wc-muted\)/, `${sel} text is --wc-muted`);
+  }
 });
 
 test('Paper and Georgetown Blue both have a dark mode, so ◑ works under them', () => {
