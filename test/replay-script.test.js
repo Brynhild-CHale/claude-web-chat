@@ -530,6 +530,12 @@ test('export MCP tool: `script` passes through; with no format it writes the .ht
   const bad = await tool.handler({ script: { ...SCRIPT, steps: [{ node: 'n1.0' }, { nodes: ['n1.1', 'n1.3'] }] } });
   assert.equal(bad.code, 'not-contiguous', 'a bad script is a result naming what to fix, not a thrown error');
   assert.match(bad.error, /step 2/);
+  assert.equal(bad.step, 2, 'the {error, code, step} the description promises: the step, as a field');
+  const offPath = await tool.handler({ script: { from: 'n1.0', to: 'n1.2', steps: [{ node: 'n1.0' }, { node: 'n1.3' }] }, format: 'gif' });
+  assert.deepEqual([offPath.code, offPath.step], ['off-path', 2], 'a render refusal carries the step too');
+  const badEnd = await tool.handler({ format: 'replay', to: 'n9.9' });
+  assert.equal(badEnd.which, 'to', 'a bad end is named: which one');
+  assert.equal(badEnd.step, undefined, 'no step where no script was refused');
 
   const html = await tool.handler({ script: SCRIPT, format: 'html' });
   assert.equal(html.code, 'bad-format');
