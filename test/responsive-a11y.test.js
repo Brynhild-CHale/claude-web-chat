@@ -186,6 +186,27 @@ test('the narrow chrome starts below 760px, all of it at once', () => {
   assert.deepEqual([...new Set(near)], [phoneMax], `every narrow breakpoint is max-width: ${phoneMax}px`);
 });
 
+test('a pane header that cannot be dragged gives the touch back to the page', () => {
+  // .pane-header is the drag handle, so it keeps the browser from panning on it.
+  // On a phone (layout fixed) or a locked block nothing can be dragged, and the
+  // strip must scroll the page like the rest of the pane — the phone's column of
+  // blocks is mostly headers to a thumb.
+  for (const width of [390, 759, 1280]) {
+    assert.equal(winningValue('.pane-header', 'touch-action', width), 'none', `a draggable header owns its touches at ${width}px`);
+    assert.equal(winningValue('.phone .pane-header', 'touch-action', width), 'auto', `a phone header pans the page at ${width}px`);
+    assert.equal(winningValue('.pane.locked .pane-header', 'touch-action', width), 'auto', `a locked header pans the page at ${width}px`);
+  }
+  // Those two out-rank .pane-header by specificity; no other rule may set a
+  // header's touch-action, or it could quietly take the pan away again.
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const setters = new Set();
+  for (const r of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(?:^|;)\s*touch-action\s*:/.test(r[2])) continue;
+    for (const sel of r[1].split(',').map((x) => x.trim())) if (/\.pane-header$/.test(sel)) setters.add(sel);
+  }
+  assert.deepEqual([...setters].sort(), ['.pane-header', '.pane.locked .pane-header', '.phone .pane-header']);
+});
+
 test('the phone rule lives in one place: public/app/viewport.js', () => {
   // The phone (layout fixed, the graph as a log) is chosen by shape —
   // narrow AND portrait (maintainer ruling a11) — and reverting that is meant to

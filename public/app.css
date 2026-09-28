@@ -1554,6 +1554,11 @@ body.pin-mode #main { cursor: crosshair; }
    refuses them too). What is inside a pane works as on the desktop. --- */
 .phone .pane :is(.pane-drag, .pane-btn, .pane-resize-r, .pane-resize-b, .pane-resize-rb) { display: none; }
 .phone .pane-header { cursor: default; }
+/* A header that cannot be dragged (the phone's fixed layout, a locked block)
+   gives the touch back: .pane-header's touch-action: none is for the drag, and
+   left on, a swipe that starts on one of the phone's stacked headers scrolls
+   nothing (attachDrag returns before preventDefault on a refused layout). */
+.phone .pane-header, .pane.locked .pane-header { touch-action: auto; }
 .phone .pane.narrow .pane-type { display: inline-block; }
 .phone .pane.minimized.peek { display: flex; }      /* a minimized block, shown here only */
 .phone #dock, .phone #more-menu [data-act="wipe"] { display: none; }
