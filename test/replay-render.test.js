@@ -22,7 +22,9 @@ const { isPidAlive } = require('../lib/core/portfiles');
 const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
-const { frameSchedule, normalizeRenderRequest, renderReplay, LIMITS } = require('../lib/server/replay/render');
+const {
+  frameSchedule, frameSize, normalizeRenderRequest, renderReplay, LIMITS,
+} = require('../lib/server/replay/render');
 const { replayOpts, buildReplay } = require('../lib/server/replay/document');
 const { createScriptStore } = require('../lib/server/replay/scripts');
 const { resolveReplayPath } = require('../lib/server/domain/replay-path');
@@ -170,6 +172,25 @@ test('frameSchedule: a fade is sampled at fps across the fade, then held — del
   assert.ok(Math.abs(sum - tl.total) < 1e-6, `delays sum to ${sum}, timeline is ${tl.total}`);
   // more fps, more samples
   assert.ok(frameSchedule(tl, { fps: 30 }).length > s.length);
+});
+
+test('normalizeRenderRequest: the frame is bounded in pixels whatever the replay\'s shape', () => {
+  const d = normalizeRenderRequest({});
+  assert.deepEqual([d.width, d.height], [960, 600], 'the default frame is unchanged');
+  assert.deepEqual([normalizeRenderRequest({ width: 1920 }).width, normalizeRenderRequest({ width: 1920 }).height], [1920, 1200], 'the widest 16:10 frame is the cap itself');
+
+  const tall = normalizeRenderRequest({ width: 1920, size: '320x2160' });
+  assert.ok(tall.width * tall.height <= LIMITS.maxArea, `${tall.width}×${tall.height} is within ${LIMITS.maxArea} px (unclamped: 1920×12960)`);
+  assert.ok(tall.width * tall.height > LIMITS.maxArea * 0.98, 'shrunk to fit, not further');
+  assert.equal(tall.width % 2, 0, 'even width');
+  assert.equal(tall.height % 2, 0, 'even height');
+  assert.ok(Math.abs(tall.height / tall.width - 2160 / 320) < 0.02, 'the frame keeps the replay\'s shape (no letterbox)');
+
+  assert.deepEqual(frameSize(1920, { w: 3840, h: 240 }), { width: 1920, height: 120 }, 'a wide, short frame is under the cap as asked');
+  for (const size of [{ w: 320, h: 2160 }, { w: 333, h: 2001 }, { w: 1280, h: 800 }, { w: 3840, h: 2160 }]) {
+    const f = frameSize(1920, size, 100000);
+    assert.ok(f.width * f.height <= 100000 && f.width % 2 === 0 && f.height % 2 === 0, `${JSON.stringify(size)} → ${f.width}×${f.height}`);
+  }
 });
 
 test('normalizeRenderRequest: defaults, clamps and honest refusals', () => {
@@ -604,6 +625,18 @@ test('a plain render hands the browser the steps it scheduled, pinned: a node se
   const after = payloadOf(buildReplay(ctx, q, { script }).html);
   assert.deepEqual(after.steps.map((s) => s.id), ['n0', 'n1', 'n4'], 'the pinned script still plays what the frames were scheduled for');
   assert.deepEqual(after.steps.map((s) => s.hold_ms ?? null), before.steps.map((s) => s.hold_ms ?? null));
+});
+
+test('renderReplay: a replay .html over the byte cap is refused, and nothing is written', async (t) => {
+  const ctx = directCtx(t);
+  const big = await renderReplay(ctx, { format: 'replay', from: 'n0', to: 'n4' }, { maxBytes: 1000 });
+  assert.equal(big.status, 413);
+  assert.equal(big.code, 'too-large');
+  assert.match(big.error, /replay \.html came to \d+ bytes; the limit is 1000/);
+  assert.ok(!fs.existsSync(ctx.paths.EXPORTS_DIR) || !fs.readdirSync(ctx.paths.EXPORTS_DIR).length, 'nothing written');
+  const fine = await renderReplay(ctx, { format: 'replay', from: 'n0', to: 'n4' }, {});
+  assert.equal(fine.ok, true, JSON.stringify(fine));
+  assert.ok(fine.bytes > 1000 && fine.bytes <= LIMITS.maxBytes);
 });
 
 // ── the routes ──────────────────────────────────────────────────────────────
