@@ -121,6 +121,7 @@ function captureInStrictChild(fake, tmpDir) {
   });
   const err = String(r.stderr || '').trim().split('\n').slice(0, 8).join(' | ');
   assert.equal(r.status, 0, `the capture's process died (${r.signal || `exit ${r.status}`}): ${err}`);
+  assert.ok(String(r.stdout || '').trim(), `the capture's process wrote nothing: ${err || '(no stderr)'}`);
   return JSON.parse(r.stdout);
 }
 
