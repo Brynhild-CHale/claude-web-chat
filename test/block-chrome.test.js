@@ -16,7 +16,7 @@
 //   - a LOCKED block refuses drags and resizes, including a lock set remotely;
 //   - a detached preview is READ-ONLY (plan §2b D2): toggles do not toggle,
 //     submits do not submit, the header's write controls refuse — and a pane
-//     kept across leaving the preview is editable again.
+//     the live surface shares with the preview is editable again once attached.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -300,16 +300,22 @@ test('a previewed pane is read-only: toggles, submits and header writes refuse',
   assert.deepEqual(sent.filter((f) => f.type !== 'event'), [], 'nothing reached the live surface');
 });
 
-test('a pane kept across leaving the preview is editable again', async () => {
+test('a pane the live surface shares with the preview is editable again once attached', async () => {
   // A hello that lands active on the previewed node attaches (leavePreview) and
-  // RECONCILES: the pane's spec is unchanged, so its DOM is kept, not re-mounted.
+  // renders its frame AUTHORITATIVELY (R7-3): the DOM on screen is the committed
+  // node's, with the node's form values, so the pane is re-mounted from the
+  // frame's live record — never reconciled over the previewed DOM, which kept the
+  // node's values on screen for the next keystroke to publish over the live ones.
   const hostBefore = pane('form').querySelector('.mount-host');
+  assert.equal(hostBefore.shadowRoot.getElementById('t').value, 'a', "precondition: the node's own value is on screen");
   frame({ type: 'hello', store: {}, theme: null, activeTheme: null, active: 'n2', lock: null, project: 'test',
-    mounts: NODE_MOUNTS.n2.map((m) => ({ ...m })) });
+    mounts: NODE_MOUNTS.n2.map((m) => ({ ...m, form_state: { '#t:0': { value: 'LIVE-typed' } } })) });
   await tick();
   assert.equal($('main').classList.contains('preview-readonly'), false, 'attached');
   const host = pane('form').querySelector('.mount-host');
-  assert.equal(host, hostBefore, 'precondition: the same DOM was kept');
+  assert.notEqual(host, hostBefore, "re-mounted from the frame, not reconciled over the previewed node's DOM");
+  assert.equal(host.shadowRoot.getElementById('t').value, 'LIVE-typed',
+    "the live form_state is on screen, not the committed node's 'a'");
   assert.equal(host.hasAttribute('data-wc-readonly'), false, 'the read-only mark was lifted');
   const box = host.shadowRoot.getElementById('c');
   box.dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true }));

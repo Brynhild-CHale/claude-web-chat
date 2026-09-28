@@ -30,17 +30,22 @@ const { pathToFileURL } = require('url');
 
 const REPO = path.resolve(__dirname, '..');
 
-// n1 (active, the live surface) ── n2 (an older-node preview target)
+// n1 (active, the live surface) ── n2 (an older-node preview target) ── n3
+// (a node that carries a pane under the SAME id as the live surface's `m-shared`,
+// as stable mount ids usually make it, with the node's own committed value)
 const NODES = [
   { id: 'n1', label: 'n1.0', parent_id: null, created_at: 1 },
   { id: 'n2', label: 'n1.1', parent_id: 'n1', created_at: 2 },
+  { id: 'n3', label: 'n1.2', parent_id: 'n2', created_at: 3 },
 ];
+const SHARED = { id: 'm-shared', html: '<input id="f">', target: 'main', params: {}, pane_state: {} };
 const NODE_MOUNTS = {
   n1: [
     { id: 'm-keep', html: '<input id="f"><script>store.subscribe("k", (v) => { window.__k = v; });</script>', target: 'main', params: {}, pane_state: {} },
     { id: 'm-gone', html: '<p>doomed</p>', target: 'main', params: {}, pane_state: {} },
   ],
   n2: [{ id: 'm-old', html: '<p>older node</p>', target: 'main', params: {}, pane_state: {} }],
+  n3: [{ ...SHARED, form_state: { '#f:0': { value: 'committed' } } }],
 };
 const liveMounts = (ids = ['m-keep', 'm-gone']) =>
   NODE_MOUNTS.n1.filter((m) => ids.includes(m.id)).map((m) => ({ ...m }));
@@ -335,6 +340,36 @@ test('frames the chrome sent while the socket was down survive the reconnect', a
   assert.equal(store.get('k'), 'second',
     'and the LOCAL copy is the one we just re-sent: the reconcile had replaced it with the '
     + "server's pre-gap value, which would have left the two ends disagreeing");
+});
+
+/* ── 4. a hello that re-attaches renders the live surface, not the previewed node ── */
+
+const app = (f) => import(pathToFileURL(path.join(REPO, 'public/app', f)).href);
+const typedLive = () => ({ ...SHARED, form_state: { '#f:0': { value: 'LIVE-typed' } } });
+
+// A re-aim that lands while the socket is down can put active exactly on the
+// node this client is previewing; the reconnect's hello then attaches. The DOM
+// on screen at that moment is the COMMITTED node's — and with stable mount ids
+// its pane answers to the live pane's id. Reconciling kept every pane whose spec
+// matched, with the node's form values (form_state is never applied over a kept
+// pane), so the live value was not on screen and the next keystroke published
+// the node's old one over it.
+test('a hello that makes the previewed node active shows the live form values', async () => {
+  const { previewNode } = await app('topbar.js');
+  hello({ store: {}, mounts: [typedLive()] });
+  await tick();
+  assert.equal(field('m-shared').value, 'LIVE-typed', 'precondition: the live value is on screen');
+  await previewNode('n3');
+  await tick();
+  assert.equal(previewing(), true, 'precondition: detached on n3');
+  assert.equal(field('m-shared').value, 'committed', "precondition: the node's pane, under the live pane's id");
+
+  hello({ active: 'n3', store: {}, mounts: [typedLive()] });
+  await tick();
+  assert.equal(previewing(), false, 'attached: active is the node on screen');
+  assert.equal(field('m-shared').value, 'LIVE-typed',
+    "the live form value is on screen — a reconcile kept the previewed pane and its 'committed'");
+  assert.equal(hostFor('m-shared').hasAttribute('data-wc-readonly'), false, 'and the pane is editable');
 });
 
 test('the outbox does not grow without bound while the socket stays down', async () => {

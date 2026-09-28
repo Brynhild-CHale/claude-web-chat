@@ -169,10 +169,17 @@ const HANDLERS = {
     // A re-aim that landed while this client was disconnected can put active
     // exactly where it is previewing — attach rather than sit half-detached
     // (previewing with viewedId === activeId), the same rule `reset` carries.
-    if (view.previewing && 'active' in msg && msg.active === view.viewedId) leavePreview();
+    // And then render the frame AUTHORITATIVELY, as `reset` does: the DOM on
+    // screen is the previewed node's, not this client's picture of the live
+    // surface, so there is nothing to reconcile. A reconcile kept every pane
+    // whose spec matched — with the committed node's form values, since
+    // form_state is never applied over a kept pane — and the next keystroke
+    // published those old values over what had been typed live.
+    const reattach = view.previewing && 'active' in msg && msg.active === view.viewedId;
+    if (reattach) leavePreview();
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
-    applySnapshot(msg, { mode: 'reconcile' });
+    applySnapshot(msg, reattach ? {} : { mode: 'reconcile' });
     sendClientInfo();
     // …and now the client's half of the catch-up: everything we tried to send
     // while the socket was down (see the outbox above).
