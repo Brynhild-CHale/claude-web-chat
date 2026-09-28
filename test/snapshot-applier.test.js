@@ -439,6 +439,61 @@ test('two panes’ writes during a gap drain as two frames, each with its own mo
   assert.equal(store.get('k'), 3, 'A k=1, B k=2, A k=3 ends at 3 on this end too');
 });
 
+/* ── 7. what the server has vs what the page shows, while the socket is down ── */
+
+// sendFormState recorded a value typed while the socket was down as the pane's
+// form_state before its isOpen() gate, so the record claimed values the server
+// never got. The record of what the SERVER has (p.form_state) now moves with the
+// frame. The spec is different: it is what a preview captures as the live
+// surface and puts back on ↩ active, so it follows the DOM — a value typed
+// offline must survive a preview round-trip.
+const TYPED = { id: 'm-typed', html: '<input id="f">', target: 'main', params: {}, pane_state: {}, form_state: { '#f:0': { value: 'server' } } };
+const typeOffline = async (id, value) => {
+  WS.readyState = 3;
+  const f = field(id);
+  f.value = value;
+  f.dispatchEvent(new W.Event('input', { bubbles: true, composed: true }));
+  await new Promise((r) => setTimeout(r, 450));   // past the 350ms debounce, while down
+};
+
+test('typing while the socket is down leaves form_state at the server’s copy until the flush sends it', async () => {
+  const { panes } = await app('mounts.js');
+  hello({ store: {}, mounts: [{ ...TYPED }] });
+  await tick();
+  const p = panes.get('m-typed');
+  assert.deepEqual(p.form_state, { '#f:0': { value: 'server' } }, "precondition: the server's copy");
+
+  await typeOffline('m-typed', 'offline');
+  assert.deepEqual(p.form_state, { '#f:0': { value: 'server' } },
+    "form_state still says what the server has — it used to take the typed value before the socket gate");
+  assert.deepEqual(p.spec.form_state, { '#f:0': { value: 'offline' } },
+    'the spec follows the DOM (see the preview round-trip below)');
+
+  WS.readyState = 1;
+  sent.length = 0;
+  hello({ store: {}, mounts: [{ ...TYPED }] });
+  await tick();
+  assert.equal(panes.get('m-typed'), p, 'precondition: the reconnect kept the pane');
+  const flushed = sent.find((f) => f.type === 'pane:form' && f.id === 'm-typed');
+  assert.equal(flushed && flushed.form_state['#f:0'].value, 'offline', 'the reconnect flush sends what was typed');
+  assert.deepEqual(p.form_state, { '#f:0': { value: 'offline' } }, 'and the record moves with the frame');
+});
+
+test('a value typed while the socket is down survives a preview round-trip', async () => {
+  hello({ store: {}, mounts: [{ ...TYPED }] });
+  await tick();
+  await typeOffline('m-typed', 'offline again');
+  $('btn-down').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));   // n1 → n2 (HTTP is up)
+  await tick();
+  assert.equal(previewing(), true, 'precondition: previewing n2');
+  $('btn-return-active').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(previewing(), false, 'attached again');
+  assert.equal(field('m-typed').value, 'offline again',
+    'the captured live surface put the typed value back — a spec that waited for the socket put back the server’s');
+  WS.readyState = 1;
+});
+
 test('the outbox does not grow without bound while the socket stays down', async () => {
   const { store } = await import(pathToFileURL(path.join(REPO, 'public/app/store.js')).href);
   WS.readyState = 3;

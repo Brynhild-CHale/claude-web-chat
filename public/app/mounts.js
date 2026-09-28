@@ -135,7 +135,11 @@ function sendFormState(id) {
   // Unchanged — don't chat. Nothing the user did is pending either: the server
   // already has what the pane shows, so the flag goes with it.
   if (json === p._lastFormJson) { p._userDirty = false; return; }
-  p.form_state = fs;
+  // The spec is this client's picture of the pane — what a preview captures as
+  // the live surface and puts back on ↩ active (topbar.js previewNode) — so it
+  // takes the DOM's values now, sent or not: a value typed while the socket was
+  // down must survive a preview round-trip. What the server has is
+  // p.form_state, recorded below the gate.
   p.spec.form_state = fs;
   // Stamp the "server has this" marker ONLY once the frame is actually on the
   // wire. Stamping before the gate recorded a value the server never received,
@@ -147,6 +151,8 @@ function sendFormState(id) {
   // for the same reason).
   // _userDirty stays set on this path too, so the reconcile's flush re-sends it.
   if (!isOpen()) return;
+  // The record of what the SERVER has moves with the frame, not before it.
+  p.form_state = fs;
   p._lastFormJson = json;
   p._userDirty = false;
   send({ type: 'pane:form', id, form_state: fs });
