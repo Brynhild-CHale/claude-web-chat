@@ -38,7 +38,7 @@ function capture() {
 // A prompt that is never interactive (as in CI) — every question takes its
 // default, the way the real engine does with no TTY.
 function quietPrompt() {
-  return { line: async () => '', confirm: async (q, { def = false } = {}) => def, close() {} };
+  return { line: async () => '', secret: async () => '', confirm: async (q, { def = false } = {}) => def, close() {} };
 }
 
 function writeConfig(raw) {
