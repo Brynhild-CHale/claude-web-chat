@@ -188,6 +188,43 @@ test('createFrameEncoder: a GIF whose ffmpeg fails falls back to the built-in en
   assert.equal(ff.read().length, 1, 'ffmpeg was tried first');
 });
 
+test('createFrameEncoder: the built-in fallback after an ffmpeg failure yields between frames and keeps the deadline', async (t) => {
+  const ff = fakeFfmpeg(t, { mode: 'fail' });
+  const tmpDir = tmp(t);
+  const N = 40;
+  const fill = (enc) => { for (let i = 0; i < N; i++) enc.addFrame(png(16, 10, [i * 5, 50, 40]), 100); };
+
+  // A setImmediate queued as the fallback reads its FIRST frame must run while
+  // the fallback is still going: a loop that never yields would run all N
+  // frames, and settle, before it.
+  const readFileSync = fs.readFileSync;
+  let reads = 0;
+  let settled = false;
+  let seen = null;
+  t.mock.method(fs, 'readFileSync', function (file, ...rest) {
+    if (/f\d{5}\.png$/.test(String(file)) && reads++ === 0) setImmediate(() => { seen = { reads, settled }; });
+    return readFileSync.call(this, file, ...rest);
+  });
+  const enc = createFrameEncoder({ format: 'gif', ffmpegPath: ff.bin, width: 16, height: 10, tmpDir });
+  t.after(() => enc.dispose());
+  fill(enc);
+  const out = await enc.finish({ timeoutMs: 20000 }).finally(() => { settled = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(out.encoder, 'builtin', 'precondition: the fallback ran');
+  assert.equal(out.frames, N);
+  assert.ok(seen, 'precondition: the queued setImmediate ran');
+  assert.equal(seen.settled, false, 'before the fallback finished');
+  assert.ok(seen.reads < N, `with frames still to encode (${seen.reads} of ${N} read)`);
+  t.mock.restoreAll();
+
+  // A deadline already past when ffmpeg fails: no fallback run past it.
+  const enc2 = createFrameEncoder({ format: 'gif', ffmpegPath: ff.bin, width: 16, height: 10, tmpDir });
+  t.after(() => enc2.dispose());
+  fill(enc2);
+  await assert.rejects(enc2.finish({ timeoutMs: 1 }), (e) => e.code === 'timeout' && /built-in GIF encoder/.test(e.message));
+  assert.equal(ff.read().length, 2, 'ffmpeg was tried (and failed) both times');
+});
+
 test('createFrameEncoder: an MP4 whose ffmpeg fails has no fallback; a hung one is killed at the deadline', async (t) => {
   const bad = fakeFfmpeg(t, { mode: 'fail' });
   const tmpDir = tmp(t);
