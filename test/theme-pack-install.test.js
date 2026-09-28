@@ -192,6 +192,34 @@ test('no fill when the installed theme is not the global one, or its logos dir i
   assert.equal(brand.effective(root, 'logotype'), null);
 });
 
+// R6-6: the fence above covers the logos DIRECTORY. One level down, a logo
+// FILE symlinked to a readable image anywhere on the host was followed —
+// shown in the topbar, served at /brand/<slot>, inlined into every export.
+test('no fill from a logo FILE symlinked out of .web-chat — only a regular file is read', async (t) => {
+  const root = project(t);
+  const forge = await forgeFor(t, themePack());
+  await packs.installPack({ url: forge.url('acme', 'harbor'), root });
+  fs.writeFileSync(projectPaths(root).theme, JSON.stringify({ name: 'harbor', tokens: {} }));
+  const logos = projectPaths(root).themeLogosDir('harbor');
+  assert.deepEqual(brand.fillSource(root), { name: 'harbor', dir: logos }, 'the directory itself is inside .web-chat');
+
+  const outside = tmpDir('wc-outside-');
+  const secret = Buffer.concat([PNG, Buffer.from('private')]);
+  write(path.join(outside, 'private.png'), secret);
+  fs.symlinkSync(path.join(outside, 'private.png'), path.join(logos, 'lockup.png'));
+
+  const lines = [];
+  const orig = console.error;
+  console.error = (...a) => lines.push(a.join(' '));
+  try {
+    assert.equal(brand.effective(root, 'lockup'), null, 'the linked file is not read');
+    assert.equal(brand.dataUri(root, 'lockup'), null, 'so no export inlines it');
+    assert.equal(brand.fills(root).lockup, null, 'and the chrome is told of no fill');
+  } finally { console.error = orig; }
+  assert.equal(lines.filter((l) => l.includes('lockup.png') && /symlink/.test(l)).length, 1, 'one log line says why');
+  assert.ok(brand.effective(root, 'logotype'), 'the regular files beside it still fill');
+});
+
 test('a --global theme pack lands in ~/.web-chat/themes and fills from there', async (t) => {
   const root = project(t);
   const forge = await forgeFor(t, themePack());
