@@ -827,6 +827,61 @@ test('the rules files\' turn-lifecycle list names every tool that says it folds 
   }
 });
 
+// The page recipes hand Claude exact placements (`{span: 6}` + `{span: 6}`,
+// three `{span: 4, rows: 3}`, `span:4` + `span:8`). A clamp tightened in the
+// engine would leave a recipe proposing one layout while the page applies
+// another, and nothing would say so. So every placement literal in the rules,
+// the /web-chat command and the tool descriptions has to come back from
+// lib/server/domain/page's normalizePlace exactly as written; literals joined
+// with `+`, or counted ("three `{…}`"), have to fit one row of the grid; and
+// `place: {}` has to still mean the full width. Every value is read off the
+// docs and the engine — nothing here restates a span, a clamp or a count.
+test('every placement the guidance recommends is one the engine applies as written', () => {
+  const page = require('../lib/server/domain/page');
+  const KEYVAL = '(?:col|span|rows)\\s*:\\s*\\d+';
+  const PLACE = new RegExp(`^(?:place:\\s*)?\\{?\\s*${KEYVAL}(?:\\s*,\\s*${KEYVAL})*\\s*\\}?$`);
+  const parse = (tok) => Object.fromEntries(
+    [...tok.matchAll(/(col|span|rows)\s*:\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]));
+  const spanOf = (tok) => page.normalizePlace(parse(tok)).span;
+  const COUNT = { two: 2, three: 3, four: 4, five: 5, six: 6 };
+
+  const sources = [
+    ...DOCS.filter((d) => /(?:rules|commands)\/web-chat\.md$/.test(d.rel)),
+    ...toolDescriptions(),
+  ];
+  let literals = 0;
+  for (const { rel, body } of sources) {
+    const flat = flatten(body);
+    for (const [, tok] of flat.matchAll(/`([^`]+)`/g)) {
+      if (!PLACE.test(tok)) continue;
+      literals++;
+      const want = parse(tok);
+      const got = page.normalizePlace(want);
+      for (const k of Object.keys(want)) {
+        assert.equal(got[k], want[k],
+          `${rel} recommends \`${tok}\`, but normalizePlace applies ${k}: ${got[k]} — fix the recipe or the clamp`);
+      }
+    }
+    for (const [, a, b] of flat.matchAll(/`([^`]+)`\s*\+\s*`([^`]+)`/g)) {
+      if (!PLACE.test(a) || !PLACE.test(b)) continue;
+      assert.ok(spanOf(a) + spanOf(b) <= page.GRID_COLS,
+        `${rel} pairs \`${a}\` + \`${b}\`, which cannot share one ${page.GRID_COLS}-column row`);
+    }
+    for (const [, word, tok] of flat.matchAll(/\b(two|three|four|five|six)\s+`([^`]+)`/gi)) {
+      if (!PLACE.test(tok)) continue;
+      const n = COUNT[word.toLowerCase()];
+      assert.ok(n * spanOf(tok) <= page.GRID_COLS,
+        `${rel} lays ${word} \`${tok}\` panes side by side, which cannot share one ${page.GRID_COLS}-column row`);
+    }
+    if (flat.includes('`place: {}`')) {
+      const full = page.normalizePlace({});
+      assert.ok(full.col == null && full.span === page.GRID_COLS && full.rows == null,
+        `${rel} says \`place: {}\` returns a pane to full width, but normalizePlace({}) is ${JSON.stringify(full)}`);
+    }
+  }
+  assert.ok(literals > 0, 'the guidance no longer recommends any placement — re-point this check');
+});
+
 // ---------------------------------------------------------------------------
 // The README's documentation table and install.md's inventory of what is
 // written to disk — both are the first place a reader looks, and both missed
