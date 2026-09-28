@@ -17,6 +17,11 @@
 //
 // Both arrival orders are pinned: the real one (reset first), and the answer
 // arriving first, where the late reset re-renders authoritatively.
+//
+// Every node carries its pane under ONE id (`m-form`), as stable ids make the
+// common case: that is what let the previewed node's pane pass for the live one,
+// and what makes the pane:form check below able to fail — the user types, and
+// the frame must carry the live value, not the previewed node's.
 const test = require('node:test');
 const { before, beforeEach, after } = test;
 const assert = require('node:assert');
@@ -24,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
+const { waitUntil } = require('../test-support/helpers');
 
 const REPO = path.resolve(__dirname, '..');
 
@@ -34,9 +40,9 @@ const NODES = [
   { id: 'n3', label: 'n1.2', parent_id: 'n2', created_at: 3 },
 ];
 const NODE_MOUNTS = {
-  n1: [{ id: 'm-live', html: '<input id="f" value="live">', target: 'main', params: {}, pane_state: { pinned: true } }],
-  n2: [{ id: 'm-old', html: '<input id="f" value="old">', target: 'main', params: {}, pane_state: {} }],
-  n3: [{ id: 'm-three', html: '<input id="f" value="three">', target: 'main', params: {}, pane_state: {} }],
+  n1: [{ id: 'm-form', html: '<input id="f" value="live">', target: 'main', params: {}, pane_state: { pinned: true } }],
+  n2: [{ id: 'm-form', html: '<input id="f" value="old">', target: 'main', params: {}, pane_state: {} }],
+  n3: [{ id: 'm-form', html: '<input id="f" value="three">', target: 'main', params: {}, pane_state: {} }],
 };
 const mountsOf = (id) => (NODE_MOUNTS[id] || []).map((m) => ({ ...m, pane_state: { ...m.pane_state } }));
 const resetFrame = (active, mounts) => ({ type: 'reset', store: {}, theme: null, activeTheme: null, active, lock: null, mounts });
@@ -62,6 +68,7 @@ const readonlyGate = () => $('main').classList.contains('preview-readonly');
 const overlayOpen = () => !$('overlay').classList.contains('hidden');
 const hosts = () => [...W.document.querySelectorAll('#main .mount-host')];
 const paneIds = () => hosts().map((h) => h.dataset.mountId || h.id);
+const fieldValues = () => hosts().map((h) => h.shadowRoot.getElementById('f').value);
 const selectInGraph = async (id) => {
   const g = W.document.querySelector(`#graph-svg g[data-id="${id}"], #gv-world .gv-srow[data-id="${id}"]`);
   g.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
@@ -149,7 +156,7 @@ beforeEach(async () => {
   ACTIVE = 'n1';
   frame(resetFrame('n1', mountsOf('n1')));
   await tick();
-  assert.deepEqual(paneIds(), ['m-live'], 'precondition: the live surface is up');
+  assert.deepEqual(fieldValues(), ['live'], 'precondition: the live surface is up');
   assert.equal(view.previewing, false, 'precondition: attached');
   calls.length = 0;
   sent.length = 0;
@@ -174,13 +181,14 @@ async function previewN2() {
   await tick();
   assert.equal(view.previewing, true, 'precondition: previewing n2');
   assert.equal(view.viewedId, 'n2');
-  assert.deepEqual(paneIds(), ['m-old'], 'precondition: the previewed node is on screen');
+  assert.deepEqual(paneIds(), ['m-form'], 'precondition: the previewed node is on screen');
+  assert.deepEqual(fieldValues(), ['old'], 'precondition: its pane, under the live pane\'s id');
   assert.equal(readonlyGate(), true, 'precondition: and gated read-only');
 }
 
 // The page shows the node the re-aim landed on, as the live, editable surface.
-function assertLive({ active, panes, what }) {
-  assert.deepEqual(paneIds(), panes,
+async function assertLive({ active, values, what }) {
+  assert.deepEqual(fieldValues(), values,
     `${what}: the live surface the reset carried is on screen — not the previewed node's panes`);
   assert.equal(view.previewing, false, `${what}: the preview is left`);
   assert.equal(view.activeId, active, `${what}: active is where the re-aim put it`);
@@ -190,11 +198,21 @@ function assertLive({ active, panes, what }) {
   for (const h of hosts()) assert.equal(h.hasAttribute('data-wc-readonly'), false, `${what}: ${h.dataset.mountId} is editable`);
   assert.doesNotMatch($('active-pill').textContent, /viewing/, `${what}: the pill no longer says it is viewing an older node`);
   const host = hosts()[0];
-  if (host) {
-    const k = new W.KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true, composed: true });
-    host.shadowRoot.getElementById('f').dispatchEvent(k);
-    assert.equal(k.defaultPrevented, false, `${what}: typing into the live pane is not refused`);
-  }
+  if (!host) return;
+  const f = host.shadowRoot.getElementById('f');
+  const k = new W.KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true, composed: true });
+  f.dispatchEvent(k);
+  assert.equal(k.defaultPrevented, false, `${what}: typing into the live pane is not refused`);
+  // …and what the user types lands on the LIVE pane: the frame carries the value
+  // on screen. With the previewed node left up as if live, this sent
+  // 'old, typed' as the live m-form's form_state.
+  sent.length = 0;
+  f.value += ', typed';   // appended to whatever is on screen
+  f.dispatchEvent(new W.Event('input', { bubbles: true, composed: true }));
+  const form = await waitUntil(() => sent.find((x) => x.type === 'pane:form' && x.id === 'm-form'),
+    { timeout: 2000, what: `${what}: the typed value's pane:form` });
+  assert.equal(form.form_state['#f:0'].value, `${values[0]}, typed`,
+    `${what}: the typed value is the live pane's — nothing from the previewed node reached the live surface`);
 }
 
 const RE_AIMS = [
@@ -203,7 +221,7 @@ const RE_AIMS = [
     active: 'n3',
     reset: () => resetFrame('n3', mountsOf('n3')),
     answer: { ok: true, active: 'n3', preserved: null },
-    panes: ['m-three'],
+    values: ['three'],
     async run() {
       click('btn-graph');
       await tick(); await tick();
@@ -216,8 +234,8 @@ const RE_AIMS = [
     active: 'n1',
     // execWipe keeps pinned panes server-side and sends the survivors
     reset: () => resetFrame('n1', mountsOf('n1')),
-    answer: { ok: true, active: 'n1', name: 'before cleanup', kept: ['m-live'] },
-    panes: ['m-live'],
+    answer: { ok: true, active: 'n1', name: 'before cleanup', kept: ['m-form'] },
+    values: ['live'],
     async run() { click('btn-wipe-go'); },
   },
   {
@@ -225,7 +243,7 @@ const RE_AIMS = [
     active: null,
     reset: () => resetFrame(null, []),
     answer: { ok: true, active: null, name: '' },
-    panes: [],
+    values: [],
     async run() { click('btn-new-graph-go'); },
   },
 ];
@@ -238,9 +256,7 @@ for (const r of RE_AIMS) {
     await tick(); await tick(); await tick();
     const posted = calls.filter((c) => c.method === 'POST' && REAIM_POSTS.has(c.url));
     assert.equal(posted.length, 1, 'precondition: the re-aim was POSTed');
-    assertLive({ active: r.active, panes: r.panes, what: r.name });
-    assert.ok(!sent.some((f) => f.type === 'pane:form' && f.id === 'm-old'),
-      'nothing from the previewed node reached the live surface');
+    await assertLive({ active: r.active, values: r.values, what: r.name });
   });
 
   test(`${r.name} while previewing a different node — answer before the reset`, async () => {
@@ -250,6 +266,6 @@ for (const r of RE_AIMS) {
     await tick(); await tick();
     frame(REAIM.reset);           // the frame lands after the POST's answer
     await tick(); await tick();
-    assertLive({ active: r.active, panes: r.panes, what: r.name });
+    await assertLive({ active: r.active, values: r.values, what: r.name });
   });
 }
