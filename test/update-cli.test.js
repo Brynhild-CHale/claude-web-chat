@@ -1010,3 +1010,74 @@ test('parseArgs knows --restart-all', () => {
   assert.equal(update.parseArgs(['--restart-all']).restartAll, true);
   assert.equal(update.parseArgs([]).restartAll, false);
 });
+
+// ── the line an update ends on ──────────────────────────────────────────────
+// H-1. An update restarts the daemon, never Claude Code, and every open
+// session keeps the MCP server — and the tool list — it started with. So a
+// successful update ends by saying so, once.
+
+const CLAUDE_LINE = /^Restart Claude Code to pick up v(\S+): \/exit and reopen it — each open session keeps the MCP server it started with\.$/;
+const lastLine = (log) => log.text().split('\n').filter(Boolean).pop();
+
+test('a successful update ends by telling the user to /exit and reopen Claude Code — in a project or not, forward or back', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const d = upgradeDeps(paths, { registration: NO_SYNC, restart: async () => ({ ok: true, stopped: {}, started: true }) });
+  await update([], d);
+  assert.match(lastLine(d.log), CLAUDE_LINE);
+  assert.equal(lastLine(d.log).match(CLAUDE_LINE)[1], '0.6.0');
+  assert.equal(d.log.text().split('\n').filter((l) => CLAUDE_LINE.test(l)).length, 1, 'said once');
+
+  inScratchCwd(t);
+  const outside = upgradeDeps(paths, { restart: async () => { throw new Error('nothing is restarted outside a project'); } });
+  outside.describeInstall = () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths });
+  const back = await update(['--to', '0.5.0'], outside);
+  assert.equal(back.after, '0.5.0');
+  assert.match(lastLine(outside.log), /^Restart Claude Code to pick up v0\.5\.0: /, 'a rollback changes the tools just as much');
+});
+
+test('a reinstall of the same build does not ask for a Claude Code restart', async (t) => {
+  const paths = onVersion(t, '0.6.0');
+  inScratchCwd(t);
+  const d = upgradeDeps(paths, {
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ versionDir }) => ({ version: '0.6.0', dir: versionDir }),
+  });
+  const res = await update(['--force'], d);
+  assert.deepEqual(res, { before: '0.6.0', after: '0.6.0' });
+  assert.match(d.log.text(), /Reinstalled v0\.6\.0\./);
+  assert.doesNotMatch(d.log.text(), /Restart Claude Code/);
+});
+
+// The target's restart prints the hop checklist when the server it replaced
+// was a pre-0.8 build — its own Claude Code line included. Driven with the real
+// restart (only its `start` stubbed) against a stand-in pre-0.8 daemon that
+// owns this project's portfile and acknowledges the shutdown by dropping it.
+test('when the restart printed the hop checklist, update does not repeat its Claude Code line', async (t) => {
+  const http = require('http');
+  const portfiles = require('../lib/core/portfiles');
+  const realRestart = require('../lib/cli/commands/restart');
+  const paths = onVersion(t);
+  const root = inProjectCwd(t);
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/health') return res.end(JSON.stringify({ ok: true, role: 'instance', version: 3, pid: process.pid }));
+    if (req.method === 'POST' && req.url === '/api/shutdown') {
+      portfiles.deletePortfile('server', { root, pid: process.pid });
+      return res.end(JSON.stringify({ ok: true, shutting_down: true }));
+    }
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { srv.close(); srv.closeAllConnections(); portfiles.deletePortfile('server', { root, pid: process.pid }); });
+  portfiles.writePortfile('server', { root, pid: process.pid, port: srv.address().port });
+
+  const d = upgradeDeps(paths, { registration: NO_SYNC });
+  d.restart = (args) => realRestart(args, { log: d.log, start: async () => {} });
+  await update([], d);
+  const text = d.log.text();
+  assert.match(text, /The server here was on a build older than 0\.8; it now runs v\S+\. To finish the upgrade:/);
+  assert.match(text, /\/exit and reopen Claude Code/, 'the checklist says it');
+  assert.doesNotMatch(text, /Restart Claude Code to pick up/, 'and update does not say it again');
+});
