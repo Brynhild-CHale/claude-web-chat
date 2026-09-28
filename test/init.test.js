@@ -166,11 +166,18 @@ test('fresh init in $HOME is refused outright: no question asked, nothing writte
     process.exitCode = 0;
     const log = sink();
     const install = fakeDoctor();
+    // Stubbed, not the real `open`: this prompt answers yes to everything, so
+    // a regression past the gate would otherwise boot a real daemon — and with
+    // HOME redirected, the upward walk from the test's cwd can reach the REAL
+    // home directory's .web-chat/.
+    const opened = [];
+    const open = async (a) => { opened.push(a); };
     const asked = [];
     const prompt = { interactive: true, confirm: async (q) => { asked.push(q); return true; }, line: async () => '', close: () => {} };
-    await init(['--yes'], { cwd, log, prompt, ...inertDeps({ install }) });
+    await init(['--yes'], { cwd, log, prompt, ...inertDeps({ install, open }) });
 
     assert.equal(install.calls.length, 0, `install must never run in $HOME (${cwd})`);
+    assert.deepEqual(opened, [], 'nor open');
     assert.deepEqual(asked, [], 'no question: there is no answer that makes a $HOME surface work');
     assert.deepEqual(fs.readdirSync(home), [], 'nothing written in $HOME');
     assert.equal(process.exitCode, 1);
