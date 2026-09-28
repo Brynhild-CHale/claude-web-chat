@@ -476,8 +476,10 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
   assert.equal(g.height, 200, 'height follows the 16:10 frame');
   assert.equal(g.loop, 0, 'loops forever');
   assert.equal(g.trailer, true);
-  assert.equal(g.frames.length, 2, 'two cut steps, two frames');
-  assert.deepEqual(g.frames.map((f) => f.delay), [100, 100], 'each held for hold_ms');
+  // Each step changed m1, so each scrolls to it: its move (500 ms of a 1 s
+  // hold) is sampled at 10 fps, then one frame holds the rest — even in `cut`.
+  assert.deepEqual(g.frames.map((f) => f.delay), [10, 10, 10, 10, 10, 50, 10, 10, 10, 10, 10, 50],
+    'a cut step is its scroll move sampled at fps, then one held frame; delays sum to hold_ms each');
 
   const log = fake.read();
   const nav = log.find((l) => l.method === 'Page.navigate').params.url;

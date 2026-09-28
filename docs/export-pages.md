@@ -168,6 +168,27 @@ next step are ever live documents.
   them), `claude-web-chat export` (`--prompts`; `--no-prompts` is the default
   spelled out) and `POST /api/replay/render` (`include_prompts: true`).
 
+**Each step scrolls to what changed.** A frame is the whole page, taller than
+the window, so a change below the fold would never be seen from the top. The
+server works out what each step changed against the step before
+(`lib/server/diff` `changeTargets` — the panes and markdown items it ADDED, then
+the ones whose content, params or typed form values CHANGED, each in page order,
+at most five; the first step is compared with its node's parent) and hands the
+player those item ids (`lib/server/replay/document` `stepFocus`). While the step
+is held the frame smooth-scrolls: the newest item's top goes to the top of the
+window, then each further target below the fold is brought fully into view (or
+its top to the top when it is taller than the window), top to bottom, never back
+up, the first target dwelling longest. A step that changed nothing (a folded or
+store-only turn) does not scroll — and does not jump back to the top: it comes in
+where the last change left off. The scroll is a timeline, not a CSS smooth
+scroll: WHEN each move happens is fixed by the step's hold and its number of
+targets (`player.js` `focusMoves`, ~700 ms a move, at most half the hold), WHERE
+it goes is measured in the loaded frame (`scrollPlan`), and the offset at any
+time is eased (`easeInOutCubic`) between them (`scrollAt`) — so `seek(t)` sets
+`scrollTop` exactly, the browser player plays it smoothly, and a render samples
+every move at its `fps` (even under `transition: 'cut'`) while still stretches
+stay one long frame. A script step's `scroll` directs it (below).
+
 The document exposes `window.__wcReplay` — `steps`, `duration()`, `seek(ms)`,
 `play()`, `pause()`, `ready()`, `stepBy(n)`, `setSpeed(x)`, `state()`,
 `subscribe(fn)`. `seek` is deterministic: it resolves once the frames visible
@@ -201,7 +222,7 @@ There is no authoring UI: Claude writes the script (the rules file's
   "steps": [
     { "node": "n1.2", "hold_ms": 4000, "caption": "The first sketch" },
     { "nodes": ["n1.3", "n1.4", "n1.5"], "hold_ms": 1500, "caption": "Layout passes" },
-    { "node": "n1.9", "hold_ms": 6000, "transition": "fade", "caption": "Shipped" }
+    { "node": "n1.9", "hold_ms": 6000, "transition": "fade", "caption": "Shipped", "scroll": "chart" }
   ]
 }
 ```
@@ -219,7 +240,10 @@ There is no authoring UI: Claude writes the script (the rules file's
   comes in; `caption` (cut to 280 characters) takes the place of the
   automatic reply line; `title` (cut to 120) heads the caption bar and names
   the document; `include_prompts`, when the script says it, wins over the
-  request's.
+  request's. `scroll` is where the frame looks during the beat: `auto` (the
+  default — what the node added, then what it changed), `none` (hold still
+  where the last beat left off), or the id of one pane or markdown item on the
+  shown node's page (an id that is not there is refused as `bad-script`).
 - A script is checked, not guessed at: a node off the `from` → `to` path
   (`off-path`), steps out of path order or naming a node twice
   (`out-of-order`), a group with a drawn node missing from its run
@@ -330,8 +354,8 @@ How a render works (`lib/server/replay/render.js`):
   `include_prompts`, and the player's **↧ GIF** / **↧ MP4** / **↧ WebM** follow
   its **Include my prompts** checkbox (see above).
 - Options: `width` (320–1920, default 960; the height follows the 16:10 frame),
-  `hold_ms`, `pacing`, `transition`, `captions`, `include_prompts`, `fps` (1–30: fade sampling, and
-  a video's frame rate), `from` / `to` / `include_collapsed` as for the player.
+  `hold_ms`, `pacing`, `transition`, `captions`, `include_prompts`, `fps` (1–30: fade and scroll
+  sampling, and a video's frame rate), `from` / `to` / `include_collapsed` as for the player.
 - Bounded: one render at a time (a second is `409` `busy`), at most 1000 frames
   (`413` `too-many-frames`), 64 MB of output (`413` `too-large`) and five minutes
   of wall clock, capture and encode together (`504` `timeout`). A browser that

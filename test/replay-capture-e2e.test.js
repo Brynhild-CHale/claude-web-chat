@@ -116,3 +116,27 @@ test('a real Chrome and a real ffmpeg render the same replay as a GIF and an MP4
   assert.ok(has(raw.stdout.subarray(0, size), [0xc0, 0x39, 0x2b], 3), 'it opens on the red node');
   assert.ok(has(raw.stdout.subarray((Math.floor(n) - 1) * size, Math.floor(n) * size), [0x24, 0x71, 0xa3], 3), 'and ends on the blue one');
 });
+
+// The scroll: a new pane far below the fold. Frame 1 of the second step still
+// shows the top of the page; by the end of its hold the frame has scrolled the
+// new (green) pane into view — measured and scrolled by the real preview
+// document inside a real Chrome.
+test('a real Chrome scrolls a replay frame down to a pane added below the fold', { skip: builtin.skip, timeout: 120000 }, async (t) => {
+  pinFfmpeg(t, '/nonexistent/ffmpeg');
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'tall', html: '<div style="height:1400px;background:#c0392b"></div>' });
+  await api.post('/api/commit', { message: 'a tall red pane' });
+  await api.post('/api/render', { id: 'low', html: '<div style="height:200px;background:#1e8449"></div>' });
+  await api.post('/api/commit', { message: 'a green pane below it' });
+
+  const res = await render(port, { format: 'gif', width: 480, hold_ms: 2000, fps: 10 });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  const g = decodeGif(fs.readFileSync(body.path));
+  const green = [0x1e, 0x84, 0x49];
+  const first = g.frames[0].image;
+  const last = g.frames[g.frames.length - 1].image;
+  assert.ok(!has(first, green), 'the replay opens on the top of the page');
+  assert.ok(has(last, green), 'and ends scrolled down to the new pane');
+  assert.ok(g.frames.length > 3, `the move is drawn as motion (${g.frames.length} frames)`);
+});
