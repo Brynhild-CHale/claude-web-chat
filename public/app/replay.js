@@ -10,7 +10,9 @@
 // render of the same replay by the daemon (POST /api/replay/render: a headless
 // system Chrome draws it, ffmpeg encodes it when the machine has one), linked in
 // the note when it is done. Each button is disabled when
-// /api/replay/capabilities says this machine cannot make that format.
+// /api/replay/capabilities says this machine cannot make that format — or,
+// through the tunnel portal, that this viewer cannot make any (the portal's
+// hint titles the buttons).
 //
 // It never touches the live surface. The frames are the node preview document
 // running inside the replay's own iframe, under PREVIEW_CSP, so nothing here
@@ -114,8 +116,11 @@ function syncButtons() {
   for (const f of RENDER_FORMATS) { const b = $('rpo-' + f); if (b) b.disabled = fileExport.busy || !fileExport.can[f]; }
 }
 
-// What each format's button says it will do, or why it cannot.
+// What each format's button says it will do, or why it cannot. Through the
+// tunnel portal nothing can be rendered (the portal refuses the render route),
+// and the capabilities carry the portal's own reason.
 function buttonTitle(f, caps) {
+  if (caps.remote) return caps.hint || 'Rendering a file runs on the host machine';
   const chrome = !!caps.chrome;
   const ffmpeg = !!caps.ffmpeg;
   if (!chrome) {

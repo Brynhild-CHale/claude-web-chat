@@ -560,6 +560,22 @@ test('Claude\'s replay with include_prompts: the box starts ticked for it, and u
   assert.doesNotMatch($('rpo-note').textContent, /prompts/);
 });
 
+test('through the tunnel portal the ↧ buttons are disabled up front, titled with the portal\'s reason', async () => {
+  const saved = caps;
+  const HINT = 'rendering a replay spawns a process — run it on the host';
+  caps = { ok: true, chrome: true, ffmpeg: true, formats: { replay: true, gif: false, mp4: false, webm: false }, remote: true, hint: HINT };
+  try {
+    await openFromMenu();
+    await tick();
+    for (const id of ['rpo-gif', 'rpo-mp4', 'rpo-webm']) {
+      assert.equal($(id).disabled, true, `${id}: a remote viewer cannot render`);
+      assert.equal($(id).title, HINT);
+    }
+  } finally {
+    caps = saved;
+  }
+});
+
 test('a replay:open frame without a script id opens nothing', async () => {
   WS.onmessage({ data: JSON.stringify({ type: 'replay:open', from: { id: 'n1' }, to: { id: 'n1b' } }) });
   await tick();

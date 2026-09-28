@@ -760,6 +760,24 @@ test('GET /api/replay/capabilities reports what was found; refresh re-looks', as
   assert.equal(fresh.formats.gif, true);
 });
 
+test('GET /api/replay/capabilities through the portal (X-WC-Remote: 1): nothing renderable, and the portal\'s reason', async (t) => {
+  const fake = fakeChrome(t);
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const { port } = await withServer(t);
+  const local = await (await fetch(`http://127.0.0.1:${port}/api/replay/capabilities`)).json();
+  assert.equal(local.formats.gif, true, 'precondition: this machine can render a GIF');
+  assert.equal(local.remote, undefined);
+
+  const remote = await (await fetch(`http://127.0.0.1:${port}/api/replay/capabilities`, { headers: { 'X-WC-Remote': '1' } })).json();
+  assert.deepEqual(remote.formats, { replay: true, gif: false, mp4: false, webm: false }, 'the portal refuses the render route to a remote viewer');
+  assert.equal(remote.remote, true);
+  const { classify } = require('../lib/core/remote-policy');
+  const verdict = classify('POST', '/api/replay/render');
+  assert.equal(verdict.allow, false, 'precondition: the render route is refused remotely');
+  assert.equal(remote.hint, verdict.hint, 'the hint is the policy table\'s own');
+  assert.equal(remote.chrome, true, 'whether, not where');
+});
+
 test('GET /api/replay/file/:name is fenced to rendered replays inside .web-chat/exports/', async (t) => {
   const { port, root } = await withServer(t);
   const dir = projectPaths(root).exports;
