@@ -596,7 +596,11 @@ function toast(text) {
 
 async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
   if (!await requestSetActive(id)) return false;
-  leavePreview();
+  // The daemon broadcasts `reset` BEFORE it answers, so a preview of another
+  // node has usually folded the new live surface into liveSnapshot by now —
+  // render it, or the previewed node stays on screen as if live. (A reset that
+  // lands after this re-renders authoritatively, so both orders end correct.)
+  leavePreview({ restoreSnapshot: true });
   if (alsoCloseOverlay) closeOverlay();
   await refreshGraph();
   if (isOverlayOpen() && view.selectedNodeId) renderInspector(view.selectedNodeId);

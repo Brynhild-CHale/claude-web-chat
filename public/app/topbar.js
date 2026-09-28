@@ -148,13 +148,18 @@ function onReadonlyAttempt(e) {
    out of step is a preview mutating the live node.
 
    The core is unconditional — including re-enabling the panes the read-only
-   preview marked (syncReadonly) — and the real variations are named options
-   rather than a switchboard:
+   preview marked (syncReadonly) and repainting the chip, which reads the
+   `previewing`/`viewedId` this just moved (a caller that forgot it left the
+   pill saying "viewing" an older node after a re-aim) — and the real
+   variations are named options rather than a switchboard:
      activeId        this client now believes active is here (a set-active that
                      has actually landed) — moves activeId AND viewedId with it.
      restoreSnapshot go back to the live surface captured on the way in:
                      re-render it, re-apply the active node's theme, aim viewed
                      at active. Consumes liveSnapshot before it is dropped.
+                     Every user re-aim passes it too (Set active / Branch, Wipe,
+                     New graph): the daemon broadcasts the `reset` BEFORE it
+                     answers, so the new live surface is already folded in.
    (A third, flushForms, released form values gated during the preview for
    branch-on-edit; the preview is read-only now, so there are none to release.)
    Callers keep their own `body.pending` early return: whether a queued re-aim
@@ -173,12 +178,12 @@ export function leavePreview({ activeId = null, restoreSnapshot = false } = {}) 
     if (snap) applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
+  updateChip();
 }
 
 export function returnToActive() {
   if (!view.previewing) { view.viewedId = view.activeId; updateChip(); return; }
   leavePreview({ restoreSnapshot: true });
-  updateChip();
 }
 
 // Export the node AS RENDERED: a detached preview exports that committed node,
@@ -260,7 +265,9 @@ export async function doWipe(name) {
   });
   const body = await r.json().catch(() => ({}));
   if (body.pending) { showReaimNote("Claude is mid-turn — the surface wipes when the turn ends."); return; }
-  leavePreview();
+  // The reset was broadcast before this answer and, while previewing, folded
+  // into liveSnapshot: render it (see postSetActive in graph-view.js).
+  leavePreview({ restoreSnapshot: true });
 }
 
 async function bookmark() {
