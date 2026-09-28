@@ -170,3 +170,47 @@ test('uninstall strips our handlers and leaves someone else\'s alone', () => {
   assert.equal(settings.hooks.UserPromptSubmit.length, 1);
   assert.match(settings.hooks.UserPromptSubmit[0].hooks[0].command, /some-other-tool/);
 });
+
+// R2-4's other half. `init` and `install` now refuse $HOME, so a 0.7.x user who
+// said yes to the old home-directory question has exactly one way out: an
+// `uninstall` typed in ~. findProjectRoot never returns $HOME (its .web-chat/ is
+// the user tier), so the WIRING decides — and the user tier is left alone.
+test('uninstall typed in $HOME removes a pre-0.8 home registration and keeps the user tier', async (t) => {
+  const { withTempHome } = require('../test-support/helpers');
+  const home = withTempHome(t);
+  write(path.join(home, '.web-chat', 'versions', '0.8.0', 'package.json'), '{"version":"0.8.0"}\n');
+  const rules = MANAGED_FILES.find((f) => f.dest.endsWith('rules/web-chat.md'));
+  write(path.join(home, rules.dest), 'managed content\n');
+  write(path.join(home, '.claude', 'settings.json'), JSON.stringify({
+    hooks: {
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-begin' }] }],
+      Stop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-end' }] }],
+    },
+    permissions: { allow: ['Bash(ls:*)'] },
+  }, null, 2));
+  write(path.join(home, '.mcp.json'), JSON.stringify({
+    mcpServers: { 'web-chat': { command: 'node', args: ['/x.js'] } },
+  }, null, 2));
+
+  const claude = fakeClaude();
+  const lines = [];
+  const prevLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    await uninstall([], { cwd: home, runClaude: claude.fn });
+  } finally {
+    console.log = prevLog;
+  }
+
+  assert.match(lines.join('\n'), new RegExp(`uninstalled from ${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.deepEqual(claude.calls, [['mcp', 'remove', 'web-chat', '--scope', 'local']]);
+  assert.deepEqual(claude.cwds, [home]);
+  const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+  assert.ok(!settings.hooks, 'the machine-wide hooks are gone');
+  assert.deepEqual(settings.permissions, { allow: ['Bash(ls:*)'] }, 'the rest of ~/.claude/settings.json is kept');
+  const mcpFile = path.join(home, '.mcp.json');
+  const mcp = fs.existsSync(mcpFile) ? JSON.parse(fs.readFileSync(mcpFile, 'utf8')) : { mcpServers: {} };
+  assert.ok(!mcp.mcpServers['web-chat'], 'and so is ~/.mcp.json\'s entry');
+  assert.equal(fs.existsSync(path.join(home, rules.dest)), false, 'the managed rules file is removed');
+  assert.ok(fs.existsSync(path.join(home, '.web-chat', 'versions', '0.8.0', 'package.json')), 'the user tier is untouched');
+});
