@@ -117,7 +117,7 @@ test('components: use mounts the component (render event carrying component prov
 // mount. All four are pinned here.
 
 test('components: use over a pane owned by a driver is soft-rejected (owned envelope)', async (t) => {
-  const { api } = await withServer(t);
+  const { api, port } = await withServer(t);
   await api.post('/api/components', { name: 'w-own', source: '<p>W</p>' });
   await api.post('/api/render', { id: 'svc', html: '<p>driver</p>', owner: 'service:git' });
   const rejected = (await api.post('/api/components/w-own/use', { id: 'svc' })).json;
@@ -125,7 +125,9 @@ test('components: use over a pane owned by a driver is soft-rejected (owned enve
   assert.equal(rejected.owned, true);
   assert.equal(rejected.owner, 'service:git');
   assert.match(rejected.hint, /force:true/);
-  const forced = (await api.post('/api/components/w-own/use', { id: 'svc', force: true })).json;
+  // `force` is use_component's (Claude, through lib/client); a browser's fetch
+  // — this test's api — has it ignored (test/pane-spawn.test.js).
+  const forced = await require('../lib/client').post('/api/components/w-own/use', { id: 'svc', force: true }, { port, noSpawn: true });
   assert.equal(forced.ok, true);
   assert.equal(forced.owner, 'claude', 'the takeover re-stamps the pane as Claude\'s');
 });

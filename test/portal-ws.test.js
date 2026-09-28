@@ -8,9 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const WebSocket = require('ws');
-const { withServer, withPortal, waitUntil } = require('../test-support/helpers');
+const { withServer, withPortal, waitUntil, tmpRoot } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
-const { registerInstance, instanceId } = require('../lib/util/registry');
+const { registerInstance, deregisterInstance, instanceId } = require('../lib/util/registry');
 const { sessionHost } = require('../lib/tunnel/config');
 const fs = require('fs');
 const { projectPaths } = require('../lib/core/paths');
@@ -112,6 +112,34 @@ test('portal ws: hiding a project cuts the relays already open into it (4403); a
   await assert.rejects(open(t, r), (e) => e.statusCode === 404);
   assert.equal(keptClosed, null, 'the project that is still served keeps its relay');
   assert.equal(kept.ws.readyState, WebSocket.OPEN);
+});
+
+// R4-1 for the socket, whose hello alone is the whole surface: A's entry names
+// hidden B's port with a live pid that is not B's daemon. Every upgrade asks the
+// daemon on the port who it is, so A's hostname is refused like a stopped
+// project and B's hello never crosses.
+test('portal ws: an entry whose port another daemon holds is refused (404) — never that daemon\'s hello', async (t) => {
+  const b = await withServer(t);
+  registerInstance({ root: b.root, port: b.port, pid: process.pid });
+  fs.writeFileSync(projectPaths(b.root).noRemote, '');
+  const aRoot = tmpRoot('wc-stale-');
+  registerInstance({ root: aRoot, port: b.port, pid: process.ppid });
+  t.after(() => {
+    deregisterInstance(aRoot);
+    deregisterInstance(b.root);
+    fs.rmSync(aRoot, { recursive: true, force: true });
+  });
+  const access = createFakeAccess();
+  const p = await withPortal(t, { config: access.config(), fetchJwks: access.fetchJwks });
+  const host = sessionHost(p.config, instanceId(aRoot));
+  const r = { p, access, host, origin: `https://${host}` };
+
+  await assert.rejects(open(t, r), (e) => e.statusCode === 404, 'refused like a stopped project');
+  assert.equal((await p.request('/api/graph', { host, headers: { 'cf-access-jwt-assertion': access.mint() } })).status, 404,
+    'HTTP on the same hostname agrees');
+  await assert.rejects(open(t, r), (e) => e.statusCode === 404, 'and a retry is refused the same way');
+  const h = await p.request('/api/health', { host: `127.0.0.1:${p.port}` });
+  assert.equal(h.json.relays, 0, 'nothing was relayed');
 });
 
 test('portal ws: a token a month from expiry keeps the relay open (no setTimeout overflow)', async (t) => {

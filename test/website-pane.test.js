@@ -61,6 +61,7 @@ function mountPane(t, { url, reply, replyDelay = 0 }) {
 
 const settle = () => new Promise((r) => setTimeout(r, 20));
 const frameSrc = (root) => root.getElementById('frame').getAttribute('src');
+const sandboxOf = (root) => root.getElementById('frame').getAttribute('sandbox').split(/\s+/).sort();
 const overlay = (root) => {
   const el = root.querySelector('.br-block .h');
   return el ? el.textContent : null;
@@ -191,10 +192,79 @@ test('a final URL that is not a web page falls back to the checked one', async (
   assert.equal(frameSrc(root), 'https://example.com/');
 });
 
-test('a same-origin path is still a web page', async (t) => {
-  const { root } = mountPane(t, { url: '/preview/node/n1', reply: {} });
+// R4-4: a page on the surface's own origin — above all the preview documents,
+// which hold historical pane code and whose PREVIEW_CSP assumes the framer
+// sandboxes them — is framed WITHOUT allow-same-origin, so it gets an opaque
+// origin and cannot reach the chrome through parent/top. Another site keeps
+// allow-same-origin (its own origin; its logins work).
+const OWN = ['allow-forms', 'allow-popups', 'allow-scripts'];
+const WEB = ['allow-forms', 'allow-popups', 'allow-same-origin', 'allow-scripts'];
+
+for (const url of ['/preview/node/n1', '/preview/pane/n1/m1', 'http://localhost:5173/replay', '/']) {
+  test(`a page on the surface's own origin is framed without allow-same-origin: ${url}`, async (t) => {
+    const { root, calls } = mountPane(t, { url, reply: {} });
+    await settle();
+    assert.deepEqual(calls, [], 'our own origin needs no pre-check');
+    assert.equal(frameSrc(root), url);
+    assert.deepEqual(sandboxOf(root), OWN);
+    root.getElementById('btn-refresh').click();
+    assert.deepEqual(sandboxOf(root), OWN, '↻ keeps the sandbox');
+  });
+}
+
+test('another origin keeps allow-same-origin — another site, or another port on this host', async (t) => {
+  const web = mountPane(t, {
+    url: 'https://example.com/',
+    reply: { ok: true, reachable: true, status: 200, finalUrl: 'https://example.com/', blocked: false, reason: null },
+  });
   await settle();
-  assert.equal(frameSrc(root), '/preview/node/n1');
+  assert.equal(frameSrc(web.root), 'https://example.com/');
+  assert.deepEqual(sandboxOf(web.root), WEB);
+  const dev = mountPane(t, { url: 'http://localhost:3000/', reply: {} });
+  await settle();
+  assert.deepEqual(sandboxOf(dev.root), WEB);
+});
+
+test('the sandbox follows the frame: own origin, then another site, then back', async (t) => {
+  const { root } = mountPane(t, {
+    url: '/preview/node/n1',
+    reply: { ok: true, reachable: true, status: 200, finalUrl: 'https://example.com/', blocked: false, reason: null },
+  });
+  await settle();
+  assert.deepEqual(sandboxOf(root), OWN);
+  const go = async (u) => {
+    root.getElementById('url-input').value = u;
+    root.getElementById('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+    await settle();
+  };
+  await go('https://example.com/');
+  assert.equal(frameSrc(root), 'https://example.com/');
+  assert.deepEqual(sandboxOf(root), WEB);
+  await go('/replay');
+  assert.equal(frameSrc(root), '/replay');
+  assert.deepEqual(sandboxOf(root), OWN);
+});
+
+for (const url of ['/api/store', '/API/Store', '/api', '/tunnel/setup', 'http://localhost:5173/api/graph', '/app/../api/store']) {
+  test(`the surface's own API and setup launcher are refused, not framed: ${url}`, async (t) => {
+    const { root, calls } = mountPane(t, { url, reply: {} });
+    await settle();
+    assert.deepEqual(calls, []);
+    assert.equal(frameSrc(root), null, 'nothing was framed');
+    assert.match(overlay(root), /own API is not a page/);
+    root.getElementById('btn-refresh').click();
+    assert.equal(frameSrc(root), null, '↻ has nothing to load');
+  });
+}
+
+test('a check that lands on the surface\'s own API is refused too', async (t) => {
+  const { root } = mountPane(t, {
+    url: 'https://example.com/',
+    reply: { ok: true, reachable: true, status: 200, finalUrl: 'http://localhost:5173/api/store', blocked: false },
+  });
+  await settle();
+  assert.equal(frameSrc(root), null);
+  assert.match(overlay(root), /own API is not a page/);
 });
 
 // The guardrail. The private-address predicate lives in exactly one place
