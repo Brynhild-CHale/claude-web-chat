@@ -132,11 +132,7 @@
     el.querySelector('.install').addEventListener('click', () => {
       window.open('/embed-helper', '_blank', 'noopener');
     });
-    el.querySelector('.try').addEventListener('click', () => {
-      clearOverlays();
-      frame.classList.remove('hidden');
-      frame.src = url;
-    });
+    el.querySelector('.try').addEventListener('click', () => show(url));
     body.appendChild(el);
   }
 
@@ -160,21 +156,18 @@
     el.querySelector('.open').addEventListener('click', () => {
       window.open(url, '_blank', 'noopener,noreferrer');
     });
-    el.querySelector('.try').addEventListener('click', () => {
-      clearOverlays();
-      frame.classList.remove('hidden');
-      frame.src = url;
-    });
+    el.querySelector('.try').addEventListener('click', () => show(url));
     body.appendChild(el);
   }
 
   // Only a web page is framed or opened: http(s), or a path on our own origin
-  // (which resolves to one). The frame is allow-same-origin, so a javascript:,
-  // data:, blob: or file: URL would run in — or read — this surface's own
-  // origin, with the whole chrome in reach through `parent`. Refused before
-  // anything points at it, whoever supplied it: params, the address bar, or the
-  // final URL the daemon reports. The daemon's embed-check refuses the same
-  // schemes (code 'unsupported-scheme').
+  // (which resolves to one). Another site's page is framed allow-same-origin
+  // (its own origin, so its logins work), so a javascript:, data:, blob: or
+  // file: URL would run in — or read — this surface's own origin, with the
+  // whole chrome in reach through `parent`. Refused before anything points at
+  // it, whoever supplied it: params, the address bar, or the final URL the
+  // daemon reports. The daemon's embed-check refuses the same schemes (code
+  // 'unsupported-scheme').
   function webUrl(u) {
     try {
       const p = new URL(u, location.href).protocol;
@@ -182,7 +175,25 @@
     } catch { return false; }
   }
 
-  function showRefused(url) {
+  // This surface's own origin: a '/' path, or the daemon's own host:port. A
+  // page there is framed WITHOUT allow-same-origin, so it gets an opaque origin
+  // and cannot reach this chrome through parent/top. That matters most for the
+  // preview documents (/preview/node, /preview/pane, /replay): they hold
+  // historical pane code, and PREVIEW_CSP (lib/core/cors.js) assumes whoever
+  // frames them sandboxes them, as the chrome's own preview frames do. The
+  // daemon's API and its setup launcher are not pages at all, and are refused.
+  const OWN_SANDBOX = 'allow-scripts allow-forms allow-popups';
+  const WEB_SANDBOX = frame.getAttribute('sandbox');
+  function ownOrigin(u) {
+    try { return new URL(u, location.href).origin === location.origin; } catch { return false; }
+  }
+  function ownApi(u) {
+    let p;
+    try { p = new URL(u, location.href).pathname.toLowerCase(); } catch { return true; }
+    return ['/api', '/tunnel'].some((pre) => p === pre || p.startsWith(pre + '/'));
+  }
+
+  function showRefused(url, { h = 'only web pages can be shown here', desc = 'this pane frames http:// and https:// addresses only.' } = {}) {
     clearOverlays();
     frame.classList.add('hidden');
     frame.removeAttribute('src');
@@ -191,12 +202,34 @@
     el.className = 'br-block';
     el.innerHTML = `
       <div class="icon">⛔</div>
-      <div class="h">only web pages can be shown here</div>
+      <div class="h"></div>
       <div class="reason"></div>
-      <div class="desc">this pane frames http:// and https:// addresses only.</div>
+      <div class="desc"></div>
     `;
+    el.querySelector('.h').textContent = h;
     el.querySelector('.reason').textContent = String(url).slice(0, 200);
+    el.querySelector('.desc').textContent = desc;
     body.appendChild(el);
+  }
+  const API_REFUSAL = {
+    h: 'this surface\'s own API is not a page',
+    desc: 'the /api and /tunnel paths are the daemon\'s endpoints, not something to browse.',
+  };
+
+  // Every navigation of the frame goes through here, sandboxed for where it
+  // lands. The sandbox attribute applies from the next navigation, so it is set
+  // before `src`. False (nothing framed) for one of the refused paths.
+  function navigate(url) {
+    const own = ownOrigin(url);
+    if (own && ownApi(url)) { currentUrl = ''; showRefused(url, API_REFUSAL); return false; }
+    frame.setAttribute('sandbox', own ? OWN_SANDBOX : WEB_SANDBOX);
+    frame.src = url;
+    return true;
+  }
+  function show(url) {
+    clearOverlays();
+    frame.classList.remove('hidden');
+    navigate(url);
   }
 
   function setTitle(url) {
@@ -222,7 +255,7 @@
   // `code:'private-target'` and load() below just frames the URL when it sees
   // it. This is only a fast path for the two cases that need no round trip.
   function skipPrecheck(u) {
-    if (u.startsWith('/')) return true; // our own origin — nothing to ask about
+    if (u.startsWith('/') || ownOrigin(u)) return true; // our own origin — nothing to ask about
     let h;
     try { h = new URL(u, location.href).hostname.toLowerCase(); } catch { return false; }
     return h === 'localhost' || h.endsWith('.localhost');
@@ -253,9 +286,7 @@
     // and with the embed helper extension active, where XFO/CSP are stripped at
     // the browser level for localhost-initiated iframe loads anyway.
     if (skipPrecheck(url) || helperActive()) {
-      clearOverlays();
-      frame.classList.remove('hidden');
-      frame.src = url;
+      show(url);
       return;
     }
     showChecking();
@@ -270,9 +301,7 @@
         // whether the browser can frame the page. It can: this is how a local
         // dev server, a container name or a Tailscale address gets embedded.
         if (j.code === 'private-target') {
-          clearOverlays();
-          frame.classList.remove('hidden');
-          frame.src = url;
+          show(url);
           return;
         }
         showUnreachable(url, j.reason);
@@ -282,9 +311,7 @@
         showBlocked(url, j.reason);
         return;
       }
-      clearOverlays();
-      frame.classList.remove('hidden');
-      frame.src = j.finalUrl && webUrl(j.finalUrl) ? j.finalUrl : url;
+      show(j.finalUrl && webUrl(j.finalUrl) ? j.finalUrl : url);
     } catch (e) {
       if (currentUrl !== url) return;
       showUnreachable(url, e.message);
@@ -296,7 +323,7 @@
     load(normalize(urlInput.value));
   });
   btnRefresh.addEventListener('click', () => {
-    if (currentUrl) frame.src = currentUrl;
+    if (currentUrl) navigate(currentUrl);
   });
   btnOpen.addEventListener('click', () => {
     if (currentUrl) window.open(currentUrl, '_blank', 'noopener,noreferrer');
