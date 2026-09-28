@@ -22,8 +22,12 @@ const { isPidAlive } = require('../lib/core/portfiles');
 const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
-const { frameSchedule, normalizeRenderRequest, LIMITS } = require('../lib/server/replay/render');
-const { replayOpts } = require('../lib/server/replay/document');
+const { frameSchedule, normalizeRenderRequest, renderReplay, LIMITS } = require('../lib/server/replay/render');
+const { replayOpts, buildReplay } = require('../lib/server/replay/document');
+const { createScriptStore } = require('../lib/server/replay/scripts');
+const { resolveReplayPath } = require('../lib/server/domain/replay-path');
+const { createGraph } = require('../lib/server/graph');
+const { createState } = require('../lib/server/state');
 const { timeline } = require('../lib/server/replay/player');
 const { findChrome, findFfmpeg, chromeCandidates } = require('../lib/replay/find');
 const { captureFrames, createPipeConnection, CHROME_FLAGS, liveBrowsers } = require('../lib/replay/chrome');
@@ -131,6 +135,13 @@ async function seed(api) {
   await api.post('/api/render', { id: 'm1', html: '<p>two</p>' });
   await api.post('/api/commit', { message: 'second prompt' });
 }
+
+const payloadOf = (html) => JSON.parse(/<script id="wc-replay-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)[1]);
+// What a step plays: which node, captioned how, held and scrolled how.
+const played = (steps) => steps.map((s) => ({
+  id: s.id, label: s.label, folded_count: s.folded_count, dt_from_prev: s.dt_from_prev,
+  caption: s.caption, hold_ms: s.hold_ms, transition: s.transition, focus: s.focus,
+}));
 
 const postJson = (port, body, headers = {}) => fetch(`http://127.0.0.1:${port}/api/replay/render`, {
   method: 'POST',
@@ -537,6 +548,64 @@ test('captureFrames: a program that is not there rejects with chrome-launch-fail
   assert.deepEqual(fs.readdirSync(tmpDir), []);
 });
 
+// ── renderReplay, called directly ───────────────────────────────────────────
+//   n0 [] → n1 [A] → n2 = → n3 = → n4 [A,B]      (n2, n3: hidden no-change nodes)
+const PANE = (id) => ({ id, html: `<p>${id}</p>`, target: null, params: {}, component: null, pane_state: {}, form_state: {}, theme: null, owner: null });
+function directCtx(t) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-rr-')));
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const pp = projectPaths(root);
+  const graph = createGraph({ paths: { GRAPH_DIR: pp.graphDir, META_PATH: pp.meta }, state: createState() });
+  let clock = 1000;
+  const node = (id, parent_id, mounts) => ({
+    id, parent_id, created_at: (clock += 1000), author: 'claude',
+    trigger: { kind: 'turn', message: `prompt ${id}`, reply: `reply ${id}` }, mounts, store: {},
+  });
+  for (const n of [node('n0', null, []), node('n1', 'n0', [PANE('a')]), node('n2', 'n1', [PANE('a')]),
+    node('n3', 'n2', [PANE('a')]), node('n4', 'n3', [PANE('a'), PANE('b')])]) graph.registerNode(n);
+  graph.active = 'n4';
+  const paths = { THEME_PATH: pp.theme, SYSTEM_THEME_PATH: '/nonexistent/theme.json', THEME_DEFAULT_PATH: pp.themeDefault, EXPORTS_DIR: pp.exports, root };
+  return { graph, paths, root };
+}
+// Chrome stood in for: it records what it was asked, then stops the render.
+function stubRender() {
+  const seen = [];
+  const opts = {
+    port: 1, findChromeImpl: () => '/x/chrome', findFfmpegImpl: () => null, scripts: createScriptStore(),
+    captureImpl: async (o) => { seen.push(o); throw Object.assign(new Error('stub'), { code: 'stub' }); },
+  };
+  return { opts, seen };
+}
+
+test('a plain render hands the browser the steps it scheduled, pinned: a node set active meanwhile changes nothing it plays', async (t) => {
+  const ctx = directCtx(t);
+  const { opts, seen } = stubRender();
+  const r = await renderReplay(ctx, { format: 'gif', from: 'n0', to: 'n4' }, opts);
+  assert.equal(r.code, 'stub', `the render reached the browser (${JSON.stringify(r)})`);
+  const u = new URL(seen[0].url);
+  assert.equal(u.searchParams.get('from'), null, 'no from/to for the browser to resolve again');
+  const script = opts.scripts.get(u.searchParams.get('script'));
+  assert.ok(script, 'a script this daemon holds');
+  const scheduled = resolveReplayPath(ctx.graph, { from: 'n0', to: 'n4' });
+  assert.deepEqual(script.steps.map((s) => s.node), scheduled.steps.map((s) => s.id), 'one step per node the schedule was built from');
+  assert.deepEqual(scheduled.steps.map((s) => s.id), ['n0', 'n1', 'n4'], 'the hidden n2, n3 are not among them');
+
+  const q = Object.fromEntries(u.searchParams);
+  const before = payloadOf(buildReplay(ctx, q, { script }).html);
+  const plain = payloadOf(buildReplay(ctx, { ...q, script: undefined, from: 'n0', to: 'n4' }).html);
+  assert.deepEqual(played(before.steps), played(plain.steps), 'the pinned page plays the plain replay exactly, "+2 folded" on n4 included');
+  assert.equal(before.steps[2].folded_count, 2);
+
+  // The user sets a hidden middle node active while Chrome is starting.
+  ctx.graph.active = 'n2';
+  assert.deepEqual(resolveReplayPath(ctx.graph, { from: 'n0', to: 'n4' }).steps.map((s) => s.id), ['n0', 'n1', 'n2', 'n4'],
+    'precondition: from/to resolved again now plays another path');
+  const after = payloadOf(buildReplay(ctx, q, { script }).html);
+  assert.deepEqual(after.steps.map((s) => s.id), ['n0', 'n1', 'n4'], 'the pinned script still plays what the frames were scheduled for');
+  assert.deepEqual(after.steps.map((s) => s.hold_ms ?? null), before.steps.map((s) => s.hold_ms ?? null));
+});
+
 // ── the routes ──────────────────────────────────────────────────────────────
 
 test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay and writes a real GIF', async (t) => {
@@ -575,14 +644,19 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
   assert.equal(u.port, String(port), 'at this daemon');
   assert.equal(u.pathname, '/replay');
   assert.equal(u.searchParams.get('chrome'), '0', 'the bare document, no player controls');
-  assert.equal(u.searchParams.get('from'), 'n0', 'both ends pinned by id');
-  assert.equal(u.searchParams.get('to'), 'n1');
+  assert.ok(u.searchParams.get('script'), 'a plain replay, too, is handed to the browser as a pinned script…');
+  assert.equal(u.searchParams.get('from'), null, '…not as a from/to it would resolve again');
+  assert.equal(u.searchParams.get('to'), null);
   assert.equal(u.searchParams.get('captions'), 'on', 'captions on by default');
   assert.equal(u.searchParams.get('include_prompts'), '0', 'and the page the browser draws holds no prompts');
   const fetched = log.find((l) => l.fetched);
   assert.equal(fetched.status, 200, 'the URL the browser was sent really loads');
   const drawn = await (await fetch(nav)).text();
   assert.ok(!/maybe private|second prompt/.test(drawn), 'the document the GIF is drawn from carries no prompt text');
+  const page = payloadOf(drawn);
+  assert.deepEqual([page.meta.from, page.meta.to], ['n1.0', 'n1.1'], 'both ends pinned');
+  const plain = payloadOf(await (await fetch(`http://127.0.0.1:${port}/replay?from=n0&to=n1&hold_ms=1000&chrome=0`)).text());
+  assert.deepEqual(played(page.steps), played(plain.steps), 'the page plays exactly the steps the render scheduled');
   assert.equal(fetched.csp, PREVIEW_CSP, 'under the preview CSP');
   const udd = log[0].argv.find((a) => a.startsWith('--user-data-dir=')).slice('--user-data-dir='.length);
   assert.ok(udd.startsWith(projectPaths(root).tmp + path.sep), 'the profile lives under .web-chat/tmp/');

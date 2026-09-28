@@ -93,6 +93,23 @@ test('script without steps IS the plain replay: the drawn path, each node at the
   assert.deepEqual(norm({}).to, { id: 'n7', label: 'n1.7' }, 'no from/to: active, as a plain replay');
 });
 
+test('a script naming every drawn node IS the plain replay, "+N folded" included; a drawn node it skips ends the run', () => {
+  // A GIF render hands the browser exactly such a script for a plain replay
+  // (lib/server/replay/render), so it must play the same steps, saying the same.
+  const plain = resolveReplayPath(G, { from: 'n1.0', to: 'n1.7' });
+  const every = norm({ from: 'n1.0', to: 'n1.7', steps: plain.steps.map((s) => ({ node: s.id })) });
+  assert.equal(every.ok, true, every.error);
+  const said = (r) => r.steps.map((s) => ({ id: s.id, folded: s.folded, folded_count: s.folded_count, dt_from_prev: s.dt_from_prev }));
+  assert.deepEqual(said(every), said(plain));
+  assert.deepEqual(every.steps[2].folded.map((f) => f.id), ['n2', 'n3'], 'the hidden n2, n3 ride on n1.4, as in the plain replay');
+
+  const skip = norm({ from: 'n1.0', to: 'n1.7', steps: [{ node: 'n1.0' }, { node: 'n1.5' }, { node: 'n1.7' }] });
+  assert.equal(skip.ok, true, skip.error);
+  assert.deepEqual(skip.steps[1].folded, [], 'n1.4 — drawn, and skipped by the script — ends the run: n2 and n3 went with it');
+  assert.deepEqual(skip.steps[2].folded.map((f) => f.id), ['n6'], 'the hidden n6, directly before n1.7, rides on it');
+  assert.equal(skip.steps[2].folded_count, 1);
+});
+
 test('steps: single nodes and a group — the group shows its LAST node and lists them all; holds clamp', () => {
   const r = norm({
     from: 'n1.0', to: 'n1.7', title: '  How it   grew  ', default_hold_ms: 1200,
