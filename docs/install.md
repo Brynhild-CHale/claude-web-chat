@@ -60,7 +60,7 @@ Under the hood the setup step is `claude-web-chat install`, which you can still 
 
 `claude-web-chat init --report` (or `--json`) is the read-only twin: it diagnoses without repairing, writes nothing, prompts for nothing, and exits non-zero when something needs attention — which is what `/web-chat init` runs, and what makes it usable as a CI health gate.
 
-Then **restart Claude Code** in the project: it reads `.mcp.json` at startup, and on first launch it will ask you to trust the new `web-chat` MCP server — approve it, or the tools won't load.
+Then **restart Claude Code** in the project: it reads `.mcp.json` at startup, and on first launch it will ask you to trust the new `web-chat` MCP server — approve it, or the tools won't load. If you declined it, `/exit`, run `claude mcp reset-project-choices` in the project directory — Claude Code's own command for forgetting which project servers you approved or declined there — and start Claude Code again: it asks again.
 
 ## Open the surface
 
