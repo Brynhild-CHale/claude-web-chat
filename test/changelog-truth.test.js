@@ -126,32 +126,120 @@ test('every flag `trust` accepts is documented in the guide', () => {
 });
 
 // The notes being written for the next release. `[Unreleased]` ends up as the
-// release's section verbatim, so the two claims below are checked while it is
+// release's section verbatim, so the claims below are checked while it is
 // still being written, not after it has shipped.
-function unreleased(text) {
-  const start = text.indexOf('## [Unreleased]');
+function sectionBody(text, heading) {
+  const start = text.indexOf(heading);
+  if (start < 0) return '';
   const next = text.indexOf('\n## [', start + 1);
   return text.slice(start, next < 0 ? undefined : next);
 }
+
+function unreleased(text) {
+  return sectionBody(text, '## [Unreleased]');
+}
+
+// The notes the checks below read: `[Unreleased]` while it holds any, else the
+// newest dated section. On a release branch `[Unreleased]` is empty — its notes
+// have just moved, verbatim, under the release's date — and a check that read
+// only `[Unreleased]` there passed on nothing, which is how the 0.8.0 notes
+// shipped a merge's two copies of one Upgrading item and one Added bullet.
+// `from` is the release those notes upgrade from.
+function currentNotes(text) {
+  const pending = unreleased(text);
+  if (pending.split('\n').some((l) => l.startsWith('### '))) {
+    return { name: '[Unreleased]', body: pending, from: SECTIONS[0] && SECTIONS[0].version };
+  }
+  const newest = SECTIONS[0];
+  return {
+    name: `[${newest.version}]`,
+    body: sectionBody(text, `## [${newest.version}]`),
+    from: SECTIONS[1] && SECTIONS[1].version,
+  };
+}
+
+// Two defects a merge leaves in release notes, both found in 0.8.0's: an
+// ordered list with a number twice (a rewritten item kept beside the one it
+// replaced), and two bullets whose bold titles say the same thing in slightly
+// different words (a rewritten bullet kept beside its original). Titles are
+// compared as words — a shared opening run of five or more, or three in five of
+// their distinct words in common — which over the whole history fires on the
+// 0.8.0 pair and nothing else.
+function mergeResidue(body) {
+  const problems = [];
+  for (const sub of body.split(/\n(?=### )/)) {
+    const heading = sub.split('\n')[0];
+    const nums = [...sub.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+    nums.forEach((n, i) => {
+      if (n !== i + 1) {
+        const dup = nums.indexOf(n) !== i;
+        problems.push(`${heading}: item ${i + 1} is numbered ${n}${dup ? ` — a second item ${n}` : ''}`);
+      }
+    });
+  }
+  const words = (t) => t.toLowerCase().replace(/[`*_.,:;!?()'"—–-]/g, ' ').split(/\s+/).filter(Boolean);
+  const titles = [...body.matchAll(/^- \*\*(.+?)\*\*/gm)].map((m) => m[1]);
+  for (let i = 0; i < titles.length; i++) {
+    for (let j = i + 1; j < titles.length; j++) {
+      const a = words(titles[i]);
+      const b = words(titles[j]);
+      let lead = 0;
+      while (lead < a.length && lead < b.length && a[lead] === b[lead]) lead++;
+      const A = new Set(a);
+      const B = new Set(b);
+      const shared = [...A].filter((w) => B.has(w)).length;
+      const overlap = shared / (A.size + B.size - shared);
+      if (lead >= 5 || overlap >= 0.6) problems.push(`two bullets say the same thing: "${titles[i]}" / "${titles[j]}"`);
+    }
+  }
+  return problems;
+}
+
+test('the current notes carry no merge residue — no list number twice, no bullet twice', () => {
+  const { name, body } = currentNotes(CHANGELOG);
+  assert.deepEqual(mergeResidue(body), [], `${name} has merge residue`);
+});
+
+test('the merge-residue check catches the 0.8.0 residue it was written for', () => {
+  const residue = [
+    '### Upgrading from 0.7.6',
+    '',
+    '3. **Expect a new look, and read-only previews.** The chrome is restyled.',
+    '4. **New commands, all opt-in:** `claude-web-chat tunnel setup|up|down|status|logs`',
+    '4. **New commands and flags, all opt-in:** `claude-web-chat tunnel',
+    '5. **Out-of-tree drivers: `POST /api/graph/branch-here` and the `branch-here` WS',
+    '',
+    '### Added',
+    '',
+    '- **The tunnel picker lists Active and Inactive projects, and can start a stopped one.** Every project…',
+    '- **The tunnel picker lists Active and Inactive projects with live Claude presence, and can start a stopped one.** Every project…',
+    '- **A push says where it came from.** Every push…',
+  ].join('\n');
+  const problems = mergeResidue(residue);
+  assert.ok(problems.some((p) => /a second item 4/.test(p)), `the duplicate item 4 was not caught: ${problems.join('; ')}`);
+  assert.ok(problems.some((p) => /tunnel picker lists/.test(p)), `the duplicate picker bullet was not caught: ${problems.join('; ')}`);
+  assert.equal(problems.filter((p) => /A push says/.test(p)).length, 0, 'an unrelated bullet was flagged');
+});
 
 test('pending release notes open with how to upgrade from the newest release', () => {
   // Every release since 0.7.0 has told its reader what to do on update — and the
   // one release that most needed it (a new MCP tool, read-only previews, a removed
   // endpoint) was about to ship without. The version it upgrades from is the
-  // newest released section, so the heading cannot drift either.
-  const body = unreleased(CHANGELOG);
+  // newest released section before the notes, so the heading cannot drift either.
+  const { name, body, from } = currentNotes(CHANGELOG);
   const firstSub = body.split('\n').find((l) => l.startsWith('### '));
-  if (!firstSub) return; // nothing pending
-  assert.equal(firstSub, `### Upgrading from ${SECTIONS[0].version}`,
-    `[Unreleased] has notes but opens with "${firstSub}" — say how to upgrade from ${SECTIONS[0].version} first`);
+  if (!firstSub || !from) return; // nothing pending, or the first release
+  assert.equal(firstSub, `### Upgrading from ${from}`,
+    `${name} has notes but opens with "${firstSub}" — say how to upgrade from ${from} first`);
 });
 
-test('every portal protocol version the pending notes state is the one the code carries', () => {
+test('every portal protocol version the current notes state is the one the code carries', () => {
   // The number went 3 → 4 → 5 inside one release, and the notes kept all three.
   const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
+  const { name, body } = currentNotes(CHANGELOG);
   const re = /portal(?:'s)? protocol(?: version)?(?: is)?(?: now)? (\d+)/gi;
-  for (const m of unreleased(CHANGELOG).matchAll(re)) {
+  for (const m of body.matchAll(re)) {
     assert.equal(Number(m[1]), PORTAL_PROTOCOL_VERSION,
-      `[Unreleased] says "${m[0]}" but lib/core/versions has PORTAL_PROTOCOL_VERSION = ${PORTAL_PROTOCOL_VERSION}`);
+      `${name} says "${m[0]}" but lib/core/versions has PORTAL_PROTOCOL_VERSION = ${PORTAL_PROTOCOL_VERSION}`);
   }
 });
