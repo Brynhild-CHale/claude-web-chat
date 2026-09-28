@@ -86,7 +86,7 @@ Run `update` inside a web-chat project: outside one it installs and syncs nothin
 
 `update` restarts one server, the project's you typed it in. Every other project whose surface is open keeps running the old build (a server with a tab attached never exits on its own), so `update` lists each one on another build, with `cd <project> && claude-web-chat restart` — or restarts them all, one at a time, with `claude-web-chat update --restart-all` (which also works when there is nothing new to install, and when GitHub cannot be reached). `install`, `open` and `start --daemon` restart a server still on an older build too, in one line.
 
-For your *other* installed projects, run `claude-web-chat init` (or `install`) in each to sync their managed files too (`--force` takes the shipped version). `claude-web-chat status` tells you when a project's files have drifted behind the package, and the MCP server logs a one-line nudge at session start when a refresh is due.
+For your *other* installed projects, run `claude-web-chat init` (or `install`) in each to sync their managed files too (`--force` takes the shipped version). You don't have to remember which: each time you run `claude-web-chat open` in a project whose managed files are behind the package, it names them in one line, with `claude-web-chat install` to refresh them, and `claude-web-chat status` reports them on its `Managed:` line.
 
 A failed or tampered download changes nothing: `current` only moves after a complete, verified unpack, so the install you have is the one you keep.
 
