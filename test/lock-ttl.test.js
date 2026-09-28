@@ -2,31 +2,40 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil } = require('../test-support/helpers');
 
 // LOCK_TTL_MS is read once, at lib/server/domain/turns LOAD, so the only way to
 // test the stale-lock path in reasonable time is to set the env var and re-read
-// the module — which means evicting turns.js and everything that top-imports it
-// (graph.js pulls in turns; routes/graph and the server index pull in graph), or
-// two turns instances end up loaded at once.
-const TTL_MODULES = ['../lib/server/domain/turns', '../lib/server/graph', '../lib/server/routes/graph', '../lib/server'];
-const bustTtlModules = () => { for (const m of TTL_MODULES) delete require.cache[require.resolve(m)]; };
+// the module — which means evicting turns.js and everything that imports it, or
+// two turns instances end up loaded at once. That set kept growing (graph, the
+// graph and health and queue and events routes, ws.js, domain/queue — whose
+// wake lock then judged staleness by the OLD TTL) and a hand-kept list of it
+// silently went stale, so every module under lib/server is evicted: nothing
+// outside it imports one of them.
+const SERVER_DIR = path.join(__dirname, '..', 'lib', 'server') + path.sep;
+const bustTtlModules = () => {
+  for (const k of Object.keys(require.cache)) if (k.startsWith(SERVER_DIR)) delete require.cache[k];
+};
 
-// Returns the FRESH createServer for withServer to boot. Passing it explicitly
-// matters: helpers used to capture createServer at require time, so a test that
-// busted the cache got the STALE module back and passed while exercising the old
-// TTL — a silent false green in a lock-correctness test. Both the env var and the
-// cache are restored on t.after, so a failing assertion cannot leak either.
-function shortTtlServer(t, ms = 50) {
+// Set the TTL and evict, for this test only. Both the env var and the cache are
+// restored on t.after, so a failing assertion cannot leak either.
+function shortTtl(t, ms) {
   const prev = process.env.WEB_CHAT_LOCK_TTL_MS;
   process.env.WEB_CHAT_LOCK_TTL_MS = String(ms);
   bustTtlModules();
-  const { createServer } = require('../lib/server');
   t.after(() => {
     if (prev === undefined) delete process.env.WEB_CHAT_LOCK_TTL_MS; else process.env.WEB_CHAT_LOCK_TTL_MS = prev;
     bustTtlModules();
   });
-  return createServer;
+}
+
+// Returns the FRESH createServer for withServer to boot. Passing it explicitly
+// matters: helpers used to capture createServer at require time, so a test that
+// busted the cache got the STALE module back and passed while exercising the old
+// TTL — a silent false green in a lock-correctness test.
+function shortTtlServer(t, ms = 50) {
+  shortTtl(t, ms);
+  return require('../lib/server').createServer;
 }
 
 // A real elapsed wait, not a synchronisation point: the assertion IS that the
@@ -159,4 +168,86 @@ test('a re-aim that steals a stale lock preserves the abandoned turn\'s work', a
   assert.match(node.trigger.summary, /abandoned/);
   assert.equal(node.parent_id, n1, 'committed on the commit point the turn was working from');
   assert.ok(node.mounts.some((m) => m.id === 'b'), 'the render survived the steal');
+});
+
+// ── the stale moment reaches the chrome ─────────────────────────────────────
+// A lock goes stale by the clock alone. The chrome gates Set active / ⑃ Branch
+// on a FRESH lock (public/app/topbar lockHoldsReaim), so the server has to say
+// when that happens — on every lock it shows, and with a frame at the moment.
+
+test('a lock frame says stale:true once the TTL passes; hello and GET /api/graph agree', async (t) => {
+  const { api, ws, wsHello, root } = await withServer(t, { createServer: shortTtlServer(t, 150) });
+  const sock = ws();
+  const frames = [];
+  sock.on('message', (d) => { try { frames.push(JSON.parse(d.toString())); } catch {} });
+  await new Promise((res, rej) => { sock.on('open', res); sock.on('error', rej); });
+  t.after(() => sock.close());
+  const hello = await waitUntil(() => frames.find((f) => f.type === 'hello'), { what: 'hello' });
+  assert.equal(hello.lock, null);
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  const fresh = await waitUntil(() => frames.find((f) => f.type === 'lock' && f.lock), { what: 'the turn-begin lock frame' });
+  assert.equal(fresh.lock.stale, false, 'a new lock is fresh');
+  assert.equal((await api.get('/api/graph')).json.lock.stale, false);
+
+  const stale = await waitUntil(() => frames.find((f) => f.type === 'lock' && f.lock && f.lock.stale === true),
+    { timeout: 3000, what: 'a stale:true lock frame' });
+  assert.equal(stale.lock.message, 'a turn that never Stops', 'it is the same lock, now stale');
+  assert.equal((await api.get('/api/graph')).json.lock.stale, true);
+  assert.equal((await wsHello()).lock.stale, true, 'a (re)connecting chrome is told too');
+
+  // `stale` is a view, never the record: _meta.json keeps the lock as it was.
+  const meta = JSON.parse(fs.readFileSync(path.join(root, '.web-chat', 'graph', '_meta.json'), 'utf8'));
+  assert.ok(meta.lock, 'still held until someone steals it');
+  assert.equal('stale' in meta.lock, false);
+});
+
+// The stale timer as a unit: an unref'd handle (a lock nobody releases must not
+// hold a daemon or a test run open), cleared with the lock, and re-armed when a
+// keep-alive re-stamp moved the deadline.
+function fakeLockBus() {
+  const frames = [];
+  return { frames, emit: (arg) => { if (arg && arg.ws) frames.push(arg.ws); return null; } };
+}
+const graphStub = () => ({ lock: null, active: 'n0', pendingReaim: null, saveMeta() {} });
+const timeouts = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+const staleFrames = (bus) => bus.frames.filter((f) => f.type === 'lock' && f.lock && f.lock.stale === true);
+
+test('the stale timer holds no handle open, and fires one stale lock frame', async (t) => {
+  shortTtl(t, 60);
+  const turns = require('../lib/server/domain/turns');
+  const graph = graphStub();
+  const bus = fakeLockBus();
+  const before = timeouts();
+  turns.acquireLock(graph, bus, { message: 'x' });
+  assert.equal(timeouts(), before, 'the timer is unref\'d — it never keeps the process alive');
+  await waitUntil(() => staleFrames(bus).length === 1, { timeout: 2000, what: 'the stale frame' });
+  await elapse(120);
+  assert.equal(staleFrames(bus).length, 1, 'once, not on a loop');
+  turns.releaseLock(graph, bus);
+});
+
+test('the stale timer is cleared with the lock: a released lock never reports stale', async (t) => {
+  shortTtl(t, 60);
+  const turns = require('../lib/server/domain/turns');
+  const graph = graphStub();
+  const bus = fakeLockBus();
+  turns.acquireLock(graph, bus, { message: 'x' });
+  turns.releaseLock(graph, bus);
+  await elapse(200);
+  assert.equal(staleFrames(bus).length, 0);
+});
+
+test('the stale timer follows a keep-alive re-stamp instead of firing on the old deadline', async (t) => {
+  shortTtl(t, 150);
+  const turns = require('../lib/server/domain/turns');
+  const graph = graphStub();
+  const bus = fakeLockBus();
+  turns.acquireLock(graph, bus, { message: 'x' });
+  await elapse(100);
+  graph.lock.started_at = Date.now(); // what installLockKeepalive does on a Claude write
+  await elapse(110);                  // past the ORIGINAL deadline, before the new one
+  assert.equal(staleFrames(bus).length, 0, 'a lock still being worked under is not reported stale');
+  await waitUntil(() => staleFrames(bus).length === 1, { timeout: 2000, what: 'the stale frame at the new deadline' });
+  turns.releaseLock(graph, bus);
 });

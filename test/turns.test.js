@@ -93,7 +93,19 @@ test('acquireLock: sets the lock + emits a combined turn-begin event and lock WS
   assert.equal(graph.lock.message, 'hi');
   assert.equal(bus.emits.length, 1);
   assert.deepEqual(bus.emits[0].event, { kind: 'graph', op: 'turn-begin', base: 'n3', stole_stale_lock: false });
-  assert.deepEqual(bus.emits[0].ws, { type: 'lock', lock: graph.lock });
+  // The frame carries the lock's VIEW (lockView): the record plus `stale`, which
+  // is never written onto graph.lock itself.
+  assert.deepEqual(bus.emits[0].ws, { type: 'lock', lock: { ...graph.lock, stale: false } });
+  assert.equal('stale' in graph.lock, false);
+  turns.releaseLock(graph, fakeBus());
+});
+
+test('lockView: the record plus `stale`, a copy; null stays null', () => {
+  assert.equal(turns.lockView(null), null);
+  const fresh = { base: 'n1', started_at: Date.now(), author: 'user' };
+  assert.deepEqual(turns.lockView(fresh), { ...fresh, stale: false });
+  assert.notEqual(turns.lockView(fresh), fresh);
+  assert.equal(turns.lockView({ base: null, started_at: 0 }).stale, true);
 });
 
 test('acquireLock: a fresh lock blocks (ok:false), no steal, no emit', (t) => {
@@ -117,8 +129,9 @@ test('acquireLock: steals a stale lock by overwrite (stole_stale_lock:true, one 
   assert.equal(r.stole_stale_lock, true);
   assert.equal(bus.emits.length, 1, 'no interim lock:null — a single overwrite emit');
   assert.equal(bus.emits[0].event.stole_stale_lock, true);
-  assert.equal(bus.emits[0].ws.lock, graph.lock);
+  assert.deepEqual(bus.emits[0].ws.lock, { ...graph.lock, stale: false });
   assert.notEqual(graph.lock.base, 'old');
+  turns.releaseLock(graph, fakeBus());
 });
 
 test('releaseLock: clears + always emits the unlock event; lock:null WS frame only when a lock was held', (t) => {

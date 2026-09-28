@@ -76,6 +76,17 @@ export function applyLock(l) {
   updateChip();
   if (view.selectedNodeId) updateSidebarButtons();
 }
+// Does the turn lock hold a re-aim off? Only while it is FRESH. A lock whose
+// turn never reached its Stop hook goes stale after its TTL, and the server
+// steals it on the very Set active it would otherwise be refusing (guardReaim) —
+// every lock frame, hello and reset says which it is (`stale`, lib/server/domain/
+// turns lockView), and a lock frame arrives the moment one goes stale. Set
+// active, ⑃ Branch, the glance's Set active, `A` and the phone log's buttons all
+// gate on this, never on `view.lock` alone, or a crashed turn leaves the graph
+// screen refusing re-aims for the rest of the TTL.
+export function lockHoldsReaim() {
+  return !!view.lock && !view.lock.stale;
+}
 
 export async function ensureGraph(force) {
   if (view.graphCache && !force) return view.graphCache;

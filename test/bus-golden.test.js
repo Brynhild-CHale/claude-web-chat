@@ -43,6 +43,9 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //  - p34c c2 (the parent chip): the per-pane render frame carries `owner`, as
 //    the full-surface frames' mount records always did, so the chrome can name
 //    a pane-spawned pane's parent on a single render.
+//  - E2-3 (stale locks): every lock a frame shows carries `stale` (domain/turns
+//    lockView) — additive, the record's own keys unchanged — so the chrome can
+//    gate its re-aim buttons on a FRESH lock. A null lock stays null.
 const GOLDEN = {
   frames: [
     {
@@ -67,7 +70,7 @@ const GOLDEN = {
       theme: { tokens: { '--wc-accent': '#123456' } },
       resolved: { scope: 'global', tokens: { '--wc-accent': '#123456' }, css: '' },
     },
-    { type: 'lock', lock: { base: null, started_at: '<v>', message: 'golden turn', author: 'user' } },
+    { type: 'lock', lock: { base: null, started_at: '<v>', message: 'golden turn', author: 'user', stale: false } },
     {
       type: 'queue',
       op: 'add',

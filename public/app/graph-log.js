@@ -26,6 +26,7 @@ import {
   closeOverlay, setLogRenderer, isLogMode,
 } from './graph-view.js';
 import { computeLogLanes, laneX, gutterWidth } from './log-lanes.js';
+import { lockHoldsReaim } from './topbar.js';
 
 let showFolded = false;   // ⋯ N folded: the ghost rows under every card
 let naming = false;       // the bar's bookmark-name field is open
@@ -228,9 +229,11 @@ function renderBar() {
   const acts = $('gv-log-acts');
   if (!acts) return;
   const isActive = !!n && id === view.activeId;
+  // A stale lock holds nothing off — the tap steals it (topbar lockHoldsReaim).
+  const held = lockHoldsReaim();
   for (const b of acts.querySelectorAll('[data-act]')) {
     const act = b.dataset.act;
-    b.disabled = !n || ((act === 'active' || act === 'branch') && (isActive || !!view.lock));
+    b.disabled = !n || ((act === 'active' || act === 'branch') && (isActive || held));
   }
   const bm = acts.querySelector('[data-act="bookmark"]');
   if (bm) {
@@ -240,7 +243,7 @@ function renderBar() {
     bm.setAttribute('aria-label', bm.title);
   }
   const act = $('gv-log-active');
-  if (act) act.textContent = view.lock ? 'Locked' : (isActive ? 'Active' : 'Set active');
+  if (act) act.textContent = held ? 'Locked' : (isActive ? 'Active' : 'Set active');
   const box = $('gv-log-naming'); if (box) box.classList.toggle('hidden', !naming || !n);
 }
 
