@@ -158,9 +158,12 @@ next step are ever live documents.
   is NO prompt text anywhere in the document — not the prompt, not the
   trigger's 100-character summary of it, nothing in the embedded payload JSON
   (the tests grep the bytes). `captions=none` drops the caption bar and ships
-  neither prompts nor replies. A node's trigger never enters the payload. The
-  retired `captions=prompt` / `captions=summary` now mean `captions=on`, and
-  neither turns prompts on.
+  neither prompts nor replies. A node's trigger never enters the payload.
+  `captions` is `on` or `none`: the `export` tool and `claude-web-chat export`
+  refuse anything else, and only the HTTP routes (`GET /replay`,
+  `GET /api/replay/html`, `POST /api/replay/render`) take another value —
+  the retired `prompt` or `summary`, say — as `on`, which never turns
+  prompts on.
 - **Where the choice lives.** The player's **Include my prompts** checkbox (off
   until you tick it, then remembered per browser) drives what you watch and
   every file you save from the player — **↧ replay.html**, **↧ GIF**, **↧ MP4**,
