@@ -435,6 +435,38 @@ test('a page with only ## sections numbers them from 1, in Contents, ⌘K and bl
   await tick();
 });
 
+// R7-5: a run is keyed by its anchor — the markdown item before it, or 'start'.
+// Writing a heading directly above a run (a `# Title` put after 'start') or
+// removing one changes that anchor while the run's panes stay exactly the same,
+// and the run used to be re-created: every pane in it re-parented into a new
+// grid, and a moved <iframe> reloads. The run's element is carried forward now.
+test('markdown written or removed directly above a run re-parents nothing', async () => {
+  const AB = MOUNTS.filter((m) => m.id === 'a' || m.id === 'b');
+  frame({ type: 'reset', store: {}, active: 'n1', lock: null, mounts: AB.map((m) => ({ ...m, pane_state: { ...m.pane_state } })),
+    markdown: [], order: ['a', 'b'], claude_order: ['a', 'b'], runs: {} });
+  await tick(60);
+  const grid = pane('a').parentElement;
+  const hosts = { a: host('a'), b: host('b') };
+  assert.equal(grid.parentElement, run('start'), 'precondition: one run, at the top of the page');
+
+  frame({ type: 'markdown', id: 'md-top', text: '# Title', owner: 'claude',
+    order: ['md-top', 'a', 'b'], claude_order: ['md-top', 'a', 'b'] });
+  await tick();
+  assert.equal($('page-title').textContent, 'Title', 'precondition: the heading landed');
+  assert.equal(pane('a').parentElement, grid, 'a heading written above the run keeps its grid');
+  assert.equal(pane('b').parentElement, grid);
+  assert.deepEqual([host('a'), host('b')], [hosts.a, hosts.b], 'and its panes');
+  assert.equal(run('md-top'), grid.parentElement, 'the run is re-keyed to its new anchor');
+  assert.equal(run('start'), undefined, 'and nothing is left under the old one');
+
+  frame({ type: 'markdown:remove', id: 'md-top' });
+  await tick();
+  assert.equal(pane('a').parentElement, grid, 'removing the heading keeps the grid too');
+  assert.deepEqual([host('a'), host('b')], [hosts.a, hosts.b]);
+  assert.equal(run('start'), grid.parentElement, 'back under start');
+  assert.equal(W.document.querySelectorAll('#main .page-run').length, 1, 'one run, no stray element');
+});
+
 // ── the node preview draws the page the same way ────────────────────────────
 // lib/server/preview.js (graph thumbnails, the glance, pane history, replay
 // frames) inlines the SAME stylesheet (public/page.css) and cuts the sequence

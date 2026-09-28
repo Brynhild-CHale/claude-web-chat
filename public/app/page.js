@@ -18,8 +18,10 @@
 // Stable DOM: layoutPage() moves an element only when it is out of place, and
 // orders panes INSIDE a run with CSS `order`, never by moving them — so a
 // markdown edit, a re-render, a drag or Claude's reorder never re-parents an
-// unrelated pane (a moved <iframe> reloads). Only a change of run membership (a
-// markdown chunk written between two panes) re-parents the panes it moves.
+// unrelated pane (a moved <iframe> reloads). A run whose anchor changes
+// (markdown written or removed directly above it) keeps its element too. Only a
+// change of run membership (a markdown chunk written between two panes)
+// re-parents the panes it moves.
 import { $, view } from './state.js';
 import { renderMarkdown, headings } from './markdown.js';
 import { panes, layoutLocked, unminimize, blockType, syncOwnerChips } from './mounts.js';
@@ -325,8 +327,30 @@ function mdElement(id) {
   return el;
 }
 
-function runElement(seg) {
-  let el = runEls.get(seg.anchor);
+// A run whose ANCHOR changed while its panes did not — markdown written or
+// removed right above it: a `# Title` put after 'start', a caption under a
+// heading — is still the same run. Its element is carried forward: the .page-run
+// that holds one of its panes is re-keyed from its old anchor, provided no run
+// starts at that anchor any more. Keyed by anchor alone, the run was re-created
+// and every pane in it re-parented into the new grid, and a moved <iframe>
+// reloads (a website pane lost its place, node-render re-fetched).
+function carriedRun(seg, liveAnchors) {
+  for (const id of seg.panes) {
+    const grid = panes.get(id).wrapper.parentElement;
+    const el = grid && grid.classList.contains('run-grid') ? grid.parentElement : null;
+    if (!el) continue;
+    const old = el.dataset.anchor;
+    if (runEls.get(old) !== el || liveAnchors.has(old)) continue;
+    runEls.delete(old);
+    runEls.set(seg.anchor, el);
+    el.dataset.anchor = seg.anchor;
+    return el;
+  }
+  return null;
+}
+
+function runElement(seg, liveAnchors) {
+  let el = runEls.get(seg.anchor) || carriedRun(seg, liveAnchors);
   if (!el) {
     el = document.createElement('section');
     el.className = 'page-run';
@@ -456,10 +480,10 @@ export function layoutPage() {
   const segs = segments();
   const want = [];
   const liveMd = new Set();
-  const liveRuns = new Set();
+  const liveRuns = new Set(segs.filter((s) => !s.md).map((s) => s.anchor));
   for (const s of segs) {
     if (s.md) { want.push(mdElement(s.md)); liveMd.add(s.md); }
-    else { want.push(runElement(s)); liveRuns.add(s.anchor); }
+    else want.push(runElement(s, liveRuns));
   }
   for (const id of [...mdEls.keys()]) if (!liveMd.has(id)) { mdEls.get(id).remove(); mdEls.delete(id); }
   for (const a of [...runEls.keys()]) if (!liveRuns.has(a)) { runEls.get(a).remove(); runEls.delete(a); }
