@@ -87,8 +87,8 @@ as `.html` — works without one. Where it looks, per platform
 | Platform | Where the browser is found | Verified by |
 | --- | --- | --- |
 | **macOS** | `/Applications/{Google Chrome,Chromium,Microsoft Edge,Brave Browser}.app` | Developed against Chrome for Testing 151 via `WEB_CHAT_CHROME`; `test/replay-capture-e2e.test.js` runs against it when opted in (`WEB_CHAT_E2E_CHROME=1`) |
-| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH` | The same e2e test, opted in by hand (CI never sets `WEB_CHAT_E2E_CHROME`); the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
-| **Windows (WSL2)** | A **Linux** Chrome installed inside the distro, as on Linux. A Windows Chrome under `/mnt/c` cannot share file-descriptor pipes with a Linux process and is not a candidate | Not run by anyone |
+| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH`. A daemon running as **root** (a Docker dev container, a root CI image) cannot launch it — Chrome refuses to run as root without `--no-sandbox`, which is not passed — so run web-chat as a normal user | The same e2e test, opted in by hand (CI never sets `WEB_CHAT_E2E_CHROME`); the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
+| **Windows (WSL2)** | A **Linux** Chrome installed inside the distro, as on Linux. A Windows Chrome under `/mnt/c` cannot share file-descriptor pipes with a Linux process and is not a candidate. As on Linux, a daemon running as **root** (a WSL distro whose default user is root) cannot launch Chrome — no `--no-sandbox` is passed — so run web-chat as a normal user | Not run by anyone |
 
 The browser is launched with `--use-mock-keychain --password-store=basic`: on
 macOS, a headless Chrome whose `HOME` is not the login user's (a sandboxed test
