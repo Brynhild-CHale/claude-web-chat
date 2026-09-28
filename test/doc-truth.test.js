@@ -841,6 +841,23 @@ test('the README\'s documentation table links every doc `claude-web-chat docs` s
   }
 });
 
+// The README's clips live in .github/media/ (outside the release tarball, so
+// nothing else notices a renamed or missing one), and a clip too heavy for the
+// README to load is as broken as a missing one.
+test('every image the README shows exists in .github/media/ and stays under 2.5 MB', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const readme = read('README.md');
+  const refs = [...readme.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((m) => m[1]);
+  assert.ok(refs.length >= 4, `expected the README's clips, found ${refs.length}`);
+  for (const rel of refs) {
+    assert.match(rel, /^\.github\/media\/[a-z0-9-]+\.gif$/, `README.md shows ${rel}; its clips live in .github/media/`);
+    const file = path.join(__dirname, '..', rel);
+    assert.ok(fs.existsSync(file), `README.md shows ${rel}, which does not exist`);
+    assert.ok(fs.statSync(file).size < 2.5 * 1024 * 1024, `${rel} is over 2.5 MB`);
+  }
+});
+
 test('install.md\'s "What it writes" names the tunnel, brand and replay scratch directories', () => {
   const { projectPaths, userPaths } = require('../lib/core/paths');
   const path = require('path');
