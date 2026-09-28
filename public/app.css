@@ -1440,7 +1440,7 @@ body.pin-mode #main { cursor: crosshair; }
   .cmd-trigger, .tb-div, .btn-graph kbd { display: none; }
   .brand-logo { max-width: 96px; }
 }
-@media (max-width: 760px) {
+@media (max-width: 759px) {
   .brand { font-size: 0; gap: 0; }   /* keep the connection dot, drop the wordmark */
   .brand .status-dot { font-size: 13px; }
 }
@@ -1464,7 +1464,7 @@ body.pin-mode #main { cursor: crosshair; }
   .gv-search { top: 54px; left: 12px; transform: none; width: min(300px, calc(100% - 24px)); }
   .gv-inspector { top: 96px; max-height: calc(100% - 150px); }
 }
-@media (max-width: 760px) {
+@media (max-width: 759px) {
   .gv-inspector { top: auto; bottom: 54px; right: 12px; width: calc(100% - 24px); max-height: 50%; }
   .gv-chip { padding: 0 8px; }
 }
