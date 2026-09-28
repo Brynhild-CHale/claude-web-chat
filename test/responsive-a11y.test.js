@@ -155,6 +155,58 @@ test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide
   assert.equal(window.document.getElementById('contents-nav').childElementCount, 0, 'and ships empty');
 });
 
+test('the narrow chrome starts below 760px, all of it at once', () => {
+  // Narrow is <760 — the bottom bar's breakpoint and viewport.js PHONE_MAX_WIDTH.
+  // Two rules once said 760, so a window exactly 760px wide lost its wordmark
+  // and floated the graph inspector as a bottom sheet 54px above a bottom bar
+  // that was not drawn.
+  const at760 = {
+    bottombar: winningValue('.bottombar', 'display', 760),
+    brand: winningValue('.brand', 'font-size', 760),
+    inspTop: winningValue('.gv-inspector', 'top', 760),
+    inspBottom: winningValue('.gv-inspector', 'bottom', 760),
+  };
+  assert.deepEqual(at760, { bottombar: 'none', brand: null, inspTop: '96px', inspBottom: null },
+    'at 760px: no bottom bar, the wordmark keeps .brand\'s own font, the inspector floats from the top (the wide rules)');
+  const at759 = {
+    bottombar: winningValue('.bottombar', 'display', 759),
+    brand: winningValue('.brand', 'font-size', 759),
+    inspTop: winningValue('.gv-inspector', 'top', 759),
+    inspBottom: winningValue('.gv-inspector', 'bottom', 759),
+  };
+  assert.deepEqual(at759, { bottombar: 'flex', brand: '0', inspTop: 'auto', inspBottom: '54px' },
+    'at 759px: the bottom bar, the wordmark dropped, the inspector a sheet above the bar (the narrow rules)');
+  // …and no chrome rule re-opens the gap: the only breakpoint near it is the one
+  // viewport.js names.
+  const phoneMax = Number(/PHONE_MAX_WIDTH\s*=\s*(\d+)/.exec(
+    fs.readFileSync(path.join(REPO, 'public/app/viewport.js'), 'utf8'))[1]);
+  const near = [...CSS.matchAll(/@media\s*\(max-width:\s*(\d+)px\)/g)].map((m) => Number(m[1]))
+    .filter((w) => Math.abs(w - phoneMax) <= 10);
+  assert.ok(near.length, 'the stylesheets have narrow rules');
+  assert.deepEqual([...new Set(near)], [phoneMax], `every narrow breakpoint is max-width: ${phoneMax}px`);
+});
+
+test('a pane header that cannot be dragged gives the touch back to the page', () => {
+  // .pane-header is the drag handle, so it keeps the browser from panning on it.
+  // On a phone (layout fixed) or a locked block nothing can be dragged, and the
+  // strip must scroll the page like the rest of the pane — the phone's column of
+  // blocks is mostly headers to a thumb.
+  for (const width of [390, 759, 1280]) {
+    assert.equal(winningValue('.pane-header', 'touch-action', width), 'none', `a draggable header owns its touches at ${width}px`);
+    assert.equal(winningValue('.phone .pane-header', 'touch-action', width), 'auto', `a phone header pans the page at ${width}px`);
+    assert.equal(winningValue('.pane.locked .pane-header', 'touch-action', width), 'auto', `a locked header pans the page at ${width}px`);
+  }
+  // Those two out-rank .pane-header by specificity; no other rule may set a
+  // header's touch-action, or it could quietly take the pan away again.
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const setters = new Set();
+  for (const r of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(?:^|;)\s*touch-action\s*:/.test(r[2])) continue;
+    for (const sel of r[1].split(',').map((x) => x.trim())) if (/\.pane-header$/.test(sel)) setters.add(sel);
+  }
+  assert.deepEqual([...setters].sort(), ['.pane-header', '.pane.locked .pane-header', '.phone .pane-header']);
+});
+
 test('the phone rule lives in one place: public/app/viewport.js', () => {
   // The phone (layout fixed, the graph as a log) is chosen by shape —
   // narrow AND portrait (maintainer ruling a11) — and reverting that is meant to
