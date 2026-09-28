@@ -12,6 +12,12 @@ npm install
 node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
+Developing needs **Node 22.13 or newer** — one minor above what users need.
+The runtime floor is 22.12 (`NODE_FLOOR` in `lib/core/versions.js`, where
+`require(esm)` is on by default), but jsdom, the suite's one devDependency,
+declares `^22.13.0`, so `npm install` and `npm test` want 22.13+. CI runs the
+current 22.x and 24.x.
+
 Run the suite with `npm test` — that is `node --test --test-timeout=60000 --import ./test-support/sandbox.js`,
 which auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
 reports a spurious failure. The timeout is load-bearing: without it one leaked
@@ -100,7 +106,14 @@ never land in a real release's directory under `~/.web-chat/versions/`, sorts
 above the release it was built after (the update banner does not offer that
 release back to it) and below the one it is heading for (which *is* offered when
 it ships). A dev build is reproducible only within the minute it was stamped; a
-normal build stays byte-reproducible. `dist/SHA256SUMS` keeps a line for every
+normal build's tar stays byte-reproducible from the tree alone. The `.tar.gz`
+digest also depends on the zlib Node is linked against: official nodejs.org
+binaries (what CI's `setup-node` installs) agree across 22.x and 24.x, while
+Homebrew and distro Node link the system zlib and produce different gzip bytes
+for the same tar — so a local `dist/` built with Homebrew Node will not match the
+published sha256. The build summary prints `process.versions.zlib` and the
+uncompressed tar's sha256 (compare it with `gunzip -c <tarball> | shasum -a 256`)
+to tell a zlib difference from a tree difference. `dist/SHA256SUMS` keeps a line for every
 tarball still in `dist/` — each build replaces its own line and drops the lines
 of tarballs you deleted — so an older build there still verifies.
 
@@ -185,11 +198,20 @@ lib/core/          paths · portfiles · bus · names · fsjson · html · versi
 any edge the direction forbids — a `core` or `client` reach outward, an entry
 point importing another entry point, a shared library importing an entry point.
 The edges that legitimately remain are listed in a `BASELINE` in that file, each
-with the reason it is allowed, and the baseline is **shrink-only**: an entry that
-no longer matches fails as stale, so a consolidation tightens the rule in the
-same PR. One entry is marked `OWED` — `lib/packs` still reaches into
-`lib/server` for the components registry (the reserved-name list now lives in
-`lib/core/names.js`).
+with the reason it is allowed, and the baseline **grows only by a reviewed,
+reasoned entry**: an unlisted edge fails, and an entry that no longer matches
+fails as stale, so a consolidation tightens the rule in the same PR. One entry is
+marked `OWED` — `lib/packs` still reaches into `lib/server` for the components
+registry (the reserved-name list now lives in `lib/core/names.js`).
+
+A baseline edge is keyed per file, so it admits everything the target file
+requires as well. Where the edge crosses into another entry point, the target is
+**pinned** (`PINNED` in the same file): the portal picker's edge into
+`lib/server/theme.js` loads that file into the tunnel portal — the remote-facing
+access-control process — so theme.js, and anything it pulls in, may require only
+`fs`, `lib/core/*` and `./theme-packs`. A new require there fails the build and
+names the picker; move what the picker needs into `lib/core` rather than widen
+the pin.
 
 The rule was a paragraph until then, and a paragraph is one lazy `require` away
 from being wrong. It already was, in four places, and every one of them was the
@@ -259,7 +281,7 @@ were the only places they lived.
 | find a system Chrome / ffmpeg, or drive Chrome headless | `lib/replay/find` (`findChrome` / `findFfmpeg`) · `lib/replay/chrome` (`captureFrames` — CDP over `--remote-debugging-pipe`, throwaway profile, bounded teardown of the browser's whole process group on every way out incl. an `AbortSignal` and process exit) · `lib/replay/tmp` (`makeTmpDir` / `sweepStaleTmp` — the `<kind>-<pid>-<hex>` render dirs under the project tmp dir, and the dead-pid sweep) | Puppeteer/Playwright, a debugging PORT, a second finder with its own candidate list, or a render dir named by hand |
 | turn captured replay frames into a GIF / MP4 / WebM | `lib/replay/encode` (`createFrameEncoder({format, ffmpegPath, …})` → `addFrame(png, delay)` / `finish()` / `dispose()` — ffmpeg when found, else the built-in GIF encoder; `pickEncoder` says which) | a second `spawn('ffmpeg')`, or choosing between the encoders at the call site |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
-| gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
+| gate on the supported Node version | `core/versions` `NODE_FLOOR` (a major.minor, `'22.12'`) / `checkNodeFloor(v)` | write the floor, or only its major, into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
 | decide which project a command operates on | `lib/setup/registration` `resolveRoot(cwd, {mode})` → `{root, movedUp}` | `process.cwd()`, or your own `findProjectRoot(cwd) || cwd` per command |
 | read what is registered with Claude Code here (hooks per event, the `.mcp.json` entry, managed-file drift, gitignore) | `lib/setup/registration` `inspect(root)` | count hooks yourself, or classify the MCP entry a second way |
@@ -1297,10 +1319,14 @@ The ratchet works the same way in both:
 - **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
   route it through its engine instead.
 - **Removed occurrence → fail as a STALE baseline.** A consolidation dropped a
-  count below its baseline; lower the number here in the same PR. The ceiling can
-  only ever move toward zero-outside-the-home.
+  count below its baseline; lower the number here in the same PR.
+- **A baseline grows only by a reviewed, reasoned entry.** Raising a count or
+  adding a file is a deliberate change with its reason written beside it (the
+  process.kill sites the tunnel and replay engines gained are examples) — never
+  a way to make a new occurrence pass. The direction of travel is still toward
+  zero-outside-the-home.
 
-Current homes (baselines can only shrink toward these):
+Current homes (baselines move toward these):
 
 | Construct | Allowed home | Phase that finishes the collapse |
 | --- | --- | --- |

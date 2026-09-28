@@ -30,15 +30,28 @@ TMP=""
 cleanup() { if [ -n "$TMP" ]; then rm -rf "$TMP"; fi; }
 trap cleanup EXIT INT TERM
 
-# 1. Require Node 22+.
-command -v node >/dev/null 2>&1 || die "claude-web-chat needs Node.js (22 or newer), which isn't installed.
+# 1. Require Node 22.12+. A major.minor, not a major: require(esm) is on by
+#    default only from 22.12, so 22.0-22.11 install fine and then cannot start
+#    the daemon. Same number as lib/core/versions NODE_FLOOR and package.json's
+#    engines (test/core-leaves.test.js holds the three together).
+NODE_FLOOR=22.12
+command -v node >/dev/null 2>&1 || die "claude-web-chat needs Node.js ($NODE_FLOOR or newer), which isn't installed.
 Get it from https://nodejs.org/ and run this again."
-node_major=$(node -p 'process.versions.node.split(".")[0]')
-if [ "$node_major" -lt 22 ]; then
-  die "claude-web-chat needs Node 22 or newer — you have $(node -v).
+node_version=$(node -p 'process.versions.node')
+node_major=${node_version%%.*}
+node_minor=${node_version#*.}
+node_minor=${node_minor%%.*}
+case "$node_major.$node_minor" in
+  *[!0-9.]*|.*|*.) die "claude-web-chat could not read your Node version (node reported '$node_version')." ;;
+esac
+floor_major=${NODE_FLOOR%%.*}
+floor_minor=${NODE_FLOOR#*.}
+if [ "$node_major" -lt "$floor_major" ] \
+   || { [ "$node_major" -eq "$floor_major" ] && [ "$node_minor" -lt "$floor_minor" ]; }; then
+  die "claude-web-chat needs Node $NODE_FLOOR or newer — you have $(node -v).
 Node 18 and 20 are both past end-of-life, and one of this program's dependencies
-(entities, via node-html-parser) is now ESM-only: without require(esm), which
-landed in Node 22, the daemon cannot even start.
+(entities, via node-html-parser) is now ESM-only: without require(esm), which is
+on by default from Node $NODE_FLOOR, the daemon cannot even start.
 
 Note that your distro's package may well be older than this: Ubuntu 24.04 ships
 Node 18, Debian 12 ships 18, Debian 13 ships 20. So 'apt install nodejs' is
