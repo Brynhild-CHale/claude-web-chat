@@ -8,27 +8,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const path = require('path');
-const { withServer } = require('../test-support/helpers');
+const { withServer, shortTtlServer } = require('../test-support/helpers');
 
-// A server whose turn lock goes stale in `ms`. LOCK_TTL_MS is read at
-// domain/turns LOAD, so every lib/server module is evicted and re-required
-// (test/lock-ttl.test.js's shortTtlServer, which explains why it is the whole
-// directory); env var and cache are restored on t.after.
-const SERVER_DIR = path.join(__dirname, '..', 'lib', 'server') + path.sep;
-const bustServerModules = () => {
-  for (const k of Object.keys(require.cache)) if (k.startsWith(SERVER_DIR)) delete require.cache[k];
-};
-function shortTtlServer(t, ms) {
-  const prev = process.env.WEB_CHAT_LOCK_TTL_MS;
-  process.env.WEB_CHAT_LOCK_TTL_MS = String(ms);
-  bustServerModules();
-  t.after(() => {
-    if (prev === undefined) delete process.env.WEB_CHAT_LOCK_TTL_MS; else process.env.WEB_CHAT_LOCK_TTL_MS = prev;
-    bustServerModules();
-  });
-  return require('../lib/server').createServer;
-}
+// shortTtlServer(t, ms) boots a server whose turn lock goes stale in `ms`
+// (test-support/helpers; env var and module cache restored on t.after).
+
 // A real elapsed wait: the assertion is that the TTL has passed.
 const elapse = (ms) => new Promise((r) => setTimeout(r, ms));
 

@@ -16,7 +16,9 @@
 // that can actually FAIL (`openSSE`), a WS connect that can send headers
 // (`wsConnect`, so the Origin gate is reachable), a deaf raw-socket WS client
 // (`deafWs`, the connection that never answers a close frame), and a hub boot
-// (`withHub`). `test/harness-conventions.test.js` ratchets those back here.
+// (`withHub`). `test/harness-conventions.test.js` ratchets those back here. It
+// also owns the short turn-lock TTL (`shortLockTtl` / `shortTtlServer`), whose
+// module eviction went stale once as a per-file copy.
 
 // The throwaway-HOME preload. `--import ./test-support/sandbox.js` in the npm
 // script gets it in before ANY require; requiring it here is the belt for a
@@ -35,8 +37,8 @@ const { writePortfileAt: writePortfile } = require('../lib/core/portfiles');
 const { LISTEN_HOST } = require('../lib/core/cors');
 const { subscribeSSE } = require('../lib/client');
 
-// Resolved LAZILY, not at require time. lock-ttl.test.js sets
-// WEB_CHAT_LOCK_TTL_MS and then deletes four require.cache entries so the TTL is
+// Resolved LAZILY, not at require time. shortLockTtl (below) sets
+// WEB_CHAT_LOCK_TTL_MS and evicts lib/server from require.cache so the TTL is
 // re-read at module load; a binding captured up here would hand that test the
 // STALE module and it would pass while exercising the wrong code. `opts.createServer`
 // lets a caller inject one outright.
@@ -45,6 +47,47 @@ function resolveCreateServer(injected) {
 }
 function resolveCreateHub(injected) {
   return injected || require('../lib/hub').createHub;
+}
+
+// ── a short turn-lock TTL ────────────────────────────────────────────────────
+//
+// LOCK_TTL_MS is read once, at lib/server/domain/turns LOAD, so the only way to
+// test the stale-lock path in reasonable time is to set the env var and re-read
+// the module — which means evicting turns.js and everything that imports it, or
+// two turns instances end up loaded at once. That set kept growing (graph, the
+// graph and health and queue and events routes, ws.js, domain/queue — whose wake
+// lock then judged staleness by the OLD TTL) and a hand-kept list of it silently
+// went stale, so every module under lib/server is evicted: nothing outside it
+// imports one of them. It lives here, once, because a second per-file copy of
+// that eviction is exactly how the list went stale.
+//
+//   shortLockTtl(t, ms)   — set the TTL and evict, for this test only (a unit
+//                           test then requires lib/server/domain/turns itself)
+//   shortTtlServer(t, ms) — the same, returning the FRESH createServer for
+//                           withServer({ createServer }) to boot. Passing it
+//                           explicitly matters: helpers used to capture
+//                           createServer at require time, so a test that busted
+//                           the cache got the STALE module back and passed while
+//                           exercising the old TTL — a silent false green.
+//
+// Both the env var and the cache are restored on t.after, so a failing
+// assertion cannot leak either.
+const SERVER_DIR = path.join(__dirname, '..', 'lib', 'server') + path.sep;
+function evictServerModules() {
+  for (const k of Object.keys(require.cache)) if (k.startsWith(SERVER_DIR)) delete require.cache[k];
+}
+function shortLockTtl(t, ms) {
+  const prev = process.env.WEB_CHAT_LOCK_TTL_MS;
+  process.env.WEB_CHAT_LOCK_TTL_MS = String(ms);
+  evictServerModules();
+  t.after(() => {
+    if (prev === undefined) delete process.env.WEB_CHAT_LOCK_TTL_MS; else process.env.WEB_CHAT_LOCK_TTL_MS = prev;
+    evictServerModules();
+  });
+}
+function shortTtlServer(t, ms = 50) {
+  shortLockTtl(t, ms);
+  return require('../lib/server').createServer;
 }
 
 // Fresh isolated project root with an empty .web-chat/. OS tmp is left to the OS
@@ -565,4 +608,5 @@ module.exports = {
   freePort, fakeCloudflared, fakeBin, e2eGate,
   withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi, existingProject,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
+  shortLockTtl, shortTtlServer,
 };

@@ -2,41 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, openSSE, waitUntil } = require('../test-support/helpers');
+const { withServer, openSSE, waitUntil, shortLockTtl, shortTtlServer } = require('../test-support/helpers');
 
-// LOCK_TTL_MS is read once, at lib/server/domain/turns LOAD, so the only way to
-// test the stale-lock path in reasonable time is to set the env var and re-read
-// the module — which means evicting turns.js and everything that imports it, or
-// two turns instances end up loaded at once. That set kept growing (graph, the
-// graph and health and queue and events routes, ws.js, domain/queue — whose
-// wake lock then judged staleness by the OLD TTL) and a hand-kept list of it
-// silently went stale, so every module under lib/server is evicted: nothing
-// outside it imports one of them.
-const SERVER_DIR = path.join(__dirname, '..', 'lib', 'server') + path.sep;
-const bustTtlModules = () => {
-  for (const k of Object.keys(require.cache)) if (k.startsWith(SERVER_DIR)) delete require.cache[k];
-};
-
-// Set the TTL and evict, for this test only. Both the env var and the cache are
-// restored on t.after, so a failing assertion cannot leak either.
-function shortTtl(t, ms) {
-  const prev = process.env.WEB_CHAT_LOCK_TTL_MS;
-  process.env.WEB_CHAT_LOCK_TTL_MS = String(ms);
-  bustTtlModules();
-  t.after(() => {
-    if (prev === undefined) delete process.env.WEB_CHAT_LOCK_TTL_MS; else process.env.WEB_CHAT_LOCK_TTL_MS = prev;
-    bustTtlModules();
-  });
-}
-
-// Returns the FRESH createServer for withServer to boot. Passing it explicitly
-// matters: helpers used to capture createServer at require time, so a test that
-// busted the cache got the STALE module back and passed while exercising the old
-// TTL — a silent false green in a lock-correctness test.
-function shortTtlServer(t, ms = 50) {
-  shortTtl(t, ms);
-  return require('../lib/server').createServer;
-}
+// The stale-lock path runs at a TTL of tens of milliseconds: shortTtlServer
+// (test-support/helpers) sets WEB_CHAT_LOCK_TTL_MS and re-reads lib/server for
+// one test, and shortLockTtl does the same for a unit test on domain/turns.
 
 // A real elapsed wait, not a synchronisation point: the assertion IS that the
 // TTL has passed.
@@ -344,7 +314,7 @@ const timeouts = () => process.getActiveResourcesInfo().filter((r) => r === 'Tim
 const staleFrames = (bus) => bus.frames.filter((f) => f.type === 'lock' && f.lock && f.lock.stale === true);
 
 test('the stale timer holds no handle open, and fires one stale lock frame', async (t) => {
-  shortTtl(t, 60);
+  shortLockTtl(t, 60);
   const turns = require('../lib/server/domain/turns');
   const graph = graphStub();
   const bus = fakeLockBus();
@@ -358,7 +328,7 @@ test('the stale timer holds no handle open, and fires one stale lock frame', asy
 });
 
 test('the stale timer is cleared with the lock: a released lock never reports stale', async (t) => {
-  shortTtl(t, 60);
+  shortLockTtl(t, 60);
   const turns = require('../lib/server/domain/turns');
   const graph = graphStub();
   const bus = fakeLockBus();
@@ -369,7 +339,7 @@ test('the stale timer is cleared with the lock: a released lock never reports st
 });
 
 test('the stale timer follows a keep-alive re-stamp instead of firing on the old deadline', async (t) => {
-  shortTtl(t, 150);
+  shortLockTtl(t, 150);
   const turns = require('../lib/server/domain/turns');
   const graph = graphStub();
   const bus = fakeLockBus();
@@ -387,7 +357,7 @@ test('the stale timer follows a keep-alive re-stamp instead of firing on the old
 // expire" TTL therefore fired, found the lock fresh, re-armed, and spun at 1 ms
 // a lap with a warning each — for the life of every lock.
 test('a TTL past setTimeout\'s ceiling arms one timer, not a 1 ms re-arm loop', async (t) => {
-  shortTtl(t, 99999999999);
+  shortLockTtl(t, 99999999999);
   const turns = require('../lib/server/domain/turns');
   const graph = graphStub();
   const bus = fakeLockBus();
