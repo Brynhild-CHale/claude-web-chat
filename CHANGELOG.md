@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-28
+
 ### Upgrading from 0.7.6
 
 No state migration runs: nodes written by 0.7.6 open as they are (a page with no
