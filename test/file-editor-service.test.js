@@ -490,3 +490,31 @@ test('file-editor pane: dirty clears on the service\'s echo, and only when the w
   assert.equal(dirtyShown(shadow), false, 'the echo settled the buffer');
   assert.equal(errText(shadow), '');
 });
+
+// The buffer and the path are the SERVICE's, not form state. Captured as
+// form_state (':0' the path, ':1' the buffer), they rode every remount — a
+// reload, leaving a preview, a re-render — and the chrome re-applies form_state
+// AFTER the pane's script has rendered what the store holds. So once the file
+// changed on disk (Claude edited it, the service pushed the new content) a
+// remount showed the stale buffer over it, and Save or ⌘S wrote that stale
+// buffer back over the newer file. Both fields are data-no-persist now: a
+// remount shows the file the service loaded.
+test('file-editor pane: the buffer and path are not form state, so a remount shows the file on disk', (t) => {
+  const document = withDom(t);
+  const store = mountRuntime.createStore({
+    editor: { root: '.', path: 'notes.txt', exists: true, load: 2, content: 'version B\n' },
+  });
+  const shadow = mountPane(t, document, store);
+  const ta = shadow.querySelector('[data-ta]');
+  assert.equal(ta.value, 'version B\n', 'precondition: the pane rendered the file the store holds');
+  assert.equal(shadow.querySelector('[data-pathin]').value, 'notes.txt');
+
+  assert.deepEqual(mountRuntime.captureFormState(shadow), {},
+    'neither field is captured, so neither can be persisted, flushed on a reconnect, or re-applied');
+
+  // What a pane persisted before this: the buffer as it was at version A. The
+  // chrome applies a mount's form_state right after the scripts run.
+  mountRuntime.applyFormState(shadow, { ':0': { value: 'notes.txt' }, ':1': { value: 'version A\n' } });
+  assert.equal(ta.value, 'version B\n', 'a stale form_state no longer paints over the newer file');
+  assert.equal(dirtyShown(shadow), false, 'and the pane does not read as holding unsaved work');
+});

@@ -48,8 +48,8 @@ export const isOpen = () => ws && ws.readyState === 1;
    would be contradicted by the very frame it was meant to correct.
 
    `pane:form` is deliberately NOT queued — the reconcile calls flushFormStates(),
-   which re-reads every kept pane's live DOM, and that is strictly fresher than
-   anything stashed here. */
+   which re-reads the live DOM of every kept pane the user edited, and that is
+   strictly fresher than anything stashed here. */
 const OUTBOX_LOG_MAX = 100;
 const pendingState = new Map();   // coalescing key → latest frame
 const pendingLog = [];            // event / script:error, in order, capped

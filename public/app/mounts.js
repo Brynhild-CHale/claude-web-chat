@@ -103,11 +103,24 @@ function emitPaneState(id) {
 // captureFormState) into the mount record server-side, so typed state survives
 // refresh, node navigation, drafts, and exports. Skipped while previewing
 // (a preview is read-only) and while a remote apply is in flight (p._applyingForm gates the echo loop).
+//
+// p._userDirty: the user has edited this pane since the server last got its
+// values. It is set in emitFormState and nowhere else — its only callers are
+// the pane's input/change listeners, and its _applyingForm gate keeps a
+// rehydrate's dispatched events out — and cleared once a frame is actually on
+// the wire.
+// flushFormStates() sends only these panes. A value a pane's SCRIPT assigns after
+// mount (a store subscriber, an awaited fetch) fires no input event, so it never
+// moves the _lastFormJson baseline: the reconcile's flush used to compare the
+// live DOM against that baseline and publish the script's fill as if the user had
+// typed it, and the surface read as changed (a spurious preserve node on Set
+// active, a chat-only turn committing).
 const formTimers = new Map();
 const FORM_DEBOUNCE_MS = 350;
 function emitFormState(id) {
   const p = panes.get(id);
   if (!p || p._applyingForm || view.previewing) return;
+  p._userDirty = true;
   if (formTimers.has(id)) clearTimeout(formTimers.get(id));
   formTimers.set(id, setTimeout(() => {
     formTimers.delete(id);
@@ -119,7 +132,9 @@ function sendFormState(id) {
   if (!p || view.previewing) return;
   const fs = window.__wcMount.captureFormState(p.root);
   const json = JSON.stringify(fs);
-  if (json === p._lastFormJson) return; // unchanged — don't chat
+  // Unchanged — don't chat. Nothing the user did is pending either: the server
+  // already has what the pane shows, so the flag goes with it.
+  if (json === p._lastFormJson) { p._userDirty = false; return; }
   p.form_state = fs;
   p.spec.form_state = fs;
   // Stamp the "server has this" marker ONLY once the frame is actually on the
@@ -130,17 +145,22 @@ function sendFormState(id) {
   // the reconcile calls flushFormStates(), which re-reads the LIVE DOM, and that
   // is fresher than any snapshot we could stash (ws.js drops a queued pane:form
   // for the same reason).
+  // _userDirty stays set on this path too, so the reconcile's flush re-sends it.
   if (!isOpen()) return;
   p._lastFormJson = json;
+  p._userDirty = false;
   send({ type: 'pane:form', id, form_state: fs });
 }
-// Immediate flush of every pane's current form values — the reconcile's way of
-// re-publishing what the user typed while the socket was down.
+// Immediate flush of the form values the user changed and the server has not
+// got — the reconcile's way of re-publishing what was typed while the socket
+// was down (or inside the debounce when it dropped). Only user-dirty panes: a
+// pane nobody typed in may still show values its own script filled since
+// mount, and those are the pane's, not the user's.
 function flushFormStates() {
-  for (const id of panes.keys()) {
+  for (const [id, p] of panes) {
     const t = formTimers.get(id);
     if (t) { clearTimeout(t); formTimers.delete(id); }
-    sendFormState(id);
+    if (p._userDirty) sendFormState(id);
   }
 }
 // Apply a remote client's pane:form (WS 'pane:form'): rehydrate the shadow DOM
@@ -152,6 +172,7 @@ export function applyRemoteFormState(id, form_state) {
   p.form_state = form_state;
   p.spec.form_state = form_state;
   p._lastFormJson = JSON.stringify(form_state || {});
+  p._userDirty = false;   // the DOM now shows the server's copy
   p._applyingForm = true;
   try { window.__wcMount.applyFormState(p.root, form_state || {}); }
   finally { p._applyingForm = false; }
@@ -713,7 +734,9 @@ function mountPane(m) {
   // Left unset for a pane nobody had typed in, the reconcile's flush (every
   // hello: a reload, a reconnect, a phone opening the page) took those defaults
   // for user input and published them, and the surface read as changed: Set
-  // active preserved a node holding nothing, a chat-only turn committed.
+  // active preserved a node holding nothing, a chat-only turn committed. What
+  // the pane's script fills in LATER never moves this baseline (no input event);
+  // the flush keeps it off the wire by sending only user-dirty panes instead.
   mounted._lastFormJson = JSON.stringify(window.__wcMount.captureFormState(root));
 
   const hostTitle = host.dataset && host.dataset.paneTitle;
@@ -912,8 +935,9 @@ function reconcileSurface(mounts, next) {
   // never runs it, which is exactly the first-open case the zero
   // state exists for. Reconcile explicitly once the frame has settled.
   layoutPage();
-  // Re-publish what the user typed while the socket was down. sendFormState is a
-  // no-op for a pane whose values the server already has.
+  // Re-publish what the user typed while the socket was down. Only panes the
+  // user edited are sent, and sendFormState is a no-op for one whose values the
+  // server already has.
   flushFormStates();
 }
 

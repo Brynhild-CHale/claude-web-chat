@@ -51,7 +51,7 @@
 </style>
 <div class="fe">
   <div class="bar">
-    <input class="path-in" placeholder="path/to/file — Enter or Open" data-pathin />
+    <input class="path-in" placeholder="path/to/file — Enter or Open" data-pathin data-no-persist />
     <button data-open>Open</button>
     <span class="dirty" data-dirty style="visibility:hidden">●</span>
     <button class="primary" data-save>Save</button>
@@ -62,7 +62,7 @@
 
   <div class="body">
     <div class="editor">
-      <textarea data-ta spellcheck="false" placeholder="Open a file, or type a path above and Save to create it."></textarea>
+      <textarea data-ta data-no-persist spellcheck="false" placeholder="Open a file, or type a path above and Save to create it."></textarea>
     </div>
     <div class="rail">
       <div>
@@ -81,6 +81,10 @@
 <script>
   const $ = (s) => root.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+  // Both fields are data-no-persist: the service is the source of truth for
+  // the buffer and the path. As persisted form state they were re-applied over
+  // a newer file on every remount (a reload, leaving a preview), so the pane
+  // showed a stale buffer — and Save wrote it back over the newer file.
   const ta = $('[data-ta]');
   const pathIn = $('[data-pathin]');
 
