@@ -15,9 +15,9 @@ the new `after` and `place` are render arguments, not params. What you have to d
 
 1. **Run `claude-web-chat update` inside a web-chat project, then reload every open
    surface tab and `/exit` + reopen Claude Code.** `update` restarts that project's
-   daemon, not the page or Claude Code (typed outside a project, 0.7.6's `update`
-   starts a stray server rooted there — stop it with `claude-web-chat stop` in that
-   directory; from 0.8 on it restarts nothing outside a project).
+   daemon, not the page or Claude Code (typed outside a project it installs the
+   build and restarts nothing — run `claude-web-chat restart` in each project, or
+   `update --restart-all`).
    An open tab keeps running 0.7.6's chrome against the new daemon — no markdown,
    no page title or Contents — until you reload it. A running session keeps the 23
    tools it started with: `write_markdown`, the 24th, arrives with the next
