@@ -264,11 +264,17 @@ const HANDLERS = {
       if (msg.target === view.activeId) setActiveNodeTheme(msg.theme || null);
       if (msg.target === view.viewedId) applyNodeTheme(msg.theme || null, true);
     } else if (msg.scope === 'pane') {
-      const p = panes.get(msg.target);
-      if (p) applyPaneTheme(p, msg.theme || null, true);
-      else if (view.liveSnapshot) {
-        const sm = view.liveSnapshot.mounts.find(x => x.id === msg.target);
+      // A pane theme is a LIVE change. While previewing, `panes` holds the
+      // previewed node's panes — and with stable mount ids one of them usually
+      // answers to the target — so the theme folds into the captured live
+      // surface, like every other live frame, and the committed node on screen
+      // is never repainted.
+      if (view.previewing) {
+        const sm = view.liveSnapshot && view.liveSnapshot.mounts.find(x => x.id === msg.target);
         if (sm) sm.theme = msg.theme || undefined;
+      } else {
+        const p = panes.get(msg.target);
+        if (p) applyPaneTheme(p, msg.theme || null, true);
       }
     }
     if (isOverlayOpen()) layoutAndRender();

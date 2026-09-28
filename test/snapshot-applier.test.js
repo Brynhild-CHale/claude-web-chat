@@ -372,6 +372,34 @@ test('a hello that makes the previewed node active shows the live form values', 
   assert.equal(hostFor('m-shared').hasAttribute('data-wc-readonly'), false, 'and the pane is editable');
 });
 
+/* ── 5. a pane theme is a live change: it never repaints the previewed node ── */
+
+// While previewing, `panes` holds the previewed node's panes, and the one that
+// shares the live pane's id answered a live pane theme: the committed node on
+// screen was repainted, and the live pane got it only by the fold's luck.
+test('a pane theme that lands during a preview themes the live pane, not the previewed one', async () => {
+  const { previewNode } = await app('topbar.js');
+  const { panes } = await app('mounts.js');
+  hello({ store: {}, mounts: [typedLive()] });   // attached on n1
+  await tick();
+  await previewNode('n3');
+  await tick();
+  assert.equal(previewing(), true, 'precondition: detached on n3, whose pane shares the id');
+
+  WS.onmessage({ data: JSON.stringify({ type: 'theme', scope: 'pane', target: 'm-shared', theme: { tokens: { '--wc-accent': '#ff0000' } } }) });
+  await tick();
+  assert.equal(panes.get('m-shared').wrapper.style.getPropertyValue('--wc-accent'), '',
+    'the committed node on screen is not repainted');
+  assert.deepEqual(view.liveSnapshot.mounts.find((m) => m.id === 'm-shared').theme, { tokens: { '--wc-accent': '#ff0000' } },
+    'the theme folded into the captured live surface, like every other live frame');
+
+  $('btn-return-active').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(previewing(), false, 'attached again');
+  assert.equal(panes.get('m-shared').wrapper.style.getPropertyValue('--wc-accent'), '#ff0000',
+    'and the live pane wears it after ↩ active');
+});
+
 test('the outbox does not grow without bound while the socket stays down', async () => {
   const { store } = await import(pathToFileURL(path.join(REPO, 'public/app/store.js')).href);
   WS.readyState = 3;
