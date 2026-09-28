@@ -287,6 +287,9 @@ test('a token value that would load something is refused at plan time, in every 
     'url(https://tracker.example/p.png)', 'URL( "x" )', 'linear-gradient(red, blue), url(x)',
     'image-set("a.png" 1x)', '-webkit-image-set(x 1x)', 'image(x)', 'cross-fade(a, b)', 'src("x")',
     'expression(alert(1))', '@import "x"', 'javascript:alert(1)', '\\75rl(x)', 'u\\rl(x)',
+    // Painted, not shipped: the strip deletes `{ } < > ;`, which assembles these.
+    'ur;l(https://tracker.example/p.png)', 'u{}rl(https://tracker.example/p.png)',
+    'image-s<>et("https://x.example/a.png" 1x)', '@im;port "https://x.example/t.css"',
   ]) assert.ok(refusedTokenValue(bad), bad);
   for (const ok of [
     '#0b5cad', 'rgb(1 2 3 / 50%)', 'radial-gradient(circle at 20% 10%, #fff 0, transparent 60%)',
@@ -302,6 +305,75 @@ test('a token value that would load something is refused at plan time, in every 
 
   const root = project(t);
   const forge = await forgeFor(t, top);
+  const q = await packs.quarantinePack({ url: forge.url('acme', 'harbor'), root });
+  assert.ok(q.record.errors.some((e) => /--wc-depth-radial carries url/.test(e)), 'the review card shows the refusal');
+  assert.throws(() => packs.approvePack({ name: 'harbor-themes', root }), /may not load anything/);
+  assert.equal(fs.existsSync(path.join(projectPaths(root).themesDir, 'harbor.json')), false);
+});
+
+// R6-1: the refusal judged the value as SHIPPED, but every consumer reads a
+// token through the strip (sanitizeTokens deletes `{ } < > ;`), and deleting
+// characters can assemble a refused name: `ur;l(` passed review and was painted
+// as `url(` into the chrome and every export. The strip and the refusal are one
+// module now, and the refusal judges the painted value too.
+test('theme values: the refusal judges the value the strip paints — a deleted { } < > ; cannot assemble a refused name', () => {
+  const { sanitizeTokenValue, refusedTokenValue, refusedTokens, alteredTokens } = require('../lib/core/theme-values');
+  const { sanitizeTokens } = require('../lib/server/theme');
+  const probes = [
+    ['ur;l(https://tracker.example/p.png)', 'url(https://tracker.example/p.png)', 'url(…)'],
+    ['u{}rl(https://tracker.example/p.png)', 'url(https://tracker.example/p.png)', 'url(…)'],
+    ['image-s<>et("https://x.example/a.png" 1x)', 'image-set("https://x.example/a.png" 1x)', 'image-set(…)'],
+    ['@im;port "https://x.example/t.css"', '@import "https://x.example/t.css"', '@import'],
+  ];
+  for (const [shipped, painted, what] of probes) {
+    assert.equal(sanitizeTokenValue(shipped), painted, `${shipped} is painted as ${painted}`);
+    assert.equal(sanitizeTokens({ '--wc-bg': shipped })['--wc-bg'], painted, 'the theme engine paints through the same strip');
+    assert.equal(refusedTokenValue(shipped), what, shipped);
+  }
+  // The shipped form is still judged: `a{}url(` is painted as the harmless
+  // `aurl(`, but a value that spells url( as shipped is refused regardless.
+  assert.equal(refusedTokenValue('a{}url(x)'), 'url(…)');
+  assert.deepEqual(refusedTokens({ '--wc-bg': 'ur;l(x)', '--wc-fg': '#fff' }), [{ token: '--wc-bg', what: 'url(…)' }]);
+
+  // The strip's own contract, unchanged by the move into core.
+  assert.equal(sanitizeTokenValue('0 1px\n2px rgba(0,0,0,.2)'), '0 1px 2px rgba(0,0,0,.2)');
+  assert.equal(sanitizeTokenValue('#fff;}\r\n<b>'), '#fff b');
+  assert.equal(sanitizeTokenValue(280), '280');
+
+  // What the strip would change — surrounding whitespace aside.
+  assert.deepEqual(alteredTokens({
+    '--wc-bg': '#fff;', '--wc-shadow': '0 1px\n2px red', '--wc-gold': 'a{b}',
+    '--wc-fg': '  #000\n', '--wc-radius': 8, '--wc-accent': '#0b5cad', '--wc-x': {},
+  }), [
+    { token: '--wc-bg', painted: '#fff' },
+    { token: '--wc-shadow', painted: '0 1px 2px red' },
+    { token: '--wc-gold', painted: 'ab' },
+  ]);
+  assert.deepEqual(alteredTokens(null), []);
+});
+
+test('a pack token the strip would change is refused at plan time, and the url( it assembles is named', async (t) => {
+  const withTop = (v) => themePack({ themes: { harbor: { theme: { ...THEME, tokens: { ...THEME.tokens, '--wc-depth-radial': v } } } } });
+  for (const [shipped, what] of [
+    ['ur;l(https://tracker.example/p.png)', /tokens --wc-depth-radial carries url\(…\)/],
+    ['u{}rl(https://tracker.example/p.png)', /tokens --wc-depth-radial carries url\(…\)/],
+    ['image-s<>et("https://x.example/a.png" 1x)', /tokens --wc-depth-radial carries image-set\(…\)/],
+    ['@im;port "https://x.example/t.css"', /tokens --wc-depth-radial carries @import/],
+  ]) {
+    const errs = planErrors(withTop(shipped));
+    assert.match(errs, what, shipped);
+    assert.match(errs, /tokens --wc-depth-radial carries \{ \} < > ; or a line break/, shipped);
+  }
+  // Structural characters alone, with nothing to assemble, are refused too — top-level and per mode.
+  const semi = planErrors(withTop('#0b5cad;'));
+  assert.match(semi, /tokens --wc-depth-radial carries \{ \} < > ; or a line break/);
+  assert.doesNotMatch(semi, /may not load anything/);
+  const nl = themePack({ themes: { harbor: { theme: { ...THEME, modes: { ...THEME.modes, light: { tokens: { ...THEME.modes.light.tokens, '--wc-shadow': '0 1px\n2px red' } } } } } } });
+  assert.match(planErrors(nl), /modes\.light\.tokens --wc-shadow carries \{ \} < > ; or a line break/);
+
+  // Through review: the card shows it and approval refuses it, so nothing lands.
+  const root = project(t);
+  const forge = await forgeFor(t, withTop('ur;l(https://tracker.example/p.png)'));
   const q = await packs.quarantinePack({ url: forge.url('acme', 'harbor'), root });
   assert.ok(q.record.errors.some((e) => /--wc-depth-radial carries url/.test(e)), 'the review card shows the refusal');
   assert.throws(() => packs.approvePack({ name: 'harbor-themes', root }), /may not load anything/);

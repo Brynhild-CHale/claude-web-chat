@@ -592,8 +592,11 @@ shows in the review card and stops the install:
   containing `url(`, `image-set(`, `image(`, `cross-fade(`, `src(`,
   `expression(`, `@import`, `javascript:` or a backslash escape is refused: the
   chrome paints tokens with no CSP and exports inline them, so such a value would
-  report every viewer to its host. Colours, lengths, font stacks and gradients
-  are fine; an image belongs in `logos/`.
+  report every viewer to its host. The check judges the value as it will be
+  painted, and a value carrying `{`, `}`, `<`, `>`, `;` or a line break is
+  refused outright — those characters are stripped before a token is painted, so
+  `ur;l(` would otherwise reassemble into `url(`. Colours, lengths, font stacks
+  and gradients are fine; an image belongs in `logos/`.
 - **Logos** pass the same check as a Settings → Brand upload: SVG or PNG by their
   bytes, at most 256 KB, and an SVG with a `<script>`, an `on*=` handler, a
   `javascript:` URL, a `<foreignObject>` or an entity declaration is refused. A

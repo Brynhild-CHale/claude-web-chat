@@ -212,7 +212,10 @@ nothing checking it.
 **No token value that loads anything.** A pack theme's token values are refused
 at review when they contain `url(`, `image-set(`, `image(`, `cross-fade(`,
 `src(`, `expression(`, `@import`, `javascript:` or a backslash escape — each is a
-request to someone else's host from every page load and every export. Use a
+request to someone else's host from every page load and every export. The check
+judges the value as it will be painted, and a value carrying `{`, `}`, `<`, `>`,
+`;` or a line break is refused outright: those characters are stripped before a
+token is painted, so `ur;l(` would otherwise reassemble into `url(`. Use a
 colour, length, font stack or gradient; ship an image as a logo.
 
 ### Logos
