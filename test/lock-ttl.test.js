@@ -381,3 +381,34 @@ test('the stale timer follows a keep-alive re-stamp instead of firing on the old
   await waitUntil(() => staleFrames(bus).length === 1, { timeout: 2000, what: 'the stale frame at the new deadline' });
   turns.releaseLock(graph, bus);
 });
+
+// setTimeout holds a signed 32-bit delay (~24.8 days); Node fires a longer one
+// after 1 ms with a TimeoutOverflowWarning. An unclamped timer under a "never
+// expire" TTL therefore fired, found the lock fresh, re-armed, and spun at 1 ms
+// a lap with a warning each — for the life of every lock.
+test('a TTL past setTimeout\'s ceiling arms one timer, not a 1 ms re-arm loop', async (t) => {
+  shortTtl(t, 99999999999);
+  const turns = require('../lib/server/domain/turns');
+  const graph = graphStub();
+  const bus = fakeLockBus();
+  const realSetTimeout = globalThis.setTimeout;
+  // Only the stale timer asks for a delay this long; anything else in the
+  // process (a socket's idle timer) is left out of the count.
+  const longArms = [];
+  const overflows = [];
+  const onWarning = (w) => { if (w && w.name === 'TimeoutOverflowWarning') overflows.push(w); };
+  process.on('warning', onWarning);
+  globalThis.setTimeout = function (fn, ms, ...rest) {
+    if (ms > 1e9) longArms.push(ms);
+    return realSetTimeout.call(this, fn, ms, ...rest);
+  };
+  t.after(() => { globalThis.setTimeout = realSetTimeout; process.off('warning', onWarning); });
+  turns.acquireLock(graph, bus, { message: 'x' });
+  await new Promise((r) => realSetTimeout(r, 100));
+  globalThis.setTimeout = realSetTimeout;
+  turns.releaseLock(graph, bus);
+  assert.equal(longArms.length, 1, `armed once, not re-armed every millisecond (${longArms.length} arms)`);
+  assert.ok(longArms[0] <= 2147483647, 'the delay is clamped to setTimeout\'s ceiling');
+  assert.equal(overflows.length, 0, 'no TimeoutOverflowWarning');
+  assert.equal(staleFrames(bus).length, 0, 'a fresh lock is never reported stale');
+});
