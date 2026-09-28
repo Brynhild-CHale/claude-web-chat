@@ -312,11 +312,15 @@ const HANDLERS = {
     onGraphChanged();
   },
   // A re-aim was queued during a locked turn (this client's or another's) —
-  // surface the "honored, deferred" note everywhere.
+  // surface the "honored, deferred" note everywhere. `intent: null` withdraws
+  // it: the turn it waited for never finished, and a new turn took its stale
+  // lock (lib/server/domain/turns stealStale), so it will never apply.
   'reaim:pending'(msg) {
-    const op = msg.intent && msg.intent.op;
+    const intent = msg.intent || msg.dropped;
+    const op = intent && intent.op;
     const what = op === 'wipe' ? 'surface wipe' : op === 'new-graph' ? 'new graph' : 'node jump';
-    showReaimNote(`Queued ${what} — applies when Claude's turn ends.`);
+    if (!msg.intent) showReaimNote(`Dropped the queued ${what} — Claude's turn stopped without finishing. Do it again if you still want it.`);
+    else showReaimNote(`Queued ${what} — applies when Claude's turn ends.`);
   },
   // The wake queue — independent of preview state (it's wake
   // signals, not surface content), so it folds regardless.

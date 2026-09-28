@@ -8,7 +8,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer } = require('../test-support/helpers');
+const { withServer, shortTtlServer } = require('../test-support/helpers');
+
+// shortTtlServer(t, ms) boots a server whose turn lock goes stale in `ms`
+// (test-support/helpers; env var and module cache restored on t.after).
+
+// A real elapsed wait: the assertion is that the TTL has passed.
+const elapse = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function nodesById(api) {
   const g = await api.get('/api/graph');
@@ -145,4 +151,69 @@ test('set-active on the already-active node mid-turn is not queued — the turn 
   assert.equal((await api.get('/api/graph')).json.active, te.json.node_id, "active stays on Claude's turn");
   const m = await api.get('/api/mounts');
   assert.deepEqual(m.json.mounts.map((x) => x.id).sort(), ['a', 'b']);
+});
+
+// R3-2: "stay here" is judged against the node the user was looking at, BEFORE
+// the stale-lock steal. The steal commits the abandoned turn as a preserve node
+// and moves active onto it; compared after, a click on the old active became a
+// real re-aim — the work left the surface, the next commit forked off the old
+// node, and the reply said `preserved:null` although a node had just been made.
+test('set-active on the node that was active, under a STALE lock: the work stays live and the reply names the preserve node', async (t) => {
+  const { api } = await withServer(t, { createServer: shortTtlServer(t, 150) });
+  await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
+  const c1 = await api.post('/api/commit', { message: 'one' });
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  await api.post('/api/render', { id: 'b', html: '<p>half-finished</p>' });
+  await elapse(300);
+
+  const r = await api.post('/api/graph/active', { id: c1.json.node_id });
+  assert.equal(r.status, 200);
+  assert.ok(r.json.preserved, 'the steal kept the abandoned work as a node, and the reply says which');
+  assert.notEqual(r.json.preserved, c1.json.node_id);
+  assert.equal(r.json.active, r.json.preserved, 'active is the preserve node — it holds exactly the page the user was on');
+
+  const { nodes, active } = await nodesById(api);
+  assert.equal(active, r.json.preserved);
+  assert.equal(nodes.get(r.json.preserved).parent_id, c1.json.node_id);
+  const full = await api.get('/api/graph/node/' + r.json.preserved);
+  assert.equal(full.json.trigger.kind, 'preserve');
+  assert.deepEqual(full.json.mounts.map((x) => x.id).sort(), ['a', 'b']);
+  const m = await api.get('/api/mounts');
+  assert.deepEqual(m.json.mounts.map((x) => x.id).sort(), ['a', 'b'], 'the live surface keeps the work');
+  assert.equal((await api.get('/api/graph')).json.lock, null, 'the stale lock is gone');
+
+  // …and the next commit continues from it rather than forking off the old node
+  const c2 = await api.post('/api/commit', { message: 'next' });
+  assert.equal((await nodesById(api)).nodes.get(c2.json.node_id).parent_id, r.json.preserved);
+});
+
+test('wipe and new-graph that steal a stale lock also say where the abandoned work went', async (t) => {
+  const { api } = await withServer(t, { createServer: shortTtlServer(t, 150) });
+  await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
+  await api.post('/api/commit', { message: 'one' });
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  await api.post('/api/render', { id: 'b', html: '<p>half-finished</p>' });
+  await elapse(300);
+  const w = await api.post('/api/graph/wipe', { name: 'fresh' });
+  assert.equal(w.status, 200);
+  assert.ok(w.json.preserved, 'the wipe reports the preserve node its steal committed');
+  const pw = await api.get('/api/graph/node/' + w.json.preserved);
+  assert.ok(pw.json.mounts.some((x) => x.id === 'b'));
+  assert.deepEqual((await api.get('/api/mounts')).json.mounts, [], 'and still wipes');
+
+  await api.post('/api/turn-begin', { message: 'another turn that never Stops' });
+  await api.post('/api/render', { id: 'c', html: '<p>more</p>' });
+  await elapse(300);
+  const n = await api.post('/api/graph/new', { name: 'next' });
+  assert.equal(n.status, 200);
+  assert.ok(n.json.preserved, 'new-graph reports it too');
+  const pn = await api.get('/api/graph/node/' + n.json.preserved);
+  assert.ok(pn.json.mounts.some((x) => x.id === 'c'));
+  assert.equal(n.json.active, null);
+
+  // Nothing to preserve → an explicit null, like set-active's.
+  const w2 = await api.post('/api/graph/wipe', {});
+  assert.equal(w2.json.preserved, null);
 });

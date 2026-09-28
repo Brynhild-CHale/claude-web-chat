@@ -76,6 +76,17 @@ export function applyLock(l) {
   updateChip();
   if (view.selectedNodeId) updateSidebarButtons();
 }
+// Does the turn lock hold a re-aim off? Only while it is FRESH. A lock whose
+// turn never reached its Stop hook goes stale after its TTL, and the server
+// steals it on the very Set active it would otherwise be refusing (guardReaim) —
+// every lock frame, hello and reset says which it is (`stale`, lib/server/domain/
+// turns lockView), and a lock frame arrives the moment one goes stale. Set
+// active, ⑃ Branch, the glance's Set active, `A` and the phone log's buttons all
+// gate on this, never on `view.lock` alone, or a crashed turn leaves the graph
+// screen refusing re-aims for the rest of the TTL.
+export function lockHoldsReaim() {
+  return !!view.lock && !view.lock.stale;
+}
 
 export async function ensureGraph(force) {
   if (view.graphCache && !force) return view.graphCache;
@@ -171,11 +182,15 @@ export function leavePreview({ activeId = null, restoreSnapshot = false } = {}) 
   $('main').classList.remove('preview-readonly');
   syncReadonly();
   if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
-  if (restoreSnapshot) {
-    view.viewedId = view.activeId;
-    // previewing is already false above, so this takes the applier's
-    // authoritative path — the captured live surface is re-rendered verbatim.
-    if (snap) applySnapshot(snap);
+  if (restoreSnapshot) view.viewedId = view.activeId;
+  // Only a preview captured a live surface to go back to. Every re-aim passes
+  // restoreSnapshot whether it was previewing or not (a Wipe from the live page
+  // does), and with nothing captured the live surface and its theme are already
+  // on screen — re-applying the theme there only ran a transition over a page
+  // that had not changed. previewing is already false above, so applySnapshot
+  // takes the applier's authoritative path — the capture is re-rendered verbatim.
+  if (restoreSnapshot && snap) {
+    applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
   updateChip();

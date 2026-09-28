@@ -142,6 +142,36 @@ test('boot the shell once, live on n1', async () => {
   assert.equal(previewing(), false, 'precondition: not detached');
 });
 
+/* ---------- 0. restoreSnapshot with nothing captured ---------- */
+
+// Every re-aim passes restoreSnapshot — a Wipe from the live page does too — but
+// only a preview captured a live surface to go back to. With none, the live
+// surface and its theme are already on screen, and re-applying the theme only
+// ran a transition over a page that had not changed.
+test('leavePreview({restoreSnapshot:true}) while not previewing starts no theme transition', async () => {
+  const { leavePreview } = await import(pathToFileURL(path.join(REPO, 'public/app/topbar.js')).href);
+  const theming = () => W.document.documentElement.classList.contains('wc-theming');
+  assert.equal(previewing(), false, 'precondition: live, not previewing');
+  assert.equal(theming(), false, 'precondition: no theme transition running');
+  leavePreview({ restoreSnapshot: true });
+  assert.equal(theming(), false, 'nothing changed on screen, so nothing animates');
+  assert.deepEqual(paneIds(), ['m-live'], 'and the live surface is left as it was');
+});
+
+// A re-aim queued behind a turn that then died is dropped when a new turn takes
+// the stale lock (lib/server/domain/turns stealStale), and the frame that
+// announced it says so: the note stops promising it and asks for it again.
+test('a reaim:pending frame with intent:null withdraws the queued re-aim note', async () => {
+  WS.onmessage({ data: JSON.stringify({ type: 'reaim:pending', intent: { op: 'wipe', id: null, name: 'x' } }) });
+  await tick();
+  assert.match(noteText(), /Queued surface wipe — applies when Claude's turn ends/, 'precondition: the queued note');
+  WS.onmessage({ data: JSON.stringify({ type: 'reaim:pending', intent: null, dropped: { op: 'wipe', name: 'x' } }) });
+  await tick();
+  assert.match(noteText(), /Dropped the queued surface wipe/, 'the note says the intent is gone');
+  assert.match(noteText(), /Do it again/, 'and how to get it back');
+  assert.doesNotMatch(noteText(), /applies when/, 'no longer promising it');
+});
+
 /* ---------- 1. restoreSnapshot ---------- */
 
 test('previewing an older node detaches and swaps the surface', async () => {

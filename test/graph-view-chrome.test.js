@@ -521,4 +521,49 @@ test('? opens the shortcut legend over the graph, and it lists the graph\'s keys
   assert.equal(overlayOpen(), false, 'with no legend up, Escape closes the overlay as before');
 });
 
+/* ============ (9) a STALE turn lock holds no re-aim off ============
+   A lock whose turn never reached its Stop hook goes stale after its TTL, and
+   the server steals it on the very Set active the chrome was refusing
+   (guardReaim). Every lock frame says which it is (`stale`, lib/server/domain/
+   turns lockView), and the graph screen gates Set active, ⑃ Branch and `A` on a
+   FRESH lock only (topbar lockHoldsReaim). Before, a crashed turn left them
+   reading "locked — turn in progress" for the rest of the TTL. */
+const lockFrame = (lock) => WS.onmessage({ data: JSON.stringify({ type: 'lock', lock }) });
+const pressA = () => W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+const setActivePosts = (from) => calls.slice(from).filter((c) => c.url === '/api/graph/active' && c.method === 'POST');
+
+test('a fresh turn lock holds Set active, ⑃ Branch and A off; a stale one does not, and A re-aims', async () => {
+  await openGraph();
+  await selectGlyph('n1a');
+  const lock = { base: 'n1', started_at: 1, message: 'a turn', author: 'user' };
+
+  lockFrame({ ...lock, stale: false });
+  await tick();
+  assert.equal($('gv-set-active').disabled, true, 'a live turn holds the re-aim off');
+  assert.match($('gv-set-active').textContent, /locked/);
+  assert.equal($('gv-branch').disabled, true);
+  let from = calls.length;
+  pressA();
+  await tick();
+  assert.equal(setActivePosts(from).length, 0, 'and A does nothing');
+
+  lockFrame({ ...lock, stale: true });
+  await tick();
+  assert.equal($('gv-set-active').disabled, false, 'a stale lock holds nothing off: the click steals it');
+  assert.match($('gv-set-active').textContent, /Set active here/);
+  assert.equal($('gv-branch').disabled, false);
+  from = calls.length;
+  pressA();
+  await tick();
+  const posts = setActivePosts(from);
+  assert.equal(posts.length, 1, 'A re-aims');
+  assert.deepEqual(posts[0].body, { id: 'n1a' });
+
+  lockFrame(null);
+  await tick();
+  esc();
+  esc();
+  await tick();
+});
+
 test('teardown', () => { restore(); });

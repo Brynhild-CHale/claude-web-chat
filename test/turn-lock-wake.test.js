@@ -119,6 +119,30 @@ test('a typed turn-begin UPGRADES a fresh wake lock instead of 409ing', async (t
   assert.equal(lock.message, 'and then the user typed');
 });
 
+// An upgrade is the SAME turn going on, not a steal: the woken work stays live
+// for that one turn to commit — no preserve node, and the typed prompt's node
+// carries it.
+test('upgrading a fresh wake lock with work on the surface preserves nothing — one turn, one node', async (t) => {
+  const { api, port } = await withServer(t);
+  const sse = await openWakeSSE(port);
+  t.after(() => sse.close());
+  await api.post('/api/queue/push', { note: 'wake first' });
+  await api.post('/api/render', { id: 'p', html: '<p>woken work</p>' });
+
+  const r = await api.post('/api/turn-begin', { message: 'and then the user typed' });
+  assert.equal(r.json.upgraded_wake_lock, true);
+  assert.equal(r.json.stole_stale_lock, false);
+  assert.equal(r.json.preserved, undefined, 'an upgrade commits nothing');
+  assert.equal((await api.get('/api/graph')).json.nodes.length, 0);
+
+  const te = await api.post('/api/turn-end', {});
+  const g = (await api.get('/api/graph')).json;
+  assert.equal(g.nodes.length, 1, 'the woken work and the typed turn are one node');
+  const node = (await api.get('/api/graph/node/' + te.json.node_id)).json;
+  assert.equal(node.trigger.message, 'and then the user typed');
+  assert.ok(node.mounts.some((m) => m.id === 'p'));
+});
+
 test('a wake during a fresh user turn folds — the user lock is untouched', async (t) => {
   const { api, port } = await withServer(t);
   const sse = await openWakeSSE(port);
