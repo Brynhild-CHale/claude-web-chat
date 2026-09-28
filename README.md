@@ -2,7 +2,7 @@
 
 A live page in your browser that Claude Code draws on while you talk in the terminal. Diagrams, forms, comparisons, and working mockups land on the page and stay interactive, with short headings and prose between them so a page reads top to bottom. What you click and type there flows back to Claude as data, and every turn becomes a node in a graph you can walk back through and branch.
 
-![A page over three turns, as web-chat's own replay draws it: Claude puts a cache comparison and a constraints form on the page, the user applies the form and a recommendation appears, then a read-path diagram lands after two chat-only turns](.github/media/flow.gif)
+![A page over three turns, as web-chat's own replay draws it: Claude puts a cache comparison and a constraints form on the page, the user applies the form and a recommendation appears, then a read-path diagram lands after two chat-only turns; each step scrolls down to what it added](.github/media/flow.gif)
 
 ## Quickstart
 
@@ -47,7 +47,7 @@ Every turn that changes the surface is saved as a node. A turn that only answers
 
 Replay plays a stretch of history forward, node by node, with Claude's reply under each one. Press `R` on the page or **▶ Replay** in the graph inspector. Claude can also direct one: it picks the nodes, how long each one holds and a caption for each, then opens it in your browser (`export({script, open: true})`). Any replay exports as an offline `.html` player, a GIF, or (with ffmpeg) an MP4 or WebM. The page at the top of this README is one of those GIFs, rendered by web-chat.
 
-![Claude opens a directed replay in the browser: the page steps from the question to the Redis recommendation, then down a branch that keeps the cache in-process](.github/media/replay.gif)
+![Claude opens a directed replay in the browser: the page steps from the question to the Redis recommendation, then down a branch that keeps the cache in-process, scrolling to each change](.github/media/replay.gif)
 
 ## Looks
 

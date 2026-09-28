@@ -72,6 +72,15 @@ test('the artifact carries package.json and everything the files allowlist names
   }
 });
 
+test('the dev-only trees stay out of the artifact (scripts/, the README clips and their recorder)', () => {
+  const prefix = `claude-web-chat-${pkg.version}`;
+  const names = build().entries.map((e) => e.name);
+  for (const dev of ['scripts', '.github', 'test', 'test-support']) {
+    assert.ok(!names.some((n) => n === `${prefix}/${dev}` || n.startsWith(`${prefix}/${dev}/`)),
+      `${dev}/ is dev-only and must not ship — keep it out of package.json "files"`);
+  }
+});
+
 test('the build is reproducible — same tree, same bytes, same checksum', () => {
   const a = build();
   const b = buildRelease({ outDir: tmpDir('wc-dist-'), log: () => {} });
