@@ -6,10 +6,13 @@
 | **Linux** (Ubuntu/Debian family) | **Supported, with gaps in what CI can prove** | Full suite runs on `ubuntu-latest` in CI on every push — but CI is a headless container. See [`platform-linux.md`](https://github.com/Brynhild-CHale/claude-web-chat/blob/platform/linux/docs/platform-linux.md) on the `platform/linux` branch |
 | **Windows** | **Via WSL2 only. No native support.** | Never run on Windows by anyone. See [`platform-windows.md`](https://github.com/Brynhild-CHale/claude-web-chat/blob/platform/windows/docs/platform-windows.md) on the `platform/windows` branch |
 
-**Node 22 or newer**, on every platform. That floor is not a preference: one of
-the four runtime dependencies (`node-html-parser`) requires an `entities` that is
-ESM-only, and `require(esm)` landed in Node 22. Below it the daemon does not
-start at all.
+**Node 22.12 or newer**, on every platform. That floor is not a preference: one
+of the four runtime dependencies (`node-html-parser`) requires an `entities` that
+is ESM-only, and `require(esm)` is on by default only from Node 22.12 (22.0–22.11
+keep it behind a flag). Below it the daemon does not start at all, so
+`install.sh`, `init` and `package.json`'s `engines` all compare the major *and*
+the minor. (Developing on web-chat itself needs 22.13, for the test suite's
+jsdom.)
 
 **Your distro's Node is probably too old.** Verified by running each image:
 
@@ -18,10 +21,11 @@ start at all.
 | Ubuntu 24.04 LTS | 18.19.1 | no |
 | Debian 12 | 18.20.4 | no |
 | Debian 13 | 20.19.2 | no |
-| Alpine 3.21+ | 22.x | yes |
-| Fedora 42+ | 22+ | yes |
+| Alpine 3.21+ | 22.x | yes, at 22.12 or later |
+| Fedora 42+ | 22+ | yes, at 22.12 or later |
 
-So `apt install nodejs` is not the route on the Debian family — use `nvm`, `fnm`,
+A package that says 22.x may still be below 22.12, so check `node --version`.
+`apt install nodejs` is not the route on the Debian family — use `nvm`, `fnm`,
 or NodeSource. `install.sh` refuses with those three options named, rather than
 sending you to nodejs.org for a tarball. Lowering the floor would not have
 helped much: `>=20.19` would have admitted Debian 13 and nothing else.
@@ -87,8 +91,8 @@ as `.html` — works without one. Where it looks, per platform
 | Platform | Where the browser is found | Verified by |
 | --- | --- | --- |
 | **macOS** | `/Applications/{Google Chrome,Chromium,Microsoft Edge,Brave Browser}.app` | Developed against Chrome for Testing 151 via `WEB_CHAT_CHROME`; `test/replay-capture-e2e.test.js` runs against it when opted in (`WEB_CHAT_E2E_CHROME=1`) |
-| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH` | The same e2e test, opted in by hand (CI never sets `WEB_CHAT_E2E_CHROME`); the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
-| **Windows (WSL2)** | A **Linux** Chrome installed inside the distro, as on Linux. A Windows Chrome under `/mnt/c` cannot share file-descriptor pipes with a Linux process and is not a candidate | Not run by anyone |
+| **Linux** | `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `microsoft-edge(-stable)`, `brave-browser` on `PATH`. A daemon running as **root** (a Docker dev container, a root CI image) cannot launch it — Chrome refuses to run as root without `--no-sandbox`, which is not passed — so run web-chat as a normal user | The same e2e test, opted in by hand (CI never sets `WEB_CHAT_E2E_CHROME`); the pipe driver itself is covered everywhere by a fake browser (`test-support/fake-chrome.js`) |
+| **Windows (WSL2)** | A **Linux** Chrome installed inside the distro, as on Linux. A Windows Chrome under `/mnt/c` cannot share file-descriptor pipes with a Linux process and is not a candidate. As on Linux, a daemon running as **root** (a WSL distro whose default user is root) cannot launch Chrome — no `--no-sandbox` is passed — so run web-chat as a normal user | Not run by anyone |
 
 The browser is launched with `--use-mock-keychain --password-store=basic`: on
 macOS, a headless Chrome whose `HOME` is not the login user's (a sandboxed test
@@ -111,12 +115,6 @@ problems** — they are live on macOS today, and they are listed here rather tha
 filed on a platform branch precisely so they do not get mistaken for someone
 else's.
 
-- **`findProjectRoot`'s `$HOME` guard is a lexical compare and can fail open.**
-  `lib/core/paths.js`. Reproduced on macOS with `HOME` set to a symlink, and with
-  a case-differing spelling on case-insensitive APFS: a fresh directory under
-  `$HOME` resolves to `$HOME`, so `init` takes the existing-install branch, skips
-  the first-run consent gate, and configures the whole machine. Needs a
-  `samePath()` that realpaths both sides.
 - **PID liveness is not identity — still true in `stop`.** `stop.js` asks "does a
   process with this pid exist", not "is it ours", so a recycled pid in
   `.web-chat/server.json` can be signalled by its SIGTERM escalation. Wants
@@ -149,6 +147,16 @@ else's.
   per-user `WEB_CHAT_PORTAL_PORT` (and a tunnel ingress pointed at it). The
   metrics port cloudflared is told (5172 by default, `tunnel.metricsPort`) has
   the same property.
+
+### Fixed since the assessments
+
+- **The `$HOME` guard failed open.** `findProjectRoot` compared paths
+  lexically, so with `HOME` set to a symlink, or spelled in another case on
+  case-insensitive APFS, a fresh directory under `$HOME` resolved to `$HOME`:
+  `init` took the existing-install branch, skipped the first-run consent gate
+  and configured the whole machine. `isHomeDir` (`lib/core/paths.js`) now
+  compares both sides by their native realpath, which returns the on-disk
+  case, and `init` and `install` refuse `$HOME` outright.
 
 ### Changed deliberately, not a bug
 
