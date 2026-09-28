@@ -171,11 +171,15 @@ export function leavePreview({ activeId = null, restoreSnapshot = false } = {}) 
   $('main').classList.remove('preview-readonly');
   syncReadonly();
   if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
-  if (restoreSnapshot) {
-    view.viewedId = view.activeId;
-    // previewing is already false above, so this takes the applier's
-    // authoritative path — the captured live surface is re-rendered verbatim.
-    if (snap) applySnapshot(snap);
+  if (restoreSnapshot) view.viewedId = view.activeId;
+  // Only a preview captured a live surface to go back to. Every re-aim passes
+  // restoreSnapshot whether it was previewing or not (a Wipe from the live page
+  // does), and with nothing captured the live surface and its theme are already
+  // on screen — re-applying the theme there only ran a transition over a page
+  // that had not changed. previewing is already false above, so applySnapshot
+  // takes the applier's authoritative path — the capture is re-rendered verbatim.
+  if (restoreSnapshot && snap) {
+    applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
   updateChip();

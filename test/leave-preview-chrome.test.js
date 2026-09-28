@@ -142,6 +142,22 @@ test('boot the shell once, live on n1', async () => {
   assert.equal(previewing(), false, 'precondition: not detached');
 });
 
+/* ---------- 0. restoreSnapshot with nothing captured ---------- */
+
+// Every re-aim passes restoreSnapshot — a Wipe from the live page does too — but
+// only a preview captured a live surface to go back to. With none, the live
+// surface and its theme are already on screen, and re-applying the theme only
+// ran a transition over a page that had not changed.
+test('leavePreview({restoreSnapshot:true}) while not previewing starts no theme transition', async () => {
+  const { leavePreview } = await import(pathToFileURL(path.join(REPO, 'public/app/topbar.js')).href);
+  const theming = () => W.document.documentElement.classList.contains('wc-theming');
+  assert.equal(previewing(), false, 'precondition: live, not previewing');
+  assert.equal(theming(), false, 'precondition: no theme transition running');
+  leavePreview({ restoreSnapshot: true });
+  assert.equal(theming(), false, 'nothing changed on screen, so nothing animates');
+  assert.deepEqual(paneIds(), ['m-live'], 'and the live surface is left as it was');
+});
+
 /* ---------- 1. restoreSnapshot ---------- */
 
 test('previewing an older node detaches and swaps the surface', async () => {
