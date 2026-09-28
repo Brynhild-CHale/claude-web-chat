@@ -100,7 +100,14 @@ never land in a real release's directory under `~/.web-chat/versions/`, sorts
 above the release it was built after (the update banner does not offer that
 release back to it) and below the one it is heading for (which *is* offered when
 it ships). A dev build is reproducible only within the minute it was stamped; a
-normal build stays byte-reproducible. `dist/SHA256SUMS` keeps a line for every
+normal build's tar stays byte-reproducible from the tree alone. The `.tar.gz`
+digest also depends on the zlib Node is linked against: official nodejs.org
+binaries (what CI's `setup-node` installs) agree across 22.x and 24.x, while
+Homebrew and distro Node link the system zlib and produce different gzip bytes
+for the same tar — so a local `dist/` built with Homebrew Node will not match the
+published sha256. The build summary prints `process.versions.zlib` and the
+uncompressed tar's sha256 (compare it with `gunzip -c <tarball> | shasum -a 256`)
+to tell a zlib difference from a tree difference. `dist/SHA256SUMS` keeps a line for every
 tarball still in `dist/` — each build replaces its own line and drops the lines
 of tarballs you deleted — so an older build there still verifies.
 

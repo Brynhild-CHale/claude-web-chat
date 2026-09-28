@@ -6,7 +6,10 @@
 //      'express'` — measured, not assumed. Production node_modules must be in it.
 //   2. devDependencies are NOT in it. jsdom is ~30 MB of test-only weight.
 //   3. It is REPRODUCIBLE. A published SHA256SUMS that depends on which machine
-//      cut the release is a checksum nobody can check.
+//      cut the release is a checksum nobody can check. The tar is reproducible
+//      from the tree alone; the .tar.gz also depends on the zlib Node links
+//      (official nodejs.org builds agree, Homebrew/distro Node do not), so the
+//      build summary names that zlib and the uncompressed tar's digest.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -25,10 +28,12 @@ function tmpDir(prefix = 'wc-build-') {
 }
 
 // Built once and shared: the build reads ~28 MB and gzips it, so paying for it
-// per-test would be the slowest thing in the suite for no extra coverage.
+// per-test would be the slowest thing in the suite for no extra coverage. Its
+// summary lines are kept for the test that reads them.
 let built = null;
+const summary = [];
 function build() {
-  if (!built) built = buildRelease({ outDir: tmpDir('wc-dist-'), log: () => {} });
+  if (!built) built = buildRelease({ outDir: tmpDir('wc-dist-'), log: (line) => summary.push(line) });
   return built;
 }
 
@@ -96,11 +101,33 @@ test('the build is reproducible — same tree, same bytes, same checksum', () =>
 // (RFC 1952 §2.3.1 — zlib stamps 3 on Linux, 19 on macOS). Left alone, the same
 // tree cut on Linux and on macOS differs at exactly byte 9, and a user verifying a
 // release by rebuilding it on another OS gets a mismatch that reads as tampering.
+// (The deflate stream after the header is the zlib build's — see the next test.)
 test('the gzip header is platform-independent — OS byte pinned, no mtime', () => {
   const gz = fs.readFileSync(build().tarPath);
   assert.deepEqual([...gz.subarray(0, 3)], [0x1f, 0x8b, 0x08], 'not a gzip stream');
   assert.deepEqual([...gz.subarray(4, 8)], [0, 0, 0, 0], 'MTIME must be zero, not the build time');
   assert.equal(gz[9], 255, 'gzip OS byte must be 255 ("unknown") on every platform');
+});
+
+// The one input the tree does not decide is the zlib Node links: official
+// nodejs.org builds (what CI's setup-node installs) bundle one zlib and agree
+// across 22.x and 24.x, while Homebrew and distro Node link the system zlib and
+// deflate the same tar to different bytes. A rebuilder whose digest differs has
+// to be able to tell "different zlib" from "different tree" — so the summary
+// names the zlib, and the uncompressed tar's digest, which never varies with it.
+// (The cross-zlib behaviour itself needs a second Node build to show.)
+test('the build summary names the zlib and the uncompressed tar digest', () => {
+  const { tarPath, digest, tarDigest, zlib: zlibVersion } = build();
+  assert.equal(zlibVersion, process.versions.zlib);
+  const zlibLine = summary.find((l) => /^\s*zlib\s/.test(l));
+  assert.ok(zlibLine, `no zlib line in the build summary:\n${summary.join('\n')}`);
+  assert.ok(zlibLine.includes(process.versions.zlib), `the zlib line must name ${process.versions.zlib}: ${zlibLine}`);
+
+  const tar = require('zlib').gunzipSync(fs.readFileSync(tarPath));
+  assert.equal(tarDigest, require('crypto').createHash('sha256').update(tar).digest('hex'),
+    'tar sha256 is the digest of the gunzipped tarball — what a rebuild with another zlib can still match');
+  assert.ok(summary.some((l) => /^\s*tar\s/.test(l) && l.includes(tarDigest)), 'the summary prints the tar digest');
+  assert.ok(summary.some((l) => /^\s*sha256\s/.test(l) && l.includes(digest)), 'and still the published one');
 });
 
 test('SHA256SUMS names the tarball in the format shasum -c reads', () => {
