@@ -111,7 +111,9 @@ and run nothing else:
 
 > The web-chat tools aren't in this session yet. `/exit`, reopen Claude Code in this
 > project, then run `/web-chat init` again. Claude Code reads `.mcp.json` only at
-> startup.
+> startup, and asks you to **approve** its `web-chat` MCP server — approve it. If you
+> declined it before, run `claude mcp reset-project-choices` in this project's
+> directory after `/exit`, and the reopened Claude Code asks again.
 
 `init` and bare `/web-chat` divide the work: **`init` teaches web-chat and owns the
 wiring; bare `/web-chat` teaches web-chat about *their repo* and owns the everyday
