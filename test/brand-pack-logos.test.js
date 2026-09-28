@@ -114,6 +114,22 @@ test('the old id `georgetown` counts as the pack too', (t) => {
   assert.equal(f.logotype.light.type, 'image/svg+xml');
 });
 
+// R6-2: a theme 0.7.6 saved and applied as `georgetown` (or `georgetown-blue`)
+// before that was a builtin carries no `builtin` flag and paints its own
+// tokens. It is not the pack, so it gets none of the pack's marks.
+test('a flagless saved copy under the pack\'s name (a 0.7.6 theme) gets no Georgetown Blue fill', (t) => {
+  withTempHome(t);
+  drop('logotype.svg', NAVY);
+  for (const name of ['georgetown', 'georgetown-blue', 'Georgetown']) {
+    const root = project(t, null);
+    fs.writeFileSync(projectPaths(root).theme, JSON.stringify({ name, tokens: { '--wc-bg': '#123456' } }));
+    assert.equal(brand.fillSource(root), null, name);
+    assert.deepEqual(brand.fills(root), { logotype: null, lockup: null, seal: null }, name);
+    assert.equal(brand.effective(root, 'logotype'), null, name);
+  }
+  assert.ok(brand.effective(project(t, 'georgetown'), 'logotype'), 'the applied pack (builtin: true) still fills');
+});
+
 test('README.txt is never rewritten: an edited one, a folder with files, a deleted one', (t) => {
   withTempHome(t);
   themeLogos.seedThemeLogos();
