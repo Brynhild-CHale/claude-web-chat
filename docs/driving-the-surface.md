@@ -221,9 +221,18 @@ Don't POST the graph routes from a driver (see the three-actor model).
   can Push to Claude — click **Push → Claude**, or `POST /api/queue/push` with a
   note of its choosing — which wakes Claude like your own Push. It can read every
   store key, another pane's or a service's included, and other panes' shadow
-  roots. It can call any local route: render, a forced `clear`, Wipe,
-  `POST /api/graph/active`. The daemon's own rules — the `event` frame allowlist,
-  owner and lock checks, the spawn caps, declared signals — decide what the
+  roots. It can call almost any local route: render, a forced `clear`, Wipe,
+  `POST /api/graph/active`. The exceptions are the few routes that refuse any
+  request carrying browser fetch metadata (`isBrowserRequest` in
+  `lib/core/cors.js` — `Origin` or `Sec-Fetch-*`, which page script can neither
+  forge nor strip): `POST /api/shutdown`, the export that writes a file to disk
+  (`GET /api/export/:ref?format=file`; the download a browser makes has no
+  `format`) and `POST /api/replay/open`. And `POST /api/components/:name/use`,
+  the ＋ drawer's route, strips `params.signals` and ignores `force` for a
+  browser, so a pane cannot declare a wake signal or take over another pane
+  through it. Approving a service has no route at all. The daemon's own rules —
+  the `event` frame allowlist, owner and lock checks, the spawn caps, declared
+  signals — decide what the
   browser's frames *mean*; they are not a fence around a pane's code. Panes are
   trusted, agent-authored JavaScript: don't render untrusted third-party HTML into
   one, and read a component pack (`pack get` + `pack review`) before installing

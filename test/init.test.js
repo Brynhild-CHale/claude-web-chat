@@ -152,6 +152,31 @@ test('fresh + --yes: installs, opens nothing, mounts no tour', async (t) => {
   assert.doesNotMatch(text, /Your tour is on the surface/);
 });
 
+// H-7. init runs install with { nextSteps: false }, which drops install's
+// "Approve the .mcp.json trust prompt" line — the only place that said it. A
+// user who dismissed or declined Claude Code's approval question then met the
+// same missing tools on every reopen, with nothing on screen naming the way
+// out. init's own closing block has to say both halves: approve it, and how to
+// be asked again.
+test('fresh init\'s closing lines say to approve the MCP server, and how to be asked again', async (t) => {
+  withTempHome(t);
+  const root = tmpDir();
+  const log = sink();
+  const install = async () => { fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true }); };
+
+  await init(['--yes'], { cwd: root, log, ...inertDeps({ install, open: async () => {} }) });
+
+  const lines = log.lines;
+  const reopen = lines.findIndex((l) => /\/exit and reopen Claude Code/.test(l));
+  const approve = lines.findIndex((l) => /approve this project's web-chat MCP server/.test(l));
+  const reset = lines.findIndex((l) => l.includes('`claude mcp reset-project-choices`'));
+  const next = lines.findIndex((l) => /Then type \/web-chat init/.test(l));
+  assert.ok(reopen >= 0 && approve > reopen, `the approval line follows the restart instruction:\n${log.text()}`);
+  assert.ok(reset > approve, 'the declined-it-before recovery follows the approval line');
+  assert.match(lines[reset], /declined/, 'the reset command is offered for a server that was declined');
+  assert.ok(next > reset, 'both come before "Then type /web-chat init", the step that needs the tools');
+});
+
 // R2-4. 0.7.x asked "Install into your home directory anyway?" and installed on
 // a yes. Since 0.8 no daemon can be rooted at $HOME (its .web-chat/ is the user
 // tier), so a yes bought machine-wide hooks and a surface that never starts.

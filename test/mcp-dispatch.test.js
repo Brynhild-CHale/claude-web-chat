@@ -26,13 +26,13 @@ function installedProject() {
   return dir;
 }
 
-async function launchMcp(t, { cwd, home }) {
+async function launchMcp(t, { cwd, home, env = {} }) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [MCP_BIN],
     cwd,
     // env spread last so HOME wins over the SDK's default-environment HOME.
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env: { ...process.env, ...env, HOME: home, USERPROFILE: home },
   });
   const client = new Client({ name: 'phase0-test', version: '0.0.0' });
   await client.connect(transport);
@@ -104,5 +104,37 @@ test('tools/call unknown tool while enabled -> error, no daemon spawned', async 
   assert.equal(res.isError, true);
   assert.equal(res.content[0].text, 'Unknown tool: nope');
   // dispatch short-circuits before any handler, so the lazy daemon never starts
+  assert.equal(fs.existsSync(path.join(cwd, '.web-chat', 'server.json')), false);
+});
+
+// H-3. After an update, a Claude Code session reopened in ANOTHER project runs
+// the new tools against that project's old daemon, which answers a route it
+// never had with Express's default 404 page. That reached Claude as
+// `Error: POST /api/markdown → 404: <!DOCTYPE html>…` and nothing more. The
+// fake daemon here is plain Express with one route that answers its own 404 as
+// JSON, the way every real route does, which must keep its own message.
+test('tools/call: a 404 on a route the daemon lacks names `claude-web-chat restart`', async (t) => {
+  const express = require('express');
+  const app = express();
+  app.get('/api/store', (req, res) => res.status(404).json({ error: 'no store here' }));
+  const srv = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  t.after(() => { srv.closeAllConnections(); return new Promise((r) => srv.close(r)); });
+  const cwd = installedProject();
+  // WEB_CHAT_CHANNEL off: the channel bridge would otherwise probe the fake
+  // daemon whenever the runner's own shell has it on.
+  const client = await launchMcp(t, { cwd, home: mkTmp(), env: { WEB_CHAT_PORT: String(srv.address().port), WEB_CHAT_CHANNEL: '0' } });
+
+  const res = await client.callTool({ name: 'write_markdown', arguments: { text: '# hi' } });
+  assert.equal(res.isError, true);
+  assert.equal(res.content.length, 1, 'no build notice from a checkout');
+  assert.match(res.content[0].text, /^Error: POST \/api\/markdown → 404: /);
+  assert.match(res.content[0].text, /`claude-web-chat restart` in this project/);
+  assert.doesNotMatch(res.content[0].text, /<html|Cannot POST/i, 'the HTML page is dropped');
+
+  const own = await client.callTool({ name: 'get_store', arguments: {} });
+  assert.equal(own.isError, true);
+  assert.match(own.content[0].text, /no store here/, 'a route that answers its own 404 keeps its message');
+  assert.doesNotMatch(own.content[0].text, /claude-web-chat restart/);
+  // The port came from WEB_CHAT_PORT, so no daemon was spawned into the project.
   assert.equal(fs.existsSync(path.join(cwd, '.web-chat', 'server.json')), false);
 });

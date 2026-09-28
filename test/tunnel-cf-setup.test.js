@@ -46,6 +46,7 @@ function capture() {
 function quietPrompt(answers = {}) {
   return {
     line: async (q) => { for (const [k, v] of Object.entries(answers)) if (q.includes(k)) return v; return ''; },
+    secret(q) { return this.line(q); },
     confirm: async (q, { def = false } = {}) => def,
     close() {},
   };

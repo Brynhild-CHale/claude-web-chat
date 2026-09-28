@@ -97,6 +97,145 @@ test('restartIfStale bounces a daemon on another build, in one line; the same bu
   assert.match(lines[0], /running v0\.7\.6, not v0\.8\.0, and could not be restarted — run `claude-web-chat restart`/);
 });
 
+// ── the hop's post-update checklist ─────────────────────────────────────────
+// 0.7.6's frozen `update` performs the hop: it activates 0.8, syncs this
+// project, calls 0.8's restart as `restart(args)` from the project directory and
+// returns. So 0.8's restart is the last 0.8 code that prints, and when the
+// daemon it replaces is a pre-0.8 build it prints what the release notes ask.
+
+test('runningBuild with exact:false names a pre-0.8 daemon LEGACY_BUILD from health alone; isLegacyBuild asks it that way', async (t) => {
+  const { LEGACY_BUILD } = require('../lib/util/registry');
+  const asked = [];
+  const port = await freePort();
+  const srv = http.createServer((req, res) => {
+    asked.push(req.url);
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/health') return res.end(JSON.stringify({ ok: true, role: 'instance', version: 3, pid: 4242 }));
+    res.end(JSON.stringify({ ok: true, current: '0.7.6' }));
+  });
+  await new Promise((r) => srv.listen(port, '127.0.0.1', r));
+  t.after(() => { srv.close(); srv.closeAllConnections(); });
+
+  assert.equal(await stale.runningBuild(port, { exact: false }), LEGACY_BUILD);
+  assert.equal(await stale.isLegacyBuild(port), true);
+  assert.deepEqual(asked, ['/api/health', '/api/health'], 'never GET /api/version — on 0.7.x that may fetch from GitHub first');
+
+  const { port: current } = await withServer(t);
+  assert.equal(await stale.isLegacyBuild(current), false, 'a 0.8 daemon names its release');
+  assert.equal(await stale.isLegacyBuild(await freePort()), false, 'nothing answering is never called old');
+});
+
+// A stand-in for the daemon a restart replaces, owning `root`'s portfile (as
+// this process, so the pid is alive), that acknowledges POST /api/shutdown the
+// way a real one does — by dropping its portfile — unless `wedge` says to ack
+// and stay. `packageVersion` null is a pre-0.8 build: health names no release.
+async function replacedDaemon(t, root, { packageVersion: pv = null, wedge = false } = {}) {
+  const portfiles = require('../lib/core/portfiles');
+  const port = await freePort();
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/health') {
+      return res.end(JSON.stringify({ ok: true, role: 'instance', version: 3, pid: process.pid, ...(pv ? { package_version: pv } : {}) }));
+    }
+    if (req.url === '/api/version') return res.end(JSON.stringify({ ok: true, current: pv || '0.7.6' }));
+    if (req.method === 'POST' && req.url === '/api/shutdown') {
+      if (!wedge) portfiles.deletePortfile('server', { root, pid: process.pid });
+      return res.end(JSON.stringify({ ok: true, shutting_down: true, pid: process.pid }));
+    }
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise((r) => srv.listen(port, '127.0.0.1', r));
+  portfiles.writePortfile('server', { root, pid: process.pid, port });
+  t.after(() => {
+    srv.close(); srv.closeAllConnections();
+    try { portfiles.deletePortfile('server', { root, pid: process.pid }); } catch {}
+  });
+  return port;
+}
+
+function hopProject(t) {
+  withTempHome(t);
+  const root = scratch('wc-hop-');
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  return root;
+}
+
+const CHECKLIST = [
+  /The server here was on a build older than 0\.8; it now runs v\S+\. To finish the upgrade:/,
+  /1\. Reload every open web-chat tab/,
+  /2\. \/exit and reopen Claude Code — a running session keeps the MCP server it started with/,
+  /3\. Run `claude-web-chat install` in each web-chat project you did not run `update` in/,
+  /`claude-web-chat update --restart-all`/,
+];
+
+test('restart of a pre-0.8 daemon prints the post-update checklist, after the new server started — called the way 0.7.6\'s update calls it', async (t) => {
+  const root = inDir(t, hopProject(t));
+  await replacedDaemon(t, root);
+  const lines = [];
+  const log = (m = '') => lines.push(String(m));
+  // restart(args) with the project read off the cwd, as the frozen updater does;
+  // only `start` is stubbed (a real one would fork a daemon), and it logs.
+  const r = await restart([], { log, start: async () => { log('STARTED'); } });
+  assert.equal(r.ok, true);
+  assert.equal(r.checklist, true, 'the result says it was printed, so 0.8\'s own update does not repeat its line');
+  const text = lines.join('\n');
+  for (const re of CHECKLIST) assert.match(text, re);
+  assert.match(text, /stopped cleanly/, 'the real stop engine replaced it');
+  const started = lines.indexOf('STARTED');
+  const heading = lines.findIndex((l) => /To finish the upgrade/.test(l));
+  assert.ok(started >= 0 && heading > started, 'printed after the restart, never before it');
+  const v = packageVersion();
+  if (!require('../lib/core/versions').isDevVersion(v)) {
+    assert.ok(text.includes(require('../lib/core/versions').releaseTagUrl(`v${v}`)), 'and it says where the release notes are');
+  }
+});
+
+test('restart of an 0.8 daemon prints no checklist', async (t) => {
+  const root = hopProject(t);
+  await replacedDaemon(t, root, { packageVersion: '0.8.0' });
+  const lines = [];
+  const r = await restart([], { root, log: (m) => lines.push(String(m)), start: async () => {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.checklist, undefined);
+  assert.doesNotMatch(lines.join('\n'), /To finish the upgrade|reopen Claude Code/);
+});
+
+test('no checklist when nothing was running, or when the old daemon could not be stopped', async (t) => {
+  const root = hopProject(t);
+  const lines = [];
+  const log = (m) => lines.push(String(m));
+  let r = await restart([], { root, log, start: async () => {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.checklist, undefined, 'no daemon to ask: nothing is claimed');
+
+  await replacedDaemon(t, root, { wedge: true });
+  let started = 0;
+  r = await restart([], { root, log, ackWaitMs: 200, signalAfterAck: false, start: async () => { started++; } });
+  assert.equal(r.ok, false);
+  assert.equal(started, 0);
+  assert.equal(r.checklist, undefined);
+  assert.doesNotMatch(lines.join('\n'), /To finish the upgrade/, 'the checklist is for a restart that happened');
+});
+
+test('the checklist can never break the restart: a probe that throws, a log that throws on it', async (t) => {
+  const root = hopProject(t);
+  await replacedDaemon(t, root);
+  let started = 0;
+  let r = await restart([], {
+    root, log: () => {}, start: async () => { started++; },
+    isLegacyBuild: async () => { throw new Error('probe blew up'); },
+  });
+  assert.deepEqual([r.ok, started, r.checklist], [true, 1, undefined]);
+
+  await replacedDaemon(t, root);
+  r = await restart([], {
+    root,
+    log: (m = '') => { if (/finish the upgrade/.test(m)) throw new Error('EPIPE'); },
+    start: async () => { started++; },
+  });
+  assert.deepEqual([r.ok, started, r.checklist], [true, 2, undefined]);
+});
+
 // ── no daemon outside a project ─────────────────────────────────────────────
 
 // Asked of start.projectRoot — the one question start answers before it
