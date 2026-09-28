@@ -143,3 +143,84 @@ test('status reports both hook events registered when both are present', async (
   assert.doesNotMatch(out, /missing:/);
   assert.doesNotMatch(out, /bare command:/);
 });
+
+// --------------------------------------------------------------------------
+// H-4. The daemon's build, and any version skew, on the lines the /web-chat
+// guided start reads. `ls` knew both; `status` knew neither, so a daemon an
+// update left on the old build read as healthy. The build comes from the
+// daemon's own /api/health (a web-chat instance answering without
+// package_version is older than 0.8), through registry.enrichSessions: the
+// probe and the skew note are the ones `ls` prints.
+// --------------------------------------------------------------------------
+
+const http = require('http');
+const { writePortfileAt } = require('../lib/core/portfiles');
+const { registerMcp } = require('../lib/util/registry');
+const { packageVersion } = require('../lib/core/versions');
+
+// A fake daemon answering GET /api/health with `health` (plus a live pid) and
+// the queue policy status also asks for. Returns its port.
+async function fakeDaemon(t, health) {
+  const srv = http.createServer((req, res) => {
+    const body = req.url === '/api/health'
+      ? { ok: true, role: 'instance', version: 1, pid: process.pid, viewers: 1, ...health }
+      : req.url === '/api/queue/policy' ? { channel_connected: false } : { error: 'nope' };
+    res.writeHead(req.url === '/api/health' || req.url === '/api/queue/policy' ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { srv.closeAllConnections(); return new Promise((r) => srv.close(r)); });
+  return srv.address().port;
+}
+
+function withDaemon(port, more) {
+  return (root) => {
+    writePortfileAt(path.join(root, '.web-chat'), { pid: process.pid, port });
+    if (more) more(root);
+  };
+}
+
+test('status: the Server line names the build a daemon on THIS build runs, with no warning', async (t) => {
+  const port = await fakeDaemon(t, { package_version: packageVersion() });
+  const out = await runStatus(t, withDaemon(port));
+  assert.match(out, new RegExp(`Server: +running at http://localhost:${port} \\(pid ${process.pid}, v${packageVersion().replace(/\./g, '\\.')}\\)`));
+  assert.doesNotMatch(out, /⚠/);
+});
+
+test('status: a daemon on another build is named, with the restart that fixes it', async (t) => {
+  const port = await fakeDaemon(t, { package_version: '0.0.1-old' });
+  const out = await runStatus(t, withDaemon(port));
+  assert.match(out, /\(pid \d+, v0\.0\.1-old\)/);
+  assert.match(out, new RegExp(`⚠ running v0\\.0\\.1-old, not this CLI's v${packageVersion().replace(/\./g, '\\.')} — run \`claude-web-chat restart\``));
+});
+
+test('status: a daemon whose health names no build is reported as older than 0.8', async (t) => {
+  const port = await fakeDaemon(t, {});
+  const out = await runStatus(t, withDaemon(port));
+  assert.match(out, /\(pid \d+, <0\.8\)/);
+  assert.match(out, /⚠ running a build older than 0\.8, not this CLI's v.* — run `claude-web-chat restart`/);
+});
+
+test('status: a daemon that does not answer gets no build and no guess', async (t) => {
+  const dead = http.createServer();
+  await new Promise((r) => dead.listen(0, '127.0.0.1', r));
+  const deadPort = dead.address().port;
+  await new Promise((r) => dead.close(r)); // a live pid in the portfile, nothing listening
+  const out = await runStatus(t, withDaemon(deadPort));
+  assert.match(out, new RegExp(`Server: +running at http://localhost:${deadPort} \\(pid ${process.pid}\\)`));
+  assert.doesNotMatch(out, /⚠/);
+});
+
+test('status: a Claude session on a newer build than the surface gets the note `ls` prints', async (t) => {
+  const port = await fakeDaemon(t, { package_version: packageVersion() });
+  const out = await runStatus(t, withDaemon(port, (root) => registerMcp({ root, package_version: '99.0.0' })));
+  assert.match(out, /Claude: +● 1 session attached/);
+  assert.match(out, /⚠ the surface is on v.*, Claude on v99\.0\.0 — run `claude-web-chat restart` in this project to pick up v99\.0\.0/);
+});
+
+test('status: a Claude session on an OLDER build is told to restart Claude Code instead', async (t) => {
+  const port = await fakeDaemon(t, { package_version: packageVersion() });
+  const out = await runStatus(t, withDaemon(port, (root) => registerMcp({ root, package_version: '0.0.1' })));
+  assert.match(out, /⚠ Claude is on v0\.0\.1 — restart Claude Code to pick up v/);
+  assert.doesNotMatch(out, /Server:.*\n +⚠/, 'the server itself is on this build');
+});
