@@ -147,10 +147,14 @@ test("Claude's own writes re-stamp the lock clock", async (t) => {
 // The wake lock's TTL is minutes, and an agentic turn routinely runs longer. Once
 // it went stale, a user click on a graph node stole the lock and restoreLiveToNode
 // threw away every render the woken turn had made — uncommitted, so with no undo.
+// (A click on the node that WAS active is "stay here", not a re-aim — that
+// case is test/set-active-preserve.test.js's; this one clicks elsewhere.)
 test('a re-aim that steals a stale lock preserves the abandoned turn\'s work', async (t) => {
   const { api } = await withServer(t, { createServer: shortTtlServer(t) });
   await api.post('/api/render', { id: 'a', html: '<p>committed</p>' });
   const n1 = (await api.post('/api/commit', { message: 'seed' })).json.node_id;
+  await api.post('/api/render', { id: 'a', html: '<p>committed again</p>' });
+  const n2 = (await api.post('/api/commit', { message: 'seed 2' })).json.node_id;
 
   await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
   await api.post('/api/render', { id: 'b', html: '<p>woken work</p>' });
@@ -161,12 +165,13 @@ test('a re-aim that steals a stale lock preserves the abandoned turn\'s work', a
   const g = (await api.get('/api/graph')).json;
   assert.equal(g.active, n1, 'the user went where they clicked');
 
-  const preserved = g.nodes.find((n) => n.id !== n1);
+  const preserved = g.nodes.find((n) => n.id !== n1 && n.id !== n2);
   assert.ok(preserved, 'the abandoned turn left a node behind');
+  assert.equal(r.json.preserved, preserved.id, 'and the reply names it');
   const node = (await api.get('/api/graph/node/' + preserved.id)).json;
   assert.equal(node.trigger.kind, 'preserve');
   assert.match(node.trigger.summary, /abandoned/);
-  assert.equal(node.parent_id, n1, 'committed on the commit point the turn was working from');
+  assert.equal(node.parent_id, n2, 'committed on the commit point the turn was working from');
   assert.ok(node.mounts.some((m) => m.id === 'b'), 'the render survived the steal');
 });
 
