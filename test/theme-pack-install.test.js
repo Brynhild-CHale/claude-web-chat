@@ -487,14 +487,16 @@ test('theme values: the refusal judges the value the strip paints — a deleted 
 test('a pack token the strip would change is refused at plan time, and the url( it assembles is named', async (t) => {
   const withTop = (v) => themePack({ themes: { harbor: { theme: { ...THEME, tokens: { ...THEME.tokens, '--wc-depth-radial': v } } } } });
   for (const [shipped, what] of [
+    ['ur;l(x)', /tokens --wc-depth-radial carries url\(…\)/],
     ['ur;l(https://tracker.example/p.png)', /tokens --wc-depth-radial carries url\(…\)/],
     ['u{}rl(https://tracker.example/p.png)', /tokens --wc-depth-radial carries url\(…\)/],
     ['image-s<>et("https://x.example/a.png" 1x)', /tokens --wc-depth-radial carries image-set\(…\)/],
     ['@im;port "https://x.example/t.css"', /tokens --wc-depth-radial carries @import/],
   ]) {
-    const errs = planErrors(withTop(shipped));
-    assert.match(errs, what, shipped);
-    assert.match(errs, /tokens --wc-depth-radial carries \{ \} < > ; or a line break/, shipped);
+    const errs = inspectPackTheme(withTop(shipped), 'harbor').errors.filter((e) => e.includes('--wc-depth-radial'));
+    assert.equal(errs.length, 1, `${shipped}: exactly one line for the token (V-6)\n${errs.join('\n')}`);
+    assert.match(errs[0], what, shipped);
+    assert.doesNotMatch(errs[0], /\{ \} < > ; or a line break/, 'the url() it assembles is the reason given, not the stripped characters too');
   }
   // Structural characters alone, with nothing to assemble, are refused too — top-level and per mode.
   const semi = planErrors(withTop('#0b5cad;'));
