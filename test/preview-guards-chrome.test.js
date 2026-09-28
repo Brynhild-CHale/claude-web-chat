@@ -64,6 +64,8 @@ async function boot() {
     if (u === '/api/components') return json({ components: [{ name: 'widget', description: 'a widget' }] });
     if (u === '/api/components/seeded/seed') return { ok: true, status: 200, text: async () => 'return { who: store.get("who") || "none" };' };
     if (u === '/api/components/locked/use') return json({ ok: false, rejected: true, hint: "pane 'spawn-locked' is locked" });
+    // A component removed since the drawer / ⌘K listed it: a HARD error, no `ok` in the body.
+    if (u === '/api/components/gone/use') return { ok: false, status: 404, json: async () => ({ error: 'not found' }), text: async () => '{"error":"not found"}' };
     if (u === '/api/themes') return json({ themes: [] });
     if (u === '/api/queue') return json({ items: [], count: 0 });
     if (u === '/api/queue/pending') return json({ pending: null });
@@ -271,6 +273,26 @@ test('adding a block while previewing goes to the live page, the preview stays, 
   await tick();
   assert.equal(uses('widget').length, 1, 'live, the same spawn goes through');
   assert.doesNotMatch(noteText(), /live page/, 'with no toast — it is on screen');
+});
+
+// R7-12: only a 200 `{ ok:false }` counted as a refusal. A component removed
+// since the drawer or ⌘K listed it answers 404 `{ error }` with no `ok` at all,
+// and from a preview that read as success: "Added gone to the live page", with a
+// Jump to live that led nowhere.
+test('from a preview, a /use that fails outright is reported, never toasted as added', async () => {
+  click('btn-down');
+  await tick();
+  assert.equal(previewing(), true, 'precondition: previewing n2');
+  const { spawnComponent } = await drawerMod();
+  calls.length = 0;
+  await spawnComponent({ name: 'gone' });
+  await tick();
+  assert.equal(uses('gone').length, 1, 'precondition: the spawn was POSTed');
+  assert.doesNotMatch(noteText(), /Added gone to the live page/, 'a 404 is not a block added');
+  assert.match(noteText(), /could not add gone: not found/, "the note says which block failed, and the daemon's reason");
+  assert.equal(noteBtn(), null, 'no Jump to live for a block that did not land');
+  click('btn-return-active');
+  await tick();
 });
 
 test('a block that needs settings puts its settings form on the live page', async () => {

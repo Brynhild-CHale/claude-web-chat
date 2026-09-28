@@ -395,10 +395,15 @@ async function mountComponent(name, id, params) {
   // Read the response. A locked or driver-owned pane answers 200 with
   // { ok:false, … }; the old code discarded that, so a soft rejection looked
   // exactly like success and the user was left wondering why nothing moved.
+  // A hard error is a refusal too, whatever its body: a component removed since
+  // the drawer or ⌘K listed it answers 404 { error } with no `ok` at all, and a
+  // failing daemon may send no JSON — neither may be toasted as added. The note
+  // names the block: a bare 'not found' does not say what was not found.
   let body = null;
   try { body = await r.json(); } catch {}
-  if (body && body.ok === false) {
-    flash(body.hint || `could not spawn ${name}`);
+  if (!r.ok || (body && body.ok === false)) {
+    const why = body && (body.hint || body.error);
+    flash(why ? `could not add ${name}: ${why}` : `could not spawn ${name}`);
     return false;
   }
   // A re-spawn into a MINIMIZED slot lands inside a collapsed chip and reads as
