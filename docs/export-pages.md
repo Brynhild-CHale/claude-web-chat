@@ -1,9 +1,10 @@
 # Export a page as a self-contained attachment
 
-A "page" in web-chat is a graph node: its panes, the store they read, and the
-theme they render under. `export` writes one of those to a **single interactive
-`.html` file** — every pane's HTML/JS, the store snapshot, the user's typed form
-values and the resolved theme inlined — that opens in any browser with no
+A "page" in web-chat is a graph node: its panes and markdown in page order,
+where each pane sits, the store they read, and the theme they render under.
+`export` writes one of those to a **single interactive `.html` file** — the page
+laid out as it was, every pane's HTML/JS, the store snapshot, the user's typed
+form values and the resolved theme inlined — that opens in any browser with no
 server, no daemon and no network. It is the thing to reach for when the user
 wants to **share, save or send** something that was rendered.
 
@@ -50,12 +51,43 @@ downloads that node as rendered, not the active one. The graph viewer's **↧** 
 
 ## What is in the file, and what is frozen
 
+**The page, laid out as it was.** The file draws the node the way the surface
+and its preview draw it:
+
+- **Page order.** Panes and markdown items come in the node's page order
+  (`pageOrder` in `lib/server/domain/page.js`).
+- **Markdown in place.** Each markdown item sits where it was on the page,
+  between and around the runs of panes. It is rendered on the host by
+  `lib/core/markdown` and escaped, so the file carries finished HTML and no
+  markdown parser.
+- **Runs.** Consecutive panes form a run, and each run is its own 12-column
+  grid, as on the page.
+- **Placement.** Each pane is placed from its `pane_state`: `col`, `colSpan`
+  and `rows` (or the minimum height an older pane was sized in). Two span-6
+  panes sit side by side, and a pane that was never placed spans the whole row.
+- **Minimized panes.** A pane minimized on the page is minimized in the file
+  too: it stays out of the grid, as it does in the node preview.
+- **Narrow screens.** Below 900px a run stacks to one column in reading order.
+  A run set to *fixed grid* on the page keeps its grid and scrolls sideways
+  instead, because the node's run flags are in the file.
+
+The layout is not an export copy. It is `drawPage` in `lib/server/preview.js`,
+the function the node preview draws with (graph thumbnails, the glance, pane
+history, replay frames). The export splices it into the file as source, under
+the same `public/page.css`. The export draws each pane's own card inside it: the
+pane's title when it has one, and its content under its own theme tokens.
+
+What the file does not have is the surface's chrome: the block header's buttons,
+drag and resize, the pin and lock marks, the Contents column and the topbar
+title. The page's headings are there as prose.
+
 Inlined: each pane's HTML and its `<script>` bodies, the mount targets, the store
-snapshot, each pane's `pane_state` and `form_state` (so typed-but-unsent values
-survive into the export), and the theme resolved through the full pane → node →
-global cascade. A theme with light and dark modes is baked in its **light** mode
-(a single-mode theme in its own) — the export has no viewer whose ◑ preference
-it could read; see [`themes.md`](themes.md). The bundled fonts that theme names
+snapshot, each pane's `pane_state` (its placement) and `form_state` (so
+typed-but-unsent values survive into the export), the node's run flags, and the
+theme resolved through the full pane → node → global cascade. A theme with light
+and dark modes is baked in its **light** mode (a single-mode theme in its own) —
+the export has no viewer whose ◑ preference it could read; see
+[`themes.md`](themes.md). The bundled fonts that theme names
 (Geist, Geist Mono, Libre Caslon Text) are inlined too, as `data:` URIs, and
 nothing else is — an unthemed page carries no font and falls back to the
 reader's system stack. So are the project's brand images, when set (⋯ →
@@ -70,9 +102,12 @@ way it behaved on the surface.
 
 Frozen means: interactions still work locally (sliders move, forms fill, a pane
 script's own state updates) but **persist nowhere**. There is no WebSocket, no
-`fetch` back to the daemon, no store round-trip. That is the right shape for an
-attachment; it is not a live link. (A pane that fetches the *public* internet
-still does so when the file is opened — documented, not solved.)
+`fetch` back to the daemon, no store round-trip. The layout is fixed as it was
+exported: nothing in the file can move, resize, minimize or restore a pane. A
+pane script's `api.spawn` and `api.close` answer `{ ok: false }` and change
+nothing. That is the right shape for an attachment; it is not a live link. (A
+pane that fetches the *public* internet still does so when the file is opened —
+documented, not solved.)
 
 Files land in `.web-chat/exports/<label>-<YYYYMMDD-HHMMSS>.html`, which is
 gitignored along with the rest of `.web-chat/`.
@@ -444,6 +479,10 @@ decisions are worth carrying forward, because the code still turns on them:
   purpose-built ~120-line runtime; what shipped instead splices the one mount
   runtime verbatim, so the export cannot drift from the live surface. Don't
   reintroduce a copy — see the mount-runtime section of `docs/extending.md`.
+  The layout follows the same rule. Until 0.8.0 the export drew every pane as a
+  full-width card in one column, while the node preview drew the page's runs.
+  Both documents now splice the preview's `drawPage`, so a node looks the same
+  in its preview and in its file.
 
 The main safety concern is unchanged, and is covered by `test/export.test.js`:
 pane HTML and store values are injected into one document, so the JSON payload is

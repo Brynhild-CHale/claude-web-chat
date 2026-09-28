@@ -341,3 +341,190 @@ test('tool: a known node still exports and reports its path', async (t) => {
   assert.ok(fs.existsSync(r.path));
   assert.match(fs.readFileSync(r.path, 'utf8'), /tooly/);
 });
+
+// --- the page layout: runs and placement, as the node preview draws them -----
+//
+// The export used to lay every pane out as a full-width card in one flex column
+// and carried no pane_state, while the node preview drew the same node in the
+// live page's grid runs. Both documents now splice ONE layout function
+// (lib/server/preview drawPage), so these compare the two documents' DOM for the
+// same node rather than restating the placement rules.
+
+const { JSDOM } = require('jsdom');
+const { drawPage, renderNodePreview, renderPreviewHtml } = require('../lib/server/preview');
+
+// The drawn page, as data: each markdown block, and each run with its panes'
+// placement. `mainId` is the document's page container.
+function layoutOf(html, mainId) {
+  const dom = new JSDOM(html, { runScripts: 'dangerously' });
+  const main = dom.window.document.getElementById(mainId);
+  const out = [...main.children].map((el) => (el.classList.contains('md-block')
+    ? { md: el.getAttribute('data-md-id'), html: el.innerHTML }
+    : {
+      run: el.getAttribute('data-anchor'),
+      cls: el.className,
+      grid: el.firstElementChild.className,
+      panes: [...el.firstElementChild.children].map((p) => ({
+        id: p.querySelector('.mount-host').id,
+        cls: p.className,
+        col: p.style.getPropertyValue('--col'),
+        span: p.style.getPropertyValue('--span'),
+        rows: p.style.getPropertyValue('--rows'),
+        minHeight: p.style.minHeight,
+      })),
+    }));
+  dom.window.close();
+  return out;
+}
+
+// A page: a title, two span-6 panes side by side, a caption, then a full-width
+// pane in a run the user set not to stack.
+const LAID_OUT = {
+  id: 'n9',
+  mounts: [
+    { id: 'left', html: '<p>left</p>', target: 'main', params: { title: 'Left' }, pane_state: { colSpan: 6 } },
+    { id: 'right', html: '<p>right</p>', target: 'main', params: {}, pane_state: { col: 7, colSpan: 6, rows: 4 } },
+    { id: 'wide', html: '<p>wide</p>', target: 'main', params: {} },
+  ],
+  markdown: [{ id: 'md-title', text: '# The page' }, { id: 'md-cap', text: 'Below the pair.' }],
+  order: ['md-title', 'left', 'right', 'md-cap', 'wide'],
+  runs: { 'md-cap': { stacks: false } },
+  store: {},
+};
+
+function exportOf(node) {
+  return assembleExport({
+    mounts: node.mounts, markdown: node.markdown, order: node.order, runs: node.runs,
+    store: node.store, meta: { label: 'n1.9' },
+  });
+}
+
+test('layout: two span-6 panes share one run, placed exactly as the node preview places them', () => {
+  const exported = layoutOf(exportOf(LAID_OUT), 'export-main');
+  const previewed = layoutOf(renderPreviewHtml(LAID_OUT, { tokens: {} }), 'main');
+  assert.deepEqual(exported, previewed, 'the export draws the preview\'s runs and placement');
+
+  const pair = exported[1];
+  assert.equal(pair.run, 'md-title');
+  assert.equal(pair.cls, 'page-run stacks');
+  assert.equal(pair.grid, 'run-grid');
+  assert.deepEqual(pair.panes.map((p) => [p.id, p.col, p.span, p.rows]), [
+    ['left', 'auto', '6', ''],
+    ['right', '7', '6', '4'],
+  ], 'both halves of the pair in ONE run, side by side');
+  assert.equal(pair.panes[1].cls, 'pane has-rows', 'a pane with rows is that tall');
+});
+
+test('layout: markdown lands between the runs, in page order', () => {
+  const exported = layoutOf(exportOf(LAID_OUT), 'export-main');
+  assert.deepEqual(exported.map((it) => (it.md ? `md:${it.md}` : `run:${it.run}[${it.panes.map((p) => p.id)}]`)),
+    ['md:md-title', 'run:md-title[left,right]', 'md:md-cap', 'run:md-cap[wide]']);
+  assert.equal(exported[0].html, '<h1 data-slug="the-page">The page</h1>', 'rendered and escaped on the host');
+  assert.equal(exported[3].cls, 'page-run fixed', 'the run the user set not to stack keeps its grid on a narrow screen');
+});
+
+test('layout: a pane with no placement is full width', () => {
+  const [run] = layoutOf(assembleExport({ mounts: [{ id: 'solo', html: '<p>x</p>' }] }), 'export-main');
+  assert.equal(run.run, 'start', 'a page with no markdown is one run from the top');
+  assert.deepEqual(run.panes, [{ id: 'solo', cls: 'pane', col: 'auto', span: '12', rows: '', minHeight: '' }]);
+});
+
+test('layout: the old single-column markup is gone', () => {
+  const html = exportOf(LAID_OUT);
+  assert.ok(!html.includes('display: flex; flex-direction: column; gap: 14px'), 'no flex column of cards');
+  assert.match(html, /<main id="export-main" class="page"><\/main>/, 'the page container is a .page, as the preview\'s is');
+  const dom = new JSDOM(html, { runScripts: 'dangerously' });
+  const doc = dom.window.document;
+  assert.equal(doc.querySelectorAll('#export-main > .pane').length, 0, 'no pane card directly in the page');
+  const panes = [...doc.querySelectorAll('.pane')];
+  assert.equal(panes.length, 3);
+  for (const p of panes) assert.ok(p.parentElement.classList.contains('run-grid'), `${p.dataset.paneId} sits in a run's grid`);
+  dom.window.close();
+  // public/page.css is what places them — the rules the preview inlines too.
+  assert.ok(html.includes('.run-grid > .pane { grid-column: var(--col, auto) / span var(--span, 12); min-width: 0; }'));
+  assert.ok(html.includes('.page-run.stacks .run-grid { grid-template-columns: minmax(0, 1fr); }'), 'runs stack below 900px');
+});
+
+test('layout: a minimized pane stays out of the grid, as it does on the page', () => {
+  const html = assembleExport({ mounts: [
+    { id: 'shown', html: '<p>x</p>' },
+    { id: 'tucked', html: '<p>y</p>', pane_state: { colSpan: 6, minimized: true } },
+  ] });
+  const [run] = layoutOf(html, 'export-main');
+  assert.equal(run.panes[1].cls, 'pane minimized');
+  assert.ok(html.includes('.pane.minimized { display: none; }'));
+});
+
+test('layout: a markdown-free page rides in page order and carries no page list', () => {
+  const html = assembleExport({
+    mounts: [{ id: 'b', html: '<p>b</p>' }, { id: 'a', html: '<p>a</p>' }],
+    order: ['a', 'b'],
+  });
+  const payload = JSON.parse(html.match(/<script id="wc-export-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  assert.equal('page' in payload, false, 'the mounts ARE the page');
+  assert.equal('runs' in payload, false, 'no run flags off their default');
+  assert.deepEqual(payload.mounts.map((m) => m.id), ['a', 'b'], 'in the order the page shows them');
+  assert.deepEqual(layoutOf(html, 'export-main')[0].panes.map((p) => p.id), ['a', 'b']);
+});
+
+test('layout: pane scripts still mount and run inside the placed cards, and api.spawn answers {ok:false}', async () => {
+  const html = assembleExport({
+    mounts: [
+      {
+        id: 'live',
+        html: '<input id="q"><output id="o"></output><script>'
+          + 'root.getElementById("o").textContent = "RAN:" + mountId;'
+          + 'api.spawn({ html: "<p>child</p>" }).then(function (r) { store.set({ spawned: r }); });'
+          + '</script>',
+        params: { title: 'Live' },
+        tokens: { '--wc-accent': '#123456' },
+        pane_state: { colSpan: 6 },
+        form_state: { '#q:0': { value: 'typed' } },
+      },
+      { id: 'other', html: '<p>other</p>', pane_state: { colSpan: 6 } },
+    ],
+    store: { seed: 1 },
+  });
+  const dom = new JSDOM(html, { runScripts: 'dangerously' });
+  await new Promise((r) => setTimeout(r, 30));
+  const doc = dom.window.document;
+  const host = doc.getElementById('live');
+  const pane = host.parentElement;
+  assert.equal(host.shadowRoot.getElementById('o').textContent, 'RAN:live', 'the pane script ran');
+  assert.equal(host.shadowRoot.getElementById('q').value, 'typed', 'typed form values rehydrated');
+  assert.equal(dom.window.store.get('seed'), 1, 'the store snapshot is baked');
+  const spawned = dom.window.store.get('spawned');
+  assert.equal(spawned.ok, false, 'a frozen page spawns nothing');
+  assert.equal(doc.querySelectorAll('.pane').length, 2, 'and no pane was added');
+  assert.equal(pane.style.getPropertyValue('--wc-accent'), '#123456', 'per-pane token on the card');
+  assert.equal(pane.style.getPropertyValue('--span'), '6', 'beside its placement');
+  assert.equal(pane.querySelector('.pane-title').textContent, 'Live');
+  dom.window.close();
+});
+
+test('drawPage: one layout, spliced into both documents, safe inside an inline script', () => {
+  const src = drawPage.toString();
+  assert.ok(!/<\/script/i.test(src), 'no script end tag in the spliced source');
+  assert.ok(!src.includes('<!--'), 'no comment opener to push the parser into script-data-escaped');
+  assert.ok(exportOf(LAID_OUT).includes(src), 'the export carries the function verbatim');
+  assert.ok(renderPreviewHtml(LAID_OUT, {}).includes(src), 'and so does the node preview');
+});
+
+test('buildExportHtml: a committed node keeps its layout — pane_state and run flags ride in the file', () => {
+  const ctx = fakeCtx();
+  ctx.graph.registerNode({
+    id: 'n2', parent_id: 'n1', created_at: 3,
+    mounts: LAID_OUT.mounts.map((m) => ({ ...m })),
+    markdown: LAID_OUT.markdown.map((m) => ({ ...m })),
+    order: LAID_OUT.order.slice(),
+    runs: { ...LAID_OUT.runs },
+    store: {},
+  });
+  const built = buildExportHtml(ctx, 'n2', new Date('2026-06-19T12:00:00Z'));
+  const payload = JSON.parse(built.html.match(/<script id="wc-export-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
+  assert.deepEqual(payload.mounts.map((m) => m.pane_state), [{ colSpan: 6 }, { col: 7, colSpan: 6, rows: 4 }, undefined]);
+  assert.deepEqual(payload.runs, { 'md-cap': { stacks: false } });
+  // The same node through the graph's own preview route builder.
+  assert.deepEqual(layoutOf(built.html, 'export-main'),
+    layoutOf(renderNodePreview(ctx.paths, ctx.graph.nodes.get('n2')), 'main'));
+});
