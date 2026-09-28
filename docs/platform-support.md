@@ -115,12 +115,6 @@ problems** — they are live on macOS today, and they are listed here rather tha
 filed on a platform branch precisely so they do not get mistaken for someone
 else's.
 
-- **`findProjectRoot`'s `$HOME` guard is a lexical compare and can fail open.**
-  `lib/core/paths.js`. Reproduced on macOS with `HOME` set to a symlink, and with
-  a case-differing spelling on case-insensitive APFS: a fresh directory under
-  `$HOME` resolves to `$HOME`, so `init` takes the existing-install branch, skips
-  the first-run consent gate, and configures the whole machine. Needs a
-  `samePath()` that realpaths both sides.
 - **PID liveness is not identity — still true in `stop`.** `stop.js` asks "does a
   process with this pid exist", not "is it ours", so a recycled pid in
   `.web-chat/server.json` can be signalled by its SIGTERM escalation. Wants
@@ -153,6 +147,16 @@ else's.
   per-user `WEB_CHAT_PORTAL_PORT` (and a tunnel ingress pointed at it). The
   metrics port cloudflared is told (5172 by default, `tunnel.metricsPort`) has
   the same property.
+
+### Fixed since the assessments
+
+- **The `$HOME` guard failed open.** `findProjectRoot` compared paths
+  lexically, so with `HOME` set to a symlink, or spelled in another case on
+  case-insensitive APFS, a fresh directory under `$HOME` resolved to `$HOME`:
+  `init` took the existing-install branch, skipped the first-run consent gate
+  and configured the whole machine. `isHomeDir` (`lib/core/paths.js`) now
+  compares both sides by their native realpath, which returns the on-disk
+  case, and `init` and `install` refuse `$HOME` outright.
 
 ### Changed deliberately, not a bug
 
