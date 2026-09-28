@@ -319,3 +319,47 @@ test('caps: a chain of self-closing panes still stops at the depth cap', () => {
   assert.equal(spawn.generationOf(state, 'g3'), 0);
   assert.equal(kid('g3', 'g4').ok, true);
 });
+
+// R4-3: POST /api/components/:name/use is the ＋ drawer's route too, and any
+// pane or remote viewer can reach it. From a browser or through the portal it
+// gets what api.spawn gets — params.signals stripped with spawn's warning, and
+// no `force` — while use_component (lib/client: no fetch metadata, no portal
+// label) keeps both.
+test('/use from a browser or the portal: signals stripped, force ignored; an MCP-shaped call keeps both', async (t) => {
+  const ctx = await withServer(t);
+  const { api, port } = ctx;
+  const client = require('../lib/client');
+  const use = (body, headers) => client.post('/api/components/w-sig/use', body, { port, noSpawn: true, headers });
+  const immediate = async () => (await api.get('/api/queue/policy')).json.immediate_signals
+    .map(({ key, mount }) => ({ key, mount }));
+  await api.post('/api/components', { name: 'w-sig', source: '<p>w</p>' });
+  await render(api, 'p');
+  assert.equal((await doSpawn(api, 'p', { id: 'p-1' })).ok, true);
+
+  const signals = [{ key: 'go', wake: 'immediate' }];
+  for (const [label, headers] of [
+    ['remote', { 'x-wc-remote': '1' }],
+    ['browser', { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' }],
+  ]) {
+    const fresh = await use({ id: `u-${label}`, force: true, params: { title: 'T', signals } }, headers);
+    assert.equal(fresh.ok, true, `${label}: ${JSON.stringify(fresh)}`);
+    assert.match(fresh.warning, /params\.signals ignored: only Claude declares wake signals/, label);
+    assert.deepEqual(await immediate(), [], `${label}: no immediate signal was declared`);
+
+    const takeover = await use({ id: 'p-1', force: true, params: { signals } }, headers);
+    assert.equal(takeover.ok, false, `${label}: force is ignored`);
+    assert.equal(takeover.owned, true);
+    assert.equal((await paneOf(api, 'p-1')).owner, 'pane:p', `${label}: the child is still its parent's`);
+  }
+  const hello = await ctx.wsHello();
+  assert.deepEqual(hello.mounts.find((m) => m.id === 'u-remote').params, { title: 'T' }, 'the rest of params is kept');
+
+  // use_component's own path (lib/client: no fetch metadata, no portal label).
+  const mcp = await use({ id: 'u-mcp', params: { signals } });
+  assert.equal(mcp.ok, true, JSON.stringify(mcp));
+  assert.equal(mcp.warning, undefined);
+  assert.deepEqual(await immediate(), [{ key: 'go', mount: 'u-mcp' }], 'Claude\'s declared signal registered');
+  const forced = await use({ id: 'p-1', force: true });
+  assert.equal(forced.ok, true, 'Claude may still take over with force');
+  assert.equal((await paneOf(api, 'p-1')).owner, 'claude');
+});

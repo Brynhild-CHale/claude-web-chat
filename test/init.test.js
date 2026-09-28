@@ -295,19 +295,14 @@ test('--yes resolves prompts to their default without a readline, and CI counts 
 test('the tour mounts as two claude-owned panes, routed auto, with the declared signal', async (t) => {
   await withServer(t, async (ctx) => {
     // A portfile so init's own portfile read finds this server, plus a client
-    // shim that speaks to it. (withServer binds an ephemeral port.)
+    // shim that speaks to it. (withServer binds an ephemeral port.) The shim is
+    // lib/client pinned to that port — what init really uses — not the test's
+    // fetch: /use strips a browser request's declared signals.
     writePortfileAt(ctx.webChatDir, { pid: process.pid, port: ctx.port });
+    const client = require('../lib/client');
     const http = {
-      get: async (p) => {
-        const r = await ctx.api.get(p);
-        if (r.status >= 400) throw new Error(`${p} -> ${r.status}`);
-        return r.json;
-      },
-      post: async (p, body) => {
-        const r = await ctx.api.post(p, body);
-        if (r.status >= 400) throw new Error(`${p} -> ${r.status}`);
-        return r.json;
-      },
+      get: (p) => client.get(p, { port: ctx.port, noSpawn: true }),
+      post: (p, body) => client.post(p, body, { port: ctx.port, noSpawn: true }),
     };
 
     const log = sink();
