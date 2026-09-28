@@ -334,7 +334,7 @@ test('frames the chrome sent while the socket was down survive the reconnect', a
   assert.equal(paneFrames[0].pane_state.minimized, false);
 
   const patches = sent.filter((f) => f.type === 'store:set');
-  assert.equal(patches.length, 1, 'the gap collapses into ONE store frame, however long it lasted');
+  assert.equal(patches.length, 1, "one writer's gap collapses into ONE store frame, however long it lasted");
   assert.deepEqual(patches[0].patch, { k: 'second', other: 1 },
     'with the last write per key — the whole gap, not just its final call');
   assert.equal(store.get('k'), 'second',
@@ -398,6 +398,45 @@ test('a pane theme that lands during a preview themes the live pane, not the pre
   assert.equal(previewing(), false, 'attached again');
   assert.equal(panes.get('m-shared').wrapper.style.getPropertyValue('--wc-accent'), '#ff0000',
     'and the live pane wears it after ↩ active');
+});
+
+/* ── 6. the outbox keeps each writer's attribution ── */
+
+// The daemon reads a store:set's `mount` (and `gesture`) to decide what it is: a
+// declared signal becomes a queue item naming its pane. The outbox merged the
+// whole gap into ONE frame carrying the LAST writer's mount, so two panes'
+// handoffs made while disconnected reached the daemon as one item on the wrong
+// pane. Each writer drains as its own frame now — and last-write-wins per key
+// still holds across them.
+const WRITERS = [
+  { id: 'm-a', html: '<p>a</p><script>window.__sA = store;</script>', target: 'main', params: {}, pane_state: {} },
+  { id: 'm-b', html: '<p>b</p><script>window.__sB = store;</script>', target: 'main', params: {}, pane_state: {} },
+];
+
+test('two panes’ writes during a gap drain as two frames, each with its own mount', async () => {
+  const { store } = await app('store.js');
+  hello({ store: {}, mounts: WRITERS.map((m) => ({ ...m })) });
+  await tick();
+  assert.ok(W.__sA && W.__sB, 'precondition: both panes hold their store facade');
+
+  WS.readyState = 3;
+  sent.length = 0;
+  W.__sA.set({ a_submit: 1 });
+  W.__sB.set({ b_submit: 1 });
+  W.__sA.set({ k: 1 });
+  W.__sB.set({ k: 2 });
+  W.__sA.set({ k: 3 });
+  assert.equal(sent.length, 0, 'precondition: nothing reaches a closed socket');
+
+  WS.readyState = 1;
+  hello({ store: {}, mounts: WRITERS.map((m) => ({ ...m })) });
+  await tick();
+  const frames = sent.filter((f) => f.type === 'store:set').map((f) => ({ mount: f.mount, patch: f.patch }));
+  assert.deepEqual(frames, [
+    { mount: 'm-b', patch: { b_submit: 1 } },
+    { mount: 'm-a', patch: { a_submit: 1, k: 3 } },
+  ], 'one frame per pane, each attributed to the pane that wrote it; k is sent once, by its last writer, last');
+  assert.equal(store.get('k'), 3, 'A k=1, B k=2, A k=3 ends at 3 on this end too');
 });
 
 test('the outbox does not grow without bound while the socket stays down', async () => {
