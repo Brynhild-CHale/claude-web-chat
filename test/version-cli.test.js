@@ -86,7 +86,7 @@ test('--version is routed to the version command, not "unknown command"', () => 
   assert.match(lines.join('\n'), /^claude-web-chat v/);
 });
 
-test('uninstall --self removes the program; plain uninstall only touches the project', (t) => {
+test('uninstall --self removes the program; plain uninstall only touches the project', async (t) => {
   withTempHome(t);
   const paths = installPaths();
   fakeVersion(paths, '0.5.0');
@@ -102,11 +102,11 @@ test('uninstall --self removes the program; plain uninstall only touches the pro
   // the local-scope registration, and no test may shell out for real.
   const opts = { cwd: project, runClaude: () => ({ ok: true }) };
   try {
-    uninstall([], opts);
+    await uninstall([], opts);
     assert.ok(fs.existsSync(paths.binLink('claude-web-chat')), 'a plain uninstall must not remove the program');
     assert.match(logs.join('\n'), /uninstall --self/, 'and it should say how to remove the program too');
 
-    uninstall(['--self'], opts);
+    await uninstall(['--self'], opts);
   } finally {
     console.log = origLog;
   }
