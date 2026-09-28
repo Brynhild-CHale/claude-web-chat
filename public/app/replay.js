@@ -10,7 +10,9 @@
 // render of the same replay by the daemon (POST /api/replay/render: a headless
 // system Chrome draws it, ffmpeg encodes it when the machine has one), linked in
 // the note when it is done. Each button is disabled when
-// /api/replay/capabilities says this machine cannot make that format.
+// /api/replay/capabilities says this machine cannot make that format — or,
+// through the tunnel portal, that this viewer cannot make any (the portal's
+// hint titles the buttons).
 //
 // It never touches the live surface. The frames are the node preview document
 // running inside the replay's own iframe, under PREVIEW_CSP, so nothing here
@@ -50,8 +52,11 @@ const FORMAT_NAME = { gif: 'GIF', mp4: 'MP4', webm: 'WebM' };
 let fileExport = { busy: false, can: { gif: true, mp4: true, webm: true } };
 // The replay being shown: its endpoints, the lineage the pickers offer, and —
 // when Claude opened it — the script: { id (the daemon's), body (the pinned
-// script, sent back with a render), title, steps }.
-let cur = { to: null, from: null, lineage: [], script: null };
+// script, sent back with a render), title, steps }. `prompts` is what that
+// script said about including the user's prompts (null: nothing): it is what
+// "Include my prompts" shows for THIS replay until the viewer changes it, and
+// it is never remembered as the viewer's own choice.
+let cur = { to: null, from: null, lineage: [], script: null, prompts: null };
 
 const pop = () => $('replay-pop');
 const frame = () => $('rpo-frame');
@@ -77,8 +82,13 @@ function player() {
 
 function note(text) { const n = $('rpo-note'); if (n) n.textContent = text || ''; }
 
-// Whether a file saved now carries the viewer's prompts.
-const filePrompts = (p = prefs()) => p.prompts && p.captions !== 'none';
+// Whether the player, and a file saved now, carry the viewer's prompts: what
+// the checkbox shows (a script's say, else the remembered choice), and never
+// with captions off. The daemon lets this explicit choice win over a script's
+// include_prompts (lib/server/replay/document replayOpts), and a render sends
+// it inside the script too.
+const promptsOn = (p = prefs()) => (cur.prompts != null ? cur.prompts : p.prompts);
+const filePrompts = (p = prefs()) => promptsOn(p) && p.captions !== 'none';
 const PROMPTS_REMINDER = 'includes your prompts';
 
 // A finished render: a link to the file, built from nodes (the name comes from
@@ -106,8 +116,11 @@ function syncButtons() {
   for (const f of RENDER_FORMATS) { const b = $('rpo-' + f); if (b) b.disabled = fileExport.busy || !fileExport.can[f]; }
 }
 
-// What each format's button says it will do, or why it cannot.
+// What each format's button says it will do, or why it cannot. Through the
+// tunnel portal nothing can be rendered (the portal refuses the render route),
+// and the capabilities carry the portal's own reason.
 function buttonTitle(f, caps) {
+  if (caps.remote) return caps.hint || 'Rendering a file runs on the host machine';
   const chrome = !!caps.chrome;
   const ffmpeg = !!caps.ffmpeg;
   if (!chrome) {
@@ -152,7 +165,7 @@ async function renderFile(format) {
   note(`Rendering ${what} in a headless Chrome…`);
   try {
     const body = { format, transition: p.transition, captions: p.captions, include_prompts: filePrompts(p) };
-    if (cur.script) body.script = cur.script.body;
+    if (cur.script) body.script = { ...cur.script.body, include_prompts: filePrompts(p) };
     else {
       if (cur.from) body.from = cur.from;
       if (cur.to) body.to = cur.to;
@@ -173,12 +186,13 @@ async function renderFile(format) {
   }
 }
 
-// The checkbox mirrors the remembered choice; it means nothing with captions off.
+// The checkbox mirrors the choice in force (a script's, else the remembered
+// one); it means nothing with captions off.
 function syncPrompts() {
   const cb = $('rpo-prompts');
   if (!cb) return;
   const p = prefs();
-  cb.checked = p.prompts;
+  cb.checked = promptsOn(p);
   cb.disabled = p.captions === 'none';
 }
 
@@ -282,7 +296,7 @@ export async function openReplay({ to = null, from = null, script = null } = {})
   const def = await getPath(from ? { to: target, from } : { to: target });
   if (def.error) {
     note(def.error);
-    cur = { to: target, from: null, lineage: [], script: null };
+    cur = { to: target, from: null, lineage: [], script: null, prompts: null };
     renderPickers();
     return;
   }
@@ -290,9 +304,11 @@ export async function openReplay({ to = null, from = null, script = null } = {})
   // own steps if the root cannot be named.
   const all = nodeById(def.to.id) ? await getPath({ to: def.to.id, from: rootOf(def.to.id) }) : def;
   const lineage = (all.error ? def.steps : all.steps).map((s) => ({ id: s.id, label: s.label }));
+  const said = script && script.script && typeof script.script.include_prompts === 'boolean' ? script.script.include_prompts : null;
   cur = {
     to: def.to.id, from: def.from.id, lineage,
     script: script ? { id: script.script_id, body: script.script, title: script.title || null, steps: script.steps } : null,
+    prompts: said,
   };
   renderPickers();
   if (cur.script) {
@@ -364,13 +380,14 @@ export function initReplay(h = {}) {
   });
   on('rpo-transition', 'change', (e) => { savePrefs({ transition: e.target.value }); load({ at: stepIndex() }); });
   on('rpo-captions', 'change', (e) => { savePrefs({ captions: e.target.value }); syncPrompts(); load({ at: stepIndex() }); });
-  on('rpo-prompts', 'change', (e) => { savePrefs({ prompts: !!e.target.checked }); note(''); load({ at: stepIndex() }); });
+  // The viewer's own choice: remembered, and it replaces whatever the script said.
+  on('rpo-prompts', 'change', (e) => { savePrefs({ prompts: !!e.target.checked }); cur.prompts = null; note(''); load({ at: stepIndex() }); });
   // replay.html is a plain link; with prompts on, say so as it downloads.
   on('rpo-download', 'click', () => { if (filePrompts()) note(`replay.html ${PROMPTS_REMINDER}`); });
   for (const f of RENDER_FORMATS) on('rpo-' + f, 'click', () => renderFile(f));
   // A new range is a plain replay of it: the script was for its own from / to.
-  on('rpo-from', 'change', (e) => { cur.from = e.target.value; cur.script = null; note(''); renderPickers(); load(); });
-  on('rpo-to', 'change', (e) => { cur.to = e.target.value; cur.script = null; note(''); renderPickers(); load(); });
+  on('rpo-from', 'change', (e) => { cur.from = e.target.value; cur.script = null; cur.prompts = null; note(''); syncPrompts(); renderPickers(); load(); });
+  on('rpo-to', 'change', (e) => { cur.to = e.target.value; cur.script = null; cur.prompts = null; note(''); syncPrompts(); renderPickers(); load(); });
   window.addEventListener('keydown', onKey, true);
   bus.on('mode', () => { if (isReplayOpen() && cur.to) load({ at: stepIndex() }); });
   bus.on('replay:open', (frame) => { openReplay({ script: frame }); });
