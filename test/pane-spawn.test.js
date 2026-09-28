@@ -291,3 +291,31 @@ test('signals: a spawned pane cannot declare wake signals', () => {
   // A spawn without signals carries no warning.
   assert.equal(spawn.spawnPane(state, bus, { parent: 'root', id: 'c2', html: 'x', params: { title: 'T' } }).warning, undefined);
 });
+
+// R3-4: the depth cap counts generations, not live ancestors. A pane may close
+// itself and its children outlive it, so a chain whose every grandparent closes
+// itself used to walk back only as far as the first live ancestor and never hit
+// the cap. Each child records its generation at spawn; the cap reads that.
+test('caps: a chain of self-closing panes still stops at the depth cap', () => {
+  const { state, bus } = fixture();
+  let now = 0;
+  const kid = (parent, id) => spawn.spawnPane(state, bus, { parent, id, html: 'x', now: now++ });
+  assert.equal(kid('root', 'g1').ok, true);
+  assert.equal(kid('g1', 'g2').ok, true);
+  // g1 closes itself: g2 outlives it, and the walk from g2 now ends at g2.
+  assert.equal(spawn.closePane(state, bus, { parent: 'g1', id: 'g1', now: now++ }).ok, true);
+  assert.equal(kid('g2', 'g3').ok, true, 'generation 3 is within the cap');
+  assert.equal(spawn.closePane(state, bus, { parent: 'g2', id: 'g2', now: now++ }).ok, true);
+  assert.equal(spawn.depthOf(state, 'g3'), 1, 'the live-ancestor walk undercounts');
+  assert.equal(spawn.generationOf(state, 'g3'), 3, 'the recorded generation does not');
+  const fourth = kid('g3', 'g4');
+  assert.equal(fourth.ok, false);
+  assert.equal(fourth.cap, 'depth');
+  assert.equal(fourth.limit, spawn.MAX_DEPTH);
+  assert.equal(state.mounts.has('g4'), false, 'nothing landed');
+  // A pane Claude put up is generation 0 whatever it once was: re-owning a
+  // child as Claude's (force) starts a new chain.
+  setMount(state, bus, { id: 'g3', html: 'mine', force: true });
+  assert.equal(spawn.generationOf(state, 'g3'), 0);
+  assert.equal(kid('g3', 'g4').ok, true);
+});
