@@ -13,14 +13,15 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
-const { withServer, fakeBin, e2eGate } = require('../test-support/helpers');
+const { withServer, fakeBin, e2eGate, waitUntil } = require('../test-support/helpers');
+const { isPidAlive } = require('../lib/core/portfiles');
 const { decodeGif } = require('../test-support/gif-decode');
 const { encodePng, solid } = require('../test-support/png-encode');
 const { projectPaths } = require('../lib/core/paths');
 const {
-  createFrameEncoder, pickEncoder, ffconcat, ffmpegPasses,
+  createFrameEncoder, pickEncoder, ffconcat, ffmpegPasses, liveEncoders,
 } = require('../lib/replay/encode');
 
 const SUPPORT = path.join(__dirname, '..', 'test-support');
@@ -187,6 +188,43 @@ test('createFrameEncoder: a GIF whose ffmpeg fails falls back to the built-in en
   assert.equal(ff.read().length, 1, 'ffmpeg was tried first');
 });
 
+test('createFrameEncoder: the built-in fallback after an ffmpeg failure yields between frames and keeps the deadline', async (t) => {
+  const ff = fakeFfmpeg(t, { mode: 'fail' });
+  const tmpDir = tmp(t);
+  const N = 40;
+  const fill = (enc) => { for (let i = 0; i < N; i++) enc.addFrame(png(16, 10, [i * 5, 50, 40]), 100); };
+
+  // A setImmediate queued as the fallback reads its FIRST frame must run while
+  // the fallback is still going: a loop that never yields would run all N
+  // frames, and settle, before it.
+  const readFileSync = fs.readFileSync;
+  let reads = 0;
+  let settled = false;
+  let seen = null;
+  t.mock.method(fs, 'readFileSync', function (file, ...rest) {
+    if (/f\d{5}\.png$/.test(String(file)) && reads++ === 0) setImmediate(() => { seen = { reads, settled }; });
+    return readFileSync.call(this, file, ...rest);
+  });
+  const enc = createFrameEncoder({ format: 'gif', ffmpegPath: ff.bin, width: 16, height: 10, tmpDir });
+  t.after(() => enc.dispose());
+  fill(enc);
+  const out = await enc.finish({ timeoutMs: 20000 }).finally(() => { settled = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(out.encoder, 'builtin', 'precondition: the fallback ran');
+  assert.equal(out.frames, N);
+  assert.ok(seen, 'precondition: the queued setImmediate ran');
+  assert.equal(seen.settled, false, 'before the fallback finished');
+  assert.ok(seen.reads < N, `with frames still to encode (${seen.reads} of ${N} read)`);
+  t.mock.restoreAll();
+
+  // A deadline already past when ffmpeg fails: no fallback run past it.
+  const enc2 = createFrameEncoder({ format: 'gif', ffmpegPath: ff.bin, width: 16, height: 10, tmpDir });
+  t.after(() => enc2.dispose());
+  fill(enc2);
+  await assert.rejects(enc2.finish({ timeoutMs: 1 }), (e) => e.code === 'timeout' && /built-in GIF encoder/.test(e.message));
+  assert.equal(ff.read().length, 2, 'ffmpeg was tried (and failed) both times');
+});
+
 test('createFrameEncoder: an MP4 whose ffmpeg fails has no fallback; a hung one is killed at the deadline', async (t) => {
   const bad = fakeFfmpeg(t, { mode: 'fail' });
   const tmpDir = tmp(t);
@@ -202,6 +240,76 @@ test('createFrameEncoder: an MP4 whose ffmpeg fails has no fallback; a hung one 
   const started = Date.now();
   await assert.rejects(enc2.finish({ timeoutMs: 1500 }), (e) => e.code === 'timeout', 'a timeout is not an ffmpeg failure: no fallback past the deadline');
   assert.ok(Date.now() - started < 10000);
+});
+
+test('createFrameEncoder: aborting during finish SIGKILLs a hung ffmpeg at once and rejects aborted', async (t) => {
+  const hung = fakeFfmpeg(t, { mode: 'hang' });
+  const tmpDir = tmp(t);
+  // The real spawn, remembered: the child's pid is the fake's (its wrapper
+  // exec's into it), and whatever the code under test does, it dies here.
+  const procs = [];
+  const spawnImpl = (...a) => { const p = spawn(...a); procs.push(p); return p; };
+  t.after(() => { for (const p of procs) { try { p.kill('SIGKILL'); } catch { /* gone */ } } });
+  const enc = createFrameEncoder({ format: 'webm', ffmpegPath: hung.bin, width: 16, height: 10, tmpDir, spawnImpl });
+  t.after(() => enc.dispose());
+  enc.addFrame(png(16, 10, RED), 1000);
+
+  const ac = new AbortController();
+  const finishing = enc.finish({ timeoutMs: 60000, signal: ac.signal });
+  await waitUntil(() => hung.read().length === 1, { timeout: 10000, what: 'the fake ffmpeg to start' });
+  assert.equal(procs.length, 1);
+  assert.equal(liveEncoders(), 1, 'the running ffmpeg is tracked for the exit hook');
+  const { pid } = procs[0];
+  const t0 = Date.now();
+  ac.abort();
+  await assert.rejects(finishing, (e) => e.code === 'aborted');
+  assert.ok(Date.now() - t0 < 1000, `answered at once, not at the deadline (${Date.now() - t0} ms)`);
+  await waitUntil(() => !isPidAlive(pid), { timeout: 3000, what: `the fake ffmpeg (pid ${pid}) to be gone` });
+  await waitUntil(() => liveEncoders() === 0, { timeout: 3000, what: 'the exit-hook set to empty' });
+
+  // A signal that has already fired starts nothing at all.
+  const enc2 = createFrameEncoder({ format: 'webm', ffmpegPath: hung.bin, width: 16, height: 10, tmpDir, spawnImpl });
+  t.after(() => enc2.dispose());
+  enc2.addFrame(png(16, 10, RED), 1000);
+  await assert.rejects(enc2.finish({ timeoutMs: 60000, signal: ac.signal }), (e) => e.code === 'aborted');
+  assert.equal(procs.length, 1, 'no second ffmpeg was spawned');
+});
+
+test('a process that exits mid-encode takes its ffmpeg with it (the exit hook)', async (t) => {
+  const hung = fakeFfmpeg(t, { mode: 'hang' });
+  const tmpDir = tmp(t);
+  const pidFile = path.join(tmpDir, 'ffmpeg.pid');
+  let pid = null;
+  t.after(() => { if (pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  // A child process starts an encode, and exits the moment ffmpeg is up — no
+  // abort, no dispose: only the 'exit' hook stands between the hung ffmpeg and
+  // a leak. (The real spawn, remembered only to learn the pid.)
+  const script = `
+    const fs = require('fs');
+    const { spawn } = require('child_process');
+    const { createFrameEncoder } = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'replay', 'encode'))});
+    const spawnImpl = (...a) => { const p = spawn(...a); fs.writeFileSync(process.env.PIDF, String(p.pid)); return p; };
+    const enc = createFrameEncoder({ format: 'webm', ffmpegPath: process.env.BIN, width: 16, height: 10, tmpDir: process.env.TMPD, spawnImpl });
+    enc.addFrame(Buffer.from(process.env.PNG, 'base64'), 1000);
+    enc.finish({ timeoutMs: 60000 }).catch(() => {});
+    const iv = setInterval(() => {
+      let calls = '';
+      try { calls = fs.readFileSync(process.env.CALLS, 'utf8'); } catch {}
+      if (calls.trim()) { clearInterval(iv); process.exit(0); }
+    }, 20);`;
+  const child = spawn(process.execPath, ['-e', script], {
+    env: {
+      ...process.env, BIN: hung.bin, TMPD: tmpDir, PIDF: pidFile,
+      CALLS: path.join(path.dirname(hung.bin), 'calls.jsonl'), PNG: png(16, 10, RED).toString('base64'),
+    },
+    stdio: 'ignore',
+  });
+  const code = await new Promise((r) => child.on('exit', r));
+  assert.equal(code, 0, 'the child reached the encode and exited');
+  pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  assert.ok(pid > 0, 'precondition: an ffmpeg was spawned');
+  assert.equal(hung.read().length, 1, 'precondition: and it was running');
+  await waitUntil(() => !isPidAlive(pid), { timeout: 3000, what: `the hung ffmpeg (pid ${pid}) to die with its parent` });
 });
 
 test('createFrameEncoder without ffmpeg: GIF is built in; MP4/WebM are ffmpeg-not-found', async (t) => {
@@ -277,6 +385,29 @@ test('POST /api/replay/render mp4 with no ffmpeg is ffmpeg-not-found before any 
   assert.equal(caps.ffmpeg, null);
   assert.deepEqual(caps.formats, { replay: true, gif: true, mp4: false, webm: false });
   assert.equal(caps.gif_encoder, 'builtin');
+});
+
+test('stopping the daemon mid-encode kills ffmpeg and answers 503 aborted, not ffmpeg\'s late result', async (t) => {
+  const chrome = fakeChrome(t);
+  const ff = fakeFfmpeg(t, { mode: 'hang' });
+  setEnv(t, { WEB_CHAT_CHROME: chrome.bin, WEB_CHAT_FFMPEG: ff.bin });
+  const { api, port, root, srv } = await withServer(t);
+  await seed(api);
+  const pending = postJson(port, { format: 'webm', width: 320, hold_ms: 1000 });
+  await waitUntil(() => ff.read().length >= 1, { timeout: 15000, what: 'the render to reach its encode' });
+  assert.equal(liveEncoders(), 1, 'precondition: ffmpeg is running');
+  const t0 = Date.now();
+  // The server's own stop, which aborts the in-flight render.
+  const stopped = srv.stop();
+  const r = await pending;
+  assert.equal(r.status, 503);
+  assert.equal((await r.json()).code, 'aborted');
+  assert.ok(Date.now() - t0 < 4000, `answered well inside the shutdown drain (${Date.now() - t0} ms)`);
+  srv.server.closeIdleConnections();
+  await stopped;
+  await waitUntil(() => liveEncoders() === 0, { timeout: 3000, what: 'ffmpeg to be killed' });
+  const tmpDir = projectPaths(root).tmp;
+  assert.deepEqual(fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [], [], 'no frames or profile left behind');
 });
 
 // ── a real ffmpeg ──────────────────────────────────────────────────────────

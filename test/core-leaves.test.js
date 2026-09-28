@@ -277,42 +277,97 @@ const { nodeFloorMessage } = require('../lib/cli/commands/init');
 
 test('the Node floor is ONE number: core, package.json engines and install.sh agree', () => {
   const REPO = path.resolve(__dirname, '..');
+  // A major.minor, not a major: require(esm) is flag-gated on 22.0-22.11, so a
+  // bare `22` waved eleven point releases that cannot start the daemon through
+  // every gate. Parsing only the major here is what let that stand.
+  assert.match(NODE_FLOOR, /^\d+\.\d+$/, 'NODE_FLOOR is a major.minor string');
 
   const engines = require('../package.json').engines.node;
-  const enginesFloor = parseInt(String(engines).replace(/[^\d.]/g, '').split('.')[0], 10);
-  assert.equal(enginesFloor, NODE_FLOOR,
+  const em = String(engines).match(/^>=\s*(\d+\.\d+)(?:\.0)?$/);
+  assert.ok(em, `package.json engines "${engines}" is not a plain ">=<major>.<minor>" range`);
+  assert.equal(em[1], NODE_FLOOR,
     `package.json engines says "${engines}" but lib/core/versions NODE_FLOOR is ${NODE_FLOOR}`);
 
   // install.sh cannot require() anything, so its copy of the number is a shell
   // literal. It is the FIRST gate a new user meets; it must not be the one that
-  // disagrees.
+  // disagrees — and it must compare the minor too, not just carry it.
   const sh = fs.readFileSync(path.join(REPO, 'install.sh'), 'utf8');
-  const m = sh.match(/node_major"?\s*-lt\s+(\d+)/);
-  assert.ok(m, 'install.sh no longer has a `-lt <major>` Node gate — did it move?');
-  assert.equal(parseInt(m[1], 10), NODE_FLOOR,
+  const m = sh.match(/^NODE_FLOOR=["']?(\d+\.\d+)["']?$/m);
+  assert.ok(m, 'install.sh no longer declares NODE_FLOOR=<major>.<minor> — did the gate move?');
+  assert.equal(m[1], NODE_FLOOR,
     `install.sh refuses below ${m[1]} but lib/core/versions NODE_FLOOR is ${NODE_FLOOR}`);
+  assert.match(sh, /"\$node_minor"\s+-lt\s+"\$floor_minor"/, 'install.sh compares the minor, not only the major');
 });
 
 test('checkNodeFloor: parses the running-version shapes it is handed', () => {
-  assert.equal(checkNodeFloor('22.0.0').ok, true);
+  assert.equal(checkNodeFloor('22.12.0').ok, true, '22.12 is where require(esm) is on by default');
+  assert.equal(checkNodeFloor('22.11.0').ok, false, '22.11 has require(esm) only behind a flag');
+  assert.equal(checkNodeFloor('22.0.0').ok, false);
+  assert.equal(checkNodeFloor('23.0.0').ok, true, 'a later major passes whatever its minor');
   assert.equal(checkNodeFloor('v24.3.1').ok, true);
   assert.equal(checkNodeFloor('21.7.3').ok, false);
   assert.equal(checkNodeFloor('20.0.0').major, 20);
+  assert.equal(checkNodeFloor('22.11.0').major, 22, 'the result keeps the parsed major');
   assert.equal(checkNodeFloor('nonsense').ok, false, 'an unparseable version fails closed');
+  assert.equal(checkNodeFloor('').ok, false, 'an empty version fails closed');
   assert.equal(checkNodeFloor().ok, true, 'this suite is running on a supported Node');
 });
 
 test('init refuses Node below the floor, and says which floor and why', () => {
   assert.equal(nodeFloorMessage('24.1.0'), null);
-  assert.equal(nodeFloorMessage(String(NODE_FLOOR) + '.0.0'), null);
+  assert.equal(nodeFloorMessage(`${NODE_FLOOR}.0`), null);
 
-  // The regression this closes: 18 through 21 used to print a green tick here.
-  for (const v of ['18.20.4', '20.11.1', '21.7.3']) {
+  // The regressions this closes: 18 through 21 used to print a green tick here,
+  // and so did 22.0-22.11, where require(esm) is still behind a flag.
+  for (const v of ['18.20.4', '20.11.1', '21.7.3', '22.0.0', '22.11.0']) {
     const msg = nodeFloorMessage(v);
     assert.ok(msg, `init must refuse Node ${v}`);
-    assert.match(msg, new RegExp(`Node ${NODE_FLOOR} or newer`));
+    assert.ok(msg.includes('Node 22.12 or newer'), `the message names the floor: ${msg}`);
     assert.match(msg, /require\(esm\)/, 'the message names the reason, not just the number');
-    assert.ok(!/Node 18 or newer/.test(msg), 'the stale floor is gone from the message');
+    assert.ok(!/Node 18 or newer|Node 22 or newer/.test(msg), 'the stale floor is gone from the message');
+  }
+});
+
+// install.sh's gate, EXECUTED: a stand-in `node` first on PATH reports a
+// version, and the installer either refuses at step 1 naming the floor or gets
+// past it. Nothing past step 1 can reach the network: the API base is a closed
+// loopback port, and HOME and TMPDIR are scratch.
+test('install.sh refuses Node below 22.12 and lets 22.12 and later majors through', { skip: process.platform === 'win32' }, (t) => {
+  const { spawnSync } = require('child_process');
+  const REPO = path.resolve(__dirname, '..');
+  const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-floor-sh-')));
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const run = (version) => {
+    const bin = path.join(scratch, `bin-${version}`);
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'node'),
+      `#!/bin/sh\ncase "$1" in -v) echo v${version} ;; *) echo ${version} ;; esac\n`, { mode: 0o755 });
+    const home = path.join(scratch, `home-${version}`);
+    fs.mkdirSync(home);
+    return spawnSync('/bin/sh', [path.join(REPO, 'install.sh')], {
+      encoding: 'utf8',
+      timeout: 30000,
+      env: {
+        PATH: `${bin}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+        HOME: home,
+        TMPDIR: scratch,
+        WEB_CHAT_API_BASE: 'http://127.0.0.1:9',
+      },
+    });
+  };
+  for (const v of ['22.11.0', '22.0.0', '21.7.3']) {
+    const r = run(v);
+    assert.equal(r.status, 1, `install.sh must refuse Node ${v}`);
+    assert.ok(r.stderr.includes(`needs Node 22.12 or newer — you have v${v}`), `refusal for ${v}: ${r.stderr}`);
+    assert.ok(!/Looking up the latest release/.test(r.stdout), `${v} must stop at step 1`);
+  }
+  for (const v of ['22.12.0', '22.13.1', '23.0.0', '24.3.1']) {
+    const r = run(v);
+    assert.ok(!/needs Node|could not read your Node/.test(r.stderr), `install.sh must accept Node ${v}: ${r.stderr}`);
+    // Past step 1 means step 2 or 3 spoke: the release lookup (which the closed
+    // port then fails), or a missing downloader/checksum tool named.
+    assert.ok(/Looking up the latest release/.test(r.stdout) || /installer needs/.test(r.stderr),
+      `Node ${v} must get past the gate:\n${r.stdout}\n${r.stderr}`);
   }
 });
 

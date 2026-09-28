@@ -9,9 +9,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const { withServer, withPortal, withTempHome, waitUntil } = require('../test-support/helpers');
+const { withServer, withPortal, withTempHome, waitUntil, tmpRoot, freePort } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
-const { registerInstance, instanceId, registerMcp, updateMcp } = require('../lib/util/registry');
+const { registerInstance, deregisterInstance, instanceId, registerMcp, updateMcp } = require('../lib/util/registry');
 const { readMcpSeen } = require('../lib/core/mcp-seen');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { forwardHeaders, responseHeaders } = require('../lib/portal/proxy');
@@ -170,6 +170,52 @@ test('portal proxy: unknown session is a friendly 404; the apex is the picker; a
   // Unauthenticated requests learn nothing about which sessions exist.
   const anon = await r.p.request('/', { host: sessionHost(r.p.config, 'deadbeef') });
   assert.equal(anon.status, 401);
+});
+
+// R4-1. A registry entry names a port, and a port is not a project: a stopped
+// project's port is the first one the next daemon's walk takes, and a crashed
+// one's entry lives on while its pid is reused. Here A's entry names hidden B's
+// port with a live pid that is not B's daemon (the runner's parent stands in
+// for the process that inherited A's pid) — the portal must ask the daemon on
+// the port who it is, and answer A's hostname as a stopped project.
+test('portal proxy: an entry whose port another daemon holds is answered as stopped — never that daemon\'s data', async (t) => {
+  const b = await withServer(t);
+  registerInstance({ root: b.root, port: b.port, pid: process.pid });
+  fs.writeFileSync(projectPaths(b.root).noRemote, '');
+  await b.api.post('/api/store', { patch: { b_secret: 'hidden-project-data' } });
+  const aRoot = tmpRoot('wc-stale-');
+  registerInstance({ root: aRoot, port: b.port, pid: process.ppid });
+  const cRoot = tmpRoot('wc-gone-');
+  registerInstance({ root: cRoot, port: await freePort(), pid: process.ppid });
+  t.after(() => {
+    for (const root of [aRoot, cRoot, b.root]) deregisterInstance(root);
+    for (const root of [aRoot, cRoot]) fs.rmSync(root, { recursive: true, force: true });
+  });
+  const lines = [];
+  const access = createFakeAccess();
+  const p = await withPortal(t, { config: access.config(), fetchJwks: access.fetchJwks, log: (l) => lines.push(l) });
+  const aHost = sessionHost(p.config, instanceId(aRoot));
+  const auth = { 'cf-access-jwt-assertion': access.mint() };
+
+  for (const pathStr of ['/api/store', '/api/graph', '/']) {
+    const res = await p.request(pathStr, { host: aHost, headers: auth });
+    assert.equal(res.status, 404, `${pathStr}: ${res.text}`);
+    assert.doesNotMatch(res.text, /hidden-project-data/, `${pathStr} carries none of B's store`);
+  }
+  assert.match((await p.request('/', { host: aHost, headers: auth })).text, /not running/, 'the stopped-project page');
+  const w = await p.request('/api/store', {
+    host: aHost, method: 'POST', body: { patch: { from_a: 1 } },
+    headers: { ...auth, 'content-type': 'application/json', origin: `https://${aHost}` },
+  });
+  assert.equal(w.status, 404, 'a write from A\'s page goes nowhere');
+  assert.equal((await b.api.get('/api/store')).json.from_a, undefined, 'B\'s store is untouched');
+  assert.ok(lines.some((l) => /not the registered one/.test(l)), lines.join('\n'));
+
+  // An entry whose port nothing answers on: the daemon is not answering (502).
+  const cHost = sessionHost(p.config, instanceId(cRoot));
+  const gone = await p.request('/api/graph', { host: cHost, headers: auth });
+  assert.equal(gone.status, 502, gone.text);
+  assert.match(gone.json.error, /not answering/);
 });
 
 test('portal proxy: showRoots lists the full path', async (t) => {

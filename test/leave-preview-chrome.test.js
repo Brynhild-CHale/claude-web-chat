@@ -265,6 +265,9 @@ test('a refused Set active surfaces in the page, never in a blocking dialog', as
   assert.match(noteText(), /the turn lock is held/, 'and carries the server’s reason');
   assert.equal(previewing(), true, 'and nothing moved');
   ACTIVE_FAILS = false;
+  // Deselect, then close the graph: the next case types into a pane, and a pane
+  // behind an open modal takes no keys (shell.js modality).
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await tick();
 });

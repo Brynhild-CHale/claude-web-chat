@@ -260,6 +260,46 @@ test('theme: a saved theme under a builtin name — listing and apply agree the 
   assert.equal(g.name, 'paper');
   assert.notEqual(g.tokens['--wc-bg'], '#123456', 'and apply agrees: the builtin');
   assert.equal(named('earthy')[0].shadows, undefined, 'an unshadowed builtin carries no shadows');
+  assert.equal(g.title, 'Paper', 'an applied pack reports its title');
+  assert.equal(g.shadows_builtin, undefined, 'and shadows nothing');
+});
+
+// R6-2: 0.7.6 could save AND APPLY a theme called `paper` (or `georgetown`)
+// before those were builtins, and its apply stored the full token copy with no
+// `builtin` flag. After the upgrade that theme.json still paints the user's
+// tokens, so it must not be reported as the pack: only `builtin: true` (what
+// apply writes now) or the retired 'web-chat' names a builtin.
+test('theme: an applied 0.7.6 copy under a builtin name reports under its own name, not as the pack', async (t) => {
+  withTempHome(t);
+  const { root, api } = await withServer(t);
+  const file = path.join(root, '.web-chat', 'theme.json');
+
+  fs.writeFileSync(file, JSON.stringify({ name: 'paper', tokens: { '--wc-bg': '#123456' } }));
+  let g = (await api.get('/api/theme?scope=global')).json;
+  assert.equal(g.name, 'paper');
+  assert.equal(g.title, undefined, 'no builtin title — it is not Paper');
+  assert.equal(g.shadows_builtin, 'paper', 'it says which pack it shadows');
+  assert.match(g.hint, /saved theme named 'paper', not the built-in Paper/);
+  assert.match(g.hint, /another name/);
+  assert.equal(g.tokens['--wc-bg'], '#123456', 'and resolves the tokens it paints');
+
+  // the retired alias: reported under the stored name, shadowing the pack it now names
+  fs.writeFileSync(file, JSON.stringify({ name: 'georgetown', tokens: { '--wc-bg': '#654321' } }));
+  g = (await api.get('/api/theme?scope=global')).json;
+  assert.equal(g.name, 'georgetown', 'not georgetown-blue');
+  assert.equal(g.title, undefined);
+  assert.equal(g.shadows_builtin, 'georgetown-blue');
+
+  // what 0.8's apply writes, and the retired stock name, are still the pack
+  fs.writeFileSync(file, JSON.stringify({ name: 'paper', builtin: true }));
+  g = (await api.get('/api/theme?scope=global')).json;
+  assert.equal(g.title, 'Paper');
+  assert.equal(g.shadows_builtin, undefined);
+  fs.writeFileSync(file, JSON.stringify({ name: 'web-chat', tokens: {} }));
+  g = (await api.get('/api/theme?scope=global')).json;
+  assert.equal(g.name, 'earthy');
+  assert.equal(g.title, 'Earthy');
+  assert.equal(g.shadows_builtin, undefined);
 });
 
 test('theme: tokens are sanitized (bad keys dropped, values stripped)', async (t) => {

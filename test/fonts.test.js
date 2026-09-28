@@ -8,6 +8,9 @@ const { PUBLIC_DIR } = require('../lib/core/paths');
 const { fontFaces, familiesIn, inlineFontCss } = require('../lib/server/fonts');
 const { assembleExport, resolveExportTheme } = require('../lib/server/export');
 const { getBuiltin, flattenTheme } = require('../lib/server/theme');
+const { previewThemeCss, renderPreviewHtml } = require('../lib/server/preview');
+const { assembleReplay } = require('../lib/server/replay/document');
+const { PREVIEW_CSP } = require('../lib/core/cors');
 const { withServer } = require('../test-support/helpers');
 
 const FONTS_DIR = path.join(PUBLIC_DIR, 'fonts');
@@ -172,4 +175,73 @@ test('route: a Georgetown Blue export carries Caslon inline; the chrome serves t
   assert.match(css.text, /@font-face/);
   const face = await api.get('/fonts/LibreCaslonText-Regular.latin.woff2');
   assert.equal(face.status, 200);
+});
+
+// --- previews and replays --------------------------------------------------------
+// The preview document (graph inspector, glance, pane history, node-render) and
+// every replay frame — the player, a downloaded replay.html, a GIF/video render —
+// are filled from previewThemeCss. None of them can fetch /fonts/ (a sandboxed
+// frame's origin is opaque; a replay.html has no server), so the faces ride
+// inline, and PREVIEW_CSP admits data: fonts and nothing else.
+
+const georgetown = (mode = 'light') => flattenTheme(getBuiltin('georgetown-blue'), mode);
+
+test('previewThemeCss: the bundled faces a theme names, inline as data: URIs; an empty theme adds none', () => {
+  for (const mode of ['light', 'dark']) {
+    const css = previewThemeCss(georgetown(mode));
+    assert.match(css, /@font-face\s*\{[^}]*font-family: 'Libre Caslon Text';\s*src: url\('data:font\/woff2;base64,/,
+      `Georgetown Blue ${mode}: Caslon, inline`);
+    assert.match(css, /font-family: 'Geist Mono';\s*src: url\('data:font\/woff2;base64,/, 'and its mono');
+    assert.ok(!/font-family: 'Geist';/.test(css), 'a family the theme does not name is not inlined');
+    assert.ok(!/url\('\/fonts\//.test(css), 'no url pointing back at the server');
+  }
+  // Earthy names Geist for its UI stack.
+  assert.match(previewThemeCss(flattenTheme(getBuiltin('earthy'), 'light')), /font-family: 'Geist';\s*src: url\('data:/);
+  // A node's raw css counts, as it does for an export.
+  assert.match(previewThemeCss({ tokens: {}, css: "h1 { font-family: 'Libre Caslon Text'; }" }), /@font-face/);
+  // Nothing named, nothing added: the stock fallback look stays as it was.
+  for (const empty of [undefined, null, {}, { tokens: {} }, { tokens: { '--wc-font': 'Georgia, serif' }, css: 'p { color: red; }' }]) {
+    assert.ok(!/@font-face/.test(previewThemeCss(empty)), `${JSON.stringify(empty)} adds no face`);
+  }
+  assert.equal(previewThemeCss({ tokens: {} }), '');
+});
+
+test('previewThemeCss: the faces go ahead of the raw css, so an unbalanced theme rule cannot swallow them', () => {
+  const css = previewThemeCss({ tokens: { '--wc-reading': "'Libre Caslon Text', serif" }, css: 'h1 { color: red' });
+  assert.ok(css.indexOf('@font-face') >= 0, 'Caslon is named, so it is inlined');
+  assert.ok(css.indexOf('@font-face') < css.indexOf(':root'), 'faces, then tokens');
+  assert.ok(css.indexOf(':root') < css.indexOf('h1 { color: red'), 'then the raw css');
+});
+
+test('the preview document carries the faces in its head style, under a CSP that admits data: fonts only', () => {
+  const html = renderPreviewHtml({ id: 'n1', mounts: [{ id: 'p', html: '<h1>t</h1>' }], store: {} }, georgetown());
+  const style = /<style>([\s\S]*?)<\/style>/.exec(html)[1];
+  assert.match(style, /font-family: 'Libre Caslon Text';\s*src: url\('data:font\/woff2;base64,/);
+  const fontSrc = PREVIEW_CSP.split(';').map((d) => d.trim()).filter((d) => d.startsWith('font-src'));
+  assert.deepEqual(fontSrc, ['font-src data:'], 'one font-src, data: only — not self, not the network');
+  assert.match(PREVIEW_CSP, /default-src 'none'/, 'the floor still stands');
+  assert.match(PREVIEW_CSP, /connect-src 'none'/);
+});
+
+test('a replay document carries the faces with each theme its frames are filled from', () => {
+  const html = assembleReplay({
+    steps: [{ id: 'a', label: 'n1.1', theme: 0, node: { id: 'a', mounts: [{ id: 'p', html: '<h1>t</h1>' }], store: {} } }],
+    themes: [georgetown()],
+  });
+  const data = JSON.parse(/<script id="wc-replay-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)[1]);
+  assert.match(data.themes[0], /font-family: 'Libre Caslon Text';\s*src: url\('data:font\/woff2;base64,/);
+});
+
+test('route: /preview/node and /preview/pane under Georgetown Blue carry Caslon inline, under PREVIEW_CSP', async (t) => {
+  const { api } = await withServer(t);
+  await api.post('/api/theme/apply', { name: 'georgetown-blue', scope: 'global' });
+  await api.post('/api/render', { id: 'p1', html: '<h1>Title</h1>' });
+  await api.post('/api/commit', { message: 'seed' });
+  const active = (await api.get('/api/graph')).json.active;
+  for (const url of [`/preview/node/${active}`, `/preview/node/${active}?mode=dark`, `/preview/pane/${active}/p1`]) {
+    const r = await api.get(url);
+    assert.equal(r.status, 200, url);
+    assert.equal(r.headers.get('content-security-policy'), PREVIEW_CSP, url);
+    assert.match(r.text, /font-family: 'Libre Caslon Text';\s*src: url\('data:font\/woff2;base64,/, url);
+  }
 });

@@ -18,7 +18,7 @@ const { createFakeAccess } = require('../test-support/fake-access');
 const { registerInstance, instanceId } = require('../lib/util/registry');
 const { sessionHost } = require('../lib/tunnel/config');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
-const { CLOSE_HIDDEN, CLOSE_UNAVAILABLE } = require('../lib/portal/ws-relay');
+const { CLOSE_EXPIRED, CLOSE_HIDDEN, CLOSE_UNAVAILABLE } = require('../lib/portal/ws-relay');
 const { watchConfigFile } = require('../lib/portal/config-watch');
 
 const OTHER = 'friend@example.com';
@@ -63,10 +63,11 @@ async function rig(t, { raw } = {}) {
   return { srv, p, id, host, origin, access, file, first, lines, req, health, edit };
 }
 
-function openWs(t, r, { email = r.access.email } = {}) {
+// `claims` merge over the fake's defaults (an `aud` the portal now checks, say).
+function openWs(t, r, { email = r.access.email, claims = {} } = {}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${r.p.port}/ws`, {
-      headers: { host: r.host, 'cf-access-jwt-assertion': r.access.mint({ email }) }, origin: r.origin,
+      headers: { host: r.host, 'cf-access-jwt-assertion': r.access.mint({ email, ...claims }) }, origin: r.origin,
     });
     t.after(() => { try { ws.terminate(); } catch {} });
     ws.on('unexpected-response', (_q, res) => { res.resume(); const e = new Error(`HTTP ${res.statusCode}`); e.statusCode = res.statusCode; reject(e); });
@@ -185,20 +186,37 @@ test('a hostname change is not hot-applied: restart needed, the old hostname sti
   assert.ok(await waitUntil(async () => (await r.health()).config.state === 'ok'));
 });
 
-test('style and tunnel changes also need a restart; an Access AUD change applies live', async (t) => {
+// A new AUD or team is how an operator revokes every outstanding Access
+// session (a leaked cookie). HTTP re-checks each request; a relay was admitted
+// once, so the portal cuts each one admitted under the old check (R4-2).
+test('style and tunnel changes also need a restart; an Access AUD or team change applies live and cuts open relays', async (t) => {
   const r = await rig(t);
+  const ws = await openWs(t, r);
   r.edit({ style: 'nested', tunnel: { kind: 'token' } });
   assert.ok(await waitUntil(async () => (await r.health()).config.state === 'restart-needed'));
   assert.deepEqual((await r.health()).config.restart, ['style', 'tunnel']);
+  assert.equal(ws.readyState, WebSocket.OPEN, 'an edit that needs a restart signs nobody out');
 
+  const cut = closeCode(ws);
   r.edit({ access: { team: r.access.team, aud: 'another-aud' } });
+  assert.equal(await cut, CLOSE_EXPIRED, 'the relay admitted under the old AUD is closed with "sign in again"');
   assert.ok(await waitUntil(async () => (await r.req('/api/graph')).status === 401), 'a token for the old AUD no longer verifies');
+  await assert.rejects(openWs(t, r), (e) => e.statusCode === 401, 'its reconnect must sign in under the new AUD');
   assert.equal((await r.health()).config.state, 'ok');
+  assert.ok(r.lines.some((l) => /closed 1 relay\(s\) signed in under the previous Access team\/AUD/.test(l)), r.lines.join('\n'));
+
+  // A relay admitted under the new AUD is in force: the sweep leaves it be.
+  const fresh = await openWs(t, r, { claims: { aud: ['another-aud'] } });
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(fresh.readyState, WebSocket.OPEN, 'a sweep later, still open');
 
   // A new team is a new key set: the portal asks for that team's keys (the
   // fake Access serves only its own team, so the answer is the cold-key-set
-  // 503 — not the old keys failing the issuer check, 401).
+  // 503 — not the old keys failing the issuer check, 401). It cuts the relays
+  // admitted under the previous team too.
+  const cutAgain = closeCode(fresh);
   r.edit({ access: { team: 'otherteam', aud: r.access.aud } });
+  assert.equal(await cutAgain, CLOSE_EXPIRED, 'a team change closes the relays signed in under the old one');
   assert.ok(await waitUntil(async () => (await r.req('/api/graph')).status === 503), 'the new team\'s keys are what is asked for');
 });
 

@@ -854,8 +854,8 @@ test('update lists the other projects still running an older build, with the com
   const res = await update([], d);
   assert.deepEqual(res.others, { stale: ['/p/old'], restarted: [] }, 'the current build and an unknown one are not listed');
   const out = d.log.text();
-  assert.match(out, /1 other project\(s\) still run an older build/);
-  assert.match(out, /\/p\/old {2}v0\.5\.0 {2}http:\/\/localhost:1/);
+  assert.match(out, /1 other project\(s\) still run a different build/);
+  assert.match(out, /\/p\/old {2}\(v0\.5\.0, not v0\.6\.0\) {2}http:\/\/localhost:1/);
   assert.match(out, /cd <project> && claude-web-chat restart/);
   assert.match(out, /claude-web-chat update --restart-all/);
 });
@@ -921,8 +921,89 @@ test('a rollback lists stale projects but never offers --restart-all, which the 
   });
   const res = await update(['--to', '0.5.0'], d);
   assert.deepEqual(res.others.stale, ['/p/new']);
-  assert.match(d.log.text(), /cd <project> && claude-web-chat restart/);
-  assert.doesNotMatch(d.log.text(), /--restart-all/);
+  const out = d.log.text();
+  assert.match(out, /cd <project> && claude-web-chat restart/);
+  assert.doesNotMatch(out, /--restart-all/);
+  // Direction-aware (R2-5): the others run the NEWER build here, and the flip
+  // is a rollback — neither is to be called what it is not.
+  assert.match(out, /Rolling back to v0\.5\.0/);
+  assert.match(out, /Rolled back: v0\.6\.0 → v0\.5\.0\./);
+  assert.doesNotMatch(out, /Updated: v0\.6\.0/);
+  assert.match(out, /1 other project\(s\) still run a different build/);
+  assert.match(out, /\/p\/new {2}\(v0\.6\.0, not v0\.5\.0\)/);
+  assert.doesNotMatch(out, /older build/);
+});
+
+// R2-2. Only a 404 comes back from the release lookup as null; an offline
+// machine, a proxy or GitHub's rate limit THROWS — and that used to print a raw
+// stack and exit before `--restart-all` (a purely local operation) ever ran.
+test('update with GitHub unreachable says so in one line, no stack, and installs nothing', async (t) => {
+  const paths = onVersion(t, '0.6.0');
+  inScratchCwd(t);
+  let code = null;
+  let unpacked = false;
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    fetchLatestRelease: async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:9'); },
+    fetchAndUnpack: async () => { unpacked = true; },
+    readInstances: () => [{ root: '/p/other', port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async () => { throw new Error('nothing may be restarted without --restart-all'); },
+  });
+  d.exit = (c) => { code = c; };
+  const res = await update([], d);
+  assert.deepEqual(res, { refused: true, reason: 'unreachable', error: 'connect ECONNREFUSED 127.0.0.1:9' });
+  assert.equal(code, 1);
+  assert.equal(unpacked, false);
+  assert.equal(fs.readlinkSync(paths.current), 'versions/0.6.0', 'current must not move');
+  const err = d.errlog.text();
+  assert.equal(err, 'GitHub unreachable: connect ECONNREFUSED 127.0.0.1:9. Nothing to install.');
+  assert.doesNotMatch(err + d.log.text(), /\n\s+at /, 'an unreachable GitHub is an outcome, not a stack trace');
+});
+
+test('update --restart-all still restarts the stale projects when GitHub is unreachable', async (t) => {
+  const paths = onVersion(t, '0.6.0');
+  inScratchCwd(t);
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-other-')));
+  const calls = [];
+  let code = null;
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    fetchLatestRelease: async () => { throw Object.assign(new Error('github returned 403 for https://api.github.com/x'), { statusCode: 403 }); },
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o) => { calls.push(o.root); return { ok: true }; },
+  });
+  d.exit = (c) => { code = c; };
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(calls, [other], 'the local restart never depends on GitHub');
+  assert.deepEqual(res.others, { stale: [other], restarted: [other], failed: [] });
+  assert.equal(res.reason, 'unreachable');
+  assert.equal(code, 1, 'the update check itself still failed, and the exit code says so');
+  assert.match(d.errlog.text(), /^GitHub unreachable: github returned 403 .*\. Nothing to install\.$/);
+  assert.ok(d.log.text().includes(`✓ ${other}  v0.5.0 → v0.6.0`));
+});
+
+test('update with no published release says so, and --restart-all still runs', async (t) => {
+  const paths = onVersion(t, '0.6.0');
+  inScratchCwd(t);
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-other-')));
+  const calls = [];
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    fetchLatestRelease: async () => null,
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o) => { calls.push(o.root); return { ok: true }; },
+  });
+  d.exit = () => {};
+  const res = await update(['--restart-all'], d);
+  assert.equal(res.reason, 'no-release');
+  assert.deepEqual(calls, [other]);
+  assert.equal(d.errlog.text(), 'No published release found on GitHub. Nothing to install.');
 });
 
 test('parseArgs knows --restart-all', () => {

@@ -22,7 +22,15 @@ const { isPidAlive } = require('../lib/core/portfiles');
 const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
-const { frameSchedule, normalizeRenderRequest, LIMITS } = require('../lib/server/replay/render');
+const {
+  frameSchedule, fitSchedule, frameSize, normalizeRenderRequest, renderReplay, LIMITS,
+} = require('../lib/server/replay/render');
+const { replayOpts, buildReplay } = require('../lib/server/replay/document');
+const { createScriptStore } = require('../lib/server/replay/scripts');
+const { resolveReplayPath } = require('../lib/server/domain/replay-path');
+const { createGraph } = require('../lib/server/graph');
+const { createState } = require('../lib/server/state');
+const { encodePng } = require('../test-support/png-encode');
 const { timeline } = require('../lib/server/replay/player');
 const { findChrome, findFfmpeg, chromeCandidates } = require('../lib/replay/find');
 const { captureFrames, createPipeConnection, CHROME_FLAGS, liveBrowsers } = require('../lib/replay/chrome');
@@ -120,6 +128,7 @@ function captureInStrictChild(fake, tmpDir) {
   });
   const err = String(r.stderr || '').trim().split('\n').slice(0, 8).join(' | ');
   assert.equal(r.status, 0, `the capture's process died (${r.signal || `exit ${r.status}`}): ${err}`);
+  assert.ok(String(r.stdout || '').trim(), `the capture's process wrote nothing: ${err || '(no stderr)'}`);
   return JSON.parse(r.stdout);
 }
 
@@ -129,6 +138,13 @@ async function seed(api) {
   await api.post('/api/render', { id: 'm1', html: '<p>two</p>' });
   await api.post('/api/commit', { message: 'second prompt' });
 }
+
+const payloadOf = (html) => JSON.parse(/<script id="wc-replay-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)[1]);
+// What a step plays: which node, captioned how, held and scrolled how.
+const played = (steps) => steps.map((s) => ({
+  id: s.id, label: s.label, folded_count: s.folded_count, dt_from_prev: s.dt_from_prev,
+  caption: s.caption, hold_ms: s.hold_ms, transition: s.transition, focus: s.focus,
+}));
 
 const postJson = (port, body, headers = {}) => fetch(`http://127.0.0.1:${port}/api/replay/render`, {
   method: 'POST',
@@ -159,14 +175,60 @@ test('frameSchedule: a fade is sampled at fps across the fade, then held — del
   assert.ok(frameSchedule(tl, { fps: 30 }).length > s.length);
 });
 
+test('fitSchedule: a long plain replay fits at a lower fps instead of being refused; a caller\'s own fps is kept', () => {
+  // 150 steps, each scrolling to what it changed: cut, the default hold.
+  const tl = timeline(Array.from({ length: 150 }, () => ({ focus: { targets: ['m1'], enter: [] } })), { hold_ms: 2500, transition: 'cut' });
+  const at10 = frameSchedule(tl, { fps: LIMITS.fps.dflt });
+  assert.ok(at10.length > LIMITS.maxFrames, `precondition: over the cap at the default fps (${at10.length})`);
+
+  const fit = fitSchedule(tl, { fps: LIMITS.fps.dflt, auto: true });
+  assert.ok(fit.fps < LIMITS.fps.dflt && fit.fps >= LIMITS.fps.min, `a lower fps (${fit.fps})`);
+  assert.ok(fit.schedule.length <= LIMITS.maxFrames, `within the cap (${fit.schedule.length})`);
+  assert.ok(frameSchedule(tl, { fps: fit.fps + 1 }).length > LIMITS.maxFrames, 'the highest fps that fits');
+  assert.deepEqual(fit.schedule, frameSchedule(tl, { fps: fit.fps }), 'the schedule at the fps it reports');
+  const sum = fit.schedule.reduce((a, f) => a + f.delay, 0);
+  assert.ok(Math.abs(sum - tl.total) < 1e-6, 'a lower fps costs smoothness, never time');
+
+  const own = fitSchedule(tl, { fps: LIMITS.fps.dflt, auto: false });
+  assert.equal(own.fps, LIMITS.fps.dflt, 'an fps the caller named is not changed…');
+  assert.equal(own.schedule.length, at10.length, '…and the cap refuses it instead');
+  const short = fitSchedule(timeline([{}, {}], { hold_ms: 2500, transition: 'cut' }), { fps: 10, auto: true });
+  assert.equal(short.fps, 10, 'a replay within the cap keeps the default fps');
+});
+
+test('normalizeRenderRequest: the frame is bounded in pixels whatever the replay\'s shape', () => {
+  const d = normalizeRenderRequest({});
+  assert.deepEqual([d.width, d.height], [960, 600], 'the default frame is unchanged');
+  assert.deepEqual([normalizeRenderRequest({ width: 1920 }).width, normalizeRenderRequest({ width: 1920 }).height], [1920, 1200], 'the widest 16:10 frame is the cap itself');
+
+  const tall = normalizeRenderRequest({ width: 1920, size: '320x2160' });
+  assert.ok(tall.width * tall.height <= LIMITS.maxArea, `${tall.width}×${tall.height} is within ${LIMITS.maxArea} px (unclamped: 1920×12960)`);
+  assert.ok(tall.width * tall.height > LIMITS.maxArea * 0.98, 'shrunk to fit, not further');
+  assert.equal(tall.width % 2, 0, 'even width');
+  assert.equal(tall.height % 2, 0, 'even height');
+  assert.ok(Math.abs(tall.height / tall.width - 2160 / 320) < 0.02, 'the frame keeps the replay\'s shape (no letterbox)');
+
+  assert.deepEqual(frameSize(1920, { w: 3840, h: 240 }), { width: 1920, height: 120 }, 'a wide, short frame is under the cap as asked');
+  for (const size of [{ w: 320, h: 2160 }, { w: 333, h: 2001 }, { w: 1280, h: 800 }, { w: 3840, h: 2160 }]) {
+    const f = frameSize(1920, size, 100000);
+    assert.ok(f.width * f.height <= 100000 && f.width % 2 === 0 && f.height % 2 === 0, `${JSON.stringify(size)} → ${f.width}×${f.height}`);
+  }
+  assert.equal(normalizeRenderRequest({}).fpsAuto, true, 'no fps: the render may fit it');
+  assert.equal(normalizeRenderRequest({ fps: 12 }).fpsAuto, false);
+  assert.equal(normalizeRenderRequest({ fps: 12 }).fps, 12);
+});
+
 test('normalizeRenderRequest: defaults, clamps and honest refusals', () => {
   const d = normalizeRenderRequest({});
   assert.equal(d.format, 'gif');
   assert.equal(d.width, LIMITS.width.dflt);
   assert.equal(d.docQuery.captions, 'on', 'a rendered file has captions…');
-  assert.equal(d.docQuery.include_prompts, false, '…without the user\'s prompts unless asked');
+  assert.equal(d.docQuery.include_prompts, undefined, 'unsaid — a script may decide (replayOpts)…');
+  assert.equal(replayOpts({ include_prompts: null }, d.docQuery).include_prompts, false, '…and without one, no prompts unless asked');
   assert.equal(normalizeRenderRequest({ include_prompts: true }).docQuery.include_prompts, true);
-  assert.equal(normalizeRenderRequest({ captions: 'prompt' }).docQuery.include_prompts, false, 'the retired captions:"prompt" does not include them');
+  assert.equal(normalizeRenderRequest({ include_prompts: false }).docQuery.include_prompts, false, 'an explicit false is kept: it wins over a script');
+  assert.equal(replayOpts({ include_prompts: null }, normalizeRenderRequest({ captions: 'prompt' }).docQuery).include_prompts, false,
+    'the retired captions:"prompt" does not include them');
   assert.equal(normalizeRenderRequest({ captions: 'none' }).docQuery.captions, 'none');
   assert.equal(normalizeRenderRequest({ width: 99999 }).width, LIMITS.width.max);
   assert.equal(normalizeRenderRequest({ width: 641 }).width % 2, 0, 'even width');
@@ -532,6 +594,109 @@ test('captureFrames: a program that is not there rejects with chrome-launch-fail
   assert.deepEqual(fs.readdirSync(tmpDir), []);
 });
 
+// ── renderReplay, called directly ───────────────────────────────────────────
+//   n0 [] → n1 [A] → n2 = → n3 = → n4 [A,B]      (n2, n3: hidden no-change nodes)
+const PANE = (id) => ({ id, html: `<p>${id}</p>`, target: null, params: {}, component: null, pane_state: {}, form_state: {}, theme: null, owner: null });
+function directCtx(t) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-rr-')));
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const pp = projectPaths(root);
+  const graph = createGraph({ paths: { GRAPH_DIR: pp.graphDir, META_PATH: pp.meta }, state: createState() });
+  let clock = 1000;
+  const node = (id, parent_id, mounts) => ({
+    id, parent_id, created_at: (clock += 1000), author: 'claude',
+    trigger: { kind: 'turn', message: `prompt ${id}`, reply: `reply ${id}` }, mounts, store: {},
+  });
+  for (const n of [node('n0', null, []), node('n1', 'n0', [PANE('a')]), node('n2', 'n1', [PANE('a')]),
+    node('n3', 'n2', [PANE('a')]), node('n4', 'n3', [PANE('a'), PANE('b')])]) graph.registerNode(n);
+  graph.active = 'n4';
+  const paths = { THEME_PATH: pp.theme, SYSTEM_THEME_PATH: '/nonexistent/theme.json', THEME_DEFAULT_PATH: pp.themeDefault, EXPORTS_DIR: pp.exports, root };
+  return { graph, paths, root };
+}
+// Chrome stood in for: it records what it was asked, then stops the render
+// (or, with `frames`, hands back one blank frame per time asked).
+function stubRender({ frames = false } = {}) {
+  const seen = [];
+  const opts = {
+    port: 1, findChromeImpl: () => '/x/chrome', findFfmpegImpl: () => null, scripts: createScriptStore(),
+    captureImpl: async (o) => {
+      seen.push(o);
+      if (!frames) throw Object.assign(new Error('stub'), { code: 'stub' });
+      const png = encodePng(Buffer.alloc(o.width * o.height * 4, 255), o.width, o.height);
+      for (let i = 0; i < o.times.length; i++) await o.onFrame(png, i);
+    },
+  };
+  return { opts, seen };
+}
+
+test('a plain render hands the browser the steps it scheduled, pinned: a node set active meanwhile changes nothing it plays', async (t) => {
+  const ctx = directCtx(t);
+  const { opts, seen } = stubRender();
+  const r = await renderReplay(ctx, { format: 'gif', from: 'n0', to: 'n4' }, opts);
+  assert.equal(r.code, 'stub', `the render reached the browser (${JSON.stringify(r)})`);
+  const u = new URL(seen[0].url);
+  assert.equal(u.searchParams.get('from'), null, 'no from/to for the browser to resolve again');
+  const script = opts.scripts.get(u.searchParams.get('script'));
+  assert.ok(script, 'a script this daemon holds');
+  const scheduled = resolveReplayPath(ctx.graph, { from: 'n0', to: 'n4' });
+  assert.deepEqual(script.steps.map((s) => s.node), scheduled.steps.map((s) => s.id), 'one step per node the schedule was built from');
+  assert.deepEqual(scheduled.steps.map((s) => s.id), ['n0', 'n1', 'n4'], 'the hidden n2, n3 are not among them');
+
+  const q = Object.fromEntries(u.searchParams);
+  const before = payloadOf(buildReplay(ctx, q, { script }).html);
+  const plain = payloadOf(buildReplay(ctx, { ...q, script: undefined, from: 'n0', to: 'n4' }).html);
+  assert.deepEqual(played(before.steps), played(plain.steps), 'the pinned page plays the plain replay exactly, "+2 folded" on n4 included');
+  assert.equal(before.steps[2].folded_count, 2);
+
+  // The user sets a hidden middle node active while Chrome is starting.
+  ctx.graph.active = 'n2';
+  assert.deepEqual(resolveReplayPath(ctx.graph, { from: 'n0', to: 'n4' }).steps.map((s) => s.id), ['n0', 'n1', 'n2', 'n4'],
+    'precondition: from/to resolved again now plays another path');
+  const after = payloadOf(buildReplay(ctx, q, { script }).html);
+  assert.deepEqual(after.steps.map((s) => s.id), ['n0', 'n1', 'n4'], 'the pinned script still plays what the frames were scheduled for');
+  assert.deepEqual(after.steps.map((s) => s.hold_ms ?? null), before.steps.map((s) => s.hold_ms ?? null));
+});
+
+test('renderReplay: a replay over the frame cap is fitted at a lower fps and says so; refused, its hint names only what a caller can change', async (t) => {
+  const ctx = directCtx(t);
+  // At 10 fps: n0 one frame, n1 and n4 each a sampled move + a held frame.
+  const tl = frameSchedule(timeline([{}, { focus: { targets: ['a'] } }, { focus: { targets: ['b'] } }], { hold_ms: 2500, transition: 'cut' }), { fps: 10 });
+  const fitted = stubRender({ frames: true });
+  const ok = await renderReplay(ctx, { format: 'gif', from: 'n0', to: 'n4', width: 320 }, { ...fitted.opts, maxFrames: 6 });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.ok(tl.length > 6, `precondition: ${tl.length} frames at 10 fps`);
+  assert.ok(ok.fps < 10, `reports the fps it used (${ok.fps})`);
+  assert.ok(fitted.seen[0].times.length <= 6, 'and captured within the cap');
+  assert.equal(ok.duration_ms, 7500, 'the replay\'s time is unchanged');
+
+  const stub = stubRender();
+  const over = await renderReplay(ctx, { format: 'gif', from: 'n0', to: 'n4' }, { ...stub.opts, maxFrames: 2 });
+  assert.equal(over.status, 413);
+  assert.equal(over.code, 'too-many-frames');
+  assert.match(over.error, /even at 1 fps/);
+  assert.doesNotMatch(over.hint, /fps|transition/, 'no knob the export tool, the CLI or the player cannot set');
+  assert.match(over.hint, /shorter from\/to range/);
+  assert.match(over.hint, /script that groups/);
+  assert.equal(stub.seen.length, 0, 'refused before any browser');
+
+  const named = await renderReplay(ctx, { format: 'gif', from: 'n0', to: 'n4', fps: 10 }, { ...stub.opts, maxFrames: 2 });
+  assert.equal(named.code, 'too-many-frames', 'an fps the caller named is not lowered for them…');
+  assert.match(named.hint, /leave fps out/, '…but the hint says how to have it fitted');
+});
+
+test('renderReplay: a replay .html over the byte cap is refused, and nothing is written', async (t) => {
+  const ctx = directCtx(t);
+  const big = await renderReplay(ctx, { format: 'replay', from: 'n0', to: 'n4' }, { maxBytes: 1000 });
+  assert.equal(big.status, 413);
+  assert.equal(big.code, 'too-large');
+  assert.match(big.error, /replay \.html came to \d+ bytes; the limit is 1000/);
+  assert.ok(!fs.existsSync(ctx.paths.EXPORTS_DIR) || !fs.readdirSync(ctx.paths.EXPORTS_DIR).length, 'nothing written');
+  const fine = await renderReplay(ctx, { format: 'replay', from: 'n0', to: 'n4' }, {});
+  assert.equal(fine.ok, true, JSON.stringify(fine));
+  assert.ok(fine.bytes > 1000 && fine.bytes <= LIMITS.maxBytes);
+});
+
 // ── the routes ──────────────────────────────────────────────────────────────
 
 test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay and writes a real GIF', async (t) => {
@@ -546,6 +711,7 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
   assert.equal(body.ok, true);
   assert.equal(body.format, 'gif');
   assert.equal(body.encoder, 'builtin');
+  assert.equal(body.fps, 10, 'the fps it sampled at: the default, which fits');
   assert.equal(body.label, 'n1.0 → n1.1');
   const exportsDir = projectPaths(root).exports;
   assert.equal(path.dirname(body.path), exportsDir);
@@ -570,18 +736,30 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
   assert.equal(u.port, String(port), 'at this daemon');
   assert.equal(u.pathname, '/replay');
   assert.equal(u.searchParams.get('chrome'), '0', 'the bare document, no player controls');
-  assert.equal(u.searchParams.get('from'), 'n0', 'both ends pinned by id');
-  assert.equal(u.searchParams.get('to'), 'n1');
+  assert.ok(u.searchParams.get('script'), 'a plain replay, too, is handed to the browser as a pinned script…');
+  assert.equal(u.searchParams.get('from'), null, '…not as a from/to it would resolve again');
+  assert.equal(u.searchParams.get('to'), null);
   assert.equal(u.searchParams.get('captions'), 'on', 'captions on by default');
   assert.equal(u.searchParams.get('include_prompts'), '0', 'and the page the browser draws holds no prompts');
   const fetched = log.find((l) => l.fetched);
   assert.equal(fetched.status, 200, 'the URL the browser was sent really loads');
   const drawn = await (await fetch(nav)).text();
   assert.ok(!/maybe private|second prompt/.test(drawn), 'the document the GIF is drawn from carries no prompt text');
+  const page = payloadOf(drawn);
+  assert.deepEqual([page.meta.from, page.meta.to], ['n1.0', 'n1.1'], 'both ends pinned');
+  const plain = payloadOf(await (await fetch(`http://127.0.0.1:${port}/replay?from=n0&to=n1&hold_ms=1000&chrome=0`)).text());
+  assert.deepEqual(played(page.steps), played(plain.steps), 'the page plays exactly the steps the render scheduled');
   assert.equal(fetched.csp, PREVIEW_CSP, 'under the preview CSP');
   const udd = log[0].argv.find((a) => a.startsWith('--user-data-dir=')).slice('--user-data-dir='.length);
   assert.ok(udd.startsWith(projectPaths(root).tmp + path.sep), 'the profile lives under .web-chat/tmp/');
   assert.equal(fs.existsSync(udd), false, 'and is gone afterwards');
+
+  // The export tool relays the fps the frames were sampled at (a long replay
+  // is fitted to the frame cap by lowering it).
+  setEnv(t, { WEB_CHAT_PORT: String(port) });
+  const viaTool = await require('../lib/mcp/tools/export').handler({ format: 'gif', width: 320, hold_ms: 1000 });
+  assert.equal(viaTool.ok, true, JSON.stringify(viaTool));
+  assert.equal(viaTool.fps, 10);
 });
 
 test('POST /api/replay/render: chrome-not-found is an honest refusal with a hint; format replay needs no browser', async (t) => {
@@ -642,8 +820,7 @@ test('POST /api/replay/render is single-flight: a second render while one runs i
 
   const first = postJson(port, { width: 320 });
   // Wait until the first has really started (the browser is up).
-  const t0 = Date.now();
-  while (!fake.read().some((l) => l.method === 'Page.navigate') && Date.now() - t0 < 10000) await new Promise((r) => setTimeout(r, 20));
+  await waitUntil(() => fake.read().some((l) => l.method === 'Page.navigate'), { timeout: 10000, what: 'the first render navigates' });
   const second = await postJson(port, { width: 320 });
   assert.equal(second.status, 409);
   assert.equal((await second.json()).code, 'busy');
@@ -756,6 +933,24 @@ test('GET /api/replay/capabilities reports what was found; refresh re-looks', as
   assert.equal(fresh.formats.gif, true);
 });
 
+test('GET /api/replay/capabilities through the portal (X-WC-Remote: 1): nothing renderable, and the portal\'s reason', async (t) => {
+  const fake = fakeChrome(t);
+  setEnv(t, { WEB_CHAT_CHROME: fake.bin, WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const { port } = await withServer(t);
+  const local = await (await fetch(`http://127.0.0.1:${port}/api/replay/capabilities`)).json();
+  assert.equal(local.formats.gif, true, 'precondition: this machine can render a GIF');
+  assert.equal(local.remote, undefined);
+
+  const remote = await (await fetch(`http://127.0.0.1:${port}/api/replay/capabilities`, { headers: { 'X-WC-Remote': '1' } })).json();
+  assert.deepEqual(remote.formats, { replay: true, gif: false, mp4: false, webm: false }, 'the portal refuses the render route to a remote viewer');
+  assert.equal(remote.remote, true);
+  const { classify } = require('../lib/core/remote-policy');
+  const verdict = classify('POST', '/api/replay/render');
+  assert.equal(verdict.allow, false, 'precondition: the render route is refused remotely');
+  assert.equal(remote.hint, verdict.hint, 'the hint is the policy table\'s own');
+  assert.equal(remote.chrome, true, 'whether, not where');
+});
+
 test('GET /api/replay/file/:name is fenced to rendered replays inside .web-chat/exports/', async (t) => {
   const { port, root } = await withServer(t);
   const dir = projectPaths(root).exports;
@@ -834,4 +1029,12 @@ test('export CLI: --replay/--gif/--mp4/--webm with --from/--hold/--fade/--width 
   assert.match(parseExportArgs(['--from', 'n1']).error, /need --replay, --gif, --mp4 or --webm/);
   assert.match(parseExportArgs(['--gif', '--hold']).error, /needs a value/);
   assert.match(parseExportArgs(['--bogus']).error, /unknown option/);
+  // --mode: the tool's and the routes' `mode`, for a page and for a replay file.
+  assert.equal(parseExportArgs(['--gif', '--mode', 'dark']).body.mode, 'dark');
+  assert.equal(parseExportArgs(['n1.7', '--replay', '--mode', 'light']).body.mode, 'light');
+  assert.deepEqual(parseExportArgs(['n1.7', '--mode', 'dark']), { format: 'html', ref: 'n1.7', mode: 'dark' }, 'a page export takes it too');
+  assert.equal('mode' in parseExportArgs(['--gif']).body, false, 'unsaid: light, whatever the browser shows');
+  assert.match(parseExportArgs(['--gif', '--mode', 'sepia']).error, /--mode takes light or dark/);
+  assert.match(parseExportArgs(['--gif', '--mode']).error, /needs a value/);
+  assert.match(parseExportArgs(['--open', '--mode', 'dark']).error, /--open takes/, 'the player keeps the viewer\'s own mode');
 });

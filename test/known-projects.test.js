@@ -26,7 +26,7 @@ const { JSDOM } = require('jsdom');
 const { withPortal, withTempHome } = require('../test-support/helpers');
 const { createFakeAccess } = require('../test-support/fake-access');
 const registry = require('../lib/util/registry');
-const { projectPaths } = require('../lib/core/paths');
+const { projectPaths, findProjectRoot, isHomeDir } = require('../lib/core/paths');
 const { sessionHost } = require('../lib/tunnel/config');
 const { getBuiltin } = require('../lib/server/theme');
 const ls = require('../lib/cli/commands/ls');
@@ -100,6 +100,30 @@ test('$HOME and a directory with no .web-chat/ are never remembered, and a legac
   ] }));
   assert.deepEqual(registry.sessions().map((r) => r.root), [kept]);
   assert.deepEqual(readKnownFile().map((e) => e.root), [kept], 'and the file is rewritten without it');
+});
+
+// R10-6. On a case-insensitive volume (APFS's default) a HOME spelled in a
+// different case names the same directory — and the JS realpath hands each
+// spelling back as given, so the $HOME guard failed open: a fresh directory
+// under it resolved its project root to $HOME, and a daemon booted there would
+// be remembered as a project the portal can start.
+test('a HOME spelled in a different case is still $HOME: never a project root, never known', (t) => {
+  const home = fs.realpathSync(withTempHome(t));
+  fs.mkdirSync(path.join(home, '.web-chat'), { recursive: true });   // the USER tier
+  const fresh = path.join(home, 'new');
+  fs.mkdirSync(fresh);
+  const base = path.basename(home);
+  const flipped = base === base.toUpperCase() ? base.toLowerCase() : base.toUpperCase();
+  const altered = path.join(path.dirname(home), flipped);
+  if (flipped === base || !fs.existsSync(altered)) {
+    t.skip('the temp volume is case-sensitive, so a case-altered HOME is a different directory');
+    return;
+  }
+  process.env.HOME = altered;   // withTempHome puts the real HOME back
+  assert.equal(isHomeDir(home), true, 'the on-disk spelling is $HOME');
+  assert.equal(isHomeDir(altered), true);
+  assert.equal(findProjectRoot(fresh), null, 'the walk from a fresh directory never stops at $HOME');
+  assert.equal(registry.rememberProject({ root: home }), null, 'and $HOME is never remembered');
 });
 
 // A build predating the known list (0.7.x) registers its daemon but never

@@ -515,8 +515,158 @@ export function handleEscape() {
   if (railPinned) { railPinned = false; setRail(false); }
 }
 
+/* ---------- modality: the three modal layers ----------
+   The graph overlay, the ⌘K palette and the replay player each declare
+   role="dialog" aria-modal="true" (index.html), and nothing kept that promise:
+   Tab walked out of them into the panes hidden underneath, and a keystroke from
+   a pane field went into that field unseen. This module owns modality for all
+   three, observing them by id so neither graph-view.js nor replay.js has to know:
+
+     * while one is open, everything BEHIND it in #stage — the page, the topbar,
+       the rail, the bottom bar, and a modal under the top one — is `inert`, so
+       focus, Tab and a screen reader's cursor stay in the dialog. A chrome panel
+       raised OVER a modal (the graph's rename panel, the bookmark popover, the
+       shortcut legend) stays live, and so do the in-page notice (#reaim-note,
+       role=status — a note raised FROM the graph screen must still be announced,
+       and its hover/focus hold must still engage) and what a modal puts outside
+       #stage (the glance, a comment thread).
+     * on close, focus goes back where it was when the modal opened — but only
+       if it was left stranded (on <body>, or inside the now-hidden layer), and
+       not when the modal's own action opened a panel that holds it now. The
+       graph overlay also hands focus back itself (graph-view.js closeOverlay's
+       returnFocusTo), synchronously as it hides — while this layer's observer
+       has not yet run and the page is still inert, so a browser refuses that
+       focus() whenever the opener was behind the overlay. The restore here runs
+       after the inert pass, and acts only when focus was left stranded, so the
+       two never fight; it is the one that lands for an opener on the page.
+     * a keystroke from an editable field behind the open modal is dropped in the
+       capture phase (initKeyboard), for the browsers and the moments where
+       `inert` has not caught up — the overlay's own jump box and the palette's
+       input are inside their modal and keep every key.
+
+   Tab and reader order WITHIN the page still follow the DOM, not a run's visual
+   (CSS `order`) arrangement, and drag / resize have no keyboard path yet. */
+const MODALS = ['replay-pop', 'overlay', 'cmd-palette'];   // topmost first
+const LAYERS = '.popover, .legend, .drawer, .reaim-note';  // over a modal, or the notice: never inert
+const isShown = (el) => !!el && !el.classList.contains('hidden');
+const topModal = () => MODALS.map((id) => $(id)).find(isShown) || null;
+const modalOf = (el) => MODALS.map((id) => $(id)).find((m) => m && el && m.contains(el)) || null;
+
+// Is this child of #stage behind the open modal `top`?
+function behind(child, top) {
+  if (!top || child === top) return false;
+  if (MODALS.includes(child.id)) return true;   // a modal under the top one
+  return !child.matches(LAYERS);
+}
+// The light-DOM element a node sits under: a pane's field → its mount host.
+function lightOf(n) {
+  while (n && n.getRootNode) {
+    const r = n.getRootNode();
+    if (!r || !r.host) break;
+    n = r.host;
+  }
+  return n;
+}
+function isBehindModal(node) {
+  const top = topModal();
+  const stage = $('stage');
+  if (!top || !stage) return false;
+  let n = lightOf(node);
+  while (n && n.parentElement !== stage) n = n.parentElement;
+  return !!n && behind(n, top);
+}
+// What holds focus, through any shadow root (a pane's field, not its host).
+function deepActive() {
+  let a = document.activeElement;
+  while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+  return a;
+}
+
+const inerted = new Set();    // the elements THIS layer made inert
+const wasOpen = new Map();    // modal id → open at the last sync
+const openers = new Map();    // modal id → where focus was when it opened
+const entered = new Map();    // modal id → where focus came from when it moved in
+let lastOutside = null;       // the last element focused outside every modal
+
+// The overlay moves focus into itself synchronously as it opens, before any
+// observer can look, so where focus came FROM is recorded on the way in.
+function trackFocus(e) {
+  const t = (e.composedPath && e.composedPath()[0]) || e.target;
+  const m = modalOf(lightOf(t));
+  if (!m) { lastOutside = t; return; }
+  if (entered.has(m.id)) return;
+  const from = e.relatedTarget;
+  entered.set(m.id, !from ? null : (modalOf(from) ? from : lastOutside));
+}
+
+function openerFor(modal) {
+  const a = deepActive();
+  if (a && a !== document.body && !modal.contains(lightOf(a))) return a;
+  return entered.get(modal.id) || null;
+}
+
+function restoreFocus(modal) {
+  const opener = openers.get(modal.id);
+  openers.delete(modal.id);
+  entered.delete(modal.id);
+  const a = document.activeElement;
+  const stranded = !a || a === document.body || modal.contains(a);
+  if (!stranded || !opener || !opener.isConnected) return;
+  // The modal's action opened a panel (⌘K → Settings, → Wipe…): it owns focus.
+  if (openPanels().length) return;
+  const top = topModal();
+  const home = lightOf(opener);
+  if (top && !top.contains(home)) return;
+  if (!home || home.closest('.hidden, [inert]')) return;
+  try { opener.focus({ preventScroll: true }); } catch {}
+}
+
+function syncModality() {
+  const stage = $('stage');
+  if (!stage) return;
+  const closed = [];
+  for (const id of MODALS) {
+    const el = $(id);
+    const open = isShown(el);
+    if (open && !wasOpen.get(id)) openers.set(id, openerFor(el));
+    if (!open && wasOpen.get(id)) closed.push(el);
+    wasOpen.set(id, open);
+  }
+  const top = topModal();
+  for (const child of stage.children) {
+    const want = behind(child, top);
+    if (want && !child.hasAttribute('inert')) { child.setAttribute('inert', ''); inerted.add(child); }
+    else if (!want && inerted.has(child)) { child.removeAttribute('inert'); inerted.delete(child); }
+  }
+  // After the inert pass: an opener behind the modal is focusable again now.
+  for (const el of closed) restoreFocus(el);
+}
+
+function initModality() {
+  const MO = window.MutationObserver;
+  const obs = MO ? new MO(syncModality) : null;
+  for (const id of MODALS) {
+    const el = $(id);
+    if (el && obs) obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+  }
+  document.addEventListener('focusin', trackFocus, true);
+  syncModality();
+}
+
 /* ---------- global keyboard layer ---------- */
 function initKeyboard() {
+  // Before anything else sees it — the pane's own listeners, this layer's
+  // `editable` early return below, the graph's single-key handler (which reads
+  // the retargeted pane HOST, a <div>, as not editable): a keystroke from an
+  // editable field BEHIND an open modal is dropped. Escape and Tab stay
+  // navigation, and a ⌘/Ctrl chord is the browser's.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.key === 'Tab' || e.metaKey || e.ctrlKey) return;
+    const src = (e.composedPath && e.composedPath()[0]) || e.target;
+    if (!isEditable(src) || !isBehindModal(src)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
   document.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
     // ⌘K opens the palette from anywhere (even inside a field) — except under a
@@ -602,4 +752,5 @@ export function initShell() {
   });
   initKeyboard();
   initDismissLayer();
+  initModality();
 }

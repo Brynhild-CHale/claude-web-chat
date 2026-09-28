@@ -133,7 +133,6 @@ const ALLOWED = [
   ['GET', '/api/graph'], ['GET', '/api/graph/node/abc'], ['GET', '/api/graph/diff?a=1&b=2'],
   ['GET', '/preview/node/abc'],
   ['POST', '/api/graph/active'], ['POST', '/api/graph/bookmark'],
-  ['POST', '/api/graph/new'],
   ['GET', '/api/store'], ['POST', '/api/store'], ['GET', '/api/mounts'], ['POST', '/api/clear'],
   ['GET', '/api/comments'], ['POST', '/api/comments'], ['PATCH', '/api/comments/c1'],
   ['POST', '/api/comments/c1/reply'], ['DELETE', '/api/comments/c1'],
@@ -178,7 +177,7 @@ const REFUSED = [
   ['GET', '/extensions'], ['GET', '/extensions/tab-stream/download'], ['GET', '/extensions/tab-stream/files/x.js'],
   ['GET', '/embed-helper'], ['GET', '/embed-helper/files/x.js'],
   // destructive, by default
-  ['POST', '/api/graph/wipe'],
+  ['POST', '/api/graph/wipe'], ['POST', '/api/graph/new'],
   // unknown
   ['GET', '/favicon.ico'], ['GET', '/api/nope'], ['DELETE', '/api/store'], ['PUT', '/api/graph/active'],
   ['OPTIONS', '/api/store'],
@@ -213,6 +212,18 @@ test('verdicts: format=file is refused however the query spells it', () => {
 test('verdicts: a wipe is allowed only when the operator opted into remote.allowDestructive', () => {
   assert.equal(classify('POST', '/api/graph/wipe').reason, 'destructive');
   assert.equal(classify('POST', '/api/graph/wipe', { allowDestructive: true }).allow, true);
+  // A new graph takes more than a wipe (pinned panes, markdown, active): the
+  // same opt-in, the same hint.
+  assert.equal(classify('POST', '/api/graph/new').reason, 'destructive');
+  assert.equal(classify('POST', '/api/graph/new').hint, classify('POST', '/api/graph/wipe').hint);
+  assert.match(classify('POST', '/api/graph/new').hint, /remote\.allowDestructive/);
+  assert.equal(classify('POST', '/api/graph/new', { allowDestructive: true }).allow, true);
+  // A bulk clear is as destructive, but the path is shared with closing one
+  // pane, so the rule is the route's (test/remote-clear.test.js) and the row
+  // records it.
+  const clear = RULES.find((r) => r.path === '/api/clear');
+  assert.ok(clear && clear.allow && !clear.destructive, 'the path stays allowed: the × closes one pane by id');
+  assert.match(clear.note, /no `id`/);
   // The opt-in widens exactly that one rule.
   assert.equal(classify('POST', '/api/packs/install', { allowDestructive: true }).allow, false);
   assert.equal(classify('POST', '/api/shutdown', { allowDestructive: true }).allow, false);

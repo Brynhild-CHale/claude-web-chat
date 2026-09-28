@@ -232,196 +232,207 @@ const rowFor = (root) => rows().find((r) => r.dataset.root === root);
 const key = (k, opts = {}) => W.document.body.dispatchEvent(new W.KeyboardEvent('keydown', { key: k, bubbles: true, ...opts }));
 const escape = () => key('Escape');
 
-test('panel: boot the shell once', async () => { await boot(); await tick(); });
+// The panel cases share ONE booted shell. It boots in before() and is torn
+// down in after(), inside this describe — never as a test, so any one case
+// runs alone under --test-name-pattern — and not at the top level, where the
+// alias of global fetch would reach the server tests above. beforeEach puts
+// the mutable fixture back and closes a panel a failed case left open.
+test.describe('the Sessions panel', () => {
+  test.before(async () => { await boot(); await tick(); });
+  test.after(() => { restore(); });
+  test.beforeEach(() => {
+    sessionsBody = ROWS();
+    sessionsStatus = 200;
+    if (panelOpen()) escape();
+  });
 
-test('panel: S toggles it, and it renders every state as text', async () => {
-  const before = sessionsCalls;
-  key('s');
-  await tick();
-  assert.ok(panelOpen(), 'S opens the Sessions panel');
-  assert.equal(sessionsCalls, before + 1, 'opening fetches immediately');
-  assert.equal(rows().length, 4);
+  test('panel: S toggles it, and it renders every state as text', async () => {
+    const before = sessionsCalls;
+    key('s');
+    await tick();
+    assert.ok(panelOpen(), 'S opens the Sessions panel');
+    assert.equal(sessionsCalls, before + 1, 'opening fetches immediately');
+    assert.equal(rows().length, 4);
 
-  const here = rowFor('/home/me/here');
-  assert.ok(here.classList.contains('current'), 'the current project is highlighted');
-  assert.match(here.textContent, /this page/);
-  assert.match(here.textContent, /~\/here/);
-  assert.match(here.textContent, /running :5173 · 2 viewers · at n1\.4/);
-  assert.match(here.textContent, /Claude connected ×2/);
-  assert.match(here.textContent, /channel on/);
-  assert.match(here.textContent, /mid-turn/);
-  assert.match(here.textContent, /last tool 3m ago/);
+    const here = rowFor('/home/me/here');
+    assert.ok(here.classList.contains('current'), 'the current project is highlighted');
+    assert.match(here.textContent, /this page/);
+    assert.match(here.textContent, /~\/here/);
+    assert.match(here.textContent, /running :5173 · 2 viewers · at n1\.4/);
+    assert.match(here.textContent, /Claude connected ×2/);
+    assert.match(here.textContent, /channel on/);
+    assert.match(here.textContent, /mid-turn/);
+    assert.match(here.textContent, /last tool 3m ago/);
 
-  const solo = rowFor('/home/me/solo');
-  assert.equal(solo.querySelector('img'), null, 'a title is text, never markup');
-  assert.match(solo.textContent, /<img src=x/);
-  assert.match(solo.textContent, /surface stopped/);
-  assert.match(solo.textContent, /channel off/);
-  assert.doesNotMatch(solo.textContent, /last tool/, 'no tool call yet, no "last tool"');
+    const solo = rowFor('/home/me/solo');
+    assert.equal(solo.querySelector('img'), null, 'a title is text, never markup');
+    assert.match(solo.textContent, /<img src=x/);
+    assert.match(solo.textContent, /surface stopped/);
+    assert.match(solo.textContent, /channel off/);
+    assert.doesNotMatch(solo.textContent, /last tool/, 'no tool call yet, no "last tool"');
 
-  assert.match(rowFor('/srv/other').textContent, /wake turn/);
-  assert.match(rowFor('/srv/other').textContent, /no Claude session/);
-  assert.match(rowFor('/srv/gone').textContent, /not answering/);
-  assert.match($('sessions-meta').textContent, /4 projects · 2 with Claude/);
+    assert.match(rowFor('/srv/other').textContent, /wake turn/);
+    assert.match(rowFor('/srv/other').textContent, /no Claude session/);
+    assert.match(rowFor('/srv/gone').textContent, /not answering/);
+    assert.match($('sessions-meta').textContent, /4 projects · 2 with Claude/);
 
-  key('S');
-  assert.ok(!panelOpen(), 'S again closes it');
+    key('S');
+    assert.ok(!panelOpen(), 'S again closes it');
+  });
+
+  test('panel: ⋯ → Sessions and ⌘K "Sessions…" both open it; Escape dismisses', async () => {
+    $('more-menu').classList.remove('hidden');
+    $('more-menu').querySelector('[data-act="sessions"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    await tick();
+    assert.ok(panelOpen(), 'the More menu item opens it');
+    assert.ok($('more-menu').classList.contains('hidden'), 'and the menu closes behind it');
+    escape();
+    assert.ok(!panelOpen(), 'Escape closes it (the shell dismiss layer owns it)');
+
+    key('k', { metaKey: true });
+    await tick();
+    const inp = $('cmd-input');
+    inp.value = 'sessions';
+    inp.dispatchEvent(new W.Event('input', { bubbles: true }));
+    await tick();
+    const item = [...$('cmd-list').querySelectorAll('.palette-item')].find((r) => /Sessions…/.test(r.textContent));
+    assert.ok(item, 'the palette lists "Sessions…"');
+    item.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    assert.ok(panelOpen(), 'running it opens the panel');
+    escape();
+  });
+
+  test('panel: a running surface opens in a new tab; the current one does not; a stopped one offers its command', async () => {
+    key('s');
+    await tick();
+    opened.length = 0;
+    rowFor('/srv/other').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    assert.deepEqual(opened, [['http://localhost:5174', '_blank', 'noopener']]);
+
+    rowFor('/home/me/here').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    assert.equal(opened.length, 1, 'clicking this page\'s own row opens nothing');
+    assert.ok(!panelOpen(), '…it just closes the panel');
+
+    key('s');
+    await tick();
+    const solo = rowFor('/home/me/solo');
+    assert.ok(!solo.classList.contains('link'), 'a stopped surface is not a link');
+    solo.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    assert.equal(opened.length, 1, 'and never starts or opens anything');
+    assert.equal(solo.querySelector('.rn-cmd').textContent, 'cd /home/me/solo && claude-web-chat open');
+    solo.querySelector('.rn-copy').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+    await tick();
+    assert.deepEqual(copied, ['cd /home/me/solo && claude-web-chat open']);
+    escape();
+  });
+
+  test('panel: refreshes while open, stops once dismissed; empty and error states', async () => {
+    longTimers.length = 0;
+    key('s');
+    await tick();
+    const refresh = longTimers.find((x) => x.ms === 5000);
+    assert.ok(refresh, 'a 5s refresh is scheduled while open');
+
+    sessionsBody = { ok: true, now: NOW, current: '/x', sessions: [] };
+    const before = sessionsCalls;
+    longTimers.length = 0;
+    await refresh.fn();
+    await tick();
+    assert.equal(sessionsCalls, before + 1, 'the tick re-fetches');
+    assert.match($('sessions-list').textContent, /No web-chat surfaces or Claude sessions/);
+    assert.ok(longTimers.find((x) => x.ms === 5000), 'and schedules the next one');
+
+    sessionsStatus = 500;
+    const next = longTimers.find((x) => x.ms === 5000);
+    longTimers.length = 0;
+    await next.fn();
+    await tick();
+    assert.match($('sessions-list').textContent, /Couldn't read sessions — HTTP 500/);
+
+    escape();
+    const after = longTimers.find((x) => x.ms === 5000);
+    longTimers.length = 0;
+    const calls = sessionsCalls;
+    await after.fn();
+    await tick();
+    assert.equal(sessionsCalls, calls, 'a dismissed panel stops polling');
+    assert.equal(longTimers.length, 0, 'and schedules nothing more');
+    sessionsStatus = 200;
+    sessionsBody = ROWS();
+  });
+
+  test('panel: viewed remotely, the portal\'s refusal hint is shown instead of a bare status', async () => {
+    const { classify, refusalBody } = require('../lib/core/remote-policy');
+    sessionsStatus = 403;
+    sessionsBody = refusalBody(classify('GET', '/api/machine/sessions'));
+    key('s');
+    await tick();
+    assert.match($('sessions-list').textContent, /Couldn't read sessions — .*run on the host: claude-web-chat ls/);
+    assert.doesNotMatch($('sessions-list').textContent, /HTTP 403/);
+    escape();
+    sessionsStatus = 200;
+    sessionsBody = ROWS();
+  });
+
+  test('panel: known projects with nothing running sit in a collapsed Inactive group that survives a refresh', async () => {
+    const body = ROWS();
+    body.sessions.push({ root: '/home/me/asleep', display_root: '~/asleep', title: 'asleep', current: false,
+      open_cmd: 'cd /home/me/asleep && claude-web-chat open', surface: null, claude: null, known: true, last_seen_at: NOW - 3_600_000 });
+    // Known but with Claude attached is NOT inactive — it stays in the live list.
+    body.sessions[1].known = true;
+    sessionsBody = body;
+    longTimers.length = 0;
+    key('s');
+    await tick();
+    const group = $('sessions-list').querySelector('details.ss-inactive');
+    assert.ok(group, 'an Inactive group is drawn');
+    assert.equal(group.open, false, 'collapsed by default');
+    assert.match(group.querySelector('summary').textContent, /Inactive · 1/);
+    assert.ok(group.contains(rowFor('/home/me/asleep')), 'the known, stopped project is inside it');
+    assert.ok(!group.contains(rowFor('/home/me/solo')), 'a Claude-attached one is not');
+    assert.equal(rowFor('/home/me/asleep').querySelector('.rn-cmd').textContent, 'cd /home/me/asleep && claude-web-chat open');
+    assert.match($('sessions-meta').textContent, /4 projects · 2 with Claude · 1 inactive/);
+
+    group.open = true;
+    group.dispatchEvent(new W.Event('toggle'));
+    const refresh = longTimers.find((x) => x.ms === 5000);
+    longTimers.length = 0;
+    await refresh.fn();
+    await tick();
+    assert.equal($('sessions-list').querySelector('details.ss-inactive').open, true, 'the refresh keeps it open');
+    escape();
+    sessionsBody = ROWS();
+  });
+
+  test('panel: each half shows its release; a dev build is clipped with the full string in the tooltip; ⚠ only on a mismatch', async () => {
+    const body = ROWS();
+    const DEV = '0.8.0-dev.202609280312.abc1234';
+    body.sessions[0].surface.package_version = '0.8.0';
+    body.sessions[0].claude.package_versions = [{ version: '0.8.0', sessions: 1 }, { version: '0.6.9', sessions: 1 }];
+    body.sessions[0].version_note = '1 of 2 Claude sessions is on v0.6.9 — restart it to pick up v0.8.0';
+    body.sessions[1].claude.package_versions = [{ version: DEV, sessions: 1 }];
+    body.sessions[1].version_note = null;
+    body.sessions[2].surface.package_version = '0.8.0';
+    sessionsBody = body;
+    key('s');
+    await tick();
+
+    const here = rowFor('/home/me/here');
+    const chips = [...here.querySelectorAll('.ss-ver')].map((c) => c.textContent);
+    assert.deepEqual(chips, ['v0.8.0', 'v0.8.0', 'v0.6.9'], 'the surface\'s, then each Claude release');
+    const warn = here.querySelector('.ss-warn');
+    assert.ok(warn, 'a mismatch gets a warning line');
+    assert.match(warn.textContent, /⚠1 of 2 Claude sessions is on v0\.6\.9 — restart it to pick up v0\.8\.0/);
+
+    const dev = rowFor('/home/me/solo').querySelector('.ss-ver');
+    assert.equal(dev.textContent, `v${DEV}`, 'the whole string is there (CSS clips it)');
+    assert.equal(dev.title, `web-chat ${DEV}`, 'and in the tooltip');
+    assert.equal(rowFor('/home/me/solo').querySelector('.ss-warn'), null);
+    assert.equal(rowFor('/srv/other').querySelector('.ss-warn'), null, 'no mismatch, no warning');
+    assert.equal(rowFor('/srv/other').querySelector('.ss-ver').textContent, 'v0.8.0');
+    assert.equal(rowFor('/srv/gone').querySelector('.ss-ver'), null, 'no release recorded, no chip');
+    escape();
+    sessionsBody = ROWS();
+  });
 });
-
-test('panel: ⋯ → Sessions and ⌘K "Sessions…" both open it; Escape dismisses', async () => {
-  $('more-menu').classList.remove('hidden');
-  $('more-menu').querySelector('[data-act="sessions"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.ok(panelOpen(), 'the More menu item opens it');
-  assert.ok($('more-menu').classList.contains('hidden'), 'and the menu closes behind it');
-  escape();
-  assert.ok(!panelOpen(), 'Escape closes it (the shell dismiss layer owns it)');
-
-  key('k', { metaKey: true });
-  await tick();
-  const inp = $('cmd-input');
-  inp.value = 'sessions';
-  inp.dispatchEvent(new W.Event('input', { bubbles: true }));
-  await tick();
-  const item = [...$('cmd-list').querySelectorAll('.palette-item')].find((r) => /Sessions…/.test(r.textContent));
-  assert.ok(item, 'the palette lists "Sessions…"');
-  item.dispatchEvent(new W.MouseEvent('mousedown', { bubbles: true }));
-  await tick();
-  assert.ok(panelOpen(), 'running it opens the panel');
-  escape();
-});
-
-test('panel: a running surface opens in a new tab; the current one does not; a stopped one offers its command', async () => {
-  key('s');
-  await tick();
-  opened.length = 0;
-  rowFor('/srv/other').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  assert.deepEqual(opened, [['http://localhost:5174', '_blank', 'noopener']]);
-
-  rowFor('/home/me/here').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  assert.equal(opened.length, 1, 'clicking this page\'s own row opens nothing');
-  assert.ok(!panelOpen(), '…it just closes the panel');
-
-  key('s');
-  await tick();
-  const solo = rowFor('/home/me/solo');
-  assert.ok(!solo.classList.contains('link'), 'a stopped surface is not a link');
-  solo.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  assert.equal(opened.length, 1, 'and never starts or opens anything');
-  assert.equal(solo.querySelector('.rn-cmd').textContent, 'cd /home/me/solo && claude-web-chat open');
-  solo.querySelector('.rn-copy').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
-  await tick();
-  assert.deepEqual(copied, ['cd /home/me/solo && claude-web-chat open']);
-  escape();
-});
-
-test('panel: refreshes while open, stops once dismissed; empty and error states', async () => {
-  longTimers.length = 0;
-  key('s');
-  await tick();
-  const refresh = longTimers.find((x) => x.ms === 5000);
-  assert.ok(refresh, 'a 5s refresh is scheduled while open');
-
-  sessionsBody = { ok: true, now: NOW, current: '/x', sessions: [] };
-  const before = sessionsCalls;
-  longTimers.length = 0;
-  await refresh.fn();
-  await tick();
-  assert.equal(sessionsCalls, before + 1, 'the tick re-fetches');
-  assert.match($('sessions-list').textContent, /No web-chat surfaces or Claude sessions/);
-  assert.ok(longTimers.find((x) => x.ms === 5000), 'and schedules the next one');
-
-  sessionsStatus = 500;
-  const next = longTimers.find((x) => x.ms === 5000);
-  longTimers.length = 0;
-  await next.fn();
-  await tick();
-  assert.match($('sessions-list').textContent, /Couldn't read sessions — HTTP 500/);
-
-  escape();
-  const after = longTimers.find((x) => x.ms === 5000);
-  longTimers.length = 0;
-  const calls = sessionsCalls;
-  await after.fn();
-  await tick();
-  assert.equal(sessionsCalls, calls, 'a dismissed panel stops polling');
-  assert.equal(longTimers.length, 0, 'and schedules nothing more');
-  sessionsStatus = 200;
-  sessionsBody = ROWS();
-});
-
-test('panel: viewed remotely, the portal\'s refusal hint is shown instead of a bare status', async () => {
-  const { classify, refusalBody } = require('../lib/core/remote-policy');
-  sessionsStatus = 403;
-  sessionsBody = refusalBody(classify('GET', '/api/machine/sessions'));
-  key('s');
-  await tick();
-  assert.match($('sessions-list').textContent, /Couldn't read sessions — .*run on the host: claude-web-chat ls/);
-  assert.doesNotMatch($('sessions-list').textContent, /HTTP 403/);
-  escape();
-  sessionsStatus = 200;
-  sessionsBody = ROWS();
-});
-
-test('panel: known projects with nothing running sit in a collapsed Inactive group that survives a refresh', async () => {
-  const body = ROWS();
-  body.sessions.push({ root: '/home/me/asleep', display_root: '~/asleep', title: 'asleep', current: false,
-    open_cmd: 'cd /home/me/asleep && claude-web-chat open', surface: null, claude: null, known: true, last_seen_at: NOW - 3_600_000 });
-  // Known but with Claude attached is NOT inactive — it stays in the live list.
-  body.sessions[1].known = true;
-  sessionsBody = body;
-  longTimers.length = 0;
-  key('s');
-  await tick();
-  const group = $('sessions-list').querySelector('details.ss-inactive');
-  assert.ok(group, 'an Inactive group is drawn');
-  assert.equal(group.open, false, 'collapsed by default');
-  assert.match(group.querySelector('summary').textContent, /Inactive · 1/);
-  assert.ok(group.contains(rowFor('/home/me/asleep')), 'the known, stopped project is inside it');
-  assert.ok(!group.contains(rowFor('/home/me/solo')), 'a Claude-attached one is not');
-  assert.equal(rowFor('/home/me/asleep').querySelector('.rn-cmd').textContent, 'cd /home/me/asleep && claude-web-chat open');
-  assert.match($('sessions-meta').textContent, /4 projects · 2 with Claude · 1 inactive/);
-
-  group.open = true;
-  group.dispatchEvent(new W.Event('toggle'));
-  const refresh = longTimers.find((x) => x.ms === 5000);
-  longTimers.length = 0;
-  await refresh.fn();
-  await tick();
-  assert.equal($('sessions-list').querySelector('details.ss-inactive').open, true, 'the refresh keeps it open');
-  escape();
-  sessionsBody = ROWS();
-});
-
-test('panel: each half shows its release; a dev build is clipped with the full string in the tooltip; ⚠ only on a mismatch', async () => {
-  const body = ROWS();
-  const DEV = '0.8.0-dev.202609280312.abc1234';
-  body.sessions[0].surface.package_version = '0.8.0';
-  body.sessions[0].claude.package_versions = [{ version: '0.8.0', sessions: 1 }, { version: '0.6.9', sessions: 1 }];
-  body.sessions[0].version_note = '1 of 2 Claude sessions is on v0.6.9 — restart it to pick up v0.8.0';
-  body.sessions[1].claude.package_versions = [{ version: DEV, sessions: 1 }];
-  body.sessions[1].version_note = null;
-  body.sessions[2].surface.package_version = '0.8.0';
-  sessionsBody = body;
-  key('s');
-  await tick();
-
-  const here = rowFor('/home/me/here');
-  const chips = [...here.querySelectorAll('.ss-ver')].map((c) => c.textContent);
-  assert.deepEqual(chips, ['v0.8.0', 'v0.8.0', 'v0.6.9'], 'the surface\'s, then each Claude release');
-  const warn = here.querySelector('.ss-warn');
-  assert.ok(warn, 'a mismatch gets a warning line');
-  assert.match(warn.textContent, /⚠1 of 2 Claude sessions is on v0\.6\.9 — restart it to pick up v0\.8\.0/);
-
-  const dev = rowFor('/home/me/solo').querySelector('.ss-ver');
-  assert.equal(dev.textContent, `v${DEV}`, 'the whole string is there (CSS clips it)');
-  assert.equal(dev.title, `web-chat ${DEV}`, 'and in the tooltip');
-  assert.equal(rowFor('/home/me/solo').querySelector('.ss-warn'), null);
-  assert.equal(rowFor('/srv/other').querySelector('.ss-warn'), null, 'no mismatch, no warning');
-  assert.equal(rowFor('/srv/other').querySelector('.ss-ver').textContent, 'v0.8.0');
-  assert.equal(rowFor('/srv/gone').querySelector('.ss-ver'), null, 'no release recorded, no chip');
-  escape();
-  sessionsBody = ROWS();
-});
-
-test('panel: teardown', () => { restore(); });

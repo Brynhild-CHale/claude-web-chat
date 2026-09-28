@@ -13,7 +13,8 @@
 // compareVersions), and can never land in a real release's directory under
 // ~/.web-chat/versions/. A dev build is reproducible only within the minute it
 // was stamped — the stamp is the one input that is not the tree. The normal
-// build is untouched and stays byte-reproducible.
+// build is untouched: its tar is byte-reproducible, and so is its .tar.gz between
+// builds whose Node links the same zlib (see the gzip note in buildRelease).
 //
 // Why self-contained: this package has four runtime dependencies
 // (@modelcontextprotocol/sdk, express, node-html-parser, ws). A source-only
@@ -30,8 +31,10 @@
 // SHA256SUMS depended on which machine cut the release. Writing plain ustar
 // ourselves fixes every varying field (mtime 0 or $SOURCE_DATE_EPOCH, uid/gid 0,
 // sorted entries, modes normalized to 0644/0755) so the same input always
-// produces the same bytes — and a checksum you can reproduce is the only kind
+// produces the same TAR bytes — and a checksum you can reproduce is the only kind
 // worth publishing. Reading it back needs nothing special: both tars read ustar.
+// (The gzip layer on top is the one part the tree does not decide: buildRelease
+// says what it depends on.)
 
 const fs = require('fs');
 const path = require('path');
@@ -135,18 +138,72 @@ function walk(dir, { skipNodeModules = false } = {}) {
   return out;
 }
 
+// Where `name`, required from the package installed at `fromDir`, lives on disk:
+// Node's own lookup (the nearest `node_modules/<name>` walking up from the
+// requiring package), bounded by the project root so nothing above it can ship.
+// A candidate counts only if it holds a package.json. Null when none does.
+function installedDir(root, fromDir, name) {
+  let dir = fromDir;
+  for (;;) {
+    if (path.basename(dir) !== 'node_modules') {
+      const candidate = path.join(dir, 'node_modules', name);
+      if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
+    }
+    if (dir === root) return null;
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+// The production packages' directories, derived from `npm ls --json`'s TREE
+// (who depends on what, by name) rather than from any path npm prints. npm
+// redacts a UUID-shaped path segment to `***` in its output, `--parseable`
+// paths included, so a checkout under a UUID-named directory (a Claude Code
+// worktree, a mktemp dir) read back as `/…/***/…` and the build refused it as
+// "resolved outside node_modules". Paths built from the root and the package
+// names cannot be redacted. Pure but for the fs lookups, so a test can hand it a
+// tree. A node with no `version` is an optional peer npm reports but did not
+// install (`{}`); a deduped node carries no `dependencies` — its subtree is
+// walked where npm printed it in full.
+function packageDirsFromTree(root, tree) {
+  const base = path.resolve(root);
+  const dirs = new Set();
+  const visit = (node, fromDir, via) => {
+    for (const [name, child] of Object.entries((node && node.dependencies) || {})) {
+      if (!child || !child.version) continue;
+      const dir = installedDir(base, fromDir, name);
+      if (!dir) {
+        throw new Error(`production dependency ${name}@${child.version} (required by ${via}) is not installed `
+          + `under ${path.join(base, 'node_modules')} — run \`npm ci\` first`);
+      }
+      const installed = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
+      if (installed !== child.version) {
+        throw new Error(`production dependency ${name}@${child.version} (required by ${via}) resolved to ${dir}, `
+          + `which holds ${installed} — the installed tree disagrees with npm's; run \`npm ci\` first`);
+      }
+      dirs.add(dir);
+      if (child.dependencies) visit(child, dir, `${name}@${child.version}`);
+    }
+  };
+  visit(tree, base, (tree && tree.name) || 'the project');
+  return [...dirs].sort();
+}
+
 // The production dependency tree, straight from npm's own resolution. Offline:
 // it reads the installed tree + lockfile, it does not hit the registry.
 function productionPackageDirs(root) {
-  const r = spawnSync('npm', ['ls', '--omit=dev', '--all', '--parseable'], {
-    cwd: root, encoding: 'utf8',
+  const r = spawnSync('npm', ['ls', '--omit=dev', '--all', '--json'], {
+    cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
   });
   if (r.status !== 0) {
     throw new Error(`npm ls --omit=dev failed — run \`npm ci\` first.\n${(r.stderr || '').trim()}`);
   }
-  return r.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
-    .filter((p) => path.resolve(p) !== path.resolve(root))
-    .map((p) => path.resolve(p));
+  let tree;
+  try { tree = JSON.parse(r.stdout); } catch (e) {
+    throw new Error(`npm ls --json printed something that is not JSON (${e.message})`);
+  }
+  return packageDirsFromTree(root, tree);
 }
 
 // `version` (optional) overrides the version the artefact's package.json
@@ -267,11 +324,20 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
 
   const entries = collectEntries(root, prefix, { version: dev ? version : null });
   const tar = makeTar(entries);
-  // level 9 + no mtime in the gzip header (node writes 0) keeps the bytes stable.
+  // The TAR above is byte-reproducible from the tree alone. The .tar.gz adds one
+  // input the tree does not decide: level 9 and a zero MTIME (node writes 0) pin
+  // the gzip header, but the deflate stream is whatever the zlib Node is LINKED
+  // against produces. The official nodejs.org binaries (what CI's setup-node
+  // installs) bundle Chromium's zlib and agree with each other across 22.x and
+  // 24.x; Homebrew and distro Node link the system zlib and emit different bytes
+  // for the same tar. So a published digest reproduces with an official Node
+  // build, and a mismatch from any other one means "different zlib" before it
+  // means "tampered" — compare the uncompressed tar (`gunzip -c <tarball> |
+  // shasum -a 256`, the `tar` line of the summary) and the `zlib` line to tell.
   const gz = zlib.gzipSync(tar, { level: 9 });
-  // The OS field (RFC 1952 §2.3.1, byte 9) is the one remaining header byte that
-  // depends on the machine rather than the tree: zlib stamps 3 on Linux and 19 on
-  // macOS, so a tag rebuilt on another OS hashed differently and read as tampering.
+  // The OS field (RFC 1952 §2.3.1, byte 9) is the one header byte that depends
+  // on the machine rather than the tree: zlib stamps 3 on Linux and 19 on macOS,
+  // so a tag rebuilt on another OS hashed differently and read as tampering.
   // 255 = "unknown", the value reproducible-build toolchains pin it to.
   gz[9] = 255;
 
@@ -280,6 +346,8 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
   fs.writeFileSync(tarPath, gz);
 
   const digest = crypto.createHash('sha256').update(gz).digest('hex');
+  const tarDigest = crypto.createHash('sha256').update(tar).digest('hex');
+  const zlibVersion = process.versions.zlib;
   const sumsPath = path.join(outDir, 'SHA256SUMS');
   fs.writeFileSync(sumsPath, mergeSums(readText(sumsPath), { tarName, digest, outDir }));
 
@@ -289,8 +357,10 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
   log(`  entries   ${files} files, ${entries.length - files} dirs`);
   log(`  size      ${(gz.length / 1024 / 1024).toFixed(2)} MB compressed`);
   log(`  sha256    ${digest}`);
+  log(`  tar       sha256 ${tarDigest}  (uncompressed — the same from any Node)`);
+  log(`  zlib      ${zlibVersion}  (the .tar.gz digest follows the zlib build: official nodejs.org Node agree, Homebrew/distro Node differ)`);
   log(`  sums      ${sumsPath}`);
-  return { version, tarPath, sumsPath, digest, entries };
+  return { version, tarPath, sumsPath, digest, tarDigest, zlib: zlibVersion, entries };
 }
 
 if (require.main === module) {
@@ -305,4 +375,6 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, REPO_ROOT };
+module.exports = {
+  buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, packageDirsFromTree, REPO_ROOT,
+};
