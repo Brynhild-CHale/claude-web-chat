@@ -104,6 +104,34 @@ test('SHA256SUMS names the tarball in the format shasum -c reads', () => {
   assert.match(out, /: OK$/m, 'the stock checksum tool must accept what we publish');
 });
 
+test('a build merges into an existing SHA256SUMS, so older tarballs in dist/ still verify', () => {
+  // The local dist/ collects builds (releases, several --dev ones); overwriting
+  // SHA256SUMS with one line left every other tarball unverifiable, and
+  // `update --from` refuses a tarball with no entry.
+  const outDir = tmpDir('wc-dist-merge-');
+  const older = 'claude-web-chat-0.7.0.tar.gz';
+  fs.writeFileSync(path.join(outDir, older), 'an older build');
+  const olderSum = require('crypto').createHash('sha256').update('an older build').digest('hex');
+  const { tarPath, digest } = build();
+  const tarName = path.basename(tarPath);
+  fs.copyFileSync(tarPath, path.join(outDir, tarName));
+  fs.writeFileSync(path.join(outDir, 'SHA256SUMS'), [
+    `${olderSum}  ${older}`,
+    `${'0'.repeat(64)}  ${tarName}`,                        // a stale line for this very name
+    `${'1'.repeat(64)}  claude-web-chat-0.6.0.tar.gz`,     // its tarball is gone
+    '',
+  ].join('\n'));
+
+  const again = buildRelease({ outDir, log: () => {} });
+  assert.equal(again.digest, digest);
+  const text = fs.readFileSync(again.sumsPath, 'utf8');
+  assert.equal(text, `${olderSum}  ${older}\n${digest}  ${tarName}\n`,
+    'keep the older entry, replace this build\'s, drop the one whose tarball is gone');
+  const out = execFileSync('shasum', ['-a', '256', '-c', 'SHA256SUMS'], { cwd: outDir, encoding: 'utf8' });
+  assert.match(out, new RegExp(`${older.replace(/\./g, '\\.')}: OK`));
+  assert.match(out, new RegExp(`${tarName.replace(/\./g, '\\.')}: OK`));
+});
+
 test('the system tar can read what we write, preserving the executable bit', () => {
   const { tarPath } = build();
   const dest = tmpDir('wc-unpack-');

@@ -100,7 +100,9 @@ never land in a real release's directory under `~/.web-chat/versions/`, sorts
 above the release it was built after (the update banner does not offer that
 release back to it) and below the one it is heading for (which *is* offered when
 it ships). A dev build is reproducible only within the minute it was stamped; a
-normal build stays byte-reproducible.
+normal build stays byte-reproducible. `dist/SHA256SUMS` keeps a line for every
+tarball still in `dist/` — each build replaces its own line and drops the lines
+of tarballs you deleted — so an older build there still verifies.
 
 `update --from` runs a GitHub update's steps from the file: it verifies the
 tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is
