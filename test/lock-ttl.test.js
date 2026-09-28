@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, waitUntil } = require('../test-support/helpers');
+const { withServer, openSSE, waitUntil } = require('../test-support/helpers');
 
 // LOCK_TTL_MS is read once, at lib/server/domain/turns LOAD, so the only way to
 // test the stale-lock path in reasonable time is to set the env var and re-read
@@ -168,6 +168,131 @@ test('a re-aim that steals a stale lock preserves the abandoned turn\'s work', a
   assert.match(node.trigger.summary, /abandoned/);
   assert.equal(node.parent_id, n1, 'committed on the commit point the turn was working from');
   assert.ok(node.mounts.some((m) => m.id === 'b'), 'the render survived the steal');
+});
+
+// ── every steal is one steal: a new prompt and a wake keep the work too ─────
+
+// A new prompt after a crashed turn used to stamp the abandoned panes onto ITS
+// node, as if that prompt had asked for them. The abandoned turn is its own
+// preserve node now, exactly as a re-aim's steal leaves it, and the new turn
+// continues from it.
+test('a new prompt that steals a stale dirty lock commits the abandoned work as its own node first', async (t) => {
+  const { api } = await withServer(t, { createServer: shortTtlServer(t) });
+  await api.post('/api/render', { id: 'a', html: '<p>committed</p>' });
+  const n0 = (await api.post('/api/commit', { message: 'seed' })).json.node_id;
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  await api.post('/api/render', { id: 'b', html: '<p>abandoned work</p>' });
+  await elapse(120);
+
+  const tb = await api.post('/api/turn-begin', { message: 'the next prompt' });
+  assert.equal(tb.status, 200);
+  assert.equal(tb.json.stole_stale_lock, true);
+  const pid = tb.json.preserved;
+  assert.ok(pid, 'the steal reports the node it kept the work in');
+  const pnode = (await api.get('/api/graph/node/' + pid)).json;
+  assert.equal(pnode.trigger.kind, 'preserve');
+  assert.equal(pnode.author, 'claude');
+  assert.match(pnode.trigger.summary, /abandoned user turn/);
+  assert.equal(pnode.parent_id, n0, 'on the commit point the abandoned turn was working from');
+  assert.deepEqual(pnode.mounts.map((m) => m.id).sort(), ['a', 'b'], 'holding exactly what it left on the surface');
+  assert.equal(tb.json.lock.base, pid, "the new turn's base is the preserve node");
+
+  await api.post('/api/render', { id: 'c', html: '<p>the answer</p>' });
+  const te = await api.post('/api/turn-end', {});
+  const node = (await api.get('/api/graph/node/' + te.json.node_id)).json;
+  assert.equal(node.parent_id, pid, "the new turn's node is the preserve node's child");
+  assert.equal(node.trigger.message, 'the next prompt');
+});
+
+test('a new prompt that steals a stale CLEAN lock commits nothing extra', async (t) => {
+  const { api } = await withServer(t, { createServer: shortTtlServer(t) });
+  await api.post('/api/render', { id: 'a', html: '<p>committed</p>' });
+  const n0 = (await api.post('/api/commit', { message: 'seed' })).json.node_id;
+  await api.post('/api/turn-begin', { message: 'a turn that rendered nothing' });
+  await elapse(120);
+  const tb = await api.post('/api/turn-begin', { message: 'next' });
+  assert.equal(tb.json.stole_stale_lock, true);
+  assert.equal(tb.json.preserved, undefined, 'nothing was left to keep');
+  assert.equal(tb.json.lock.base, n0);
+  assert.equal((await api.get('/api/graph')).json.nodes.length, 1);
+});
+
+// A re-aim queued under a turn waits for THAT turn's end. When the turn dies,
+// the end never comes, and the intent used to sit in the slot until the end of
+// the NEXT, unrelated turn — which then jumped the page, or wiped it, with no
+// click. A steal drops it.
+test('a set-active queued under a turn that never Stopped is dropped when a new prompt steals the lock', async (t) => {
+  const { api, ws } = await withServer(t, { createServer: shortTtlServer(t, 150) });
+  const sock = ws();
+  const frames = [];
+  sock.on('message', (d) => { try { frames.push(JSON.parse(d.toString())); } catch {} });
+  await new Promise((res, rej) => { sock.on('open', res); sock.on('error', rej); });
+  t.after(() => sock.close());
+  await api.post('/api/render', { id: 'a', html: '<p>zero</p>' });
+  const n0 = (await api.post('/api/commit', { message: 'zero' })).json.node_id;
+  await api.post('/api/render', { id: 'a', html: '<p>one</p>' });
+  await api.post('/api/commit', { message: 'one' });
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  const q = await api.post('/api/graph/active', { id: n0 });
+  assert.equal(q.json.pending, true, 'precondition: the jump queued behind the fresh lock');
+  await elapse(300);
+
+  const tb = await api.post('/api/turn-begin', { message: 'a new prompt, much later' });
+  assert.equal(tb.json.stole_stale_lock, true);
+  assert.deepEqual(tb.json.dropped_reaim, { op: 'set-active', id: n0 }, 'the steal says what it dropped');
+  assert.equal((await api.get('/api/graph')).json.pending_reaim, null, 'nothing is queued any more');
+  const ev = (await api.get('/api/events')).json.events.filter((e) => e.kind === 'graph' && e.op === 'turn-begin');
+  assert.deepEqual(ev[ev.length - 1].dropped_reaim, { op: 'set-active', id: n0 }, 'and so does the ring');
+  // …and the chrome, on the frame that queued it: the "applies when Claude's
+  // turn ends" note is withdrawn rather than left promising a jump.
+  const withdrawn = await waitUntil(() => frames.find((f) => f.type === 'reaim:pending' && f.intent === null),
+    { what: 'the reaim:pending frame withdrawing the queued jump' });
+  assert.deepEqual(withdrawn.dropped, { op: 'set-active', id: n0 });
+
+  await api.post('/api/render', { id: 'c', html: '<p>the answer</p>' });
+  const te = await api.post('/api/turn-end', {});
+  assert.ok(te.json.node_id);
+  assert.equal(te.json.reaim, undefined, 'the dead turn\'s jump does not fire at the end of this one');
+  assert.equal((await api.get('/api/graph')).json.active, te.json.node_id, "active stays on the new turn's node");
+  assert.deepEqual((await api.get('/api/mounts')).json.mounts.map((m) => m.id).sort(), ['a', 'c']);
+});
+
+test('a wipe queued under a turn that never Stopped is dropped when a wake steals the lock', async (t) => {
+  const { api, port } = await withServer(t, { createServer: shortTtlServer(t, 150) });
+  const sse = await openSSE(port, { kinds: ['wake'] });
+  t.after(() => sse.close());
+  await api.post('/api/render', { id: 'a', html: '<p>committed</p>' });
+  const n0 = (await api.post('/api/commit', { message: 'seed' })).json.node_id;
+
+  await api.post('/api/turn-begin', { message: 'a turn that never Stops' });
+  await api.post('/api/render', { id: 'b', html: '<p>abandoned work</p>' });
+  const q = await api.post('/api/graph/wipe', { name: 'fresh' });
+  assert.equal(q.json.pending, true, 'precondition: the wipe queued behind the fresh lock');
+  await elapse(300);
+
+  const push = await api.post('/api/queue/push', { note: 'look at this' });
+  assert.equal(push.json.mode, 'wake', 'precondition: a live wake, not a park');
+  const g = (await api.get('/api/graph')).json;
+  assert.equal(g.lock.author, 'wake', 'the wake took the stale lock');
+  assert.equal(g.pending_reaim, null, 'and dropped the wipe the dead turn had queued');
+  const tbEvent = (await api.get('/api/events')).json.events
+    .filter((e) => e.kind === 'graph' && e.op === 'turn-begin' && e.author === 'wake').pop();
+  assert.equal(tbEvent.stole_stale_lock, true);
+  assert.deepEqual(tbEvent.dropped_reaim, { op: 'wipe', name: 'fresh' });
+
+  // The wake's steal keeps the abandoned work the same way a prompt's does.
+  const pid = tbEvent.preserved;
+  assert.ok(pid, 'the abandoned render was committed before the wake took the lock');
+  const pnode = (await api.get('/api/graph/node/' + pid)).json;
+  assert.equal(pnode.parent_id, n0);
+  assert.equal(g.lock.base, pid);
+  assert.ok(pnode.mounts.some((m) => m.id === 'b'));
+
+  const te = await api.post('/api/turn-end', {});
+  assert.equal(te.json.reaim, undefined, 'no wipe at the end of the woken turn');
+  assert.deepEqual((await api.get('/api/mounts')).json.mounts.map((m) => m.id).sort(), ['a', 'b'], 'the page is intact');
 });
 
 // ── the stale moment reaches the chrome ─────────────────────────────────────

@@ -158,6 +158,20 @@ test('leavePreview({restoreSnapshot:true}) while not previewing starts no theme 
   assert.deepEqual(paneIds(), ['m-live'], 'and the live surface is left as it was');
 });
 
+// A re-aim queued behind a turn that then died is dropped when a new turn takes
+// the stale lock (lib/server/domain/turns stealStale), and the frame that
+// announced it says so: the note stops promising it and asks for it again.
+test('a reaim:pending frame with intent:null withdraws the queued re-aim note', async () => {
+  WS.onmessage({ data: JSON.stringify({ type: 'reaim:pending', intent: { op: 'wipe', id: null, name: 'x' } }) });
+  await tick();
+  assert.match(noteText(), /Queued surface wipe — applies when Claude's turn ends/, 'precondition: the queued note');
+  WS.onmessage({ data: JSON.stringify({ type: 'reaim:pending', intent: null, dropped: { op: 'wipe', name: 'x' } }) });
+  await tick();
+  assert.match(noteText(), /Dropped the queued surface wipe/, 'the note says the intent is gone');
+  assert.match(noteText(), /Do it again/, 'and how to get it back');
+  assert.doesNotMatch(noteText(), /applies when/, 'no longer promising it');
+});
+
 /* ---------- 1. restoreSnapshot ---------- */
 
 test('previewing an older node detaches and swaps the surface', async () => {
