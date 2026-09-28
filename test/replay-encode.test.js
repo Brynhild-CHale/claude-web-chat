@@ -275,6 +275,43 @@ test('createFrameEncoder: aborting during finish SIGKILLs a hung ffmpeg at once 
   assert.equal(procs.length, 1, 'no second ffmpeg was spawned');
 });
 
+test('a process that exits mid-encode takes its ffmpeg with it (the exit hook)', async (t) => {
+  const hung = fakeFfmpeg(t, { mode: 'hang' });
+  const tmpDir = tmp(t);
+  const pidFile = path.join(tmpDir, 'ffmpeg.pid');
+  let pid = null;
+  t.after(() => { if (pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  // A child process starts an encode, and exits the moment ffmpeg is up — no
+  // abort, no dispose: only the 'exit' hook stands between the hung ffmpeg and
+  // a leak. (The real spawn, remembered only to learn the pid.)
+  const script = `
+    const fs = require('fs');
+    const { spawn } = require('child_process');
+    const { createFrameEncoder } = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'replay', 'encode'))});
+    const spawnImpl = (...a) => { const p = spawn(...a); fs.writeFileSync(process.env.PIDF, String(p.pid)); return p; };
+    const enc = createFrameEncoder({ format: 'webm', ffmpegPath: process.env.BIN, width: 16, height: 10, tmpDir: process.env.TMPD, spawnImpl });
+    enc.addFrame(Buffer.from(process.env.PNG, 'base64'), 1000);
+    enc.finish({ timeoutMs: 60000 }).catch(() => {});
+    const iv = setInterval(() => {
+      let calls = '';
+      try { calls = fs.readFileSync(process.env.CALLS, 'utf8'); } catch {}
+      if (calls.trim()) { clearInterval(iv); process.exit(0); }
+    }, 20);`;
+  const child = spawn(process.execPath, ['-e', script], {
+    env: {
+      ...process.env, BIN: hung.bin, TMPD: tmpDir, PIDF: pidFile,
+      CALLS: path.join(path.dirname(hung.bin), 'calls.jsonl'), PNG: png(16, 10, RED).toString('base64'),
+    },
+    stdio: 'ignore',
+  });
+  const code = await new Promise((r) => child.on('exit', r));
+  assert.equal(code, 0, 'the child reached the encode and exited');
+  pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  assert.ok(pid > 0, 'precondition: an ffmpeg was spawned');
+  assert.equal(hung.read().length, 1, 'precondition: and it was running');
+  await waitUntil(() => !isPidAlive(pid), { timeout: 3000, what: `the hung ffmpeg (pid ${pid}) to die with its parent` });
+});
+
 test('createFrameEncoder without ffmpeg: GIF is built in; MP4/WebM are ffmpeg-not-found', async (t) => {
   const tmpDir = tmp(t);
   const enc = createFrameEncoder({ format: 'gif', ffmpegPath: null, width: 16, height: 10, tmpDir });
