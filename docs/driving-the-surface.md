@@ -186,7 +186,7 @@ Any language can drive the surface — it's just HTTP. Discover the port from
 
 | Endpoint | Body | Does |
 |---|---|---|
-| `GET /api/health` | — | `{ok, pid, active, nodes, lock, lock_stale, active_label, last_commit_at, viewers}` — liveness + graph state. |
+| `GET /api/health` | — | `{ok, build, pid, active, nodes, lock, lock_stale, active_label, last_commit_at, viewers}` — liveness + graph state; `build` is the package version the daemon runs. |
 | `GET /api/store?keys=a,b` | — | Full store, or filtered. |
 | `POST /api/store` | `{patch}` | Merge + broadcast. Returns post-patch store. |
 | `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?, after?, place?}` | Mount/replace. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. `theme` normalized (below). `after` positions the pane in the page sequence; `place: {col, span, rows}` sizes it on the 12-column grid (clamped; the applied value comes back as `place`). |

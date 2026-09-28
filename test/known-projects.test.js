@@ -77,6 +77,47 @@ test('a known root that is gone, or no longer has .web-chat/, is pruned on read'
   assert.deepEqual(readKnownFile().map((e) => e.root), [kept], 'and the file is rewritten without them');
 });
 
+// A daemon an old `update` booted in ~ (or any non-project cwd) used to land on
+// the list for good: $HOME's .web-chat/ is the user tier, present on every
+// machine, so the directory check could never prune it — and the portal would
+// start a surface rooted at the home directory for a remote viewer.
+test('$HOME and a directory with no .web-chat/ are never remembered, and a legacy $HOME entry is pruned on read', (t) => {
+  const home = withTempHome(t);
+  fs.mkdirSync(path.join(home, '.web-chat'), { recursive: true });
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-known-bare-')));
+  t.after(() => fs.rmSync(bare, { recursive: true, force: true }));
+
+  assert.equal(registry.rememberProject({ root: home }), null);
+  assert.equal(registry.rememberProject({ root: fs.realpathSync(home) }), null, 'by its real path too');
+  assert.equal(registry.rememberProject({ root: bare }), null);
+  registry.registerInstance({ root: home, port: 1, pid: DEAD_PID });
+  assert.equal(fs.existsSync(registry.knownPath()), false, 'nothing was written');
+
+  const kept = project(t, 'kept');
+  fs.writeFileSync(registry.knownPath(), JSON.stringify({ projects: [
+    { id: registry.instanceId(home), root: fs.realpathSync(home), title: 'home', last_seen_at: 1 },
+    { id: registry.instanceId(kept), root: kept, title: 'kept', last_seen_at: 1 },
+  ] }));
+  assert.deepEqual(registry.sessions().map((r) => r.root), [kept]);
+  assert.deepEqual(readKnownFile().map((e) => e.root), [kept], 'and the file is rewritten without it');
+});
+
+// A build predating the known list (0.7.x) registers its daemon but never
+// remembers it; the first boot on this build remembers every daemon then
+// running, so an old one still up is not lost the moment it stops.
+test('a boot also remembers the other daemons running beside it (0.7.x ones never did themselves)', (t) => {
+  withTempHome(t);
+  const old = project(t, 'old');
+  const fresh = project(t, 'fresh');
+  // What a 0.7.6 daemon writes: an instance entry, and nothing in projects.json.
+  fs.mkdirSync(path.dirname(registry.registryPath()), { recursive: true });
+  fs.writeFileSync(registry.registryPath(), JSON.stringify({ instances: [
+    { id: registry.instanceId(old), role: 'instance', root: old, title: 'old', port: 2, pid: process.pid },
+  ] }));
+  registry.registerInstance({ root: fresh, port: 1, pid: process.pid, title: 'fresh' });
+  assert.deepEqual(readKnownFile().map((e) => e.root).sort(), [fresh, old].sort());
+});
+
 test('sessions(): inactive rows for known projects with nothing running; every row says whether it is known', (t) => {
   withTempHome(t);
   const live = project(t, 'live');

@@ -271,6 +271,21 @@ test('install prints its next-steps checklist by default', async () => {
   }
 });
 
+// upgrade-stale-daemons-other-projects: `install` is the step the upgrade
+// notes send the user to in every other project, so a daemon still running
+// the previous build there is restarted onto this one.
+test('install asks restartIfStale about THIS project\'s daemon before the pre-warm', async () => {
+  const restore = sandboxHome();
+  try {
+    const root = tmpRoot();
+    const seen = [];
+    await captureInstall(root, { restartIfStale: async (r) => { seen.push(r); return { restarted: false }; } });
+    assert.deepEqual(seen, [root]);
+  } finally {
+    restore();
+  }
+});
+
 test('install({nextSteps:false}) suppresses ONLY the trailing checklist', async () => {
   const restore = sandboxHome();
   try {

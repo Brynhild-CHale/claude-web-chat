@@ -346,7 +346,11 @@ in force at once; it prints one line saying so, and remote viewers reconnect.
 If that restart fails — a `tunnel.json` or token `up` would refuse, say — it says
 so, the update itself still succeeds, and `claude-web-chat tunnel up` is the fix.
 With no portal running, `update` leaves the tunnel alone. (`up` also restarts a
-portal it finds from an older build.)
+portal it finds from an older build.) A rollback to a build with no `tunnel`
+command (0.7.6) cannot restart it, and could not stop it afterwards either, so
+`update --to` stops the portal first, with the running build's `tunnel down`, and
+says remote access is off until a build that has the command is back; if the
+portal will not stop, nothing is rolled back.
 
 **The portal follows `tunnel.json` while it runs.** It watches the file (and
 polls it every two seconds, in case the watch misses a save) and applies a
