@@ -124,6 +124,38 @@ test('an edited file the template has since moved past (a conflict install will 
   assert.match(line, /your edits are kept/);
 });
 
+// A file that differs with NO recorded baseline (a project bootstrapped by
+// hand, or a clone of someone else's edited .claude/) is bootstrap drift:
+// plain `install` leaves it alone and only `install --force` adopts the shipped
+// version — so the line must not send the user to a command that will never
+// clear it, and must not promise their edits are kept by it.
+test('a file that differs with no baseline names install --force, not a refresh that would repeat forever', async (t) => {
+  const root = freshProject(t);
+  const rules = MANAGED_FILES.find((f) => f.tpl === 'rules/web-chat.md').dest;
+  fs.appendFileSync(path.join(root, rules), '\nmy own note\n');
+  const b = readBaselines(root);
+  delete b[rules];
+  writeBaselines(root, b);
+
+  const row = require('../lib/setup/registration').inspect(root).managed.find((r) => r.dest === rules);
+  assert.equal(row.action, 'differs', 'the fixture is bootstrap drift');
+
+  const { calls, deps: d } = deps(root);
+  await open([], d);
+  const line = managedLine(calls.logs);
+  assert.ok(line && line.includes(rules), `the differing rules file is not named: ${JSON.stringify(calls.logs)}`);
+  assert.match(line, /install --force/, 'names the only command that settles a differs file');
+  assert.doesNotMatch(line, /your edits are kept/, 'does not promise a plain install keeps edits it will not touch');
+  assert.doesNotMatch(line, /run `claude-web-chat install` to refresh/, 'does not name a refresh that would repeat on every open');
+
+  // Running the plain install the old line pointed at changes nothing, and
+  // the line would have come back identical — the repeat the wording avoids.
+  reconcileManagedFiles(root);
+  const { calls: again, deps: d2 } = deps(root);
+  await open([], d2);
+  assert.equal(managedLine(again.logs), line, 'a plain install does not settle a differs file');
+});
+
 // install cannot merge a .new for the user, so naming install over an offer
 // they already have would be an unactionable line on every open. status, init,
 // install and update still report the sidecar.
