@@ -135,18 +135,72 @@ function walk(dir, { skipNodeModules = false } = {}) {
   return out;
 }
 
+// Where `name`, required from the package installed at `fromDir`, lives on disk:
+// Node's own lookup (the nearest `node_modules/<name>` walking up from the
+// requiring package), bounded by the project root so nothing above it can ship.
+// A candidate counts only if it holds a package.json. Null when none does.
+function installedDir(root, fromDir, name) {
+  let dir = fromDir;
+  for (;;) {
+    if (path.basename(dir) !== 'node_modules') {
+      const candidate = path.join(dir, 'node_modules', name);
+      if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
+    }
+    if (dir === root) return null;
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+// The production packages' directories, derived from `npm ls --json`'s TREE
+// (who depends on what, by name) rather than from any path npm prints. npm
+// redacts a UUID-shaped path segment to `***` in its output, `--parseable`
+// paths included, so a checkout under a UUID-named directory (a Claude Code
+// worktree, a mktemp dir) read back as `/…/***/…` and the build refused it as
+// "resolved outside node_modules". Paths built from the root and the package
+// names cannot be redacted. Pure but for the fs lookups, so a test can hand it a
+// tree. A node with no `version` is an optional peer npm reports but did not
+// install (`{}`); a deduped node carries no `dependencies` — its subtree is
+// walked where npm printed it in full.
+function packageDirsFromTree(root, tree) {
+  const base = path.resolve(root);
+  const dirs = new Set();
+  const visit = (node, fromDir, via) => {
+    for (const [name, child] of Object.entries((node && node.dependencies) || {})) {
+      if (!child || !child.version) continue;
+      const dir = installedDir(base, fromDir, name);
+      if (!dir) {
+        throw new Error(`production dependency ${name}@${child.version} (required by ${via}) is not installed `
+          + `under ${path.join(base, 'node_modules')} — run \`npm ci\` first`);
+      }
+      const installed = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
+      if (installed !== child.version) {
+        throw new Error(`production dependency ${name}@${child.version} (required by ${via}) resolved to ${dir}, `
+          + `which holds ${installed} — the installed tree disagrees with npm's; run \`npm ci\` first`);
+      }
+      dirs.add(dir);
+      if (child.dependencies) visit(child, dir, `${name}@${child.version}`);
+    }
+  };
+  visit(tree, base, (tree && tree.name) || 'the project');
+  return [...dirs].sort();
+}
+
 // The production dependency tree, straight from npm's own resolution. Offline:
 // it reads the installed tree + lockfile, it does not hit the registry.
 function productionPackageDirs(root) {
-  const r = spawnSync('npm', ['ls', '--omit=dev', '--all', '--parseable'], {
-    cwd: root, encoding: 'utf8',
+  const r = spawnSync('npm', ['ls', '--omit=dev', '--all', '--json'], {
+    cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
   });
   if (r.status !== 0) {
     throw new Error(`npm ls --omit=dev failed — run \`npm ci\` first.\n${(r.stderr || '').trim()}`);
   }
-  return r.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
-    .filter((p) => path.resolve(p) !== path.resolve(root))
-    .map((p) => path.resolve(p));
+  let tree;
+  try { tree = JSON.parse(r.stdout); } catch (e) {
+    throw new Error(`npm ls --json printed something that is not JSON (${e.message})`);
+  }
+  return packageDirsFromTree(root, tree);
 }
 
 // `version` (optional) overrides the version the artefact's package.json
@@ -305,4 +359,6 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, REPO_ROOT };
+module.exports = {
+  buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, packageDirsFromTree, REPO_ROOT,
+};
