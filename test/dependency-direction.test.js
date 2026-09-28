@@ -23,9 +23,16 @@
 //
 // This test parses every relative require() under lib/, maps it to an edge
 // between two subsystems, and fails on any edge the direction forbids that is
-// not in the BASELINE below. The baseline may only ever SHRINK: an entry that
-// no longer exists fails as stale, exactly like the conventions ratchet, so a
+// not in the BASELINE below. The baseline grows only by a reviewed, reasoned
+// entry — never silently: an unlisted edge fails, and an entry that no longer
+// exists fails as stale, exactly like the conventions ratchet, so a
 // consolidation is forced to tighten the rule in the same PR.
+//
+// A baseline edge is keyed per FILE, so it admits more than the one import it
+// names: everything the target file requires is loaded into the importing
+// process too. Where that matters — an entry point reaching into another's
+// file — the target is PINNED below: what it may itself require is written
+// down, and anything else it grows fails the build naming the importer.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -113,7 +120,9 @@ const BASELINE = {
 
   // The portal picker wears Georgetown Blue from the pack's own token table,
   // declared through the one token sanitiser, rather than a pasted palette
-  // that would drift. theme.js needs only fs + the pack data.
+  // that would drift. theme.js needs only fs + the pack data — and PINNED
+  // holds it to that, because the portal is the remote-facing access-control
+  // process and must not load daemon state through this edge.
   'lib/portal/picker.js => lib/server/theme.js':
     'the picker themes itself from the canonical Georgetown Blue tokens via tokenDecls',
 
@@ -121,6 +130,22 @@ const BASELINE = {
   // not. The fix is to lift the registry, not to widen the rule.
   'lib/packs/plan.js => lib/server/components-registry.js':
     'OWED: the components registry is server-shaped but tier resolution is not',
+};
+
+// ── pinned targets: what a baseline edge is allowed to drag in ──────────────
+// For each target of a baseline edge into another entry point, the complete
+// list of what that file — and every lib/ file it pulls in, transitively — may
+// require: bare module names (Node built-ins or npm packages), and lib/ files
+// by repo-relative path. lib/core/* is always allowed (it is the leaf, and the
+// core test below keeps it one). Anything else is a new dependency riding into
+// the importing process on an edge that was reviewed for less.
+const PINNED = {
+  'lib/server/theme.js': {
+    importer: 'lib/portal/picker.js',
+    process: 'the tunnel portal (the remote-facing access-control process)',
+    bare: ['fs'],
+    files: ['lib/server/theme-packs.js'],
+  },
 };
 
 // ── the walk ────────────────────────────────────────────────────────────────
@@ -156,6 +181,41 @@ function resolveTarget(fromFile, spec) {
     if (!target.endsWith('.js')) target += '.js';
   }
   return target;
+}
+
+// Every require() specifier in a source text, relative or bare.
+function requiresOf(src) {
+  const out = [];
+  const re = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
+  let m;
+  while ((m = re.exec(src))) out.push(m[1]);
+  return out;
+}
+
+// What a pinned target (and each lib/ file it pulls in) requires beyond its pin.
+// `read` is injectable so a test can show the pin catching a require that is not
+// in the tree today.
+function pinOffenders(target, pin, read = (abs) => fs.readFileSync(abs, 'utf8')) {
+  const offenders = [];
+  const seen = new Set();
+  const queue = [target];
+  while (queue.length) {
+    const file = queue.shift();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const spec of requiresOf(read(path.join(REPO_ROOT, file)))) {
+      if (!spec.startsWith('.')) {
+        if (!pin.bare.includes(spec.replace(/^node:/, ''))) offenders.push(`${file} requires '${spec}'`);
+        continue;
+      }
+      const abs = resolveTarget(path.join(REPO_ROOT, file), spec);
+      const dep = abs ? rel(abs) : null;
+      if (dep && dep.startsWith('lib/core/')) continue;
+      if (dep && pin.files.includes(dep)) { queue.push(dep); continue; }
+      offenders.push(`${file} requires '${spec}'${dep ? ` (${dep})` : ''}`);
+    }
+  }
+  return offenders;
 }
 
 // Why this edge is forbidden, or null when it is fine.
@@ -212,6 +272,44 @@ test('dependency direction: the baseline is not stale', () => {
     + 'from BASELINE in this file in the same PR, so the rule tightens with the code:\n  '
     + gone.join('\n  '),
   );
+});
+
+test('dependency direction: a pinned baseline target requires only what its pin allows', () => {
+  for (const [target, pin] of Object.entries(PINNED)) {
+    const edge = `${pin.importer} => ${target}`;
+    assert.ok(edge in BASELINE, `PINNED names ${edge}, which is not a BASELINE edge — drop the pin with the edge`);
+    const offenders = pinOffenders(target, pin);
+    assert.deepEqual(
+      offenders,
+      [],
+      `${pin.importer} imports ${target} (a BASELINE edge), so everything ${target} requires is loaded into\n`
+      + `${pin.process}. These requires are outside its pin — move what ${pin.importer} needs down into\n`
+      + `lib/core, or, if the new dependency is genuinely safe in that process, add it to PINNED in this file\n`
+      + `with the reason:\n  ${offenders.join('\n  ')}`,
+    );
+  }
+});
+
+test('dependency direction: the pin catches a require theme.js does not have today', () => {
+  // The failure the pin exists for: theme.js starts requiring a daemon-stateful
+  // module, and the picker edge — keyed per file — would otherwise wave it into
+  // the portal process unnoticed.
+  const pin = PINNED['lib/server/theme.js'];
+  const real = (abs) => fs.readFileSync(abs, 'utf8');
+  const withGraph = (abs) => (rel(abs) === 'lib/server/theme.js'
+    ? `${real(abs)}\nconst graph = require('./graph');\n`
+    : real(abs));
+  assert.deepEqual(pinOffenders('lib/server/theme.js', pin, withGraph),
+    ["lib/server/theme.js requires './graph' (lib/server/graph.js)"]);
+
+  // Transitively too: a file the pin allows cannot become the back door.
+  const packsGrow = (abs) => (rel(abs) === 'lib/server/theme-packs.js'
+    ? `${real(abs)}\nconst { state } = require('./state');\nconst os = require('os');\n`
+    : real(abs));
+  assert.deepEqual(pinOffenders('lib/server/theme.js', pin, packsGrow), [
+    "lib/server/theme-packs.js requires './state' (lib/server/state.js)",
+    "lib/server/theme-packs.js requires 'os'",
+  ]);
 });
 
 test('dependency direction: lib/core imports nothing but lib/core', () => {

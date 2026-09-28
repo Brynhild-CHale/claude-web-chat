@@ -198,11 +198,20 @@ lib/core/          paths · portfiles · bus · names · fsjson · html · versi
 any edge the direction forbids — a `core` or `client` reach outward, an entry
 point importing another entry point, a shared library importing an entry point.
 The edges that legitimately remain are listed in a `BASELINE` in that file, each
-with the reason it is allowed, and the baseline is **shrink-only**: an entry that
-no longer matches fails as stale, so a consolidation tightens the rule in the
-same PR. One entry is marked `OWED` — `lib/packs` still reaches into
-`lib/server` for the components registry (the reserved-name list now lives in
-`lib/core/names.js`).
+with the reason it is allowed, and the baseline **grows only by a reviewed,
+reasoned entry**: an unlisted edge fails, and an entry that no longer matches
+fails as stale, so a consolidation tightens the rule in the same PR. One entry is
+marked `OWED` — `lib/packs` still reaches into `lib/server` for the components
+registry (the reserved-name list now lives in `lib/core/names.js`).
+
+A baseline edge is keyed per file, so it admits everything the target file
+requires as well. Where the edge crosses into another entry point, the target is
+**pinned** (`PINNED` in the same file): the portal picker's edge into
+`lib/server/theme.js` loads that file into the tunnel portal — the remote-facing
+access-control process — so theme.js, and anything it pulls in, may require only
+`fs`, `lib/core/*` and `./theme-packs`. A new require there fails the build and
+names the picker; move what the picker needs into `lib/core` rather than widen
+the pin.
 
 The rule was a paragraph until then, and a paragraph is one lazy `require` away
 from being wrong. It already was, in four places, and every one of them was the
@@ -1310,10 +1319,14 @@ The ratchet works the same way in both:
 - **New / grown occurrence → fail.** You wrote a banned construct somewhere new —
   route it through its engine instead.
 - **Removed occurrence → fail as a STALE baseline.** A consolidation dropped a
-  count below its baseline; lower the number here in the same PR. The ceiling can
-  only ever move toward zero-outside-the-home.
+  count below its baseline; lower the number here in the same PR.
+- **A baseline grows only by a reviewed, reasoned entry.** Raising a count or
+  adding a file is a deliberate change with its reason written beside it (the
+  process.kill sites the tunnel and replay engines gained are examples) — never
+  a way to make a new occurrence pass. The direction of travel is still toward
+  zero-outside-the-home.
 
-Current homes (baselines can only shrink toward these):
+Current homes (baselines move toward these):
 
 | Construct | Allowed home | Phase that finishes the collapse |
 | --- | --- | --- |
