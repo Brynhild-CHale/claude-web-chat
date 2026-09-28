@@ -546,6 +546,34 @@ test('fonts: a bundled family or a licensed WOFF2 only', () => {
   assert.deepEqual(ok.summary.fonts, [{ family: 'Libre Caslon Text', bundled: true }]);
 });
 
+// E3-M2: an installed theme's fonts/ is validated and copied, but nothing
+// serves it yet (no @font-face in the chrome, a preview or an export). The
+// plan says so, so the review card, `pack review` and the install report carry it.
+test('a theme that ships a font plans with the not-yet-loaded warning; a bundled family alone does not', async (t) => {
+  const harbor = themePack({ themes: { harbor: {
+    theme: { ...THEME, fonts: [{ family: 'Harbor', file: 'Harbor.woff2' }] },
+    fonts: { 'Harbor.woff2': WOFF2, 'OFL.txt': OFL },
+  } } });
+  const r = inspectPackTheme(harbor, 'harbor');
+  assert.deepEqual(r.errors, []);
+  assert.ok(r.files.some((f) => f.path === 'harbor/fonts/Harbor.woff2'), 'the font still installs');
+  const w = r.warnings.filter((x) => /not yet loaded/.test(x));
+  assert.equal(w.length, 1, r.warnings.join('\n'));
+  assert.match(w[0], /^theme "harbor": "Harbor" \(fonts\/\) is installed with the theme but not yet loaded by the surface or exports — name a bundled fallback after it in the token/);
+  assert.match(w[0], /e\.g\. "'Harbor', Geist, sans-serif"/, 'with a bundled family to name');
+
+  const bundledOnly = themePack({ themes: { harbor: { theme: { ...THEME, fonts: ['Geist Mono'] }, fonts: null } } });
+  assert.equal(inspectPackTheme(bundledOnly, 'harbor').warnings.some((x) => /not yet loaded/.test(x)), false, 'a bundled family IS loaded');
+
+  // …and it rides the plan into what the user reads.
+  const root = project(t);
+  const forge = await forgeFor(t, harbor);
+  const q = await packs.quarantinePack({ url: forge.url('acme', 'harbor'), root });
+  assert.ok(q.record.warnings.some((x) => /"Harbor" \(fonts\/\) is installed with the theme but not yet loaded/.test(x)), 'the review card');
+  const out = packs.approvePack({ name: 'harbor-themes', root });
+  assert.ok(out.warnings.some((x) => /not yet loaded/.test(x)), 'the install report');
+});
+
 test('theme.json: its name must match its directory, and it may not claim to be built in', () => {
   const renamed = themePack({ themes: { harbor: { theme: { ...THEME, name: 'other' } } } });
   assert.match(planErrors(renamed), /says name "other"/);
