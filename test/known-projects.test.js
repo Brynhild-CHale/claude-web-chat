@@ -90,7 +90,7 @@ test('sessions(): inactive rows for known projects with nothing running; every r
   assert.equal(by[live].known, true);
   assert.ok(by[live].surface, 'a running project is not inactive');
   assert.equal(registry.isInactive(by[live]), false);
-  assert.deepEqual(by[asleep], { root: asleep, title: 'asleep', surface: null, claude: null, known: true, last_seen_at: 42 });
+  assert.deepEqual(by[asleep], { root: asleep, title: 'asleep', surface: null, claude: null, known: true, last_seen_at: 42, last_package_version: null, version_skew: null });
   assert.equal(registry.isInactive(by[asleep]), true);
   assert.equal(by[stranger].known, false, 'a Claude-only project whose daemon never booted is not known');
   assert.equal(registry.isInactive(by[stranger]), false);
@@ -374,6 +374,46 @@ test('picker page: ACTIVE and INACTIVE sections, every row clickable, confirm-to
   await new Promise((res) => setTimeout(res, 20));
   assert.deepEqual(posts, ['/api/sessions/abcd1234/start']);
   assert.deepEqual(assigned, ['https://wc-abcd1234.example.test/'], 'then it goes to the session');
+  window.close();
+});
+
+test('picker: listSessions carries each side\'s release and the restart sentence', async () => {
+  const { listSessions } = require('../lib/portal/picker');
+  const config = { hostname: 'wc.example.test', naming: 'flat', showRoots: false };
+  const rows = [
+    { root: '/x/skewed', title: 'skewed', known: true,
+      surface: { running: true, port: 1, pid: 2, reachable: true, package_version: '0.8.0' },
+      claude: { sessions: 1, channel: false, pids: [3], last_tool_at: null, package_versions: [{ version: '0.7.6', sessions: 1 }] } },
+    { root: '/x/asleep', title: 'asleep', known: true, surface: null, claude: null, last_seen_at: 1, last_package_version: '0.7.6' },
+  ];
+  const out = await listSessions({ config, rows, enrich: async (r) => r.map((x) => ({ ...x, version_skew: registry.versionSkew(x) })) });
+  assert.equal(out[0].surface.package_version, '0.8.0');
+  assert.deepEqual(out[0].claude.package_versions, [{ version: '0.7.6', sessions: 1 }]);
+  assert.equal(out[0].version_note, 'Claude is on v0.7.6 — restart Claude Code to pick up v0.8.0');
+  assert.equal(out[1].version_note, null);
+  assert.equal(out[1].last_package_version, '0.7.6');
+  assert.equal(JSON.stringify(out).includes('"pids"'), false, 'still no pids');
+});
+
+test('picker page: release chips (full string in the tooltip) and the ⚠ line only on a mismatch', async () => {
+  const DEV = '0.8.0-dev.202609280312.abc1234';
+  const { window, doc } = await pickerDom([
+    { id: 'aaaa1111', title: 'skewed', url: 'https://wc-aaaa1111.example.test/', known: true,
+      surface: { reachable: true, started_at: null, viewers: 1, turn: null, active_label: null, package_version: DEV },
+      claude: { sessions: 1, channel: false, last_tool_at: null, package_versions: [{ version: '0.7.6', sessions: 1 }] },
+      version_note: `Claude is on v0.7.6 — restart Claude Code to pick up v${DEV}` },
+    { id: 'bbbb2222', title: 'fine', url: 'https://wc-bbbb2222.example.test/', known: true,
+      surface: { reachable: true, started_at: null, viewers: 0, turn: null, active_label: null, package_version: '0.8.0' },
+      claude: { sessions: 1, channel: false, last_tool_at: null, package_versions: [{ version: '0.8.0', sessions: 1 }] }, version_note: null },
+    { id: 'cccc3333', title: 'asleep', url: null, known: true, surface: null, claude: null, last_package_version: '0.7.6', version_note: null },
+  ]);
+  const [skewed, fine] = doc.getElementById('active').querySelectorAll('li');
+  const chips = [...skewed.querySelectorAll('.ver')];
+  assert.deepEqual(chips.map((c) => c.textContent), [`v${DEV}`, 'v0.7.6']);
+  assert.equal(chips[0].title, `web-chat ${DEV}`);
+  assert.match(skewed.querySelector('.warn').textContent, /^⚠ Claude is on v0\.7\.6 — restart Claude Code/);
+  assert.equal(fine.querySelector('.warn'), null, 'no mismatch, no warning');
+  assert.equal(doc.getElementById('inactive').querySelector('.ver').textContent, 'v0.7.6', 'an inactive row: the release it last ran');
   window.close();
 });
 

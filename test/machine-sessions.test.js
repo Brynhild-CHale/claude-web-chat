@@ -113,6 +113,24 @@ test('GET /api/machine/sessions: the answering daemon lists itself as running ev
   assert.equal(row.open_cmd, null);
 });
 
+test('GET /api/machine/sessions: each side\'s release, and the restart sentence only on a mismatch', async (t) => {
+  const { api, port, root } = await withServer(t);
+  const here = path.resolve(root);
+  registry.registerInstance({ root: here, port, pid: process.pid, title: 'here' });
+  registry.registerMcp({ root: here, pid: process.pid, ppid: process.ppid });
+  const v = require('../lib/core/versions').packageVersion();
+
+  let [row] = (await api.get('/api/machine/sessions')).json.sessions;
+  assert.equal(row.surface.package_version, v);
+  assert.deepEqual(row.claude.package_versions, [{ version: v, sessions: 1 }]);
+  assert.equal(row.version_note, null, 'same release: nothing to say');
+
+  // A session started before an update still runs the old MCP server.
+  registry.registerMcp({ root: here, pid: process.pid, ppid: process.ppid, package_version: '0.6.9' });
+  [row] = (await api.get('/api/machine/sessions')).json.sessions;
+  assert.equal(row.version_note, `Claude is on v0.6.9 — restart Claude Code to pick up v${v}`);
+});
+
 test('openCommand / displayRoot: quote what needs quoting; ~ only for a path inside HOME', (t) => {
   assert.equal(shellQuote('/Users/me/Dev/app'), '/Users/me/Dev/app');
   assert.equal(shellQuote("/tmp/it's here"), `'/tmp/it'\\''s here'`);
@@ -371,6 +389,37 @@ test('panel: known projects with nothing running sit in a collapsed Inactive gro
   await refresh.fn();
   await tick();
   assert.equal($('sessions-list').querySelector('details.ss-inactive').open, true, 'the refresh keeps it open');
+  escape();
+  sessionsBody = ROWS();
+});
+
+test('panel: each half shows its release; a dev build is clipped with the full string in the tooltip; ⚠ only on a mismatch', async () => {
+  const body = ROWS();
+  const DEV = '0.8.0-dev.202609280312.abc1234';
+  body.sessions[0].surface.package_version = '0.8.0';
+  body.sessions[0].claude.package_versions = [{ version: '0.8.0', sessions: 1 }, { version: '0.6.9', sessions: 1 }];
+  body.sessions[0].version_note = '1 of 2 Claude sessions is on v0.6.9 — restart it to pick up v0.8.0';
+  body.sessions[1].claude.package_versions = [{ version: DEV, sessions: 1 }];
+  body.sessions[1].version_note = null;
+  body.sessions[2].surface.package_version = '0.8.0';
+  sessionsBody = body;
+  key('s');
+  await tick();
+
+  const here = rowFor('/home/me/here');
+  const chips = [...here.querySelectorAll('.ss-ver')].map((c) => c.textContent);
+  assert.deepEqual(chips, ['v0.8.0', 'v0.8.0', 'v0.6.9'], 'the surface\'s, then each Claude release');
+  const warn = here.querySelector('.ss-warn');
+  assert.ok(warn, 'a mismatch gets a warning line');
+  assert.match(warn.textContent, /⚠1 of 2 Claude sessions is on v0\.6\.9 — restart it to pick up v0\.8\.0/);
+
+  const dev = rowFor('/home/me/solo').querySelector('.ss-ver');
+  assert.equal(dev.textContent, `v${DEV}`, 'the whole string is there (CSS clips it)');
+  assert.equal(dev.title, `web-chat ${DEV}`, 'and in the tooltip');
+  assert.equal(rowFor('/home/me/solo').querySelector('.ss-warn'), null);
+  assert.equal(rowFor('/srv/other').querySelector('.ss-warn'), null, 'no mismatch, no warning');
+  assert.equal(rowFor('/srv/other').querySelector('.ss-ver').textContent, 'v0.8.0');
+  assert.equal(rowFor('/srv/gone').querySelector('.ss-ver'), null, 'no release recorded, no chip');
   escape();
   sessionsBody = ROWS();
 });

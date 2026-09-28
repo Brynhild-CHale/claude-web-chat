@@ -16,6 +16,7 @@ const { readMcpSeen } = require('../lib/core/mcp-seen');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { forwardHeaders, responseHeaders } = require('../lib/portal/proxy');
 const { parseHost, sessionHost, normalizeConfig } = require('../lib/tunnel/config');
+const { packageVersion } = require('../lib/core/versions');
 
 // One daemon + one portal, the daemon registered under its real instance id.
 async function rig(t, { config } = {}) {
@@ -188,7 +189,10 @@ test('picker: live Claude presence from the registry — connected ×N, channel,
   assert.equal(lock.status, 200, lock.text);
   const list = await r.req('/api/sessions', { h: 'wc.example.test' });
   const row = list.json.sessions.find((s) => s.id === r.id);
-  assert.deepEqual(row.claude, { sessions: 2, channel: true, last_tool_at: 1234 });
+  const v = packageVersion();
+  assert.deepEqual(row.claude, { sessions: 2, channel: true, last_tool_at: 1234, package_versions: [{ version: v, sessions: 2 }] });
+  assert.equal(row.surface.package_version, v, 'the surface\'s release, from its /api/health');
+  assert.equal(row.version_note, null, 'one release on both sides: nothing to say');
   assert.equal(row.surface.turn, 'mid-turn');
   assert.equal(row.claude_seen_at, undefined, 'the old "Claude seen <ago>" field is gone');
   assert.equal(JSON.stringify(row).includes(String(kid.pid)), false, 'no pids on the remote page');
@@ -207,8 +211,9 @@ test('picker: a project with Claude attached but no surface is listed WITHOUT a 
   assert.equal(list.status, 200, list.text);
   assert.deepEqual(list.json.sessions, [{
     id: instanceId(root), title: 'claude-only-project', url: null, surface: null,
-    claude: { sessions: 1, channel: false, last_tool_at: null },
+    claude: { sessions: 1, channel: false, last_tool_at: null, package_versions: [] },
     known: false,
+    version_note: null,
   }]);
   // Its hostname is still the friendly 404 — listing it did not make it routable.
   const page = await p.request('/', { host: sessionHost(p.config, instanceId(root)), headers: { 'cf-access-jwt-assertion': access.mint() } });

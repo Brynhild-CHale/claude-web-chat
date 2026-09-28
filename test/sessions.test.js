@@ -12,7 +12,9 @@
 //     daemons only, exactly as before;
 //   * enrichSessions() reads the turn/viewers/active facts from a real daemon;
 //   * last_tool_at writes are throttled and never on the call path;
-//   * `ls` prints the CLAUDE / TURN / VIEWERS columns and `--json`, `status` its line.
+//   * `ls` prints the VERSION / CLAUDE / TURN / VIEWERS columns and `--json`, `status` its line;
+//   * each side's web-chat release rides every row, and a Claude session on a
+//     different release than its surface says which side to restart.
 //
 // Every test runs under a throwaway HOME (withTempHome), so nothing here reads
 // or writes the developer's ~/.web-chat.
@@ -30,6 +32,7 @@ const { startPresence } = require('../lib/mcp/presence');
 const { startChannelBridge } = require('../lib/channel/bridge');
 const ls = require('../lib/cli/commands/ls');
 const status = require('../lib/cli/commands/status');
+const { packageVersion, PROTOCOL_VERSION } = require('../lib/core/versions');
 
 const MCP_BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
 const DEAD_PID = 2 ** 30;
@@ -87,6 +90,8 @@ test('MCP server: registers a presence row at startup with no daemon, drops it w
   assert.equal(row.ppid, process.pid, 'ppid is the process that spawned it (Claude Code, in life)');
   assert.equal(row.channel, false);
   assert.equal(typeof row.started_at, 'number');
+  assert.equal(row.package_version, packageVersion(), 'the release this MCP server loaded, for the sessions view');
+  assert.equal(row.version, PROTOCOL_VERSION, '`version` stays the protocol number');
   assert.equal(fs.existsSync(path.join(root, '.web-chat', 'server.json')), false, 'no daemon was spawned to say so');
 
   child.stdin.end();
@@ -338,11 +343,13 @@ test('ls: CLAUDE / TURN / VIEWERS columns, a session-only project, and --json', 
   const log = sink();
   await ls([], { log, here: surfaced, timeoutMs: 2000 });
   const out = log.text();
-  assert.match(out, /PROJECT +SURFACE +CLAUDE +TURN +VIEWERS/);
+  assert.match(out, /PROJECT +SURFACE +VERSION +CLAUDE +TURN +VIEWERS/);
   const line = out.split('\n').find((l) => /^ {2}surfaced /.test(l));
   assert.match(line, /● 2 · channel +mid-turn +0 +←/);
+  assert.ok(line.includes(` v${packageVersion()} `), 'the surface\'s release, from its /api/health');
+  assert.doesNotMatch(out, /⚠/, 'one release on both sides: no restart hint');
   const only = out.split('\n').find((l) => l.includes(path.basename(sessionOnly)) && /●/.test(l));
-  assert.match(only, /— +● 1\b/, 'a project with a session and no surface is listed');
+  assert.match(only, /— +v\S+ +● 1\b/, 'a project with a session and no surface is listed');
   assert.match(out, /no surface — `claude-web-chat open` there starts one/);
 
   const jlog = sink();
@@ -373,4 +380,95 @@ test('status: the Claude line for this project', async (t) => {
   assert.equal(claude.length, 2);
   assert.match(claude[0], /no Claude Code session attached/);
   assert.match(claude[1], /● 1 session attached · channel on · since \d+s ago · no tool call yet/);
+});
+
+// ──────────────────────────────────────────────── versions ────
+
+test('sessions(): each side\'s release; a skew only when a Claude session differs from its surface', (t) => {
+  withTempHome(t);
+  const same = project(t, 'same');
+  const skewed = project(t, 'skewed');
+  const other = bystander(t);
+  const third = bystander(t);
+  registry.registerInstance({ root: same, port: 1, pid: process.pid, title: 'same' });
+  registry.registerMcp({ root: same, pid: process.pid, ppid: process.ppid });
+  registry.registerInstance({ root: skewed, port: 2, pid: other.pid, title: 'skewed' });
+  // Two sessions started before an update (0.6.9), one after.
+  registry.registerMcp({ root: skewed, pid: other.pid, ppid: process.pid, package_version: '0.6.9' });
+  registry.registerMcp({ root: skewed, pid: third.pid, ppid: process.pid, package_version: '0.6.9' });
+  registry.registerMcp({ root: skewed, pid: bystander(t).pid, ppid: process.pid, package_version: packageVersion() });
+
+  const v = packageVersion();
+  const by = Object.fromEntries(registry.sessions().map((r) => [r.root, r]));
+  assert.equal(by[same].surface.package_version, v, 'the daemon\'s release, as the registry recorded it');
+  assert.deepEqual(by[same].claude.package_versions, [{ version: v, sessions: 1 }]);
+  assert.equal(by[same].version_skew, null, 'one release on both sides: no skew');
+
+  assert.deepEqual(by[skewed].claude.package_versions.map((x) => x.sessions).sort(), [1, 2]);
+  assert.deepEqual(by[skewed].version_skew, { surface: v, sessions: 3, stale: [{ version: '0.6.9', sessions: 2, restart: 'claude' }] });
+  assert.equal(registry.versionNote(by[skewed].version_skew),
+    `2 of 3 Claude sessions are on v0.6.9 — restart them to pick up v${v}`);
+});
+
+test('versionSkew / versionNote: which side is behind, all or some sessions, and nothing without both versions', () => {
+  const row = (sv, list, sessions) => ({ surface: sv === undefined ? null : { package_version: sv },
+    claude: list ? { sessions: sessions || list.reduce((n, x) => n + x.sessions, 0), package_versions: list } : null });
+  const skew = (...a) => registry.versionSkew(row(...a));
+
+  assert.equal(registry.versionNote(skew('0.8.0', [{ version: '0.6.9', sessions: 1 }])),
+    'Claude is on v0.6.9 — restart Claude Code to pick up v0.8.0');
+  assert.equal(registry.versionNote(skew('0.8.0', [{ version: '0.8.0', sessions: 1 }, { version: '0.6.9', sessions: 1 }])),
+    '1 of 2 Claude sessions is on v0.6.9 — restart it to pick up v0.8.0');
+  assert.equal(registry.versionNote(skew('0.6.9', [{ version: '0.8.0', sessions: 1 }])),
+    'the surface is on v0.6.9, Claude on v0.8.0 — run `claude-web-chat restart` in this project to pick up v0.8.0');
+  // Two dev builds of one release: a string difference is still a skew.
+  const dev = skew('0.8.0-dev.202609280101.aaaaaaa', [{ version: '0.8.0-dev.202609270101.bbbbbbb', sessions: 1 }]);
+  assert.equal(dev.stale[0].restart, 'claude');
+  assert.match(registry.versionNote(dev), /^Claude is on v0\.8\.0-dev\.202609270101\.bbbbbbb — restart Claude Code/);
+
+  assert.equal(skew(undefined, [{ version: '0.6.9', sessions: 1 }]), null, 'no surface, nothing to compare against');
+  assert.equal(skew(null, [{ version: '0.6.9', sessions: 1 }]), null, 'a daemon that recorded no release');
+  assert.equal(skew('0.8.0', [], 1), null, 'a session that recorded no release');
+  assert.equal(skew('0.8.0', null), null);
+  assert.equal(registry.versionNote(null), null);
+});
+
+test('enrichSessions(): the daemon\'s own release replaces the registry\'s; an older daemon keeps the registry\'s', async () => {
+  const row = () => ({ root: '/r', title: 'r', surface: { running: true, port: 9, url: 'u', pid: 7, package_version: '0.6.9' },
+    claude: { sessions: 1, package_versions: [{ version: '0.8.1', sessions: 1 }] } });
+  let [r] = await registry.enrichSessions([row()], { get: async () => ({ ok: true, pid: 7, package_version: '0.8.1' }) });
+  assert.equal(r.surface.package_version, '0.8.1');
+  assert.equal(r.version_skew, null, 'the skew is recomputed from what the daemon said');
+  [r] = await registry.enrichSessions([row()], { get: async () => ({ ok: true, pid: 7 }) });
+  assert.equal(r.surface.package_version, '0.6.9', 'a daemon predating the field: the registry\'s record stands');
+  assert.equal(r.version_skew.stale[0].restart, 'surface', 'and a surface behind Claude says to restart the surface');
+  [r] = await registry.enrichSessions([row()], { get: async () => ({ ok: true, pid: 7, package_version: '<b>x</b> much too long for a release string, really, far too long here' }) });
+  assert.equal(r.surface.package_version, '0.6.9', 'a malformed version is not repeated');
+});
+
+test('an inactive project remembers the release it last ran', (t) => {
+  withTempHome(t);
+  const root = project(t, 'asleep');
+  registry.rememberProject({ root, title: 'asleep', now: 1, package_version: '0.6.9' });
+  const [r] = registry.sessions();
+  assert.equal(registry.isInactive(r), true);
+  assert.equal(r.last_package_version, '0.6.9');
+});
+
+test('ls: the ⚠ restart hint names the stale sessions, only on a mismatch', async (t) => {
+  const { port, root } = await withServer(t);
+  const surfaced = fs.realpathSync(root);
+  registry.registerInstance({ root: surfaced, port, pid: process.pid, title: 'surfaced' });
+  registry.registerMcp({ root: surfaced, pid: process.pid, ppid: process.ppid, package_version: '0.6.9' });
+  const log = sink();
+  await ls([], { log, here: surfaced, timeoutMs: 2000 });
+  const out = log.text();
+  assert.ok(out.includes(`⚠ Claude is on v0.6.9 — restart Claude Code to pick up v${packageVersion()}`), out);
+  assert.match(out, /⚠ marks a Claude session on a different web-chat release/);
+
+  const jlog = sink();
+  await ls(['--json'], { log: jlog, here: null, timeoutMs: 2000 });
+  const [row] = JSON.parse(jlog.text()).sessions;
+  assert.equal(row.surface.package_version, packageVersion());
+  assert.deepEqual(row.version_skew.stale, [{ version: '0.6.9', sessions: 1, restart: 'claude' }]);
 });

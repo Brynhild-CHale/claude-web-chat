@@ -60,3 +60,7 @@ h2 {
 .btn:disabled { opacity: .6; cursor: default; }
 [hidden] { display: none !important; }
 footer { margin-top: 32px; font-size: 13px; }
+/* A release chip (v0.8.0): a dev build's long string is clipped, the full one is its tooltip. */
+.ver { display: inline-block; vertical-align: bottom; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--wc-mono); color: var(--wc-muted); }
+.meta .ver { margin-left: 8px; }
+.warn { display: block; margin-top: 4px; font-size: 13px; }

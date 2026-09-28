@@ -20,6 +20,12 @@
 // group under the live rows, with the same start-it command. The group's
 // open/closed state survives the 5s refresh.
 //
+// Each row also says which web-chat RELEASE each half runs — the surface's
+// daemon and every attached Claude session's MCP server — and, when they
+// differ, the route's one-sentence `version_note` (lib/util/registry
+// versionNote) under a ⚠: after an `update` that is how the user finds the
+// Claude Code sessions still running the old tools.
+//
 // Every string that came from the registry — a project title, a root path — is
 // a directory name somebody chose, so it is set as textContent, never parsed.
 import { $ } from './state.js';
@@ -62,6 +68,15 @@ function badge(text, kind) {
   return el('span', `ss-badge${kind ? ' ' + kind : ''}`, text);
 }
 
+// A release, compactly: `v0.8.0`. A dev build's long string is cut short by
+// CSS; the whole of it stays in the tooltip.
+function versionChip(v, suffix = '') {
+  if (typeof v !== 'string' || !v) return null;
+  const chip = el('span', 'ss-ver', `v${v}${suffix}`);
+  chip.title = `web-chat ${v}`;
+  return chip;
+}
+
 // The turn lock lives on the daemon, so only a reachable surface can say. It
 // rides the Claude line; a lock with no live session beside it (a session that
 // just exited mid-turn) shows on the surface line instead, never nowhere.
@@ -72,20 +87,25 @@ function turnBadge(s) {
 }
 
 // The surface half of a row: running :port · N viewers | not answering | stopped.
-function surfaceLine(s, withTurn) {
+function surfaceLine(s, withTurn, lastVersion) {
   const line = el('div', 'ss-line ss-surface');
   if (!s) {
     line.append(el('span', 'ss-dot off', '○'), el('span', null, 'surface stopped'));
+    const last = versionChip(lastVersion);
+    if (last) { last.title = `last ran web-chat ${lastVersion}`; line.append(last); }
     return line;
   }
+  const ver = versionChip(s.package_version);
   if (s.reachable === false) {
     line.append(el('span', 'ss-dot warn', '●'), el('span', null, `:${s.port} · not answering`));
+    if (ver) line.append(ver);
     return line;
   }
   const bits = [`running :${s.port}`];
   if (Number.isFinite(s.viewers)) bits.push(`${s.viewers} viewer${s.viewers === 1 ? '' : 's'}`);
   if (s.active_label) bits.push(`at ${s.active_label}`);
   line.append(el('span', 'ss-dot on', '●'), el('span', null, bits.join(' · ')));
+  if (ver) line.append(ver);
   const turn = withTurn && turnBadge(s);
   if (turn) line.append(turn);
   return line;
@@ -99,6 +119,12 @@ function claudeLine(c, s, now) {
     return line;
   }
   line.append(el('span', 'ss-dot on', '●'), el('span', null, `Claude connected${c.sessions > 1 ? ` ×${c.sessions}` : ''}`));
+  // One chip per release the sessions run; ×N only when they are split.
+  const vers = Array.isArray(c.package_versions) ? c.package_versions : [];
+  for (const v of vers) {
+    const chip = versionChip(v.version, vers.length > 1 && v.sessions > 1 ? ` ×${v.sessions}` : '');
+    if (chip) line.append(chip);
+  }
   line.append(badge(c.channel ? 'channel on' : 'channel off', c.channel ? 'on' : null));
   const turn = turnBadge(s);
   if (turn) line.append(turn);
@@ -140,7 +166,12 @@ function rowEl(row, now) {
   head.append(el('span', 'ss-title', row.title || row.root));
   if (row.current) head.append(badge('this page', 'here'));
   item.append(head, el('div', 'ss-root', row.display_root || row.root));
-  item.append(surfaceLine(row.surface, !row.claude), claudeLine(row.claude, row.surface, now));
+  item.append(surfaceLine(row.surface, !row.claude, row.last_package_version), claudeLine(row.claude, row.surface, now));
+  if (row.version_note) {
+    const warn = el('div', 'ss-line ss-warn');
+    warn.append(el('span', 'ss-dot warn', '⚠'), el('span', null, row.version_note));
+    item.append(warn);
+  }
 
   if (row.surface && row.surface.url) {
     item.classList.add('link');
