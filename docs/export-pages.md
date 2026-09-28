@@ -237,15 +237,18 @@ There is no authoring UI: Claude writes the script (the rules file's
 - `steps` — the beats, in path order. `node` shows one node; `nodes` is a
   GROUP of consecutive nodes played as one beat: it shows the group's LAST
   node and its caption lists every node in it (`n1.3 · n1.4 · n1.5`). A
-  no-change node the graph hides may sit inside a group unnamed. Nodes no step
-  names are not shown. Omit `steps` and the script is the plain replay: every
+  no-change node the graph hides may sit inside a group unnamed, and a step
+  right after such nodes carries them as `+N folded`, as the plain replay does.
+  Nodes no step names are not shown. Omit `steps` and the script is the plain replay: every
   drawn node at `default_hold_ms`.
 - `hold_ms` (per step, else `default_hold_ms`, else the replay's `hold_ms`)
   is clamped to 500–20000 ms; `transition` (`cut` | `fade`) is how that beat
   comes in; `caption` (cut to 280 characters) takes the place of the
   automatic reply line; `title` (cut to 120) heads the caption bar and names
-  the document; `include_prompts`, when the script says it, wins over the
-  request's. `scroll` is where the frame looks during the beat: `auto` (the
+  the document; `include_prompts`, when the script says it, is the default for
+  a request that states none — a request that states one wins (the player's
+  **Include my prompts** checkbox starts from the script's, and your choice
+  there decides what you watch and save). `scroll` is where the frame looks during the beat: `auto` (the
   default — what the node added, then what it changed), `none` (hold still
   where the last beat left off), or the id of one pane or markdown item on the
   shown node's page (an id that is not there is refused as `bad-script`).
@@ -254,7 +257,8 @@ There is no authoring UI: Claude writes the script (the rules file's
   (`out-of-order`), a group with a drawn node missing from its run
   (`not-contiguous`), more than 200 steps (`too-many-steps`) or a malformed
   script (`bad-script`) is refused with `{ error, code, step }` naming the
-  step. `normalizeReplayScript` (`lib/server/domain/replay-path.js`) is the
+  step, and a `from` or `to` that does not resolve with `which` naming the end;
+  the `export` tool hands both back as they came. `normalizeReplayScript` (`lib/server/domain/replay-path.js`) is the
   one home of that check, and its answer is what the replay document, the
   player and the renderer all play — a plain replay is the no-steps case of
   the same model, not a second path.
@@ -287,7 +291,7 @@ The same replay can be written to disk, to attach or post:
 | Route | Who uses it | What you get |
 | --- | --- | --- |
 | `export({ format: 'gif' \| 'mp4' \| 'webm' \| 'replay', from, to, … })` MCP tool | Claude | the path of `replay-<from>_<to>-<stamp>.gif` / `.mp4` / `.webm` / `.html` under `.web-chat/exports/` |
-| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions on\|none] [--prompts\|--no-prompts]` | the user, from a terminal | the same write, path printed |
+| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions on\|none] [--prompts\|--no-prompts] [--mode light\|dark]` | the user, from a terminal | the same write, path printed |
 | **↧ GIF** / **↧ MP4** / **↧ WebM** in the replay player | the user, from the surface | a render of what the player is showing, with a link to download it |
 | `POST /api/replay/render` | anything local, JSON body only | `{ ok, path, label, from, to, format, frames, encoder, bytes }` |
 
@@ -306,7 +310,11 @@ macOS the Chrome, Chromium, Edge and Brave app bundles in `/Applications`, else
 hint naming what to install; `GET /api/replay/capabilities` (`{ chrome, ffmpeg,
 formats, gif_encoder }`, cached — `?refresh=1` looks again) says so up front,
 the player disables the buttons it cannot serve, and `claude-web-chat doctor`
-notes what it found.
+notes what it found. Asked through the tunnel portal, which refuses
+`POST /api/replay/render` to a remote viewer, it says only *whether* Chrome and
+ffmpeg are installed, answers `gif`, `mp4` and `webm` as unavailable with
+`remote: true` and the portal's `hint`, and the player disables those buttons
+with that hint as their title — before the click, not after it.
 
 **ffmpeg is optional, and used when it is there** (`WEB_CHAT_FFMPEG`, same
 override rule, else `ffmpeg` on `PATH`; version 4.4 or later). It encodes every
@@ -324,15 +332,19 @@ format (`lib/replay/encode.js`):
   not shimmer) — smoother gradients and images than the built-in encoder's
   per-frame, undithered palette. Holds are exact to the centisecond, the last
   one included. If ffmpeg fails on a GIF, the frames already captured go through
-  the built-in encoder instead and the answer carries `encoder: 'builtin'` plus
-  `fallback` (ffmpeg's error); a failed MP4/WebM is a `502` `ffmpeg-failed`
+  the built-in encoder instead — one at a time, yielding to the daemon between
+  them and stopping at the render's deadline (`504` `timeout`), so a long
+  fallback never stalls the surface — and the answer carries
+  `encoder: 'builtin'` plus `fallback` (ffmpeg's error); a failed MP4/WebM is a `502` `ffmpeg-failed`
   naming ffmpeg's last line of stderr. The answer's `encoder` is always the one
   that wrote the file.
 - It is run with an argv this package builds (never a shell, never a value from
   the request but clamped numbers), on an `ffconcat` list of the distinct frames
   written under `.web-chat/tmp/` — a node held for 2.5 s is one image with a
   2.5 s duration — which is removed when the render ends, and it shares the
-  render's wall-clock budget.
+  render's wall-clock budget and its abort: the daemon shutting down mid-encode
+  kills ffmpeg (SIGKILL) and the render answers `503` `aborted`, and a daemon
+  that exits for any reason SIGKILLs every ffmpeg it started on its way out.
 
 How a render works (`lib/server/replay/render.js`):
 
@@ -341,7 +353,11 @@ How a render works (`lib/server/replay/render.js`):
   inherited file descriptors, so no debugging port is ever opened
   (`lib/replay/chrome.js`). It is pointed at this daemon's own `/replay` document
   over loopback with `chrome=0`, so a frame is drawn under the same
-  `PREVIEW_CSP` as every preview.
+  `PREVIEW_CSP` as every preview — and by script id (`/replay?script=<id>`):
+  the render pins the steps it resolved, every node by its stored id (a plain
+  replay's as one `{node}` step each), so a node set active, bookmarked or
+  branched from while Chrome starts cannot change what it plays under a frame
+  schedule already fixed.
 - Frames are taken where `player.js`'s own timeline says: one per step for a
   cut, and for a fade `fps` samples across the fade (default 10) then one held
   frame. Each is `seek(t)` then a screenshot; the PNG is decoded by
@@ -354,15 +370,30 @@ How a render works (`lib/server/replay/render.js`):
   `include_prompts: true` — a file is made to be sent on, and the prompt is the
   one thing a replay carries that a page export does not. The captions still
   show each node's label, time and Claude's reply; `captions: 'none'` drops
-  them. The browser is pointed at `/replay?…&include_prompts=0`, so the page it
-  draws the frames from holds no prompt text either. The answer carries
+  them. The browser is pointed at `/replay?…&include_prompts=0` (or `=1`: the
+  render's own decision, always explicit), so the page it draws the frames
+  from holds no prompt text either. The answer carries
   `include_prompts`, and the player's **↧ GIF** / **↧ MP4** / **↧ WebM** follow
   its **Include my prompts** checkbox (see above).
-- Options: `width` (320–1920, default 960; the height follows the 16:10 frame),
-  `hold_ms`, `pacing`, `transition`, `captions`, `include_prompts`, `fps` (1–30: fade and scroll
-  sampling, and a video's frame rate), `from` / `to` / `include_collapsed` as for the player.
+- Options: `width` (320–1920, default 960; the height follows the replay's
+  `size`, 16:10 by default), `hold_ms`, `pacing`, `transition`, `captions`,
+  `include_prompts`, `mode` (`light` unless asked), `fps` (1–30: fade and scroll
+  sampling, and a video's frame rate), `from` / `to` / `include_collapsed` as
+  for the player. A frame is at most 1920×1200 in area: a taller `size` shrinks
+  the frame (width and height together, keeping its shape, both even) rather
+  than rendering a 1920×12960 page.
+- **Frames are fitted, not refused, when they can be.** A move is sampled at
+  `fps`, about eight frames a step at the default 10, so a plain replay of more
+  than ~125 changing steps would pass the frame cap. When the request names no
+  `fps` (the `export` tool, the CLI and the player's buttons never do), the
+  render lowers it — to the highest `fps`, down to 1, whose frames fit — which
+  costs smoothness, never time: a hold is one frame whatever the rate. The
+  answer carries the `fps` it used. Past the cap even at 1 fps, or with an
+  `fps` you named, it is `413` `too-many-frames` with a hint to shorten the
+  range or group in-between nodes in a script (or leave `fps` out).
 - Bounded: one render at a time (a second is `409` `busy`), at most 1000 frames
-  (`413` `too-many-frames`), 64 MB of output (`413` `too-large`) and five minutes
+  (`413` `too-many-frames`), 64 MB of output — a `format: 'replay'` document,
+  every step's node inlined, included — (`413` `too-large`) and five minutes
   of wall clock, capture and encode together (`504` `timeout`). A browser that
   dies (`chrome-exited`), a page that crashes in it (`page-crashed`), a frame of
   the wrong size, or an ffmpeg that fails a video, is a `502` naming what
