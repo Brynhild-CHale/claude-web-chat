@@ -202,6 +202,31 @@ test('Escape from inside the inspector\'s preview IFRAME still reaches the page'
   assert.equal(overlayOpen(), false, 'a second Escape closes the graph');
 });
 
+// security-preview-frames-escape-csp: both node previews re-run old pane code, so
+// both are framed sandboxed — scripts, no allow-same-origin — and a browser then
+// gives the page no contentDocument to bind; the preview posts {wc:'escape'}.
+test('the inspector preview and the glance are sandboxed; a posted Escape reaches the page', async () => {
+  await openGraph();
+  await selectGlyph('n1');
+  const frame = W.document.querySelector('.gv-preview-frame');
+  assert.equal(frame.getAttribute('sandbox'), 'allow-scripts');
+  assert.ok(inspectorUp(), 'precondition: the inspector is up');
+  Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null });
+  W.dispatchEvent(new W.MessageEvent('message', { data: { wc: 'escape' }, source: frame.contentWindow }));
+  await tick();
+  assert.equal(inspectorUp(), false, 'the posted key closed the selection');
+  assert.ok(overlayOpen(), 'and only that layer');
+  await selectGlyph('n1a');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+  await tick();
+  assert.ok(glanceUp(), 'precondition: Space raised the glance');
+  assert.equal(W.document.querySelector('.glance-frame').getAttribute('sandbox'), 'allow-scripts');
+  esc();
+  await tick();
+  esc();
+  await tick();
+});
+
 test('precedence: glance ▸ rename panel ▸ selection ▸ overlay ▸ chrome panels', async () => {
   await openGraph();
   await selectGlyph('n1a');

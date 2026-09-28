@@ -138,6 +138,65 @@ test('localhost keeps its no-round-trip fast path', async (t) => {
   assert.equal(frameSrc(root), 'http://localhost:3000/');
 });
 
+// security-website-javascript-url-remote-html: the frame is allow-same-origin, so
+// a javascript:/data:/blob:/file: URL pointed at it runs in (or reads) the
+// surface's own origin. Whoever supplies it — Claude's params, a remote viewer's
+// spawn, the address bar — it is refused before anything is asked or framed, and
+// the refusal offers no "try embed anyway", ↻ or ↗ route round it.
+for (const url of [
+  'javascript://%0aalert(document.domain)',
+  'data:text/html,<script>alert(1)</script>',
+  'blob:http://localhost:5173/0f0f',
+  'file:///etc/passwd',
+  'JaVaScRiPt://x%0aalert(1)',
+]) {
+  test(`a URL that is not a web page is refused outright: ${url.slice(0, 24)}`, async (t) => {
+    const { root, calls } = mountPane(t, { url, reply: { ok: false, reachable: false, reason: 'x', code: null } });
+    await settle();
+    assert.deepEqual(calls, [], 'not even asked about');
+    assert.equal(overlay(root), 'only web pages can be shown here');
+    assert.equal(root.querySelector('.br-block .try'), null, 'no "try embed anyway"');
+    assert.equal(frameSrc(root), null);
+    root.getElementById('btn-refresh').click();
+    assert.equal(frameSrc(root), null, '↻ has nothing to load');
+  });
+}
+
+test('the address bar is held to the same rule', async (t) => {
+  const { root } = mountPane(t, { url: '', reply: {} });
+  root.getElementById('url-input').value = 'javascript://%0aalert(1)';
+  root.getElementById('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await settle();
+  assert.equal(overlay(root), 'only web pages can be shown here');
+  assert.equal(frameSrc(root), null);
+});
+
+test('the daemon\'s unsupported-scheme answer, or a non-web final URL, is never framed', async (t) => {
+  const refused = mountPane(t, {
+    url: 'https://example.com/',
+    reply: { ok: false, blocked: false, reachable: false, reason: 'only http', code: 'unsupported-scheme' },
+  });
+  await settle();
+  assert.equal(overlay(refused.root), 'only web pages can be shown here');
+  assert.equal(refused.root.querySelector('.br-block .try'), null);
+  assert.equal(frameSrc(refused.root), null);
+});
+
+test('a final URL that is not a web page falls back to the checked one', async (t) => {
+  const { root } = mountPane(t, {
+    url: 'https://example.com/',
+    reply: { ok: true, reachable: true, status: 200, finalUrl: 'javascript:alert(1)', blocked: false },
+  });
+  await settle();
+  assert.equal(frameSrc(root), 'https://example.com/');
+});
+
+test('a same-origin path is still a web page', async (t) => {
+  const { root } = mountPane(t, { url: '/preview/node/n1', reply: {} });
+  await settle();
+  assert.equal(frameSrc(root), '/preview/node/n1');
+});
+
 // The guardrail. The private-address predicate lives in exactly one place
 // (lib/server/routes/embed.js); a pane cannot require it, so the only safe
 // number of copies in the pane is zero. This fails the build if one grows back.

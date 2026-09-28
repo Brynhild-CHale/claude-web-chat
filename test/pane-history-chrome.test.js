@@ -279,6 +279,33 @@ test('Escape from inside the version preview IFRAME still closes the panel', asy
   assert.equal(isOpen(), false, 'the key was forwarded to the one Escape owner');
 });
 
+// security-preview-frames-escape-csp: the version preview re-runs OLD pane code,
+// so it is framed sandboxed (opaque origin — no reaching the chrome through
+// parent/top). A real browser then gives us no contentDocument, and the preview
+// document posts {wc:'escape'} instead; the forwarder takes that path only for a
+// frame it cannot read, so a same-origin frame is never forwarded twice.
+test('the version preview is sandboxed, and Escape still comes back by message', async () => {
+  const frame = $('ph-frame');
+  assert.equal(frame.getAttribute('sandbox'), 'allow-scripts', 'scripts, but no allow-same-origin');
+  await openFor('fig');
+  assert.ok(isOpen(), 'precondition: open');
+  const post = () => W.dispatchEvent(new W.MessageEvent('message', { data: { wc: 'escape' }, source: frame.contentWindow }));
+  // readable (jsdom ignores sandbox): the direct binding owns it, the message is ignored
+  post();
+  await tick();
+  assert.ok(isOpen(), 'a frame we can read is not forwarded a second time');
+  // opaque, as in a browser
+  Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null });
+  try {
+    W.dispatchEvent(new W.MessageEvent('message', { data: { wc: 'escape' } }));
+    await tick();
+    assert.ok(isOpen(), 'a message from no framed preview is ignored');
+    post();
+    await tick();
+    assert.equal(isOpen(), false, 'the posted Escape reached the one Escape owner');
+  } finally { delete frame.contentDocument; }
+});
+
 test('a read-only view does not open it — neither the button nor the module', async () => {
   const history = await import(pathToFileURL(path.join(REPO, 'public/app/pane-history.js')).href);
   stateMod.view.previewing = true;

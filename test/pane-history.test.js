@@ -191,6 +191,36 @@ test('preview/pane: one version of one pane under PREVIEW_CSP — no other pane,
   }
 });
 
+// The chrome frames these documents sandboxed (no allow-same-origin: old pane
+// code must not reach the chrome through parent/top — security-preview-frames-
+// escape-csp), so it cannot bind Escape inside them; the document says it instead.
+// Wired before the pane scripts, so a pane that throws cannot unwire it.
+test('preview/pane and preview/node post Escape to the framing page, and nothing else', async (t) => {
+  const { JSDOM, VirtualConsole } = require('jsdom');
+  const { api } = await withServer(t);
+  await render(api, 'p', '<p>x</p><script>throw new Error("broken pane")</script>');
+  const a = await turn(api);
+  for (const url of [`/preview/pane/${a.node_id}/p`, `/preview/node/${a.node_id}`]) {
+    const r = await api.get(url);
+    assert.equal(r.status, 200, url);
+    const posted = [];
+    const dom = new JSDOM(r.text, {
+      runScripts: 'dangerously',
+      virtualConsole: new VirtualConsole(),
+      beforeParse(w) {
+        Object.defineProperty(w, 'parent', { configurable: true, get: () => ({ postMessage: (m, o) => posted.push([m, o]) }) });
+      },
+    });
+    const key = (k) => dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('a');
+    key('Enter');
+    assert.deepEqual(posted, [], `${url}: only Escape is said`);
+    key('Escape');
+    assert.deepEqual(posted, [[{ wc: 'escape' }, '*']], url);
+    dom.window.close();
+  }
+});
+
 test('preview/pane (and preview/node) draw in the viewer\'s ?mode=, else the server default', async (t) => {
   const { api } = await withServer(t);
   const applied = await api.post('/api/theme/apply', { name: 'earthy', scope: 'global' });

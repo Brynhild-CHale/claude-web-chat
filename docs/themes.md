@@ -205,6 +205,12 @@ pack at review, with the reason on the card. Tokens reach every surface a theme
 needs; a stylesheet from somebody else's repository would reach the chrome with
 nothing checking it.
 
+**No token value that loads anything.** A pack theme's token values are refused
+at review when they contain `url(`, `image-set(`, `image(`, `cross-fade(`,
+`src(`, `expression(`, `@import`, `javascript:` or a backslash escape — each is a
+request to someone else's host from every page load and every export. Use a
+colour, length, font stack or gradient; ship an image as a logo.
+
 ### Logos
 
 A theme may carry the project's three [brand images](#brand-images). While it is

@@ -163,7 +163,7 @@ lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
                    channels · resources · mcp-seen · remote-policy · png · gif ·
-                   brand-image · fonts
+                   brand-image · fonts · theme-values
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -270,6 +270,7 @@ were the only places they lived.
 | decide whether a name is a builtin THEME (a pack, or a retired alias) | `core/names` `isBuiltinThemeName` / `BUILTIN_THEME_NAMES` (a test holds it equal to lib/server/theme-packs' packs + aliases) | re-list `earthy`/`paper`/`georgetown-blue` |
 | validate an image before it is shown as a logo (a Settings → Brand upload, a theme's logos) | `core/brand-image` `validate(bytes)` / `validateLogoFile(name, bytes)` / `parseLogoName(name)` (lib/server/brand.js re-exports them) | a second sniffer or SVG blocklist |
 | check what a theme inside a pack may carry (tokens, modes, fonts, logos — raw CSS gated by the one `THEME_CSS_POLICY`) | `lib/packs/themes` `inspectPackTheme(stageDir, name)` | a second theme check in a route or the drawer |
+| ask whether a theme token VALUE would load something (`url(` and kin, `@import`, `javascript:`, escapes) | `core/theme-values` `refusedTokenValue(v)` / `refusedTokens(map)` | a second `url(` regex in a route, the planner or the drawer |
 | know which font families web-chat bundles | `core/fonts` `fontFaces()` / `bundledFamilies()` (parses public/fonts/fonts.css) | a hard-coded family list |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | read or write a browser storage key from the chrome | `public/app/storage.js` `getLocal` / `setLocal` / `getSession` / `getLocalJson` — every one fails open | touch `localStorage` / `sessionStorage` directly: the accessor itself throws in a private window and takes the whole module graph down with it |
@@ -573,7 +574,12 @@ module. Facts that must never drift apart:
   runs one of those documents per visible node thumbnail, executing historical
   pane scripts unattended against the live daemon, so `connect-src 'none'` is the
   load-bearing directive. `'unsafe-eval'` is required, not sloppy: the spliced
-  mount runtime executes pane bodies through `new Function`.
+  mount runtime executes pane bodies through `new Function`. The CSP binds only
+  the framed document's realm, so the chrome also frames every preview
+  `sandbox="allow-scripts"` (`PREVIEW_SANDBOX` in `public/app/graph-view.js`) —
+  without it, old pane code reaches the chrome's realm through `parent`/`top`.
+  Escape comes back by `postMessage` (`forwardEscapeFrom`). The replay player is
+  the one same-origin exception (the chrome drives it through its window).
 
 `LOOPBACK` is the literal address web-chat's own clients dial — deliberately not
 the name `localhost`, which resolves to both `::1` and `127.0.0.1` on a

@@ -276,6 +276,38 @@ test('raw CSS in an installed theme is refused at plan time — top-level and pe
   assert.equal(fs.existsSync(path.join(projectPaths(root).themesDir, 'harbor.json')), false);
 });
 
+// security-theme-pack-token-url: a token is one declaration value, but one value
+// can still make the browser fetch — and the chrome paints tokens with no CSP,
+// and an export inlines them. An installed theme's token values may not load
+// anything, top-level or per mode; an escape is refused with them (`\75rl(` IS
+// `url(` to CSS).
+test('a token value that would load something is refused at plan time, in every token map', async (t) => {
+  const { refusedTokenValue } = require('../lib/core/theme-values');
+  for (const bad of [
+    'url(https://tracker.example/p.png)', 'URL( "x" )', 'linear-gradient(red, blue), url(x)',
+    'image-set("a.png" 1x)', '-webkit-image-set(x 1x)', 'image(x)', 'cross-fade(a, b)', 'src("x")',
+    'expression(alert(1))', '@import "x"', 'javascript:alert(1)', '\\75rl(x)', 'u\\rl(x)',
+  ]) assert.ok(refusedTokenValue(bad), bad);
+  for (const ok of [
+    '#0b5cad', 'rgb(1 2 3 / 50%)', 'radial-gradient(circle at 20% 10%, #fff 0, transparent 60%)',
+    "'Harbor Sans', sans-serif", '0 1px 2px rgba(0,0,0,.2)', '8px', 280, 'color-mix(in srgb, red 20%, blue)',
+    'curly', 'imagery', 'sourced',
+  ]) assert.equal(refusedTokenValue(ok), null, String(ok));
+
+  const top = themePack({ themes: { harbor: { theme: { ...THEME, tokens: { ...THEME.tokens, '--wc-depth-radial': 'url(https://tracker.example/p.png)' } } } } });
+  assert.match(planErrors(top), /tokens --wc-depth-radial carries url\(…\)/);
+  const mode = themePack({ themes: { harbor: { theme: { ...THEME, modes: { ...THEME.modes, dark: { tokens: { ...THEME.modes.dark.tokens, '--wc-bg': 'image-set("https://x.example/a.png" 1x)' } } } } } } });
+  assert.match(planErrors(mode), /modes\.dark\.tokens --wc-bg carries image-set\(…\)/);
+  assert.equal(planErrors(themePack()), '', 'the plain theme still plans clean');
+
+  const root = project(t);
+  const forge = await forgeFor(t, top);
+  const q = await packs.quarantinePack({ url: forge.url('acme', 'harbor'), root });
+  assert.ok(q.record.errors.some((e) => /--wc-depth-radial carries url/.test(e)), 'the review card shows the refusal');
+  assert.throws(() => packs.approvePack({ name: 'harbor-themes', root }), /may not load anything/);
+  assert.equal(fs.existsSync(path.join(projectPaths(root).themesDir, 'harbor.json')), false);
+});
+
 test('a bad logo fails the plan: active SVG, wrong format for its name, too large', () => {
   const script = themePack({ themes: { harbor: { logos: { 'logotype.svg': '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' } } } });
   assert.match(planErrors(script), /logo logos\/logotype\.svg refused: SVG refused: it contains a <script> element/);
