@@ -76,6 +76,17 @@ export function applyLock(l) {
   updateChip();
   if (view.selectedNodeId) updateSidebarButtons();
 }
+// Does the turn lock hold a re-aim off? Only while it is FRESH. A lock whose
+// turn never reached its Stop hook goes stale after its TTL, and the server
+// steals it on the very Set active it would otherwise be refusing (guardReaim) —
+// every lock frame, hello and reset says which it is (`stale`, lib/server/domain/
+// turns lockView), and a lock frame arrives the moment one goes stale. Set
+// active, ⑃ Branch, the glance's Set active, `A` and the phone log's buttons all
+// gate on this, never on `view.lock` alone, or a crashed turn leaves the graph
+// screen refusing re-aims for the rest of the TTL.
+export function lockHoldsReaim() {
+  return !!view.lock && !view.lock.stale;
+}
 
 export async function ensureGraph(force) {
   if (view.graphCache && !force) return view.graphCache;
@@ -148,13 +159,18 @@ function onReadonlyAttempt(e) {
    out of step is a preview mutating the live node.
 
    The core is unconditional — including re-enabling the panes the read-only
-   preview marked (syncReadonly) — and the real variations are named options
-   rather than a switchboard:
+   preview marked (syncReadonly) and repainting the chip, which reads the
+   `previewing`/`viewedId` this just moved (a caller that forgot it left the
+   pill saying "viewing" an older node after a re-aim) — and the real
+   variations are named options rather than a switchboard:
      activeId        this client now believes active is here (a set-active that
                      has actually landed) — moves activeId AND viewedId with it.
      restoreSnapshot go back to the live surface captured on the way in:
                      re-render it, re-apply the active node's theme, aim viewed
                      at active. Consumes liveSnapshot before it is dropped.
+                     Every user re-aim passes it too (Set active / Branch, Wipe,
+                     New graph): the daemon broadcasts the `reset` BEFORE it
+                     answers, so the new live surface is already folded in.
    (A third, flushForms, released form values gated during the preview for
    branch-on-edit; the preview is read-only now, so there are none to release.)
    Callers keep their own `body.pending` early return: whether a queued re-aim
@@ -166,19 +182,23 @@ export function leavePreview({ activeId = null, restoreSnapshot = false } = {}) 
   $('main').classList.remove('preview-readonly');
   syncReadonly();
   if (activeId != null) { view.activeId = activeId; view.viewedId = activeId; }
-  if (restoreSnapshot) {
-    view.viewedId = view.activeId;
-    // previewing is already false above, so this takes the applier's
-    // authoritative path — the captured live surface is re-rendered verbatim.
-    if (snap) applySnapshot(snap);
+  if (restoreSnapshot) view.viewedId = view.activeId;
+  // Only a preview captured a live surface to go back to. Every re-aim passes
+  // restoreSnapshot whether it was previewing or not (a Wipe from the live page
+  // does), and with nothing captured the live surface and its theme are already
+  // on screen — re-applying the theme there only ran a transition over a page
+  // that had not changed. previewing is already false above, so applySnapshot
+  // takes the applier's authoritative path — the capture is re-rendered verbatim.
+  if (restoreSnapshot && snap) {
+    applySnapshot(snap);
     applyNodeTheme(getActiveNodeTheme(), true);
   }
+  updateChip();
 }
 
 export function returnToActive() {
   if (!view.previewing) { view.viewedId = view.activeId; updateChip(); return; }
   leavePreview({ restoreSnapshot: true });
-  updateChip();
 }
 
 // Export the node AS RENDERED: a detached preview exports that committed node,
@@ -260,7 +280,9 @@ export async function doWipe(name) {
   });
   const body = await r.json().catch(() => ({}));
   if (body.pending) { showReaimNote("Claude is mid-turn — the surface wipes when the turn ends."); return; }
-  leavePreview();
+  // The reset was broadcast before this answer and, while previewing, folded
+  // into liveSnapshot: render it (see postSetActive in graph-view.js).
+  leavePreview({ restoreSnapshot: true });
 }
 
 async function bookmark() {

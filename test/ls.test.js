@@ -165,6 +165,33 @@ test('ls prints the stale annotation for a row that really is stale', async (t) 
   assert.match(log.text(), /1 stale entry — clear with/);
 });
 
+// R8-2. After a 0.7.6 → 0.8.0 update, the other projects' 0.7.6 daemons carry
+// no release in the registry or on /api/health, and ls printed a blank VERSION
+// with no ⚠ beside a reopened 0.8.0 Claude session — the exact mismatch whose
+// write_markdown 404s.
+test('ls: a daemon too old to name its release reads <0.8, and a 0.8 Claude session beside it gets the ⚠', async (t) => {
+  resetRegistry();
+  const root = project('legacy');
+  const daemon = await stubDaemon(t, { root, pid: process.pid });
+  // The registry row a 0.7.6 daemon writes: no package_version.
+  fs.mkdirSync(path.dirname(registry.registryPath()), { recursive: true });
+  fs.writeFileSync(registry.registryPath(), JSON.stringify({ instances: [{
+    id: registry.instanceId(root), role: 'instance', version: 3, root, title: 'legacy',
+    port: daemon.port, pid: process.pid, url: `http://localhost:${daemon.port}`, started_at: Date.now(),
+  }] }));
+  registry.registerMcp({ root, pid: process.pid, ppid: process.ppid, package_version: '0.8.0' });
+
+  const log = sink();
+  await ls([], { log, here: null, timeoutMs: 2000 });
+  const out = log.text();
+  const row = out.split('\n').find((l) => /^ {2}legacy /.test(l));
+  assert.ok(row, out);
+  assert.match(row, new RegExp(`http://localhost:${daemon.port} +<0\\.8 +● 1`), 'VERSION says <0.8, not blank');
+  assert.ok(out.includes('⚠ the surface is on a build older than 0.8, Claude on v0.8.0 — run `claude-web-chat restart` in this project to pick up v0.8.0'), out);
+  assert.match(out, /⚠ marks a Claude session on a different web-chat release/);
+  resetRegistry();
+});
+
 // ─────────────────────────────────────────────────── reaping ────
 
 test('--reap stops only the row that ANSWERS as the pid we listed', async (t) => {

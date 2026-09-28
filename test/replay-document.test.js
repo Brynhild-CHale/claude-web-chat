@@ -21,8 +21,9 @@ const { withServer } = require('../test-support/helpers');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { previewTemplate, renderPreviewHtml } = require('../lib/server/preview');
 const {
-  assembleReplay, normalizeReplayOpts, playerSource,
+  assembleReplay, normalizeReplayOpts, playerSource, replayOpts,
 } = require('../lib/server/replay/document');
+const client = require('../lib/client');
 const player = require('../lib/server/replay/player');
 
 const NASTY = 'a </script><script>alert(1)</script> b </style> c <!-- d \u2028 e \u2029 f & <b>';
@@ -146,9 +147,14 @@ function stubEnv() {
       now: () => now,
       raf: (fn) => { q.push(fn); return q.length; },
       caf: () => {},
-      // unref'd: a seek whose stub frame is never loaded holds its 8 s
-      // frame-timeout open, and that must not hold the test process.
-      setTimeout: (fn, ms) => { const h = setTimeout(fn, ms); h.unref(); return h; },
+      // Only the frame-timeout (player.FRAME_TIMEOUT_MS) is unref'd: a seek
+      // whose stub frame is never loaded holds it open, and that must not hold
+      // the test process. Every other timer — the short settle (SETTLE_MS)
+      // among them — stays ref'd: an awaited seek resolves through it, and on
+      // Node 22 a promise held only by unref'd timers is abandoned (the test
+      // cancelled: "Promise resolution is still pending but the event loop has
+      // already resolved").
+      setTimeout: (fn, ms) => { const h = setTimeout(fn, ms); if (ms === player.FRAME_TIMEOUT_MS) h.unref(); return h; },
       clearTimeout: (id) => clearTimeout(id),
     },
     advance(ms) { now += ms; const run = q.splice(0); run.forEach((fn) => fn(now)); },
@@ -390,6 +396,32 @@ test('/replay and /api/replay/html carry no prompt text unless include_prompts=1
     const on = await (await fetch(`http://localhost:${port}${route}?include_prompts=1`)).text();
     assert.match(on, /PRIVATE-ALPHA/, `${route}: include_prompts=1 puts them in`);
     assert.match(on, /PRIVATE-BETA/);
+  }
+});
+
+test('include_prompts: an explicit choice on the request wins over a script\'s; unsaid, the script decides; neither, off', async (t) => {
+  // The rule, on its own.
+  assert.equal(replayOpts({ include_prompts: true }, { include_prompts: '0' }).include_prompts, false, 'the viewer unticked it');
+  assert.equal(replayOpts({ include_prompts: false }, { include_prompts: '1' }).include_prompts, true, 'the viewer ticked it');
+  assert.equal(replayOpts({ include_prompts: true }, {}).include_prompts, true, 'the request is silent: the script decides');
+  assert.equal(replayOpts({ include_prompts: true }, { include_prompts: '' }).include_prompts, true, 'an empty value is silence');
+  assert.equal(replayOpts({ include_prompts: null }, {}).include_prompts, false, 'nobody said: off');
+
+  // …and through the routes, for a script Claude opened with prompts ON.
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'm1', html: '<p>one</p>' });
+  await api.post('/api/commit', { message: 'PRIVATE-ALPHA' });
+  await api.post('/api/render', { id: 'm1', html: '<p>two</p>' });
+  await api.post('/api/commit', { message: 'PRIVATE-BETA' });
+  const opened = await client.request(port, 'POST', '/api/replay/open', { script: { from: 'n0', to: 'n1', include_prompts: true } });
+  assert.equal(opened.status, 200, JSON.stringify(opened.body));
+  const id = opened.body.script_id;
+  for (const route of ['/replay', '/api/replay/html']) {
+    const off = await (await fetch(`http://localhost:${port}${route}?script=${id}&include_prompts=0`)).text();
+    assert.ok(!/PRIVATE-(ALPHA|BETA)/.test(off), `${route}: the viewer's include_prompts=0 wins over the script's true`);
+    assert.equal(parse(off).payload.opts.include_prompts, false);
+    const unsaid = await (await fetch(`http://localhost:${port}${route}?script=${id}`)).text();
+    assert.match(unsaid, /PRIVATE-ALPHA/, `${route}: with the request silent, the script's true stands`);
   }
 });
 

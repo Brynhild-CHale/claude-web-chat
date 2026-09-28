@@ -17,6 +17,7 @@ const { run, NEW_PROJECT_PACK } = require('../lib/update/migrations');
 const { getBuiltin, normalizeTheme, resolveDefault } = require('../lib/server/theme');
 const { projectPaths } = require('../lib/core/paths');
 const { normalizeRenderRequest, renderReplay } = require('../lib/server/replay/render');
+const { createScriptStore } = require('../lib/server/replay/scripts');
 const { createGraph } = require('../lib/server/graph');
 const { createState } = require('../lib/server/state');
 
@@ -153,7 +154,7 @@ test('a rendered replay file is light unless the request names a mode, which rea
   const ctx = { graph, paths: { THEME_PATH: p.pp.theme, SYSTEM_THEME_PATH: '/nonexistent/theme.json', THEME_DEFAULT_PATH: p.pp.themeDefault, EXPORTS_DIR: p.pp.exports, root: p.root }, root: p.root };
   const urls = [];
   const opts = {
-    port: 1, findChromeImpl: () => '/x/chrome', findFfmpegImpl: () => null,
+    port: 1, findChromeImpl: () => '/x/chrome', findFfmpegImpl: () => null, scripts: createScriptStore(),
     captureImpl: async ({ url }) => { urls.push(url); throw Object.assign(new Error('stub'), { code: 'stub' }); },
   };
   await renderReplay(ctx, { format: 'gif', from: 'n0', to: 'n0' }, opts);

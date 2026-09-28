@@ -161,6 +161,12 @@ claude-web-chat tunnel setup --api-token-file ~/Downloads/cf-token.txt \
 claude-web-chat tunnel up
 ```
 
+A pasted token is **shown as you paste it** — the terminal prompt does not hide
+what you type — and stays in the scrollback. Where the screen is shared or
+recorded, prefer `--api-token-file` (and delete the file afterwards). The same
+goes for the connector token and the Google client secret when setup asks for
+them.
+
 Setup reads your account first, prints its plan, and only then changes
 anything. It creates — or finds, so a re-run changes nothing — a remotely
 managed tunnel named `web-chat` (`--name` for another), routed to the portal
@@ -253,7 +259,8 @@ The same result, by hand in the dashboard.
    `~/.web-chat/tunnel/tunnel.json` (mode 0600) and the connector token to
    `~/.web-chat/tunnel/token` (0600), and prints the remaining dashboard steps
    with your hostnames filled in. The token is never a flag *value* — that would
-   put it in your shell history — only a file to read it from, or a paste.
+   put it in your shell history — only a file to read it from, or a paste (which
+   the terminal shows as you paste it, so prefer the file on a shared screen).
 4. **Route the hostnames to the portal.**
    - token tunnel: in the tunnel's Public Hostnames, add `wc.example.com` and
      `*.example.com` (or one per project — `claude-web-chat tunnel status` lists
@@ -363,7 +370,9 @@ valid edit at once:
   within a second (code 4403 — the page's reconnect then meets the refusal).
 - `access` (team, AUD), `expose.exclude`, `remote.allowDestructive`,
   `showRoots` — in force from the next request; a newly excluded project's
-  open sockets are closed the same way.
+  open sockets are closed the same way, and a new team or AUD — how you revoke
+  every outstanding sign-in — closes every open socket at once (code 4401,
+  *sign in again*), so each reconnect meets the new check.
 - `hostname`, `style`, `tunnel` — **not** applied live: they name what
   cloudflared routes, so they need a new connector. The portal keeps serving
   the hostnames it started with (the rest of the same edit still applies), its
@@ -412,6 +421,11 @@ with the same "not running" page a stopped project gets:
 `claude-web-chat tunnel status` lists hidden projects separately, with which of
 the two hid them.
 
+`claude-web-chat off` is **not** a third way. It silences web-chat's hooks and
+tools in the project, but the project stays on the picker — and one that has
+booted here before can still be started from it. To keep a project off the
+tunnel, use `no-remote`.
+
 ## What a remote viewer sees
 
 The surface looks and works the same, except where an action is host-only. The
@@ -426,10 +440,17 @@ permission — what a remote viewer may do is decided in the portal. It narrows
 one thing: a pane can still spawn a saved component remotely, but not a pane of
 raw HTML — that would be markup the remote viewer's page wrote, landing in your
 surface — so such a spawn is refused (the portal always sets the header and
-drops any copy a viewer sends). A Push made remotely is marked
+drops any copy a viewer sends). Adding a block from the ＋ drawer works, but
+the page cannot use it to declare a wake signal or take a pane over: `signals`
+in its params are stripped and `force` is ignored, from any browser, remote or
+not. A Push made remotely is marked
 `origin=remote` (and `device=mobile` from a phone) in what Claude receives, so
 it answers on the surface rather than asking you to run a command — see
-[channels-dev](channels-dev.md), "Push provenance". The ⋯ → **Sessions** panel says to run
+[channels-dev](channels-dev.md), "Push provenance". A replay Claude opens for
+you (`export` with `open: true`) opens in every browser watching the surface,
+a remote viewer's phone included. The player plays as it does locally, but its
+**↧ GIF**, **↧ MP4** and **↧ WebM** are disabled up front, with the reason: a
+render starts Chrome and ffmpeg on the host, which a remote viewer may not. The ⋯ → **Sessions** panel says to run
 `claude-web-chat ls` on the host instead of listing anything: it names every
 project on the machine, so it is host-only.
 
@@ -474,9 +495,11 @@ The portal is **access control**, so every step fails closed:
    internals and Claude's own write paths (`render`, `write_markdown`), the
    machine-wide Sessions list (it names every project on the machine), a pane
    spawning raw HTML, shutting a daemon down, captures from the browser
-   extension, setting brand images, writing export files to disk, and wiping
-   the graph (unless you opt in with
-   `"remote": {"allowDestructive": true}` in `tunnel.json`).
+   extension, setting brand images, writing export files to disk, rendering a
+   replay to a GIF or video, wiping the graph or starting a new one (unless you
+   opt in with `"remote": {"allowDestructive": true}` in `tunnel.json`), and
+   clearing the whole page at once — a remote viewer closes panes one at a
+   time (×).
 4. **Cross-site requests.** A request that changes anything, and the live socket,
    must come from the project's own page (an exact `Origin` match); requests
    from another site — or another project's hostname, or the picker — are
@@ -491,14 +514,22 @@ The portal is **access control**, so every step fails closed:
    live on the host — the service-approval list, the pack listings, the replay
    capabilities — answer a remote viewer with the project root as `<project>`,
    your home as `~`, and only *whether* Chrome and ffmpeg are installed.
-6. **Expiry and hiding.** The live socket is closed when your sign-in token
-   expires (code 4401) — the page reconnects, which needs a fresh one — and when
-   its project is hidden or stops (code 4403).
-7. **Setting up is the host's.** The ⌘K setup page (*Or set it up from the
+6. **The project behind the hostname.** A registry entry names a port, and a
+   port is not a project: a stopped project's port is the first one the next
+   daemon takes. So before it proxies a request or relays a socket, the portal
+   asks the daemon on that port for its `/api/health` and goes on only if it
+   answers as the entry's own process — asked afresh for every socket,
+   remembered for a second for plain requests. Anything else is answered as a
+   stopped project; a daemon that does not answer within 5 seconds gets a 502.
+7. **Expiry and hiding.** The live socket is closed when your sign-in token
+   expires or `tunnel.json`'s Access team or AUD changes (code 4401) — the page
+   reconnects, which needs a token the current check accepts — and when its
+   project is hidden or stops (code 4403).
+8. **Setting up is the host's.** The ⌘K setup page (*Or set it up from the
    browser*) runs on its own loopback origin, refuses any call that is not from
    that page with its per-load nonce, and is refused through the tunnel; no
    pane can reach it.
-8. **The tunnel's own credential** (the connector token) lives in a 0600 file and
+9. **The tunnel's own credential** (the connector token) lives in a 0600 file and
    is handed to cloudflared in its environment, never on its command line.
    A local tunnel's generated config also makes cloudflared itself require a
    valid Access token for your AUD, so there are two independent checks.
@@ -523,8 +554,10 @@ Access, so nothing would check who is signing in.
   from an untrusted source is untrusted code in either place.
 - **Cloudflare sees the traffic** (TLS terminates at its edge). That is how every
   Cloudflare tunnel works.
-- **Every running project is listed** to an allowlisted account unless you hid
-  it (see *Keeping a project off the tunnel*) — hiding is opt-out, not opt-in.
+- **Every project that has run here is listed** to an allowlisted account —
+  running ones to open, stopped ones to start — unless you hid it (see *Keeping
+  a project off the tunnel*). Hiding is opt-out, not opt-in, and switching
+  web-chat off in a project (`claude-web-chat off`) does not hide it.
 - **A portal killed with `SIGKILL`** cannot stop its cloudflared; the orphaned
   connector answers visitors with an error until something stops it. The next
   `tunnel up` does: the portal records its connector's pid, and a new portal
@@ -543,4 +576,5 @@ Access, so nothing would check who is signing in.
 | `~/.web-chat/tunnel/portal.log`, `cloudflared.log` | what `tunnel logs` prints |
 | `~/.web-chat/tunnel/cloudflared.pid.json` | the connector the portal runs — how the next portal recognises one a killed portal left behind |
 | `~/.web-chat/tunnel/remote-access.log` (+ `.1`) | one line per remote write / socket, 0600, capped at 1 MB |
+| `~/.web-chat/projects.json` | every project whose surface has booted on this machine — the picker's Inactive list, and the only projects it can start |
 | `<project>/.web-chat/no-remote` | this project is never served through the tunnel |

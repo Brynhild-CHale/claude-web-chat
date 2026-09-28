@@ -525,7 +525,8 @@ per mode as swatches, shows its logos and fonts, and prints any refusal; once it
 is installed, **Apply now** makes the theme the web-chat-wide one (Settings →
 Theme lists it afterwards under **Installed**, with the pack's name). Removing a
 pack whose theme is the active one puts the project back on its default theme,
-and says so. The theme side — layout, `theme.json`, logo and font rules — is
+and says so — and so does updating it to a version that no longer ships that
+theme. The theme side — layout, `theme.json`, logo and font rules — is
 [themes.md → Sharing a theme as a pack](themes.md#sharing-a-theme-as-a-pack).
 
 ### Private packs — `gh`
@@ -592,17 +593,26 @@ shows in the review card and stops the install:
   containing `url(`, `image-set(`, `image(`, `cross-fade(`, `src(`,
   `expression(`, `@import`, `javascript:` or a backslash escape is refused: the
   chrome paints tokens with no CSP and exports inline them, so such a value would
-  report every viewer to its host. Colours, lengths, font stacks and gradients
-  are fine; an image belongs in `logos/`.
+  report every viewer to its host. The check judges the value as it will be
+  painted, and a value carrying `{`, `}`, `<`, `>`, `;` or a line break is
+  refused outright — those characters are stripped before a token is painted, so
+  `ur;l(` would otherwise reassemble into `url(`. Colours, lengths, font stacks
+  and gradients are fine; an image belongs in `logos/`.
 - **Logos** pass the same check as a Settings → Brand upload: SVG or PNG by their
-  bytes, at most 256 KB, and an SVG with a `<script>`, an `on*=` handler, a
-  `javascript:` URL, a `<foreignObject>` or an entity declaration is refused. A
-  `.png` must be a PNG and an `.svg` an SVG. A file in `logos/` whose name is not
-  a slot is not installed (the review says so).
+  bytes, at most 256 KB, and an SVG with a `<script>`, `<foreignObject>`,
+  `<iframe>`, `<embed>`, `<object>` or `<handler>` (under any namespace prefix),
+  an `on*=` handler, a `javascript:` URL (however its characters are
+  referenced), an animation that sets a handler or a link, a namespace other
+  than SVG's and XLink's, or an entity declaration is refused. A `.png` must be a
+  PNG and an `.svg` an SVG. A file in `logos/` whose name is not a slot is not
+  installed (the review says so), and a symlink there is never read.
 - **Fonts** are a list: a bundled family by name (`"Geist"`, `"Geist Mono"`,
   `"Libre Caslon Text"`), or `{ "family", "file", "weight"?, "style"? }` naming a
   `.woff2` in `fonts/` — WOFF2 by its bytes, at most 1 MB each, at most 12, and
-  only with the SIL Open Font License text beside them (`fonts/OFL.txt`).
+  only with the SIL Open Font License text beside them (`fonts/OFL.txt`). A
+  shipped font is installed with the theme but **not yet loaded** by the surface
+  or exports, and the review warns about each one: name a bundled fallback after
+  it in the token (`'Harbor Sans', 'Geist', sans-serif`).
 - **Names.** The theme's name is its directory; a `name` in `theme.json` must
   match it. A built-in theme name — `earthy`, `paper`, `georgetown-blue`,
   `georgetown`, `web-chat` — is refused with no override.

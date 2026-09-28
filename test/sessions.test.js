@@ -446,6 +446,39 @@ test('enrichSessions(): the daemon\'s own release replaces the registry\'s; an o
   assert.equal(r.surface.package_version, '0.6.9', 'a malformed version is not repeated');
 });
 
+// R8-2. A 0.7.x daemon records no release in the registry and its health
+// carries only the protocol number — so after an update, every other project's
+// old daemon beside a reopened 0.8 Claude session (whose write_markdown 404s
+// there) showed a blank VERSION and no ⚠. A daemon that answers but names no
+// release anywhere is a pre-0.8 build, and the skew says the surface is behind.
+test('enrichSessions(): a daemon that names no release anywhere is pre-0.8 — the skew says restart the surface', async () => {
+  const row = (claude = { sessions: 2, package_versions: [{ version: '0.8.0', sessions: 2 }] }) => ({
+    root: '/r', title: 'r', surface: { running: true, port: 9, url: 'u', pid: 7, package_version: null }, claude });
+  const legacyHealth = async () => ({ ok: true, version: PROTOCOL_VERSION, viewers: 1 });   // 0.7.6's shape: no pid, no package_version
+
+  const [r] = await registry.enrichSessions([row()], { get: legacyHealth });
+  assert.equal(r.surface.reachable, true);
+  assert.equal(r.surface.legacy_build, true);
+  assert.equal(r.surface.package_version, null, 'no release is invented for it');
+  assert.deepEqual(r.version_skew, { surface: registry.LEGACY_BUILD, sessions: 2, stale: [{ version: '0.8.0', sessions: 2, restart: 'surface' }] },
+    'the same skew shape the Sessions panel and the picker already render');
+  assert.equal(registry.LEGACY_BUILD, '<0.8');
+  assert.equal(registry.versionNote(r.version_skew),
+    'the surface is on a build older than 0.8, Claude on v0.8.0 — run `claude-web-chat restart` in this project to pick up v0.8.0');
+
+  const [alone] = await registry.enrichSessions([row(null)], { get: legacyHealth });
+  assert.equal(alone.surface.legacy_build, true);
+  assert.equal(alone.version_skew, null, 'no Claude session: nothing to be skewed against');
+
+  const [down] = await registry.enrichSessions([row()], { get: async () => { throw new Error('ECONNREFUSED'); } });
+  assert.equal(down.surface.legacy_build, undefined, 'a daemon that did not answer is not called old');
+  assert.equal(down.version_skew, null);
+  const [impostor] = await registry.enrichSessions([row()], { get: async () => ({ ok: true, pid: 8 }) });
+  assert.equal(impostor.surface.legacy_build, undefined, 'nor is one answering as a different pid');
+  const [odd] = await registry.enrichSessions([row()], { get: async () => ({ ok: true, pid: 7, package_version: '<b>' + 'x'.repeat(80) }) });
+  assert.equal(odd.surface.legacy_build, undefined, 'a daemon that DID name a (malformed) release is not a pre-0.8 one');
+});
+
 test('an inactive project remembers the release it last ran', (t) => {
   withTempHome(t);
   const root = project(t, 'asleep');

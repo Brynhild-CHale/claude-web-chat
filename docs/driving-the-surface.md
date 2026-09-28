@@ -215,6 +215,19 @@ Don't POST the graph routes from a driver (see the three-actor model).
   arbitrary HTML/JS into the user's browser. The bind address IS the access
   control. Treat the surface as a same-machine trust domain; don't expose the port
   off-box, and don't render untrusted third-party HTML through it.
+- **Pane code runs with the chrome's authority.** A pane's script is not
+  sandboxed: it runs in the surface page's own window (its shadow root scopes
+  styles, not privilege, and is open), so it can do whatever the chrome can. It
+  can Push to Claude — click **Push → Claude**, or `POST /api/queue/push` with a
+  note of its choosing — which wakes Claude like your own Push. It can read every
+  store key, another pane's or a service's included, and other panes' shadow
+  roots. It can call any local route: render, a forced `clear`, Wipe,
+  `POST /api/graph/active`. The daemon's own rules — the `event` frame allowlist,
+  owner and lock checks, the spawn caps, declared signals — decide what the
+  browser's frames *mean*; they are not a fence around a pane's code. Panes are
+  trusted, agent-authored JavaScript: don't render untrusted third-party HTML into
+  one, and read a component pack (`pack get` + `pack review`) before installing
+  components you did not write.
 - **Every request is gated on `Host`.** The daemon and the hub answer only to the
   names they actually are — `localhost`, `127.0.0.1`, `[::1]` — and reply
   `421 Misdirected Request` to anything else. This is the DNS-rebinding gate: a

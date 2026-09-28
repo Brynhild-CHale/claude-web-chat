@@ -133,7 +133,7 @@ test('setup refuses an unreachable team and an empty allowlist — and writes no
   await assert.rejects(tunnel([...base, '--email', 'me@example.com'], { log: () => {}, prompt: quietPrompt(), fetchJwks: access.fetchJwks }),
     (e) => e.userFacing && /could not fetch the Access signing keys for team "testteam".*--skip-verify/.test(e.message));
   await assert.rejects(tunnel(base, { log: () => {}, prompt: quietPrompt(), fetchJwks: access.fetchJwks }),
-    (e) => e.userFacing && /at least one allowed Google account/.test(e.message));
+    (e) => e.userFacing && /at least one allowed email address/.test(e.message));
   await assert.rejects(tunnel([...base, '--email', 'me@example.com', '--kind', 'quick', '--skip-verify'], { log: () => {}, prompt: quietPrompt() }),
     (e) => e.userFacing && /quick tunnel/.test(e.message));
   assert.equal(fs.existsSync(userPaths().tunnelConfig), false);

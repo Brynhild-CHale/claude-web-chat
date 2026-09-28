@@ -19,7 +19,7 @@
 // the shared state (activeId/viewedId/lock/graphCache/…).
 import { view, $ } from './state.js';
 import { seqNum, nodeById, labelFor, nodeTime } from './labels.js';
-import { previewNode, ensureGraph, leavePreview, showReaimNote } from './topbar.js';
+import { previewNode, ensureGraph, leavePreview, showReaimNote, lockHoldsReaim } from './topbar.js';
 import { esc } from './esc.js';
 import { getLocalJson, setLocalJson } from './storage.js';
 import { openReplay } from './replay.js';
@@ -247,17 +247,19 @@ export async function refreshGraph() {
 }
 
 // Keep the inspector's Set active / Branch in sync (called on lock changes too).
+// A STALE lock holds nothing off (topbar lockHoldsReaim): the click steals it.
 export function updateSidebarButtons() {
   const id = view.selectedNodeId;
   const isActive = !!id && id === view.activeId;
+  const held = lockHoldsReaim();
   const btn = $('gv-set-active');
   if (btn) {
-    btn.disabled = !id || isActive || !!view.lock;
-    btn.textContent = view.lock ? 'locked — turn in progress'
+    btn.disabled = !id || isActive || held;
+    btn.textContent = held ? 'locked — turn in progress'
       : (isActive ? 'A · Active' : 'A · Set active here');
   }
   const br = $('gv-branch');
-  if (br) br.disabled = !id || isActive || !!view.lock;
+  if (br) br.disabled = !id || isActive || held;
 }
 
 // Select a node → highlight it and raise the inspector. Selecting a node inside a
@@ -596,7 +598,11 @@ function toast(text) {
 
 async function postSetActive(id, { alsoCloseOverlay = false } = {}) {
   if (!await requestSetActive(id)) return false;
-  leavePreview();
+  // The daemon broadcasts `reset` BEFORE it answers, so a preview of another
+  // node has usually folded the new live surface into liveSnapshot by now —
+  // render it, or the previewed node stays on screen as if live. (A reset that
+  // lands after this re-renders authoritatively, so both orders end correct.)
+  leavePreview({ restoreSnapshot: true });
   if (alsoCloseOverlay) closeOverlay();
   await refreshGraph();
   if (isOverlayOpen() && view.selectedNodeId) renderInspector(view.selectedNodeId);
@@ -716,7 +722,7 @@ function openFloatPreview(id) {
   floatEl.querySelector('.glance-title').textContent = labelFor(id) + ' · glance';
   floatEl.querySelector('.glance-trigger').textContent = n.trigger_summary || '';
   const act = floatEl.querySelector('[data-act="active"]');
-  act.disabled = id === view.activeId || !!view.lock;
+  act.disabled = id === view.activeId || lockHoldsReaim();
   const frame = floatEl.querySelector('.glance-frame');
   forwardEscapeFrom(frame);
   const src = previewSrc(id);
@@ -1469,8 +1475,8 @@ export function initGraph() {
     else if (e.key === ' ') { e.preventDefault(); toggleFloatPreview(); }
     else if (e.key === 'Enter') { e.preventDefault(); if (id) openNode(id); }
     // Guarded exactly as the Set active button is (updateSidebarButtons): not on
-    // the node that is already active, and not while a turn holds the lock.
-    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (id && id !== view.activeId && !view.lock) setActive(id); }
+    // the node that is already active, and not while a FRESH turn lock holds it.
+    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); if (id && id !== view.activeId && !lockHoldsReaim()) setActive(id); }
     else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); if (id) exportNode(id); }
     else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); if (id) bookmarkNode(id); }
     else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (id) openReplay({ to: id }); }

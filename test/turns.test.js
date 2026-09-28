@@ -93,7 +93,19 @@ test('acquireLock: sets the lock + emits a combined turn-begin event and lock WS
   assert.equal(graph.lock.message, 'hi');
   assert.equal(bus.emits.length, 1);
   assert.deepEqual(bus.emits[0].event, { kind: 'graph', op: 'turn-begin', base: 'n3', stole_stale_lock: false });
-  assert.deepEqual(bus.emits[0].ws, { type: 'lock', lock: graph.lock });
+  // The frame carries the lock's VIEW (lockView): the record plus `stale`, which
+  // is never written onto graph.lock itself.
+  assert.deepEqual(bus.emits[0].ws, { type: 'lock', lock: { ...graph.lock, stale: false } });
+  assert.equal('stale' in graph.lock, false);
+  turns.releaseLock(graph, fakeBus());
+});
+
+test('lockView: the record plus `stale`, a copy; null stays null', () => {
+  assert.equal(turns.lockView(null), null);
+  const fresh = { base: 'n1', started_at: Date.now(), author: 'user' };
+  assert.deepEqual(turns.lockView(fresh), { ...fresh, stale: false });
+  assert.notEqual(turns.lockView(fresh), fresh);
+  assert.equal(turns.lockView({ base: null, started_at: 0 }).stale, true);
 });
 
 test('acquireLock: a fresh lock blocks (ok:false), no steal, no emit', (t) => {
@@ -115,10 +127,93 @@ test('acquireLock: steals a stale lock by overwrite (stole_stale_lock:true, one 
   const r = turns.acquireLock(graph, bus, { message: 'm', author: 'user' });
   assert.equal(r.ok, true);
   assert.equal(r.stole_stale_lock, true);
-  assert.equal(bus.emits.length, 1, 'no interim lock:null — a single overwrite emit');
+  assert.equal(bus.emits.length, 1, 'no interim lock:null — a single overwrite emit (a clean surface: nothing to preserve)');
   assert.equal(bus.emits[0].event.stole_stale_lock, true);
-  assert.equal(bus.emits[0].ws.lock, graph.lock);
+  assert.deepEqual(bus.emits[0].ws.lock, { ...graph.lock, stale: false });
   assert.notEqual(graph.lock.base, 'old');
+  turns.releaseLock(graph, fakeBus());
+});
+
+// Every steal is one steal (turns.stealStale): a dirty surface is the abandoned
+// turn's work, committed as a 'claude' preserve node BEFORE the new lock is based
+// on it, and a re-aim that dead turn queued is dropped. Three emits: the
+// preserve's node-added, the `reaim:pending` frame withdrawing the dropped
+// intent (WS-only), then the turn-begin + lock frame.
+test('acquireLock: stealing a stale lock over a DIRTY surface preserves first, then bases the new lock on it', (t) => {
+  const { graph, state, dir } = tmpGraph(t);
+  state.mounts.set('m1', { html: '<p>abandoned</p>', target: 'main' });
+  graph.lock = { started_at: 0, base: null, author: 'user', message: 'died' };
+  graph.pendingReaim = { op: 'wipe', name: 'x', requested_at: 1 };
+  const bus = fakeBus();
+  const r = turns.acquireLock(graph, bus, { message: 'next', author: 'user', draftPath: path.join(dir, 'draft.json') });
+  assert.equal(r.ok, true);
+  assert.equal(r.stole_stale_lock, true);
+  assert.equal(r.preserved, 'n0');
+  assert.deepEqual(r.dropped_reaim, { op: 'wipe', name: 'x' });
+  assert.equal(graph.pendingReaim, null);
+  const node = graph.nodes.get('n0');
+  assert.equal(node.author, 'claude');
+  assert.equal(node.trigger.kind, 'preserve');
+  assert.equal(node.trigger.summary, 'auto-preserved from an abandoned user turn');
+  assert.equal(graph.lock.base, 'n0', "the new turn's base is the preserve node");
+  assert.equal(bus.emits.length, 3);
+  assert.deepEqual(bus.emits[0].event, { kind: 'graph', op: 'commit', id: 'n0' });
+  assert.equal(bus.emits[0].ws.type, 'node-added');
+  assert.deepEqual(bus.emits[1], { ws: { type: 'reaim:pending', intent: null, dropped: { op: 'wipe', name: 'x' } } },
+    'the chrome is told the queued intent will never apply — no ring entry, like the frame that queued it');
+  assert.deepEqual(bus.emits[2].event, {
+    kind: 'graph', op: 'turn-begin', base: 'n0', stole_stale_lock: true,
+    preserved: 'n0', dropped_reaim: { op: 'wipe', name: 'x' },
+  });
+  turns.releaseLock(graph, fakeBus());
+});
+
+test('acquireLock: UPGRADING a fresh wake lock is not a steal — nothing preserved, the queued re-aim kept', (t) => {
+  const { graph, state } = tmpGraph(t);
+  state.mounts.set('m1', { html: '<p>woken work</p>', target: 'main' });
+  graph.active = null;
+  graph.lock = { started_at: Date.now(), base: null, author: 'wake', ttl_ms: 60_000, message: 'channel wake' };
+  graph.pendingReaim = { op: 'set-active', id: 'n9', requested_at: 1 };
+  const bus = fakeBus();
+  const r = turns.acquireLock(graph, bus, { message: 'typed', author: 'user' });
+  assert.equal(r.upgraded_wake_lock, true);
+  assert.equal(r.preserved, undefined);
+  assert.equal(graph.nodes.size, 0, 'the woken work stays live for this one turn to commit');
+  assert.deepEqual(graph.pendingReaim, { op: 'set-active', id: 'n9', requested_at: 1 }, 'the same turn goes on; its queued re-aim with it');
+  assert.equal(bus.emits.length, 1);
+  turns.releaseLock(graph, fakeBus());
+});
+
+test('acquireWakeLock: stealing a stale lock over a dirty surface preserves and drops the queued re-aim too', (t) => {
+  const { graph, state } = tmpGraph(t);
+  state.mounts.set('m1', { html: '<p>abandoned</p>', target: 'main' });
+  graph.lock = { started_at: 0, base: null, author: 'user', message: 'died' };
+  graph.pendingReaim = { op: 'set-active', id: 'n7', requested_at: 1 };
+  const bus = fakeBus();
+  const r = turns.acquireWakeLock(graph, bus, { message: 'channel wake: 1 signal' });
+  assert.equal(r.stole_stale_lock, true);
+  assert.equal(r.preserved, 'n0');
+  assert.deepEqual(r.dropped_reaim, { op: 'set-active', id: 'n7' });
+  assert.equal(graph.lock.author, 'wake');
+  assert.equal(graph.lock.base, 'n0');
+  assert.equal(bus.emits.length, 3);
+  assert.deepEqual(bus.emits[1].ws, { type: 'reaim:pending', intent: null, dropped: { op: 'set-active', id: 'n7' } });
+  assert.equal(bus.emits[2].event.op, 'turn-begin');
+  assert.equal(bus.emits[2].event.author, 'wake');
+  turns.releaseLock(graph, fakeBus());
+});
+
+test('guardReaim: a steal also drops the re-aim the dead turn had queued', (t) => {
+  const { graph } = tmpGraph(t);
+  graph.lock = { started_at: 0, base: null };
+  graph.pendingReaim = { op: 'new-graph', name: 'later', requested_at: 1 };
+  const bus = fakeBus();
+  const r = turns.guardReaim(graph, bus);
+  assert.equal(graph.pendingReaim, null);
+  assert.deepEqual(r.dropped_reaim, { op: 'new-graph', name: 'later' });
+  // The click that stole is the user's newer intent and supersedes the queued
+  // one, as under a fresh lock — nothing to withdraw on the wire.
+  assert.deepEqual(bus.emits, [{ ws: { type: 'lock', lock: null } }]);
 });
 
 test('releaseLock: clears + always emits the unlock event; lock:null WS frame only when a lock was held', (t) => {

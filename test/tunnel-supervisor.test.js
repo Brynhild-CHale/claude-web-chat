@@ -285,6 +285,40 @@ test('supervisor: a connector left by a portal that was killed outright is stopp
   assert.equal(JSON.parse(fs.readFileSync(pidFile, 'utf8')).pid, pid, 'the record names the new one');
 });
 
+// `tunnel down` (settleStopped) awaits stopConnector as the last thing a
+// one-shot CLI does, on a connector another process spawned — so nothing but
+// stopConnector's own wait keeps that CLI's event loop alive. An unref'd poll
+// let the process exit the moment SIGTERM was sent: no SIGKILL, no answer, and
+// the connector still on its metrics port. The stopper here is such a process.
+test('stopConnector keeps an otherwise idle process alive until a connector that ignores SIGTERM is killed', async (t) => {
+  const { spawn } = require('child_process');
+  // It says "ready" once its SIGTERM handler is in, so the SIGTERM below
+  // cannot land before it and kill it outright.
+  const connector = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); process.stdout.write("ready\\n")'],
+    { stdio: ['ignore', 'pipe', 'ignore'] });
+  t.after(() => { try { connector.kill('SIGKILL'); } catch {} });
+  const connectorExit = new Promise((r) => connector.once('exit', (code, signal) => r({ code, signal })));
+  await new Promise((resolve, reject) => {
+    connector.stdout.once('data', resolve);
+    connector.once('exit', () => reject(new Error('the connector exited before it was ready')));
+  });
+
+  // The stopper holds no handle but stopConnector's; its exit code is the
+  // verdict — 0 resolved true, 1 resolved false, 3 exited with it pending.
+  const script = [
+    'const { stopConnector } = require(process.argv[1]);',
+    'let resolved = null;',
+    'process.on("exit", () => { process.exitCode = resolved === true ? 0 : resolved === false ? 1 : 3; });',
+    'stopConnector(Number(process.argv[2]), { graceMs: 500 }).then((v) => { resolved = v; });',
+  ].join('\n');
+  const stopper = spawn(process.execPath, ['-e', script, require.resolve('../lib/tunnel/cloudflared'), String(connector.pid)], { stdio: 'ignore' });
+  t.after(() => { try { stopper.kill('SIGKILL'); } catch {} });
+  const stopped = await new Promise((r) => stopper.once('exit', (code, signal) => r({ code, signal })));
+
+  assert.deepEqual(stopped, { code: 0, signal: null }, 'stopConnector resolved true before its process exited (code 3: the process exited with it still pending)');
+  assert.deepEqual(await connectorExit, { code: null, signal: 'SIGKILL' }, 'the connector ignored SIGTERM and went to the SIGKILL escalation');
+});
+
 test('isStrayConnector: never a pid whose portal lives, whose argv is not that connector, or that is gone', async (t) => {
   const alive = (pid) => pid === 100 || pid === 200;
   const command = (pid) => (pid === 100 ? '/usr/local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:5172 run' : 'vim notes.txt');

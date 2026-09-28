@@ -23,14 +23,20 @@ or node scope it styles the chrome only, at pane scope that pane's content only.
 | `paper` | light + dark | flat cream (dark: warm charcoal), olive accent, every depth effect off |
 | `georgetown-blue` (Georgetown Blue) | light + dark | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar; dark is navy surfaces, a lightened 293, 1205 gold bookmarks on burgundy and a faint cross-hatch |
 
-Every pack is held to WCAG AA contrast in every mode it declares — 4.5:1 for
-running text, 3:1 for labels on fills, glyphs and large text — measured over the
-ink/fill pairs the chrome actually paints (`test/theme-contrast.test.js`). One
-ink is held only to the 3:1 line: the accent ink (`--wc-accent-text`), which
-colours accent labels and also the links in a page's markdown — so a link in
-body-size prose can fall short of AA's 4.5:1 for normal text (Earthy light's is
-3.04:1 on the stage). Earthy light's accent labels, keycaps and muted text were
-darkened just past their lines for this; they read a shade deeper than 0.7.6's.
+Every pack is held to contrast lines in every mode it declares — WCAG AA's
+4.5:1 for running text, 3:1 for glyphs, UI and large text — measured over the
+ink/fill pairs the chrome actually paints (`test/theme-contrast.test.js`). Small
+text that labels a control or sits on a fill — button labels, count badges,
+keycaps, tertiary glyphs, pins and error text — is held to the 3:1 line, not the
+4.5:1 AA asks of normal-size text; in Earthy and Paper light several of those
+sit between the two. So is the accent ink (`--wc-accent-text`), which colours
+accent labels and also the links in a page's markdown — so a link in body-size
+prose can fall short of AA's 4.5:1 for normal text (Earthy light's is 3.04:1 on
+the stage). Text that is running prose on the stage, such as the graph legend
+and the phone log's empty message, reads in `--wc-muted`, which is held to
+4.5:1. Earthy light's accent labels, keycaps, muted and tertiary text and comment
+pins were darkened just past their lines for this; they read a shade deeper than
+0.7.6's.
 No builtin carries raw CSS:
 Georgetown Blue's 2px topbar rule is the `--wc-topbar-rule-width` token.
 
@@ -48,6 +54,14 @@ A theme saved before a builtin took its name (a 0.7.6 `paper.json`, say) is
 left on disk but never applied: the builtin wins in `list_themes` too, whose
 row for it carries `shadows` (the library the file is in) and a `hint`. To keep
 using the saved tokens, save them under another name.
+
+Only a stored theme marked `builtin: true` — what applying a pack writes — or the
+retired `web-chat` counts as the pack. So a builtin-named copy that 0.7.6 had
+already **applied** keeps painting its own tokens after the upgrade, and says so:
+`get_theme` reports it under its own name, with no pack title, plus
+`shadows_builtin` and a `hint`, and it draws none of the pack's logos. ⋯ →
+Settings still shows the pack selected for it; to put the pack itself on, pick
+another theme there first and then the pack, or `apply_theme` the pack.
 
 ## The default look
 
@@ -124,6 +138,14 @@ unthemed export carries no font at all and a Georgetown Blue one carries Caslon 
 Geist Mono (about 205KB inlined), not Geist; an Earthy or Paper one carries Geist and Geist Mono (about 185KB). A family the bundle lacks is left to
 the reader's machine.
 
+Every document drawn from the node preview inlines them the same way: the graph
+inspector's preview and the glance, pane history, the `node-render` builtin,
+each replay frame, a downloaded `replay.html` and a rendered GIF, MP4 or WebM.
+Their CSP allows `data:` fonts and nothing else (`font-src data:`), so a replay
+of a Georgetown Blue page draws its headings in Caslon, not in whatever serif
+the rendering machine has. A preview whose theme names a bundled family grows by
+about 190–210KB.
+
 ## Brand images
 
 A theme applies colour and type only. A project's own artwork goes in three
@@ -139,8 +161,11 @@ click it to choose one):
 Each slot is one SVG or PNG of at most 256 KB, stored under
 `.web-chat/brand/` with the project (so, like the rest of `.web-chat/`, it is
 gitignored). The format is decided by the file's bytes, not its name. An SVG
-carrying anything active — a `<script>`, an `on…=` handler, a `javascript:` url,
-a `<foreignObject>`, an entity declaration — is refused rather than cleaned.
+carrying anything active — a `<script>`, `<foreignObject>`, `<iframe>`,
+`<embed>`, `<object>` or `<handler>` under any namespace prefix, an `on…=`
+handler, a `javascript:` url however its characters are referenced, an animation
+that sets a handler or a link, a namespace other than SVG's and XLink's, an
+entity declaration — is refused rather than cleaned.
 An unset slot draws nothing at all: no empty box in the topbar, no header rule
 or footer in the export.
 
@@ -212,7 +237,10 @@ nothing checking it.
 **No token value that loads anything.** A pack theme's token values are refused
 at review when they contain `url(`, `image-set(`, `image(`, `cross-fade(`,
 `src(`, `expression(`, `@import`, `javascript:` or a backslash escape — each is a
-request to someone else's host from every page load and every export. Use a
+request to someone else's host from every page load and every export. The check
+judges the value as it will be painted, and a value carrying `{`, `}`, `<`, `>`,
+`;` or a line break is refused outright: those characters are stripped before a
+token is painted, so `ur;l(` would otherwise reassemble into `url(`. Use a
 colour, length, font stack or gradient; ship an image as a logo.
 
 ### Logos
@@ -235,10 +263,11 @@ outlines, and use no external references (a linked image or font is never
 fetched, so it would not show); a PNG should be 2× on a transparent background.
 At most 256 KB each. Every logo passes the same check as a Settings → Brand
 upload when the pack is reviewed: SVG or PNG by its bytes (and the format its
-name says), and no `<script>`, `on…=` handler, `javascript:` URL,
-`<foreignObject>` or entity declaration. One that fails refuses the pack, and
-the review card says which; a file whose name is not one of the six is simply
-not installed.
+name says), and nothing active — the same list as a Brand upload (see *Brand
+images*). One that fails refuses the pack, and the review card says which; a
+file whose name is not one of the six is simply not installed. A logo is read
+only from a regular file: a symlink in `logos/` is skipped (with a log line), so
+a committed link cannot show a file from elsewhere on the host.
 
 ### Fonts
 
@@ -248,8 +277,8 @@ today. A pack may also ship its own as `{ "family": "Harbor Sans", "file":
 "HarborSans.woff2", "weight": "100 900", "style": "normal" }`: WOFF2 only, at
 most 1 MB each and 12 per theme, and only with the SIL Open Font License text
 beside them in `fonts/OFL.txt`. Such a font is installed with the theme but not
-yet loaded by the surface or exports, so name a fallback after it in the token
-(`'Harbor Sans', 'Geist', sans-serif`).
+yet loaded by the surface or exports — the review warns about each one — so name
+a bundled fallback after it in the token (`'Harbor Sans', 'Geist', sans-serif`).
 
 ### Reviewing, applying, removing
 
@@ -260,7 +289,9 @@ one; later, it is under **Installed** in ⋯ → Settings → Theme, next to the
 of the pack it came from. `claude-web-chat pack list` lists a pack's themes, and
 `claude-web-chat pack remove <pack>` removes them with their logos and fonts — if
 the removed theme was the active one, the project goes back to its default
-theme and the command says so.
+theme and the command says so. Updating a pack (installing it again) to a
+version that no longer ships the active theme does the same, and every open
+surface repaints.
 
 ## Canonical token table
 

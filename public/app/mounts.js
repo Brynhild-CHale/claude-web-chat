@@ -103,11 +103,24 @@ function emitPaneState(id) {
 // captureFormState) into the mount record server-side, so typed state survives
 // refresh, node navigation, drafts, and exports. Skipped while previewing
 // (a preview is read-only) and while a remote apply is in flight (p._applyingForm gates the echo loop).
+//
+// p._userDirty: the user has edited this pane since the server last got its
+// values. It is set in emitFormState and nowhere else — its only callers are
+// the pane's input/change listeners, and its _applyingForm gate keeps a
+// rehydrate's dispatched events out — and cleared once a frame is actually on
+// the wire.
+// flushFormStates() sends only these panes. A value a pane's SCRIPT assigns after
+// mount (a store subscriber, an awaited fetch) fires no input event, so it never
+// moves the _lastFormJson baseline: the reconcile's flush used to compare the
+// live DOM against that baseline and publish the script's fill as if the user had
+// typed it, and the surface read as changed (a spurious preserve node on Set
+// active, a chat-only turn committing).
 const formTimers = new Map();
 const FORM_DEBOUNCE_MS = 350;
 function emitFormState(id) {
   const p = panes.get(id);
   if (!p || p._applyingForm || view.previewing) return;
+  p._userDirty = true;
   if (formTimers.has(id)) clearTimeout(formTimers.get(id));
   formTimers.set(id, setTimeout(() => {
     formTimers.delete(id);
@@ -119,8 +132,14 @@ function sendFormState(id) {
   if (!p || view.previewing) return;
   const fs = window.__wcMount.captureFormState(p.root);
   const json = JSON.stringify(fs);
-  if (json === p._lastFormJson) return; // unchanged — don't chat
-  p.form_state = fs;
+  // Unchanged — don't chat. Nothing the user did is pending either: the server
+  // already has what the pane shows, so the flag goes with it.
+  if (json === p._lastFormJson) { p._userDirty = false; return; }
+  // The spec is this client's picture of the pane — what a preview captures as
+  // the live surface and puts back on ↩ active (topbar.js previewNode) — so it
+  // takes the DOM's values now, sent or not: a value typed while the socket was
+  // down must survive a preview round-trip. What the server has is
+  // p.form_state, recorded below the gate.
   p.spec.form_state = fs;
   // Stamp the "server has this" marker ONLY once the frame is actually on the
   // wire. Stamping before the gate recorded a value the server never received,
@@ -130,17 +149,24 @@ function sendFormState(id) {
   // the reconcile calls flushFormStates(), which re-reads the LIVE DOM, and that
   // is fresher than any snapshot we could stash (ws.js drops a queued pane:form
   // for the same reason).
+  // _userDirty stays set on this path too, so the reconcile's flush re-sends it.
   if (!isOpen()) return;
+  // The record of what the SERVER has moves with the frame, not before it.
+  p.form_state = fs;
   p._lastFormJson = json;
+  p._userDirty = false;
   send({ type: 'pane:form', id, form_state: fs });
 }
-// Immediate flush of every pane's current form values — the reconcile's way of
-// re-publishing what the user typed while the socket was down.
+// Immediate flush of the form values the user changed and the server has not
+// got — the reconcile's way of re-publishing what was typed while the socket
+// was down (or inside the debounce when it dropped). Only user-dirty panes: a
+// pane nobody typed in may still show values its own script filled since
+// mount, and those are the pane's, not the user's.
 function flushFormStates() {
-  for (const id of panes.keys()) {
+  for (const [id, p] of panes) {
     const t = formTimers.get(id);
     if (t) { clearTimeout(t); formTimers.delete(id); }
-    sendFormState(id);
+    if (p._userDirty) sendFormState(id);
   }
 }
 // Apply a remote client's pane:form (WS 'pane:form'): rehydrate the shadow DOM
@@ -152,6 +178,7 @@ export function applyRemoteFormState(id, form_state) {
   p.form_state = form_state;
   p.spec.form_state = form_state;
   p._lastFormJson = JSON.stringify(form_state || {});
+  p._userDirty = false;   // the DOM now shows the server's copy
   p._applyingForm = true;
   try { window.__wcMount.applyFormState(p.root, form_state || {}); }
   finally { p._applyingForm = false; }
@@ -354,14 +381,48 @@ export function refusesLayout(pane_state) {
   return !!(pane_state && pane_state.locked) || layoutLocked();
 }
 
-// The run grid a pane sits in, measured: its rect and one column's width. A grid
-// that has not been laid out (a hidden tab, jsdom) falls back to a nominal 60px
-// column so the arithmetic stays finite.
+// The run grid a pane sits in, measured: its rect, one column's width, and how
+// many column tracks it resolves to right now. A grid that has not been laid out
+// (a hidden tab, jsdom) falls back to a nominal 60px column so the arithmetic
+// stays finite.
 function gridMetrics(wrapper) {
   const grid = wrapper.parentElement;
   const rect = grid && grid.getBoundingClientRect ? grid.getBoundingClientRect() : { left: 0, top: 0, width: 0 };
   const colW = rect.width > 0 ? (rect.width - GAP_PX * (COLS - 1)) / COLS : 60;
-  return { rect, colW };
+  let tracks = null;
+  try { tracks = grid ? trackCount(window.getComputedStyle(grid).gridTemplateColumns) : null; } catch {}
+  return { rect, colW, tracks };
+}
+
+// The number of column tracks in a grid-template-columns value: the computed
+// form a browser reports (one length per track, `83.5px 83.5px …`) and the
+// declared forms (`repeat(12, minmax(0, 1fr))`, `minmax(0, 1fr)`) alike. Line
+// names (`[a]`) are not tracks. null when the value says nothing (`none`, empty,
+// an auto-fill repeat).
+export function trackCount(tpl) {
+  const s = String(tpl == null ? '' : tpl).trim();
+  if (!s || s === 'none') return null;
+  const parts = [];
+  let depth = 0, tok = '';
+  for (const c of s) {
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    if (/\s/.test(c) && depth === 0) { if (tok) parts.push(tok); tok = ''; }
+    else tok += c;
+  }
+  if (tok) parts.push(tok);
+  let n = 0;
+  for (const t of parts) {
+    if (t.startsWith('[')) continue;
+    const rep = /^repeat\(\s*(\d+)\s*,([\s\S]*)\)$/i.exec(t);
+    if (rep) {
+      const inner = trackCount(rep[2]);
+      if (inner == null) return null;
+      n += Number(rep[1]) * inner;
+    } else if (/^repeat\(/i.test(t)) return null;   // auto-fill / auto-fit
+    else n += 1;
+  }
+  return n || null;
 }
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -507,8 +568,13 @@ function attachDrag(wrapper, handle, id, pane_state) {
       if (ev.pointerId !== pointerId) return;
       ghost.style.left = (ev.clientX - offX) + 'px';
       ghost.style.top = (ev.clientY - offY) + 'px';
-      const { rect, colW } = gridMetrics(wrapper);
-      if (rect.width > 0) {
+      // A run the narrow layout has stacked to ONE column (page.css) draws every
+      // block at the grid's left edge, so the pointer's drift would compute
+      // column 1 and a plain reorder would move the block on a wide screen,
+      // unseen here. There the drag only reorders. The grid itself says how
+      // many tracks it has — no width check of our own.
+      const { rect, colW, tracks } = gridMetrics(wrapper);
+      if (rect.width > 0 && tracks !== 1) {
         const span = placeOf(pane_state).span;
         const col = clampN(Math.round((ev.clientX - offX - rect.left) / (colW + GAP_PX)) + 1, 1, COLS - span + 1);
         if (col !== pane_state.col) { pane_state.col = col; applyPaneState(wrapper, pane_state); }
@@ -713,7 +779,9 @@ function mountPane(m) {
   // Left unset for a pane nobody had typed in, the reconcile's flush (every
   // hello: a reload, a reconnect, a phone opening the page) took those defaults
   // for user input and published them, and the surface read as changed: Set
-  // active preserved a node holding nothing, a chat-only turn committed.
+  // active preserved a node holding nothing, a chat-only turn committed. What
+  // the pane's script fills in LATER never moves this baseline (no input event);
+  // the flush keeps it off the wire by sending only user-dirty panes instead.
   mounted._lastFormJson = JSON.stringify(window.__wcMount.captureFormState(root));
 
   const hostTitle = host.dataset && host.dataset.paneTitle;
@@ -912,8 +980,9 @@ function reconcileSurface(mounts, next) {
   // never runs it, which is exactly the first-open case the zero
   // state exists for. Reconcile explicitly once the frame has settled.
   layoutPage();
-  // Re-publish what the user typed while the socket was down. sendFormState is a
-  // no-op for a pane whose values the server already has.
+  // Re-publish what the user typed while the socket was down. Only panes the
+  // user edited are sent, and sendFormState is a no-op for one whose values the
+  // server already has.
   flushFormStates();
 }
 

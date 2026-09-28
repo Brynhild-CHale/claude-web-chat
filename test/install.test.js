@@ -361,6 +361,36 @@ test('install from a SUBDIRECTORY adopts the enclosing project root', async () =
   }
 });
 
+// R2-4. Since 0.8 no daemon can be rooted at $HOME, but `install` there still
+// wrote machine-wide hooks into ~/.claude/settings.json and a ~/.mcp.json,
+// first-touched the user tier, and promised "Server will start on your first
+// open" — which `start` then refused. It now refuses before writing a byte.
+test('install in $HOME throws userFacing and writes nothing', async () => {
+  const restore = sandboxHome();
+  try {
+    const home = process.env.HOME;
+    // The user tier every machine has (install.sh makes it).
+    fs.mkdirSync(path.join(home, '.web-chat', 'versions'), { recursive: true });
+    const stale = [];
+    for (const cwd of [home, fs.realpathSync(home)]) {
+      let out = '';
+      await assert.rejects(
+        async () => { out = await captureInstall(cwd, { restartIfStale: async (r) => { stale.push(r); return { restarted: false }; } }); },
+        (e) => e.userFacing === true
+          && /is your home directory — web-chat does not install here/.test(e.message)
+          && /no surface can be rooted at \$HOME/.test(e.message)
+          && /claude-web-chat uninstall/.test(e.message),
+      );
+      assert.equal(out, '', 'nothing is reported as installed');
+    }
+    assert.deepEqual(fs.readdirSync(home), ['.web-chat'], 'no .claude/, no .mcp.json, no .gitignore');
+    assert.deepEqual(fs.readdirSync(path.join(home, '.web-chat')), ['versions'], 'and the user tier is not first-touched');
+    assert.deepEqual(stale, [], 'no daemon is asked about, let alone started');
+  } finally {
+    restore();
+  }
+});
+
 test('install THROWS userFacing on a malformed settings.json instead of exiting', async () => {
   const restore = sandboxHome();
   try {

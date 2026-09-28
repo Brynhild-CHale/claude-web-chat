@@ -858,7 +858,7 @@ test('every image the README shows exists in .github/media/ and stays under 2.5 
   }
 });
 
-test('install.md\'s "What it writes" names the tunnel, brand and replay scratch directories', () => {
+test('install.md\'s "What it writes" names the tunnel, brand and replay scratch directories and the machine-wide lists', () => {
   const { projectPaths, userPaths } = require('../lib/core/paths');
   const path = require('path');
   const body = read('docs/install.md');
@@ -872,8 +872,22 @@ test('install.md\'s "What it writes" names the tunnel, brand and replay scratch 
     ['projectPaths().brandDir', `\`${path.basename(p.brandDir)}/\``],
     ['projectPaths().tmp', `\`${path.basename(p.tmp)}/\``],
     ['userPaths().tunnelDir', `\`~/${path.relative(path.dirname(u.root), u.tunnelDir)}/\``],
+    // The known-projects list decides which projects the tunnel portal may
+    // start, and the registry carries a row per Claude Code session — both
+    // written machine-wide, neither under any project.
+    ['userPaths().projects', `\`~/${path.relative(path.dirname(u.root), u.projects)}\``],
+    ['userPaths().instances', `\`~/${path.relative(path.dirname(u.root), u.instances)}\``],
   ]) {
     assert.ok(section.includes(claim), `docs/install.md's inventory does not name ${claim} (${what})`);
   }
-  assert.match(section, /tunnel down/, 'the inventory must say to run `tunnel down` before `uninstall --self`');
+  // `uninstall --self` stops a running portal before it removes the program
+  // (no command that could stop it would be left), and removes nothing if the
+  // portal will not stop — so the doc must not send the reader to `tunnel down`
+  // first, as it did while the command left the portal running.
+  assert.match(read('lib/cli/commands/uninstall.js'), /readRoleEntry\('portal'\)/,
+    'uninstall no longer reads the registered portal — re-check what docs/install.md says --self does to it');
+  assert.match(section, /`uninstall --self` stops it and its cloudflared first/,
+    'the inventory must say `uninstall --self` stops a running tunnel portal first');
+  assert.doesNotMatch(section, /does not stop a running portal/,
+    'the inventory still says `uninstall --self` leaves a running portal up');
 });

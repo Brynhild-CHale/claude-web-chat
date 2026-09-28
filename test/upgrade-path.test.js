@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 
-const { withServer, withTempHome, freePort } = require('../test-support/helpers');
+const { withServer, withTempHome, freePort, existingProject } = require('../test-support/helpers');
 const { userPaths } = require('../lib/core/paths');
 const { packageVersion } = require('../lib/core/versions');
 const stale = require('../lib/cli/stale-daemon');
@@ -147,4 +147,108 @@ test('a daemon boot seeds the builtin theme pack folder', async (t) => {
   await withServer(t);
   const folders = require('../lib/setup/theme-logos').FILL_PACKS.map((p) => userPaths().themeLogosDir(p));
   for (const dir of folders) assert.deepEqual(fs.readdirSync(dir), ['README.txt']);
+});
+
+// ── state a 0.7.x build left behind ─────────────────────────────────────────
+// No migration runs on the hop to 0.8, so a node or a draft 0.7.x wrote is
+// restored as-is. These fixtures are shaped exactly as 0.7.6 writes them.
+
+function seedGraph(webChatDir, nodes, extra = {}) {
+  const graphDir = path.join(webChatDir, 'graph');
+  fs.mkdirSync(graphDir, { recursive: true });
+  for (const n of nodes) fs.writeFileSync(path.join(graphDir, `${n.id}.json`), JSON.stringify(n));
+  fs.writeFileSync(path.join(graphDir, '_meta.json'), JSON.stringify({ active: nodes[nodes.length - 1].id, lock: null, ...extra }));
+}
+const pane = (id, html) => ({ id, html, target: 'main', params: {}, pane_state: {}, owner: 'claude' });
+
+// R2-1. A rollback round trip: 0.8 commits a page with markdown; `update --to
+// 0.7.6` runs 0.7.6, whose graceful stop writes a draft from a live state that
+// cannot hold markdown (same schema_version 1, no `markdown`/`order` keys); then
+// `update` returns to 0.8. The draft used to restore as "no markdown": the
+// page lost its title and prose, and the next chat-only turn committed a node
+// without them.
+test('a 0.7.6 draft over a node with markdown keeps the node\'s page, and a chat-only turn after it folds', async (t) => {
+  const node = {
+    id: 'n0', parent_id: null, created_at: 1000, author: 'claude',
+    trigger: { kind: 'turn', message: 'build a page', summary: 'build a page' },
+    mounts: [pane('pane-a', '<p>a</p>'), pane('pane-b', '<p>b</p>')],
+    markdown: [{ id: 'md-title', text: '# Upgrade test page', owner: 'claude' }, { id: 'md-2', text: '## Part two', owner: 'claude' }],
+    order: ['md-title', 'pane-a', 'md-2', 'pane-b'],
+    store: { k: 1 }, comments: [], captures: [],
+  };
+  const { api } = await withServer(t, {
+    seed: ({ webChatDir }) => {
+      existingProject({ webChatDir });
+      seedGraph(webChatDir, [node]);
+      // What 0.7.6's writeDraft writes: the same panes, no page fields.
+      fs.writeFileSync(path.join(webChatDir, 'draft.json'), JSON.stringify({
+        schema_version: 1, saved_at: 2000, base_active: 'n0',
+        mounts: node.mounts, store: { k: 1 }, comments: [], captures: [], queue: [],
+        pendingWake: null, pendingAck: null,
+      }));
+    },
+  });
+  const live = (await api.get('/api/mounts')).json;
+  assert.deepEqual(live.markdown.map((m) => m.id), ['md-title', 'md-2'], 'the node\'s markdown is live');
+  assert.deepEqual(live.order, node.order, 'in the node\'s page order');
+
+  await api.post('/api/turn-begin', { message: 'just a question' });
+  const te = await api.post('/api/turn-end', {});
+  assert.equal(te.json.skipped, 'no-change', 'the surface IS the node — nothing to commit');
+});
+
+test('a 0.7.6 draft that added a pane keeps the node\'s page with the new pane appended', async (t) => {
+  const node = {
+    id: 'n0', parent_id: null, created_at: 1000, author: 'claude',
+    trigger: { kind: 'turn', message: 'build a page', summary: 'build a page' },
+    mounts: [pane('pane-a', '<p>a</p>'), pane('pane-b', '<p>b</p>')],
+    markdown: [{ id: 'md-title', text: '# Upgrade test page', owner: 'claude' }],
+    order: ['md-title', 'pane-b', 'pane-a'],
+    store: {}, comments: [], captures: [],
+  };
+  const { api } = await withServer(t, {
+    seed: ({ webChatDir }) => {
+      existingProject({ webChatDir });
+      seedGraph(webChatDir, [node]);
+      fs.writeFileSync(path.join(webChatDir, 'draft.json'), JSON.stringify({
+        schema_version: 1, saved_at: 2000, base_active: 'n0',
+        mounts: [...node.mounts, pane('pane-new', '<p>made on 0.7.6</p>')],
+        store: {}, comments: [], captures: [], queue: [], pendingWake: null, pendingAck: null,
+      }));
+    },
+  });
+  const live = (await api.get('/api/mounts')).json;
+  assert.deepEqual(live.order, ['md-title', 'pane-b', 'pane-a', 'pane-new']);
+  assert.deepEqual(live.markdown.map((m) => m.id), ['md-title']);
+});
+
+// R3-5. 0.7.x did not reserve 'start', so a node it committed can hold a pane by
+// that name. The reservation was write-side only: such a pane came back live but
+// could be neither re-rendered nor restored from history.
+test('a 0.7.6 pane named \'start\' stays addressable; a new \'start\' is still refused, and after:\'start\' is still the top', async (t) => {
+  const node = {
+    id: 'n0', parent_id: null, created_at: 1000, author: 'claude',
+    trigger: { kind: 'turn', message: 'a start screen', summary: 'a start screen' },
+    mounts: [pane('x', '<p>x</p>'), pane('start', '<p>start screen</p>')],
+    store: {}, comments: [], captures: [],
+  };
+  const { api } = await withServer(t, {
+    seed: ({ webChatDir }) => { existingProject({ webChatDir }); seedGraph(webChatDir, [node]); },
+  });
+  assert.deepEqual((await api.get('/api/mounts')).json.order, ['x', 'start'], 'precondition: restored as-is');
+
+  const r = await api.post('/api/render', { id: 'start', html: '<p>start screen, v2</p>' });
+  assert.equal(r.json.ok, true, 'Claude can update the pane it already has');
+  const h = await api.post('/api/mounts/start/restore', { node_id: 'n0' });
+  assert.equal(h.json.ok, true, 'and the user can put an older version back');
+  assert.equal(h.json.restored_from, 'n0');
+
+  const top = await api.post('/api/render', { id: 'new', html: '<p>new</p>', after: 'start' });
+  assert.equal(top.json.ok, true);
+  assert.deepEqual((await api.get('/api/mounts')).json.order, ['new', 'x', 'start'], "after:'start' still means the page top");
+
+  await api.post('/api/clear', { id: 'start' });
+  const again = await api.post('/api/render', { id: 'start', html: '<p>a new one</p>' });
+  assert.equal(again.json.ok, false);
+  assert.equal(again.json.reserved, true, 'once it is gone the name is reserved again');
 });
