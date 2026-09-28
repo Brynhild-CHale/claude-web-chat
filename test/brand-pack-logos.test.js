@@ -193,6 +193,24 @@ test('fill: reversed variants are dark mode\'s; svg is preferred over png', (t) 
   assert.equal(f.seal.dark.type, 'image/svg+xml');
 });
 
+// R4-5 hardened the SVG check (prefixed elements, character references, SMIL
+// targets, namespace bindings). A logo as a design tool exports it — an XML
+// declaration, a generator comment, the xlink binding, a <style>, <use> by
+// fragment, entity-free character references — still fills.
+test('fill: an exported logo with the xlink binding, a <style> and <use> still passes the hardened check', (t) => {
+  withTempHome(t);
+  const gt = project(t, PACK);
+  const exported = Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<!-- Generator: Adobe Illustrator 28.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->\n'
+    + '<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+    + 'x="0px" y="0px" viewBox="0 0 260 52" style="enable-background:new 0 0 260 52;" xml:space="preserve">\n'
+    + '<style type="text/css">.st0{fill:#041E42;}</style>\n'
+    + '<defs><path id="mark" d="M0 0h52v52H0z"/></defs><use xlink:href="#mark" class="st0"/>'
+    + '<text class="st0" x="60" y="34">Georgetown &#x2014; University</text></svg>');
+  drop('lockup.svg', exported);
+  assert.deepEqual(brand.effective(gt, 'lockup').bytes, exported);
+});
+
 test('fill: the files go through the upload validation; a bad one is ignored with ONE log line', async (t) => {
   withTempHome(t);
   const gt = project(t, PACK);
