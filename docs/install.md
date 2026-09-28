@@ -6,7 +6,7 @@ machine.
 
 ## Requirements
 
-**Node 22+** and **Claude Code**, on **macOS or Linux**.
+**Node 22.12+** and **Claude Code**, on **macOS or Linux**.
 
 **Platforms.** macOS and Linux are supported — the full suite runs on both in CI on every push. **On Windows, use WSL2**: web-chat installs and runs inside your WSL2 Linux environment like any other Linux install, and there is no native Windows installer. What each of those actually means, and what is known to be untested, is in [`platform-support.md`](platform-support.md).
 
@@ -16,7 +16,7 @@ machine.
 curl -fsSL https://raw.githubusercontent.com/Brynhild-CHale/claude-web-chat/main/install.sh | sh
 ```
 
-That checks you have Node 22+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
+That checks you have Node 22.12+, downloads the latest **GitHub Release**, verifies its SHA-256 checksum, and unpacks it — no npm, no registry, no sudo. Everything lands in your home directory:
 
 ```
 ~/.web-chat/versions/<version>/ the release, self-contained (dependencies included)

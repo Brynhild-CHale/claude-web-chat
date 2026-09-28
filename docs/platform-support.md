@@ -6,10 +6,13 @@
 | **Linux** (Ubuntu/Debian family) | **Supported, with gaps in what CI can prove** | Full suite runs on `ubuntu-latest` in CI on every push — but CI is a headless container. See [`platform-linux.md`](https://github.com/Brynhild-CHale/claude-web-chat/blob/platform/linux/docs/platform-linux.md) on the `platform/linux` branch |
 | **Windows** | **Via WSL2 only. No native support.** | Never run on Windows by anyone. See [`platform-windows.md`](https://github.com/Brynhild-CHale/claude-web-chat/blob/platform/windows/docs/platform-windows.md) on the `platform/windows` branch |
 
-**Node 22 or newer**, on every platform. That floor is not a preference: one of
-the four runtime dependencies (`node-html-parser`) requires an `entities` that is
-ESM-only, and `require(esm)` landed in Node 22. Below it the daemon does not
-start at all.
+**Node 22.12 or newer**, on every platform. That floor is not a preference: one
+of the four runtime dependencies (`node-html-parser`) requires an `entities` that
+is ESM-only, and `require(esm)` is on by default only from Node 22.12 (22.0–22.11
+keep it behind a flag). Below it the daemon does not start at all, so
+`install.sh`, `init` and `package.json`'s `engines` all compare the major *and*
+the minor. (Developing on web-chat itself needs 22.13, for the test suite's
+jsdom.)
 
 **Your distro's Node is probably too old.** Verified by running each image:
 
@@ -18,10 +21,11 @@ start at all.
 | Ubuntu 24.04 LTS | 18.19.1 | no |
 | Debian 12 | 18.20.4 | no |
 | Debian 13 | 20.19.2 | no |
-| Alpine 3.21+ | 22.x | yes |
-| Fedora 42+ | 22+ | yes |
+| Alpine 3.21+ | 22.x | yes, at 22.12 or later |
+| Fedora 42+ | 22+ | yes, at 22.12 or later |
 
-So `apt install nodejs` is not the route on the Debian family — use `nvm`, `fnm`,
+A package that says 22.x may still be below 22.12, so check `node --version`.
+`apt install nodejs` is not the route on the Debian family — use `nvm`, `fnm`,
 or NodeSource. `install.sh` refuses with those three options named, rather than
 sending you to nodejs.org for a tarball. Lowering the floor would not have
 helped much: `>=20.19` would have admitted Debian 13 and nothing else.

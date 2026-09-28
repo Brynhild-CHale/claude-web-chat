@@ -6,7 +6,7 @@ A live page in your browser that Claude Code draws on while you talk in the term
 
 ## Quickstart
 
-You'll need **Node 22+** and **Claude Code**, on **macOS or Linux** (on Windows, use WSL2 — see [platform support](docs/platform-support.md)).
+You'll need **Node 22.12+** and **Claude Code**, on **macOS or Linux** (on Windows, use WSL2 — see [platform support](docs/platform-support.md)).
 
 **1. Install.** No npm, no sudo. The release is checksum-verified and unpacked under `~/.web-chat/`, with the command linked into `~/.local/bin`:
 
