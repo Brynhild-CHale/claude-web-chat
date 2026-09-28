@@ -52,25 +52,39 @@ Call `list_components`. This project ships builtins — including `git-dashboard
 have components saved from earlier sessions. Read their descriptions; they decide
 what you offer in step 3.
 
-### 3. Render one real pane — do not describe it, render it
+### 3. Build a small page — do not describe it, render it
 
 Take a quick look at what this project actually is (its README, its `package.json`
-or equivalent, the top-level layout) so the pane is about *their* repo and not a
+or equivalent, the top-level layout) so the page is about *their* repo and not a
 generic tour.
 
-Then `render` a single pane, mount id **`web-chat-start`** (a stable id, so running
-`/web-chat` again replaces it instead of stacking a second copy), containing:
+Then build it top to bottom: a title, and two panes side by side under it. Every
+id is stable, so running `/web-chat` again replaces these items in place instead of
+stacking a second copy, and each `after` names the item before it, so the three
+stay together at the top even on a page that already has content:
 
-- one short line saying what this page is: Claude's second surface, and every turn
-  here becomes a node they can walk back to;
-- **three or four concrete buttons**, each a real thing you would do next *in this
-  repo* — for example "diagram how these modules fit together", "open a live git
-  dashboard", "table the options for &lt;a decision this repo faces&gt;", "edit
-  &lt;some config file&gt; from the page". Ground every one of them in something you
-  actually saw in the project;
-- a free-text field for anything not on the list.
+1. `write_markdown` — id **`web-chat-start-title`**, `after: "start"`: a `#` heading
+   naming the project, then one short line saying what this page is — Claude's
+   second surface, where every turn becomes a node they can walk back to. The `#`
+   is the page's title (topbar and H1) and its first Contents row.
+2. `render` mount **`web-chat-start-facts`**, `after: "web-chat-start-title"`,
+   `place: {span: 4}`, `params: {title: 'At a glance'}`: three to five facts you
+   actually read — language and runtime, entry points, how the tests run, anything
+   unusual.
+3. `render` mount **`web-chat-start`**, `after: "web-chat-start-facts"`,
+   `place: {span: 8}`, `params: {title: 'What next'}` — it sits beside the facts —
+   containing:
+   - **three or four concrete buttons**, each a real thing you would do next *in
+     this repo* — for example "diagram how these modules fit together", "open a live
+     git dashboard", "table the options for &lt;a decision this repo faces&gt;",
+     "edit &lt;some config file&gt; from the page". Ground every one of them in
+     something you actually saw in the project;
+   - a free-text field for anything not on the list.
 
-Wire it up so a click writes **one** store key, `web_chat_start`, with a bumped
+Write nothing between the two panes: a markdown item there starts a new grid run,
+and the pair would no longer sit side by side.
+
+Wire the buttons so a click writes **one** store key, `web_chat_start`, with a bumped
 `seq`, e.g. `store.set({ web_chat_start: { seq: Date.now(), choice: 'diagram', note } })`
 — and declare it on the render: `signals: [{ key: 'web_chat_start', wake: 'queue' }]`.
 Query the DOM through the injected `root` (the pane's shadow root), never `document.querySelector`/`getElementById` — building nodes with `document.createElement` is fine.
@@ -78,8 +92,9 @@ Query the DOM through the injected `root` (the pane's shadow root), never `docum
 ### 4. Say the short version in chat
 
 Four lines at most: where to look, that the buttons write `web_chat_start`, that
-**`P`** (Push → Claude) hands their choice to you, and that `⌘K`/`Ctrl-K` opens
-commands, nodes and components. Do not transcribe the pane — it is on screen.
+**`P`** (Push → Claude) hands their choice to you, that `⌘K`/`Ctrl-K` opens
+commands, sections, nodes and components, and that they can drag or resize either
+block (**↺ Claude's layout** puts it back). Do not transcribe the page — it is on screen.
 
 Then wait. Their Push is your next turn.
 
@@ -96,7 +111,9 @@ and run nothing else:
 
 > The web-chat tools aren't in this session yet. `/exit`, reopen Claude Code in this
 > project, then run `/web-chat init` again. Claude Code reads `.mcp.json` only at
-> startup.
+> startup, and asks you to **approve** its `web-chat` MCP server — approve it. If you
+> declined it before, run `claude mcp reset-project-choices` in this project's
+> directory after `/exit`, and the reopened Claude Code asks again.
 
 `init` and bare `/web-chat` divide the work: **`init` teaches web-chat and owns the
 wiring; bare `/web-chat` teaches web-chat about *their repo* and owns the everyday
@@ -131,7 +148,9 @@ run `claude-web-chat init` in the terminal — it prompts before writing anythin
    so no `force` is needed. Do this first, so the surface is clean.
 3. Then **do the thing they asked for in step 3 of the tour** — for real, in this
    repo. `web_chat_init.choice` is `architecture`, `git`, or `other` (with
-   `web_chat_init.note`). Not a mock, not a plan: the actual work.
+   `web_chat_init.note`). Not a mock, not a plan: the actual work. If the result has
+   more than one part, put it up as a page — a `#` title, a `##` per part, and `place`
+   where two things sit side by side (the rules file's Page recipes).
 4. If they left text in `form_state` (from `list_mounts`) but never pressed Send,
    **quote their unsubmitted text back to them** and act on it. Being quoted
    something you never submitted is the moment the surface stops feeling like a form.
