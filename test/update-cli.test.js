@@ -50,6 +50,16 @@ function inScratchCwd(t) {
   return dir;
 }
 
+// A scratch cwd that IS a project — `update` restarts a daemon only there.
+function inProjectCwd(t) {
+  const dir = inScratchCwd(t);
+  fs.mkdirSync(path.join(dir, '.web-chat'));
+  return dir;
+}
+
+// A registration engine that syncs nothing, for tests about something else.
+const NO_SYNC = { apply: () => ({ managed: [] }) };
+
 function deps(extra = {}) {
   return {
     log: sink(),
@@ -124,7 +134,7 @@ test('a refusal never downloads anything', async (t) => {
 
 test('update downloads, activates, relinks, prunes and restarts', async (t) => {
   withTempHome(t);
-  inScratchCwd(t);
+  inProjectCwd(t);
   const paths = installPaths();
   fakeVersion(paths, '0.5.0');
   activate('0.5.0', paths);
@@ -140,6 +150,7 @@ test('update downloads, activates, relinks, prunes and restarts', async (t) => {
       return { version: release.version, dir: versionDir };
     },
     restart: async (args) => { restartedWith = args; },
+    registration: NO_SYNC,
   });
   const res = await update([], d);
 
@@ -632,22 +643,76 @@ test('a failed portal restart that left the old portal up says it is still on th
   t.after(() => { srv.close(); srv.closeAllConnections(); });
   const paths = installPaths();
   fakeVersion(paths, '0.5.0');
-  fakeVersion(paths, '0.6.0');
-  activate('0.6.0', paths);
+  activate('0.5.0', paths);
   linkBins(paths);
-  // A rollback bounces the portal too — and v0.5.0 here ships no tunnel command.
   const d = deps({
     paths,
     readPortal: () => ({ role: 'portal', pid: 4242, port }),
+    restartPortal: async () => { throw new Error('cloudflared is not on PATH'); },
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => { fakeVersion(paths, release.version); return { version: release.version, dir: versionDir }; },
+  });
+  const res = await update([], d);
+  assert.equal(res.after, '0.6.0');
+  assert.equal(res.portal.restarted, false);
+  const text = d.errlog.text();
+  assert.match(text, /on v0\.6\.0: cloudflared is not on PATH/);
+  assert.match(text, /still running, on the previous build's code and remote policy/);
+  assert.match(text, /claude-web-chat tunnel up/);
+});
+
+// upgrade-rollback-leaves-portal-unmanageable. A rollback to a build with no
+// tunnel command used to leave the portal up — on the NEWER build's code,
+// starting newer daemons on request — and advise `tunnel up`, which the build
+// just activated does not have. Now this build's `tunnel down` stops it BEFORE
+// the flip, and nothing names a command the target lacks.
+test('a rollback to a build with no tunnel command stops the portal first, with THIS build\'s tunnel down', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  const downs = [];
+  const d = deps({
+    paths,
+    readPortal: () => ({ role: 'portal', pid: 4242, port: 45678 }),
+    tunnelDown: async (o) => { downs.push({ current: fs.readlinkSync(paths.current), port: o.env.WEB_CHAT_PORTAL_PORT }); return { stopped: true }; },
     describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
   });
   const res = await update(['--to', '0.5.0'], d);
   assert.equal(res.after, '0.5.0');
-  assert.equal(res.portal.restarted, false);
-  const text = d.errlog.text();
-  assert.match(text, /on v0\.5\.0: v0\.5\.0 has no tunnel command to restart it with/);
-  assert.match(text, /still running, on the previous build's code and remote policy/);
-  assert.match(text, /claude-web-chat tunnel up/);
+  assert.deepEqual(downs, [{ current: 'versions/0.6.0', port: '45678' }], 'stopped once, before the flip, on the registered port');
+  assert.deepEqual(res.portal, { restarted: false, stopped: true });
+  const out = d.log.text();
+  assert.match(out, /Stopped the tunnel portal \(pid 4242\): v0\.5\.0 has no tunnel command to run it with, so remote access is off/);
+  assert.match(out, /back on a build that has one \(`claude-web-chat update`\)/);
+  assert.doesNotMatch(out + d.errlog.text(), /tunnel up/, 'never a command v0.5.0 does not have');
+});
+
+test('a rollback whose portal cannot be stopped changes nothing', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  let code = null;
+  const d = deps({
+    paths,
+    readPortal: () => ({ role: 'portal', pid: 4242, port: 45678 }),
+    tunnelDown: async () => { throw new Error('the portal (pid 4242) is still answering'); },
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  d.exit = (c) => { code = c; };
+  const res = await update(['--to', '0.5.0'], d);
+  assert.equal(res.refused, true);
+  assert.equal(code, 1);
+  assert.equal(fs.readlinkSync(paths.current), 'versions/0.6.0', 'still on the build that can stop it');
+  assert.match(d.errlog.text(), /Nothing was changed\. Stop it with `claude-web-chat tunnel down`, then run this again/);
 });
 
 test('--to restarts a running portal as well', async (t) => {
@@ -735,4 +800,132 @@ test('update seeds the per-user theme folders with the TARGET build\'s module; a
   assert.deepEqual(d, { before: '0.5.0', after: '0.6.0' });
   assert.deepEqual(globalThis.__wcSeeded, ['0.6.0'], 'the target build\'s copy ran');
   assert.deepEqual(fs.readdirSync(folder), ['README.txt']);
+});
+
+// ── outside a project, and the projects an update does not restart ──────────
+
+function upgradeDeps(paths, extra = {}) {
+  return deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => { fakeVersion(paths, release.version); return { version: release.version, dir: versionDir }; },
+    readInstances: () => [],
+    ...extra,
+  });
+}
+
+function onVersion(t, v = '0.5.0') {
+  withTempHome(t);
+  const paths = installPaths();
+  fakeVersion(paths, v);
+  activate(v, paths);
+  linkBins(paths);
+  return paths;
+}
+
+// upgrade-update-outside-project-remembers-cwd: `update` typed in ~ or
+// ~/Downloads restarted "the daemon" anyway — booting one rooted there.
+test('update outside a project restarts nothing, and says so', async (t) => {
+  const paths = onVersion(t);
+  const dir = inScratchCwd(t);
+  let restarted = 0;
+  const d = upgradeDeps(paths, { restart: async () => { restarted++; } });
+  const res = await update([], d);
+  assert.equal(res.after, '0.6.0');
+  assert.equal(restarted, 0);
+  assert.ok(d.log.text().includes(`No web-chat project here (${dir}) — no server restarted here.`));
+  assert.doesNotMatch(d.log.text(), /Restarting bg server/);
+});
+
+// upgrade-stale-daemons-other-projects.
+test('update lists the other projects still running an older build, with the command for each', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [
+      { root: '/p/old', port: 1, url: 'http://localhost:1' },
+      { root: '/p/current', port: 2, url: 'http://localhost:2' },
+      { root: '/p/silent', port: 3 },
+    ],
+    runningBuild: async (port) => ({ 1: '0.5.0', 2: '0.6.0', 3: null })[port],
+  });
+  const res = await update([], d);
+  assert.deepEqual(res.others, { stale: ['/p/old'], restarted: [] }, 'the current build and an unknown one are not listed');
+  const out = d.log.text();
+  assert.match(out, /1 other project\(s\) still run an older build/);
+  assert.match(out, /\/p\/old {2}v0\.5\.0 {2}http:\/\/localhost:1/);
+  assert.match(out, /cd <project> && claude-web-chat restart/);
+  assert.match(out, /claude-web-chat update --restart-all/);
+});
+
+test('update --restart-all restarts each on the new build, one at a time, from its own directory, and sums up', async (t) => {
+  const paths = onVersion(t);
+  const here = inProjectCwd(t);
+  const a = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-other-a-')));
+  const b = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-other-b-')));
+  const calls = [];
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: a, port: 1 }, { root: b, port: 2 }, { root: here, port: 3 }],
+    runningBuild: async (port) => (port === 3 ? '0.6.0' : '0.5.0'),
+    restart: async (args, o = {}) => { calls.push([process.cwd(), o.root || null]); return o.root === b ? { ok: false } : { ok: true }; },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(calls, [[here, null], [a, a], [b, b]], 'this project first, then each other one from inside it');
+  assert.equal(process.cwd(), here, 'and back where it started');
+  assert.deepEqual(res.others, { stale: [a, b], restarted: [a], failed: [b] });
+  const out = d.log.text();
+  assert.match(out, /Restarting 2 project\(s\) on v0\.6\.0, one at a time/);
+  assert.ok(out.includes(`✓ ${a}  v0.5.0 → v0.6.0`));
+  assert.ok(out.includes(`✗ ${b}  v0.5.0 → v0.6.0  (the old daemon did not stop)`));
+  assert.match(out, /Restarted 1 of 2\. For the rest: cd <project> && claude-web-chat restart/);
+});
+
+// The 0.7.6 updater performs the hop to 0.8 and knows nothing of other
+// projects — so on the new build, with nothing left to install, the flag
+// still does its job.
+test('update --restart-all when already up to date still restarts the stale projects', async (t) => {
+  const paths = onVersion(t, '0.6.0');
+  inScratchCwd(t);
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-other-')));
+  const calls = [];
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o) => { calls.push(o.root); return { ok: true }; },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.equal(res.unchanged, true);
+  assert.deepEqual(calls, [other]);
+  assert.deepEqual(res.others.restarted, [other]);
+});
+
+test('a rollback lists stale projects but never offers --restart-all, which the older build may not have', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    readInstances: () => [{ root: '/p/new', port: 1 }],
+    runningBuild: async () => '0.6.0',
+  });
+  const res = await update(['--to', '0.5.0'], d);
+  assert.deepEqual(res.others.stale, ['/p/new']);
+  assert.match(d.log.text(), /cd <project> && claude-web-chat restart/);
+  assert.doesNotMatch(d.log.text(), /--restart-all/);
+});
+
+test('parseArgs knows --restart-all', () => {
+  assert.equal(update.parseArgs(['--restart-all']).restartAll, true);
+  assert.equal(update.parseArgs([]).restartAll, false);
 });

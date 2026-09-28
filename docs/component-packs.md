@@ -588,6 +588,12 @@ shows in the review card and stops the install:
 
 - **No raw CSS.** A `css` (top-level or `modes.light|dark.css`) is refused — for
   now. Tokens, light/dark modes, fonts and logos are all allowed.
+- **No token value that loads anything.** A token value (top-level or in a mode)
+  containing `url(`, `image-set(`, `image(`, `cross-fade(`, `src(`,
+  `expression(`, `@import`, `javascript:` or a backslash escape is refused: the
+  chrome paints tokens with no CSP and exports inline them, so such a value would
+  report every viewer to its host. Colours, lengths, font stacks and gradients
+  are fine; an image belongs in `logos/`.
 - **Logos** pass the same check as a Settings → Brand upload: SVG or PNG by their
   bytes, at most 256 KB, and an SVG with a `<script>`, an `on*=` handler, a
   `javascript:` URL, a `<foreignObject>` or an entity declaration is refused. A

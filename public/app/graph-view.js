@@ -161,6 +161,10 @@ bus.on('viewport', ({ phone }) => {
 // The inspector preview and the glance are /preview/node documents drawn in the
 // viewer's light/dark (the daemon has no mode of its own), so they read like
 // the chrome around them — and are redrawn when ◑ flips it.
+// What every /preview document is framed with: scripts run (the panes are the
+// point), but in an opaque origin, so old pane code cannot reach this realm —
+// PREVIEW_CSP's connect-src 'none' binds only the framed document's own realm.
+export const PREVIEW_SANDBOX = 'allow-scripts';
 export const previewSrc = (id, mode = effectiveMode()) =>
   '/preview/node/' + encodeURIComponent(id) + '?mode=' + encodeURIComponent(mode);
 bus.on('mode', () => {
@@ -187,21 +191,43 @@ export function escapeInOverlay() {
   return false;
 }
 
-/* Same-origin preview iframes swallow the key. The inspector's thumbnail and the
-   glance are both <iframe src="/preview/node/:id">; clicking either moves focus
-   INTO that document, after which a real Escape is delivered there and never
-   reaches ours. Both are same-origin, so forward the key back to the page that
-   owns the layers. Transport, not a second Escape implementation. */
+/* Preview iframes swallow the key. The inspector's thumbnail, the glance and a
+   block's version preview are all <iframe src="/preview/…">; clicking one moves
+   focus INTO that document, after which a real Escape is delivered there and
+   never reaches ours, so forward the key back to the page that owns the layers.
+   Transport, not a second Escape implementation.
+
+   Two transports, one per kind of frame. Those three are SANDBOXED (opaque
+   origin — the old pane code they re-run must not reach this realm through
+   parent/top), so their document posts {wc:'escape'} to us (lib/server/preview)
+   and the one message listener below re-dispatches it. A frame we CAN read (the
+   replay player, same-origin by necessity) is bound directly; its posted message
+   is then ignored, so one keypress is never two Escapes. */
+const escFrames = new Set();
+const fireEscape = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+const readable = (frame) => { try { return !!frame.contentDocument; } catch { return false; } };
+window.addEventListener('message', (e) => {
+  if (!e.data || e.data.wc !== 'escape' || !e.source) return;
+  for (const frame of escFrames) {
+    if (!frame.isConnected) { escFrames.delete(frame); continue; }
+    if (frame.contentWindow !== e.source) continue;
+    if (!readable(frame)) fireEscape();
+    return;
+  }
+});
 export function forwardEscapeFrom(frame) {
+  // the inspector draws a fresh frame per selection: drop the ones it discarded
+  for (const f of escFrames) if (!f.isConnected) escFrames.delete(f);
+  escFrames.add(frame);
   const bind = () => {
     let doc = null;
-    try { doc = frame.contentDocument; } catch { return; }   // cross-origin: nothing to do
+    try { doc = frame.contentDocument; } catch { return; }   // opaque: the message path carries it
     if (!doc || doc.__wcEscBound) return;
     doc.__wcEscBound = true;
     doc.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      fireEscape();
     });
   };
   // Three cheap, idempotent moments — a navigation swaps the child document out
@@ -491,6 +517,7 @@ function drawPreview(box, id, paneCount) {
   const scale = (box.clientWidth || 274) / PREVIEW_W;
   const fr = document.createElement('iframe');
   fr.className = 'gv-preview-frame';
+  fr.setAttribute('sandbox', PREVIEW_SANDBOX);
   fr.setAttribute('scrolling', 'no');
   fr.setAttribute('title', 'page preview at ' + labelFor(id));
   fr.style.width = PREVIEW_W + 'px';
@@ -670,7 +697,7 @@ function openFloatPreview(id) {
           '<button class="glance-btn primary" data-act="active" title="Set this node active">Set active here</button>' +
           '<button class="glance-btn icon" data-act="close" title="Close (Space)" aria-label="Close the glance">✕</button>' +
         '</div>' +
-        '<iframe class="glance-frame" title="node preview"></iframe>' +
+        '<iframe class="glance-frame" title="node preview" sandbox="' + PREVIEW_SANDBOX + '"></iframe>' +
       '</div>';
     document.body.appendChild(floatEl);
     floatEl.addEventListener('mousedown', (e) => { if (e.target === floatEl) closeFloatPreview(); });

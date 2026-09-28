@@ -14,6 +14,7 @@ const http = require('http');
 const { URL } = require('url');
 const {
   fetchHead, classify, refuseTarget, isPrivateAddress, publicOnlyLookup, PRIVATE_TARGET,
+  UNSUPPORTED_SCHEME,
 } = require('../lib/server/routes/embed');
 const { withServer } = require('../test-support/helpers');
 
@@ -136,7 +137,7 @@ test('the route refuses a private target and never connects to it', async (t) =>
   assert.equal(r.json.status, undefined, 'no status leaks back, so it is not a port oracle');
 
   const scheme = await api.get('/api/embed-check?url=' + encodeURIComponent('file:///etc/passwd'));
-  assert.match(scheme.json.reason, /unsupported protocol/);
+  assert.match(scheme.json.reason, /only http:\/\/ and https:\/\//);
 
   const missing = await api.get('/api/embed-check');
   assert.equal(missing.status, 400);
@@ -219,7 +220,24 @@ test('a private-target refusal is labelled, and no other refusal is', async (t) 
   assert.equal(priv.json.reachable, false, 'and it is still a refusal — nothing was fetched');
 
   const scheme = await api.get('/api/embed-check?url=' + encodeURIComponent('file:///etc/passwd'));
-  assert.strictEqual(scheme.json.code, null, 'a non-http(s) target is not something to go ahead and frame');
+  assert.notStrictEqual(scheme.json.code, PRIVATE_TARGET, 'a non-http(s) target is not something to go ahead and frame');
+  const timeout = await api.get('/api/embed-check?url=' + encodeURIComponent('http://[::1:bad/'));
+  assert.strictEqual(timeout.json.code, null, 'an ordinary failure carries no label');
+});
+
+// security-website-javascript-url-remote-html: a URL that is not a web page is
+// its own labelled refusal, decided before any request — the pane shows it with
+// no "try embed anyway", because framing it would run it in the surface's origin.
+test('a non-http(s) URL is refused as unsupported-scheme, every such scheme', async (t) => {
+  assert.equal(UNSUPPORTED_SCHEME, 'unsupported-scheme');
+  const { api } = await withServer(t);
+  for (const u of ['javascript://%0aalert(document.domain)', 'javascript:alert(1)', 'data:text/html,<script>1</script>',
+    'blob:http://localhost:5173/x', 'file:///etc/passwd', 'ftp://example.com/']) {
+    const r = await api.get('/api/embed-check?url=' + encodeURIComponent(u));
+    assert.equal(r.status, 200, u);
+    assert.strictEqual(r.json.code, UNSUPPORTED_SCHEME, u);
+    assert.equal(r.json.reachable, false, u);
+  }
 });
 
 test('the resolver half refuses with the same string the label is derived from', async () => {

@@ -168,6 +168,37 @@
     body.appendChild(el);
   }
 
+  // Only a web page is framed or opened: http(s), or a path on our own origin
+  // (which resolves to one). The frame is allow-same-origin, so a javascript:,
+  // data:, blob: or file: URL would run in — or read — this surface's own
+  // origin, with the whole chrome in reach through `parent`. Refused before
+  // anything points at it, whoever supplied it: params, the address bar, or the
+  // final URL the daemon reports. The daemon's embed-check refuses the same
+  // schemes (code 'unsupported-scheme').
+  function webUrl(u) {
+    try {
+      const p = new URL(u, location.href).protocol;
+      return p === 'http:' || p === 'https:';
+    } catch { return false; }
+  }
+
+  function showRefused(url) {
+    clearOverlays();
+    frame.classList.add('hidden');
+    frame.removeAttribute('src');
+    empty.style.display = 'none';
+    const el = document.createElement('div');
+    el.className = 'br-block';
+    el.innerHTML = `
+      <div class="icon">⛔</div>
+      <div class="h">only web pages can be shown here</div>
+      <div class="reason"></div>
+      <div class="desc">this pane frames http:// and https:// addresses only.</div>
+    `;
+    el.querySelector('.reason').textContent = String(url).slice(0, 200);
+    body.appendChild(el);
+  }
+
   function setTitle(url) {
     if (params && params.title) { root.host.dataset.paneTitle = params.title; return; }
     if (!url) { root.host.dataset.paneTitle = 'browser'; return; }
@@ -212,6 +243,11 @@
       empty.style.display = 'flex';
       return;
     }
+    if (!webUrl(url)) {
+      currentUrl = '';   // so ↻ and ↗ have nothing to act on
+      showRefused(url);
+      return;
+    }
     // The pre-check is only an advisory "will this frame?", so skipping it costs
     // nothing but a nicer error message. Skip it for the obvious local case,
     // and with the embed helper extension active, where XFO/CSP are stripped at
@@ -227,6 +263,7 @@
       const r = await fetch('/api/embed-check?url=' + encodeURIComponent(url));
       const j = await r.json();
       if (currentUrl !== url) return; // a newer load() started
+      if (j.code === 'unsupported-scheme') { currentUrl = ''; showRefused(url); return; }
       if (!j.ok || !j.reachable) {
         // "The daemon will not fetch that on your behalf" is not "that URL is
         // unreachable" — it is the SSRF fence, and it says nothing about
@@ -247,7 +284,7 @@
       }
       clearOverlays();
       frame.classList.remove('hidden');
-      frame.src = j.finalUrl || url;
+      frame.src = j.finalUrl && webUrl(j.finalUrl) ? j.finalUrl : url;
     } catch (e) {
       if (currentUrl !== url) return;
       showUnreachable(url, e.message);

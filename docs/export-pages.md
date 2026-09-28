@@ -140,7 +140,9 @@ next step are ever live documents.
 
 - `GET /replay?from=&to=&…` serves it under the same `PREVIEW_CSP` as the node
   previews (`connect-src 'none'`, which the srcdoc frames inherit): pane
-  scripts run, nothing reaches the daemon. It names no network API itself.
+  scripts run, and nothing reaches the daemon from their own realm. (The in-app
+  player frames it same-origin, unlike the sandboxed node previews, because the
+  chrome drives it through its window — a recorded, accepted risk.) It names no network API itself.
 - `GET /api/replay/html?from=&to=&…` is the same document as a download,
   `replay-<from>_<to>.html` — offline, no server, like a page export.
 - Options (query parameters): `hold_ms` (2500; 0.5–20 s) or `pacing=realtime`

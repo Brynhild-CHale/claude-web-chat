@@ -70,7 +70,7 @@ test('replay doc: nasty prompts, replies, pane html and theme css cannot break o
   const frame = a + payload.themes[0] + b + payload.steps[0].node + c;
   assert.equal(frame, renderPreviewHtml(steps[0].node, themes[0]));
   const f = parse(frame.replace('<head>', '<head><script id="wc-replay-data" type="application/json">{}</script>'));
-  assert.equal(f.scripts.length, 3, 'the filled frame holds its own two scripts (+ the probe) — the pane html stayed data');
+  assert.equal(f.scripts.length, 4, 'the filled frame holds its own three scripts — Escape relay, runtime, node (+ the probe) — the pane html stayed data');
   assert.equal(f.doc.querySelectorAll('style').length, 1, 'the theme css did not close the style element');
 });
 

@@ -250,6 +250,46 @@ test('the ownership guard still wins: a foreign pane rejects the clear before pi
   assert.equal(c.json.ok, false);
   assert.equal(c.json.owned, true);
   assert.deepEqual(await mountIds(api), ['keep', 'svc'], 'rejected whole — nothing removed');
+  assert.match(c.json.hint, /clear your own by id/);
+  assert.match(c.json.hint, /force:true on a bulk clear also removes every pinned pane/,
+    'the hint must not send Claude to force:true without saying it sweeps the user\'s pins');
+});
+
+// A pinned pane the clear would KEEP is not a clobber, whoever owns it. It used
+// to refuse the whole clear anyway — and every pane-spawned child is foreign to
+// Claude — so one pinned child blocked every page-wide clear, and the hint's
+// force:true then took every pinned pane, the user's included.
+test('a pinned foreign pane the clear keeps does not refuse it', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  await api.post('/api/markdown', { id: 'svc-head', text: '## Tests', owner: 'service:tests' });
+  await api.post('/api/render', { id: 'drv', html: '<p>d</p>', owner: 'service:tests' });
+  await api.post('/api/render', { id: 'mine', html: '<p>m</p>' });
+  await api.post('/api/render', { id: 'mine-pinned', html: '<p>p</p>' });
+  await pin(ctx, 'drv');
+  await pin(ctx, 'mine-pinned');
+
+  const c = await api.post('/api/clear', {});
+  assert.equal(c.json.ok, true, 'the pinned driver pane (and its heading above it) stay, so nothing foreign is taken');
+  assert.deepEqual(c.json.kept.sort(), ['drv', 'mine-pinned']);
+  assert.deepEqual(await mountIds(api), ['drv', 'mine-pinned']);
+  const { markdown } = (await api.get('/api/mounts')).json;
+  assert.deepEqual(markdown.map((m) => m.id), ['svc-head'], 'the foreign heading directly above the kept pane survives');
+
+  // Unpinned, the same pane is a clobber again.
+  const sock = ctx.ws();
+  await new Promise((r, j) => { sock.on('open', r); sock.on('error', j); });
+  sock.send(JSON.stringify({ type: 'pane:state', id: 'drv', pane_state: { pinned: false } }));
+  for (let i = 0; i < 100; i++) {
+    const m = (await api.get('/api/mounts')).json.mounts.find((x) => x.id === 'drv');
+    if (!m.pane_state.pinned) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  sock.close();
+  const again = await api.post('/api/clear', {});
+  assert.equal(again.json.ok, false);
+  assert.equal(again.json.owned, true);
+  assert.deepEqual(await mountIds(api), ['drv', 'mine-pinned'], 'rejected whole');
 });
 
 // ── Restart ────────────────────────────────────────────────────────────────

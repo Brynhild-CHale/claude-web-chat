@@ -391,6 +391,8 @@ function openDeps(overrides = {}) {
     probeReachable: async () => true,
     spawnDaemonProcess: () => {},
     waitForPortfile: async () => ({ port: 5999, url: 'http://localhost:5999', pid: 1 }),
+    restartIfStale: async () => ({ restarted: false }),
+    root: '/wc-test/project',
     ...overrides,
   };
   return { calls, deps };
@@ -415,6 +417,37 @@ test('a cold start points at the extensions page — the only in-product mention
     calls.logs.some((l) => /\/extensions$/.test(l)),
     `cold start must advertise the extensions page; logs were ${JSON.stringify(calls.logs)}`,
   );
+});
+
+// No bare-cwd fallback: a daemon is only ever rooted at an initialised project.
+test('`open` outside a web-chat project refuses, naming init, and spawns nothing', async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(require('os').tmpdir(), 'wc-open-noproj-')));
+  const prev = process.cwd();
+  process.chdir(dir);
+  t.after(() => { process.chdir(prev); fs.rmSync(dir, { recursive: true, force: true }); });
+  let spawned = 0;
+  const { calls, deps } = openDeps({ root: undefined, readPortfile: () => null, spawnDaemonProcess: () => { spawned++; } });
+  await open([], deps);
+  assert.equal(spawned, 0);
+  assert.deepEqual(calls.exits, [1]);
+  assert.deepEqual(calls.browsed, []);
+  assert.match(calls.errs[0], /no web-chat project here .*claude-web-chat init/);
+});
+
+// A daemon an update left on the old build would serve the old chrome to the
+// tab `open` is about to show: it is restarted first, and the browser goes to
+// wherever the new one bound.
+test('`open` bounces a daemon on an older build, then opens the NEW one', async () => {
+  let reads = 0;
+  const seen = [];
+  const { calls, deps } = openDeps({
+    readPortfile: () => (reads++ === 0 ? { port: 5999, url: 'http://localhost:5999' } : { port: 6001, url: 'http://localhost:6001' }),
+    restartIfStale: async (root) => { seen.push(root); return { restarted: true, build: '0.7.6' }; },
+  });
+  await open([], deps);
+  assert.deepEqual(seen, ['/wc-test/project']);
+  assert.deepEqual(calls.browsed, ['http://localhost:6001']);
+  assert.equal(calls.logs.some((l) => /already running/.test(l)), false);
 });
 
 test('an unknown open target is refused rather than silently opening the surface', async () => {

@@ -38,6 +38,7 @@ const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { parseSums } = require('../lib/update/release');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const BLOCK = 512;
@@ -228,6 +229,32 @@ function devVersion(base, { now = new Date(), sha = 'nogit' } = {}) {
   return `${m[1]}.${Number(m[2]) + 1}.0-dev.${stamp}.${sha}`;
 }
 
+// ────────────────────────────────────────────────────────────── SHA256SUMS ──
+
+// The SHA256SUMS a build leaves in outDir: every entry already there whose
+// tarball is still beside it, plus this build's line (replacing any earlier one
+// for the same name). CI builds into a fresh dist/, so a release still publishes
+// exactly one line; a local dist/ that holds several builds keeps a line for
+// each, so `update --from dist/<an older one>` and `shasum -a 256 -c SHA256SUMS`
+// still verify it. The exact format `shasum -a 256` writes and `-c` reads, read
+// back through the one parser install and `update --from` use.
+function mergeSums(existing, { tarName, digest, outDir }) {
+  const sums = existing == null ? {} : parseSums(existing);
+  delete sums[tarName];
+  const lines = Object.keys(sums)
+    .filter((name) => !name.includes('/') && fs.existsSync(path.join(outDir, name)))
+    .map((name) => `${sums[name]}  ${name}`);
+  lines.push(`${digest}  ${tarName}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function readText(file) {
+  try { return fs.readFileSync(file, 'utf8'); } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
 // ───────────────────────────────────────────────────────────────── the build ──
 
 function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'), log = console.log, dev = false, now, sha } = {}) {
@@ -254,9 +281,7 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
 
   const digest = crypto.createHash('sha256').update(gz).digest('hex');
   const sumsPath = path.join(outDir, 'SHA256SUMS');
-  // The exact format `shasum -a 256` writes and `-c` reads, so install.sh can
-  // verify with the stock tool.
-  fs.writeFileSync(sumsPath, `${digest}  ${tarName}\n`);
+  fs.writeFileSync(sumsPath, mergeSums(readText(sumsPath), { tarName, digest, outDir }));
 
   const files = entries.filter((e) => e.type === 'file').length;
   log(`built ${tarPath}`);
@@ -280,4 +305,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildRelease, collectEntries, makeTar, splitName, devVersion, REPO_ROOT };
+module.exports = { buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, REPO_ROOT };
