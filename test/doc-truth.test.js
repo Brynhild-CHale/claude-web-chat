@@ -880,5 +880,14 @@ test('install.md\'s "What it writes" names the tunnel, brand and replay scratch 
   ]) {
     assert.ok(section.includes(claim), `docs/install.md's inventory does not name ${claim} (${what})`);
   }
-  assert.match(section, /tunnel down/, 'the inventory must say to run `tunnel down` before `uninstall --self`');
+  // `uninstall --self` stops a running portal before it removes the program
+  // (no command that could stop it would be left), and removes nothing if the
+  // portal will not stop — so the doc must not send the reader to `tunnel down`
+  // first, as it did while the command left the portal running.
+  assert.match(read('lib/cli/commands/uninstall.js'), /readRoleEntry\('portal'\)/,
+    'uninstall no longer reads the registered portal — re-check what docs/install.md says --self does to it');
+  assert.match(section, /`uninstall --self` stops it and its cloudflared first/,
+    'the inventory must say `uninstall --self` stops a running tunnel portal first');
+  assert.doesNotMatch(section, /does not stop a running portal/,
+    'the inventory still says `uninstall --self` leaves a running portal up');
 });
