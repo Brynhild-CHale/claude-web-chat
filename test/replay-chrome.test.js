@@ -517,8 +517,8 @@ test('Claude\'s replay: a replay:open frame opens the player on that script, and
   await tick();
   await tick();
   const r = calls.find((c) => c.url === '/api/replay/render');
-  assert.deepEqual(r.body, { format: 'gif', transition: 'cut', captions: 'on', include_prompts: false, script: pinned },
-    'the render is of the same script, not its from/to');
+  assert.deepEqual(r.body, { format: 'gif', transition: 'cut', captions: 'on', include_prompts: false, script: { ...pinned, include_prompts: false } },
+    'the render is of the same script, not its from/to — carrying the viewer\'s prompt choice');
 
   // A new range is a plain replay of it.
   const from = $('rpo-from');
@@ -528,6 +528,36 @@ test('Claude\'s replay: a replay:open frame opens the player on that script, and
   assert.equal(frameQuery().get('script'), null, 'picking a range leaves the script');
   assert.equal(frameQuery().get('from'), 'n1a');
   assert.equal($('rpo-note').textContent, '');
+});
+
+test('Claude\'s replay with include_prompts: the box starts ticked for it, and unticking it takes them out of every file', async () => {
+  const pinned = { from: 'n1', to: 'n1b', include_prompts: true };
+  WS.onmessage({ data: JSON.stringify({
+    type: 'replay:open', script_id: 'withp', script: pinned, title: null, steps: 3,
+    from: { id: 'n1', label: 'n1' }, to: { id: 'n1b', label: 'n1.2' },
+  }) });
+  await tick();
+  await tick();
+  assert.ok(replayOpen());
+  assert.equal($('rpo-prompts').checked, true, 'the checkbox shows what the script chose');
+  assert.equal(frameQuery().get('include_prompts'), '1', 'and the player follows it');
+  assert.notEqual((JSON.parse(W.localStorage.getItem('wc:replay-prefs') || '{}')).prompts, true,
+    'Claude\'s choice is not remembered as the viewer\'s');
+
+  const cb = $('rpo-prompts');
+  cb.checked = false;
+  cb.dispatchEvent(new W.Event('change', { bubbles: true }));
+  assert.equal(frameQuery().get('include_prompts'), '0', 'unticked: the player drops them…');
+  assert.match($('rpo-download').getAttribute('href'), /include_prompts=0/, '…and so does replay.html');
+
+  calls.length = 0;
+  click($('rpo-gif'));
+  await tick();
+  await tick();
+  const r = calls.find((c) => c.url === '/api/replay/render');
+  assert.equal(r.body.include_prompts, false);
+  assert.equal(r.body.script.include_prompts, false, '↧ GIF posts the script with the viewer\'s choice, not the script\'s');
+  assert.doesNotMatch($('rpo-note').textContent, /prompts/);
 });
 
 test('a replay:open frame without a script id opens nothing', async () => {

@@ -23,6 +23,7 @@ const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
 const { frameSchedule, normalizeRenderRequest, LIMITS } = require('../lib/server/replay/render');
+const { replayOpts } = require('../lib/server/replay/document');
 const { timeline } = require('../lib/server/replay/player');
 const { findChrome, findFfmpeg, chromeCandidates } = require('../lib/replay/find');
 const { captureFrames, createPipeConnection, CHROME_FLAGS, liveBrowsers } = require('../lib/replay/chrome');
@@ -164,9 +165,12 @@ test('normalizeRenderRequest: defaults, clamps and honest refusals', () => {
   assert.equal(d.format, 'gif');
   assert.equal(d.width, LIMITS.width.dflt);
   assert.equal(d.docQuery.captions, 'on', 'a rendered file has captions…');
-  assert.equal(d.docQuery.include_prompts, false, '…without the user\'s prompts unless asked');
+  assert.equal(d.docQuery.include_prompts, undefined, 'unsaid — a script may decide (replayOpts)…');
+  assert.equal(replayOpts({ include_prompts: null }, d.docQuery).include_prompts, false, '…and without one, no prompts unless asked');
   assert.equal(normalizeRenderRequest({ include_prompts: true }).docQuery.include_prompts, true);
-  assert.equal(normalizeRenderRequest({ captions: 'prompt' }).docQuery.include_prompts, false, 'the retired captions:"prompt" does not include them');
+  assert.equal(normalizeRenderRequest({ include_prompts: false }).docQuery.include_prompts, false, 'an explicit false is kept: it wins over a script');
+  assert.equal(replayOpts({ include_prompts: null }, normalizeRenderRequest({ captions: 'prompt' }).docQuery).include_prompts, false,
+    'the retired captions:"prompt" does not include them');
   assert.equal(normalizeRenderRequest({ captions: 'none' }).docQuery.captions, 'none');
   assert.equal(normalizeRenderRequest({ width: 99999 }).width, LIMITS.width.max);
   assert.equal(normalizeRenderRequest({ width: 641 }).width % 2, 0, 'even width');

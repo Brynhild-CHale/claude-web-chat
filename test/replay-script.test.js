@@ -476,7 +476,7 @@ test('a scripted GIF: one frame per beat, each delay the beat\'s hold, and Chrom
   assert.ok(seeks.every((ms) => ms < 4500), 'and none past the end');
 });
 
-test('a scripted replay .html: the script decides include_prompts; a bad script is refused before any browser', async (t) => {
+test('a scripted replay .html: the script decides include_prompts unless the request says one; a bad script is refused before any browser', async (t) => {
   setEnv(t, { WEB_CHAT_CHROME: '/nonexistent/chrome' });
   const { api, port } = await withServer(t);
   await seed(api);
@@ -488,9 +488,15 @@ test('a scripted replay .html: the script decides include_prompts; a bad script 
   assert.ok(!/maybe private/.test(html), 'no prompts unless asked');
   assert.deepEqual(payloadOf(html).steps[1].group, ['n1.1', 'n1.2']);
 
-  const on = await post({ format: 'replay', include_prompts: false, script: { ...SCRIPT, include_prompts: true } });
-  assert.equal(on.body.include_prompts, true, 'the script\'s own include_prompts wins');
+  const on = await post({ format: 'replay', script: { ...SCRIPT, include_prompts: true } });
+  assert.equal(on.body.include_prompts, true, 'a request that says nothing leaves it to the script');
   assert.match(fs.readFileSync(on.body.path, 'utf8'), /maybe private/);
+
+  const overruled = await post({ format: 'replay', include_prompts: false, script: { ...SCRIPT, include_prompts: true } });
+  assert.equal(overruled.body.include_prompts, false, 'an explicit include_prompts on the request (the viewer\'s checkbox) wins over the script\'s');
+  assert.ok(!/maybe private/.test(fs.readFileSync(overruled.body.path, 'utf8')));
+  const ticked = await post({ format: 'replay', include_prompts: true, script: { ...SCRIPT, include_prompts: false } });
+  assert.equal(ticked.body.include_prompts, true, '…both ways');
 
   const bad = await post({ format: 'gif', script: { ...SCRIPT, steps: [{ node: 'n1.3' }, { node: 'n1.0' }] } });
   assert.equal(bad.status, 400);
