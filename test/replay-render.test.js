@@ -647,8 +647,7 @@ test('POST /api/replay/render is single-flight: a second render while one runs i
 
   const first = postJson(port, { width: 320 });
   // Wait until the first has really started (the browser is up).
-  const t0 = Date.now();
-  while (!fake.read().some((l) => l.method === 'Page.navigate') && Date.now() - t0 < 10000) await new Promise((r) => setTimeout(r, 20));
+  await waitUntil(() => fake.read().some((l) => l.method === 'Page.navigate'), { timeout: 10000, what: 'the first render navigates' });
   const second = await postJson(port, { width: 320 });
   assert.equal(second.status, 409);
   assert.equal((await second.json()).code, 'busy');

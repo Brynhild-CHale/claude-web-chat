@@ -61,11 +61,16 @@ const PATTERNS = [
     // boolean vs first-truthy-value, one calling its predicate synchronously —
     // which is why ~17 `assert.ok(await waitUntil(…))` call sites could not
     // simply be pointed at any one of them.
-    name: 'while (Date.now()',
+    //
+    // Any condition that reads the clock counts, not only one that STARTS with
+    // it: a compound `while (!pred() && Date.now() - t0 < N)` is the same loop,
+    // and it is worse — on a timeout it falls through silently and the test
+    // goes on against a state it never reached.
+    name: 'while (… Date.now()',
     home: 'test-support/helpers.js — `waitUntil(pred, { timeout, interval, what })`',
     what: 'a hand-rolled deadline poll loop',
     roots: ROOTS,
-    re: /while\s*\(\s*Date\.now\(\)/g,
+    re: /while\s*\([^{;]*Date\.now\(\)/g,
     baseline: {},
   },
   {
@@ -347,7 +352,8 @@ test('harness: every server a test binds names LOOPBACK, never the wildcard', ()
 // Shrink-only, with a named baseline: seven shell files still do it, converting
 // them is not this ratchet's job, and the baseline exists so the number can only
 // go down.
-const SHELL_BOOT = /^test\(\s*(['"`])(?:boot|set ?up)/gim;
+// A `<word>: ` prefix does not hide one ('panel: boot the shell once').
+const SHELL_BOOT = /^test\(\s*(['"`])(?:[\w-]+:\s*)?(?:boot|set ?up)/gim;
 
 // Gated on the file actually building a jsdom shell, so a genuine test ABOUT
 // booting something else (lock-ttl's "boot clears a stale lock persisted in
