@@ -93,6 +93,23 @@ test('script without steps IS the plain replay: the drawn path, each node at the
   assert.deepEqual(norm({}).to, { id: 'n7', label: 'n1.7' }, 'no from/to: active, as a plain replay');
 });
 
+test('a script naming every drawn node IS the plain replay, "+N folded" included; a drawn node it skips ends the run', () => {
+  // A GIF render hands the browser exactly such a script for a plain replay
+  // (lib/server/replay/render), so it must play the same steps, saying the same.
+  const plain = resolveReplayPath(G, { from: 'n1.0', to: 'n1.7' });
+  const every = norm({ from: 'n1.0', to: 'n1.7', steps: plain.steps.map((s) => ({ node: s.id })) });
+  assert.equal(every.ok, true, every.error);
+  const said = (r) => r.steps.map((s) => ({ id: s.id, folded: s.folded, folded_count: s.folded_count, dt_from_prev: s.dt_from_prev }));
+  assert.deepEqual(said(every), said(plain));
+  assert.deepEqual(every.steps[2].folded.map((f) => f.id), ['n2', 'n3'], 'the hidden n2, n3 ride on n1.4, as in the plain replay');
+
+  const skip = norm({ from: 'n1.0', to: 'n1.7', steps: [{ node: 'n1.0' }, { node: 'n1.5' }, { node: 'n1.7' }] });
+  assert.equal(skip.ok, true, skip.error);
+  assert.deepEqual(skip.steps[1].folded, [], 'n1.4 — drawn, and skipped by the script — ends the run: n2 and n3 went with it');
+  assert.deepEqual(skip.steps[2].folded.map((f) => f.id), ['n6'], 'the hidden n6, directly before n1.7, rides on it');
+  assert.equal(skip.steps[2].folded_count, 1);
+});
+
 test('steps: single nodes and a group — the group shows its LAST node and lists them all; holds clamp', () => {
   const r = norm({
     from: 'n1.0', to: 'n1.7', title: '  How it   grew  ', default_hold_ms: 1200,
@@ -476,7 +493,7 @@ test('a scripted GIF: one frame per beat, each delay the beat\'s hold, and Chrom
   assert.ok(seeks.every((ms) => ms < 4500), 'and none past the end');
 });
 
-test('a scripted replay .html: the script decides include_prompts; a bad script is refused before any browser', async (t) => {
+test('a scripted replay .html: the script decides include_prompts unless the request says one; a bad script is refused before any browser', async (t) => {
   setEnv(t, { WEB_CHAT_CHROME: '/nonexistent/chrome' });
   const { api, port } = await withServer(t);
   await seed(api);
@@ -488,9 +505,15 @@ test('a scripted replay .html: the script decides include_prompts; a bad script 
   assert.ok(!/maybe private/.test(html), 'no prompts unless asked');
   assert.deepEqual(payloadOf(html).steps[1].group, ['n1.1', 'n1.2']);
 
-  const on = await post({ format: 'replay', include_prompts: false, script: { ...SCRIPT, include_prompts: true } });
-  assert.equal(on.body.include_prompts, true, 'the script\'s own include_prompts wins');
+  const on = await post({ format: 'replay', script: { ...SCRIPT, include_prompts: true } });
+  assert.equal(on.body.include_prompts, true, 'a request that says nothing leaves it to the script');
   assert.match(fs.readFileSync(on.body.path, 'utf8'), /maybe private/);
+
+  const overruled = await post({ format: 'replay', include_prompts: false, script: { ...SCRIPT, include_prompts: true } });
+  assert.equal(overruled.body.include_prompts, false, 'an explicit include_prompts on the request (the viewer\'s checkbox) wins over the script\'s');
+  assert.ok(!/maybe private/.test(fs.readFileSync(overruled.body.path, 'utf8')));
+  const ticked = await post({ format: 'replay', include_prompts: true, script: { ...SCRIPT, include_prompts: false } });
+  assert.equal(ticked.body.include_prompts, true, '…both ways');
 
   const bad = await post({ format: 'gif', script: { ...SCRIPT, steps: [{ node: 'n1.3' }, { node: 'n1.0' }] } });
   assert.equal(bad.status, 400);
@@ -524,6 +547,12 @@ test('export MCP tool: `script` passes through; with no format it writes the .ht
   const bad = await tool.handler({ script: { ...SCRIPT, steps: [{ node: 'n1.0' }, { nodes: ['n1.1', 'n1.3'] }] } });
   assert.equal(bad.code, 'not-contiguous', 'a bad script is a result naming what to fix, not a thrown error');
   assert.match(bad.error, /step 2/);
+  assert.equal(bad.step, 2, 'the {error, code, step} the description promises: the step, as a field');
+  const offPath = await tool.handler({ script: { from: 'n1.0', to: 'n1.2', steps: [{ node: 'n1.0' }, { node: 'n1.3' }] }, format: 'gif' });
+  assert.deepEqual([offPath.code, offPath.step], ['off-path', 2], 'a render refusal carries the step too');
+  const badEnd = await tool.handler({ format: 'replay', to: 'n9.9' });
+  assert.equal(badEnd.which, 'to', 'a bad end is named: which one');
+  assert.equal(badEnd.step, undefined, 'no step where no script was refused');
 
   const html = await tool.handler({ script: SCRIPT, format: 'html' });
   assert.equal(html.code, 'bad-format');

@@ -95,8 +95,9 @@ test('the release note about a private embed target matches what the pane does',
   const pane = read('templates/components/website/component.html');
   const branch = pane.slice(pane.indexOf("j.code === 'private-target'"));
   assert.ok(branch.startsWith("j.code === 'private-target'"), 'the pane no longer answers the private-target label');
+  // show(url) is the pane's one framing path (it picks the sandbox for the URL).
   assert.ok(
-    branch.slice(0, 400).includes('frame.src = url'),
+    /\bshow\(url\)|frame\.src = url/.test(branch.slice(0, 400)),
     'the pane no longer frames a private target — re-word the 0.7.0 embed-check note before changing this',
   );
   const bullet = CHANGELOG.split('\n').find((l) => l.includes('/api/embed-check` can no longer be used to probe'));

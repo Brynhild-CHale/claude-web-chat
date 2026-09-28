@@ -47,6 +47,17 @@ export const isOpen = () => ws && ws.readyState === 1;
    built that snapshot before it heard any of this, so a frame sent ahead of it
    would be contradicted by the very frame it was meant to correct.
 
+   Store patches coalesce per WRITER — one entry per (mount, gesture) — not into
+   one patch for the whole gap. The daemon reads a store:set's `mount` and
+   `gesture` to decide what it is (lib/channel/policy: a declared signal becomes
+   a queue item naming its pane, a gesture-less undeclared write is a script's
+   and routes nowhere), so one merged frame carrying the LAST writer's
+   attribution turned two panes' handoffs into one item on the wrong pane, and a
+   user's write followed by a script tick into no activity at all. Across
+   writers, last-write-wins per key still holds: a later write of a key takes it
+   out of every other pending patch and moves its own entry to the end, and the
+   drain sends in that order.
+
    `pane:form` is deliberately NOT queued — the reconcile calls flushFormStates(),
    which re-reads the live DOM of every kept pane the user edited, and that is
    strictly fresher than anything stashed here. */
@@ -54,14 +65,25 @@ const OUTBOX_LOG_MAX = 100;
 const pendingState = new Map();   // coalescing key → latest frame
 const pendingLog = [];            // event / script:error, in order, capped
 
-function queueFrame(frame) {
-  if (frame.type === 'store:set') {
-    const prev = pendingState.get('store:set');
-    // Last-write-wins per key, so the whole gap collapses into one patch. The
-    // newest frame's `mount`/`gesture` attribution rides along with it.
-    pendingState.set('store:set', prev ? { ...frame, patch: { ...prev.patch, ...frame.patch } } : frame);
-    return;
+function queueStoreSet(frame) {
+  const key = `store:set:${frame.mount || ''}:${frame.gesture ? 1 : 0}`;
+  const written = Object.keys(frame.patch || {});
+  // A key written now is no longer another writer's to send.
+  for (const [k, f] of [...pendingState]) {
+    if (k === key || f.type !== 'store:set') continue;
+    if (!written.some((w) => w in f.patch)) continue;
+    const patch = { ...f.patch };
+    for (const w of written) delete patch[w];
+    if (Object.keys(patch).length) pendingState.set(k, { ...f, patch });
+    else pendingState.delete(k);
   }
+  const prev = pendingState.get(key);
+  pendingState.delete(key);   // re-inserted last: the drain replays the writes in order
+  pendingState.set(key, prev ? { ...frame, patch: { ...prev.patch, ...frame.patch } } : frame);
+}
+
+function queueFrame(frame) {
+  if (frame.type === 'store:set') { queueStoreSet(frame); return; }
   if (frame.type === 'pane:state') { pendingState.set(`pane:state:${frame.id}`, frame); return; }
   if (frame.type === 'pane:form') return;  // see the block comment
   if (frame.type === 'client') return;     // hello re-sends the current one
@@ -169,10 +191,17 @@ const HANDLERS = {
     // A re-aim that landed while this client was disconnected can put active
     // exactly where it is previewing — attach rather than sit half-detached
     // (previewing with viewedId === activeId), the same rule `reset` carries.
-    if (view.previewing && 'active' in msg && msg.active === view.viewedId) leavePreview();
+    // And then render the frame AUTHORITATIVELY, as `reset` does: the DOM on
+    // screen is the previewed node's, not this client's picture of the live
+    // surface, so there is nothing to reconcile. A reconcile kept every pane
+    // whose spec matched — with the committed node's form values, since
+    // form_state is never applied over a kept pane — and the next keystroke
+    // published those old values over what had been typed live.
+    const reattach = view.previewing && 'active' in msg && msg.active === view.viewedId;
+    if (reattach) leavePreview();
     applyGlobalTheme(msg.theme || null, false); // initial paint: no animation
     setActiveNodeTheme(msg.activeTheme || null);
-    applySnapshot(msg, { mode: 'reconcile' });
+    applySnapshot(msg, reattach ? {} : { mode: 'reconcile' });
     sendClientInfo();
     // …and now the client's half of the catch-up: everything we tried to send
     // while the socket was down (see the outbox above).
@@ -257,11 +286,17 @@ const HANDLERS = {
       if (msg.target === view.activeId) setActiveNodeTheme(msg.theme || null);
       if (msg.target === view.viewedId) applyNodeTheme(msg.theme || null, true);
     } else if (msg.scope === 'pane') {
-      const p = panes.get(msg.target);
-      if (p) applyPaneTheme(p, msg.theme || null, true);
-      else if (view.liveSnapshot) {
-        const sm = view.liveSnapshot.mounts.find(x => x.id === msg.target);
+      // A pane theme is a LIVE change. While previewing, `panes` holds the
+      // previewed node's panes — and with stable mount ids one of them usually
+      // answers to the target — so the theme folds into the captured live
+      // surface, like every other live frame, and the committed node on screen
+      // is never repainted.
+      if (view.previewing) {
+        const sm = view.liveSnapshot && view.liveSnapshot.mounts.find(x => x.id === msg.target);
         if (sm) sm.theme = msg.theme || undefined;
+      } else {
+        const p = panes.get(msg.target);
+        if (p) applyPaneTheme(p, msg.theme || null, true);
       }
     }
     if (isOverlayOpen()) layoutAndRender();

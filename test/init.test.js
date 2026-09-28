@@ -152,18 +152,41 @@ test('fresh + --yes: installs, opens nothing, mounts no tour', async (t) => {
   assert.doesNotMatch(text, /Your tour is on the surface/);
 });
 
-test('fresh + --yes in $HOME still asks about the disable-marker collision and takes the No default', async (t) => {
+// R2-4. 0.7.x asked "Install into your home directory anyway?" and installed on
+// a yes. Since 0.8 no daemon can be rooted at $HOME (its .web-chat/ is the user
+// tier), so a yes bought machine-wide hooks and a surface that never starts.
+// Refused outright now — no question, nothing written — by either spelling of
+// the directory (withTempHome's HOME is a /var/folders path whose real path is
+// /private/var/…).
+test('fresh init in $HOME is refused outright: no question asked, nothing written, exit 1', async (t) => {
   const home = withTempHome(t);
-  const log = sink();
-  const install = fakeDoctor();
+  const prevExit = process.exitCode;
+  t.after(() => { process.exitCode = prevExit; });
+  for (const cwd of [home, fs.realpathSync(home)]) {
+    process.exitCode = 0;
+    const log = sink();
+    const install = fakeDoctor();
+    // Stubbed, not the real `open`: this prompt answers yes to everything, so
+    // a regression past the gate would otherwise boot a real daemon — and with
+    // HOME redirected, the upward walk from the test's cwd can reach the REAL
+    // home directory's .web-chat/.
+    const opened = [];
+    const open = async (a) => { opened.push(a); };
+    const asked = [];
+    const prompt = { interactive: true, confirm: async (q) => { asked.push(q); return true; }, line: async () => '', close: () => {} };
+    await init(['--yes'], { cwd, log, prompt, ...inertDeps({ install, open }) });
 
-  // cwd IS the home directory: projectPaths(root).disabled === userPaths().disabled.
-  await init(['--yes'], { cwd: home, log, ...inertDeps({ install }) });
-
-  assert.equal(install.calls.length, 0, '--yes must not install into $HOME — the printed default is No');
-  const text = log.text();
-  assert.match(text, /home directory/);
-  assert.match(text, /disable web-chat for EVERY project/);
+    assert.equal(install.calls.length, 0, `install must never run in $HOME (${cwd})`);
+    assert.deepEqual(opened, [], 'nor open');
+    assert.deepEqual(asked, [], 'no question: there is no answer that makes a $HOME surface work');
+    assert.deepEqual(fs.readdirSync(home), [], 'nothing written in $HOME');
+    assert.equal(process.exitCode, 1);
+    const text = log.text();
+    assert.match(text, /This is your home directory, and web-chat does not install here/);
+    assert.match(text, /`claude-web-chat uninstall` in this directory/, 'a pre-0.8 home install is pointed at its removal');
+    assert.match(text, /Nothing written\. Run this from a project directory instead\./);
+    assert.doesNotMatch(text, /first-time setup/);
+  }
 });
 
 // -------------------------------------------------------------- --report ----
@@ -295,19 +318,14 @@ test('--yes resolves prompts to their default without a readline, and CI counts 
 test('the tour mounts as two claude-owned panes, routed auto, with the declared signal', async (t) => {
   await withServer(t, async (ctx) => {
     // A portfile so init's own portfile read finds this server, plus a client
-    // shim that speaks to it. (withServer binds an ephemeral port.)
+    // shim that speaks to it. (withServer binds an ephemeral port.) The shim is
+    // lib/client pinned to that port — what init really uses — not the test's
+    // fetch: /use strips a browser request's declared signals.
     writePortfileAt(ctx.webChatDir, { pid: process.pid, port: ctx.port });
+    const client = require('../lib/client');
     const http = {
-      get: async (p) => {
-        const r = await ctx.api.get(p);
-        if (r.status >= 400) throw new Error(`${p} -> ${r.status}`);
-        return r.json;
-      },
-      post: async (p, body) => {
-        const r = await ctx.api.post(p, body);
-        if (r.status >= 400) throw new Error(`${p} -> ${r.status}`);
-        return r.json;
-      },
+      get: (p) => client.get(p, { port: ctx.port, noSpawn: true }),
+      post: (p, body) => client.post(p, body, { port: ctx.port, noSpawn: true }),
     };
 
     const log = sink();

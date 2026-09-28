@@ -114,6 +114,22 @@ test('the old id `georgetown` counts as the pack too', (t) => {
   assert.equal(f.logotype.light.type, 'image/svg+xml');
 });
 
+// R6-2: a theme 0.7.6 saved and applied as `georgetown` (or `georgetown-blue`)
+// before that was a builtin carries no `builtin` flag and paints its own
+// tokens. It is not the pack, so it gets none of the pack's marks.
+test('a flagless saved copy under the pack\'s name (a 0.7.6 theme) gets no Georgetown Blue fill', (t) => {
+  withTempHome(t);
+  drop('logotype.svg', NAVY);
+  for (const name of ['georgetown', 'georgetown-blue', 'Georgetown']) {
+    const root = project(t, null);
+    fs.writeFileSync(projectPaths(root).theme, JSON.stringify({ name, tokens: { '--wc-bg': '#123456' } }));
+    assert.equal(brand.fillSource(root), null, name);
+    assert.deepEqual(brand.fills(root), { logotype: null, lockup: null, seal: null }, name);
+    assert.equal(brand.effective(root, 'logotype'), null, name);
+  }
+  assert.ok(brand.effective(project(t, 'georgetown'), 'logotype'), 'the applied pack (builtin: true) still fills');
+});
+
 test('README.txt is never rewritten: an edited one, a folder with files, a deleted one', (t) => {
   withTempHome(t);
   themeLogos.seedThemeLogos();
@@ -191,6 +207,24 @@ test('fill: reversed variants are dark mode\'s; svg is preferred over png', (t) 
   const f = brand.fills(gt);
   assert.equal(f.seal.light, null);
   assert.equal(f.seal.dark.type, 'image/svg+xml');
+});
+
+// R4-5 hardened the SVG check (prefixed elements, character references, SMIL
+// targets, namespace bindings). A logo as a design tool exports it — an XML
+// declaration, a generator comment, the xlink binding, a <style>, <use> by
+// fragment, entity-free character references — still fills.
+test('fill: an exported logo with the xlink binding, a <style> and <use> still passes the hardened check', (t) => {
+  withTempHome(t);
+  const gt = project(t, PACK);
+  const exported = Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<!-- Generator: Adobe Illustrator 28.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->\n'
+    + '<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+    + 'x="0px" y="0px" viewBox="0 0 260 52" style="enable-background:new 0 0 260 52;" xml:space="preserve">\n'
+    + '<style type="text/css">.st0{fill:#041E42;}</style>\n'
+    + '<defs><path id="mark" d="M0 0h52v52H0z"/></defs><use xlink:href="#mark" class="st0"/>'
+    + '<text class="st0" x="60" y="34">Georgetown &#x2014; University</text></svg>');
+  drop('lockup.svg', exported);
+  assert.deepEqual(brand.effective(gt, 'lockup').bytes, exported);
 });
 
 test('fill: the files go through the upload validation; a bad one is ignored with ONE log line', async (t) => {

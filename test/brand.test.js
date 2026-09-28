@@ -70,6 +70,48 @@ test('write: type, size and active-SVG refusals, each with its status', (t) => {
   assert.equal(status(() => brand.write(root, 'lockup', atCap)), 200);
 });
 
+// R4-5: the check is textual, and an XML parser reads what a plain regex does
+// not — a namespace prefix makes `<x:script>` a script, and a character
+// reference spells `javascript:` without the colon. Each probe below passed
+// the old blocklist; each is refused now, on the upload path and the logo-file
+// path alike (lib/core/brand-image is the one check both run).
+test('the SVG check reads namespace prefixes, character references, SMIL targets and namespace bindings', (t) => {
+  const root = tmpProject(t);
+  const NS = 'xmlns="http://www.w3.org/2000/svg"';
+  const probes = [
+    [`<svg ${NS} xmlns:x="http://www.w3.org/2000/svg"><x:script>alert(document.domain)</x:script></svg>`, /<script>/],
+    [`<svg ${NS}><x:foreignObject xmlns:x="http://www.w3.org/2000/svg"><div/></x:foreignObject></svg>`, /<foreignObject>/],
+    [`<svg ${NS}><a href="javascript&#58;alert(1)"><rect/></a></svg>`, /javascript: url/],
+    [`<svg ${NS}><set attributeName="onmouseover" to="alert(1)"/></svg>`, /animation of an event handler or a link/],
+    // …and their near relatives
+    [`<svg ${NS}><a href="&#x6A;avascript:alert(1)"><rect/></a></svg>`, /javascript: url/],
+    [`<svg ${NS}><a href="java&#9;script:alert(1)"><rect/></a></svg>`, /javascript: url/],
+    [`<svg ${NS}><set attributeName="&#111;nclick" to="alert(1)"/></svg>`, /animation/],
+    [`<svg ${NS} xmlns:xlink="http://www.w3.org/1999/xlink"><animate attributeName="xlink:href" values="#a"/></svg>`, /animation/],
+    [`<svg ${NS}><iframe src="https://example.com"/></svg>`, /<iframe>/],
+    [`<svg ${NS}><h:object xmlns:h="http://www.w3.org/1999/xhtml"/></svg>`, /<object>/],
+    [`<svg ${NS} xmlns:h="http://www.w3.org/1999/xhtml"><h:img src="x"/></svg>`, /namespace other than SVG and XLink/],
+    [`<svg ${NS}><g xmlns="http://www.w3.org/1999/xhtml"/></svg>`, /namespace other than SVG and XLink/],
+  ];
+  for (const [bad, why] of probes) {
+    assert.match(String(brand.svgRefusal(Buffer.from(bad))), why, bad);
+    assert.throws(() => brand.write(root, 'seal', Buffer.from(bad)), (e) => e.status === 422, bad);
+    assert.throws(() => brand.validateLogoFile('seal.svg', Buffer.from(bad)), (e) => e.status === 422, bad);
+  }
+
+  // What a real logo carries stays accepted: the SVG and XLink bindings under
+  // their own prefixes, an xlink:href to a fragment, an opacity animation,
+  // character references in text, no namespace at all.
+  for (const ok of [
+    SVG,
+    Buffer.from('<svg viewBox="0 0 1 1"/>'),
+    Buffer.from(`<svg ${NS} xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svg="http://www.w3.org/2000/svg" xml:space="preserve">`
+      + '<defs><linearGradient id="g" gradientUnits="objectBoundingBox"/></defs><use xlink:href="#g"/>'
+      + '<animate attributeName="opacity" values="0;1" dur="1s"/><text>&#x2014; &amp; &lt;b&gt;</text>'
+      + '<style>.a{fill:#041E42}</style></svg>'),
+  ]) assert.equal(brand.svgRefusal(ok), null, ok.toString());
+});
+
 test('a slot is one file: switching format drops the other; remove clears it', (t) => {
   const root = tmpProject(t);
   const dir = projectPaths(root).brandDir;

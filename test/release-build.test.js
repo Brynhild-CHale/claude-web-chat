@@ -6,7 +6,10 @@
 //      'express'` — measured, not assumed. Production node_modules must be in it.
 //   2. devDependencies are NOT in it. jsdom is ~30 MB of test-only weight.
 //   3. It is REPRODUCIBLE. A published SHA256SUMS that depends on which machine
-//      cut the release is a checksum nobody can check.
+//      cut the release is a checksum nobody can check. The tar is reproducible
+//      from the tree alone; the .tar.gz also depends on the zlib Node links
+//      (official nodejs.org builds agree, Homebrew/distro Node do not), so the
+//      build summary names that zlib and the uncompressed tar's digest.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -15,7 +18,7 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
-const { buildRelease, collectEntries, splitName } = require('../scripts/build-release');
+const { buildRelease, collectEntries, splitName, packageDirsFromTree } = require('../scripts/build-release');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
@@ -25,10 +28,12 @@ function tmpDir(prefix = 'wc-build-') {
 }
 
 // Built once and shared: the build reads ~28 MB and gzips it, so paying for it
-// per-test would be the slowest thing in the suite for no extra coverage.
+// per-test would be the slowest thing in the suite for no extra coverage. Its
+// summary lines are kept for the test that reads them.
 let built = null;
+const summary = [];
 function build() {
-  if (!built) built = buildRelease({ outDir: tmpDir('wc-dist-'), log: () => {} });
+  if (!built) built = buildRelease({ outDir: tmpDir('wc-dist-'), log: (line) => summary.push(line) });
   return built;
 }
 
@@ -96,11 +101,33 @@ test('the build is reproducible — same tree, same bytes, same checksum', () =>
 // (RFC 1952 §2.3.1 — zlib stamps 3 on Linux, 19 on macOS). Left alone, the same
 // tree cut on Linux and on macOS differs at exactly byte 9, and a user verifying a
 // release by rebuilding it on another OS gets a mismatch that reads as tampering.
+// (The deflate stream after the header is the zlib build's — see the next test.)
 test('the gzip header is platform-independent — OS byte pinned, no mtime', () => {
   const gz = fs.readFileSync(build().tarPath);
   assert.deepEqual([...gz.subarray(0, 3)], [0x1f, 0x8b, 0x08], 'not a gzip stream');
   assert.deepEqual([...gz.subarray(4, 8)], [0, 0, 0, 0], 'MTIME must be zero, not the build time');
   assert.equal(gz[9], 255, 'gzip OS byte must be 255 ("unknown") on every platform');
+});
+
+// The one input the tree does not decide is the zlib Node links: official
+// nodejs.org builds (what CI's setup-node installs) bundle one zlib and agree
+// across 22.x and 24.x, while Homebrew and distro Node link the system zlib and
+// deflate the same tar to different bytes. A rebuilder whose digest differs has
+// to be able to tell "different zlib" from "different tree" — so the summary
+// names the zlib, and the uncompressed tar's digest, which never varies with it.
+// (The cross-zlib behaviour itself needs a second Node build to show.)
+test('the build summary names the zlib and the uncompressed tar digest', () => {
+  const { tarPath, digest, tarDigest, zlib: zlibVersion } = build();
+  assert.equal(zlibVersion, process.versions.zlib);
+  const zlibLine = summary.find((l) => /^\s*zlib\s/.test(l));
+  assert.ok(zlibLine, `no zlib line in the build summary:\n${summary.join('\n')}`);
+  assert.ok(zlibLine.includes(process.versions.zlib), `the zlib line must name ${process.versions.zlib}: ${zlibLine}`);
+
+  const tar = require('zlib').gunzipSync(fs.readFileSync(tarPath));
+  assert.equal(tarDigest, require('crypto').createHash('sha256').update(tar).digest('hex'),
+    'tar sha256 is the digest of the gunzipped tarball — what a rebuild with another zlib can still match');
+  assert.ok(summary.some((l) => /^\s*tar\s/.test(l) && l.includes(tarDigest)), 'the summary prints the tar digest');
+  assert.ok(summary.some((l) => /^\s*sha256\s/.test(l) && l.includes(digest)), 'and still the published one');
 });
 
 test('SHA256SUMS names the tarball in the format shasum -c reads', () => {
@@ -184,6 +211,88 @@ test('collectEntries is sorted and free of duplicates', () => {
   const names = entries.map((e) => e.name);
   assert.deepEqual(names, [...names].sort(), 'entry order must be deterministic');
   assert.equal(new Set(names).size, names.length, 'no path may appear twice');
+});
+
+// ── the production tree comes from npm's TREE, never its printed paths ─────
+//
+// npm redacts a UUID-shaped path segment to `***` in what it prints, and
+// `npm ls --parseable` paths are no exception — so a checkout under a
+// UUID-named directory (a Claude Code worktree, a mktemp dir) read back as
+// `/…/***/…/node_modules/express`, and the build refused every package as
+// "resolved outside node_modules". The directories are now built from the root
+// and the dependency tree's NAMES, which nothing redacts.
+
+// A tiny installed project under a UUID-named directory: a nested copy (a's own
+// b@2 beside the hoisted b@1), a scoped package, a devDependency on disk that
+// must never be listed, and a package.json per package the way npm lays it out.
+function uuidProject() {
+  const root = path.join(tmpDir('wc-npm-tree-'), require('crypto').randomUUID(), 'proj');
+  const put = (rel, json) => {
+    fs.mkdirSync(path.join(root, rel), { recursive: true });
+    fs.writeFileSync(path.join(root, rel, 'package.json'), JSON.stringify(json));
+  };
+  put('.', {
+    name: 'proj', version: '1.0.0', files: ['index.js'],
+    dependencies: { a: '1.0.0', '@s/c': '1.0.0' }, devDependencies: { d: '1.0.0' },
+  });
+  fs.writeFileSync(path.join(root, 'index.js'), '');
+  put('node_modules/a', { name: 'a', version: '1.0.0', dependencies: { b: '2.0.0' } });
+  put('node_modules/a/node_modules/b', { name: 'b', version: '2.0.0' });
+  put('node_modules/b', { name: 'b', version: '1.0.0' });
+  put('node_modules/@s/c', { name: '@s/c', version: '1.0.0', dependencies: { b: '1.0.0' } });
+  put('node_modules/d', { name: 'd', version: '1.0.0' });
+  return root;
+}
+
+// What `npm ls --omit=dev --all --json` prints for it — including the two shapes
+// that carry no directory of their own: a deduped node (version only, no
+// dependencies) and an optional peer npm reports but never installed (`{}`).
+const UUID_TREE = {
+  name: 'proj',
+  version: '1.0.0',
+  dependencies: {
+    '@s/c': { version: '1.0.0', dependencies: { b: { version: '1.0.0' }, 'peer-opt': {} } },
+    a: { version: '1.0.0', dependencies: { b: { version: '2.0.0' } } },
+  },
+};
+
+test('production package dirs are derived from the dependency tree, so a UUID-named checkout builds', () => {
+  const root = uuidProject();
+  const dirs = packageDirsFromTree(root, UUID_TREE);
+  const rels = dirs.map((d) => path.relative(root, d).split(path.sep).join('/'));
+  assert.deepEqual(rels, [
+    'node_modules/@s/c',
+    'node_modules/a',
+    'node_modules/a/node_modules/b',
+    'node_modules/b',
+  ], 'the nearest node_modules/<name> from each requiring package, the way Node resolves it');
+  for (const d of dirs) {
+    assert.ok(!d.includes('***'), `a derived path is never npm's redacted spelling: ${d}`);
+    assert.ok(d.startsWith(path.join(root, 'node_modules') + path.sep), `outside node_modules: ${d}`);
+  }
+});
+
+test('a package the tree names but the disk lacks fails the build, naming it', () => {
+  const root = uuidProject();
+  const tree = { ...UUID_TREE, dependencies: { ...UUID_TREE.dependencies, ghost: { version: '3.1.4' } } };
+  assert.throws(() => packageDirsFromTree(root, tree), /production dependency ghost@3\.1\.4 \(required by proj\) is not installed/);
+
+  // And a derived directory holding a different version than npm resolved is
+  // refused rather than shipped: the lookup and npm disagree about the tree.
+  const skew = { name: 'proj', dependencies: { a: { version: '1.0.0', dependencies: { b: { version: '9.9.9' } } } } };
+  assert.throws(() => packageDirsFromTree(root, skew), /b@9\.9\.9 \(required by a@1\.0\.0\) resolved to .*which holds 2\.0\.0/);
+});
+
+test('collectEntries builds from a UUID-named checkout with the real npm (no "resolved outside node_modules")', () => {
+  const root = uuidProject();
+  const names = collectEntries(root, 'p').map((e) => e.name);
+  for (const want of [
+    'p/node_modules/a/package.json',
+    'p/node_modules/a/node_modules/b/package.json',
+    'p/node_modules/b/package.json',
+    'p/node_modules/@s/c/package.json',
+  ]) assert.ok(names.includes(want), `${want} missing from ${JSON.stringify(names)}`);
+  assert.ok(!names.some((n) => n.startsWith('p/node_modules/d/')), 'a devDependency must not ship');
 });
 
 // A `.gitkeep` exists to make git track an EMPTY directory. Seven of them

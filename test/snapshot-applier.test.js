@@ -30,17 +30,22 @@ const { pathToFileURL } = require('url');
 
 const REPO = path.resolve(__dirname, '..');
 
-// n1 (active, the live surface) ── n2 (an older-node preview target)
+// n1 (active, the live surface) ── n2 (an older-node preview target) ── n3
+// (a node that carries a pane under the SAME id as the live surface's `m-shared`,
+// as stable mount ids usually make it, with the node's own committed value)
 const NODES = [
   { id: 'n1', label: 'n1.0', parent_id: null, created_at: 1 },
   { id: 'n2', label: 'n1.1', parent_id: 'n1', created_at: 2 },
+  { id: 'n3', label: 'n1.2', parent_id: 'n2', created_at: 3 },
 ];
+const SHARED = { id: 'm-shared', html: '<input id="f">', target: 'main', params: {}, pane_state: {} };
 const NODE_MOUNTS = {
   n1: [
     { id: 'm-keep', html: '<input id="f"><script>store.subscribe("k", (v) => { window.__k = v; });</script>', target: 'main', params: {}, pane_state: {} },
     { id: 'm-gone', html: '<p>doomed</p>', target: 'main', params: {}, pane_state: {} },
   ],
   n2: [{ id: 'm-old', html: '<p>older node</p>', target: 'main', params: {}, pane_state: {} }],
+  n3: [{ ...SHARED, form_state: { '#f:0': { value: 'committed' } } }],
 };
 const liveMounts = (ids = ['m-keep', 'm-gone']) =>
   NODE_MOUNTS.n1.filter((m) => ids.includes(m.id)).map((m) => ({ ...m }));
@@ -329,12 +334,164 @@ test('frames the chrome sent while the socket was down survive the reconnect', a
   assert.equal(paneFrames[0].pane_state.minimized, false);
 
   const patches = sent.filter((f) => f.type === 'store:set');
-  assert.equal(patches.length, 1, 'the gap collapses into ONE store frame, however long it lasted');
+  assert.equal(patches.length, 1, "one writer's gap collapses into ONE store frame, however long it lasted");
   assert.deepEqual(patches[0].patch, { k: 'second', other: 1 },
     'with the last write per key — the whole gap, not just its final call');
   assert.equal(store.get('k'), 'second',
     'and the LOCAL copy is the one we just re-sent: the reconcile had replaced it with the '
     + "server's pre-gap value, which would have left the two ends disagreeing");
+});
+
+/* ── 4. a hello that re-attaches renders the live surface, not the previewed node ── */
+
+const app = (f) => import(pathToFileURL(path.join(REPO, 'public/app', f)).href);
+const typedLive = () => ({ ...SHARED, form_state: { '#f:0': { value: 'LIVE-typed' } } });
+
+// A re-aim that lands while the socket is down can put active exactly on the
+// node this client is previewing; the reconnect's hello then attaches. The DOM
+// on screen at that moment is the COMMITTED node's — and with stable mount ids
+// its pane answers to the live pane's id. Reconciling kept every pane whose spec
+// matched, with the node's form values (form_state is never applied over a kept
+// pane), so the live value was not on screen and the next keystroke published
+// the node's old one over it.
+test('a hello that makes the previewed node active shows the live form values', async () => {
+  const { previewNode } = await app('topbar.js');
+  hello({ store: {}, mounts: [typedLive()] });
+  await tick();
+  assert.equal(field('m-shared').value, 'LIVE-typed', 'precondition: the live value is on screen');
+  await previewNode('n3');
+  await tick();
+  assert.equal(previewing(), true, 'precondition: detached on n3');
+  assert.equal(field('m-shared').value, 'committed', "precondition: the node's pane, under the live pane's id");
+
+  hello({ active: 'n3', store: {}, mounts: [typedLive()] });
+  await tick();
+  assert.equal(previewing(), false, 'attached: active is the node on screen');
+  assert.equal(field('m-shared').value, 'LIVE-typed',
+    "the live form value is on screen — a reconcile kept the previewed pane and its 'committed'");
+  assert.equal(hostFor('m-shared').hasAttribute('data-wc-readonly'), false, 'and the pane is editable');
+});
+
+/* ── 5. a pane theme is a live change: it never repaints the previewed node ── */
+
+// While previewing, `panes` holds the previewed node's panes, and the one that
+// shares the live pane's id answered a live pane theme: the committed node on
+// screen was repainted, and the live pane got it only by the fold's luck.
+test('a pane theme that lands during a preview themes the live pane, not the previewed one', async () => {
+  const { previewNode } = await app('topbar.js');
+  const { panes } = await app('mounts.js');
+  hello({ store: {}, mounts: [typedLive()] });   // attached on n1
+  await tick();
+  await previewNode('n3');
+  await tick();
+  assert.equal(previewing(), true, 'precondition: detached on n3, whose pane shares the id');
+
+  WS.onmessage({ data: JSON.stringify({ type: 'theme', scope: 'pane', target: 'm-shared', theme: { tokens: { '--wc-accent': '#ff0000' } } }) });
+  await tick();
+  assert.equal(panes.get('m-shared').wrapper.style.getPropertyValue('--wc-accent'), '',
+    'the committed node on screen is not repainted');
+  assert.deepEqual(view.liveSnapshot.mounts.find((m) => m.id === 'm-shared').theme, { tokens: { '--wc-accent': '#ff0000' } },
+    'the theme folded into the captured live surface, like every other live frame');
+
+  $('btn-return-active').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(previewing(), false, 'attached again');
+  assert.equal(panes.get('m-shared').wrapper.style.getPropertyValue('--wc-accent'), '#ff0000',
+    'and the live pane wears it after ↩ active');
+});
+
+/* ── 6. the outbox keeps each writer's attribution ── */
+
+// The daemon reads a store:set's `mount` (and `gesture`) to decide what it is: a
+// declared signal becomes a queue item naming its pane. The outbox merged the
+// whole gap into ONE frame carrying the LAST writer's mount, so two panes'
+// handoffs made while disconnected reached the daemon as one item on the wrong
+// pane. Each writer drains as its own frame now — and last-write-wins per key
+// still holds across them.
+const WRITERS = [
+  { id: 'm-a', html: '<p>a</p><script>window.__sA = store;</script>', target: 'main', params: {}, pane_state: {} },
+  { id: 'm-b', html: '<p>b</p><script>window.__sB = store;</script>', target: 'main', params: {}, pane_state: {} },
+];
+
+test('two panes’ writes during a gap drain as two frames, each with its own mount', async () => {
+  const { store } = await app('store.js');
+  hello({ store: {}, mounts: WRITERS.map((m) => ({ ...m })) });
+  await tick();
+  assert.ok(W.__sA && W.__sB, 'precondition: both panes hold their store facade');
+
+  WS.readyState = 3;
+  sent.length = 0;
+  W.__sA.set({ a_submit: 1 });
+  W.__sB.set({ b_submit: 1 });
+  W.__sA.set({ k: 1 });
+  W.__sB.set({ k: 2 });
+  W.__sA.set({ k: 3 });
+  assert.equal(sent.length, 0, 'precondition: nothing reaches a closed socket');
+
+  WS.readyState = 1;
+  hello({ store: {}, mounts: WRITERS.map((m) => ({ ...m })) });
+  await tick();
+  const frames = sent.filter((f) => f.type === 'store:set').map((f) => ({ mount: f.mount, patch: f.patch }));
+  assert.deepEqual(frames, [
+    { mount: 'm-b', patch: { b_submit: 1 } },
+    { mount: 'm-a', patch: { a_submit: 1, k: 3 } },
+  ], 'one frame per pane, each attributed to the pane that wrote it; k is sent once, by its last writer, last');
+  assert.equal(store.get('k'), 3, 'A k=1, B k=2, A k=3 ends at 3 on this end too');
+});
+
+/* ── 7. what the server has vs what the page shows, while the socket is down ── */
+
+// sendFormState recorded a value typed while the socket was down as the pane's
+// form_state before its isOpen() gate, so the record claimed values the server
+// never got. The record of what the SERVER has (p.form_state) now moves with the
+// frame. The spec is different: it is what a preview captures as the live
+// surface and puts back on ↩ active, so it follows the DOM — a value typed
+// offline must survive a preview round-trip.
+const TYPED = { id: 'm-typed', html: '<input id="f">', target: 'main', params: {}, pane_state: {}, form_state: { '#f:0': { value: 'server' } } };
+const typeOffline = async (id, value) => {
+  WS.readyState = 3;
+  const f = field(id);
+  f.value = value;
+  f.dispatchEvent(new W.Event('input', { bubbles: true, composed: true }));
+  await new Promise((r) => setTimeout(r, 450));   // past the 350ms debounce, while down
+};
+
+test('typing while the socket is down leaves form_state at the server’s copy until the flush sends it', async () => {
+  const { panes } = await app('mounts.js');
+  hello({ store: {}, mounts: [{ ...TYPED }] });
+  await tick();
+  const p = panes.get('m-typed');
+  assert.deepEqual(p.form_state, { '#f:0': { value: 'server' } }, "precondition: the server's copy");
+
+  await typeOffline('m-typed', 'offline');
+  assert.deepEqual(p.form_state, { '#f:0': { value: 'server' } },
+    "form_state still says what the server has — it used to take the typed value before the socket gate");
+  assert.deepEqual(p.spec.form_state, { '#f:0': { value: 'offline' } },
+    'the spec follows the DOM (see the preview round-trip below)');
+
+  WS.readyState = 1;
+  sent.length = 0;
+  hello({ store: {}, mounts: [{ ...TYPED }] });
+  await tick();
+  assert.equal(panes.get('m-typed'), p, 'precondition: the reconnect kept the pane');
+  const flushed = sent.find((f) => f.type === 'pane:form' && f.id === 'm-typed');
+  assert.equal(flushed && flushed.form_state['#f:0'].value, 'offline', 'the reconnect flush sends what was typed');
+  assert.deepEqual(p.form_state, { '#f:0': { value: 'offline' } }, 'and the record moves with the frame');
+});
+
+test('a value typed while the socket is down survives a preview round-trip', async () => {
+  hello({ store: {}, mounts: [{ ...TYPED }] });
+  await tick();
+  await typeOffline('m-typed', 'offline again');
+  $('btn-down').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));   // n1 → n2 (HTTP is up)
+  await tick();
+  assert.equal(previewing(), true, 'precondition: previewing n2');
+  $('btn-return-active').dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(previewing(), false, 'attached again');
+  assert.equal(field('m-typed').value, 'offline again',
+    'the captured live surface put the typed value back — a spec that waited for the socket put back the server’s');
+  WS.readyState = 1;
 });
 
 test('the outbox does not grow without bound while the socket stays down', async () => {

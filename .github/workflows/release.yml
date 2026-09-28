@@ -24,12 +24,18 @@ jobs:
       contents: write
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      # @v5: both run on the Node 24 action runtime (the @v4s targeted Node 20).
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          # setup-node@v5 turns dependency caching on by itself when package.json
+          # names npm in `packageManager` / `devEngines.packageManager`. Ours
+          # names neither today; this keeps the release build from ever
+          # installing out of a restored npm cache if one is added later.
+          package-manager-cache: false
 
       # The full install: the test run below needs devDependencies. The build
       # script selects the PRODUCTION tree itself (`npm ls --omit=dev`), so
