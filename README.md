@@ -35,7 +35,7 @@ claude-web-chat open
 
 ## Pages
 
-A page is a sequence of panes and short markdown. Claude writes a `#` title and `##` headings between runs of panes, and the headings become the page's **Contents** column. Panes sit on a 12-column grid: drag one by its header or resize it, and **↺ Claude's layout** puts a run back. What you type in a pane is kept across refreshes and turns. Hit **Push → Claude** (`P`) to hand what you did back to Claude as data.
+A page is a sequence of panes and short markdown. Claude writes a `#` title and `##` headings between runs of panes, and the headings become the page's **Contents** column. Panes sit on a 12-column grid: drag one by its header or resize it, and **↺ Claude's layout** puts a run back. What you type in a pane is kept across refreshes and turns. Hit **Push → Claude** (`P`) to hand what you did back to Claude as data. See [Using web-chat](docs/guide.md).
 
 ## History is a graph
 
@@ -45,7 +45,7 @@ Every turn that changes the surface is saved as a node. A turn that only answers
 
 ## Replay
 
-Replay plays a stretch of history forward, node by node, with Claude's reply under each one. Press `R` on the page or **▶ Replay** in the graph inspector. Claude can also direct one: it picks the nodes, how long each one holds and a caption for each, then opens it in your browser (`export({script, open: true})`). Any replay exports as an offline `.html` player, a GIF, or (with ffmpeg) an MP4 or WebM. The page at the top of this README is one of those GIFs, rendered by web-chat.
+Replay plays a stretch of history forward, node by node, with Claude's reply under each one. Press `R` on the page or **▶ Replay** in the graph inspector. Claude can also direct one: it picks the nodes, how long each one holds and a caption for each, then opens it in your browser (`export({script, open: true})`). Any replay exports as an offline `.html` player, a GIF, or (with ffmpeg) an MP4 or WebM. The page at the top of this README is one of those GIFs, rendered by web-chat. See [Exporting pages and replays](docs/export-pages.md).
 
 ![Claude opens a directed replay in the browser: the page steps from the question to the Redis recommendation, then down a branch that keeps the cache in-process, scrolling to each change](.github/media/replay.gif)
 
@@ -65,7 +65,7 @@ claude-web-chat pack get https://github.com/acme/ops-pack    # download and revi
 
 ## Every project on this machine
 
-⋯ → **Sessions** (`S`) lists every web-chat project on this computer: whether its surface is running, and whether a Claude Code session is attached or in the middle of a turn. Click one to open it. `claude-web-chat ls` prints the same list in the terminal.
+⋯ → **Sessions** (`S`) lists every web-chat project on this computer: whether its surface is running, and whether a Claude Code session is attached or in the middle of a turn. Click one to open it. `claude-web-chat ls` prints the same list in the terminal. See [Using web-chat](docs/guide.md).
 
 ## From your phone
 
