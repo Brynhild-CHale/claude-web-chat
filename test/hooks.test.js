@@ -59,7 +59,9 @@ function mkTmp(prefix = 'wc-hk-') {
 
 // Recording HTTP stub: answers everything 200 (so probeReachable's HEAD
 // /api/health passes) and records each request's method/url/parsed body.
-function stubServer() {
+// `routes` overrides the JSON body per `METHOD /url` (e.g. a fake GET
+// /api/health naming some other build); everything else answers {ok:true}.
+function stubServer(routes = {}) {
   const requests = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -67,8 +69,9 @@ function stubServer() {
     req.on('end', () => {
       let json = null; try { json = body ? JSON.parse(body) : null; } catch {}
       requests.push({ method: req.method, url: req.url, body: json });
+      const key = `${req.method} ${req.url}`;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify(Object.prototype.hasOwnProperty.call(routes, key) ? routes[key] : { ok: true }));
     });
   });
   return new Promise((resolve) => {
@@ -204,6 +207,89 @@ test('turn-begin/turn-end: every daemon call is pinned to THIS root and never sp
     assert.equal(c.opts.port, stub.port);
   }
   assert.deepEqual(probes, [5000, 5000], 'the probe budget comes from ctx, not a hardcoded 500ms');
+});
+
+// --- turn-begin: the daemon runs another build (H-2) ---
+//
+// The hook runs from ~/.web-chat/current, so after an update it is the NEW
+// build, while another project's daemon can stay on the old one for as long as
+// a tab is attached. /api/health names the daemon's release from 0.8 on; a
+// web-chat instance that answers without one is older than 0.8.
+
+const { packageVersion } = require('../lib/core/versions');
+
+function instanceHealth(extra) {
+  return { ok: true, role: 'instance', version: 1, pid: 4242, viewers: 1, ...extra };
+}
+
+async function skewStub(t, routes) {
+  withTempHome(t);
+  const stub = await stubServer(routes);
+  t.after(() => stub.close());
+  const root = tmpRoot('wc-hook-skew-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  writePortfile(path.join(root, '.web-chat'), { pid: process.pid, port: stub.port });
+  return { stub, root };
+}
+
+// Exactly one hook frame on stdout, parsed; null when the hook said nothing.
+function oneFrame(out) {
+  if (!out.trim()) return null;
+  const parsed = JSON.parse(out); // throws on two concatenated frames
+  return parsed.hookSpecificOutput.additionalContext;
+}
+
+test('turn-begin: a pre-0.8 daemon (health names no release) gets one restart line', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({}) });
+  const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 's1' }, { root, ...PROBE })));
+  assert.ok(ctx, 'a browser is watching, so the skew line is the whole frame');
+  assert.match(ctx, /surface is running a build older than 0\.8/);
+  assert.ok(ctx.includes(`not the installed v${packageVersion()}`));
+  assert.match(ctx, /`claude-web-chat restart` in this project/);
+  assert.equal(ctx.split('\n').length, 1, 'one line');
+});
+
+test('turn-begin: a daemon on another release is named, and rides in the SAME frame as the no-viewer notice', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: '0.0.1-old', viewers: 0 }) });
+  const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 's1' }, { root, ...PROBE })));
+  assert.match(ctx, /no browser is watching/, 'the frame the hook already emitted');
+  assert.match(ctx, /surface is running v0\.0\.1-old, not the installed v/, 'extended, not a second frame');
+});
+
+test('turn-begin: the skew line rides with a parked delivery too', async (t) => {
+  const { root } = await skewStub(t, {
+    'GET /api/health': instanceHealth({ package_version: '0.0.1-old' }),
+    'GET /api/queue/pending': { pending: { id: 'p1', envelope: { content: 'PARKED-SUMMARY' } } },
+    'POST /api/queue/pending/consume': { consumed: true },
+  });
+  const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 's1' }, { root, ...PROBE })));
+  assert.match(ctx, /Parked delivery/);
+  assert.match(ctx, /PARKED-SUMMARY/);
+  assert.match(ctx, /claude-web-chat restart/);
+});
+
+test('turn-begin: a daemon on THIS build says nothing about builds', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: packageVersion() }) });
+  const out = await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 's1' }, { root, ...PROBE }));
+  assert.equal(out.trim(), '');
+});
+
+test('turn-begin: the skew line is said once per session per daemon, not every prompt', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: '0.0.1-old' }) });
+  const run = (sid) => captureStdout(() => turnBegin({ prompt: 'hi', session_id: sid }, { root, ...PROBE }));
+  assert.match(oneFrame(await run('s1')), /claude-web-chat restart/);
+  assert.equal((await run('s1')).trim(), '', 'the same session already has it in context');
+  assert.match(oneFrame(await run('s2')), /claude-web-chat restart/, 'another session has not seen it');
+});
+
+test('skewLine: only a web-chat instance that answered is judged; a match is silent', () => {
+  const { skewLine } = turnBegin;
+  assert.equal(skewLine(null, '0.8.0'), null, 'no health, no claim');
+  assert.equal(skewLine({ ok: true }, '0.8.0'), null, 'not an instance health: never guess a build');
+  assert.equal(skewLine({ ok: true, role: 'hub' }, '0.8.0'), null);
+  assert.equal(skewLine(instanceHealth({ package_version: '0.8.0' }), '0.8.0'), null);
+  assert.match(skewLine(instanceHealth({ package_version: '0.8.1' }), '0.8.0'), /running v0\.8\.1, not the installed v0\.8\.0/);
+  assert.match(skewLine(instanceHealth({}), '0.8.0'), /running a build older than 0\.8, not the installed v0\.8\.0/);
 });
 
 // --- turn-end (in-process) ---
