@@ -212,7 +212,9 @@ async function startNewGraph() {
     const body = await r.json().catch(() => ({}));
     if (body.pending) { showReaimNote("Claude is mid-turn — the new graph starts when the turn ends."); return; }
   } catch { return; }
-  leavePreview();
+  // The reset was broadcast before this answer and, while previewing, folded
+  // into liveSnapshot: render it (see postSetActive in graph-view.js).
+  leavePreview({ restoreSnapshot: true });
 }
 function initNewGraph() {
   const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
