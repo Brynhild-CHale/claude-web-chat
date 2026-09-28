@@ -12,6 +12,12 @@ npm install
 node bin/claude-web-chat.js help    # run it straight out of the checkout
 ```
 
+Developing needs **Node 22.13 or newer** — one minor above what users need.
+The runtime floor is 22.12 (`NODE_FLOOR` in `lib/core/versions.js`, where
+`require(esm)` is on by default), but jsdom, the suite's one devDependency,
+declares `^22.13.0`, so `npm install` and `npm test` want 22.13+. CI runs the
+current 22.x and 24.x.
+
 Run the suite with `npm test` — that is `node --test --test-timeout=60000 --import ./test-support/sandbox.js`,
 which auto-discovers `test/`; **not** `node --test test/`, which mis-resolves and
 reports a spurious failure. The timeout is load-bearing: without it one leaked
@@ -266,7 +272,7 @@ were the only places they lived.
 | find a system Chrome / ffmpeg, or drive Chrome headless | `lib/replay/find` (`findChrome` / `findFfmpeg`) · `lib/replay/chrome` (`captureFrames` — CDP over `--remote-debugging-pipe`, throwaway profile, bounded teardown of the browser's whole process group on every way out incl. an `AbortSignal` and process exit) · `lib/replay/tmp` (`makeTmpDir` / `sweepStaleTmp` — the `<kind>-<pid>-<hex>` render dirs under the project tmp dir, and the dead-pid sweep) | Puppeteer/Playwright, a debugging PORT, a second finder with its own candidate list, or a render dir named by hand |
 | turn captured replay frames into a GIF / MP4 / WebM | `lib/replay/encode` (`createFrameEncoder({format, ffmpegPath, …})` → `addFrame(png, delay)` / `finish()` / `dispose()` — ffmpeg when found, else the built-in GIF encoder; `pickEncoder` says which) | a second `spawn('ffmpeg')`, or choosing between the encoders at the call site |
 | decide whether version A is newer than B | `core/versions` `compareVersions` | a third dotted-number comparator |
-| gate on the supported Node version | `core/versions` `NODE_FLOOR` / `checkNodeFloor(v)` | write the major version into a comparison |
+| gate on the supported Node version | `core/versions` `NODE_FLOOR` (a major.minor, `'22.12'`) / `checkNodeFloor(v)` | write the floor, or only its major, into a comparison |
 | name the repo, or build a github.com / raw.githubusercontent URL | `core/versions` `REPO_SLUG` / `REPO_URL` / `RELEASES_PAGE` / `DOCS_URL` / `INSTALL_SH_URL` / `releaseTagUrl(tag)` | paste the slug into a string |
 | decide which project a command operates on | `lib/setup/registration` `resolveRoot(cwd, {mode})` → `{root, movedUp}` | `process.cwd()`, or your own `findProjectRoot(cwd) || cwd` per command |
 | read what is registered with Claude Code here (hooks per event, the `.mcp.json` entry, managed-file drift, gitignore) | `lib/setup/registration` `inspect(root)` | count hooks yourself, or classify the MCP entry a second way |
