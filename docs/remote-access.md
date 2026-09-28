@@ -403,8 +403,9 @@ with the same "not running" page a stopped project gets:
   "expose": { "exclude": ["0a1b2c3d", "/Users/me/work/client-x"] }
   ```
 
-  Then run `claude-web-chat tunnel up`, which restarts the portal so the new
-  list is in force (and closes any open socket into a project it now hides).
+  The running portal picks the edit up within a couple of seconds (see *The
+  portal follows `tunnel.json` while it runs*) and closes any open socket into
+  a project it now hides. No restart needed.
 
 `claude-web-chat tunnel status` lists hidden projects separately, with which of
 the two hid them.

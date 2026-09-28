@@ -23,11 +23,15 @@ or node scope it styles the chrome only, at pane scope that pane's content only.
 | `paper` | light + dark | flat cream (dark: warm charcoal), olive accent, every depth effect off |
 | `georgetown-blue` (Georgetown Blue) | light + dark | navy and Pantone 293 on a putty vellum ground, Caslon headings, a 2px blue rule under a white topbar; dark is navy surfaces, a lightened 293, 1205 gold bookmarks on burgundy and a faint cross-hatch |
 
-Every pack meets WCAG AA in every mode it declares — 4.5:1 for text, 3:1 for
-labels on fills, glyphs and large text — measured over the ink/fill pairs the
-chrome actually paints (`test/theme-contrast.test.js`), with no exceptions.
-(Earthy light's accent labels, keycaps and muted text were darkened just past AA
-for this; they read a shade deeper than 0.7.6's.) No builtin carries raw CSS:
+Every pack is held to WCAG AA contrast in every mode it declares — 4.5:1 for
+running text, 3:1 for labels on fills, glyphs and large text — measured over the
+ink/fill pairs the chrome actually paints (`test/theme-contrast.test.js`). One
+ink is held only to the 3:1 line: the accent ink (`--wc-accent-text`), which
+colours accent labels and also the links in a page's markdown — so a link in
+body-size prose can fall short of AA's 4.5:1 for normal text (Earthy light's is
+3.04:1 on the stage). Earthy light's accent labels, keycaps and muted text were
+darkened just past their lines for this; they read a shade deeper than 0.7.6's.
+No builtin carries raw CSS:
 Georgetown Blue's 2px topbar rule is the `--wc-topbar-rule-width` token.
 
 Builtins are read-only: a saved theme cannot take a builtin's name, and

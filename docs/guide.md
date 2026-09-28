@@ -44,6 +44,8 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Export anything.** Any node can become a single self-contained `.html` file — panes, data, and theme inlined, interactive with no server and no network — right for attaching to a message or an email. Use **⋯ → ↧ Export node** in the topbar (or **↧** / `E` on a node in the graph viewer), or `claude-web-chat export [node]`, or just ask Claude. More detail in [`export-pages.md`](export-pages.md).
 
+**Replay how the work evolved.** The replay player plays the page forward node by node — by default from the nearest bookmark down to the node on screen, and any stretch of that lineage you pick with its *from* / *to*. Open it with **⋯ → ▶ Replay…** or `R` on the page, **▶ Replay** (or `R`) on a node selected in the graph, or ⌘K *Replay to …*. Space plays and pauses, ←/→ step, and **Open this node** leaves the replay on the step you are looking at. Captions show each node's label, time and Claude's reply; tick **Include my prompts** to show your prompts too — the choice also decides whether they go into anything you save from the player: **↧ replay.html** (a self-contained player that works offline), **↧ GIF**, or **↧ MP4** / **↧ WebM** (a GIF needs Chrome, Chromium, Edge or Brave on this machine; the videos need ffmpeg too). More detail in [`export-pages.md`](export-pages.md).
+
 **Find anything with ⌘K.** The palette lists four kinds of row: **node** (a turn, with its time), **section** (a heading on the page, numbered as in Contents — choosing one scrolls to it), **block** (a block on the page, with the number of the section it sits under — choosing one scrolls to it and restores it if minimized) and **command** (with its key, where it has one), including *Add block · name* for every component in the library. Type a kind to list only those. (On the graph screen and in the replay player ⌘K does nothing — the graph has its own jump search.) On this computer the palette also offers *Set up remote access…*, which opens the tunnel setup page in a new tab (see remote-access).
 
 **Narrow windows and phones.** Below 900px each run of blocks stacks to one column in reading order — unless it is set to *fixed grid*, which keeps its grid and scrolls sideways (**FIXED GRID · SCROLL →**). Below 760px a bar along the bottom carries ↑/↓, ↩ active (while you are viewing an older node), **Graph** and **Queue [n]** — which opens the queue as a full screen; **‹ Page** goes back. From 1100px up the Contents column sits beside the page (hidden while the page has no headings). On a phone — a window under 760px wide that is also portrait-tall (narrower than 3:4), whatever the pointer; a phone on its side is not one, and a desktop window dragged that narrow and tall is — what is inside a block works exactly as on a desktop — type, tick, submit, press its buttons — but the layout is fixed: each block's header shows only its title and type, nothing can be moved, resized, pinned, locked, minimized or closed (a layout gesture that gets through says *Layout editing is available on a larger screen*), no block is added from ＋ or ⌘K, and a minimized block's chip only shows it on that phone. An older node you are previewing is read-only there too, as everywhere. You talk to Claude from the queue (stage or hold items, add a comment, Push) and act on the graph, which on a phone is a newest-first log of one graph with its forks drawn in a gutter: each turn names the sections it changed (**# Results +2 ~1** — blocks and prose added, changed, removed under that heading); tap a turn, then ◫ Glance, ⚑ bookmark (with a name), ⑃ Branch, ↧ Export or **Set active**. The graph name at the top switches graphs, and **⋯ N folded** shows the turns that changed nothing.
@@ -125,17 +127,23 @@ trust [name]        approve (or --deny) a component's host-side service.js;
 version             which version, and which tree it is actually running from
 stop | restart      stop or bounce the background server
 unlock              clear a turn lock orphaned by an interrupted turn
-export [node]       write a node to a self-contained .html (--replay / --gif / --mp4 / --webm: a replay of its lineage)
+export [node]       write a node to a self-contained .html (--replay / --gif / --mp4 / --webm: a replay of its lineage;
+                    --script <file.json>: a replay Claude or you scripted; --prompts puts your prompts in its captions)
 docs [name]         print a bundled contract doc; with no name, list them
 on | off            enable/disable web-chat (see install.md, “Turning it off”)
 install             the setup step on its own, and how updates reach a project
 update              install the latest GitHub release (checksum-verified), sync,
-                    restart; --list shows versions on disk, --to <v> rolls back
+                    restart; --list shows versions on disk, --to <v> rolls back,
+                    --from <tarball> installs a local build (a --dev build from
+                    scripts/build-release.js), --restart-all restarts every other
+                    project still running an older build
 uninstall           remove the hooks (your graph data is kept); --self also
                     removes the program itself
 tunnel [verb]       reach your surfaces from your phone or another machine:
                     setup | up | down | status | logs, through a Cloudflare
-                    tunnel behind Google sign-in (see remote-access.md)
+                    tunnel behind Cloudflare Access — an emailed code plus your
+                    device's biometrics by default, or Google (see
+                    remote-access.md)
 ```
 
 Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start above.
@@ -148,7 +156,7 @@ The server binds **loopback only** (`127.0.0.1`) and is deliberately unauthentic
 - The WebSocket upgrade is gated on `Origin`, so a random web page you happen to visit can't open a socket to `ws://localhost:<port>` and read your store. Non-browser clients (drivers, the CLI) send no `Origin` and are unaffected.
 - Captures are only readable cross-origin by the browser extension, not by any site you're browsing.
 - `WEB_CHAT_HOST` overrides the bind address for the deliberate remote case (a dev container, a remote workstation). Setting it exposes all of the above to that interface with no authentication, and the server says so on startup.
-- To reach your surfaces from **outside** this machine, don't widen the bind — use `claude-web-chat tunnel`: the daemons stay on loopback, and a separate portal admits only a Google account you allowlisted, verified twice (by Cloudflare Access and again locally). The walkthrough and the security model are in [`remote-access.md`](remote-access.md).
+- To reach your surfaces from **outside** this machine, don't widen the bind — use `claude-web-chat tunnel`: the daemons stay on loopback, and a separate portal admits only an email address you allowlisted, verified by Cloudflare Access and again locally (sign-in is an emailed code plus your device's biometrics by default, or Google). The walkthrough and the security model are in [`remote-access.md`](remote-access.md).
 
 ## When something's stuck
 
