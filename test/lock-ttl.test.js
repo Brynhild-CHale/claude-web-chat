@@ -338,17 +338,22 @@ test('the stale timer is cleared with the lock: a released lock never reports st
   assert.equal(staleFrames(bus).length, 0);
 });
 
-test('the stale timer follows a keep-alive re-stamp instead of firing on the old deadline', async (t) => {
+// Driven by a mocked clock (setTimeout AND Date), not by sleeping: with real
+// waits the case had ~40 ms of margin either side of a 150 ms deadline, and an
+// event-loop stall before the re-stamp fired the stale frame and failed it.
+test('the stale timer follows a keep-alive re-stamp instead of firing on the old deadline', (t) => {
   shortLockTtl(t, 150);
   const turns = require('../lib/server/domain/turns');
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
   const graph = graphStub();
   const bus = fakeLockBus();
-  turns.acquireLock(graph, bus, { message: 'x' });
-  await elapse(100);
-  graph.lock.started_at = Date.now(); // what installLockKeepalive does on a Claude write
-  await elapse(110);                  // past the ORIGINAL deadline, before the new one
+  turns.acquireLock(graph, bus, { message: 'x' });   // deadline at +150
+  t.mock.timers.tick(100);
+  graph.lock.started_at = Date.now();                 // what installLockKeepalive does on a Claude write → +250
+  t.mock.timers.tick(110);                            // +210: past the ORIGINAL deadline, before the new one
   assert.equal(staleFrames(bus).length, 0, 'a lock still being worked under is not reported stale');
-  await waitUntil(() => staleFrames(bus).length === 1, { timeout: 2000, what: 'the stale frame at the new deadline' });
+  t.mock.timers.tick(50);                             // +260: past the new deadline
+  assert.equal(staleFrames(bus).length, 1, 'the stale frame fires at the re-stamped deadline');
   turns.releaseLock(graph, bus);
 });
 
