@@ -143,7 +143,8 @@ You're not the only writer. A local process (a dev server, test runner, file wat
 A plain replay plays every node at one pace. When the user wants a **walkthrough, a demo, or a README GIF** of how something evolved, *direct* it with a replay **script** on `export`:
 
 - `get_graph`, then pick the two moments that bound the story: `script: { from, to, title?, steps: [...] }`.
-- `steps` run in path order: `{ node, hold_ms?, caption?, transition? }` for a moment that matters, `{ nodes: [...] }` to fold a run of consecutive in-between nodes into ONE beat (it shows the last; the caption lists them). Nodes no step names are skipped. Give the key moments long holds (4000–6000 ms), quick beats short ones (1000–1500), and a few-word caption each — it replaces the automatic reply line.
+- `steps` run in path order: `{ node, hold_ms?, caption?, transition?, scroll? }` for a moment that matters, `{ nodes: [...] }` to fold a run of consecutive in-between nodes into ONE beat (it shows the last; the caption lists them). Nodes no step names are skipped. Give the key moments long holds (4000–6000 ms), quick beats short ones (1000–1500), and a few-word caption each — it replaces the automatic reply line.
+- Each frame smooth-scrolls to what its step changed: the newest pane's top to the top of the window, then down to changes below the fold. A step's `scroll` directs it — `'none'` holds still, or the id of one pane or markdown item on that node's page to look at it instead (default `'auto'`).
 - `export({ script, open: true })` plays it in the user's browser player first — nothing is written; then export the same script as `format: 'gif'` (or `'replay'` / `'mp4'` / `'webm'`). A refused script comes back as `{error, code, step}` naming the step — fix it and call again.
 - There is no authoring UI: scripts are yours to write. The user runs one from a terminal with `claude-web-chat export --script <file.json> [--gif]`.
 

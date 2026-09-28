@@ -110,7 +110,9 @@ for it to answer, and takes you there. The start names the project by its id
 only, never a path; a hidden project (below) is never listed or started; one
 start per project per 10 seconds; and every start is a line in the remote access
 log. A project that has never run a surface here can only be started on the host
-with `claude-web-chat open`. The picker wears the Georgetown Blue theme, light or
+with `claude-web-chat open`. Each row also shows the web-chat release its surface
+and its Claude sessions run, with a ⚠ restart hint when they differ (a release
+is not a host path, so it is shown remotely). The picker wears the Georgetown Blue theme, light or
 dark with your device. Each project then gets its own
 hostname, derived from its instance id (eight hex characters, stable per
 project directory):

@@ -858,6 +858,10 @@ kbd {
 .ss-dot.warn { color: var(--wc-gold); }
 .ss-dot.off { color: var(--wc-muted); }
 .ss-muted { font: 11px var(--wc-font); color: var(--wc-muted); }
+/* A release chip (v0.8.0). A dev build's long string is clipped; the full one is the tooltip. */
+.ss-ver { font: 10.5px var(--wc-mono); color: var(--wc-muted); max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-warn { align-items: flex-start; flex-wrap: nowrap; }
+.ss-warn > span:last-child { min-width: 0; }
 /* the same chip as the graph inspector's ACTIVE / FORK badges (.gv-badge) */
 .ss-badge { font: 600 9px var(--wc-mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--wc-radius); border: 1px solid var(--wc-border); color: var(--wc-muted); }
 .ss-badge.on { color: var(--wc-green); border-color: color-mix(in srgb, var(--wc-green) 50%, transparent); }

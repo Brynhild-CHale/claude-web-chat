@@ -455,8 +455,13 @@ test('a scripted GIF: one frame per beat, each delay the beat\'s hold, and Chrom
   assert.equal(body.label, 'n1.0 → n1.3');
   assert.equal(body.duration_ms, 4500, 'the script\'s beats, not 4 × hold_ms');
   const g = decodeGif(fs.readFileSync(body.path));
-  assert.equal(g.frames.length, 3, 'three beats, three frames — the grouped n1.1 is never drawn on its own');
-  assert.deepEqual(g.frames.map((f) => f.delay), [100, 300, 50], 'each held for its own hold (centiseconds)');
+  // Every beat changed m1, so each opens with a scroll move to it, sampled at
+  // 10 fps (500, 700 and 250 ms of motion — a move takes at most half its
+  // beat), then one frame holding the rest of the beat.
+  const cs = g.frames.map((f) => f.delay);
+  assert.equal(g.frames.length, 6 + 8 + 4, 'three beats: their moves sampled, then one held frame each');
+  assert.deepEqual([cs[5], cs[13]], [50, 230], 'each beat ends on one long held frame');
+  assert.ok(Math.abs(cs.reduce((a, d) => a + d, 0) - 450) <= 2, `the beats' holds, in total (${cs.join(',')})`);
 
   const log = fake.read();
   const u = new URL(log.find((l) => l.method === 'Page.navigate').params.url);
@@ -467,7 +472,8 @@ test('a scripted GIF: one frame per beat, each delay the beat\'s hold, and Chrom
   assert.deepEqual(drawn.steps.map((s) => s.label), ['n1.0', 'n1.2', 'n1.3'], 'the page the browser drew is the script');
   const seeks = log.filter((l) => l.method === 'Runtime.evaluate' && /seek\(/.test(JSON.stringify(l.params)))
     .map((l) => Number(/seek\(([-\d.e]+)\)/.exec(JSON.stringify(l.params))[1]));
-  assert.deepEqual(seeks, [0, 1000, 4000], 'seeks land on each beat');
+  assert.deepEqual(seeks.filter((ms) => [0, 1000, 4000].includes(ms)), [0, 1000, 4000], 'a frame lands on each beat\'s start');
+  assert.ok(seeks.every((ms) => ms < 4500), 'and none past the end');
 });
 
 test('a scripted replay .html: the script decides include_prompts; a bad script is refused before any browser', async (t) => {

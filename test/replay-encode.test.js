@@ -235,14 +235,18 @@ test('POST /api/replay/render mp4/webm/gif go through ffmpeg when it is found, a
     assert.equal(body.encoder, 'ffmpeg');
     assert.match(path.basename(body.path), new RegExp(`^replay-n1-0_n1-1-\\d{8}-\\d{6}\\.${format}$`));
     assert.equal(fs.readFileSync(body.path, 'utf8'), `FAKE:out.${format}`);
-    assert.equal(body.frames, 2);
+    // Two steps, each a 500 ms scroll move to m1 sampled at 8 fps (4 frames)
+    // plus one held frame.
+    assert.equal(body.frames, 10);
     assert.deepEqual([body.width, body.height], [320, 200]);
   }
   const calls = ff.read();
   const video = calls.filter((c) => c.argv.includes('-c:v'));
   assert.deepEqual(video.map((c) => c.argv[c.argv.indexOf('-c:v') + 1]), ['libx264', 'libvpx-vp9']);
   assert.ok(video.every((c) => c.argv[c.argv.indexOf('-vf') + 1] === 'fps=8'), 'the requested fps');
-  assert.ok(video.every((c) => /duration 1\.000\n/.test(c.list)), 'each node held for hold_ms');
+  const listed = (c) => [...c.list.matchAll(/duration ([\d.]+)\n/g)].reduce((a, m) => a + Number(m[1]), 0);
+  assert.ok(video.every((c) => Math.abs(listed(c) - 2) < 0.01), 'the two nodes held for hold_ms each, in total');
+  assert.ok(video.every((c) => /duration 0\.500\n/.test(c.list)), 'each ends on one frame held for the rest of its hold');
   assert.ok(calls.some((c) => /palettegen/.test(c.argv.join(' '))), 'the GIF took the palette pass');
   const tmpDir = projectPaths(root).tmp;
   assert.deepEqual(fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir) : [], [], 'no frames or profile left behind');
