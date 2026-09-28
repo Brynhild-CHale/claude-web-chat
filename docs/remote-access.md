@@ -101,8 +101,9 @@ You pick one hostname for the **picker** — the page listing your projects —
 for example `wc.example.com`. It shows the same picture as `claude-web-chat ls
 --all`, in two sections. **Active**: each running surface (viewers, the active
 node, a turn in progress) and whether a Claude Code session is attached (`×N`,
-channel on/off, when it last called a tool) — click to open it. **Inactive**:
-projects whose surface is stopped. Clicking a stopped project that is **known on
+channel on/off, when it last called a tool) — click to open it. (*Channel on*
+is what lets a Push from your phone wake that session; see *What a remote viewer
+sees*.) **Inactive**: projects whose surface is stopped. Clicking a stopped project that is **known on
 this machine** (its surface has booted here before; `~/.web-chat/projects.json`)
 asks *Start <project> on <host>?*, and on confirm the portal starts that
 project's daemon — the same detached start `claude-web-chat open` uses — waits
@@ -161,11 +162,11 @@ claude-web-chat tunnel setup --api-token-file ~/Downloads/cf-token.txt \
 claude-web-chat tunnel up
 ```
 
-A pasted token is **shown as you paste it** — the terminal prompt does not hide
-what you type — and stays in the scrollback. Where the screen is shared or
-recorded, prefer `--api-token-file` (and delete the file afterwards). The same
-goes for the connector token and the Google client secret when setup asks for
-them.
+A pasted token is **not shown** as you paste it — the terminal prompt hides what
+you type, so it does not stay in the scrollback. On a shared or recorded screen,
+still prefer `--api-token-file` (and delete the file afterwards); the same goes
+for the connector token (`--token-file`) and the Google client secret
+(`--google-client-secret-file`) when setup asks for them.
 
 Setup reads your account first, prints its plan, and only then changes
 anything. It creates — or finds, so a re-run changes nothing — a remotely
@@ -260,7 +261,7 @@ The same result, by hand in the dashboard.
    `~/.web-chat/tunnel/token` (0600), and prints the remaining dashboard steps
    with your hostnames filled in. The token is never a flag *value* — that would
    put it in your shell history — only a file to read it from, or a paste (which
-   the terminal shows as you paste it, so prefer the file on a shared screen).
+   the terminal does not show; a file is still the better choice on a recorded screen).
 4. **Route the hostnames to the portal.**
    - token tunnel: in the tunnel's Public Hostnames, add `wc.example.com` and
      `*.example.com` (or one per project — `claude-web-chat tunnel status` lists
@@ -320,6 +321,16 @@ ready; `claude-web-chat tunnel logs --cloudflared` shows why not. `tunnel up`
 refuses, with the reason, when something would make the tunnel unsafe or broken
 (see *Manual walkthrough*, step 5).
 
+- *The phone gets a Cloudflare error page, not the picker.* The tunnel has
+  nothing to reach on the host: the machine is asleep or offline, or the portal
+  is not running (nothing starts at login, so a reboot stops it). Wake the host,
+  or run `claude-web-chat tunnel up` on it, and keep it awake while you are away
+  (see *Commands*).
+- *A Push from the phone did nothing.* The project's Claude Code session has no
+  channel (the picker says *channel off*, or *no Claude session*), so the Push
+  is parked for the next prompt typed on the host (see *What a remote viewer
+  sees*).
+
 ## Commands
 
 ```
@@ -349,7 +360,14 @@ tunnel logs        the portal, cloudflared and remote access logs (--follow,
 The portal restarts cloudflared if it exits (waiting 1s, then 2s, 4s … up to a
 minute; a run that lasted five minutes starts the ladder again) and stops it
 when the portal stops. Nothing starts at login — run `tunnel up` again after a
-reboot. `claude-web-chat update` (and `update --to <version>`) restarts a
+reboot. And nothing keeps the machine awake: the portal and cloudflared run on
+it, so a laptop that sleeps takes every remote surface down until it wakes, and
+your phone gets Cloudflare's error page rather than web-chat's. Leave the host
+awake and online while you are away. On macOS, `caffeinate -s` (left running in
+a terminal) stops it sleeping while it is on power; closing a laptop's lid still
+sleeps it unless it is driving an external display.
+
+`claude-web-chat update` (and `update --to <version>`) restarts a
 running portal on the build it just activated, so that build's remote policy is
 in force at once; it prints one line saying so, and remote viewers reconnect.
 If that restart fails — a `tunnel.json` or token `up` would refuse, say — it says
@@ -446,7 +464,21 @@ in its params are stripped and `force` is ignored, from any browser, remote or
 not. A Push made remotely is marked
 `origin=remote` (and `device=mobile` from a phone) in what Claude receives, so
 it answers on the surface rather than asking you to run a command — see
-[channels-dev](channels-dev.md), "Push provenance". A replay Claude opens for
+[channels-dev](channels-dev.md), "Push provenance".
+
+**A Push from your phone wakes Claude only if that project's Claude Code
+session has Channels on** — it was started on the host with
+`WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat`
+(a research preview), and the picker shows it as *channel on*. Otherwise the
+Push is **parked**: the rail's *delivers with your next message* means the next
+prompt someone types into Claude Code **on the host**. From the phone you cannot
+type one, so Claude does not see the Push until you are back at that terminal —
+it waits until then, or until a session with Channels starts there and takes it
+at once. The same goes for a project with no Claude Code session at all (*no
+Claude session* on the picker). If you mean to work from your phone, start the
+session with Channels before you leave.
+
+A replay Claude opens for
 you (`export` with `open: true`) opens in every browser watching the surface,
 a remote viewer's phone included. The player plays as it does locally, but its
 **↧ GIF**, **↧ MP4** and **↧ WebM** are disabled up front, with the reason: a
