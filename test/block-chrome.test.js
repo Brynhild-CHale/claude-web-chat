@@ -347,3 +347,64 @@ test('snapshot frames carrying markdown / order / runs mount in page order, and 
   await tick();
   assert.deepEqual(order(['pg-a', 'pg-b']), ['pg-a', 'pg-b'], 'a reset re-orders to its page order');
 });
+
+// R7-6: a run the narrow layout has stacked to ONE column (page.css) draws every
+// block at the grid's left edge. A vertical drag there computed column 1 from
+// the pointer's drift and published it, so a plain reorder moved the block on a
+// wide screen, unseen here. The grid itself says how many tracks it resolves to
+// (getComputedStyle — no width check at the call site); jsdom lays nothing out,
+// so the template is set inline and the rects are stood in for: every block
+// full-width, stacked in its CSS `order`, 220px apart.
+test('a drag in a run stacked to one column only reorders; the column is left alone', async () => {
+  const placed = (col, span) => ({ col, colSpan: span, rows: 4, heightPx: 160, claude_place: { col, span, rows: 4 } });
+  const RUN = [
+    { id: 'st-a', html: '<p>a</p>', target: 'main', params: {}, pane_state: placed(1, 6) },
+    { id: 'st-b', html: '<p>b</p>', target: 'main', params: {}, pane_state: placed(7, 6) },
+  ];
+  frame({ type: 'reset', store: {}, active: 'n2', mounts: RUN.map((m) => ({ ...m })),
+    markdown: [], order: ['st-a', 'st-b'], claude_order: ['st-a', 'st-b'], runs: {} });
+  await tick();
+  const grid = pane('st-a').parentElement;
+  assert.equal(pane('st-b').parentElement, grid, 'precondition: one run');
+  grid.getBoundingClientRect = () => ({ left: 0, top: 0, right: 886, bottom: 440, width: 886, height: 440 });
+  for (const id of ['st-a', 'st-b']) {
+    const w = pane(id);
+    w.getBoundingClientRect = () => {
+      const top = Number(w.style.order) * 220;
+      return { left: 0, top, right: 886, bottom: top + 202, width: 886, height: 202 };
+    };
+  }
+  const drag = (id, [x0, y0], [x1, y1]) => {
+    const h = pane(id).querySelector('.pane-title');
+    pointer(h, 'pointerdown', x0, y0);
+    pointer(h, 'pointermove', x1, y1);
+    pointer(h, 'pointerup', x1, y1);
+  };
+
+  grid.style.gridTemplateColumns = 'minmax(0, 1fr)';   // stacked: one track
+  sent.length = 0;
+  const before = calls.length;
+  drag('st-b', [100, 230], [100, 10]);                  // straight up, over st-a
+  await tick(150);
+  assert.equal(lastState('st-b'), undefined, 'no pane:state: the column was not touched');
+  assert.equal(pane('st-b').style.getPropertyValue('--col'), '7', 'and the block keeps its wide-screen column');
+  const moves = calls.slice(before).filter((c) => c.method === 'POST' && c.url === '/api/page/move').map((c) => c.body);
+  assert.deepEqual(moves, [{ id: 'st-b', after: 'start' }], 'the drag reordered the run — st-b first');
+
+  // The same run on its 12-column grid: the pointer's drift is a column there.
+  grid.style.gridTemplateColumns = 'repeat(12, minmax(0, 1fr))';
+  sent.length = 0;
+  drag('st-a', [100, 230], [500, 230]);
+  await tick(150);
+  const f = lastState('st-a');
+  assert.ok(f && f.pane_state.col > 1, `a sideways drag on the full grid still moves the column (${f && f.pane_state.col})`);
+
+  // A browser reports the COMPUTED template — one length per track — not the
+  // declared one jsdom echoes back; both spellings count.
+  const { trackCount } = await import(pathToFileURL(path.join(REPO, 'public/app/mounts.js')).href);
+  assert.equal(trackCount(Array(12).fill('83.5px').join(' ')), 12, 'the computed form of the wide grid');
+  assert.equal(trackCount('886px'), 1, 'the computed form of a stacked run');
+  assert.equal(trackCount('[full-start] minmax(0, 1fr) [full-end]'), 1, 'line names are not tracks');
+  assert.equal(trackCount('repeat(auto-fill, 100px)'), null, 'an auto-fill repeat says nothing');
+  assert.equal(trackCount('none'), null);
+});

@@ -381,14 +381,48 @@ export function refusesLayout(pane_state) {
   return !!(pane_state && pane_state.locked) || layoutLocked();
 }
 
-// The run grid a pane sits in, measured: its rect and one column's width. A grid
-// that has not been laid out (a hidden tab, jsdom) falls back to a nominal 60px
-// column so the arithmetic stays finite.
+// The run grid a pane sits in, measured: its rect, one column's width, and how
+// many column tracks it resolves to right now. A grid that has not been laid out
+// (a hidden tab, jsdom) falls back to a nominal 60px column so the arithmetic
+// stays finite.
 function gridMetrics(wrapper) {
   const grid = wrapper.parentElement;
   const rect = grid && grid.getBoundingClientRect ? grid.getBoundingClientRect() : { left: 0, top: 0, width: 0 };
   const colW = rect.width > 0 ? (rect.width - GAP_PX * (COLS - 1)) / COLS : 60;
-  return { rect, colW };
+  let tracks = null;
+  try { tracks = grid ? trackCount(window.getComputedStyle(grid).gridTemplateColumns) : null; } catch {}
+  return { rect, colW, tracks };
+}
+
+// The number of column tracks in a grid-template-columns value: the computed
+// form a browser reports (one length per track, `83.5px 83.5px …`) and the
+// declared forms (`repeat(12, minmax(0, 1fr))`, `minmax(0, 1fr)`) alike. Line
+// names (`[a]`) are not tracks. null when the value says nothing (`none`, empty,
+// an auto-fill repeat).
+export function trackCount(tpl) {
+  const s = String(tpl == null ? '' : tpl).trim();
+  if (!s || s === 'none') return null;
+  const parts = [];
+  let depth = 0, tok = '';
+  for (const c of s) {
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    if (/\s/.test(c) && depth === 0) { if (tok) parts.push(tok); tok = ''; }
+    else tok += c;
+  }
+  if (tok) parts.push(tok);
+  let n = 0;
+  for (const t of parts) {
+    if (t.startsWith('[')) continue;
+    const rep = /^repeat\(\s*(\d+)\s*,([\s\S]*)\)$/i.exec(t);
+    if (rep) {
+      const inner = trackCount(rep[2]);
+      if (inner == null) return null;
+      n += Number(rep[1]) * inner;
+    } else if (/^repeat\(/i.test(t)) return null;   // auto-fill / auto-fit
+    else n += 1;
+  }
+  return n || null;
 }
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -534,8 +568,13 @@ function attachDrag(wrapper, handle, id, pane_state) {
       if (ev.pointerId !== pointerId) return;
       ghost.style.left = (ev.clientX - offX) + 'px';
       ghost.style.top = (ev.clientY - offY) + 'px';
-      const { rect, colW } = gridMetrics(wrapper);
-      if (rect.width > 0) {
+      // A run the narrow layout has stacked to ONE column (page.css) draws every
+      // block at the grid's left edge, so the pointer's drift would compute
+      // column 1 and a plain reorder would move the block on a wide screen,
+      // unseen here. There the drag only reorders. The grid itself says how
+      // many tracks it has — no width check of our own.
+      const { rect, colW, tracks } = gridMetrics(wrapper);
+      if (rect.width > 0 && tracks !== 1) {
         const span = placeOf(pane_state).span;
         const col = clampN(Math.round((ev.clientX - offX - rect.left) / (colW + GAP_PX)) + 1, 1, COLS - span + 1);
         if (col !== pane_state.col) { pane_state.col = col; applyPaneState(wrapper, pane_state); }
