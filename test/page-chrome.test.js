@@ -467,6 +467,45 @@ test('markdown written or removed directly above a run re-parents nothing', asyn
   assert.equal(W.document.querySelectorAll('#main .page-run').length, 1, 'one run, no stray element');
 });
 
+// R7-8: the run head (↺, the stacks chip) and the Contents rows were rebuilt on
+// EVERY layout — every pane:state, render or page frame, from Claude or another
+// viewer — so a keyboard user on one of them lost focus whenever anything on the
+// page moved. They are updated in place now.
+test('a focused run control or Contents row keeps focus through an unrelated re-layout', async () => {
+  frame({ type: 'reset', store: {}, active: 'n1', lock: null,
+    mounts: MOUNTS.map((m) => ({ ...m, pane_state: { ...m.pane_state } })),
+    markdown: MARKDOWN.map((m) => ({ ...m })), order: ORDER.slice(), claude_order: ORDER.slice(), runs: {} });
+  await tick(60);
+  frame({ type: 'page:order', order: ['md-title', 'b', 'a', 'md-res', 'c', 'md-disc', 'd'] });   // off Claude's order
+  await tick();
+  const reset = run('md-title').querySelector('.run-reset');
+  const stacks = run('md-title').querySelector('.run-stacks');
+  assert.ok(reset && stacks, "precondition: the dirty run offers ↺ and its stacks chip");
+  reset.focus();
+  assert.equal(W.document.activeElement, reset, 'precondition: ↺ has focus');
+
+  frame({ type: 'pane:state', id: 'd', pane_state: { colSpan: 6 } });   // another run, another pane
+  await tick();
+  assert.equal(reset.isConnected, true, '↺ is the same button after the re-layout');
+  assert.equal(W.document.activeElement, reset, 'and it still has focus');
+  assert.equal(run('md-title').querySelector('.run-stacks'), stacks, 'the stacks chip is kept too');
+
+  const row = $('contents-nav').querySelector('.cn-row');
+  row.focus();
+  frame({ type: 'pane:state', id: 'd', pane_state: { colSpan: 12 } });
+  await tick();
+  assert.equal(row.isConnected, true, 'the Contents row is kept');
+  assert.equal(W.document.activeElement, row, 'and keeps focus');
+
+  // A kept ↺ still resets THIS run, and goes once the run is back on Claude's layout.
+  click(reset);
+  await tick();
+  assert.deepEqual(posts('/api/page/reset-layout').pop().body, { run_anchor: 'md-title' });
+  frame({ type: 'page:order', order: ORDER.slice() });
+  await tick();
+  assert.equal(run('md-title').querySelector('.run-reset'), null);
+});
+
 // ── the node preview draws the page the same way ────────────────────────────
 // lib/server/preview.js (graph thumbnails, the glance, pane history, replay
 // frames) inlines the SAME stylesheet (public/page.css) and cuts the sequence

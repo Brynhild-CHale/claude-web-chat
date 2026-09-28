@@ -381,62 +381,85 @@ function runElement(seg, liveAnchors) {
 // off Claude's layout, the stacks/fixed chip when there is a row to keep (two or
 // more visible panes) or the run is already fixed (so it can be turned back).
 // Both are layout, so a layout-locked view (preview, phone) has neither.
+//
+// Updated IN PLACE, never rebuilt: this runs on every layout — every pane:state,
+// render or page frame, from Claude or from another viewer — and a rebuilt
+// button took the keyboard focus of whoever was on it. The click handlers read
+// the run's anchor and flag off the element when they fire, because both can
+// move under a button that is kept.
 function renderRunHead(el, seg, fixed) {
   const head = el.querySelector('.run-head');
-  head.textContent = '';
-  if (!layoutLocked()) {
-    if (runDirty(seg.panes)) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'run-reset';
-      b.textContent = "↺ Claude's layout";
-      b.title = 'Restore the arrangement Claude proposed for these blocks';
-      b.addEventListener('click', () => { if (!layoutLocked()) resetRun(seg.anchor); });
-      head.appendChild(b);
+  const locked = layoutLocked();
+  const wantReset = !locked && runDirty(seg.panes);
+  const visible = seg.panes.filter((id) => !panes.get(id).pane_state.minimized).length;
+  const wantStacks = !locked && (visible >= 2 || fixed);
+
+  let reset = head.querySelector('.run-reset');
+  if (wantReset && !reset) {
+    reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'run-reset';
+    reset.textContent = "↺ Claude's layout";
+    reset.title = 'Restore the arrangement Claude proposed for these blocks';
+    reset.addEventListener('click', () => { if (!layoutLocked()) resetRun(el.dataset.anchor); });
+    head.prepend(reset);
+  } else if (!wantReset && reset) reset.remove();
+
+  let stacks = head.querySelector('.run-stacks');
+  if (wantStacks) {
+    if (!stacks) {
+      stacks = document.createElement('button');
+      stacks.type = 'button';
+      stacks.title = 'On a narrow screen these blocks either stack to one column in reading order, or keep their grid and scroll sideways';
+      stacks.addEventListener('click', () => {
+        if (!layoutLocked()) setRunStacks(el.dataset.anchor, el.classList.contains('fixed'));
+      });
+      head.appendChild(stacks);
     }
-    const visible = seg.panes.filter((id) => !panes.get(id).pane_state.minimized).length;
-    if (visible >= 2 || fixed) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'run-stacks' + (fixed ? ' fixed' : '');
-      b.textContent = fixed ? 'fixed grid' : 'stacks on narrow';
-      b.setAttribute('aria-pressed', String(fixed));
-      b.title = 'On a narrow screen these blocks either stack to one column in reading order, or keep their grid and scroll sideways';
-      b.addEventListener('click', () => { if (!layoutLocked()) setRunStacks(seg.anchor, fixed); });
-      head.appendChild(b);
-    }
-  }
+    stacks.className = 'run-stacks' + (fixed ? ' fixed' : '');
+    stacks.textContent = fixed ? 'fixed grid' : 'stacks on narrow';
+    stacks.setAttribute('aria-pressed', String(fixed));
+  } else if (stacks) stacks.remove();
   head.hidden = !head.childElementCount;
 }
 
-// Minimized blocks, as chips under the run they belong to. textContent, never
-// innerHTML: a pane title can be attacker-controlled (a captured page's <title>
-// flows into params.title via routes/capture.js).
+// Minimized blocks, as chips under the run they belong to — kept per pane across
+// layouts, like the run head, so a focused chip keeps its focus. textContent,
+// never innerHTML: a pane title can be attacker-controlled (a captured page's
+// <title> flows into params.title via routes/capture.js).
 function renderRunMin(el, seg) {
   const box = el.querySelector('.run-min');
-  box.textContent = '';
-  for (const id of seg.panes) {
+  const have = new Map([...box.querySelectorAll('.min-chip')].map((c) => [c.dataset.paneId, c]));
+  const want = seg.panes.filter((id) => panes.get(id).pane_state.minimized);
+  want.forEach((id, i) => {
     const p = panes.get(id);
-    if (!p.pane_state.minimized) continue;
-    const chip = document.createElement('button');
-    chip.type = 'button';
+    let chip = have.get(id);
+    have.delete(id);
+    if (!chip) {
+      chip = document.createElement('button');
+      chip.type = 'button';
+      chip.dataset.paneId = id;
+      const label = document.createElement('span');
+      const restore = document.createElement('span');
+      restore.className = 'restore';
+      restore.textContent = '↗';
+      chip.append(label, restore);
+      const c = chip;
+      chip.addEventListener('click', () => {
+        const cur = panes.get(id);
+        if (!cur) return;
+        // A phone's layout is fixed: restoring a block would re-arrange the live
+        // page, so the chip only shows it HERE (a local peek).
+        if (isPhone()) { c.classList.toggle('on', cur.wrapper.classList.toggle('peek')); return; }
+        if (layoutLocked()) return;
+        unminimize(id);
+      });
+    }
     chip.className = 'min-chip' + (p.wrapper.classList.contains('peek') ? ' on' : '');
-    chip.dataset.paneId = id;
-    const label = document.createElement('span');
-    label.textContent = p.title || id;
-    const restore = document.createElement('span');
-    restore.className = 'restore';
-    restore.textContent = '↗';
-    chip.append(label, restore);
-    chip.addEventListener('click', () => {
-      // A phone's layout is fixed: restoring a block would re-arrange the live
-      // page, so the chip only shows it HERE (a local peek).
-      if (isPhone()) { chip.classList.toggle('on', p.wrapper.classList.toggle('peek')); return; }
-      if (layoutLocked()) return;
-      unminimize(id);
-    });
-    box.appendChild(chip);
-  }
+    chip.firstElementChild.textContent = p.title || id;   // the label span
+    if (box.children[i] !== chip) box.insertBefore(chip, box.children[i] || null);
+  });
+  for (const c of have.values()) c.remove();
   box.hidden = !box.childElementCount;
 }
 
@@ -563,35 +586,63 @@ export function syncPageMeta() {
 // The Contents nav (≥1100px — app.css hides it narrower): one row per # / ##
 // heading, numbered, level 2 indented, with the panes until the next heading.
 // Empty — and so not drawn — when the page has no headings.
+//
+// Rows are kept across layouts (by the heading they point at) and updated in
+// place: this runs on every layout, and a rebuilt nav dropped the keyboard focus
+// of a user on one of its rows whenever anything on the page changed.
+function contentsRow() {
+  const b = document.createElement('button');
+  b.type = 'button';
+  const num = document.createElement('span'); num.className = 'cn-num';
+  const name = document.createElement('span'); name.className = 'cn-name';
+  const count = document.createElement('span'); count.className = 'cn-count';
+  b.append(num, name, count);
+  b.addEventListener('click', () => scrollToHeading(b.dataset.md, b.dataset.slug));
+  return b;
+}
 export function renderContents() {
   const nav = $('contents-nav');
   if (!nav) return;
   const rows = outline();
-  nav.textContent = '';
-  if (!rows.length) return;
-  const label = document.createElement('div');
-  label.className = 'cn-label';
-  label.textContent = 'CONTENTS';
-  nav.appendChild(label);
+  if (!rows.length) { nav.textContent = ''; return; }
+  let label = nav.querySelector('.cn-label');
+  if (!label) {
+    label = document.createElement('div');
+    label.className = 'cn-label';
+    label.textContent = 'CONTENTS';
+  }
+  const want = [label];
+  const have = new Map();   // heading → its rows, in order (a slug can repeat)
+  for (const b of nav.querySelectorAll('.cn-row')) {
+    const k = `${b.dataset.md}\n${b.dataset.slug}`;
+    if (!have.has(k)) have.set(k, []);
+    have.get(k).push(b);
+  }
   for (const r of rows) {
-    const b = document.createElement('button');
-    b.type = 'button';
+    const kept = have.get(`${r.md}\n${r.slug}`);
+    const b = (kept && kept.shift()) || contentsRow();
     b.className = 'cn-row' + (r.level === 2 ? ' sub' : '');
-    const num = document.createElement('span'); num.className = 'cn-num'; num.textContent = r.num;
-    const name = document.createElement('span'); name.className = 'cn-name'; name.textContent = r.text;
-    const count = document.createElement('span'); count.className = 'cn-count';
-    count.textContent = r.panes.length ? String(r.panes.length) : '';
+    b.dataset.md = r.md;
+    b.dataset.slug = r.slug;
     b.title = r.text;
-    b.append(num, name, count);
-    b.addEventListener('click', () => scrollToHeading(r.md, r.slug));
-    nav.appendChild(b);
+    b.querySelector('.cn-num').textContent = r.num;
+    b.querySelector('.cn-name').textContent = r.text;
+    b.querySelector('.cn-count').textContent = r.panes.length ? String(r.panes.length) : '';
+    want.push(b);
   }
   // The tip is about adding to the page — nothing a layout-locked view can do.
-  if (layoutLocked()) return;
-  const tip = document.createElement('div');
-  tip.className = 'cn-tip';
-  tip.innerHTML = 'Ask Claude for a new section, or press <kbd>N</kbd> to add a block.';
-  nav.appendChild(tip);
+  if (!layoutLocked()) {
+    let tip = nav.querySelector('.cn-tip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.className = 'cn-tip';
+      tip.innerHTML = 'Ask Claude for a new section, or press <kbd>N</kbd> to add a block.';
+    }
+    want.push(tip);
+  }
+  // Moved only when out of place, the way layoutPage places the page.
+  want.forEach((el, i) => { if (nav.children[i] !== el) nav.insertBefore(el, nav.children[i] || null); });
+  for (const el of [...nav.children].slice(want.length)) el.remove();
 }
 
 // ⌘K rows: one "section" row per heading (scrolls to it), and each block's

@@ -188,6 +188,9 @@ async function previewN2() {
 
 // The page shows the node the re-aim landed on, as the live, editable surface.
 async function assertLive({ active, values, what }) {
+  // Set active leaves the graph open, and a pane behind an open modal takes no
+  // keys at all (shell.js): close it (deselect, then close) to type on the page.
+  if (overlayOpen()) { key('Escape'); key('Escape'); await tick(); }
   assert.deepEqual(fieldValues(), values,
     `${what}: the live surface the reset carried is on screen — not the previewed node's panes`);
   assert.equal(view.previewing, false, `${what}: the preview is left`);

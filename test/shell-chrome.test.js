@@ -644,4 +644,75 @@ test('a reset frame is rendered verbatim — the server decides what survives a 
   assert.deepEqual(ids(), [], 'an empty reset empties the surface, pinned or not');
 });
 
+/* ---------- modality: the graph, the palette and the replay player ---------- */
+// Each declares role="dialog" aria-modal="true", and nothing kept the promise:
+// Tab walked out of the graph into the panes hidden underneath, and a keystroke
+// from a pane field went into that field unseen. The shell owns modality now
+// (R7-8). jsdom implements neither `inert` nor focus blocking, so what is
+// asserted is the attribute, where focus lands, and what a key reaches.
+const keyFrom = (el, key) => {
+  const k = new W.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, composed: true });
+  el.dispatchEvent(k);
+  return k;
+};
+
+test('an open modal inerts the page behind it, and a pane field there takes no keys', async (t) => {
+  const { showReaimNote } = await import(pathToFileURL(path.join(REPO, 'public/app/topbar.js')).href);
+  WS.onmessage({ data: JSON.stringify({
+    type: 'reset', active: 'n1', lock: null, store: {}, theme: null, activeTheme: null,
+    mounts: [{ id: 'form', target: 'main', params: {}, pane_state: {},
+      html: '<input id="f"><script>root.getElementById("f").addEventListener("keydown", function () {'
+        + ' window.__paneKeys = (window.__paneKeys || 0) + 1; });</script>' }],
+  }) });
+  await tick();
+  const host = $('main').querySelector('.pane[data-pane-id="form"] .mount-host');
+  const field = host.shadowRoot.getElementById('f');
+  assert.equal(keyFrom(field, 'x').defaultPrevented, false, 'precondition: with nothing open the field takes its keys');
+  assert.equal(W.__paneKeys, 1, "precondition: and the pane's own listener hears them");
+  showReaimNote('Queued node jump');   // a notice already up when the graph opens
+  // Hover holds the notice's dismissal timer; then take it down, so no timer
+  // outlives this file's window, pass or fail.
+  t.after(() => {
+    const n = $('reaim-note');
+    if (n) { n.dispatchEvent(new W.MouseEvent('mouseenter')); n.remove(); }
+  });
+  field.focus();
+
+  click($('btn-graph'));
+  await tick(); await tick();
+  assert.ok(open('overlay'), 'precondition: the graph is open');
+  assert.ok($('main').closest('[inert]'), 'the page behind the graph is inert');
+  assert.equal($('topbar').hasAttribute('inert'), true, 'and so is the topbar');
+  assert.equal($('overlay').hasAttribute('inert'), false, 'the graph itself is not');
+  assert.equal($('reaim-note').hasAttribute('inert'), false, 'nor the in-page notice (role=status): it must still be announced');
+
+  const k = keyFrom(field, 'x');
+  assert.equal(k.defaultPrevented, true, 'a key from the pane field behind the graph is dropped');
+  assert.equal(W.__paneKeys, 1, 'before the pane ever hears it');
+  assert.equal(keyFrom($('gv-jump'), 'x').defaultPrevented, false, "the graph's own jump box keeps every key");
+
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal(open('overlay'), false, 'Escape closes the graph');
+  assert.equal($('main').closest('[inert]'), null, 'the page is live again');
+  assert.equal($('topbar').hasAttribute('inert'), false);
+  assert.equal(host.shadowRoot.activeElement, field, 'focus is back on the field the graph was opened from');
+  assert.equal(keyFrom(field, 'x').defaultPrevented, false, 'and it takes its keys again');
+});
+
+test('the palette is modal too, and its own input keeps every key', async () => {
+  const field = $('main').querySelector('.pane[data-pane-id="form"] .mount-host').shadowRoot.getElementById('f');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+  await tick();
+  assert.ok(open('cmd-palette'), 'precondition: ⌘K opened the palette');
+  assert.ok($('main').closest('[inert]'), 'the page behind the palette is inert');
+  assert.equal($('cmd-palette').hasAttribute('inert'), false);
+  assert.equal(keyFrom($('cmd-input'), 'x').defaultPrevented, false, "the palette's input keeps its keys");
+  assert.equal(keyFrom(field, 'x').defaultPrevented, true, 'a pane field behind it does not');
+  keyFrom($('cmd-input'), 'Escape');
+  await tick();
+  assert.equal(open('cmd-palette'), false, 'precondition: Escape in its input closed it');
+  assert.equal($('main').closest('[inert]'), null, 'closing it lifts the inert');
+});
+
 test.after(async () => { await new Promise((r) => setTimeout(r, 400)); restore(); });
