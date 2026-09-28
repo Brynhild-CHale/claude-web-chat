@@ -127,3 +127,47 @@ test('the dom-event reporter gates the value through that predicate', () => {
   assert.doesNotMatch(src, /^\s*value: t\?\.value \?\? null,$/m,
     'the unguarded form of the payload must not come back');
 });
+
+// ── a page opening is not user input ─────────────────────────────────────────
+// Every hello (a reload, a reconnect, a phone opening the page) ends in the
+// chrome's form flush. A pane nobody typed in used to publish its rendered
+// defaults there — `{}` for a pane with no fields — and form_state is a snapshot
+// field, so the surface read as changed with no user action: a chat-only turn
+// committed instead of folding, and Set active preserved a 'user' node holding
+// nothing. The chrome no longer sends it (test/snapshot-applier.test.js); an
+// empty form_state is also the same surface as none on the server, so an older
+// chrome's flush cannot do it either.
+
+async function turn(api, message, work) {
+  await api.post('/api/turn-begin', { message });
+  if (work) await work();
+  return (await api.post('/api/turn-end', { author: 'claude' })).json;
+}
+
+test('a page opening over an unchanged surface leaves it clean: no commit, no preserve node', async (t) => {
+  const { api, port } = await withServer(t);
+  const n0 = (await turn(api, 'one', () => api.post('/api/render', { id: 'plain', html: '<p>no fields</p>' }))).node_id;
+  const n1 = (await turn(api, 'two', () => api.post('/api/render', { id: 'other', html: '<p>second</p>' }))).node_id;
+  assert.ok(n0 && n1, 'precondition: two committed nodes');
+
+  // What a reloaded page's flush sent for panes with no form fields.
+  await typeInto(port, 'plain', {});
+  await typeInto(port, 'other', {});
+
+  const r = await turn(api, 'just talking');
+  assert.equal(r.skipped, 'no-change', 'a chat-only turn after a reload still folds');
+
+  const nodesBefore = (await api.get('/api/graph')).json.nodes.length;
+  const sa = (await api.post('/api/graph/active', { id: n0 })).json;
+  assert.equal(sa.ok, true);
+  assert.equal(sa.preserved, null, 'Set active on a surface nobody touched preserves nothing');
+  assert.equal((await api.get('/api/graph')).json.nodes.length, nodesBefore, 'and the graph gained no node');
+});
+
+test('typing after a reload is still a change', async (t) => {
+  const { api, port } = await withServer(t);
+  await turn(api, 'one', () => api.post('/api/render', { id: 'f', html: '<input id="a">' }));
+  await typeInto(port, 'f', { '#a:0': { value: 'typed' } });
+  const r = await turn(api, 'chat');
+  assert.ok(r.node_id, 'real typed values still commit — only the empty snapshot is no change');
+});

@@ -135,6 +135,20 @@ test('boot the shell live on n1, two panes up', async () => {
   assert.equal(W.__k, 'one', 'precondition: the pane script is subscribed and receiving');
 });
 
+// The boot hello mounted two panes nobody has typed in: `m-keep` (an untouched
+// input) and `m-gone` (no fields at all). Its reconcile flush used to take their
+// rendered defaults for user input and publish them — `{"#f:0":{value:""}}` and
+// `{}` — so every reload made an unchanged surface read as changed server-side
+// (a spurious preserve node on Set active; test/form-state.test.js).
+test('the boot hello publishes no form_state for panes nobody typed in', async () => {
+  assert.deepEqual(sent.filter((f) => f.type === 'pane:form'), [],
+    'a page opening is not user input: the flush must send nothing for untouched panes');
+  sent.length = 0;
+  hello({ store: { k: 'one' } }); // a reconnect over the same surface
+  await tick();
+  assert.deepEqual(sent.filter((f) => f.type === 'pane:form'), [], 'nor does a reconnect');
+});
+
 /* ── 1. a hello delivered while previewing must not touch the previewed DOM ── */
 
 test('a reconnect during a node preview folds instead of overwriting the surface', async () => {

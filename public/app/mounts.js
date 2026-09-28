@@ -702,13 +702,19 @@ function mountPane(m) {
   // wins over a script's own initialization; the runtime dispatches input/change
   // for changed fields so reactive pane scripts resync. Gated so those dispatched
   // events don't re-capture and echo the same snapshot straight back.
+  const mounted = panes.get(id);
   if (form_state) {
-    const p = panes.get(id);
-    p._lastFormJson = JSON.stringify(form_state);
-    p._applyingForm = true;
+    mounted._applyingForm = true;
     try { window.__wcMount.applyFormState(root, form_state); }
-    finally { p._applyingForm = false; }
+    finally { mounted._applyingForm = false; }
   }
+  // The "server has this" baseline is what the pane shows NOW — its rendered
+  // defaults, plus any restored values — whether or not a form_state was stored.
+  // Left unset for a pane nobody had typed in, the reconcile's flush (every
+  // hello: a reload, a reconnect, a phone opening the page) took those defaults
+  // for user input and published them, and the surface read as changed: Set
+  // active preserved a node holding nothing, a chat-only turn committed.
+  mounted._lastFormJson = JSON.stringify(window.__wcMount.captureFormState(root));
 
   const hostTitle = host.dataset && host.dataset.paneTitle;
   if (hostTitle && !titleFromParams) {
