@@ -224,3 +224,39 @@ test('status: a Claude session on an OLDER build is told to restart Claude Code 
   assert.match(out, /⚠ Claude is on v0\.0\.1 — restart Claude Code to pick up v/);
   assert.doesNotMatch(out, /Server:.*\n +⚠/, 'the server itself is on this build');
 });
+
+// A pre-0.8 daemon with a 0.8 session used to get two ⚠ lines that said the
+// same thing — "running a build older than 0.8 … run `claude-web-chat restart`"
+// under Server, and "the surface is on a build older than 0.8, Claude on v… —
+// run `claude-web-chat restart` in this project" under Claude. One fix, one
+// line: the Server line keeps it, and a skew that asks for anything else (a
+// session behind the surface, to restart Claude Code) is still said.
+const warnings = (out) => out.split('\n').filter((l) => l.includes('⚠'));
+
+test('status: a pre-0.8 daemon with a 0.8 session prints one ⚠, not two', async (t) => {
+  const port = await fakeDaemon(t, {});
+  const out = await runStatus(t, withDaemon(port, (root) => registerMcp({ root, package_version: packageVersion() })));
+  assert.match(out, /Claude: +● 1 session attached/);
+  assert.deepStrictEqual(warnings(out).map((l) => l.trim()),
+    [`⚠ running a build older than 0.8, not this CLI's v${packageVersion()} — run \`claude-web-chat restart\``]);
+});
+
+test('status: a daemon on an older 0.8 build with a session on this one prints one ⚠ too', async (t) => {
+  const port = await fakeDaemon(t, { package_version: '0.0.1-old' });
+  const out = await runStatus(t, withDaemon(port, (root) => registerMcp({ root, package_version: packageVersion() })));
+  assert.equal(warnings(out).length, 1, out);
+  assert.match(warnings(out)[0], /⚠ running v0\.0\.1-old, not this CLI's v.* — run `claude-web-chat restart`/);
+});
+
+test('status: a session BEHIND an outdated daemon still gets its own ⚠ — a different fix', async (t) => {
+  const port = await fakeDaemon(t, { package_version: '0.0.5' });
+  const out = await runStatus(t, withDaemon(port, (root) => {
+    registerMcp({ root, pid: process.pid, package_version: packageVersion() });
+    registerMcp({ root, pid: process.ppid, ppid: 1, package_version: '0.0.1' });
+  }));
+  const w = warnings(out);
+  assert.equal(w.length, 2, out);
+  assert.match(w[0], /⚠ running v0\.0\.5, not this CLI's v/);
+  assert.match(w[1], /⚠ 1 of 2 Claude sessions is on v0\.0\.1 — restart it to pick up v0\.0\.5/);
+  assert.doesNotMatch(w[1], /Claude on v/, 'the surface-restart half is the Server line\'s, not said twice');
+});
