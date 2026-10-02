@@ -113,6 +113,12 @@ test('status admits "unknown" rather than guessing when no MCP client was ever s
 // UserPromptSubmit reported "1 hook(s) registered" and looked healthy while no
 // turn ever committed. status now reports per event, off the template's key
 // set, and names what is absent.
+//
+// 0.8.5's template has twelve events (spec §1.1), so the count is out of the
+// template's event list rather than a literal.
+const { hookEvents } = require('../lib/setup/registration');
+const { ensureHooks } = require('../lib/update/managed-files');
+
 test('status names the missing hook EVENT rather than reporting a smaller count', async (t) => {
   const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
   const out = await runStatus(t, (root) => {
@@ -122,24 +128,15 @@ test('status names the missing hook EVENT rather than reporting a smaller count'
       hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }] },
     }, null, 2));
   });
-  assert.match(out, /Hooks: +1\/2 registered/, 'both template events are counted, not just the ones on disk');
+  assert.match(out, new RegExp(`Hooks: +1/${hookEvents().length} registered`), 'every template event is counted, not just the ones on disk');
   assert.match(out, /missing: Stop/, 'and the absent one is named');
   assert.match(out, /claude-web-chat install/, 'with the command that repairs it');
 });
 
-test('status reports both hook events registered when both are present', async (t) => {
-  const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
-  const out = await runStatus(t, (root) => {
-    const settingsPath = path.join(root, '.claude', 'settings.json');
-    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify({
-      hooks: {
-        UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }],
-        Stop: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-end` }] }],
-      },
-    }, null, 2));
-  });
-  assert.match(out, /Hooks: +2\/2 registered/);
+test('status reports every hook event registered once the template is in place', async (t) => {
+  const out = await runStatus(t, (root) => { ensureHooks(root); });
+  const n = hookEvents().length;
+  assert.match(out, new RegExp(`Hooks: +${n}/${n} registered`));
   assert.doesNotMatch(out, /missing:/);
   assert.doesNotMatch(out, /bare command:/);
 });
