@@ -146,8 +146,11 @@ test('the topbar sits above every surface artifact — including comment pins', 
 
 test('the whole z-index inventory is one ordered scale', () => {
   const s = scale();
+  // --z-chat (0.8.5): the chat dock and the phone pull. Above the topbar, which
+  // the phone sheet's keyboard mode can overlap; below the panels, whose rung
+  // closes on blur and on another panel opening, which a chat drawer must survive.
   const order = ['--z-depth', '--z-content', '--z-glass', '--z-drag', '--z-pins',
-    '--z-topbar', '--z-panel', '--z-notice', '--z-overlay', '--z-glance', '--z-legend'];
+    '--z-topbar', '--z-chat', '--z-panel', '--z-notice', '--z-overlay', '--z-glance', '--z-legend'];
   for (const k of order) assert.ok(k in s, `the scale declares ${k}`);
   for (let i = 1; i < order.length; i++) {
     assert.ok(s[order[i - 1]] < s[order[i]],
@@ -274,6 +277,108 @@ test('no chrome surface is painted from a colour the palette does not hold', () 
     '.depth-grid { mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 78%) }',
     '.update-banner .ub-btn:hover { background: color-mix(in srgb, var(--wc-gold) 85%, #fff) }',
   ], 'literal colours outside the palette blocks');
+});
+
+/* ================= (f) the chat mirror's scaffold (0.8.5) ================= */
+// The chat chrome is built by some twenty-five units, several at a time, each on
+// its own files. So one unit (U15) laid the ground they all share, once: the
+// --z-chat rung above, the --wc-agent token, the status bar's height, .body's
+// wrapper, one section of this sheet per chrome unit, and every chrome id the
+// release plans, reserved ahead of the unit that builds it. These pin that
+// ground until its units have built on it. (The wrapper and the chat hosts in
+// index.html are pinned through the real shell: test/chrome-shell.test.js.)
+
+// The chrome units of the release, in the order their sections sit in app.css.
+const CHAT_UNITS = ['U17', 'U20', 'U32', 'U33', 'U35', 'U36', 'U37', 'U38', 'U46', 'U47', 'U56', 'U62',
+  'U65', 'U68', 'U69', 'U70', 'U71', 'U72', 'U77', 'U80', 'U85', 'U86', 'U91', 'U93'];
+
+test('the chat mirror region holds one marked section per chrome unit, in order', () => {
+  const at = CSS.lastIndexOf('/* ===', CSS.indexOf('chat mirror (0.8.5)'));
+  assert.ok(at > 0, 'app.css opens a chat mirror region');
+  const region = CSS.slice(at);
+  const markers = [...region.matchAll(/^\/\* ── (U\d+) · [^\n]* ── \*\/$/gm)];
+  assert.deepEqual(markers.map((m) => m[1]), CHAT_UNITS, 'one marker per chrome unit, in unit order');
+  // Blank-line separated: each section is its own paragraph, so units adding
+  // rules under their own markers never edit the same lines, and merge cleanly.
+  for (const m of markers) {
+    assert.ok(region.slice(0, m.index).endsWith('\n\n'), `${m[1]}'s marker opens a paragraph of its own`);
+  }
+});
+
+test('--wc-agent, the chat chrome\'s one new token, is in every pack and mode and in both palette blocks', () => {
+  // Agents and delegated work get a hue no existing token holds; every other
+  // chat state and task category is painted from the tokens it already had.
+  const { BUILTIN_THEMES, themeModes, flattenTheme, normalizeTheme } = require('../lib/server/theme');
+  const DESIGN = { earthy: { light: '#4f6f8a', dark: '#8fb0c8' }, paper: { light: '#4f6f8a', dark: '#8fb0c8' },
+    'georgetown-blue': { light: '#1f6f78', dark: '#7cc4c8' } };   // teal: Georgetown Blue's accent is already blue
+  for (const pack of BUILTIN_THEMES) {
+    for (const mode of themeModes(pack)) {
+      const v = flattenTheme(normalizeTheme(pack), mode).tokens['--wc-agent'];
+      if (DESIGN[pack.name]) assert.equal(v, DESIGN[pack.name][mode], `${pack.name}/${mode}`);
+      else assert.ok(v, `${pack.name}/${mode} sets --wc-agent`);
+    }
+  }
+  const block = (sel) => CSS_RULES.find((r) => r.selector === sel && isPaletteBlock(r)).body;
+  assert.match(block(':root'), /--wc-agent:\s*#8fb0c8;/, 'Earthy dark, the :root block');
+  assert.match(block(':root[data-theme="light"]'), /--wc-agent:\s*#4f6f8a;/, 'Earthy light, the light block');
+});
+
+test('the status bar\'s height is one structural property: 28px at 760px and wider, 0px below', () => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(css, /\}\s*:root\s*\{\s*--cs-bar-h:\s*28px;?\s*\}/, 'the wide value, on :root (the trust cards sit on <body>)');
+  assert.match(css, /@media \(max-width: 759px\) \{\s*:root\s*\{\s*--cs-bar-h:\s*0px;?\s*\}\s*\}/,
+    'zero below the one narrow breakpoint, where no bar is drawn — 0px, since a bare 0 is not a length in calc()');
+  assert.equal(css.match(/--cs-bar-h\s*:/g).length, 2, 'declared in those two places and nowhere else');
+});
+
+test('.body\'s wrapper positions the chat dock without becoming a stacking context', () => {
+  const rule = CSS_RULES.find((r) => r.selector === '.body-wrap');
+  assert.ok(rule, 'app.css styles .body-wrap');
+  assert.match(rule.body, /position:\s*relative/, 'the dock is positioned against it');
+  // .body is a stacking context at --z-content, under #pin-layer; the dock is
+  // its sibling precisely so it can paint above the pins. A z-index here (or
+  // any other stacking-context property) would put the dock back under them.
+  assert.doesNotMatch(rule.body, /z-index|isolation|transform|filter|opacity|contain\s*:|will-change/,
+    'nothing that would make the wrapper a stacking context');
+  // A column, so .body is stretched across it as it was across #stage; in a
+  // row, .body's automatic minimum width would be its min-content width.
+  assert.match(rule.body, /flex-direction:\s*column/);
+  assert.match(rule.body, /flex:\s*1/);
+});
+
+// Every chrome id the release plans, by surface and the unit that builds it
+// (design spec §7–§9 and §15). lib/server/domain/mounts.js reserves them all
+// AHEAD of those units, so none of them edits that file and no pane can claim
+// an id its surface is about to need. test/mount-engine.test.js derives the
+// reserved set from the sources; this is the plan's half, which no source can
+// show until its unit lands.
+const PLANNED_CHROME_IDS = {
+  'the status bar (U17)': ['chat-statusbar', 'cs-step', 'cs-step-text', 'cs-step-meta', 'cs-act', 'cs-stop',
+    'cs-chips', 'cs-live'],
+  'the trays (U46)': ['cs-tray', 'cs-tray-title', 'cs-tray-sub', 'cs-tray-close', 'cs-tray-rows'],
+  'the dock (U33)': ['chat-dock', 'cd-strip', 'cd-body'],
+  'the panel and its awaiting card (U36)': ['chat-panel', 'chat-title', 'cp-stop', 'cp-ops', 'chat-strip',
+    'chat-meta', 'chat-session', 'chat-notice', 'chat-awaiting', 'chat-views', 'chat-composer-slot'],
+  'the stream and the detail views (U37, U47)': ['chat-stream', 'chat-new', 'chat-detail'],
+  'the phone pull and its sheet (U68)': ['chat-scrim', 'chat-pull', 'chat-badge', 'chat-tab', 'chat-sheet',
+    'sh-tab-chat', 'sh-tab-tasks', 'sh-chat', 'sh-tasks', 'chat-live'],
+  'the co-brand lockup (U20)': ['cobrand', 'cobrand-co', 'cobrand-logo', 'cobrand-mark', 'cobrand-proj',
+    'cobrand-icon', 'cobrand-pmark', 'cobrand-name'],
+  'the favicon (U77)': ['wc-favicon', 'wc-favicon-dark', 'wc-touch-icon'],
+  'the control layer (U80, U85, U86)': ['cs-stop', 'cp-stop', 'cp-ops', 'turn-action', 'ta-title', 'ta-body',
+    'ta-confirm', 'gi-turns'],
+};
+
+test('every chrome id the chat mirror plans is reserved ahead of the unit that builds it', () => {
+  const { isReservedId } = require('../lib/server/domain/mounts');
+  const missing = [];
+  for (const [surface, ids] of Object.entries(PLANNED_CHROME_IDS)) {
+    for (const id of ids) if (!isReservedId(id)) missing.push(`${id} (${surface})`);
+  }
+  assert.deepEqual(missing, [], 'reserve these in RESERVED_IDS (lib/server/domain/mounts.js)');
+  // The two the lockup retires stay reserved: a tab loaded before 0.8.5 still
+  // has them, and a pane must not take either while it talks to a newer daemon.
+  for (const id of ['status-dot', 'brand-logotype']) assert.ok(isReservedId(id), `${id} stays reserved`);
 });
 
 /* ======================= the jsdom boot ======================= */

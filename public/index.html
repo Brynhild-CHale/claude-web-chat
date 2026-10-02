@@ -70,61 +70,76 @@
       <button class="dock-btn" id="btn-more" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
     </header>
 
-    <!-- body: [contents] + surface well + proximity queue rail -->
-    <div class="body">
-      <!-- the page's contents column (wide screens, ≥1100px): one row per # / ##
-           heading in the page's markdown (public/app/page.js). Empty — and so not
-           drawn — when the page has no headings. -->
-      <nav id="contents-nav" class="contents-nav" aria-label="Contents"></nav>
-      <div class="well-wrap">
-        <!-- the page: markdown between grid runs of panes (public/app/page.js);
-             minimized blocks sit as chips under their own run -->
-        <main id="main" class="page"></main>
+    <!-- .body and, beside it, the chat dock. The wrapper is the dock's positioning
+         context; it has no z-index, so it is no stacking context and .body keeps
+         its rung (app.css, the chat mirror region). -->
+    <div class="body-wrap">
+      <!-- body: [contents] + surface well + proximity queue rail -->
+      <div class="body">
+        <!-- the page's contents column (wide screens, ≥1100px): one row per # / ##
+             heading in the page's markdown (public/app/page.js). Empty — and so not
+             drawn — when the page has no headings. -->
+        <nav id="contents-nav" class="contents-nav" aria-label="Contents"></nav>
+        <div class="well-wrap">
+          <!-- the page: markdown between grid runs of panes (public/app/page.js);
+               minimized blocks sit as chips under their own run -->
+          <main id="main" class="page"></main>
+        </div>
+        <aside id="queue-rail" class="rail" aria-label="Queue to Claude">
+          <div class="rail-collapsed">
+            <div class="rail-vlabel">QUEUE</div>
+            <div class="rail-count">0</div>
+            <div class="rail-sub">PENDING</div>
+            <div class="rail-chips"></div>
+            <!-- collapsed mirror of the standing parked-delivery indicator below:
+                 a park is real server state and must stay visible without expanding. -->
+            <div class="rail-parked-mini" title="A push is parked — it delivers with your next message">⇢</div>
+            <div class="rail-hint">‹ Q</div>
+          </div>
+          <div class="rail-expanded">
+            <div class="rail-head">
+              <span class="title">QUEUE → CLAUDE</span>
+              <span class="badge">0</span>
+              <!-- the design's ESC chip is a real control: it closes (unpins) the
+                   rail, the same as Escape. shell.js wires it. -->
+              <button type="button" class="rail-close" title="Close the queue (Esc)" aria-label="Close the queue (Escape)"><kbd class="esc">ESC</kbd></button>
+            </div>
+            <div class="wake-slot"><span class="gear">⚙</span> wakes: Push</div>
+            <!-- B8: text is server-sent (GET /api/queue/policy activation_hint),
+                 filled by wake-panel.js — not a hardcoded incantation here. -->
+            <div class="rail-notice hidden">
+              <div class="rn-title"></div>
+              <div class="rn-body"></div>
+              <code class="rn-cmd"></code>
+              <!-- parked-delivery mode line (server-sent, filled by wake-panel.js). -->
+              <div class="rn-parked"></div>
+            </div>
+            <!-- standing parked-delivery indicator. A parked push is server state
+                 (GET /api/queue/pending) that survives until the user's next message
+                 consumes it — so unlike the transient confirmation it stays put, and
+                 offers the only way to take it back. Filled by queue.js. -->
+            <div class="rail-pending hidden" role="status">
+              <div class="rp-text"></div>
+              <button class="rp-cancel" type="button">Cancel delivery</button>
+            </div>
+            <div class="rail-items"><div class="rail-empty">No queued signals. Captures, pane signals, and pane activity collect here.</div></div>
+            <label class="sr-only" for="rail-add">Comment to send with the push</label>
+            <input class="rail-add" id="rail-add" placeholder="Add comment…">
+            <button class="btn primary rail-push" disabled>Push 0 → Claude <kbd>P</kbd></button>
+          </div>
+        </aside>
       </div>
-      <aside id="queue-rail" class="rail" aria-label="Queue to Claude">
-        <div class="rail-collapsed">
-          <div class="rail-vlabel">QUEUE</div>
-          <div class="rail-count">0</div>
-          <div class="rail-sub">PENDING</div>
-          <div class="rail-chips"></div>
-          <!-- collapsed mirror of the standing parked-delivery indicator below:
-               a park is real server state and must stay visible without expanding. -->
-          <div class="rail-parked-mini" title="A push is parked — it delivers with your next message">⇢</div>
-          <div class="rail-hint">‹ Q</div>
-        </div>
-        <div class="rail-expanded">
-          <div class="rail-head">
-            <span class="title">QUEUE → CLAUDE</span>
-            <span class="badge">0</span>
-            <!-- the design's ESC chip is a real control: it closes (unpins) the
-                 rail, the same as Escape. shell.js wires it. -->
-            <button type="button" class="rail-close" title="Close the queue (Esc)" aria-label="Close the queue (Escape)"><kbd class="esc">ESC</kbd></button>
-          </div>
-          <div class="wake-slot"><span class="gear">⚙</span> wakes: Push</div>
-          <!-- B8: text is server-sent (GET /api/queue/policy activation_hint),
-               filled by wake-panel.js — not a hardcoded incantation here. -->
-          <div class="rail-notice hidden">
-            <div class="rn-title"></div>
-            <div class="rn-body"></div>
-            <code class="rn-cmd"></code>
-            <!-- parked-delivery mode line (server-sent, filled by wake-panel.js). -->
-            <div class="rn-parked"></div>
-          </div>
-          <!-- standing parked-delivery indicator. A parked push is server state
-               (GET /api/queue/pending) that survives until the user's next message
-               consumes it — so unlike the transient confirmation it stays put, and
-               offers the only way to take it back. Filled by queue.js. -->
-          <div class="rail-pending hidden" role="status">
-            <div class="rp-text"></div>
-            <button class="rp-cancel" type="button">Cancel delivery</button>
-          </div>
-          <div class="rail-items"><div class="rail-empty">No queued signals. Captures, pane signals, and pane activity collect here.</div></div>
-          <label class="sr-only" for="rail-add">Comment to send with the push</label>
-          <input class="rail-add" id="rail-add" placeholder="Add comment…">
-          <button class="btn primary rail-push" disabled>Push 0 → Claude <kbd>P</kbd></button>
-        </div>
-      </aside>
+
+      <!-- chat-host:dock · U33, public/app/chat-dock.js — #chat-dock goes here,
+           .body's sibling: the drawer right of the well, or the floating window. Both
+           markers stay: test/chrome-shell.test.js holds the host's place by them. -->
+      <!-- /chat-host:dock -->
     </div>
+
+    <!-- chat-host:bar · U17, public/app/chat-bar.js — #chat-statusbar goes here, a
+         direct child of #stage: the 28px status bar under the body, 760px and wider.
+         Both markers stay: test/chrome-shell.test.js holds the host's place by them. -->
+    <!-- /chat-host:bar -->
 
     <!-- narrow bottom bar (<760px, app.css): the topbar's ↑/↓, ↩ active and Graph
          move down here under a thumb, beside Queue [n] — which opens the queue as
@@ -141,6 +156,12 @@
       <button class="bb-queue" id="bb-queue" aria-controls="queue-rail" aria-expanded="false"
               aria-label="Queue to Claude"><span class="bb-queue-label">Queue</span><span class="bb-parked" aria-hidden="true" title="A push is parked — it delivers with your next message">⇢</span><span class="bb-count" id="bb-queue-count">0</span></button>
     </nav>
+
+    <!-- chat-host:pull · U68, public/app/chat-sheet.js — #chat-scrim, then #chat-pull,
+         go here, direct children of #stage: the grip tab, its badge and the sheet,
+         riding the bottom bar below 760px. Both markers stay: test/chrome-shell.test.js
+         holds the host's place by them. -->
+    <!-- /chat-host:pull -->
 
     <!-- front glass (scanline + highlight), above content -->
     <div class="glass-scanline"></div>
@@ -320,6 +341,11 @@
       </div>
       <iframe id="rpo-frame" class="rpo-frame" title="Replay player"></iframe>
     </div>
+
+    <!-- chat-host:tray · U46, public/app/chat-trays.js — #cs-tray goes here: the
+         status bar's chips open it, a .popover on the panels' rung like those above.
+         Both markers stay: test/chrome-shell.test.js holds the host's place by them. -->
+    <!-- /chat-host:tray -->
 
     <!-- keyboard legend -->
     <div id="key-legend" class="legend hidden">
