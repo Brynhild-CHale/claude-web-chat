@@ -378,6 +378,79 @@ test('the consent listing prints no control character it was handed', async (t) 
   assert.ok(!listing.stdout.includes('\u001b'), 'a pane cannot write escape sequences into the listing');
 });
 
+// ── the trust file itself ───────────────────────────────────────────────────
+// Every decision is a read-modify-write of ~/.web-chat/services/trusted.json.
+// A read that took a torn file for an empty one made the next grant drop every
+// earlier decision; `[]` printed "Recorded in…" over a file that recorded
+// nothing; `null` threw.
+
+test('a trust file the CLI cannot use is kept aside, and the decision really is recorded', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installAcme(ctx.root);
+  const file = trustFile(ctx);
+  const dir = path.dirname(file);
+  const keys = (await packOf(ctx)).requests.map((p) => p.key).sort();
+  for (const [label, bytes] of [
+    ['torn', '{"older-key": {"name": "older", "approved": tru'],
+    ['an array', '[]'],
+    ['null', 'null'],
+    ['a string', '"x"'],
+  ]) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, bytes);
+    const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(true) }));
+    assert.equal(r.exit, null, `${label}: ${r.err}`);
+    const now = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.ok(now && !Array.isArray(now) && typeof now === 'object', `${label}: the file is a map of decisions again`);
+    assert.deepEqual(Object.keys(now).sort(), keys, `${label}: and holds the decision just made`);
+    const aside = fs.readdirSync(dir).filter((f) => f.startsWith('trusted.json.unreadable-'));
+    assert.equal(aside.length, 1, `${label}: the unusable file was kept, not overwritten`);
+    assert.equal(fs.readFileSync(path.join(dir, aside[0]), 'utf8'), bytes, `${label}: byte for byte`);
+    assert.ok(r.out.includes(path.join(dir, aside[0])), `${label}: and the output says where: ${r.out}`);
+    assert.match(r.out, /no decision in it was in effect/);
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), [], `${label}: no temp file left behind`);
+  }
+
+  // A readable file keeps every decision already in it.
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ 'older-key': { name: 'older', approved: true, approved_at: 1 } }));
+  const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(true) }));
+  assert.equal(r.exit, null, r.err);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))).sort(), ['older-key', ...keys].sort());
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('trusted.json.unreadable-')), []);
+  assert.doesNotMatch(r.out, /kept as/);
+});
+
+// The daemon reads the same file fail-closed (readJsonOr plus a shape check):
+// anything but a map of decisions approves nothing — and must not throw, since
+// reconcile runs on a timer with no handler above it.
+test('the daemon reads a trust file that is not a map of decisions as nothing decided', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const { api } = ctx;
+  installAcme(ctx.root);
+  await openViewer(t, ctx);
+  const file = trustFile(ctx);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (const bytes of ['null', '[]', '"x"', '7']) {
+    fs.writeFileSync(file, bytes);
+    await api.post('/api/components/deploy-board/use', { id: 'b', params: { title: 'x' } });
+    await api.post('/api/services/refresh-trust', {});
+    const waiting = await waitUntil(async () => {
+      const p = await pendingOf(ctx);
+      return p.length === 1 ? p : false;
+    });
+    assert.ok(waiting, `${bytes}: the pane waits for a decision`);
+    await sleep(300);
+    assert.equal(ctx.srv.services._children.size, 0, `${bytes}: and nothing runs`);
+    assert.equal((await api.get('/api/health')).status, 200, `${bytes}: the daemon still answers`);
+    const pack = await api.get('/api/services/pack/acme-ops');
+    assert.equal(pack.status, 200, `${bytes}: the pack listing too`);
+    assert.deepEqual(pack.json.requests.map((p) => p.decision), [null, null]);
+  }
+});
+
 // ── refusals ────────────────────────────────────────────────────────────────
 
 test('--pack refuses with no daemon, and writes nothing', async (t) => {

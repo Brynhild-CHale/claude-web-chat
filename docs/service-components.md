@@ -178,6 +178,12 @@ A record can also carry `covers` (what the approval spans beyond `params`, below
 `trust --pack` approval was made for). All three are notes for a person reading
 the file; the key is the decision.
 
+`claude-web-chat trust` is the only writer, and it writes the file atomically.
+If it cannot use the file as it finds it (torn, or JSON that is not a map of
+decisions), it moves it aside as `trusted.json.unreadable-<time>`, says so, and
+records the new decision in a fresh file. Nothing in such a file was in effect:
+the daemon reads it fail-closed, as no decision at all.
+
 It lives outside the project because a project could otherwise ship its own
 approval — commit `.web-chat/services/trusted.json` and cloning the repo would
 run its `service.js` unprompted.
