@@ -294,6 +294,11 @@ test('each value that cannot be proven inside is its own exact key', (t) => {
   assert.equal(keys.size, exact.length, 'and no two of them share a key');
   // `unfenced` carries no mark: the builtin's escape hatch is always exact.
   assert.notEqual(mint(root, { path: 'src/a.js', unfenced: true }).key, inside);
+  // And an unmarked `false` is a value, not an absence. The ＋ drawer's form
+  // passes every checkbox it shows, so its file-editor carries
+  // `unfenced: false` and asks once on its own; folding false into absent
+  // would move the keys approvals recorded under 0.8.0 were written with.
+  assert.notEqual(mint(root, { path: 'src/a.js', unfenced: false }).key, inside);
 });
 
 test('the declaration is part of the code hash', () => {

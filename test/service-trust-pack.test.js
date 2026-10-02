@@ -199,6 +199,8 @@ test('--pack approves the pre-approval keys and leaves pending exact requests al
   assert.match(r.out, /incident-log\n {4}from: [^\n]+\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +a pane with no params only/);
   assert.match(r.out, /An approval lets any pane point deploy-board at any file inside this project, \.env files included/, 'the remaining risk is said before the answer');
   assert.match(r.out, /--params-fp/, 'and where a wider request goes instead');
+  assert.match(r.out, /drawer's settings form passes every checkbox it shows/,
+    'and that a pane opened from the drawer\'s form, which passes every checkbox as a value, asks on its own');
 
   const trusted = readTrust(ctx);
   assert.deepEqual(Object.keys(trusted).sort(), [board.key, log.key].sort(), 'exactly the two pre-approval keys were written');
