@@ -204,6 +204,7 @@ test("update syncs with the NEW version's engine, not the one it was launched fr
   const paths = installPaths();
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-proj-')));
   fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  wire(project);
   const prevCwd = process.cwd();
   process.chdir(project);
   t.after(() => process.chdir(prevCwd));
@@ -321,6 +322,7 @@ test('--to an older build leaves the project\'s managed files where they are', a
   const paths = installPaths();
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-back-')));
   fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  wire(project);  // registered: it is the rollback that leaves it alone
   const prevCwd = process.cwd();
   process.chdir(project);
   t.after(() => process.chdir(prevCwd));
@@ -340,7 +342,7 @@ test('--to an older build leaves the project\'s managed files where they are', a
   assert.equal(res.after, '0.4.0');
   assert.equal(fs.existsSync(path.join(project, '.claude')), false,
     "this build's rules and skills must not be written into a project rolled back to v0.4.0");
-  assert.match(d.log.text(), /Managed files left alone/);
+  assert.match(d.log.text(), /Managed files left alone — v0\.4\.0 has no templates of its own here/);
   assert.match(d.log.text(), /claude-web-chat install/, 'and the way to sync with v0.4.0 templates is named');
   assert.doesNotMatch(d.log.text(), /Syncing managed files/, 'no heading over a sync that did not happen');
 });
@@ -1026,6 +1028,11 @@ test('update with no published release says so, and --restart-all still runs', a
 function registeredProject(prefix) {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   fs.mkdirSync(path.join(dir, '.web-chat'));
+  return wire(dir);
+}
+
+// Register web-chat in `dir` as an older install did: its .mcp.json entry.
+function wire(dir) {
   fs.writeFileSync(path.join(dir, '.mcp.json'),
     JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: ['/old/bin/claude-web-chat-mcp.js'] } } }, null, 2) + '\n');
   return dir;
@@ -1054,7 +1061,7 @@ const restartLikeStart = async (args, o = {}) => {
 
 test('update --restart-all refreshes each restarted project with the NEW build\'s engine, after its restart, one line each', async (t) => {
   const paths = onVersion(t);
-  const here = inProjectCwd(t);
+  const here = wire(inProjectCwd(t));
   const [a, b, c, d2] = ['wc-ra-a-', 'wc-ra-b-', 'wc-ra-c-', 'wc-ra-d-'].map(registeredProject);
   const seq = [];
   globalThis.__wcRefreshSeq = seq;
@@ -1238,6 +1245,50 @@ test('update --restart-all judges a project as it was before its restart: wiring
   assert.deepEqual(filesOutsideState(bare), { '.mcp.json': wiring }, 'so nothing but what the restart wrote is there');
   assert.ok(d.log.text().split('\n').includes(
     '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it'));
+});
+
+// The project `update` is typed in goes through the same gate. An uninstalled
+// project keeps its .web-chat/, and 0.7.x booted a daemon — so made a
+// .web-chat/ — wherever `update` was typed: ~/Downloads, say, the directory a
+// user is likeliest to type it in again. Synced on that evidence, either was
+// registered again: hooks, .mcp.json entry, rules, command and skills. Its
+// server is still restarted.
+const NOT_REGISTERED_HERE = 'Managed files left alone — web-chat is not registered here; `claude-web-chat install` registers it.';
+
+test('update --restart-all typed in an uninstalled project writes nothing there, and still restarts its server', async (t) => {
+  const paths = onVersion(t);
+  const here = inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const noClaude = () => ({ ok: true });
+  registration.apply(here, { force: false, runClaude: noClaude });
+  registration.remove(here, { runClaude: noClaude });
+  assert.equal(registration.isRegistered(here), false, 'uninstalled');
+  const before = filesOutsideState(here);
+  let restarts = 0;
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: had the gate let it through, it would write
+    restart: async (args, o) => { restarts++; return restartLikeStart(args, o); },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.equal(res.after, '0.6.0');
+  assert.deepEqual(filesOutsideState(here), before, 'nothing outside .web-chat/ was written');
+  assert.equal(registration.isRegistered(here), false, 'web-chat is still not registered there');
+  assert.equal(restarts, 1, 'its server was restarted');
+  const out = d.log.text();
+  assert.ok(out.split('\n').includes(NOT_REGISTERED_HERE), out);
+  assert.doesNotMatch(out, /Syncing managed files/);
+});
+
+test('update typed in a directory with only a .web-chat/ (a 0.7.x daemon\'s) writes nothing there', async (t) => {
+  const paths = onVersion(t);
+  const here = inProjectCwd(t);
+  fs.writeFileSync(path.join(here, 'notes.txt'), 'not a project\n');
+  const registration = require('../lib/setup/registration');
+  const d = upgradeDeps(paths, { registration, restart: restartLikeStart });
+  await update([], d);
+  assert.deepEqual(filesOutsideState(here), { 'notes.txt': 'not a project\n' });
+  assert.equal(registration.isRegistered(here), false);
+  assert.ok(d.log.text().split('\n').includes(NOT_REGISTERED_HERE), d.log.text());
 });
 
 test('a project refreshed with nothing to change says so in one line', async (t) => {
