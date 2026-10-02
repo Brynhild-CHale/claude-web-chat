@@ -34,7 +34,7 @@ const path = require('path');
 
 const {
   classify, classifier, keyOf, refusalBody, RULES,
-  MIRROR_HINT, MIRROR_FULL_HINT, MIRROR_LEVELS, rankLevel, atLeast, remoteLevel,
+  MIRROR_HINT, MIRROR_FULL_HINT, MIRROR_LEVELS, rankLevel, atLeast, fromOptIn,
   FRAME_RULES, projectFrame, projectValue,
   STATUS_SCHEMA, STATUS_ROW_SCHEMA, ASK_SCHEMA, ASK_FRAME_SCHEMA, RESET_SCHEMA,
   TEXT_RULES, stripText,
@@ -380,7 +380,7 @@ test('mirror: every 0.8.5 route is decided by a row, at the level the spec names
       if (v.key === null) { say('no row (the default deny)'); continue; }
       if (need === 'refused') { if (v.allow || v.reason !== 'refused') say('should be refused by its row'); continue; }
       if (need === 'open') { if (!v.allow) say('should be allowed at every level'); continue; }
-      const ok = atLeast(remoteLevel(optIn), need);
+      const ok = atLeast(fromOptIn(optIn), need);
       if (ok && !v.allow) say(`should be allowed (it needs ${need})`);
       if (!ok && (v.allow || v.reason !== 'mirror')) say(`should be refused for the mirror level (it needs ${need})`);
     }
@@ -432,8 +432,12 @@ test('mirror: classify reads the opt-in — off, read, full; anything else is ba
   assert.ok(Object.isFrozen(MIRROR_LEVELS));
   for (const [optIn, level] of [['off', 'basic'], ['read', 'read'], ['full', 'full'], [undefined, 'basic'], [null, 'basic'],
     ['basic', 'basic'], ['local', 'basic'], ['FULL', 'basic'], ['on', 'basic'], [true, 'basic']]) {
-    assert.equal(remoteLevel(optIn), level, String(optIn));
+    assert.equal(fromOptIn(optIn), level, String(optIn));
   }
+  // Spec §5.4 gives the name remoteLevel() to the audience gate, where it
+  // answers the opt-in ('off' | 'read' | 'full'); the opt-in → level mapping is
+  // fromOptIn. One name, one meaning, so this module never exports the other.
+  assert.equal(require('../lib/core/remote-policy').remoteLevel, undefined);
   assert.equal(atLeast('full', 'read'), true);
   assert.equal(atLeast('read', 'full'), false);
   assert.equal(atLeast('local', 'full'), true);
