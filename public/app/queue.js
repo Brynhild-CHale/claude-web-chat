@@ -7,9 +7,15 @@
 //
 // The queue is NOT carried on the WS hello/reset (that frame's shape is golden-
 // pinned), so we hydrate once via GET and stay live off the frames.
+//
+// The queue stays this module's: the chat chrome's chips, trays and phone Tasks
+// (chat-present.js) read it through queueSnapshot(), and every render() ends by
+// announcing the new snapshot on the chrome bus as `queue` — so the rail, the
+// `queue N` chip and the phone's Queue count the same items, from one list.
 import { $ } from './state.js';
 import { isCommentAnswered } from './comments.js';
 import { deviceKind } from './viewport.js';
+import { bus } from './bus.js';
 
 let items = [];
 const isStaged = (it) => it.staged !== false; // default staged; held is explicit
@@ -394,8 +400,9 @@ function clearPushError() {
 export function renderQueue() { render(); }
 
 // Unstage (hold) / stage an item — persisted server-side so it stays held across
-// reconnect. Optimistic; the server confirms with an `update` frame.
-async function setStaged(id, staged) {
+// reconnect. Optimistic; the server confirms with an `update` frame. The rail's
+// −/+ and the queue tray's Hold / Stage both go through here.
+export async function setStaged(id, staged) {
   const it = items.find((x) => x.id === id);
   if (it) { it.staged = staged; render(); }
   try {
@@ -413,6 +420,35 @@ async function revertItem(id) {
   items = items.filter((x) => x.id !== id);
   render();
   try { await fetch('/api/queue/' + encodeURIComponent(id) + '?revert=1', { method: 'DELETE' }); } catch {}
+}
+
+// Remove — the item leaves the queue and NOTHING else changes: the queue tray's
+// Remove (design spec §7.6). Revert above stays the rail's ⟲. Optimistic like
+// the rail's own buttons; a refusal (a remote viewer below `full` removing a
+// message) re-reads the queue, so the item comes back rather than vanishing
+// here while the daemon keeps it. Answers whether the daemon removed it.
+export async function removeItem(id) {
+  items = items.filter((x) => x.id !== id);
+  render();
+  let ok = false;
+  try { ok = (await fetch('/api/queue/' + encodeURIComponent(id), { method: 'DELETE' })).ok === true; } catch {}
+  if (!ok) await hydrateQueue();
+  return ok;
+}
+
+// What the chat chrome reads of the queue: the items in rail order (each a
+// frozen copy, `staged` made explicit), the counts the rail shows, and the
+// parked push, if one waits for the next message.
+export function queueSnapshot() {
+  const list = items.map((it) => Object.freeze({ ...it, staged: isStaged(it) }));
+  const staged = list.filter((it) => it.staged).length;
+  return Object.freeze({
+    items: Object.freeze(list),
+    count: list.length,
+    staged,
+    held: list.length - staged,
+    parked: parked ? Object.freeze({ id: parked.id || null, count: parkedCount(parked) }) : null,
+  });
 }
 
 // One row builder for both lists. A PARKED row is the read-only variant: that
@@ -543,7 +579,15 @@ function sectionHeader(label, n, cls) {
   return h;
 }
 
+// Draw the rail, then tell the chrome the queue rendered (bus `queue`, with the
+// snapshot) — whether or not there is a rail to draw into, so a chip never
+// waits on the rail's markup.
 function render() {
+  drawRail();
+  bus.emit('queue', queueSnapshot());
+}
+
+function drawRail() {
   const rail = railEl();
   if (!rail) return;
   const count = items.length;

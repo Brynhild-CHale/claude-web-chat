@@ -30,6 +30,11 @@
 // a directory name somebody chose, so it is set as textContent, never parsed.
 import { $ } from './state.js';
 import { copyText } from './drawer.js';
+import { ago } from './labels.js';
+
+// `ago` lives in labels.js now — the chat chrome words its times with the same
+// phrase — and stays importable from here.
+export { ago };
 
 const PANEL = 'sessions-panel';
 export const REFRESH_MS = 5000;
@@ -48,20 +53,6 @@ function el(tagName, className, text) {
   if (className) n.className = className;
   if (text != null) n.textContent = text;
   return n;
-}
-
-// "just now" / "42s ago" / "3m ago" / "2h ago" / "4d ago", against the SERVER's
-// clock (the route sends `now`), which is the clock that stamped the times.
-export function ago(ts, now) {
-  if (!Number.isFinite(ts) || !Number.isFinite(now)) return null;
-  const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 5) return 'just now';
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 48) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
 }
 
 function badge(text, kind) {
