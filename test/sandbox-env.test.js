@@ -87,7 +87,7 @@ test('CLAUDE_CONFIG_DIR points inside the sandbox, never at the real ~/.claude',
   assert.equal(os.homedir(), SANDBOX, 'and HOME is the sandbox');
 
   const cp = userClaudePaths();
-  for (const p of [cp.projectsDir, cp.sessionsDir, cp.plansDir, cp.fileHistoryDir, cp.skillsSyncedDir, cp.pluginsDir, cp.claudeSessionStateFile(process.pid)]) {
+  for (const p of [cp.claudeSettings, cp.claudeSkillsDir, cp.claudeCommandsDir, cp.projectsDir, cp.sessionsDir, cp.plansDir, cp.fileHistoryDir, cp.skillsSyncedDir, cp.pluginsDir, cp.claudeSessionStateFile(process.pid)]) {
     assert.ok(inSandbox(p), `${p} is in the sandbox`);
   }
   // The account's real home, from the user database rather than $HOME (which

@@ -44,6 +44,9 @@ function configDirFor(t, value) {
 function claudeTier(config) {
   return {
     configDir: config,
+    claudeSettings: path.join(config, 'settings.json'),
+    claudeSkillsDir: path.join(config, 'skills'),
+    claudeCommandsDir: path.join(config, 'commands'),
     projectsDir: path.join(config, 'projects'),
     sessionsDir: path.join(config, 'sessions'),
     plansDir: path.join(config, 'plans'),
@@ -82,9 +85,13 @@ test('without CLAUDE_CONFIG_DIR the whole Claude tier is <home>/.claude', (t) =>
   for (const [key, want] of Object.entries(claudeTier(config))) assert.equal(cp[key], want, key);
   assert.equal(cp.projectDir('/Users/me/My Project'), path.join(config, 'projects', '-Users-me-My-Project'));
   assert.equal(cp.claudeSessionStateFile(4242), path.join(config, 'sessions', '4242.json'));
-  // The --global pack tier is the same directory in the usual case.
+  // The --global pack tier is the same directory in the usual case, so the two
+  // views of the user's settings, skills and commands name the same paths.
   assert.equal(cp.dir, config);
   assert.equal(cp.skillDir('acme-ops'), path.join(config, 'skills', 'acme-ops'));
+  assert.equal(cp.claudeSettings, cp.settings);
+  assert.equal(cp.claudeSkillsDir, cp.skillsDir);
+  assert.equal(cp.claudeCommandsDir, cp.commandsDir);
 });
 
 test('with CLAUDE_CONFIG_DIR, Claude Code\'s state moves there and the --global pack tier stays in the home directory', (t) => {
@@ -97,13 +104,37 @@ test('with CLAUDE_CONFIG_DIR, Claude Code\'s state moves there and the --global 
   assert.equal(cp.projectDir('/srv/acme-web'), path.join(config, 'projects', '-srv-acme-web'));
   assert.equal(cp.claudeSessionStateFile(7), path.join(config, 'sessions', '7.json'));
 
+  // Claude Code reads the user's settings, skills and commands from the
+  // variable's directory too, so its view of them (the `/` catalog's user
+  // skills and commands, and the `enabledPlugins` that gate the plugins)
+  // follows it, beside the plugins it gates.
+  assert.equal(cp.claudeSettings, path.join(config, 'settings.json'));
+  assert.equal(cp.claudeSkillsDir, path.join(config, 'skills'));
+  assert.equal(cp.claudeCommandsDir, path.join(config, 'commands'));
+  assert.equal(path.dirname(cp.claudeSettings), path.dirname(cp.pluginsDir), 'the user settings sit beside the plugins they gate');
+  assert.equal(path.dirname(cp.skillsSyncedDir), cp.claudeSkillsDir, 'and the synced bucket inside the user skills');
+
   // lib/packs fences a system-tier unit to the home directory
   // (lib/packs/tree.js recordAnchor), so where a --global pack's skill goes
   // does not follow the variable.
   assert.equal(cp.dir, path.join(home, '.claude'));
   assert.equal(cp.settings, path.join(home, '.claude', 'settings.json'));
   assert.equal(cp.skillsDir, path.join(home, '.claude', 'skills'));
+  assert.equal(cp.commandsDir, path.join(home, '.claude', 'commands'));
   assert.equal(cp.skillDir('acme-ops'), path.join(home, '.claude', 'skills', 'acme-ops'));
+  assert.equal(cp.skill('acme-ops'), path.join(home, '.claude', 'skills', 'acme-ops', 'SKILL.md'));
+  for (const [claudeKey, packKey] of [['claudeSettings', 'settings'], ['claudeSkillsDir', 'skillsDir'], ['claudeCommandsDir', 'commandsDir']]) {
+    assert.notEqual(cp[claudeKey], cp[packKey], `${claudeKey} is Claude Code's view, ${packKey} the pack tier's`);
+  }
+});
+
+test('the user tier has no settings.local.json: personal overrides are per project', (t) => {
+  withTempHome(t);
+  configDirFor(t, undefined);
+  assert.equal(userClaudePaths().settingsLocal, undefined, 'without CLAUDE_CONFIG_DIR');
+  process.env.CLAUDE_CONFIG_DIR = '/opt/claude-work';
+  assert.equal(userClaudePaths().settingsLocal, undefined, 'with CLAUDE_CONFIG_DIR');
+  assert.equal(claudePaths(ROOT).settingsLocal, path.join(ROOT, '.claude', 'settings.local.json'), 'the project keeps its own');
 });
 
 test('claudePaths(root) gains settings.local.json beside settings.json', () => {
