@@ -195,9 +195,11 @@ test('resolveHookCommand: a MANAGED layout resolves every form to ~/.web-chat/cu
   assert.equal(halt, `sh "${path.join(current, 'lib', 'hooks', 'claude-web-chat-hook-halt.sh')}" pre`);
   assert.doesNotMatch(halt, /versions/, 'pruneVersions deletes that directory three updates later');
   assert.equal(mf.resolveHookCommand(halt, opts), halt);
-  const mirror = mf.resolveHookCommand('claude-web-chat-hook mirror', opts);
-  assert.equal(mirror, `node "${path.join(current, 'bin', 'claude-web-chat-hook.js')}" mirror`);
-  assert.equal(mf.resolveHookCommand(mirror, opts), mirror);
+  for (const sub of ['mirror', 'turn-begin', 'turn-end', 'ask']) {
+    const out = mf.resolveHookCommand(`claude-web-chat-hook ${sub}`, opts);
+    assert.equal(out, `node "${path.join(current, 'bin', 'claude-web-chat-hook.js')}" ${sub}`, `${sub}: node "<stable bin>"`);
+    assert.equal(mf.resolveHookCommand(out, opts), out);
+  }
 
   // A halt handler pinned to a pruned version, and a halt handler written in
   // the Node form, both come back to the one resolved form.
