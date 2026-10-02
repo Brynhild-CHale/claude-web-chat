@@ -96,6 +96,42 @@ test('golden: a component with no x-trust keeps the 0.8.0 hash and key', () => {
   assert.equal(trustKey(GOLDEN.hash, GOLDEN_ROOT, paramsFingerprint({})), GOLDEN.emptyKey);
 });
 
+// The shapes the approvals on disk actually have: 17 of the maintainer's 30
+// carry array-valued params, one carries non-ASCII text. A refactor that
+// "normalises" any of these — sorting an array or a nested object's keys,
+// NFC-folding a string — would move every such key and ask again, so each is
+// checked against the spelled-out 0.8.0 formula.
+const GOLDEN_SHAPES = [
+  ['absent params', undefined],
+  ['an empty bag', {}],
+  ['render-control keys only', { form_reset: true, routing: 'none', signals: [{ key: 'k', wake: 'queue' }] }],
+  ['an unsorted array', { cells: ['b.ipynb', 'a.ipynb'], kernel: 'python3' }],
+  ['an array of objects', { panes: [{ z: 1, a: 2 }, { id: 'x' }] }],
+  ['a nested object with unsorted keys', { opts: { z: 1, a: { y: 2, b: 3 } } }],
+  ['an NFC string', { title: 'caf\u00e9' }],
+  ['an NFD string', { title: 'cafe\u0301' }],
+  ['non-ASCII text', { label: '\u65e5\u672c\u8a9e \u2014 notes' }],
+  ['integer-like keys', { 10: 'ten', 9: 'nine', b: 'bee', a: 'ay' }],
+  ['an own __proto__ key, as JSON.parse makes one', JSON.parse('{"__proto__": {"polluted": true}, "a": 1}')],
+  ['null, false and 0', { n: null, f: false, z: 0 }],
+];
+
+test('golden: every params shape keeps its 0.8.0 key when nothing is declared', () => {
+  const keys = new Map();
+  for (const [label, params] of GOLDEN_SHAPES) {
+    const want = legacyKey(GOLDEN_SRC, GOLDEN_ROOT, params);
+    for (const schema of [undefined, {}, { type: 'object', properties: { title: { type: 'string' } } }]) {
+      const id = mintIdentity({ root: GOLDEN_ROOT, sourceHash: GOLDEN.hash, schema, params });
+      assert.equal(id.key, want, `${label} (${JSON.stringify(schema)}): the key moved`);
+      assert.equal(id.hash, GOLDEN.hash);
+    }
+    keys.set(label, want);
+  }
+  assert.notEqual(keys.get('an NFC string'), keys.get('an NFD string'), 'NFC and NFD stay two requests, as in 0.8.0');
+  assert.equal(keys.get('render-control keys only'), keys.get('an empty bag'), 'the shell\'s own keys are not part of it');
+  assert.equal(keys.get('absent params'), GOLDEN.emptyKey);
+});
+
 test('golden, end to end: the daemon mints the 0.8.0 key for a component with no x-trust', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
@@ -113,6 +149,16 @@ test('golden, end to end: the daemon mints the 0.8.0 key for a component with no
   assert.equal(req.hash, GOLDEN.hash, 'the hash reported is the sha256 of service.js, as before');
   assert.equal(req.key, legacyKey(GOLDEN_SRC, ctx.root, GOLDEN_PARAMS), 'the key is the one 0.8.0 would have recorded');
   assert.deepEqual(req.covers, {});
+
+  // And the shape most approvals on disk have: arrays (and objects in them),
+  // through the route, the mount and the supervisor.
+  const arrays = { cells: ['b.ipynb', 'a.ipynb'], kernel: 'python3', panes: [{ z: 1, a: 2 }], title: 'caf\u00e9' };
+  await api.post('/api/components/plain/use', { id: 'm2', params: arrays });
+  const second = await waitUntil(async () => {
+    const p = (await api.get('/api/services/pending')).json.pending;
+    return p.find((x) => x.key !== req.key) || false;
+  });
+  assert.equal(second.key, legacyKey(GOLDEN_SRC, ctx.root, arrays), 'an array-valued request keeps its 0.8.0 key end to end');
 });
 
 // ── a project to resolve paths in ───────────────────────────────────────────

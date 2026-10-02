@@ -582,28 +582,29 @@ test('--pack never resolves a unit name that is not a component name', async (t)
 test('the consent listing prints no control character it was handed', async (t) => {
   const ctx = await withServer(t, { writePortfile: true });
   const stageDir = packFixture({
-    version: '1.2.0\u001b[2K\rforged',
+    version: '1.2.0\u001b[2K\rforged\u009b31m\u007f',
     components: [{
       name: 'deploy-board', service: SERVICE,
-      params_schema: { type: 'object', properties: { ['ti\u001btle']: { type: 'string', 'x-trust': 'display' } } },
+      params_schema: { type: 'object', properties: { ['ti\u001btle']: { type: 'string', 'x-trust': 'display' }, ['n\u009bote\u007f']: { type: 'string', 'x-trust': 'display' } } },
     }],
   });
   installFromStage({ stageDir, source: SOURCE, tier: 'local', root: ctx.root, actor: 'cli' });
 
   const pack = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(false) }));
   assert.match(pack.out, /deploy-board/);
-  assert.ok(!/[\u001b\r]/.test(pack.out), `a pack record's version or a schema's param name reached the terminal raw: ${JSON.stringify(pack.out)}`);
-  assert.match(pack.out, /1\.2\.0\?\[2K\?forged/, 'shown, with its control characters as ?');
-  assert.match(pack.out, /ti\?tle: display only/);
+  assert.ok(!/[\u001b\r\u007f\u0080-\u009f]/.test(pack.out), `a pack record's version or a schema's param name reached the terminal raw: ${JSON.stringify(pack.out)}`);
+  assert.match(pack.out, /1\.2\.0\?\[2K\?forged\?31m\?/, 'shown, with its control characters — C0, C1 and DEL — as ?');
+  assert.match(pack.out, /n\?ote\?, ti\?tle: display only/);
 
   // A pane's param NAME (values are JSON-escaped already) on the pending listing.
   await openViewer(t, ctx);
-  await ctx.api.post('/api/components/deploy-board/use', { id: 'b', params: { ['x\u001b[31m']: 1 } });
+  await ctx.api.post('/api/components/deploy-board/use', { id: 'b', params: { ['x\u001b[31m']: 1, ['y\u009b32m\u007f']: 2 } });
   assert.ok(await waitUntil(async () => (await pendingOf(ctx)).length === 1));
   const listing = await runCli(['trust'], { cwd: ctx.root, home: ctx.home });
   assert.equal(listing.status, 0, listing.stderr);
   assert.match(listing.stdout, /x\?\[31m=1/);
-  assert.ok(!listing.stdout.includes('\u001b'), 'a pane cannot write escape sequences into the listing');
+  assert.match(listing.stdout, /y\?32m\?=2/, 'a C1 control (a one-byte CSI) and DEL print as ? too');
+  assert.ok(!/[\u001b\u007f\u0080-\u009f]/.test(listing.stdout), 'a pane cannot write escape sequences into the listing');
 });
 
 // ── the trust file itself ───────────────────────────────────────────────────
