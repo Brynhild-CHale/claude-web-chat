@@ -57,14 +57,15 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 A saved component can carry a host-side service the daemon runs while its pane is open — a git dashboard, a test monitor, a file watcher that refreshes itself, no per-turn driving. The built-in `git-dashboard` is one. Because that's real code running on your machine, the first spawn waits for you to approve it **in your terminal**:
 
 ```sh
-claude-web-chat trust                 # what's waiting
-claude-web-chat trust git-dashboard   # approve it (--deny refuses)
-claude-web-chat trust --all           # approve everything waiting, in one go
+claude-web-chat trust                   # what's waiting
+claude-web-chat trust git-dashboard     # approve it (--deny refuses)
+claude-web-chat trust --all             # approve everything waiting, in one go
+claude-web-chat trust --pack acme-ops   # approve the services a pack installed, before any pane opens
 ```
 
 The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. There is no `--yes`: the gate exists so that a human reads what is about to run. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`, so one name can have more than one request waiting; when it does, the listing prints a fingerprint for each and you pick one with `--params-fp <fingerprint>` (`--key` is the same flag, and either the fingerprint or the full trust key works).
 
-A component can mark the params that do not need asking about again — a pane's title, or a file inside this project — and the listing shows them under `covers`. The built-in file editor is approved once for every file inside the project; `unfenced: true`, or a path outside the project, still asks. See [`service-components.md`](service-components.md).
+A component can mark the params that do not need asking about again — a pane's title, or a file inside this project — and the listing shows them under `covers`. The built-in file editor is approved once for every file inside the project; `unfenced: true`, or a path outside the project, still asks. `--pack <name>` approves every service a pack installed in one confirmation, with the surface running and no pane open; a pane that passes anything wider than what each one covers still asks. After that, any pane can point one of those services that takes a path at any file in the project, `.env` files included. See [`service-components.md`](service-components.md).
 
 ## Component packs
 
@@ -125,7 +126,8 @@ doctor              diagnose and repair daemon / lock / MCP / hook issues
 trust [name]        approve (or --deny) a component's host-side service.js;
                     with no name, list what's waiting; --all takes everything
                     waiting (or every variant of one name), --params-fp / --key
-                    picks one request when a name has several
+                    picks one request when a name has several; --pack <name>
+                    approves the services a pack installed, ahead of time
 version             which version, and which tree it is actually running from
 stop | restart      stop or bounce the background server
 unlock              clear a turn lock orphaned by an interrupted turn

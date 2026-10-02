@@ -449,6 +449,7 @@ A service is arbitrary code running as the user, so it is gated. The gate is a
 claude-web-chat trust                  # what is waiting
 claude-web-chat trust deploy-board     # approve
 claude-web-chat trust deploy-board --deny
+claude-web-chat trust --pack acme-ops  # every service the pack installed, before any pane opens
 ```
 
 The surface shows a notice naming the command; it grants nothing, and it cannot
@@ -488,6 +489,16 @@ it against `process.cwd()`, which is the project root, and fence it with
 nothing that changes what the service may touch: an unmarked param is always
 safe, it only asks more often. The full rules for what counts as inside are in
 `claude-web-chat docs service-components`.
+
+**Approving a whole pack.** `claude-web-chat trust --pack <name>` approves, for
+one project, every service component your pack installed, at its current code,
+for panes that pass only marked params. It lists each service with its hash and
+what it covers, asks once, and has no `--yes`. It leaves out a component whose
+`service.js` or `meta.json` was edited after install, and it never decides a
+request for anything wider. Once a user approves your pack this way, any pane in
+that project can point your `project-path` services at any file inside the
+project, `.env` included — so mark a param `project-path` only when that is what
+your service is for.
 
 ### What a service may and may not do
 
@@ -900,6 +911,8 @@ Debugging:
   for stdout and `[<name>!]` for stderr.
 - `claude-web-chat trust` lists services waiting for approval, with the hash,
   the params they would run with, and what an approval covers (`covers`).
+  `claude-web-chat trust --pack <name>` shows what a pack approval would cover
+  before you say yes.
 
 ---
 

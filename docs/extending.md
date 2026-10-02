@@ -1293,10 +1293,11 @@ A consent is a triple: **(project root, code hash, service-facing params)**.
 `mintIdentity` and the pure helpers under it (`serviceParams`, `trustDeclaration`,
 `codeHash`, `identityParams`, `paramsFingerprint`, `trustKey`, all module-scoped)
 are the only place that triple becomes a value; `computeDesired` mints it once per
-pane and everything downstream QUOTES it — the trust-file key, `pendingTrust()`,
-the `service:trust` / `service:trust:clear` frames, the browser's card map
-(`public/app/service-trust.js`), the CLI's `--params-fp` selector, and the
-supervisor's own "did this child's identity change" test.
+pane, `packRequests` mints a pack's pre-approvals through the same function, and
+everything downstream QUOTES it — the trust-file key, `pendingTrust()`, the
+`service:trust` / `service:trust:clear` frames, the browser's card map
+(`public/app/service-trust.js`), the CLI's `--params-fp` selector, `trust --pack`,
+and the supervisor's own "did this child's identity change" test.
 
 A component's `x-trust` declaration (its params_schema marks; the vocabulary is
 `lib/core/trust-marks`) is folded into the code hash, and the params it covers —

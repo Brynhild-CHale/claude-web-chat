@@ -123,6 +123,7 @@ claude-web-chat trust git-dashboard        # approve it
 claude-web-chat trust git-dashboard --deny # refuse it
 claude-web-chat trust file-editor --params-fp 9f2c…  # pick ONE of two variants
 claude-web-chat trust file-editor --all              # decide every variant of that name
+claude-web-chat trust --pack acme-ops                # approve a pack's services ahead of time
 ```
 
 Two panes of one component mounted with **different params** are two decisions,
@@ -159,8 +160,9 @@ Approval is persisted in the **user tier**, not the project:
 } }
 ```
 
-A record can also carry `covers`: what the approval spans beyond `params`
-(below). It is a note for a person reading the file; the key is the decision.
+A record can also carry `covers` (what the approval spans beyond `params`, below)
+and `pack` (the pack a `trust --pack` approval was made for). Both are notes for a
+person reading the file; the key is the decision.
 
 It lives outside the project because a project could otherwise ship its own
 approval — commit `.web-chat/services/trusted.json` and cloning the repo would
@@ -168,8 +170,8 @@ run its `service.js` unprompted.
 
 The trust key covers **(project root, code hash, params)**. It is minted once, by
 the supervisor, and every consumer quotes it — the file above, the `trust`
-listing, the notice on the surface and the CLI's selector all name the same
-value. The code hash is the sha256 of `service.js`; for a component that
+listing, the notice on the surface, the CLI's selector and `trust --pack` all name
+the same value. The code hash is the sha256 of `service.js`; for a component that
 declares `x-trust`, it is the sha256 of that digest, a `\0`, and the declaration
 as sorted JSON (`{"path":"project-path","root":"project-path"}`). "Params" means
 the params the SERVICE gets, minus what the declaration covers: the shell's own
@@ -249,6 +251,38 @@ has no mark, so `unfenced: true` always asks. One approval therefore covers the
 editor on any file inside the project. Because adding the marks changed its code
 hash, an approval recorded before 0.8.2 asks once more.
 
+### Approving a pack ahead of time: `trust --pack`
+
+```sh
+claude-web-chat trust --pack acme-ops          # list, then ask once
+claude-web-chat trust --pack acme-ops --deny   # refuse them all
+```
+
+For this project, this approves every service component the named pack installed
+(its provenance record, project tier and user tier), each at its current code,
+for the identity it has when a pane passes it nothing but covered params:
+`display` values and paths inside the project. No pane needs to be open and no
+request needs to be waiting. It needs the project's server running, because the
+server mints the keys (`GET /api/services/pack/:name`, read-only, like
+`/api/services/pending`); the CLI writes them, as for every other approval.
+
+It lists each service with its `service.js` hash and what it covers, says what the
+approval allows, and asks once. Like `--all`, it has no `--yes`. It never decides
+a waiting request for anything wider: a pane that passed `unfenced: true` or a
+path outside the project keeps its own key, and you decide it with
+`trust <name> --params-fp`. A pack update, or an edit to a `service.js` or its
+`meta.json`, changes the code hash, so it asks again.
+
+It approves only what the pack installed. A component is left out, with the
+reason, when its `service.js` or `meta.json` no longer hashes to what the pack
+recorded, or when a same-named component in another tier shadows the pack's.
+Decide those per pane.
+
+**The risk you take.** Once a pack is approved, any pane in this project can
+point its `project-path` services at any file inside the project, `.env` files
+included, without asking. A pane cannot prove who mounted it, so per-pane
+approval stays the default.
+
 > **Scope of this gate.** It governs whether a *host process* runs. It is not a
 > sandbox for pane code: a component's pane JavaScript is fully privileged in the
 > surface's origin whether or not its service is approved. Treat installing a
@@ -323,11 +357,13 @@ The result is a live, clickable history/branch browser with zero per-turn drivin
 
 | Concern | Lives in |
 | --- | --- |
-| the supervisor (reconcile, trust, spawn/stop) and the trust identity (`mintIdentity`) | `lib/server/services.js` |
+| the supervisor (reconcile, trust, spawn/stop) and the trust identity (`mintIdentity`, `packRequests`) | `lib/server/services.js` |
 | the forked child harness | `lib/server/service-runner.js` |
-| component tier resolution + `serviceInfo` (the `service.js` digest, the params_schema) | `lib/server/components-registry.js` |
+| component tier resolution + `serviceInfo` (the digests of `service.js` and `meta.json`, the params_schema read from those bytes) | `lib/server/components-registry.js` |
 | the `x-trust` vocabulary and its warnings | `lib/core/trust-marks.js` |
 | authoring (`service`/`seed` params, `has_service`) | `lib/mcp/tools/save_component.js`, `lib/server/routes/components.js` |
+| the trust listings (`/api/services/pending`, `/api/services/pack/:name`) | `lib/server/routes/components.js` |
+| the approval itself | `lib/cli/commands/trust.js` |
 | viewer-count hook | `lib/server/ws.js` (`onViewersChanged`) |
 | trust store (per user, NOT per project) | `~/.web-chat/services/trusted.json` — `userPaths().trustedServices` in `lib/core/paths.js`, handed to the daemon as `TRUSTED_SERVICES_PATH` |
 | driver API the service uses | `lib/driver.js` (see [driving-the-surface.md](driving-the-surface.md)) |
