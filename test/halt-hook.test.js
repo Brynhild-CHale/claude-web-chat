@@ -58,13 +58,32 @@ function assertSilent(r, label) {
   assert.equal(r.stderr, '', `${label}: says nothing on stderr`);
 }
 
-test('the flag lives where the path engine says the halt flag lives', (t) => {
+test('the flag lives at $HOME/.web-chat/halt/<session id>', (t) => {
   const home = withTempHome(t);
   assert.equal(flagPath(), path.join(home, '.web-chat', 'halt', SID));
-  // lib/core/paths gains userPaths().haltFlag(session_id) in the same release;
-  // once it exists, the script and the engine must name one file.
+});
+
+// lib/core/paths gains userPaths().haltFlag(session_id) in this release (U01),
+// and the daemon's control domain writes the flag through it (U81). Until U01
+// is on this branch the cross-check is SKIPPED, and says so in the run's
+// output, rather than passing without asserting anything; it runs as soon as
+// the accessor exists. The tranche's integration pass (U22a) drops the
+// condition, so that a renamed accessor fails here instead of skipping.
+const HALT_FLAG_PENDING = typeof userPaths().haltFlag === 'function'
+  ? false
+  : 'userPaths().haltFlag arrives with U01 (wc085/core-paths); U22a makes this check unconditional';
+
+test('the script obeys the flag the path engine names, and the ids it refuses have none', { skip: HALT_FLAG_PENDING }, (t) => {
+  const home = withTempHome(t);
   const { haltFlag } = userPaths();
-  if (typeof haltFlag === 'function') assert.equal(haltFlag(SID), flagPath());
+  assert.equal(haltFlag(SID), flagPath(), 'one file for the script and the engine');
+  fs.mkdirSync(path.dirname(haltFlag(SID)), { recursive: true });
+  fs.writeFileSync(haltFlag(SID), `${nowS() + 600}\n`);
+  for (const shell of SHELLS) assert.equal(fire(home, 'pre', { shell }).stdout, `${PRE}\n`, `${shell}: a flag written where the engine says`);
+  // Every id the script refuses to look up, the engine names no flag for.
+  for (const sid of ['', '../escape', '.', '..', 'a/b', 'x y', 'a'.repeat(101)]) {
+    assert.equal(haltFlag(sid), null, `no flag for ${JSON.stringify(sid)}`);
+  }
 });
 
 test('no CLAUDE_CODE_SESSION_ID: nothing, even with a live flag on disk', (t) => {
