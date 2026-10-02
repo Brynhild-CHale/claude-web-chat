@@ -18,7 +18,7 @@ const path = require('path');
 const os = require('os');
 
 const reg = require('../lib/setup/registration');
-const { MANAGED_FILES, baselinePath } = require('../lib/update/managed-files');
+const { MANAGED_FILES, baselinePath, hookTemplate } = require('../lib/update/managed-files');
 const { claudePaths, projectPaths } = require('../lib/core/paths');
 const { withTempHome } = require('../test-support/helpers');
 
@@ -57,7 +57,9 @@ test('apply → inspect → remove → inspect round-trips the registration mode
   const root = tmpRoot();
   fs.mkdirSync(path.join(root, '.git'), { recursive: true });
   const events = reg.hookEvents();
-  assert.deepEqual(events, ['UserPromptSubmit', 'Stop'], 'both turn-lifecycle events come from the template');
+  assert.deepEqual(events, Object.keys(hookTemplate().hooks), 'the events come from the template');
+  assert.ok(events.includes('UserPromptSubmit') && events.includes('Stop'), 'the turn lifecycle among them');
+  const handlers = reg.hookHandlers().length;  // 0.8.5: fourteen, on twelve events
 
   const before = reg.inspect(root);
   for (const e of events) assert.equal(before.hooks[e], 'missing');
@@ -68,7 +70,7 @@ test('apply → inspect → remove → inspect round-trips the registration mode
 
   const claude = fakeClaude();
   const applied = reg.apply(root, { runClaude: claude.fn });
-  assert.equal(applied.hooks.added, 2);
+  assert.equal(applied.hooks.added, handlers);
   assert.equal(applied.gitignore, 'added');
   assert.equal(applied.mcp.localScope, null, 'a resolvable .mcp.json entry needs no local-scope shell-out');
   assert.equal(claude.calls.length, 0);
@@ -92,7 +94,7 @@ test('apply → inspect → remove → inspect round-trips the registration mode
 
   const removeClaude = fakeClaude();
   const removed = reg.remove(root, { runClaude: removeClaude.fn });
-  assert.equal(removed.hooks.removed, 2);
+  assert.equal(removed.hooks.removed, handlers);
   assert.deepEqual(removed.hooks.events, events);
   assert.equal(removed.mcp.status, 'removed (file empty)');
   assert.equal(removed.baselines, 'removed');
@@ -117,7 +119,7 @@ test('apply --dryRun writes nothing at all', (t) => {
   const claude = fakeClaude();
 
   const out = reg.apply(root, { dryRun: true, runClaude: claude.fn });
-  assert.equal(out.hooks.added, 2, 'it still reports what it WOULD do');
+  assert.equal(out.hooks.added, reg.hookHandlers().length, 'it still reports what it WOULD do');
   assert.equal(claude.calls.length, 0);
   assert.equal(fs.existsSync(claudePaths(root).settings), false);
   assert.equal(fs.existsSync(path.join(root, '.mcp.json')), false);

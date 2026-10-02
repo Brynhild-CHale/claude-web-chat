@@ -1,18 +1,46 @@
 {
   "hooks": {
     "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-web-chat-hook turn-begin" }
-        ]
-      }
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook turn-begin" }] }
     ],
     "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "claude-web-chat-hook turn-end" }
-        ]
-      }
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook turn-end" }] }
+    ],
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook turn-end", "timeout": 30 }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook mirror", "async": true, "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook mirror" }] }
+    ],
+    "PreToolUse": [
+      { "hooks": [
+        { "type": "command", "command": "claude-web-chat-hook mirror", "async": true, "timeout": 10 },
+        { "type": "command", "command": "claude-web-chat-hook halt pre", "timeout": 5 }
+      ] }
+    ],
+    "PostToolUse": [
+      { "hooks": [
+        { "type": "command", "command": "claude-web-chat-hook mirror", "async": true, "timeout": 10 },
+        { "type": "command", "command": "claude-web-chat-hook halt post", "timeout": 5 }
+      ] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook mirror", "async": true, "timeout": 10 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook mirror", "async": true, "timeout": 10 }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook mirror", "async": true, "timeout": 10 }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook ask", "timeout": 600 }] }
+    ],
+    "PostToolBatch": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook halt batch", "timeout": 5 }] }
     ]
   }
 }
