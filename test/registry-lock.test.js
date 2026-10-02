@@ -21,20 +21,24 @@
 //     leaves one holder at most, on the file it created; a lock moved in the
 //     one window left (a live holder letting go mid-break) is put back or
 //     kept, never deleted; a break another waiter has claimed is waited for,
-//     and a claim whose breaker died is cleared.
+//     and a claim whose breaker died is cleared; a refused rename waits;
+//   * a dangling symlink at the lock's path is a lock like any other (an old
+//     one broken, a fresh one waited out), and no break can keep a writer
+//     retrying past LOCK_WAIT_MS.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const { withTempHome, waitUntil } = require('../test-support/helpers');
 const registry = require('../lib/util/registry');
 const { userPaths } = require('../lib/core/paths');
 
 const REGISTRY_MODULE = path.join(__dirname, '..', 'lib', 'util', 'registry.js');
+const PATHS_MODULE = path.join(__dirname, '..', 'lib', 'core', 'paths.js');
 const DEAD_PID = 2 ** 30;
 const WRITERS = 8;
 const UPDATES = 25;
@@ -409,4 +413,77 @@ test('a break whose rename fails for another reason than ENOENT leaves the lock 
   assert.deepStrictEqual(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.startsWith('instances.json.lock')),
     ['instances.json.lock'], 'and the claim is released, no aside left');
   assert.strictEqual(out.text, '');
+});
+
+// ── a lock path that the create sees and stat does not ──────────────────────
+// A dangling symlink at instances.json.lock: O_EXCL creation refuses it
+// (EEXIST), and stat, which follows the link, finds nothing there (ENOENT).
+// Read that way, every turn of acquireLock reported the lock gone and retried
+// at once, past the deadline, forever. Each case runs in a child process with a
+// timeout, so a regression fails here instead of hanging the suite.
+const SPIN_WORKER = `
+const fs = require('fs');
+const path = require('path');
+const reg = require(${JSON.stringify(REGISTRY_MODULE)});
+const { userPaths } = require(${JSON.stringify(PATHS_MODULE)});
+const [mode, root] = [process.argv[1], process.argv[2]];
+const file = userPaths().instancesLock;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+fs.symlinkSync(path.join(path.dirname(file), 'nowhere'), file);
+if (mode === 'old') { const then = (Date.now() - 60000) / 1000; fs.lutimesSync(file, then, then); }
+const real = { statSync: fs.statSync, lstatSync: fs.lstatSync };
+if (mode === 'blind') {
+  // However the lock is read, nothing is found: every break reports it gone.
+  // Only the deadline can end the wait.
+  for (const name of Object.keys(real)) {
+    fs[name] = function blind(p, ...rest) {
+      if (path.resolve(String(p)) === file) throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+      return real[name].call(fs, p, ...rest);
+    };
+  }
+}
+const started = Date.now();
+reg.registerMcp({ root });
+const ms = Date.now() - started;
+Object.assign(fs, real);
+let left = true;
+try { fs.lstatSync(file); } catch { left = false; }
+const written = reg.readAllEntries().some((e) => e.id === reg.mcpId(process.pid));
+process.stdout.write(JSON.stringify({ ms, left, written }) + '\\n');
+`;
+
+function runLockWorker(t, mode) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), `wc-rlock-${mode}-`));
+  t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
+  const root = project(t, mode);
+  const r = spawnSync(process.execPath, ['-e', SPIN_WORKER, mode, root], {
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+  assert.strictEqual(r.signal, null, `the writer was still going after 15s and was killed — it spun (${mode})`);
+  assert.strictEqual(r.status, 0, r.stderr);
+  return { ...JSON.parse(r.stdout.trim().split('\n').pop()), stderr: r.stderr };
+}
+
+test('a dangling symlink at the lock\'s path is a lock like any other: an old one is broken at once', (t) => {
+  const r = runLockWorker(t, 'old');
+  assert.ok(r.ms < registry.LOCK_WAIT_MS / 2, `took ${r.ms}ms`);
+  assert.match(r.stderr, /broke a stale instances\.json\.lock \(it is \d+s old\)/);
+  assert.strictEqual(r.left, false, 'nothing is left at the path');
+  assert.strictEqual(r.written, true);
+});
+
+test('a fresh dangling symlink is waited on for LOCK_WAIT_MS at most, never spun on', (t) => {
+  const r = runLockWorker(t, 'fresh');
+  assert.ok(r.ms >= registry.LOCK_WAIT_MS - 50 && r.ms < registry.LOCK_WAIT_MS + 1500, `waited ${r.ms}ms`);
+  assert.match(r.stderr, new RegExp(`instances\\.json\\.lock still held after ${registry.LOCK_WAIT_MS}ms; writing without it`));
+  assert.strictEqual(r.written, true);
+});
+
+test('a lock that every break reports gone still ends at the deadline, not in an endless retry', (t) => {
+  const r = runLockWorker(t, 'blind');
+  assert.ok(r.ms >= registry.LOCK_WAIT_MS - 50 && r.ms < registry.LOCK_WAIT_MS + 1500, `waited ${r.ms}ms`);
+  assert.match(r.stderr, new RegExp(`instances\\.json\\.lock still held after ${registry.LOCK_WAIT_MS}ms; writing without it`));
+  assert.strictEqual(r.written, true);
 });
