@@ -9,8 +9,9 @@
 //   * eight real processes released at one barrier, each registering a
 //     presence row, updating it, registering a daemon row (half of them then
 //     releasing it), lose no row, no update and no known project — three runs;
-//   * a stale lock (its holder's pid gone, or older than LOCK_STALE_MS) is
-//     broken, said on stderr, and the write lands at once;
+//   * a stale lock (its holder's pid gone, or older than LOCK_STALE_MS, or
+//     dated further ahead than that) is broken, said on stderr, and the write
+//     lands at once;
 //   * a live lock is waited on for LOCK_WAIT_MS at most — then the write goes
 //     ahead without it and says so, and the lock is left to its holder;
 //   * a failed write still releases the lock, a no-op never takes it (nor
@@ -174,6 +175,35 @@ test('a lock older than LOCK_STALE_MS is broken even when its pid is alive', (t)
   assert.match(text, /broke a stale instances\.json\.lock \(it is \d+s old\)/);
   assert.ok(!fs.existsSync(lockFile()));
   assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)));
+});
+
+// A clock stepped back after a writer died holding the lock leaves its mtime
+// in the future, and by age alone it would not go stale until the clock had
+// caught up with it: every writer until then waited LOCK_WAIT_MS and wrote
+// unlocked. Its pid only answers that if it is gone, and a reused one is alive.
+test('a lock whose mtime is further ahead than LOCK_STALE_MS is broken even when its pid is alive; a few seconds of skew is not', (t) => {
+  withTempHome(t);
+  const root = project(t, 'future');
+  fs.mkdirSync(path.dirname(lockFile()), { recursive: true });
+  fs.writeFileSync(lockFile(), `${process.pid}\n`);
+  const tomorrow = (Date.now() + 24 * 3600 * 1000) / 1000;
+  fs.utimesSync(lockFile(), tomorrow, tomorrow);
+  const started = Date.now();
+  const { text } = stderrOf(() => registry.registerMcp({ root }));
+  assert.ok(Date.now() - started < registry.LOCK_WAIT_MS / 2, 'no wait for a lock dated tomorrow');
+  assert.match(text, /broke a stale instances\.json\.lock \(its mtime is \d+s in the future\)/);
+  assert.ok(!fs.existsSync(lockFile()));
+  assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)));
+
+  // Within LOCK_STALE_MS ahead is a clock that disagrees a little with the
+  // filesystem's (a network share's): a live lock, left to its holder.
+  fs.writeFileSync(lockFile(), `${process.pid}\n`);
+  const soon = (Date.now() + registry.LOCK_STALE_MS / 2) / 1000;
+  fs.utimesSync(lockFile(), soon, soon);
+  const { value, text: quiet } = stderrOf(() => registry.breakIfStale(lockFile()));
+  assert.strictEqual(value, false, 'wait for it');
+  assert.ok(fs.existsSync(lockFile()));
+  assert.strictEqual(quiet, '');
 });
 
 test('a live lock is waited on for LOCK_WAIT_MS at most, then the write goes ahead without it and says so', (t) => {
