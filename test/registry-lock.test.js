@@ -24,7 +24,9 @@
 //     and a claim whose breaker died is cleared; a refused rename waits;
 //   * a dangling symlink at the lock's path is a lock like any other (an old
 //     one broken, a fresh one waited out), and no break can keep a writer
-//     retrying past LOCK_WAIT_MS.
+//     retrying past LOCK_WAIT_MS;
+//   * a lock broken on the wait's last turn, at the deadline, is taken by the
+//     writer that broke it, never written beside.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -486,4 +488,65 @@ test('a lock that every break reports gone still ends at the deadline, not in an
   assert.ok(r.ms >= registry.LOCK_WAIT_MS - 50 && r.ms < registry.LOCK_WAIT_MS + 1500, `waited ${r.ms}ms`);
   assert.match(r.stderr, new RegExp(`instances\\.json\\.lock still held after ${registry.LOCK_WAIT_MS}ms; writing without it`));
   assert.strictEqual(r.written, true);
+});
+
+// ── the wait's last turn ────────────────────────────────────────────────────
+// The wait's last sleep is min(left, backoff), so its last turn runs at the
+// deadline exactly. A lock that first goes stale there is broken on that turn,
+// and the path it frees is the writer's to take: writing without the lock
+// instead (and saying it is "still held") left the lock free for the next
+// writer to take while this one wrote. Run on a clock that moves only when the
+// writer sleeps, so the turn at the deadline is the one the lock goes stale on,
+// every run.
+const LAST_TURN_WORKER = `
+const fs = require('fs');
+const path = require('path');
+let now = Date.now();
+const start = now;
+Date.now = () => now;
+Atomics.wait = (arr, i, v, ms) => { now += ms; return 'timed-out'; };
+Math.random = () => 0.5;
+const reg = require(${JSON.stringify(REGISTRY_MODULE)});
+const { userPaths } = require(${JSON.stringify(PATHS_MODULE)});
+const file = userPaths().instancesLock;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+// Held by a live process (this one) and aged so it is live on every turn before
+// the deadline and stale on the turn at it: with the backoff fixed, the turn
+// before runs at start + 1963 ms and the last at start + 2000 ms.
+fs.writeFileSync(file, process.pid + '\\n');
+const mtime = (start + reg.LOCK_WAIT_MS - reg.LOCK_STALE_MS - 20) / 1000;
+fs.utimesSync(file, mtime, mtime);
+// Is the lock at its path when instances.json is renamed into place?
+let lockAtWrite = null;
+const rename = fs.renameSync;
+fs.renameSync = function renameWatched(from, to) {
+  if (path.basename(String(to)) === 'instances.json') {
+    try { fs.lstatSync(file); lockAtWrite = true; } catch { lockAtWrite = false; }
+  }
+  return rename.apply(fs, arguments);
+};
+reg.registerMcp({ root: process.argv[1] });
+fs.renameSync = rename;
+let left = true;
+try { fs.lstatSync(file); } catch { left = false; }
+process.stdout.write(JSON.stringify({ ms: now - start, lockAtWrite, left }) + '\\n');
+`;
+
+test('a lock broken on the wait\'s last turn is taken, not written beside: no "still held", and the write is locked', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-rlock-last-'));
+  t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
+  const root = project(t, 'last');
+  const r = spawnSync(process.execPath, ['-e', LAST_TURN_WORKER, root], {
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+  assert.strictEqual(r.signal, null, 'the writer was still going after 15s and was killed');
+  assert.strictEqual(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.strictEqual(out.ms, registry.LOCK_WAIT_MS, 'the break ran on the turn at the deadline');
+  assert.match(r.stderr, /broke a stale instances\.json\.lock \(it is 5s old\)/);
+  assert.doesNotMatch(r.stderr, /still held/, 'the lock was just broken: it is not held');
+  assert.strictEqual(out.lockAtWrite, true, 'the write ran holding the lock it freed');
+  assert.strictEqual(out.left, false, 'and released it after');
 });
