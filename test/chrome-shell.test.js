@@ -95,6 +95,9 @@ test('every request is answered from the routes, layered, and recorded', async (
   assert.ok(bootCalls.length > 0 && helloCalls.length > 0, 'the boot and the hello were recorded');
   assert.ok([...bootCalls, ...helloCalls].every((u) => u.startsWith('/api/')), 'every one an /api read');
   assert.deepEqual(await (await fetch('/api/probe')).json(), { answer: 42 }, 'a boot route');
+  const res = await fetch('/api/probe');
+  assert.equal(res.headers.get('Content-Type'), 'application/json');
+  assert.equal(new TextDecoder().decode(await res.arrayBuffer()), '{"answer":42}', 'the body, as bytes too');
   const a = await (await fetch('/api/probe')).json();
   a.answer = 0;
   assert.equal((await (await fetch('/api/probe')).json()).answer, 42, 'an answer is a fresh copy: the chrome cannot edit a route');
@@ -114,7 +117,8 @@ test('every request is answered from the routes, layered, and recorded', async (
   const post = shell.calls.find((c) => c.url === '/api/thing');
   assert.deepEqual([post.method, post.body], ['POST', { k: 1 }], 'a JSON body is recorded parsed');
   assert.deepEqual(shell.calls.map((c) => c.url).filter((u) => /^\/api\/(probe|items|graph|nowhere|thing)/.test(u)),
-    ['/api/probe', '/api/probe', '/api/probe', '/api/probe', '/api/items/i7?full=1', '/api/graph', '/api/nowhere', '/api/thing'],
+    ['/api/probe', '/api/probe', '/api/probe', '/api/probe', '/api/probe', '/api/items/i7?full=1', '/api/graph',
+      '/api/nowhere', '/api/thing'],
     'every request, in order');
 
   shell.setRoutes();

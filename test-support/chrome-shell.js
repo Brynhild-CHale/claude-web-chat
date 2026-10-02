@@ -84,6 +84,7 @@ const real = {
   setInterval: global.setInterval,
   clearInterval: global.clearInterval,
 };
+const NodeBlob = global.Blob;
 
 // ── responses ────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,8 @@ function respond(body, { status = 200, headers = {} } = {}) {
       has: (k) => h.has(String(k).toLowerCase()) },
     json: async () => JSON.parse(text),   // parsed per call: the chrome can never edit a route's own object
     text: async () => text,
+    arrayBuffer: async () => new TextEncoder().encode(text).buffer,
+    blob: async () => new NodeBlob([text], { type: h.get('content-type') }),
     clone: () => respond(body, { status, headers }),
   };
 }
