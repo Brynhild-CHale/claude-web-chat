@@ -398,6 +398,38 @@ test('chrome: the topbar shows the logotype left of the wordmark only when set, 
   assert.equal(doc.querySelector('.brand-logo-div'), null);
 });
 
+test('chrome: Settings → Brand names the theme its images belong to, and follows it as `brand` frames move it', async () => {
+  const { window, ws } = await bootChrome();
+  const doc = window.document;
+  const frame = (msg) => ws().onmessage({ data: JSON.stringify({ type: 'brand', ...msg }) });
+  const line = () => doc.getElementById('brand-theme').textContent;
+  const logo = () => doc.getElementById('brand-logotype');
+
+  frame({ theme: { key: 'paper', name: 'paper', title: 'Paper' }, slots: { logotype: { type: 'image/png', bytes: 9, version: '1-9-paper' } } });
+  assert.equal(line(), 'Images for the Paper theme');
+  assert.equal(doc.querySelector('#brand-theme strong').textContent, 'Paper', 'a pack by its display name');
+  assert.equal(logo().getAttribute('src'), '/brand/logotype?v=1-9-paper');
+
+  // The global theme moves: its images replace the slots, and the line follows.
+  frame({ theme: { key: 'harbor', name: 'harbor', title: null }, slots: { logotype: null, lockup: null, seal: null } });
+  assert.equal(line(), 'Images for the harbor theme');
+  assert.equal(logo(), null, 'harbor has no logotype: the topbar shows none');
+  for (const row of doc.querySelectorAll('#settings-panel .brand-slot')) {
+    assert.equal(row.querySelector('.brand-drop img'), null, `${row.dataset.slot}: Paper's image is not harbor's`);
+  }
+
+  frame({ theme: { key: '_unnamed', name: null, title: null }, slots: {} });
+  assert.equal(line(), 'Images for the current theme, which has no name');
+
+  // A theme's name is text, never markup.
+  frame({ theme: { key: '_n-0123456789abcdef', name: '<img src=x onerror=alert(1)>', title: null }, slots: {} });
+  assert.equal(doc.querySelector('#brand-theme img'), null);
+  assert.equal(line(), 'Images for the <img src=x onerror=alert(1)> theme');
+  // and a frame that does not carry `theme` keeps the one known
+  frame({ slots: { logotype: null } });
+  assert.equal(line(), 'Images for the <img src=x onerror=alert(1)> theme');
+});
+
 test('chrome: a native file chooser taking focus does not dismiss Settings', async () => {
   const { window } = await bootChrome();
   const doc = window.document;

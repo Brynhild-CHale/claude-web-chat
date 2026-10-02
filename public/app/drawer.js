@@ -775,7 +775,7 @@ function themesOf(pack) {
 // Post-install: a pack that brought themes offers to switch to one, right
 // where the user is still looking. "Apply now" is the same request Settings →
 // Theme makes — the web-chat-wide default, which is also what lets the theme's
-// logos fill the brand slots this project left empty.
+// logos fill the brand slots it has no image of its own in.
 function applyPrompt(body) {
   const themes = themesOf(body.pack);
   if (!themes.length) return null;

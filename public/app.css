@@ -783,6 +783,10 @@ kbd {
 .settings-mode button { height: 24px; padding: 0 10px; }
 /* Settings → Brand: one row per slot — name, drop target (also a file button), Remove */
 .popover h4.settings-sub { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--wc-border); }
+/* whose images the slots are — "Images for the Paper theme" (brand.js) */
+.brand-theme { margin: 0 0 6px; font: 11.5px var(--wc-font); color: var(--wc-muted); }
+.brand-theme strong { font-weight: 600; color: var(--wc-text-1); }
+.brand-theme:empty { display: none; }
 .brand-slots { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
 .brand-slot { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 8px; }
 .brand-slot-name { display: flex; flex-direction: column; font: 12px var(--wc-font); color: var(--wc-text-1); }
