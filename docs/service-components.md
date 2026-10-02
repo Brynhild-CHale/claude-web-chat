@@ -68,9 +68,16 @@ module.exports = {
 
 The child is a `fork()`ed Node process (`lib/server/service-runner.js`). It reads
 `service.js` once, checks those bytes against the sha256 the approval was keyed
-on, and runs exactly them as a CommonJS module (`module.exports`; `require`
-resolves next to the file as usual) — so bytes written to the file after the
-daemon read it never run under that approval. It then builds the driver with an
+on, and runs exactly them (`lib/server/service-loader.js`) — so bytes written to
+the file after the daemon read it never run under that approval. They run the way
+`require()` runs a file: as CommonJS (`module.exports`, a `require` that resolves
+next to the file), or as an ES module when the file is written as one
+(`export async function start(ctx) {…}`; as with `require()`, no top-level
+`await`). `import()` works in either. The format comes from the file's syntax,
+not from a `package.json` `"type"`, so a CommonJS `service.js` also runs in a
+project whose `package.json` says `"type": "module"`. What `service.js` requires
+or imports loads from disk as usual: the approval covers `service.js` itself.
+It then builds the driver with an
 explicit port (no portfile discovery) and calls `start(ctx)`. On stop it sends IPC `stop` and, two seconds later, `SIGTERM`;
 the child also exits if the daemon disconnects. Either of those is decisive once a
 stop is already in flight — a `stop()` that never resolves does not keep the
@@ -427,6 +434,7 @@ The result is a live, clickable history/branch browser with zero per-turn drivin
 | --- | --- |
 | the supervisor (reconcile, trust, spawn/stop) and the trust identity (`mintIdentity`, `packRequests`) | `lib/server/services.js` |
 | the forked child harness | `lib/server/service-runner.js` |
+| loading exactly the approved `service.js` bytes (one read, hash check, compiled as `require()` would) | `lib/server/service-loader.js` |
 | component tier resolution + `serviceInfo` (the digests of `service.js` and `meta.json`, the params_schema read from those bytes) | `lib/server/components-registry.js` |
 | the `x-trust` vocabulary and its warnings | `lib/core/trust-marks.js` |
 | authoring (`service`/`seed` params, `has_service`) | `lib/mcp/tools/save_component.js`, `lib/server/routes/components.js` |
