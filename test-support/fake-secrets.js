@@ -202,6 +202,11 @@ function fakeSecrets({ seed = 0x5eed } = {}) {
     const a = g.strong(43, B64URL);
     const b = g.strong(24, HEX);
     add('cookie-request', 'cookie', { secrets: [a, b], text: `curl -H 'Cookie: _csrf_token=${a}; sid=${b}; theme=dark' https://app.example.com/`, tail: 'Cookie: sid=', cut: 8 });
+    // RFC 6265 lets a cookie's value be quoted, in either header.
+    const q = g.strong(32, ALNUM + '-_');
+    add('cookie-set-quoted', 'cookie', { secrets: [q], text: `< HTTP/2 302\n< Set-Cookie: session="${q}"; Path=/; HttpOnly\n< Vary: Cookie`, tail: '< Set-Cookie: session="', cut: 9 });
+    const r = g.strong(28, ALNUM);
+    add('cookie-request-quoted', 'cookie', { secrets: [r], text: `curl -H 'Cookie: sid="${r}"; theme=dark' https://app.example.com/`, tail: `curl -H 'Cookie: sid="`, cut: 8 });
   }
 
   {

@@ -261,6 +261,28 @@ test('a token after a percent-encoded byte, and an Azure account key, are masked
   }
 });
 
+test('cookie: a quoted value (RFC 6265) is masked inside its quotes, in either header and in JSON text', () => {
+  const C = MASK('cookie');
+  const v = 'Zq81mXp2LwQ9abcdefgH';
+  for (const [text, want] of [
+    [`Cookie: sid="${v}"; theme=dark`, `Cookie: sid="${C}"; theme=${C}`],
+    [`Set-Cookie: session="${v}"; Path=/; HttpOnly`, `Set-Cookie: session="${C}"; Path=/; HttpOnly`],
+    [`Set-Cookie: session="${v} and more"; Secure`, `Set-Cookie: session="${C}"; Secure`],
+    [`Cookie: a="${v}"; b="${v}"`, `Cookie: a="${C}"; b="${C}"`],
+    [`< Set-Cookie: session="${v}`, `< Set-Cookie: session="${C}`],
+    ['Cookie: sid=""; x=1', `Cookie: sid=""; x=${C}`],
+    ['Cookie: sid="$SID"', 'Cookie: sid="$SID"'],
+  ]) {
+    assert.equal(redactText(text), want, text);
+  }
+  // JSON text escapes the quotes; the JSON around the header stays, and a
+  // value left empty at the end of its string is nothing to mask.
+  const enc = JSON.stringify;
+  assert.equal(redactText(enc({ h: `Cookie: sid="${v}"; theme=dark`, n: 1 })), enc({ h: `Cookie: sid="${C}"; theme=${C}`, n: 1 }));
+  assert.equal(redactText(enc(enc({ h: `Set-Cookie: session="${v}"` }))), enc(enc({ h: `Set-Cookie: session="${C}"` })));
+  assert.equal(redactText(enc({ h: 'Cookie: sid=', x: 'y z' })), enc({ h: 'Cookie: sid=', x: 'y z' }));
+});
+
 test('a tail applies only at the end of a text: a short fragment mid-text is not a token', () => {
   for (const s of ['ghp_Ab3dE9 is too short to be a token', 'sk-Ab3dE9x and more', 'AKIAB12C then text']) {
     assert.equal(redactText(s), s);
@@ -815,6 +837,7 @@ test('adversarial inputs finish in linear time', (t) => {
     'env quotes at string ends': rep('\\nAPI_KEY=","'), backslashes: rep('\\'), 'backslashes after a key': `password=${rep('\\')}"`,
     'escaped quotes after a key': `password=${rep('\\"')}`, 'deep quotes': rep('\\\\\\"token\\\\\\":'),
     'JSON closers after a tail': `ghp_abcdef${rep('\\"}')}x`, 'escaped line breaks after a tail': `sk-abcdefgh${rep('\\n')}x`,
+    'cookie quotes': `Cookie: ${rep('a="')}`, 'cookie escaped quotes': `Cookie: ${rep('a=\\"b')}`, 'cookie open quote': `Cookie: a="${rep('b')}`,
     letters: rep('a'), 'jwt dashes': rep('eyJa-'), 'jwt with no dot': `eyJ${rep('a')}`, 'sk dashes': rep('sk-a'),
     'password words': rep('password'), 'unterminated quote': `password="${rep('a')}`, 'escapes in a quote': `password="${rep('\\a')}`,
     'token colons': `token: ${rep(':')}`, 'curl words': `${rep('curl ')}-u`, 'scheme slashes': rep('https://'),
