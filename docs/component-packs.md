@@ -480,7 +480,7 @@ same project — and learns to approve without reading. Use `x-trust`:
 | mark | use it for | the approval |
 | --- | --- | --- |
 | `"display"` | a label, a title, a colour: a value the service shows but never acts on | never includes it |
-| `"project-path"` | a file or directory the service reads or writes, inside the project | leaves it out while the value is a path inside the project root; a value outside the root, through a symlink that leads out, with any `..` segment, or not a plain path asks as before |
+| `"project-path"` | a file or directory the service reads or writes, inside the project | leaves it out while the value is a path inside the project root; a value outside the root, through a symlink that leads out, with any `..` segment, not a plain path, or too long or too deep to prove asks as before |
 
 The built-in `file-editor` marks `path` and `root` as `project-path` and leaves
 `unfenced` unmarked. A `project-path` value reaches your service unchanged: resolve

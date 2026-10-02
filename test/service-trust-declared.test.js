@@ -14,7 +14,9 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { withServer, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
-const { mintIdentity, trustKey, paramsFingerprint } = require('../lib/server/services');
+const {
+  mintIdentity, trustKey, paramsFingerprint, createServiceSupervisor, MAX_PATH_DEPTH, PROOFS_PER_PASS,
+} = require('../lib/server/services');
 const {
   readTrustMarks, trustMarkWarnings, describeCovers, describeExact, coversProjectPath, pathReach,
 } = require('../lib/core/trust-marks');
@@ -214,7 +216,9 @@ test('a path inside the project never moves the key', (t) => {
     'link-in/a.js',                          // through a link that stays inside
     path.join(root, 'src', 'a.js'),          // absolute, inside
     'src/..b/c.js', 'src/b..js',             // dots that are not a `..` segment
-    `${'a/'.repeat(511)}bb`,                 // exactly the longest value the proof takes (1024)
+    // Exactly the longest and the deepest value the proof takes: 1024
+    // characters in MAX_PATH_DEPTH (64) segments.
+    `${'abcdefghijklmno/'.repeat(MAX_PATH_DEPTH - 1)}abcdefghijklmnop`,
   ]) {
     assert.equal(mint(root, { path: value }).key, base, `${JSON.stringify(value)} is inside the project`);
   }
@@ -238,19 +242,48 @@ test('a `..` is never proven inside: the kernel follows a link before it applies
   assert.deepEqual(id.exact, { path: 'project-path' }, 'and the request says so');
 });
 
-test('the proof is bounded: an oversized value is exact, and costs no walk', (t) => {
+// Every filesystem call `fn` makes, by name, counted on the shared `fs` module
+// that lib/core/paths (the fence walk: lstat, realpath), the components
+// registry and lib/core/fsjson all call through. A count, not a clock: it is
+// the same on a loaded machine as on an idle one.
+const FS_CALLS = ['lstatSync', 'statSync', 'existsSync', 'realpathSync', 'readFileSync', 'readdirSync', 'accessSync', 'openSync'];
+function countFs(fn) {
+  const counts = Object.fromEntries(FS_CALLS.map((n) => [n, 0]));
+  const saved = FS_CALLS.map((n) => [n, fs[n]]);
+  for (const [n, orig] of saved) {
+    const counted = function (...args) { counts[n] += 1; return orig.apply(this, args); };
+    if (orig.native) counted.native = orig.native;
+    fs[n] = counted;
+  }
+  try { fn(); } finally { for (const [n, orig] of saved) fs[n] = orig; }
+  return counts;
+}
+const NO_CALLS = Object.fromEntries(FS_CALLS.map((n) => [n, 0]));
+
+test('the proof is bounded: an oversized or overdeep value is exact, and costs no walk', (t) => {
   const { root } = project(t);
   const justOver = `${'a/'.repeat(511)}bbb`; // 1025 characters, every segment "inside"
-  assert.equal(mint(root, { path: justOver }).paramsFp, paramsFingerprint({ path: justOver }),
-    'a value longer than any path macOS opens counts by its exact value');
+  // One segment deeper than the bound, in either separator (both count, as
+  // they do for `..`): short strings, every segment "inside".
+  const tooDeep = `${'a/'.repeat(MAX_PATH_DEPTH)}b`;
+  const tooDeepBackslash = `${'a\\'.repeat(MAX_PATH_DEPTH)}b`;
   // 1 MiB of segments used to hold the daemon's thread for ~37 s (the fence
   // walks up one segment at a time, re-resolving the rest at each step).
   const huge = 'a/'.repeat(512 * 1024);
-  const started = process.hrtime.bigint();
-  const id = mint(root, { path: huge, title: huge });
-  const ms = Number(process.hrtime.bigint() - started) / 1e6;
-  assert.equal(id.paramsFp, paramsFingerprint({ path: huge }), 'exact, and the display param still left out');
-  assert.ok(ms < 1000, `minting an identity for a 1 MiB value took ${ms.toFixed(0)} ms`);
+  for (const value of [justOver, tooDeep, tooDeepBackslash, huge]) {
+    let id = null;
+    const calls = countFs(() => { id = mint(root, { path: value, title: value }); });
+    const label = `${value.length} characters`;
+    assert.equal(id.paramsFp, paramsFingerprint({ path: value }), `${label}: exact, and the display param still left out`);
+    assert.deepEqual(id.exact, { path: 'project-path' }, `${label}: and the request says so`);
+    assert.deepEqual(calls, NO_CALLS, `${label}: decided without a single filesystem call`);
+  }
+  // The deepest value it does take is proven, by a walk of one lstat a segment.
+  const deepest = `${'a/'.repeat(MAX_PATH_DEPTH - 1)}b`;
+  let id = null;
+  const calls = countFs(() => { id = mint(root, { path: deepest }); });
+  assert.equal(id.key, mint(root, {}).key, 'MAX_PATH_DEPTH segments inside the project are covered');
+  assert.equal(calls.lstatSync, MAX_PATH_DEPTH + 1, 'up from the value to the root, which exists');
 });
 
 test('each value that cannot be proven inside is its own exact key', (t) => {
@@ -299,6 +332,107 @@ test('each value that cannot be proven inside is its own exact key', (t) => {
   // `unfenced: false` and asks once on its own; folding false into absent
   // would move the keys approvals recorded under 0.8.0 were written with.
   assert.notEqual(mint(root, { path: 'src/a.js', unfenced: false }).key, inside);
+});
+
+// ── one reconcile pass ──────────────────────────────────────────────────────
+// The supervisor proves the values of every service-backed pane on the surface
+// on every reconcile, on the daemon's only thread, and the number of panes has
+// no cap (any pane can mount more; a committed draft.json restores as many as it
+// lists). A thousand file-editor panes held the thread for about 7 s a pass.
+
+// A supervisor over a bare surface: no server, no socket and no port, so
+// nothing is ever forked. One pass reads only state.mounts, the component on
+// disk and the trust file, and leaves each request pending.
+function bareSupervisor(paths, mounts) {
+  const state = { mounts: new Map(mounts.map((m, i) => [m.id || `m${i}`, m])) };
+  const bus = { emit() {}, subscribe() { return () => {}; } };
+  return createServiceSupervisor({ state, graph: null, paths, bus, getPort: () => null, getViewers: () => 1 });
+}
+
+function serviceComponent(root, name = 'deep-editor') {
+  const paths = resolvePaths(root);
+  const dir = path.join(paths.COMPONENTS_DIR, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'component.html'), '<p>e</p>');
+  fs.writeFileSync(path.join(dir, 'service.js'), GOLDEN_SRC);
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ name, params_schema: SCHEMA }));
+  return paths;
+}
+
+// A path inside the project, MAX_PATH_DEPTH segments deep, none of which exists:
+// the costliest value the proof still takes (one lstat a segment on the way up
+// to the root, then the realpaths).
+const deepValue = (i) => `${'d/'.repeat(MAX_PATH_DEPTH - 1)}f${i}`;
+
+test('one reconcile pass mints the surface once, and proves each value once', (t) => {
+  const { root } = project(t);
+  const paths = serviceComponent(root);
+  const surface = (n) => bareSupervisor(paths, Array.from({ length: n }, () => ({ component: 'deep-editor', params: { path: deepValue(0) } })));
+  const pass = (sup) => countFs(() => sup.reconcile('test'));
+
+  const one = pass(surface(1));
+  assert.equal(one.lstatSync, MAX_PATH_DEPTH + 1, 'one pane: one walk, from the value up to the root');
+
+  // 300 panes on one value cost what one pane does: its service.js and
+  // meta.json read once, the trust file read once, the value proven once.
+  // Every pass here leaves a request pending, which is when prune() used to
+  // mint the whole surface a second time.
+  const many = surface(300);
+  assert.deepEqual(pass(many), one);
+  assert.equal(many.pendingTrust().length, 1, 'the request is pending through the pass');
+  assert.deepEqual(pass(many), one, 'and the next pass costs the same: nothing piles up');
+  assert.deepEqual(many.pendingTrust()[0].covers, { path: 'project-path', title: 'display' }, 'the value was proven inside');
+});
+
+test('one reconcile pass proves at most PROOFS_PER_PASS different values, however many panes', (t) => {
+  const { root } = project(t);
+  const paths = serviceComponent(root);
+  const surface = (n) => bareSupervisor(paths, Array.from({ length: n }, (_, i) => ({ component: 'deep-editor', params: { path: deepValue(i) } })));
+  const pass = (sup) => countFs(() => sup.reconcile('test'));
+
+  const walk = pass(surface(1));
+  const three = pass(surface(300));
+  assert.equal(three.lstatSync, PROOFS_PER_PASS * walk.lstatSync, `${PROOFS_PER_PASS} walks of ${walk.lstatSync} lstats, no more`);
+  assert.equal(three.realpathSync, PROOFS_PER_PASS * walk.realpathSync);
+  assert.deepEqual(pass(surface(600)), three, 'twice the panes, the same filesystem work');
+});
+
+test('past the pass budget a value counts by its exact value, so it asks', (t) => {
+  const { root } = project(t);
+  const paths = serviceComponent(root);
+  // PROOFS_PER_PASS + 1 different files inside the project: the first ones are
+  // proven and share one covered request, the last is not proven at all.
+  const values = Array.from({ length: PROOFS_PER_PASS + 1 }, (_, i) => `src/f${i}.txt`);
+  const sup = bareSupervisor(paths, values.map((v, i) => ({ id: `ed${i}`, component: 'deep-editor', params: { path: v } })));
+  sup.reconcile('test');
+  const pending = sup.pendingTrust();
+  assert.equal(pending.length, 2);
+  const [covered, over] = pending;
+  assert.deepEqual(covered.exact, {}, 'one approval covers every file the pass proved');
+  assert.equal(covered.key, mint(root, {}).key);
+  assert.deepEqual(over.params, { path: values[PROOFS_PER_PASS] });
+  assert.deepEqual(over.exact, { path: 'project-path' }, 'the one past the budget is held to its value');
+  assert.equal(over.params_fp, paramsFingerprint({ path: values[PROOFS_PER_PASS] }));
+  // Which values a pass proves follows the order the panes were mounted, so
+  // the next pass draws the same line: no pane flips between the two requests.
+  sup.reconcile('test');
+  assert.deepEqual(sup.pendingTrust().map((p) => p.key), [covered.key, over.key]);
+});
+
+test('a pass keeps no proof for the next: a path that turns into a link out asks', (t) => {
+  const { root, outside } = project(t);
+  const paths = serviceComponent(root);
+  const sup = bareSupervisor(paths, [{ id: 'ed', component: 'deep-editor', params: { path: 'later/notes.md' } }]);
+  sup.reconcile('test');
+  const [before] = sup.pendingTrust();
+  assert.deepEqual(before.exact, {}, 'nothing there yet: inside the project, covered');
+  // Between two passes, a checkout puts a link out of the project there.
+  fs.symlinkSync(outside, path.join(root, 'later'));
+  sup.reconcile('test');
+  const after = sup.pendingTrust();
+  assert.equal(after.length, 1, 'the covered request went with its key');
+  assert.deepEqual(after[0].exact, { path: 'project-path' }, 'the next pass proved the value again, and it leads out now');
+  assert.notEqual(after[0].key, before.key);
 });
 
 test('the declaration is part of the code hash', () => {

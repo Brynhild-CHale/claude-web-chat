@@ -1297,7 +1297,7 @@ whole surface and broadcast a `reset` instead of per-pane frames, and
 A consent is a triple: **(project root, code hash, service-facing params)**.
 `mintIdentity` and the pure helpers under it (`serviceParams`, `trustDeclaration`,
 `codeHash`, `identityParams`, `paramsFingerprint`, `trustKey`, all module-scoped)
-are the only place that triple becomes a value; `computeDesired` mints it once per
+are the only place that triple becomes a value; `mintSurface` mints it once per
 pane, `packRequests` mints a pack's pre-approvals through the same function, and
 everything downstream QUOTES it — the trust-file key, `pendingTrust()`, the
 `service:trust` / `service:trust:clear` frames, the browser's card map
@@ -1313,6 +1313,17 @@ recorded before declarations existed; `test/service-trust-declared.test.js` hold
 that with a golden. Because a covered value can change without changing the key,
 the supervisor also compares the fingerprint of everything the child was handed
 (`spawnFp`) and restarts it on a change, asking nothing.
+
+The proof runs on the daemon's only thread, for every service-backed pane, on
+every reconcile, and nothing caps the number of panes. So `reconcile` mints the
+surface ONCE a pass (`mintSurface`; `prune` reuses it), reads each component's
+files and the trust file once a pass, and proves each value once a pass through
+the pass's own `passProofs`: one lstat a segment, `MAX_PATH_DEPTH` segments at
+most, `PROOFS_PER_PASS` different values at most, and a value past either bound
+counts by its exact value. Nothing is kept for the next pass: a path proven
+inside can become a link out of the project between two.
+`test/service-trust-declared.test.js` pins the bounds by counting filesystem
+calls, not by timing them.
 
 What a request reports as `covers` is ITS range, not the declaration
 (`mintIdentity` returns both: `declared` is what the hash folds in, `covers` the

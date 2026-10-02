@@ -265,8 +265,13 @@ these counts as outside, and asks as an unmarked param does:
   `/elsewhere/secret.txt`;
 - a symlink that leads out of the root, or one that points nowhere;
 - a path whose nearest existing ancestor resolves outside the root;
-- a value longer than 1024 characters (macOS opens no longer path, and the
-  proof runs on the daemon's only thread);
+- a value longer than 1024 characters (macOS opens no longer path), or more
+  than 64 segments deep, counting both `/` and `\`. The proof runs on the
+  daemon's only thread, and each segment costs it a filesystem call;
+- a value past the first 64 different ones the daemon proves in one pass. It
+  proves every service-backed pane's values each time the surface changes, in
+  the order the panes were mounted, so a surface with more different paths than
+  that asks for the rest by their exact values;
 - a value that is not a plain path: one with a control character, one that
   starts with `-` (a command line would read it as a flag), one that starts
   with `~` (a shell reads it as your home directory), or one with a URL scheme
