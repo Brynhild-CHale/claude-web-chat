@@ -1,11 +1,12 @@
 // A theme pack's per-user logos (lib/server/brand.js, "A pack's per-user
 // logos"): while a project's global theme resolves to Georgetown Blue, a brand
 // slot with no image of the theme's own is filled from
-// userPaths().themeLogosDir('georgetown-blue') — the topbar logotype, and an
-// export's lockup and seal — with `<slot>-reversed.*` used in dark mode. The
-// folder is created holding only a README.txt by `install` and `update` (never
-// lazily on first use), never rewritten, and deliberately advertised nowhere
-// else.
+// userPaths().themeLogosDir('georgetown-blue') — the topbar's company image,
+// and an export's lockup and seal — with `<slot>-reversed.*` used in dark mode.
+// The folder is created holding only a README.txt by `install` and `update`
+// (never lazily on first use), never rewritten, and deliberately advertised
+// nowhere else. How the topbar's co-brand lockup draws a fill, per mode, is
+// test/cobrand-chrome.test.js's.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -356,45 +357,20 @@ async function bootChrome(t) {
   return { window, calls, ws: () => wsInstances[0] };
 }
 
-test('chrome: the topbar shows the fill per mode, the project slot wins, Settings never shows it', async (t) => {
+test('chrome: Settings → Brand never shows the fill, and follows a theme change with no round trip', async (t) => {
   const { window, ws, calls } = await bootChrome(t);
   const doc = window.document;
   const tick = () => new Promise((r) => setTimeout(r, 0));
   const frame = (msg) => ws().onmessage({ data: JSON.stringify(msg) });
-  const logo = () => doc.getElementById('brand-logotype');
   const empty = { logotype: null, lockup: null, seal: null };
   const fill = {
     logotype: { light: { type: 'image/svg+xml', bytes: 9, version: 'L1' }, dark: { type: 'image/svg+xml', bytes: 9, version: 'D1' } },
     lockup: null, seal: null,
   };
 
-  assert.equal(doc.documentElement.dataset.theme, 'light');
+  // The pack fills the logotype; Settings → Brand shows the theme's own slots
+  // only, so all three stay empty.
   frame({ type: 'brand', slots: empty, fill });
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?mode=light&v=L1');
-
-  delete doc.documentElement.dataset.theme; // theme.js's dark
-  await tick();
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?mode=dark&v=D1', 'a mode flip swaps to the reversed mark');
-  doc.documentElement.dataset.theme = 'light';
-  await tick();
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?mode=light&v=L1');
-
-  // only a reversed mark: nothing on light, drawn on dark
-  frame({ type: 'brand', slots: empty, fill: { ...fill, logotype: { light: null, dark: fill.logotype.dark } } });
-  assert.equal(logo(), null);
-  delete doc.documentElement.dataset.theme;
-  await tick();
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?mode=dark&v=D1');
-  doc.documentElement.dataset.theme = 'light';
-  await tick();
-
-  // the project's own logotype wins; a frame without `fill` keeps the known one
-  frame({ type: 'brand', slots: { ...empty, logotype: { type: 'image/png', bytes: 5, version: 'own' } }, fill });
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?v=own');
-  frame({ type: 'brand', slots: empty });
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?mode=light&v=L1');
-
-  // Settings → Brand shows the project's slots only: all three empty
   const rows = [...doc.querySelectorAll('#settings-panel .brand-slot')];
   assert.equal(rows.length, 3);
   for (const row of rows) {
@@ -404,13 +380,11 @@ test('chrome: the topbar shows the fill per mode, the project slot wins, Setting
 
   // A global theme change arrives as a `brand` frame for the theme now on — the
   // daemon sends one with every global theme change, just ahead of the theme
-  // frame — so the topbar takes that theme's images and fill with no round
-  // trip of its own.
+  // frame — so Settings names that theme with no round trip of its own.
   const before = calls.filter((u) => u === '/api/brand').length;
   frame({ type: 'brand', theme: { key: 'earthy', name: 'earthy', title: 'Earthy' }, slots: empty, fill: empty });
   frame({ type: 'theme', scope: 'global', theme: { name: 'earthy', tokens: {} } });
   await tick();
-  assert.equal(logo(), null, 'Earthy has no logos: the fill went with the theme');
   assert.equal(doc.getElementById('brand-theme').textContent, 'Images for the Earthy theme');
   assert.equal(calls.filter((u) => u === '/api/brand').length, before, 'the frame carried all of it');
 });

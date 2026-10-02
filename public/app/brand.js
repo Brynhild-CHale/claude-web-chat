@@ -1,7 +1,9 @@
-// Brand image slots in the chrome: the topbar logotype, and the Settings
-// panel's three drop targets (logotype / lockup / seal). The server owns the
-// files and the validation (lib/server/brand.js); this only shows them and
-// sends new ones.
+// Brand image slots in the chrome: the state of the three slots (logotype /
+// lockup / seal), the Settings panel's drop targets for them, and slotSrc(), the
+// URL that shows one. The server owns the files and the validation
+// (lib/server/brand.js); this only shows them and sends new ones. The topbar's
+// company image is the co-brand lockup's (cobrand.js), which reads slotSrc and
+// redraws on the chrome bus's `brand`, emitted every time the state lands here.
 //
 // The images are kept per THEME — the project's global theme when they were
 // added — so every slot here is the current theme's, Settings → Brand names
@@ -11,6 +13,7 @@
 // An image is only ever an <img> pointed at /brand/<slot> — never SVG markup
 // in this document — so a logo cannot run anything in the chrome's origin.
 import { $ } from './state.js';
+import { bus } from './bus.js';
 
 const SLOTS = [
   { slot: 'logotype', label: 'Logotype', where: 'topbar' },
@@ -24,7 +27,8 @@ let current = {};   // slot -> {type, bytes, version} | null — the current the
 // What fills a slot the theme has no image in — the theme pack's per-user logos
 // (lib/server/brand.js explains; deliberately unmentioned anywhere a user
 // reads). slot -> {light, dark} (each {type, bytes, version} | null) | null.
-// Only the topbar reads it: Settings → Brand shows the theme's own slots.
+// Only the topbar's lockup reads it, through slotSrc: Settings → Brand shows the
+// theme's own slots.
 let fill = {};
 // Whose images `current` are: the global theme, { key, name, title } — `title`
 // a builtin pack's display name, `name` null for a theme set without one. Null
@@ -38,45 +42,16 @@ let picking = false;
 export function isPickingFile() { return picking; }
 
 const src = (slot, meta) => `/brand/${slot}?v=${encodeURIComponent(meta.version || '')}`;
-// The chrome's effective mode, as theme.js leaves it on <html>.
-const viewMode = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
-// The topbar's logotype: the project's own, else the fill for this mode.
-function topbarSrc() {
-  if (current.logotype) return src('logotype', current.logotype);
-  const mode = viewMode();
-  const f = fill.logotype && fill.logotype[mode];
-  return f ? `/brand/logotype?mode=${mode}&v=${encodeURIComponent(f.version || '')}` : null;
-}
 
-/* ---------- topbar ---------- */
-function applyTopbar() {
-  const bar = $('topbar');
-  const wordmark = bar && bar.querySelector('.brand');
-  if (!wordmark) return;
-  let logo = $('brand-logotype');
-  const want = topbarSrc();
-  if (!want) {
-    // Absent means absent: no empty <img>, no stray divider.
-    if (logo) logo.remove();
-    const div = bar.querySelector('.brand-logo-div');
-    if (div) div.remove();
-    return;
-  }
-  if (!logo) {
-    logo = document.createElement('img');
-    logo.id = 'brand-logotype';
-    logo.className = 'brand-logo';
-    logo.alt = 'logo';
-    // An unreadable image leaves no broken-image glyph in the chrome.
-    logo.addEventListener('error', () => { logo.hidden = true; });
-    logo.addEventListener('load', () => { logo.hidden = false; });
-    const div = document.createElement('span');
-    div.className = 'tb-div brand-logo-div';
-    div.setAttribute('aria-hidden', 'true');
-    bar.insertBefore(logo, wordmark);
-    bar.insertBefore(div, wordmark);
-  }
-  if (logo.getAttribute('src') !== want) logo.setAttribute('src', want);
+// The URL that shows one slot in `mode` ('light' | 'dark', the chrome's own
+// mode — the caller's to read): the theme's own image, which serves every mode,
+// else the fill for that mode, else null (nothing to show: absent means absent).
+export function slotSrc(slot, mode) {
+  const own = current[slot];
+  if (own) return src(slot, own);
+  const m = mode === 'dark' ? 'dark' : 'light';
+  const f = fill[slot] && fill[slot][m];
+  return f ? `/brand/${slot}?mode=${m}&v=${encodeURIComponent(f.version || '')}` : null;
 }
 
 /* ---------- settings: three drop targets ---------- */
@@ -235,9 +210,10 @@ export function applyBrand(slots, fillIn, themeIn) {
     fill = f;
   }
   if (themeIn !== undefined) theme = themeIn && typeof themeIn === 'object' ? themeIn : null;
-  applyTopbar();
   applyThemeLine();
   applyRows();
+  // Whatever else draws a slot (the topbar's lockup) reads it again.
+  bus.emit('brand', { theme });
 }
 
 export async function refreshBrand() {
@@ -252,10 +228,4 @@ export async function refreshBrand() {
 export function initBrand() {
   buildRows();
   refreshBrand();
-  // A light/dark flip can swap the fill's logotype for its reversed variant.
-  // theme.js marks the mode on <html>; following the attribute keeps this
-  // module out of theme.js's import graph.
-  if (typeof MutationObserver === 'function') {
-    new MutationObserver(applyTopbar).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  }
 }
