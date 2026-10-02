@@ -350,6 +350,37 @@ test('context: env-dotenv masks every value and keeps keys; env-dump masks crede
   assert.equal(redactText(dump, { context: { mode: 'something-else' } }), redactText(dump), 'an unknown mode drives nothing');
 });
 
+test('env rows: which part of a line is the value', () => {
+  const S = MASK('secret');
+  const V = MASK('env-value');
+  const p = 'Zq81mXp2Lw';
+  // env-line: a comment is not the value, the command a quoted assignment
+  // prefixes is shell and stays, and a CRLF line keeps its CR.
+  assert.equal(redactText(`API_TOKEN=${p} # rotated monthly`), `API_TOKEN=${S} # rotated monthly`);
+  assert.equal(redactText(`SESSION_COOKIE_KEY="${p}" ./serve --port 80`), `SESSION_COOKIE_KEY="${S}" ./serve --port 80`);
+  assert.equal(redactText(`SESSION_COOKIE_KEY='${p}' ./serve`), `SESSION_COOKIE_KEY='${S}' ./serve`);
+  assert.equal(redactText(`API_TOKEN=${p}\r\nNEXT=1`), `API_TOKEN=${S}\r\nNEXT=1`);
+  assert.equal(redactText(`API_TOKEN="${p}`), `API_TOKEN="${S}`, 'a quote left open runs to the end of the line');
+  assert.equal(redactText(`API_TOKEN='${p}`), `API_TOKEN=${S}`, 'an open single quote is part of an unquoted value');
+  assert.equal(redactText(`API_TOKEN=${p}    `), `API_TOKEN=${S}    `, 'trailing blanks are not the value');
+  // env-dotenv: a comment after a closing quote is kept; anything else after
+  // it, and an unquoted value's comment, are part of the value.
+  const dotenv = { context: { mode: 'env-dotenv' } };
+  assert.equal(redactText(`NAME="${p}" # note`, dotenv), `NAME="${V}" # note`);
+  assert.equal(redactText(`NAME="${p}"tail`, dotenv), `NAME=${V}`);
+  assert.equal(redactText(`NAME=${p} # note`, dotenv), `NAME=${V}`);
+  assert.equal(redactText(`NAME = ${p}`, dotenv), `NAME = ${V}`);
+  // env-dump: a dump's values are literal, so only blanks may follow a quote.
+  const dump = { context: { mode: 'env-dump' } };
+  assert.equal(redactText(`declare -x VAULT_TOKEN="${p}"`, dump), `declare -x VAULT_TOKEN="${V}"`);
+  assert.equal(redactText(`VAULT_TOKEN="${p}" #x`, dump), `VAULT_TOKEN=${V}`);
+  assert.equal(redactText(`vault_token=${p} #x`, dump), `vault_token=${V}`);
+  // A name is at most 128 characters, its family word starting in the first
+  // 125 (SESSION is a family word only env-line knows; assign would take TOKEN).
+  assert.equal(redactText(`${'A'.repeat(100)}_SESSION=${p}`), `${'A'.repeat(100)}_SESSION=${S}`);
+  assert.equal(redactText(`${'A'.repeat(140)}_SESSION=${p}`), `${'A'.repeat(140)}_SESSION=${p}`);
+});
+
 // ── sensitive paths ─────────────────────────────────────────────────────────
 
 test('sensitivePath: every category, case-insensitively on every platform', () => {
@@ -624,12 +655,21 @@ test('lib/core/redact.js requires nothing, imports nothing and touches no proces
 
 // Inputs that make a careless rule quadratic: a run that holds its own start
 // pattern (every `eyJ` after a dash, every `sk-`), an unterminated quote, a line
-// of a thousand `curl`s. Each is 200 KB; a quadratic rule would not finish
-// inside the test timeout. Timings are logged, and asserted only under PERF.
+// of a thousand `curl`s, and the env rows' two shapes (a long name of family
+// words with no `=`, and a long run of blanks before a value's last character),
+// each run under all three modes so env-line, env-dotenv and env-dump all see
+// them. Each is 200 KB; a quadratic rule would not finish inside the test
+// timeout. Timings are logged, and asserted only under PERF.
 test('adversarial inputs finish in linear time', (t) => {
   const N = 200_000;
   const rep = (s) => s.repeat(Math.ceil(N / s.length)).slice(0, N);
+  const blanks = ' '.repeat(N);
   const inputs = {
+    'env name, no =': rep('KEY'), 'env name, no =, lowercase': rep('key'), 'env name after export': `export ${rep('TOKEN')}`,
+    'env blanks, then a character': `API_KEY=a${blanks}x`, 'env tabs, then a character': `API_KEY=a${rep('\t')}x`,
+    'env blanks after a quote': `API_KEY="a"${blanks}x`, 'env blanks before a comment': `API_KEY=a${blanks}#${blanks}x`,
+    'env open quote': `API_KEY="${rep('a')}`, 'env open single quote': `API_KEY='${rep('a')}`,
+    'env lines of blanks': rep(`\nAPI_KEY=a${' '.repeat(64)}x`),
     letters: rep('a'), 'jwt dashes': rep('eyJa-'), 'jwt with no dot': `eyJ${rep('a')}`, 'sk dashes': rep('sk-a'),
     'password words': rep('password'), 'unterminated quote': `password="${rep('a')}`, 'escapes in a quote': `password="${rep('\\a')}`,
     'token colons': `token: ${rep(':')}`, 'curl words': `${rep('curl ')}-u`, 'scheme slashes': rep('https://'),
