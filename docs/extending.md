@@ -178,7 +178,7 @@ lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
                    channels · resources · mcp-seen · remote-policy · png · gif ·
-                   brand-image · fonts · theme-values
+                   brand-image · fonts · theme-values · trust-marks
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -291,6 +291,7 @@ were the only places they lived.
 | say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
+| read a component's `x-trust` marks, warn about an unknown one, or say what an approval covers | `core/trust-marks` `readTrustMarks` / `trustMarkWarnings` / `describeCovers` / `TRUST_MARKS` (the identity those marks enter is minted in `lib/server/services.js` `mintIdentity`) | re-list `display` / `project-path`, or word the unknown-mark warning a second time |
 | decide whether a name is a builtin THEME (a pack, or a retired alias) | `core/names` `isBuiltinThemeName` / `BUILTIN_THEME_NAMES` (a test holds it equal to lib/server/theme-packs' packs + aliases) | re-list `earthy`/`paper`/`georgetown-blue` |
 | validate an image before it is shown as a logo (a Settings → Brand upload, a theme's logos) | `core/brand-image` `validate(bytes)` / `validateLogoFile(name, bytes)` / `parseLogoName(name)` (lib/server/brand.js re-exports them) | a second sniffer or SVG blocklist |
 | check what a theme inside a pack may carry (tokens, modes, fonts, logos — raw CSS gated by the one `THEME_CSS_POLICY`) | `lib/packs/themes` `inspectPackTheme(stageDir, name)` | a second theme check in a route or the drawer |
@@ -1288,13 +1289,24 @@ whole surface and broadcast a `reset` instead of per-pane frames, and
 
 ### `lib/server/services.js` — the service-trust identity
 
-A consent is a triple: **(project root, `service.js` hash, service-facing params)**.
-`serviceParams` / `paramsFingerprint` / `trustKey` (module-scoped and pure) are the
-only place that triple becomes a value; `computeDesired` mints it once per pane and
-everything downstream QUOTES it — the trust-file key, `pendingTrust()`, the
-`service:trust` / `service:trust:clear` frames, the browser's card map
+A consent is a triple: **(project root, code hash, service-facing params)**.
+`mintIdentity` and the pure helpers under it (`serviceParams`, `trustDeclaration`,
+`codeHash`, `identityParams`, `paramsFingerprint`, `trustKey`, all module-scoped)
+are the only place that triple becomes a value; `computeDesired` mints it once per
+pane and everything downstream QUOTES it — the trust-file key, `pendingTrust()`,
+the `service:trust` / `service:trust:clear` frames, the browser's card map
 (`public/app/service-trust.js`), the CLI's `--params-fp` selector, and the
 supervisor's own "did this child's identity change" test.
+
+A component's `x-trust` declaration (its params_schema marks; the vocabulary is
+`lib/core/trust-marks`) is folded into the code hash, and the params it covers —
+every `display` value, and a `project-path` value proven inside the root by
+`core/paths` `fence` — are left out of the params half. With no declaration the
+hash is the plain sha256 of `service.js` and the key is byte-for-byte the one
+recorded before declarations existed; `test/service-trust-declared.test.js` holds
+that with a golden. Because a covered value can change without changing the key,
+the supervisor also compares the fingerprint of everything the child was handed
+(`spawnFp`) and restarts it on a change, asking nothing.
 
 Every lossy re-projection of that triple was a place two different consents were
 mistaken for one: the WS frames carried the `service.js` hash alone, so two

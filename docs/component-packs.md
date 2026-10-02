@@ -176,6 +176,22 @@ component from the drawer (`＋` / `N`). A component with a good schema is
 user-spawnable with no extra work; a component without one gets mounted with
 empty params and has to cope.
 
+For a component with a `service.js`, the schema does a third job: a property
+can carry an `x-trust` mark that keeps it out of what the user approves (§6,
+*Consent*):
+
+```json
+"properties": {
+  "env":   { "type": "string", "enum": ["prod", "staging"] },
+  "title": { "type": "string", "x-trust": "display" },
+  "file":  { "type": "string", "x-trust": "project-path" }
+}
+```
+
+`display` is never part of the approval; `project-path` is not while its value is
+a path inside the project. Any other value of `x-trust` counts as absent, and
+`pack review` warns about it.
+
 ### `component.html`
 
 Markup, one or more `<style>` blocks, and one or more inline `<script>` blocks.
@@ -439,19 +455,39 @@ The surface shows a notice naming the command; it grants nothing, and it cannot
 — pane scripts share the page's realm, so anything the page receives is readable
 by the very code being gated.
 
-Consent is recorded per **(project root, `service.js` hash, params shape)**.
-Practical consequences for a pack author:
+Consent is recorded per **(project root, code, params)**: the code is
+`service.js` plus the component's `x-trust` declaration. Practical consequences
+for a pack author:
 
 - **every project asks separately** — a user who installs your pack globally
   still approves it per project;
-- **any edit to `service.js` re-asks** — including a version bump of your pack;
+- **any edit to `service.js` re-asks** — including a version bump of your pack,
+  and a change to the `x-trust` marks in `meta.json`;
 - **different params re-ask** — if your component takes a param that widens what
   the service can touch, approving the narrow form does not approve the wide one.
+  The exception is a param you mark `x-trust`.
 
 Design for that. Keep `service.js` small and stable, put volatile logic in files
 it requires, and make the params that change its blast radius obvious by name
 (the built-in `file-editor` uses `unfenced: true`, which is exactly the kind of
 param that should re-ask).
+
+**Mark the params that do not widen anything.** Without marks, a user is asked
+again whenever a pane changes any param — a renamed pane, another file in the
+same project — and learns to approve without reading. Use `x-trust`:
+
+| mark | use it for | the approval |
+| --- | --- | --- |
+| `"display"` | a label, a title, a colour: a value the service shows but never acts on | never includes it |
+| `"project-path"` | a file or directory the service reads or writes, inside the project | leaves it out while the value is a path inside the project root; a value outside the root, through a symlink that leads out, or not a plain path asks as before |
+
+The built-in `file-editor` marks `path` and `root` as `project-path` and leaves
+`unfenced` unmarked. A `project-path` value reaches your service unchanged: resolve
+it against `process.cwd()`, which is the project root, and fence it with
+`ctx.fence`. Never read it as a URL, a shell word or a command-line flag. Mark
+nothing that changes what the service may touch: an unmarked param is always
+safe, it only asks more often. The full rules for what counts as inside are in
+`claude-web-chat docs service-components`.
 
 ### What a service may and may not do
 
@@ -845,7 +881,7 @@ What reloads when:
 
 | you edited | to see it |
 | --- | --- |
-| `component.html`, `meta.json`, `seed.js` | re-spawn the pane (no restart) |
+| `component.html`, `meta.json`, `seed.js` | re-spawn the pane (no restart); a change to an `x-trust` mark in `meta.json` also asks for approval again |
 | `service.js` | re-spawn the pane — and re-approve, since the hash changed |
 | `SKILL.md` | nothing — Claude Code picks it up within a few seconds |
 
@@ -862,8 +898,8 @@ Debugging:
   whether or not they submitted.
 - The daemon's service logs go to `.web-chat/server.log`, prefixed `[<name>]`
   for stdout and `[<name>!]` for stderr.
-- `claude-web-chat trust` lists services waiting for approval, with the hash and
-  the params they would run with.
+- `claude-web-chat trust` lists services waiting for approval, with the hash,
+  the params they would run with, and what an approval covers (`covers`).
 
 ---
 
@@ -892,6 +928,7 @@ with `--replace`. You cannot fix that from your side; just pick distinctive name
 - [ ] Every component directory name matches its `meta.json` `name`.
 - [ ] Every `description` answers *when to use this*, not just what it is.
 - [ ] `params_schema` is complete enough that the drawer's generated form is usable.
+- [ ] Every `x-trust` mark is `display` or `project-path`, and only on a param that widens nothing (`pack review` warns about any other value).
 - [ ] No `document` *queries* in any pane script — `root.querySelector`, never `document.querySelector`/`getElementById`. (`document.createElement` is fine; it is how you build DOM from data without `innerHTML`.)
 - [ ] No `<script src>`, no CDN, no external fetch you cannot justify.
 - [ ] No `innerHTML` on anything you did not author.

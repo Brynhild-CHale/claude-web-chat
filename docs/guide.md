@@ -62,7 +62,9 @@ claude-web-chat trust git-dashboard   # approve it (--deny refuses)
 claude-web-chat trust --all           # approve everything waiting, in one go
 ```
 
-The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. There is no `--yes`: the gate exists so that a human reads what is about to run. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`, so one name can have more than one request waiting; when it does, the listing prints a fingerprint for each and you pick one with `--params-fp <fingerprint>` (`--key` is the same flag, and either the fingerprint or the full trust key works). See [`service-components.md`](service-components.md).
+The page can only tell you the command — it deliberately can't grant the approval, since the component's own pane script runs in that page. There is no `--yes`: the gate exists so that a human reads what is about to run. Approval is remembered per project, per version of the service, per set of params, in `~/.web-chat/`, so one name can have more than one request waiting; when it does, the listing prints a fingerprint for each and you pick one with `--params-fp <fingerprint>` (`--key` is the same flag, and either the fingerprint or the full trust key works).
+
+A component can mark the params that do not need asking about again — a pane's title, or a file inside this project — and the listing shows them under `covers`. The built-in file editor is approved once for every file inside the project; `unfenced: true`, or a path outside the project, still asks. See [`service-components.md`](service-components.md).
 
 ## Component packs
 

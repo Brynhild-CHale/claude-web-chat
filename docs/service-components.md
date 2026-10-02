@@ -36,8 +36,11 @@ module.exports = {
     //               v1: WRITE THE STORE ONLY (ctx.driver.setStore({...})). No render.
     // ctx.params  — the mount's params, minus the three keys the SHELL reads for
     //               itself (`form_reset`, `routing`, `signals`; the pane <script>
-    //               still sees those). It is exactly the params the user was
-    //               asked to consent to — see Trust below.
+    //               still sees those). Every one of them, unchanged: a param your
+    //               params_schema marks `x-trust` is still handed to you, it is
+    //               only left out of what the user approves — see Trust below.
+    // process.cwd() — the project root, wherever the daemon was started from.
+    //               Resolve a relative path param against it.
     // ctx.mountId — the pane id; namespace per-pane store keys with it if needed.
     // ctx.name    — the component name.
     // ctx.log     — stdout logger (piped to the daemon log).
@@ -97,7 +100,7 @@ debounced `reconcile()` that diffs the *desired* set of children against the
 | State | When | How |
 | --- | --- | --- |
 | **running** | the pane is a live mount on the active node **and** ≥1 browser is connected | reconcile spawns it |
-| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, or the pane is re-used with different params | reconcile stops it |
+| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, or the pane is re-used with different params (a value its `x-trust` declaration covers restarts it with the new value and asks nothing; any other change asks again) | reconcile stops it |
 | **respawned** | you navigate back / a viewer reconnects | reconcile spawns a fresh child |
 
 The desired set is derived from `state.mounts` — which *is* the active surface,
@@ -126,6 +129,9 @@ Two panes of one component mounted with **different params** are two decisions,
 so a bare name that matches both refuses, prints each request, and asks for the
 `--params-fp` from the listing (the full trust key works there too). Nothing is
 written until the name resolves to one request or `--all` is given and confirmed.
+A param the component declares with `x-trust` is the exception (see
+[Declared params](#declared-params-x-trust) below): the listing shows it under
+`covers`, and a different value for it is the same decision.
 
 The surface shows a notice naming the component, its params and the command to
 run — one notice per waiting request, addressed by trust key, so two params
@@ -145,7 +151,7 @@ Approval is persisted in the **user tier**, not the project:
 // ~/.web-chat/services/trusted.json
 { "<trust key>": {
     "name": "git-dashboard",
-    "hash": "<sha256 of service.js>",
+    "hash": "<the code hash: sha256 of service.js, see below>",
     "root": "/Users/you/Dev/my-project",
     "params": {},
     "approved": true,
@@ -153,28 +159,95 @@ Approval is persisted in the **user tier**, not the project:
 } }
 ```
 
+A record can also carry `covers`: what the approval spans beyond `params`
+(below). It is a note for a person reading the file; the key is the decision.
+
 It lives outside the project because a project could otherwise ship its own
 approval — commit `.web-chat/services/trusted.json` and cloning the repo would
 run its `service.js` unprompted.
 
-The trust key covers **(project root, `service.js` hash, params shape)**. It is
-minted once, by the supervisor, and every consumer quotes it — the file above, the
-`trust` listing, the notice on the surface, and the CLI's selector all name the
-same value. "Params shape" means the params the SERVICE gets: the shell's own
+The trust key covers **(project root, code hash, params)**. It is minted once, by
+the supervisor, and every consumer quotes it — the file above, the `trust`
+listing, the notice on the surface and the CLI's selector all name the same
+value. The code hash is the sha256 of `service.js`; for a component that
+declares `x-trust`, it is the sha256 of that digest, a `\0`, and the declaration
+as sorted JSON (`{"path":"project-path","root":"project-path"}`). "Params" means
+the params the SERVICE gets, minus what the declaration covers: the shell's own
 render-control keys (`form_reset`, `routing`, `signals`) are stripped first, so a
 re-render that only changes how the pane is painted is not a new consent.
 
 Each of these asks again:
 
 - **editing the service** — you always approve the exact bytes that will run;
+- **editing its `x-trust` declaration** — the declaration decides what an
+  approval spans, so it is part of the code hash;
 - **the same component in another project** — a service reads and writes the
   project it is spawned under, so one approval must not become a machine-wide
   capability that every repo you later clone inherits;
 - **different params** — `file-editor` takes `unfenced: true`, which lifts its
   writes out of the project root. Approving the fenced form must not silently
-  approve the unfenced one.
+  approve the unfenced one. Only a value the declaration covers is exempt.
 
 A denial is recorded the same way, so a refused service stops asking.
+
+### Declared params: `x-trust`
+
+Some params change nothing you would decide differently: a pane's title, or a
+file inside the project that the service could already browse to. A component
+says so in its `params_schema`, which is JSON Schema, by giving the property an
+`x-trust` mark:
+
+```json
+"params_schema": {
+  "type": "object",
+  "properties": {
+    "path":     { "type": "string",  "x-trust": "project-path" },
+    "title":    { "type": "string",  "x-trust": "display" },
+    "unfenced": { "type": "boolean" }
+  }
+}
+```
+
+| `x-trust` | in the approval | the service gets it |
+| --- | --- | --- |
+| `"display"` | never | yes, unchanged |
+| `"project-path"` | not while the value is a path inside the project root; otherwise by its exact value | yes, unchanged |
+| absent, any other value, or a param not in the schema | by its exact value, as before | yes |
+
+**What counts as inside the project.** The value must be a string that reads as a
+plain path, and the containment engine (`lib/core/paths` `fence`) must place it
+inside the project root. A relative value resolves against the root. Each of
+these counts as outside, and asks as an unmarked param does:
+
+- a value that is not a string;
+- a `..` that leaves the root, or an absolute path elsewhere;
+- a symlink that leads out of the root, or one that points nowhere;
+- a path whose nearest existing ancestor resolves outside the root;
+- a value that is not a plain path: one with a control character, one that
+  starts with `-` (a command line would read it as a flag), one that starts
+  with `~` (a shell reads it as your home directory), or one with a URL scheme
+  (`file:///etc/passwd`).
+
+When in doubt, the value counts by its exact value.
+
+**Unknown marks fail closed.** A mark web-chat does not know, a misspelling
+included, counts as absent. `save_component` saves the component and returns a
+`warnings` entry naming the param, and `pack review` / `pack install` warn the
+same way.
+
+**The service still gets every value.** A covered value is only left out of the
+approval. When a pane is re-used with a different covered value, the supervisor
+restarts the child with the new params and asks nothing. The child runs with the
+project root as its working directory, wherever the daemon was started from, so
+resolve a relative path param against `process.cwd()`, and fence anything a pane
+hands you at run time with `ctx.fence(process.cwd(), value)`. A `project-path`
+param must mean a path: a service that reads the value as a URL, a shell word or
+a command-line flag breaks the promise its mark makes.
+
+The builtin `file-editor` marks `path` and `root` as `project-path`. `unfenced`
+has no mark, so `unfenced: true` always asks. One approval therefore covers the
+editor on any file inside the project. Because adding the marks changed its code
+hash, an approval recorded before 0.8.2 asks once more.
 
 > **Scope of this gate.** It governs whether a *host process* runs. It is not a
 > sandbox for pane code: a component's pane JavaScript is fully privileged in the
@@ -250,9 +323,10 @@ The result is a live, clickable history/branch browser with zero per-turn drivin
 
 | Concern | Lives in |
 | --- | --- |
-| the supervisor (reconcile, trust, spawn/stop) | `lib/server/services.js` |
+| the supervisor (reconcile, trust, spawn/stop) and the trust identity (`mintIdentity`) | `lib/server/services.js` |
 | the forked child harness | `lib/server/service-runner.js` |
-| component tier resolution + `serviceInfo` (hash) | `lib/server/components-registry.js` |
+| component tier resolution + `serviceInfo` (the `service.js` digest, the params_schema) | `lib/server/components-registry.js` |
+| the `x-trust` vocabulary and its warnings | `lib/core/trust-marks.js` |
 | authoring (`service`/`seed` params, `has_service`) | `lib/mcp/tools/save_component.js`, `lib/server/routes/components.js` |
 | viewer-count hook | `lib/server/ws.js` (`onViewersChanged`) |
 | trust store (per user, NOT per project) | `~/.web-chat/services/trusted.json` — `userPaths().trustedServices` in `lib/core/paths.js`, handed to the daemon as `TRUSTED_SERVICES_PATH` |
