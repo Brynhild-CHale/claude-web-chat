@@ -22,6 +22,14 @@
 // narrow screen the name is not drawn, and stays in the tooltip, the tab title
 // and the accessibility tree.
 //
+// ONLY EVER AN <img>. Each image is an <img> pointed at its same-origin route,
+// never SVG markup in this document nor an <object>, <embed> or <iframe> of the
+// file: an <img> runs nothing, even for an SVG. That is the guard for the
+// project's images most of all, since an SVG committed with the repository never
+// passed the upload's active-SVG refusal (lib/core/image-file.js re-sniffs it on
+// read, nothing more). test/cobrand-chrome.test.js holds the lockup to <span>
+// and <img> elements.
+//
 // WHICH MODE. Every image here follows web-chat's OWN mode — the ◑ toggle and
 // the theme, which theme.js marks on <html data-theme> — never the browser's
 // colour scheme (that one is the favicon's). A MutationObserver on the

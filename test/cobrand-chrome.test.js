@@ -9,6 +9,9 @@
 //     the stylesheet's (test/responsive-a11y.test.js pins the breakpoint); the
 //     has-* classes, data-slot and data-shape this module sets are pinned here,
 //     for every combination of company image and project logo and mark.
+//   * Every image is an <img>, never inlined SVG markup nor an <object>, <embed>
+//     or <iframe> of the file, so a logo runs nothing in the chrome's origin
+//     (assertImgOnly, in each mode).
 //   * Every image follows web-chat's OWN mode (<html data-theme>, the ◑ toggle):
 //     the company image takes its reversed mark, and the project's images ask
 //     for ?mode=dark, which the daemon answers with the dark variant or, with
@@ -53,6 +56,23 @@ let W, doc, $;
 const cobrand = () => $('cobrand');
 const classes = () => [...cobrand().classList].filter((c) => c !== 'cobrand').sort();
 const srcOf = (id) => ($(id) ? $(id).getAttribute('src') : null);
+// Every image of the lockup is an <img> pointed at a same-origin route, and the
+// lockup holds nothing but <span> and <img> elements. An <img> runs nothing in
+// the chrome's origin, even for an SVG; inlined <svg> markup, or an <object>,
+// <embed> or <iframe> of the same file, would run its scripts here. It is the
+// guard for the project's images above all: an SVG committed with a repository
+// was never through the upload's active-SVG refusal, and is only re-sniffed
+// when it is read (lib/core/image-file.js). A src checked through getAttribute
+// cannot see the difference, so the tests that draw images call this too.
+const IMAGE_IDS = ['cobrand-logo', 'cobrand-mark', 'cobrand-icon', 'cobrand-pmark'];
+function assertImgOnly(at) {
+  for (const id of IMAGE_IDS) {
+    if ($(id)) assert.equal($(id).tagName, 'IMG', `${at}: #${id} is an <img>, never inlined svg markup`);
+  }
+  assert.equal(cobrand().querySelector('svg'), null, `${at}: no <svg> anywhere in the lockup`);
+  const other = [...cobrand().querySelectorAll('*')].map((e) => e.tagName).filter((t) => t !== 'SPAN' && t !== 'IMG');
+  assert.deepEqual(other, [], `${at}: the lockup is made of <span> and <img> elements only`);
+}
 const brandFrame = (slots, fill, theme) => shell.frame({ type: 'brand', slots: { ...NO_SLOTS, ...slots },
   ...(fill === undefined ? {} : { fill: { ...NO_SLOTS, ...fill } }), ...(theme === undefined ? {} : { theme }) });
 const projectFrame = (id) => shell.frame({ type: 'project', identity: id });
@@ -313,10 +333,14 @@ test('every combination of company image and project logo and mark: the has-* cl
         [...(co.logo ? ['cobrand-co', 'cobrand-div'] : []), 'cobrand-proj'], `${at}: the lockup's order`);
       assert.deepEqual([...$('cobrand-proj').children].map((e) => e.id),
         [...(pr.icon ? ['cobrand-icon'] : []), ...(pr.pmark ? ['cobrand-pmark'] : []), 'cobrand-name'], `${at}: the project's order`);
-      for (const img of cobrand().querySelectorAll('img')) {
+      const imgs = [...cobrand().querySelectorAll('img')];
+      assert.equal(imgs.length, (co.logo ? 2 : 0) + (pr.icon ? 1 : 0) + (pr.pmark ? 1 : 0),
+        `${at}: one <img> per image drawn, so the loop below has every one of them to check`);
+      for (const img of imgs) {
         assert.equal(img.getAttribute('alt'), '', `${at}: #${img.id} is an <img> with an empty alt; the name says it`);
         assert.equal(img.hidden, false, `${at}: #${img.id} shows`);
       }
+      assertImgOnly(at);
     }
   }
   await brandFrame({}, {});
@@ -398,13 +422,16 @@ test('in dark mode the project\'s images ask for ?mode=dark, and back in light f
   await projectFrame(identity({ logo: meta('L1', 128, 128), logo_dark: meta('D1', 128, 128), mark: 'logo', mark_dark: true }));
   assert.equal(srcOf('cobrand-icon'), '/project/logo?v=L1');
   assert.equal(srcOf('cobrand-pmark'), '/project/mark?v=L1');
+  assertImgOnly('light');
 
   await setMode('dark');
   assert.equal(srcOf('cobrand-icon'), '/project/logo?mode=dark&v=D1', 'the dark variant, keyed by its own version');
   assert.equal(srcOf('cobrand-pmark'), '/project/mark?mode=dark&v=D1');
+  assertImgOnly('dark: the dark variants are <img> sources too');
   await setMode('light');
   assert.equal(srcOf('cobrand-icon'), '/project/logo?v=L1', 'and back');
   assert.equal(srcOf('cobrand-pmark'), '/project/mark?v=L1');
+  assertImgOnly('back in light');
 
   // No dark variant: dark mode still asks for ?mode=dark (the daemon falls back
   // to the light image), keyed by the light file it will get.
@@ -413,6 +440,7 @@ test('in dark mode the project\'s images ask for ?mode=dark, and back in light f
   await setMode('dark');
   assert.equal(srcOf('cobrand-icon'), '/project/logo?mode=dark&v=L2');
   assert.equal(srcOf('cobrand-pmark'), '/project/mark?mode=dark&v=FD', 'a favicon mark takes the favicon\'s dark variant');
+  assertImgOnly('dark, a wordmark and a favicon');
   await setMode('light');
   await projectFrame(identity());
 });
@@ -443,8 +471,11 @@ test('the company image follows the mode too: a pack\'s fill swaps to its revers
   const fill = { logotype: { light: meta('FL'), dark: meta('FD') } };
   await brandFrame({}, fill);
   assert.equal(srcOf('cobrand-logo'), '/brand/logotype?mode=light&v=FL');
+  assertImgOnly('the fill, light');
   await setMode('dark');
   assert.equal(srcOf('cobrand-logo'), '/brand/logotype?mode=dark&v=FD', 'the reversed mark');
+  assert.equal(srcOf('cobrand-mark'), '/brand/logotype?mode=dark&v=FD', 'the narrow choice, the logotype too');
+  assertImgOnly('the fill, dark: the reversed mark is an <img> source too');
   await setMode('light');
   assert.equal(srcOf('cobrand-logo'), '/brand/logotype?mode=light&v=FL');
 
@@ -455,6 +486,7 @@ test('the company image follows the mode too: a pack\'s fill swaps to its revers
   await setMode('dark');
   assert.equal(srcOf('cobrand-logo'), '/brand/logotype?mode=dark&v=FD');
   assert.ok(cobrand().classList.contains('has-logo'));
+  assertImgOnly('only a reversed mark, dark');
   await setMode('light');
   assert.equal($('cobrand-co'), null, 'gone again in light');
 
@@ -477,6 +509,7 @@ test('a brand frame updates the lockup with no /api/brand fetch, and the theme f
   await brandFrame({ logotype: meta('B1') }, {}, { key: 'paper', name: 'paper', title: 'Paper' });
   assert.equal(srcOf('cobrand-logo'), '/brand/logotype?v=B1');
   assert.ok(cobrand().classList.contains('has-logo'));
+  assertImgOnly('a brand frame');
 
   // A global theme change: the daemon's brand frame for the new theme, then its theme frame.
   await brandFrame({}, {}, { key: 'earthy', name: 'earthy', title: 'Earthy' });
@@ -495,6 +528,7 @@ test('an upload from Settings → Brand lands in the lockup from its reply', asy
   ev.dataTransfer = { files: [file] };
   drop.dispatchEvent(ev);
   await waitUntil(() => srcOf('cobrand-logo') === '/brand/logotype?v=UP', { what: 'the reply in the lockup' });
+  assertImgOnly('an upload\'s reply');
   const put = shell.calls.find((c) => c.method === 'PUT');
   assert.equal(put && put.url, '/api/brand/logotype');
   assert.equal(brandReads(), 0, 'the reply carried the slots: no re-read');
