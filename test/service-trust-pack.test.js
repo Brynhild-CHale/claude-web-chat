@@ -538,6 +538,35 @@ test('a byte-identical copy in the project is still not the copy the pack instal
   assert.match(listing.skipped[0].reason, /shadows/);
 });
 
+// The one case only the tier check stops: the same pack, from the same
+// source, installed for this project AND for all projects. Both installs are
+// this machine's (the project one in the ledger), both copies are the pack's
+// bytes, and the sources agree, so neither the provenance, the digests nor the
+// source check tells them apart. Which copy runs here is still a choice between
+// two installs, and one confirmation must not make it.
+test('the same pack installed here and for all projects, from one source, offers neither copy', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const components = [{ name: 'deploy-board', service: SERVICE, params_schema: BOARD_SCHEMA }];
+  installAcme(ctx.root, { tier: 'local', components });
+  installAcme(ctx.root, { tier: 'system', components });
+  const listing = await packOf(ctx);
+  assert.deepEqual(listing.pack.installs.map((i) => [i.tier, i.recorded, i.source && i.source.url]),
+    [['local', true, SOURCE.url], ['system', true, SOURCE.url]], 'two installs this machine recorded, from one source');
+  assert.deepEqual(listing.requests, [], 'no request is made for either copy');
+  assert.deepEqual(listing.skipped, [{
+    name: 'deploy-board',
+    reason: 'a copy in this project shadows the one installed for all projects; one confirmation must not choose between them',
+  }]);
+
+  const prompt = answering(true);
+  const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt }));
+  assert.equal(r.exit, null);
+  assert.match(r.out, /Not included:\n {2}deploy-board — a copy in this project shadows the one installed for all projects; one confirmation must not choose between them\. Decide it per pane: claude-web-chat trust deploy-board/);
+  assert.match(r.out, /Nothing was changed\./);
+  assert.deepEqual(prompt.asked, [], 'and nothing is asked');
+  assert.equal(readTrust(ctx), null, 'or recorded');
+});
+
 // A pack component may ship no meta.json (the manifest only warns). One written
 // afterwards — by save_component over it, a pane's file-editor, a checkout — is
 // a declaration the pack never shipped.
