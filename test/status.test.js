@@ -260,3 +260,32 @@ test('status: a session BEHIND an outdated daemon still gets its own ⚠ — a d
   assert.match(w[1], /⚠ 1 of 2 Claude sessions is on v0\.0\.1 — restart it to pick up v0\.0\.5/);
   assert.doesNotMatch(w[1], /Claude on v/, 'the surface-restart half is the Server line\'s, not said twice');
 });
+
+// H-11, status's half: the same one line `version` prints, right under the
+// version, for whoever builds web-chat — standing in a checkout of this
+// package whose HEAD is not the commit the installed dev build was cut from.
+test('status: in a checkout ahead of the installed dev build, the line names both commits', async (t) => {
+  const { installPaths } = require('../lib/core/paths');
+  const { activate } = require('../lib/update/install-layout');
+  const dev = '0.9.0-dev.202610021200.abc1234';
+  const out = await runStatus(t, (root) => {
+    const paths = installPaths();
+    fs.mkdirSync(paths.versionDir(dev), { recursive: true });
+    fs.writeFileSync(path.join(paths.versionDir(dev), 'package.json'), JSON.stringify({ version: dev }));
+    activate(dev, paths);
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'claude-web-chat' }));
+    fs.mkdirSync(path.join(root, '.git', 'refs', 'heads'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(root, '.git', 'refs', 'heads', 'main'), `${'d'.repeat(40)}\n`);
+  });
+  const lines = out.split('\n');
+  assert.match(lines[0], /^claude-web-chat v/);
+  assert.equal(lines[1], '  ⚠ The installed dev build is from abc1234; this checkout is at ddddddd. Rebuild it: '
+    + 'node scripts/build-release.js --dev, then run the `claude-web-chat update --from` line it prints.');
+  assert.equal(out.split('\n').filter((l) => l.includes('dev build is from')).length, 1);
+});
+
+test('status: no such line outside a checkout', async (t) => {
+  const out = await runStatus(t);
+  assert.doesNotMatch(out, /dev build is from/);
+});

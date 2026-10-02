@@ -120,6 +120,16 @@ to tell a zlib difference from a tree difference. `dist/SHA256SUMS` keeps a line
 tarball still in `dist/` — each build replaces its own line and drops the lines
 of tarballs you deleted — so an older build there still verifies.
 
+A dev build goes stale as soon as the checkout moves on, and nothing about it
+looks different from the outside. So inside a checkout of this package (or any
+directory below it), `claude-web-chat version` and `claude-web-chat status`
+print one ⚠ line when the installed build is a dev build cut from a commit other
+than the checkout's HEAD: both commits, and the rebuild (`node
+scripts/build-release.js --dev`, then the `update --from` line it prints). They
+say nothing anywhere else, for a release install, or once you have rebuilt from
+HEAD. The check only reads files — the two package.json files and the
+checkout's `.git` — and runs no `git`.
+
 `update --from` runs a GitHub update's steps from the file: it verifies the
 tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is
 refused; no `SHA256SUMS` at all is refused unless you pass `--yes`), unpacks it
