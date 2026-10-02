@@ -921,6 +921,23 @@ test('permissions: a PermissionRequest with its tool_use_id marks the call await
   assert.equal(h.model.item('tu9').awaiting.kind, 'question');
 });
 
+test('permissions: a decision is allow, deny or ask, else null, on the transition and on the call alike', () => {
+  const h = harness();
+  h.hook('UserPromptSubmit', promptEnv('pA', 'deploy'));
+  h.hook('PreToolUse', toolEnv('pA', 'tu1', 'Bash'));
+  h.hook('PreToolUse', toolEnv('pA', 'tu2', 'Bash'));
+  h.hook('PreToolUse', toolEnv('pA', 'tu3', 'Bash'));
+  h.tx(opener('pA', 'u1', null, 'deploy'),
+    { type: 'permission-decision', uuid: 'u2', parent_uuid: 'u1', tool_use_id: 'tu1', decision: 'deny' },
+    { type: 'permission-decision', uuid: 'u3', parent_uuid: 'u2', tool_use_id: 'tu2', decision: 'allow; rm -rf / SECRETx' },
+    { type: 'permission-decision', uuid: 'u4', parent_uuid: 'u3', tool_use_id: 'tu3', decision: { behavior: 'allow' } });
+  const decisions = h.transitions.filter((t) => t.op === 'permission-decision').map((t) => [t.tool_use_id, t.decision]);
+  assert.deepEqual(decisions, [['tu1', 'deny'], ['tu2', null], ['tu3', null]]);
+  assert.equal(h.model.item('tu1').awaiting.decision, 'deny');
+  assert.equal(h.model.item('tu2').awaiting.decision, null);
+  assert.equal(h.model.item('tu3').awaiting.decision, null);
+});
+
 test('every string the machine stores passes the model\'s redactor', () => {
   const h = harness();
   h.hook('UserPromptSubmit', promptEnv('pA', 'token SECRETabc'));
