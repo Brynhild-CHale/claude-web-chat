@@ -2,7 +2,8 @@
 // lib/tunnel/config reads it (normalizeConfig, failing closed on anything it
 // does not understand), answers it per project (mirrorLevelFor: exact match,
 // never spread to a sub-project), and edits it for the CLI (withMirrorLevel:
-// pure, every unrelated key kept).
+// pure, every unrelated key kept); and the tunnel portal applies an edit of it
+// live, through the same watcher as the rest of the file.
 //
 // The fingerprints pinned below were taken from the 0.8.0 normaliser before
 // the mirror existed: a file without `remote.mirror` must normalise, and so
@@ -11,9 +12,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { withServer, withPortal, waitUntil } = require('../test-support/helpers');
+const { createFakeAccess } = require('../test-support/fake-access');
+const { registerInstance, instanceId } = require('../lib/util/registry');
+const { writeJsonAtomic } = require('../lib/core/fsjson');
 const {
-  normalizeConfig, configFingerprint, mirrorLevelFor, withMirrorLevel, MIRROR_VALUES,
+  normalizeConfig, configFingerprint, mirrorLevelFor, withMirrorLevel, sessionHost, MIRROR_VALUES,
 } = require('../lib/tunnel/config');
+const { MIRROR_HINT, MIRROR_FULL_HINT } = require('../lib/core/remote-policy');
 
 const BASE = Object.freeze({
   hostname: 'wc.example.test',
@@ -193,4 +202,90 @@ test('withMirrorLevel refuses what it cannot edit honestly, and never overwrites
   for (const [fn, why] of cases) {
     assert.throws(fn, (e) => e.userFacing === true && why.test(e.message), String(why));
   }
+});
+
+// ── the portal applies an edit live ─────────────────────────────────────────
+
+function tmpDir(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-mirror-cfg-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+test('the portal follows a remote.mirror edit within a poll (no directory watcher, a 100 ms poll)', async (t) => {
+  // Watch what the portal's watchers open: with configDirWatch:false there
+  // must be no watch on tunnel.json's directory (closing one can block the
+  // event loop for seconds under load).
+  const watched = [];
+  const realWatch = fs.watch;
+  fs.watch = function spy(target, ...rest) {
+    watched.push(path.resolve(String(target)));
+    return realWatch.call(this, target, ...rest);
+  };
+  t.after(() => { fs.watch = realWatch; });
+
+  const srv = await withServer(t);
+  registerInstance({ root: srv.root, port: srv.port, pid: process.pid });
+  const id = instanceId(srv.root);
+  const access = createFakeAccess();
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'tunnel.json');
+  const raw = access.config();
+  writeJsonAtomic(file, raw);
+  const lines = [];
+  const p = await withPortal(t, {
+    config: raw, fetchJwks: access.fetchJwks, configFile: file,
+    configDirWatch: false, configPollMs: 100, configDebounceMs: 10, log: (l) => lines.push(l),
+  });
+  const host = sessionHost(p.config, id);
+  const origin = `https://${host}`;
+  const req = (pathStr, { method = 'GET', body } = {}) => p.request(pathStr, {
+    host, method, body,
+    headers: {
+      'cf-access-jwt-assertion': access.mint(),
+      ...(method !== 'GET' ? { 'content-type': 'application/json', origin } : {}),
+    },
+  });
+  // The portal's own refusal for the mirror level — not the daemon's answer.
+  const refusedFor = (res) => (res.status === 403 && res.json && res.json.remote === true && res.json.mirror) || null;
+  const health = async () => (await p.request('/api/health', { host: `127.0.0.1:${p.port}` })).json;
+
+  // Off (no key): the heartbeat routes pass the portal; the conversation is refused with the host command.
+  assert.equal(refusedFor(await req('/api/mirror/status')), null, 'a basic row reaches the daemon');
+  const before = await req('/api/mirror/turns/t1');
+  assert.equal(refusedFor(before), 'basic');
+  assert.equal(before.json.hint, MIRROR_HINT);
+  assert.equal((await req('/api/graph')).status, 200, 'the surface is unaffected');
+
+  // `tunnel mirror on --read-only`, by the project's root: applied within a poll.
+  writeJsonAtomic(file, withMirrorLevel(raw, { root: srv.root }, 'read'));
+  assert.ok(await waitUntil(async () => refusedFor(await req('/api/mirror/turns/t1')) === null, { timeout: 5000 }),
+    'the read grant is in force');
+  const send = await req('/api/queue/message', { method: 'POST', body: { text: 'hi' } });
+  assert.equal(refusedFor(send), 'read', 'read-only: the composer is still refused');
+  assert.equal(send.json.hint, MIRROR_FULL_HINT);
+
+  // A grant by the instance id this time (a hand edit; the CLI writes roots): full.
+  writeJsonAtomic(file, { ...raw, remote: { mirror: { [id]: 'full' } } });
+  assert.ok(await waitUntil(async () => refusedFor(await req('/api/queue/message', { method: 'POST', body: { text: 'hi' } })) === null,
+    { timeout: 5000 }), 'the full grant is in force');
+
+  // What the portal enforces is exactly the file (so `tunnel up` restarts nothing).
+  assert.equal((await health()).config_fp, configFingerprint(normalizeConfig(JSON.parse(fs.readFileSync(file, 'utf8')))));
+
+  // A value it cannot read fails the whole file closed, like any other field.
+  writeJsonAtomic(file, { ...raw, remote: { mirror: { [id]: 'everything' } } });
+  assert.ok(await waitUntil(async () => (await health()).config.state === 'invalid', { timeout: 5000 }));
+  assert.match((await health()).config.error, /remote\.mirror/);
+  assert.equal((await req('/api/graph')).status, 503, 'every session request refused while the file is invalid');
+
+  // `tunnel mirror off`: back to the heartbeat.
+  writeJsonAtomic(file, raw);
+  assert.ok(await waitUntil(async () => refusedFor(await req('/api/mirror/turns/t1')) === 'basic', { timeout: 5000 }),
+    'the grant is gone');
+  assert.equal((await health()).config.state, 'ok');
+
+  assert.ok(lines.some((l) => /tunnel\.json reloaded/.test(l)), lines.join('\n'));
+  assert.ok(!watched.includes(dir), `the portal watched tunnel.json's directory: ${watched.join(', ')}`);
+  assert.ok(watched.includes(file), `the portal watched tunnel.json itself: ${watched.join(', ')}`);
 });
