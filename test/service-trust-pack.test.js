@@ -242,8 +242,35 @@ test('--pack with no terminal lists, answers No, and writes nothing', async (t) 
   assert.match(r.stdout, /covers: +target: any path inside this project · title: display only/);
   assert.match(r.stdout, /Approve all 2\? \[y\/N\]/);
   assert.match(r.stdout, /assuming no/, 'a pipe never grants host execution');
+  assert.match(r.stdout, /\(no terminal — assuming no; run it in a terminal to answer\)/,
+    'and it says how to answer: not with a --yes this command refuses');
+  assert.doesNotMatch(r.stdout, /pass --yes/);
   assert.match(r.stdout, /Nothing was changed\./);
   assert.equal(readTrust(ctx), null, 'nothing written');
+});
+
+// There is deliberately no --yes: nothing non-interactive grants host
+// execution. An unknown flag is ignored by the parser, so this is what keeps a
+// "--yes for symmetry with pack install" from ever becoming one.
+test('--yes is not a way past the question, for --pack or --all', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installAcme(ctx.root);
+  await openViewer(t, ctx);
+  await ctx.api.post('/api/components/deploy-board/use', { id: 'b', params: { env: 'prod' } });
+  assert.ok(await waitUntil(async () => (await pendingOf(ctx)).length === 1), 'one request is waiting for --all');
+  for (const args of [
+    ['trust', '--pack', 'acme-ops', '--yes'],
+    ['trust', '--pack', 'acme-ops', '-y'],
+    ['trust', '--all', '--yes'],
+    ['trust', '--all', '-y'],
+  ]) {
+    const r = await runCli(args, { cwd: ctx.root, home: ctx.home });
+    assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`);
+    assert.match(r.stdout, /\[y\/N\]/, `${args.join(' ')} still asks`);
+    assert.match(r.stdout, /assuming no; run it in a terminal to answer/, `${args.join(' ')}`);
+    assert.match(r.stdout, /Nothing was changed\./, `${args.join(' ')}`);
+    assert.equal(readTrust(ctx), null, `${args.join(' ')} wrote nothing`);
+  }
 });
 
 test('--pack --deny refuses every service the pack installed, and the panes stop asking', async (t) => {
