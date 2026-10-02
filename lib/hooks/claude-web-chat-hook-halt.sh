@@ -44,11 +44,14 @@ case ${1:-} in
   *) finish ;;
 esac
 
-# A session id is a UUID; anything that could leave the halt directory is not one.
+# A session id is a UUID; anything that could leave the halt directory is not
+# one. The same grammar as the path engine's isSafeId (1–100 of [A-Za-z0-9_-]),
+# so an id the daemon could never write a flag for is never looked up.
 sid=${CLAUDE_CODE_SESSION_ID:-}
 case $sid in
   ''|*[!A-Za-z0-9_-]*) finish ;;
 esac
+[ ${#sid} -le 100 ] || finish
 [ -n "${HOME:-}" ] || finish
 flag=$HOME/.web-chat/halt/$sid
 [ -f "$flag" ] || finish

@@ -172,6 +172,17 @@ test('a session id that could leave the halt directory is never followed', (t) =
   assert.equal(fs.existsSync(path.join(home, 'pwned')), false);
 });
 
+test('a session id longer than the path engine allows has no flag, even if a file has its name', (t) => {
+  const home = withTempHome(t);
+  const long = 'a'.repeat(101);            // isSafeId: 1–100 of [A-Za-z0-9_-]
+  writeFlag(`${nowS() + 600}\n`, long);
+  writeFlag(`${nowS() + 600}\n`, long.slice(1));
+  for (const shell of SHELLS) {
+    assertSilent(fire(home, 'pre', { sid: long, shell }), `${shell} 101 characters`);
+    assert.equal(fire(home, 'pre', { sid: long.slice(1), shell }).stdout, `${PRE}\n`, `${shell}: 100 is still an id`);
+  }
+});
+
 test('a 1 MB payload on stdin causes no error, with or without a flag', (t) => {
   const home = withTempHome(t);
   const big = JSON.stringify({ hook_event_name: 'PostToolUse', tool_response: { stdout: 'x'.repeat(1 << 20) } });
