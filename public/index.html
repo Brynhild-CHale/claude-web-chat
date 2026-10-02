@@ -27,10 +27,10 @@
     <div class="depth depth-fog"></div>
 
     <!-- topbar — the order is the design's (Layout Engine header / Theme §4a):
-         live dot + wordmark (brand.js puts the logotype in front) · node label ·
-         page title · ⌘K · ＋ ⚑ ✎ · ↑/↓ · ↩ active · status pill · ◑ · Graph · ⋯ -->
+         co-brand lockup (cobrand.js) · node label · page title · ⌘K · ＋ ⚑ ✎ ·
+         ↑/↓ · ↩ active · status pill · ◑ · Graph · ⋯ -->
     <header id="topbar">
-      <div class="brand"><span class="status-dot off" id="status-dot" role="img" aria-label="connecting" title="connecting"></span>web-chat</div>
+      <div class="cobrand" id="cobrand"><span class="cobrand-proj" id="cobrand-proj"><span class="cobrand-name" id="cobrand-name"></span></span></div>
       <span class="tb-div" aria-hidden="true"></span>
       <span class="node-label" id="node-label">—</span>
       <!-- the page's own title: its first # heading (public/app/page.js). Empty

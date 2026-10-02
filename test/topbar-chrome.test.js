@@ -9,7 +9,10 @@
 //     and set-active live on the graph screen);
 //   - ONE status pill carries every state the old two pills did — connecting…,
 //     reconnecting…, active, locked, channel turn, viewing — in a fixed
-//     precedence, and the brand dot still says whether the socket is live;
+//     precedence. The brand dot that also told live from not is gone (0.8.5:
+//     the co-brand lockup took the top-left corner, and the connection moved
+//     into the chat chrome), so the pill is the topbar's one word on a dropped
+//     socket; the dot's id stays reserved for a tab loaded before then;
 //   - Settings says the ◑ mode in words, and greys the missing mode of a
 //     single-mode pack;
 //   - the wipe label opens prefilled with "before cleanup", and that label rides
@@ -22,6 +25,7 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
 const { normalizeTheme } = require('../lib/server/theme');
+const { isReservedId } = require('../lib/server/domain/mounts');
 
 const REPO = path.resolve(__dirname, '..');
 const EARTHY = normalizeTheme({ name: 'earthy', builtin: true });
@@ -110,28 +114,36 @@ const hasCls = (el, c) => el.classList.contains(c);
 // the jsdom WebSocket stub, not on Node's own after restore()).
 test.after(async () => { await new Promise((r) => setTimeout(r, 1100)); restore(); });
 
-test('before the socket opens, the one pill says so and the dot is grey', async () => {
+test('before the socket opens, the one pill says so', async () => {
   await boot();
   await tick();
   assert.equal(pill().textContent, 'connecting…');
   assert.ok(hasCls(pill(), 'off'), 'the pill is in its not-live colour');
-  assert.ok(hasCls($('status-dot'), 'off'), 'and the brand dot is grey');
   assert.equal($('status'), null, 'there is no second, connection-only pill any more');
 });
 
-test('live: the dot turns green and the pill names the active node', async () => {
+test('the brand dot and the wordmark are gone, and their ids stay reserved', () => {
+  assert.equal($('status-dot'), null, 'no connection dot: the co-brand lockup took the top-left corner');
+  assert.equal($('topbar').querySelector('.brand'), null, 'and no "web-chat" wordmark beside it');
+  assert.equal($('brand-logotype'), null, 'nor the logotype brand.js used to put in front of it');
+  assert.ok($('cobrand'), 'the lockup is in their place');
+  // A tab loaded before 0.8.5 still has both while it talks to a newer daemon,
+  // so no pane may claim either id.
+  for (const id of ['status-dot', 'brand-logotype']) assert.ok(isReservedId(id), `${id} stays reserved`);
+});
+
+test('live: the pill names the active node', async () => {
   WS.readyState = 1;
   WS.onopen();
   await frame({ type: 'hello', store: {}, theme: EARTHY, activeTheme: null, active: 'n1', lock: null, project: 'test', mounts: [] });
-  assert.ok(!hasCls($('status-dot'), 'off'), 'the brand dot is the live signal');
-  assert.equal($('status-dot').getAttribute('aria-label'), 'live', 'and says so to a screen reader');
   assert.equal(pill().textContent, 'active n1.0');
   assert.equal(pill().className, 'active-pill', 'the plain green active state');
+  assert.equal($('status-dot'), null, 'and no dot comes back with the connection');
 });
 
 test('the topbar is laid out in the design\'s order', () => {
   const order = [...$('topbar').children].map((el) => el.id || el.className);
-  const want = ['brand', 'node-label', 'page-title', 'cmd-trigger', 'dock', 'btn-return-active',
+  const want = ['cobrand', 'node-label', 'page-title', 'cmd-trigger', 'dock', 'btn-return-active',
     'active-pill', 'btn-theme-toggle', 'btn-graph', 'btn-more'];
   const seen = order.filter((k) => want.includes(k));
   assert.deepEqual(seen, want, `topbar children in order: ${order.join(' · ')}`);
@@ -186,8 +198,8 @@ test('a dropped socket outranks every node state, and the pill recovers on recon
   await tick();
   assert.equal(pill().textContent, 'reconnecting…', 'a stale "locked n1.0" under a dead socket is worse than none');
   assert.ok(hasCls(pill(), 'off'));
-  assert.ok(hasCls($('status-dot'), 'off'));
-  assert.equal($('status-dot').getAttribute('aria-label'), 'reconnecting…');
+  assert.equal(pill().getAttribute('role'), 'status', 'and it is a live region: the drop is announced, not only drawn');
+  assert.equal($('status-dot'), null, 'the pill is the topbar\'s one word on it: no dot');
 
   WS.onopen();
   await tick();

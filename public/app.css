@@ -350,13 +350,9 @@ html.wc-theming, html.wc-theming * {
   border-bottom: var(--wc-topbar-rule-width) solid var(--wc-topbar-border);
   box-shadow: var(--wc-elev-bar);
 }
-.brand { display: flex; align-items: center; gap: 8px; font: 600 13px var(--wc-display); color: var(--wc-fg-bright); }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wc-green); box-shadow: 0 0 8px var(--wc-green); }
-.status-dot.off { background: var(--wc-muted-dim); box-shadow: none; }
+/* the top-left corner is the co-brand lockup: its rules are in the chat mirror
+   region below (U20 · the co-brand lockup) */
 .tb-div { width: 1px; height: 20px; background: var(--wc-border); opacity: .7; }
-/* the project's logotype (Settings → Brand), left of the wordmark; only present when set */
-.brand-logo { flex: 0 0 auto; height: 22px; width: auto; max-width: 150px; object-fit: contain; object-position: left center; }
-.brand-logo[hidden], .brand-logo[hidden] + .brand-logo-div { display: none; }
 .node-label { font: 500 12px var(--wc-mono); color: var(--wc-text-2); }
 /* the page's own title — an empty slot until the page model fills it, and an
    empty slot takes no room at all */
@@ -1442,7 +1438,7 @@ body.pin-mode #main { cursor: crosshair; }
 
 /* --- topbar: shed chrome before anything overflows --- */
 #topbar { flex-wrap: nowrap; }
-.brand, .node-label, .active-pill, .btn-graph { flex: 0 0 auto; white-space: nowrap; }
+.node-label, .active-pill, .btn-graph { flex: 0 0 auto; white-space: nowrap; }
 .cmd-trigger { min-width: 0; }
 
 @media (max-width: 1100px) {
@@ -1454,11 +1450,6 @@ body.pin-mode #main { cursor: crosshair; }
 @media (max-width: 900px) {
   #topbar { gap: 6px; padding: 0 8px; }
   .cmd-trigger, .tb-div, .btn-graph kbd { display: none; }
-  .brand-logo { max-width: 96px; }
-}
-@media (max-width: 759px) {
-  .brand { font-size: 0; gap: 0; }   /* keep the connection dot, drop the wordmark */
-  .brand .status-dot { font-size: 13px; }
 }
 
 /* --- surface: a 12-column grid inside ~500px is a row of slivers --- */
@@ -1717,6 +1708,45 @@ body.pin-mode #main { cursor: crosshair; }
 /* ── U17 · the status bar · chat-bar.js ── */
 
 /* ── U20 · the co-brand lockup · cobrand.js ── */
+/* The topbar's top-left (design spec §9.4): the global theme's company image │
+   the project's logo and name. cobrand.js adds an image only while it has one
+   and sets has-logo / has-mark (the company's wide and narrow image), has-plogo
+   / has-pmark (the project's), no-name and data-shape; what each width shows is
+   decided here. Wide: the logotype (else the seal at 22×22) │ the project logo,
+   a 20px tile when square and a wordmark up to 120px when not, then the name
+   (no-name hides it from the eye only, beside a wordmark that spells it).
+   Narrow, at the one breakpoint: the seal (else the logotype) │ the project's
+   24px mark, and no name; it stays in the tooltip, the tab title and the
+   accessibility tree. Nothing is ever cropped but a square tile. */
+.cobrand { display: flex; align-items: center; gap: 10px; flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.cobrand-co, .cobrand-div, .cobrand-mark, .cobrand-pmark { display: none; }
+.cobrand.has-logo .cobrand-co { display: flex; align-items: center; }
+.cobrand.has-logo .cobrand-div { display: block; }
+.cobrand-logo { height: 22px; width: auto; max-width: 150px; object-fit: contain; object-position: left center; }
+.cobrand-logo[data-slot="seal"] { width: 22px; }
+.cobrand-div { flex: none; width: 1px; height: 20px; background: color-mix(in srgb, var(--wc-border) 55%, var(--wc-muted-dim)); }
+.cobrand-proj { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cobrand-icon { flex: none; height: 20px; }
+.cobrand-icon[data-shape="tile"] { width: 20px; border-radius: 4px; object-fit: cover;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--wc-fg-bright) 12%, transparent); }
+.cobrand-icon[data-shape="wide"] { width: auto; max-width: 120px; object-fit: contain; object-position: left center; }
+.cobrand-name { flex: 0 1 auto; min-width: 3ch; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+  font: 600 13px var(--wc-display); color: var(--wc-fg-bright); }
+.cobrand.no-name .cobrand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* an image that failed to load is hidden whatever its width's rule says */
+.cobrand img[hidden] { display: none; }
+@media (max-width: 1100px) { .cobrand-name { max-width: 160px; } }
+@media (max-width: 900px)  { .cobrand-logo { max-width: 96px; } .cobrand-name { max-width: 120px; } }
+@media (max-width: 759px) {
+  .cobrand.has-logo .cobrand-co, .cobrand.has-logo .cobrand-div, .cobrand-logo, .cobrand-icon { display: none; }
+  .cobrand.has-mark .cobrand-co { display: flex; align-items: center; }
+  .cobrand.has-mark.has-pmark .cobrand-div { display: block; height: 22px; }   /* only between two marks */
+  .cobrand-mark { display: block; width: 22px; height: 22px; object-fit: contain; }
+  .cobrand-mark[data-slot="logotype"] { width: auto; max-width: 96px; height: 20px; object-position: left center; }
+  .cobrand.has-pmark .cobrand-pmark { display: block; width: 24px; height: 24px; border-radius: 4px; object-fit: cover; }
+  .cobrand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }  /* hidden, still read */
+  .cobrand:not(.has-mark):not(.has-pmark) { display: none; }
+}
 
 /* ── U32 · narrow posture · viewport.js ── */
 

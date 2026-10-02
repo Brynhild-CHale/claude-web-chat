@@ -1,9 +1,10 @@
 // Brand image slots: the engine (lib/server/brand.js), its routes
 // (lib/server/routes/brand.js), the export that inlines the lockup and seal,
-// and the chrome's topbar logotype + Settings → Brand drop targets. The images
-// are kept per theme; what that means across a theme switch, the migration that
-// moved the old per-project files, and the theme key's path safety are in
-// test/brand-per-theme.test.js.
+// and the chrome's Settings → Brand drop targets. The topbar's half — the
+// company image in the co-brand lockup — is test/cobrand-chrome.test.js's. The
+// images are kept per theme; what that means across a theme switch, the
+// migration that moved the old per-project files, and the theme key's path
+// safety are in test/brand-per-theme.test.js.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -344,9 +345,7 @@ async function bootOnce() {
 test('chrome: Settings → Brand has three drop targets that PUT the raw file', async () => {
   const { window, calls } = await bootChrome();
   const doc = window.document;
-  // the boot GET: only the lockup is set, so the topbar has no logotype
-  assert.equal(doc.getElementById('brand-logotype'), null, 'absent → no element');
-  assert.equal(doc.querySelector('.brand-logo-div'), null);
+  // the boot GET: only the lockup is set
   const rows = [...doc.querySelectorAll('#settings-panel .brand-slot')];
   assert.deepEqual(rows.map((r) => r.dataset.slot), ['logotype', 'lockup', 'seal']);
   const lockupImg = rows[1].querySelector('.brand-drop img');
@@ -364,7 +363,11 @@ test('chrome: Settings → Brand has three drop targets that PUT the raw file', 
   assert.equal(putCall.url, '/api/brand/logotype');
   assert.equal(putCall.headers['Content-Type'], 'image/png');
   assert.equal(putCall.body, file, 'the raw file is the body');
-  assert.equal(doc.getElementById('brand-logotype').getAttribute('src'), '/brand/logotype?v=v2', 'the reply lands in the topbar');
+  assert.equal(rows[0].querySelector('.brand-drop img').getAttribute('src'), '/brand/logotype?v=v2',
+    'the reply lands in Settings');
+  // …and only there: the topbar's company image is the co-brand lockup's
+  // (cobrand.js, which reads brand.js's slotSrc), never an element of brand.js's.
+  assert.equal(doc.getElementById('brand-logotype'), null, 'brand.js draws nothing in the topbar any more');
 
   // a non-image is refused before it is sent
   const txt = new window.File(['hi'], 'notes.txt', { type: 'text/plain' });
@@ -376,44 +379,21 @@ test('chrome: Settings → Brand has three drop targets that PUT the raw file', 
   assert.match(doc.getElementById('brand-msg').textContent, /not an SVG or PNG/);
 });
 
-test('chrome: the topbar shows the logotype left of the wordmark only when set, and follows `brand` frames', async () => {
-  const { window, ws } = await bootChrome();
-  const doc = window.document;
-  // start from unset (the previous test uploaded one)
-  ws().onmessage({ data: JSON.stringify({ type: 'brand', slots: { logotype: null } }) });
-  assert.equal(doc.getElementById('brand-logotype'), null, 'absent → no element');
-  assert.equal(doc.querySelector('.brand-logo-div'), null);
-
-  ws().onmessage({ data: JSON.stringify({ type: 'brand', slots: { logotype: { type: 'image/png', bytes: 9, version: 'v1' } } }) });
-  const logo = doc.getElementById('brand-logotype');
-  assert.ok(logo, 'set → shown');
-  assert.equal(logo.tagName, 'IMG', 'an <img>, never inlined svg markup');
-  assert.equal(logo.getAttribute('src'), '/brand/logotype?v=v1');
-  const bar = doc.getElementById('topbar');
-  const kids = [...bar.children];
-  assert.ok(kids.indexOf(logo) < kids.indexOf(bar.querySelector('.brand')), 'left of the wordmark');
-
-  ws().onmessage({ data: JSON.stringify({ type: 'brand', slots: { logotype: null } }) });
-  assert.equal(doc.getElementById('brand-logotype'), null, 'cleared → removed');
-  assert.equal(doc.querySelector('.brand-logo-div'), null);
-});
-
 test('chrome: Settings → Brand names the theme its images belong to, and follows it as `brand` frames move it', async () => {
   const { window, ws } = await bootChrome();
   const doc = window.document;
   const frame = (msg) => ws().onmessage({ data: JSON.stringify({ type: 'brand', ...msg }) });
   const line = () => doc.getElementById('brand-theme').textContent;
-  const logo = () => doc.getElementById('brand-logotype');
+  const preview = (slot) => doc.querySelector(`#settings-panel .brand-slot[data-slot="${slot}"] .brand-drop img`);
 
   frame({ theme: { key: 'paper', name: 'paper', title: 'Paper' }, slots: { logotype: { type: 'image/png', bytes: 9, version: '1-9-paper' } } });
   assert.equal(line(), 'Images for the Paper theme');
   assert.equal(doc.querySelector('#brand-theme strong').textContent, 'Paper', 'a pack by its display name');
-  assert.equal(logo().getAttribute('src'), '/brand/logotype?v=1-9-paper');
+  assert.equal(preview('logotype').getAttribute('src'), '/brand/logotype?v=1-9-paper');
 
   // The global theme moves: its images replace the slots, and the line follows.
   frame({ theme: { key: 'harbor', name: 'harbor', title: null }, slots: { logotype: null, lockup: null, seal: null } });
   assert.equal(line(), 'Images for the harbor theme');
-  assert.equal(logo(), null, 'harbor has no logotype: the topbar shows none');
   for (const row of doc.querySelectorAll('#settings-panel .brand-slot')) {
     assert.equal(row.querySelector('.brand-drop img'), null, `${row.dataset.slot}: Paper's image is not harbor's`);
   }

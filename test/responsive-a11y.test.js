@@ -159,23 +159,29 @@ test('the narrow chrome starts below 760px, all of it at once', () => {
   // Narrow is <760 — the bottom bar's breakpoint and viewport.js PHONE_MAX_WIDTH.
   // Two rules once said 760, so a window exactly 760px wide lost its wordmark
   // and floated the graph inspector as a bottom sheet 54px above a bottom bar
-  // that was not drawn.
-  const at760 = {
-    bottombar: winningValue('.bottombar', 'display', 760),
-    brand: winningValue('.brand', 'font-size', 760),
-    inspTop: winningValue('.gv-inspector', 'top', 760),
-    inspBottom: winningValue('.gv-inspector', 'bottom', 760),
-  };
-  assert.deepEqual(at760, { bottombar: 'none', brand: null, inspTop: '96px', inspBottom: null },
-    'at 760px: no bottom bar, the wordmark keeps .brand\'s own font, the inspector floats from the top (the wide rules)');
-  const at759 = {
-    bottombar: winningValue('.bottombar', 'display', 759),
-    brand: winningValue('.brand', 'font-size', 759),
-    inspTop: winningValue('.gv-inspector', 'top', 759),
-    inspBottom: winningValue('.gv-inspector', 'bottom', 759),
-  };
-  assert.deepEqual(at759, { bottombar: 'flex', brand: '0', inspTop: 'auto', inspBottom: '54px' },
-    'at 759px: the bottom bar, the wordmark dropped, the inspector a sheet above the bar (the narrow rules)');
+  // that was not drawn. The topbar's co-brand lockup (cobrand.js) switches at
+  // the same width: its wide images and the name on one side, the marks alone
+  // on the other — the project's mark only while it has one (has-pmark).
+  const probe = (width) => ({
+    bottombar: winningValue('.bottombar', 'display', width),
+    logo: winningValue('.cobrand-logo', 'display', width),
+    mark: winningValue('.cobrand-mark', 'display', width),
+    pmark: winningValue('.cobrand-pmark', 'display', width),
+    pmarkSet: winningValue('.cobrand.has-pmark .cobrand-pmark', 'display', width),
+    name: winningValue('.cobrand-name', 'position', width),
+    inspTop: winningValue('.gv-inspector', 'top', width),
+    inspBottom: winningValue('.gv-inspector', 'bottom', width),
+  });
+  assert.deepEqual(probe(760), {
+    bottombar: 'none', logo: null, mark: 'none', pmark: 'none', pmarkSet: null, name: null,
+    inspTop: '96px', inspBottom: null,
+  }, 'at 760px: no bottom bar; the lockup shows the company logo, not its mark, no project mark, and the name '
+    + 'in the flow; the inspector floats from the top (the wide rules)');
+  assert.deepEqual(probe(759), {
+    bottombar: 'flex', logo: 'none', mark: 'block', pmark: 'none', pmarkSet: 'block', name: 'absolute',
+    inspTop: 'auto', inspBottom: '54px',
+  }, 'at 759px: the bottom bar; the lockup shows the company mark and the project mark, and takes the name out '
+    + 'of sight (still read); the inspector a sheet above the bar (the narrow rules)');
   // …and no chrome rule re-opens the gap: the only breakpoint near it is the one
   // viewport.js names.
   const phoneMax = Number(/PHONE_MAX_WIDTH\s*=\s*(\d+)/.exec(
@@ -184,6 +190,21 @@ test('the narrow chrome starts below 760px, all of it at once', () => {
     .filter((w) => Math.abs(w - phoneMax) <= 10);
   assert.ok(near.length, 'the stylesheets have narrow rules');
   assert.deepEqual([...new Set(near)], [phoneMax], `every narrow breakpoint is max-width: ${phoneMax}px`);
+});
+
+test('the lockup\'s divider stands only between two images or words that show', () => {
+  // Absent means absent (design spec §9.4): no divider beside nothing. Wide, it
+  // follows the company logo, and the project half on its other side always
+  // shows something — its logo, or its name (which no-name hides only beside a
+  // logo that spells it).
+  assert.equal(winningValue('.cobrand-div', 'display', 1280), 'none', 'no divider unless a class asks for one');
+  assert.equal(winningValue('.cobrand.has-logo .cobrand-div', 'display', 1280), 'block');
+  // Narrow, the name is never drawn, so it needs a mark on each side: the
+  // company mark alone stands alone.
+  assert.equal(winningValue('.cobrand.has-logo .cobrand-div', 'display', 759), 'none');
+  assert.equal(winningValue('.cobrand.has-mark .cobrand-div', 'display', 759), null, 'never on the company mark alone');
+  assert.equal(winningValue('.cobrand.has-mark.has-pmark .cobrand-div', 'display', 759), 'block');
+  assert.equal(winningValue('.cobrand.has-mark.has-pmark .cobrand-div', 'display', 760), null);
 });
 
 test('a pane header that cannot be dragged gives the touch back to the page', () => {
