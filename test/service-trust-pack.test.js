@@ -652,6 +652,25 @@ test('a trust file the CLI cannot use is kept aside, and the decision really is 
   assert.doesNotMatch(r.out, /kept as/);
 });
 
+// Moving an unusable file aside must not cost an earlier one: a cap on the
+// copies kept reaped the oldest, deleting decisions with no word in the output.
+test('a copy kept from an earlier unusable trust file is never reaped by a later one', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installAcme(ctx.root);
+  const file = trustFile(ctx);
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const earlier = [1, 2, 3, 4, 5].map((n) => `trusted.json.unreadable-${1000000000000 + n}`);
+  for (const name of earlier) fs.writeFileSync(path.join(dir, name), `{"${name}": tru`);
+  fs.writeFileSync(file, '{"newest": tru');
+  const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(true) }));
+  assert.equal(r.exit, null, r.err);
+  const aside = fs.readdirSync(dir).filter((f) => f.startsWith('trusted.json.unreadable-'));
+  for (const name of earlier) assert.ok(aside.includes(name), `${name} is still kept`);
+  assert.equal(aside.length, earlier.length + 1, 'beside the copy set aside now');
+  assert.ok(aside.some((f) => fs.readFileSync(path.join(dir, f), 'utf8') === '{"newest": tru'));
+});
+
 // The daemon reads the same file fail-closed (readJsonOr plus a shape check):
 // anything but a map of decisions approves nothing — and must not throw, since
 // reconcile runs on a timer with no handler above it.
