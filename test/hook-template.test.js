@@ -270,6 +270,82 @@ test('ensureHooks returns the count of handlers ADDED: fresh, 0.8.0, again, and 
   assert.equal(mf.ensureHooks(old), 0);
 });
 
+test('mergeHooks also counts the handlers it rewrote: a repair, a bare command, a command from another tree', (t) => {
+  const home = withTempHome(t);
+
+  // A bare 0.7-era project: two PATH lookups to resolve, twelve handlers to add.
+  const bare = installedRoot(t);
+  writeSettings(bare, { hooks: {
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-begin' }] }],
+    Stop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-end' }] }],
+  } });
+  const before = fs.readFileSync(settingsPath(bare), 'utf8');
+  assert.deepStrictEqual(mf.mergeHooks(bare, { dryRun: true }), { added: HANDLER_COUNT - 2, updated: 2 });
+  assert.equal(fs.readFileSync(settingsPath(bare), 'utf8'), before, 'dry: untouched');
+  assert.deepStrictEqual(mf.mergeHooks(bare), { added: HANDLER_COUNT - 2, updated: 2 });
+  assert.deepStrictEqual(mf.mergeHooks(bare), { added: 0, updated: 0 }, 'a second pass changes nothing');
+
+  // 0.8.0's two handlers, resolved to this tree, are already right.
+  const old = installedRoot(t);
+  writeSettings(old, { hooks: V080_HOOKS() });
+  assert.deepStrictEqual(mf.mergeHooks(old), { added: HANDLER_COUNT - 2, updated: 0 });
+
+  // A repair only: one managed field, one field the template does not set.
+  const stale = installedRoot(t);
+  reg.apply(stale, { runClaude: fakeClaude().fn });
+  const s = readSettings(stale);
+  s.hooks.PreToolUse[0].hooks[0].timeout = 3;
+  s.hooks.SessionEnd[0].hooks[0].statusMessage = 'bye';
+  s.hooks.Notification = [{ hooks: [{ type: 'command', command: 'say done', timeout: 1 }] }];
+  writeSettings(stale, s);
+  const applied = reg.applyHooks(stale);
+  assert.deepStrictEqual({ added: applied.added, updated: applied.updated }, { added: 0, updated: 2 }, 'another tool\'s handler is never counted');
+  assert.deepStrictEqual(applied.events, ALL_EVENTS);
+
+  // Registered from ~/.web-chat/current while this build runs from a checkout:
+  // inspect() reads it ok (the same shapes), but every command is re-pointed at
+  // this tree, and the count says so.
+  const elsewhere = installedRoot(t);
+  const opts = { packageRoot: path.join(home, '.web-chat', 'versions', '0.8.5'), paths: installPaths() };
+  const hooks = {};
+  for (const [event, groups] of Object.entries(mf.hookTemplate().hooks)) {
+    hooks[event] = groups.map((g) => ({ hooks: g.hooks.map((h) => ({ ...h, command: mf.resolveHookCommand(h.command, opts) })) }));
+  }
+  writeSettings(elsewhere, { hooks });
+  assert.deepStrictEqual(reg.apply(elsewhere, { dryRun: true, runClaude: fakeClaude().fn }).hooks,
+    { added: 0, updated: HANDLER_COUNT, events: ALL_EVENTS });
+});
+
+test('install names a repair: "N hook(s) updated", then "already up to date"', async (t) => {
+  withTempHome(t);
+  const root = installedRoot(t);
+  reg.apply(root, { runClaude: fakeClaude().fn });
+  const s = readSettings(root);
+  s.hooks.PostToolUse[0].hooks[1].timeout = 60;                     // stale: a managed field
+  s.hooks.Stop[0].hooks[0].command = 'claude-web-chat-hook turn-end'; // bare: a PATH lookup
+  writeSettings(root, s);
+
+  const settingsLine = async () => {
+    const lines = [];
+    const prevLog = console.log;
+    console.log = (...a) => lines.push(a.join(' '));
+    try {
+      await install([], { cwd: root, runClaude: fakeClaude().fn, restartIfStale: async () => ({ restarted: false }), nextSteps: false });
+    } finally {
+      console.log = prevLog;
+    }
+    return lines.find((l) => /^ {2}\.claude\/settings\.json /.test(l));
+  };
+  assert.match(await settingsLine(), /^ {2}\.claude\/settings\.json +2 hook\(s\) updated$/);
+  assert.ok(reg.inspect(root).handlers.every((r) => r.state === 'ok'), 'both repaired');
+  assert.match(await settingsLine(), /^ {2}\.claude\/settings\.json +already up to date$/, 'and then there is nothing to do');
+
+  // The same two edits again, and the PostToolBatch handler gone as well.
+  delete s.hooks.PostToolBatch;
+  writeSettings(root, s);
+  assert.match(await settingsLine(), /^ {2}\.claude\/settings\.json +1 hook\(s\) added, 2 hook\(s\) updated$/);
+});
+
 test('a project with only 0.8.0\'s two events reports the other ten missing', (t) => {
   withTempHome(t);
   const root = installedRoot(t);
