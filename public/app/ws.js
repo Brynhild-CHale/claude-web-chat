@@ -4,6 +4,12 @@
 //
 // While detached in a preview, live updates fold into view.liveSnapshot instead
 // of touching the DOM (rewrite risk #3 — a preview must never mutate the live node).
+//
+// HANDLERS is the core frames' table. A chrome module with frames of its own
+// (the chat mirror's `mirror:*`, the project identity's `project`) plugs in
+// through three seams instead of editing this file — see "the registration
+// seams" below: onFrame, onHello and setClientField. The connection's state
+// goes out on the chrome bus as `conn` {state} whenever it changes.
 import { view, $ } from './state.js';
 import { store } from './store.js';
 import {
@@ -102,7 +108,15 @@ export function send(frame) {
 // whether this is the phone view (lib/server/domain/queue provenance). Sent on
 // every (re)connect — before the outbox drains, so a write made across the gap
 // is attributed — and whenever the viewport flips.
-function sendClientInfo() { send({ type: 'client', device: deviceKind() }); }
+//
+// Other modules add fields of their own with setClientField (the registration
+// seams, below): every `client` frame carries all of them, so a reconnect's
+// hello restores the whole set to a socket the daemon has just met. `type` and
+// `device` stay this file's.
+const clientFields = new Map();
+function sendClientInfo() {
+  send({ ...Object.fromEntries(clientFields), type: 'client', device: deviceKind() });
+}
 bus.on('viewport', sendClientInfo);
 
 function flushOutbox() {
@@ -125,8 +139,11 @@ function flushOutbox() {
 // The socket's state is one input to the topbar's ONE status pill (it used to
 // own a second pill of its own, beside the node pill). While it is not live the
 // pill says so, and the brand dot goes grey; live, the green dot is the signal
-// and the pill goes back to naming the node.
+// and the pill goes back to naming the node. Every change also goes out on the
+// chrome bus as `conn` {state} — connecting, live, reconnecting — for the chat
+// chrome, which shows a dropped connection where the dot used to.
 function setConnStatus(state) {
+  const changed = state !== view.conn;
   view.conn = state;
   const dot = $('status-dot');
   if (dot) {
@@ -136,6 +153,7 @@ function setConnStatus(state) {
     dot.setAttribute('aria-label', label);
   }
   updateChip();
+  if (changed) bus.emit('conn', { state });
 }
 
 // --- preview fold helpers (operate on the captured live surface) ---
@@ -354,6 +372,95 @@ const HANDLERS = {
   'replay:open'(msg) { bus.emit('replay:open', msg); },
 };
 
+/* ── the registration seams ───────────────────────────────────────────────────
+   HANDLERS stays the core frames' one table. A module with frames, hello work
+   or client fields of its own registers them here instead, so the chat mirror's
+   chrome (design spec §7.2) and everything after it plug in without editing
+   this file, and no two of them ever edit the same lines:
+
+     onFrame(typeOrPrefix, handler) → unregister
+         an exact frame type ('project'), or a prefix ending in ':' for a family
+         ('mirror:'). Several per type; they run in registration order AFTER any
+         built-in handler, each in its own try/catch, so a module that throws
+         cannot cost the next one its frame.
+     onHello(handler) → unregister
+         runs at the end of every `hello`: after the snapshot, the outbox drain
+         and hydrateQueue(). hello carries nothing new for a module (the wire is
+         pinned byte for byte, test/bus-golden.test.js), so this is where one
+         re-reads what a (re)connect may have missed.
+     setClientField(key, value)
+         merged into every `client` frame, and sent at once while the socket is
+         open; a reconnect's hello re-sends the whole set. `undefined` withdraws
+         the field.
+
+   The one field this file sets itself: the chat views' posture. chat-slots.js
+   owns it and announces each change as `chat:posture`; the socket carries it
+   as `mirror`, which the daemon reads to decide whether this viewer wants the
+   mirror's stream frames. */
+const frameHandlers = [];   // { key, prefix, fn }, in registration order
+const helloHooks = [];      // { fn }
+
+const unregisterFrom = (list, entry) => () => {
+  const i = list.indexOf(entry);
+  if (i >= 0) list.splice(i, 1);
+};
+
+export function onFrame(typeOrPrefix, handler) {
+  if (typeof typeOrPrefix !== 'string' || !typeOrPrefix) {
+    throw new TypeError('onFrame: give a frame type, or a prefix ending in ":"');
+  }
+  if (typeof handler !== 'function') throw new TypeError('onFrame: the handler must be a function');
+  const entry = { key: typeOrPrefix, prefix: typeOrPrefix.endsWith(':'), fn: handler };
+  frameHandlers.push(entry);
+  return unregisterFrom(frameHandlers, entry);
+}
+
+export function onHello(handler) {
+  if (typeof handler !== 'function') throw new TypeError('onHello: the handler must be a function');
+  const entry = { fn: handler };
+  helloHooks.push(entry);
+  return unregisterFrom(helloHooks, entry);
+}
+
+const OWN_CLIENT_FIELDS = new Set(['type', 'device']);
+export function setClientField(key, value) {
+  if (typeof key !== 'string' || !key || OWN_CLIENT_FIELDS.has(key)) {
+    throw new TypeError(`setClientField: '${key}' is not a field another module may set`);
+  }
+  if (value === undefined) {
+    if (!clientFields.has(key)) return;
+    clientFields.delete(key);
+  } else {
+    if (clientFields.has(key) && clientFields.get(key) === value) return;
+    clientFields.set(key, value);
+  }
+  if (isOpen()) sendClientInfo();   // closed: the next hello sends it
+}
+
+bus.on('chat:posture', (d) => {
+  const posture = d && d.posture;
+  if (posture === 'full' || posture === 'status') setClientField('mirror', posture);
+});
+
+function runSafely(fn, msg, what) {
+  try { fn(msg); } catch (e) { console.error(`[web-chat] ${what} failed for`, msg.type, e); }
+}
+
+// One frame: the built-in handler, then (for a hello) the hello hooks, then
+// every registered handler whose type or prefix matches. One throwing frame
+// must not abort the rest of the stream (a `hello` that died partway used to
+// leave the topbar, queue and version banner uninitialised), and one throwing
+// handler must not starve the others — so each runs on its own.
+function dispatch(msg) {
+  if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+  const { type } = msg;
+  if (Object.prototype.hasOwnProperty.call(HANDLERS, type)) runSafely(HANDLERS[type], msg, 'handler');
+  if (type === 'hello') for (const h of [...helloHooks]) runSafely(h.fn, msg, 'hello hook');
+  for (const h of [...frameHandlers]) {
+    if (h.prefix ? type.startsWith(h.key) : type === h.key) runSafely(h.fn, msg, 'frame handler');
+  }
+}
+
 // The daemon's socket, on the page's own origin and scheme. A page served over
 // https (a TLS proxy or tunnel in front of the daemon) must open wss: — a browser
 // refuses a plain ws: socket from a secure page as mixed content, and the surface
@@ -372,9 +479,6 @@ export function connect() {
   };
   ws.onmessage = (m) => {
     let msg; try { msg = JSON.parse(m.data); } catch { return; }
-    const h = HANDLERS[msg.type];
-    // One throwing frame must not abort the rest of the stream (a `hello` that
-    // dies partway used to leave the topbar, queue and version banner uninitialised).
-    if (h) { try { h(msg); } catch (e) { console.error('[web-chat] handler failed for', msg.type, e); } }
+    dispatch(msg);
   };
 }
