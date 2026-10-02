@@ -873,6 +873,88 @@ test('an idle written after the turn began, its busy missed between two reads, s
   await g.live.stop();
 });
 
+test('a read that lands late still gives a Stop in flight the whole grace; the turn ends at the status write', async () => {
+  // The file went idle at +2 s; the read that sees it lands at +5 s (a slow poll, a stalled loop).
+  const late = async (w) => {
+    w.live.start();
+    w.file('busy', { updatedAt: T0, statusUpdatedAt: T0 });
+    w.hook('UserPromptSubmit', { prompt_id: 'p1', ts: T0 + 10, prompt: { author: 'user', text: 'go' } });
+    w.clock.set(T0 + 5000);
+    w.file('idle', { updatedAt: T0 + 2000, statusUpdatedAt: T0 + 2000 });
+  };
+  const w = wired();
+  await late(w);
+  await w.clock.advance(0);
+  assert.equal(w.closes().length, 0, 'not decided on the read');
+  await w.clock.advance(STOP_GRACE_MS - 1);
+  assert.equal(w.closes().length, 0, 'the grace runs from the read, not from the write');
+  await w.clock.advance(1);
+  assert.deepEqual(w.closes().map((t) => [t.by, t.outcome]), [['status', 'interrupted']]);
+  assert.equal(w.model.turn('p1').ended_at, T0 + 2000, 'the turn ended when the file went idle');
+  await w.live.stop();
+
+  // A Stop inside that wait: it ended normally, and no status close follows.
+  const s = wired();
+  await late(s);
+  await s.clock.advance(STOP_GRACE_MS - 500);
+  s.hook('Stop', { prompt_id: 'p1', stop: { last_assistant_message: 'Done.' } });
+  await s.clock.advance(60000);
+  assert.deepEqual(s.closes().map((t) => t.by), ['stop']);
+  assert.equal(s.model.turn('p1').status, 'done');
+  await s.live.stop();
+
+  // live.js on its own (no turn machine wired) waits the same.
+  const h = harness();
+  h.live.start();
+  h.file('busy', { updatedAt: T0, statusUpdatedAt: T0 });
+  h.prompt();
+  h.clock.set(T0 + 5000);
+  h.file('idle', { updatedAt: T0 + 2000, statusUpdatedAt: T0 + 2000 });
+  await h.clock.advance(STOP_GRACE_MS - 1);
+  assert.equal(h.ofOp('turn-closed').length, 0);
+  await h.clock.advance(1);
+  assert.equal(h.ofOp('turn-closed').length, 1);
+  assert.equal(h.L().last_turn.ended_at, T0 + 2000);
+  await h.live.stop();
+});
+
+test('busy again voids an armed flip: the next idle arms a fresh grace, and the turn ends at that idle', async () => {
+  const h = harness();
+  h.live.start();
+  h.file('busy', { updatedAt: T0 });
+  h.prompt();
+  h.clock.set(T0 + 1000);
+  h.file('idle'); // armed: its grace would end at +3 s
+  h.clock.set(T0 + 2000);
+  h.file('busy'); // a notification absorbed into the turn: not its end
+  h.clock.set(T0 + 2500);
+  h.file('idle'); // a fresh flip: its grace ends at +4.5 s
+  await h.clock.advance(STOP_GRACE_MS - 1);
+  assert.equal(h.ofOp('turn-closed').length, 0, 'a Stop for the second idle still has its grace');
+  await h.clock.advance(1);
+  assert.equal(h.ofOp('turn-closed').length, 1);
+  assert.equal(h.L().last_turn.ended_at, T0 + 2500, 'the turn ended at the second idle, not the first');
+
+  // A prompt shown (waiting) voids it the same way; the Esc's idle arms the fresh one.
+  const q = harness();
+  q.live.start();
+  q.file('busy', { updatedAt: T0 });
+  q.prompt();
+  q.clock.set(T0 + 1000);
+  q.file('idle');
+  q.clock.set(T0 + 1500);
+  q.file('waiting', { waitingFor: 'permission prompt' });
+  q.clock.set(T0 + 2800);
+  q.file('idle');
+  await q.clock.advance(STOP_GRACE_MS - 1);
+  assert.equal(q.ofOp('turn-closed').length, 0);
+  await q.clock.advance(1);
+  assert.equal(q.ofOp('turn-closed').length, 1);
+  assert.equal(q.L().last_turn.ended_at, T0 + 2800);
+  await h.live.stop();
+  await q.live.stop();
+});
+
 test('wired to the real turn machine: the turn machine emits the one turn-closed {by: status}, live.js none', async () => {
   const w = wired();
   w.live.start();
