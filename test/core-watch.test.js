@@ -1,6 +1,6 @@
 // The file-watch engine (lib/core/watch.js): one debounced, single-flight
 // onTrigger fed by a file watch that follows the inode, an optional directory
-// watch, and a mandatory poll.
+// watch, and a mandatory poll — and config-watch, the thin wrapper over it.
 //
 // No test here opens a real DIRECTORY watcher. On macOS that is FSEvents, whose
 // close() blocked the event loop for up to ~25 s under load when it was measured
@@ -22,7 +22,9 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { execFile } = require('child_process');
 const { waitUntil } = require('../test-support/helpers');
+const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { watchFile } = require('../lib/core/watch');
+const { watchConfigFile, POLL_MS, DEBOUNCE_MS } = require('../lib/portal/config-watch');
 
 const WATCH_JS = path.join(__dirname, '..', 'lib', 'core', 'watch.js');
 const NEVER = 60_000; // a poll that does not fire during a test
@@ -489,4 +491,45 @@ test('bad arguments throw at once', () => {
     assert.throws(() => watchFile('/x', () => {}, { pollMs }), RangeError, `pollMs ${String(pollMs)}`);
   }
   assert.throws(() => watchFile('/x', () => {}, { debounceMs: -1 }), RangeError);
+});
+
+test('watchConfigFile keeps its exports, and its directory watch by default, unref\'d', (t) => {
+  assert.equal(POLL_MS, 2000);
+  assert.equal(DEBOUNCE_MS, 150);
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'tunnel.json');
+  const opened = fakeWatch(t);
+  let calls = 0;
+  const w = watchConfigFile(file, () => { calls += 1; }, { pollMs: NEVER });
+  t.after(() => w.stop());
+  assert.deepEqual(Object.keys(w).sort(), ['check', 'stop']);
+  assert.equal(calls, 1, 'the first check reports at once (absent is a state)');
+  assert.deepEqual(opened.map((o) => [o.target, o.opts]), [[dir, { persistent: false }]],
+    'one directory watcher, and no file watch while the file is absent');
+});
+
+test('watchConfigFile with dirWatch:false: no directory watcher, and each edit is still one report', async (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'tunnel.json');
+  writeJsonAtomic(file, { a: 1 });
+  const watch = t.mock.method(fs, 'watch'); // a spy: the real fs.watch underneath
+  let calls = 0;
+  const w = watchConfigFile(file, () => { calls += 1; }, { dirWatch: false, pollMs: 50, debounceMs: 10 });
+  t.after(() => w.stop());
+  assert.equal(calls, 1, 'the first check reports at once');
+
+  writeJsonAtomic(file, { a: 2 });
+  await waitUntil(() => calls === 2, { ...WAIT, what: 'the edit reported' });
+  writeJsonAtomic(file, { a: 2 });
+  await sleep(150);
+  assert.equal(calls, 2, 'the same bytes rewritten is no change');
+  writeJsonAtomic(file, { a: 3 });
+  await waitUntil(() => calls === 3, { ...WAIT, what: 'the next edit reported' });
+
+  assert.ok(watch.mock.callCount() >= 1, 'the file itself is watched');
+  assert.ok(watch.mock.calls.every((c) => c.arguments[0] === file), 'and never its directory');
+  w.stop();
+  writeJsonAtomic(file, { a: 4 });
+  await sleep(150);
+  assert.equal(calls, 3, 'stopped means stopped');
 });
