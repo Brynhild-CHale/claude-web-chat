@@ -1,10 +1,10 @@
 // The mirror's emission (lib/server/mirror/emit.js, spec §2.9): change
 // collection over the model, the 100 ms flush on an injected clock and timers,
 // the per-engine rev, the four frames and the compact ring events on the mirror
-// bus, StatusRow's typed and content-free fields, index mode, the volume bound
-// and a wall clock stepped back. Unit tests over the real model, turn machine
-// and change bus, wired the way createServer wires them (two buses, one
-// broadcaster): no server, no files, no real timers.
+// bus, StatusRow's typed and content-free fields, index mode, the volume bound,
+// a wall clock stepped back, and the reset a failed send owes. Unit tests over
+// the real model, turn machine and change bus, wired the way createServer wires
+// them (two buses, one broadcaster): no server, no files, no real timers.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -604,6 +604,140 @@ test('reset() goes out at the next flush, after the changes it covers and in pla
   assert.deepStrictEqual(sent.at(-1).frame, { type: 'mirror:reset', reason: 'reset' });
   assert.equal(em.reset({ conversation_id: 'two words' }), false);
   assert.equal(em.reset({ conversation_id: 42 }), false);
+});
+
+// A broadcaster that throws on the frames `fails(frame)` picks, as many times as
+// `times` says, and hands every other frame to the setup's record.
+function flakyBroadcaster({ clock, mirrorBus, sent }, fails, times = 1) {
+  const left = { n: times };
+  mirrorBus.setBroadcaster((frame) => {
+    if (left.n > 0 && fails(frame)) { left.n -= 1; throw new Error('a socket went away'); }
+    sent.push({ at: clock.now(), frame });
+  });
+  return left;
+}
+
+test('frames that fail to go out make a mirror:reset due in the same flush, so the chrome refetches what they carried', () => {
+  const s = setup();
+  const { clock, em, tm, sent, ring } = s;
+  const t0 = clock.now();
+  em.model.upsertConversation(C1, { title: 'flaky' });
+  em.model.upsertConversation(C2, { title: 'steady' });
+  tm.ingest(C1, prompt(C1, 'p1', t0));
+  tm.ingest(C2, prompt(C2, 'p2', t0));
+  clock.advance(FLUSH_MS);
+  const mark = sent.length;
+
+  // The broadcaster throws once, on C1's frames: its turn closing, which no
+  // later delta would bring back. The drain has already spent those changes.
+  const left = flakyBroadcaster(s, (f) => f.conversation_id === C1 && f.type !== 'mirror:reset');
+  tm.ingest(C1, stop(C1, clock.now()));
+  tm.ingest(C2, pre(C2, 'toolu_c2', clock.now()));
+  clock.advance(FLUSH_MS);
+  const out = sent.slice(mark).map((x) => x.frame);
+  assert.equal(left.n, 0, 'the broadcaster threw');
+  assert.equal(out.filter((f) => f.conversation_id === C1 && f.type !== 'mirror:reset').length, 0, 'C1\'s frames were lost');
+  assert.deepStrictEqual(out.filter((f) => f.type === 'mirror:reset'), [{ type: 'mirror:reset', reason: 'error', conversation_id: C1 }],
+    'one reset for what they carried');
+  assert.equal(out.at(-1).type, 'mirror:reset', 'at the end of the same flush');
+  assert.ok(out.some((f) => f.type === 'mirror:stream' && f.conversation_id === C2), 'the other conversation streams on');
+  assert.deepStrictEqual(ring('reset').map((e) => [e.reason, e.conversation_id]), [['error', C1]]);
+  assert.equal(em.stats().errors, 1);
+  assert.equal(em.stats().resets_due, 0);
+
+  // The next change streams as usual, with no second reset.
+  tm.ingest(C1, prompt(C1, 'p3', clock.now()));
+  clock.advance(FLUSH_MS);
+  const after = sent.slice(mark).map((x) => x.frame);
+  assert.ok(after.some((f) => f.type === 'mirror:stream' && f.conversation_id === C1 && (f.items || []).some((it) => it.id === 'p_p3')));
+  assert.equal(after.filter((f) => f.type === 'mirror:reset').length, 1);
+});
+
+test('a frame that fails to be built makes a reset due too, and the log names the error\'s kind, never its text', () => {
+  const clock = manualClock();
+  const model = createModel({ redactor: passRedactor });
+  const boom = { n: 0 };
+  const flaky = {
+    ...model,
+    serializeTurn(...args) {
+      if (boom.n > 0) { boom.n -= 1; throw new TypeError('a turn about /Users/me/secret-project'); }
+      return model.serializeTurn(...args);
+    },
+  };
+  const bus = createBus({ maxEvents: 2000 });
+  const sent = [];
+  bus.setBroadcaster((frame) => sent.push(frame));
+  const logs = [];
+  const em = createEmitter({ model: flaky, bus, now: clock.now, timers: clock, log: (m) => logs.push(m) });
+  const tm = createTurnMachine({ model: em.model, now: clock.now, transition: em.transition });
+  tm.ingest(C1, prompt(C1, 'p1', clock.now()));
+  clock.advance(FLUSH_MS);
+  const mark = sent.length;
+
+  // Armed after the ingest: the turn machine reads the turn too, and only the
+  // flush's read should meet the fault.
+  tm.ingest(C1, stop(C1, clock.now()));
+  boom.n = 1;
+  clock.advance(FLUSH_MS);
+  const out = sent.slice(mark);
+  assert.equal(boom.n, 0, 'the framing threw');
+  assert.equal(out.filter((f) => f.type === 'mirror:stream').length, 0);
+  assert.deepStrictEqual(out.filter((f) => f.type === 'mirror:reset'), [{ type: 'mirror:reset', reason: 'error', conversation_id: C1 }]);
+  assert.equal(em.stats().errors, 1);
+  assert.match(logs.join('\n'), /frame failed \(TypeError\)/);
+  assert.ok(!logs.join('\n').includes('secret-project'), 'an error\'s message could quote what it was handling');
+});
+
+test('a status frame that fails makes a reset due for every conversation; a reset that fails stays due for the next flush', () => {
+  const s = setup();
+  const { clock, em, tm, sent } = s;
+  const t0 = clock.now();
+  em.model.upsertConversation(C1, { title: 'one' });
+  em.model.upsertConversation(C2, { title: 'two' });
+  working(em, C1, t0, { kind: 'Edit', tool: 'Edit', label: 'Edit · a.js', started_at: t0 });
+  tm.ingest(C2, prompt(C2, 'p2', t0));
+  clock.advance(FLUSH_MS);
+  let mark = sent.length;
+
+  // The status carries every conversation's row: losing it loses them all.
+  flakyBroadcaster(s, (f) => f.type === 'mirror:status');
+  em.model.upsertLive(C1, { state: 'waiting', since: clock.now(), step: null,
+    waiting: { kind: 'permission', tool: 'Bash', summary: 'Bash(rm -rf dist)', pending: false } });
+  tm.ingest(C2, pre(C2, 'toolu_c2', clock.now()));
+  clock.advance(FLUSH_MS);
+  let out = sent.slice(mark).map((x) => x.frame);
+  assert.equal(out.filter((f) => f.type === 'mirror:status').length, 0, 'the status was lost');
+  assert.deepStrictEqual(out.filter((f) => f.type === 'mirror:reset'), [{ type: 'mirror:reset', reason: 'error' }],
+    'one reset, with no conversation id');
+  assert.equal(out.filter((f) => f.type === 'mirror:stream').length, 0, 'the reset stands for the stream of its flush');
+  assert.equal(out.at(-1).type, 'mirror:reset');
+
+  // The broadcaster down for a whole flush: the reset owed for it cannot go out
+  // either. It stays due, with no timer spinning on it, and goes out with the
+  // next flush, in place of the stream it covers.
+  mark = sent.length;
+  const left = flakyBroadcaster(s, () => true, Infinity);
+  tm.ingest(C2, post(C2, 'toolu_c2', clock.now()));
+  clock.advance(FLUSH_MS);
+  assert.equal(sent.length, mark, 'nothing went out');
+  assert.equal(em.stats().resets_due, 1, 'the reset stays due');
+  assert.equal(clock.pending(), 0, 'and nothing spins on it');
+  clock.advance(10 * FLUSH_MS);
+  assert.equal(sent.length, mark);
+
+  left.n = 0; // the broadcaster is back
+  tm.ingest(C2, pre(C2, 'toolu_c2_next', clock.now()));
+  clock.advance(FLUSH_MS);
+  out = sent.slice(mark).map((x) => x.frame);
+  assert.deepStrictEqual(out.filter((f) => f.type === 'mirror:reset'), [{ type: 'mirror:reset', reason: 'error', conversation_id: C2 }]);
+  assert.equal(out.filter((f) => f.type === 'mirror:stream').length, 0);
+  assert.equal(em.stats().resets_due, 0);
+
+  // Then the stream carries on as usual.
+  tm.ingest(C2, post(C2, 'toolu_c2_next', clock.now()));
+  clock.advance(FLUSH_MS);
+  assert.equal(sent.at(-1).frame.type, 'mirror:stream');
+  assert.equal(sent.slice(mark).filter((x) => x.frame.type === 'mirror:reset').length, 1);
 });
 
 test('a burst of 300 tool calls yields at most ten stream frames a second, and loses none of them', () => {
