@@ -65,12 +65,16 @@ file:
 
 ```sh
 node scripts/build-release.js --dev      # dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz + SHA256SUMS
-claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz
-claude-web-chat install                  # in each other web-chat project
+claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz --restart-all
+claude-web-chat install                  # in any other web-chat project it did not refresh
 ```
 
-Then `/exit` and reopen Claude Code (the MCP server loads its code at session
-start) and reload any open surface tab.
+`--restart-all` restarts every other project whose server runs another build,
+and refreshes the managed files of each one web-chat is registered in, as
+`install` would there. (The `update` that runs is the installed build's, so the
+refresh needs 0.8.2 or later installed.) Then `/exit` and reopen Claude Code
+(the MCP server loads its code at session start) and reload any open surface
+tab.
 
 **First time on an install that predates `--from` (0.7.5, 0.7.6): bootstrap by
 hand.** The `update` in those releases does not know `--from` — its argument
@@ -116,6 +120,16 @@ uncompressed tar's sha256 (compare it with `gunzip -c <tarball> | shasum -a 256`
 to tell a zlib difference from a tree difference. `dist/SHA256SUMS` keeps a line for every
 tarball still in `dist/` — each build replaces its own line and drops the lines
 of tarballs you deleted — so an older build there still verifies.
+
+A dev build goes stale as soon as the checkout moves on, and nothing about it
+looks different from the outside. So inside a checkout of this package (or any
+directory below it), `claude-web-chat version` and `claude-web-chat status`
+print one ⚠ line when the installed build is a dev build cut from a commit other
+than the checkout's HEAD: both commits, and the rebuild (`node
+scripts/build-release.js --dev`, then the `update --from` line it prints). They
+say nothing anywhere else, for a release install, or once you have rebuilt from
+HEAD. The check only reads files — the two package.json files and the
+checkout's `.git` — and runs no `git`.
 
 `update --from` runs a GitHub update's steps from the file: it verifies the
 tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is

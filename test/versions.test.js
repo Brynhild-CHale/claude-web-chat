@@ -37,7 +37,7 @@ test('HUB_PROTOCOL_VERSION alias still equals PROTOCOL_VERSION', () => {
 // below the release it is heading for (so 0.8.0 is offered when it ships), and
 // two of them by their stamp.
 
-const { compareVersions, isDevVersion, isPrerelease } = require('../lib/core/versions');
+const { compareVersions, isDevVersion, devBuildCommit, isPrerelease } = require('../lib/core/versions');
 
 test('a dev build sorts below its own final release and above the last one', () => {
   const dev = '0.8.0-dev.202609271415.abc1234';
@@ -73,6 +73,17 @@ test('isDevVersion names a --dev stamp and nothing else', () => {
   assert.equal(isDevVersion('0.8.0-rc.1'), false);
   assert.equal(isDevVersion('0.8.0-devil'), false);
   assert.equal(isDevVersion(null), false);
+});
+
+test('devBuildCommit reads the commit out of a --dev stamp, and nothing else', () => {
+  // The stamp scripts/build-release.js writes, from its own devVersion.
+  const { devVersion } = require('../scripts/build-release');
+  assert.equal(devBuildCommit(devVersion('0.8.2', { now: new Date(Date.UTC(2026, 9, 2, 12, 0)), sha: 'abc1234' })), 'abc1234');
+  assert.equal(devBuildCommit('v0.8.0-dev.1.0a1b'), '0a1b');
+  assert.equal(devBuildCommit('0.9.0-dev.202610021200.nogit'), null, 'built outside a checkout: no commit');
+  assert.equal(devBuildCommit('0.8.2'), null);
+  assert.equal(devBuildCommit('0.8.0-rc.1'), null);
+  assert.equal(devBuildCommit(null), null);
 });
 
 test('isPrerelease reads the tail compareVersions orders by, never build metadata', () => {

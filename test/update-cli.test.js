@@ -204,6 +204,7 @@ test("update syncs with the NEW version's engine, not the one it was launched fr
   const paths = installPaths();
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-proj-')));
   fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  wire(project);
   const prevCwd = process.cwd();
   process.chdir(project);
   t.after(() => process.chdir(prevCwd));
@@ -321,6 +322,7 @@ test('--to an older build leaves the project\'s managed files where they are', a
   const paths = installPaths();
   const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-back-')));
   fs.mkdirSync(path.join(project, '.web-chat'), { recursive: true });
+  wire(project);  // registered: it is the rollback that leaves it alone
   const prevCwd = process.cwd();
   process.chdir(project);
   t.after(() => process.chdir(prevCwd));
@@ -340,7 +342,7 @@ test('--to an older build leaves the project\'s managed files where they are', a
   assert.equal(res.after, '0.4.0');
   assert.equal(fs.existsSync(path.join(project, '.claude')), false,
     "this build's rules and skills must not be written into a project rolled back to v0.4.0");
-  assert.match(d.log.text(), /Managed files left alone/);
+  assert.match(d.log.text(), /Managed files left alone — v0\.4\.0 has no templates of its own here/);
   assert.match(d.log.text(), /claude-web-chat install/, 'and the way to sync with v0.4.0 templates is named');
   assert.doesNotMatch(d.log.text(), /Syncing managed files/, 'no heading over a sync that did not happen');
 });
@@ -842,22 +844,28 @@ test('update outside a project restarts nothing, and says so', async (t) => {
 test('update lists the other projects still running an older build, with the command for each', async (t) => {
   const paths = onVersion(t);
   inProjectCwd(t);
+  const old = registeredProject('wc-list-old-');
   const d = upgradeDeps(paths, {
     registration: NO_SYNC,
     readInstances: () => [
-      { root: '/p/old', port: 1, url: 'http://localhost:1' },
+      { root: old, port: 1, url: 'http://localhost:1' },
       { root: '/p/current', port: 2, url: 'http://localhost:2' },
       { root: '/p/silent', port: 3 },
+      { root: '/p/stray', port: 4 },
     ],
-    runningBuild: async (port) => ({ 1: '0.5.0', 2: '0.6.0', 3: null })[port],
+    runningBuild: async (port) => ({ 1: '0.5.0', 2: '0.6.0', 3: null, 4: '0.5.0' })[port],
   });
   const res = await update([], d);
-  assert.deepEqual(res.others, { stale: ['/p/old'], restarted: [] }, 'the current build and an unknown one are not listed');
+  assert.deepEqual(res.others, { stale: [old, '/p/stray'], restarted: [] }, 'the current build and an unknown one are not listed');
   const out = d.log.text();
-  assert.match(out, /1 other project\(s\) still run a different build/);
-  assert.match(out, /\/p\/old {2}\(v0\.5\.0, not v0\.6\.0\) {2}http:\/\/localhost:1/);
-  assert.match(out, /cd <project> && claude-web-chat restart/);
-  assert.match(out, /claude-web-chat update --restart-all/);
+  assert.match(out, /2 other project\(s\) still run a different build/);
+  assert.ok(out.includes(`  ${old}  (v0.5.0, not v0.6.0)  http://localhost:1\n`), 'a registered project gets no note');
+  assert.ok(out.includes('  /p/stray  (v0.5.0, not v0.6.0)  — web-chat is not registered there'));
+  // `install` does both — restarts it and refreshes its managed files — but
+  // would register web-chat where it is not, so there it is `restart`.
+  assert.match(out, /Restart and refresh each where it lives: {2}cd <project> && claude-web-chat install/);
+  assert.match(out, /Where web-chat is not registered: {9}cd <project> && claude-web-chat restart {2}\(registers nothing\)/);
+  assert.match(out, /Or all of them at once: {19}claude-web-chat update --restart-all/);
 });
 
 test('update --restart-all restarts each on the new build, one at a time, from its own directory, and sums up', async (t) => {
@@ -875,12 +883,14 @@ test('update --restart-all restarts each on the new build, one at a time, from i
   const res = await update(['--restart-all'], d);
   assert.deepEqual(calls, [[here, null], [a, a], [b, b]], 'this project first, then each other one from inside it');
   assert.equal(process.cwd(), here, 'and back where it started');
-  assert.deepEqual(res.others, { stale: [a, b], restarted: [a], failed: [b] });
+  // Web-chat is registered in neither (no hooks, no .mcp.json entry), so
+  // nothing is refreshed in them, and the failed one is told to `restart`.
+  assert.deepEqual(res.others, { stale: [a, b], restarted: [a], failed: [b], refreshed: [] });
   const out = d.log.text();
   assert.match(out, /Restarting 2 project\(s\) on v0\.6\.0, one at a time/);
   assert.ok(out.includes(`✓ ${a}  v0.5.0 → v0.6.0`));
   assert.ok(out.includes(`✗ ${b}  v0.5.0 → v0.6.0  (the old daemon did not stop)`));
-  assert.match(out, /Restarted 1 of 2\. For the rest: cd <project> && claude-web-chat restart/);
+  assert.match(out, /Restarted 1 of 2\. For the rest: cd <project> && claude-web-chat install — it refreshes the managed files and restarts a server still on an older build \(where web-chat is not registered, `claude-web-chat restart` instead\)\./);
 });
 
 // The 0.7.6 updater performs the hop to 0.8 and knows nothing of other
@@ -979,7 +989,7 @@ test('update --restart-all still restarts the stale projects when GitHub is unre
   d.exit = (c) => { code = c; };
   const res = await update(['--restart-all'], d);
   assert.deepEqual(calls, [other], 'the local restart never depends on GitHub');
-  assert.deepEqual(res.others, { stale: [other], restarted: [other], failed: [] });
+  assert.deepEqual(res.others, { stale: [other], restarted: [other], failed: [], refreshed: [] });
   assert.equal(res.reason, 'unreachable');
   assert.equal(code, 1, 'the update check itself still failed, and the exit code says so');
   assert.match(d.errlog.text(), /^GitHub unreachable: github returned 403 .*\. Nothing to install\.$/);
@@ -1004,6 +1014,545 @@ test('update with no published release says so, and --restart-all still runs', a
   assert.equal(res.reason, 'no-release');
   assert.deepEqual(calls, [other]);
   assert.equal(d.errlog.text(), 'No published release found on GitHub. Nothing to install.');
+});
+
+// H-13. `--restart-all` restarted every other project's server on the new
+// build and left its rules, command and skills on the old one, until someone
+// ran `install` there. Each project it restarts is now refreshed too — through
+// the TARGET build's registration engine, after that project's restart, one
+// line each — and one project's failure is reported without stopping the next.
+// Only where web-chat is registered (its hooks or its .mcp.json entry are in
+// place), decided before the restart: the real restart creates .web-chat/.
+
+// A project an install left: its state directory and its .mcp.json entry.
+function registeredProject(prefix) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  fs.mkdirSync(path.join(dir, '.web-chat'));
+  return wire(dir);
+}
+
+// Register web-chat in `dir` as an older install did: its .mcp.json entry.
+function wire(dir) {
+  fs.writeFileSync(path.join(dir, '.mcp.json'),
+    JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: ['/old/bin/claude-web-chat-mcp.js'] } } }, null, 2) + '\n');
+  return dir;
+}
+
+// Every file under `root` but its .web-chat/, with its bytes.
+function filesOutsideState(root) {
+  const out = {};
+  const walk = (rel) => {
+    for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      const r = path.join(rel, e.name);
+      if (r === '.web-chat') continue;
+      if (e.isDirectory()) walk(r); else out[r] = fs.readFileSync(path.join(root, r), 'utf8');
+    }
+  };
+  walk('');
+  return out;
+}
+
+// What the real `restart` does to a directory: start --daemon creates .web-chat/.
+// (update restarts the project it was typed in by its cwd, with no root.)
+const restartLikeStart = async (args, o = {}) => {
+  fs.mkdirSync(path.join(o.root || process.cwd(), '.web-chat'), { recursive: true });
+  return { ok: true };
+};
+
+test('update --restart-all refreshes each restarted project with the NEW build\'s engine, after its restart, one line each', async (t) => {
+  const paths = onVersion(t);
+  const here = wire(inProjectCwd(t));
+  const [a, b, c, d2] = ['wc-ra-a-', 'wc-ra-b-', 'wc-ra-c-', 'wc-ra-d-'].map(registeredProject);
+  const seq = [];
+  globalThis.__wcRefreshSeq = seq;
+  t.after(() => { delete globalThis.__wcRefreshSeq; });
+  const d = upgradeDeps(paths, {
+    readInstances: () => [a, b, c, d2].map((root, i) => ({ root, port: i + 1 })),
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => { seq.push(['restart', o.root || here]); return { ok: o.root !== b }; },
+    fetchAndUnpack: async ({ release, versionDir }) => {
+      const dir = fakeVersion(paths, release.version);
+      // The new build's engine, identifiable by what it writes. It cannot
+      // parse c's settings — the shape of install's userFacing throw.
+      fs.mkdirSync(path.join(dir, 'lib', 'setup'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'lib', 'setup', 'registration.js'), `
+        const fs = require('fs'); const path = require('path');
+        module.exports.apply = (root, opts) => {
+          globalThis.__wcRefreshSeq.push(['apply', root, opts.force]);
+          if (root === ${JSON.stringify(c)}) throw new Error('error parsing ' + path.join(root, '.claude', 'settings.json') + ': Unexpected token');
+          fs.mkdirSync(path.join(root, '.claude', 'rules'), { recursive: true });
+          fs.writeFileSync(path.join(root, '.claude', 'rules', 'web-chat.md'), 'shipped by v0.6.0\\n');
+          return { hooks: { added: 0 }, gitignore: 'already-present', mcp: { status: 'already up to date' },
+            managed: [{ dest: '.claude/rules/web-chat.md', action: 'updated' }, { dest: '.claude/commands/web-chat.md', action: 'up-to-date' }] };
+        };`);
+      return { version: release.version, dir: versionDir };
+    },
+  });
+  const res = await update(['--restart-all'], d);
+
+  assert.deepEqual(seq, [
+    ['apply', here, false], ['restart', here],
+    ['restart', a], ['apply', a, false],
+    ['restart', b],
+    ['restart', c], ['apply', c, false],
+    ['restart', d2], ['apply', d2, false],
+  ], 'each project is refreshed right after its own restart, never one whose restart failed, and edit-preserving (force:false)');
+  assert.deepEqual(res.others, { stale: [a, b, c, d2], restarted: [a, c, d2], failed: [b], refreshed: [a, d2] });
+  for (const p of [a, d2]) {
+    assert.equal(fs.readFileSync(path.join(p, '.claude', 'rules', 'web-chat.md'), 'utf8'), 'shipped by v0.6.0\n', 'with v0.6.0\'s templates');
+  }
+  assert.ok(!fs.existsSync(path.join(b, '.claude')), 'a project whose server is still the old one is left as it was');
+
+  const lines = d.log.text().split('\n');
+  const after = (root) => lines[lines.findIndex((l) => l.includes(`${root}  v0.5.0 → v0.6.0`)) + 1];
+  assert.equal(after(a), '      refreshed .claude/rules/web-chat.md');
+  assert.equal(after(d2), '      refreshed .claude/rules/web-chat.md');
+  // apply() may have written some files before it threw, so the line never
+  // claims nothing changed.
+  assert.match(after(c), /^ {6}refresh stopped part-way: error parsing .*settings\.json: Unexpected token — fix that, then run `claude-web-chat install` there$/);
+  assert.ok(after(b).startsWith(`  ✓ ${c}`), 'no refresh line under a failed restart');
+  assert.match(d.log.text(), /Restarted 3 of 4\. For the rest: cd <project> && claude-web-chat install — it refreshes the managed files and restarts a server still on an older build\.$/m);
+});
+
+test('update --restart-all writes into each project exactly what `install` writes there, through the same engine', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const managedFiles = require('../lib/update/managed-files');
+  const noClaude = () => ({ ok: false });
+  // One project as an older install left it: wired by the real engine, then
+  // taken back to what an older build shipped — the rules file as that build
+  // shipped it (its baseline recorded), no Stop hook yet, no .gitignore rule.
+  const seed = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-seed-')));
+  fs.mkdirSync(path.join(seed, '.web-chat'));
+  fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
+  registration.apply(seed, { force: false, runClaude: noClaude });
+  const older = 'the rules as an older build shipped them\n';
+  fs.writeFileSync(path.join(seed, '.claude', 'rules', 'web-chat.md'), older);
+  managedFiles.writeBaselines(seed, { ...managedFiles.readBaselines(seed), '.claude/rules/web-chat.md': managedFiles.hashContent(older) });
+  const settingsFile = path.join(seed, '.claude', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  delete settings.hooks.Stop;
+  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+  fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
+  assert.equal(registration.isRegistered(seed), true, 'the seed is a registered project');
+  const copy = (prefix) => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+    fs.cpSync(seed, dir, { recursive: true });
+    return dir;
+  };
+  const viaUpdate = copy('wc-ra-same-u-');
+  const viaInstall = copy('wc-ra-same-i-');
+
+  const d = upgradeDeps(paths, {
+    registration,
+    readInstances: () => [{ root: viaUpdate, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: restartLikeStart,
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others.refreshed, [viaUpdate]);
+  // install's own step: registration.apply(root, { force, runClaude }).
+  registration.apply(viaInstall, { force: false, runClaude: noClaude });
+
+  const tree = (root) => {
+    const out = {};
+    const walk = (rel) => {
+      const abs = path.join(root, rel);
+      if (fs.statSync(abs).isDirectory()) { for (const e of fs.readdirSync(abs).sort()) walk(path.join(rel, e)); return; }
+      out[rel] = fs.readFileSync(abs, 'utf8');
+    };
+    for (const top of ['.claude', '.gitignore', '.mcp.json', path.join('.web-chat', 'managed.json')]) walk(top);
+    return out;
+  };
+  const written = tree(viaUpdate);
+  assert.deepEqual(written, tree(viaInstall));
+  assert.match(written[path.join('.claude', 'rules', 'web-chat.md')], /write_markdown/, 'the shipped rules landed');
+  assert.match(written[path.join('.claude', 'settings.json')], /turn-end/, 'and the missing Stop hook');
+  const line = d.log.text().split('\n').find((l) => l.startsWith('      ') && l.includes('refreshed'));
+  assert.equal(line, '      refreshed .claude/rules/web-chat.md; 1 hook(s) added; .web-chat/ added to .gitignore');
+});
+
+// The review's reproduction: install, then uninstall (which keeps .web-chat/
+// and leaves the daemon running), then `update --restart-all` — whose real
+// restart creates .web-chat/ even where there was none — used to put the
+// hooks, the .mcp.json entry and every managed file back.
+test('update --restart-all never registers web-chat where it is not: an uninstalled project, a bare .web-chat/, a stray daemon\'s directory, $HOME', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const noClaude = () => ({ ok: true });
+  const uninstalled = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-uninst-')));
+  fs.mkdirSync(path.join(uninstalled, '.web-chat'));
+  registration.apply(uninstalled, { force: false, runClaude: noClaude });
+  registration.remove(uninstalled, { runClaude: noClaude });
+  const stateOnly = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-state-')));
+  fs.mkdirSync(path.join(stateOnly, '.web-chat'));
+  // Where 0.7.x booted a daemon because `update` was typed there.
+  const stray = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-stray-')));
+  fs.writeFileSync(path.join(stray, 'notes.txt'), 'not a project\n');
+  // An install an old build made in ~ left its hooks in ~/.claude, which fire
+  // in every project: registered, and still never written.
+  const homeSettings = path.join(paths.home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(homeSettings), { recursive: true });
+  fs.writeFileSync(homeSettings, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-end' }] }] } }, null, 2));
+  assert.equal(registration.isRegistered(paths.home), true);
+  const roots = [uninstalled, stateOnly, stray, paths.home];
+  const before = roots.map(filesOutsideState);
+
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: if the gate let one through, it would write
+    readInstances: () => roots.map((root, i) => ({ root, port: i + 1 })),
+    runningBuild: async () => '0.5.0',
+    restart: restartLikeStart,
+    stopRow: async () => ({ ok: true, path: 'request' }),
+  });
+  const res = await update(['--restart-all'], d);
+
+  assert.deepEqual(res.others.restarted, roots.slice(0, 3), 'each project is still restarted, as 0.8.0 did');
+  assert.deepEqual(res.others.stopped, [paths.home], '(the server in $HOME is stopped instead: see below)');
+  assert.deepEqual(res.others.refreshed, []);
+  assert.deepEqual(roots.map(filesOutsideState), before, 'and nothing in any of them was written');
+  assert.ok(fs.existsSync(path.join(stray, '.web-chat')), '(the restart itself made .web-chat/ in the stray directory)');
+  const lines = d.log.text().split('\n');
+  assert.equal(lines.filter((l) => l === '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it').length, 3);
+});
+
+// A server 0.7.x booted in $HOME (`update` or `restart` typed in ~) cannot be
+// restarted: since 0.8 `start` refuses $HOME. Restarting it stopped it, then
+// waited 8s for a server that never came, and reported "✓ ~ v0.7.6 → v0.8.x"
+// and "Restarted 1 of 1" right above "this is your home directory, which is
+// never a web-chat project". It is stopped instead — through lib/cli/reap's
+// stopRow — and said so; the listing and the summary name `ls --reap`, the
+// command that stops it, where they named `install` (which refuses $HOME) and
+// `restart` (which finds no project there and stops nothing).
+const HOME_STOPPED = 'stopped, not restarted: your home directory is never a web-chat project, and no server starts there';
+const REAP = "claude-web-chat ls --reap  (it stops every other project's server too)";
+
+test('update --restart-all stops a server in $HOME through the reap engine, never restarts it, and counts it apart', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const other = registeredProject('wc-ra-home-other-');
+  const asked = [];
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }, { root: other, port: 2, pid: 4343 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      if (o.root === paths.home) throw new Error('no server can be restarted in $HOME');
+      return { ok: true };
+    },
+    stopRow: async (row) => { asked.push(row); return { ok: true, path: 'request', pid: row.pid }; },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(asked, [{ root: paths.home, port: 1, pid: 4242, reachable: true }], 'stopped as the row the registry named, which just answered');
+  assert.deepEqual(res.others, { stale: [paths.home, other], restarted: [other], failed: [], refreshed: [other], stopped: [paths.home] });
+  const out = d.log.text();
+  assert.match(out, /Restarting 1 project\(s\) on v0\.6\.0, one at a time, and stopping the server in your home directory\.\.\./);
+  assert.ok(out.split('\n').includes(`  ✓ ${paths.home}  v0.5.0 — ${HOME_STOPPED}`), out);
+  assert.ok(out.split('\n').includes('Restarted 1 of 1.'), 'the home directory is not counted as a project restarted');
+  assert.doesNotMatch(out, new RegExp(`${paths.home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}  v0\\.5\\.0 → v0\\.6\\.0`), 'and never reported as restarted');
+});
+
+// The same, end to end: the real stopRow against a stand-in 0.7.x daemon
+// rooted at $HOME, whose portfile is ~/.web-chat/server.json. It answers
+// /api/health as itself and acknowledges the shutdown by dropping its portfile.
+test('update --restart-all stops a 0.7.x server in $HOME with the real reap engine, at once', async (t) => {
+  const http = require('http');
+  const portfiles = require('../lib/core/portfiles');
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  let shutdowns = 0;
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/health') return res.end(JSON.stringify({ ok: true, role: 'instance', version: 3, pid: process.pid }));
+    if (req.method === 'POST' && req.url === '/api/shutdown' && req.headers['x-wc-shutdown'] === '1') {
+      shutdowns++;
+      portfiles.deletePortfile('server', { root: paths.home, pid: process.pid });
+      return res.end(JSON.stringify({ ok: true, shutting_down: true }));
+    }
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { srv.close(); srv.closeAllConnections(); portfiles.deletePortfile('server', { root: paths.home, pid: process.pid }); });
+  const port = srv.address().port;
+  portfiles.writePortfile('server', { root: paths.home, pid: process.pid, port });
+
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port, pid: process.pid }],
+    runningBuild: async () => '0.7.6',
+    restart: async (args, o = {}) => {
+      if (o.root === paths.home) throw new Error('no server can be restarted in $HOME');
+      return { ok: true };
+    },
+  });
+  const started = Date.now();
+  const res = await update(['--restart-all'], d);
+  assert.ok(Date.now() - started < 4000, `took ${Date.now() - started}ms — a restart there waited 8s for a server that never came`);
+  assert.equal(shutdowns, 1, 'asked once, through /api/shutdown');
+  assert.deepEqual(res.others.stopped, [paths.home]);
+  assert.ok(d.log.text().split('\n').includes(`  ✓ ${paths.home}  v0.7.6 — ${HOME_STOPPED}`), d.log.text());
+});
+
+test('a server in $HOME that does not stop is said so, and the summary names `ls --reap`', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 7, pid: 4242 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      if (o.root === paths.home) throw new Error('no server can be restarted in $HOME');
+      return { ok: true };
+    },
+    stopRow: async () => ({ ok: false, path: 'none', pid: 4242, reason: 'identity' }),
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others, { stale: [paths.home], restarted: [], failed: [paths.home], refreshed: [], stopped: [] });
+  const lines = d.log.text().split('\n');
+  assert.ok(lines.includes('Stopping the server in your home directory...'), d.log.text());
+  assert.ok(lines.includes(`  ✗ ${paths.home}  v0.5.0 — not stopped (port 7 answers, but not as pid 4242)`), d.log.text());
+  assert.ok(lines.includes(`The server in your home directory is still running — to stop it: ${REAP}.`), d.log.text());
+  assert.ok(!lines.some((l) => l.startsWith('Restarted ')), 'no project was there to restart');
+});
+
+test('the listing gives a server in $HOME `ls --reap`, never `install` or `restart` — going forward or after a rollback', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const other = registeredProject('wc-list-home-');
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }, { root: other, port: 2, pid: 4343 }],
+    runningBuild: async () => '0.5.0',
+  });
+  const res = await update([], d);
+  assert.deepEqual(res.others, { stale: [paths.home, other], restarted: [] });
+  const out = d.log.text().split('\n');
+  assert.ok(out.includes(`  ${paths.home}  (v0.5.0, not v0.6.0)  — your home directory, never a web-chat project`), d.log.text());
+  assert.ok(out.includes('  Restart and refresh each where it lives:  cd <project> && claude-web-chat install'));
+  assert.ok(out.includes(`  Stop the one in your home directory:      ${REAP}`));
+  assert.ok(!out.some((l) => l.startsWith('  Where web-chat is not registered:')), 'the home directory is not offered `restart`');
+
+  // Only the home directory: no per-project command at all.
+  const only = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }],
+    runningBuild: async () => '0.5.0',
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  await update([], only);
+  const alone = only.log.text();
+  assert.match(alone, /Stop the one in your home directory: {6}claude-web-chat ls --reap/);
+  assert.doesNotMatch(alone, /cd <project>/);
+
+  // After a rollback: `restart` for the projects, `ls --reap` for $HOME.
+  const back = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }, { root: other, port: 2, pid: 4343 }],
+    runningBuild: async () => '0.7.6',
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  await update(['--to', '0.5.0'], back);
+  const rolled = back.log.text().split('\n');
+  assert.ok(rolled.includes('  Restart each where it lives:  cd <project> && claude-web-chat restart'), back.log.text());
+  assert.ok(rolled.includes(`  Stop the one in your home directory:  ${REAP}`), back.log.text());
+});
+
+// Whether a project may be refreshed is decided on the project as it was
+// BEFORE its restart. The restart that runs is the target build's, loaded out
+// of versions/<target>, and whatever it leaves in a directory is not evidence
+// that anyone installed web-chat there: decided after it, a restart that wired
+// the directory would make it eligible on its own say-so.
+test('update --restart-all judges a project as it was before its restart: wiring the restart leaves does not make it eligible', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-wired-')));
+  const wiring = JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: ['/x/bin/claude-web-chat-mcp.js'] } } }, null, 2) + '\n';
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: had the gate let it through, it would write
+    readInstances: () => [{ root: bare, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      await restartLikeStart(args, o);
+      if (o.root) fs.writeFileSync(path.join(o.root, '.mcp.json'), wiring);
+      return { ok: true };
+    },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.equal(registration.isRegistered(bare), true, 'its restart left it wired');
+  assert.deepEqual(res.others.restarted, [bare]);
+  assert.deepEqual(res.others.refreshed, [], 'but it was not registered before the restart');
+  assert.deepEqual(filesOutsideState(bare), { '.mcp.json': wiring }, 'so nothing but what the restart wrote is there');
+  assert.ok(d.log.text().split('\n').includes(
+    '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it'));
+});
+
+// And as it is after the restart. The check before decides alone what a
+// restart can make eligible (nothing), but an `uninstall` typed in another
+// terminal while that project's restart ran (its stop can wait up to 40s on a
+// drain) must stand, not be undone by the refresh that follows.
+test('update --restart-all leaves alone a project un-registered while its server restarted', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const p = registeredProject('wc-ra-gone-');
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: had the refresh run, it would write
+    readInstances: () => [{ root: p, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      if (o.root === p) registration.remove(p, { runClaude: () => ({ ok: true }) });
+      return { ok: true };
+    },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others.restarted, [p]);
+  assert.deepEqual(res.others.refreshed, [], 'not refreshed');
+  assert.equal(registration.isRegistered(p), false, 'the uninstall stands');
+  assert.deepEqual(filesOutsideState(p), {}, 'nothing was written back');
+  assert.ok(d.log.text().split('\n').includes(
+    '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it'));
+});
+
+// The project `update` is typed in goes through the same gate. An uninstalled
+// project keeps its .web-chat/, and 0.7.x booted a daemon — so made a
+// .web-chat/ — wherever `update` was typed: ~/Downloads, say, the directory a
+// user is likeliest to type it in again. Synced on that evidence, either was
+// registered again: hooks, .mcp.json entry, rules, command and skills. Its
+// server is still restarted.
+const NOT_REGISTERED_HERE = 'Managed files left alone — web-chat is not registered here; `claude-web-chat install` registers it.';
+
+test('update --restart-all typed in an uninstalled project writes nothing there, and still restarts its server', async (t) => {
+  const paths = onVersion(t);
+  const here = inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const noClaude = () => ({ ok: true });
+  registration.apply(here, { force: false, runClaude: noClaude });
+  registration.remove(here, { runClaude: noClaude });
+  assert.equal(registration.isRegistered(here), false, 'uninstalled');
+  const before = filesOutsideState(here);
+  let restarts = 0;
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: had the gate let it through, it would write
+    restart: async (args, o) => { restarts++; return restartLikeStart(args, o); },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.equal(res.after, '0.6.0');
+  assert.deepEqual(filesOutsideState(here), before, 'nothing outside .web-chat/ was written');
+  assert.equal(registration.isRegistered(here), false, 'web-chat is still not registered there');
+  assert.equal(restarts, 1, 'its server was restarted');
+  const out = d.log.text();
+  assert.ok(out.split('\n').includes(NOT_REGISTERED_HERE), out);
+  assert.doesNotMatch(out, /Syncing managed files/);
+});
+
+test('update typed in a directory with only a .web-chat/ (a 0.7.x daemon\'s) writes nothing there', async (t) => {
+  const paths = onVersion(t);
+  const here = inProjectCwd(t);
+  fs.writeFileSync(path.join(here, 'notes.txt'), 'not a project\n');
+  const registration = require('../lib/setup/registration');
+  const d = upgradeDeps(paths, { registration, restart: restartLikeStart });
+  await update([], d);
+  assert.deepEqual(filesOutsideState(here), { 'notes.txt': 'not a project\n' });
+  assert.equal(registration.isRegistered(here), false);
+  assert.ok(d.log.text().split('\n').includes(NOT_REGISTERED_HERE), d.log.text());
+});
+
+test('a project refreshed with nothing to change says so in one line', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const other = registeredProject('wc-ra-same-');
+  const d = upgradeDeps(paths, {
+    registration: { apply: () => ({ hooks: { added: 0 }, gitignore: 'already-present', mcp: { status: 'already up to date' }, managed: [{ dest: '.claude/rules/web-chat.md', action: 'up-to-date' }] }) },
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async () => ({ ok: true }),
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others.refreshed, [other]);
+  assert.ok(d.log.text().split('\n').includes('      managed files already up to date'));
+});
+
+test('a refresh names what is left for the user in that project: a conflict, a differs file, a stub .mcp.json', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const other = registeredProject('wc-ra-left-');
+  const d = upgradeDeps(paths, {
+    registration: {
+      apply: (root, { runClaude }) => {
+        runClaude(['mcp', 'add', 'web-chat', '--scope', 'local', '--', 'node', '/x/bin/claude-web-chat-mcp.js'], { cwd: root });
+        return {
+          hooks: { added: 0 }, gitignore: 'already-present', mcp: { status: 'kept plugin registration' },
+          managed: [
+            { dest: '.claude/rules/web-chat.md', action: 'conflict', sidecar: '.claude/rules/web-chat.md.new', pending: true },
+            { dest: '.claude/commands/web-chat.md', action: 'differs' },
+          ],
+        };
+      },
+    },
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async () => ({ ok: true }),
+  });
+  await update(['--restart-all'], d);
+  const line = d.log.text().split('\n').find((l) => l.startsWith('      ') && l.includes('.claude/commands/web-chat.md'));
+  assert.ok(line, d.log.text());
+  assert.match(line, /\.claude\/commands\/web-chat\.md differs from the shipped version with no record of your edits — kept; `claude-web-chat install --force` there adopts the shipped version/);
+  assert.match(line, /conflicts: \.claude\/rules\/web-chat\.md — merge the \.new beside each, then delete it/);
+  assert.match(line, /its \.mcp\.json entry cannot resolve there — run in it: claude mcp add web-chat --scope local -- node \/x\/bin\/claude-web-chat-mcp\.js$/);
+});
+
+test('a rollback --restart-all to a build with no engine restarts the others and leaves their files alone, saying so', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');   // predates the engine
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  const other = registeredProject('wc-ra-back-');
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.6.0',
+    restart: async () => ({ ok: true }),
+  });
+  const res = await update(['--to', '0.5.0', '--restart-all'], d);
+  assert.deepEqual(res.others, { stale: [other], restarted: [other], failed: [], refreshed: [] });
+  assert.ok(!fs.existsSync(path.join(other, '.claude')), 'nothing synced forward to templates v0.5.0 does not ship');
+  assert.ok(d.log.text().split('\n').includes(
+    '      managed files left alone — v0.5.0 has no templates of its own; run `claude-web-chat install` there'));
+});
+
+// The summary names the same command the listing would have. After a
+// rollback that is `restart`: the servers left run the NEWER build, and the
+// build now installed may have an `install` that restarts nothing.
+test('after a rollback, a project whose restart failed is told to `restart` it, never `install`, and nothing is called older', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  const done = registeredProject('wc-ra-back-ok-');
+  const stuck = registeredProject('wc-ra-back-stuck-');
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    readInstances: () => [{ root: done, port: 1 }, { root: stuck, port: 2 }],
+    runningBuild: async () => '0.6.0',
+    restart: async (args, o = {}) => ({ ok: o.root !== stuck }),
+  });
+  const res = await update(['--to', '0.5.0', '--restart-all'], d);
+  assert.deepEqual(res.others.failed, [stuck]);
+  const out = d.log.text();
+  assert.ok(out.split('\n').includes('Restarted 1 of 2. For the rest: cd <project> && claude-web-chat restart'), out);
+  assert.doesNotMatch(out, /older build/);
 });
 
 test('parseArgs knows --restart-all', () => {
