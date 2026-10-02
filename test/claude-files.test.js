@@ -558,6 +558,123 @@ test('planFile refuses the wrong name and anything but a regular file', (t) => {
   assert.equal(planFile(plans), null, 'plans/ itself');
 });
 
+// Claude Code's `plansDirectory` setting moves plans into the project: it is
+// resolved against the session's working directory, and used only while it
+// stays inside it (2.1.287). The caller reads the setting; the fence takes the
+// pair, under Claude Code's rule.
+test('planFile takes a plan where a plansDirectory setting put it, only when asked to', (t) => {
+  const ch = tier(t);
+  const root = ch.root;
+  const plan = put(path.join(root, 'docs', 'plans', 'quiet-river.md'), '# Plan\n');
+  const setting = { projectRoot: root, plansDirectory: 'docs/plans' };
+
+  assert.equal(planFile(plan), null, 'by default a plan lives in <config>/plans alone');
+  assert.equal(planFile(plan, setting), plan);
+  for (const plansDirectory of ['./docs/plans', 'docs/plans/', 'docs/../docs/plans', path.join(root, 'docs', 'plans')]) {
+    assert.equal(planFile(plan, { projectRoot: root, plansDirectory }), plan, plansDirectory);
+  }
+  const nested = put(path.join(root, 'docs', 'plans', 'agents', 'quiet-river-agent-a1.md'), '# Plan\n');
+  assert.equal(planFile(nested, setting), nested);
+
+  // Claude Code records the physical path (macOS's /var is /private/var), and
+  // a caller may hold the root in either spelling.
+  const physical = path.join(ch.cwd, 'docs', 'plans', 'quiet-river.md');
+  assert.equal(planFile(physical, setting), physical);
+  assert.equal(planFile(physical, { projectRoot: ch.cwd, plansDirectory: 'docs/plans' }), physical);
+
+  // <config>/plans is still a plans directory.
+  const usual = ch.write('plans/loud-river.md', '# Plan\n');
+  assert.equal(planFile(usual, setting), usual);
+});
+
+test('planFile refuses a plansDirectory that leaves the project or names all of it, and keeps every other rule inside one', (t) => {
+  const ch = tier(t);
+  const root = ch.root;
+  const home = withTempHome(t);
+  const key = put(path.join(home, '.ssh', 'id_rsa.md'), STAND_IN);
+  const outside = put(path.join(scratch(t, 'cf-out-'), 'plans', 'quiet-river.md'), '# Plan\n');
+  const readme = put(path.join(root, 'README.md'), '# A project file, not a plan\n');
+  const plan = put(path.join(root, 'docs', 'plans', 'quiet-river.md'), '# Plan\n');
+  const plans = path.dirname(plan);
+  const setting = { projectRoot: root, plansDirectory: 'docs/plans' };
+
+  // A setting that leads out of the project names no plans directory, as in
+  // Claude Code, which writes to <config>/plans then.
+  for (const [plansDirectory, p] of [
+    ['..', outside],
+    [path.relative(root, path.dirname(outside)), outside],
+    [path.dirname(outside), outside],
+    [path.join(home, '.ssh'), key],
+    ['/', key],
+  ]) {
+    assert.equal(planFile(p, { projectRoot: root, plansDirectory }), null, plansDirectory);
+  }
+  // Nor does one that leads out through a link inside the project.
+  link(path.dirname(outside), path.join(root, 'linked-plans'));
+  assert.equal(planFile(path.join(root, 'linked-plans', 'quiet-river.md'), { projectRoot: root, plansDirectory: 'linked-plans' }), null);
+
+  // A setting that names the project root itself would make every markdown
+  // file in the project a plan: refused, spelled out or through a link.
+  for (const plansDirectory of ['.', './', 'docs/..', root]) {
+    assert.equal(planFile(readme, { projectRoot: root, plansDirectory }), null, plansDirectory);
+  }
+  link('.', path.join(root, 'loop'));
+  assert.equal(planFile(path.join(root, 'loop', 'README.md'), { projectRoot: root, plansDirectory: 'loop' }), null);
+  // And a root at the top of the filesystem is no project.
+  assert.equal(planFile(plan, { projectRoot: path.parse(root).root, plansDirectory: path.relative(path.parse(root).root, plans) }), null);
+
+  // Inside the moved directory every other rule holds.
+  for (const p of [
+    readme, // in the project, beside the plans directory
+    put(path.join(root, 'docs', 'notes.md'), '# notes\n'),
+    put(path.join(plans, 'river.txt'), '# Plan\n'),
+    put(path.join(plans, 'river.md.bak'), '# Plan\n'),
+    raw(plans, '..', 'plans', 'quiet-river.md'),
+    raw(plans, '.', 'quiet-river.md'),
+    path.relative(process.cwd(), plan),
+    'docs/plans/quiet-river.md',
+    path.join(plans, 'missing.md'),
+    plans,
+  ]) {
+    assert.equal(planFile(p, setting), null, p);
+  }
+  assert.equal(planFile(link(key, path.join(plans, 'stolen.md')), setting), null, 'a link named like a plan');
+  assert.equal(planFile(link(plan, path.join(plans, 'copy.md')), setting), null, 'a link to a plan');
+  link(path.join(home, '.ssh'), path.join(plans, 'keys'));
+  assert.equal(planFile(path.join(plans, 'keys', 'id_rsa.md'), setting), null, 'a subdirectory that leads out');
+  fs.mkdirSync(path.join(plans, 'dir.md'));
+  assert.equal(planFile(path.join(plans, 'dir.md'), setting), null, 'a directory');
+  const pipe = path.join(plans, 'pipe.md');
+  if (fifo(pipe)) assert.equal(planFile(pipe, setting), null, 'a FIFO');
+  assert.equal(planFile(plan, setting), plan, 'and the plan itself is still taken');
+});
+
+test('a plansDirectory option that is not a clean pair adds nothing, and takes nothing away', (t) => {
+  const ch = tier(t);
+  const root = ch.root;
+  const plan = put(path.join(root, 'docs', 'plans', 'quiet-river.md'), '# Plan\n');
+  const usual = ch.write('plans/loud-river.md', '# Plan\n');
+  for (const opts of [
+    undefined, null, 'docs/plans', 42, [], ['docs/plans'], {},
+    { projectRoot: root },
+    { plansDirectory: 'docs/plans' },
+    { projectRoot: path.relative(process.cwd(), root), plansDirectory: 'docs/plans' },
+    { projectRoot: `${root}/`, plansDirectory: 'docs/plans' },
+    { projectRoot: raw(root, '.'), plansDirectory: 'docs/plans' },
+    { projectRoot: root, plansDirectory: '' },
+    { projectRoot: root, plansDirectory: 7 },
+    { projectRoot: root, plansDirectory: ['docs/plans'] },
+    { projectRoot: root, plansDirectory: `${'./'.repeat(2100)}docs/plans` }, // past PATH_MAX, though it resolves to docs/plans
+    { projectRoot: Buffer.from(root), plansDirectory: 'docs/plans' },
+  ]) {
+    assert.equal(planFile(plan, opts), null, label(opts));
+    assert.equal(planFile(usual, opts), usual, `<config>/plans with ${label(opts)}`);
+  }
+  // An option that throws when read is doubt, like any other.
+  const throwing = { get projectRoot() { throw new Error('no root here'); }, plansDirectory: 'docs/plans' };
+  assert.equal(planFile(plan, throwing), null);
+});
+
 // ── readWindow ───────────────────────────────────────────────────────────────
 
 // 1,000 ASCII lines, so a byte offset is a character offset.
