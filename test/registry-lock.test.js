@@ -15,7 +15,13 @@
 //     ahead without it and says so, and the lock is left to its holder;
 //   * a failed write still releases the lock, a no-op never takes it (nor
 //     creates ~/.web-chat to hold it), and registerInstance holds it across
-//     both files without waiting on itself.
+//     both files without waiting on itself;
+//   * breaking a stale lock never moves a lock it did not judge (F-16): every
+//     interleaving of a second waiter and a third writer with the breaker
+//     leaves one holder at most, on the file it created; a lock moved in the
+//     one window left (a live holder letting go mid-break) is put back or
+//     kept, never deleted; a break another waiter has claimed is waited for,
+//     and a claim whose breaker died is cleared.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -219,4 +225,169 @@ test('registerInstance holds one lock across both files without waiting on itsel
   assert.deepStrictEqual(registry.readInstances().map((e) => e.id), [value.id]);
   assert.deepStrictEqual(registry.readAllEntries().map((e) => e.id), [value.id], 'the prune was written');
   assert.ok(!fs.existsSync(lockFile()));
+});
+
+// ── F-16: a break never moves a lock it did not judge ───────────────────────
+// breakIfStale judges a lock stale, then moves what is at its path aside. Two
+// waiters judging one dead lock is the ordinary case (sessions starting at
+// once), and the code it replaced let the second move the FRESH lock the first
+// had taken in the meantime: the path stood empty, a third writer took the lock
+// there, the move could not be undone, and the fresh lock was deleted — two
+// writers inside the lock at once. The interleavings are driven here step by
+// step, in one process, by hooking the fs calls the breaker (B) makes: no sleep
+// and no real race.
+//
+//   A  another waiter, run just before the B call `before` picks: one turn of
+//      acquireLock (create the lock; else break a stale one, then create it);
+//   C  a third writer, which creates the lock the instant B leaves the path
+//      empty (unless `third: false`).
+//
+// `holders` maps each writer that created a lock to that file's inode.
+
+function driveBreak({ before, a, third = true }) {
+  const file = lockFile();
+  const dir = path.dirname(file);
+  const real = { openSync: fs.openSync, renameSync: fs.renameSync, linkSync: fs.linkSync, unlinkSync: fs.unlinkSync };
+  const inDir = (p) => path.dirname(path.resolve(String(p))) === dir;
+  // The calls that change the lock directory, which is all an interleaving is made of.
+  const changes = {
+    openSync: (p, flags) => flags === 'wx' && inDir(p),
+    renameSync: (p) => inDir(p),
+    linkSync: (p) => inDir(p),
+    unlinkSync: (p) => inDir(p),
+  };
+  const holders = new Map();
+  const create = (who) => {
+    let fd;
+    try { fd = fs.openSync(file, 'wx'); } catch (e) { if (e.code === 'EEXIST') return false; throw e; }
+    fs.writeSync(fd, `${process.pid}\n`);
+    fs.closeSync(fd);
+    holders.set(who, fs.statSync(file).ino);
+    return true;
+  };
+  const turn = (who) => create(who) || (registry.breakIfStale(file) && create(who));
+  let hooked = true;
+  let count = 0;
+  let injected = false;
+  const others = (fn) => { hooked = false; try { fn(); } finally { hooked = true; } };
+  for (const [name, isChange] of Object.entries(changes)) {
+    fs[name] = function hookedCall(...args) {
+      if (!hooked || !isChange(...args)) return real[name].apply(fs, args);
+      count++;
+      if (!injected && before(name, args, count)) {
+        injected = true;
+        others(() => (a ? a({ file, turn, create }) : turn('A')));
+      }
+      try {
+        return real[name].apply(fs, args);
+      } finally {
+        if (third && !holders.has('C') && !fs.existsSync(file)) others(() => create('C'));
+      }
+    };
+  }
+  let out;
+  try {
+    out = stderrOf(() => registry.breakIfStale(file));
+  } finally {
+    Object.assign(fs, real);
+  }
+  const left = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(file))).sort();
+  return { result: out.value, text: out.text, holders, injected, changes: count, left };
+}
+
+function freshStaleLock(body = `${DEAD_PID}\n`) {
+  const dir = path.dirname(lockFile());
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { force: true });
+  fs.writeFileSync(lockFile(), body);
+}
+
+const inodeOf = (f) => fs.statSync(f).ino;
+
+test('F-16: a waiter that judged a lock stale never moves the fresh lock that replaced it', (t) => {
+  withTempHome(t);
+  freshStaleLock();
+  // A breaks the dead lock and takes a fresh one after B judged it, before B
+  // has changed anything; C is ready to take the lock the moment the path is empty.
+  const r = driveBreak({ before: (name, args, n) => n === 1 });
+  assert.ok(r.injected, 'A ran');
+  assert.ok(r.holders.has('A'), 'A broke the dead lock and took the lock');
+  assert.deepStrictEqual([...r.holders.keys()], ['A'], 'and no second writer got the lock beside it');
+  assert.strictEqual(inodeOf(lockFile()), r.holders.get('A'), "the lock is still the file A created — never moved, never deleted");
+  assert.deepStrictEqual(r.left, ['instances.json.lock'], 'nothing is left beside it');
+  assert.strictEqual(r.result, false, 'B waits for A');
+});
+
+test('F-16: wherever the other waiter acts, one writer at most holds the lock, on the file it created', (t) => {
+  withTempHome(t);
+  for (let k = 1; ; k++) {
+    freshStaleLock();
+    const r = driveBreak({ before: (name, args, n) => n === k });
+    const who = [...r.holders.keys()];
+    assert.ok(who.length <= 1, `A before B's change ${k}: ${who.join(' and ')} both hold the lock`);
+    if (who.length) {
+      assert.strictEqual(inodeOf(lockFile()), r.holders.get(who[0]), `A before B's change ${k}: ${who[0]}'s lock was moved`);
+      assert.deepStrictEqual(r.left, ['instances.json.lock'], `A before B's change ${k}: left beside the lock`);
+    } else {
+      assert.deepStrictEqual(r.left, [], `A before B's change ${k}: left behind`);
+    }
+    if (!r.injected) break; // B made fewer than k changes: every point is covered
+  }
+});
+
+test('a lock whose live holder lets go between the look and the move is put back, not deleted', (t) => {
+  withTempHome(t);
+  // Stale by age only: its holder (this process) is alive. Just before B moves
+  // it, the holder releases it and A takes the lock — so what B moves is A's.
+  const aged = () => {
+    freshStaleLock(`${process.pid}\n`);
+    const then = (Date.now() - registry.LOCK_STALE_MS - 5000) / 1000;
+    fs.utimesSync(lockFile(), then, then);
+  };
+  const beforeMove = (name, args) => name === 'renameSync' && path.resolve(String(args[0])) === lockFile();
+  const releaseThenA = ({ file, turn }) => { fs.unlinkSync(file); turn('A'); };
+
+  aged();
+  const back = driveBreak({ before: beforeMove, a: releaseThenA, third: false });
+  assert.ok(back.injected && back.holders.has('A'));
+  assert.strictEqual(inodeOf(lockFile()), back.holders.get('A'), "A's lock is back where A created it, the same file");
+  assert.deepStrictEqual(back.left, ['instances.json.lock']);
+  assert.strictEqual(back.result, false);
+
+  // And when a third writer took the empty path before it could go back, A's
+  // lock is kept beside it and said, never deleted.
+  aged();
+  const kept = driveBreak({ before: beforeMove, a: releaseThenA });
+  assert.ok(kept.holders.has('A') && kept.holders.has('C'));
+  assert.strictEqual(inodeOf(lockFile()), kept.holders.get('C'));
+  const dir = path.dirname(lockFile());
+  const asideA = kept.left.find((f) => f !== 'instances.json.lock' && inodeOf(path.join(dir, f)) === kept.holders.get('A'));
+  assert.ok(asideA, `A's lock was deleted (left: ${kept.left.join(', ')})`);
+  assert.match(kept.text, new RegExp(`kept it as ${asideA.replace(/[.]/g, '\\.')}`));
+});
+
+test('a break another waiter has claimed is left to it: the lock and the claim stay, and this one waits', (t) => {
+  withTempHome(t);
+  freshStaleLock();
+  const claim = `${lockFile()}.break`;
+  fs.writeFileSync(claim, `${process.pid}\n`); // a live waiter's claim, just taken
+  const { value, text } = stderrOf(() => registry.breakIfStale(lockFile()));
+  assert.strictEqual(value, false, 'wait for the waiter breaking it');
+  assert.strictEqual(fs.readFileSync(lockFile(), 'utf8'), `${DEAD_PID}\n`, 'the stale lock is that waiter\'s to break');
+  assert.ok(fs.existsSync(claim), 'and its claim is not touched');
+  assert.strictEqual(text, '');
+});
+
+test('a claim left by a breaker that died is cleared, then the stale lock is broken and the write lands', (t) => {
+  withTempHome(t);
+  const root = project(t, 'claim');
+  freshStaleLock();
+  fs.writeFileSync(`${lockFile()}.break`, `${DEAD_PID + 1}\n`);
+  const started = Date.now();
+  const { text } = stderrOf(() => registry.registerMcp({ root }));
+  assert.ok(Date.now() - started < registry.LOCK_WAIT_MS / 2, 'no wait for a dead breaker');
+  assert.match(text, new RegExp(`broke a stale instances\\.json\\.lock\\.break \\(its holder, pid ${DEAD_PID + 1}, is gone\\)`));
+  assert.match(text, new RegExp(`broke a stale instances\\.json\\.lock \\(its holder, pid ${DEAD_PID}, is gone\\)`));
+  assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)), 'the row was written');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.includes('.lock')), [], 'no lock, claim or aside file left');
 });
