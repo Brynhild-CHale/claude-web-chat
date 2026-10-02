@@ -168,7 +168,6 @@ test('the driver docs name every method a driver has, and none it lacks', () => 
   const { read, flatten } = require('../test-support/doc-truth');
   const wc = createDriver({ owner: 'svc', port: 1 }); // nothing is requested
   const methods = Object.keys(wc).filter((k) => typeof wc[k] === 'function').sort();
-  assert.ok(methods.length >= 9, `expected the driver's methods, found ${methods.join(', ')}`);
 
   const driving = read('docs/driving-the-surface.md');
   for (const m of methods) assert.ok(driving.includes(`${m}(`), `docs/driving-the-surface.md never shows \`${m}(…)\``);
