@@ -1307,6 +1307,33 @@ test('a rollback --restart-all to a build with no engine restarts the others and
     '      managed files left alone — v0.5.0 has no templates of its own; run `claude-web-chat install` there'));
 });
 
+// The summary names the same command the listing would have. After a
+// rollback that is `restart`: the servers left run the NEWER build, and the
+// build now installed may have an `install` that restarts nothing.
+test('after a rollback, a project whose restart failed is told to `restart` it, never `install`, and nothing is called older', async (t) => {
+  withTempHome(t);
+  inScratchCwd(t);
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  fakeVersion(paths, '0.6.0');
+  activate('0.6.0', paths);
+  linkBins(paths);
+  const done = registeredProject('wc-ra-back-ok-');
+  const stuck = registeredProject('wc-ra-back-stuck-');
+  const d = deps({
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+    readInstances: () => [{ root: done, port: 1 }, { root: stuck, port: 2 }],
+    runningBuild: async () => '0.6.0',
+    restart: async (args, o = {}) => ({ ok: o.root !== stuck }),
+  });
+  const res = await update(['--to', '0.5.0', '--restart-all'], d);
+  assert.deepEqual(res.others.failed, [stuck]);
+  const out = d.log.text();
+  assert.ok(out.split('\n').includes('Restarted 1 of 2. For the rest: cd <project> && claude-web-chat restart'), out);
+  assert.doesNotMatch(out, /older build/);
+});
+
 test('parseArgs knows --restart-all', () => {
   assert.equal(update.parseArgs(['--restart-all']).restartAll, true);
   assert.equal(update.parseArgs([]).restartAll, false);
