@@ -1210,6 +1210,36 @@ test('update --restart-all never registers web-chat where it is not: an uninstal
   assert.equal(lines.filter((l) => l === '      managed files left alone — this is your home directory, which is never a web-chat project').length, 1);
 });
 
+// Whether a project may be refreshed is decided on the project as it was
+// BEFORE its restart. The restart that runs is the target build's, loaded out
+// of versions/<target>, and whatever it leaves in a directory is not evidence
+// that anyone installed web-chat there: decided after it, a restart that wired
+// the directory would make it eligible on its own say-so.
+test('update --restart-all judges a project as it was before its restart: wiring the restart leaves does not make it eligible', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-wired-')));
+  const wiring = JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: ['/x/bin/claude-web-chat-mcp.js'] } } }, null, 2) + '\n';
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: had the gate let it through, it would write
+    readInstances: () => [{ root: bare, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      await restartLikeStart(args, o);
+      if (o.root) fs.writeFileSync(path.join(o.root, '.mcp.json'), wiring);
+      return { ok: true };
+    },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.equal(registration.isRegistered(bare), true, 'its restart left it wired');
+  assert.deepEqual(res.others.restarted, [bare]);
+  assert.deepEqual(res.others.refreshed, [], 'but it was not registered before the restart');
+  assert.deepEqual(filesOutsideState(bare), { '.mcp.json': wiring }, 'so nothing but what the restart wrote is there');
+  assert.ok(d.log.text().split('\n').includes(
+    '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it'));
+});
+
 test('a project refreshed with nothing to change says so in one line', async (t) => {
   const paths = onVersion(t);
   inProjectCwd(t);
