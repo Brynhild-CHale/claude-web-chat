@@ -66,9 +66,12 @@ module.exports = {
 };
 ```
 
-The child is a `fork()`ed Node process (`lib/server/service-runner.js`). It loads
-`service.js`, builds the driver with an explicit port (no portfile discovery), and
-calls `start(ctx)`. On stop it sends IPC `stop` and, two seconds later, `SIGTERM`;
+The child is a `fork()`ed Node process (`lib/server/service-runner.js`). It reads
+`service.js` once, checks those bytes against the sha256 the approval was keyed
+on, and runs exactly them as a CommonJS module (`module.exports`; `require`
+resolves next to the file as usual) — so bytes written to the file after the
+daemon read it never run under that approval. It then builds the driver with an
+explicit port (no portfile discovery) and calls `start(ctx)`. On stop it sends IPC `stop` and, two seconds later, `SIGTERM`;
 the child also exits if the daemon disconnects. Either of those is decisive once a
 stop is already in flight — a `stop()` that never resolves does not keep the
 process alive — so services never orphan. Do the cleanup that matters inside the
