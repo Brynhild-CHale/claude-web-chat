@@ -686,46 +686,136 @@ test('readWindow reads a small file whole, from either end', (t) => {
   const file = put(path.join(dir, 'small.txt'), 'one\ntwo\n');
   for (const opts of [undefined, {}, { maxBytes: 8 }, { maxBytes: 100 }, { from: 0 }, { maxBytes: 8, fromEnd: true }, { maxBytes: 100, fromEnd: true }]) {
     assert.deepEqual(readWindow(file, opts),
-      { text: 'one\ntwo\n', startsMidFile: false, complete: true, from: 0, to: 8, size: 8 }, label(opts));
+      { text: 'one\ntwo\n', startsMidFile: false, complete: true, from: 0, to: 8, next: 8, size: 8 }, label(opts));
   }
   assert.deepEqual(readWindow(put(path.join(dir, 'empty.txt'), ''), { fromEnd: true }),
-    { text: '', startsMidFile: false, complete: true, from: 0, to: 0, size: 0 });
+    { text: '', startsMidFile: false, complete: true, from: 0, to: 0, next: 0, size: 0 });
 });
 
 test('a window from the start stops at maxBytes, and is not complete', (t) => {
   const file = put(path.join(scratch(t, 'cf-win-'), 'data.txt'), DATA);
-  assert.deepEqual(readWindow(file, { maxBytes: 1000 }),
-    { text: DATA.slice(0, 1000), startsMidFile: false, complete: false, from: 0, to: 1000, size: DATA_SIZE });
+  assert.deepEqual(readWindow(file, { maxBytes: 1000 }), {
+    text: DATA.slice(0, 1000), startsMidFile: false, complete: false,
+    from: 0, to: 1000, next: DATA.lastIndexOf('\n', 999) + 1, size: DATA_SIZE,
+  });
 });
 
 test('a window from the end holds the last maxBytes bytes, starts mid-file and is complete', (t) => {
   const file = put(path.join(scratch(t, 'cf-win-'), 'data.txt'), DATA);
+  assert.notEqual(DATA[DATA_SIZE - 1001], '\n', 'the window opens partway through a line');
   assert.deepEqual(readWindow(file, { maxBytes: 1000, fromEnd: true }), {
     text: DATA.slice(DATA_SIZE - 1000), startsMidFile: true, complete: true,
-    from: DATA_SIZE - 1000, to: DATA_SIZE, size: DATA_SIZE,
+    from: DATA_SIZE - 1000, to: DATA_SIZE, next: DATA_SIZE, size: DATA_SIZE,
   });
 });
 
 test('readWindow pages through a file from `from`, each window\'s `to` the next one\'s `from`', (t) => {
   const file = put(path.join(scratch(t, 'cf-win-'), 'data.txt'), DATA);
   const pages = [];
+  let aligned = 0;
   let from = 0;
   for (let i = 0; i < 100; i++) {
     const w = readWindow(file, { from, maxBytes: 1000 });
     assert.equal(w.from, from);
-    assert.equal(w.startsMidFile, from > 0);
+    assert.equal(w.startsMidFile, from > 0 && DATA[from - 1] !== '\n', `the window at ${from}`);
+    if (from > 0 && !w.startsMidFile) aligned++;
     assert.equal(w.complete, w.to === DATA_SIZE);
+    assert.equal(w.next, w.text.includes('\n') ? from + w.text.lastIndexOf('\n') + 1 : w.to);
     pages.push(w.text);
     if (w.complete) break;
     from = w.to;
   }
   assert.equal(pages.length, Math.ceil(DATA_SIZE / 1000));
   assert.equal(pages.join(''), DATA);
+  assert.equal(aligned, 1, 'one page (at 7000) starts just after a newline');
 
   assert.deepEqual(readWindow(file, { from: DATA_SIZE - 3, maxBytes: 10 }),
-    { text: DATA.slice(-3), startsMidFile: true, complete: true, from: DATA_SIZE - 3, to: DATA_SIZE, size: DATA_SIZE });
+    { text: DATA.slice(-3), startsMidFile: true, complete: true, from: DATA_SIZE - 3, to: DATA_SIZE, next: DATA_SIZE, size: DATA_SIZE });
   assert.deepEqual(readWindow(file, { from: DATA_SIZE + 50, maxBytes: 10 }),
-    { text: '', startsMidFile: true, complete: true, from: DATA_SIZE, to: DATA_SIZE, size: DATA_SIZE }, 'past the end');
+    { text: '', startsMidFile: false, complete: true, from: DATA_SIZE, to: DATA_SIZE, next: DATA_SIZE, size: DATA_SIZE }, 'past the end');
+});
+
+test('startsMidFile says whether the window\'s first line is cut, from the byte before it', (t) => {
+  const dir = scratch(t, 'cf-win-');
+  const file = put(path.join(dir, 'abc.txt'), 'aaa\nbbb\nccc\n');
+  const shown = (opts) => {
+    const w = readWindow(file, opts);
+    return [w.text, w.startsMidFile, redactWindow(w.text, w)];
+  };
+  assert.deepEqual(shown({ from: 1, maxBytes: 4 }), ['aa\nb', true, PARTIAL_LINE]);
+  assert.deepEqual(shown({ from: 3, maxBytes: 5 }), ['\nbbb\n', true, 'bbb\n']);
+  // A window that starts just after a newline starts a line, and keeps it:
+  // the first line of a page is not lost because the page is not the first.
+  assert.deepEqual(shown({ from: 4, maxBytes: 4 }), ['bbb\n', false, 'bbb\n']);
+  assert.deepEqual(shown({ from: 4, maxBytes: 6 }), ['bbb\ncc', false, 'bbb\n']);
+  assert.deepEqual(shown({ from: 5, maxBytes: 7 }), ['bb\nccc\n', true, 'ccc\n']);
+  assert.deepEqual(shown({ maxBytes: 8, fromEnd: true }), ['bbb\nccc\n', false, 'bbb\nccc\n']);
+  assert.deepEqual(shown({ maxBytes: 7, fromEnd: true }), ['bb\nccc\n', true, 'ccc\n']);
+
+  // Byte 0 is the first byte before any window that starts at 1.
+  const blank = put(path.join(dir, 'blank-first.txt'), '\nabc\n');
+  const w = readWindow(blank, { from: 1 });
+  assert.deepEqual([w.text, w.startsMidFile, redactWindow(w.text, w)], ['abc\n', false, 'abc\n']);
+});
+
+test('a byte before the window that the read cannot reach counts as a cut', (t) => {
+  const file = put(path.join(scratch(t, 'cf-win-'), 'abc.txt'), 'aaa\nbbb\nccc\n');
+  assert.equal(readWindow(file, { from: 4, maxBytes: 4 }).startsMidFile, false);
+  // The file shrinks between the measure and the read of byte 3.
+  const readSync = fs.readSync;
+  t.mock.method(fs, 'readSync', function (fd, buf, off, len, pos) {
+    return pos === 3 ? 0 : readSync.call(this, fd, buf, off, len, pos);
+  });
+  const w = readWindow(file, { from: 4, maxBytes: 4 });
+  assert.deepEqual([w.text, w.startsMidFile], ['bbb\n', true]);
+  assert.equal(redactWindow(w.text, w), PARTIAL_LINE, 'a line not known to be whole is not shown');
+});
+
+test('a reader that pages by `next` and redacts each page shows every line once', (t) => {
+  const dir = scratch(t, 'cf-win-');
+  const pageThrough = (file, maxBytes) => {
+    const pages = [];
+    let from = 0;
+    for (let i = 0; i < 10000; i++) {
+      const w = readWindow(file, { from, maxBytes });
+      pages.push(redactWindow(w.text, w));
+      if (w.complete) return pages;
+      assert.ok(w.next > from, `page ${i} moves on`);
+      from = w.next;
+    }
+    assert.fail('the pages never ended');
+  };
+
+  const data = put(path.join(dir, 'data.txt'), DATA);
+  assert.equal(pageThrough(data, 1000).join(''), DATA);
+  assert.equal(pageThrough(data, 13).join(''), DATA, 'a window barely longer than a line');
+
+  // Characters of two, three and four bytes, cut at every page edge: a page
+  // starts on a line, so none is cut at a page's start, and the line cut at a
+  // page's end is the next page's first.
+  const wide = Array.from({ length: 200 }, (_, i) => `ünïcödé ${i} 東京 𝄞`).join('\n') + '\n';
+  const widePath = put(path.join(dir, 'wide.txt'), wide);
+  for (const maxBytes of [40, 41, 42, 43, 97]) {
+    assert.equal(pageThrough(widePath, maxBytes).join(''), wide, `pages of ${maxBytes} bytes`);
+  }
+
+  // A line longer than a page is read on in pieces, each shown as a partial
+  // line; the lines around it are shown whole, once.
+  const long = put(path.join(dir, 'long.txt'), `short\n${'x'.repeat(50)}\nend\n`);
+  const pages = pageThrough(long, 20);
+  assert.equal(pages[0], 'short\n');
+  assert.equal(pages[pages.length - 1], 'end\n');
+  assert.ok(pages.slice(1, -1).length > 0 && pages.slice(1, -1).every((p) => p === PARTIAL_LINE), label(pages));
+
+  // Paging by `to` instead loses the line cut between two pages: each page
+  // drops its own half of it.
+  const byTo = [];
+  for (let from = 0, w; ; from = w.to) {
+    w = readWindow(data, { from, maxBytes: 1000 });
+    byTo.push(redactWindow(w.text, w));
+    if (w.complete) break;
+  }
+  assert.ok(byTo.join('').length < DATA.length, 'paging by `to` loses lines');
 });
 
 test('readWindow never reads past its window, however large the file (task outputs have no cap, V5)', (t) => {
@@ -737,10 +827,15 @@ test('readWindow never reads past its window, however large the file (task outpu
     reads.push({ pos, len });
     return readSync.call(this, fd, buf, off, len, pos);
   });
+  // The window, and the one byte before it (which says whether the window's
+  // first line is whole) when there is one: nothing else.
   const within = (what, lo, hi) => {
     assert.ok(reads.length > 0, `${what}: read something`);
-    for (const r of reads) assert.ok(r.pos >= lo && r.pos + r.len <= hi, `${what}: read ${r.len} at ${r.pos}, outside [${lo}, ${hi})`);
-    assert.ok(reads.reduce((n, r) => n + r.len, 0) <= hi - lo, `${what}: read no more than the window`);
+    const before = reads.filter((r) => r.pos === lo - 1 && r.len === 1);
+    assert.equal(before.length, lo > 0 ? 1 : 0, `${what}: the byte before the window, once`);
+    const rest = reads.filter((r) => !before.includes(r));
+    for (const r of rest) assert.ok(r.pos >= lo && r.pos + r.len <= hi, `${what}: read ${r.len} at ${r.pos}, outside [${lo}, ${hi})`);
+    assert.ok(rest.reduce((n, r) => n + r.len, 0) <= hi - lo, `${what}: read no more than the window`);
     reads.length = 0;
   };
 
@@ -749,7 +844,7 @@ test('readWindow never reads past its window, however large the file (task outpu
   assert.ok(tail.text.endsWith('[exited with code 0]\n'));
   assert.equal(Buffer.byteLength(tail.text), 64);
   assert.deepEqual({ ...tail, text: undefined },
-    { text: undefined, startsMidFile: true, complete: true, from: size - 64, to: size, size });
+    { text: undefined, startsMidFile: true, complete: true, from: size - 64, to: size, next: size, size });
 
   const head = readWindow(big, { maxBytes: 4096 });
   within('the head', 0, 4096);
@@ -757,7 +852,8 @@ test('readWindow never reads past its window, however large the file (task outpu
 
   const middle = readWindow(big, { from: 1 << 20, maxBytes: 100 });
   within('a page', 1 << 20, (1 << 20) + 100);
-  assert.deepEqual([middle.from, middle.to, middle.startsMidFile, middle.complete], [1 << 20, (1 << 20) + 100, true, false]);
+  assert.deepEqual([middle.from, middle.to, middle.next, middle.startsMidFile, middle.complete],
+    [1 << 20, (1 << 20) + 100, (1 << 20) + 100, true, false]);
 });
 
 test('readWindow reads WINDOW_BYTES unless told otherwise, and never more than WINDOW_MAX_BYTES', (t) => {
@@ -809,8 +905,31 @@ test('a file that shrinks while it is read ends the window where the read stoppe
     calls++;
     return calls === 1 ? readSync.call(this, fd, buf, off, Math.min(len, 100), pos) : 0;
   });
-  assert.deepEqual(readWindow(file, { maxBytes: 1000 }),
-    { text: DATA.slice(0, 100), startsMidFile: false, complete: true, from: 0, to: 100, size: 100 });
+  assert.deepEqual(readWindow(file, { maxBytes: 1000 }), {
+    text: DATA.slice(0, 100), startsMidFile: false, complete: true,
+    from: 0, to: 100, next: DATA.lastIndexOf('\n', 99) + 1, size: 100,
+  });
+});
+
+test('a window is assembled from as many reads as the file takes to give it', (t) => {
+  const file = put(path.join(scratch(t, 'cf-win-'), 'data.txt'), DATA);
+  const whole = [
+    readWindow(file, { maxBytes: 1000 }),
+    readWindow(file, { maxBytes: 1000, fromEnd: true }),
+    readWindow(file, { from: 4321, maxBytes: 999 }),
+  ];
+  // A read may return fewer bytes than asked for while more remain (a pipe, a
+  // network filesystem, a signal): at most 7 a call here.
+  const readSync = fs.readSync;
+  let calls = 0;
+  t.mock.method(fs, 'readSync', function (fd, buf, off, len, pos) {
+    calls++;
+    return readSync.call(this, fd, buf, off, Math.min(len, 7), pos);
+  });
+  assert.deepEqual(readWindow(file, { maxBytes: 1000 }), whole[0]);
+  assert.deepEqual(readWindow(file, { maxBytes: 1000, fromEnd: true }), whole[1]);
+  assert.deepEqual(readWindow(file, { from: 4321, maxBytes: 999 }), whole[2]);
+  assert.ok(calls >= 3 * Math.ceil(999 / 7), `${calls} reads`);
 });
 
 test('the window\'s flags feed redactWindow: a cut edge goes with its line, a whole one stays', (t) => {
