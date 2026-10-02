@@ -6,13 +6,108 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-02
+
 ### Upgrading from 0.8.0
 
-Nothing to do for the changes so far: they touch only the repository's README.
+No state migration runs: nodes, drafts and recorded approvals written by 0.8.0
+stay as they are, and only one service asks for approval again — the built-in
+`file-editor` (item 4). What you have to do:
+
+1. **Run `claude-web-chat update`, in a project where web-chat is installed or
+   outside any project.** The `update` that installs 0.8.2 is 0.8.0's own: it
+   installs the build, syncs the managed files of the project you typed it in
+   with 0.8.2's templates, and restarts that project's server. 0.8.0's updater
+   syncs any project with a `.web-chat/` it is typed in, registered or not, so
+   typed in a project you ran `uninstall` in it registers web-chat there again —
+   0.8.2's own `update` no longer does (see *Fixed*). It lists the other projects
+   still on 0.8.0 with `restart`, and its `--restart-all` would restart them
+   without refreshing them: step 2 does both.
+2. **Then run `claude-web-chat update --restart-all`.** This run is 0.8.2's. With
+   nothing new to install, it restarts every other project's server still on
+   0.8.0, one at a time, and refreshes the managed files of each of those
+   projects web-chat is registered in, as `install` would there, with one line
+   per project (see *Changed*). It writes nothing in a project whose server is
+   not running, nor in one whose server was restarted onto 0.8.2 before this step
+   (by `open` or `restart`): run `claude-web-chat install` in each of those —
+   `claude-web-chat open` names a project's managed files when they are behind.
+   This release's rules file teaches `x-trust` and `trust --pack`, so a project
+   left out keeps 0.8.0's.
+3. **`/exit` and reopen Claude Code, and reload open surface tabs.** A running
+   session keeps the MCP server it started with, so the `export` tool's `fps` and
+   `size` (see *Added*) arrive with the next one. A tab that reconnects to its
+   restarted server reloads itself once onto 0.8.2's chrome — the drawer's
+   `trust --pack`, the trust notice's `covers` — so reload any that did not.
+4. **Expect the built-in `file-editor` to ask for approval once more.** Its
+   `meta.json` now marks `path` and `root` as `x-trust: project-path` (see
+   *Added*), the declaration is part of its code hash, and its `service.js`
+   changed too. After that one approval it does not ask again for another file
+   inside the project. A pane opened from the ＋ drawer's form passes
+   `unfenced: false`, which is a request of its own, approved once, separately.
+   `unfenced: true` still asks, and so does a path the server cannot prove is
+   inside the project. Every approval of a component that declares no `x-trust`
+   keeps its 0.8.0 key.
+5. **`trust --pack` needs the project's server on 0.8.2.** Against a server still
+   on 0.8.0 it stops with *the server running for this project predates
+   `trust --pack`* and says to restart it (`claude-web-chat restart`).
+6. **Install a pack again if you installed it in a project before 0.8.2 and want
+   `trust --pack` to approve it.** `--pack` counts only installs this machine
+   recorded, and a project install is recorded (in
+   `~/.web-chat/packs/ledger.json`) from 0.8.2 on. Until you run
+   `claude-web-chat pack install <url>` for it again, `pack list` says it is not
+   recorded on this machine and its panes ask one by one. A pack installed for
+   all projects (`--global`) is offered as it is.
+
+### Added
+
+- **Components can keep a param out of a service's approval: `x-trust`.** Consent for a service is keyed on (project root, code, params), so a pane that changed any param — its title, or which file in the project it opens — asked again, which teaches people to approve without reading. A property of a component's `params_schema` may now carry `"x-trust": "display"`, never part of the approval, or `"x-trust": "project-path"`, left out of it while the value is proven to be a path inside the project root and otherwise approved by its exact value. Proven means all of these: a string of at most 1024 characters and at most 64 segments deep (`/` and `\` both count); a plain path, with no control characters, no leading `-` or `~` and no URL scheme in any case; no `..` segment; and placed inside the root by `lib/core/paths` with symlinks resolved, so a link out of the project, or a link pointing nowhere, counts as outside. The server proves at most 64 different values each time it checks the surface (after a render, a clear, a graph move or a pack change, and when a browser connects or leaves), in the order the panes were mounted: on a surface with more different paths than that, the rest count by their exact values, so they ask. The service is still handed every value unchanged, and re-using a pane with a different covered value restarts its service with the new value and asks nothing. An unknown mark counts as absent, and `save_component` (a `warnings` entry), `pack review` and `pack install` say so. The declaration is part of the code hash, so changing it asks again; a component without marks keeps exactly its 0.8.0 hash and key. The built-in `file-editor` marks `path` and `root` (see *Upgrading*), and while its approval covers `root` it also holds every path inside the project root, so a `root` that later becomes a link out of the project reaches nothing outside it. `docs/service-components.md` has the rules, and `docs/component-packs.md` the pack author's side.
+- **What an approval covers is said before it is given.** For each waiting request, `claude-web-chat trust` lists `covers`, what the approval spans beyond the values shown (`path, root: any path inside this project`), and `exact`, a path param whose value the server could not prove is inside the project, which the approval holds to the one value shown. The surface's trust notice shows the same words. When a request covers a project path, five places say that any pane can then point the service at any file in the project, `.env` files included: the surface's notice, the plain `claude-web-chat trust` listing, `trust --all` (before it asks), `trust --pack` and the grant. A denial does not say it, since it allows nothing.
+- **`claude-web-chat trust --pack <name> [--deny]` approves a pack's services ahead of time.** With the project's server running and no pane open, it approves in one confirmation, for this project, every service component the named pack installed, at its current code, for panes that pass it nothing but what its marks cover. It approves only what this machine recorded installing: for an install for all projects, its user-tier record; for a project install, a new user-tier ledger, `~/.web-chat/packs/ledger.json`, which the install pipeline writes and `pack remove` trims — never the project's own `.web-chat/packs.json`, which a repository can commit. For each install it names the version, the source URL and, where the record says, who asked: "from a terminal", or "through the surface", a request any pane's script can also make. For each service it shows the `service.js` sha256 and what the approval covers. It leaves out, with the reason: a unit only the project's record names; a component whose `service.js` or `meta.json` changed since the install (a `meta.json` the pack never shipped counts as changed); a project copy that shadows one installed for all projects, the same pack installed both ways from one source included, since which copy runs is a choice one confirmation must not make; and the whole of a pack installed for this project and for all projects from different sources. It has no `--yes`, and it never decides a waiting request for anything wider, such as an `unfenced: true` file-editor or a path outside the project. `--deny` refuses them all and stops any that are already running. It reads from a new read-only route, `GET /api/services/pack/:name`, which a remote viewer may read too, with host paths redacted.
+- **Services are handed `ctx.covers` and `ctx.root`.** `ctx.covers` names the params this run's approval left out (`{ param: mark }`), as they applied to these values. `ctx.root` is the project root, spelled the way the server proved covered paths against it. A service should resolve and fence paths against `ctx.root`, not `process.cwd()`, which returns the real path and so spells the root differently when the project is reached through a symlink.
+- **`export` sets a replay's frame rate and page size, and reports the frame it drew.** The `export` tool takes `fps` (1–30): the rate a fade or a scroll is sampled at, and a video's frame rate. Left out, a replay too long for the 1000-frame cap is still drawn at the highest fps that fits; a named `fps` is kept, and a replay over the cap at it is refused. It also takes `size`, `'WxH'` in CSS px — digits and a lowercase x, `'1280x800'` by default; any other form is refused — the page size each frame is laid out at, which also gives a GIF or video its shape; a width of 900 or less lays the page out as a narrow screen does. For a GIF or video the result now gives the `width` and `height` it drew. `claude-web-chat export` takes `--fps` and `--size`; `POST /api/replay/render` already accepted both.
+- **A driver can write the page's markdown.** `lib/driver` gains `writeMarkdown({text, id?, after?, force?})` and `removeMarkdown({id, force?})` over `POST /api/markdown`, so a local process can head and caption its panes. Both carry the driver's owner, so the owner gate between Claude and a driver covers markdown too. `docs/driving-the-surface.md` documents them.
+- **`version` and `status` warn when the installed dev build is behind the checkout.** Inside a git checkout of this package, when the managed install is a `--dev` build cut from a commit other than the checkout's HEAD, both print one ⚠ line naming the dev build's commit, the checkout's HEAD and the rebuild: `node scripts/build-release.js --dev`, then the `update --from` line it prints. It only reads files (the two `package.json` files and the checkout's `.git`), runs no `git`, and says nothing anywhere else.
 
 ### Changed
 
+- **`update --restart-all` refreshes the managed files of each project it restarts that web-chat is registered in.** After each restart it syncs that project exactly as `install` would there — the rules file, the `/web-chat` command, the skills, the hooks, the `.gitignore` rule and the `.mcp.json` entry — through the new build's engine and templates, keeping your edits, and prints one line per project: what it refreshed, and anything left for you to do there (a conflict's `.new`, a file that differs with no record of your edits, or a `claude mcp add --scope local` command, which is printed and not run). It is the first time `update` writes into other projects' `.claude/`, `.mcp.json` and `.gitignore`, so it writes only where web-chat is registered — its hooks or its `.mcp.json` entry in place — judged before the project's restart (which itself creates `.web-chat/`) and again after it, so an `uninstall` typed meanwhile stands. An uninstalled project, or a directory an old build started a server in, is restarted but never written, though the restart itself writes its `.web-chat/` state and makes it a known project. A registered project whose server is not running is not touched: run `install` there. A project whose restart fails is left as it was, and a refresh that stops part-way is reported without stopping the next. The `update` help, `docs/install.md`, the guide and `docs/extending.md` say the same. The `update` that runs is the installed build's, so all of this starts with 0.8.2's own `update` (see *Upgrading*).
+- **`update` names a working command for each other project still on another build.** It used to offer `cd <project> && claude-web-chat restart`, which leaves that project's managed files behind. Going forward it offers `cd <project> && claude-web-chat install`, which restarts the server and refreshes them; where web-chat is not registered it offers `restart`, which registers nothing, and after a rollback `restart` throughout, since the build now installed may have an `install` that restarts nothing. For a server in your home directory it names `claude-web-chat ls --reap`, and says that this stops every other project's server too. The summary after a failed restart names the same commands.
+- **The hop checklist's third step is `update --restart-all`.** When a restart replaces a server older than 0.8, the checklist it prints now says to run `claude-web-chat update --restart-all`, which restarts every other project's server still on the old build and refreshes the rules, command and skills of those web-chat is registered in, then `claude-web-chat install` in every other project you use web-chat in: one whose server was not running, or the one you ran `restart` in.
+- **A service runs in its project.** Its working directory is the project root, wherever the server was started from, so a relative path it is handed resolves where the server proved it does.
+- **The drawer and `pack` point at `trust --pack`.** The ＋ drawer's post-install notice and its pack card offer `claude-web-chat trust --pack <pack>` where they offered `trust --all`, which decides every request waiting in the project, a pane's `unfenced: true` included — and right after an install, with no pane open yet, found nothing to approve. `pack install` and `pack approve` show `trust --pack` beside the per-service command, and `pack list` shows it for an install this machine recorded.
+- **Checking the surface's services reads each file once.** Each check now reads each service component's files, and the trust file, once rather than once per pane, so a surface with hundreds of service-backed panes costs the server less than it did on 0.8.0.
+- **The `export` tool's `width` text says how the height is found.** The height follows `size`, and a frame of more than 1920×1200 px in area shrinks to fit, keeping its shape.
 - **The README shows its original screen recordings again.** `flow.gif`, `graph.gif` and `component-install.gif` are back to the clips recorded on 2026-09-14 from real sessions, replacing the 0.8.0 re-records. `replay.gif` stays as it is: it has no earlier version. The README check no longer caps each clip at 2.5 MB (the original `flow.gif` is 6.4 MB; `.github/` never ships in the release).
+
+### Fixed
+
+- **`update` no longer registers web-chat again where it was uninstalled.** Typed in a project you had run `uninstall` in (which keeps `.web-chat/`), or in a directory where a 0.7.x server once started, `update` synced its managed files, which put back the hooks, the `.mcp.json` entry, the rules, the command and the skills. It now leaves them alone, says that `claude-web-chat install` registers it, and still restarts the server. This is 0.8.2's own `update`; the one that installs 0.8.2 is 0.8.0's (see *Upgrading*, step 1).
+- **`update --restart-all` stops a server in your home directory instead of reporting a restart that never happened.** 0.7.x started a server wherever `update` was typed, `~` included, and since 0.8 no server can start there, so the "restart" stopped it, waited 8 s for a server that never came, then printed ✓ and counted it as restarted. It is now stopped through the acknowledged shutdown `ls --reap` uses, and its line says it was stopped, not restarted; if it does not stop, the summary names `claude-web-chat ls --reap`.
+- **Breaking a stale registry lock can no longer delete a fresh one.** Two waiters breaking one dead `~/.web-chat/instances.json.lock` while a third writer arrived could put two writers inside the lock and lose a registry row. A break is now claimed first (`instances.json.lock.break`), only the very lock judged stale is ever moved, and a lock moved in the one window left is put back or kept, never deleted.
+- **A dangling symlink at `~/.web-chat/instances.json.lock` no longer hangs every registry writer.** The lock's exclusive create refused the path while `stat`, following the link, found nothing, so every attempt to break it reported the lock gone and retried at once, past the deadline, forever: a daemon boot, a CLI command or a Claude Code session start never returned. The lock is now read as itself (`lstat`): an old dangling link is broken like any stale lock (over 5 s old), and a fresh one is waited on for at most 2 s, after which the write goes ahead without the lock and says so. No break, whatever it reports, can keep a writer retrying past that deadline.
+- **A registry lock dated in the future is broken.** A lock left by a writer that had died, whose pid had since been reused, stayed live once the clock stepped back behind its mtime: until the clock caught up, every daemon boot, CLI command and session start waited 2 s and wrote without the lock. A lock dated more than 5 s ahead is now stale.
+- **`status` says "restart the server" once.** A server behind both the CLI and a Claude session no longer gets a second ⚠ with the same fix.
+- **A CommonJS `service.js` starts in a project whose `package.json` says `"type": "module"`.** That includes the builtins `git-dashboard` and `file-editor`: 0.8.0 loaded such a file as an ES module there, and it failed with *module is not defined in ES module scope*. The format now comes from the file's syntax; a `service.js` written as an ES module, and `import()`, work as before.
+- **`claude-web-chat trust` no longer drops earlier approvals when `trusted.json` is torn.** It read a torn file as empty and the next grant replaced it; `[]` printed *Recorded in…* over a file that recorded nothing, and `null` threw. A file it cannot use (torn, or JSON that is not a map of decisions) is now kept as `trusted.json.unreadable-<time>`, the output names the kept file, and the decision goes into a fresh file. The write is atomic, so the server never reads half a file.
+- **A `trusted.json` that is JSON but not an object no longer takes the server down.** One holding `null` threw inside the service supervisor's reconcile timer; such a file now approves nothing.
+- **`trust --all` without a terminal no longer suggests `--yes`**, a flag it refuses. It now says to run it in a terminal.
+- **`lib/driver`'s `render()` passes `after` and `place`.** It dropped both, so a driver's pane always landed at the bottom of the page at full width. The applied placement comes back as `place`.
+- **A mistyped `captions` no longer writes a replay with captions on.** `POST /api/replay/render` answers any value other than `on` or `none` with a 400 `bad-captions` before any browser starts; the hint names the two values, and for the retired `prompt` points at `include_prompts`. `GET /replay` and `GET /api/replay/html` still read another value as `on`.
+- **A replay size in the wrong form no longer becomes 1280x800.** `POST /api/replay/render` answers a `size` that is not `WxH` — `390X844`, `390×844`, `390 x 844`, `390x844px`, `9x9` — with a 400 `bad-size` before any browser starts; the hint gives the form and the bounds (320–3840 by 240–2160, beyond which a number is clamped). `GET /replay` and `GET /api/replay/html` still read another form as the default size.
+- **`claude-web-chat export` checks its values before sending them.** `--hold`, `--width` and the new `--fps` must be numbers, and `--size` must be `WxH`. Before, `--hold abc` quietly meant the default hold, and `--width abc` the default width.
+
+### Security
+
+- **A service runs only the `service.js` bytes that were approved.** 0.8.0's runner loaded the file again with `require()` after forking, so bytes written in between ran under the earlier approval — and `POST /api/components` can rewrite a non-builtin component's `service.js`. The runner now reads the file once, checks it against the sha256 the approval was keyed on, and runs exactly those bytes. What `service.js` itself requires or imports still loads from disk: the approval covers `service.js`.
+- **A crafted brand image can no longer stall the server (a ReDoS).** The SMIL check in `lib/core/brand-image.js` took quadratic time on a run of whitespace after `attributeName=`, so a 256 KB upload through `PUT /api/brand/:slot`, which any pane can send, held the daemon's only thread for about 35–43 s. It now takes about a millisecond, and refuses exactly what it refused before.
+- **A restored mount whose component is not a valid component name no longer resolves to a `service.js` outside the components directory.** A mount restored from a committed `draft.json` or a graph node naming a component such as `../../x` resolved out of the components directory, and the `service.js` found there could be listed, approved and run. Such a mount now never asks to run.
+- **The trust listings print control characters (C0, DEL, C1) as `?`.** 0.8.0 printed a pane's param names raw, so a pane could write escape sequences into the listing a user was about to approve.
+
+### Internal
+
+- **The `x-trust` words live in one module, `lib/core/trust-marks`.** The marks, the unknown-mark warning, the `covers` and `exact` lines and the `.env` sentence are composed there, so the CLI, the surface's notice, the save route and pack review say the same thing; the identity they describe is minted only in `lib/server/services.js`. A conventions row holds `lib/cli/commands/trust.js` to the atomic write.
+- **One answer to "is web-chat registered here".** `uninstall` and `update` both ask `isRegistered` in `lib/setup/registration` (its hooks or its `.mcp.json` entry in place), which replaced `uninstall`'s private copy.
+- **`test/export.test.js` checks the export's page stylesheet against its source** instead of pinning two `public/page.css` rules word for word. Test-only; no product change.
 
 ## [0.8.0] - 2026-09-28
 
