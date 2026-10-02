@@ -1362,7 +1362,10 @@ body.pin-mode #main { cursor: crosshair; }
 .svc-trust-cmd code { color: var(--wc-fg); font-size: 12px; white-space: pre; }
 /* Two panes of one component with different params are two decisions, so each
    card names the params it is about — otherwise the pair reads identically. */
-.svc-trust-params { word-break: break-word; }
+.svc-trust-params, .svc-trust-covers { word-break: break-word; }
+/* What an approval lets a pane do beyond the values shown — read before the
+   command is run, so it sits where the eye lands after the params. */
+.svc-trust-card p.svc-trust-reach { color: var(--wc-fg); }
 .svc-trust-foot { opacity: .85; }
 /* Through the tunnel portal: WHERE to run the command is the one thing that differs. */
 .svc-trust-card p.svc-trust-remote { color: var(--wc-fg); border-left: 2px solid var(--wc-gold); padding-left: 8px; }

@@ -119,3 +119,20 @@ test('Ctrl+C during secret() rejects, ends the line and leaves raw mode', async 
   assert.ok(term.out().endsWith('\n'));
   assert.equal(term.raw[term.raw.length - 1], false);
 });
+
+// A command with no --yes by design (`trust`: nothing non-interactive grants
+// host execution) must not tell the user to pass one.
+test('with yesFlag:false the non-interactive line points at a terminal, not at --yes', async () => {
+  const lines = [];
+  const p = createPrompt({ log: (s) => lines.push(s), stdin: { isTTY: false }, env: {}, yesFlag: false });
+  assert.equal(await p.confirm('Approve it?', { def: false }), false);
+  assert.deepEqual(lines, ['  Approve it? [y/N]', '  (no terminal — assuming no; run it in a terminal to answer)']);
+  const ci = [];
+  const q = createPrompt({ log: (s) => ci.push(s), stdin: { isTTY: true }, env: { CI: '1' }, yesFlag: false });
+  assert.equal(await q.confirm('Approve it?', { def: false }), false);
+  assert.equal(ci[1], '  (CI — assuming no; run it in a terminal to answer)');
+  // Every other command keeps its flags in the line.
+  const other = [];
+  await createPrompt({ log: (s) => other.push(s), stdin: { isTTY: false }, env: {} }).confirm('Install?', { def: false });
+  assert.equal(other[1], '  (no terminal — assuming no; pass --yes to accept, --no-input to silence)');
+});

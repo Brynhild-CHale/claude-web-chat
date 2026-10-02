@@ -1,7 +1,7 @@
 // Service-trust IDENTITY — one triple, minted once, quoted everywhere.
 //
 // A consent is (project root, service.js hash, params shape). lib/server/services.js
-// mints it in computeDesired and hands the same value to the trust file, the
+// mints it in mintSurface and hands the same value to the trust file, the
 // pending listing, the WS notice, the browser's card map, the CLI's selector and
 // its own restart test. Everything here fails if a consumer starts re-projecting
 // it — which is exactly what had happened:

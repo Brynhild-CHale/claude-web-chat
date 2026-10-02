@@ -520,19 +520,28 @@ const PATTERNS = [
     // so a lib-wide ceiling could never approach zero-outside-the-home the way
     // the contract at the top of this file promises.
     //
-    // Scoped instead to the three files whose records the durable-JSON engine
-    // was extracted FOR, each at a hard zero. Every writer in them — a graph
-    // node file, graph/_meta.json, draft.json — is a durable record that a
-    // crash mid-write used to be able to tear, and the reader of each one has a
-    // recovery path that assumes it cannot happen twice. A new bare
-    // writeFileSync here is the regression.
-    name: 'writeFileSync( in the three durable-record files',
+    // Scoped instead to the files whose records must never be read half
+    // written, each at a hard zero. A new bare writeFileSync in any of them is
+    // the regression:
+    //   * the three the durable-JSON engine was extracted FOR. Every writer in
+    //     them — a graph node file, graph/_meta.json, draft.json — is a durable
+    //     record that a crash mid-write used to be able to tear, and the reader
+    //     of each one has a recovery path that assumes it cannot happen twice.
+    //   * lib/cli/commands/trust.js, the one writer of the user's service
+    //     approvals (~/.web-chat/services/trusted.json). The daemon re-reads
+    //     that file on every reconcile, and a plain write truncates before it
+    //     writes: a read in between sees a torn file, which approves nothing,
+    //     so the pass stops every running service and asks again for each.
+    //     Nothing else catches it — swapping writeTrusted's writeJsonAtomic for
+    //     main's mkdirSync + writeFileSync passed the whole suite.
+    name: 'writeFileSync( in the durable-record files',
     home: 'lib/core/fsjson.js — `writeJsonAtomic`',
-    what: 'writing a graph node, graph/_meta.json or draft.json',
+    what: 'writing a graph node, graph/_meta.json, draft.json or the service trust file',
     files: [
       'lib/server/graph.js',
       'lib/server/domain/turns.js',
       'lib/update/migrations/index.js',
+      'lib/cli/commands/trust.js',
     ],
     re: /writeFileSync\(/g,
     baseline: {},

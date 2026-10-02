@@ -144,7 +144,9 @@ test('readJsonOr: returns the fallback for absent, corrupt and invalid alike', (
 });
 
 test('readJsonOr: a torn consent-shaped record falls back rather than reading as trusted', (t) => {
-  // The fail-CLOSED contract lib/cli/commands/trust.js depends on.
+  // The fail-CLOSED contract the daemon's trust read (lib/server/services.js
+  // readTrusted) depends on. The CLI, which WRITES the file, tells the states
+  // apart with readJson instead (lib/cli/commands/trust.js loadTrusted).
   const dir = tmpDir(t);
   const f = path.join(dir, 'trusted.json');
   fs.writeFileSync(f, '{"key": tru');

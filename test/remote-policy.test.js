@@ -142,7 +142,8 @@ const ALLOWED = [
   ['GET', '/api/theme?scope=global'], ['GET', '/api/themes'], ['POST', '/api/theme/apply'],
   ['GET', '/api/components'], ['GET', '/api/components/git-dashboard'], ['GET', '/api/components/x/seed'],
   ['POST', '/api/components/git-dashboard/use'],
-  ['GET', '/api/services/pending'], ['GET', '/api/version'], ['GET', '/api/health'], ['GET', '/api/embed-check?url=x'],
+  ['GET', '/api/services/pending'], ['GET', '/api/services/pack/acme-ops'],
+  ['GET', '/api/version'], ['GET', '/api/health'], ['GET', '/api/embed-check?url=x'],
   ['GET', '/api/export/n1.4'], ['GET', '/api/export/active?format=html'],
   ['GET', '/api/packs'], ['GET', '/api/packs/audit'], ['GET', '/api/packs/quarantine/p/review?file=a'],
   ['GET', '/replay'], ['GET', '/api/replay/n1'],
@@ -157,7 +158,8 @@ const REFUSED = [
   ['POST', '/api/packs/install'], ['POST', '/api/packs/quarantine'], ['POST', '/api/packs/quarantine/p/approve'],
   ['DELETE', '/api/packs/quarantine/p'], ['DELETE', '/api/packs/p'], ['POST', '/api/packs/announce'],
   // components / services / brand
-  ['POST', '/api/components'], ['POST', '/api/services/refresh-trust'], ['POST', '/api/brand/logo'],
+  ['POST', '/api/components'], ['POST', '/api/services/refresh-trust'], ['POST', '/api/services/pack/acme-ops'],
+  ['POST', '/api/brand/logo'],
   ['DELETE', '/api/brand/logo'], ['PUT', '/api/brand/logo'], ['POST', '/api/theme'], ['POST', '/api/themes'],
   // Claude's markdown write path, and the machine-wide sessions feed
   ['POST', '/api/markdown'], ['GET', '/api/machine/sessions'], ['GET', '/api/machine/anything'],

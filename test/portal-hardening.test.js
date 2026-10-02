@@ -380,12 +380,13 @@ test('host paths: remote-allowed reads name no absolute root, home or binary pat
   const r = await rig(t);
   const home = require('../lib/core/paths').homeDir();
   const leaks = (text) => text.includes(r.srv.root) || text.includes(fs.realpathSync(r.srv.root)) || text.includes(home);
-  for (const p of ['/api/services/pending', '/api/packs', '/api/packs/audit', '/api/replay/capabilities']) {
+  for (const p of ['/api/services/pending', '/api/services/pack/acme-ops', '/api/packs', '/api/packs/audit', '/api/replay/capabilities']) {
     const res = await r.req(p);
     assert.equal(res.status, 200, `${p}: ${res.text}`);
     assert.equal(leaks(res.text), false, `${p} leaked a host path: ${res.text}`);
   }
   assert.equal((await r.req('/api/services/pending')).json.root, '<project>');
+  assert.equal((await r.req('/api/services/pack/acme-ops')).json.root, '<project>');
   assert.equal((await r.req('/api/packs')).json.root, '<project>');
   const caps = (await r.req('/api/replay/capabilities')).json;
   assert.equal(typeof caps.chrome, 'boolean', 'whether, not where');
