@@ -457,22 +457,25 @@ async function withHub(t, { port = 0, createHub } = {}) {
 // withHub's sibling. Loopback, ephemeral port, never start(): no registry
 // entry for the portal itself, no JWKS warm-up against anything real.
 //   withPortal(t, { config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
-//                   configFile, tokenFile, configPollMs, configDebounceMs, log, spawnDaemon })
+//                   configFile, tokenFile, configPollMs, configDebounceMs, configDirWatch, log, spawnDaemon })
 // `config` is tunnel.json's raw shape (normalised here, so a test can hand in
 // fake-access's config()). `configFile` makes the portal watch that file the
 // way `portal run` watches tunnel.json (write `config` into it first). Returns { portal, port, config, request } where
 // `request(path, {host, method, headers, body})` is a RAW request — the portal
-// routes on Host, which fetch refuses to set.
+// routes on Host, which fetch refuses to set. `configDirWatch: false` keeps
+// the portal's watchers off the file's directory (a directory watcher's close
+// can block the event loop for seconds under load): pair it with a short
+// `configPollMs` — the file watch and the poll still see every edit.
 async function withPortal(t, {
   config, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
-  configFile, tokenFile, configPollMs, configDebounceMs, log, spawnDaemon,
+  configFile, tokenFile, configPollMs, configDebounceMs, configDirWatch, log, spawnDaemon,
 } = {}) {
   const { createPortal } = require('../lib/portal');
   const { normalizeConfig } = require('../lib/tunnel/config');
   const cfg = normalizeConfig(config);
   const portal = createPortal({
     port: 0, config: cfg, fetchJwks, now, instances, sessions, enrich, wsGraceMs, accessLog, throttle,
-    configFile, tokenFile, configPollMs, configDebounceMs, log, spawnDaemon,
+    configFile, tokenFile, configPollMs, configDebounceMs, configDirWatch, log, spawnDaemon,
   });
   await new Promise((resolve, reject) => {
     const onError = (e) => { portal.server.off('error', onError); reject(e); };
