@@ -1410,6 +1410,44 @@ test('an envelope delivered twice changes nothing', () => {
   assert.equal(h.ofOp('waiting-cleared').length, 1);
 });
 
+test('two envelopes of one millisecond are two envelopes: two agents\' asks, two calls of one message, two resolutions', () => {
+  // The main agent's ask and a subagent's, neither with a tool_use_id (V3: PermissionRequest carries none).
+  const h = harness({ pid: null });
+  h.prompt();
+  h.clock.set(T0 + 100);
+  h.hook('PermissionRequest', { prompt_id: 'p1', tool: tool('Bash', null, { command: 'a' }, { input_hash: 'ha' }) });
+  h.hook('PermissionRequest', { prompt_id: 'p1', agent: { id: 'agent-b', type: 'general-purpose' },
+    tool: tool('Write', null, { file_path: '/x' }, { input_hash: 'hb' }) });
+  h.clock.set(T0 + 200);
+  h.hook('PostToolUse', { prompt_id: 'p1', tool: tool('Bash', 'tu1', { command: 'a' }, { input_hash: 'ha' }) });
+  assert.equal(h.state(), 'waiting', 'the main agent\'s ask cleared; the subagent\'s still waits');
+  assert.deepEqual(h.L().waiting, { kind: 'permission', tool: 'Write', summary: 'Write(/x)', pending: true });
+
+  // Two calls of one message that both need permission (V27): one agent, one millisecond, two input_hashes.
+  const m = harness({ pid: null });
+  m.prompt();
+  m.clock.set(T0 + 100);
+  m.hook('PermissionRequest', { prompt_id: 'p1', tool: tool('Bash', null, { command: 'a' }, { input_hash: 'ha' }) });
+  m.hook('PermissionRequest', { prompt_id: 'p1', tool: tool('Bash', null, { command: 'b' }, { input_hash: 'hb' }) });
+  m.clock.set(T0 + 200);
+  m.hook('Stop', { prompt_id: 'p1' });
+  assert.equal(m.ofOp('waiting-cleared').length, 2, 'two asks were pending, and each clears');
+
+  // Two asks the asks domain resolved in one millisecond: both clear.
+  const r = harness({ pid: null });
+  r.prompt();
+  r.clock.set(T0 + 100);
+  r.hook('PermissionRequest', { prompt_id: 'p1', tool: tool('Bash', null, { command: 'a' }, { input_hash: 'ha' }),
+    ask: { id: 'ask_aaaaaaaaaaa1', kind: 'permission' } });
+  r.hook('PermissionRequest', { prompt_id: 'p1', agent: { id: 'agent-b', type: 'general-purpose' },
+    tool: tool('Write', null, { file_path: '/x' }, { input_hash: 'hb' }), ask: { id: 'ask_aaaaaaaaaaa2', kind: 'permission' } });
+  r.clock.set(T0 + 200);
+  r.hook('PermissionResolved', { ask: { id: 'ask_aaaaaaaaaaa1', by: 'terminal' }, synthetic: true });
+  r.hook('PermissionResolved', { ask: { id: 'ask_aaaaaaaaaaa2', by: 'terminal' }, synthetic: true });
+  assert.deepEqual(r.ofOp('waiting-cleared').map((t) => t.ask_id), ['ask_aaaaaaaaaaa1', 'ask_aaaaaaaaaaa2']);
+  assert.equal(r.state(), 'working');
+});
+
 // ── quiet ─────────────────────────────────────────────────────────────────────
 
 async function quietRun({ pct, pid = PID, toolCall = false, until }) {
