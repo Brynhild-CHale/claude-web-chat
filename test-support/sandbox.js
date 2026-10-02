@@ -4,7 +4,9 @@
 // Loaded by `npm test` as `node --test --import ./test-support/sandbox.js`, so it
 // runs before any test file's first `require`, and required from
 // test-support/helpers.js as a belt in case a runner (or a bare
-// `node --test some.test.js`) doesn't carry the flag through.
+// `node --test some.test.js`) doesn't carry the flag through. The runner itself
+// does not load it: each test FILE runs in a process of its own, which loads it
+// and so makes a sandbox of its own.
 //
 // WHY, precisely: withServer already sandboxes HOME per test, so the ~45 files
 // that go through it were never exposed. Two paths it cannot see were:
@@ -25,9 +27,48 @@
 // inside a file (the service trust store, system-scope themes and the
 // update-check throttle all accumulate).
 //
-// Safe to load after other modules: lib/core/paths.js calls os.homedir() per
-// use with no module-scope memoization anywhere in lib/, and os.homedir()
-// re-reads $HOME at call time.
+// Safe to load after other modules: lib/core/paths.js reads the home directory
+// and CLAUDE_CONFIG_DIR per use, with no module-scope memoization anywhere in
+// lib/, so a value set here is what the next call sees.
+//
+// ── Claude Code's environment ───────────────────────────────────────────────
+// The suite usually runs INSIDE Claude Code (a developer's session, or a
+// workflow agent), and every process the tests start inherits that session's
+// variables: CLAUDE_PID, CLAUDECODE, CLAUDE_EFFORT, CLAUDE_JOB_DIR (a workflow
+// agent's), the CLAUDE_CODE_* family (CLAUDE_CODE_SESSION_ID,
+// CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_MESSAGING_TOKEN, …), and
+// WEB_CHAT_CHANNEL=1 when the session was launched with the channel. Left in
+// place, a hook subprocess spawned with {...process.env, HOME} would build its
+// envelope and its halt-flag path from the developer's LIVE session, the ask
+// hook would return at once, reporting nothing, as it does under an SDK host
+// (CLAUDE_CODE_ENTRYPOINT=sdk-…), and an MCP server under test would start a
+// channel bridge. So they are deleted (with
+// WEB_CHAT_CHANNEL_FORCE, the bridge's override), and a test that needs one
+// sets it explicitly, in a subprocess's `env` (test/channel-mcp.test.js does
+// that for WEB_CHAT_CHANNEL).
+//
+// CLAUDE_CONFIG_DIR is pointed into the sandbox, at <sandbox>/.claude.
+// lib/core/paths claudeConfigDir() follows it to Claude Code's state (live
+// sessions files and transcripts, which hold real secrets), so an inherited
+// value would lead a test straight to the real one. It does not follow a
+// per-test HOME (withTempHome): for the whole file the Claude tier stays here,
+// where test-support/claude-home.js builds a fake one (or a private one per
+// test).
+//
+// Both happen once, where the sandbox is made, and the scrub before anything
+// is required. A process that inherits a sandbox (WEB_CHAT_TEST_SANDBOX set)
+// inherits the scrubbed environment too, plus whatever a test set on purpose,
+// which a second scrub would wipe. test/sandbox-env.test.js holds all of this.
+
+if (!process.env.WEB_CHAT_TEST_SANDBOX) {
+  const exact = new Set([
+    'CLAUDE_PID', 'CLAUDECODE', 'CLAUDE_EFFORT', 'CLAUDE_JOB_DIR',
+    'WEB_CHAT_CHANNEL', 'WEB_CHAT_CHANNEL_FORCE',
+  ]);
+  for (const name of Object.keys(process.env)) {
+    if (exact.has(name) || name.startsWith('CLAUDE_CODE_')) delete process.env[name];
+  }
+}
 
 const fs = require('fs');
 const os = require('os');
@@ -39,6 +80,7 @@ if (!process.env.WEB_CHAT_TEST_SANDBOX) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-sandbox-home-'));
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  process.env.CLAUDE_CONFIG_DIR = path.join(home, '.claude');
   process.env.WEB_CHAT_TEST_SANDBOX = home;
   // Best-effort: a killed runner leaves it for the OS to reap, like every other
   // mkdtemp in this harness.
