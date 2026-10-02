@@ -8,10 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Upgrading from 0.8.0
 
-Nothing to do for the changes so far: they touch only the repository's README.
+One state migration runs (schema v2 → v3), the first time this build's daemon
+starts in a project or `install` runs there: the brand images the project
+already has move from `.web-chat/brand/` into the folder of the theme the
+project is on, so nothing on screen changes until you switch theme. If that folder already holds
+an image for a slot, it is kept and the old file is renamed aside
+(`<slot>.<ext>.superseded-<time>`, beside where it was) rather than deleted; a
+symlink is left where it is and never followed. A 0.8.0 build run against a
+migrated project shows no brand images.
 
 ### Changed
 
+- **Brand images belong to the theme they were added under.** A Settings → Brand image (logotype, lockup, seal) was the project's and showed under every theme; it is now kept with the theme that was the web-chat-wide theme when you added it. Switch theme and that theme's own images show — or, in a slot it has none in, the logos its theme pack brought — and switch back to get yours back; Remove clears only the theme on screen, and an export carries the lockup and seal of the theme the project is on. Settings → Brand says whose images it is showing ("Images for the Paper theme"). A theme whose name cannot be a folder name (a saved "Ocean Dusk") still keeps its own, every theme set without a name (`set_theme`'s raw tokens) shares one set, and a saved theme that only carries a built-in's name keeps its images apart from the pack's. Every change of the web-chat-wide theme — Settings, `apply_theme`, `set_theme`, `save_theme` with `set_default`, a pack removal that resets it — now sends every open surface a `brand` frame and logs a `brand` event naming the theme, so each topbar swaps its logotype without a refresh. `GET /api/brand` and the upload and remove replies carry the `theme` too. See `docs/themes.md#brand-images`.
 - **The README shows its original screen recordings again.** `flow.gif`, `graph.gif` and `component-install.gif` are back to the clips recorded on 2026-09-14 from real sessions, replacing the 0.8.0 re-records. `replay.gif` stays as it is: it has no earlier version. The README check no longer caps each clip at 2.5 MB (the original `flow.gif` is 6.4 MB; `.github/` never ships in the release).
 
 ## [0.8.0] - 2026-09-28

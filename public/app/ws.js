@@ -281,7 +281,10 @@ const HANDLERS = {
     if (msg.scope === 'global') {
       applyGlobalTheme(msg.theme || null, true);
       if (msg.theme && msg.theme.name) syncThemeSelect(msg.theme.name);
-      refreshBrand(); // the pack can fill an empty brand slot (lib/server/brand.js)
+      // The brand images follow the global theme (each theme keeps its own,
+      // and its pack can fill an empty slot) — the daemon sends a `brand` frame
+      // with every global theme change, just ahead of this one, so there is
+      // nothing to re-read here (lib/server/routes/brand.js).
     } else if (msg.scope === 'node') {
       if (msg.target === view.activeId) setActiveNodeTheme(msg.theme || null);
       if (msg.target === view.viewedId) applyNodeTheme(msg.theme || null, true);
@@ -342,8 +345,9 @@ const HANDLERS = {
   // Service consent. Chrome-level, never a mount — see service-trust.js for why.
   'service:trust'(msg) { onTrustPrompt(msg); },
   'service:trust:clear'(msg) { onTrustClear(msg); },
-  // A brand image slot was set or cleared (here or in another viewer).
-  brand(msg) { applyBrand(msg.slots, msg.fill); },
+  // A brand image slot was set or cleared (here or in another viewer), or the
+  // global theme moved and its images with it.
+  brand(msg) { applyBrand(msg.slots, msg.fill, msg.theme); },
   // Claude opened a replay for the user (export({open:true}) → POST
   // /api/replay/open): the player overlay shows that script. Relayed over the
   // chrome bus, like packs:changed — replay.js listens (initReplay).

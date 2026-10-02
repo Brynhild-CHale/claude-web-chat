@@ -18,8 +18,8 @@ function tmpState() {
 const readVersion = (f) => JSON.parse(fs.readFileSync(f, 'utf8')).version;
 const writeVersion = (f, v) => fs.writeFileSync(f, JSON.stringify({ version: v }, null, 2) + '\n');
 
-test('SCHEMA_VERSION is 2 (first real migration landed)', () => {
-  assert.equal(SCHEMA_VERSION, 2);
+test('SCHEMA_VERSION is 3 (v2→v3 moved brand images under their theme)', () => {
+  assert.equal(SCHEMA_VERSION, 3);
 });
 
 test('first-touch: a stateDir with no _version.json is stamped at SCHEMA_VERSION without migrating', () => {
@@ -33,13 +33,13 @@ test('first-touch: a stateDir with no _version.json is stamped at SCHEMA_VERSION
   assert.ok(fs.existsSync(pid), 'first-touch does not run migrations against a fresh baseline');
 });
 
-test('v1 → v2: removes the orphaned server.pid and stamps version 2', () => {
+test('v1 → v2: removes the orphaned server.pid, and the run stamps the current schema', () => {
   const { stateDir, versionFile } = tmpState();
   writeVersion(versionFile, 1);
   const pid = path.join(stateDir, 'server.pid');
   fs.writeFileSync(pid, '999');
   run(stateDir);
-  assert.equal(readVersion(versionFile), 2);
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION);
   assert.ok(!fs.existsSync(pid), 'orphaned server.pid removed');
 });
 
@@ -48,16 +48,16 @@ test('idempotent: re-running an already-migrated dir is a no-op and never throws
   writeVersion(versionFile, 1);
   fs.writeFileSync(path.join(stateDir, 'server.pid'), '1');
   run(stateDir);
-  assert.equal(readVersion(versionFile), 2);
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION);
   run(stateDir); // second pass: nothing to do
-  assert.equal(readVersion(versionFile), 2);
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION);
 });
 
-test('v1 → v2 with no server.pid present still stamps 2 (unlink of a missing file is a no-op)', () => {
+test('v1 → v2 with no server.pid present still migrates through (unlink of a missing file is a no-op)', () => {
   const { stateDir, versionFile } = tmpState();
   writeVersion(versionFile, 1);
   run(stateDir);
-  assert.equal(readVersion(versionFile), 2);
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION);
 });
 
 test('the v1-to-v2 migration is directly idempotent', () => {
@@ -123,7 +123,7 @@ test('corrupt _version.json: warns, treats the project as v1, and RUNS the pendi
   const warned = captureStderr(() => run(stateDir));
   assert.match(warned, /unreadable/, 'the operator is told, not silently stamped');
   assert.ok(!fs.existsSync(pid), 'v1→v2 actually ran instead of being skipped');
-  assert.equal(readVersion(versionFile), 2, 'and the stamp is repaired on the way through');
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION, 'and the stamp is repaired on the way through');
 });
 
 test('a `{}` _version.json is unusable, not version-undefined falling out of both branches', () => {
@@ -134,14 +134,14 @@ test('a `{}` _version.json is unusable, not version-undefined falling out of bot
 
   captureStderr(() => run(stateDir));
   assert.ok(!fs.existsSync(pid));
-  assert.equal(readVersion(versionFile), 2, 'the stamp is no longer left unwritten');
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION, 'the stamp is no longer left unwritten');
 });
 
 test('a non-integer version is unusable too, and does not migrate from NaN', () => {
   const { stateDir, versionFile } = tmpState();
   fs.writeFileSync(versionFile, JSON.stringify({ version: 'two' }));
   captureStderr(() => run(stateDir));
-  assert.equal(readVersion(versionFile), 2);
+  assert.equal(readVersion(versionFile), SCHEMA_VERSION);
 });
 
 test('an ABSENT _version.json still first-touches — absent is not conflated with corrupt', () => {

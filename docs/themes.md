@@ -148,9 +148,8 @@ about 190–210KB.
 
 ## Brand images
 
-A theme applies colour and type only. A project's own artwork goes in three
-**brand image slots**, set from ⋯ → Settings → Brand (drop a file on a slot, or
-click it to choose one):
+Artwork goes in three **brand image slots**, set from ⋯ → Settings → Brand
+(drop a file on a slot, or click it to choose one):
 
 | Slot | Shown | Drawn at |
 | --- | --- | --- |
@@ -158,9 +157,20 @@ click it to choose one):
 | `lockup` | an exported page's header | 260 × 52 |
 | `seal` | an exported page's footer, beside "made with web-chat" | 44 × 44 |
 
-Each slot is one SVG or PNG of at most 256 KB, stored under
-`.web-chat/brand/` with the project (so, like the rest of `.web-chat/`, it is
-gitignored). The format is decided by the file's bytes, not its name. An SVG
+An image belongs to the **theme** that is the web-chat-wide theme when you add
+it, and stays with that theme. Switch to another theme and its own images show
+instead — or, in a slot it has none in, the [logos](#logos) its theme pack
+brought — and switching back brings yours back; Remove clears only the theme on
+screen. Settings → Brand says which theme's images it is showing ("Images for
+the Paper theme"), and an export carries the lockup and seal of the theme the
+project is on. Every theme set without a name (`set_theme`'s raw tokens) shares
+one set. Images added on a build that kept them per project are filed under the
+theme the project is on when it upgrades, so nothing on screen changes until you
+switch.
+
+Each slot is one SVG or PNG of at most 256 KB, stored with the project under
+`.web-chat/brand/`, one folder per theme (so, like the rest of `.web-chat/`, it
+is gitignored). The format is decided by the file's bytes, not its name. An SVG
 carrying anything active — a `<script>`, `<foreignObject>`, `<iframe>`,
 `<embed>`, `<object>` or `<handler>` under any namespace prefix, an `on…=`
 handler, a `javascript:` url however its characters are referenced, an animation
@@ -175,11 +185,14 @@ with its own `Content-Type`, `X-Content-Type-Options: nosniff` and a
 `Content-Security-Policy` that forbids script and sandboxes the document, for
 the case where someone opens the url directly.
 
-The HTTP surface, for scripting it: `GET /api/brand` (each slot's type, size and
-a `version` that changes with the file), `PUT /api/brand/:slot` with the raw
-image as the body and `Content-Type: image/png` or `image/svg+xml`, and
+The HTTP surface, for scripting it — every call works on the images of the
+theme the project is on now: `GET /api/brand` (that `theme` — its `key`, `name`
+and, for a built-in, `title` — and each slot's type, size and a `version` that
+changes with the file or the theme), `PUT /api/brand/:slot` with the raw image
+as the body and `Content-Type: image/png` or `image/svg+xml`, and
 `DELETE /api/brand/:slot`. Refusals: 404 not a slot, 413 too big, 415 not a
-PNG/SVG, 422 an active SVG.
+PNG/SVG, 422 an active SVG. Each change, and each change of the web-chat-wide
+theme, sends every open surface a `brand` frame and logs a `brand` event.
 
 ## Sharing a theme as a pack
 
@@ -245,10 +258,10 @@ colour, length, font stack or gradient; ship an image as a logo.
 
 ### Logos
 
-A theme may carry the project's three [brand images](#brand-images). While it is
-the web-chat-wide theme, they fill any slot the project left empty — a project's
-own Settings → Brand image always wins — and they stop the moment another theme
-is applied.
+A theme may carry its own three [brand images](#brand-images). While it is the
+web-chat-wide theme, they fill any slot with no image added under it in
+Settings → Brand — an image added there always wins — and they stop the moment
+another theme is applied.
 
 | File in `logos/` | Shown | Drawn at | PNG at 2× |
 | --- | --- | --- | --- |

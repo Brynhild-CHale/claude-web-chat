@@ -21,7 +21,7 @@ const { THEME_CSS_POLICY, inspectPackTheme } = require('../lib/packs/themes');
 const { listPacks } = require('../lib/packs/store');
 const brand = require('../lib/server/brand');
 const { PACKS, ALIASES } = require('../lib/server/theme-packs');
-const { BUILTIN_THEME_NAMES, isBuiltinThemeName } = require('../lib/core/names');
+const { BUILTIN_THEME_NAMES, BUILTIN_THEME_PACKS, BUILTIN_THEME_ALIASES, isBuiltinThemeName, builtinThemeId } = require('../lib/core/names');
 const { classify } = require('../lib/core/remote-policy');
 const { REMOTE_HEADER, REMOTE_HEADER_VALUE } = require('../lib/core/cors');
 const { projectPaths, userPaths, PUBLIC_DIR } = require('../lib/core/paths');
@@ -84,8 +84,16 @@ const planErrors = (dir, name = 'harbor') => inspectPackTheme(dir, name).errors.
 test('the builtin theme names in core are exactly the packs plus their aliases', () => {
   const expected = [...PACKS.map((p) => p.name), ...Object.keys(ALIASES)].sort();
   assert.deepEqual([...BUILTIN_THEME_NAMES].sort(), expected);
+  assert.deepEqual([...BUILTIN_THEME_PACKS], PACKS.map((p) => p.name), 'the pack ids, in the packs\' order');
+  assert.equal(ALIASES, BUILTIN_THEME_ALIASES, 'one alias table: theme-packs re-exports core\'s');
   assert.equal(isBuiltinThemeName('Paper'), true, 'case-insensitive, like the library');
   assert.equal(isBuiltinThemeName('harbor'), false);
+  // the one name → pack resolution (lib/server/theme getBuiltin asks it)
+  assert.equal(builtinThemeId('Paper'), 'paper');
+  assert.equal(builtinThemeId('GEORGETOWN'), 'georgetown-blue');
+  assert.equal(builtinThemeId('web-chat'), 'earthy');
+  assert.equal(builtinThemeId('harbor'), null);
+  assert.equal(builtinThemeId(undefined), null);
 });
 
 test('a builtin theme name is refused, every one of them, with no override', async (t) => {

@@ -3,6 +3,11 @@
 // files and the validation (lib/server/brand.js); this only shows them and
 // sends new ones.
 //
+// The images are kept per THEME — the project's global theme when they were
+// added — so every slot here is the current theme's, Settings → Brand names
+// that theme, and a change of theme arrives as a `brand` frame (the daemon
+// sends one whenever the global theme moves) carrying the new theme's slots.
+//
 // An image is only ever an <img> pointed at /brand/<slot> — never SVG markup
 // in this document — so a logo cannot run anything in the chrome's origin.
 import { $ } from './state.js';
@@ -15,12 +20,16 @@ const SLOTS = [
 const TYPE_BY_EXT = { svg: 'image/svg+xml', png: 'image/png' };
 const ACCEPT = '.svg,.png,image/svg+xml,image/png';
 
-let current = {};   // slot -> {type, bytes, version} | null
-// What fills a slot the project left empty — the theme pack's per-user logos
+let current = {};   // slot -> {type, bytes, version} | null — the current theme's own images
+// What fills a slot the theme has no image in — the theme pack's per-user logos
 // (lib/server/brand.js explains; deliberately unmentioned anywhere a user
 // reads). slot -> {light, dark} (each {type, bytes, version} | null) | null.
-// Only the topbar reads it: Settings → Brand shows the project's own slots.
+// Only the topbar reads it: Settings → Brand shows the theme's own slots.
 let fill = {};
+// Whose images `current` are: the global theme, { key, name, title } — `title`
+// a builtin pack's display name, `name` null for a theme set without one. Null
+// until the daemon has said.
+let theme = null;
 
 // A native file chooser takes window focus, and the dismiss layer closes every
 // panel on window blur — which would shut Settings under the user's pick. The
@@ -93,7 +102,7 @@ async function upload(slot, file) {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { say(body.error || `Upload failed (${r.status}).`, true); return; }
     say('');
-    if (body.slots) applyBrand(body.slots, body.fill);
+    if (body.slots) applyBrand(body.slots, body.fill, body.theme);
   } catch { say('Upload failed — is the daemon running?', true); }
 }
 
@@ -103,7 +112,7 @@ async function clearSlot(slot) {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { say(body.error || `Remove failed (${r.status}).`, true); return; }
     say('');
-    if (body.slots) applyBrand(body.slots, body.fill);
+    if (body.slots) applyBrand(body.slots, body.fill, body.theme);
   } catch { say('Remove failed — is the daemon running?', true); }
 }
 
@@ -169,6 +178,19 @@ function buildRows() {
   }
 }
 
+// Settings → Brand says whose images these are: "Images for the Paper theme".
+// Built from text nodes — a theme's name is the user's (or a pack's) text.
+function applyThemeLine() {
+  const el = $('brand-theme'); if (!el) return;
+  el.textContent = '';
+  if (!theme) return; // not heard yet: say nothing rather than guess
+  const label = theme.title || theme.name;
+  if (!label) { el.textContent = 'Images for the current theme, which has no name'; return; }
+  const strong = document.createElement('strong');
+  strong.textContent = label;
+  el.append('Images for the ', strong, ' theme');
+}
+
 function applyRows() {
   const host = $('brand-slots'); if (!host) return;
   for (const row of host.querySelectorAll('.brand-slot')) {
@@ -194,10 +216,10 @@ function applyRows() {
 }
 
 // The one place slot state lands — the GET on boot, an upload's reply, and the
-// `brand` WS frame every viewer gets when any of them changes a slot.
-// `fillIn` absent (an older daemon, or a reply that does not carry it) keeps
-// the fill already known.
-export function applyBrand(slots, fillIn) {
+// `brand` WS frame every viewer gets when any of them changes a slot, or the
+// global theme moves and with it the images that show. `fillIn` / `themeIn`
+// absent (a reply or frame that does not carry them) keep what is known.
+export function applyBrand(slots, fillIn, themeIn) {
   const next = {};
   for (const { slot } of SLOTS) {
     const m = slots && slots[slot];
@@ -212,7 +234,9 @@ export function applyBrand(slots, fillIn) {
     }
     fill = f;
   }
+  if (themeIn !== undefined) theme = themeIn && typeof themeIn === 'object' ? themeIn : null;
   applyTopbar();
+  applyThemeLine();
   applyRows();
 }
 
@@ -221,7 +245,7 @@ export async function refreshBrand() {
     const r = await fetch('/api/brand');
     if (!r.ok) return;
     const body = await r.json();
-    applyBrand(body && body.slots, body && body.fill);
+    applyBrand(body && body.slots, body && body.fill, body && body.theme);
   } catch {}
 }
 

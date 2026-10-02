@@ -1,6 +1,6 @@
 // A theme pack's per-user logos (lib/server/brand.js, "A pack's per-user
 // logos"): while a project's global theme resolves to Georgetown Blue, a brand
-// slot the PROJECT left empty is filled from
+// slot with no image of the theme's own is filled from
 // userPaths().themeLogosDir('georgetown-blue') — the topbar logotype, and an
 // export's lockup and seal — with `<slot>-reversed.*` used in dark mode. The
 // folder is created holding only a README.txt by `install` and `update` (never
@@ -402,11 +402,17 @@ test('chrome: the topbar shows the fill per mode, the project slot wins, Setting
     assert.equal(row.querySelector('.brand-remove').disabled, true);
   }
 
-  // a global theme change re-reads the brand (the pack decides the fill)
+  // A global theme change arrives as a `brand` frame for the theme now on — the
+  // daemon sends one with every global theme change, just ahead of the theme
+  // frame — so the topbar takes that theme's images and fill with no round
+  // trip of its own.
   const before = calls.filter((u) => u === '/api/brand').length;
+  frame({ type: 'brand', theme: { key: 'earthy', name: 'earthy', title: 'Earthy' }, slots: empty, fill: empty });
   frame({ type: 'theme', scope: 'global', theme: { name: 'earthy', tokens: {} } });
   await tick();
-  assert.equal(calls.filter((u) => u === '/api/brand').length, before + 1);
+  assert.equal(logo(), null, 'Earthy has no logos: the fill went with the theme');
+  assert.equal(doc.getElementById('brand-theme').textContent, 'Images for the Earthy theme');
+  assert.equal(calls.filter((u) => u === '/api/brand').length, before, 'the frame carried all of it');
 });
 
 // --- not advertised ------------------------------------------------------------------
