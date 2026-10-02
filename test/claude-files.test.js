@@ -192,6 +192,16 @@ test('a fence takes its root in either spelling, as this process names it and by
   assert.equal(transcriptFile(transcript(other)), null);
   assert.equal(sessionDirFile(sessionDir(other), result(other)), null);
   assert.equal(planFile(plan(other)), null);
+
+  // A session directory and a file in it may arrive in different spellings,
+  // either way round (a caller may have taken the directory's realpath); a
+  // third spelling is refused on either side.
+  for (const [dirRoot, fileRoot] of [[named, canonical], [canonical, named]]) {
+    assert.equal(sessionDirFile(sessionDir(dirRoot), result(fileRoot)), result(fileRoot), `${dirRoot} | ${fileRoot}`);
+  }
+  for (const [dirRoot, fileRoot] of [[named, other], [canonical, other], [other, named], [other, canonical]]) {
+    assert.equal(sessionDirFile(sessionDir(dirRoot), result(fileRoot)), null, `${dirRoot} | ${fileRoot}`);
+  }
 });
 
 // ── transcriptFile ───────────────────────────────────────────────────────────
