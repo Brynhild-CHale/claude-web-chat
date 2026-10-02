@@ -1247,6 +1247,33 @@ test('update --restart-all judges a project as it was before its restart: wiring
     '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it'));
 });
 
+// And as it is after the restart. The check before decides alone what a
+// restart can make eligible (nothing), but an `uninstall` typed in another
+// terminal while that project's restart ran (its stop can wait up to 40s on a
+// drain) must stand, not be undone by the refresh that follows.
+test('update --restart-all leaves alone a project un-registered while its server restarted', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const p = registeredProject('wc-ra-gone-');
+  const d = upgradeDeps(paths, {
+    registration,  // the real engine: had the refresh run, it would write
+    readInstances: () => [{ root: p, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      if (o.root === p) registration.remove(p, { runClaude: () => ({ ok: true }) });
+      return { ok: true };
+    },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others.restarted, [p]);
+  assert.deepEqual(res.others.refreshed, [], 'not refreshed');
+  assert.equal(registration.isRegistered(p), false, 'the uninstall stands');
+  assert.deepEqual(filesOutsideState(p), {}, 'nothing was written back');
+  assert.ok(d.log.text().split('\n').includes(
+    '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it'));
+});
+
 // The project `update` is typed in goes through the same gate. An uninstalled
 // project keeps its .web-chat/, and 0.7.x booted a daemon — so made a
 // .web-chat/ — wherever `update` was typed: ~/Downloads, say, the directory a
