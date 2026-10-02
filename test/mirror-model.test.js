@@ -473,6 +473,57 @@ test('the turn writer is claimed once; sources patch only the header fields nobo
   assert.equal(model.isEvicted('t9'), true, 'a restored turn waits for its refill');
 });
 
+test('the lifecycle writer makes room in the order: shiftSeq moves every later turn on, keeping their order', () => {
+  const { model, w, turn } = setup();
+  turn('t1');
+  turn('t2');
+  turn('t3');
+  model.takeChanges();
+  assert.deepEqual(w.shiftSeq('c1', 2, 1), ['t2', 't3']);
+  assert.deepEqual(model.turnsOf('c1').map((t) => [t.id, t.seq]), [['t1', 1], ['t2', 3], ['t3', 4]]);
+  // A turn put at the freed seq goes between them.
+  w.putTurn({ id: 'older', conversation_id: 'c1', session_id: 's1', seq: 2, status: 'open' });
+  assert.deepEqual(model.turnsOf('c1').map((t) => t.id), ['t1', 'older', 't2', 't3']);
+  const ch = model.takeChanges()[0];
+  assert.deepEqual(ch.turns.sort(), ['older', 't2', 't3'], 'the moved headers are changes');
+  assert.ok(Object.isFrozen(model.turn('t2')));
+  assert.deepEqual(w.shiftSeq('c1', 99, 1), [], 'nothing at or after it');
+  assert.deepEqual(w.shiftSeq('c1', 1, 0), [], 'a move of at least one');
+  assert.deepEqual(w.shiftSeq('nope', 1, 1), []);
+});
+
+test('the lifecycle writer merges a provisional turn into an existing one, as an alias of it', () => {
+  const { model, w, turn } = setup();
+  turn('tx1', { started_at: 5 });
+  model.upsertItem({ id: 'p_tx1', turn_id: 'tx1', kind: 'prompt', text: 'run the tests', origin: 'human' });
+  turn('h1', { provisional: true, started_at: 9 });
+  model.upsertItem({ id: 'p_h1', turn_id: 'h1', kind: 'prompt', text: 'run the tests', origin: 'human', source: 'hook' });
+  model.upsertItem({ id: 'toolu_a', turn_id: 'h1', kind: 'tool_call', tool: 'Bash', status: 'running', source: 'hook' });
+  model.upsertItem({ id: 'rl_h1', turn_id: 'h1', kind: 'reply', text: 'done', source: 'hook' });
+  w.putTurn({ id: 'h1', node: { id: 'n7', label: 'n1.7', role: 'commit' } });
+  model.takeChanges();
+  const merged = w.mergeTurn('h1', 'tx1');
+  assert.equal(merged.id, 'tx1');
+  assert.equal(merged.replaces, 'h1');
+  assert.deepEqual({ ...merged.node }, { id: 'n7', label: 'n1.7', role: 'commit' }, 'the node link comes along');
+  assert.equal(model.turn('h1'), null);
+  assert.deepEqual(model.turnsOf('c1').map((t) => t.id), ['tx1']);
+  assert.deepEqual(model.itemsOf('tx1').map((i) => i.id).sort(), ['p_tx1', 'rl_tx1', 'toolu_a']);
+  assert.equal(model.item('p_tx1').source, 'transcript', 'the turn\'s own prompt stays');
+  assert.equal(model.item('toolu_a').turn_id, 'tx1');
+  assert.equal(model.turn('tx1').counts.tools, 1);
+  const ch = model.takeChanges()[0];
+  assert.deepEqual(ch.removed_items.sort(), ['p_h1', 'rl_h1']);
+  assert.ok(ch.items.includes('toolu_a') && ch.items.includes('rl_tx1'));
+  assert.equal(ch.turns.includes('h1'), false);
+  let n = 0;
+  let k = 0;
+  for (const it of model.itemsOf('tx1')) { n += charsOf(it); k += 1; }
+  assert.deepEqual([model.stats().chars, model.stats().items], [n, k], 'the LRU count stays exact');
+  assert.equal(w.mergeTurn('tx1', 'tx1'), null);
+  assert.equal(w.mergeTurn('nope', 'tx1'), null);
+});
+
 test('an optional header field set to null by the lifecycle writer is removed', () => {
   const { model, w, turn } = setup();
   turn('t1', { provisional: true });

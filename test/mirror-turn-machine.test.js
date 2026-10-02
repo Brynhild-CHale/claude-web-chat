@@ -10,7 +10,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createModel } = require('../lib/server/mirror/model');
-const { createTurnMachine, unframe, isRelay, USER_REQUEST_FRAME, FRAME_MARK } = require('../lib/server/mirror/turn-machine');
+const {
+  createTurnMachine, unframe, isRelay, USER_REQUEST_FRAME, FRAME_MARK, OPENER_SKEW_MS,
+} = require('../lib/server/mirror/turn-machine');
 
 const C = 'conv-1';
 const S = 'sess-1';
@@ -21,12 +23,14 @@ const redactor = {
   value: (v) => JSON.parse(JSON.stringify(v).replace(/SECRET[A-Za-z0-9_]*/g, '[MASK]')),
 };
 
-function harness({ interruptedBy } = {}) {
+// `start` sets the wall clock the hooks read (each hook is 1 ms after the last);
+// `setClock` moves it.
+function harness({ interruptedBy, start = 1000 } = {}) {
   const model = createModel({ redactor });
   const transitions = [];
   const opened = [];
   const closed = [];
-  let clock = 1000;
+  let clock = start;
   const tm = createTurnMachine({
     model,
     now: () => clock,
@@ -41,7 +45,7 @@ function harness({ interruptedBy } = {}) {
   };
   const tx = (...changes) => tm.applyChanges(C, S, changes);
   const closes = () => transitions.filter((t) => t.op === 'turn-closed');
-  return { model, tm, transitions, opened, closed, hook, tx, closes, clock: () => clock };
+  return { model, tm, transitions, opened, closed, hook, tx, closes, clock: () => clock, setClock: (ms) => { clock = ms; } };
 }
 
 // Hook envelopes (envelope v1, §1.3).
@@ -56,7 +60,7 @@ const opener = (pid, uuid, parent, text = `prompt ${pid}`, extra = {}) =>
 const reply = (id, uuid, parent, text) => ({ type: 'item', uuid, parent_uuid: parent, item: { id, kind: 'reply', text } });
 const toolItem = (id, uuid, parent, name, status = 'done', extra = {}) =>
   ({ type: 'item', uuid, parent_uuid: parent, item: { id, kind: 'tool_call', tool: name, tool_kind: name, label: `${name} · x`, status, ...extra } });
-const duration = (uuid, parent, ms = 500) => ({ type: 'turn-duration', uuid, parent_uuid: parent, duration_ms: ms });
+const duration = (uuid, parent, ms = 500, extra = {}) => ({ type: 'turn-duration', uuid, parent_uuid: parent, duration_ms: ms, ...extra });
 
 // One whole transcript turn: opener, reply, turn_duration — chained.
 function txTurn(h, pid, n, parent) {
@@ -225,6 +229,218 @@ test('rule 2, read from the other side: a hook arriving after the transcript ope
   assert.equal(d.model.turn('tA').status, 'open');
   d.hook('Stop', { prompt_id: 'hA', stop: { last_assistant_message: 'ok' } });
   assert.equal(d.model.turn('tA').status, 'done');
+});
+
+test('rule 2: by order, with no prompt to match, an opener binds the provisional turn whose start is closest to its own', () => {
+  const h = harness();
+  h.hook('UserPromptSubmit', promptEnv('hA', 'a prompt another hook blocked')); // its record never lands
+  h.setClock(60000);
+  h.hook('UserPromptSubmit', promptEnv('hB', '/review the diff'));
+  h.tx(opener('tB', 'u1', null, 'the expanded review prompt', { ts: 60050 }));
+  assert.equal(h.model.turn('tB').replaces, 'hB');
+  assert.equal(h.model.turn('hA').provisional, true, 'the older provisional turn is left alone');
+  // Without a record time there is nothing to compare: file order, the oldest.
+  const n = harness();
+  n.hook('UserPromptSubmit', promptEnv('hA', 'one'));
+  n.hook('UserPromptSubmit', promptEnv('hB', 'two'));
+  n.tx({ type: 'opener', prompt_id: 'tA', uuid: 'u1', parent_uuid: null, kind: 'prompt', text: 'not the hook\'s words' });
+  assert.equal(n.model.turn('tA').replaces, 'hA');
+});
+
+// ---- catch-up: a hook opened the live turn before the tailer read the older ones ----------------------------
+
+// A session with history found late (first install, a daemon started mid-session,
+// a gap): the tailer replays the file from its start, older turns first.
+function olderTurns(n, first = null) {
+  const out = [];
+  let parent = first;
+  for (let i = 1; i <= n; i++) {
+    const u = (k) => `u${i}${k}`;
+    out.push(opener(`P${i}`, u('a'), parent, `prompt ${i}`, { ts: i * 1000 }),
+      reply(`r_${i}`, u('b'), u('a'), `answer ${i}`),
+      duration(u('c'), u('b'), 400, { ts: i * 1000 + 500 }));
+    parent = u('c');
+  }
+  return out;
+}
+
+test('catch-up: older turns replayed after a UserPromptSubmit go before its turn and never bind or close it', () => {
+  for (const hookId of ['P3', 'H3']) { // V28: the hook's prompt_id equals the record's promptId, or it does not
+    const h = harness({ start: 100000 });
+    h.hook('UserPromptSubmit', promptEnv(hookId, 'third prompt'));
+    h.tx(...olderTurns(2));
+    assert.deepEqual(turnsOf(h).map((t) => [t.id, t.seq, t.status, t.provisional === true]),
+      [['P1', 1, 'done', false], ['P2', 2, 'done', false], [hookId, 3, 'open', true]], hookId);
+    assert.equal(h.tm.openTurnOf(C), hookId, 'the live turn stays the open one');
+    assert.equal(h.model.item(`p_${hookId}`).text, 'third prompt');
+    assert.deepEqual(h.model.itemsOf('P1').map((i) => i.id), ['p_P1', 'r_1']);
+    assert.deepEqual(h.closes().map((x) => [x.turn_id, x.outcome, x.by]), [['P1', 'done', 'transcript'], ['P2', 'done', 'transcript']]);
+    // Then the live opener, its reply and the live Stop.
+    h.tx(opener('P3', 'u3a', 'u2c', 'third prompt', { ts: 100002 }), reply('r_3', 'u3b', 'u3a', 'answer 3'));
+    const t3 = h.model.turn('P3');
+    assert.equal(t3.status, 'open');
+    assert.equal(t3.seq, 3);
+    assert.equal(t3.replaces, hookId === 'P3' ? undefined : 'H3');
+    assert.equal('provisional' in t3, false);
+    assert.deepEqual(h.model.itemsOf('P3').map((i) => [i.id, i.source]), [['p_P3', 'transcript'], ['r_3', 'transcript']]);
+    assert.equal(h.tm.openTurnOf(C), 'P3');
+    h.hook('Stop', { prompt_id: hookId, stop: { last_assistant_message: 'answer 3' } });
+    assert.deepEqual(turnsOf(h).map((t) => [t.id, t.status]), [['P1', 'done'], ['P2', 'done'], ['P3', 'done']]);
+    assert.deepEqual(h.closes().map((x) => [x.turn_id, x.outcome, x.by]),
+      [['P1', 'done', 'transcript'], ['P2', 'done', 'transcript'], ['P3', 'done', 'stop']], 'one close per turn');
+    assert.equal(h.tm.openTurnOf(C), null);
+  }
+});
+
+test('catch-up: records at the file\'s head, before its first opener, are not the hook\'s turn\'s', () => {
+  const h = harness({ start: 100000 });
+  h.hook('UserPromptSubmit', promptEnv('H3', 'third prompt'));
+  h.tx({ type: 'record', uuid: 'u0a', ts: 500, offset: { start: 0, end: 300 } },
+    { type: 'item', uuid: 'u0b', ts: 600, offset: { start: 300, end: 400 }, item: { id: 'l_0', kind: 'local', local: 'model', output: 'Set model to opus' } },
+    { ...opener('P1', 'u1a', 'u0b', 'prompt 1', { ts: 1000 }), offset: { start: 400, end: 500 } });
+  assert.deepEqual(h.model.itemsOf('H3').map((i) => i.id), ['p_H3']);
+  assert.equal(h.model.item('l_0'), null, 'an item with no turn of its own is not stored');
+  assert.equal(h.tm.segmentOf('H3'), null, 'the live turn\'s byte range does not grow over the file\'s head');
+  assert.equal(h.tm.turnOfUuid('u0a'), null);
+  assert.deepEqual(h.tm.segmentOf('P1'), { from: 400, to: 500 });
+  assert.equal(h.tm.diagnostics().items_without_turn, 1);
+});
+
+test('catch-up: a turn a mid-turn hook opened keeps its running tool call while older turns replay', () => {
+  const h = harness({ start: 200000 });
+  h.hook('PreToolUse', toolEnv('P3', 'toolu_live', 'Bash'));
+  assert.equal(h.model.turn('P3').provisional, true);
+  h.tx(...olderTurns(2));
+  assert.deepEqual(turnsOf(h).map((t) => [t.id, t.seq, t.status]), [['P1', 1, 'done'], ['P2', 2, 'done'], ['P3', 3, 'open']]);
+  assert.equal(h.model.item('toolu_live').turn_id, 'P3');
+  assert.equal(h.model.item('toolu_live').status, 'running');
+  assert.equal(h.tm.openTurnOf(C), 'P3');
+  assert.deepEqual(h.closes().map((x) => x.turn_id), ['P1', 'P2']);
+  // The live turn's own opener, recorded long before the tool call, binds it by id.
+  h.tx(opener('P3', 'u3a', 'u2c', 'run the tests', { ts: 150000 }), toolItem('toolu_live', 'u3b', 'u3a', 'Bash', 'running'));
+  const t3 = h.model.turn('P3');
+  assert.equal('provisional' in t3, false);
+  assert.equal(t3.started_at, 150000);
+  assert.equal(h.model.item('toolu_live').source, 'transcript');
+  h.hook('PostToolUse', { ...toolEnv('P3', 'toolu_live', 'Bash'), result: { ok: true, duration_ms: 900 } });
+  h.hook('Stop', { prompt_id: 'P3', stop: { last_assistant_message: 'All green.' } });
+  h.tx(toolItem('toolu_live', 'u3c', 'u3b', 'Bash', 'done', { result: { preview: '42 passing', is_error: false } }));
+  assert.equal(h.model.turn('P3').status, 'done');
+  assert.equal(h.model.item('toolu_live').status, 'done');
+  assert.equal(h.model.item('toolu_live').turn_id, 'P3');
+  assert.deepEqual(h.closes().map((x) => [x.turn_id, x.by]), [['P1', 'transcript'], ['P2', 'transcript'], ['P3', 'stop']]);
+});
+
+test('catch-up: when the ids differ, a mid-turn hook\'s turn binds by order only an opener near it', () => {
+  // The turn's first tool call came within OPENER_SKEW_MS of its prompt: bound by order.
+  const h = harness({ start: 200000 });
+  h.hook('PreToolUse', toolEnv('H3', 'toolu_live', 'Bash'));
+  h.tx(...olderTurns(2), opener('P3', 'u3a', 'u2c', 'run the tests', { ts: 200001 - (OPENER_SKEW_MS - 1000) }));
+  assert.deepEqual(turnsOf(h).map((t) => [t.id, t.status, t.replaces]), [['P1', 'done', undefined], ['P2', 'done', undefined], ['P3', 'open', 'H3']]);
+  assert.equal(h.model.item('toolu_live').turn_id, 'P3');
+  // Recorded longer before it, the opener could as well be an older turn's: it
+  // opens its own turn, before the hook's. Once the transcript places a tool call
+  // the hook's turn holds in it, the two are one, and the hook's merges in.
+  const f = harness({ start: 200000 });
+  f.hook('PreToolUse', toolEnv('H3', 'toolu_live', 'Bash'));
+  f.hook('PreToolUse', toolEnv('H3', 'toolu_next', 'Read'));
+  f.tx(...olderTurns(2), opener('P3', 'u3a', 'u2c', 'run the tests', { ts: 150000 }));
+  assert.deepEqual(turnsOf(f).map((t) => [t.id, t.status, t.provisional === true]),
+    [['P1', 'done', false], ['P2', 'done', false], ['P3', 'open', false], ['H3', 'open', true]]);
+  f.model.takeChanges();
+  f.tx(toolItem('toolu_live', 'u3b', 'u3a', 'Bash', 'running'));
+  assert.deepEqual(turnsOf(f).map((t) => [t.id, t.status, t.replaces]), [['P1', 'done', undefined], ['P2', 'done', undefined], ['P3', 'open', 'H3']]);
+  assert.equal(f.model.turn('H3'), null);
+  assert.equal(f.model.item('toolu_next').turn_id, 'P3', 'the hook turn\'s other calls move with it');
+  assert.equal(f.tm.openTurnOf(C), 'P3');
+  assert.equal(f.tm.resolve('H3'), 'P3');
+  assert.ok(f.model.takeChanges()[0].turns.includes('P3'));
+  f.hook('Stop', { prompt_id: 'H3', stop: { last_assistant_message: 'All green.' } });
+  assert.equal(f.model.turn('P3').status, 'done');
+  f.tx(reply('r_3', 'u3c', 'u3b', 'All green.'), duration('u3d', 'u3c', 50000, { ts: 200500 }));
+  assert.equal(f.model.turn('P3').duration_ms, 50000);
+  assert.deepEqual(f.closes().map((x) => [x.turn_id, x.by]), [['P1', 'transcript'], ['P2', 'transcript'], ['P3', 'stop']]);
+  assert.equal(f.model.item('rl_P3'), null, 'the transcript\'s reply replaced the Stop\'s');
+  // When the Stop came first, the transcript's turn takes the hook turn's close, unannounced.
+  const g = harness({ start: 200000 });
+  g.hook('PreToolUse', toolEnv('H3', 'toolu_live', 'Bash'));
+  g.hook('Stop', { prompt_id: 'H3', stop: { last_assistant_message: 'All green.' } });
+  g.tx(...olderTurns(2), opener('P3', 'u3a', 'u2c', 'run the tests', { ts: 150000 }), toolItem('toolu_live', 'u3b', 'u3a', 'Bash', 'running'));
+  const t3 = g.model.turn('P3');
+  assert.equal(t3.status, 'done');
+  assert.equal(t3.replaces, 'H3');
+  assert.equal(g.model.item('rl_P3').text, 'All green.', 'the Stop\'s provisional reply moved over');
+  assert.equal(g.tm.openTurnOf(C), null);
+  assert.deepEqual(g.closes().map((x) => [x.turn_id, x.by]), [['H3', 'stop'], ['P1', 'transcript'], ['P2', 'transcript']]);
+  assert.equal(g.tm.linkState('P3'), 'pending', 'closed, for the graph link to attach');
+  g.tx(reply('r_3', 'u3c', 'u3b', 'All green.'), duration('u3d', 'u3c', 50000, { ts: 200500 }));
+  assert.equal(g.model.item('rl_P3'), null);
+  assert.equal(g.model.turn('P3').status, 'done');
+  // A transcript turn that began after the hook's first event is a later turn: no merge.
+  const k = harness({ start: 200000 });
+  k.hook('PreToolUse', toolEnv('H3', 'toolu_live', 'Bash'));
+  k.hook('Stop', { prompt_id: 'H3' });
+  k.tx(opener('P4', 'u4a', null, 'later', { ts: 260000 }), toolItem('toolu_live', 'u4b', 'u4a', 'Bash', 'done'));
+  assert.ok(k.model.turn('H3'), 'kept');
+  assert.equal(k.model.turn('P4').replaces, undefined);
+});
+
+test('catch-up: a restart mid-replay resumes the transcript at its last bound turn, never at the hook\'s', () => {
+  const h = harness({ start: 100000 });
+  h.hook('UserPromptSubmit', promptEnv('H3', 'third prompt'));
+  h.tx(...olderTurns(1));
+  const records = JSON.parse(JSON.stringify(h.tm.exportTurns(S)));
+  assert.deepEqual(records.map((r) => [r.header.id, r.internal.bound]), [['P1', true], ['H3', false]]);
+  const g = harness({ start: 100100 });
+  g.tm.restoreTurns(C, records);
+  assert.equal(g.tm.openTurnOf(C), 'H3');
+  assert.equal(g.tm.sessionTurn(S), 'P1');
+  // Whatever the resumed tail starts with lands in the transcript's turn, not the hook's.
+  g.tx(duration('u1x', 'u1c', 450, { ts: 1600 }));
+  assert.equal(g.model.turn('H3').status, 'open');
+  g.tx(...olderTurns(2).slice(3), opener('P3', 'u3a', 'u2c', 'third prompt', { ts: 100002 }));
+  assert.deepEqual(turnsOf(g).map((t) => [t.id, t.status, t.replaces]),
+    [['P1', 'done', undefined], ['P2', 'done', undefined], ['P3', 'open', 'H3']]);
+});
+
+test('catch-up: an older session\'s file drained late never closes the newer session\'s open turn', () => {
+  const h = harness({ start: 100000 });
+  h.hook('UserPromptSubmit', promptEnv('Q1', 'after the clear'));
+  h.tx(opener('Q1', 'q1a', null, 'after the clear', { ts: 100002 }));
+  // The /clear's old file (another session of the conversation), read to its end late.
+  h.tm.applyChanges(C, 'sess-0', [opener('O9', 'o9a', 'o8c', 'before the clear', { ts: 50000 }),
+    reply('r_o9', 'o9b', 'o9a', 'old answer'), duration('o9c', 'o9b', 300, { ts: 50400 })]);
+  assert.deepEqual(turnsOf(h).map((t) => [t.id, t.session_id, t.status]), [['O9', 'sess-0', 'done'], ['Q1', S, 'open']]);
+  assert.equal(h.tm.openTurnOf(C), 'Q1');
+  assert.deepEqual(h.closes().map((x) => x.turn_id), ['O9']);
+});
+
+test('catch-up: a live prompt that arrives mid-replay never joins an older turn, and its presumption is corrected', () => {
+  const h = harness({ start: 100000 });
+  // The replay has read turn 1's opener and reply, not yet its end; the live prompt
+  // uses the same words.
+  h.tx(opener('P1', 'u1a', null, 'continue', { ts: 1000 }), reply('r_1', 'u1b', 'u1a', 'answer 1'));
+  assert.deepEqual(h.hook('UserPromptSubmit', promptEnv('H3', 'continue')), { ok: true, turn_id: 'H3', opened: true });
+  assert.equal(h.tm.resolve('H3'), 'H3', 'not an alias of the older turn');
+  assert.equal(h.model.turn('P1').status, 'interrupted', 'presumed: no Stop and no end read yet');
+  h.tx(duration('u1c', 'u1b', 400, { ts: 1500 }));
+  const t1 = h.model.turn('P1');
+  assert.equal(t1.status, 'done', 'its turn_duration says it finished');
+  assert.equal(t1.ended_at, 1500);
+  assert.equal(t1.duration_ms, 400);
+  assert.equal('ended_by' in t1, false);
+  assert.equal(h.closes().filter((x) => x.turn_id === 'P1').length, 1, 'the correction announces nothing');
+  // The rest of the replay goes before the live turn, whose opener binds it.
+  h.tx(opener('P2', 'u2a', 'u1c', 'prompt 2', { ts: 2000 }), duration('u2c', 'u2a', 400, { ts: 2500 }),
+    opener('P3', 'u3a', 'u2c', 'continue', { ts: 100002 }));
+  assert.deepEqual(turnsOf(h).map((t) => [t.id, t.status, t.replaces]),
+    [['P1', 'done', undefined], ['P2', 'done', undefined], ['P3', 'open', 'H3']]);
+  // An interrupt marker before the turn_duration keeps the interruption.
+  const m = harness({ start: 100000 });
+  m.tx(opener('P1', 'u1a', null, 'go', { ts: 1000 }), toolItem('tu1', 'u1b', 'u1a', 'Bash', 'interrupted'));
+  m.hook('UserPromptSubmit', promptEnv('H3', 'next'));
+  m.tx({ type: 'interrupt', uuid: 'u1c', parent_uuid: 'u1b' }, duration('u1d', 'u1c', 300, { ts: 1400 }));
+  assert.equal(m.model.turn('P1').status, 'interrupted');
 });
 
 // ---- rule 3: every close path --------------------------------------------------------------------------
