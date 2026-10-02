@@ -39,6 +39,12 @@ module.exports = {
     //               still sees those). Every one of them, unchanged: a param your
     //               params_schema marks `x-trust` is still handed to you, it is
     //               only left out of what the user approves — see Trust below.
+    // ctx.covers  — { param: mark }: the params THIS run's approval left out, as
+    //               they applied to these values (an `x-trust: project-path`
+    //               value appears only if it was proven inside the project).
+    //               That proof was made when the approval was keyed, not for
+    //               the life of the child: a service that keeps using a covered
+    //               path holds it inside with ctx.fence(process.cwd(), …).
     // process.cwd() — the project root, wherever the daemon was started from.
     //               Resolve a relative path param against it.
     // ctx.mountId — the pane id; namespace per-pane store keys with it if needed.
@@ -100,7 +106,7 @@ debounced `reconcile()` that diffs the *desired* set of children against the
 | State | When | How |
 | --- | --- | --- |
 | **running** | the pane is a live mount on the active node **and** ≥1 browser is connected | reconcile spawns it |
-| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, or the pane is re-used with different params (a value its `x-trust` declaration covers restarts it with the new value and asks nothing; any other change asks again) | reconcile stops it |
+| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, the pane is re-used with different params (a value its `x-trust` declaration covers restarts it with the new value and asks nothing; any other change asks again), or its approval is withdrawn (`trust --pack <name> --deny` over a key it had approved) | reconcile stops it |
 | **respawned** | you navigate back / a viewer reconnects | reconcile spawns a fresh child |
 
 The desired set is derived from `state.mounts` — which *is* the active surface,
@@ -262,10 +268,21 @@ shell word, a command-line flag or a glob pattern breaks the promise its mark
 makes. The proof covers the literal string only; brace expansion can turn
 `{..,x}/secret` into a `..` the value never contained.
 
+**The proof is made once, when the approval is keyed.** A covered path that
+later turns into a symlink out of the project (a checkout, a pull, a build
+tool's output link) was still covered. `ctx.covers` tells the child which params
+its approval covered; a service that keeps using a covered path for the life of
+the child, as a base directory say, fences what it resolves against
+`process.cwd()` at use time too.
+
 The builtin `file-editor` marks `path` and `root` as `project-path`. `unfenced`
 has no mark, so `unfenced: true` always asks. One approval therefore covers the
-editor on any file inside the project. Because adding the marks changed its code
-hash, an approval recorded before 0.8.2 asks once more.
+editor on any file inside the project. While its approval covers `root`, the
+editor fences every path against both `root` and the project root, so a `root`
+that becomes a link out of the project reaches nothing outside it. A `root` the
+approval names by its exact value (one outside the project, which the user saw)
+keeps its own fence only. Because adding the marks changed its code hash, an
+approval recorded before 0.8.2 asks once more.
 
 ### Approving a pack ahead of time: `trust --pack`
 

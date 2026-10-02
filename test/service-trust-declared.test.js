@@ -542,3 +542,49 @@ test('the listing, the notice and the grant say what each request covers, and ho
   assert.deepEqual(recorded[outside.key].covers, { root: 'project-path' }, 'the record notes this request\'s range');
   assert.deepEqual(recorded[outside.key].exact, { path: 'project-path' });
 });
+
+// A covered `root` was proven inside when the approval was keyed — not for the
+// life of the child. file-editor fences every path against its root, and the
+// fence realpaths that root on every call: a root that later becomes a link out
+// of the project carried the fence out with it, under an approval that never
+// named root. The supervisor now tells the child what its approval covered
+// (ctx.covers), and the editor holds a covered root inside the project too.
+test('a covered root that becomes a link out of the project reaches nothing outside it', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-xtrust-rootout-'));
+  t.after(() => { try { fs.rmSync(outside, { recursive: true, force: true }); } catch {} });
+  fs.writeFileSync(path.join(outside, 'secret.txt'), 'OUTSIDE SECRET\n');
+  const sub = path.join(ctx.root, 'sub');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'notes.txt'), 'inside\n');
+  await openViewer(t, ctx);
+  const editor = async () => (await api.get('/api/store')).json.editor;
+
+  await api.post('/api/components/file-editor/use', { id: 'ed', params: { root: 'sub', path: 'notes.txt' } });
+  const req = await waitUntil(async () => (await api.get('/api/services/pending')).json.pending[0] || false);
+  assert.deepEqual(req.covers, { path: 'project-path', root: 'project-path' }, 'root inside the project is covered');
+  await approve(ctx, req);
+  const opened = await waitUntil(async () => {
+    const ed = await editor();
+    return ed && ed.path === 'notes.txt' && ed.exists ? ed : false;
+  });
+  assert.ok(opened, 'the editor runs on the covered root');
+  assert.equal(opened.content, 'inside\n');
+  const child = ctx.srv.services._children.get('ed');
+  assert.deepEqual(child && child.params, { path: 'notes.txt', root: 'sub' });
+
+  // While it runs, `sub` turns into a link out of the project. Nothing on the
+  // bus announces that, so the same child keeps running.
+  fs.rmSync(sub, { recursive: true, force: true });
+  fs.symlinkSync(outside, sub);
+  await api.post('/api/store', { patch: { editor_ctl: { action: 'open', path: 'secret.txt', seq: Date.now() + 1000 } } });
+  const refused = await waitUntil(async () => {
+    const ed = await editor();
+    return ed && ed.error ? ed : false;
+  }, { timeout: 6000 });
+  assert.ok(refused, 'the open was answered');
+  assert.match(refused.error, /outside the project root/);
+  assert.notEqual(refused.content, 'OUTSIDE SECRET\n', 'nothing outside the project was read');
+  assert.equal(ctx.srv.services._children.get('ed'), child, 'by the same child, still running');
+});
