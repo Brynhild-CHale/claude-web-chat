@@ -1742,10 +1742,48 @@ test('last_turn: the newest closed turn, read fresh, with its code once it is re
   h.prompt();
   h.clock.set(T0 + 4000);
   h.closeTurn('p1', 'done', { reply_preview: 'The rail now collapses to 56px', code: { status: 'pending' } });
-  assert.deepEqual(h.L().last_turn, { id: 'p1', outcome: 'done', ended_at: T0 + 4000, code: null, reply_preview: 'The rail now collapses to 56px' });
+  assert.deepEqual(h.L().last_turn, { id: 'p1', outcome: 'done', ended_at: T0 + 4000, code: null, reply_preview: 'The rail now collapses to 56px',
+    ended_by: null });
   h.turns.close(C, 'p1', 'done', T0 + 4000, { reply_preview: 'The rail now collapses to 56px', code: { status: 'ready', files: 3, additions: 40, deletions: 2 } });
   h.live.noteActivity(C, T0 + 4100, 'transcript');
   assert.deepEqual(h.L().last_turn.code, { files: 3, additions: 40, deletions: 2 });
+});
+
+test('last_turn.ended_by: who stopped an interrupted turn, from its header; null for any other end', async () => {
+  // §7.3 words an idle after a stop from the browser ('web' or 'hook') from the live state alone.
+  for (const [given, want] of [['web', 'web'], ['hook', 'hook'], ['terminal', 'terminal'], ['someone', null], [undefined, null]]) {
+    const h = harness();
+    h.prompt();
+    h.clock.set(T0 + 1000);
+    h.closeTurn('p1', 'interrupted', given === undefined ? {} : { ended_by: given });
+    assert.equal(h.L().last_turn.ended_by, want, String(given));
+  }
+  // Only an interrupted turn has one (as the turn machine sets it).
+  const d = harness();
+  d.prompt();
+  d.closeTurn('p1', 'done', { ended_by: 'web' });
+  assert.equal(d.L().last_turn.ended_by, null);
+
+  // Wired: a status close says 'terminal' (no control event names another until tranche 4), and the
+  // real model keeps it; a turn that ended with its Stop says nothing.
+  const w = wired();
+  w.live.start();
+  w.file('busy', { updatedAt: T0 });
+  w.hook('UserPromptSubmit', { prompt_id: 'p1', prompt: { author: 'user', text: 'go' } });
+  w.clock.set(T0 + 2000);
+  w.file('idle');
+  await w.clock.advance(STOP_GRACE_MS);
+  assert.equal(w.L().last_turn.outcome, 'interrupted');
+  assert.equal(w.L().last_turn.ended_by, 'terminal');
+  assert.equal(w.model.serializeLive(C).last_turn.ended_by, 'terminal');
+  w.clock.set(T0 + 10000);
+  w.hook('UserPromptSubmit', { prompt_id: 'p2', prompt: { author: 'user', text: 'again' } });
+  w.clock.set(T0 + 11000);
+  w.hook('Stop', { prompt_id: 'p2' });
+  assert.equal(w.L().last_turn.id, 'p2');
+  assert.equal(w.L().last_turn.ended_by, null);
+  assert.equal(w.model.serializeLive(C).last_turn.ended_by, null, 'a merge never keeps the old turn\'s');
+  await w.live.stop();
 });
 
 test('a removed or merged conversation is dropped; its sessions no longer resolve', () => {
