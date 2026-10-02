@@ -52,8 +52,8 @@ function markingRedactor() {
   return r;
 }
 
-// Every string VALUE held anywhere in the model, `_` fields included, and every
-// object key that is not a plain field name.
+// Every string held anywhere in the model, `_` fields included: every value and
+// every object key, field names as much as content keys.
 function heldStrings(model) {
   const out = [];
   const walk = (v) => {
@@ -61,7 +61,7 @@ function heldStrings(model) {
     if (Array.isArray(v)) { v.forEach(walk); return; }
     if (v && typeof v === 'object') {
       for (const k of Object.keys(v)) {
-        if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(k)) out.push(k);
+        out.push(k);
         walk(v[k]);
       }
     }
@@ -135,6 +135,41 @@ test('upsert passes every text field through the injected redactor, so no stored
   assert.equal(model.item('toolu_1').input.api_key, '[MASK:key]');
   // A content key the redactor would change is dropped, never kept.
   assert.deepEqual(Object.keys(model.conversation('c1').diagnostics.unknown_kinds), []);
+});
+
+test('keys pass the redactor too, at every depth: a key it would change is dropped, an identifier-shaped one included', () => {
+  const { redactor, model, turn } = setup();
+  model.upsertConversation('c1', { SECRETtop: 'x', title: 't',
+    diagnostics: { unknown_kinds: { SECRETghp_token: 1, 'attachment/frame-link': 2 } } });
+  model.upsertLive('c1', { state: 'idle', SECRETlive: 1, evidence: { SECRETev: 1, hook_at: 3 } });
+  model.upsertTask({ id: 'k1', conversation_id: 'c1', kind: 'monitor', title: 'errors', status: 'running',
+    meta: { events: { SECRETevent: 'x', 'task-7': 'fired' } } });
+  turn('t1');
+  model.upsertItem({ id: 'toolu_1', turn_id: 't1', kind: 'tool_call', tool: 'mcp__svc__do', status: 'done',
+    input: { SECRET_key: 'v', query: 'q' }, result: { preview: 'ok', SECRETres: 1 } });
+  model.patchTurn('t1', { code: { status: 'ready', files: { SECRETfile: 1, 'a.js': 2 } } });
+  const c = model.conversation('c1');
+  assert.deepEqual(Object.keys(c).sort(), ['diagnostics', 'id', 'title']);
+  assert.deepEqual(Object.keys(c.diagnostics.unknown_kinds), ['attachment/frame-link']);
+  assert.deepEqual(Object.keys(model.live('c1').evidence), ['hook_at']);
+  assert.deepEqual(Object.keys(model.task('k1').meta.events), ['task-7']);
+  assert.deepEqual(Object.keys(model.item('toolu_1').input), ['query']);
+  assert.deepEqual(Object.keys(model.item('toolu_1').result), ['preview']);
+  assert.deepEqual(Object.keys(model.turn('t1').code.files), ['a.js']);
+  for (const s of heldStrings(model)) {
+    assert.ok(!s.includes('SECRET'), `a stored string escaped the redactor: ${JSON.stringify(s)}`);
+    assert.ok(redactor.produced.has(s), `a stored key or value did not come out of the redactor: ${JSON.stringify(s)}`);
+  }
+  // A key is checked on every write: one the redactor learns about later (its
+  // addKnown) is not waved through by an earlier pass.
+  const known = new Set();
+  const learning = { text: (s) => [...known].reduce((out, v) => out.split(v).join('[KNOWN]'), s) };
+  const m = createModel({ redactor: learning });
+  m.upsertConversation('c1', { diagnostics: { kinds: { 'acct-7f3a9c': 1 } } });
+  assert.deepEqual(Object.keys(m.conversation('c1').diagnostics.kinds), ['acct-7f3a9c']);
+  known.add('7f3a9c');
+  m.upsertConversation('c1', { diagnostics: { kinds: { 'acct-7f3a9c': 2 } } });
+  assert.deepEqual(Object.keys(m.conversation('c1').diagnostics.kinds), []);
 });
 
 test('the tool-output context reaches the redactor for output only, never for a label, call or input', () => {
