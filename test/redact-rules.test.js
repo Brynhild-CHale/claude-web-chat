@@ -460,6 +460,27 @@ test('idempotence: redacting already-masked text changes nothing', () => {
   }
 });
 
+test('only a well-formed mark shelters a value, and never across a line break', () => {
+  const secret = 'Zq81mXp2LwQ9abcdefgH';
+  const S = MASK('secret');
+  // Text that merely opens a mark, around a secret: on the line before it, in
+  // the store keys beside it, or a mark-shaped prefix with a label no rule
+  // writes. None of them is a mark, so none of them shelters anything.
+  assert.equal(redactText(`X=${MASK_OPEN}\nDB_PASSWORD=${secret}\nY=›`), `X=${MASK_OPEN}\nDB_PASSWORD=${S}\nY=›`);
+  const store = { a: MASK_OPEN, api_token: secret.slice(0, 16), z: '›' };
+  assert.equal(redactText(JSON.stringify(store)), JSON.stringify({ ...store, api_token: S }));
+  assert.deepEqual(redactValue(store), { ...store, api_token: S });
+  assert.equal(redactText(`${MASK_OPEN}Not A Label› password=${secret}`), `${MASK_OPEN}Not A Label› password=${S}`);
+  assert.equal(redactText(`token: ${MASK_OPEN}${secret}`), `token: ${S}`, 'an opening with no label and no close');
+  // A real mark earlier on the line, or on the line before, covers only itself.
+  assert.equal(redactText(`${S} DB_PASSWORD=${secret}`), `${S} DB_PASSWORD=${S}`);
+  assert.equal(redactText(`${WITHHELD('ssh')}\nDB_PASSWORD=${secret}`), `${WITHHELD('ssh')}\nDB_PASSWORD=${S}`);
+  // A value that begins with a real mark was masked already, and keeps what
+  // follows it (a URL's host after its masked password).
+  const url = `https://x-access-token:${MASK('github-token')}@git.example.com/org/repo.git`;
+  assert.equal(redactText(url), url);
+});
+
 // ── acceptance 3: a mask reveals no prefix, length or hash ──────────────────
 
 test('masks reveal no prefix, length or hash: two secrets of one format redact to the same text', () => {
