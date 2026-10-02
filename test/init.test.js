@@ -18,6 +18,8 @@ const path = require('path');
 const os = require('os');
 
 const init = require('../lib/cli/commands/init');
+const reg = require('../lib/setup/registration');
+const { managedSkillNames } = require('../lib/update/managed-files');
 const { createPrompt } = require('../lib/cli/prompt');
 const { deriveRouting } = require('../lib/server/domain/signals');
 const { withTempHome, withServer } = require('../test-support/helpers');
@@ -122,6 +124,40 @@ test('fresh + no TTY + no --yes: prints the write list and writes NOTHING', asyn
   const text = log.text();
   assert.match(text, /\.mcp\.json/, 'the write list is still printed');
   assert.match(text, /Not a terminal — nothing written\. Re-run with --yes/);
+});
+
+// The write list is the user's consent, so its counts must be what the install
+// then writes. It once said "2 hooks merged in" while the install wrote fourteen
+// handlers on twelve events. Checked against the engine's own dry run on the
+// same fresh root, not against a number written here.
+test('fresh init announces the hooks and skills the install would write, counted by the engines that write them', async (t) => {
+  withTempHome(t);
+  const root = tmpDir();
+  const log = sink();
+  await init([], { cwd: root, log, ...inertDeps({ install: fakeDoctor() }), noOpenGuard: true });
+
+  const claudeCalls = [];
+  const would = reg.apply(root, { dryRun: true, runClaude: (argv) => { claudeCalls.push(argv); return { ok: true }; } });
+  assert.equal(claudeCalls.length, 0);
+  assert.equal(fs.existsSync(path.join(root, '.claude')), false, 'neither init nor the dry run wrote anything');
+
+  const text = log.text();
+  const hooks = text.match(/^ {2}\.claude\/settings\.json +(\d+) hooks? on (\d+) events? merged in \(existing hooks are preserved\)$/m);
+  assert.ok(hooks, `the settings.json line, in:\n${text}`);
+  assert.equal(Number(hooks[1]), would.hooks.added, 'every hook handler a fresh install adds');
+  assert.equal(Number(hooks[1]), reg.hookHandlers().length);
+  assert.equal(Number(hooks[2]), would.hooks.events.length, 'on every event the template registers');
+
+  const skills = text.match(/^ {2}\.claude\/skills\/… +(\d+) skills? \((.*)\)$/m);
+  assert.ok(skills, `the skills line, in:\n${text}`);
+  const written = would.managed
+    .filter((r) => r.action === 'created')
+    .map((r) => r.dest.split('/'))
+    .filter((p) => p.length === 4 && p[1] === 'skills')
+    .map((p) => p[2]);
+  assert.deepEqual(skills[2].split(', '), written, 'the skills a fresh install creates, by name');
+  assert.equal(Number(skills[1]), written.length);
+  assert.deepEqual(written, managedSkillNames());
 });
 
 test('fresh + --yes: installs, opens nothing, mounts no tour', async (t) => {
