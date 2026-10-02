@@ -618,6 +618,33 @@ test('redactWindow: an END marker with no BEGIN masks from the window start', ()
   assert.equal(redactWindow(`ok\n${PEM('BEGIN')}\nQm9keQ\nQm9k`, { complete: false }), `ok\n${MASK('private-key')}`);
 });
 
+test('redactWindow: a key whose BEGIN or END sits on a dropped edge is masked all the same', () => {
+  // The edges go only after the keys are found on the window whole. Each case
+  // keeps key lines between a marker the window drops and one it lacks.
+  const body = ['Qm9keSBsaW5lIG9uZQabc', 'Qm9keSBsaW5lIHR3bwxyz'];
+  const K = MASK('private-key');
+  const cases = [
+    // A window that opens on the BEGIN's line, before its END.
+    [`deploy: wrote key ${PEM('BEGIN')}\n${body[0]}\n${body[1]}\n`, { startsMidFile: true, complete: true }, K],
+    // ...and one whose END is inside it: what follows the key stays.
+    [`x ${PEM('BEGIN')}\n${body[0]}\n${body[1]}\n${PEM('END')}\nafter\n`, { startsMidFile: true, complete: true }, `${K}\nafter\n`],
+    // An END on the dropped unterminated last line, and no BEGIN.
+    [`x\n${body[0]}\n${body[1]}\n${PEM('END')}`, { startsMidFile: true, complete: false }, K],
+    [`${body[0]}\n${body[1]}\n${PEM('END')}`, { startsMidFile: false, complete: false }, K],
+    // A BEGIN on a first line past 4 KB, which becomes the partial-line mark.
+    [`${'y'.repeat(5000)} ${PEM('BEGIN')}\n${body[0]}\n${body[1]}\n`, { startsMidFile: true, complete: true }, `${PARTIAL_LINE}${K}`],
+    // Both edges at once, the key spanning the whole kept window.
+    [`x ${PEM('BEGIN')}\n${body[0]}\n${body[1]}\n${PEM('END')}`, { startsMidFile: true, complete: false }, K],
+  ];
+  for (const [text, opts, want] of cases) {
+    const reports = [];
+    const out = redactWindow(text, { ...opts, onMask: (n) => reports.push(n.id) });
+    assert.equal(out, want, JSON.stringify(text.slice(-80)));
+    assert.ok(!body.some((b) => out.includes(b.slice(0, 8))));
+    assert.deepEqual(reports, ['pem']);
+  }
+});
+
 test('redactWindow: a complete window from the start of a file is redactText', () => {
   for (const f of FAKES.filter((x) => !x.context && !x.known)) {
     assert.equal(redactWindow(f.text, { startsMidFile: false, complete: true }), redactText(f.text), f.id);
