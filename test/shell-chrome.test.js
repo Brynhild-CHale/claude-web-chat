@@ -348,6 +348,41 @@ test('.body\'s wrapper positions the chat dock without becoming a stacking conte
   assert.match(rule.body, /flex:\s*1/);
 });
 
+// Every chrome id the release plans, by surface and the unit that builds it
+// (design spec §7–§9 and §15). lib/server/domain/mounts.js reserves them all
+// AHEAD of those units, so none of them edits that file and no pane can claim
+// an id its surface is about to need. test/mount-engine.test.js derives the
+// reserved set from the sources; this is the plan's half, which no source can
+// show until its unit lands.
+const PLANNED_CHROME_IDS = {
+  'the status bar (U17)': ['chat-statusbar', 'cs-step', 'cs-step-text', 'cs-step-meta', 'cs-act', 'cs-stop',
+    'cs-chips', 'cs-live'],
+  'the trays (U46)': ['cs-tray', 'cs-tray-title', 'cs-tray-sub', 'cs-tray-close', 'cs-tray-rows'],
+  'the dock (U33)': ['chat-dock', 'cd-strip', 'cd-body'],
+  'the panel and its awaiting card (U36)': ['chat-panel', 'chat-title', 'cp-stop', 'cp-ops', 'chat-strip',
+    'chat-meta', 'chat-session', 'chat-notice', 'chat-awaiting', 'chat-views', 'chat-composer-slot'],
+  'the stream and the detail views (U37, U47)': ['chat-stream', 'chat-new', 'chat-detail'],
+  'the phone pull and its sheet (U68)': ['chat-scrim', 'chat-pull', 'chat-badge', 'chat-tab', 'chat-sheet',
+    'sh-tab-chat', 'sh-tab-tasks', 'sh-chat', 'sh-tasks', 'chat-live'],
+  'the co-brand lockup (U20)': ['cobrand', 'cobrand-co', 'cobrand-logo', 'cobrand-mark', 'cobrand-proj',
+    'cobrand-icon', 'cobrand-pmark', 'cobrand-name'],
+  'the favicon (U77)': ['wc-favicon', 'wc-favicon-dark', 'wc-touch-icon'],
+  'the control layer (U80, U85, U86)': ['cs-stop', 'cp-stop', 'cp-ops', 'turn-action', 'ta-title', 'ta-body',
+    'ta-confirm', 'gi-turns'],
+};
+
+test('every chrome id the chat mirror plans is reserved ahead of the unit that builds it', () => {
+  const { isReservedId } = require('../lib/server/domain/mounts');
+  const missing = [];
+  for (const [surface, ids] of Object.entries(PLANNED_CHROME_IDS)) {
+    for (const id of ids) if (!isReservedId(id)) missing.push(`${id} (${surface})`);
+  }
+  assert.deepEqual(missing, [], 'reserve these in RESERVED_IDS (lib/server/domain/mounts.js)');
+  // The two the lockup retires stay reserved: a tab loaded before 0.8.5 still
+  // has them, and a pane must not take either while it talks to a newer daemon.
+  for (const id of ['status-dot', 'brand-logotype']) assert.ok(isReservedId(id), `${id} stays reserved`);
+});
+
 /* ======================= the jsdom boot ======================= */
 const calls = [];
 const routes = {
