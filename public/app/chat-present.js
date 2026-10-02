@@ -150,7 +150,8 @@ const LABEL = { working: 'WORKING', question: 'QUESTION', waiting: 'NEEDS YOU', 
   suspended: 'SUSPENDED' };
 const LAST_ACTIVITY_AFTER_MS = 15000;
 
-function out(key, head, { meta = '', detail = '', pace = 'normal', act = null, ask = null, others = [], conn = 'live' } = {}) {
+function out(key, head, { meta = '', detail = '', pace = 'normal', act = null, ask = null, others = [], conn = 'live',
+  headless = false } = {}) {
   return Object.freeze({
     key,
     label: LABEL[key],
@@ -163,6 +164,7 @@ function out(key, head, { meta = '', detail = '', pace = 'normal', act = null, a
     ask,
     others: Object.freeze(others),
     conn,
+    headless,
   });
 }
 
@@ -172,7 +174,9 @@ function out(key, head, { meta = '', detail = '', pace = 'normal', act = null, a
 // line (a title, an aria-label); `act` is answer | approve | review | null for
 // `ask`; `pace` is 'quiet' for a quiet working session (a still dot or bar);
 // `others` lists the other conversations waiting on the user; `conn` is the
-// socket's state, so announce() can tell a first connection from a return.
+// socket's state, so announce() can tell a first connection from a return;
+// `headless` is true for a `claude -p` job, which the store follows only when
+// the tab chose it and for which announce() never speaks (§2.2).
 // `approvalsReady`: an approvals slot is registered (chat-slots.js), so a
 // permission the level may answer gets the answer frame (`approve`).
 export function uiState(mirror, { now, approvalsReady = false } = {}) {
@@ -209,79 +213,83 @@ export function uiState(mirror, { now, approvalsReady = false } = {}) {
   if (!known) return out('idle', 'No Claude session', { detail: 'start claude in this project', others });
   const { live: L, content, conversation } = known;
   const since = (t) => (finite(t) ? t : finite(L.since) ? L.since : now);
+  // Every line about the followed conversation carries `others`, and whether it
+  // is a headless one: only its record can say, so below `read` it is never.
+  const headless = !!(conversation && conversation.headless === true);
+  const say = (key, head, opts = {}) => out(key, head, { ...opts, others, headless });
 
   switch (L.state) {
     case 'question': {
       const ask = askFor(m, cid, 'question', L.waiting);
       const q = content ? (L.waiting && L.waiting.summary) || ask.summary || '' : '';
-      if (!content) return out('question', 'Needs you · question', { detail: 'a question is waiting', act: 'answer', ask, others });
-      return out('question', q ? `Question · ${q}` : 'Question · see the terminal',
-        { detail: q || 'a question is waiting', act: 'answer', ask, others });
+      if (!content) return say('question', 'Needs you · question', { detail: 'a question is waiting', act: 'answer', ask });
+      return say('question', q ? `Question · ${q}` : 'Question · see the terminal',
+        { detail: q || 'a question is waiting', act: 'answer', ask });
     }
     case 'waiting': {
       const kind = (L.waiting && L.waiting.kind) || 'other';
       if (kind === 'plan') {
         const ask = askFor(m, cid, 'plan', L.waiting);
-        return out('waiting', content ? 'Plan ready · review it' : 'Needs you · plan approval',
-          { detail: 'plan approval', act: 'review', ask, others });
+        return say('waiting', content ? 'Plan ready · review it' : 'Needs you · plan approval',
+          { detail: 'plan approval', act: 'review', ask });
       }
       if (kind === 'permission') {
         const ask = askFor(m, cid, 'permission', L.waiting);
         const answerable = approvalsReady && ask.answerable === true && ask.state === 'pending' && atLeast(level, 'full');
         const act = answerable ? 'approve' : 'review';
-        if (!content) return out('waiting', 'Needs you · permission', { detail: 'permission', act, ask, others });
+        if (!content) return say('waiting', 'Needs you · permission', { detail: 'permission', act, ask });
         const tool = (L.waiting && L.waiting.tool) || ask.tool_name || 'a tool';
         // Beside a mounted answer frame the chrome names the tool and never the
         // subject: a trusted click lands beside text a pane cannot rewrite (§4.5).
         const subject = act === 'approve' ? tool : (L.waiting && L.waiting.summary) || ask.summary || tool;
-        return out('waiting', `Permission · ${subject}`, { detail: `Permission · ${subject}`, act, ask, others });
+        return say('waiting', `Permission · ${subject}`, { detail: `Permission · ${subject}`, act, ask });
       }
       const what = content ? (L.waiting && L.waiting.summary) || '' : '';
       const ask = askFor(m, cid, 'other', L.waiting);
-      return out('waiting', what ? `Needs you · ${what} — answer in the terminal` : 'Needs you — answer in the terminal',
-        { detail: what || 'answer in the terminal', ask, others });
+      return say('waiting', what ? `Needs you · ${what} — answer in the terminal` : 'Needs you — answer in the terminal',
+        { detail: what || 'answer in the terminal', ask });
     }
     case 'compacting': {
       const clock = fmtClock(now - since(L.step && L.step.started_at));
-      return out('working', 'Compacting', { meta: clock, detail: `compacting the conversation · ${clock}`, others });
+      return say('working', 'Compacting', { meta: clock, detail: `compacting the conversation · ${clock}` });
     }
     case 'working': {
       const step = L.step || null;
       const name = step ? (content && step.label) || step.kind || '' : '';
       if (L.quiet) {
         const dur = fmtShort(now - (finite(L.quiet.since) ? L.quiet.since : since(L.last_activity_at)));
-        return out('working', `Quiet ${dur}${name ? ` · ${name}` : ''} — check the terminal`, {
-          detail: `quiet for ${dur}${name ? ` (last: ${name})` : ''}; check the terminal`, pace: 'quiet', others,
+        return say('working', `Quiet ${dur}${name ? ` · ${name}` : ''} — check the terminal`, {
+          detail: `quiet for ${dur}${name ? ` (last: ${name})` : ''}; check the terminal`, pace: 'quiet',
         });
       }
       const started = step && content ? since(step.started_at) : content ? since(L.turn_started_at) : since(L.since);
       const clock = fmtClock(now - started);
       const quietFor = finite(L.last_activity_at) ? now - L.last_activity_at : 0;
       const last = content && quietFor >= LAST_ACTIVITY_AFTER_MS ? ` · last activity ${ago(L.last_activity_at, now)}` : '';
-      if (!name) return out('working', 'Working', { meta: clock, detail: `${clock}${last}`, others });
-      return out('working', content ? name : `Working · ${name}`, { meta: clock, detail: `${name} · ${clock}${last}`, others });
+      if (!name) return say('working', 'Working', { meta: clock, detail: `${clock}${last}` });
+      return say('working', content ? name : `Working · ${name}`, { meta: clock, detail: `${name} · ${clock}${last}` });
     }
     case 'suspended':
-      return out('suspended', 'Suspended · resume it in the terminal (fg)',
-        { detail: 'stopped with Ctrl-Z; fg in the terminal resumes it', others });
+      return say('suspended', 'Suspended · resume it in the terminal (fg)',
+        { detail: 'stopped with Ctrl-Z; fg in the terminal resumes it' });
     case 'ended': {
       const when = ago(finite(conversation && conversation.ended_at) ? conversation.ended_at : L.since, now);
-      return out('idle', 'Session ended', { meta: when || '', detail: when ? `session ended ${when}` : 'session ended', others });
+      return say('idle', 'Session ended', { meta: when || '', detail: when ? `session ended ${when}` : 'session ended' });
     }
     case 'idle':
-      return idleState(m, L, content, now, others);
+      return idleState(m, L, content, now, say);
     default:
-      return out('idle', 'Status unknown — check the terminal',
-        { detail: 'no recent sign of this session; check the terminal', others });
+      return say('idle', 'Status unknown — check the terminal',
+        { detail: 'no recent sign of this session; check the terminal' });
   }
 }
 
 // Idle says how the last turn ended, most specific first.
-function idleState(m, L, content, now, others) {
+function idleState(m, L, content, now, say) {
   if (content && L.stale_status) {
     const quietFor = fmtLong(now - (finite(L.last_activity_at) ? L.last_activity_at : finite(L.since) ? L.since : now));
-    return out('idle', `Idle — the session says busy, but nothing has happened for ${quietFor}`,
-      { detail: 'status looks stale', others });
+    return say('idle', `Idle — the session says busy, but nothing has happened for ${quietFor}`,
+      { detail: 'status looks stale' });
   }
   const t = content ? L.last_turn : null;
   if (t) {
@@ -295,26 +303,26 @@ function idleState(m, L, content, now, others) {
         by = turn && turn.ended_by;
       }
       if (by === 'web' || by === 'hook') {
-        return out('idle', 'Stopped · from this page', { meta: when, detail: `stopped from the web-chat page${at}`, others });
+        return say('idle', 'Stopped · from this page', { meta: when, detail: `stopped from the web-chat page${at}` });
       }
-      return out('idle', 'Stopped · interrupted in the terminal', { meta: when, detail: `interrupted${at}`, others });
+      return say('idle', 'Stopped · interrupted in the terminal', { meta: when, detail: `interrupted${at}` });
     }
     if (t.outcome === 'error') {
       const why = t.error || 'the turn failed';
-      return out('idle', `Stopped · ${why} — see the terminal`, { meta: when, detail: `stopped: ${why}`, others });
+      return say('idle', `Stopped · ${why} — see the terminal`, { meta: when, detail: `stopped: ${why}` });
     }
     const files = t.code && finite(t.code.files) ? t.code.files : 0;
     if (files > 0) {
       const changed = `${files} ${plural(files, 'file', 'files')} changed`;
-      return out('idle', `Done · ${changed}`, { meta: when, detail: `done · ${changed}${at}`, others });
+      return say('idle', `Done · ${changed}`, { meta: when, detail: `done · ${changed}${at}` });
     }
     if (t.reply_preview) {
-      return out('idle', `Done · ${quote(t.reply_preview)}`, { meta: when, detail: when ? `replied ${when}` : 'replied', others });
+      return say('idle', `Done · ${quote(t.reply_preview)}`, { meta: when, detail: when ? `replied ${when}` : 'replied' });
     }
-    return out('idle', 'Done', { meta: when, detail: `done${at}`, others });
+    return say('idle', 'Done', { meta: when, detail: `done${at}` });
   }
   const when = ago(finite(L.last_activity_at) ? L.last_activity_at : L.since, now) || '';
-  return out('idle', 'Idle', { meta: when, detail: when ? `last active ${when}` : 'idle', others });
+  return say('idle', 'Idle', { meta: when, detail: when ? `last active ${when}` : 'idle' });
 }
 
 // ── categories ───────────────────────────────────────────────────────────────
@@ -627,6 +635,9 @@ function transition(prev, next) {
     return next.head.includes("can't reach") ? "Offline — can't reach this computer; retrying." : 'Offline — reconnecting.';
   }
   if (prev.key === 'offline' && next.key !== 'offline') return prev.conn === 'connecting' ? null : 'Back online.';
+  // A headless conversation (a `claude -p` job the tab chose to follow) never
+  // announces (§2.2): the surface's own comings and goings above still do.
+  if (next.headless) return null;
   if (next.key === 'question' && (prev.key !== 'question' || askKey(prev) !== askKey(next))) {
     return `Claude has a question: ${next.detail}`;
   }
@@ -639,7 +650,8 @@ function transition(prev, next) {
 
 // Live-region text for four transitions only — to a question, to a wait on the
 // user (NEEDS YOU), working → idle, and offline and back — at most one per
-// 2 s per gate; never for a move into or out of `suspended`. `prev` and `next`
+// 2 s per gate; never for a move into or out of `suspended`, nor for a headless
+// conversation (only offline and back are said while one is followed). `prev` and `next`
 // are uiState() results. A transition inside the gap is held and said by a
 // later call (the bar's 1 s ticker) while it is still true; pass the phone's
 // region its own gate (createAnnounceGate()).

@@ -37,6 +37,13 @@
 // carries. That is defence in depth behind the daemon's own projection
 // (lib/core/remote-policy), never the gate itself.
 //
+// FOLLOWING. The followed conversation is this tab's choice while it is live,
+// else the server's primary (§7.3). A headless one (a `claude -p` job, §2.2) is
+// followed only by choice: no fallback ever reaches it. A StatusRow does not say
+// which sessions are headless, so below `read` the store picks none from the
+// rows; when the aggregate shows a live interactive session that nothing
+// followed covers, it reads the snapshot again for the server's primary.
+//
 // NO TIMER. The bounds — 300 turns; a finished task dropped 15 minutes after it
 // ended, a failure kept until it has been seen (markSeen) — are pruned on each
 // fold. A hydrate that failed is retried from the next frame, at most every 5 s.
@@ -734,35 +741,79 @@ function stateOfConversation(id) {
 }
 const known = (id) => !!id && (mirror.conversations.has(id) || mirror.status.has(id));
 const isLive = (id) => known(id) && stateOfConversation(id) !== 'ended';
-const isHeadless = (id) => { const c = mirror.conversations.get(id); return !!(c && c.headless); };
 const lastActive = (id) => {
   const c = mirror.conversations.get(id);
   const r = mirror.status.get(id);
   return (c && (c.last_activity_at || (c.live && c.live.last_activity_at))) || (r && r.last_activity_at) || 0;
 };
 
-// The user's choice while it is live, else the server's primary while it is
-// live, else the most urgent then most recently active live conversation (the
-// server's rule, applied here between snapshots), else whatever was last
-// followed or known, so an ended session can still say it ended.
+// Whether the store may follow a conversation on its own: one KNOWN not to be
+// headless. A `claude -p` job never becomes primary (§2.2), and is followed only
+// when this tab chose it (the session switcher's "Show headless"). At `read` and
+// above a conversation's record says which it is; a StatusRow does not, so below
+// `read` (and for a row whose record has not arrived) only the server's primary
+// is known to be interactive.
+function isInteractive(id) {
+  if (!known(id)) return false;
+  const c = mirror.conversations.get(id);
+  if (c && typeof c.headless === 'boolean') return !c.headless;
+  return id === mirror.serverPrimary;
+}
+
+// The tab's own choice while it is live (any conversation, a headless one
+// included), else the server's primary while it is live. Between snapshots the
+// server's rule is applied here, at `read` and above only: the most urgent, then
+// the most recently active, live interactive conversation. Failing those, what
+// was followed, then the server's primary, then the most recently active
+// interactive conversation, so an ended session can still say it ended. No
+// fallback ever reaches a headless conversation: with no other, nothing is
+// followed and the bar says "No Claude session". Below `read` nothing is picked
+// from the rows at all; askAgain() asks the server instead.
 function resolveFollowed() {
   if (chosen && isLive(chosen)) return chosen;
-  if (isLive(mirror.serverPrimary)) return mirror.serverPrimary;
-  const ids = new Set([...mirror.conversations.keys(), ...mirror.status.keys()]);
+  const primary = mirror.serverPrimary;
+  if (isLive(primary) && isInteractive(primary)) return primary;
   let best = null;
-  for (const id of ids) {
-    if (!isLive(id) || isHeadless(id)) continue;
-    const better = !best
-      || (RANK[stateOfConversation(id)] || 0) > (RANK[stateOfConversation(best)] || 0)
-      || ((RANK[stateOfConversation(id)] || 0) === (RANK[stateOfConversation(best)] || 0) && lastActive(id) > lastActive(best));
-    if (better) best = id;
+  for (const id of mirror.conversations.keys()) {
+    if (!isLive(id) || !isInteractive(id)) continue;
+    const rank = RANK[stateOfConversation(id)] || 0;
+    const top = best ? RANK[stateOfConversation(best)] || 0 : -1;
+    if (rank > top || (rank === top && lastActive(id) > lastActive(best))) best = id;
   }
   if (best) return best;
-  if (known(mirror.followed)) return mirror.followed;
-  if (known(mirror.serverPrimary)) return mirror.serverPrimary;
+  if (isInteractive(mirror.followed)) return mirror.followed;
+  if (isInteractive(primary)) return primary;
   let recent = null;
-  for (const id of ids) if (!recent || lastActive(id) > lastActive(recent)) recent = id;
+  for (const id of mirror.conversations.keys()) {
+    if (isInteractive(id) && (!recent || lastActive(id) > lastActive(recent))) recent = id;
+  }
   return recent;
+}
+
+// Below `read` a StatusRow cannot say whether its session is interactive, so the
+// store never picks one itself (above) and the server's primary stands until the
+// next snapshot. The aggregate speaks for the interactive conversations only
+// (`none` while there are none, lib/server/mirror/emit.js), so when it names a
+// live state while nothing live is followed, the primary has moved on since that
+// snapshot: the snapshot is read again. Once for each set of live conversations,
+// so a server that names no primary is never asked twice about the same ones.
+const LIVE_AGGREGATE = new Set([...STATES].filter((s) => s !== 'ended'));
+let askedLive = null;         // the live conversations the server was last asked about
+const liveRows = () => [...mirror.status.values()].filter((r) => r.state !== 'ended').map((r) => r.id).sort().join(' ');
+
+function primaryStale() {
+  if (contentOk() || mirror.availability !== 'ok' || isLive(mirror.followed)) return false;
+  if (!LIVE_AGGREGATE.has(mirror.aggregate.state)) return false;
+  const live = liveRows();
+  return live !== '' && live !== askedLive;
+}
+
+// True when the snapshot should be read again (primaryStale), noting the live
+// conversations it is read for; the caller reads it.
+function askAgain() {
+  if (!primaryStale()) return false;
+  askedLive = liveRows();
+  return true;
 }
 
 function refollow() {
@@ -1136,7 +1187,9 @@ function putLive(cid, live, frameRev) {
   const rev = Number.isFinite(live.rev) ? live.rev : frameRev;
   if (held && held.live && Number.isFinite(held.live.rev) && Number.isFinite(rev) && rev <= held.live.rev) return false;
   const next = Number.isFinite(rev) && live.rev !== rev ? freeze({ ...live, rev }) : live;
-  mirror.conversations.set(cid, freeze({ ...(held || { id: cid, headless: false, counts: countsOf(null) }), live: next }));
+  // A live state ahead of its conversation's record: whether it is headless is
+  // not known until the record arrives (`null`), so nothing follows it on its own.
+  mirror.conversations.set(cid, freeze({ ...(held || { id: cid, headless: null, counts: countsOf(null) }), live: next }));
   return true;
 }
 
@@ -1279,6 +1332,7 @@ export function foldMirrorFrame(msg) {
   if (followMoved) what.add('conversations').add('stream');
   if (pruneTasks()) what.add('tasks');
   if (what.size) notify([...what]);
+  if (!hydrating && askAgain()) hydrateMirror();
 }
 
 function applySnapshot(snap) {
@@ -1315,6 +1369,7 @@ function clearForUnavailable(availability, hint) {
   finishedAt.clear();
   asks.clear();
   mirror.serverPrimary = null;
+  askedLive = null;
   mirror.capabilities = normalizeCapabilities(null);
   mirror.aggregate = freeze({ state: 'unknown' });
   resetStream(null);
@@ -1331,8 +1386,11 @@ async function hydrateOnce() {
   if (r.ok && isPlain(r.body)) {
     const snap = normalizeSnapshot(r.body);
     if (snap && snap.disabled) clearForUnavailable('disabled', snap.hint);
-    else if (snap) { applySnapshot(snap); snapRev = snap.rev; }
-    else clearForUnavailable('unavailable', null);
+    else if (snap) {
+      applySnapshot(snap);
+      snapRev = snap.rev;
+      askedLive = liveRows();   // the live conversations this primary was named among
+    } else clearForUnavailable('unavailable', null);
     hydrated = true;
   } else if (r.status === 404) {
     // An older daemon: there is no mirror to read.
@@ -1357,15 +1415,18 @@ async function hydrateOnce() {
       applyFrame(f);
     }
   }
-  if (again) hydrateAgain = true;
   refollow();
   pruneTasks();
+  // Frames newer than the snapshot may hold a live session it did not know of.
+  if (askAgain()) again = true;
+  if (again) hydrateAgain = true;
   return true;
 }
 
 // Read GET /api/mirror and replace what the store holds with it: on every
-// `hello`, after a `mirror:reset`, and when the level changes. Calls while one
-// is under way fold into one more read after it.
+// `hello`, after a `mirror:reset`, when the level changes, and below `read`
+// when the server's primary has gone stale (askAgain). Calls while one is under
+// way fold into one more read after it.
 export function hydrateMirror() {
   if (hydrating) {
     hydrateAgain = true;

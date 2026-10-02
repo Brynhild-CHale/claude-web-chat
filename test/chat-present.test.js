@@ -7,7 +7,8 @@
 // answer frame, the ask and the level; categories() reads the Final's fixture as
 // `2 monitors` and `6 running` (deviation 19: a live monitor is running), omits
 // empty categories, and never pulses the queue chip; announce() speaks for four
-// transitions only, at most once per 2 s, never for a suspend. And queue.js:
+// transitions only, at most once per 2 s, never for a suspend nor for a headless
+// conversation followed by choice (§2.2). And queue.js:
 // queueSnapshot() is what the chips read, announced on the bus at the end of
 // every render().
 const test = require('node:test');
@@ -431,6 +432,28 @@ test('announce: the four transitions only, at most once per 2 s, never for suspe
   const sheet = P.createAnnounceGate();
   assert.ok(P.announce(s.working, s.question, { now: NOW, gate: bar }));
   assert.ok(P.announce(s.working, s.question, { now: NOW, gate: sheet }));
+});
+
+test('announce: a headless conversation, followed by the tab\'s choice, never speaks (§2.2); the socket still does', () => {
+  const job = (live) => one(live, {}, { headless: true });
+  const working = P.uiState(job({ state: 'working', step: { kind: 'Bash', label: 'Bash · npm run lint', started_at: NOW } }), { now: NOW });
+  const done = P.uiState(job({ state: 'idle', last_turn: { id: 't', outcome: 'done', ended_at: NOW, code: { files: 2 } } }), { now: NOW });
+  const ended = P.uiState(job({ state: 'ended' }), { now: NOW });
+  assert.deepEqual([working.headless, done.headless, ended.headless], [true, true, true]);
+  assert.equal(working.text, 'Bash · npm run lint · 0:00', 'worded like any session');
+  const offline = P.uiState(mirror({ conn: 'reconnecting' }), { now: NOW });
+  assert.equal(offline.headless, false);
+  let at = NOW;
+  const say = (prev, next) => P.announce(prev, next, { now: (at += 5000), gate: P.createAnnounceGate() });
+  assert.equal(say(working, done), null, 'a CI job finishing is not "Claude finished"');
+  assert.equal(say(working, ended), null);
+  assert.equal(say(working, offline), 'Offline — reconnecting.', 'the surface going offline is still said');
+  assert.equal(say(offline, working), 'Back online.');
+  const interactive = P.uiState(one({ state: 'working', step: { kind: 'Bash', label: 'Bash · npm run lint', started_at: NOW } }), { now: NOW });
+  assert.equal(interactive.headless, false);
+  assert.equal(say(interactive, P.uiState(one({ state: 'idle' }), { now: NOW })), 'Claude finished — Idle');
+  const basic = P.uiState(mirror({ level: 'basic', status: [{ id: 'c1', state: 'working', counts: {} }] }), { now: NOW });
+  assert.equal(basic.headless, false, 'below read nothing says so: the store never follows such a row on its own');
 });
 
 // ── queue.js ─────────────────────────────────────────────────────────────────

@@ -10,8 +10,10 @@
 // the snapshot are replayed only when newer than it; below `read` the store
 // holds no content field whatever a frame carries; the followed conversation is
 // the tab's choice while it is live, else the server's primary, and switching
-// fetches its stream; the bounds (300 turns, finished tasks 15 minutes, a failure
-// until seen) are kept on each fold, with no timer.
+// fetches its stream; no fallback follows a headless (`claude -p`) conversation
+// (§2.2), and below `read` none is followed on a status row's word; the bounds
+// (300 turns, finished tasks 15 minutes, a failure until seen) are kept on each
+// fold, with no timer.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -25,20 +27,23 @@ const appUrl = (rel) => pathToFileURL(path.join(APP, rel)).href;
 
 let bus;
 let shared; // the store module as the chrome loads it, for its pure normalizers
+let P;      // chat-present.js: what the bar says about a store
 test.before(async () => {
   ({ bus } = await import(appUrl('bus.js')));
   shared = await import(appUrl('chat-state.js'));
+  P = await import(appUrl('chat-present.js'));
 });
 
 // A store of its own for one test: the module loaded again under a URL of its
 // own (its imports — the bus, storage — stay the shared instances), with a fake
-// fetch, and its bus listeners removed when the test ends.
+// fetch, and its bus listeners removed when the test ends. `conn` is the
+// socket's state when it starts ('live' for a test that reads what the bar says).
 let loads = 0;
-async function makeStore(t, routes = {}, { init = true } = {}) {
+async function makeStore(t, routes = {}, { init = true, conn } = {}) {
   const store = await import(`${appUrl('chat-state.js')}?case=${++loads}`);
   const fetch = fakeFetch(routes);
   if (init) {
-    const handle = store.initChatState({ fetch });
+    const handle = store.initChatState({ fetch, conn });
     t.after(() => handle.stop());
   }
   return { store, fetch };
@@ -115,6 +120,21 @@ const snapshot = (extra = {}) => ({
   capabilities: {}, primary: 'c1', aggregate: { state: 'idle' }, conversations: [conv('c1')], tasks: [], asks: [],
   ...extra,
 });
+// A `claude -p` job (CI, a script): a conversation too, but one the store never
+// follows on its own (§2.2: a headless session never becomes primary).
+const job = (id, live = {}, extra = {}) => conv(id, {
+  state: 'working', step: { kind: 'Bash', tool: 'Bash', label: 'Bash · npm run lint', started_at: Date.now() - 5000 }, ...live,
+}, { headless: true, process: { pid: 7, kind: 'bg', entrypoint: 'sdk-cli' }, ...extra });
+// The basic level's body and frames: StatusRows, which do not say whether a
+// session is headless.
+const row = (id, state, extra = {}) => ({ id, state, since: T0, last_activity_at: Date.now(), counts: ZERO, ...extra });
+const basicSnapshot = (extra = {}) => ({
+  v: 1, enabled: true, now: Date.now(), rev: 10, content: false, access: { level: 'basic', remote: true },
+  primary: 'u1', aggregate: { state: 'working' }, conversations: [row('u1', 'working', { step_kind: 'Edit' })], asks: [],
+  ...extra,
+});
+const statusFrame = (rev, aggregate, rows) => ({ type: 'mirror:status', rev, now: Date.now(), aggregate: { state: aggregate },
+  conversations: rows });
 const turn = (id, seq, extra = {}) => ({ id, seq, rev: 1, conversation_id: 'c1', status: 'done', started_at: T0 + seq, ...extra });
 const item = (id, turnId, seq, extra = {}) => ({ id, turn_id: turnId, kind: 'reply', seq, rev: 1, text: `reply ${id}`, ...extra });
 const page = (turns, extra = {}) => ({ conversation_id: 'c1', turns, next_before: null, total: turns.length, rev: 10, ...extra });
@@ -482,6 +502,120 @@ test('switching the followed conversation fetches its stream while a chat view i
   assert.equal(turnReads().at(-1), '/api/mirror/conversations/c2/turns?limit=30&items=summary');
   assert.deepEqual(m.stream.turns.map((x) => x.id), ['u1']);
   assert.equal(turnReads().length, 2);
+});
+
+test('at read and above no fallback follows a headless conversation: only the tab\'s own choice does', async (t) => {
+  const saved = withSessionStorage(t);
+  // Only a CI job is live; the server names no primary and its aggregate,
+  // which speaks for interactive sessions only, says `none`.
+  const { store } = await makeStore(t, { '/api/mirror': snapshot({ primary: null, aggregate: { state: 'none' },
+    conversations: [job('ci')] }) }, { conn: 'live' });
+  await store.hydrateMirror();
+  const m = store.mirror;
+  assert.equal(store.followed(), null, 'the job is not followed on its own');
+  assert.equal(P.uiState(m).text, 'No Claude session', 'and the bar does not read `Bash · npm run lint · 0:05`');
+
+  // Its frames move nothing.
+  store.foldMirrorFrame(statusFrame(11, 'none', [row('ci', 'working', { step_kind: 'Bash' })]));
+  store.foldMirrorFrame({ type: 'mirror:update', rev: 12, now: Date.now(), conversation_id: 'ci',
+    live: { rev: 12, state: 'idle', since: T0, last_activity_at: Date.now() } });
+  assert.equal(store.followed(), null);
+
+  // An ended interactive session is followed before it, so the bar can say it ended.
+  store.foldMirrorFrame({ type: 'mirror:update', rev: 13, now: Date.now(), conversation_id: 'u1',
+    conversation: conv('u1', { rev: 13, state: 'ended', ended_reason: 'process-gone' }, { rev: 13 }) });
+  assert.equal(store.followed(), 'u1');
+  assert.match(P.uiState(m).text, /^Session ended/);
+
+  // The switcher's "Show headless": a headless conversation is followed by choice.
+  assert.equal(store.followConversation('ci'), 'ci');
+  // Once it ends, no fallback keeps it.
+  store.foldMirrorFrame({ type: 'mirror:update', rev: 14, now: Date.now(), conversation_id: 'ci',
+    live: { rev: 14, state: 'ended', since: T0 } });
+  assert.equal(store.followed(), 'u1', 'not the ended job: the last interactive session');
+  store.foldMirrorFrame({ type: 'mirror:update', rev: 15, now: Date.now(), conversation_id: 'u1', removed: true });
+  assert.equal(store.followed(), null, 'and with none, nothing');
+  assert.equal(saved.get('wc:chat-follow'), 'ci', 'the choice itself is kept, for when the job is live again');
+
+  // A primary that turns out to be headless is not followed either.
+  saved.delete('wc:chat-follow');
+  const odd = await makeStore(t, { '/api/mirror': snapshot({ primary: 'ci', aggregate: { state: 'none' },
+    conversations: [job('ci')] }) });
+  await odd.store.hydrateMirror();
+  assert.equal(odd.store.followed(), null);
+});
+
+test('below read nothing is followed on a status row\'s word, so a headless job never becomes the bar\'s session', async (t) => {
+  // The user's session ends while a CI job works. A StatusRow does not say
+  // the job is headless, so the store follows only what the server named.
+  const { store, fetch } = await makeStore(t, { '/api/mirror': basicSnapshot() }, { conn: 'live' });
+  await store.hydrateMirror();
+  const m = store.mirror;
+  assert.equal(store.followed(), 'u1', 'the server\'s primary');
+
+  store.foldMirrorFrame(statusFrame(11, 'ended', [row('ci', 'working', { step_kind: 'Bash' }),
+    row('u1', 'ended', { ended_reason: 'process-gone' })]));
+  assert.equal(store.followed(), 'u1', 'the ended session, never the working job');
+  assert.match(P.uiState(m).text, /^Session ended/);
+  assert.doesNotMatch(P.uiState(m).text, /Working|Bash/, 'the bar does not read `Working · Bash · 0:05`');
+
+  // The ended session is gone too: no interactive conversation is left.
+  store.foldMirrorFrame(statusFrame(12, 'none', [row('ci', 'working', { step_kind: 'Bash' })]));
+  assert.equal(store.followed(), null);
+  assert.equal(P.uiState(m).text, 'No Claude session');
+  assert.deepEqual(fetch.calls, ['/api/mirror'], 'a headless job alone is no reason to ask the server again');
+
+  // A tab that opens on the job alone.
+  const fresh = await makeStore(t, { '/api/mirror': basicSnapshot({ primary: null, aggregate: { state: 'none' },
+    conversations: [row('ci', 'working', { step_kind: 'Bash' })] }) }, { conn: 'live' });
+  await fresh.store.hydrateMirror();
+  assert.equal(fresh.store.followed(), null);
+  assert.equal(P.uiState(fresh.store.mirror).text, 'No Claude session');
+});
+
+test('below read, a live interactive session the snapshot did not name makes the store ask the server again', async (t) => {
+  // The tab opened before `claude` started: no primary, and nothing live.
+  const answers = [
+    basicSnapshot({ primary: null, aggregate: { state: 'none' }, conversations: [] }),
+    basicSnapshot({ rev: 12, primary: 'v1', aggregate: { state: 'idle' }, conversations: [row('v1', 'idle')] }),
+  ];
+  let reads = 0;
+  const { store } = await makeStore(t, { '/api/mirror': () => ({ status: 200, body: answers[Math.min(reads++, answers.length - 1)] }) },
+    { conn: 'live' });
+  await store.hydrateMirror();
+  assert.equal(store.followed(), null);
+
+  // The aggregate now speaks for an interactive session that is live, which
+  // the rows alone cannot point at: the server is asked which one it is.
+  store.foldMirrorFrame(statusFrame(11, 'idle', [row('v1', 'idle')]));
+  assert.equal(store.followed(), null, 'never picked from the rows themselves');
+  await waitUntil(() => store.followed() === 'v1', { what: 'the server\'s primary, read again' });
+  assert.equal(reads, 2);
+  assert.equal(P.uiState(store.mirror).key, 'idle');
+  assert.notEqual(P.uiState(store.mirror).text, 'No Claude session');
+  store.foldMirrorFrame(statusFrame(13, 'working', [row('v1', 'working', { step_kind: 'Edit' })]));
+  assert.equal(reads, 2, 'followed and live: no reason to ask again');
+
+  // A server that still names no primary is asked once per set of live
+  // conversations, never again about the same ones.
+  let lagging = 0;
+  const lagBodies = [
+    basicSnapshot({ primary: null, aggregate: { state: 'none' }, conversations: [] }),
+    basicSnapshot({ rev: 20, primary: null, aggregate: { state: 'idle' }, conversations: [row('v1', 'idle')] }),
+    basicSnapshot({ rev: 30, primary: null, aggregate: { state: 'working' },
+      conversations: [row('v1', 'working', { step_kind: 'Edit' }), row('v2', 'idle')] }),
+  ];
+  const lag = await makeStore(t, { '/api/mirror': () => ({ status: 200, body: lagBodies[Math.min(lagging++, 2)] }) });
+  await lag.store.hydrateMirror();
+  lag.store.foldMirrorFrame(statusFrame(11, 'idle', [row('v1', 'idle')]));
+  await waitUntil(() => lag.store.mirror.rev === 20, { what: 'the second read' });
+  assert.equal(lagging, 2);
+  lag.store.foldMirrorFrame(statusFrame(21, 'working', [row('v1', 'working', { step_kind: 'Edit' })]));
+  assert.equal(lagging, 2, 'the same live session: not asked again');
+  lag.store.foldMirrorFrame(statusFrame(22, 'working', [row('v1', 'working', { step_kind: 'Edit' }), row('v2', 'idle')]));
+  await waitUntil(() => lag.store.mirror.rev === 30, { what: 'the third read' });
+  assert.equal(lagging, 3, 'another live session: asked once more, and only once');
+  assert.equal(lag.store.followed(), null, 'still nothing on a row\'s word');
 });
 
 // ── the stream ───────────────────────────────────────────────────────────────
