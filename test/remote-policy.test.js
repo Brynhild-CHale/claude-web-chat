@@ -23,8 +23,12 @@
 //      level its row names; a portal still on the protocol-8 table refuses them
 //      all; and the daemon's two data tables — FRAME_RULES (which `mirror:*`
 //      frames a socket gets, and the typed `basic` projection) and TEXT_RULES
-//      (the graph's conversation text below `read`) — are pinned to the code
-//      that sends those frames and bodies.
+//      (the conversation text a viewer below `read` must not get) — are pinned
+//      to the code that sends those frames and bodies. TEXT_RULES is also
+//      proved by a probe: a daemon holding marked prompts, summaries and
+//      replies serves none of them, once each entry is stripped, from any
+//      route the table lets a `basic` viewer GET — save the replay documents,
+//      the one carrier still waiting on the maintainer's decision.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -39,6 +43,7 @@ const {
   STATUS_SCHEMA, STATUS_ROW_SCHEMA, ASK_SCHEMA, ASK_FRAME_SCHEMA, RESET_SCHEMA,
   TEXT_RULES, stripText,
 } = require('../lib/core/remote-policy');
+const { withServer } = require('../test-support/helpers');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -687,14 +692,27 @@ test('projectValue: the types are narrow — word (never `__`), id, number, bool
 // ── TEXT_RULES ──────────────────────────────────────────────────────────────
 
 const LOCK_PATHS = ['lock.message', 'lock.session_id', 'lock.claude_pid', 'lock.prompt_id'];
+const NODE_PATHS = ['trigger.message', 'trigger.summary', 'trigger.reply', 'trigger.error',
+  'folded[].message', 'folded[].summary', 'folded[].reply', 'folded[].error', 'mirror'];
 
-test('TEXT_RULES: the spec\'s table, exactly', () => {
+test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(TEXT_RULES)), {
     frames: { hello: LOCK_PATHS, reset: LOCK_PATHS, lock: LOCK_PATHS, 'node-added': ['node.trigger_summary'] },
     routes: {
       'GET /api/graph': ['nodes[].trigger_summary', 'nodes[].absorbed[].trigger_summary', ...LOCK_PATHS],
-      'GET /api/graph/node/:id': ['trigger.message', 'trigger.summary', 'trigger.reply', 'trigger.error',
-        'folded[].message', 'folded[].summary', 'folded[].reply', 'mirror'],
+      // Spec §5.3's, plus `folded[].error`: §3.2 gives folded turns the error
+      // text the spec already strips from the trigger.
+      'GET /api/graph/node/:id': NODE_PATHS,
+      // The routes the spec's list missed, each a carrier the U05 review found
+      // (ruling Q2: no conversation text below `read`): the preview document
+      // embeds the whole node, a pane's history names each version's prompt,
+      // the replay path captions every step, and /api/health reports the raw
+      // lock.
+      'GET /preview/node/:id': NODE_PATHS,
+      'GET /api/mounts/:id/history': ['versions[].trigger_summary'],
+      'GET /api/replay/path': ['steps[].prompt', 'steps[].reply', 'steps[].summary',
+        'steps[].folded[].prompt', 'steps[].folded[].reply', 'steps[].folded[].summary'],
+      'GET /api/health': LOCK_PATHS,
     },
   });
 });
@@ -732,14 +750,47 @@ test('stripText: the listed paths off a copy; a missing path is fine; nothing li
   assert.equal(graph.nodes[0].absorbed[0].trigger_summary, 'b');
   const node = {
     id: 'n7', label: 'n1.7', author: 'claude', mounts: [{ id: 'p1' }],
-    trigger: { kind: 'turn', message: 'm', summary: 's', reply: 'r', error: 'e' },
-    folded: [{ at: 1, author: 'claude', kind: 'turn', message: 'm2', summary: 's2', reply: 'r2' }], folded_count: 1,
+    trigger: { kind: 'turn', message: 'm', summary: 's', reply: 'r', error: 'e', ended: 'failed' },
+    folded: [{ at: 1, author: 'claude', kind: 'turn', message: 'm2', summary: 's2', reply: 'r2', error: 'e2', ended: 'failed' }],
+    folded_count: 1,
     mirror: { v: 1, turns: [{ conversation_id: 'c1', turn_id: 't1' }] },
   };
-  assert.deepStrictEqual(stripText('route', 'GET /api/graph/node/:id', node), {
+  const bareNode = {
     id: 'n7', label: 'n1.7', author: 'claude', mounts: [{ id: 'p1' }],
-    trigger: { kind: 'turn' }, folded: [{ at: 1, author: 'claude', kind: 'turn' }], folded_count: 1,
-  });
+    trigger: { kind: 'turn', ended: 'failed' }, folded: [{ at: 1, author: 'claude', kind: 'turn', ended: 'failed' }], folded_count: 1,
+  };
+  assert.deepStrictEqual(stripText('route', 'GET /api/graph/node/:id', node), bareNode);
+  // The preview document embeds the node it is handed: the route hands it
+  // the node with the same paths gone.
+  assert.deepStrictEqual(stripText('routes', 'GET /preview/node/:id', node), bareNode);
+  assert.equal(node.trigger.message, 'm', 'the original is untouched');
+
+  const history = { ok: true, id: 'p1', from: 'n7', versions: [
+    { node_id: 'live', label: 'live', trigger_summary: 'the live surface (not yet committed)', spec_hash: 'h0', current: true },
+    { node_id: 'n7', label: 'n1.7', author: 'claude', owner: 'claude', trigger_summary: 'the prompt', spec_hash: 'h1' },
+  ] };
+  assert.deepStrictEqual(stripText('routes', 'GET /api/mounts/:id/history', history), { ok: true, id: 'p1', from: 'n7', versions: [
+    { node_id: 'live', label: 'live', spec_hash: 'h0', current: true },
+    { node_id: 'n7', label: 'n1.7', author: 'claude', owner: 'claude', spec_hash: 'h1' },
+  ] });
+
+  // A replay step and its folded turns, in caption shape
+  // (lib/server/domain/replay-path); a hidden node's folded entry keeps its
+  // label and id — the surface's, not the conversation's.
+  const replayPath = { ok: true, from: { id: 'n6', label: 'n1.6' }, to: { id: 'n7', label: 'n1.7' }, steps: [
+    { id: 'n7', label: 'n1.7', author: 'claude', kind: 'turn', prompt: 'p', reply: 'r', summary: 's', folded_count: 2,
+      folded: [{ at: 1, author: 'claude', kind: 'turn', prompt: 'p2', reply: null, summary: 's2' },
+        { at: 2, author: 'claude', kind: 'turn', prompt: 'p3', reply: 'r3', summary: 's3', id: 'n6', label: 'n1.6', collapsed: true }],
+      created_at: 3, dt_from_prev: null },
+  ], skipped: 1, truncated: false, total_steps: 1 };
+  assert.deepStrictEqual(stripText('routes', 'GET /api/replay/path', replayPath).steps, [
+    { id: 'n7', label: 'n1.7', author: 'claude', kind: 'turn', folded_count: 2,
+      folded: [{ at: 1, author: 'claude', kind: 'turn' }, { at: 2, author: 'claude', kind: 'turn', id: 'n6', label: 'n1.6', collapsed: true }],
+      created_at: 3, dt_from_prev: null },
+  ]);
+
+  const health = { ok: true, role: 'instance', active: 'n4', nodes: 4, lock: lockRec, lock_stale: false, remote: false };
+  assert.deepStrictEqual(stripText('routes', 'GET /api/health', health), { ...health, lock: bare });
 
   const store = { type: 'store', patch: { a: 1 } };
   assert.equal(stripText('frames', 'store', store), store, 'a key with no entry: the value itself');
@@ -779,51 +830,94 @@ function blank(src) {
   return out.join('');
 }
 
-// Every `lockView(` CALL under lib/server/ (not its definition) and what
-// carries it to a viewer: the frame whose object literal holds it (that
-// literal's own `type:`), else the route whose handler it sits in (the
-// nearest `app.<verb>('<path>'` above it); and the key it is stored under.
-function lockViewCarriers() {
+// What carries the code at offset `at` of a lib/server file to a viewer: the
+// frame whose object literal holds it (that literal's own `type:`), else the
+// route whose handler it sits in (the nearest `app.<verb>('<path>'` above
+// it, as 'VERB /path'). `b` is the file blanked.
+function carrierAt(src, b, at) {
+  // The object literal around it: its unmatched `{` above, and the `}` that
+  // closes it below.
+  let open = -1;
+  for (let k = at - 1, d = 0; k >= 0; k--) {
+    if (b[k] === '}') d++;
+    else if (b[k] === '{') { if (d === 0) { open = k; break; } d--; }
+  }
+  let frame = null;
+  if (open !== -1) {
+    let top = '';
+    for (let k = open + 1, d = 0; k < b.length; k++) {
+      if (b[k] === '{') d++;
+      else if (b[k] === '}') { if (d === 0) break; d--; }
+      top += d === 0 ? src[k] : ' ';
+    }
+    const t = /\btype\s*:\s*(['"`])([^'"`]+)\1/.exec(top);
+    if (t) frame = t[2];
+  }
+  let route = null;
+  if (!frame) {
+    let last = null;
+    for (const r of b.slice(0, at).matchAll(/\bapp\.(get|post|put|patch|delete)\(\s*(['"`])/g)) last = r;
+    if (last) {
+      const q = last.index + last[0].length;
+      route = `${last[1].toUpperCase()} ${src.slice(q, src.indexOf(last[2], q))}`;
+    }
+  }
+  return { frame, route };
+}
+
+// Every match of `re` in the blanked `files`, with where it is and what
+// carries it.
+function matchesIn(files, re) {
   const out = [];
-  for (const file of serverFiles()) {
+  for (const file of files) {
     const src = fs.readFileSync(file, 'utf8');
     const b = blank(src);
-    for (const m of b.matchAll(/\blockView\(/g)) {
-      const at = m.index;
-      if (/function\s+$/.test(b.slice(Math.max(0, at - 20), at))) continue;
-      const where = `${path.relative(REPO_ROOT, file)}:${src.slice(0, at).split('\n').length}`;
-      const propM = /(\w+)\s*:\s*$/.exec(b.slice(Math.max(0, at - 60), at));
-      // The object literal around the call: its unmatched `{` above, and the
-      // `}` that closes it below.
-      let open = -1;
-      for (let k = at - 1, d = 0; k >= 0; k--) {
-        if (b[k] === '}') d++;
-        else if (b[k] === '{') { if (d === 0) { open = k; break; } d--; }
-      }
-      let frame = null;
-      if (open !== -1) {
-        let top = '';
-        for (let k = open + 1, d = 0; k < b.length; k++) {
-          if (b[k] === '{') d++;
-          else if (b[k] === '}') { if (d === 0) break; d--; }
-          top += d === 0 ? src[k] : ' ';
-        }
-        const t = /\btype\s*:\s*(['"`])([^'"`]+)\1/.exec(top);
-        if (t) frame = t[2];
-      }
-      let route = null;
-      if (!frame) {
-        let last = null;
-        for (const r of b.slice(0, at).matchAll(/\bapp\.(get|post|put|patch|delete)\(\s*(['"`])/g)) last = r;
-        if (last) {
-          const q = last.index + last[0].length;
-          route = `${last[1].toUpperCase()} ${src.slice(q, src.indexOf(last[2], q))}`;
-        }
-      }
-      out.push({ where, prop: propM ? propM[1] : null, frame, route });
+    for (const m of b.matchAll(re)) {
+      const where = `${path.relative(REPO_ROOT, file)}:${src.slice(0, m.index).split('\n').length}`;
+      out.push({ m, b, where, ...carrierAt(src, b, m.index) });
     }
   }
   return out;
+}
+
+const routeFiles = () => serverFiles(path.join(SERVER_DIR, 'routes'));
+
+// Every `lockView(` CALL under lib/server/ (not its definition), what carries
+// it, and the key it is stored under.
+function lockViewCarriers() {
+  return matchesIn(serverFiles(), /\blockView\(/g)
+    .filter(({ m, b }) => !/function\s+$/.test(b.slice(Math.max(0, m.index - 20), m.index)))
+    .map(({ m, b, where, frame, route }) => {
+      const propM = /(\w+)\s*:\s*$/.exec(b.slice(Math.max(0, m.index - 60), m.index));
+      return { where, prop: propM ? propM[1] : null, frame, route };
+    });
+}
+
+// The raw lock record (`graph.lock` itself, not lockView's copy) put into a
+// body or frame under lib/server/routes/ — GET /api/health reports it so.
+// Only a value that is the whole record counts: `graph.lock ? …` and
+// `graph.lock.base` read it, they do not send it.
+function rawLockCarriers() {
+  return matchesIn(routeFiles(), /(\w+)\s*:\s*graph\.lock\s*(?=[,}\n])/g)
+    .map(({ m, where, frame, route }) => ({ where, prop: m[1], frame, route }));
+}
+
+// A read of a committed node's conversation text — its `trigger`, its
+// `folded` turns, or the `trigger_summary` the topology copies from it — in
+// a route under lib/server/routes/.
+function nodeTextReaders() {
+  return matchesIn(routeFiles(), /\.(?:trigger|folded)\b|\btrigger_summary\b/g)
+    .map(({ m, where, frame, route }) => ({ where, what: m[0].replace(/^\./, ''), frame, route }));
+}
+
+// Does the table let a remote viewer with no opt-in (`basic`) reach this
+// route, on one of the surface's own rows? A mirror row (one with a level)
+// is not TEXT_RULES' to decide: its route answers by level itself
+// (requireMirror, and the projection its row's note names).
+const RULE_BY_KEY = new Map(RULES.map((r) => [keyOf(r), r]));
+function basicSurfaceRoute(method, url) {
+  const v = classify(method, url, { mirror: 'off' });
+  return v.allow && !RULE_BY_KEY.get(v.key).mirror;
 }
 
 test('TEXT_RULES: every lockView( under lib/server/ sits in a frame or body whose entry strips the lock\'s text', () => {
@@ -849,6 +943,46 @@ test('TEXT_RULES: every lockView( under lib/server/ sits in a frame or body whos
   for (const k of ['hello', 'reset', 'lock', 'GET /api/graph']) assert.ok(kinds.has(k), `the scan found no lockView( in ${k}`);
 });
 
+test('TEXT_RULES: a raw lock, or a read of a node\'s trigger, folded turns or trigger_summary, in a route a basic viewer reaches has an entry', () => {
+  // The scans are live: each pattern is found, and only where it means one.
+  const re = /\.(?:trigger|folded)\b|\btrigger_summary\b/g;
+  assert.deepStrictEqual([...'n.trigger.message n.trigger?.reply n.folded t.trigger_summary n.folded_count graph.pendingFolded triggerKind wake_trigger'
+    .matchAll(re)].map((m) => m[0]), ['.trigger', '.trigger', '.folded', 'trigger_summary']);
+  const raw = /(\w+)\s*:\s*graph\.lock\s*(?=[,}\n])/g;
+  assert.deepStrictEqual([...'{ lock: graph.lock, lock_stale: graph.lock ? x : y, base: graph.lock.base }'.matchAll(raw)].map((m) => m[1]), ['lock']);
+
+  const missing = [];
+  const need = (c, kind) => {
+    if (!c.frame && !c.route) { missing.push(`${c.where}: ${kind}, but found no frame type or route around it`); return null; }
+    if (c.route) {
+      const [method, p] = c.route.split(' ');
+      if (!basicSurfaceRoute(method, sample(p))) return null; // host-only, or the mirror's own
+    }
+    const name = c.frame ? `frame '${c.frame}'` : c.route;
+    const have = c.frame ? TEXT_RULES.frames[c.frame] : TEXT_RULES.routes[c.route];
+    if (!have) missing.push(`${c.where}: ${kind} in ${name}, which has no TEXT_RULES entry`);
+    return have ? { name, have } : null;
+  };
+  const locks = rawLockCarriers();
+  for (const c of locks) {
+    const e = need(c, 'the raw lock record');
+    if (!e) continue;
+    for (const p of LOCK_PATHS.map((x) => x.replace(/^lock\./, `${c.prop}.`))) {
+      if (!e.have.includes(p)) missing.push(`${c.where}: ${e.name} does not strip ${p}`);
+    }
+  }
+  const readers = nodeTextReaders();
+  for (const c of readers) need(c, `a read of a node's ${c.what}`);
+  assert.deepStrictEqual(missing, [],
+    'conversation text reaches a frame or body a remote viewer below `read` may get, and TEXT_RULES does not strip it. '
+    + 'Add the carrier to TEXT_RULES in lib/core/remote-policy.js, and strip it where it is sent');
+  // Today's: /api/health's raw lock (spec §5.3's list missed it) and the
+  // graph topology's trigger_summary.
+  assert.ok(locks.some((c) => c.route === 'GET /api/health'), 'the scan found no raw lock in GET /api/health');
+  assert.ok(readers.some((c) => c.route === 'GET /api/graph' && c.what === 'trigger_summary'),
+    'the scan found no trigger_summary read in GET /api/graph');
+});
+
 test('TEXT_RULES: every key names a frame sent, or a route mounted, under lib/server/', () => {
   const routes = new Set(daemonRoutes().map((r) => `${r.method} ${r.path}`));
   for (const k of Object.keys(TEXT_RULES.routes)) assert.ok(routes.has(k), `${k} is not a route in lib/server/routes/`);
@@ -857,4 +991,114 @@ test('TEXT_RULES: every key names a frame sent, or a route mounted, under lib/se
     for (const m of fs.readFileSync(file, 'utf8').matchAll(/\btype\s*:\s*'([a-z:-]+)'/g)) sent.add(m[1]);
   }
   for (const t of Object.keys(TEXT_RULES.frames)) assert.ok(sent.has(t), `no '${t}' frame is sent under lib/server/`);
+});
+
+// ── the probe: what a basic viewer could GET ────────────────────────────────
+
+// The routes a remote viewer below `read` may GET that serve conversation
+// text the table does not decide yet. The replay documents caption each step
+// with Claude's reply summary (and with the prompt, when include_prompts asks
+// for it); whether such a viewer gets them with no captions or not at all is
+// the maintainer's call, open since the U05 review. They are named here, each
+// with what it is, so the probe below still fails on any NEW carrier.
+const TEXT_UNDECIDED = new Map([
+  ['GET /replay', 'the replay document the player frames'],
+  ['GET /api/replay/html', 'the same document, as a download'],
+  ['GET /api/replay/file/:name', 'a replay POST /api/replay/render wrote: its captions are drawn into a GIF\'s or a '
+    + 'video\'s frames, or held in a .html payload, so no text probe sees them'],
+]);
+
+test('TEXT_RULES: the replay documents are the one undecided carrier, and still routes a basic viewer may GET', () => {
+  const routes = new Set(daemonRoutes().map((r) => `${r.method} ${r.path}`));
+  for (const key of TEXT_UNDECIDED.keys()) {
+    const p = key.slice('GET '.length);
+    assert.ok(routes.has(key), `${key} is not a route in lib/server/routes/`);
+    assert.ok(basicSurfaceRoute('GET', sample(p)),
+      `${key} is no longer one a basic viewer may GET — if the maintainer's decision refused it there, drop it from TEXT_UNDECIDED`);
+    assert.equal(TEXT_RULES.routes[key], undefined, `${key} has a TEXT_RULES entry now — drop it from TEXT_UNDECIDED`);
+  }
+});
+
+// A daemon with marked conversation text in every place a turn writes it —
+// the lock's prompt, a node's prompt, summary and reply, a turn folded onto
+// the next node — then every route the table lets a `basic` viewer GET on
+// one of the surface's own rows, fetched as the host would (a local request
+// is never projected). A body that carries the mark needs a TEXT_RULES entry
+// that, applied to that body, leaves none: that is what a remote request below
+// `read` gets once the route strips its entry. A document (HTML) is drawn
+// from data, so its entry is proved on that data, drawn as the route draws it.
+test('TEXT_RULES: no route a basic viewer may GET serves conversation text its entry leaves in', async (t) => {
+  const { request } = require('../lib/client');
+  const { renderPreviewHtml } = require('../lib/server/preview');
+  const { port } = await withServer(t);
+  const MARK = 'wc-text-mark';
+  const MOUNT = 'tx-pane';
+  const get = (p) => request(port, 'GET', p, null, { timeout: 30000 });
+  // Through lib/client, as the hooks post: a host request, no Origin.
+  const must = async (method, p, body) => {
+    const r = await request(port, method, p, body, { timeout: 30000 });
+    assert.ok(r.status < 400, `${method} ${p} → ${r.status} ${JSON.stringify(r.body)}`);
+    return r.body;
+  };
+  const turn = async (n, { summary, work } = {}) => {
+    await must('POST', '/api/turn-begin', { message: `${MARK} prompt ${n}` });
+    if (work) await must('POST', '/api/render', { id: MOUNT, html: `<p>${n}</p>` });
+    return must('POST', '/api/turn-end', { ...(summary ? { summary: `${MARK} summary ${n}` } : {}), reply: `${MARK} reply ${n}` });
+  };
+  await turn('one', { summary: true, work: true });
+  assert.equal((await turn('two')).skipped, 'no-change', 'a chat-only turn folds onto the next node');
+  await turn('three', { work: true });
+  await must('POST', '/api/turn-begin', { message: `${MARK} prompt four` }); // a turn still running: the lock holds it
+
+  const graph = await must('GET', '/api/graph');
+  const [first, last] = [...graph.nodes].sort((a, b) => a.created_at - b.created_at).map((n) => n.id);
+  assert.equal(graph.nodes.length, 2);
+  assert.equal(graph.active, last);
+  const node = await must('GET', `/api/graph/node/${last}`);
+  assert.equal(node.folded.length, 1, 'the chat-only turn rode onto the last node');
+
+  // A route pattern as a request this daemon answers with its data.
+  const concrete = (p) => (p.startsWith('/api/mounts/') ? p.replace(':id', MOUNT) : p)
+    .replace(/:(?:id|node|ref)\b/g, last).replace(/:mount\b/g, MOUNT)
+    .replace(/\$\{[^}]*\}/g, 'sample').replace(/:[A-Za-z_]+/g, 'sample1');
+  const QUERY = { '/api/graph/diff': `?a=${first}&b=${last}` };
+  // What each document route draws from: the preview, the node it is handed.
+  const DRAWN = {
+    'GET /preview/node/:id': () => renderPreviewHtml(stripText('routes', 'GET /preview/node/:id', node), {}),
+  };
+
+  const near = (text) => { const i = text.indexOf(MARK); return text.slice(Math.max(0, i - 80), i + 40); };
+  const seen = new Set();
+  const carriers = new Set();
+  const wrong = [];
+  for (const r of daemonRoutes()) {
+    if (r.method !== 'GET' && r.method !== '*') continue;
+    const url = concrete(r.path) + (QUERY[r.path] || '');
+    if (seen.has(url)) continue;
+    seen.add(url);
+    if (!basicSurfaceRoute('GET', url)) continue;
+    const key = `GET ${r.path}`;
+    const { status, body } = await get(url);
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
+    if (!text || !text.includes(MARK)) continue;
+    carriers.add(key);
+    if (TEXT_UNDECIDED.has(key)) continue;
+    if (!TEXT_RULES.routes[key]) {
+      wrong.push(`${key} (GET ${url} → ${status}) serves conversation text and has no TEXT_RULES entry: …${near(text)}…`);
+    } else if (typeof body === 'string') {
+      const draw = DRAWN[key];
+      if (!draw) wrong.push(`${key} serves a document with conversation text, and this test does not know what it is drawn from`);
+      else if (draw().includes(MARK)) wrong.push(`${key}: drawn from its stripped data, the document still carries …${near(draw())}…`);
+    } else {
+      const left = JSON.stringify(stripText('routes', key, body));
+      if (left.includes(MARK)) wrong.push(`${key}: its entry leaves conversation text in: …${near(left)}…`);
+    }
+  }
+  assert.deepStrictEqual(wrong, [],
+    'a remote viewer below `read` would get conversation text from these. Give each a TEXT_RULES entry (lib/core/remote-policy.js) '
+    + 'that strips all of it, and strip it in the route');
+  // The probe is live: it reached the graph and found the text there.
+  for (const k of ['GET /api/graph', 'GET /api/graph/node/:id']) {
+    assert.ok(carriers.has(k), `the probe found no conversation text in ${k} (found: ${[...carriers].join(', ')})`);
+  }
 });
