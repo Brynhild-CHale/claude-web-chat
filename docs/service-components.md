@@ -132,11 +132,18 @@ so a bare name that matches both refuses, prints each request, and asks for the
 written until the name resolves to one request or `--all` is given and confirmed.
 A param the component declares with `x-trust` is the exception (see
 [Declared params](#declared-params-x-trust) below): the listing shows it under
-`covers`, and a different value for it is the same decision.
+`covers`, and a different value for it is the same decision. `covers` is worked
+out per request: a `project-path` param whose value is not a path inside the
+project is listed under `exact` instead, and approving that request covers the
+one value shown.
 
-The surface shows a notice naming the component, its params and the command to
-run — one notice per waiting request, addressed by trust key, so two params
-shapes of one component are two cards. That
+The surface shows a notice naming the component, its params, what an approval
+covers and the command to run — one notice per waiting request, addressed by
+trust key, so two params shapes of one component are two cards. `trust <name>`
+writes at once, so the notice is where the range is said before the command is
+run; when a request covers a `project-path` param, the notice and the terminal
+both say that an approval lets any pane point the service at any file inside the
+project, `.env` files included. That
 notice grants nothing, and it deliberately cannot: pane scripts are compiled with
 `new Function` and run in the surface's own window realm with `document`, `fetch`
 and `WebSocket`, and no CSP is served. A pane can therefore synthesise a click on
@@ -160,9 +167,10 @@ Approval is persisted in the **user tier**, not the project:
 } }
 ```
 
-A record can also carry `covers` (what the approval spans beyond `params`, below)
-and `pack` (the pack a `trust --pack` approval was made for). Both are notes for a
-person reading the file; the key is the decision.
+A record can also carry `covers` (what the approval spans beyond `params`, below),
+`exact` (a marked param it holds to the value in `params`) and `pack` (the pack a
+`trust --pack` approval was made for). All three are notes for a person reading
+the file; the key is the decision.
 
 It lives outside the project because a project could otherwise ship its own
 approval — commit `.web-chat/services/trusted.json` and cloning the repo would

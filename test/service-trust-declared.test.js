@@ -15,24 +15,31 @@ const path = require('path');
 const crypto = require('crypto');
 const { withServer, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
 const { mintIdentity, trustKey, paramsFingerprint } = require('../lib/server/services');
-const { readTrustMarks, trustMarkWarnings, describeCovers } = require('../lib/core/trust-marks');
+const {
+  readTrustMarks, trustMarkWarnings, describeCovers, describeExact, coversProjectPath, pathReach,
+} = require('../lib/core/trust-marks');
 const { validateManifest } = require('../lib/packs/manifest');
 const { serviceInfo } = require('../lib/server/components-registry');
 const { resolvePaths } = require('../lib/server/paths');
 const { packFixture } = require('../test-support/packs');
+const { gatherState } = require('../lib/cli/init/state');
+const { spawn } = require('child_process');
 
 const waitUntil = (fn, opts) => harnessWaitUntil(fn, { timeout: 4000, interval: 40, ...opts });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // A browser that stays connected: services run only while someone is watching.
+// `sock.frames` keeps every frame it was sent, so a test can read the notice.
 function openViewer(t, ctx) {
   return new Promise((resolve, reject) => {
     const sock = ctx.ws();
+    sock.frames = [];
     t.after(() => { try { sock.close(); } catch {} });
     sock.on('message', (data) => {
       let msg = null;
       try { msg = JSON.parse(data.toString()); } catch {}
+      if (msg) sock.frames.push(msg);
       if (msg && msg.type === 'hello') resolve(sock);
     });
     sock.on('error', reject);
@@ -147,7 +154,9 @@ test('a display value never moves the key — the child still gets it', (t) => {
   assert.equal(a.key, mint(root, {}).key, 'a display param is not part of the identity at all');
   assert.notEqual(a.spawnFp, b.spawnFp, 'but the child is handed the new value (the supervisor restarts it)');
   assert.deepEqual(b.params, { title: 'Renamed' });
-  assert.deepEqual(a.covers, { path: 'project-path', title: 'display' });
+  assert.deepEqual(a.covers, { path: 'project-path', title: 'display' }, 'an absent path is covered too');
+  assert.deepEqual(a.exact, {});
+  assert.deepEqual(a.declared, { path: 'project-path', title: 'display' });
 });
 
 test('a path inside the project never moves the key', (t) => {
@@ -180,6 +189,7 @@ test('a `..` is never proven inside: the kernel follows a link before it applies
   const id = mint(root, { path: value });
   assert.notEqual(id.key, mint(root, {}).key, 'so it must not ride the in-project approval');
   assert.equal(id.paramsFp, paramsFingerprint({ path: value }), 'it counts by its exact value');
+  assert.deepEqual(id.exact, { path: 'project-path' }, 'and the request says so');
 });
 
 test('the proof is bounded: an oversized value is exact, and costs no walk', (t) => {
@@ -228,6 +238,12 @@ test('each value that cannot be proven inside is its own exact key', (t) => {
     keys.add(id.key);
     // Exact means exact: its own value is its identity, as for an unmarked param.
     assert.equal(id.paramsFp, paramsFingerprint({ path: value }), `${JSON.stringify(value)} counts by its exact value`);
+    // And what this request's approval covers says so: not "any path inside
+    // this project" for a value that is not one (the declaration still says
+    // project-path, and the code hash still folds it in).
+    assert.deepEqual(id.covers, { title: 'display' }, `${JSON.stringify(value)}: path is not covered`);
+    assert.deepEqual(id.exact, { path: 'project-path' }, `${JSON.stringify(value)}: path is held to its value`);
+    assert.deepEqual(id.declared, { path: 'project-path', title: 'display' });
   }
   assert.equal(keys.size, exact.length, 'and no two of them share a key');
   // `unfenced` carries no mark: the builtin's escape hatch is always exact.
@@ -270,6 +286,11 @@ test('the words: what an approval covers, and the warning for an unknown mark', 
   assert.match(w, /counts as absent/);
   assert.match(w, /display, project-path|project-path, display/);
   assert.deepEqual(trustMarkWarnings({ properties: { title: { 'x-trust': 'display' } } }), []);
+  assert.equal(describeExact({ path: 'project-path' }), 'path (not a path inside this project: only the value shown)');
+  assert.equal(describeExact({}), '');
+  assert.equal(coversProjectPath({ title: 'display' }), false);
+  assert.equal(coversProjectPath({ path: 'project-path' }), true);
+  assert.match(pathReach('file-editor'), /^An approval lets any pane point file-editor at any file inside this project, \.env files included/);
 });
 
 test('save_component warns about an unknown mark, and saves anyway', async (t) => {
@@ -357,13 +378,22 @@ test('a file-editor pane re-mounted on a second file does not ask again; unfence
   const { api } = ctx;
   fs.writeFileSync(path.join(ctx.root, 'a.txt'), 'first\n');
   fs.writeFileSync(path.join(ctx.root, 'b.txt'), 'second\n');
-  await openViewer(t, ctx);
+  const viewer = await openViewer(t, ctx);
   const pending = async () => (await api.get('/api/services/pending')).json.pending;
 
   await api.post('/api/components/file-editor/use', { id: 'ed', params: { path: 'a.txt' } });
   const req = await waitUntil(async () => (await pending())[0] || false);
   assert.ok(req, 'the first mount asks');
   assert.deepEqual(req.covers, { path: 'project-path', root: 'project-path' }, 'and says what an approval covers');
+  assert.deepEqual(req.exact, {});
+  // The surface's notice carries it too, in the words the CLI prints: the card
+  // is where the user reads the command, before running it.
+  const frame = await waitUntil(() => viewer.frames.find((f) => f.type === 'service:trust' && f.key === req.key) || false);
+  assert.ok(frame, 'the notice was sent');
+  assert.deepEqual(frame.covers, req.covers);
+  assert.equal(frame.covers_text, 'path, root: any path inside this project');
+  assert.equal(frame.exact_text, '');
+  assert.match(frame.reach_text, /any pane point it at any file inside this project, \.env files included/);
   assert.notEqual(req.hash, req.source_hash, 'the declaration is folded into the code hash');
   assert.equal(req.source_hash, sha256(fs.readFileSync(path.join(ctx.root, '.web-chat', 'components', 'file-editor', 'service.js'))));
   await approve(ctx, req);
@@ -413,4 +443,102 @@ test('a file-editor pane re-mounted on a second file does not ask again; unfence
   });
   assert.ok(both, 'a path outside the project asks too');
   assert.equal(new Set([...both.map((p) => p.key), req.key]).size, 3);
+});
+
+// ── what the user is shown ──────────────────────────────────────────────────
+// `covers` is what an approval of ONE request spans beyond the values it shows.
+// It used to be the component's whole declaration, so a request for
+// `/etc/hosts` — which is in the key by its exact value — was listed as
+// covering "any path inside this project". And the listing, the grant and the
+// notice are the only places a user reads the range before (or as) it is
+// granted: `trust <name>` writes at once.
+
+// The real CLI, with no terminal. ASYNC spawn: the daemon it talks to is in
+// THIS process.
+function runCli(args, ctx) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'claude-web-chat.js'), ...args], {
+      cwd: ctx.root,
+      env: { ...process.env, HOME: ctx.home, USERPROFILE: ctx.home, CI: '' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+test('the listing, the notice and the grant say what each request covers, and hold to', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const { api } = ctx;
+  const viewer = await openViewer(t, ctx);
+  const trustFile = path.join(ctx.userWebChat, 'services', 'trusted.json');
+  const outsidePath = path.join(os.tmpdir(), 'wc-not-this-project', 'hosts');
+
+  await api.post('/api/components/file-editor/use', { id: 'in', params: { path: 'notes.md' } });
+  await api.post('/api/components/file-editor/use', { id: 'out', params: { path: outsidePath } });
+  const two = await waitUntil(async () => {
+    const p = (await api.get('/api/services/pending')).json.pending;
+    return p.length === 2 ? p : false;
+  });
+  assert.ok(two, 'two requests are waiting');
+  const inside = two.find((p) => p.params.path === 'notes.md');
+  const outside = two.find((p) => p.params.path === outsidePath);
+  assert.deepEqual(inside.covers, { path: 'project-path', root: 'project-path' });
+  assert.deepEqual(inside.exact, {});
+  assert.deepEqual(outside.covers, { root: 'project-path' }, 'a path outside the project is not covered');
+  assert.deepEqual(outside.exact, { path: 'project-path' }, 'it is held to its value');
+
+  const outFrame = await waitUntil(() => viewer.frames.find((f) => f.type === 'service:trust' && f.key === outside.key) || false);
+  assert.equal(outFrame.covers_text, 'root: any path inside this project');
+  assert.equal(outFrame.exact_text, 'path (not a path inside this project: only the value shown)');
+
+  // `init --json`'s state names the file's sha256, not the code hash (which
+  // folds the declaration in and is no file's digest).
+  const state = await gatherState({ root: ctx.root, mode: 'test', deps: { collectRows: async () => [] } });
+  const fileSha = sha256(fs.readFileSync(path.join(ctx.root, '.web-chat', 'components', 'file-editor', 'service.js')));
+  assert.notEqual(inside.hash, fileSha);
+  assert.deepEqual(state.pending_services.map((s) => s.sha256), [fileSha, fileSha]);
+
+  // The plain listing: the file's sha256, this request's covers, and what is
+  // held to one value — and the footer that says what `covers` means.
+  const listing = await runCli(['trust'], ctx);
+  assert.equal(listing.status, 0, listing.stderr);
+  assert.ok(listing.stdout.includes(`service.js sha256: ${fileSha.slice(0, 16)}…`), listing.stdout);
+  assert.ok(!listing.stdout.includes(inside.hash.slice(0, 16)), 'never the code hash under the file\'s name');
+  const block = (fp) => {
+    const lines = listing.stdout.split('\n');
+    const at = lines.findIndex((l) => l.includes(`params fingerprint: ${fp}`));
+    return lines.slice(Math.max(0, at - 5), at + 1).join('\n');
+  };
+  assert.match(block(inside.params_fp), /covers: +path, root: any path inside this project/);
+  assert.doesNotMatch(block(inside.params_fp), /exact:/);
+  assert.match(block(outside.params_fp), /covers: +root: any path inside this project\n/);
+  assert.match(block(outside.params_fp), /exact: +path \(not a path inside this project: only the value shown\)/);
+  assert.match(listing.stdout, /`covers` names what an approval spans beyond the values shown/);
+  assert.match(listing.stdout, /a project-path param while its value stays inside this\nproject/);
+
+  // --all prints the same lines before it asks (and, with no terminal, answers No).
+  const all = await runCli(['trust', 'file-editor', '--all'], ctx);
+  assert.equal(all.status, 0, all.stderr);
+  assert.match(all.stdout, /covers: +path, root: any path inside this project/);
+  assert.match(all.stdout, /exact: +path \(not a path inside this project/);
+  assert.match(all.stdout, /Nothing was changed/);
+  assert.equal(fs.existsSync(trustFile), false);
+
+  // The grant names what it covers, and what an approval of a path lets a pane do.
+  const granted = await runCli(['trust', 'file-editor', '--params-fp', inside.params_fp], ctx);
+  assert.equal(granted.status, 0, granted.stderr);
+  assert.match(granted.stdout, /file-editor — path="notes\.md"; covers path, root: any path inside this project\n/);
+  assert.match(granted.stdout, /An approval lets any pane point file-editor at any file inside this project, \.env files included, without asking again\./);
+  const exactGrant = await runCli(['trust', 'file-editor', '--params-fp', outside.params_fp], ctx);
+  assert.equal(exactGrant.status, 0, exactGrant.stderr);
+  assert.match(exactGrant.stdout, /; covers root: any path inside this project; exact path \(not a path inside this project: only the value shown\)/);
+  const recorded = JSON.parse(fs.readFileSync(trustFile, 'utf8'));
+  assert.deepEqual(recorded[inside.key].covers, { path: 'project-path', root: 'project-path' });
+  assert.equal(recorded[inside.key].exact, undefined);
+  assert.deepEqual(recorded[outside.key].covers, { root: 'project-path' }, 'the record notes this request\'s range');
+  assert.deepEqual(recorded[outside.key].exact, { path: 'project-path' });
 });

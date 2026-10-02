@@ -291,7 +291,7 @@ were the only places they lived.
 | say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
-| read a component's `x-trust` marks, warn about an unknown one, or say what an approval covers | `core/trust-marks` `readTrustMarks` / `trustMarkWarnings` / `describeCovers` / `TRUST_MARKS` (the identity those marks enter is minted in `lib/server/services.js` `mintIdentity`) | re-list `display` / `project-path`, or word the unknown-mark warning a second time |
+| read a component's `x-trust` marks, warn about an unknown one, or say what an approval covers (and what it lets a pane do) | `core/trust-marks` `readTrustMarks` / `trustMarkWarnings` / `describeCovers` / `describeExact` / `coversProjectPath` / `pathReach` / `TRUST_MARKS` (the identity those marks enter — and each request's `covers` / `exact` — is minted in `lib/server/services.js` `mintIdentity`) | re-list `display` / `project-path`, or word the unknown-mark warning, a covers line or the `.env` sentence a second time |
 | decide whether a name is a builtin THEME (a pack, or a retired alias) | `core/names` `isBuiltinThemeName` / `BUILTIN_THEME_NAMES` (a test holds it equal to lib/server/theme-packs' packs + aliases) | re-list `earthy`/`paper`/`georgetown-blue` |
 | validate an image before it is shown as a logo (a Settings → Brand upload, a theme's logos) | `core/brand-image` `validate(bytes)` / `validateLogoFile(name, bytes)` / `parseLogoName(name)` (lib/server/brand.js re-exports them) | a second sniffer or SVG blocklist |
 | check what a theme inside a pack may carry (tokens, modes, fonts, logos — raw CSS gated by the one `THEME_CSS_POLICY`) | `lib/packs/themes` `inspectPackTheme(stageDir, name)` | a second theme check in a route or the drawer |
@@ -1308,6 +1308,13 @@ recorded before declarations existed; `test/service-trust-declared.test.js` hold
 that with a golden. Because a covered value can change without changing the key,
 the supervisor also compares the fingerprint of everything the child was handed
 (`spawnFp`) and restarts it on a change, asking nothing.
+
+What a request reports as `covers` is ITS range, not the declaration
+(`mintIdentity` returns both: `declared` is what the hash folds in, `covers` the
+marks that request's values let it leave out, `exact` the `project-path` params it
+holds to one value because the value could not be proven inside). Reporting the
+declaration said "any path inside this project" of an approval keyed to
+`/etc/hosts` alone.
 
 Every lossy re-projection of that triple was a place two different consents were
 mistaken for one: the WS frames carried the `service.js` hash alone, so two

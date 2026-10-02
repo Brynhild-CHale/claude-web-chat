@@ -177,9 +177,16 @@ test('--pack approves the pre-approval keys and leaves pending exact requests al
   assert.equal(prompt.asked[0].opts.def, false, 'and the answer nobody gives is No');
   assert.match(prompt.asked[0].question, /Approve all 2\?/);
   assert.match(r.out, /Pack "acme-ops" — 1\.2\.0 · installed for this project · tarball @ ccccccc/, 'it names the pack and where it came from');
+  // The sha256 shown is the FILE's — what `shasum service.js` prints — never
+  // the code hash, which for deploy-board folds its declaration in.
+  const boardFile = sha256(fs.readFileSync(path.join(ctx.root, '.web-chat', 'components', 'deploy-board', 'service.js')));
+  assert.equal(board.source_hash, boardFile);
+  assert.notEqual(board.hash, boardFile, 'deploy-board declares x-trust, so the two differ');
+  assert.ok(r.out.includes(`deploy-board\n    service.js sha256: ${boardFile.slice(0, 16)}…\n`), r.out);
+  assert.ok(!r.out.includes(board.hash.slice(0, 16)), 'the code hash is never shown as the file\'s');
   assert.match(r.out, /deploy-board\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +target: any path inside this project · title: display only/);
   assert.match(r.out, /incident-log\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +a pane with no params only/);
-  assert.match(r.out, /any pane can point deploy-board at any file inside this\nproject, \.env files included/, 'the remaining risk is said before the answer');
+  assert.match(r.out, /An approval lets any pane point deploy-board at any file inside this project, \.env files included/, 'the remaining risk is said before the answer');
   assert.match(r.out, /--params-fp/, 'and where a wider request goes instead');
 
   const trusted = readTrust(ctx);
@@ -428,6 +435,8 @@ test('--pack names an unknown pack, a pack with no services, and a malformed cal
   assert.match(bare.err, /--pack needs the name of an installed pack/);
   const flagged = await runInProcess(() => trust(['--pack', '--deny'], { cwd: ctx.root, prompt: answering(true) }));
   assert.equal(flagged.exit, 1, '`--pack --deny` is a missing name, not a pack called --deny');
+  assert.match(flagged.err, /--pack needs the name of an installed pack/);
+  assert.doesNotMatch(flagged.err, /no pack named/);
   for (const extra of [['--all'], ['deploy-board'], ['--params-fp', 'abc']]) {
     const mixed = await runInProcess(() => trust(['--pack', 'acme-ops', ...extra], { cwd: ctx.root, prompt: answering(true) }));
     assert.equal(mixed.exit, 1, `--pack with ${extra.join(' ')}`);
