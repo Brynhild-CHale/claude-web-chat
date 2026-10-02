@@ -1,6 +1,7 @@
 // A fake Claude Code user tier for the chat mirror's tests: the directories
 // lib/core/paths userClaudePaths() names (projects/<slug>/ with each session's
-// transcript and side directories, sessions/<pid>.json state files, plans,
+// transcript and side directories, sessions/<pid>.json state files, and,
+// through write(rel), the user's settings.json, skills and commands, plans,
 // synced skills, plugins), the MCP presence rows web-chat's own MCP server
 // writes into ~/.web-chat/instances.json, and Claude Code's task-output tree
 // (/tmp/claude-<uid>/<slug>/<session>/tasks/<task id>.output).
@@ -237,28 +238,26 @@ function claudeHome(t, { root, isolate = false } = {}) {
   }
 
   // ── MCP presence rows ──
-  // Written by the registry's own writer (lib/util/registry registerMcp), so
-  // the row has the shape web-chat's MCP server gives it. Fields that writer
-  // does not take (or takes differently) are patched onto the row as given.
-  // The row is written whether or not its pids are alive: liveness is the
-  // reader's question, and a dead row is a fixture too.
+  // Built by the registry's own writer (lib/util/registry registerMcp), so the
+  // row has the shape web-chat's MCP server gives it; fields that writer does
+  // not take (or takes differently) are patched onto it as given. The row is
+  // written whether or not its pids are alive: liveness is the reader's
+  // question, and a dead row is a fixture too. So the fixture changes no row
+  // but its own. registerMcp prunes every dead row it finds as it writes
+  // (right for an MCP server, wrong for a fixture building a registry that
+  // mixes live and dead rows: a dead row added first was gone as soon as a
+  // live one followed), so the file is written back from the rows it held
+  // BEFORE the call, with this one upserted at the end, where the writer puts
+  // it.
   function addMcp({ pid = process.pid, ppid = process.ppid, root: rowRoot = cwd, channel = false, ...fields } = {}) {
     const registryFile = registry.registryPath();
-    registry.registerMcp({ root: rowRoot, pid, ppid, channel, ...fields });
-    const got = readJson(registryFile, VALID_REGISTRY);
+    const before = readJson(registryFile, VALID_REGISTRY);
+    const base = before.ok ? before.value : { instances: [] }; // absent or torn: the writer starts afresh too
+    const row = { ...registry.registerMcp({ root: rowRoot, pid, ppid, channel, ...fields }), ...fields };
     const id = registry.mcpId(pid);
-    const at = got.ok ? got.value.instances.findIndex((e) => e && e.id === id) : -1;
-    if (at < 0) throw new Error(`claudeHome addMcp: the presence row for pid ${pid} was not written to ${registryFile}`);
+    writeJsonAtomic(registryFile, { ...base, instances: [...base.instances.filter((e) => !(e && e.id === id)), row] });
     rows.set(pid, registryFile);
-    const patch = {};
-    for (const [k, v] of Object.entries(fields)) {
-      if (JSON.stringify(got.value.instances[at][k]) !== JSON.stringify(v)) patch[k] = v;
-    }
-    if (Object.keys(patch).length) {
-      got.value.instances[at] = { ...got.value.instances[at], ...patch };
-      writeJsonAtomic(registryFile, got.value);
-    }
-    return got.value.instances[at];
+    return row;
   }
 
   function removeMcp(pid) {

@@ -23,6 +23,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const { claudeConfigDir, userClaudePaths, realpath, fence } = require('../lib/core/paths');
+const { writeJsonAtomic } = require('../lib/core/fsjson');
 const registry = require('../lib/util/registry');
 const { claudeHome } = require('../test-support/claude-home');
 
@@ -254,6 +255,57 @@ test('claude-home builds its tree only under the sandbox, with the procStart the
     assert.equal(fs.existsSync(p), false, `${p} is gone`);
   }
   assert.equal(registry.readMcpEntries().some((e) => e.pid === process.pid && e.root === physical), false, 'and so is the row');
+});
+
+test('claude-home keeps a dead presence row beside a live one, whichever is added first, and leaves every other row alone', (t) => {
+  // The registry's own writer prunes every dead row it finds; a fixture that
+  // went through it alone lost a dead row the moment a live one followed.
+  const DEAD = 2 ** 30; // above any pid limit: never a live process
+  const LATE_DEAD = DEAD + 1;
+  const file = registry.registryPath();
+  // A row the fixture did not write: a dead daemon's, as a crash leaves it.
+  const foreign = { id: 'deadbeef', role: 'instance', root: '/srv/gone', port: 5199, pid: DEAD + 2, url: 'http://127.0.0.1:5199', started_at: 1 };
+  writeJsonAtomic(file, { instances: [...registry.readAllEntries(), foreign] });
+  t.after(() => writeJsonAtomic(file, { instances: registry.readAllEntries().filter((e) => e.id !== foreign.id) }));
+
+  const ch = claudeHome(t, { root: tmpDir(t, 'wc-proj-') });
+  const dead = ch.addMcp({ pid: DEAD, ppid: process.pid });
+  const live = ch.addMcp({ pid: process.pid, ppid: process.ppid });
+  const lateDead = ch.addMcp({ pid: LATE_DEAD, ppid: process.pid, channel: true });
+
+  // Read raw: the pruning readers (readMcpEntries and the rest) would drop
+  // the dead rows, which is a reader's call to make, not the fixture's.
+  const raw = registry.readAllEntries();
+  const row = (id) => raw.find((e) => e.id === id);
+  for (const r of [dead, live, lateDead]) assert.deepEqual(row(r.id), r, `${r.id} is in the registry as addMcp returned it`);
+  assert.deepEqual(row(foreign.id), foreign, 'a row the fixture did not write is untouched');
+  assert.equal(registry.isLive(row(live.id)), true);
+  assert.equal(registry.isLive(row(dead.id)), false, 'liveness is the reader\'s question');
+  assert.equal(registry.isLive(row(lateDead.id)), false);
+
+  // Each is the row web-chat's MCP server writes, whatever its liveness.
+  for (const [r, pid] of [[dead, DEAD], [live, process.pid], [lateDead, LATE_DEAD]]) {
+    assert.equal(r.id, registry.mcpId(pid));
+    assert.equal(r.role, 'mcp');
+    assert.equal(r.pid, pid);
+    assert.equal(r.root, ch.cwd);
+    assert.equal(typeof r.version, 'number');
+    assert.equal(typeof r.started_at, 'number');
+  }
+  assert.equal(lateDead.channel, true);
+  assert.equal(dead.channel, false);
+
+  // Re-adding a pid replaces its row; nothing else moves.
+  const again = ch.addMcp({ pid: DEAD, ppid: process.pid, channel: true });
+  const now = registry.readAllEntries();
+  assert.equal(now.filter((e) => e.id === again.id).length, 1);
+  assert.deepEqual(now.find((e) => e.id === again.id), again);
+  for (const id of [foreign.id, live.id, lateDead.id]) assert.ok(now.some((e) => e.id === id), `${id} is still there`);
+
+  ch.cleanup();
+  const left = registry.readAllEntries().map((e) => e.id);
+  for (const id of [dead.id, live.id, lateDead.id]) assert.ok(!left.includes(id), `cleanup removes ${id}`);
+  assert.ok(left.includes(foreign.id), 'and only the fixture\'s own rows');
 });
 
 test('claude-home refuses to guess: procStart is the caller\'s, a pid is an integer, an id cannot form a path', (t) => {
