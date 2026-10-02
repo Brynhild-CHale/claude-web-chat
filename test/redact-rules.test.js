@@ -338,14 +338,73 @@ test('redactValue: shared references and cycles, an own __proto__ key, non-plain
   const date = new Date(0);
   const buf = Buffer.from('password=hunter2andmore');
   const kept = redactValue({ date, buf });
-  assert.equal(kept.date, date);
-  assert.equal(kept.buf, buf, 'a Buffer is returned as it is, never walked index by index');
+  assert.equal(kept.date, date, 'a Date is kept: its JSON is a timestamp');
+  assert.equal(kept.buf, `password=${MASK('secret')}`, 'a Buffer is decoded and redacted as text, never walked index by index');
 
   const token = FAKES.find((f) => f.id === 'github-ghp').secrets[0];
   const keyed = redactValue({ [token]: { note: 'value' } });
   assert.deepEqual(Object.keys(keyed), [MASK('github-token')], 'a secret used as a key is a secret');
 
   for (const v of [null, undefined, 42, true, 'short']) assert.equal(redactValue(v), v);
+});
+
+test('json-key: under a key that names the credential, every string and number below it is masked; a pwd path is not', () => {
+  const S = MASK('secret');
+  const out = redactValue({
+    secret: { value: 'v1', nested: [{ deep: 'v2' }], n: 42 },
+    token: { v: 'v3', expires_in: 3600, ok: true, none: null },
+    password: 12345678,
+    credentials: { username: 'svc', pin: 1234 },
+    secretCount: 2,
+    passwordPolicy: { minLength: 12, note: 'twelve or more' },
+    PWD: '/Users/someone/proj',
+    OLDPWD: '/tmp',
+    db: { password: './secrets/db.txt', pwd: 'hunter2andmore', passwd: 'C:\\run\\db' },
+  });
+  assert.deepEqual(out.secret, { value: S, nested: [{ deep: S }], n: S });
+  assert.deepEqual(out.token, { v: S, expires_in: S, ok: true, none: null }, 'booleans and null are never masked');
+  assert.equal(out.password, S, 'a numeric password');
+  assert.deepEqual(out.credentials, { username: S, pin: S });
+  assert.equal(out.secretCount, 2, 'a count that mentions secrets is not one');
+  assert.deepEqual(out.passwordPolicy, { minLength: 12, note: 'twelve or more' }, 'a key that only mentions a credential masks its own string, not what is below it');
+  assert.equal(out.PWD, '/Users/someone/proj', 'a working directory is not a secret');
+  assert.equal(out.OLDPWD, '/tmp');
+  assert.deepEqual(out.db, { password: './secrets/db.txt', pwd: S, passwd: 'C:\\run\\db' });
+  assert.deepEqual(['password', 'client_secret', 'refreshToken', 'credentials', 'Authorization', 'OLDPWD'].map(sensitiveKey), [true, true, true, true, true, true]);
+});
+
+test('redactValue fails closed: what JSON would carry of any object is redacted, and what cannot be read is masked', () => {
+  const f = FAKES.find((x) => x.id === 'sk-anthropic-api');
+  const key = f.secrets[0];
+  const K = MASK('api-key');
+  class Box { constructor() { this.cmd = `deploy --token ${key}`; this.n = 1; } }
+  const err = Object.assign(new Error(`failed with ${key}`), { stdout: `export API_KEY=${key}`, stderr: '', cmd: `curl -u admin:${key} https://h.example.com`, code: 1 });
+  const throwing = {};
+  Object.defineProperty(throwing, 'x', { enumerable: true, get() { throw new Error('unreadable'); } });
+  const looping = { toJSON() { return { again: looping, note: key }; } };
+  const input = {
+    box: new Box(),
+    err,
+    buf: Buffer.from(`password=hunter2andmore and ${key}`),
+    bytes: new TextEncoder().encode(`token: ${key}`),
+    map: new Map([['k', key]]),
+    when: { toJSON: () => `at ${key}` },
+    looping,
+    throwing,
+    proxy: new Proxy({}, { ownKeys() { throw new Error('no keys'); } }),
+  };
+  const out = redactValue(input);
+  assert.deepEqual(findLeaks(JSON.stringify(out), [f]), [], JSON.stringify(out).slice(0, 300));
+  assert.deepEqual(out.box, { cmd: `deploy --token ${K}`, n: 1 }, 'a class instance is copied by its own properties');
+  assert.deepEqual(out.err, { stdout: `export API_KEY=${K}`, stderr: '', cmd: `curl -u admin:${K} https://h.example.com`, code: 1 },
+    'an Error carries what JSON would: its enumerable fields');
+  assert.equal(out.buf, `password=${MASK('secret')} and ${K}`);
+  assert.equal(out.bytes, `token: ${K}`, 'a typed array is decoded too');
+  assert.deepEqual(out.map, {}, 'a Map is what JSON carries of it');
+  assert.equal(out.when, `at ${K}`, 'toJSON is honoured');
+  assert.deepEqual(out.looping, { again: MASK('secret'), note: K }, 'a toJSON that returns its own object again is cut off');
+  assert.equal(out.throwing, MASK('secret'), 'a throwing getter masks its object');
+  assert.equal(out.proxy, MASK('secret'), 'so does a proxy that cannot list its keys');
 });
 
 // ── the display-safe guard ──────────────────────────────────────────────────
