@@ -768,6 +768,41 @@ test('rule 4: the rewinds source\'s reset and anchor go through the same superse
   assert.deepEqual(h.tm.supersede(C, 'nope'), { ok: false, reason: 'unknown-turn', superseded: [] });
 });
 
+test('rule 4: the spec\'s call, supersede(cid, from, {reason, at}), stops at the rewind and never takes the open turn', () => {
+  // Three closed turns (started 1000, 2000, 3000), then the reset's new prompt T4
+  // (4000), open: the rewinds source calls with the spec's arguments alone.
+  const setup = () => {
+    const h = harness({ start: 9000 });
+    h.tx(...olderTurns(3), opener('P4', 'u4a', 'u3c', 'prompt 1 again', { ts: 4000 }));
+    return h;
+  };
+  const marked = (h) => turnsOf(h).map((t) => [t.id, t.superseded === true]);
+  const h = setup();
+  const r = h.tm.supersede(C, 'P1', { reason: 'reset', at: 3999 });
+  assert.deepEqual(r.superseded, ['P1', 'P2', 'P3'], 'the first abandoned turn is included');
+  assert.deepEqual(marked(h), [['P1', true], ['P2', true], ['P3', true], ['P4', false]]);
+  assert.equal(h.model.item('rw_P1').reason, 'reset');
+  assert.equal(h.model.item('rw_P1').through_turn_id, 'P3');
+  assert.equal(h.model.turn('P4').status, 'open');
+  // At the new prompt's own start, it is the conversation going on.
+  const a = setup();
+  assert.deepEqual(a.tm.supersede(C, 'P2', { reason: 'anchor', at: 4000 }).superseded, ['P2', 'P3']);
+  // With the new turn already closed, `at` still stops before it.
+  const c = setup();
+  c.tx(duration('u4c', 'u4a', 400, { ts: 4500 }));
+  assert.deepEqual(c.tm.supersede(C, 'P1', { reason: 'reset', at: 3999 }).superseded, ['P1', 'P2', 'P3']);
+  // With no time either, the open turn still bounds it.
+  const n = setup();
+  assert.deepEqual(n.tm.supersede(C, 'P1', { reason: 'reset' }).superseded, ['P1', 'P2', 'P3']);
+  assert.equal(n.model.turn('P4').superseded, undefined);
+  // Not even a named end takes the open turn past it.
+  const t = setup();
+  assert.deepEqual(t.tm.supersede(C, 'P2', { reason: 'anchor', through: 'P4' }).superseded, ['P2', 'P3']);
+  // The open turn is superseded only as the first abandoned turn itself.
+  const o = setup();
+  assert.deepEqual(o.tm.supersede(C, 'P4', { reason: 'anchor', at: 5000 }).superseded, ['P4']);
+});
+
 test('rule 4: an anchor and the branch it foretells leave one notice', () => {
   const { h, e1 } = threeTurns();
   h.tm.supersede(C, 'T2', { reason: 'anchor' }); // a headless last-prompt {rewound: true}
