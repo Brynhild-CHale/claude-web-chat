@@ -110,6 +110,42 @@ test('apply → inspect → remove → inspect round-trips the registration mode
   assert.ok(!settings.hooks, 'no empty hook husk left behind');
 });
 
+// isRegistered: the hook entries or the .mcp.json server — what makes Claude
+// Code run web-chat — and nothing else. `uninstall` asks it of a directory with
+// no .web-chat/, and `update --restart-all` asks it before writing into
+// another project, which is why a .web-chat/ on its own (uninstall keeps it, a
+// daemon's boot creates it) must not count.
+test('isRegistered: wired by its hooks or its .mcp.json entry, and by nothing else', (t) => {
+  withTempHome(t);
+  const root = tmpRoot();
+  assert.equal(reg.isRegistered(root), false, 'a bare directory');
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  assert.equal(reg.isRegistered(root), false, 'a .web-chat/ on its own');
+  const rules = path.join(root, MANAGED_FILES[0].dest);
+  fs.mkdirSync(path.dirname(rules), { recursive: true });
+  fs.writeFileSync(rules, 'a leftover managed file\n');
+  assert.equal(reg.isRegistered(root), false, 'a leftover managed file');
+
+  const claude = fakeClaude();
+  reg.apply(root, { runClaude: claude.fn });
+  assert.equal(reg.isRegistered(root), true, 'after apply');
+  reg.remove(root, { runClaude: claude.fn });
+  assert.equal(reg.isRegistered(root), false, 'after remove, which keeps .web-chat/');
+
+  const hooksOnly = tmpRoot();
+  fs.mkdirSync(path.dirname(claudePaths(hooksOnly).settings), { recursive: true });
+  fs.writeFileSync(claudePaths(hooksOnly).settings, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-end' }] }] } }));
+  assert.equal(reg.isRegistered(hooksOnly), true, 'one hook event is enough');
+  const mcpOnly = tmpRoot();
+  fs.writeFileSync(path.join(mcpOnly, '.mcp.json'), JSON.stringify({ mcpServers: { 'web-chat': { command: 'claude-web-chat-mcp' } } }));
+  assert.equal(reg.isRegistered(mcpOnly), true, 'so is the .mcp.json entry, resolvable or not');
+  const torn = tmpRoot();
+  fs.writeFileSync(path.join(torn, '.mcp.json'), '{ not json');
+  fs.mkdirSync(path.dirname(claudePaths(torn).settings), { recursive: true });
+  fs.writeFileSync(claudePaths(torn).settings, '{ not json');
+  assert.equal(reg.isRegistered(torn), false, 'unreadable files register nothing, and do not throw');
+});
+
 test('apply --dryRun writes nothing at all', (t) => {
   withTempHome(t);
   const root = tmpRoot();

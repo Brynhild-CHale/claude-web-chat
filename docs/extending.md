@@ -66,14 +66,15 @@ file:
 ```sh
 node scripts/build-release.js --dev      # dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz + SHA256SUMS
 claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz --restart-all
-claude-web-chat install                  # in any other web-chat project it did not restart
+claude-web-chat install                  # in any other web-chat project it did not refresh
 ```
 
-`--restart-all` restarts every other project whose server runs another build
-and refreshes that project's managed files, as `install` would there (the
-`update` that runs is the installed build's, so the refresh needs 0.8.2 or later
-installed). Then `/exit` and reopen Claude Code (the MCP server loads its code
-at session start) and reload any open surface tab.
+`--restart-all` restarts every other project whose server runs another build,
+and refreshes the managed files of each one web-chat is registered in, as
+`install` would there. (The `update` that runs is the installed build's, so the
+refresh needs 0.8.2 or later installed.) Then `/exit` and reopen Claude Code
+(the MCP server loads its code at session start) and reload any open surface
+tab.
 
 **First time on an install that predates `--from` (0.7.5, 0.7.6): bootstrap by
 hand.** The `update` in those releases does not know `--from` — its argument

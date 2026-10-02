@@ -136,8 +136,8 @@ update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back,
                     --from <tarball> installs a local build (a --dev build from
                     scripts/build-release.js), --restart-all restarts every other
-                    project still running an older build and refreshes its
-                    managed files
+                    project still running an older build and refreshes the
+                    managed files of each one web-chat is registered in
 uninstall           remove the hooks (your graph data is kept); --self also
                     removes the program itself
 tunnel [verb]       reach your surfaces from your phone or another machine:
