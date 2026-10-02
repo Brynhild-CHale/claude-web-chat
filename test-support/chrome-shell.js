@@ -6,9 +6,9 @@
 //   before(async () => { shell = await bootShell({ routes, onSocket, init }); });
 //   after(() => shell.restore());
 //
-// Forty-odd chrome test files hand-rolled this boot, each a copy of the same
-// thirty lines that drifted apart: which globals got aliased (and how — Node
-// 21+ defines `navigator` as a getter, so a plain assignment silently does
+// Thirty chrome test files hand-roll this boot, each a copy of the same thirty
+// lines that drifted apart: which globals got aliased (and how — Node 21+
+// defines `navigator` as a getter, so a plain assignment silently does
 // nothing), whether the socket opened, which timers were stubbed, and whether
 // anything was put back. This is the one boot; new chrome tests use it.
 //

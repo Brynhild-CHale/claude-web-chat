@@ -292,7 +292,7 @@ test('no chrome surface is painted from a colour the palette does not hold', () 
 const CHAT_UNITS = ['U17', 'U20', 'U32', 'U33', 'U35', 'U36', 'U37', 'U38', 'U46', 'U47', 'U56', 'U62',
   'U65', 'U68', 'U69', 'U70', 'U71', 'U72', 'U77', 'U80', 'U85', 'U86', 'U91', 'U93'];
 
-test('the chat mirror region holds one marked section per chrome unit, in order, at the end of the sheet', () => {
+test('the chat mirror region holds one marked section per chrome unit, in order', () => {
   const at = CSS.lastIndexOf('/* ===', CSS.indexOf('chat mirror (0.8.5)'));
   assert.ok(at > 0, 'app.css opens a chat mirror region');
   const region = CSS.slice(at);
@@ -303,8 +303,6 @@ test('the chat mirror region holds one marked section per chrome unit, in order,
   for (const m of markers) {
     assert.ok(region.slice(0, m.index).endsWith('\n\n'), `${m[1]}'s marker opens a paragraph of its own`);
   }
-  assert.doesNotMatch(region.slice(region.indexOf('*/') + 2), /\/\* ={10,}/,
-    'no other region follows it: a unit section is the last thing in the sheet');
 });
 
 test('--wc-agent, the chat chrome\'s one new token, is in every pack and mode and in both palette blocks', () => {

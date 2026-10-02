@@ -1685,9 +1685,10 @@ body.pin-mode #main { cursor: crosshair; }
 
    The status bar, the trays, the dock, the panel, the stream, the phone pull
    and the co-brand lockup are built by separate units, several at a time, so
-   each owns ONE section below: a unit writes its rules under its own marker,
-   before the blank line that ends it, and nowhere else in this region. The
-   scaffold's own rules come first.
+   each owns ONE section below: a unit writes its rules under its own marker
+   and nowhere else in this region, and keeps the blank line before the next
+   marker, so two units never edit the same lines. The markers stay as they
+   are (test/shell-chrome.test.js reads them). The scaffold's rules come first.
 
    Two rules hold here as in the rest of the sheet: colours come from tokens
    (state and category inks are local custom properties set by attribute

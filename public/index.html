@@ -131,12 +131,14 @@
       </div>
 
       <!-- chat-host:dock · U33, public/app/chat-dock.js — #chat-dock goes here,
-           .body's sibling: the drawer right of the well, or the floating window -->
+           .body's sibling: the drawer right of the well, or the floating window. Both
+           markers stay: test/chrome-shell.test.js holds the host's place by them. -->
       <!-- /chat-host:dock -->
     </div>
 
     <!-- chat-host:bar · U17, public/app/chat-bar.js — #chat-statusbar goes here, a
-         direct child of #stage: the 28px status bar under the body, 760px and wider -->
+         direct child of #stage: the 28px status bar under the body, 760px and wider.
+         Both markers stay: test/chrome-shell.test.js holds the host's place by them. -->
     <!-- /chat-host:bar -->
 
     <!-- narrow bottom bar (<760px, app.css): the topbar's ↑/↓, ↩ active and Graph
@@ -157,7 +159,8 @@
 
     <!-- chat-host:pull · U68, public/app/chat-sheet.js — #chat-scrim, then #chat-pull,
          go here, direct children of #stage: the grip tab, its badge and the sheet,
-         riding the bottom bar below 760px -->
+         riding the bottom bar below 760px. Both markers stay: test/chrome-shell.test.js
+         holds the host's place by them. -->
     <!-- /chat-host:pull -->
 
     <!-- front glass (scanline + highlight), above content -->
@@ -340,7 +343,8 @@
     </div>
 
     <!-- chat-host:tray · U46, public/app/chat-trays.js — #cs-tray goes here: the
-         status bar's chips open it, a .popover on the panels' rung like those above -->
+         status bar's chips open it, a .popover on the panels' rung like those above.
+         Both markers stay: test/chrome-shell.test.js holds the host's place by them. -->
     <!-- /chat-host:tray -->
 
     <!-- keyboard legend -->
