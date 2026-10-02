@@ -44,9 +44,15 @@ module.exports = {
     //               value appears only if it was proven inside the project).
     //               That proof was made when the approval was keyed, not for
     //               the life of the child: a service that keeps using a covered
-    //               path holds it inside with ctx.fence(process.cwd(), …).
-    // process.cwd() — the project root, wherever the daemon was started from.
-    //               Resolve a relative path param against it.
+    //               path holds it inside with ctx.fence(ctx.root, …).
+    // ctx.root    — the project root, spelled as the daemon spells it: the
+    //               frame a covered path was proven in. Resolve a relative path
+    //               param against it, and fence against it. The child's working
+    //               directory is the same directory, wherever the daemon was
+    //               started from, but process.cwd() returns its real path, which
+    //               is spelled differently when the project is reached through
+    //               a symlink — an absolute in-project value then reads as
+    //               outside it.
     // ctx.mountId — the pane id; namespace per-pane store keys with it if needed.
     // ctx.name    — the component name.
     // ctx.log     — stdout logger (piped to the daemon log).
@@ -276,9 +282,12 @@ same way.
 **The service still gets every value.** A covered value is only left out of the
 approval. When a pane is re-used with a different covered value, the supervisor
 restarts the child with the new params and asks nothing. The child runs with the
-project root as its working directory, wherever the daemon was started from, so
-resolve a relative path param against `process.cwd()`, and fence anything a pane
-hands you at run time with `ctx.fence(process.cwd(), value)`. A `project-path`
+project root as its working directory, wherever the daemon was started from, and
+gets that root as `ctx.root`, spelled the way the daemon proved the value against
+it: resolve a relative path param against `ctx.root`, and fence anything a pane
+hands you at run time with `ctx.fence(ctx.root, value)`. (Not `process.cwd()`:
+it returns the real path, which differs when the project is reached through a
+symlink, and an absolute value proven inside would then read as outside.) A `project-path`
 param must mean a path, used as one: a service that reads the value as a URL, a
 shell word, a command-line flag or a glob pattern breaks the promise its mark
 makes. The proof covers the literal string only; brace expansion can turn
@@ -289,7 +298,7 @@ later turns into a symlink out of the project (a checkout, a pull, a build
 tool's output link) was still covered. `ctx.covers` tells the child which params
 its approval covered; a service that keeps using a covered path for the life of
 the child, as a base directory say, fences what it resolves against
-`process.cwd()` at use time too.
+`ctx.root` at use time too.
 
 The builtin `file-editor` marks `path` and `root` as `project-path`. `unfenced`
 has no mark, so `unfenced: true` always asks. One approval therefore covers the

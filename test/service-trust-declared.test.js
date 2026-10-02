@@ -634,3 +634,54 @@ test('a covered root that becomes a link out of the project reaches nothing outs
   assert.notEqual(refused.content, 'OUTSIDE SECRET\n', 'nothing outside the project was read');
   assert.equal(ctx.srv.services._children.get('ed'), child, 'by the same child, still running');
 });
+
+// The daemon proves a covered path inside the project AS IT SPELLS THE ROOT: an
+// absolute value is compared to that spelling as text before anything on disk
+// is resolved. The child runs in the same directory, but process.cwd() hands it
+// back as its REAL path, which is spelled differently whenever the root is
+// reached through a symlink (macOS's /var temp dirs, a symlinked parent). The
+// editor's project fence used process.cwd(), so under a covered absolute root
+// every path read as outside — the pane the daemon had approved could open
+// nothing. The child is now handed the daemon's spelling (ctx.root).
+test('a covered absolute root works when the project is reached through a symlink', async (t) => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-xtrust-real-'));
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-xtrust-link-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-xtrust-out-'));
+  t.after(() => { for (const d of [real, parent, outside]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} } });
+  const root = path.join(parent, 'project');
+  fs.symlinkSync(real, root);
+  assert.notEqual(fs.realpathSync(root), root, 'the project is reached through a link');
+  const ctx = await withServer(t, { root });
+  const { api } = ctx;
+  fs.mkdirSync(path.join(root, 'sub'));
+  fs.writeFileSync(path.join(root, 'sub', 'notes.txt'), 'inside\n');
+  fs.writeFileSync(path.join(outside, 'secret.txt'), 'OUTSIDE SECRET\n');
+  fs.symlinkSync(outside, path.join(root, 'sub', 'out'));
+  await openViewer(t, ctx);
+  const editor = async () => (await api.get('/api/store')).json.editor;
+
+  const sub = path.join(root, 'sub');
+  await api.post('/api/components/file-editor/use', { id: 'ed', params: { root: sub, path: 'notes.txt' } });
+  const req = await waitUntil(async () => (await api.get('/api/services/pending')).json.pending[0] || false);
+  assert.equal(req.root, root);
+  assert.deepEqual(req.covers, { path: 'project-path', root: 'project-path' },
+    'an absolute root spelled as the daemon spells the project is proven inside, and covered');
+  await approve(ctx, req);
+  const opened = await waitUntil(async () => {
+    const ed = await editor();
+    return ed && (ed.exists || ed.error) ? ed : false;
+  }, { timeout: 6000 });
+  assert.ok(opened, 'the editor answered');
+  assert.equal(opened.error, null, 'and opened the file the approval covers');
+  assert.equal(opened.path, 'notes.txt');
+  assert.equal(opened.content, 'inside\n');
+
+  // The project fence still holds under that root: a link out is refused.
+  await api.post('/api/store', { patch: { editor_ctl: { action: 'open', path: 'out/secret.txt', seq: Date.now() + 1000 } } });
+  const refused = await waitUntil(async () => {
+    const ed = await editor();
+    return ed && ed.error ? ed : false;
+  }, { timeout: 6000 });
+  assert.match(refused.error, /outside the project root/);
+  assert.notEqual(refused.content, 'OUTSIDE SECRET\n');
+});

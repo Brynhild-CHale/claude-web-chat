@@ -484,8 +484,8 @@ same project — and learns to approve without reading. Use `x-trust`:
 
 The built-in `file-editor` marks `path` and `root` as `project-path` and leaves
 `unfenced` unmarked. A `project-path` value reaches your service unchanged: resolve
-it against `process.cwd()`, which is the project root, and fence it with
-`ctx.fence`. Never read it as a URL, a shell word, a command-line flag or a glob
+it against `ctx.root`, the project root as the daemon proved the value against it,
+and fence it with `ctx.fence(ctx.root, value)`. Never read it as a URL, a shell word, a command-line flag or a glob
 pattern: the proof covers the literal string only. Mark
 nothing that changes what the service may touch: an unmarked param is always
 safe, it only asks more often. The full rules for what counts as inside are in
