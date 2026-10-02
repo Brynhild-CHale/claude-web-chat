@@ -25,7 +25,9 @@ const { projectPaths } = require('../lib/core/paths');
 const {
   frameSchedule, fitSchedule, frameSize, normalizeRenderRequest, renderReplay, LIMITS,
 } = require('../lib/server/replay/render');
-const { replayOpts, buildReplay } = require('../lib/server/replay/document');
+const {
+  replayOpts, buildReplay, CAPTIONS, DEFAULTS, SIZE_LIMITS, parseSize,
+} = require('../lib/server/replay/document');
 const { createScriptStore } = require('../lib/server/replay/scripts');
 const { resolveReplayPath } = require('../lib/server/domain/replay-path');
 const { createGraph } = require('../lib/server/graph');
@@ -227,9 +229,38 @@ test('normalizeRenderRequest: defaults, clamps and honest refusals', () => {
   assert.equal(replayOpts({ include_prompts: null }, d.docQuery).include_prompts, false, '…and without one, no prompts unless asked');
   assert.equal(normalizeRenderRequest({ include_prompts: true }).docQuery.include_prompts, true);
   assert.equal(normalizeRenderRequest({ include_prompts: false }).docQuery.include_prompts, false, 'an explicit false is kept: it wins over a script');
-  assert.equal(replayOpts({ include_prompts: null }, normalizeRenderRequest({ captions: 'prompt' }).docQuery).include_prompts, false,
-    'the retired captions:"prompt" does not include them');
   assert.equal(normalizeRenderRequest({ captions: 'none' }).docQuery.captions, 'none');
+  for (const captions of [undefined, null, '', 'on']) {
+    assert.equal(normalizeRenderRequest({ captions }).docQuery.captions, 'on', `captions ${JSON.stringify(captions)} is captions on`);
+  }
+  // Any other captions is refused by name: the document routes read it as 'on'
+  // (test/replay-document.test.js), but a rendered FILE is not a view, and a
+  // typo there used to write captions nobody asked for.
+  for (const captions of ['off', 'None', 'summary', true]) {
+    const r = normalizeRenderRequest({ captions });
+    assert.deepEqual([r.ok, r.status, r.code], [false, 400, 'bad-captions'], `captions ${JSON.stringify(captions)} is refused`);
+    assert.equal(r.error, `unknown captions '${captions}'`);
+    assert.equal(r.hint, `one of: ${CAPTIONS.join(', ')}`, 'the hint names the values the route takes');
+  }
+  const retired = normalizeRenderRequest({ captions: 'prompt' });
+  assert.equal(retired.code, 'bad-captions', 'the retired captions:"prompt" writes no file at all (it never included prompts)…');
+  assert.match(retired.hint, /^one of: on, none \(.*include_prompts: true\)$/, '…and its hint says how prompts ARE asked for');
+  // So is a size not of the form 'WxH' (the document routes draw it at the
+  // default size): a file of another shape than the one asked for. The hint's
+  // example and bounds are the ones document.js reads and clamps to.
+  for (const size of ['390X844', '390×844', '390 x 844', '390x844px', '9x9', '12345x800', 1280]) {
+    const r = normalizeRenderRequest({ format: 'gif', size });
+    assert.deepEqual([r.ok, r.status, r.code], [false, 400, 'bad-size'], `size ${JSON.stringify(size)} is refused`);
+    assert.equal(r.error, `size '${size}' is not 'WxH'`);
+  }
+  const sizeHint = normalizeRenderRequest({ size: '390X844' }).hint;
+  assert.ok(sizeHint.includes(`'${DEFAULTS.size.w}x${DEFAULTS.size.h}'`), `the hint shows the form (${sizeHint})`);
+  for (const n of [SIZE_LIMITS.w.min, SIZE_LIMITS.w.max, SIZE_LIMITS.h.min, SIZE_LIMITS.h.max]) {
+    assert.ok(sizeHint.includes(String(n)), `the hint gives the bound ${n}`);
+  }
+  for (const size of [undefined, null, '', '390x844', '99x99']) {
+    assert.equal(normalizeRenderRequest({ size }).ok, true, `size ${JSON.stringify(size)} renders (a number beyond the bounds is clamped)`);
+  }
   assert.equal(normalizeRenderRequest({ width: 99999 }).width, LIMITS.width.max);
   assert.equal(normalizeRenderRequest({ width: 641 }).width % 2, 0, 'even width');
   assert.equal(normalizeRenderRequest({ format: 'mp4' }).format, 'mp4', 'video formats are named — whether ffmpeg is there is the render\'s question');
@@ -755,11 +786,23 @@ test('POST /api/replay/render gif: drives Chrome at this daemon\'s own /replay a
   assert.equal(fs.existsSync(udd), false, 'and is gone afterwards');
 
   // The export tool relays the fps the frames were sampled at (a long replay
-  // is fitted to the frame cap by lowering it).
+  // is fitted to the frame cap by lowering it), and the frame it drew.
   setEnv(t, { WEB_CHAT_PORT: String(port) });
   const viaTool = await require('../lib/mcp/tools/export').handler({ format: 'gif', width: 320, hold_ms: 1000 });
   assert.equal(viaTool.ok, true, JSON.stringify(viaTool));
   assert.equal(viaTool.fps, 10);
+  assert.deepEqual([viaTool.width, viaTool.height], [320, 200], 'the width and height drawn: the default 16:10');
+
+  // …and passes its own fps and size through: a named fps is the one the frames
+  // are sampled at, and the frame takes the size's shape.
+  const shaped = await require('../lib/mcp/tools/export').handler({ format: 'gif', width: 320, hold_ms: 1000, fps: 4, size: '800x800' });
+  assert.equal(shaped.ok, true, JSON.stringify(shaped));
+  assert.equal(shaped.fps, 4, 'the fps the tool was given');
+  const sq = decodeGif(fs.readFileSync(shaped.path));
+  assert.deepEqual([sq.width, sq.height], [320, 320], 'a square size draws a square frame');
+  assert.deepEqual([shaped.width, shaped.height], [sq.width, sq.height], 'and the tool says so');
+  const asked = new URL(fake.read().filter((l) => l.method === 'Page.navigate').pop().params.url);
+  assert.equal(asked.searchParams.get('size'), '800x800', 'and the page is laid out at that size');
 });
 
 test('POST /api/replay/render: chrome-not-found is an honest refusal with a hint; format replay needs no browser', async (t) => {
@@ -800,6 +843,62 @@ test('POST /api/replay/render: chrome-not-found is an honest refusal with a hint
 
   const bad = await postJson(port, { format: 'gif', to: 'nope' });
   assert.equal(bad.status, 404, 'a bad ref is refused before any browser is looked for');
+});
+
+test('POST /api/replay/render: an unknown captions is a 400 naming the values it takes, before any browser, and writes nothing', async (t) => {
+  setEnv(t, { WEB_CHAT_CHROME: '/nonexistent/chrome', WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const { api, port, root } = await withServer(t);
+  await seed(api);
+  const written = () => (fs.existsSync(projectPaths(root).exports) ? fs.readdirSync(projectPaths(root).exports) : []);
+
+  // A gif here would be 422 chrome-not-found: the 400 comes first.
+  for (const format of ['replay', 'gif']) {
+    const res = await postJson(port, { format, captions: 'off' });
+    const body = await res.json();
+    assert.equal(res.status, 400, `${format}: ${JSON.stringify(body)}`);
+    assert.equal(body.code, 'bad-captions');
+    assert.equal(body.error, "unknown captions 'off'");
+    assert.equal(body.hint, `one of: ${CAPTIONS.join(', ')}`);
+  }
+  assert.deepEqual(written(), [], 'nothing written');
+
+  // The export tool hands the refusal back as a result Claude can act on.
+  setEnv(t, { WEB_CHAT_PORT: String(port) });
+  const viaTool = await require('../lib/mcp/tools/export').handler({ format: 'replay', captions: 'Off' });
+  assert.deepEqual(viaTool, { error: "unknown captions 'Off'", code: 'bad-captions', hint: `one of: ${CAPTIONS.join(', ')}`, format: 'replay' });
+  assert.deepEqual(written(), [], 'still nothing written');
+
+  const none = await postJson(port, { format: 'replay', captions: 'none' });
+  const nb = await none.json();
+  assert.equal(none.status, 200, JSON.stringify(nb));
+  assert.equal(payloadOf(fs.readFileSync(nb.path, 'utf8')).opts.captions, 'none', 'a value it takes renders as before');
+});
+
+test('POST /api/replay/render: a size not of the form WxH is a 400 with the form and bounds, before any browser, and writes nothing', async (t) => {
+  setEnv(t, { WEB_CHAT_CHROME: '/nonexistent/chrome', WEB_CHAT_FFMPEG: NO_FFMPEG });
+  const { api, port, root } = await withServer(t);
+  await seed(api);
+  const written = () => (fs.existsSync(projectPaths(root).exports) ? fs.readdirSync(projectPaths(root).exports) : []);
+  const hint = normalizeRenderRequest({ size: 'x' }).hint;
+
+  // A gif here would be 422 chrome-not-found: the 400 comes first.
+  for (const format of ['gif', 'replay']) {
+    const res = await postJson(port, { format, size: '390×844' });
+    const body = await res.json();
+    assert.equal(res.status, 400, `${format}: ${JSON.stringify(body)}`);
+    assert.deepEqual([body.code, body.error, body.hint], ['bad-size', "size '390×844' is not 'WxH'", hint]);
+  }
+
+  // The export tool hands the refusal back as a result Claude can act on.
+  setEnv(t, { WEB_CHAT_PORT: String(port) });
+  const viaTool = await require('../lib/mcp/tools/export').handler({ format: 'gif', size: '390X844' });
+  assert.deepEqual(viaTool, { error: "size '390X844' is not 'WxH'", code: 'bad-size', hint, format: 'gif' });
+  assert.deepEqual(written(), [], 'nothing written');
+
+  // The document routes stay lenient, as with captions: a view draws the default size.
+  const view = await fetch(`http://127.0.0.1:${port}/replay?size=390X844&chrome=0`);
+  assert.equal(view.status, 200);
+  assert.deepEqual(payloadOf(await view.text()).opts.size, DEFAULTS.size);
 });
 
 test('POST /api/replay/render takes JSON only', async (t) => {
@@ -1001,6 +1100,15 @@ test('export MCP tool: format html is unchanged; replay/gif go through the rende
   assert.match(withP.hint, /include the user's prompts/, 'the tool tells Claude the file has them');
   assert.match(fs.readFileSync(withP.path, 'utf8'), /maybe private/, 'include_prompts: true puts them in');
 
+  // size reaches the replay document too (fps is a GIF/video knob: the route
+  // test above draws one with it).
+  assert.equal(tool.inputSchema.properties.fps.type, 'number');
+  assert.equal(tool.inputSchema.properties.size.type, 'string');
+  const phone = await tool.handler({ format: 'replay', to: 'n1', from: 'n0', size: '390x844' });
+  assert.equal(phone.ok, true, JSON.stringify(phone));
+  assert.deepEqual(payloadOf(fs.readFileSync(phone.path, 'utf8')).opts.size, { w: 390, h: 844 }, 'the player lays each frame out at that size');
+  assert.equal('width' in phone || 'height' in phone, false, 'a .html player draws no frame of its own size');
+
   const gif = await tool.handler({ format: 'gif' });
   assert.equal(gif.code, 'chrome-not-found');
   assert.match(gif.hint, /WEB_CHAT_CHROME/);
@@ -1010,7 +1118,7 @@ test('export MCP tool: format html is unchanged; replay/gif go through the rende
   assert.equal(bad.code, 'not-found');
 });
 
-test('export CLI: --replay/--gif/--mp4/--webm with --from/--hold/--fade/--width parse into a render body', () => {
+test('export CLI: --replay/--gif/--mp4/--webm with --from/--hold/--fade/--width/--fps/--size parse into a render body', () => {
   const { parseExportArgs } = require('../lib/cli/commands/export');
   assert.deepEqual(parseExportArgs([]), { format: 'html', ref: 'active' });
   assert.deepEqual(parseExportArgs(['n1.7']), { format: 'html', ref: 'n1.7' });
@@ -1037,4 +1145,47 @@ test('export CLI: --replay/--gif/--mp4/--webm with --from/--hold/--fade/--width 
   assert.match(parseExportArgs(['--gif', '--mode', 'sepia']).error, /--mode takes light or dark/);
   assert.match(parseExportArgs(['--gif', '--mode']).error, /needs a value/);
   assert.match(parseExportArgs(['--open', '--mode', 'dark']).error, /--open takes/, 'the player keeps the viewer\'s own mode');
+  // --fps and --size: the render route's fps and size, passed through (the
+  // daemon clamps them).
+  assert.deepEqual(parseExportArgs(['n1.7', '--mp4', '--fps', '24', '--size', '1920x1080']).body,
+    { format: 'mp4', to: 'n1.7', fps: 24, size: '1920x1080' });
+  assert.equal(parseExportArgs(['--replay', '--size', '390x844']).body.size, '390x844');
+  assert.equal('fps' in parseExportArgs(['--gif']).body, false, 'unsaid: a long replay is fitted to the frame cap');
+  assert.match(parseExportArgs(['--gif', '--fps']).error, /--fps needs a value/);
+  assert.match(parseExportArgs(['--gif', '--size']).error, /--size needs a value/);
+  assert.match(parseExportArgs(['n1.7', '--fps', '12']).error, /--fps\/--size\/.* need --replay, --gif, --mp4 or --webm/, 'a page export has no frames');
+  assert.match(parseExportArgs(['--open', '--size', '800x600']).error, /--open takes/, 'the player keeps its own size');
+  // Checked before anything is sent, as --captions and --mode are: a word where
+  // a number goes, or a size in another form, is refused rather than becoming
+  // the daemon's default.
+  for (const flag of ['--fps', '--hold', '--width']) {
+    for (const v of ['ten', '12px', ' ']) assert.match(parseExportArgs(['--gif', flag, v]).error, new RegExp(`^${flag} takes a number$`), `${flag} ${JSON.stringify(v)}`);
+  }
+  assert.match(parseExportArgs(['--gif', '--size', '390X844']).error, /^--size takes WxH/);
+});
+
+// The CLI checks --size itself, before the daemon does (an entry point cannot
+// import the daemon's parseSize). The two must agree on every form.
+test('export CLI: --size takes exactly the sizes the render route takes', () => {
+  const { parseExportArgs } = require('../lib/cli/commands/export');
+  const forms = ['1280x800', '390x844', '99x99', '9999x9999', '390X844', '390×844', '390 x 844', '390x844px', '9x9', '12345x800', 'x800', '1280x', '-390x844'];
+  for (const v of forms) {
+    const cli = !parseExportArgs(['--gif', '--size', v]).error;
+    assert.equal(cli, parseSize(v) != null, `--size ${v}: the CLI ${cli ? 'takes' : 'refuses'} it, the daemon ${cli ? 'refuses' : 'takes'} it`);
+  }
+});
+
+// The route refuses a captions it does not take (above), so every caller that
+// offers a choice has to offer exactly the route's: the tool's enum, the CLI's
+// --captions, and the player's select (public/app/replay.js sends its value).
+test('every caller of the render route offers exactly the captions it takes', () => {
+  const { parseExportArgs } = require('../lib/cli/commands/export');
+  const tool = require('../lib/mcp/tools/export');
+  assert.deepEqual(tool.inputSchema.properties.captions.enum, [...CAPTIONS], 'the export tool\'s enum');
+  for (const c of CAPTIONS) assert.equal(parseExportArgs(['--gif', '--captions', c]).body.captions, c, `the CLI takes --captions ${c}`);
+  assert.match(parseExportArgs(['--gif', '--captions', 'off']).error, /--captions takes on or none/, '…and refuses the rest before sending');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const select = /<select id="rpo-captions"[\s\S]*?<\/select>/.exec(html);
+  assert.ok(select, 'public/index.html no longer has the player\'s captions select — re-point this check');
+  assert.deepEqual([...select[0].matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]), [...CAPTIONS], 'the player\'s captions select');
 });

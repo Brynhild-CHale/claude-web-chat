@@ -352,6 +352,21 @@ test('tool: a known node still exports and reports its path', async (t) => {
 
 const { JSDOM } = require('jsdom');
 const { drawPage, renderNodePreview, renderPreviewHtml } = require('../lib/server/preview');
+const { source: pageCssSource } = require('../lib/server/runtime/page-css-src');
+
+// Every style rule a parsed document's stylesheets hold, with the @media it
+// sits in ('' at the top level) and a key from the CSSOM's own text — so two
+// sheets compare by the rules a browser would apply, not by their bytes.
+function styleRules(doc) {
+  const out = [];
+  (function walk(list, media) {
+    for (const r of list) {
+      if (r.media && r.cssRules) walk(r.cssRules, r.media.mediaText);
+      else if (r.selectorText) out.push({ media, selector: r.selectorText, style: r.style, key: `${media} ${r.cssText}` });
+    }
+  })([...doc.styleSheets].flatMap((s) => [...s.cssRules]), '');
+  return out;
+}
 
 // The drawn page, as data: each markdown block, and each run with its panes'
 // placement. `mainId` is the document's page container.
@@ -439,10 +454,28 @@ test('layout: the old single-column markup is gone', () => {
   const panes = [...doc.querySelectorAll('.pane')];
   assert.equal(panes.length, 3);
   for (const p of panes) assert.ok(p.parentElement.classList.contains('run-grid'), `${p.dataset.paneId} sits in a run's grid`);
+
+  // public/page.css is what places them — the stylesheet the preview inlines
+  // too. It is read here from its one accessor, never copied, so restyling the
+  // page cannot break this test while dropping or breaking the sheet in the
+  // file still does: the whole sheet is inlined, every rule of it is live in
+  // the parsed document, and among them are the two this markup needs.
+  const pageCss = pageCssSource();
+  assert.ok(html.includes(pageCss), 'public/page.css is inlined whole');
+  const sheet = new JSDOM(`<style>${pageCss}</style>`);
+  const own = styleRules(sheet.window.document);
+  const live = new Set(styleRules(doc).map((r) => r.key));
+  for (const r of own) {
+    assert.ok(live.has(r.key), `page.css's \`${r.selector}\`${r.media ? ` (@media ${r.media})` : ''} is a live rule in the export`);
+  }
+  const pane = doc.querySelector('.run-grid > .pane');
+  assert.ok(own.some((r) => !r.media && pane.matches(r.selector) && /var\(--col\b.*var\(--span\b/.test(r.style.getPropertyValue('grid-column'))),
+    'a page.css rule puts each pane on its run\'s grid from the --col / --span its card carries');
+  const stacking = doc.querySelector('.page-run.stacks .run-grid');
+  assert.ok(own.some((r) => /max-width/.test(r.media) && stacking.matches(r.selector) && r.style.getPropertyValue('grid-template-columns')),
+    'and a narrow-screen page.css rule re-lays a stacking run\'s grid');
+  sheet.window.close();
   dom.window.close();
-  // public/page.css is what places them — the rules the preview inlines too.
-  assert.ok(html.includes('.run-grid > .pane { grid-column: var(--col, auto) / span var(--span, 12); min-width: 0; }'));
-  assert.ok(html.includes('.page-run.stacks .run-grid { grid-template-columns: minmax(0, 1fr); }'), 'runs stack below 900px');
 });
 
 test('layout: a minimized pane stays out of the grid, as it does on the page', () => {

@@ -405,8 +405,9 @@ module.exports = {
 };
 ```
 
-The driver's whole surface is `render`, `setStore`, `getStore`, `clear`,
-`getEvents`, `waitFor` and `streamEvents` — see `lib/driver.js`. **There is no
+The driver's whole surface is `render`, `writeMarkdown`, `removeMarkdown`,
+`setStore`, `getStore`, `clear`, `getEvents`, `waitFor` and `streamEvents` — see
+`lib/driver.js`. **There is no
 per-key `subscribe`.** A control loop is `streamEvents({ kinds: ['store'] })`
 plus a slow poll as the reconnect fallback, exactly as `git-dashboard` does it.
 A service that calls a method the driver does not have throws at `start()`, and

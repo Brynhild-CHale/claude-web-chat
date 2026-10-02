@@ -134,6 +134,8 @@ test('replay doc: options normalize to safe values', () => {
   assert.equal(o.autoplay, true);
   assert.equal(o.at, 3);
   assert.equal(normalizeReplayOpts({ captions: '<x>', transition: 'wipe', pacing: 'x' }).captions, 'on');
+  assert.deepEqual(normalizeReplayOpts({ size: '390X844' }).size, d.size,
+    'a size not of the form WxH is the default here — a view, not a file (the render route refuses it)');
   assert.equal(normalizeReplayOpts({ captions: 'prompt' }).include_prompts, false, 'the retired mode does not turn prompts on');
 });
 

@@ -183,8 +183,9 @@ next step are ever live documents.
 - Options (query parameters): `hold_ms` (2500; 0.5–20 s) or `pacing=realtime`
   (each step held for the real gap to the next, clamped 1–6 s), `transition`
   `cut` (default) | `fade`, `captions` `on` (default) | `none`,
-  `include_prompts=1` (default off — see below), `size` (`1280x800`; the
-  logical frame size, scaled to fit), `chrome=0` (stage and caption only —
+  `include_prompts=1` (default off — see below), `size` (`WxH`, `1280x800` by
+  default; the logical frame size, scaled to fit — these routes read any other
+  form as the default), `chrome=0` (stage and caption only —
   what a renderer captures), `speed` (0.25–4), `autoplay=1`,
   `at=<step index>`.
 - **Your prompts are in a replay only when you say so — "Include my prompts".**
@@ -194,11 +195,12 @@ next step are ever live documents.
   trigger's 100-character summary of it, nothing in the embedded payload JSON
   (the tests grep the bytes). `captions=none` drops the caption bar and ships
   neither prompts nor replies. A node's trigger never enters the payload.
-  `captions` is `on` or `none`: the `export` tool and `claude-web-chat export`
-  refuse anything else, and only the HTTP routes (`GET /replay`,
-  `GET /api/replay/html`, `POST /api/replay/render`) take another value —
-  the retired `prompt` or `summary`, say — as `on`, which never turns
-  prompts on.
+  `captions` is `on` or `none`. The `export` tool, `claude-web-chat export`
+  and `POST /api/replay/render` refuse anything else; the route answers `400`
+  `bad-captions` with a hint naming the two values, so a typo never writes a
+  file with captions it did not ask for. Only the document routes
+  (`GET /replay`, `GET /api/replay/html`) take another value — the retired
+  `prompt` or `summary`, say — as `on`, which never turns prompts on.
 - **Where the choice lives.** The player's **Include my prompts** checkbox (off
   until you tick it, then remembered per browser) drives what you watch and
   every file you save from the player — **↧ replay.html**, **↧ GIF**, **↧ MP4**,
@@ -326,7 +328,7 @@ The same replay can be written to disk, to attach or post:
 | Route | Who uses it | What you get |
 | --- | --- | --- |
 | `export({ format: 'gif' \| 'mp4' \| 'webm' \| 'replay', from, to, … })` MCP tool | Claude | the path of `replay-<from>_<to>-<stamp>.gif` / `.mp4` / `.webm` / `.html` under `.web-chat/exports/` |
-| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--captions on\|none] [--prompts\|--no-prompts] [--mode light\|dark]` | the user, from a terminal | the same write, path printed |
+| `claude-web-chat export [to] --gif \| --mp4 \| --webm \| --replay [--from <node>] [--hold <ms>] [--fade] [--width <px>] [--fps <n>] [--size <WxH>] [--captions on\|none] [--prompts\|--no-prompts] [--mode light\|dark]` | the user, from a terminal | the same write, path printed |
 | **↧ GIF** / **↧ MP4** / **↧ WebM** in the replay player | the user, from the surface | a render of what the player is showing, with a link to download it |
 | `POST /api/replay/render` | anything local, JSON body only | `{ ok, path, label, from, to, format, frames, encoder, bytes }` |
 
@@ -411,21 +413,29 @@ How a render works (`lib/server/replay/render.js`):
   `include_prompts`, and the player's **↧ GIF** / **↧ MP4** / **↧ WebM** follow
   its **Include my prompts** checkbox (see above).
 - Options: `width` (320–1920, default 960; the height follows the replay's
-  `size`, 16:10 by default), `hold_ms`, `pacing`, `transition`, `captions`,
-  `include_prompts`, `mode` (`light` unless asked), `fps` (1–30: fade and scroll
-  sampling, and a video's frame rate), `from` / `to` / `include_collapsed` as
-  for the player. A frame is at most 1920×1200 in area: a taller `size` shrinks
-  the frame (width and height together, keeping its shape, both even) rather
-  than rendering a 1920×12960 page.
+  `size`, 16:10 by default), `size` (as for the player: the page size each
+  frame is laid out at, so a width of 900 or less draws the page as a narrow
+  screen does; a value not of the form `WxH`, digits and a lowercase `x`, is a
+  `400` `bad-size` whose hint gives the form and the bounds), `hold_ms`,
+  `pacing`, `transition`, `captions` (`on` | `none`; anything else is the `400`
+  above), `include_prompts`, `mode` (`light` unless asked), `fps` (1–30: fade
+  and scroll sampling, and a video's frame rate), `from` / `to` /
+  `include_collapsed` as for the player. The `export` tool takes `fps` and
+  `size` too, and `claude-web-chat export` takes `--fps` and `--size`, checking
+  both before it sends them; the player's ↧ buttons send neither. A frame is at
+  most 1920×1200 in area: a taller `size` shrinks the frame (width and height
+  together, keeping its shape, both even) rather than rendering a 1920×12960
+  page. The answer for a GIF or video carries the `width` and `height` it drew,
+  and the `export` tool passes them on.
 - **Frames are fitted, not refused, when they can be.** A move is sampled at
   `fps`, about eight frames a step at the default 10, so a plain replay of more
   than ~125 changing steps would pass the frame cap. When the request names no
-  `fps` (the `export` tool, the CLI and the player's buttons never do), the
-  render lowers it — to the highest `fps`, down to 1, whose frames fit — which
-  costs smoothness, never time: a hold is one frame whatever the rate. The
-  answer carries the `fps` it used. Past the cap even at 1 fps, or with an
-  `fps` you named, it is `413` `too-many-frames` with a hint to shorten the
-  range or group in-between nodes in a script (or leave `fps` out).
+  `fps` (the player's buttons never do, and the `export` tool and the CLI only
+  when asked), the render lowers it — to the highest `fps`, down to 1, whose
+  frames fit — which costs smoothness, never time: a hold is one frame whatever
+  the rate. The answer carries the `fps` it used. Past the cap even at 1 fps,
+  or with an `fps` you named, it is `413` `too-many-frames` with a hint to
+  shorten the range or group in-between nodes in a script (or leave `fps` out).
 - Bounded: one render at a time (a second is `409` `busy`), at most 1000 frames
   (`413` `too-many-frames`), 64 MB of output — a `format: 'replay'` document,
   every step's node inlined, included — (`413` `too-large`) and five minutes
