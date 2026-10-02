@@ -1,10 +1,10 @@
 // The mirror's emission (lib/server/mirror/emit.js, spec §2.9): change
 // collection over the model, the 100 ms flush on an injected clock and timers,
 // the per-engine rev, the four frames and the compact ring events on the mirror
-// bus, StatusRow's typed and content-free fields, index mode, and the volume
-// bound. Unit tests over the real model, turn machine and change bus, wired the
-// way createServer wires them (two buses, one broadcaster): no server, no files,
-// no real timers.
+// bus, StatusRow's typed and content-free fields, index mode, the volume bound
+// and a wall clock stepped back. Unit tests over the real model, turn machine
+// and change bus, wired the way createServer wires them (two buses, one
+// broadcaster): no server, no files, no real timers.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -23,13 +23,17 @@ const C2 = '7c1d5e8f-2a4b-4c6d-8e0f-1a2b3c4d5e6f';
 // A manual clock: `advance(ms)` runs every timer that falls due within it, in
 // order, with the clock set to each one's time first. With `skew`, every timer
 // fires that many milliseconds early (but at least 1 ms out), as a Node timer
-// armed against a stale loop time can.
+// armed against a stale loop time can. `stepWall(ms)` steps the wall clock
+// (`now`) alone, as an NTP step or a clock set by hand does: the timers run on a
+// monotonic clock of their own, as Node's do, and keep their times.
 function manualClock({ start = 1_790_000_000_000, skew = 0 } = {}) {
   let t = start;
+  let wall = 0;
   let n = 0;
   const pending = new Map();
   return {
-    now: () => t,
+    now: () => t + wall,
+    stepWall(ms) { wall += ms; },
     setTimeout(fn, ms) {
       const handle = { n: ++n };
       pending.set(handle, { at: t + (skew ? Math.max(1, ms - skew) : Math.max(0, ms)), fn, n });
@@ -646,6 +650,52 @@ test('a burst of 300 tool calls yields at most ten stream frames a second, and l
     const turns = streams.flatMap((s) => s.frame.turns || []).filter((x) => x.id === 'p-burst');
     assert.equal(turns.at(-1).status, 'done');
     assert.equal(turns.at(-1).counts.tools, 300);
+    assert.equal(clock.pending(), 0, 'and nothing is left armed');
+  }
+});
+
+test('a wall clock stepped back holds no frame back: the next write goes out within FLUSH_MS', () => {
+  // On time, and with timers that fire early. Only the wall clock steps: the
+  // timers run on a monotonic clock of their own, as Node's do.
+  for (const skew of [0, 30, 99]) {
+    const { clock, em, tm, sent, frames } = setup({ skew });
+    const t0 = clock.now();
+    em.model.upsertConversation(C1, { title: 'clock' });
+    tm.ingest(C1, prompt(C1, 'p-clock', t0));
+    working(em, C1, t0, { kind: 'Bash', tool: 'Bash', label: 'Bash · npm test', started_at: t0 });
+    clock.advance(FLUSH_MS);
+    assert.equal(frames('mirror:status').at(-1).conversations[0].state, 'working');
+
+    // Right after that flush an NTP step puts the wall clock back a minute, and
+    // Claude stops on a permission prompt. The bar must say so now, not a
+    // minute from now.
+    clock.stepWall(-60_000);
+    const mark = sent.length;
+    em.model.upsertLive(C1, { state: 'waiting', since: clock.now(), step: null,
+      waiting: { kind: 'permission', tool: 'Bash', summary: 'Bash(rm -rf dist)', pending: false } });
+    clock.advance(FLUSH_MS);
+    const out = sent.slice(mark).map((s) => s.frame);
+    const status = out.find((f) => f.type === 'mirror:status');
+    assert.ok(status, `skew ${skew}: the status went out within FLUSH_MS of the write`);
+    assert.equal(status.conversations[0].state, 'waiting');
+    assert.equal(status.conversations[0].waiting_kind, 'permission');
+    assert.ok(out.some((f) => f.type === 'mirror:update' && f.live && f.live.state === 'waiting'), `skew ${skew}: and so did the live state`);
+
+    // And the mirror keeps its pace on the clock it now reads: five seconds of
+    // tool calls, about one frame per FLUSH_MS, none held back and none closer
+    // together than FLUSH_MS.
+    const mark2 = sent.length;
+    for (let i = 0; i < 50; i++) {
+      tm.ingest(C1, pre(C1, `toolu_clock_${i}`, clock.now()));
+      clock.advance(FLUSH_MS);
+    }
+    const streams = sent.slice(mark2).filter((s) => s.frame.type === 'mirror:stream');
+    assert.ok(streams.length >= 45, `skew ${skew}: ${streams.length} stream frames in five seconds`);
+    for (let i = 1; i < streams.length; i++) {
+      assert.ok(streams[i].at - streams[i - 1].at >= FLUSH_MS, `skew ${skew}: flushes are FLUSH_MS apart again`);
+    }
+    const seen = new Set(streams.flatMap((s) => (s.frame.items || []).map((it) => it.id)));
+    for (let i = 0; i < 50; i++) assert.ok(seen.has(`toolu_clock_${i}`), `skew ${skew}: toolu_clock_${i} went out`);
     assert.equal(clock.pending(), 0, 'and nothing is left armed');
   }
 });
