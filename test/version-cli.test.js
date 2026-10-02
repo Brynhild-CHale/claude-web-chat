@@ -226,7 +226,13 @@ test('H-11: silent everywhere else', (t) => {
   const broken = fakeCheckout(t);
   fs.writeFileSync(path.join(broken, '.git', 'HEAD'), 'ref: refs/heads/gone\n');
   assert.equal(devBuildBehind({ cwd: broken, paths }), null, 'a HEAD naming a ref that is not there');
-  fs.writeFileSync(path.join(broken, '.git', 'HEAD'), 'ref: refs/heads/../../../../etc/passwd\n');
+  // A ref that climbs out of the git dir to a file that does hold a sha: read,
+  // it would be taken for HEAD.
+  const outside = path.join(path.dirname(broken), `wc-outside-${path.basename(broken)}`);
+  fs.writeFileSync(outside, `${'e'.repeat(40)}\n`);
+  t.after(() => fs.rmSync(outside, { force: true }));
+  assert.equal(path.resolve(broken, '.git', 'refs', '..', '..', '..', path.basename(outside)), outside);
+  fs.writeFileSync(path.join(broken, '.git', 'HEAD'), `ref: refs/../../../${path.basename(outside)}\n`);
   assert.equal(gitHead(broken), null, 'a ref that climbs out is not followed');
   // And nothing reaches the output.
   const log = sink();
