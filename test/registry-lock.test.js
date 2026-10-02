@@ -391,3 +391,22 @@ test('a claim left by a breaker that died is cleared, then the stale lock is bro
   assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)), 'the row was written');
   assert.deepStrictEqual(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.includes('.lock')), [], 'no lock, claim or aside file left');
 });
+
+test('a break whose rename fails for another reason than ENOENT leaves the lock alone, and waits', (t) => {
+  withTempHome(t);
+  freshStaleLock();
+  const real = fs.renameSync;
+  fs.renameSync = function renameRefused(from, ...rest) {
+    if (path.resolve(String(from)) === lockFile()) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    return real.call(fs, from, ...rest);
+  };
+  let out;
+  try { out = stderrOf(() => registry.breakIfStale(lockFile())); } finally { fs.renameSync = real; }
+  // "Gone, retry at once" here would be a lie the next turn repeats: the lock
+  // is still there, and the same rename will fail the same way.
+  assert.strictEqual(out.value, false, 'wait');
+  assert.strictEqual(fs.readFileSync(lockFile(), 'utf8'), `${DEAD_PID}\n`, 'the lock is untouched');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.startsWith('instances.json.lock')),
+    ['instances.json.lock'], 'and the claim is released, no aside left');
+  assert.strictEqual(out.text, '');
+});
