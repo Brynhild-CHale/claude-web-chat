@@ -27,7 +27,7 @@ const { installFromStage } = require('../lib/packs/install');
 const { upsertPack, sha256 } = require('../lib/packs/store');
 const { classify } = require('../lib/core/remote-policy');
 const { homeDir, userPaths } = require('../lib/core/paths');
-const { writePortfileAt } = require('../lib/core/portfiles');
+const { writePortfileAt, isPidAlive } = require('../lib/core/portfiles');
 const trust = require('../lib/cli/commands/trust');
 
 const waitUntil = (fn, opts) => harnessWaitUntil(fn, { timeout: 4000, interval: 40, ...opts });
@@ -248,6 +248,36 @@ test('--pack --deny refuses every service the pack installed, and the panes stop
   assert.deepEqual(await pendingOf(ctx), [], 'a denied request is not asked about');
   assert.equal((await api.get('/api/store')).json.svc_b, undefined, 'and does not run');
   assert.deepEqual((await packOf(ctx)).requests.map((p) => p.decision), ['denied', 'denied']);
+});
+
+// `--pack --deny` is the one CLI path that turns an approval a child is RUNNING
+// under into a denial — and it says "It will not run". Starting was gated on
+// the trust file; running has to be too.
+test('--pack --deny stops a service it had approved, and it does not come back', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const { api } = ctx;
+  installAcme(ctx.root);
+  await openViewer(t, ctx);
+
+  const approved = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(true) }));
+  assert.equal(approved.exit, null, approved.err);
+  await api.post('/api/components/deploy-board/use', { id: 'b', params: { title: 'x' } });
+  const running = await waitUntil(async () => (await api.get('/api/store')).json.svc_b || false);
+  assert.ok(running, 'the approved service runs');
+  assert.equal(isPidAlive(running.pid), true);
+
+  const denied = await runInProcess(() => trust(['--pack', 'acme-ops', '--deny'], { cwd: ctx.root, prompt: answering(true) }));
+  assert.equal(denied.exit, null, denied.err);
+  assert.match(denied.out, /approved earlier — denying changes that/);
+  assert.match(denied.out, /It will not run/);
+  assert.ok(await waitUntil(() => !isPidAlive(running.pid)), 'the denial stops the child that was running');
+  assert.equal(ctx.srv.services._children.size, 0);
+
+  // Any later pass leaves it stopped, and quiet: a denial is a decision.
+  ctx.srv.services.scheduleReconcile('test');
+  await sleep(600);
+  assert.equal(ctx.srv.services._children.size, 0, 'and it is not respawned');
+  assert.deepEqual(await pendingOf(ctx), [], 'nor asked about again');
 });
 
 // ── what it will not approve ────────────────────────────────────────────────
