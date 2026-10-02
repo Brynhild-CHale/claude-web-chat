@@ -226,8 +226,13 @@ test('fields starting with _ are kept in process and never serialize', () => {
   model.upsertTask({ id: 'k1', conversation_id: 'c1', kind: 'shell', title: 't', status: 'running', _output: '/x/tasks/k1.output' });
 
   assert.equal(model.item('toolu_1').result._path, '/x/tool-results/a.txt', 'kept in process');
+  assert.equal(model.turn('t1')._segment.to, 10, 'the getters are in process: they keep it');
+  // A turn page is in the content route's shape, ready to leave the engine.
+  const page = model.turnPage('c1');
+  assert.deepEqual(page.turns, [model.serializeTurn('t1')]);
+  assert.equal(typeof page.turns[0].rev, 'number');
   const out = [model.serializeItem('toolu_1'), model.serializeItem('toolu_1', { level: 'full' }), model.serializeTurn('t1'),
-    model.serializeTask('k1'), model.serializeConversation('c1'), model.serializeLive('c1')];
+    model.serializeTask('k1'), model.serializeConversation('c1'), model.serializeLive('c1'), page];
   const keys = [];
   const walk = (v) => { if (v && typeof v === 'object') for (const k of Object.keys(v)) { keys.push(k); walk(v[k]); } };
   walk(out);
