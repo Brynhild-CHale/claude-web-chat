@@ -183,8 +183,9 @@ next step are ever live documents.
 - Options (query parameters): `hold_ms` (2500; 0.5–20 s) or `pacing=realtime`
   (each step held for the real gap to the next, clamped 1–6 s), `transition`
   `cut` (default) | `fade`, `captions` `on` (default) | `none`,
-  `include_prompts=1` (default off — see below), `size` (`1280x800`; the
-  logical frame size, scaled to fit), `chrome=0` (stage and caption only —
+  `include_prompts=1` (default off — see below), `size` (`WxH`, `1280x800` by
+  default; the logical frame size, scaled to fit — these routes read any other
+  form as the default), `chrome=0` (stage and caption only —
   what a renderer captures), `speed` (0.25–4), `autoplay=1`,
   `at=<step index>`.
 - **Your prompts are in a replay only when you say so — "Include my prompts".**
@@ -414,14 +415,18 @@ How a render works (`lib/server/replay/render.js`):
 - Options: `width` (320–1920, default 960; the height follows the replay's
   `size`, 16:10 by default), `size` (as for the player: the page size each
   frame is laid out at, so a width of 900 or less draws the page as a narrow
-  screen does), `hold_ms`, `pacing`, `transition`, `captions` (`on` | `none`;
-  anything else is the `400` above), `include_prompts`, `mode` (`light` unless
-  asked), `fps` (1–30: fade and scroll sampling, and a video's frame rate),
-  `from` / `to` / `include_collapsed` as for the player. The `export` tool takes
-  `fps` and `size` too, and `claude-web-chat export` takes `--fps` and `--size`;
-  the player's ↧ buttons send neither. A frame is at most 1920×1200 in
-  area: a taller `size` shrinks the frame (width and height together, keeping
-  its shape, both even) rather than rendering a 1920×12960 page.
+  screen does; a value not of the form `WxH`, digits and a lowercase `x`, is a
+  `400` `bad-size` whose hint gives the form and the bounds), `hold_ms`,
+  `pacing`, `transition`, `captions` (`on` | `none`; anything else is the `400`
+  above), `include_prompts`, `mode` (`light` unless asked), `fps` (1–30: fade
+  and scroll sampling, and a video's frame rate), `from` / `to` /
+  `include_collapsed` as for the player. The `export` tool takes `fps` and
+  `size` too, and `claude-web-chat export` takes `--fps` and `--size`, checking
+  both before it sends them; the player's ↧ buttons send neither. A frame is at
+  most 1920×1200 in area: a taller `size` shrinks the frame (width and height
+  together, keeping its shape, both even) rather than rendering a 1920×12960
+  page. The answer for a GIF or video carries the `width` and `height` it drew,
+  and the `export` tool passes them on.
 - **Frames are fitted, not refused, when they can be.** A move is sampled at
   `fps`, about eight frames a step at the default 10, so a plain replay of more
   than ~125 changing steps would pass the frame cap. When the request names no
