@@ -1,6 +1,8 @@
 // The floor under the suite, held: test-support/sandbox.js scrubs Claude
 // Code's environment and points CLAUDE_CONFIG_DIR into the sandbox, in this
-// process and in every process a test starts.
+// process and in every process a test starts; and test-support/claude-home.js
+// builds its fake ~/.claude only under that sandbox, with the procStart the
+// caller hands it.
 //
 // The suite usually runs inside a Claude Code session, and an inherited
 // CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_ENTRYPOINT or CLAUDE_CONFIG_DIR would point
@@ -21,6 +23,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const { claudeConfigDir, userClaudePaths, realpath, fence } = require('../lib/core/paths');
+const registry = require('../lib/util/registry');
+const { claudeHome } = require('../test-support/claude-home');
 
 const SANDBOX_MODULE = path.join(__dirname, '..', 'test-support', 'sandbox.js');
 const PATHS_MODULE = path.join(__dirname, '..', 'lib', 'core', 'paths.js');
@@ -160,4 +164,144 @@ test('a process that inherits a sandbox keeps what a test set on purpose', () =>
   assert.equal(r.sandbox, SANDBOX);
   assert.deepEqual(r.names.filter(scrubbed), ['CLAUDE_CODE_SESSION_ID']);
   assert.ok(fs.existsSync(SANDBOX), 'and the inherited sandbox outlives that process');
+});
+
+// ── the claude-home fixture ─────────────────────────────────────────────────
+
+// Every path an fs write call names while `fn` runs: what it creates, writes,
+// moves, links, chmods or removes. Relative paths resolve as fs would resolve
+// them. Synchronous, so nothing else runs in the window.
+const ONE_PATH = ['mkdirSync', 'mkdtempSync', 'writeFileSync', 'appendFileSync', 'openSync', 'chmodSync', 'utimesSync', 'truncateSync', 'unlinkSync', 'rmSync', 'rmdirSync'];
+const TWO_PATHS = ['renameSync', 'linkSync', 'copyFileSync', 'cpSync'];
+function writesDuring(fn) {
+  const seen = [];
+  const note = (a) => {
+    if (typeof a === 'string' || Buffer.isBuffer(a)) seen.push(path.resolve(String(a)));
+    else if (a instanceof URL) seen.push(path.resolve(a.pathname));
+  };
+  const saved = new Map();
+  const spy = (name, pick) => {
+    const orig = fs[name];
+    if (typeof orig !== 'function') return;
+    saved.set(name, orig);
+    fs[name] = function (...args) { pick(args).forEach(note); return orig.apply(this, args); };
+  };
+  for (const name of ONE_PATH) spy(name, (args) => [args[0]]);
+  for (const name of TWO_PATHS) spy(name, (args) => [args[0], args[1]]);
+  spy('symlinkSync', (args) => [args[1]]); // the link is made at the second argument
+  try {
+    return { result: fn(), paths: seen };
+  } finally {
+    for (const [name, orig] of saved) fs[name] = orig;
+  }
+}
+
+test('claude-home builds its tree only under the sandbox, with the procStart the caller supplies', (t) => {
+  const root = tmpDir(t, 'wc-proj-');
+  const procStart = 'Fri Oct  2 04:22:15 2026'; // the caller's; the fixture never computes one
+
+  const { result: ch, paths: written } = writesDuring(() => {
+    const home = claudeHome(t, { root });
+    home.writeSession({ pid: process.pid, procStart, sessionId: SID });
+    home.writeTranscript(SID, [{ type: 'user', sessionId: SID }]);
+    home.appendTranscript(SID, ['{"type":"assistant"}']);
+    home.writeTaskOutput(SID, 'b3k9x2', 'building\n');
+    home.addMcp({ pid: process.pid, ppid: process.ppid, interrupt: 'tty' });
+    home.write('plans/quiet-river.md', '# Plan\n');
+    home.sessionDir(SID);
+    return home;
+  });
+  assert.ok(written.length > 0);
+  for (const p of written) assert.ok(inSandbox(p), `${p} is outside the sandbox`);
+
+  // Claude Code's layout, at the paths the path authority names, from the
+  // PHYSICAL project path.
+  const cp = userClaudePaths();
+  const physical = fs.realpathSync(root);
+  assert.equal(ch.dir, path.join(SANDBOX, '.claude'));
+  assert.equal(ch.cwd, physical);
+  assert.equal(ch.projectDir, cp.projectDir(physical));
+  assert.ok(fs.statSync(ch.projectDir).isDirectory(), 'the projects slug directory');
+
+  const sessionFile = cp.claudeSessionStateFile(process.pid);
+  const record = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+  assert.equal(record.procStart, procStart, 'procStart is the caller\'s, verbatim');
+  assert.equal(record.pid, process.pid);
+  assert.equal(record.sessionId, SID);
+  assert.equal(record.cwd, physical);
+  assert.ok(fs.existsSync(path.join(cp.sessionsDir, `${process.pid}.key`)), 'beside it, the .key a reader must never open');
+
+  const transcript = path.join(ch.projectDir, `${SID}.jsonl`);
+  assert.equal(ch.transcript(SID), transcript);
+  assert.equal(fs.readFileSync(transcript, 'utf8'), `${JSON.stringify({ type: 'user', sessionId: SID })}\n{"type":"assistant"}\n`);
+
+  const out = path.join(ch.tmpDir, `claude-${ch.uid}`, ch.slug, SID, 'tasks', 'b3k9x2.output');
+  assert.equal(fs.readFileSync(out, 'utf8'), 'building\n');
+  assert.equal(path.basename(ch.taskDir(SID)), 'tasks');
+  assert.equal(fs.statSync(path.join(ch.tmpDir, `claude-${ch.uid}`)).mode & 0o777, 0o700, 'claude-<uid> is private, as Claude Code makes it');
+
+  const row = registry.readMcpEntries().find((e) => e.pid === process.pid && e.root === physical);
+  assert.ok(row, 'a live MCP presence row for this project');
+  assert.equal(row.ppid, process.ppid);
+  assert.equal(row.interrupt, 'tty', 'a field the writer does not take is still on the row');
+
+  assert.equal(fs.readFileSync(path.join(ch.dir, 'plans', 'quiet-river.md'), 'utf8'), '# Plan\n');
+
+  // Cleanup takes everything it made, and only that.
+  const { paths: removed } = writesDuring(() => ch.cleanup());
+  for (const p of removed) assert.ok(inSandbox(p), `${p} is outside the sandbox`);
+  for (const p of [sessionFile, transcript, out, path.join(ch.dir, 'plans', 'quiet-river.md'), ch.projectDir]) {
+    assert.equal(fs.existsSync(p), false, `${p} is gone`);
+  }
+  assert.equal(registry.readMcpEntries().some((e) => e.pid === process.pid && e.root === physical), false, 'and so is the row');
+});
+
+test('claude-home refuses to guess: procStart is the caller\'s, a pid is an integer, an id cannot form a path', (t) => {
+  const ch = claudeHome(t, { root: tmpDir(t, 'wc-proj-') });
+  assert.throws(() => ch.writeSession({ pid: process.pid }), /procStart/);
+  assert.throws(() => ch.writeSession({ pid: String(process.pid), procStart: null }), /pid/);
+  const { record } = ch.writeSession({ pid: process.pid, procStart: null, status: 'waiting', waitingFor: 'permission prompt' });
+  assert.equal(record.procStart, null, 'null is a choice the caller may make');
+  assert.equal(record.waitingFor, 'permission prompt');
+  for (const bad of ['../x', 'a/b', '', 'x'.repeat(101)]) {
+    assert.throws(() => ch.writeTranscript(bad, []), /session id/, JSON.stringify(bad));
+    assert.throws(() => ch.taskDir(bad), /session id/, JSON.stringify(bad));
+  }
+  assert.throws(() => ch.writeTaskOutput(SID, '../escape', 'x'), /task id/);
+  assert.throws(() => ch.write('../../outside.txt', 'x'), /not a file inside/);
+  assert.throws(() => ch.write('', 'x'), /not a file inside/);
+});
+
+test('claude-home refuses a Claude tier outside the sandbox, and writes nothing there', (t) => {
+  const outside = tmpDir(t, 'wc-not-sandbox-');
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = path.join(outside, '.claude');
+  t.after(() => {
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prev;
+  });
+
+  assert.throws(() => claudeHome(t, { root: tmpDir(t, 'wc-proj-') }), /outside the test sandbox/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('an isolated claude-home is a private, empty tier under the sandbox until its cleanup', (t) => {
+  const shared = process.env.CLAUDE_CONFIG_DIR;
+  const outer = claudeHome(t, { root: tmpDir(t, 'wc-proj-'), isolate: true });
+  assert.notEqual(outer.dir, shared);
+  assert.ok(inSandbox(outer.dir));
+  assert.equal(process.env.CLAUDE_CONFIG_DIR, outer.dir);
+  assert.equal(claudeConfigDir(), outer.dir, 'code under test resolves the private tier');
+  assert.deepEqual(fs.readdirSync(outer.dir).sort(), ['projects', 'sessions']);
+
+  // Nested, the innermost wins; unwinding outer first (the order t.after hooks
+  // run in) still leaves the right tier in force at each step.
+  const inner = claudeHome(t, { root: outer.root, isolate: true });
+  assert.equal(claudeConfigDir(), inner.dir);
+  outer.cleanup();
+  assert.equal(claudeConfigDir(), inner.dir, 'the outer cleanup leaves the inner tier in force');
+  inner.cleanup();
+  assert.equal(process.env.CLAUDE_CONFIG_DIR, shared, 'then the sandbox\'s own tier again');
+  assert.equal(fs.existsSync(outer.dir), false);
+  assert.equal(fs.existsSync(inner.dir), false);
 });
