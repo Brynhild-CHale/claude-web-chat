@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Upgrading from 0.8.0
+
+Nothing to do for the changes so far: they touch only the repository's README.
+
+### Changed
+
+- **The README shows its original screen recordings again.** `flow.gif`, `graph.gif` and `component-install.gif` are back to the clips recorded on 2026-09-14 from real sessions, replacing the 0.8.0 re-records. `replay.gif` stays as it is: it has no earlier version. The README check no longer caps each clip at 2.5 MB (the original `flow.gif` is 6.4 MB; `.github/` never ships in the release).
+
 ## [0.8.0] - 2026-09-28
 
 ### Upgrading from 0.7.6

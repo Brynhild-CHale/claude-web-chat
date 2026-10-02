@@ -7,16 +7,18 @@
 // throwaway HOME (so nothing reaches ~/.web-chat or a daemon already running),
 // drives the demo story (story.js) through the HTTP API, then records:
 //
-//   flow    .github/media/flow.gif — the product's own scripted replay render
-//           (POST /api/replay/render, story.FLOW), 960×600
+//   flow    flow.gif — the product's own scripted replay render
+//           (POST /api/replay/render, story.FLOW), 960×600. NOT the README's
+//           flow.gif, which is the original screen recording (2026-10-02).
 //   replay  .github/media/replay.gif — the live chrome, 1280×800 at 0.75 scale,
 //           while Claude opens a directed replay in it (POST /api/replay/open,
 //           story.REPLAY)
 //
 // Needs a Chrome-family browser (WEB_CHAT_CHROME to pick one) and, for a small
 // GIF, ffmpeg (WEB_CHAT_FFMPEG). With no clip named it records both. Output
-// goes to --out (default: a fresh temp dir, printed); pass `--out .github/media`
-// to replace the committed clips. See README.md beside this file.
+// goes to --out (default: a fresh temp dir, printed). To replace the README's
+// replay clip, record only it: `replay --out .github/media` — never `flow` into
+// .github/media. See README.md beside this file.
 
 const fs = require('fs');
 const os = require('os');

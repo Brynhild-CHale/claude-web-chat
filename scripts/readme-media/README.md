@@ -1,11 +1,15 @@
 # README media
 
-This directory records the README's replay clips, `.github/media/flow.gif` and
-`.github/media/replay.gif`. It is dev-only. `scripts/` is not in package.json's
-`files` allowlist, and `test/release-build.test.js` fails if it ever ships.
+This directory records the README's replay clip, `.github/media/replay.gif`, and a
+scripted `flow.gif`. It is dev-only. `scripts/` is not in package.json's `files`
+allowlist, and `test/release-build.test.js` fails if it ever ships.
+
+The README's own `flow.gif` is not this recorder's. It is the original screen
+recording (restored 2026-10-02, see the last section), so record `flow` to a
+scratch directory, never into `.github/media/`:
 
 ```sh
-WEB_CHAT_CHROME=/path/to/chrome node scripts/readme-media/record.js --out .github/media
+WEB_CHAT_CHROME=/path/to/chrome node scripts/readme-media/record.js replay --out .github/media
 ```
 
 | file | what it is |
@@ -31,7 +35,8 @@ WEB_CHAT_CHROME=/path/to/chrome node scripts/readme-media/record.js --out .githu
 
 - **flow.gif** is web-chat's own scripted replay render (`POST /api/replay/render`
   with `story.FLOW`). The page is drawn at 1280×800 and written at 960×600, at
-  20 fps so the scroll moves stay smooth. It covers n1.0 → n1.2.
+  20 fps so the scroll moves stay smooth. It covers n1.0 → n1.2. The README does
+  not show it; `test/readme-media.test.js` still drives its script.
 - **replay.gif** records the live chrome at 1280×800 and 0.75 scale while Claude opens
   a directed replay in it (`POST /api/replay/open` with `story.REPLAY`, the call
   behind `export({script, open: true})`). It covers n1.0 → n1.1 → the n1.1.0 / n1.1.1 branch.
@@ -45,11 +50,12 @@ something the step before already showed.
 
 ## After re-recording
 
-- Each GIF must stay under 2.5 MB (`test/doc-truth.test.js`).
 - Pull a few frames and look at them before committing:
-  `ffmpeg -i .github/media/flow.gif -fps_mode passthrough /tmp/f/%03d.png`.
+  `ffmpeg -i .github/media/replay.gif -fps_mode passthrough /tmp/f/%03d.png`.
 - If the story changed, update the README's alt text for the clip.
 
-`graph.gif` and `component-install.gif` are not made here. They drive the chrome
-by hand over CDP (the graph screen, and a pack installed through ＋ → Manage
-against `test-support/fake-gh.js`). Commit 57912ec describes how they were made.
+`flow.gif`, `graph.gif` and `component-install.gif` in the README are not made
+here. They are the original screen recordings of real sessions, from commit
+af972c3 (2026-09-14). The 0.8.0 re-records that replaced them (commits 57912ec
+and 20ea236) were reverted on 2026-10-02 at the maintainer's request, along with
+the 2.5 MB-per-clip check that came with them.

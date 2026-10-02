@@ -897,9 +897,9 @@ test('the README\'s documentation table links every doc `claude-web-chat docs` s
 });
 
 // The README's clips live in .github/media/ (outside the release tarball, so
-// nothing else notices a renamed or missing one), and a clip too heavy for the
-// README to load is as broken as a missing one.
-test('every image the README shows exists in .github/media/ and stays under 2.5 MB', () => {
+// nothing else notices a renamed or missing one). No size cap: the README shows
+// the original screen recordings (maintainer, 2026-10-02), and flow.gif is 6.4 MB.
+test('every image the README shows exists in .github/media/', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const readme = read('README.md');
@@ -909,7 +909,6 @@ test('every image the README shows exists in .github/media/ and stays under 2.5 
     assert.match(rel, /^\.github\/media\/[a-z0-9-]+\.gif$/, `README.md shows ${rel}; its clips live in .github/media/`);
     const file = path.join(__dirname, '..', rel);
     assert.ok(fs.existsSync(file), `README.md shows ${rel}, which does not exist`);
-    assert.ok(fs.statSync(file).size < 2.5 * 1024 * 1024, `${rel} is over 2.5 MB`);
   }
 });
 

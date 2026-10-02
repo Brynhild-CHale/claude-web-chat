@@ -2,7 +2,7 @@
 
 A live page in your browser that Claude Code draws on while you talk in the terminal. Diagrams, forms, comparisons, and working mockups land on the page and stay interactive, with short headings and prose between them so a page reads top to bottom. What you click and type there flows back to Claude as data, and every turn becomes a node in a graph you can walk back through and branch.
 
-![A page over three turns, as web-chat's own replay draws it: Claude puts a cache comparison and a constraints form on the page, the user applies the form and a recommendation appears, then a read-path diagram lands after two chat-only turns; each step scrolls down to what it added](.github/media/flow.gif)
+![One web-chat cycle: Claude renders a question on the surface, the user answers in the page, and the answer flows back to Claude](.github/media/flow.gif)
 
 ## Quickstart
 
@@ -41,11 +41,11 @@ A page is a sequence of panes and short markdown. Claude writes a `#` title and 
 
 Every turn that changes the surface is saved as a node. A turn that only answers in chat saves nothing, and is listed on the next node that does. Preview any earlier state (read-only), set it active on the graph screen, and your next message branches from there, so trying a different direction never loses the first one. A run of turns collapses into a ×N stack, and bookmarks name the moments that matter.
 
-![The graph screen: the bookmarked node opens in the inspector, a ×2 branch stack expands into its two turns, and one of them opens in a read-only glance](.github/media/graph.gif)
+![The graph viewer: every turn is a node, and earlier states can be previewed and branched from](.github/media/graph.gif)
 
 ## Replay
 
-Replay plays a stretch of history forward, node by node, with Claude's reply under each one. Press `R` on the page or **▶ Replay** in the graph inspector. Claude can also direct one: it picks the nodes, how long each one holds and a caption for each, then opens it in your browser (`export({script, open: true})`). Any replay exports as an offline `.html` player, a GIF, or (with ffmpeg) an MP4 or WebM. The page at the top of this README is one of those GIFs, rendered by web-chat. See [Exporting pages and replays](docs/export-pages.md).
+Replay plays a stretch of history forward, node by node, with Claude's reply under each one. Press `R` on the page or **▶ Replay** in the graph inspector. Claude can also direct one: it picks the nodes, how long each one holds and a caption for each, then opens it in your browser (`export({script, open: true})`). Any replay exports as an offline `.html` player, a GIF, or (with ffmpeg) an MP4 or WebM. See [Exporting pages and replays](docs/export-pages.md).
 
 ![Claude opens a directed replay in the browser: the page steps from the question to the Redis recommendation, then down a branch that keeps the cache in-process, scrolling to each change](.github/media/replay.gif)
 
@@ -61,7 +61,7 @@ Claude saves panes worth keeping to the project's component library and reuses t
 claude-web-chat pack get https://github.com/acme/ops-pack    # download and review first; installs nothing
 ```
 
-![Installing a component pack from a GitHub URL through the topbar's ＋ → Manage panel: download for review, install, then add one of its blocks to the page from the Library tab](.github/media/component-install.gif)
+![Installing a component pack from a GitHub URL through the topbar's ＋ → Manage panel](.github/media/component-install.gif)
 
 ## Every project on this machine
 
