@@ -577,9 +577,10 @@ somewhere its components are not.
 A pack theme lands in the ordinary themes registry, so Claude applies it by name
 — `apply_theme({ name: 'acme-dark', scope: 'global' })` — and `list_themes`
 shows it. Its logos and fonts land beside it, under `themes/acme-dark/`. While it
-is the project's **global** theme, its logos fill any brand slot the project left
-empty (the topbar logotype, an export's lockup and seal; a `-reversed` file is the
-dark-mode mark) — an image the project set in Settings → Brand always wins.
+is the project's **global** theme, its logos fill any brand slot with no image
+added under it (the topbar logotype, an export's lockup and seal; a `-reversed`
+file is the dark-mode mark) — an image added in Settings → Brand while it is the
+theme always wins, and stays with it.
 Removing the pack deletes that theme's JSON file, its logos and fonts and the
 `themes/acme-dark/` folders they emptied, and never the shared `themes/`
 directory.

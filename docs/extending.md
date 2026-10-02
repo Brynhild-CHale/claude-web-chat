@@ -178,7 +178,7 @@ lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
                    channels · resources · mcp-seen · remote-policy · png · gif ·
-                   brand-image · fonts · theme-values
+                   brand-image · brand-store · theme-identity · fonts · theme-values
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -268,7 +268,8 @@ were the only places they lived.
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | name a design token, or ship a builtin theme pack | `lib/server/theme-packs` `CANONICAL_TOKENS` / `PACKS` (every pack defines every canonical token; Earthy = `public/app.css` verbatim, and the theme-packs test holds both) | a token only one stylesheet knows, or a pack that leaves one unset |
 | declare a bundled font face, or inline the ones a theme names into a document with no origin | public/fonts/fonts.css — THE @font-face list — and `lib/server/fonts` `inlineFontCss(strings)` / `fontFaces()`, which read it (test/fonts.test.js refuses a face declared anywhere else) | an `@font-face` in `app.css` or a pane, or a hot-linked font CDN |
-| store, validate, list or inline a brand image (logotype / lockup / seal) | `lib/server/brand` `write` / `read` / `list` / `remove` / `dataUri` (sniffs PNG/SVG, refuses active SVG, fences to `.web-chat/`); the chrome only ever `<img>`s `/brand/<slot>` (`public/app/brand.js`) | a second reader of `.web-chat/brand/`, or SVG markup inlined into a document |
+| store, validate, list or inline a brand image (logotype / lockup / seal) | `lib/server/brand` `write` / `read` / `list` / `remove` / `dataUri` / `snapshot` (sniffs PNG/SVG, refuses active SVG, works on the CURRENT global theme's images — `themeOf`); the files' layout and fence are `core/brand-store` `slotFile`, which the v2→v3 migration shares; the chrome only ever `<img>`s `/brand/<slot>` (`public/app/brand.js`) | a second reader of `.web-chat/brand/`, a slot path built by hand, or SVG markup inlined into a document |
+| ask which theme a project is on BY NAME — the stored record that wins, whether it is an applied builtin, the key its per-theme files are kept under | `core/theme-identity` `projectTheme(root)` → `{key, name, builtin}` / `globalThemeRecord(files)` / `appliedBuiltinId(t)` / `themeKey(record)` (one safe path segment: a pack id, a kebab name, `_unnamed`, or a digest) — `lib/server/theme` `resolveDefault` normalizes the same record | a second resolution order (project → user tier → default pack), or a theme name joined into a path |
 | resolve a theme's light/dark mode, or merge layers at one | `lib/server/theme` `flattenTheme(t, mode)` / `mergeTokensAt(mode, layers)` / `cascadeMode` (the chrome's mirror is `public/app/theme.js`) | read `theme.tokens` alone off a theme that may carry `modes` |
 | collapse whitespace in profile text | `capture/profiles/util` `collapse` | re-declare it |
 | resolve + scheme-gate an href/src read out of a captured page | `capture/profiles/util` `safeHref(href, pageUrl)` | `new URL` plus your own `javascript:` regex |
@@ -291,7 +292,7 @@ were the only places they lived.
 | say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
-| decide whether a name is a builtin THEME (a pack, or a retired alias) | `core/names` `isBuiltinThemeName` / `BUILTIN_THEME_NAMES` (a test holds it equal to lib/server/theme-packs' packs + aliases) | re-list `earthy`/`paper`/`georgetown-blue` |
+| decide whether a name is a builtin THEME (a pack, or a retired alias), or which pack it resolves to | `core/names` `isBuiltinThemeName` / `builtinThemeId` / `BUILTIN_THEME_NAMES` (the alias table `BUILTIN_THEME_ALIASES` lives here and lib/server/theme-packs re-exports it; a test holds `BUILTIN_THEME_PACKS` equal to its packs) | re-list `earthy`/`paper`/`georgetown-blue`, or a second alias table |
 | validate an image before it is shown as a logo (a Settings → Brand upload, a theme's logos) | `core/brand-image` `validate(bytes)` / `validateLogoFile(name, bytes)` / `parseLogoName(name)` (lib/server/brand.js re-exports them) | a second sniffer or SVG blocklist |
 | check what a theme inside a pack may carry (tokens, modes, fonts, logos — raw CSS gated by the one `THEME_CSS_POLICY`) | `lib/packs/themes` `inspectPackTheme(stageDir, name)` | a second theme check in a route or the drawer |
 | ask whether a theme token VALUE would load something (`url(` and kin, `@import`, `javascript:`, escapes) | `core/theme-values` `refusedTokenValue(v)` / `refusedTokens(map)` | a second `url(` regex in a route, the planner or the drawer |
@@ -947,6 +948,21 @@ artifact — so a rename fails the build instead of the updaters already shipped
   `.replace` chain and the `{'&':'&amp;'}` lookup map — are pinned by
   `test/conventions.test.js`, and those eight are the whole grandfathered list.
 - `lib/capture/profiles/util.js` — `collapse(s)`.
+- `lib/core/theme-identity.js` + `lib/core/brand-store.js` — which theme a
+  project is on **by name**, and where its brand images live. Brand images are
+  kept per theme (`.web-chat/brand/themes/<key>/<slot>.<ext>`), and the
+  v2→v3 migration that moved the old per-project files runs in `install` as
+  well as the daemon, so both questions are answered in core: lib/update may not
+  import lib/server. `globalThemeRecord(files)` is the one resolution order
+  (project theme.json → user tier → the default pack) — `lib/server/theme`
+  `resolveDefault` normalizes the record it picks — and `themeKey(record)` turns
+  it into ONE safe path segment: a pack id, a kebab-case name lower-cased, `_unnamed`
+  for raw `set_theme` tokens, or `_n-` + a sha256 prefix for any other name (so
+  "Ocean Dusk" keeps a bucket of its own, and a name never reaches a path).
+  `brand-store` `slotFile(root, key, slot, ext)` is the fenced path both the
+  engine and the migration resolve through. A global theme change is a brand
+  change: `lib/server/routes/brand.js` follows every global `theme` bus event
+  and emits the `brand` frame, so no theme route has to remember to.
 
 ## The test harness — `test-support/helpers.js`
 
