@@ -229,9 +229,11 @@ test('transcriptFile refuses a relative path, a `..`, the wrong name and the wro
     put(path.join(ch.projectDir, SID, `${SID}.jsonl`), '{}\n'), // a level too deep
     put(path.join(ch.projectDir, SID, 'subagents', 'agent-a1.jsonl'), '{}\n'),
     `${ch.transcript(SID2)}/`, // not written yet, and spelled as a directory
-    // A control character in a directory name: a real file, the right depth and
-    // name, but no slug Claude Code makes (every such character becomes '-').
-    put(path.join(ch.projectsDir, '-srv-line\nbreak', `${SID}.jsonl`), '{}\n'),
+    // A NUL in a directory name: no file can be named so, and the filesystem
+    // will not answer about the path. That is doubt, not "not written yet".
+    // (Other characters are not a fence's question: lib/core/text.js is the
+    // one guard for what is shown.)
+    path.join(ch.projectsDir, '-srv-nul\0byte', `${SID}.jsonl`),
   ]) {
     assert.equal(transcriptFile(p), null, label(p));
   }
