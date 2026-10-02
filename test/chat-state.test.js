@@ -7,13 +7,13 @@
 // records dropped, unknown fields ignored, every string capped again, the
 // control layer's `process.interrupt` and capability keys read); a frame applies
 // only when it is newer than what the store holds, and frames that arrive before
-// the snapshot are replayed only when newer than it; below `read` the store
-// holds no content field whatever a frame carries; the followed conversation is
-// the tab's choice while it is live, else the server's primary, and switching
-// fetches its stream; no fallback follows a headless (`claude -p`) conversation
-// (§2.2), and below `read` none is followed on a status row's word; the bounds
-// (300 turns, finished tasks 15 minutes, a failure until seen) are kept on each
-// fold, with no timer.
+// the snapshot are replayed only when newer than it, and every mirror:reset
+// reads the snapshot again; below `read` the store holds no content field
+// whatever a frame carries; the followed conversation is the tab's choice while
+// it is live, else the server's primary, and switching fetches its stream; no
+// fallback follows a headless (`claude -p`) conversation (§2.2), and below `read`
+// none is followed on a status row's word; the bounds (300 turns, finished tasks
+// 15 minutes, a failure until seen) are kept on each fold, with no timer.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -389,6 +389,46 @@ test('a mirror:reset reads the snapshot again; mirror:access refetches, and a fa
   assert.equal(m.status.get('c1').state, 'working');
   assert.deepEqual(m.status.get('c1').counts, { shells: 1, agents: 0, workflows: 0, monitors: 0 });
   assert.ok(fetch.calls.filter((u) => u === '/api/mirror').length >= 3, 'the level change read the snapshot again');
+});
+
+test('a reset of the followed conversation reads the snapshot again, and its stream after it while a chat view is open', async (t) => {
+  const task = (id, rev) => ({ id, rev, conversation_id: 'c1', kind: 'shell', title: id, status: 'running', started_at: T0 });
+  let reads = 0;
+  const { store, fetch } = await makeStore(t, {
+    '/api/mirror': () => ({ status: 200, body: ++reads === 1
+      ? snapshot({ conversations: [conv('c1', { rev: 10 }, { rev: 10 })], tasks: [task('old-task', 10)] })
+      : snapshot({ rev: 12, conversations: [conv('c1', { rev: 12 }, { rev: 12 })], tasks: [task('new-task', 12)] }) }),
+    '/api/mirror/conversations/c1/turns': page([{ ...turn('t1', 1), items: [] }], { rev: 12 }),
+  });
+  await store.hydrateMirror();
+  const m = store.mirror;
+  assert.equal(store.followed(), 'c1');
+  assert.deepEqual([...m.tasks.keys()], ['old-task']);
+
+  // c1 removed and added back between two flushes (lib/server/mirror/emit.js):
+  // the update says what the new incarnation holds, and no delta can say that
+  // the old one's rows are gone — the `rebuilt` reset after it does.
+  store.foldMirrorFrame({ type: 'mirror:update', rev: 12, now: Date.now(), conversation_id: 'c1',
+    conversation: conv('c1', { rev: 12 }, { rev: 12 }), tasks: [task('new-task', 12)] });
+  assert.deepEqual([...m.tasks.keys()].sort(), ['new-task', 'old-task']);
+  store.foldMirrorFrame({ type: 'mirror:reset', reason: 'rebuilt', conversation_id: 'c1' });
+  await waitUntil(() => !m.tasks.has('old-task'), { what: 'the snapshot read again after the reset' });
+  assert.equal(reads, 2, 'the reset read the snapshot again, though no chat view is open');
+  assert.deepEqual([...m.tasks.keys()], ['new-task'], 'and the old incarnation\'s running task is gone');
+  assert.deepEqual(P.categories(m, null).map((c) => c.label), ['1 shell'], 'so the chip no longer counts it');
+  assert.deepEqual(fetch.calls, ['/api/mirror', '/api/mirror'], 'no stream is read while no chat view is open');
+
+  // Every reason does the same: a catch-up's frames may include update frames
+  // that failed to go out, since a reset already due keeps its own reason.
+  // With a chat view open, the followed stream is read after the snapshot.
+  bus.emit('chat:posture', { posture: 'full' });
+  t.after(() => bus.emit('chat:posture', { posture: 'status' }));
+  await waitUntil(() => m.stream.turns.length === 1 && !m.stream.loading, { what: 'the first page' });
+  const opened = fetch.calls.length;
+  store.foldMirrorFrame({ type: 'mirror:reset', reason: 'catch-up', conversation_id: 'c1' });
+  await waitUntil(() => fetch.calls.length === opened + 2 && !m.stream.loading, { what: 'the snapshot, then the stream' });
+  assert.deepEqual(fetch.calls.slice(opened), ['/api/mirror', '/api/mirror/conversations/c1/turns?limit=30&items=summary']);
+  assert.deepEqual(m.stream.turns.map((x) => x.id), ['t1'], 'the stream shown meanwhile is kept, then replaced');
 });
 
 // ── below read ───────────────────────────────────────────────────────────────

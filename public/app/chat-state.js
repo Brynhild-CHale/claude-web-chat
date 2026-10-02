@@ -1279,11 +1279,14 @@ function applyFrame(f) {
       break;
     }
     case 'mirror:reset':
-      if (f.conversation_id && f.conversation_id === mirror.stream.conversationId && f.reason !== 'disabled') {
-        if (streamWanted()) fireStream();
-      } else {
-        hydrateMirror();
-      }
+      // A reset says what no delta can, whatever its scope or reason: a
+      // conversation removed and added back between two flushes (`rebuilt`,
+      // whose old task rows no frame drops), frames that failed to go out
+      // (`error`), a catch-up whose frames were held back, the mirror switched
+      // off. And a reason is no promise of what was lost (a reset already due
+      // keeps its own), so every one reads the snapshot again, and the followed
+      // stream after it while a chat view is open.
+      hydrateMirror();
       break;
     default:
       break;
@@ -1424,7 +1427,7 @@ async function hydrateOnce() {
 }
 
 // Read GET /api/mirror and replace what the store holds with it: on every
-// `hello`, after a `mirror:reset`, when the level changes, and below `read`
+// `hello`, after every `mirror:reset`, when the level changes, and below `read`
 // when the server's primary has gone stale (askAgain). Calls while one is under
 // way fold into one more read after it.
 export function hydrateMirror() {
