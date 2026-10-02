@@ -1205,16 +1205,159 @@ test('update --restart-all never registers web-chat where it is not: an uninstal
     readInstances: () => roots.map((root, i) => ({ root, port: i + 1 })),
     runningBuild: async () => '0.5.0',
     restart: restartLikeStart,
+    stopRow: async () => ({ ok: true, path: 'request' }),
   });
   const res = await update(['--restart-all'], d);
 
-  assert.deepEqual(res.others.restarted, roots, 'each is still restarted, as 0.8.0 did');
+  assert.deepEqual(res.others.restarted, roots.slice(0, 3), 'each project is still restarted, as 0.8.0 did');
+  assert.deepEqual(res.others.stopped, [paths.home], '(the server in $HOME is stopped instead: see below)');
   assert.deepEqual(res.others.refreshed, []);
   assert.deepEqual(roots.map(filesOutsideState), before, 'and nothing in any of them was written');
   assert.ok(fs.existsSync(path.join(stray, '.web-chat')), '(the restart itself made .web-chat/ in the stray directory)');
   const lines = d.log.text().split('\n');
   assert.equal(lines.filter((l) => l === '      managed files left alone — web-chat is not registered there; `claude-web-chat install` there registers it').length, 3);
-  assert.equal(lines.filter((l) => l === '      managed files left alone — this is your home directory, which is never a web-chat project').length, 1);
+});
+
+// A server 0.7.x booted in $HOME (`update` or `restart` typed in ~) cannot be
+// restarted: since 0.8 `start` refuses $HOME. Restarting it stopped it, then
+// waited 8s for a server that never came, and reported "✓ ~ v0.7.6 → v0.8.x"
+// and "Restarted 1 of 1" right above "this is your home directory, which is
+// never a web-chat project". It is stopped instead — through lib/cli/reap's
+// stopRow — and said so; the listing and the summary name `ls --reap`, the
+// command that stops it, where they named `install` (which refuses $HOME) and
+// `restart` (which finds no project there and stops nothing).
+const HOME_STOPPED = 'stopped, not restarted: your home directory is never a web-chat project, and no server starts there';
+const REAP = "claude-web-chat ls --reap  (it stops every other project's server too)";
+
+test('update --restart-all stops a server in $HOME through the reap engine, never restarts it, and counts it apart', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const other = registeredProject('wc-ra-home-other-');
+  const asked = [];
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }, { root: other, port: 2, pid: 4343 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      if (o.root === paths.home) throw new Error('no server can be restarted in $HOME');
+      return { ok: true };
+    },
+    stopRow: async (row) => { asked.push(row); return { ok: true, path: 'request', pid: row.pid }; },
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(asked, [{ root: paths.home, port: 1, pid: 4242, reachable: true }], 'stopped as the row the registry named, which just answered');
+  assert.deepEqual(res.others, { stale: [paths.home, other], restarted: [other], failed: [], refreshed: [other], stopped: [paths.home] });
+  const out = d.log.text();
+  assert.match(out, /Restarting 1 project\(s\) on v0\.6\.0, one at a time, and stopping the server in your home directory\.\.\./);
+  assert.ok(out.split('\n').includes(`  ✓ ${paths.home}  v0.5.0 — ${HOME_STOPPED}`), out);
+  assert.ok(out.split('\n').includes('Restarted 1 of 1.'), 'the home directory is not counted as a project restarted');
+  assert.doesNotMatch(out, new RegExp(`${paths.home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}  v0\\.5\\.0 → v0\\.6\\.0`), 'and never reported as restarted');
+});
+
+// The same, end to end: the real stopRow against a stand-in 0.7.x daemon
+// rooted at $HOME, whose portfile is ~/.web-chat/server.json. It answers
+// /api/health as itself and acknowledges the shutdown by dropping its portfile.
+test('update --restart-all stops a 0.7.x server in $HOME with the real reap engine, at once', async (t) => {
+  const http = require('http');
+  const portfiles = require('../lib/core/portfiles');
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  let shutdowns = 0;
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/health') return res.end(JSON.stringify({ ok: true, role: 'instance', version: 3, pid: process.pid }));
+    if (req.method === 'POST' && req.url === '/api/shutdown' && req.headers['x-wc-shutdown'] === '1') {
+      shutdowns++;
+      portfiles.deletePortfile('server', { root: paths.home, pid: process.pid });
+      return res.end(JSON.stringify({ ok: true, shutting_down: true }));
+    }
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { srv.close(); srv.closeAllConnections(); portfiles.deletePortfile('server', { root: paths.home, pid: process.pid }); });
+  const port = srv.address().port;
+  portfiles.writePortfile('server', { root: paths.home, pid: process.pid, port });
+
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port, pid: process.pid }],
+    runningBuild: async () => '0.7.6',
+    restart: async (args, o = {}) => {
+      if (o.root === paths.home) throw new Error('no server can be restarted in $HOME');
+      return { ok: true };
+    },
+  });
+  const started = Date.now();
+  const res = await update(['--restart-all'], d);
+  assert.ok(Date.now() - started < 4000, `took ${Date.now() - started}ms — a restart there waited 8s for a server that never came`);
+  assert.equal(shutdowns, 1, 'asked once, through /api/shutdown');
+  assert.deepEqual(res.others.stopped, [paths.home]);
+  assert.ok(d.log.text().split('\n').includes(`  ✓ ${paths.home}  v0.7.6 — ${HOME_STOPPED}`), d.log.text());
+});
+
+test('a server in $HOME that does not stop is said so, and the summary names `ls --reap`', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 7, pid: 4242 }],
+    runningBuild: async () => '0.5.0',
+    restart: async (args, o = {}) => {
+      if (o.root === paths.home) throw new Error('no server can be restarted in $HOME');
+      return { ok: true };
+    },
+    stopRow: async () => ({ ok: false, path: 'none', pid: 4242, reason: 'identity' }),
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others, { stale: [paths.home], restarted: [], failed: [paths.home], refreshed: [], stopped: [] });
+  const lines = d.log.text().split('\n');
+  assert.ok(lines.includes('Stopping the server in your home directory...'), d.log.text());
+  assert.ok(lines.includes(`  ✗ ${paths.home}  v0.5.0 — not stopped (port 7 answers, but not as pid 4242)`), d.log.text());
+  assert.ok(lines.includes(`The server in your home directory is still running — to stop it: ${REAP}.`), d.log.text());
+  assert.ok(!lines.some((l) => l.startsWith('Restarted ')), 'no project was there to restart');
+});
+
+test('the listing gives a server in $HOME `ls --reap`, never `install` or `restart` — going forward or after a rollback', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const other = registeredProject('wc-list-home-');
+  const d = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }, { root: other, port: 2, pid: 4343 }],
+    runningBuild: async () => '0.5.0',
+  });
+  const res = await update([], d);
+  assert.deepEqual(res.others, { stale: [paths.home, other], restarted: [] });
+  const out = d.log.text().split('\n');
+  assert.ok(out.includes(`  ${paths.home}  (v0.5.0, not v0.6.0)  — your home directory, never a web-chat project`), d.log.text());
+  assert.ok(out.includes('  Restart and refresh each where it lives:  cd <project> && claude-web-chat install'));
+  assert.ok(out.includes(`  Stop the one in your home directory:      ${REAP}`));
+  assert.ok(!out.some((l) => l.startsWith('  Where web-chat is not registered:')), 'the home directory is not offered `restart`');
+
+  // Only the home directory: no per-project command at all.
+  const only = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }],
+    runningBuild: async () => '0.5.0',
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  await update([], only);
+  const alone = only.log.text();
+  assert.match(alone, /Stop the one in your home directory: {6}claude-web-chat ls --reap/);
+  assert.doesNotMatch(alone, /cd <project>/);
+
+  // After a rollback: `restart` for the projects, `ls --reap` for $HOME.
+  const back = upgradeDeps(paths, {
+    registration: NO_SYNC,
+    readInstances: () => [{ root: paths.home, port: 1, pid: 4242 }, { root: other, port: 2, pid: 4343 }],
+    runningBuild: async () => '0.7.6',
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.6.0'), paths }),
+  });
+  await update(['--to', '0.5.0'], back);
+  const rolled = back.log.text().split('\n');
+  assert.ok(rolled.includes('  Restart each where it lives:  cd <project> && claude-web-chat restart'), back.log.text());
+  assert.ok(rolled.includes(`  Stop the one in your home directory:  ${REAP}`), back.log.text());
 });
 
 // Whether a project may be refreshed is decided on the project as it was
