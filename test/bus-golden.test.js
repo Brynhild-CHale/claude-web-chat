@@ -30,7 +30,7 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    goes through the shared mount-set (lib/server/domain/mounts), so it emits a
 //    ring `render` event at seq 7 — which is what makes a capture pane visible
 //    in /api/events and to the service supervisor's reconcile subscriber — and
-//    turn-end moves to seq 8.
+//    turn-end moves to seq 8 (8 and 9 since the wc085 brand event below).
 //  - p34b (the page sequence): the full-surface frames (`hello`, `reset`) carry
 //    the page's `markdown` items and `order` beside `mounts` — deliberately
 //    additive, so a chrome that predates markdown ignores them. The per-pane
@@ -46,6 +46,13 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //  - E2-3 (stale locks): every lock a frame shows carries `stale` (domain/turns
 //    lockView) — additive, the record's own keys unchanged — so the chrome can
 //    gate its re-aim buttons on a FRESH lock. A null lock stays null.
+//  - wc085 (brand images per theme): a GLOBAL theme change is a brand change —
+//    each theme keeps its own images — so lib/server/routes/brand.js follows the
+//    theme event and emits a `brand` event + frame for the theme now on. Like
+//    the queue add above, it fires SYNCHRONOUSLY inside the theme event's
+//    subscriber phase: the `brand` frame precedes the `theme` frame, its event
+//    takes seq 4, and every later ring seq moves up one. The golden's set_theme
+//    carries no name, so the theme is the unnamed one.
 const GOLDEN = {
   frames: [
     {
@@ -64,6 +71,12 @@ const GOLDEN = {
     },
     { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude' },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
+    {
+      type: 'brand',
+      theme: { key: '_unnamed', name: null, title: null },
+      slots: { logotype: null, lockup: null, seal: null },
+      fill: { logotype: null, lockup: null, seal: null },
+    },
     {
       type: 'theme',
       scope: 'global',
@@ -127,10 +140,11 @@ const GOLDEN = {
     { seq: 1, ts: '<v>', kind: 'render', id: 'm1', target: 'main', bytes: 12, source: 'claude' },
     { seq: 2, ts: '<v>', kind: 'store', patch: { greeting: 'hi', n: 1 }, source: 'server' },
     { seq: 3, ts: '<v>', kind: 'theme', scope: 'global', clear: false },
-    { seq: 4, ts: '<v>', kind: 'graph', op: 'turn-begin', base: null, stole_stale_lock: false },
+    { seq: 4, ts: '<v>', kind: 'brand', op: 'theme', theme: '_unnamed' },
+    { seq: 5, ts: '<v>', kind: 'graph', op: 'turn-begin', base: null, stole_stale_lock: false },
     { seq: 1, ts: '<v>', kind: 'capture', capture_id: 'cap1', url: 'https://example.com/page', profile: 'tables', source: 'ext:tab-stream' },
     {
-      seq: 6, ts: '<v>', kind: 'queue', op: 'add', id: 'q1',
+      seq: 7, ts: '<v>', kind: 'queue', op: 'add', id: 'q1',
       item: {
         staged: true, kind: 'capture', source: 'ext:tab-stream', capture_id: 'cap1',
         why_wake: 'page captured', summary: 'captured example.com · profile tables · cap1',
@@ -139,10 +153,10 @@ const GOLDEN = {
     },
     // D1: the capture pane goes through the shared mount-set now, so it emits a
     // ring `render` event like every other pane instead of a WS-only frame.
-    { seq: 7, ts: '<v>', kind: 'render', id: 'tab-capture:tables:bf705e83', target: 'main', bytes: 527, source: 'service:tab-stream' },
-    { seq: 8, ts: '<v>', kind: 'graph', op: 'turn-end', id: 'n0' },
+    { seq: 8, ts: '<v>', kind: 'render', id: 'tab-capture:tables:bf705e83', target: 'main', bytes: 527, source: 'service:tab-stream' },
+    { seq: 9, ts: '<v>', kind: 'graph', op: 'turn-end', id: 'n0' },
   ],
-  latest: 8,
+  latest: 9,
 };
 
 test('bus golden: the whole wire is byte-identical to the pre-refactor server', async (t) => {

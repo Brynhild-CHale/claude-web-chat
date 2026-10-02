@@ -1,6 +1,9 @@
-// Per-project brand image slots: the engine (lib/server/brand.js), its routes
+// Brand image slots: the engine (lib/server/brand.js), its routes
 // (lib/server/routes/brand.js), the export that inlines the lockup and seal,
-// and the chrome's topbar logotype + Settings → Brand drop targets.
+// and the chrome's topbar logotype + Settings → Brand drop targets. The images
+// are kept per theme; what that means across a theme switch, the migration that
+// moved the old per-project files, and the theme key's path safety are in
+// test/brand-per-theme.test.js.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -28,6 +31,8 @@ function tmpProject(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
+// Where the project's CURRENT theme keeps its images (no theme set: Earthy's).
+const bucket = (root) => projectPaths(root).brandThemeDir(brand.themeKey(root));
 
 // --- the engine ---------------------------------------------------------------
 
@@ -114,7 +119,8 @@ test('the SVG check reads namespace prefixes, character references, SMIL targets
 
 test('a slot is one file: switching format drops the other; remove clears it', (t) => {
   const root = tmpProject(t);
-  const dir = projectPaths(root).brandDir;
+  assert.equal(brand.themeKey(root), 'earthy', 'no theme set: the stock look\'s bucket');
+  const dir = bucket(root);
   brand.write(root, 'logotype', PNG);
   assert.deepEqual(fs.readdirSync(dir), ['logotype.png']);
   brand.write(root, 'logotype', SVG);
@@ -131,7 +137,7 @@ test('fence: a slot file symlinked out of .web-chat is never read', (t) => {
   const root = tmpProject(t);
   const outside = path.join(tmpProject(t), 'secret.png');
   fs.writeFileSync(outside, PNG);
-  const dir = projectPaths(root).brandDir;
+  const dir = bucket(root);
   fs.mkdirSync(dir, { recursive: true });
   fs.symlinkSync(outside, path.join(dir, 'seal.png'));
   assert.equal(brand.read(root, 'seal'), null);
@@ -139,9 +145,21 @@ test('fence: a slot file symlinked out of .web-chat is never read', (t) => {
   assert.equal(brand.list(root).seal, null);
 });
 
+test('fence: a theme\'s whole folder symlinked out of .web-chat is never read or written', (t) => {
+  const root = tmpProject(t);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-brand-out-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'logotype.png'), PNG);
+  fs.mkdirSync(projectPaths(root).brandThemesDir, { recursive: true });
+  fs.symlinkSync(outside, bucket(root));
+  assert.equal(brand.read(root, 'logotype'), null, 'the linked folder is not read');
+  assert.throws(() => brand.write(root, 'seal', PNG), (e) => e.status === 400, 'nor written through');
+  assert.deepEqual(fs.readdirSync(outside), ['logotype.png'], 'nothing landed outside');
+});
+
 test('read: a file that is not what its extension says is not served', (t) => {
   const root = tmpProject(t);
-  const dir = projectPaths(root).brandDir;
+  const dir = bucket(root);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'logotype.png'), '<html><script>1</script></html>');
   assert.equal(brand.read(root, 'logotype'), null);
@@ -166,7 +184,10 @@ test('routes: upload, list, serve locked down, delete', async (t) => {
   const upBody = await up.json();
   assert.equal(upBody.type, 'image/svg+xml');
   assert.ok(upBody.slots.logotype.version);
-  assert.ok(fs.existsSync(path.join(projectPaths(root).brandDir, 'logotype.svg')));
+  assert.deepEqual(upBody.theme, { key: 'georgetown-blue', name: 'georgetown-blue', title: 'Georgetown Blue' },
+    'the reply says whose image it is: a new project starts on Georgetown Blue');
+  assert.ok(fs.existsSync(path.join(bucket(root), 'logotype.svg')), 'kept with that theme');
+  assert.equal(fs.existsSync(path.join(projectPaths(root).brandDir, 'logotype.svg')), false, 'not with the project');
 
   const img = await fetch(`${baseUrl}/brand/logotype`);
   assert.equal(img.status, 200);
@@ -176,9 +197,10 @@ test('routes: upload, list, serve locked down, delete', async (t) => {
   assert.match(img.headers.get('content-security-policy'), /sandbox/);
   assert.deepEqual(Buffer.from(await img.arrayBuffer()), SVG);
 
-  // the change reaches the event ring (and the WS frame beside it)
+  // the change reaches the event ring (and the WS frame beside it), naming the theme
   const ev = await api.get('/api/events');
-  assert.ok((ev.json.events || []).some((e) => e.kind === 'brand' && e.op === 'set' && e.slot === 'logotype'));
+  assert.ok((ev.json.events || []).some((e) => e.kind === 'brand' && e.op === 'set' && e.slot === 'logotype'
+    && e.theme === 'georgetown-blue'));
 
   const del = await fetch(`${baseUrl}/api/brand/logotype`, { method: 'DELETE' });
   assert.equal((await del.json()).removed, true);
