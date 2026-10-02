@@ -222,13 +222,19 @@ inside the project root. A relative value resolves against the root. Each of
 these counts as outside, and asks as an unmarked param does:
 
 - a value that is not a string;
-- a `..` that leaves the root, or an absolute path elsewhere;
+- an absolute path elsewhere;
+- any `..` segment, even one that stays inside as text. The kernel follows a
+  symlink before it applies the `..`, so with `link -> /elsewhere/deep`, the
+  value `link/../secret.txt` reads as `<project>/secret.txt` but opens
+  `/elsewhere/secret.txt`;
 - a symlink that leads out of the root, or one that points nowhere;
 - a path whose nearest existing ancestor resolves outside the root;
+- a value longer than 1024 characters (macOS opens no longer path, and the
+  proof runs on the daemon's only thread);
 - a value that is not a plain path: one with a control character, one that
   starts with `-` (a command line would read it as a flag), one that starts
   with `~` (a shell reads it as your home directory), or one with a URL scheme
-  (`file:///etc/passwd`).
+  in any case (`file:///etc/passwd`, `FILE:///etc/passwd`).
 
 When in doubt, the value counts by its exact value.
 
@@ -243,8 +249,10 @@ restarts the child with the new params and asks nothing. The child runs with the
 project root as its working directory, wherever the daemon was started from, so
 resolve a relative path param against `process.cwd()`, and fence anything a pane
 hands you at run time with `ctx.fence(process.cwd(), value)`. A `project-path`
-param must mean a path: a service that reads the value as a URL, a shell word or
-a command-line flag breaks the promise its mark makes.
+param must mean a path, used as one: a service that reads the value as a URL, a
+shell word, a command-line flag or a glob pattern breaks the promise its mark
+makes. The proof covers the literal string only; brace expansion can turn
+`{..,x}/secret` into a `..` the value never contained.
 
 The builtin `file-editor` marks `path` and `root` as `project-path`. `unfenced`
 has no mark, so `unfenced: true` always asks. One approval therefore covers the

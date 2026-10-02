@@ -480,12 +480,13 @@ same project — and learns to approve without reading. Use `x-trust`:
 | mark | use it for | the approval |
 | --- | --- | --- |
 | `"display"` | a label, a title, a colour: a value the service shows but never acts on | never includes it |
-| `"project-path"` | a file or directory the service reads or writes, inside the project | leaves it out while the value is a path inside the project root; a value outside the root, through a symlink that leads out, or not a plain path asks as before |
+| `"project-path"` | a file or directory the service reads or writes, inside the project | leaves it out while the value is a path inside the project root; a value outside the root, through a symlink that leads out, with any `..` segment, or not a plain path asks as before |
 
 The built-in `file-editor` marks `path` and `root` as `project-path` and leaves
 `unfenced` unmarked. A `project-path` value reaches your service unchanged: resolve
 it against `process.cwd()`, which is the project root, and fence it with
-`ctx.fence`. Never read it as a URL, a shell word or a command-line flag. Mark
+`ctx.fence`. Never read it as a URL, a shell word, a command-line flag or a glob
+pattern: the proof covers the literal string only. Mark
 nothing that changes what the service may touch: an unmarked param is always
 safe, it only asks more often. The full rules for what counts as inside are in
 `claude-web-chat docs service-components`.

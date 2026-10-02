@@ -120,7 +120,9 @@ function project(t) {
   fs.writeFileSync(path.join(root, 'src', 'a.js'), 'a');
   fs.writeFileSync(path.join(root, 'src', 'b.js'), 'b');
   fs.writeFileSync(path.join(outside, 'secret.txt'), 's');
+  fs.mkdirSync(path.join(outside, 'deep'));
   fs.symlinkSync(outside, path.join(root, 'link-out'));                         // a directory link out
+  fs.symlinkSync(path.join(outside, 'deep'), path.join(root, 'link-deep'));    // a link out, one level down
   fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(root, 'leaf-out')); // a file link out
   fs.symlinkSync(path.join(outside, 'nothing-yet'), path.join(root, 'dangling')); // points nowhere (yet)
   fs.symlinkSync(path.join(root, 'src'), path.join(root, 'link-in'));           // a link that stays inside
@@ -154,12 +156,45 @@ test('a path inside the project never moves the key', (t) => {
   for (const value of [
     'src/a.js', 'src/b.js', './src/a.js', 'src', '', '.',
     'notes/not-created-yet.md',              // nearest existing ancestor is the root
-    'src/../src/b.js',                       // a `..` that stays inside
     'link-in/a.js',                          // through a link that stays inside
     path.join(root, 'src', 'a.js'),          // absolute, inside
+    'src/..b/c.js', 'src/b..js',             // dots that are not a `..` segment
+    `${'a/'.repeat(511)}bb`,                 // exactly the longest value the proof takes (1024)
   ]) {
     assert.equal(mint(root, { path: value }).key, base, `${JSON.stringify(value)} is inside the project`);
   }
+});
+
+test('a `..` is never proven inside: the kernel follows a link before it applies one', (t) => {
+  const { root, outside } = project(t);
+  // `link-deep -> <outside>/deep`. As text, `link-deep/../secret.txt` is
+  // `<root>/secret.txt`, which is inside; opened, it is `<outside>/secret.txt`.
+  const value = 'link-deep/../secret.txt';
+  assert.equal(path.resolve(root, value), path.join(root, 'secret.txt'), 'the lexical reading stays inside');
+  // Joined by hand: path.join would collapse the `..` as text, which is the
+  // very reading the kernel does not share.
+  const opened = `${root}/${value}`;
+  assert.equal(fs.readFileSync(opened, 'utf8'), 's', 'the kernel reads the file outside');
+  assert.equal(fs.realpathSync.native(opened), fs.realpathSync.native(path.join(outside, 'secret.txt')));
+  assert.equal(fs.existsSync(path.join(root, 'secret.txt')), false, 'there is no such file inside');
+  const id = mint(root, { path: value });
+  assert.notEqual(id.key, mint(root, {}).key, 'so it must not ride the in-project approval');
+  assert.equal(id.paramsFp, paramsFingerprint({ path: value }), 'it counts by its exact value');
+});
+
+test('the proof is bounded: an oversized value is exact, and costs no walk', (t) => {
+  const { root } = project(t);
+  const justOver = `${'a/'.repeat(511)}bbb`; // 1025 characters, every segment "inside"
+  assert.equal(mint(root, { path: justOver }).paramsFp, paramsFingerprint({ path: justOver }),
+    'a value longer than any path macOS opens counts by its exact value');
+  // 1 MiB of segments used to hold the daemon's thread for ~37 s (the fence
+  // walks up one segment at a time, re-resolving the rest at each step).
+  const huge = 'a/'.repeat(512 * 1024);
+  const started = process.hrtime.bigint();
+  const id = mint(root, { path: huge, title: huge });
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.equal(id.paramsFp, paramsFingerprint({ path: huge }), 'exact, and the display param still left out');
+  assert.ok(ms < 1000, `minting an identity for a 1 MiB value took ${ms.toFixed(0)} ms`);
 });
 
 test('each value that cannot be proven inside is its own exact key', (t) => {
@@ -170,6 +205,9 @@ test('each value that cannot be proven inside is its own exact key', (t) => {
     '/etc/passwd',
     '../escape.txt',                         // a `..` that leaves the root
     'src/../../escape.txt',
+    'src/../src/b.js',                       // any `..`, even one that stays inside as text
+    'link-deep/../secret.txt',               // ... because a link is followed before the `..`
+    'src\\..\\b.js',                         // either separator
     'link-out/secret.txt',                   // through a directory link that leads out
     'link-out',
     'leaf-out',                              // a file link that leads out
@@ -179,7 +217,9 @@ test('each value that cannot be proven inside is its own exact key', (t) => {
     '-rf', '--output=x.txt',                 // option-shaped
     '~/notes.txt', '~',                      // a home directory to a shell
     'file:///etc/passwd', 'http://example.test/x', // a URL to anything that takes one
+    'FILE:///etc/passwd', 'Https://example.test/x', // in any case: schemes are case-insensitive
     'src/a\0.js', 'src/a\n.js',              // control characters
+    'src/a\u007f.js', 'src/a\u009b.js',      // DEL, and a C1 control (a one-byte CSI)
   ];
   const keys = new Set();
   for (const value of exact) {
