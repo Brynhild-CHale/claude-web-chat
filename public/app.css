@@ -202,8 +202,8 @@ html.wc-theming, html.wc-theming * {
    The rule the scale encodes, hard:
 
      depth < surface content < front glass < drag feedback < pin markers
-       < TOPBAR < chrome panels < host notices < graph overlay < glance
-       < the shortcut legend
+       < TOPBAR < the chat chrome < chrome panels < host notices
+       < graph overlay < glance < the shortcut legend
 
    Host notices (service-trust, the queued-re-aim note) sit above every piece of
    ordinary chrome so an advisory is never buried — but BELOW the graph overlay.
@@ -228,7 +228,16 @@ html.wc-theming, html.wc-theming * {
    per-panel rung would only be a number to get wrong later. The one exception
    is the shortcut legend: `?` summons it from anywhere, the graph overlay (and
    a glance raised inside it) included, so it paints above them all. Opening it
-   still closes every other panel, so its rung never contests theirs. */
+   still closes every other panel, so its rung never contests theirs.
+
+   The chat chrome (0.8.5) has a rung of its own, between the topbar and the
+   panels: the chat dock and the phone's pull (its tab, badge, scrim and sheet)
+   paint above comment pins and the front glass, and below every popover,
+   palette, notice and the graph overlay. Not the topbar's rung — the phone
+   sheet's keyboard mode can overlap the topbar and must paint over it, while
+   the dock never reaches it. Not the panels' rung either — every member of
+   that one closes when another opens and on window blur, and the chat must
+   survive the user switching to the terminal. */
 :root {
   --z-depth: 0;    /* .depth-* backdrop layers */
   --z-content: 1;  /* .body — the surface well + queue rail */
@@ -236,11 +245,12 @@ html.wc-theming, html.wc-theming * {
   --z-drag: 3;     /* pane drag ghost + drop indicator */
   --z-pins: 4;     /* #pin-layer comment markers */
   --z-topbar: 5;   /* #topbar and the update banner stacked above it */
-  --z-panel: 6;    /* popovers, palette, legend, drawer, pin composer */
-  --z-notice: 7;   /* service-trust / re-aim notices — above all ordinary chrome */
-  --z-overlay: 8;  /* the graph viewer — covers the whole stage, notices included */
-  --z-glance: 9;   /* raised from INSIDE the overlay: the glance preview + the rename panel */
-  --z-legend: 10;  /* the `?` shortcut sheet — summonable over the overlay itself */
+  --z-chat: 6;     /* the chat dock and the phone pull — above pins and glass, below every panel */
+  --z-panel: 7;    /* popovers, palette, legend, drawer, pin composer */
+  --z-notice: 8;   /* service-trust / re-aim notices — above all ordinary chrome */
+  --z-overlay: 9;  /* the graph viewer — covers the whole stage, notices included */
+  --z-glance: 10;  /* raised from INSIDE the overlay: the glance preview + the rename panel */
+  --z-legend: 11;  /* the `?` shortcut sheet — summonable over the overlay itself */
 }
 
 /* ===================== the stage + depth layers ===================== */
@@ -1669,3 +1679,83 @@ body.pin-mode #main { cursor: crosshair; }
 .gv-log-act.primary { width: auto; padding: 0 12px; background: var(--wc-green); color: var(--wc-green-fg); border-color: transparent; font: 600 13px var(--wc-font); }
 .gv-log-act:disabled { opacity: .4; cursor: default; }
 .gv-log-act.primary:disabled { background: var(--wc-panel-bg); color: var(--wc-muted); border-color: var(--wc-border); opacity: 1; }
+
+/* ==========================================================================
+   chat mirror (0.8.5) — the chat chrome's region of this sheet.
+
+   The status bar, the trays, the dock, the panel, the stream, the phone pull
+   and the co-brand lockup are built by separate units, several at a time, so
+   each owns ONE section below: a unit writes its rules under its own marker,
+   before the blank line that ends it, and nowhere else in this region. The
+   scaffold's own rules come first.
+
+   Two rules hold here as in the rest of the sheet: colours come from tokens
+   (state and category inks are local custom properties set by attribute
+   selectors, never a hex value), and every z-index is a rung of the scale
+   above (--z-chat for the dock and the phone pull, --z-topbar for the bar,
+   --z-panel for the trays).
+   ========================================================================== */
+
+/* ── the scaffold (U15) ── */
+/* The status bar's height, the ONE property every offset that clears it reads
+   (the graph overlay, the service-trust cards, the trays). On :root, because
+   .svc-trust-host is appended to <body>, outside #stage. Structure, not theme,
+   so not a --wc-* token. The bar shows only at 760px and wider: the other side
+   of the narrow breakpoint, below which the phone pull rides the bottom bar. */
+:root { --cs-bar-h: 28px; }
+@media (max-width: 759px) { :root { --cs-bar-h: 0px; } }
+/* .body's wrapper, the chat dock's positioning context: the dock is .body's
+   sibling because .body is a stacking context at --z-content, under #pin-layer.
+   No z-index, so the wrapper is NOT a stacking context (and goes inert with
+   .body under a modal). A flex column, so .body stretches across it exactly as
+   it did as #stage's own row — a flex row would floor .body at its min-content
+   width. */
+.body-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+
+/* ── U17 · the status bar · chat-bar.js ── */
+
+/* ── U20 · the co-brand lockup · cobrand.js ── */
+
+/* ── U32 · narrow posture · viewport.js ── */
+
+/* ── U33 · the chat dock · chat-dock.js ── */
+
+/* ── U35 · the chat markdown flavour · lib/core/markdown.js ── */
+
+/* ── U36 · the chat panel and the awaiting card · chat-panel.js, chat-awaiting.js ── */
+
+/* ── U37 · the stream · chat-stream.js, chat-turns.js ── */
+
+/* ── U38 · tool cards · chat-tools.js ── */
+
+/* ── U46 · chips and trays · chat-trays.js, chat-rows.js, chat-actions.js ── */
+
+/* ── U47 · detail views · chat-detail.js ── */
+
+/* ── U56 · the chrome's asks and the answer frames · asks.js ── */
+
+/* ── U62 · messages in the rail and the trays · queue.js ── */
+
+/* ── U65 · the composer · chat-composer.js ── */
+
+/* ── U68 · the pull and its drag · chat-sheet.js, sheet-drag.js ── */
+
+/* ── U69 · tasks in the sheet · chat-sheet-tasks.js ── */
+
+/* ── U70 · the queue in the sheet · chat-sheet-queue.js ── */
+
+/* ── U71 · the keyboard · sheet-keyboard.js ── */
+
+/* ── U72 · docking the tab · tab-dock.js ── */
+
+/* ── U77 · the favicon and its attention badge · favicon.js ── */
+
+/* ── U80 · a node's turns in the graph inspector · graph-turns.js ── */
+
+/* ── U85 · the control frame and the Stop control · session-control.js ── */
+
+/* ── U86 · turn actions: Restore files and Fork · turn-actions.js ── */
+
+/* ── U91 · the composer on the mod · composer-mod.js ── */
+
+/* ── U93 · session controls on the mod · session-ops.js ── */
