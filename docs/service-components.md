@@ -286,7 +286,11 @@ the child, as a base directory say, fences what it resolves against
 
 The builtin `file-editor` marks `path` and `root` as `project-path`. `unfenced`
 has no mark, so `unfenced: true` always asks. One approval therefore covers the
-editor on any file inside the project. While its approval covers `root`, the
+editor on any file inside the project, for panes that pass the same other
+params: Claude's `{path}` is one request, and the ＋ drawer's form, which passes
+`unfenced: false` explicitly, is another, approved once on its own. The identity
+does not fold `false` into absent, because approvals recorded under 0.8.0 keep
+the two apart. While its approval covers `root`, the
 editor fences every path against both `root` and the project root, so a `root`
 that becomes a link out of the project reaches nothing outside it. A `root` the
 approval names by its exact value (one outside the project, which the user saw)
@@ -324,7 +328,9 @@ It lists each service with its `service.js` hash and what it covers, says what t
 approval allows, and asks once. Like `--all`, it has no `--yes`. It never decides
 a waiting request for anything wider: a pane that passed `unfenced: true` or a
 path outside the project keeps its own key, and you decide it with
-`trust <name> --params-fp`. A pack update, or an edit to a `service.js` or its
+`trust <name> --params-fp`. So does a pane opened from the ＋ drawer's settings
+form: the form passes every checkbox it shows (`unfenced: false`, say) as a value,
+which is a request of its own, approved once. A pack update, or an edit to a `service.js` or its
 `meta.json`, changes the code hash, so it asks again.
 
 It approves only what the pack installed. A component is left out, with the
