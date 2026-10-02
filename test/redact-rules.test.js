@@ -2,8 +2,10 @@
 //
 // Every format test-support/fake-secrets.js generates is masked with its rule's
 // label in plain text, inside JSON through redactValue, and cut short at the
-// end of a text (its tail form), and neither the secret nor any 8-character
-// window of it survives (acceptance 1). Around that: the display-safe guard,
+// end of a text (its tail form), each also as JSON text holds it (on its own
+// line inside a JSON string, encoded once and twice), and neither the secret
+// nor any 8-character window of it survives (acceptance 1). Around that: the
+// display-safe guard,
 // sensitive paths, the four window rules, idempotence, masks that reveal no
 // prefix, length or hash (acceptance 3), and the purity contract (acceptance 2).
 //
@@ -20,7 +22,7 @@ const {
   MASK, WITHHELD, PARTIAL_LINE, RULES, NEVER_EMIT, PATH_CATEGORIES, WITHHOLD_CATEGORIES,
   redactText, redactValue, redactWindow, sensitivePath, sensitiveKey, createRedactor,
 } = require('../lib/core/redact');
-const { fakeSecrets, findLeaks, fakeCorpus, mulberry32 } = require('../test-support/fake-secrets');
+const { fakeSecrets, findLeaks, fakeCorpus, jsonText, mulberry32 } = require('../test-support/fake-secrets');
 
 const PERF = process.env.WEB_CHAT_PERF === '1';
 const FAKES = fakeSecrets();
@@ -29,6 +31,18 @@ const labelFor = (f) => f.known || RULE.get(f.rule).label;
 const optsFor = (f) => ({ context: f.context, known: f.known ? [[f.secrets[0], f.known]] : undefined });
 const jsonFor = (f) => (f.json !== undefined ? f.json : { tool: 'Bash', input: { notes: [f.text] }, result: { text: `out: ${f.text}` } });
 const ms = (t0) => Number(process.hrtime.bigint() - t0) / 1e6;
+// Each carrier as it stands, and as JSON text holds it: on its own line inside
+// a JSON string, where a line break is `\n` and a quote `\"`, encoded once (a
+// .jsonl line a command printed, an MCP result) and twice (that line inside
+// another tool's JSON result). `o` is jsonText's options (a tail stays last).
+const FORMS = [
+  ['plain', (s) => s],
+  ['JSON text', (s, o) => jsonText(s, o)],
+  ['JSON in JSON', (s, o) => jsonText(s, { ...o, levels: 2 })],
+];
+// The formats that identify themselves, with no key or header beside them.
+const TOKEN_RULES = new Set(['jwt', 'sk-key', 'github', 'aws-key-id', 'slack-token', 'google-api-key', 'google-client-secret',
+  'google-oauth-token', 'npm', 'huggingface', 'stripe', 'cloudflare-tunnel']);
 
 // The PEM marker and the mask's opening are spelled once, in lib/core/redact.js;
 // a test builds them rather than writing them out.
@@ -125,29 +139,107 @@ test('findLeaks finds a whole secret, any 8 characters of one, and nothing short
 
 // ── acceptance 1: nothing survives ──────────────────────────────────────────
 
-test('plain text: every format is masked with its label and nothing of it survives', async (t) => {
+test('text: every format, plain and as JSON text, is masked with its label and nothing of it survives', async (t) => {
   for (const f of FAKES) {
-    await t.test(f.id, () => assertClean(redactText(f.text, optsFor(f)), f));
+    for (const [form, wrap] of FORMS) {
+      await t.test(`${f.id} (${form})`, () => assertClean(redactText(wrap(f.text), optsFor(f)), f));
+    }
   }
 });
 
-test('JSON: every format through redactValue, as a deep copy that leaves its input alone', async (t) => {
+test('JSON: every format through redactValue, structured and as JSON text in a value, as a deep copy that leaves its input alone', async (t) => {
   for (const f of FAKES) {
-    await t.test(f.id, () => {
-      const input = jsonFor(f);
-      const before = JSON.stringify(input);
-      const out = redactValue(input, optsFor(f));
-      assert.equal(JSON.stringify(input), before, 'the input is not mutated');
-      assert.notEqual(out, input);
-      assertClean(JSON.stringify(out), f);
-    });
+    const inputs = [['structured', jsonFor(f)],
+      ...FORMS.slice(1).map(([form, wrap]) => [form, { type: 'tool_result', content: [{ type: 'text', text: wrap(f.text) }] }])];
+    for (const [form, input] of inputs) {
+      await t.test(`${f.id} (${form})`, () => {
+        const before = JSON.stringify(input);
+        const out = redactValue(input, optsFor(f));
+        assert.equal(JSON.stringify(input), before, 'the input is not mutated');
+        assert.notEqual(out, input);
+        assertClean(JSON.stringify(out), f);
+      });
+    }
   }
 });
 
-test('tail form: every format cut short at the end of a text is masked whole', async (t) => {
+test('tail form: every format cut short at the end of a text, plain and as JSON text, is masked whole', async (t) => {
   for (const f of FAKES) {
-    await t.test(f.id, () => assertClean(redactText(f.tail.text, optsFor(f)), f, { tail: true }));
+    for (const [form, wrap] of FORMS) {
+      await t.test(`${f.id} (${form})`, () => assertClean(redactText(wrap(f.tail.text, { tail: true }), optsFor(f)), f, { tail: true }));
+    }
   }
+});
+
+test('a token on its own line in JSON text, or right after any escape, is masked', () => {
+  // The format alone, right after an escape whose last character belongs to its
+  // alphabet: a JSON line break at each level, a tab, a \u escape, a
+  // percent-encoded line break, and a terminal colour or cursor sequence
+  // however ESC is spelled (raw, \u001b, \033, \x1b).
+  const wraps = {
+    'JSON text': (s) => jsonText(s),
+    'JSON in JSON': (s) => jsonText(s, { levels: 2 }),
+    'after \\t': (s) => JSON.stringify(`a\t${s}`),
+    'after \\r\\n': (s) => JSON.stringify(`a\r\n${s}`),
+    'after \\u0027': (s) => `x=\\u0027${s}\\u0027`,
+    'after %0A': (s) => `a%0A${s}`,
+    'after ESC[1;32m': (s) => `\x1b[1;32m${s}\x1b[0m`,
+    'after \\u001b[32m': (s) => JSON.stringify(`\x1b[32m${s}\x1b[0m`),
+    'after \\033[1m': (s) => `printf '\\033[1m${s}\\033[0m'`,
+    'after \\x1b[K': (s) => `\\x1b[K${s}`,
+  };
+  const fakes = FAKES.filter((f) => TOKEN_RULES.has(f.rule));
+  assert.ok(fakes.length >= 20);
+  for (const f of fakes) {
+    for (const [how, wrap] of Object.entries(wraps)) {
+      const out = redactText(wrap(f.secrets[0]));
+      assert.deepEqual(findLeaks(out, [f]), [], `${f.id} ${how}: ${out.slice(0, 120)}`);
+      assert.ok(out.includes(MASK(labelFor(f))), `${f.id} ${how}: ${out.slice(0, 120)}`);
+    }
+  }
+});
+
+test('V16\'s case: a key on its own line of a prompt, in the transcript line a tool result carries', () => {
+  const f = FAKES.find((x) => x.id === 'sk-openrouter');
+  const record = JSON.stringify({ type: 'user', message: { role: 'user', content: `here is the key\n${f.secrets[0]}\nuse it` }, uuid: '0000-4000' });
+  const out = createRedactor().value({ type: 'tool_result', tool_use_id: 'toolu_01', content: [{ type: 'text', text: `${record}\n${record}` }] });
+  assert.deepEqual(findLeaks(out, [f]), []);
+  assert.equal(JSON.stringify(out).split(MASK('api-key')).length - 1, 2);
+});
+
+test('headers, URLs, flags and env lines after a JSON line break, and keys in JSON in JSON, are masked', () => {
+  const p = 'Zq81mXp2LwQ9abcdefgH';
+  const S = MASK('secret');
+  const cases = [
+    [`x\nAuthorization: Basic ${Buffer.from(`svc:${p}`).toString('base64')}`, 'bearer'],
+    [`x\nAuthorization: Bearer ${p}`, 'bearer'],
+    [`x\nBearer ${p}`, 'bearer'],
+    [`x\r\nSet-Cookie: sid=${p}; Path=/`, 'cookie'],
+    [`x\ncurl -u u:${p} https://h.example.com`, 'curl-user'],
+    [`x\nx-api-key: ${p}`, 'x-api-key'],
+    [`x\n--token ${p}`, 'cli-flag'],
+    [`x\nhttps://u:${p}@h.example.com`, 'url-creds'],
+    [`x\nDB_PASSWORD=${p}\nNEXT=1`, 'env-line'],
+    [`x\nSESSION_COOKIE_KEY=${p}`, 'env-line'],
+    [`x\n     2\tSESSION_KEY=${p}`, 'env-line'],
+  ].map(([text, id]) => [JSON.stringify(text), id]);
+  // A key and its value in JSON three and four levels deep (`\\\"` and `\\\\\\\"`).
+  cases.push([JSON.stringify(JSON.stringify(JSON.stringify({ password: p }))), 'assign']);
+  cases.push([JSON.stringify(JSON.stringify(JSON.stringify(JSON.stringify({ input: { api_key: p } })))), 'assign']);
+  for (const [text, id] of cases) {
+    const ids = [];
+    const out = redactText(text, { onMask: (n) => ids.push(n.id) });
+    assert.ok(!out.includes(p.slice(0, 8)), `kept in ${out}`);
+    assert.ok(ids.includes(id), `${id} masked ${text} (masked by ${ids})`);
+  }
+  // An env line ends with its JSON line and with its string: the next line,
+  // and the next field, stay readable; a value in escaped quotes keeps them.
+  const enc = (v) => JSON.stringify(v);
+  assert.equal(redactText(enc({ a: `x\nSESSION_KEY=${p}\nNODE_ENV=production`, b: 'y z' })), enc({ a: `x\nSESSION_KEY=${S}\nNODE_ENV=production`, b: 'y z' }));
+  assert.equal(redactText(enc({ a: `x\nSESSION_KEY=${p}`, b: 1 })), enc({ a: `x\nSESSION_KEY=${S}`, b: 1 }));
+  assert.equal(redactText(enc({ a: `x\nSESSION_KEY="two words"\ny` })), enc({ a: `x\nSESSION_KEY="${S}"\ny` }));
+  // An env value that ends where its string does is empty: nothing to mask.
+  assert.equal(redactText(enc({ a: 'x\nSESSION_KEY=', b: 'y z' })), enc({ a: 'x\nSESSION_KEY=', b: 'y z' }));
 });
 
 test('a token after a percent-encoded byte, and an Azure account key, are masked', () => {
@@ -363,6 +455,8 @@ test('env rows: which part of a line is the value', () => {
   assert.equal(redactText(`API_TOKEN="${p}`), `API_TOKEN="${S}`, 'a quote left open runs to the end of the line');
   assert.equal(redactText(`API_TOKEN='${p}`), `API_TOKEN=${S}`, 'an open single quote is part of an unquoted value');
   assert.equal(redactText(`API_TOKEN=${p}    `), `API_TOKEN=${S}    `, 'trailing blanks are not the value');
+  assert.equal(redactText(`SESSION_KEY=ab"${p}"`), `SESSION_KEY=${S}"`, 'a quote inside a shell word does not end the value');
+  assert.equal(redactText(`SESSION_KEY=${p}"; next`), `SESSION_KEY=${S}"; next`, 'a quote before a delimiter does');
   // env-dotenv: a comment after a closing quote is kept; anything else after
   // it, and an unquoted value's comment, are part of the value.
   const dotenv = { context: { mode: 'env-dotenv' } };
@@ -473,7 +567,8 @@ test('redactWindow: a complete window from the start of a file is redactText', (
 test('idempotence: redacting already-masked text changes nothing', () => {
   for (const f of FAKES) {
     const o = optsFor(f);
-    for (const text of [f.text, f.tail.text]) {
+    const texts = FORMS.flatMap(([, wrap]) => [wrap(f.text), wrap(f.tail.text, { tail: true })]);
+    for (const text of texts) {
       const once = redactText(text, o);
       assert.equal(redactText(once, o), once, `${f.id}: text`);
       assert.equal(redactWindow(once, { ...o, complete: true }), once, `${f.id}: window`);
@@ -550,7 +645,8 @@ test('masks reveal no prefix, length or hash: two secrets of one format redact t
 test('every mask any rule writes is exactly MASK(label), with no value material beside it', () => {
   for (const f of FAKES) {
     const o = optsFor(f);
-    for (const out of [redactText(f.text, o), redactText(f.tail.text, o), JSON.stringify(redactValue(jsonFor(f), o))]) {
+    const texts = FORMS.flatMap(([, wrap]) => [wrap(f.text), wrap(f.tail.text, { tail: true })]);
+    for (const out of [...texts.map((t) => redactText(t, o)), JSON.stringify(redactValue(jsonFor(f), o))]) {
       for (const m of out.match(ANY_MASK) || []) {
         assert.ok(ALL_LABELS.has(m.slice(MASK_OPEN.length, -1)), `${f.id}: ${m} is a known label`);
       }
@@ -670,6 +766,13 @@ test('adversarial inputs finish in linear time', (t) => {
     'env blanks after a quote': `API_KEY="a"${blanks}x`, 'env blanks before a comment': `API_KEY=a${blanks}#${blanks}x`,
     'env open quote': `API_KEY="${rep('a')}`, 'env open single quote': `API_KEY='${rep('a')}`,
     'env lines of blanks': rep(`\nAPI_KEY=a${' '.repeat(64)}x`),
+    // Starts after an escape (JSON line breaks, \u escapes, colour codes), runs
+    // of backslashes and escaped quotes, and JSON closers after a tail.
+    'escaped jwt lines': rep('\\neyJa-'), 'escaped sk lines': rep('\\nsk-a'), 'unicode escapes': rep('\\u0041ghp_'),
+    'colour codes': rep('\x1b[0meyJa'), 'escaped env lines': rep('\\nAPI_KEY=a'), 'escaped env quotes': rep('\\nAPI_KEY=\\"a'),
+    'env quotes at string ends': rep('\\nAPI_KEY=","'), backslashes: rep('\\'), 'backslashes after a key': `password=${rep('\\')}"`,
+    'escaped quotes after a key': `password=${rep('\\"')}`, 'deep quotes': rep('\\\\\\"token\\\\\\":'),
+    'JSON closers after a tail': `ghp_abcdef${rep('\\"}')}x`, 'escaped line breaks after a tail': `sk-abcdefgh${rep('\\n')}x`,
     letters: rep('a'), 'jwt dashes': rep('eyJa-'), 'jwt with no dot': `eyJ${rep('a')}`, 'sk dashes': rep('sk-a'),
     'password words': rep('password'), 'unterminated quote': `password="${rep('a')}`, 'escapes in a quote': `password="${rep('\\a')}`,
     'token colons': `token: ${rep(':')}`, 'curl words': `${rep('curl ')}-u`, 'scheme slashes': rep('https://'),
@@ -694,7 +797,7 @@ test('adversarial inputs finish in linear time', (t) => {
 });
 
 test('speed: a 1 MiB mixed corpus, with no leak and no ordinary line changed', (t) => {
-  const { text, fakes } = fakeCorpus({ bytes: 1 << 20 });
+  const { text, fakes, carried: carriers } = fakeCorpus({ bytes: 1 << 20 });
   const r = createRedactor();
   r.addKnown('someone.person@example.com', 'email');
   r.text(text);
@@ -709,7 +812,8 @@ test('speed: a 1 MiB mixed corpus, with no leak and no ordinary line changed', (
   t.diagnostic(`1 MiB redacted in ${runs[1].toFixed(1)} ms (median of 3)`);
   if (PERF) assert.ok(runs[1] < 250, `1 MiB took ${runs[1].toFixed(0)} ms`);
   assert.deepEqual(findLeaks(out, fakes), []);
-  const carried = new Set(fakes.flatMap((f) => f.text.split('\n')));
+  assert.ok(carriers.some((line) => line.startsWith('{"type":"user"')), 'some carriers are JSON text');
+  const carried = new Set(carriers);
   const changed = text.split('\n').filter((line) => !carried.has(line) && redactText(line) !== line);
   assert.deepEqual(changed, [], 'code, logs, JSON and prose lines with no secret are unchanged');
 });

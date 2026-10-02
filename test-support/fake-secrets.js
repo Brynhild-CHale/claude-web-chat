@@ -29,7 +29,8 @@
 //   }
 //
 // fakeSecrets({ seed }) → the array; findLeaks(haystack, fakes) → what survived;
-// fakeCorpus({ seed, bytes }) → a mixed text with fakes sprinkled through it.
+// fakeCorpus({ seed, bytes }) → a mixed text with fakes sprinkled through it;
+// jsonText(text, { levels, tail }) → a carrier as JSON text holds it.
 
 const PEM_DASHES = '-----';
 const PEM_TAIL = ['PRIVATE', 'KEY'].join(' ') + PEM_DASHES;   // the marker, assembled
@@ -385,6 +386,20 @@ function fakeSecrets({ seed = 0x5eed } = {}) {
   return all;
 }
 
+// A carrier as JSON-encoded text holds it: on its own line inside a multi-line
+// string in a record, JSON-encoded once (a .jsonl transcript line a command
+// printed, an MCP result) or `levels` times (that record inside another
+// tool's JSON result). There a line break is `\n` (`\\n` a level deeper) and
+// a quote `\"` (`\\\"`). A tail keeps its fragment at the very end of its
+// string, so only the closing quotes and brackets of the JSON follow it.
+function jsonText(text, { levels = 1, tail = false } = {}) {
+  let t = tail ? `first line\n${text}` : `first line\n${text}\nlast line`;
+  for (let i = 0; i < levels; i++) {
+    t = JSON.stringify(i === 0 ? { type: 'user', message: { content: t } } : { type: 'tool_result', content: t });
+  }
+  return t;
+}
+
 // Which fakes leaked into `haystack` (a string, or a value it serialises): a
 // secret found whole, or any `window` characters of it (8 by default —
 // acceptance criterion 1). Multi-line secrets are checked line by line, since a
@@ -424,14 +439,17 @@ function findLeaks(haystack, fakes, { window = 8, tail = false } = {}) {
 }
 
 // A mixed text of roughly `bytes` characters — source code, JSON lines, logs,
-// shell sessions and prose, with a fake carrier every few dozen lines — for the
-// speed measurement and for a sweep over text the rules did not see in isolation.
-// Context-driven fakes are left out (they need their context); known values too.
+// shell sessions and prose, with a fake carrier every few dozen lines, every
+// third one JSON-encoded — for the speed measurement and for a sweep over text
+// the rules did not see in isolation. `carried` lists the lines that hold a
+// carrier. Context-driven fakes are left out (they need their context); known
+// values too.
 function fakeCorpus({ seed = 0xc0ffee, bytes = 1 << 20 } = {}) {
   const g = makeGen(seed);
   const fakes = fakeSecrets({ seed: seed ^ 0x9e3779b9 }).filter((f) => !f.context && f.rule !== 'known');
   const lines = [];
   const used = [];
+  const carried = [];
   let size = 0;
   let i = 0;
   const filler = [
@@ -449,9 +467,11 @@ function fakeCorpus({ seed = 0xc0ffee, bytes = 1 << 20 } = {}) {
   while (size < bytes) {
     let line;
     if (i % 40 === 39) {
-      const f = fakes[(i / 40 | 0) % fakes.length];
+      const k = i / 40 | 0;
+      const f = fakes[k % fakes.length];
       used.push(f);
-      line = f.text;
+      line = k % 3 === 2 ? jsonText(f.text) : f.text;
+      carried.push(...line.split('\n'));
     } else {
       line = filler[Math.floor(g.next() * filler.length)]();
     }
@@ -459,7 +479,7 @@ function fakeCorpus({ seed = 0xc0ffee, bytes = 1 << 20 } = {}) {
     size += line.length + 1;
     i++;
   }
-  return { text: lines.join('\n'), fakes: used };
+  return { text: lines.join('\n'), fakes: used, carried };
 }
 
-module.exports = { fakeSecrets, findLeaks, fakeCorpus, mulberry32 };
+module.exports = { fakeSecrets, findLeaks, fakeCorpus, jsonText, mulberry32 };
