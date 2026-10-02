@@ -49,6 +49,7 @@ const UI = [
   ['comment', 'bg', 'comment pins on the stage'],
   ['rust', 'panel-bg', 'capture ink'],
   ['key-fg', 'key-bg', 'a keycap'],
+  ['agent', 'panel-bg', 'agent ink in the chat trays'],
 ];
 
 // There are no exceptions. Earthy light carried four shortfalls from before

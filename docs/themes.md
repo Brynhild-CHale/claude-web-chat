@@ -382,3 +382,4 @@ content opts in by referencing it.
 | `--wc-key-bg` | chrome | keycap fill |
 | `--wc-key-border` | chrome | keycap border |
 | `--wc-key-fg` | chrome | keycap ink |
+| `--wc-agent` | chrome | agents and delegated work in the chat chrome |
