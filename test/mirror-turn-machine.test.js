@@ -1007,6 +1007,21 @@ test('the turn index: exported turns restore, their rewinds replayed through sup
   assert.equal(rewoundNotices(g).length, 1);
 });
 
+test('the turn index: a restored turn\'s replaces is its alias again, so a hook naming the hook-side id reaches it', () => {
+  const h = harness();
+  h.hook('UserPromptSubmit', promptEnv('hA', 'fix it'));
+  h.tx(opener('tA', 'u1', null, 'fix it'));
+  h.hook('Stop', { prompt_id: 'hA', stop: { last_assistant_message: 'done' } });
+  const records = JSON.parse(JSON.stringify(h.tm.exportTurns(S)));
+  assert.equal(records[0].header.replaces, 'hA');
+  const g = harness({ start: 500000 }); // well past the late-event window
+  g.tm.restoreTurns(C, records);
+  assert.equal(g.tm.resolve('hA'), 'tA');
+  g.hook('PostToolUse', { ...toolEnv('hA', 'tu9'), result: { ok: true, duration_ms: 5 } });
+  assert.equal(g.model.item('tu9').turn_id, 'tA');
+  assert.deepEqual(g.hook('UserPromptSubmit', promptEnv('hA', 'fix it')), { ok: true, turn_id: 'tA', known: true });
+});
+
 // ---- the transitions and purity ------------------------------------------------------------------------
 
 test('transitions are compact and content-free', () => {
