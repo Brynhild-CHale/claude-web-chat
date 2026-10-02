@@ -164,8 +164,9 @@ const CHECKLIST = [
   /The server here was on a build older than 0\.8; it now runs v\S+\. To finish the upgrade:/,
   /1\. Reload every open web-chat tab/,
   /2\. \/exit and reopen Claude Code — a running session keeps the MCP server it started with/,
-  /3\. Run `claude-web-chat install` in each web-chat project you did not run `update` in/,
-  /`claude-web-chat update --restart-all`/,
+  /3\. Run `claude-web-chat update --restart-all`: it restarts every server still on the old build/,
+  /and refreshes that project's rules, command and skills\. Any other web-chat project you did/,
+  /not run `update` in refreshes with `claude-web-chat install` there\./,
 ];
 
 test('restart of a pre-0.8 daemon prints the post-update checklist, after the new server started — called the way 0.7.6\'s update calls it', async (t) => {
