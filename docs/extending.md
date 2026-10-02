@@ -755,7 +755,8 @@ plan.js      planInstall() → { units, collisions, services, errors }  — PURE
 tree.js      applyPlan / removeUnits / verifyPack / stage+promote quarantine
              — plus beginJournal (the undo list) and droppedUnits (the diff)
    ↓
-install.js   orchestrate, write the provenance record, append the audit line
+install.js   orchestrate, write the provenance record (and, for a project
+             install, the user-tier ledger entry), append the audit line
 ```
 
 `plan.js` writes nothing, deliberately: the same function serves the install, the
@@ -801,7 +802,11 @@ Five invariants live in code rather than in a reviewer's memory:
   unlinks is built from that record, so `verifyPack` validates it at READ time:
   kebab-case unit name, `memberEscapes` on every recorded path, and
   `isInside` for any recorded file that exists. A unit that fails is `refused`
-  whole — nothing unlinked, counted as drift, kept in the record.
+  whole — nothing unlinked, counted as drift, kept in the record. And nothing
+  that GRANTS reads it as provenance: a project install's provenance for
+  `trust --pack` is the user-tier ledger `install.js` writes after the
+  transaction commits (`store.recordLedger` / `findLedgerEntry` / `trimLedger`,
+  `~/.web-chat/packs/ledger.json`), keyed by (project root, pack name).
 
 `lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
 `install.js`. **Read the risk paragraph at the head of the route file before

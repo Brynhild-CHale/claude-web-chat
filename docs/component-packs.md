@@ -493,10 +493,15 @@ safe, it only asks more often. The full rules for what counts as inside are in
 
 **Approving a whole pack.** `claude-web-chat trust --pack <name>` approves, for
 one project, every service component your pack installed, at its current code,
-for panes that pass only marked params. It lists each service with its hash and
-what it covers, asks once, and has no `--yes`. It leaves out a component whose
-`service.js` or `meta.json` was edited after install, and it never decides a
-request for anything wider. Once a user approves your pack this way, any pane in
+for panes that pass only marked params. "Installed" means recorded by the user's
+machine: the user-tier record of a `--global` install, or the ledger the install
+pipeline keeps of each project install (`~/.web-chat/packs/ledger.json`), never
+the project's `.web-chat/packs.json`, which a repository can commit. It lists
+each service with its hash, its install's source and what it covers, asks once,
+and has no `--yes`. It leaves out a component whose `service.js` or `meta.json`
+was edited after install, one only the project's record names, and a project
+copy that shadows one installed for all projects, and it never decides a request
+for anything wider. Once a user approves your pack this way, any pane in
 that project can point your `project-path` services at any file inside the
 project, `.env` included — so mark a param `project-path` only when that is what
 your service is for.
@@ -615,6 +620,7 @@ Where things land:
 | themes | `.web-chat/themes/` | `~/.web-chat/themes/` |
 | `SKILL.md` | `.claude/skills/<pack>/` | `~/.claude/skills/<pack>/` |
 | provenance record | `.web-chat/packs.json` | `~/.web-chat/packs.json` |
+| this machine's account of the install (what `trust --pack` reads) | `~/.web-chat/packs/ledger.json`, one entry per project | the provenance record above |
 | in-flight marker | `.web-chat/packs/pending.json` | `~/.web-chat/packs/pending.json` |
 | rollback snapshots | `.web-chat/packs/backup/apply-*/` | `~/.web-chat/packs/backup/apply-*/` |
 | audit log | `.web-chat/packs/audit.log` | `.web-chat/packs/audit.log` (per project, always) |
@@ -752,6 +758,14 @@ A unit that fails is **refused** — nothing is unlinked, `remove` and `pack inf
 print the reason, and the record is kept so you can see what claimed to be
 installed. `--force` does not override this: it overrides *your edits*, not the
 shape of the record.
+
+The same rule decides what `trust --pack` will approve. Every project install
+also leaves an entry in the user tier (`~/.web-chat/packs/ledger.json`): the
+project, the pack, its source, who asked (the CLI or the drawer's install
+request) and each unit's digests. `trust --pack` takes a project install's
+provenance from that entry and never from `.web-chat/packs.json`, so a record a
+repository committed vouches for nothing. `remove` trims or drops the entry with
+the record.
 
 ### Updating: re-install the same pack
 

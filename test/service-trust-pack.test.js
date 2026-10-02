@@ -10,8 +10,12 @@
 //     declaration, a path outside the project) — those keep their own keys;
 //   * it asks once, and a pipe or CI answers No (there is no --yes);
 //   * it names what it is about: the pack, each service's hash, what it covers;
-//   * it approves only the bytes the pack installed — an edited service.js or
-//     meta.json, or a same-named component shadowing the pack's, is left out;
+//   * it approves only what THIS machine recorded installing — the user-tier
+//     record of an install for all projects, or the ledger of a project install,
+//     never the project's own .web-chat/packs.json (a repository can commit it);
+//     an edited service.js or meta.json, a unit only that file names, a copy
+//     shadowing another tier's, or two installs from different sources is left
+//     out, with the reason;
 //   * no daemon, an unknown pack, a pack with no services: each said plainly;
 //   * through the portal, the listing names no host path.
 
@@ -23,8 +27,8 @@ const http = require('http');
 const { spawn } = require('child_process');
 const { withServer, withTempHome, tmpRoot, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
 const { packFixture } = require('../test-support/packs');
-const { installFromStage } = require('../lib/packs/install');
-const { upsertPack, sha256 } = require('../lib/packs/store');
+const { installFromStage, removePackByName } = require('../lib/packs/install');
+const { upsertPack, sha256, findLedgerEntry, readLedger } = require('../lib/packs/store');
 const { classify } = require('../lib/core/remote-policy');
 const { homeDir, userPaths } = require('../lib/core/paths');
 const { writePortfileAt, isPidAlive } = require('../lib/core/portfiles');
@@ -157,7 +161,9 @@ test('--pack approves the pre-approval keys and leaves pending exact requests al
   assert.equal(listing.root, ctx.root);
   assert.equal(listing.pack.name, 'acme-ops');
   assert.deepEqual(listing.pack.installs.map((i) => i.tier), ['local']);
+  assert.equal(listing.pack.installs[0].recorded, true, 'this machine recorded the install (the ledger)');
   assert.equal(listing.pack.installs[0].source.sha, SOURCE.sha);
+  assert.equal(listing.pack.installs[0].actor, 'cli');
   assert.deepEqual(listing.requests.map((r) => r.name).sort(), ['deploy-board', 'incident-log'],
     'every service component the pack installed, and only those (readme-view ships no service.js)');
   assert.deepEqual(listing.skipped, []);
@@ -167,6 +173,8 @@ test('--pack approves the pre-approval keys and leaves pending exact requests al
   assert.deepEqual(log.covers, {}, 'a component with no declaration is pre-approved for the no-params pane only');
   assert.deepEqual(board.params, {});
   assert.equal(board.decision, null);
+  assert.equal(board.tier, 'local', 'each request says which install it is');
+  assert.equal(board.source_url, SOURCE.url, 'and where that install came from');
   assert.equal(board.key, coveredReq.key, 'the pre-approval is exactly the key the covered pane is waiting on');
   assert.ok(!exactKeys.includes(board.key) && !exactKeys.includes(log.key), 'and never an exact-valued request\'s');
 
@@ -176,16 +184,19 @@ test('--pack approves the pre-approval keys and leaves pending exact requests al
   assert.equal(prompt.asked.length, 1, 'it asks once, for the whole pack');
   assert.equal(prompt.asked[0].opts.def, false, 'and the answer nobody gives is No');
   assert.match(prompt.asked[0].question, /Approve all 2\?/);
-  assert.match(r.out, /Pack "acme-ops" — 1\.2\.0 · installed for this project · tarball @ ccccccc/, 'it names the pack and where it came from');
+  assert.match(r.out, /Pack "acme-ops"\n {2}for this project: +1\.2\.0 · tarball @ ccccccc · https:\/\/github\.com\/acme\/ops · from a terminal\n/,
+    'it names the pack, and where and how this machine installed it');
+  assert.match(r.out, /deploy-board\n {4}from: +the install for this project \(https:\/\/github\.com\/acme\/ops\)\n/,
+    'and which install each service is');
   // The sha256 shown is the FILE's — what `shasum service.js` prints — never
   // the code hash, which for deploy-board folds its declaration in.
   const boardFile = sha256(fs.readFileSync(path.join(ctx.root, '.web-chat', 'components', 'deploy-board', 'service.js')));
   assert.equal(board.source_hash, boardFile);
   assert.notEqual(board.hash, boardFile, 'deploy-board declares x-trust, so the two differ');
-  assert.ok(r.out.includes(`deploy-board\n    service.js sha256: ${boardFile.slice(0, 16)}…\n`), r.out);
+  assert.ok(r.out.includes(`\n    service.js sha256: ${boardFile.slice(0, 16)}…\n`), r.out);
   assert.ok(!r.out.includes(board.hash.slice(0, 16)), 'the code hash is never shown as the file\'s');
-  assert.match(r.out, /deploy-board\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +target: any path inside this project · title: display only/);
-  assert.match(r.out, /incident-log\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +a pane with no params only/);
+  assert.match(r.out, /deploy-board\n {4}from: [^\n]+\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +target: any path inside this project · title: display only/);
+  assert.match(r.out, /incident-log\n {4}from: [^\n]+\n {4}service\.js sha256: [0-9a-f]{16}…\n {4}covers: +a pane with no params only/);
   assert.match(r.out, /An approval lets any pane point deploy-board at any file inside this project, \.env files included/, 'the remaining risk is said before the answer');
   assert.match(r.out, /--params-fp/, 'and where a wider request goes instead');
 
@@ -319,13 +330,203 @@ test('--pack leaves out a component whose identity files changed since the insta
   await ctx2.api.post('/api/components', { name: 'shadowed-board', source: '<p>mine</p>', description: 'mine', service: SERVICE });
   const shadowed = await packOf(ctx2);
   assert.deepEqual(shadowed.requests, []);
-  assert.match(shadowed.skipped[0].reason, /a project component of the same name shadows the pack's here/);
+  assert.match(shadowed.skipped[0].reason, /a copy in this project shadows the one installed for all projects/);
   assert.deepEqual(shadowed.pack.installs.map((i) => i.tier), ['system']);
 });
 
 // ── a record a repository wrote ─────────────────────────────────────────────
 // `.web-chat/packs.json` is project-tier: a repository can commit one, naming
-// whatever it likes. `--pack` reads its units, so the record is untrusted input.
+// whatever it likes — any pack, any source, any digests (it ships the files
+// too, so they agree with themselves). `--pack` takes a project install's
+// provenance from the ledger this machine's install pipeline keeps, never from
+// that file; what only that file names is listed as not included.
+
+// What a repository can ship: the component files...
+function commitComponent(root, name, service, { meta = null } = {}) {
+  const dir = path.join(root, '.web-chat', 'components', name);
+  const metaText = meta || JSON.stringify({ name, description: `${name}.`, params_schema: {} });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'component.html'), `<p>${name}</p>`);
+  fs.writeFileSync(path.join(dir, 'meta.json'), metaText);
+  fs.writeFileSync(path.join(dir, 'service.js'), service);
+  return {
+    kind: 'component', name, files: [
+      { path: 'component.html', sha256: sha256(`<p>${name}</p>`) },
+      { path: 'meta.json', sha256: sha256(metaText) },
+      { path: 'service.js', sha256: sha256(service) },
+    ],
+  };
+}
+
+// ...and a record naming them, written as a file in the tree, which is all a
+// repository can do (upsertPack is this machine's code, not a repository's).
+function commitRecord(root, record) {
+  fs.writeFileSync(path.join(root, '.web-chat', 'packs.json'), JSON.stringify({ version: 1, packs: [record] }, null, 2));
+}
+
+const RELEASE = {
+  url: 'https://github.com/someone/wc-jupyter', ref: 'v1.4.0', sha: 'abcdef1'.padEnd(40, '0'),
+  via: 'release', sums_verified: true, asset: 'wc-jupyter-1.4.0.tar.gz', transport: 'https',
+};
+
+test('a record the repository committed vouches for nothing, even with matching digests', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const unit = commitComponent(ctx.root, 'jpy-notebook', SERVICE);
+  commitRecord(ctx.root, { name: 'wc-jupyter', version: '1.4.0', source: RELEASE, units: [unit], services: ['jpy-notebook'] });
+
+  const listing = await packOf(ctx, 'wc-jupyter');
+  assert.deepEqual(listing.pack.installs, [{ tier: 'local', recorded: false }],
+    'the record is named for what it is, and nothing it claims is repeated');
+  assert.deepEqual(listing.requests, [], 'its code is not offered as the pack\'s');
+  assert.deepEqual(listing.skipped.map((x) => x.name), ['jpy-notebook']);
+  assert.match(listing.skipped[0].reason, /only this project's \.web-chat\/packs\.json names it, and no install on this machine recorded it/);
+
+  const prompt = answering(true);
+  const r = await runInProcess(() => trust(['--pack', 'wc-jupyter'], { cwd: ctx.root, prompt }));
+  assert.equal(r.exit, null, r.err);
+  assert.equal(prompt.asked.length, 0, 'there is nothing to ask about');
+  assert.match(r.out, /for this project: +not recorded on this machine/);
+  assert.doesNotMatch(r.out, /sha256 verified|1\.4\.0|release v1\.4\.0|abcdef1/, 'none of the record\'s claims reaches the terminal');
+  assert.match(r.out, /Not included:\n {2}jpy-notebook — only this project's \.web-chat\/packs\.json names it/);
+  assert.match(r.out, /Nothing was changed\./);
+  assert.equal(readTrust(ctx), null);
+
+  // `pack list` does not send the user to `trust --pack` for it either.
+  const listed = await runCli(['pack', 'list'], { cwd: ctx.root, home: ctx.home });
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.doesNotMatch(listed.stdout, /trust --pack wc-jupyter/);
+  assert.match(listed.stdout, /not recorded on this machine/);
+});
+
+test('a committed record cannot shadow an install for all projects, or add a unit to it', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installAcme(ctx.root, { tier: 'system', components: [{ name: 'deploy-board', service: SERVICE, params_schema: BOARD_SCHEMA }] });
+  assert.deepEqual((await packOf(ctx)).requests.map((p) => p.name), ['deploy-board'], 'the user\'s own install is offered');
+
+  // The repository ships its own deploy-board and an extra helper, and a
+  // record that names both under the pack's name, with matching digests.
+  const EVIL = `${SERVICE}\n// the repository's own\n`;
+  commitRecord(ctx.root, {
+    name: 'acme-ops', version: '1.4.0', source: { ...SOURCE, via: 'release', ref: 'v1.4.0', sums_verified: true },
+    units: [commitComponent(ctx.root, 'deploy-board', EVIL), commitComponent(ctx.root, 'deploy-helper', EVIL)],
+  });
+
+  const listing = await packOf(ctx);
+  assert.deepEqual(listing.pack.installs.map((i) => [i.tier, i.recorded]), [['local', false], ['system', true]]);
+  assert.deepEqual(listing.requests, [], 'neither the shadowing copy nor the extra unit is offered');
+  const reasons = Object.fromEntries(listing.skipped.map((x) => [x.name, x.reason]));
+  assert.deepEqual(Object.keys(reasons).sort(), ['deploy-board', 'deploy-helper'], 'and neither is dropped without a word');
+  assert.match(reasons['deploy-board'], /a copy in this project shadows the one installed for all projects/);
+  assert.match(reasons['deploy-helper'], /only this project's \.web-chat\/packs\.json names it/);
+
+  const prompt = answering(true);
+  const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt }));
+  assert.equal(r.exit, null, r.err);
+  assert.equal(prompt.asked.length, 0);
+  assert.match(r.out, /for this project: +not recorded on this machine/);
+  assert.match(r.out, /for all projects: +1\.2\.0 · tarball @ ccccccc · https:\/\/github\.com\/acme\/ops · from a terminal/);
+  assert.doesNotMatch(r.out, /sha256 verified|1\.4\.0/);
+  assert.match(r.out, /Not included:\n(?: {2}.+\n)*? {2}deploy-board — a copy in this project shadows/);
+  assert.equal(readTrust(ctx), null, 'nothing was approved');
+});
+
+test('an install made under the same name from another source approves nothing of either', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installAcme(ctx.root, { tier: 'system', components: [{ name: 'deploy-board', service: SERVICE }] });
+  // The drawer's install route, which a pane's script can call too: a real
+  // install, through the pipeline, of a different repository that names
+  // itself after the user's pack.
+  installFromStage({
+    stageDir: packFixture({ components: [{ name: 'deploy-helper', service: LOG_SERVICE }] }),
+    source: { ...SOURCE, url: 'https://github.com/mallory/not-ops', sha: 'b'.repeat(40) },
+    tier: 'local', root: ctx.root, actor: 'http',
+  });
+  const listing = await packOf(ctx);
+  assert.deepEqual(listing.pack.installs.map((i) => [i.tier, i.recorded, i.actor]), [['local', true, 'http'], ['system', true, 'cli']]);
+  assert.deepEqual(listing.requests, []);
+  assert.deepEqual(listing.skipped.map((x) => x.name).sort(), ['deploy-board', 'deploy-helper']);
+  for (const x of listing.skipped) assert.match(x.reason, /from different sources/);
+  const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(true) }));
+  assert.match(r.out, /https:\/\/github\.com\/mallory\/not-ops · through the surface/, 'both sources are named');
+  assert.match(r.out, /https:\/\/github\.com\/acme\/ops · from a terminal/);
+  assert.equal(readTrust(ctx), null);
+});
+
+test('a project install made through the surface is offered, and says so', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installFromStage({
+    stageDir: packFixture({ components: [{ name: 'deploy-board', service: SERVICE }] }),
+    source: SOURCE, tier: 'local', root: ctx.root, actor: 'http',
+  });
+  const listing = await packOf(ctx);
+  assert.deepEqual(listing.requests.map((p) => [p.name, p.tier, p.actor]), [['deploy-board', 'local', 'http']]);
+  const r = await runInProcess(() => trust(['--pack', 'acme-ops'], { cwd: ctx.root, prompt: answering(false) }));
+  assert.match(r.out, /for this project: +1\.2\.0 · tarball @ ccccccc · https:\/\/github\.com\/acme\/ops · through the surface\n/);
+  assert.match(r.out, /An install "through the surface" is a request any pane's script can\n +make too: approve only a pack you chose to install\./);
+});
+
+test('the ledger follows the record: written by a project install, trimmed and dropped by remove', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installAcme(ctx.root);
+  const entry = findLedgerEntry(ctx.root, 'acme-ops');
+  assert.ok(entry, 'a project install is recorded in the user tier');
+  assert.equal(entry.actor, 'cli');
+  assert.deepEqual(entry.units.map((u) => u.name).sort(), ['acme-ops', 'deploy-board', 'incident-log', 'readme-view']);
+  installAcme(ctx.root, { tier: 'system', components: [{ name: 'other-board', service: SERVICE }] });
+  assert.deepEqual(readLedger().map((e) => e.name), ['acme-ops'], 'an install for all projects needs none: its record is user-tier');
+
+  // An edited unit is kept by remove; the ledger keeps it with the digests
+  // this machine installed, so it still reads as edited.
+  fs.appendFileSync(path.join(ctx.root, '.web-chat', 'components', 'deploy-board', 'service.js'), '\n// mine now\n');
+  removePackByName({ name: 'acme-ops', root: ctx.root, tier: 'local' });
+  const trimmed = findLedgerEntry(ctx.root, 'acme-ops');
+  assert.deepEqual(trimmed.units.map((u) => u.name), ['deploy-board']);
+  assert.match((await packOf(ctx)).skipped.find((x) => x.name === 'deploy-board').reason, /service\.js changed since the pack installed it/);
+  removePackByName({ name: 'acme-ops', root: ctx.root, tier: 'local', force: true });
+  assert.equal(findLedgerEntry(ctx.root, 'acme-ops'), null, 'and dropped with the record');
+});
+
+// The tier check on its own: a copy whose service.js AND meta.json are the
+// pack's bytes, in the other tier. The identity files cannot tell it apart; the
+// module it requires can differ.
+test('a byte-identical copy in the project is still not the copy the pack installed', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const TWIN = "const impl = require('./impl.js');\nmodule.exports = { async start(ctx) { ctx.driver.setStore({ ['svc_' + ctx.mountId]: impl() }); }, async stop() {} };\n";
+  installFromStage({ stageDir: packFixture({ components: [{ name: 'twin', service: TWIN }] }), source: SOURCE, tier: 'system', root: ctx.root, actor: 'cli' });
+  const sys = path.join(userPaths().components, 'twin');
+  fs.writeFileSync(path.join(sys, 'impl.js'), "module.exports = () => 'the pack';\n");
+  assert.deepEqual((await packOf(ctx)).requests.map((p) => p.name), ['twin'], 'the install for all projects is offered');
+
+  const local = path.join(ctx.root, '.web-chat', 'components', 'twin');
+  fs.cpSync(sys, local, { recursive: true });
+  fs.writeFileSync(path.join(local, 'impl.js'), "module.exports = () => 'the repository';\n");
+  for (const f of ['service.js', 'meta.json']) {
+    assert.equal(sha256(fs.readFileSync(path.join(local, f))), sha256(fs.readFileSync(path.join(sys, f))), `${f} is byte-identical`);
+  }
+  const listing = await packOf(ctx);
+  assert.deepEqual(listing.requests, [], 'what would run here is not what the pack installed');
+  assert.deepEqual(listing.skipped.map((x) => x.name), ['twin']);
+  assert.match(listing.skipped[0].reason, /shadows/);
+});
+
+// A pack component may ship no meta.json (the manifest only warns). One written
+// afterwards — by save_component over it, a pane's file-editor, a checkout — is
+// a declaration the pack never shipped.
+test('--pack leaves out a component whose meta.json the pack never shipped', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  installFromStage({
+    stageDir: packFixture({ components: [{ name: 'runner', service: SERVICE, meta: null }] }),
+    source: SOURCE, tier: 'local', root: ctx.root, actor: 'cli',
+  });
+  const before = await packOf(ctx);
+  assert.deepEqual(before.requests.map((p) => [p.name, p.covers]), [['runner', {}]], 'as shipped: no meta.json, no declaration');
+  fs.writeFileSync(path.join(ctx.root, '.web-chat', 'components', 'runner', 'meta.json'), JSON.stringify({
+    name: 'runner', params_schema: { type: 'object', properties: { cmd: { type: 'string', 'x-trust': 'display' } } },
+  }));
+  const after = await packOf(ctx);
+  assert.deepEqual(after.requests, [], 'a widened declaration is not approved as the pack\'s');
+  assert.match(after.skipped[0].reason, /meta\.json changed since the pack installed it/);
+});
 
 test('--pack never resolves a unit name that is not a component name', async (t) => {
   const ctx = await withServer(t, { writePortfile: true });

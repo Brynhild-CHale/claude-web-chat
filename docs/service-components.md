@@ -297,13 +297,25 @@ claude-web-chat trust --pack acme-ops          # list, then ask once
 claude-web-chat trust --pack acme-ops --deny   # refuse them all
 ```
 
-For this project, this approves every service component the named pack installed
-(its provenance record, project tier and user tier), each at its current code,
-for the identity it has when a pane passes it nothing but covered params:
-`display` values and paths inside the project. No pane needs to be open and no
-request needs to be waiting. It needs the project's server running, because the
-server mints the keys (`GET /api/services/pack/:name`, read-only, like
-`/api/services/pending`); the CLI writes them, as for every other approval.
+For this project, this approves every service component the named pack installed,
+each at its current code, for the identity it has when a pane passes it nothing
+but covered params: `display` values and paths inside the project. No pane needs
+to be open and no request needs to be waiting. It needs the project's server
+running, because the server mints the keys (`GET /api/services/pack/:name`,
+read-only, like `/api/services/pending`); the CLI writes them, as for every other
+approval.
+
+**"Installed" means recorded by this machine.** For an install for all projects
+that is its record in `~/.web-chat/packs.json`. For an install in this project it
+is the ledger the install pipeline keeps in the user tier
+(`~/.web-chat/packs/ledger.json`), never the project's own `.web-chat/packs.json`:
+a repository can commit that file, naming any pack, source and digests, and ship
+the matching files with it. A pack installed in a project before 0.8.2 has no
+ledger entry, so `--pack` approves nothing of it until you install it again
+(`claude-web-chat pack install <url>`); until then its panes ask one by one. The
+listing names each install with its version, source, URL and who asked: "from a
+terminal", or "through the surface", which is the drawer's install request and
+one any pane's script can make too.
 
 It lists each service with its `service.js` hash and what it covers, says what the
 approval allows, and asks once. Like `--all`, it has no `--yes`. It never decides
@@ -313,8 +325,16 @@ path outside the project keeps its own key, and you decide it with
 `meta.json`, changes the code hash, so it asks again.
 
 It approves only what the pack installed. A component is left out, with the
-reason, when its `service.js` or `meta.json` no longer hashes to what the pack
-recorded, or when a same-named component in another tier shadows the pack's.
+reason, when:
+
+- only the project's `.web-chat/packs.json` names it;
+- its `service.js` or `meta.json` no longer hashes to what this machine recorded
+  at install (a `meta.json` the pack never shipped counts as changed);
+- a same-named component in another tier shadows the pack's, or a copy in this
+  project shadows one installed for all projects;
+- the pack is installed both in this project and for all projects from two
+  different sources, so neither is the pack.
+
 Decide those per pane.
 
 **The risk you take.** Once a pack is approved, any pane in this project can
