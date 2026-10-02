@@ -728,6 +728,52 @@ test('the listing, the notice and the grant say what each request covers, and ho
   assert.deepEqual(recorded[outside.key].exact, { path: 'project-path' });
 });
 
+// What approving a project path lets a pane do. The notice, the `--pack`
+// listing and the grant said it; the two listings a user reads before
+// `trust <name>` or `trust --all` printed the covers lines and not this.
+test('the plain listing and --all say what approving a project path lets a pane do, and only then', async (t) => {
+  const ctx = await withServer(t, { writePortfile: true });
+  const { api } = ctx;
+  await openViewer(t, ctx);
+  const trustFile = path.join(ctx.userWebChat, 'services', 'trusted.json');
+  const waiting = async (n) => waitUntil(async () => (await api.get('/api/services/pending')).json.pending.length === n);
+  const REACH = 'An approval lets any pane point file-editor at any file inside this project, .env files included, without asking again.';
+
+  // A request that covers no project path: neither listing says it.
+  await api.post('/api/components', { name: 'plain', source: '<p>p</p>', description: 'p', service: GOLDEN_SRC });
+  await api.post('/api/components/plain/use', { id: 'p1', params: { mode: 'a' } });
+  assert.ok(await waiting(1));
+  for (const args of [['trust'], ['trust', '--all']]) {
+    const r = await runCli(args, ctx);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /plain/);
+    assert.doesNotMatch(r.stdout, /\.env/, `${args.join(' ')}: nothing it lists covers a project path`);
+  }
+
+  // A file-editor request covers path and root.
+  await api.post('/api/components/file-editor/use', { id: 'ed', params: { path: 'notes.md' } });
+  assert.ok(await waiting(2));
+
+  const listing = await runCli(['trust'], ctx);
+  assert.equal(listing.status, 0, listing.stderr);
+  assert.ok(listing.stdout.includes(`${REACH}\nAn approved service runs as a process`), listing.stdout);
+  assert.equal(listing.stdout.split('.env').length - 1, 1, 'said once, naming only the component that covers a path');
+
+  // --all says it with the rest of what it is about to decide, before it asks
+  // (and, with no terminal, answers No).
+  const all = await runCli(['trust', '--all'], ctx);
+  assert.equal(all.status, 0, all.stderr);
+  assert.ok(all.stdout.includes(`Each one runs as a process on your machine, with your permissions.\n${REACH}\n\n  Approve all 2? [y/N]`), all.stdout);
+  assert.match(all.stdout, /Nothing was changed/);
+
+  // A denial lets a pane do nothing, so --all --deny does not say it.
+  const deny = await runCli(['trust', '--all', '--deny'], ctx);
+  assert.equal(deny.status, 0, deny.stderr);
+  assert.match(deny.stdout, /Deny all 2\? \[y\/N\]/);
+  assert.doesNotMatch(deny.stdout, /\.env/);
+  assert.equal(fs.existsSync(trustFile), false, 'nothing was decided');
+});
+
 // A covered `root` was proven inside when the approval was keyed — not for the
 // life of the child. file-editor fences every path against its root, and the
 // fence realpaths that root on every call: a root that later becomes a link out

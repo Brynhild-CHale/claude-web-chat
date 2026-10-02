@@ -163,12 +163,13 @@ The surface shows a notice naming the component, its params, what an approval
 covers and the command to run — one notice per waiting request, addressed by
 trust key, so two params shapes of one component are two cards. `trust <name>`
 writes at once, so the notice is where the range is said before the command is
-run; when a request covers a `project-path` param, the notice and the terminal
-both say that an approval lets any pane point the service at any file inside the
-project, `.env` files included. That
-notice grants nothing, and it deliberately cannot: pane scripts are compiled with
-`new Function` and run in the surface's own window realm with `document`, `fetch`
-and `WebSocket`, and no CSP is served. A pane can therefore synthesise a click on
+run. When a request covers a `project-path` param, the notice says that an
+approval lets any pane point the service at any file inside the project, `.env`
+files included, and so do the plain `trust` listing, `trust --all` (before it
+asks), `trust --pack` and the grant. That notice grants nothing, and it
+deliberately cannot: pane scripts are compiled with `new Function` and run in
+the surface's own window realm with `document`, `fetch` and `WebSocket`, and no
+CSP is served. A pane can therefore synthesise a click on
 any button in the page, open its own same-origin socket and read anything the
 server broadcasts to the shell, and call any localhost endpoint. Nothing
 delivered to that page — a nonce, a token, a hidden node — is a secret from the
