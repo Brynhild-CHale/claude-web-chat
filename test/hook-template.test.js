@@ -16,7 +16,11 @@ const os = require('os');
 const reg = require('../lib/setup/registration');
 const mf = require('../lib/update/managed-files');
 const { claudePaths, installPaths, PACKAGE_ROOT } = require('../lib/core/paths');
-const { withTempHome } = require('../test-support/helpers');
+const { withTempHome, waitUntil } = require('../test-support/helpers');
+
+// doctor probes the capture hub on the fixed hub port: pin it, for the whole
+// file, at a port nothing listens on (as test/doctor.test.js does).
+process.env.WEB_CHAT_HUB_PORT = '65533';
 
 // `install` pre-warms a daemon through spawnDaemon, which it destructures at
 // module load — so the patch goes in before the first require (the pattern
@@ -26,6 +30,7 @@ const realSpawnDaemon = daemonMod.spawnDaemon;
 daemonMod.spawnDaemon = async () => null;
 const install = require('../lib/cli/commands/install');
 daemonMod.spawnDaemon = realSpawnDaemon;
+const doctor = require('../lib/cli/commands/doctor');
 
 // §1.2's template, exactly as the spec writes it.
 const SPEC_TEMPLATE = {
@@ -475,6 +480,67 @@ test('a malformed hooks list is refused, not silently replaced', (t) => {
   assert.deepStrictEqual(readSettings(root).hooks.PreToolUse, { not: 'a list' });
 });
 
+// ── doctor's words, per role ─────────────────────────────────────────────────
+
+async function runDoctor(root, opts = {}) {
+  return doctor([], { cwd: root, runClaude: fakeClaude().fn, log: () => {}, findChrome: () => null, findFfmpeg: () => null, ...opts });
+}
+
+function seedMcp(root) {
+  fs.writeFileSync(path.join(root, '.mcp.json'), JSON.stringify({
+    mcpServers: { 'web-chat': { command: 'node', args: [path.join(PACKAGE_ROOT, 'bin', 'claude-web-chat-mcp.js')] } },
+  }, null, 2));
+}
+
+test('doctor words each role: what a 0.8.0 project lacks, and what that costs', async (t) => {
+  withTempHome(t);
+  const root = installedRoot(t);
+  seedMcp(root);
+  writeSettings(root, { hooks: V080_HOOKS() });
+  const before = fs.readFileSync(settingsPath(root), 'utf8');
+
+  const summary = await runDoctor(root, { dryRun: true });
+  const problems = summary.checks.filter((c) => c.status === 'problem').map((c) => c.m);
+  const has = (re) => assert.ok(problems.some((m) => re.test(m)), `${re} in:\n${problems.join('\n')}`);
+  has(/^lifecycle hook\(s\) missing for StopFailure — a turn that ends on an API error holds the turn lock until it times out$/);
+  has(/^mirror hook\(s\) missing for SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact — the chat mirror shows no live tool status$/);
+  has(/^bridge hook\(s\) missing for PermissionRequest — prompts cannot be answered from the browser$/);
+  has(/^halt hook\(s\) missing for PreToolUse, PostToolUse, PostToolBatch — "Stop after this step" from the browser does nothing$/);
+  assert.ok(!problems.some((m) => /turns never begin/.test(m)), 'a 0.8.0 project still begins and commits its turns');
+  const repair = summary.checks.find((c) => c.status === 'repaired' && /hook/.test(c.m));
+  assert.ok(repair && repair.dry);
+  assert.match(repair.m, /registered the missing hook\(s\): StopFailure, SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact, PermissionRequest, PostToolBatch/);
+  assert.match(repair.m, /then restart Claude Code \(or open \/hooks to review them\)$/);
+  assert.equal(fs.readFileSync(settingsPath(root), 'utf8'), before, 'a dry run writes nothing');
+
+  await runDoctor(root);
+  assert.ok(reg.inspect(root).handlers.every((r) => r.state === 'ok'), 'a real run repairs it');
+  const again = await runDoctor(root);
+  assert.ok(again.checks.some((c) => c.status === 'ok' && c.m === '14 web-chat hook handlers on 12 events registered and resolvable (lifecycle, mirror, bridge, halt)'));
+});
+
+test('doctor words lifecycle in full where turns really stop, and names stale and bare handlers', async (t) => {
+  withTempHome(t);
+  const root = installedRoot(t);
+  seedMcp(root);
+  reg.apply(root, { runClaude: fakeClaude().fn });
+  const s = readSettings(root);
+  delete s.hooks.Stop;
+  s.hooks.UserPromptSubmit[0].hooks[0].command = 'claude-web-chat-hook turn-begin';
+  s.hooks.PostToolUse[0].hooks[1].timeout = 60;
+  s.hooks.PostToolBatch[0].hooks[0].command = `node "${HOOK_BIN}" halt batch`;
+  writeSettings(root, s);
+
+  const summary = await runDoctor(root, { dryRun: true });
+  const problems = summary.checks.filter((c) => c.status === 'problem').map((c) => c.m);
+  const has = (re) => assert.ok(problems.some((m) => re.test(m)), `${re} in:\n${problems.join('\n')}`);
+  has(/^lifecycle hook\(s\) missing for Stop — turns never begin or never commit$/);
+  has(/^lifecycle hook\(s\) use a bare PATH-dependent command \(UserPromptSubmit\) — it only runs where the package is on PATH, so turns never begin or never commit$/);
+  has(/^halt hook\(s\) on PostToolUse, PostToolBatch differ from this build's template \(timeout, command\) — as registered, "Stop after this step" from the browser does nothing$/);
+  const repair = summary.checks.find((c) => c.status === 'repaired' && /hook/.test(c.m));
+  assert.match(repair.m, /^rewrote the web-chat hook command\(s\) to absolute paths; registered the missing hook\(s\): Stop; updated the outdated hook\(s\) on PostToolUse, PostToolBatch — then restart Claude Code/);
+});
+
 // ── the MCP server's startup line ────────────────────────────────────────────
 
 test('driftLine names missing, bare and stale hooks, and leaves a healthy project alone', (t) => {
@@ -497,4 +563,37 @@ test('driftLine names missing, bare and stale hooks, and leaves a healthy projec
   const st = reg.inspect(root);
   assert.equal(st.hooksFile, 'unparseable');
   assert.equal(reg.driftLine(st), null);
+});
+
+test('the MCP server says so at startup: its stderr line names the missing and stale hooks', async (t) => {
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+  const home = tmpRoot('wc-hooks-home-');
+  t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
+  // A fresh update-check record, so the server's throttled release check stays offline.
+  fs.mkdirSync(path.join(home, '.web-chat'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.web-chat', 'update-check.json'), JSON.stringify({ last_check: Date.now(), latest: null }));
+  const root = installedRoot(t);
+  const hooks = V080_HOOKS();
+  hooks.PreToolUse = [{ hooks: [{ type: 'command', command: `node "${HOOK_BIN}" mirror`, timeout: 10 }] }];
+  writeSettings(root, { hooks });
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(PACKAGE_ROOT, 'bin', 'claude-web-chat-mcp.js')],
+    cwd: root,
+    env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_CHANNEL: '' },
+    stderr: 'pipe',
+  });
+  let stderr = '';
+  transport.stderr.on('data', (c) => { stderr += c; });
+  const client = new Client({ name: 'hook-drift-test', version: '0.0.0' });
+  await client.connect(transport);
+  t.after(() => client.close());
+
+  const line = await waitUntil(() => stderr.split('\n').find((l) => /hooks out of date/.test(l)), { timeout: 10000, what: 'the drift line' });
+  assert.match(line, /^\[claude-web-chat\] /);
+  assert.match(line, /missing: StopFailure, SessionStart, SessionEnd, PreToolUse \(halt\), PostToolUse, /);
+  assert.match(line, /stale: PreToolUse \(mirror\)/);
+  assert.match(line, /run `claude-web-chat install`, then restart Claude Code \(or open \/hooks to review them\)$/);
 });

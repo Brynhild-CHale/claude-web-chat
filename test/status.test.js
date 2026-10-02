@@ -115,30 +115,66 @@ test('status admits "unknown" rather than guessing when no MCP client was ever s
 // set, and names what is absent.
 //
 // 0.8.5's template has twelve events (spec §1.1), so the count is out of the
-// template's event list rather than a literal.
+// template's event list, and the absent ones are named per ROLE — one line per
+// role, saying what its loss costs.
 const { hookEvents } = require('../lib/setup/registration');
 const { ensureHooks } = require('../lib/update/managed-files');
+const HOOK_BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
 
-test('status names the missing hook EVENT rather than reporting a smaller count', async (t) => {
-  const hookBin = path.join(__dirname, '..', 'bin', 'claude-web-chat-hook.js');
-  const out = await runStatus(t, (root) => {
+function seedHooks(hooks) {
+  return (root) => {
     const settingsPath = path.join(root, '.claude', 'settings.json');
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify({
-      hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${hookBin}" turn-begin` }] }] },
-    }, null, 2));
-  });
-  assert.match(out, new RegExp(`Hooks: +1/${hookEvents().length} registered`), 'every template event is counted, not just the ones on disk');
-  assert.match(out, /missing: Stop/, 'and the absent one is named');
+    fs.writeFileSync(settingsPath, JSON.stringify({ hooks }, null, 2));
+  };
+}
+
+test('status names the missing hook EVENT rather than reporting a smaller count', async (t) => {
+  const out = await runStatus(t, seedHooks({
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${HOOK_BIN}" turn-begin` }] }],
+  }));
+  assert.match(out, new RegExp(`Hooks: +1/${hookEvents().length} events registered`), 'every template event is counted, not just the ones on disk');
+  assert.match(out, /lifecycle +missing: Stop, StopFailure — turns never begin or never commit/, 'and the absent ones are named, with what that costs');
   assert.match(out, /claude-web-chat install/, 'with the command that repairs it');
 });
 
 test('status reports every hook event registered once the template is in place', async (t) => {
   const out = await runStatus(t, (root) => { ensureHooks(root); });
-  const n = hookEvents().length;
-  assert.match(out, new RegExp(`Hooks: +${n}/${n} registered`));
+  assert.match(out, new RegExp(`Hooks: +${hookEvents().length}/${hookEvents().length} events registered in \\.claude/settings\\.json \\(lifecycle, mirror, bridge, halt\\)`));
   assert.doesNotMatch(out, /missing:/);
   assert.doesNotMatch(out, /bare command:/);
+  assert.doesNotMatch(out, /outdated:/);
+});
+
+test('status words each role for a 0.8.0 project, and the narrower cost of StopFailure alone', async (t) => {
+  const out = await runStatus(t, seedHooks({
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${HOOK_BIN}" turn-begin` }] }],
+    Stop: [{ hooks: [{ type: 'command', command: `node "${HOOK_BIN}" turn-end` }] }],
+  }));
+  assert.match(out, /Hooks: +2\/12 events registered in \.claude\/settings\.json — run `claude-web-chat install`, then restart Claude Code \(or open \/hooks to review them\)/);
+  assert.match(out, /\n +lifecycle +missing: StopFailure — a turn that ends on an API error holds the turn lock until it times out\n/,
+    'a 0.8.0 project still begins and commits its turns: its lifecycle line says what it does lose');
+  assert.match(out, /\n +mirror +missing: SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact — the chat mirror shows no live tool status\n/);
+  assert.match(out, /\n +bridge +missing: PermissionRequest — prompts cannot be answered from the browser\n/);
+  assert.match(out, /\n +halt +missing: PreToolUse, PostToolUse, PostToolBatch — "Stop after this step" from the browser does nothing\n/);
+  assert.doesNotMatch(out, /turns never begin/);
+});
+
+test('status reads an outdated handler as outdated, naming the field, and a bare one as bare', async (t) => {
+  const out = await runStatus(t, (root) => {
+    ensureHooks(root);
+    const settingsPath = path.join(root, '.claude', 'settings.json');
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    s.hooks.PreToolUse[0].hooks[0].timeout = 3;                                  // the mirror's
+    s.hooks.PostToolBatch[0].hooks[0].command = `node "${HOOK_BIN}" halt batch`;   // a halt the Node dispatcher ignores
+    s.hooks.Stop[0].hooks[0].command = 'claude-web-chat-hook turn-end';            // bare
+    fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
+  });
+  assert.match(out, /Hooks: +12\/12 events registered .* — run `claude-web-chat install`/, 'registered, yet not right');
+  assert.match(out, /\n +lifecycle +bare command: Stop — runs only where claude-web-chat-hook is on PATH, so turns never begin or never commit\n/);
+  assert.match(out, /\n +mirror +outdated: PreToolUse \(timeout differs from this build's template\)\n/,
+    'a different timeout is out of date, not broken — no loss is claimed');
+  assert.match(out, /\n +halt +outdated: PostToolBatch \(command differs from this build's template\) — as registered, "Stop after this step" from the browser does nothing\n/);
 });
 
 // --------------------------------------------------------------------------
