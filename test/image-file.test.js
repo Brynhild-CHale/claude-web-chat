@@ -3,7 +3,9 @@
 // (lib/core/fsjson writeFileAtomic). Spec §9.2: `<base>.svg` OR `<base>.png`,
 // lstat and regular files only (a symlink is skipped and logged once), every
 // path fenced to .web-chat/, the newer of two formats wins, re-checked on read,
-// and no write ever follows a link.
+// and no write ever follows a link. Brand slots ride the same store
+// (lib/server/brand.js); U00's own suites (brand, brand-per-theme,
+// brand-pack-logos) still pass on it.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -14,6 +16,7 @@ const { writeFileAtomic, writeJsonAtomic } = require('../lib/core/fsjson');
 const { imageFile, imageSize } = require('../lib/core/image-file');
 const { BrandError, MAX_BYTES } = require('../lib/core/brand-image');
 const { projectPaths } = require('../lib/core/paths');
+const brand = require('../lib/server/brand');
 const { encodePng, solid } = require('../test-support/png-encode');
 
 const png = (w, h, rgb = [20, 40, 200]) => encodePng(solid(w, h, rgb), w, h);
@@ -391,4 +394,42 @@ test('image-file imports only fs, path and its four lib/core neighbours', () => 
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'core', 'image-file.js'), 'utf8');
   const reqs = [...src.matchAll(/require\(\s*'([^']+)'\s*\)/g)].map((m) => m[1]).sort();
   assert.deepEqual(reqs, ['./brand-image', './fsjson', './paths', './png', 'fs', 'path']);
+});
+
+// ── brand slots ride the same store ─────────────────────────────────────────
+
+test('brand slots go through imageFile: a slot that is a link is not served, and a write replaces it', (t) => {
+  const root = tmpProject(t);
+  const pp = projectPaths(root);
+  const bucket = pp.brandThemeDir(brand.themeKey(root));
+  fs.mkdirSync(bucket, { recursive: true });
+  // A link to a perfectly good image INSIDE .web-chat: served before 0.8.5,
+  // deliberately not served now.
+  const inside = path.join(pp.dir, 'captures', 'mark.png');
+  fs.mkdirSync(path.dirname(inside), { recursive: true });
+  fs.writeFileSync(inside, png(4, 4));
+  fs.symlinkSync(inside, path.join(bucket, 'seal.png'));
+  const orig = console.error;
+  const said = [];
+  console.error = (m) => said.push(String(m));
+  try {
+    assert.equal(brand.read(root, 'seal'), null);
+    assert.equal(brand.list(root).seal, null);
+    assert.equal(brand.effective(root, 'seal'), null);
+  } finally {
+    console.error = orig;
+  }
+  assert.ok(said.some((m) => /seal\.png: it is a symlink/.test(m)), 'and the daemon log says why');
+
+  const p = png(5, 5);
+  brand.write(root, 'seal', p);
+  assert.ok(fs.lstatSync(path.join(bucket, 'seal.png')).isFile(), 'the write replaced the link');
+  assert.deepEqual(fs.readFileSync(inside), png(4, 4), 'and did not write through it');
+  assert.deepEqual(brand.read(root, 'seal'), { bytes: p, type: 'image/png' });
+
+  fs.rmSync(path.join(bucket, 'seal.png'));
+  fs.symlinkSync(inside, path.join(bucket, 'seal.png'));
+  assert.equal(brand.remove(root, 'seal'), true, 'remove takes the link…');
+  assert.equal(fs.existsSync(path.join(bucket, 'seal.png')), false);
+  assert.deepEqual(fs.readFileSync(inside), png(4, 4), '…never its target');
 });
