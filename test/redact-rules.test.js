@@ -394,6 +394,48 @@ test('display-safe guard: each of assign, env-line, cli-flag and cookie keeps co
   }
 });
 
+test('a token cut short is judged by its words, not its randomness', () => {
+  // Tails whose few characters happen to look tidy: a Slack token cut inside
+  // its numeric ids, a bot token whose ids drag its entropy down, ten hex
+  // characters that repeat digits, base64url that splits into two-letter
+  // pieces. (Seeds 1, 11, 37 and 250 of fake-secrets drew these shapes.)
+  for (const [s, label] of [
+    ['slack user token xoxp-565219024729-108719792893-5237284597240-14888', 'slack-token'],
+    ['slack said xoxb-911116461683-4051931499513-aGF6', 'slack-token'],
+    ['calling the API with sk-or-v1-3873b22722…', 'api-key'],
+    ['gcloud printed ya29.hn-cy_LpaoI', 'google-token'],
+  ]) {
+    const out = redactText(s);
+    assert.ok(out.endsWith(MASK(label)) || out.endsWith(`${MASK(label)}…`), `${s} → ${out}`);
+  }
+  // Words and placeholders at the end of a text are still identifiers.
+  for (const s of ['trained with sk-learn-intro', 'set npm_config_cache', 'call hf_hub_download', 'xoxb-not-a-real-token',
+    'export GH=ghp_xxxxxxxxxxxx', 'see sk-proj-your-key-here', 'the key is sk-ant-xxxxxxxx…']) {
+    assert.equal(redactText(s), s);
+  }
+});
+
+test('fake-secrets: no seed leaks a format, plain or as JSON text, whole or cut short', (t) => {
+  // The acceptance loops run one seed. A format with a guard can fail on an
+  // unlucky draw (a short fragment that looks tidy), so many seeds are swept.
+  const SEEDS = 64;
+  const t0 = process.hrtime.bigint();
+  const failures = [];
+  for (let seed = 1; seed <= SEEDS; seed++) {
+    for (const f of fakeSecrets({ seed })) {
+      const o = optsFor(f);
+      for (const [form, wrap] of FORMS) {
+        for (const [text, tail] of [[wrap(f.text), false], [wrap(f.tail.text, { tail: true }), true]]) {
+          if (findLeaks(redactText(text, o), [f], { tail }).length) failures.push(`${f.id}, seed ${seed}, ${form}${tail ? ', tail' : ''}`);
+        }
+      }
+      if (findLeaks(redactValue(jsonFor(f), o), [f]).length) failures.push(`${f.id}, seed ${seed}, redactValue`);
+    }
+  }
+  t.diagnostic(`${SEEDS} seeds swept in ${ms(t0).toFixed(0)} ms`);
+  assert.deepEqual(failures, []);
+});
+
 test('sk-key and slack-token leave identifier-shaped strings alone (secret_scan.py\'s is_identifier_like)', () => {
   for (const s of ['the sk-some-long-identifier-name-here class', 'xoxb-not-a-real-token-for-tests', 'sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaa']) {
     assert.equal(redactText(s), s);
