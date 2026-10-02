@@ -1708,9 +1708,10 @@ body.pin-mode #main { cursor: crosshair; }
 /* .body's wrapper, the chat dock's positioning context: the dock is .body's
    sibling because .body is a stacking context at --z-content, under #pin-layer.
    No z-index, so the wrapper is NOT a stacking context (and goes inert with
-   .body under a modal). A flex column, so .body stretches across it exactly as
-   it did as #stage's own row — a flex row would floor .body at its min-content
-   width. */
+   .body under a modal). A flex column, like #stage, so .body is stretched across
+   its width exactly as it was across #stage's; in a flex row, .body's minimum
+   width would be its content's (a long line of code in a pane could push the
+   queue rail off-screen). */
 .body-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
 
 /* ── U17 · the status bar · chat-bar.js ── */
