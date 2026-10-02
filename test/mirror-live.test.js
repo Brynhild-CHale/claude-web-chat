@@ -271,7 +271,9 @@ test('every numeric constant and every vocabulary in live.js is exported by name
   assert.deepEqual([...STATES], ['ended', 'suspended', 'question', 'waiting', 'compacting', 'working', 'idle', 'unknown']);
   assert.deepEqual([...WAITING_KINDS], ['permission', 'question', 'plan', 'other']);
   assert.deepEqual([...CLEARED_BY], ['terminal', 'web', 'esc', 'tool-ran', 'turn-closed']);
-  assert.ok(Object.isFrozen(STATES) && Object.isFrozen(CLEARED_BY));
+  // §2.6's vocabularies have their one home here: emit.js imports these three (U12b).
+  assert.deepEqual([...ENDED_REASONS], ['process-gone', 'start-mismatch', 'session-end']);
+  for (const v of [STATES, WAITING_KINDS, CLEARED_BY, ENDED_REASONS]) assert.ok(Object.isFrozen(v));
 });
 
 test('createLive needs the turn machine\'s open-turn reader', () => {
