@@ -266,3 +266,28 @@ test('the sessions directory follows CLAUDE_CONFIG_DIR', (t) => {
   b.writeSession({ pid: 4242, procStart: null, sessionId: SID2 });
   assert.equal(readSessionState({ pid: 4242 }).sessionId, SID2);
 });
+
+test('the field checks are exported, and conversations.json is read back through them, not a second copy', () => {
+  const claudeSessions = require('../lib/core/claude-sessions');
+  const ctrl = String.fromCharCode(7);
+  const cases = [
+    ['entrypointOf', ['cli', 'sdk-cli', 'sdk-ts', 'claude-vscode'], ['', '-cli', 'a'.repeat(41), 'a b', 42, null]],
+    ['wordOf', ['busy', 'interactive', 'bg'], ['Busy', '', 'a'.repeat(33), 7, null]],
+    ['versionOf', ['2.1.287'], ['', '2.1 .287', 'a'.repeat(41), `2.1${ctrl}`, null]],
+    ['procStartOf', [PROC_START], ['', `Fri${ctrl}`, 'a'.repeat(65), 1, null]],
+    ['sessionIdOf', [SID, SID2], ['', '../x', '_x', 'a/b', null]],
+  ];
+  for (const [name, good, bad] of cases) {
+    const check = claudeSessions[name];
+    assert.equal(typeof check, 'function', name);
+    for (const v of good) assert.equal(check(v), v, `${name}(${JSON.stringify(v)})`);
+    for (const v of bad) assert.equal(check(v), null, `${name}(${JSON.stringify(v)})`);
+  }
+  // The conversation registry holds the same fields in conversations.json and
+  // reads them back by these checks: one grammar per field, written once.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'server', 'mirror', 'conversations.js'), 'utf8');
+  for (const name of ['ENTRYPOINT_RE', 'WORD_RE', 'VERSION_RE', 'PROC_START_RE']) {
+    assert.ok(!src.includes(name), `conversations.js declares no ${name} of its own`);
+  }
+  assert.match(src, /\{ entrypointOf, wordOf, versionOf, procStartOf \} = claudeSessions/);
+});
