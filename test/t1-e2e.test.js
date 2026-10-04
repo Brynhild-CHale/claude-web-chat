@@ -33,7 +33,8 @@
 //   * the redactor knows web-chat's capture token (spec §5.5, "Known values");
 //   * the server leaves no open handle through srv.stop() and through
 //     gracefulShutdown(), the chat mirror's own (its timers, a linked process's
-//     sampler and sessions-file watch, the audience's tunnel.json poll) included;
+//     sampler and sessions-file watch, the audience's tunnel.json poll) included,
+//     and gracefulShutdown() goes on past a mirror whose stop never settles;
 //   * test/bus-golden.test.js is byte-identical;
 //   * the real main.js, booted in jsdom, draws the bar from the frames a daemon
 //     sent; the tab reads the project's name after hello and after a project
@@ -70,6 +71,7 @@ const { projectPaths, userPaths } = require('../lib/core/paths');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { sampleProcs, formatProcStart } = require('../lib/core/portfiles');
 const { HOST_ONLY } = require('../lib/server/audience');
+const { MIRROR_STOP_TIMEOUT_MS } = require('../lib/server');
 
 const REPO = path.resolve(__dirname, '..');
 
@@ -519,6 +521,50 @@ test('srv.stop() leaves no open handle: the chat mirror, its audience and every 
 
 test('gracefulShutdown() leaves no open handle: the chat mirror, its audience and every socket stop with it', async (t) => {
   await exitsClean(t, (d) => d.srv.gracefulShutdown());
+});
+
+test('gracefulShutdown() does not wait for ever on a chat mirror whose stop never settles: the step has a ceiling', async (t) => {
+  // Registered before the daemon's own cleanup, so it runs first: should an
+  // assertion below fail, the stuck stop is let go and srv.stop() can end.
+  let letGo = null;
+  t.after(() => { if (letGo) letGo(); });
+  const d = await daemon(t);
+  // A source whose stop() hangs (a later tranche's tailer mid-read, say),
+  // registered on the running engine, which starts it at once.
+  let asked = 0;
+  d.srv.mirror.register('stuck', () => ({
+    start: async () => {},
+    stop: () => { asked += 1; return new Promise((resolve) => { letGo = resolve; }); },
+  }));
+  await waitUntil(() => d.srv.mirror.stats().sources.some((s) => s.name === 'stuck' && s.started),
+    { ...WAIT, what: 'the stuck source to start' });
+
+  const logged = [];
+  const realError = console.error;
+  console.error = (...a) => { logged.push(a.map(String).join(' ')); };
+  let took;
+  try {
+    const t0 = Date.now();
+    await d.srv.gracefulShutdown();
+    took = Date.now() - t0;
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(asked, 1, 'the shutdown asked the mirror to stop, and the mirror its source');
+  assert.equal(typeof letGo, 'function', 'and settled while that stop was still pending');
+  assert.equal(d.server.listening, false, 'then went on to close the server');
+  assert.ok(logged.some((l) => l.includes(`mirror: stop timed out after ${MIRROR_STOP_TIMEOUT_MS} ms`)),
+    `the daemon's log says why it went on: ${JSON.stringify(logged)}`);
+  // A wall-clock bound is asserted only under WEB_CHAT_PERF=1 (spec §10.1).
+  t.diagnostic(`gracefulShutdown settled in ${took} ms with the mirror's stop pending (ceiling ${MIRROR_STOP_TIMEOUT_MS} ms)`);
+  if (process.env.WEB_CHAT_PERF === '1') {
+    assert.ok(took >= MIRROR_STOP_TIMEOUT_MS - 50 && took < MIRROR_STOP_TIMEOUT_MS + 1500, `took ${took} ms`);
+  }
+
+  // Let the stop finish, so the engine ends its own timers and this file exits.
+  letGo();
+  await d.srv.mirror.stop();
+  assert.equal(d.srv.mirror.stats().timers, 0, 'the engine, let go, cleared every timer it held');
 });
 
 // §2.9 and §10.2: the core bus API and its golden are unchanged by the mirror,
