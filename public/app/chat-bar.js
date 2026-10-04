@@ -183,13 +183,17 @@ function notePopover() {
 
 const noteOpen = (p) => !!p && !p.classList.contains('hidden');
 
-// aria-expanded on every stand-in: true on the one whose note is showing.
+// aria-expanded on the bar's own stand-ins, true on the one whose note is
+// showing, and on nothing else: the five muted chips (none once the trays claim
+// #cs-chips), and the step while it controls the note (with a chat view,
+// paintStep gives it the chat's). Never every [aria-controls="cs-tray"]: the
+// trays' own chips carry that too (spec §7.6), and their state is theirs alone.
 function markStandIns() {
   if (!els) return;
   const open = noteOpen(ownNote());
-  for (const t of els.bar.querySelectorAll('[aria-controls="cs-tray"]')) {
-    setAttr(t, 'aria-expanded', String(open && t === noteOpener));
-  }
+  const mark = (t) => setAttr(t, 'aria-expanded', String(open && t === noteOpener));
+  if (els.step.getAttribute('aria-controls') === 'cs-tray') mark(els.step);
+  for (const t of els.chips.querySelectorAll('.cs-devchip')) mark(t);
 }
 
 function closeNote() {
@@ -486,8 +490,9 @@ export function stopBar() {
 }
 
 // The trays take #cs-chips over: the five stand-ins go at once, and the bar
-// never writes there again until the returned release() is called. A second
-// claim takes over from the first, whose release then does nothing.
+// never writes there again, not even an attribute of the trays' own chips,
+// until the returned release() is called. A second claim takes over from the
+// first, whose release then does nothing.
 export function claimChips() {
   const claim = {};
   chipsClaim = claim;

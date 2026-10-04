@@ -508,20 +508,68 @@ test('stand-in replaced: the trays\' claimChips() takes the chips away at once, 
   assert.deepEqual(chips(), [], 'the stand-ins went at once');
   assert.ok(!noteShown(), 'and so did the note one of them opened');
 
+  // A tray chip as the trays render one (spec §7.6): it shares the stand-ins'
+  // aria-controls, and its aria-expanded is the trays' alone.
   const trays = doc.createElement('button');
   trays.className = 'test-tray-chip';
+  trays.setAttribute('aria-controls', 'cs-tray');
+  trays.setAttribute('aria-expanded', 'true');
   trays.textContent = '2 shells';
   $('cs-chips').append(trays);
   await update(live('idle'));
   tickAt();
   assert.deepEqual(chips(), [], 'no render brings them back');
   assert.deepEqual([...$('cs-chips').children], [trays], '#cs-chips is the trays\' to fill');
+  assert.equal(trays.getAttribute('aria-expanded'), 'true', 'a frame and a tick leave the tray chip\'s aria-expanded alone');
+  shell.press(step());
+  assert.ok(noteShown(), 'precondition: the step, still a stand-in, opened its note');
+  assert.equal(trays.getAttribute('aria-expanded'), 'true', 'so does the note opening');
+  shell.press(step());
+  assert.ok(!noteShown());
+  assert.equal(trays.getAttribute('aria-expanded'), 'true', 'and the note closing');
+  assert.equal(step().getAttribute('aria-expanded'), 'false', 'while the step\'s own follows its note');
 
   trays.remove();
   release();
   released = true;
   await shell.tick();
   assert.deepEqual(chips().map((c) => c.dataset.csCat), CATS, 'released, the stand-ins come back');
+});
+
+test('once the trays own #cs-tray and #cs-chips, the bar builds no second tray and never writes a tray chip\'s state', async (t) => {
+  await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
+  fakeView(t);
+  // The trays' own tray, static in its host (spec §7.6), stands where the note
+  // stood: a page with the trays never has the note.
+  if (note()) note().remove();
+  const tray = doc.createElement('div');
+  tray.id = 'cs-tray';
+  tray.className = 'popover cs-tray';   // open
+  $('stage').append(tray);
+  const release = bar.claimChips();
+  const trayChip = doc.createElement('button');
+  trayChip.type = 'button';
+  trayChip.className = 'cs-chip';
+  trayChip.dataset.csCat = 'shells';
+  trayChip.setAttribute('aria-controls', 'cs-tray');
+  trayChip.setAttribute('aria-expanded', 'true');
+  trayChip.textContent = '2 shells';
+  $('cs-chips').append(trayChip);
+  t.after(() => {
+    trayChip.remove();
+    tray.remove();
+    release();
+  });
+
+  await update(live('working', { step: { kind: 'Bash', label: 'Bash · npm test', started_at: T - sec(1) } }));
+  assert.equal(text(), 'Bash · npm test', 'precondition: the frame redrew the bar');
+  assert.equal(step().getAttribute('aria-controls'), 'chat-dock', 'precondition: the step is the chat\'s, no stand-in');
+  assert.equal(trayChip.getAttribute('aria-expanded'), 'true', 'a frame leaves the tray chip saying its tray is open');
+  tickAt(sec(1));
+  assert.equal(meta(), '0:02', 'precondition: the tick redrew the running clock');
+  assert.equal(trayChip.getAttribute('aria-expanded'), 'true', 'and so does every tick');
+  assert.equal(doc.querySelectorAll('[id="cs-tray"]').length, 1, 'one #cs-tray, the trays\': the bar builds no second');
+  assert.equal(note(), null, 'and no note');
 });
 
 /* ── stand-in (c): the act area, before the answer frames ──────────────────── */
