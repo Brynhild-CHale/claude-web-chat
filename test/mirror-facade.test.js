@@ -19,6 +19,9 @@
 //   * a main-bus control interrupt via tty gives the next interrupted close of
 //     its session ended_by 'web'; via hook it outlasts the Esc window and gives
 //     'hook'; with none, the transcript's marker gives 'terminal';
+//   * who interrupted is the facade's answer alone: a source's closeTurn and
+//     statusClosed drop the ended_by they are handed and get the facade's, about
+//     the very turn they close;
 //   * live.js's two decisions run on the facade's wiring: the sessions file the
 //     registry follows reaches live.js, a busy → idle flip with no Stop closes
 //     the turn in the turn machine with exactly one turn-closed {by: 'status'}
@@ -670,6 +673,55 @@ test('with no control event an interrupt marker gives ended_by terminal; another
   h.prompt('pB', 'fine');
   h.publish('Stop', { prompt_id: 'pB', stop: { last_assistant_message: 'ok' } });
   assert.equal('ended_by' in h.closes()[1], false);
+});
+
+test('who interrupted is the facade\'s answer alone: a source\'s closeTurn and statusClosed drop the ended_by they are handed', async (t) => {
+  const h = setup(t);
+  const src = recorder('rewinds');
+  h.mirror.register('rewinds', src.source);
+  await h.mirror.start();
+  h.start();
+  const close = (id, opts) => src.engine.model.closeTurn(S1, id, opts);
+  const last = () => h.closes()[h.closes().length - 1];
+  const said = (keys = ['turn_id', 'by', 'ended_by']) => pick(last(), keys);
+
+  // No request: an observed interruption is the terminal's, whatever the source says.
+  h.prompt('pA', 'one');
+  assert.equal(close('pA', { outcome: 'interrupted', by: 'transcript', ended_by: 'hook' }).ended_by, 'terminal');
+  assert.deepEqual(said(), { turn_id: 'pA', by: 'transcript', ended_by: 'terminal' });
+
+  // A request from the page: the facade's 'web', not the source's 'hook'.
+  h.prompt('pB', 'two');
+  h.interrupt({ session_id: S1, via: 'tty', expires_at: h.clock.now() + 2000 });
+  close('pB', { outcome: 'interrupted', by: 'transcript', ended_by: 'hook' });
+  assert.deepEqual(said(), { turn_id: 'pB', by: 'transcript', ended_by: 'web' });
+  assert.equal(h.mirror.stats().interrupts, 0, 'spent with its turn');
+
+  // An inferred interruption (the next prompt came with no Stop) names nobody
+  // without a request, as the turn machine's own does; any other outcome none.
+  h.prompt('pC', 'three');
+  close('pC', { outcome: 'interrupted', by: 'next-turn', ended_by: 'terminal' });
+  assert.deepEqual(said(), { turn_id: 'pC', by: 'next-turn' });
+  h.prompt('pD', 'four');
+  close('pD', { outcome: 'done', ended_by: 'web' });
+  assert.deepEqual(said(['turn_id', 'outcome', 'ended_by']), { turn_id: 'pD', outcome: 'done' });
+
+  // A decision handed to statusClosed: its ended_by is dropped too.
+  h.prompt('pE', 'five');
+  src.engine.statusClosed({ kind: 'mirror', op: 'turn-closed', conversation_id: S1, session_id: S1, turn_id: 'pE',
+    outcome: 'interrupted', by: 'status', ended_by: 'hook', at: h.clock.tick() });
+  assert.deepEqual(said(), { turn_id: 'pE', by: 'status', ended_by: 'terminal' });
+
+  // A request is about the turn open when it was made: a source closing an older
+  // turn a catch-up put behind it neither takes the request nor spends it.
+  h.prompt('pF', 'six');
+  src.engine.model.openTurn(S1, { id: 'old1', session_id: S1, started_at: h.clock.now() - 60000, before: 'pF' });
+  h.interrupt({ session_id: S1, via: 'tty', expires_at: h.clock.now() + 2000 });
+  close('old1', { outcome: 'interrupted', by: 'transcript' });
+  assert.deepEqual(said(), { turn_id: 'old1', by: 'transcript', ended_by: 'terminal' });
+  assert.equal(h.mirror.stats().interrupts, 1, 'the request waits for its own turn');
+  close('pF', { outcome: 'interrupted', by: 'transcript', ended_by: 'terminal' });
+  assert.deepEqual(said(), { turn_id: 'pF', by: 'transcript', ended_by: 'web' });
 });
 
 test('a StopFailure\'s message rides into the live state\'s last_turn', async (t) => {
