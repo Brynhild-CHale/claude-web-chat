@@ -139,6 +139,23 @@
     <!-- chat-host:bar · U17, public/app/chat-bar.js — #chat-statusbar goes here, a
          direct child of #stage: the 28px status bar under the body, 760px and wider.
          Both markers stay: test/chrome-shell.test.js holds the host's place by them. -->
+    <!-- What Claude is doing, from the chat mirror (chat-bar.js renders it, and owns
+         the step's title, aria-controls, aria-expanded and aria-keyshortcuts): the
+         step (opens the chat), the act area (Answer › / Review ›, or the answer
+         frame), the Stop slot, the chips of background work and a live region.
+         #cs-stop stays empty until the Stop control mounts into it. -->
+    <div id="chat-statusbar" class="cs-bar" role="region" aria-label="Claude session" data-cs-state="idle">
+      <button id="cs-step" class="cs-step" type="button" aria-controls="chat-dock" aria-expanded="false">
+        <span class="cs-dot" aria-hidden="true"></span>
+        <span id="cs-step-text" class="cs-step-text">Live</span>
+        <span id="cs-step-meta" class="cs-step-meta"></span>
+      </button>
+      <span id="cs-act" class="cs-act"></span>
+      <span id="cs-stop" class="cs-stop"></span>
+      <span class="cs-div" aria-hidden="true"></span>
+      <div id="cs-chips" class="cs-chips" role="group" aria-label="Background work"></div>
+      <span id="cs-live" class="sr-only" role="status" aria-live="polite"></span>
+    </div>
     <!-- /chat-host:bar -->
 
     <!-- narrow bottom bar (<760px, app.css): the topbar's ↑/↓, ↩ active and Graph

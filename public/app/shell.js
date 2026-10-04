@@ -547,7 +547,11 @@ export function handleEscape() {
    Tab and reader order WITHIN the page still follow the DOM, not a run's visual
    (CSS `order`) arrangement, and drag / resize have no keyboard path yet. */
 const MODALS = ['replay-pop', 'overlay', 'cmd-palette'];   // topmost first
-const LAYERS = '.popover, .legend, .drawer, .reaim-note';  // over a modal, or the notice: never inert
+// Over a modal, the notice, or the chat status bar: never inert. The bar is a
+// row of #stage that no modal covers (the graph overlay is inset by its height,
+// design spec §7.1), so it stays live beside the graph — what Claude is doing,
+// and the way to the chat, are never shut off by the screen the user opened.
+const LAYERS = '.popover, .legend, .drawer, .reaim-note, #chat-statusbar';
 const isShown = (el) => !!el && !el.classList.contains('hidden');
 const topModal = () => MODALS.map((id) => $(id)).find(isShown) || null;
 const modalOf = (el) => MODALS.map((id) => $(id)).find((m) => m && el && m.contains(el)) || null;
