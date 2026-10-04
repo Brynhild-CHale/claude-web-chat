@@ -175,6 +175,11 @@ test('one mount that throws does not abort the rest of a hello', async () => {
     return realAttach(host, html);
   };
   try {
+    // The probe for the rest of the frame: the hello handler's tail, after its
+    // mounts, applies the frame's lock (applyLock), which takes this class off
+    // the topbar again. (The tab's title no longer proves it: project.js writes
+    // it from a hello hook, which runs even when the handler threw.)
+    topbarEl.classList.add('locked');
     frame({
       type: 'hello', store: {}, theme: null, activeTheme: null, active: 'n1', lock: null, project: 'after-boom',
       mounts: [
@@ -184,7 +189,8 @@ test('one mount that throws does not abort the rest of a hello', async () => {
     });
     await tick();
     assert.ok(mainEl.querySelector('[data-pane-id="good"]'), 'the mount after the failing one still rendered');
-    assert.equal(W.document.title, 'after-boom', 'the rest of the hello frame still ran');
+    assert.equal(topbarEl.classList.contains('locked'), false, 'the rest of the hello handler still ran: its tail applied the lock');
+    assert.equal(W.document.title, 'after-boom', 'and the frame reached its hello hooks: project.js titled the tab');
     // The wrapper is in the DOM before the shadow root is attached, so a failure
     // used to leave an empty .pane with no pane record behind it.
     assert.equal(mainEl.querySelectorAll('[data-pane-id="bad"]').length, 0, 'the failed mount left no half-built pane');
