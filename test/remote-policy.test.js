@@ -476,35 +476,44 @@ function digest(v) {
 }
 
 test('mirror: a portal still on the protocol-8 table refuses every new route by the default deny (a rollback fails safe)', () => {
+  const PIN = 'a row a protocol-8 portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin';
   const added = new Set(SPEC_ROWS.map(keyOf));
   const older = RULES.filter((r) => !added.has(keyOf(r)));
-  // That is protocol 8's table, byte for byte (`wc085/int` before this unit):
-  // the release added rows and changed none, so an older portal enforces
-  // exactly this.
-  assert.equal(older.length, 76);
-  assert.equal(digest(older), 'd5878f2b94237a22',
-    'a row a protocol-8 portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin');
-  const old = classifier(older);
-  let checked = 0;
-  const letThrough = new Set();
-  for (const [m, u] of ROUTES_085) {
-    if (!added.has(classify(m, u, { mirror: 'full' }).key)) continue; // decided by a row protocol 8 already has
-    checked += 1;
-    for (const optIn of [undefined, ...OPT_INS]) {
-      const v = old(m, u, { mirror: optIn });
-      if (v.allow) letThrough.add(`${m} ${u} → ${v.key}`);
-      else assert.equal(v.reason, 'unknown', `${m} ${u}: refused by the default deny, with no row of its own`);
+  // That is protocol 8's table as 0.8.2 ships it, byte for byte: the release
+  // added rows and changed none, so an older portal enforces exactly this.
+  // Protocol 8 has two tables in the wild. 0.8.2 added one row, `trust
+  // --pack`'s read-only listing, without a protocol bump, so a 0.8.0 portal
+  // enforces this table less that row (and refuses the listing by the default
+  // deny). A rollback can land on either, so both are checked.
+  assert.equal(older.length, 77);
+  assert.equal(digest(older), 'c1e44e5df5393ba7', PIN);
+  const PACK_LISTING = 'GET /api/services/pack/:name';
+  const v080 = older.filter((r) => keyOf(r) !== PACK_LISTING);
+  assert.equal(v080.length, 76, `0.8.2's one added row is ${PACK_LISTING}`);
+  assert.equal(digest(v080), 'd5878f2b94237a22', PIN);
+  for (const [release, table] of [['0.8.2', older], ['0.8.0', v080]]) {
+    const old = classifier(table);
+    let checked = 0;
+    const letThrough = new Set();
+    for (const [m, u] of ROUTES_085) {
+      if (!added.has(classify(m, u, { mirror: 'full' }).key)) continue; // decided by a row protocol 8 already has
+      checked += 1;
+      for (const optIn of [undefined, ...OPT_INS]) {
+        const v = old(m, u, { mirror: optIn });
+        if (v.allow) letThrough.add(`${m} ${u} → ${v.key}`);
+        else assert.equal(v.reason, 'unknown', `${release}'s portal, ${m} ${u}: refused by the default deny, with no row of its own`);
+      }
     }
+    assert.ok(checked >= 45, `only ${checked} new routes checked`);
+    // The one exception, deliberate: protocol 8's `/api/queue/*` lets the two
+    // queue writes through, and the daemon's own level check (requireMirror
+    // 'full', spec §5.4) refuses them below full — a rolled-back portal over a
+    // 0.8.5 daemon still sends no message for a viewer without the opt-in.
+    assert.deepStrictEqual([...letThrough].sort(), [
+      'POST /api/queue/message → * /api/queue/*',
+      'POST /api/queue/task-stop → * /api/queue/*',
+    ], `${release}'s portal`);
   }
-  assert.ok(checked >= 45, `only ${checked} new routes checked`);
-  // The one exception, deliberate: protocol 8's `/api/queue/*` lets the two
-  // queue writes through, and the daemon's own level check (requireMirror
-  // 'full', spec §5.4) refuses them below full — a rolled-back portal over a
-  // 0.8.5 daemon still sends no message for a viewer without the opt-in.
-  assert.deepStrictEqual([...letThrough].sort(), [
-    'POST /api/queue/message → * /api/queue/*',
-    'POST /api/queue/task-stop → * /api/queue/*',
-  ]);
 });
 
 // ── frames ────────────────────────────────────────────────────────────────
