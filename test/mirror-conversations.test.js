@@ -1481,6 +1481,44 @@ test('a session the session toggle disabled is never linked, by hook or by sessi
   assert.equal(h.start(S1, 7001).ok, true);
 });
 
+test('a session switched off after it was linked is not handed out or watched, and comes back when switched on', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, watch, clock } = h;
+  ch.writeSession({ pid: P1, procStart: await liveStart(P1), sessionId: S1 });
+  await reg.start();
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch' });
+  assert.equal(reg.transcriptPath(S1), ch.transcript(S1));
+
+  const marker = userPaths().sessionFile(S1);
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.writeFileSync(marker, JSON.stringify({ enabled: false }));
+  clock.tick(DISCOVERY_MS + 1); // past the cached answer
+  h.seen.events.length = 0;
+  h.seen.states.length = 0;
+  await reg.tick();
+  assert.ok(reg.get(S1), 'still listed');
+  assert.equal(reg.transcriptPath(S1), null, 'so never tailed');
+  assert.equal(reg.sessionDir(S1), null);
+  assert.equal(watch.active().length, 0, 'its process\'s file is not watched');
+  assert.equal(reg.stats().watching, 0);
+  assert.equal(reg.stats().sessions_off, 1);
+  assert.deepEqual(h.seen.events.map((e) => [e.change, e.conversation.id]), [['updated', S1]]);
+  assert.deepEqual(h.seen.states, [{ cid: S1, rec: null }], 'the live machine hears the file no longer speaks for it');
+  assert.deepEqual(reg.ingest(h.env('PreToolUse', S1, { claude_pid: P1 })), { ok: false, ignored: 'session-disabled' });
+  await reg.tick();
+  assert.equal(h.seen.events.length, 1, 'announced once');
+
+  fs.rmSync(marker);
+  clock.tick(DISCOVERY_MS + 1);
+  await reg.tick();
+  assert.equal(reg.transcriptPath(S1), ch.transcript(S1));
+  assert.equal(reg.sessionDir(S1), path.join(ch.projectDir, S1));
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch again' });
+  assert.equal(reg.stats().sessions_off, 0);
+  assert.deepEqual(h.seen.events.map((e) => [e.change, e.conversation.id]), [['updated', S1], ['updated', S1]]);
+});
+
 // ── headless ─────────────────────────────────────────────────────────────────
 
 test('headless (sdk-cli) conversations are flagged', async (t) => {
