@@ -496,8 +496,11 @@ Three policies are load-bearing — preserve them:
   making a mid-response death a new error class every caller must learn.
 
 - **`spawn` defaults `false`.** Only `lib/mcp/client.js` (a spawn-injecting shim)
-  opts in, so the 24 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
-  CLI must never resurrect a daemon the user closed. `opts.noSpawn` always wins.
+  opts in, so the 24 MCP tools keep auto-spawning a daemon; driver / hub / CLI
+  must never resurrect a daemon the user closed, and neither may a hook: the turn
+  hooks share that shim but pass `noSpawn` (and their own root), and the `mirror`
+  and `ask` hooks post through `lib/client` with `noSpawn`. `opts.noSpawn` always
+  wins.
 - **No default socket timeout.** A driver's `/api/wait` long-poll (`lib/driver`
   `waitFor`) runs for up to `timeout_ms`; a blanket socket timeout would break it.
   `timeout` is opt-in. (Claude no longer long-polls — channels-only wake made
