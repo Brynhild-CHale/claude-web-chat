@@ -14,16 +14,16 @@
 //   booting the daemon       -> withServer
 //   listening on an owner    -> withServer / withHub
 //   a hand-written WS upgrade-> deafWs
-//   probing for a real Chrome/ffmpeg -> e2eGate (opt-in, WEB_CHAT_E2E_*)
-//   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
 //   a jsdom boot of public/index.html -> test-support/chrome-shell's bootShell
 //                              (file by file, at the bottom of this file)
+//   probing for a real Chrome/ffmpeg -> e2eGate (opt-in, WEB_CHAT_E2E_*)
+//   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
 //
-// The last two are a slightly different species from the first five: not a
-// primitive the harness re-implements, but a TRUTH the harness re-states when a
-// module already owns it. A test that hand-copies a number the code derives is
-// the same defect as a test that hand-rolls a poll — it goes stale silently, and
-// the stale copy passes.
+// The last two, the Chrome/ffmpeg probe and the tool count, are a slightly
+// different species from the rest: not a primitive the harness re-implements,
+// but a TRUTH the harness re-states when a module already owns it. A test that
+// hand-copies a number the code derives is the same defect as a test that
+// hand-rolls a poll — it goes stale silently, and the stale copy passes.
 //
 // Each of those had between two and nine copies before the harness grew the
 // engine, and the copies were not merely redundant: three SSE openers could not
