@@ -1758,13 +1758,12 @@ body.pin-mode #main { cursor: crosshair; }
    a 23px tab, 56px wide and 124px while it says NEEDS YOU or QUESTION, holding a
    26×4 bar in the state's ink that pulses in every state but idle (and stays
    still for a suspended session and a quiet one). A tap opens the "Under
-   development" note above it, a .popover. No badge, no drag, no dock. The state
-   inks are §7.4's, set on the stub alone, so nothing here paints outside it.
+   development" note above it, a .popover. No badge, no drag, no dock.
    Drawn only under <html class="phone"> and inside the one narrow breakpoint;
    chat-pull-stub.js keeps it [hidden] everywhere else. --bb-h is the bottom
    bar's height once the narrow posture defines it (§8.2); until then the phone
    bar's own. */
-.pull-stub { display: none; --cs-st: var(--wc-muted); --cs-pulse: 0s; }
+.pull-stub { display: none; }
 @media (max-width: 759px) {
   .phone .pull-stub:not([hidden]) {
     display: block; position: absolute; z-index: var(--z-chat); right: env(safe-area-inset-right);
@@ -1776,11 +1775,20 @@ body.pin-mode #main { cursor: crosshair; }
      sits under the tab. */
   .phone #stage:has(> .pull-stub:not([hidden])) .rail.open .rail-expanded { bottom: 22px; }
 }
-.pull-stub[data-cs-state="working"]  { --cs-st: var(--wc-green);   --cs-pulse: 1.2s; }
-.pull-stub[data-cs-state="question"] { --cs-st: var(--wc-gold);    --cs-pulse: 1s; }
-.pull-stub[data-cs-state="waiting"]  { --cs-st: var(--wc-comment); --cs-pulse: .8s; }
-.pull-stub[data-cs-state="offline"]  { --cs-st: color-mix(in srgb, var(--wc-gold) 55%, var(--wc-muted)); --cs-pulse: 2.4s; }
-.pull-stub[data-cs-pace="quiet"]     { --cs-pulse: 0s; }
+/* §7.4's state inks, border mix and pulse, set on the stub alone: a stand-in for
+   the status bar's section, which sets the same table on anything that carries
+   data-cs-state. Once both sections are on one branch, this block goes whole,
+   through its @keyframes; the rules after it name no state's ink, only --cs-st,
+   --cs-st-bd and --cs-pulse. */
+.pull-stub[data-cs-state="working"]   { --cs-st: var(--wc-green);   --cs-pulse: 1.2s; }
+.pull-stub[data-cs-state="question"]  { --cs-st: var(--wc-gold);    --cs-pulse: 1s; }
+.pull-stub[data-cs-state="waiting"]   { --cs-st: var(--wc-comment); --cs-pulse: .8s; }
+.pull-stub[data-cs-state="idle"]      { --cs-st: var(--wc-muted);   --cs-pulse: 0s; }
+.pull-stub[data-cs-state="offline"]   { --cs-st: color-mix(in srgb, var(--wc-gold) 55%, var(--wc-muted)); --cs-pulse: 2.4s; }
+.pull-stub[data-cs-state="suspended"] { --cs-st: var(--wc-muted);   --cs-pulse: 0s; }
+.pull-stub[data-cs-pace="quiet"]      { --cs-pulse: 0s; }
+.pull-stub[data-cs-state] { --cs-st-bd: color-mix(in srgb, var(--cs-st) 55%, transparent); }
+@keyframes wc-chat-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
 .ps-tab {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   height: 23px; min-width: 56px; margin: 0; padding: 0 12px;
@@ -1794,16 +1802,12 @@ body.pin-mode #main { cursor: crosshair; }
   animation: wc-chat-pulse var(--cs-pulse) ease-in-out infinite;
 }
 .ps-word { display: none; font: 700 10px var(--wc-mono); letter-spacing: .08em; white-space: nowrap; color: var(--cs-st); }
-.pull-stub:is([data-cs-state="question"], [data-cs-state="waiting"]) .ps-tab {
-  min-width: 124px; border-color: color-mix(in srgb, var(--cs-st) 70%, transparent);
-}
+.pull-stub:is([data-cs-state="question"], [data-cs-state="waiting"]) .ps-tab { min-width: 124px; border-color: var(--cs-st-bd); }
 .pull-stub:is([data-cs-state="question"], [data-cs-state="waiting"]) .ps-word { display: inline; }
-.pull-stub[data-cs-state="question"] .ps-tab { background: color-mix(in srgb, var(--wc-gold) 20%, var(--wc-header-bg)); }
+.pull-stub[data-cs-state="question"] .ps-tab { background: color-mix(in srgb, var(--cs-st) 20%, var(--wc-header-bg)); }
 .pull-stub:is([data-cs-state="idle"], [data-cs-state="suspended"], [data-cs-pace="quiet"]) .ps-bar { animation: none; }
 .popover.ps-note { top: auto; right: 8px; bottom: calc(100% + 8px); width: min(300px, calc(100vw - 32px)); min-width: 0; }
 .ps-note p { margin: 0; font: 13px/1.45 var(--wc-font); color: var(--wc-text-1); }
-/* §7.4's one pulse, opacity only, written as the spec writes it. */
-@keyframes wc-chat-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
 @media (prefers-reduced-motion: reduce) {
   .pull-stub .ps-bar { animation: none; }
   .ps-tab { transition: none; }

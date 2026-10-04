@@ -403,8 +403,9 @@ test('question: 124px, QUESTION in the question ink, tinted, pulsing at 1s', asy
   assert.equal(pull().dataset.csState, 'question');
   assert.deepEqual(look(), LOOKS.question);
   assert.equal(declared(pull().querySelector('.ps-word'), 'color'), 'var(--cs-st)', 'the word in the state\'s ink');
-  assert.equal(declared(tab(), 'background'), 'color-mix(in srgb, var(--wc-gold) 20%, var(--wc-header-bg))',
-    'a yellow tint while closed (§8.3)');
+  assert.equal(declared(tab(), 'background'), 'color-mix(in srgb, var(--cs-st) 20%, var(--wc-header-bg))',
+    'a tint of the state\'s ink while closed (§8.3)');
+  assert.equal(inherited(tab(), '--cs-st'), 'var(--wc-gold)', 'so a yellow one');
   assert.equal(label(), 'Claude has a question — answer it in the terminal');
 });
 
@@ -412,7 +413,9 @@ test('waiting: 124px, NEEDS YOU in rust behind a rust border, pulsing at .8s', a
   await show(snapshot([conversation('c1', WAITING)]));
   assert.equal(pull().dataset.csState, 'waiting');
   assert.deepEqual(look(), LOOKS.waiting);
-  assert.equal(declared(tab(), 'border-color'), 'color-mix(in srgb, var(--cs-st) 70%, transparent)');
+  assert.equal(declared(tab(), 'border-color'), 'var(--cs-st-bd)', 'the state\'s border (§7.4)');
+  assert.equal(inherited(tab(), '--cs-st-bd'), 'color-mix(in srgb, var(--cs-st) 55%, transparent)',
+    'which is §7.4\'s 55% of the state\'s ink');
   assert.equal(label(), 'Claude needs you: Permission · Bash(npm test) — answer in the terminal');
 });
 
