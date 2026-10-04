@@ -1476,6 +1476,34 @@ test('a project refreshed with nothing to change says so in one line', async (t)
   assert.ok(d.log.text().split('\n').includes('      managed files already up to date'));
 });
 
+// The hook merge counts the web-chat handlers it rewrote (a stale field, a
+// bare command) apart from the ones it added, and `install` prints both. A
+// refresh is the same apply(), so a run that only repaired a handler must not
+// report "already up to date" after rewriting .claude/settings.json.
+test('a refresh that rewrote a hook handler says so, as install does', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const registration = require('../lib/setup/registration');
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-hook-')));
+  fs.mkdirSync(path.join(other, '.web-chat'));
+  registration.apply(other, { force: false, runClaude: () => ({ ok: false }) });
+  const settingsFile = path.join(other, '.claude', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  settings.hooks.PreToolUse[0].hooks[0].timeout = 3; // the mirror's: out of date, not missing
+  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+  assert.equal(registration.inspect(other).hooks.PreToolUse, 'stale');
+  const d = upgradeDeps(paths, {
+    registration,
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: restartLikeStart,
+  });
+  const res = await update(['--restart-all'], d);
+  assert.deepEqual(res.others.refreshed, [other]);
+  assert.equal(registration.inspect(other).hooks.PreToolUse, 'ok', 'the refresh rewrote the handler');
+  assert.ok(d.log.text().split('\n').includes('      1 hook(s) updated'), d.log.text());
+});
+
 test('a refresh names what is left for the user in that project: a conflict, a differs file, a stub .mcp.json', async (t) => {
   const paths = onVersion(t);
   inProjectCwd(t);
