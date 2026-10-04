@@ -15,6 +15,11 @@
 //     the next prompt beats the SessionStart (the younger merges into the older),
 //     resume (the conversation moves to the new process), fork (forked_from),
 //     and formerNames linking a /clear missed while the daemon was down;
+//   * formerNames is a hint, never proof: it never joins across a fork or a
+//     resume the hooks reported (in either order), a conversation the process
+//     left by one (across a restart too), a session older than the process's
+//     last, or a fork and its source; and while hooks flow it waits for the
+//     SessionStart;
 //   * SessionEnd never ends a conversation; a gone process does;
 //   * conversations.json: written atomically, set aside when corrupt or invalid
 //     and rebuilt by discovery, every field checked when read back, bounded to
@@ -44,7 +49,7 @@ const portfiles = require('../lib/core/portfiles');
 const registry = require('../lib/util/registry');
 const { projectPaths, userPaths, userClaudePaths } = require('../lib/core/paths');
 const {
-  createConversations, CONVERSATIONS_MAX, FALLBACK_WINDOW_MS, CLEAR_GRACE_MS, DISCOVERY_MS, REASONS, LINKED_BY, CHANGES,
+  createConversations, CONVERSATIONS_MAX, FALLBACK_WINDOW_MS, CLEAR_GRACE_MS, DISCOVERY_MS, ARRIVALS_MAX, REASONS, LINKED_BY, CHANGES,
 } = require('../lib/server/mirror/conversations');
 const { createClaudeState, ACTIVE_POLL_MS, IDLE_POLL_MS } = require('../lib/server/mirror/claude-state');
 const live = require('../lib/server/mirror/live');
@@ -678,6 +683,32 @@ test('an in-place /resume moves the process; the conversation it left keeps it a
   assert.equal(reg.processGone(S2, { pid: 7001, at: h.clock.tick() }), true);
 });
 
+test('a process linked where none was is announced as reason process, with no previous session', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, clock } = h;
+  await reg.start();
+  const linkedOf = (cid) => h.seen.events.filter((e) => e.change === 'linked' && e.conversation.id === cid)
+    .map((e) => [e.session_id, e.previous_session_id, e.reason]);
+
+  // The sessions file finds the process of a conversation hooks opened with no pid.
+  reg.ingest(h.env('SessionStart', S1, { claude_pid: null, session: { source: 'startup' } }));
+  ch.writeSession({ pid: P1, procStart: await liveStart(P1), sessionId: S1 });
+  await reg.discover();
+  assert.equal(reg.get(S1).process.pid, P1);
+  assert.deepEqual(linkedOf(S1), [[S1, null, 'process']], 'no resume happened, and no session precedes it');
+
+  // A SessionStart(resume) names the process of one that no process had written.
+  reg.ingest(h.env('SessionStart', S2, { claude_pid: null, session: { source: 'startup' } }));
+  h.start(S2, 7002, 'resume');
+  assert.deepEqual(linkedOf(S2), [[S2, null, 'process']]);
+
+  // One another process wrote moves to the new one by a resume.
+  reg.processGone(S2, { pid: 7002, at: clock.tick() });
+  h.start(S2, 7003, 'resume');
+  assert.deepEqual(linkedOf(S2).at(-1), [S2, S2, 'resume']);
+});
+
 test('a fork becomes its own conversation with forked_from', async (t) => {
   const h = setup(t);
   const { reg } = h;
@@ -777,12 +808,321 @@ test('a link found later merges the younger conversation into the older', async 
   assert.deepEqual(ids(reg.list()), [S1, S2]);
   ch.writeSession({ pid: P1, procStart: await liveStart(P1), sessionId: S2, formerNames: [{ sessionId: S1 }] });
   await reg.discover();
+  // Hooks flow and no SessionStart has said what S2 was: it may be on its way
+  // (an in-place /fork whose prompt beat it), and it outranks formerNames.
+  assert.deepEqual(ids(reg.list()), [S1, S2], 'not merged while the SessionStart is due');
+  assert.equal(reg.stats().pending_clears, 1);
+  await h.clock.advance(CLEAR_GRACE_MS + 10);
   assert.deepEqual(ids(reg.list()), [S1]);
   assert.deepEqual(sessionIds(reg.get(S1)), [S1, S2]);
   assert.equal(reg.get(S1).current_session_id, S2);
   const merged = h.seen.events.find((e) => e.change === 'merged');
   assert.equal(merged.conversation.id, S2);
   assert.equal(merged.merged_into, S1);
+});
+
+// ── formerNames: a hint for a /clear missed while down, never proof ─────────
+// A sessions file's formerNames lists every session the process had before,
+// whatever it left them by: /clear, /resume or /fork. The hooks say which, and
+// they win.
+
+// Nothing merged, and none of the given conversations gone.
+function apart(h, list) {
+  assert.deepEqual(ids(h.reg.list()), [...list].sort());
+  assert.ok(!h.seen.events.some((e) => e.change === 'merged'), 'nothing merged');
+}
+
+test('formerNames never folds an in-place /fork into its source: SessionStart(fork), then the sessions file', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, clock } = h;
+  const st1 = await liveStart(P1);
+  await reg.start();
+  h.start(S1, P1);
+  h.tool(S1, P1);
+  h.start(S3, P1, 'fork');
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S3, formerNames: [{ sessionId: S1 }], updatedAt: clock.tick() });
+  await reg.discover();
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  await reg.discover();
+  apart(h, [S1, S3]);
+  const f = reg.get(S3);
+  assert.equal(f.forked_from, S1);
+  assert.deepEqual(f.sessions.map((s) => [s.session_id, s.reason]), [[S3, 'fork']]);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+  assert.equal(reg.conversationOfPid(P1), S3);
+  assert.equal(reg.stats().pending_clears, 0);
+});
+
+test('formerNames never folds an in-place /fork into its source: the sessions file, then SessionStart(fork)', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, watch, clock } = h;
+  const st1 = await liveStart(P1);
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S1 });
+  await reg.start();
+  h.tool(S1, P1); // hooks flow
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch' });
+  const w = watch.active()[0];
+  await w.trigger('start');
+
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S3, formerNames: [{ sessionId: S1 }], updatedAt: clock.tick() });
+  await w.trigger('file');
+  assert.equal(reg.bySession(S3), null, 'not joined to S1 while its SessionStart is due');
+  assert.equal(reg.stats().pending_clears, 1);
+  assert.ok(clock.pendingDelays().includes(CLEAR_GRACE_MS));
+  await reg.discover(); // a tick meanwhile decides nothing either
+  assert.equal(reg.bySession(S3), null);
+
+  h.start(S3, P1, 'fork');
+  assert.equal(reg.stats().pending_clears, 0);
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  await reg.discover();
+  apart(h, [S1, S3]);
+  assert.equal(reg.get(S3).forked_from, S1);
+  assert.deepEqual(reg.get(S3).sessions.map((s) => s.reason), ['fork']);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+});
+
+test('formerNames never merges in the conversation an in-place /resume left: SessionStart(resume), then the sessions file', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, clock } = h;
+  const st1 = await liveStart(P1);
+  await reg.start();
+  h.start(S2, 7001); // an older conversation, whose process has gone
+  reg.processGone(S2, { pid: 7001, at: clock.tick() });
+  clock.tick(1000);
+  h.start(S1, P1);
+  h.end(S1, P1, 'resume');
+  h.start(S2, P1, 'resume');
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S2, formerNames: [{ sessionId: S1 }], updatedAt: clock.tick() });
+  await reg.discover();
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  await reg.discover();
+  apart(h, [S1, S2]);
+  assert.deepEqual(sessionIds(reg.get(S2)), [S2]);
+  assert.equal(reg.conversationOfPid(P1), S2);
+  const left = reg.get(S1);
+  assert.deepEqual(sessionIds(left), [S1]);
+  assert.equal(left.process.pid, P1, 'it keeps the process as its last');
+  assert.ok(Number.isFinite(left.sessions[0].ended_at));
+});
+
+test('formerNames never merges in the conversation an in-place /resume left: the sessions file, then SessionStart(resume)', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, watch, clock } = h;
+  const st1 = await liveStart(P1);
+  await reg.start();
+  h.start(S2, 7001);
+  reg.processGone(S2, { pid: 7001, at: clock.tick() });
+  clock.tick(1000);
+  h.start(S1, P1);
+  h.tool(S1, P1); // hooks flow
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S1 });
+  await reg.discover();
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch' });
+  const w = watch.active()[0];
+  await w.trigger('start');
+
+  // The file alone already shows a resume: S2 is another process's conversation,
+  // which this one cannot have made by a /clear.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S2, formerNames: [{ sessionId: S1 }], updatedAt: clock.tick() });
+  await w.trigger('file');
+  apart(h, [S1, S2]);
+  assert.equal(reg.conversationOfPid(P1), S2, 'the process moved to the conversation it resumed');
+  assert.equal(reg.get(S2).ended_at, null, 'which it revived');
+  assert.ok(Number.isFinite(reg.get(S1).sessions[0].ended_at));
+  assert.equal(reg.stats().pending_clears, 0, 'nothing to wait for');
+
+  h.end(S1, P1, 'resume');
+  h.start(S2, P1, 'resume');
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  await reg.discover();
+  apart(h, [S1, S2]);
+  assert.deepEqual(sessionIds(reg.get(S2)), [S2]);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+  assert.equal(reg.conversationOfPid(P1), S2);
+});
+
+test('a /clear after an in-place /fork joins the fork; formerNames never brings back the source it left', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, clock } = h;
+  const st1 = await liveStart(P1);
+  await reg.start();
+  h.start(S1, P1);
+  h.start(S3, P1, 'fork');
+  h.end(S3, P1, 'clear');
+  h.start(S4, P1, 'clear');
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S4, formerNames: [{ sessionId: S1 }, { sessionId: S3 }], updatedAt: clock.tick() });
+  await reg.discover();
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  apart(h, [S1, S3]);
+  assert.deepEqual(sessionIds(reg.get(S3)), [S3, S4]);
+  assert.deepEqual(reg.get(S3).sessions.map((s) => s.reason), ['fork', 'clear']);
+  assert.equal(reg.get(S3).forked_from, S1);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+});
+
+test('a conversation left by a resume stays left across a restart: a /clear missed while down joins only the one the process wrote', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, clock } = h;
+  const st1 = await liveStart(P1);
+  await h.reg.start();
+  h.start(S2, 7001);
+  h.reg.processGone(S2, { pid: 7001, at: clock.tick() });
+  clock.tick(1000);
+  h.start(S1, P1);
+  h.start(S2, P1, 'resume'); // S1's conversation is left by a resume
+  await h.reg.stop();
+  const stored = h.saved().conversations.find((c) => c.id === S1);
+  assert.equal(stored.process.left_by, 'resume', 'kept in conversations.json');
+  assert.equal(h.saved().conversations.find((c) => c.id === S2).process.left_by, null);
+
+  // While the daemon is down the process /clears into S4.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S4, formerNames: [{ sessionId: S1 }, { sessionId: S2 }], updatedAt: clock.tick() });
+  const seen = [];
+  const reg2 = createConversations({
+    root: h.root, now: clock.now, timers: clock.timers, redact, sampleProcs: knownSampler(),
+    watchFile: fakeWatches().watchFile, onConversation: (ev) => seen.push(ev),
+  });
+  t.after(() => reg2.stop());
+  await reg2.start();
+  assert.deepEqual(ids(reg2.list()), [S1, S2]);
+  assert.deepEqual(sessionIds(reg2.get(S2)), [S2, S4]);
+  assert.equal(reg2.get(S2).sessions[1].reason, 'clear');
+  assert.deepEqual(sessionIds(reg2.get(S1)), [S1]);
+  assert.ok(!seen.some((e) => e.change === 'merged'));
+});
+
+test('a session older than one the process had before is a /resume, never a /clear, with no hooks at all', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, watch, clock } = h;
+  const st1 = await liveStart(P1);
+  // An hour-old conversation, written by no process the registry knows.
+  writeStored(h, [storedConversation(S2, { last_activity_at: Date.now() - 3600 * 1000 })]);
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S1 }); // a new session; no hooks installed
+  await reg.start();
+  assert.deepEqual(ids(reg.list()), [S1, S2]);
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch' });
+  const w = watch.active()[0];
+  await w.trigger('start');
+
+  // The process resumes S2 in place; its file lists S1 as a former session.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S2, formerNames: [{ sessionId: S1 }], updatedAt: clock.tick(1000) });
+  await w.trigger('file');
+  apart(h, [S1, S2]);
+  assert.equal(reg.conversationOfPid(P1), S2);
+  assert.deepEqual(sessionIds(reg.get(S2)), [S2]);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+  const linked = h.seen.events.filter((e) => e.change === 'linked' && e.conversation.id === S2);
+  assert.deepEqual(linked.map((e) => [e.session_id, e.previous_session_id, e.reason]), [[S2, null, 'process']],
+    'no process wrote S2 before: one is linked where none was');
+
+  // A /clear in S2 later: S1's conversation, left by that resume, stays apart.
+  await waitUntil(() => watch.active().some((x) => x !== w), { what: 'the watch moving' });
+  const w2 = watch.active().find((x) => x !== w);
+  await w2.trigger('start');
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S3, formerNames: [{ sessionId: S1 }, { sessionId: S2 }], updatedAt: clock.tick(1000) });
+  await w2.trigger('file');
+  apart(h, [S1, S2]);
+  assert.deepEqual(sessionIds(reg.get(S2)), [S2, S3]);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+});
+
+test('a session unknown to the registry whose transcript predates the process\'s last is resumed: its own conversation', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, watch, clock } = h;
+  const st1 = await liveStart(P1);
+  transcript(h, S2, { ageMs: 0 }); // made now, by the wall clock
+  clock.tick(60000); // the registry's clock is a minute on: S1 starts after S2's file was made
+  reg.ingest(h.env('SessionStart', S1, { claude_pid: null, session: { source: 'startup' } }));
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S1, updatedAt: clock.tick() });
+  await reg.start();
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch' });
+  const w = watch.active()[0];
+  await w.trigger('start');
+
+  // Hooks flow (S1's SessionStart came in), yet nothing waits: an older file is
+  // a resume whatever the SessionStart on its way says.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S2, updatedAt: clock.tick() });
+  await w.trigger('file');
+  assert.deepEqual(ids(reg.list()), [S1, S2]);
+  const c = reg.get(S2);
+  assert.deepEqual(c.sessions.map((s) => [s.session_id, s.reason]), [[S2, 'resume']]);
+  assert.equal(reg.conversationOfPid(P1), S2);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1], 'not a /clear in S1\'s conversation');
+  assert.equal(reg.stats().pending_clears, 0);
+});
+
+test('formerNames never joins a fork and its source', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const st1 = await liveStart(P1);
+  const fork = storedConversation(S3, { process: { pid: P1, proc_start: st1, kind: 'interactive', entrypoint: 'cli', linked_by: 'hook', linked_at: Date.now() - 30000 } });
+  fork.forked_from = S1;
+  fork.sessions[0].reason = 'fork';
+  writeStored(h, [storedConversation(S1, { last_activity_at: Date.now() - 120000 }), fork]);
+  // A /clear in the fork, made while the daemon was down.
+  h.ch.writeSession({ pid: P1, procStart: st1, sessionId: S4, formerNames: [{ sessionId: S1 }, { sessionId: S3 }] });
+  await h.reg.start();
+  apart(h, [S1, S3]);
+  assert.deepEqual(sessionIds(h.reg.get(S3)), [S3, S4]);
+  assert.equal(h.reg.get(S3).forked_from, S1);
+  assert.deepEqual(sessionIds(h.reg.get(S1)), [S1]);
+});
+
+test('a formerNames join waits for the SessionStart while hooks flow; without one it is a /clear, and the file is read again first', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg, watch, clock } = h;
+  const st1 = await liveStart(P1);
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S1 });
+  await reg.start();
+  h.tool(S1, P1); // hooks flow
+  await waitUntil(() => watch.active().length === 1, { what: 'the watch' });
+  const w = watch.active()[0];
+  await w.trigger('start');
+
+  // No SessionStart comes for S2: after the grace it is a /clear.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S2, formerNames: [{ sessionId: S1 }], updatedAt: clock.tick() });
+  await w.trigger('file');
+  assert.equal(reg.bySession(S2), null);
+  assert.equal(reg.stats().pending_clears, 1);
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  assert.equal(reg.stats().pending_clears, 0);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1, S2]);
+  assert.deepEqual(reg.get(S1).sessions.map((s) => s.reason), ['start', 'clear']);
+  assert.equal(reg.get(S1).current_session_id, S2);
+
+  // A SessionStart(clear) within the grace links at once, and ends the wait.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S3, formerNames: [{ sessionId: S1 }, { sessionId: S2 }], updatedAt: clock.tick() });
+  await w.trigger('file');
+  assert.equal(reg.stats().pending_clears, 1);
+  h.start(S3, P1, 'clear');
+  assert.equal(reg.stats().pending_clears, 0);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1, S2, S3]);
+
+  // Two switches inside one grace: the first one's wait ends on a read that
+  // shows the second, which decides for both (the skipped session's file
+  // exists by then, so it is linked as well).
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S4, formerNames: [{ sessionId: S1 }, { sessionId: S2 }, { sessionId: S3 }], updatedAt: clock.tick() });
+  await w.trigger('file');
+  transcript(h, S4); // a new session's file appears after the switch (V3)
+  clock.tick(500);
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S5, formerNames: [{ sessionId: S1 }, { sessionId: S2 }, { sessionId: S3 }, { sessionId: S4 }], updatedAt: clock.tick() });
+  await w.trigger('file');
+  assert.equal(reg.stats().pending_clears, 2);
+  await clock.advance(CLEAR_GRACE_MS + 10);
+  assert.equal(reg.stats().pending_clears, 0);
+  apart(h, [S1]);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1, S2, S3, S4, S5]);
+  assert.equal(reg.get(S1).current_session_id, S5);
 });
 
 test('a sessions file that has not caught up with a hook never moves a conversation back', async (t) => {
@@ -1030,6 +1370,24 @@ test('at the bound, a new conversation prunes the least active one nobody writes
   assert.equal(fs.existsSync(p.mirrorDiff('turn-s2')), false, 'and its diffs');
   assert.equal(fs.existsSync(p.mirrorIndex(S3)), true);
   assert.equal(fs.existsSync(p.mirrorDiff('turn-s3')), true);
+});
+
+test('how a process came to each session is kept for the newest ARRIVALS_MAX sessions, and leaves with a removed conversation', async (t) => {
+  await t.test('a pruned conversation\'s sessions leave it', async (t2) => {
+    const h = setup(t2, { options: { maxConversations: 3 } });
+    await h.reg.start();
+    for (const sid of [S1, S2, S3, S4, S5]) h.start(sid, null);
+    assert.equal(h.reg.list().length, 3);
+    assert.equal(h.reg.stats().arrivals, 3);
+  });
+  await t.test('bounded however many sessions start', async (t2) => {
+    const h = setup(t2, { options: { maxConversations: ARRIVALS_MAX + 100 } });
+    await h.reg.start();
+    const sid = (i) => `a${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`;
+    for (let i = 0; i < ARRIVALS_MAX + 5; i++) h.start(sid(i), null);
+    assert.equal(h.reg.list().length, ARRIVALS_MAX + 5);
+    assert.equal(h.reg.stats().arrivals, ARRIVALS_MAX);
+  });
 });
 
 test('a repeated envelope changes nothing', async (t) => {
