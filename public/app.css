@@ -1780,19 +1780,20 @@ body.pin-mode #main { cursor: crosshair; }
 .cs-step-meta:empty, .cs-act:empty, .cs-stop:empty { display: none; }
 /* The act area: Answer › (a question) and Review › (a permission or a plan)
    open the chat on what Claude is waiting for; once answering lands, the answer
-   frame mounts here instead. Until then a wait reads "Answer in the terminal".
-   The slot draws no box of its own (display: contents), so what it holds sits
-   in the bar's row: the note and the buttons never shrink, and the under-
-   development hint has only the room the rest leave free (a zero basis, grown
-   up to its own width first), so it gives way before a word of the step does;
-   below 1100px it goes. */
+   frame mounts here instead. Until then a wait reads "Answer in the terminal",
+   with the hint "answering from the browser is under development". The slot
+   and the hint draw no box of their own (display: contents), so what they hold
+   sits in the bar's row: the note and the buttons never shrink, nor do the
+   hint's last words, "under development", so the bar says so at every width it
+   is drawn at (the 2026-10-02 ruling); the hint's lead has only the room the
+   rest leave free (a zero basis, grown up to its own width first), so it gives
+   way, to its ellipsis, before a word of the step does. */
 .cs-act { display: contents; }
 .cs-act > * { flex: none; }
 .cs-act-note { color: var(--wc-fg-bright); }
-.cs-act-hint {
-  flex: 1000 1 0; min-width: 0; max-width: max-content; overflow: hidden; text-overflow: ellipsis;
-  color: var(--wc-muted);
-}
+.cs-act-hint { display: contents; color: var(--wc-muted); }
+.cs-act-hint-lead { flex: 1000 1 0; min-width: 0; max-width: max-content; overflow: hidden; text-overflow: ellipsis; }
+.cs-act-hint-tail { flex: none; }
 .cs-answer, .cs-review {
   height: 20px; padding: 0 9px; display: inline-flex; align-items: center;
   border-radius: var(--wc-radius-sm); font: 600 10.5px var(--wc-font);
@@ -1838,8 +1839,7 @@ body.pin-mode #main { cursor: crosshair; }
 .cs-dev-line { margin: 0; font: 12px/1.45 var(--wc-font); color: var(--wc-fg); }
 @media (prefers-reduced-motion: reduce) { .cs-dot { animation: none; } }
 /* Short rows: the chips (and their tray, later) keep the dot and move the word
-   into the tooltip, so the step keeps about 300px; the act hint goes first. */
-@media (max-width: 1100px) { .cs-act-hint { display: none; } }
+   into the tooltip, so the step keeps about 300px. */
 @media (max-width: 1000px) { .cs-devchip { padding: 0 6px; } .cs-devchip-label { display: none; } }
 @media (max-width: 759px) { #chat-statusbar, .popover.cs-dev { display: none; } }
 

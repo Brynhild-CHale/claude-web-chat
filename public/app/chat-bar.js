@@ -79,7 +79,9 @@ const STAND_IN_CHIPS = [
   ['queue', 'queue', 'Messages queued for Claude'],
 ];
 const TERMINAL_NOTE = 'Answer in the terminal';
-const TERMINAL_HINT = 'answering from the browser is under development';
+// The hint, one sentence in two halves: app.css lets the lead give way when the
+// row is short and never the tail, so "under development" shows at every width.
+const TERMINAL_HINT = ['answering from the browser is', 'under development'];
 
 let els = null;            // the bar's elements, while it runs
 let ticker = null;
@@ -259,13 +261,23 @@ function paintStep(s, seam) {
 }
 
 function terminalNote() {
+  const [leadText, tailText] = TERMINAL_HINT;
+  const sentence = `${leadText} ${tailText}`;
+  const title = sentence.charAt(0).toUpperCase() + sentence.slice(1);   // the whole hint, wherever the row cuts it
   const note = document.createElement('span');
   note.className = 'cs-act-note';
   note.textContent = TERMINAL_NOTE;
-  note.title = 'Answering from the browser is under development';
+  note.title = title;
+  const lead = document.createElement('span');
+  lead.className = 'cs-act-hint-lead';
+  lead.textContent = leadText;
+  lead.title = title;
+  const tail = document.createElement('span');
+  tail.className = 'cs-act-hint-tail';
+  tail.textContent = tailText;
   const hint = document.createElement('span');
   hint.className = 'cs-act-hint';
-  hint.textContent = TERMINAL_HINT;
+  hint.append(lead, ' ', tail);   // its text stays the one sentence
   return [note, hint];
 }
 

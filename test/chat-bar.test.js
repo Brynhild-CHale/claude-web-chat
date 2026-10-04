@@ -56,9 +56,9 @@ const CATS = ['shells', 'agents', 'workflows', 'monitors', 'queue'];
 // ── public/app.css, read as the browser would cascade it ─────────────────────
 
 const CSS = stripComments(read('public/app.css'));
-// The rules whose selector list names `sel`, each with the prelude of the @media
-// block it sits in ('' at the top level).
-function rulesFor(sel) {
+// The rules whose selector list `pick` accepts, each with its selector list and
+// the prelude of the @media block it sits in ('' at the top level).
+function rulesWhere(pick) {
   const out = [];
   const walk = (src, media) => {
     let i = 0;
@@ -73,14 +73,17 @@ function rulesFor(sel) {
         else if (src[j] === '}') depth--;
       }
       const body = src.slice(open + 1, j - 1);
+      const selectors = prelude.split(',').map((s) => s.trim());
       if (prelude.startsWith('@media')) walk(body, prelude);
-      else if (!prelude.startsWith('@') && prelude.split(',').map((s) => s.trim()).includes(sel)) out.push({ media, body });
+      else if (!prelude.startsWith('@') && pick(selectors)) out.push({ media, selectors, body });
       i = j;
     }
   };
   walk(CSS, '');
   return out;
 }
+// The rules whose selector list names `sel` itself.
+const rulesFor = (sel) => rulesWhere((selectors) => selectors.includes(sel));
 const decl = (body, prop) => {
   const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(body);
   return m ? m[1].trim() : null;
@@ -584,12 +587,44 @@ test('stand-in: a waiting question, permission or plan reads "Answer in the term
   for (const [kind, l] of kinds) {
     await show(one(l));
     assert.equal(act().querySelector('.cs-act-note').textContent, 'Answer in the terminal', `${kind}: the note`);
-    assert.equal(act().querySelector('.cs-act-hint').textContent, 'answering from the browser is under development',
-      `${kind}: and its muted hint`);
+    const hint = act().querySelector('.cs-act-hint');
+    assert.equal(hint.textContent, 'answering from the browser is under development', `${kind}: and its muted hint`);
+    // One sentence in two halves: the lead may give way on a short row, the
+    // tail never does (app.css, the next test).
+    assert.deepEqual([...hint.children].map((el) => [el.className, el.textContent]), [
+      ['cs-act-hint-lead', 'answering from the browser is'], ['cs-act-hint-tail', 'under development']]);
+    assert.equal(hint.querySelector('.cs-act-hint-lead').title, 'Answering from the browser is under development',
+      `${kind}: a lead cut short carries the whole hint in its title`);
+    assert.equal(act().querySelector('.cs-act-note').title, 'Answering from the browser is under development');
     assert.equal(act().querySelector('button'), null, `${kind}: no button, with no chat to open`);
   }
   await show(one(live('working')));
   assert.equal(act().childNodes.length, 0, 'nothing waits: the act area is empty');
+});
+
+test('stand-in: "under development" shows at every width the bar is drawn at, and the hint\'s lead gives way first', () => {
+  // jsdom lays nothing out, so this reads the cascade. The hint draws no box,
+  // so its halves are flex items of the bar's own row (as the act area's are):
+  assert.equal(decl(rulesFor('.cs-act').find((r) => !r.media).body, 'display'), 'contents');
+  assert.equal(decl(rulesFor('.cs-act-hint').find((r) => !r.media).body, 'display'), 'contents');
+  // "under development" never shrinks…
+  assert.equal(decl(rulesFor('.cs-act-hint-tail').find((r) => !r.media).body, 'flex'), 'none');
+  // …while the lead has only the room the rest leave free, to its ellipsis.
+  const lead = rulesFor('.cs-act-hint-lead').find((r) => !r.media).body;
+  assert.equal(decl(lead, 'flex'), '1000 1 0', 'a zero basis: it takes free room, never the step\'s');
+  assert.equal(decl(lead, 'min-width'), '0');
+  assert.equal(decl(lead, 'text-overflow'), 'ellipsis');
+  // And no rule, at any width, hides the note, the hint or its last words: only
+  // the bar's own display:none below 760px does (the test below).
+  const words = rulesWhere((sels) => sels.some((s) => /\.cs-act-(note|hint|hint-tail)(?![\w-])/.test(s)));
+  assert.ok(words.length >= 3, 'the rules for the note, the hint and its tail were found');
+  for (const r of words) {
+    const where = `${r.selectors.join(', ')}${r.media ? ` in ${r.media}` : ''}`;
+    assert.notEqual(decl(r.body, 'display'), 'none', `${where}: never display: none`);
+    assert.equal(decl(r.body, 'visibility'), null, `${where}: never hidden`);
+    assert.equal(decl(r.body, 'max-width'), null, `${where}: never capped`);
+    assert.equal(decl(r.body, 'overflow'), null, `${where}: never clipped`);
+  }
 });
 
 test('stand-in replaced: once an answer frame registers, the terminal note goes and the frame mounts', async (t) => {
