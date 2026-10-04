@@ -1770,6 +1770,11 @@ body.pin-mode #main { cursor: crosshair; }
     display: block; position: absolute; z-index: var(--z-chat); right: env(safe-area-inset-right);
     bottom: calc(var(--bb-h, calc(60px + env(safe-area-inset-bottom))) - 1px);
   }
+  /* The queue screen (here the open rail covers the page, above the bottom bar)
+     ends where the tab begins: its column stops 22px up, the tab's 23px less the
+     1px it lays over the bar, and keeps its own padding inside, so Push never
+     sits under the tab. */
+  .phone #stage:has(> .pull-stub:not([hidden])) .rail.open .rail-expanded { bottom: 22px; }
 }
 .pull-stub[data-cs-state="working"]  { --cs-st: var(--wc-green);   --cs-pulse: 1.2s; }
 .pull-stub[data-cs-state="question"] { --cs-st: var(--wc-gold);    --cs-pulse: 1s; }

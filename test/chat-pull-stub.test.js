@@ -12,7 +12,8 @@
 //     as the data-cs-state the stub's section of app.css turns into the ink, the
 //     pulse and the width, with NEEDS YOU or QUESTION while Claude waits on the
 //     user; another session waiting outranks a calmer one.
-//   * It rides the bottom bar wherever app.css sizes the bar.
+//   * It rides the bottom bar wherever app.css sizes the bar, and the narrow
+//     queue screen stops short of it, so it never sits on Push.
 //   * A tap opens the "Under development" note; a second tap, Escape and an
 //     outside tap close it (the shell's dismiss layer). No badge, no drag.
 //   * It steps aside for the real phone chat: once a chat view registers as
@@ -577,6 +578,35 @@ test('the tab rides the bottom bar\'s top edge, right-justified, on the chat run
   const bar4 = p.querySelector('.ps-bar');
   assert.deepEqual([declared(bar4, 'width'), declared(bar4, 'height')], ['26px', '4px'], 'a 26×4 bar');
   assert.equal(declared(t, 'touch-action'), null, 'nothing to drag yet');
+});
+
+test('the queue screen stops where the tab begins, so the tab never sits on Push', async () => {
+  // Below 760px the open rail covers the page down to the bottom bar, and the
+  // tab rides that bar over the rail's foot, where Push is. The rail's column
+  // (all of app.css, cascaded: the stub's rule against the rail's own inset)
+  // ends at the tab's top edge instead: its 23px less the 1px it lays over the bar.
+  await viewport(PHONE);
+  assert.equal(pull().hidden, false, 'the tab is up');
+  const rail = $('queue-rail');
+  const column = rail.querySelector('.rail-expanded');
+  assert.ok(column && column.querySelector('.rail-push'), 'the rail\'s column holds Push');
+  const foot = () => side(computed(column, ['bottom', 'inset']), 2);
+  assert.equal(rail.classList.contains('open'), false);
+  assert.equal(foot(), '0', 'a closed rail keeps its own inset');
+  withClass(rail, 'open', () => {
+    assert.equal(foot(), `${parseFloat(declared(tab(), 'height')) - 1}px`, 'the open queue screen stops at the tab');
+    // Only while the tab is there to clear: with the stub hidden the queue
+    // screen reaches the bar again.
+    const p = pull();
+    p.hidden = true;
+    try { assert.equal(foot(), '0', 'no tab, no gap'); } finally { p.hidden = false; }
+  });
+  assert.equal(pull().hidden, false, 'and the tab is up again');
+  // And off the phone layout, where the stub never shows, the rail is the rail.
+  await viewport(NARROW);
+  withClass(rail, 'open', () => assert.equal(foot(), '0', 'a narrow window that is not a phone'));
+  await viewport(DESKTOP);
+  withClass(rail, 'open', () => assert.equal(foot(), '0', 'a desktop'));
 });
 
 test('the pulse is opacity only, and it stops under reduced motion', async () => {
