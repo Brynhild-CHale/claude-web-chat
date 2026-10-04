@@ -1209,6 +1209,33 @@ test('claude-state hands on each changed record, and null once the file is gone'
   await cs.stop(); // idempotent
 });
 
+test('claude-state: a file missing at the first read is not reported gone by the next', async (t) => {
+  const watch = fakeWatches();
+  let current = null;
+  const records = [];
+  const cs = createClaudeState({
+    watchFile: watch.watchFile,
+    readSessionState: () => current,
+    onRecord: (cid, pid, rec, info) => records.push({ rec, first: info.first }),
+  });
+  t.after(() => cs.stop());
+  await cs.link('c1', 4246);
+  const w = watch.watches[0];
+  await w.trigger('poll');
+  await w.trigger('poll');
+  assert.deepEqual(records, [], 'never there, so never gone');
+  assert.equal(cs.recordOf('c1'), null);
+
+  current = Object.freeze({ pid: 4246, sessionId: S1, status: 'busy' });
+  await w.trigger('poll');
+  assert.deepEqual(records, [{ rec: current, first: false }], 'it appears: a change');
+  await w.trigger('poll');
+  assert.equal(records.length, 1);
+  current = null;
+  await w.trigger('poll');
+  assert.deepEqual(records.at(-1), { rec: null, first: false }, 'there, then gone');
+});
+
 test('the live machine hears a process\'s sessions file only through the conversation it writes now', async (t) => {
   const P1 = process.pid;
   const h = setup(t);
