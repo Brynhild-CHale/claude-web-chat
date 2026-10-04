@@ -44,8 +44,10 @@
 //   * test/bus-golden.test.js is byte-identical;
 //   * the real main.js, booted in jsdom, draws the bar from the frames a daemon
 //     sent; the tab reads the project's name after hello and after a project
-//     frame renames it, and nothing but project.js writes it; the step, a chip
-//     and the phone tab each open an "Under development" note;
+//     frame renames it, and nothing but project.js writes it; the lockup draws
+//     the project's logo (and the phone's mark) from the URLs the daemon served
+//     it at, light and dark; the step, a chip and the phone tab each open an
+//     "Under development" note;
 //   * a chrome test file that boots main.js still exits: this one (its shell,
 //     restored, leaves nothing behind) and one that hand-rolls its boot, run in a
 //     child process. On Node 22 (CI's), --test-timeout bounds a whole FILE, so
@@ -67,6 +69,7 @@ const { createHook } = require('node:async_hooks');
 const { withServer, tmpRoot, waitUntil, wsConnect } = require('../test-support/helpers');
 const { claudeHome } = require('../test-support/claude-home');
 const { bootShell } = require('../test-support/chrome-shell');
+const { encodePng, solid } = require('../test-support/png-encode');
 const client = require('../lib/client');
 const { hookEnvelope } = require('../lib/hooks/envelope');
 const { sessionFields } = require('../lib/hooks/turn-begin');
@@ -90,6 +93,21 @@ const REPLY_MARK = 'T1E2E-REPLY-MARK';
 const PROMPT = `${PROMPT_MARK} fix the import paths`;
 const REPLY = `${REPLY_MARK} the import paths are fixed`;
 const RENAMED = 'Heartbeat Project';
+// The project's logo and its dark variant: square, so the logo is the phone's
+// mark too (lib/core/project-identity markOf), and of two sizes, so the two
+// files' versions differ and each mode's URL names its own.
+const LOGO = encodePng(solid(16, 16, [20, 40, 200]), 16, 16);
+const LOGO_DARK = encodePng(solid(32, 32, [230, 200, 40]), 32, 32);
+// The URLs the topbar's lockup draws the project's images from (spec §9.3, §9.4):
+// the route, `mode=dark` in web-chat's dark mode, and a cache key that names the
+// version of the file that mode serves.
+function lockupSrcs(id) {
+  const v = (meta) => encodeURIComponent(meta.version);
+  return {
+    light: { icon: `/project/logo?v=${v(id.logo)}`, mark: `/project/mark?v=${v(id.logo)}` },
+    dark: { icon: `/project/logo?mode=dark&v=${v(id.logo_dark)}`, mark: `/project/mark?mode=dark&v=${v(id.logo_dark)}` },
+  };
+}
 // A network peer's address (spec §5.4: anything but loopback is one).
 const PEER = '192.168.1.23';
 // A tunnel.json `tunnel setup` could have written: the opt-in rides beside it.
@@ -735,7 +753,8 @@ async function scratch(fn) {
 
 // A session recorded off a real daemon, for the chrome to replay: every frame a
 // local socket got, in order, and what GET /api/mirror and GET /api/project
-// answered at each point the chrome reads them.
+// answered at each point the chrome reads them — and what the daemon served at
+// each URL the lockup draws the project's logo from.
 async function recordSession() {
   return scratch(async (t) => {
     const d = await daemon(t);
@@ -757,8 +776,26 @@ async function recordSession() {
     assert.equal(renamed.status, 200);
     await waitUntil(() => local.of('project').length > 0, { ...WAIT, what: 'the project frame' });
     rec.identity.renamed = await client.get('/api/project', d.call);
+    rec.marks.end = local.frames.length;
+
+    // Then a logo, light and dark, through the routes `claude-web-chat identity`
+    // writes through (a raw image body, so Node's fetch: lib/client sends JSON).
+    for (const [kind, png] of [['logo', LOGO], ['logo-dark', LOGO_DARK]]) {
+      const put = await d.api.raw(`/api/project/${kind}`, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: png });
+      assert.equal(put.status, 200, `PUT /api/project/${kind}: ${await put.text()}`);
+    }
+    await waitUntil(() => local.of('project').some((f) => f.identity && f.identity.logo_dark),
+      { ...WAIT, what: 'the dark logo\'s project frame' });
+    rec.identity.branded = await client.get('/api/project', d.call);
+    rec.served = {};
+    for (const urls of Object.values(lockupSrcs(rec.identity.branded))) {
+      for (const url of Object.values(urls)) {
+        const r = await d.api.raw(url);
+        rec.served[url] = { status: r.status, type: r.headers.get('content-type'), bytes: Buffer.from(await r.arrayBuffer()) };
+      }
+    }
     rec.frames = local.frames.slice();
-    rec.marks.end = rec.frames.length;
+    rec.marks.branded = rec.frames.length;
     return rec;
   });
 }
@@ -853,6 +890,52 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     for (const w of titleWrites) assert.equal(writer(w.stack), 'project.js', `title ${JSON.stringify(w.value)} written by project.js`);
     assert.ok(titleWrites.every((w) => w.value === rec.project || w.value === RENAMED),
       `the title was only ever the project's name: ${JSON.stringify(titleWrites.map((w) => w.value))}`);
+  });
+
+  test('the lockup draws the project\'s logo from the URLs the daemon serves it at, its dark variant in dark mode', async () => {
+    // The two halves agree on the wire (spec §9.3): the project frames carry the
+    // ImageMeta GET /api/project answers.
+    const id = rec.identity.branded;
+    const frames = rec.frames.slice(rec.marks.end, rec.marks.branded).filter((f) => f.type === 'project');
+    assert.ok(frames.length > 0, 'the uploads were announced in project frames');
+    const last = frames[frames.length - 1].identity;
+    for (const k of ['logo', 'logo_dark', 'mark', 'mark_dark']) assert.deepEqual(last[k], id[k], `the frame's ${k} is GET /api/project's`);
+    assert.deepEqual(Object.keys(id.logo).sort(), ['bytes', 'height', 'type', 'version', 'width']);
+    assert.deepEqual([id.logo.type, id.logo.bytes, id.logo.width, id.logo.height], ['image/png', LOGO.length, 16, 16]);
+    assert.deepEqual([id.mark, id.mark_dark], ['logo', true], 'a square logo with a dark variant is the mark in both modes');
+    assert.notEqual(id.logo.version, id.logo_dark.version, 'precondition: each mode\'s URL names its own file');
+
+    current.identity = id;
+    await replay(rec.marks.end, rec.marks.branded); // the frames themselves land it
+    const srcs = lockupSrcs(id);
+    const root = shell.document.documentElement;
+    const was = root.getAttribute('data-theme');
+    const drawn = () => ({ icon: $('cobrand-icon') && $('cobrand-icon').getAttribute('src'),
+      mark: $('cobrand-pmark') && $('cobrand-pmark').getAttribute('src') });
+    try {
+      root.setAttribute('data-theme', 'light'); // web-chat's light mode, as theme.js marks it
+      await shell.tick();
+      assert.deepEqual(drawn(), srcs.light, 'light: the logo and the mark, each keyed by the light file\'s version');
+      assert.equal($('cobrand-icon').dataset.shape, 'tile', 'a square logo is drawn as a tile');
+      root.removeAttribute('data-theme'); // and its dark mode: the attribute gone
+      await shell.tick();
+      assert.deepEqual(drawn(), srcs.dark, 'dark: mode=dark, keyed by the dark variant\'s version');
+    } finally {
+      if (was === null) root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', was);
+      await shell.tick();
+    }
+
+    // Each of those URLs, asked of the daemon that sent the frames, served that
+    // mode's image as uploaded.
+    for (const [mode, png] of [['light', LOGO], ['dark', LOGO_DARK]]) {
+      for (const url of Object.values(srcs[mode])) {
+        const got = rec.served[url];
+        assert.ok(got, `the recording asked the daemon for ${url}`);
+        assert.deepEqual([got.status, got.type], [200, 'image/png'], url);
+        assert.ok(got.bytes.equals(png), `${url} served the ${mode} logo's bytes`);
+      }
+    }
   });
 
   test('the stand-ins: the step, a chip and the phone tab each open an "Under development" note', async () => {
