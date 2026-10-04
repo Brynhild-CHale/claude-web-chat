@@ -1751,6 +1751,59 @@ body.pin-mode #main { cursor: crosshair; }
   .cobrand:not(.has-mark):not(.has-pmark) { display: none; }
 }
 
+/* ── U22c · the phone grip-tab stub · chat-pull-stub.js ── */
+/* The grip tab's stand-in until the phone chrome builds the real pull (design
+   spec §8.2–§8.3, §7.4). On a phone it rides the bottom bar's top edge,
+   right-justified, over the bar's 1px top border so the two read as one piece:
+   a 23px tab, 56px wide and 124px while it says NEEDS YOU or QUESTION, holding a
+   26×4 bar in the state's ink that pulses in every state but idle (and stays
+   still for a suspended session and a quiet one). A tap opens the "Under
+   development" note above it, a .popover. No badge, no drag, no dock. The state
+   inks are §7.4's, set on the stub alone, so nothing here paints outside it.
+   Drawn only under <html class="phone"> and inside the one narrow breakpoint;
+   chat-pull-stub.js keeps it [hidden] everywhere else. --bb-h is the bottom
+   bar's height once the narrow posture defines it (§8.2); until then the phone
+   bar's own. */
+.pull-stub { display: none; --cs-st: var(--wc-muted); --cs-pulse: 0s; }
+@media (max-width: 759px) {
+  .phone .pull-stub:not([hidden]) {
+    display: block; position: absolute; z-index: var(--z-chat); right: env(safe-area-inset-right);
+    bottom: calc(var(--bb-h, calc(60px + env(safe-area-inset-bottom))) - 1px);
+  }
+}
+.pull-stub[data-cs-state="working"]  { --cs-st: var(--wc-green);   --cs-pulse: 1.2s; }
+.pull-stub[data-cs-state="question"] { --cs-st: var(--wc-gold);    --cs-pulse: 1s; }
+.pull-stub[data-cs-state="waiting"]  { --cs-st: var(--wc-comment); --cs-pulse: .8s; }
+.pull-stub[data-cs-state="offline"]  { --cs-st: color-mix(in srgb, var(--wc-gold) 55%, var(--wc-muted)); --cs-pulse: 2.4s; }
+.pull-stub[data-cs-pace="quiet"]     { --cs-pulse: 0s; }
+.ps-tab {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  height: 23px; min-width: 56px; margin: 0; padding: 0 12px;
+  border: 1px solid var(--wc-border); border-right: 0; border-bottom: 0; border-radius: 10px 0 0 0;
+  background: var(--wc-header-bg); color: var(--wc-fg); font: inherit;
+  transition: min-width .25s, border-color .2s;
+}
+.ps-tab:focus-visible { outline-offset: -2px; }
+.ps-bar {
+  flex: none; width: 26px; height: 4px; border-radius: 2px; background: var(--cs-st);
+  animation: wc-chat-pulse var(--cs-pulse) ease-in-out infinite;
+}
+.ps-word { display: none; font: 700 10px var(--wc-mono); letter-spacing: .08em; white-space: nowrap; color: var(--cs-st); }
+.pull-stub:is([data-cs-state="question"], [data-cs-state="waiting"]) .ps-tab {
+  min-width: 124px; border-color: color-mix(in srgb, var(--cs-st) 70%, transparent);
+}
+.pull-stub:is([data-cs-state="question"], [data-cs-state="waiting"]) .ps-word { display: inline; }
+.pull-stub[data-cs-state="question"] .ps-tab { background: color-mix(in srgb, var(--wc-gold) 20%, var(--wc-header-bg)); }
+.pull-stub:is([data-cs-state="idle"], [data-cs-state="suspended"], [data-cs-pace="quiet"]) .ps-bar { animation: none; }
+.popover.ps-note { top: auto; right: 8px; bottom: calc(100% + 8px); width: min(300px, calc(100vw - 32px)); min-width: 0; }
+.ps-note p { margin: 0; font: 13px/1.45 var(--wc-font); color: var(--wc-text-1); }
+/* §7.4's one pulse, opacity only, written as the spec writes it. */
+@keyframes wc-chat-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+@media (prefers-reduced-motion: reduce) {
+  .pull-stub .ps-bar { animation: none; }
+  .ps-tab { transition: none; }
+}
+
 /* ── U32 · narrow posture · viewport.js ── */
 
 /* ── U33 · the chat dock · chat-dock.js ── */

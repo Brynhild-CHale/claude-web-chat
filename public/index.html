@@ -161,6 +161,18 @@
          go here, direct children of #stage: the grip tab, its badge and the sheet,
          riding the bottom bar below 760px. Both markers stay: test/chrome-shell.test.js
          holds the host's place by them. -->
+    <!-- Until then, the grip tab's stand-in (public/app/chat-pull-stub.js): on a phone
+         it shows Claude's state where the real tab will sit, and a tap says the chat
+         on the phone is under development. [hidden] until initPullStub() shows it;
+         the real pull replaces all of it. -->
+    <div id="chat-pull" class="pull-stub" data-cs-state="idle" hidden>
+      <button type="button" id="chat-tab" class="ps-tab" aria-controls="chat-sheet" aria-expanded="false"
+              aria-describedby="chat-sheet" aria-label="Chat with Claude — idle"><span class="ps-bar" aria-hidden="true"></span><span class="ps-word" aria-hidden="true"></span></button>
+      <div id="chat-sheet" class="popover ps-note hidden">
+        <h4>Under development</h4>
+        <p>Chat and tasks on your phone land in a later 0.8.5 build; the tab already shows what Claude is doing.</p>
+      </div>
+    </div>
     <!-- /chat-host:pull -->
 
     <!-- front glass (scanline + highlight), above content -->
