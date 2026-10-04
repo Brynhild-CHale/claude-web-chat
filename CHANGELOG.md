@@ -21,7 +21,7 @@ migrated project shows no brand images.
 
 - **Brand images belong to the theme they were added under.** A Settings → Brand image (logotype, lockup, seal) was the project's and showed under every theme; it is now kept with the theme that was the web-chat-wide theme when you added it. Switch theme and that theme's own images show — or, in a slot it has none in, the logos its theme pack brought — and switch back to get yours back; Remove clears only the theme on screen, and an export carries the lockup and seal of the theme the project is on. Settings → Brand says whose images it is showing ("Images for the Paper theme"). A theme whose name cannot be a folder name (a saved "Ocean Dusk") still keeps its own, every theme set without a name (`set_theme`'s raw tokens) shares one set, and a saved theme that only carries a built-in's name keeps its images apart from the pack's. Every change of the web-chat-wide theme — Settings, `apply_theme`, `set_theme`, `save_theme` with `set_default`, a pack removal that resets it — now sends every open surface a `brand` frame and logs a `brand` event naming the theme, so each topbar swaps its logotype without a refresh. `GET /api/brand` and the upload and remove replies carry the `theme` too. See `docs/themes.md#brand-images`.
 
-## [0.8.2] - 2026-10-02
+## [0.8.2] - 2026-10-04
 
 ### Upgrading from 0.8.0
 
