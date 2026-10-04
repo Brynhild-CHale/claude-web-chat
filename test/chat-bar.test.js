@@ -205,8 +205,11 @@ before(async () => {
       const { view } = await sh.importApp('state.js');
       const store = await sh.importApp('chat-state.js');
       store.initChatState({ onFrame: ws.onFrame, onHello: ws.onHello, conn: view.conn });
-      const known = new Set(sh.intervals().map((i) => i.id));
       bar = await sh.importApp('chat-bar.js');
+      // Once main.js starts the bar itself, it is running already: this file
+      // wants a ticker of its own, counted from its start.
+      bar.stopBar();
+      const known = new Set(sh.intervals().map((i) => i.id));
       bar.initChatBar();
       const mine = sh.intervals().filter((i) => !known.has(i.id));
       assert.equal(mine.length, 1, 'initChatBar registers exactly one interval');
