@@ -42,7 +42,8 @@ takes). The graph belongs to Claude's turn lifecycle and the user.
 const { createDriver } = require('claude-web-chat/lib/driver');
 
 const wc = createDriver({ owner: 'test-runner' }); // discovers the port
-await wc.render({ id: 'tests', html: '<h2>running…</h2>' });
+await wc.writeMarkdown({ id: 'tests-h', text: '## Tests' });
+await wc.render({ id: 'tests', html: '<p>running…</p>', after: 'tests-h' });
 await wc.setStore({ test_run: { seq: Date.now(), status: 'pass', total: 42 } });
 const ev = await wc.waitFor({ store_key: 'rerun_request', exists: true });
 ```
@@ -53,10 +54,12 @@ const ev = await wc.waitFor({ store_key: 'rerun_request', exists: true });
 
 | Method | Maps to | Notes |
 |---|---|---|
-| `render({html, id?, target?, params?, theme?, force?})` | `POST /api/render` | Auto-tags `owner`. Returns the envelope — check `.ok` (see ownership below). `theme` is normalized like any other (below). |
+| `render({html, id?, target?, params?, theme?, force?, after?, place?})` | `POST /api/render` | Auto-tags `owner`. Returns the envelope — check `.ok` (see ownership below). `after` and `place` position and size the pane as on the route (below); the applied placement comes back as `place`. `theme` is normalized like any other (below). |
+| `writeMarkdown({text, id?, after?, force?})` | `POST /api/markdown` | Puts a markdown item on the page: a heading or short prose between and around panes. Auto-tags `owner`. Reuse `id` to rewrite one in place; left out, the server assigns `md-<n>` and returns it as `id`. `after` places it as it places a pane. Check `.ok`: an item another writer owns, an id a pane holds (`conflict`), a reserved id and text over the cap (`too_large`) all soft-reject. |
+| `removeMarkdown({id, force?})` | `POST /api/markdown` with `remove: true` | Takes one markdown item off the page, and never a pane of that id. Returns `{ok, removed, id}`; `removed` is `false` when no such item was there. An item another writer owns soft-rejects without `force`. |
 | `setStore(patch)` | `POST /api/store` | Merge a patch; use a signal key with a bumping `seq`. |
 | `getStore(keys?)` | `GET /api/store` | Full store, or a filtered subset. |
-| `clear({id?, target?})` | `POST /api/clear` | Auto-tags `owner`. |
+| `clear({id?, target?})` | `POST /api/clear` | Auto-tags `owner`. By id it takes a pane or a markdown item. |
 | `getEvents({since?})` | `GET /api/events` | Catch-up tail + gap detection (see below). |
 | `waitFor(predicate, {timeout_ms?})` | `POST /api/wait` | Long-poll on a store key or event kind. **Driver-only** — Claude wakes via the channel/queue, not this. |
 
@@ -85,6 +88,10 @@ So a driver and Claude can't silently overwrite each other's panes by colliding
 on `id`. Both sides should check `.ok` and either pick a different `id` or
 deliberately `force`. Claude sees the owner in `list_mounts` before rendering.
 
+Markdown items carry an owner the same way (`writeMarkdown` stamps the
+driver's), under the same gate: rewriting or removing an item another writer
+owns soft-rejects with this envelope unless you pass `force:true`.
+
 Pick a namespaced `id` per driver surface (`tests_*`, `watch_*`) to avoid
 collisions in the first place.
 
@@ -103,6 +110,8 @@ spawn over a driver's pane, because it never passes `force`.
 Every mutation endpoint emits an event with a monotonic `seq` and a `source`:
 
 - `render` → `{kind:'render', id, target, bytes, source:<owner>}`
+- `markdown` → `{kind:'markdown', op:'put', id, bytes, source:<owner>}`, or
+  `{kind:'markdown', op:'remove', id, source:<owner>}`
 - `clear` → `{kind:'clear', id?, target?, source:<owner>}`
 - `store` → `{kind:'store', patch, source:'server'}`
 - graph ops → `{kind:'graph', op, …}`
@@ -155,13 +164,13 @@ For `waitFor` with an `event_kind` predicate, pass `since_seq` (from a prior
 
 ## Between-turn commit semantics
 
-External writes are **live-only**. A driver's renders and store writes mutate the
-running server's state immediately and broadcast to the browser — but they are
-**not** a graph node. They fold into the **next** node the same way a user's pane
-clicks do: when Claude's turn ends, the Stop hook (`turn-end`) snapshots whatever
-is live — including driver-owned panes and driver store writes — into one new
-node. `owner` is preserved on those mounts, so a committed node records which
-panes a driver authored.
+External writes are **live-only**. A driver's renders, markdown and store writes
+mutate the running server's state immediately and broadcast to the browser — but
+they are **not** a graph node. They fold into the **next** node the same way a
+user's pane clicks do: when Claude's turn ends, the Stop hook (`turn-end`)
+snapshots whatever is live — including driver-owned panes and markdown and driver
+store writes — into one new node. `owner` is preserved on those panes and
+markdown items, so a committed node records which ones a driver authored.
 
 So the lifecycle is:
 
@@ -190,7 +199,8 @@ Any language can drive the surface — it's just HTTP. Discover the port from
 | `GET /api/store?keys=a,b` | — | Full store, or filtered. |
 | `POST /api/store` | `{patch}` | Merge + broadcast. Returns post-patch store. |
 | `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?, after?, place?}` | Mount/replace. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. `theme` normalized (below). `after` positions the pane in the page sequence; `place: {col, span, rows}` sizes it on the 12-column grid (clamped; the applied value comes back as `place`). |
-| `POST /api/clear` | `{id?}` / `{target?}` / `{}` | Remove a pane / slot / everything. |
+| `POST /api/markdown` | `{text, id?, after?, owner?, force?}` / `{id, remove:true, owner?, force?}` | Put or replace a markdown item (escaped; a page's headings build its Contents), or take one off. Soft-rejects (HTTP 200) on cross-owner, an id a pane holds, a reserved id, or text over the cap; check the body. |
+| `POST /api/clear` | `{id?}` / `{target?}` / `{}` | Remove a pane or markdown item by id / a slot / everything. |
 | `GET /api/events?since=<seq>` | — | `{events, latest, oldest, gap, dropped}`. |
 | `POST /api/wait` | `{predicate, timeout_ms}` | Long-poll (**driver-only**; Claude uses the channel/queue). `{ok:false, timeout:true}` (HTTP 200) on miss. Counts against the 5s shutdown drain. |
 

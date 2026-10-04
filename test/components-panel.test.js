@@ -712,12 +712,14 @@ test('installing a pack with services shows ONE command covering all of them', a
   assert.match(manage.textContent, /deploy-board, incident-timeline, service-health/);
 
   const cmds = [...manage.querySelectorAll('.rn-cmd')].map((c) => c.textContent);
-  assert.ok(cmds.includes('claude-web-chat trust --all'),
+  assert.ok(cmds.includes('claude-web-chat trust --pack acme-ops'),
     'one command covers all three — not three commands, and not one name with the rest dropped');
   assert.equal(cmds.some((c) => /trust deploy-board$/.test(c)), false);
+  assert.equal(cmds.includes('claude-web-chat trust --all'), false,
+    '--all decides every pending request in the project, including ones a pane raised for something wider');
 });
 
-test('a single service names that service, rather than --all', async () => {
+test('a single service right after install gets the pack command too: nothing is pending yet', async () => {
   await openDrawer();
   press($('drawer-tab-manage'));
   await tick();
@@ -737,8 +739,9 @@ test('a single service names that service, rather than --all', async () => {
   );
 
   const cmds = [...$('drawer-manage').querySelectorAll('.rn-cmd')].map((c) => c.textContent);
-  assert.ok(cmds.includes('claude-web-chat trust deploy-board'));
-  assert.equal(cmds.includes('claude-web-chat trust --all'), false, 'no need for --all when there is one');
+  assert.ok(cmds.includes('claude-web-chat trust --pack one-pack'),
+    'no pane is open yet, so `trust deploy-board` would find nothing waiting; --pack approves ahead of time');
+  assert.equal(cmds.includes('claude-web-chat trust --all'), false);
 });
 
 test('every command notice carries a copy button that puts it on the clipboard', async () => {
@@ -760,16 +763,36 @@ test('every command notice carries a copy button that puts it on the clipboard',
   await tick();
 
   const card = $('drawer-manage').querySelector('.pk-card');
-  assert.match(card.textContent, /one command covers all 2/);
+  assert.match(card.textContent, /The command approves what this pack installed/);
+  assert.match(card.textContent, /a pane that passes anything else still asks on its own/);
   const cmd = card.querySelector('.rn-cmd').textContent;
-  assert.equal(cmd, 'claude-web-chat trust --all');
+  assert.equal(cmd, 'claude-web-chat trust --pack acme-ops');
 
   const copy = card.querySelector('.rn-copy');
   assert.ok(copy, 'the command has a copy button');
   press(copy);
   await tick();
-  assert.deepEqual(copied, ['claude-web-chat trust --all']);
+  assert.deepEqual(copied, ['claude-web-chat trust --pack acme-ops']);
   assert.match(copy.textContent, /copied/);
+});
+
+test('a pack whose record this machine did not write is not offered `trust --pack`', async () => {
+  routes['/api/packs'] = { ok: true, quarantined: [], packs: [{
+    name: 'acme-ops', version: '1.2.0', tier: 'local', drift: false, machine_recorded: false,
+    source: { via: 'archive', sha: 'abc1234000000000000000000000000000000000' },
+    components: ['deploy-board', 'incident-timeline'],
+    services: ['deploy-board', 'incident-timeline'], skill: null,
+  }] };
+  routes['/api/services/pending'] = { ok: true, pending: [{ name: 'deploy-board' }, { name: 'incident-timeline' }] };
+  const { invalidate } = await import(pathToFileURL(path.join(REPO, 'public/app/components.js')).href);
+  invalidate();
+  if (drawerOpen()) { key('Escape'); await tick(); }
+  await openDrawer();
+  press($('drawer-tab-manage'));
+  await tick();
+  const card = $('drawer-manage').querySelector('.pk-card');
+  assert.equal(card.querySelector('.rn-cmd').textContent, 'claude-web-chat trust', 'the listing, which names each request');
+  assert.match(card.textContent, /not written by an install on this machine, so approve them one by one/);
 });
 
 test('a clipboard that refuses does not throw — the command is still selectable', async () => {

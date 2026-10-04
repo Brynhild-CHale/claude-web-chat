@@ -65,12 +65,16 @@ file:
 
 ```sh
 node scripts/build-release.js --dev      # dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz + SHA256SUMS
-claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz
-claude-web-chat install                  # in each other web-chat project
+claude-web-chat update --from dist/claude-web-chat-0.8.0-dev.<stamp>.<sha>.tar.gz --restart-all
+claude-web-chat install                  # in any other web-chat project it did not refresh
 ```
 
-Then `/exit` and reopen Claude Code (the MCP server loads its code at session
-start) and reload any open surface tab.
+`--restart-all` restarts every other project whose server runs another build,
+and refreshes the managed files of each one web-chat is registered in, as
+`install` would there. (The `update` that runs is the installed build's, so the
+refresh needs 0.8.2 or later installed.) Then `/exit` and reopen Claude Code
+(the MCP server loads its code at session start) and reload any open surface
+tab.
 
 **First time on an install that predates `--from` (0.7.5, 0.7.6): bootstrap by
 hand.** The `update` in those releases does not know `--from` — its argument
@@ -116,6 +120,22 @@ uncompressed tar's sha256 (compare it with `gunzip -c <tarball> | shasum -a 256`
 to tell a zlib difference from a tree difference. `dist/SHA256SUMS` keeps a line for every
 tarball still in `dist/` — each build replaces its own line and drops the lines
 of tarballs you deleted — so an older build there still verifies.
+
+Once the checkout moves on — a new commit, or another branch checked out — the
+installed dev build is no longer the code in front of you, and nothing about it
+looks different from the outside. So inside a checkout of this package (or any
+directory below it), `claude-web-chat version` and `claude-web-chat status`
+print one ⚠ line when the installed build is a dev build cut from a commit other
+than the checkout's HEAD. It names both commits, and how to install this
+checkout's code instead if that is what you want:
+`node scripts/build-release.js --dev`, then the `update --from` line it prints.
+It does not say which of the two is newer, because it cannot know: the check
+only reads files — the two package.json files and the checkout's `.git` — runs
+no `git`, and walks no history. A build you cut on another branch may well be
+ahead of the checkout you are standing in, and rebuilding from that checkout
+would replace it with older code, so the rebuild is offered, never prescribed.
+The line says nothing anywhere else, for a release install, or while the
+installed build is the checkout's HEAD.
 
 `update --from` runs a GitHub update's steps from the file: it verifies the
 tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is
@@ -178,7 +198,8 @@ lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
                    channels · resources · mcp-seen · remote-policy · png · gif ·
-                   brand-image · brand-store · theme-identity · fonts · theme-values
+                   brand-image · brand-store · theme-identity · fonts · theme-values ·
+                   trust-marks
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -292,6 +313,7 @@ were the only places they lived.
 | say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
+| read a component's `x-trust` marks, warn about an unknown one, or say what an approval covers (and what it lets a pane do) | `core/trust-marks` `readTrustMarks` / `trustMarkWarnings` / `describeCovers` / `describeExact` / `coversProjectPath` / `pathReach` / `TRUST_MARKS` (the identity those marks enter — and each request's `covers` / `exact` — is minted in `lib/server/services.js` `mintIdentity`) | re-list `display` / `project-path`, or word the unknown-mark warning, a covers line or the `.env` sentence a second time |
 | decide whether a name is a builtin THEME (a pack, or a retired alias), or which pack it resolves to | `core/names` `isBuiltinThemeName` / `builtinThemeId` / `BUILTIN_THEME_NAMES` (the alias table `BUILTIN_THEME_ALIASES` lives here and lib/server/theme-packs re-exports it; a test holds `BUILTIN_THEME_PACKS` equal to its packs) | re-list `earthy`/`paper`/`georgetown-blue`, or a second alias table |
 | validate an image before it is shown as a logo (a Settings → Brand upload, a theme's logos) | `core/brand-image` `validate(bytes)` / `validateLogoFile(name, bytes)` / `parseLogoName(name)` (lib/server/brand.js re-exports them) | a second sniffer or SVG blocklist |
 | check what a theme inside a pack may carry (tokens, modes, fonts, logos — raw CSS gated by the one `THEME_CSS_POLICY`) | `lib/packs/themes` `inspectPackTheme(stageDir, name)` | a second theme check in a route or the drawer |
@@ -755,7 +777,8 @@ plan.js      planInstall() → { units, collisions, services, errors }  — PURE
 tree.js      applyPlan / removeUnits / verifyPack / stage+promote quarantine
              — plus beginJournal (the undo list) and droppedUnits (the diff)
    ↓
-install.js   orchestrate, write the provenance record, append the audit line
+install.js   orchestrate, write the provenance record (and, for a project
+             install, the user-tier ledger entry), append the audit line
 ```
 
 `plan.js` writes nothing, deliberately: the same function serves the install, the
@@ -801,7 +824,11 @@ Five invariants live in code rather than in a reviewer's memory:
   unlinks is built from that record, so `verifyPack` validates it at READ time:
   kebab-case unit name, `memberEscapes` on every recorded path, and
   `isInside` for any recorded file that exists. A unit that fails is `refused`
-  whole — nothing unlinked, counted as drift, kept in the record.
+  whole — nothing unlinked, counted as drift, kept in the record. And nothing
+  that GRANTS reads it as provenance: a project install's provenance for
+  `trust --pack` is the user-tier ledger `install.js` writes after the
+  transaction commits (`store.recordLedger` / `findLedgerEntry` / `trimLedger`,
+  `~/.web-chat/packs/ledger.json`), keyed by (project root, pack name).
 
 `lib/server/routes/packs.js` and `lib/cli/commands/pack.js` are both thin over
 `install.js`. **Read the risk paragraph at the head of the route file before
@@ -1304,13 +1331,43 @@ whole surface and broadcast a `reset` instead of per-pane frames, and
 
 ### `lib/server/services.js` — the service-trust identity
 
-A consent is a triple: **(project root, `service.js` hash, service-facing params)**.
-`serviceParams` / `paramsFingerprint` / `trustKey` (module-scoped and pure) are the
-only place that triple becomes a value; `computeDesired` mints it once per pane and
+A consent is a triple: **(project root, code hash, service-facing params)**.
+`mintIdentity` and the pure helpers under it (`serviceParams`, `trustDeclaration`,
+`codeHash`, `identityParams`, `paramsFingerprint`, `trustKey`, all module-scoped)
+are the only place that triple becomes a value; `mintSurface` mints it once per
+pane, `packRequests` mints a pack's pre-approvals through the same function, and
 everything downstream QUOTES it — the trust-file key, `pendingTrust()`, the
 `service:trust` / `service:trust:clear` frames, the browser's card map
-(`public/app/service-trust.js`), the CLI's `--params-fp` selector, and the
-supervisor's own "did this child's identity change" test.
+(`public/app/service-trust.js`), the CLI's `--params-fp` selector, `trust --pack`,
+and the supervisor's own "did this child's identity change" test.
+
+A component's `x-trust` declaration (its params_schema marks; the vocabulary is
+`lib/core/trust-marks`) is folded into the code hash, and the params it covers —
+every `display` value, and a `project-path` value proven inside the root by
+`core/paths` `fence` — are left out of the params half. With no declaration the
+hash is the plain sha256 of `service.js` and the key is byte-for-byte the one
+recorded before declarations existed; `test/service-trust-declared.test.js` holds
+that with a golden. Because a covered value can change without changing the key,
+the supervisor also compares the fingerprint of everything the child was handed
+(`spawnFp`) and restarts it on a change, asking nothing.
+
+The proof runs on the daemon's only thread, for every service-backed pane, on
+every reconcile, and nothing caps the number of panes. So `reconcile` mints the
+surface ONCE a pass (`mintSurface`; `prune` reuses it), reads each component's
+files and the trust file once a pass, and proves each value once a pass through
+the pass's own `passProofs`: one lstat a segment, `MAX_PATH_DEPTH` segments at
+most, `PROOFS_PER_PASS` different values at most, and a value past either bound
+counts by its exact value. Nothing is kept for the next pass: a path proven
+inside can become a link out of the project between two.
+`test/service-trust-declared.test.js` pins the bounds by counting filesystem
+calls, not by timing them.
+
+What a request reports as `covers` is ITS range, not the declaration
+(`mintIdentity` returns both: `declared` is what the hash folds in, `covers` the
+marks that request's values let it leave out, `exact` the `project-path` params it
+holds to one value because the value could not be proven inside). Reporting the
+declaration said "any path inside this project" of an approval keyed to
+`/etc/hosts` alone.
 
 Every lossy re-projection of that triple was a place two different consents were
 mistaken for one: the WS frames carried the `service.js` hash alone, so two
@@ -1360,7 +1417,7 @@ Current homes (baselines move toward these):
 | `const esc =` / `function esc(` (the declaration spelling) | same two homes — capture profiles take `esc` off their injected ctx | landed with `lib/capture/pane` ✅ |
 | `/^--wc-[\w-]+$/` | `lib/server/theme.js` (`TOKEN_RE` + `sanitizeTokens`/`tokenDecls`) — plus the one copy baked into `lib/server/export.js`'s downloaded shell script, which has no server to require from | landed with the core leaves ✅ |
 | `.tmp` — a per-pid temp name, both spellings (`.${pid}.tmp` / `.tmp-${pid}`) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus `lib/update/install-layout.js`, which swaps a *symlink*, not a JSON record | landed with the durable-record engine ✅ |
-| `writeFileSync(` **in three named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero | landed with the durable-record engine ✅ |
+| `writeFileSync(` **in four named files only** | `lib/core/fsjson.js` — `lib/server/graph.js`, `lib/server/domain/turns.js` and `lib/update/migrations/index.js` are held at zero, and so is `lib/cli/commands/trust.js`, the one writer of the service trust file, which the daemon re-reads on every reconcile (a torn read approves nothing and stops every running service) | landed with the durable-record engine ✅ |
 | `process.kill(` | `lib/core/portfiles.js` `isPidAlive` for liveness · `lib/cli/commands/stop.js` for the one SIGTERM escalation — plus the two hub bounces and `tunnel down`, which signal only the pid `/api/health` reported, and the reap of a cloudflared (`lib/tunnel/cloudflared` `stopConnector`: a stray one the portal finds, identity-gated by `isStrayConnector`, or the one a portal `tunnel down` just stopped reported, gated by `isConnectorProcess`) | landed with the daemon-record engine ✅ |
 | `state.mounts.set(` / `state.mounts.delete(` | `lib/server/domain/mounts.js` (`setMount` / `removeMount` / `emitMount`) — plus the two bulk restore paths (`lib/server/graph.js`, `lib/server/domain/turns.js`), which replace the whole surface and broadcast a `reset`, and the bulk clear's per-pane delete in `lib/server/routes/render.js`, which owns a pin filter and two batched frame shapes | landed with the mount-set engine ✅ |
 | `state.order =` / `state.order.push/splice/unshift(` / `state.markdown.set/delete/clear(` | `lib/server/domain/page.js` — the one writer of the page sequence and its markdown items; the mount engine and the bulk paths call into it | landed with the page sequence ✅ |

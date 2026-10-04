@@ -51,7 +51,7 @@ function rememberDismissal(key) {
   setSessionJson(DISMISS_KEY, [...s]);   // private window — the card simply returns on the next announce
 }
 
-// trust key -> { name, command, params }
+// trust key -> { name, command, params, coversText, exactText, reachText }
 const pending = new Map();
 let host = null;
 
@@ -97,6 +97,14 @@ function repaint() {
       // Without this the two cards read identically and the user cannot tell
       // which one the command in front of them is about.
       (p.params ? '<p class="svc-trust-params">params: <code>' + esc(p.params) + '</code></p>' : '') +
+      // What approving it spans beyond the values shown (the component's
+      // x-trust marks, as they apply to THIS request) — said here, before the
+      // command is run, because `trust <name>` writes at once. The words come
+      // from the daemon (lib/core/trust-marks), so the card and the terminal
+      // say the same thing.
+      (p.coversText ? '<p class="svc-trust-covers">covers: <code>' + esc(p.coversText) + '</code></p>' : '') +
+      (p.exactText ? '<p class="svc-trust-covers">exact: <code>' + esc(p.exactText) + '</code></p>' : '') +
+      (p.reachText ? '<p class="svc-trust-reach">' + esc(p.reachText) + '</p>' : '') +
       '<p class="svc-trust-foot">Add <code>--deny</code> to refuse and stop being asked; the ' +
         'block stays inert until you decide. Dismissing hides this for the session ' +
         '&mdash; it isn&rsquo;t a denial.</p>' +
@@ -128,10 +136,14 @@ function describeParams(params) {
 
 export function onTrustPrompt(msg) {
   if (!msg || !msg.key) return;
+  const text = (v) => (typeof v === 'string' ? v : '');
   pending.set(msg.key, {
     name: msg.name || 'service',
     command: msg.command || `claude-web-chat trust ${msg.name || ''}`.trim(),
     params: describeParams(msg.params),
+    coversText: text(msg.covers_text),
+    exactText: text(msg.exact_text),
+    reachText: text(msg.reach_text),
   });
   repaint();
   // The first card of a page load asks whether the page is remote (answered

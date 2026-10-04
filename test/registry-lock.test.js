@@ -9,26 +9,39 @@
 //   * eight real processes released at one barrier, each registering a
 //     presence row, updating it, registering a daemon row (half of them then
 //     releasing it), lose no row, no update and no known project — three runs;
-//   * a stale lock (its holder's pid gone, or older than LOCK_STALE_MS) is
-//     broken, said on stderr, and the write lands at once;
+//   * a stale lock (its holder's pid gone, or older than LOCK_STALE_MS, or
+//     dated further ahead than that) is broken, said on stderr, and the write
+//     lands at once;
 //   * a live lock is waited on for LOCK_WAIT_MS at most — then the write goes
 //     ahead without it and says so, and the lock is left to its holder;
 //   * a failed write still releases the lock, a no-op never takes it (nor
 //     creates ~/.web-chat to hold it), and registerInstance holds it across
-//     both files without waiting on itself.
+//     both files without waiting on itself;
+//   * breaking a stale lock never moves a lock it did not judge (F-16): every
+//     interleaving of a second waiter and a third writer with the breaker
+//     leaves one holder at most, on the file it created; a lock moved in the
+//     one window left (a live holder letting go mid-break) is put back or
+//     kept, never deleted; a break another waiter has claimed is waited for,
+//     and a claim whose breaker died is cleared; a refused rename waits;
+//   * a dangling symlink at the lock's path is a lock like any other (an old
+//     one broken, a fresh one waited out), and no break can keep a writer
+//     retrying past LOCK_WAIT_MS;
+//   * a lock broken on the wait's last turn, at the deadline, is taken by the
+//     writer that broke it, never written beside.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const { withTempHome, waitUntil } = require('../test-support/helpers');
 const registry = require('../lib/util/registry');
 const { userPaths } = require('../lib/core/paths');
 
 const REGISTRY_MODULE = path.join(__dirname, '..', 'lib', 'util', 'registry.js');
+const PATHS_MODULE = path.join(__dirname, '..', 'lib', 'core', 'paths.js');
 const DEAD_PID = 2 ** 30;
 const WRITERS = 8;
 const UPDATES = 25;
@@ -164,6 +177,35 @@ test('a lock older than LOCK_STALE_MS is broken even when its pid is alive', (t)
   assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)));
 });
 
+// A clock stepped back after a writer died holding the lock leaves its mtime
+// in the future, and by age alone it would not go stale until the clock had
+// caught up with it: every writer until then waited LOCK_WAIT_MS and wrote
+// unlocked. Its pid only answers that if it is gone, and a reused one is alive.
+test('a lock whose mtime is further ahead than LOCK_STALE_MS is broken even when its pid is alive; a few seconds of skew is not', (t) => {
+  withTempHome(t);
+  const root = project(t, 'future');
+  fs.mkdirSync(path.dirname(lockFile()), { recursive: true });
+  fs.writeFileSync(lockFile(), `${process.pid}\n`);
+  const tomorrow = (Date.now() + 24 * 3600 * 1000) / 1000;
+  fs.utimesSync(lockFile(), tomorrow, tomorrow);
+  const started = Date.now();
+  const { text } = stderrOf(() => registry.registerMcp({ root }));
+  assert.ok(Date.now() - started < registry.LOCK_WAIT_MS / 2, 'no wait for a lock dated tomorrow');
+  assert.match(text, /broke a stale instances\.json\.lock \(its mtime is \d+s in the future\)/);
+  assert.ok(!fs.existsSync(lockFile()));
+  assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)));
+
+  // Within LOCK_STALE_MS ahead is a clock that disagrees a little with the
+  // filesystem's (a network share's): a live lock, left to its holder.
+  fs.writeFileSync(lockFile(), `${process.pid}\n`);
+  const soon = (Date.now() + registry.LOCK_STALE_MS / 2) / 1000;
+  fs.utimesSync(lockFile(), soon, soon);
+  const { value, text: quiet } = stderrOf(() => registry.breakIfStale(lockFile()));
+  assert.strictEqual(value, false, 'wait for it');
+  assert.ok(fs.existsSync(lockFile()));
+  assert.strictEqual(quiet, '');
+});
+
 test('a live lock is waited on for LOCK_WAIT_MS at most, then the write goes ahead without it and says so', (t) => {
   withTempHome(t);
   const root = project(t, 'held');
@@ -219,4 +261,322 @@ test('registerInstance holds one lock across both files without waiting on itsel
   assert.deepStrictEqual(registry.readInstances().map((e) => e.id), [value.id]);
   assert.deepStrictEqual(registry.readAllEntries().map((e) => e.id), [value.id], 'the prune was written');
   assert.ok(!fs.existsSync(lockFile()));
+});
+
+// ── F-16: a break never moves a lock it did not judge ───────────────────────
+// breakIfStale judges a lock stale, then moves what is at its path aside. Two
+// waiters judging one dead lock is the ordinary case (sessions starting at
+// once), and the code it replaced let the second move the FRESH lock the first
+// had taken in the meantime: the path stood empty, a third writer took the lock
+// there, the move could not be undone, and the fresh lock was deleted — two
+// writers inside the lock at once. The interleavings are driven here step by
+// step, in one process, by hooking the fs calls the breaker (B) makes: no sleep
+// and no real race.
+//
+//   A  another waiter, run just before the B call `before` picks: one turn of
+//      acquireLock (create the lock; else break a stale one, then create it);
+//   C  a third writer, which creates the lock the instant B leaves the path
+//      empty (unless `third: false`).
+//
+// `holders` maps each writer that created a lock to that file's inode.
+
+function driveBreak({ before, a, third = true }) {
+  const file = lockFile();
+  const dir = path.dirname(file);
+  const real = { openSync: fs.openSync, renameSync: fs.renameSync, linkSync: fs.linkSync, unlinkSync: fs.unlinkSync };
+  const inDir = (p) => path.dirname(path.resolve(String(p))) === dir;
+  // The calls that change the lock directory, which is all an interleaving is made of.
+  const changes = {
+    openSync: (p, flags) => flags === 'wx' && inDir(p),
+    renameSync: (p) => inDir(p),
+    linkSync: (p) => inDir(p),
+    unlinkSync: (p) => inDir(p),
+  };
+  const holders = new Map();
+  const create = (who) => {
+    let fd;
+    try { fd = fs.openSync(file, 'wx'); } catch (e) { if (e.code === 'EEXIST') return false; throw e; }
+    fs.writeSync(fd, `${process.pid}\n`);
+    fs.closeSync(fd);
+    holders.set(who, fs.statSync(file).ino);
+    return true;
+  };
+  const turn = (who) => create(who) || (registry.breakIfStale(file) && create(who));
+  let hooked = true;
+  let count = 0;
+  let injected = false;
+  const others = (fn) => { hooked = false; try { fn(); } finally { hooked = true; } };
+  for (const [name, isChange] of Object.entries(changes)) {
+    fs[name] = function hookedCall(...args) {
+      if (!hooked || !isChange(...args)) return real[name].apply(fs, args);
+      count++;
+      if (!injected && before(name, args, count)) {
+        injected = true;
+        others(() => (a ? a({ file, turn, create }) : turn('A')));
+      }
+      try {
+        return real[name].apply(fs, args);
+      } finally {
+        if (third && !holders.has('C') && !fs.existsSync(file)) others(() => create('C'));
+      }
+    };
+  }
+  let out;
+  try {
+    out = stderrOf(() => registry.breakIfStale(file));
+  } finally {
+    Object.assign(fs, real);
+  }
+  const left = fs.readdirSync(dir).filter((f) => f.startsWith(path.basename(file))).sort();
+  return { result: out.value, text: out.text, holders, injected, changes: count, left };
+}
+
+function freshStaleLock(body = `${DEAD_PID}\n`) {
+  const dir = path.dirname(lockFile());
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { force: true });
+  fs.writeFileSync(lockFile(), body);
+}
+
+const inodeOf = (f) => fs.statSync(f).ino;
+
+test('F-16: a waiter that judged a lock stale never moves the fresh lock that replaced it', (t) => {
+  withTempHome(t);
+  freshStaleLock();
+  // A breaks the dead lock and takes a fresh one after B judged it, before B
+  // has changed anything; C is ready to take the lock the moment the path is empty.
+  const r = driveBreak({ before: (name, args, n) => n === 1 });
+  assert.ok(r.injected, 'A ran');
+  assert.ok(r.holders.has('A'), 'A broke the dead lock and took the lock');
+  assert.deepStrictEqual([...r.holders.keys()], ['A'], 'and no second writer got the lock beside it');
+  assert.strictEqual(inodeOf(lockFile()), r.holders.get('A'), "the lock is still the file A created — never moved, never deleted");
+  assert.deepStrictEqual(r.left, ['instances.json.lock'], 'nothing is left beside it');
+  assert.strictEqual(r.result, false, 'B waits for A');
+});
+
+test('F-16: wherever the other waiter acts, one writer at most holds the lock, on the file it created', (t) => {
+  withTempHome(t);
+  for (let k = 1; ; k++) {
+    freshStaleLock();
+    const r = driveBreak({ before: (name, args, n) => n === k });
+    const who = [...r.holders.keys()];
+    assert.ok(who.length <= 1, `A before B's change ${k}: ${who.join(' and ')} both hold the lock`);
+    if (who.length) {
+      assert.strictEqual(inodeOf(lockFile()), r.holders.get(who[0]), `A before B's change ${k}: ${who[0]}'s lock was moved`);
+      assert.deepStrictEqual(r.left, ['instances.json.lock'], `A before B's change ${k}: left beside the lock`);
+    } else {
+      assert.deepStrictEqual(r.left, [], `A before B's change ${k}: left behind`);
+    }
+    if (!r.injected) break; // B made fewer than k changes: every point is covered
+  }
+});
+
+test('a lock whose live holder lets go between the look and the move is put back, not deleted', (t) => {
+  withTempHome(t);
+  // Stale by age only: its holder (this process) is alive. Just before B moves
+  // it, the holder releases it and A takes the lock — so what B moves is A's.
+  const aged = () => {
+    freshStaleLock(`${process.pid}\n`);
+    const then = (Date.now() - registry.LOCK_STALE_MS - 5000) / 1000;
+    fs.utimesSync(lockFile(), then, then);
+  };
+  const beforeMove = (name, args) => name === 'renameSync' && path.resolve(String(args[0])) === lockFile();
+  const releaseThenA = ({ file, turn }) => { fs.unlinkSync(file); turn('A'); };
+
+  aged();
+  const back = driveBreak({ before: beforeMove, a: releaseThenA, third: false });
+  assert.ok(back.injected && back.holders.has('A'));
+  assert.strictEqual(inodeOf(lockFile()), back.holders.get('A'), "A's lock is back where A created it, the same file");
+  assert.deepStrictEqual(back.left, ['instances.json.lock']);
+  assert.strictEqual(back.result, false);
+
+  // And when a third writer took the empty path before it could go back, A's
+  // lock is kept beside it and said, never deleted.
+  aged();
+  const kept = driveBreak({ before: beforeMove, a: releaseThenA });
+  assert.ok(kept.holders.has('A') && kept.holders.has('C'));
+  assert.strictEqual(inodeOf(lockFile()), kept.holders.get('C'));
+  const dir = path.dirname(lockFile());
+  const asideA = kept.left.find((f) => f !== 'instances.json.lock' && inodeOf(path.join(dir, f)) === kept.holders.get('A'));
+  assert.ok(asideA, `A's lock was deleted (left: ${kept.left.join(', ')})`);
+  assert.match(kept.text, new RegExp(`kept it as ${asideA.replace(/[.]/g, '\\.')}`));
+});
+
+test('a break another waiter has claimed is left to it: the lock and the claim stay, and this one waits', (t) => {
+  withTempHome(t);
+  freshStaleLock();
+  const claim = `${lockFile()}.break`;
+  fs.writeFileSync(claim, `${process.pid}\n`); // a live waiter's claim, just taken
+  const { value, text } = stderrOf(() => registry.breakIfStale(lockFile()));
+  assert.strictEqual(value, false, 'wait for the waiter breaking it');
+  assert.strictEqual(fs.readFileSync(lockFile(), 'utf8'), `${DEAD_PID}\n`, 'the stale lock is that waiter\'s to break');
+  assert.ok(fs.existsSync(claim), 'and its claim is not touched');
+  assert.strictEqual(text, '');
+});
+
+test('a claim left by a breaker that died is cleared, then the stale lock is broken and the write lands', (t) => {
+  withTempHome(t);
+  const root = project(t, 'claim');
+  freshStaleLock();
+  fs.writeFileSync(`${lockFile()}.break`, `${DEAD_PID + 1}\n`);
+  const started = Date.now();
+  const { text } = stderrOf(() => registry.registerMcp({ root }));
+  assert.ok(Date.now() - started < registry.LOCK_WAIT_MS / 2, 'no wait for a dead breaker');
+  assert.match(text, new RegExp(`broke a stale instances\\.json\\.lock\\.break \\(its holder, pid ${DEAD_PID + 1}, is gone\\)`));
+  assert.match(text, new RegExp(`broke a stale instances\\.json\\.lock \\(its holder, pid ${DEAD_PID}, is gone\\)`));
+  assert.ok(registry.readAllEntries().some((e) => e.id === registry.mcpId(process.pid)), 'the row was written');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.includes('.lock')), [], 'no lock, claim or aside file left');
+});
+
+test('a break whose rename fails for another reason than ENOENT leaves the lock alone, and waits', (t) => {
+  withTempHome(t);
+  freshStaleLock();
+  const real = fs.renameSync;
+  fs.renameSync = function renameRefused(from, ...rest) {
+    if (path.resolve(String(from)) === lockFile()) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    return real.call(fs, from, ...rest);
+  };
+  let out;
+  try { out = stderrOf(() => registry.breakIfStale(lockFile())); } finally { fs.renameSync = real; }
+  // "Gone, retry at once" here would be a lie the next turn repeats: the lock
+  // is still there, and the same rename will fail the same way.
+  assert.strictEqual(out.value, false, 'wait');
+  assert.strictEqual(fs.readFileSync(lockFile(), 'utf8'), `${DEAD_PID}\n`, 'the lock is untouched');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(lockFile())).filter((f) => f.startsWith('instances.json.lock')),
+    ['instances.json.lock'], 'and the claim is released, no aside left');
+  assert.strictEqual(out.text, '');
+});
+
+// ── a lock path that the create sees and stat does not ──────────────────────
+// A dangling symlink at instances.json.lock: O_EXCL creation refuses it
+// (EEXIST), and stat, which follows the link, finds nothing there (ENOENT).
+// Read that way, every turn of acquireLock reported the lock gone and retried
+// at once, past the deadline, forever. Each case runs in a child process with a
+// timeout, so a regression fails here instead of hanging the suite.
+const SPIN_WORKER = `
+const fs = require('fs');
+const path = require('path');
+const reg = require(${JSON.stringify(REGISTRY_MODULE)});
+const { userPaths } = require(${JSON.stringify(PATHS_MODULE)});
+const [mode, root] = [process.argv[1], process.argv[2]];
+const file = userPaths().instancesLock;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+fs.symlinkSync(path.join(path.dirname(file), 'nowhere'), file);
+if (mode === 'old') { const then = (Date.now() - 60000) / 1000; fs.lutimesSync(file, then, then); }
+const real = { statSync: fs.statSync, lstatSync: fs.lstatSync };
+if (mode === 'blind') {
+  // However the lock is read, nothing is found: every break reports it gone.
+  // Only the deadline can end the wait.
+  for (const name of Object.keys(real)) {
+    fs[name] = function blind(p, ...rest) {
+      if (path.resolve(String(p)) === file) throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+      return real[name].call(fs, p, ...rest);
+    };
+  }
+}
+const started = Date.now();
+reg.registerMcp({ root });
+const ms = Date.now() - started;
+Object.assign(fs, real);
+let left = true;
+try { fs.lstatSync(file); } catch { left = false; }
+const written = reg.readAllEntries().some((e) => e.id === reg.mcpId(process.pid));
+process.stdout.write(JSON.stringify({ ms, left, written }) + '\\n');
+`;
+
+function runLockWorker(t, mode) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), `wc-rlock-${mode}-`));
+  t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
+  const root = project(t, mode);
+  const r = spawnSync(process.execPath, ['-e', SPIN_WORKER, mode, root], {
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+  assert.strictEqual(r.signal, null, `the writer was still going after 15s and was killed — it spun (${mode})`);
+  assert.strictEqual(r.status, 0, r.stderr);
+  return { ...JSON.parse(r.stdout.trim().split('\n').pop()), stderr: r.stderr };
+}
+
+test('a dangling symlink at the lock\'s path is a lock like any other: an old one is broken at once', (t) => {
+  const r = runLockWorker(t, 'old');
+  assert.ok(r.ms < registry.LOCK_WAIT_MS / 2, `took ${r.ms}ms`);
+  assert.match(r.stderr, /broke a stale instances\.json\.lock \(it is \d+s old\)/);
+  assert.strictEqual(r.left, false, 'nothing is left at the path');
+  assert.strictEqual(r.written, true);
+});
+
+test('a fresh dangling symlink is waited on for LOCK_WAIT_MS at most, never spun on', (t) => {
+  const r = runLockWorker(t, 'fresh');
+  assert.ok(r.ms >= registry.LOCK_WAIT_MS - 50 && r.ms < registry.LOCK_WAIT_MS + 1500, `waited ${r.ms}ms`);
+  assert.match(r.stderr, new RegExp(`instances\\.json\\.lock still held after ${registry.LOCK_WAIT_MS}ms; writing without it`));
+  assert.strictEqual(r.written, true);
+});
+
+test('a lock that every break reports gone still ends at the deadline, not in an endless retry', (t) => {
+  const r = runLockWorker(t, 'blind');
+  assert.ok(r.ms >= registry.LOCK_WAIT_MS - 50 && r.ms < registry.LOCK_WAIT_MS + 1500, `waited ${r.ms}ms`);
+  assert.match(r.stderr, new RegExp(`instances\\.json\\.lock still held after ${registry.LOCK_WAIT_MS}ms; writing without it`));
+  assert.strictEqual(r.written, true);
+});
+
+// ── the wait's last turn ────────────────────────────────────────────────────
+// The wait's last sleep is min(left, backoff), so its last turn runs at the
+// deadline exactly. A lock that first goes stale there is broken on that turn,
+// and the path it frees is the writer's to take: writing without the lock
+// instead (and saying it is "still held") left the lock free for the next
+// writer to take while this one wrote. Run on a clock that moves only when the
+// writer sleeps, so the turn at the deadline is the one the lock goes stale on,
+// every run.
+const LAST_TURN_WORKER = `
+const fs = require('fs');
+const path = require('path');
+let now = Date.now();
+const start = now;
+Date.now = () => now;
+Atomics.wait = (arr, i, v, ms) => { now += ms; return 'timed-out'; };
+Math.random = () => 0.5;
+const reg = require(${JSON.stringify(REGISTRY_MODULE)});
+const { userPaths } = require(${JSON.stringify(PATHS_MODULE)});
+const file = userPaths().instancesLock;
+fs.mkdirSync(path.dirname(file), { recursive: true });
+// Held by a live process (this one) and aged so it is live on every turn before
+// the deadline and stale on the turn at it: with the backoff fixed, the turn
+// before runs at start + 1963 ms and the last at start + 2000 ms.
+fs.writeFileSync(file, process.pid + '\\n');
+const mtime = (start + reg.LOCK_WAIT_MS - reg.LOCK_STALE_MS - 20) / 1000;
+fs.utimesSync(file, mtime, mtime);
+// Is the lock at its path when instances.json is renamed into place?
+let lockAtWrite = null;
+const rename = fs.renameSync;
+fs.renameSync = function renameWatched(from, to) {
+  if (path.basename(String(to)) === 'instances.json') {
+    try { fs.lstatSync(file); lockAtWrite = true; } catch { lockAtWrite = false; }
+  }
+  return rename.apply(fs, arguments);
+};
+reg.registerMcp({ root: process.argv[1] });
+fs.renameSync = rename;
+let left = true;
+try { fs.lstatSync(file); } catch { left = false; }
+process.stdout.write(JSON.stringify({ ms: now - start, lockAtWrite, left }) + '\\n');
+`;
+
+test('a lock broken on the wait\'s last turn is taken, not written beside: no "still held", and the write is locked', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-rlock-last-'));
+  t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
+  const root = project(t, 'last');
+  const r = spawnSync(process.execPath, ['-e', LAST_TURN_WORKER, root], {
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+  assert.strictEqual(r.signal, null, 'the writer was still going after 15s and was killed');
+  assert.strictEqual(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.strictEqual(out.ms, registry.LOCK_WAIT_MS, 'the break ran on the turn at the deadline');
+  assert.match(r.stderr, /broke a stale instances\.json\.lock \(it is 5s old\)/);
+  assert.doesNotMatch(r.stderr, /still held/, 'the lock was just broken: it is not held');
+  assert.strictEqual(out.lockAtWrite, true, 'the write ran holding the lock it freed');
+  assert.strictEqual(out.left, false, 'and released it after');
 });

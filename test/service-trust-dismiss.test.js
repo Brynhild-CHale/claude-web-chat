@@ -211,4 +211,42 @@ test('a blocked sessionStorage cannot kill the notice (private window)', async (
   }
 });
 
+// `trust <name>` writes at once, so the card — where the user reads the command
+// — is where the range has to be said BEFORE it is run. The words come from the
+// daemon (lib/core/trust-marks); the card only escapes them.
+test('the card says what an approval covers, and what that lets a pane do', async () => {
+  WS.onmessage({ data: JSON.stringify({
+    type: 'service:trust', key: 'k-covers', name: 'file-editor', hash: 'h', params: { path: '/etc/hosts' },
+    command: 'claude-web-chat trust file-editor',
+    covers: { root: 'project-path' }, exact: { path: 'project-path' },
+    covers_text: 'root: any path inside this project',
+    exact_text: 'path (not a path inside this project: only the value shown)',
+    reach_text: 'An approval lets any pane point it at any file inside this project, .env files included, without asking again.',
+  }) });
+  await tick();
+  const card = cards().find((c) => c.getAttribute('data-key') === 'k-covers');
+  assert.ok(card, 'the card is up');
+  const text = card.textContent;
+  assert.match(text, /covers: root: any path inside this project/);
+  assert.match(text, /exact: path \(not a path inside this project: only the value shown\)/);
+  assert.match(text, /any pane point it at any file inside this project, \.env files included/);
+  // Text, not markup: a name a schema chose cannot inject into the chrome.
+  WS.onmessage({ data: JSON.stringify({
+    type: 'service:trust', key: 'k-covers-html', name: 'x', hash: 'h', params: {},
+    command: 'claude-web-chat trust x', covers_text: '<img src=x onerror=alert(1)>: display only',
+  }) });
+  await tick();
+  const hostile = cards().find((c) => c.getAttribute('data-key') === 'k-covers-html');
+  assert.equal(hostile.querySelector('img'), null, 'the covers text is escaped');
+  assert.match(hostile.textContent, /covers: <img src=x onerror=alert\(1\)>: display only/);
+  // A notice without the words (a daemon older than this) shows no empty rows.
+  WS.onmessage({ data: JSON.stringify({ type: 'service:trust', key: 'k-bare', name: 'y', hash: 'h', params: {}, command: 'claude-web-chat trust y' }) });
+  await tick();
+  const bare = cards().find((c) => c.getAttribute('data-key') === 'k-bare');
+  assert.equal(bare.querySelector('.svc-trust-covers'), null);
+  assert.equal(bare.querySelector('.svc-trust-reach'), null);
+  for (const k of ['k-covers', 'k-covers-html', 'k-bare']) clear(k);
+  await tick();
+});
+
 test('teardown', () => { restore(); });

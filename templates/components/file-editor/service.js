@@ -12,8 +12,11 @@
 // Path fencing: by default paths resolve under `root` (params.root or the repo
 // the daemon runs in) and anything escaping it is rejected — through ctx.fence,
 // the daemon's containment engine (lib/core/paths), which refuses a lexical
-// `../..` AND a symlink that resolves out of the tree. params.unfenced:true
-// lifts the fence (for LLM-driven use) — a per-mount setting, off by default.
+// `../..` AND a symlink that resolves out of the tree. While the approval
+// covers `root` (it was proven inside the project, so the user never saw its
+// value), every path is held inside the project root too, whatever `root`
+// turns into later. params.unfenced:true lifts the fence (for LLM-driven use) —
+// a per-mount setting, off by default.
 //
 // Everything in `editor_ctl` is attacker-shaped input: it is a store key, so
 // every script in the page and every local driver can write it. Paths go
@@ -42,7 +45,14 @@ let stopped = false;
 module.exports = {
   async start(ctx) {
     const startedAt = Date.now(); // the control-key cursor's floor — see below
-    const cwd = process.cwd();
+    // The project root as the daemon spells it (ctx.root): the frame the
+    // supervisor proved a covered `root`/`path` inside, comparing an absolute
+    // value to it as text. This process runs in that directory, but
+    // process.cwd() returns its real path, which is spelled differently when
+    // the project is reached through a symlink — and then every path under an
+    // absolute covered root read as outside the project. process.cwd() only
+    // when no ctx.root is handed in.
+    const cwd = ctx.root || process.cwd();
     const root = ctx.params && ctx.params.root ? path.resolve(cwd, ctx.params.root) : cwd;
     const unfenced = !!(ctx.params && ctx.params.unfenced);
     const versionsBase = path.join(ctx.webChatDir || path.join(cwd, '.web-chat'), 'file-versions');
@@ -73,6 +83,18 @@ module.exports = {
       const rel = path.relative(root, abs);
       return rel === '' ? '.' : rel;
     }
+    // A `root` this run's approval COVERS (x-trust project-path, ctx.covers)
+    // was proven inside the project when the approval was keyed — not for the
+    // life of this process. The fence below is anchored on root and realpaths
+    // it on every call, so a root that later becomes a link out of the project
+    // (a checkout, a pull, a build tool's output link) would carry the fence
+    // out with it, under an approval that never named root at all. While root
+    // is covered, every path is ALSO held inside the project root (`cwd`
+    // above: this process's working directory, as the daemon spells it). A root
+    // the approval names by its exact value — one the user saw and approved —
+    // keeps its own fence only.
+    const covers = ctx.covers && typeof ctx.covers === 'object' ? ctx.covers : {};
+    const projectRoot = !unfenced && covers.root === 'project-path' ? cwd : null;
     // The fence lives in the daemon (ctx.fence → lib/core/paths). It resolves
     // the path AND refuses a symlink that points out of the root, which the
     // lexical path.relative check this used to do could not see — readFileSync
@@ -81,7 +103,7 @@ module.exports = {
     function resolveInput(p) {
       if (unfenced) return path.resolve(root, p || '.');
       const abs = ctx.fence(root, p || '.');
-      if (!abs) throw new Error('path is outside the project root: ' + p);
+      if (!abs || (projectRoot && !ctx.fence(projectRoot, abs))) throw new Error('path is outside the project root: ' + p);
       return abs;
     }
     function verDir(abs) {

@@ -177,12 +177,21 @@ function chip(text, kind) {
   return el('span', `de-chip${kind ? ' ' + kind : ''}`, text);
 }
 
-// The one command that covers whatever is waiting. A pack with three
-// service-backed components should not mean three commands to copy out.
-function trustCommand(names) {
+// The one command for what is waiting. A pack with three service-backed
+// components should not mean three commands to copy out — and the command for
+// a pack is `trust --pack <pack>`, never `trust --all`: --all decides EVERY
+// request pending in the project, including one a pane raised for something
+// wider (an `unfenced:true` file-editor, a path outside the project), while
+// --pack approves only what this machine recorded the pack installing, for the
+// panes that pass nothing but what each service covers. One waiting request is
+// named directly. A pack whose record this machine did not write (a repository
+// can commit .web-chat/packs.json) gets the plain listing, since --pack would
+// approve nothing of it.
+function trustCommand(names, pack = null) {
   const waiting = (names || []).filter(Boolean);
-  if (!waiting.length) return 'claude-web-chat trust';
-  return waiting.length === 1 ? `claude-web-chat trust ${waiting[0]}` : 'claude-web-chat trust --all';
+  if (waiting.length === 1) return `claude-web-chat trust ${waiting[0]}`;
+  if (pack && pack.name && pack.machine_recorded !== false) return `claude-web-chat trust --pack ${pack.name}`;
+  return 'claude-web-chat trust';
 }
 
 export async function copyText(text) {
@@ -752,16 +761,20 @@ function installedSummary(body) {
 
 // Post-install: the services that need a terminal, and the ONE command that
 // covers them, right where the user is still looking. Without this the only
-// prompt was a per-component notice further down the Library tab.
+// prompt was a per-component notice further down the Library tab. Right after
+// an install no pane is open, so nothing is pending yet: `trust --pack` is the
+// command that works now (it approves ahead of time), for one service or many.
 function trustPrompt(body) {
   const services = body.services || [];
   if (!services.length) return null;
+  const name = body.pack && body.pack.name;
   return notice(
     services.length === 1 ? 'One component needs your approval' : `${services.length} components need your approval`,
     `${services.join(', ')} ship a service.js — a process on your machine, with your permissions. `
-      + 'They stay inert until you approve them in a terminal. The page cannot grant this, and deliberately does not try: '
+      + 'They stay inert until you approve them in a terminal; the command approves what this pack installed, '
+      + 'for panes that pass only the params each one covers. The page cannot grant this, and deliberately does not try: '
       + 'a pane script runs in this same page and could ask on its own behalf.',
-    trustCommand(services),
+    name ? `claude-web-chat trust --pack ${name}` : trustCommand(services),
   );
 }
 
@@ -1125,13 +1138,17 @@ function installedCard(p) {
   if ((p.services || []).length) {
     const waiting = p.services.filter((s) => pendingTrust.has(s));
     if (waiting.length) {
-      card.appendChild(notice(
-        'Waiting for your approval',
-        waiting.length === 1
-          ? `${waiting[0]} runs a host-side process. It stays inert until you approve it in a terminal.`
-          : `${waiting.join(', ')} run host-side processes. They stay inert until you approve them — one command covers all ${waiting.length}.`,
-        trustCommand(waiting),
-      ));
+      const body = waiting.length === 1
+        ? `${waiting[0]} runs a host-side process. It stays inert until you approve it in a terminal.`
+        : p.machine_recorded === false
+          // `trust --pack` approves nothing of a record this machine did not
+          // write, so it is not offered; the listing names each request.
+          ? `${waiting.join(', ')} run host-side processes. They stay inert until you approve each in a terminal — `
+            + 'this pack\'s record was not written by an install on this machine, so approve them one by one.'
+          : `${waiting.join(', ')} run host-side processes. They stay inert until you approve them. The command approves `
+            + 'what this pack installed, for panes that pass only the params each one covers; a pane that passes anything '
+            + 'else still asks on its own (`claude-web-chat trust` lists it).';
+      card.appendChild(notice('Waiting for your approval', body, trustCommand(waiting, p)));
     }
   }
 
