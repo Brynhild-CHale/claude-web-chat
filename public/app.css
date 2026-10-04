@@ -1709,6 +1709,132 @@ body.pin-mode #main { cursor: crosshair; }
 .body-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
 
 /* ── U17 · the status bar · chat-bar.js ── */
+/* The chat chrome's state and category inks (design spec §7.4): local custom
+   properties set by attribute selectors, so a pack colours them through its own
+   tokens and no hex appears here. Any chat element that says a state or a
+   category puts data-cs-state / data-cs-cat on itself and reads --cs-st,
+   --cs-st-bd, --cs-st-tint, --cs-pulse or --cs-cat. A pulse is opacity only
+   (the Final's wcpulse), --cs-pulse long; 0s is still: idle, suspended (deviation
+   16) and a quiet session, which keeps the working ink. Colour is never the only
+   signal: every state has its words, every chip its text. */
+[data-cs-state="working"]   { --cs-st: var(--wc-green);   --cs-pulse: 1.2s; }
+[data-cs-state="question"]  { --cs-st: var(--wc-gold);    --cs-pulse: 1s; }
+[data-cs-state="waiting"]   { --cs-st: var(--wc-comment); --cs-pulse: .8s; }
+[data-cs-state="idle"]      { --cs-st: var(--wc-muted);   --cs-pulse: 0s; }
+[data-cs-state="offline"]   { --cs-st: color-mix(in srgb, var(--wc-gold) 55%, var(--wc-muted)); --cs-pulse: 2.4s; }
+[data-cs-state="suspended"] { --cs-st: var(--wc-muted);   --cs-pulse: 0s; }
+[data-cs-pace="quiet"]      { --cs-pulse: 0s; }
+[data-cs-state] {
+  --cs-st-bd: color-mix(in srgb, var(--cs-st) 55%, transparent);
+  --cs-st-tint: color-mix(in srgb, var(--cs-st) 14%, var(--wc-header-bg));
+}
+[data-cs-cat="shells"]    { --cs-cat: var(--wc-green); }
+[data-cs-cat="agents"]    { --cs-cat: var(--wc-agent); }
+[data-cs-cat="workflows"] { --cs-cat: color-mix(in srgb, var(--wc-gold) 75%, var(--wc-fg)); }
+[data-cs-cat="monitors"]  { --cs-cat: var(--wc-muted); }
+[data-cs-cat="queue"]     { --cs-cat: var(--wc-accent); }
+@keyframes wc-chat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* The bar (§7.5): a 28px row under the body, the last flex row of #stage at
+   760px and wider. Below the one narrow breakpoint the phone pull rides the
+   bottom bar instead, and the display:none at the end of this section is the
+   whole of that decision: chat-bar.js never asks the width. On the topbar's
+   rung, over the page, its comment pins and the front glass. A question tints
+   it gold and a wait on the user rust, as the Final does. */
+#chat-statusbar {
+  position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  height: var(--cs-bar-h); padding: 0 12px 0 4px; box-sizing: border-box;
+  border-top: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+  font: 500 11px var(--wc-mono); color: var(--wc-text-2); white-space: nowrap;
+}
+#chat-statusbar[data-cs-state="question"] {
+  border-top-color: var(--cs-st-bd); background: color-mix(in srgb, var(--cs-st) 20%, var(--wc-header-bg));
+}
+#chat-statusbar[data-cs-state="waiting"] { border-top-color: var(--cs-st-bd); background: var(--cs-st-tint); }
+/* The step: the state dot, what Claude is doing, and its clock or age beside it
+   (deviation 9); its title carries the whole line when the row cuts it short. */
+.cs-step {
+  flex: 1 1 auto; min-width: 0; height: 22px;
+  display: flex; align-items: center; gap: 10px; padding: 0 8px;
+  border: 0; border-radius: var(--wc-radius-sm); background: transparent;
+  font: inherit; color: var(--wc-fg-bright); text-align: left;
+}
+.cs-step:hover { background: color-mix(in srgb, var(--wc-fg-bright) 6%, transparent); }
+.cs-step[aria-expanded="true"] { background: color-mix(in srgb, var(--wc-fg-bright) 9%, transparent); }
+.cs-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cs-st);
+  animation: wc-chat-pulse var(--cs-pulse) ease-in-out infinite;
+}
+.cs-step-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cs-step-meta { flex: none; color: var(--wc-muted); font-variant-numeric: tabular-nums; }
+/* An empty slot takes no room, and no gap beside it: the act area between
+   states, the Stop slot until its control mounts, a step with no clock. */
+.cs-step-meta:empty, .cs-act:empty, .cs-stop:empty { display: none; }
+/* The act area: Answer › (a question) and Review › (a permission or a plan)
+   open the chat on what Claude is waiting for; once answering lands, the answer
+   frame mounts here instead. Until then a wait reads "Answer in the terminal".
+   The slot draws no box of its own (display: contents), so what it holds sits
+   in the bar's row: the note and the buttons never shrink, and the under-
+   development hint has only the room the rest leave free (a zero basis, grown
+   up to its own width first), so it gives way before a word of the step does;
+   below 1100px it goes. */
+.cs-act { display: contents; }
+.cs-act > * { flex: none; }
+.cs-act-note { color: var(--wc-fg-bright); }
+.cs-act-hint {
+  flex: 1000 1 0; min-width: 0; max-width: max-content; overflow: hidden; text-overflow: ellipsis;
+  color: var(--wc-muted);
+}
+.cs-answer, .cs-review {
+  height: 20px; padding: 0 9px; display: inline-flex; align-items: center;
+  border-radius: var(--wc-radius-sm); font: 600 10.5px var(--wc-font);
+}
+.cs-answer { border: 1px solid var(--wc-gold); background: var(--wc-gold); color: var(--wc-gold-fg); }
+.cs-answer:hover { border-color: var(--wc-gold-fg); }
+.cs-review { border: 1px solid color-mix(in srgb, var(--wc-comment) 65%, transparent); background: var(--wc-panel-bg); color: var(--wc-fg-bright); }
+.cs-review:hover { border-color: var(--wc-comment); }
+/* Another conversation waiting on the user: one chip before the divider, in
+   that conversation's own state ink; a click follows it. */
+.cs-other {
+  flex: none; height: 20px; padding: 0 8px; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--cs-st-bd); border-radius: var(--wc-radius-sm); background: var(--cs-st-tint);
+  font: 600 10px var(--wc-mono); color: var(--wc-fg-bright);
+}
+.cs-other:hover { border-color: var(--cs-st); }
+.cs-div { flex: none; width: 1px; height: 14px; background: var(--wc-border); }
+/* The chips are the trays' (they render into #cs-chips once they claim it);
+   with no chip there is nothing for the divider to divide. */
+.cs-chips { flex: none; display: flex; align-items: center; gap: 6px; }
+.cs-chips:empty, .cs-div:has(+ .cs-chips:empty) { display: none; }
+/* Until the trays land, five muted stand-ins: dashed, a still dot, no count. */
+.cs-devchip {
+  height: 20px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px dashed var(--wc-border); border-radius: var(--wc-radius-sm); background: transparent;
+  font: 600 10px var(--wc-mono); color: var(--wc-muted);
+}
+.cs-devchip:hover, .cs-devchip[aria-expanded="true"] { border-color: var(--wc-muted-dim); color: var(--wc-text-2); }
+.cs-devchip-dot {
+  flex: none; width: 5px; height: 5px; border-radius: 50%;
+  background: color-mix(in srgb, var(--cs-cat) 40%, var(--wc-muted-dim));
+}
+:is(.cs-step, .cs-answer, .cs-review, .cs-other, .cs-devchip):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+/* The one "Under development" note the bar's stand-ins open: a popover (the
+   shell's dismiss layer closes it: Esc, an outside click, another panel), above
+   the step or above the chips, whichever opened it. */
+.popover.cs-dev {
+  top: auto; right: auto; left: 12px; bottom: calc(var(--cs-bar-h) + 8px);
+  min-width: 0; width: max-content; max-width: min(360px, calc(100% - 24px)); padding: 10px 12px;
+}
+.popover.cs-dev[data-cs-anchor="chips"] { left: auto; right: 12px; }
+.cs-dev-title { margin-bottom: 4px; font: 600 10px var(--wc-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--wc-gold); }
+.cs-dev-line { margin: 0; font: 12px/1.45 var(--wc-font); color: var(--wc-fg); }
+@media (prefers-reduced-motion: reduce) { .cs-dot { animation: none; } }
+/* Short rows: the chips (and their tray, later) keep the dot and move the word
+   into the tooltip, so the step keeps about 300px; the act hint goes first. */
+@media (max-width: 1100px) { .cs-act-hint { display: none; } }
+@media (max-width: 1000px) { .cs-devchip { padding: 0 6px; } .cs-devchip-label { display: none; } }
+@media (max-width: 759px) { #chat-statusbar, .popover.cs-dev { display: none; } }
 
 /* ── U20 · the co-brand lockup · cobrand.js ── */
 /* The topbar's top-left (design spec §9.4): the global theme's company image │
