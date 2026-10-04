@@ -121,15 +121,21 @@ to tell a zlib difference from a tree difference. `dist/SHA256SUMS` keeps a line
 tarball still in `dist/` — each build replaces its own line and drops the lines
 of tarballs you deleted — so an older build there still verifies.
 
-A dev build goes stale as soon as the checkout moves on, and nothing about it
+Once the checkout moves on — a new commit, or another branch checked out — the
+installed dev build is no longer the code in front of you, and nothing about it
 looks different from the outside. So inside a checkout of this package (or any
 directory below it), `claude-web-chat version` and `claude-web-chat status`
 print one ⚠ line when the installed build is a dev build cut from a commit other
-than the checkout's HEAD: both commits, and the rebuild (`node
-scripts/build-release.js --dev`, then the `update --from` line it prints). They
-say nothing anywhere else, for a release install, or once you have rebuilt from
-HEAD. The check only reads files — the two package.json files and the
-checkout's `.git` — and runs no `git`.
+than the checkout's HEAD. It names both commits, and how to install this
+checkout's code instead if that is what you want:
+`node scripts/build-release.js --dev`, then the `update --from` line it prints.
+It does not say which of the two is newer, because it cannot know: the check
+only reads files — the two package.json files and the checkout's `.git` — runs
+no `git`, and walks no history. A build you cut on another branch may well be
+ahead of the checkout you are standing in, and rebuilding from that checkout
+would replace it with older code, so the rebuild is offered, never prescribed.
+The line says nothing anywhere else, for a release install, or while the
+installed build is the checkout's HEAD.
 
 `update --from` runs a GitHub update's steps from the file: it verifies the
 tarball against the `SHA256SUMS` beside it (a mismatch or a missing entry is

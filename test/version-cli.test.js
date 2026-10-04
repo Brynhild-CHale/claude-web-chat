@@ -116,18 +116,21 @@ test('uninstall --self removes the program; plain uninstall only touches the pro
   assert.ok(fs.existsSync(path.join(project, '.web-chat')), 'the project graph is never deleted');
 });
 
-// ── H-11: the installed dev build is behind the checkout ────────────────────
+// ── H-11: the installed dev build is not the checkout's HEAD ────────────────
 // The maintainer's managed install ran a dev build cut 111 commits before the
 // checkout they were testing in, and nothing said so — "is it broken?" was the
 // first symptom. `version` and `status` now say it in one line, for exactly
 // that person: inside a git checkout of this package, with a dev build
 // installed whose commit is not the checkout's HEAD. Everyone else hears
-// nothing, and the check only reads files.
+// nothing, and the check only reads files — so it can say that the two commits
+// differ, never which one is newer (the last test here).
 
-const { devBuildBehind, gitHead } = require('../lib/update/install-layout');
+const { devBuildDiffers, gitHead } = require('../lib/update/install-layout');
 
 const HEAD_SHA = 'def5678'.padEnd(40, '0');
 const DEV = '0.9.0-dev.202610021200.abc1234';
+// What marks the line in the output, for the tests that look for it or for its absence.
+const DEV_LINE = /differs from this checkout's HEAD/;
 
 // A git checkout as git leaves one on disk, without git: package.json, .git/HEAD
 // and the ref it names (loose, packed, or HEAD detached).
@@ -167,14 +170,15 @@ test('H-11: inside a checkout whose HEAD is not the installed dev build\'s commi
   const paths = devInstalled(t);
   const checkout = fakeCheckout(t);
   const before = snapshot(checkout);
-  const b = devBuildBehind({ cwd: path.join(checkout), paths });
-  assert.deepEqual(b, { installed: DEV, commit: 'abc1234', head: HEAD_SHA, checkout });
+  const d = devBuildDiffers({ cwd: path.join(checkout), paths });
+  assert.deepEqual(d, { installed: DEV, commit: 'abc1234', head: HEAD_SHA, checkout });
 
   const log = sink();
   versionCmd([], { log, paths, cwd: checkout, describeInstall: () => describeInstall({ packageRoot: paths.versionDir(DEV), paths }) });
-  const lines = log.text().split('\n').filter((l) => l.includes('dev build is from'));
-  assert.deepEqual(lines, ['  ⚠ The installed dev build is from abc1234; this checkout is at def5678. Rebuild it: '
-    + 'node scripts/build-release.js --dev, then run the `claude-web-chat update --from` line it prints.']);
+  const lines = log.text().split('\n').filter((l) => DEV_LINE.test(l));
+  assert.deepEqual(lines, ['  ⚠ The installed dev build\'s commit (abc1234) differs from this checkout\'s HEAD (def5678). '
+    + 'If you want this checkout\'s code installed instead, run node scripts/build-release.js --dev, '
+    + 'then the `claude-web-chat update --from` line it prints.']);
   assert.deepEqual(snapshot(checkout), before, 'nothing in the checkout was written');
 
   const short = sink();
@@ -186,8 +190,8 @@ test('H-11: a subdirectory of the checkout, a packed ref and a detached HEAD are
   const paths = devInstalled(t);
   const sub = path.join(fakeCheckout(t, { ref: 'packed' }), 'lib', 'cli');
   fs.mkdirSync(sub, { recursive: true });
-  assert.equal(devBuildBehind({ cwd: sub, paths }).head, HEAD_SHA);
-  assert.equal(devBuildBehind({ cwd: fakeCheckout(t, { ref: 'detached' }), paths }).head, HEAD_SHA);
+  assert.equal(devBuildDiffers({ cwd: sub, paths }).head, HEAD_SHA);
+  assert.equal(devBuildDiffers({ cwd: fakeCheckout(t, { ref: 'detached' }), paths }).head, HEAD_SHA);
 });
 
 test('H-11: a linked worktree reads its own HEAD and the branch from the common dir', (t) => {
@@ -205,27 +209,27 @@ test('H-11: a linked worktree reads its own HEAD and the branch from the common 
   fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${wtGit}\n`);
   fs.writeFileSync(path.join(wt, 'package.json'), JSON.stringify({ name: 'claude-web-chat' }));
   assert.equal(gitHead(wt), HEAD_SHA);
-  assert.equal(devBuildBehind({ cwd: wt, paths }).head, HEAD_SHA);
+  assert.equal(devBuildDiffers({ cwd: wt, paths }).head, HEAD_SHA);
 });
 
 test('H-11: silent everywhere else', (t) => {
   // The dev build IS the checkout's HEAD (a short sha matches by prefix).
   let paths = devInstalled(t, `0.9.0-dev.202610021200.${HEAD_SHA.slice(0, 7)}`);
-  assert.equal(devBuildBehind({ cwd: fakeCheckout(t), paths }), null, 'the installed build is HEAD');
+  assert.equal(devBuildDiffers({ cwd: fakeCheckout(t), paths }), null, 'the installed build is HEAD');
   // A release installed, or a dev build stamped outside a checkout.
   paths = devInstalled(t, '0.8.2');
-  assert.equal(devBuildBehind({ cwd: fakeCheckout(t), paths }), null, 'a release');
+  assert.equal(devBuildDiffers({ cwd: fakeCheckout(t), paths }), null, 'a release');
   paths = devInstalled(t, '0.9.0-dev.202610021200.nogit');
-  assert.equal(devBuildBehind({ cwd: fakeCheckout(t), paths }), null, 'a dev build with no commit');
+  assert.equal(devBuildDiffers({ cwd: fakeCheckout(t), paths }), null, 'a dev build with no commit');
   // Not a checkout of this package, not a checkout at all, or a HEAD that cannot be read.
   paths = devInstalled(t);
-  assert.equal(devBuildBehind({ cwd: fakeCheckout(t, { name: 'some-other-package' }), paths }), null, 'another package');
+  assert.equal(devBuildDiffers({ cwd: fakeCheckout(t, { name: 'some-other-package' }), paths }), null, 'another package');
   const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-plain-')));
   t.after(() => fs.rmSync(plain, { recursive: true, force: true }));
-  assert.equal(devBuildBehind({ cwd: plain, paths }), null, 'no checkout');
+  assert.equal(devBuildDiffers({ cwd: plain, paths }), null, 'no checkout');
   const broken = fakeCheckout(t);
   fs.writeFileSync(path.join(broken, '.git', 'HEAD'), 'ref: refs/heads/gone\n');
-  assert.equal(devBuildBehind({ cwd: broken, paths }), null, 'a HEAD naming a ref that is not there');
+  assert.equal(devBuildDiffers({ cwd: broken, paths }), null, 'a HEAD naming a ref that is not there');
   // A ref that climbs out of the git dir to a file that does hold a sha: read,
   // it would be taken for HEAD.
   const outside = path.join(path.dirname(broken), `wc-outside-${path.basename(broken)}`);
@@ -237,5 +241,26 @@ test('H-11: silent everywhere else', (t) => {
   // And nothing reaches the output.
   const log = sink();
   versionCmd([], { log, paths, cwd: plain, describeInstall: () => describeInstall({ packageRoot: paths.versionDir(DEV), paths }) });
-  assert.doesNotMatch(log.text(), /dev build is from/);
+  assert.doesNotMatch(log.text(), DEV_LINE);
+});
+
+test('H-11: the line claims no direction, because the installed build may be the newer one', (t) => {
+  // Found on 0.8.2's own dev build: cut from 1feb5a6 on release/0.8.2 and
+  // installed, it was AHEAD of the main checkout at 5b9e839, where `version` and
+  // `status` said "Rebuild it" — which would have replaced it with main's older
+  // code.
+  // Nothing here walks history, so the two cases below look alike to the check:
+  // the line says that the commits differ, and offers the rebuild only as the
+  // way to install this checkout's code.
+  const NEWER = '1feb5a6';
+  const OLDER = '5b9e839';
+  for (const [installed, head] of [[NEWER, OLDER], [OLDER, NEWER]]) {
+    const paths = devInstalled(t, `0.9.0-dev.202610040900.${installed}`);
+    const line = versionCmd.devBuildWarning({ cwd: fakeCheckout(t, { head: head.padEnd(40, '0') }), paths });
+    assert.equal(line, `⚠ The installed dev build's commit (${installed}) differs from this checkout's HEAD (${head}). `
+      + 'If you want this checkout\'s code installed instead, run node scripts/build-release.js --dev, '
+      + 'then the `claude-web-chat update --from` line it prints.');
+    assert.doesNotMatch(line, /\b(behind|ahead|older|newer|stale|outdated|out of date|rebuild it)\b/i,
+      'the check cannot know which side is newer, so the line must not say or assume it');
+  }
 });

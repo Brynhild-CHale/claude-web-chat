@@ -264,7 +264,10 @@ test('status: a session BEHIND an outdated daemon still gets its own ⚠ — a d
 // H-11, status's half: the same one line `version` prints, right under the
 // version, for whoever builds web-chat — standing in a checkout of this
 // package whose HEAD is not the commit the installed dev build was cut from.
-test('status: in a checkout ahead of the installed dev build, the line names both commits', async (t) => {
+// Which of the two is newer it cannot know (it reads files, walks no history),
+// so it does not say.
+const DEV_LINE = /differs from this checkout's HEAD/;
+test('status: in a checkout whose HEAD is not the installed dev build\'s commit, the line names both commits', async (t) => {
   const { installPaths } = require('../lib/core/paths');
   const { activate } = require('../lib/update/install-layout');
   const dev = '0.9.0-dev.202610021200.abc1234';
@@ -280,12 +283,13 @@ test('status: in a checkout ahead of the installed dev build, the line names bot
   });
   const lines = out.split('\n');
   assert.match(lines[0], /^claude-web-chat v/);
-  assert.equal(lines[1], '  ⚠ The installed dev build is from abc1234; this checkout is at ddddddd. Rebuild it: '
-    + 'node scripts/build-release.js --dev, then run the `claude-web-chat update --from` line it prints.');
-  assert.equal(out.split('\n').filter((l) => l.includes('dev build is from')).length, 1);
+  assert.equal(lines[1], '  ⚠ The installed dev build\'s commit (abc1234) differs from this checkout\'s HEAD (ddddddd). '
+    + 'If you want this checkout\'s code installed instead, run node scripts/build-release.js --dev, '
+    + 'then the `claude-web-chat update --from` line it prints.');
+  assert.equal(out.split('\n').filter((l) => DEV_LINE.test(l)).length, 1);
 });
 
 test('status: no such line outside a checkout', async (t) => {
   const out = await runStatus(t);
-  assert.doesNotMatch(out, /dev build is from/);
+  assert.doesNotMatch(out, DEV_LINE);
 });
