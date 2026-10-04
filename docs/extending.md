@@ -1007,27 +1007,26 @@ their baselines, the `.gitignore` line. Four functions:
   the managed files, their `.new` sidecars and baselines, the `.mcp.json` entry,
   and the local-scope registration `apply`/`doctor` may have written.
 
-**The hooks are fourteen handlers on twelve events**, and an event can carry
-two of ours (PreToolUse and PostToolUse each hold the mirror's and the
-halt's), so registration reasons per HANDLER, matched by subcommand, never per
-event. `hookHandlers()` lists the template's handlers, and `HOOK_ROLES` says
-what each is for: `lifecycle` (`turn-begin`, `turn-end`), `mirror`, `bridge`
-(`ask`) and `halt`, each with the effect the user loses while it is missing or
-cannot run (`roleEffect`). A handler is `stale` when it resolves but differs
-from the template in a managed field (`MANAGED_HOOK_KEYS` in
-`lib/update/managed-files`: `async`, `timeout`, `statusMessage`, `if`) or in its
-command's shape, and `applyHooks` — which `install`, `update` and `doctor` all
-reach — repairs every state but `ok`: it adds what is missing, resolves a bare
-command, and rewrites a stale handler's managed fields to the template's,
-leaving other keys and other tools' handlers alone. `hookProblems(state)` groups
-what needs a repair by role for `doctor` and `status`, and `driftLine(state)` is
-the MCP server's one startup line. A command resolves through `stableRoot()`
-(`~/.web-chat/current` for a managed install, the tree itself for a checkout),
-so an update or a rollback never strands one; the halt handlers run
-`lib/hooks/claude-web-chat-hook-halt.sh` under that root with `sh`. Every line
-that asks for a hook upgrade ends with `HOOK_RESTART_NOTE`, because whether a
-running Claude Code session picks up a hook `install` just registered is not yet
-known (validation gate V24 (c)).
+**An event can carry two of our hook handlers** (PreToolUse and PostToolUse
+each hold the mirror's and the halt's), so registration reasons per HANDLER,
+matched by subcommand, never per event. `hookHandlers()` lists the template's
+handlers, and `HOOK_ROLES` says what each is for: `lifecycle` (`turn-begin`,
+`turn-end`), `mirror`, `bridge` (`ask`) and `halt`, each with the effect the
+user loses while it is missing or cannot run (`roleEffect`). A handler is
+`stale` when it resolves but differs from the template in a managed field
+(`MANAGED_HOOK_KEYS` in `lib/update/managed-files`: `async`, `timeout`,
+`statusMessage`, `if`) or in its command's shape, and `applyHooks` — which
+`install`, `update` and `doctor` all reach — repairs every state but `ok`: it
+adds what is missing, resolves a bare command, and rewrites a stale handler's
+managed fields to the template's, leaving other keys and other tools' handlers
+alone. `hookProblems(state)` groups what needs a repair by role for `doctor` and
+`status`, and `driftLine(state)` is the MCP server's one startup line. A command
+resolves through `stableRoot()` (`~/.web-chat/current` for a managed install,
+the tree itself for a checkout), so an update or a rollback never strands one;
+the halt handlers run `lib/hooks/claude-web-chat-hook-halt.sh` under that root
+with `sh`. Every line that asks for a hook upgrade ends with
+`HOOK_RESTART_NOTE`, because whether a running Claude Code session picks up a
+hook `install` just registered is not yet known (validation gate V24 (c)).
 
 Two asymmetries are deliberate, and stated in the module header: `apply()` is
 **not** the whole of `install` (creating `.web-chat/`, running the migrations and

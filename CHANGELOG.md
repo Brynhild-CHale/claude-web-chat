@@ -22,13 +22,13 @@ What you have to do:
 1. **Register the new hooks in every project you use web-chat in.** `claude-web-chat
    update` does it in the project you type it in, where web-chat is registered,
    and `update --restart-all` in each registered project whose server it
-   restarts; anywhere else, run `claude-web-chat install`. Either turns 0.8.2's two hook handlers into this
-   release's fourteen (see *Added*). A project left out keeps its two: its turns
-   still begin and commit, and the status bar still says whether Claude is
-   working, waiting on you or idle there, but shows no live tool status for it
-   (no step labels such as `Edit · paths.js`); a turn there that ends on an API
-   error still holds the lock until it times out (see *Fixed*); and
-   `claude-web-chat status` and `doctor` name what it is missing.
+   restarts; anywhere else, run `claude-web-chat install`. Either adds this
+   release's hook handlers to 0.8.2's two (see *Added*). A project left out
+   keeps its two: its turns still begin and commit, and the status bar still
+   says whether Claude is working, waiting on you or idle there, but shows no
+   live tool status for it (no step labels such as `Edit · paths.js`); a turn
+   there that ends on an API error still holds the lock until it times out (see
+   *Fixed*); and `claude-web-chat status` and `doctor` name what it is missing.
 2. **`/exit` and reopen Claude Code, and reload open surface tabs.** A session
    that is already running may not pick up a hook `install` has just added, and
    a tab needs the new chrome: the status bar, and the topbar's new corner.
@@ -49,7 +49,7 @@ What you have to do:
 ### Added
 
 - **The status bar: what Claude is doing, along the bottom of the page.** A strip under the page follows this project's Claude Code conversations as they run and says what is happening now: the tool running and for how long (`Edit · paths.js · 0:12`), a permission prompt (`Permission · …`, orange) or a question (yellow) waiting in the terminal, compacting, a long silence (`Quiet 2m — check the terminal`), the last turn's result once Claude is idle (`Done · "…" · 4m ago`), a turn that was stopped (`Stopped · interrupted in the terminal`), a suspended session (`Suspended · resume it in the terminal (fg)`), and `Offline · reconnecting…` while the page cannot reach its server. It follows one conversation at a time; another one waiting on you gets a chip that switches to it. The parts later builds fill in (the step's detail, the task chips) open an "Under development" note. The bar is not drawn below 760px wide, and on a phone a grip tab at the bottom says the chat on the phone is under development. Everything it shows is redacted on the server first, so a key or token in a format the redactor knows is masked before it reaches the page.
-- **The chat mirror follows Claude Code through fourteen hook handlers on twelve events.** Beside the turn hooks, `install` now registers a `mirror` hook on SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop and PreCompact (all but SessionEnd in the background, and a tool's input cut down inside the hook: a command or a path, never a file's contents), an `ask` hook on PermissionRequest that reports the prompt without answering it, a StopFailure handler (see *Fixed*), and three "stop after this step" handlers, a small shell script that prints nothing until a stop is set. The turn hooks now also send the Claude Code session they ran in. From those events and Claude Code's own sessions files the server follows each of the project's conversations, and serves what it knows at `GET /api/mirror` and `GET /api/mirror/status`; `GET /api/mirror/access` says how much of it the asker may see, and `GET /api/health` gains a `mirror` object. Hook events arrive at `POST /api/hooks/event`, which only the host's own hooks can reach: a browser (a pane's `fetch` included), a remote viewer and a network peer are refused, so a page cannot forge Claude's state.
+- **The chat mirror follows Claude Code through new hook handlers.** Beside the turn hooks, `install` now registers a `mirror` hook on SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop and PreCompact (all but SessionEnd in the background, and a tool's input cut down inside the hook: a command or a path, never a file's contents), an `ask` hook on PermissionRequest that reports the prompt without answering it, a StopFailure handler (see *Fixed*), and three "stop after this step" handlers, a small shell script that prints nothing until a stop is set. The turn hooks now also send the Claude Code session they ran in. From those events and Claude Code's own sessions files the server follows each of the project's conversations, and serves what it knows at `GET /api/mirror` and `GET /api/mirror/status`; `GET /api/mirror/access` says how much of it the asker may see, and `GET /api/health` gains a `mirror` object. Hook events arrive at `POST /api/hooks/event`, which only the host's own hooks can reach: a browser (a pane's `fetch` included), a remote viewer and a network peer are refused, so a page cannot forge Claude's state.
 
 ### Changed
 
