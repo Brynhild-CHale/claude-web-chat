@@ -14,14 +14,16 @@
 //   booting the daemon       -> withServer
 //   listening on an owner    -> withServer / withHub
 //   a hand-written WS upgrade-> deafWs
+//   a jsdom boot of public/index.html -> test-support/chrome-shell's bootShell
+//                              (file by file, at the bottom of this file)
 //   probing for a real Chrome/ffmpeg -> e2eGate (opt-in, WEB_CHAT_E2E_*)
 //   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
 //
-// The last two are a slightly different species from the first five: not a
-// primitive the harness re-implements, but a TRUTH the harness re-states when a
-// module already owns it. A test that hand-copies a number the code derives is
-// the same defect as a test that hand-rolls a poll — it goes stale silently, and
-// the stale copy passes.
+// The last two, the Chrome/ffmpeg probe and the tool count, are a slightly
+// different species from the rest: not a primitive the harness re-implements,
+// but a TRUTH the harness re-states when a module already owns it. A test that
+// hand-copies a number the code derives is the same defect as a test that
+// hand-rolls a poll — it goes stale silently, and the stale copy passes.
 //
 // Each of those had between two and nine copies before the harness grew the
 // engine, and the copies were not merely redundant: three SSE openers could not
@@ -388,4 +390,121 @@ test('harness: a shared jsdom shell boots in a `before` hook, not in a test', ()
     assert.ok(cur >= n,
       `STALE baseline: ${file} now has ${cur} shared-shell pseudo-tests but the baseline says ${n}. Lower or remove this entry in test/harness-conventions.test.js.`);
   }
+});
+
+// ── the hand-rolled jsdom boot ───────────────────────────────────────────────
+//
+// Booting the real chrome in jsdom takes about thirty lines, and every chrome
+// test file carried its own copy, each drifted from the others: which globals
+// were aliased (Node 21+ defines `navigator` as a getter, so a plain
+// assignment silently does nothing), whether the socket opened, which timers
+// were stubbed, and whether anything was put back afterwards.
+// test-support/chrome-shell.js `bootShell({routes, onSocket, init})` is the one
+// boot now (design spec §10.1): the real public/index.html and module graph, a
+// fetch indirection, a socket the test drives, stubbed pollers, layout metrics,
+// a viewport, and a restore() that puts every global back.
+//
+// Shrink-only, FILE BY FILE: a file that builds a JSDOM and names the repo's
+// public/index.html hand-rolls the boot. The baseline is the files that did so
+// when bootShell landed. A file converted to bootShell leaves the list in the
+// same change (the stale check below says so), and a new chrome test boots
+// through bootShell. The path is matched as it is spelled: `public/index.html`,
+// `'public', 'index.html'`, or the repo's own constant for the directory,
+// lib/core/paths PUBLIC_DIR, joined to it (`PUBLIC_DIR, 'index.html'`,
+// `${PUBLIC_DIR}/index.html`, `PUBLIC_DIR + '/index.html'`), which is how
+// test/fonts.test.js already reads the file. The portal picker's and the tunnel
+// setup page's own index.html, which their tests read from a variable naming
+// their directory (`dir`, `PUB`), are other documents and are not counted. The
+// last test in this file pins both sides of that line.
+const INDEX_HTML = /(?:public|PUBLIC_DIR\}?)(?:\/|['"`]?\s*[,+]\s*['"`]\/?)index\.html/;
+
+const JSDOM_BOOT_BASELINE = new Set([
+  // The home.
+  'test-support/chrome-shell.js',
+  'test/block-chrome.test.js',
+  'test/brand-pack-logos.test.js',
+  'test/brand.test.js',
+  'test/client-boot.test.js',
+  'test/components-panel.test.js',
+  'test/graph-canvas-chrome.test.js',
+  'test/graph-collapse-chrome.test.js',
+  'test/graph-edge-routing-chrome.test.js',
+  'test/graph-nav-chrome.test.js',
+  'test/graph-view-chrome.test.js',
+  'test/leave-preview-chrome.test.js',
+  'test/machine-sessions.test.js',
+  'test/mount-chrome-safety.test.js',
+  'test/page-chrome.test.js',
+  'test/pane-history-chrome.test.js',
+  'test/phone-chrome.test.js',
+  'test/preview-guards-chrome.test.js',
+  'test/queue-held.test.js',
+  'test/queue-rail.test.js',
+  'test/rail-palette-chrome.test.js',
+  'test/reaim-while-previewing-chrome.test.js',
+  'test/remote-affordances.test.js',
+  'test/replay-chrome.test.js',
+  // Parses the static markup (labels, landmarks) without the module graph. It
+  // is still a jsdom of index.html, and a new check of that kind reads
+  // bootShell's window instead.
+  'test/responsive-a11y.test.js',
+  'test/service-trust-dismiss.test.js',
+  'test/shell-chrome.test.js',
+  'test/snapshot-applier.test.js',
+  'test/storage-guard.test.js',
+  'test/theme-mode-chrome.test.js',
+  'test/topbar-chrome.test.js',
+  'test/update-banner.test.js',
+  'test/ws-url.test.js',
+]);
+
+test('harness: a jsdom boot of public/index.html goes through test-support/chrome-shell.js', () => {
+  const actual = new Set();
+  for (const r of ROOTS) {
+    for (const f of walk(path.join(REPO_ROOT, r), [])) {
+      // This file names both halves of the fingerprint.
+      if (path.resolve(f) === path.resolve(__filename)) continue;
+      const src = fs.readFileSync(f, 'utf8');
+      if (src.includes('new JSDOM(') && INDEX_HTML.test(src)) actual.add(relPosix(f));
+    }
+  }
+
+  for (const file of actual) {
+    assert.ok(JSDOM_BOOT_BASELINE.has(file),
+      `${file} boots public/index.html in jsdom by hand. Boot the chrome through test-support/chrome-shell.js instead: \`bootShell({routes, onSocket, init})\` in a before() hook, and \`shell.restore()\` in after(). It aliases the globals, drives the socket, stubs the pollers and puts everything back.`);
+  }
+  for (const file of JSDOM_BOOT_BASELINE) {
+    assert.ok(actual.has(file),
+      `STALE baseline: ${file} no longer boots public/index.html in jsdom by hand. Remove it from JSDOM_BOOT_BASELINE in test/harness-conventions.test.js.`);
+  }
+});
+
+// What INDEX_HTML counts as naming the chrome's index.html, and what it leaves
+// to other documents. A spelling missing from the first list is a hand-rolled
+// boot the row above cannot see; one in the second would put a portal or setup
+// page test on the baseline. The negative cases are spelled as those tests
+// spell them today (test/known-projects.test.js, the portal picker;
+// test/tunnel-setup-page-chrome.test.js, the setup page).
+test('harness: the jsdom-boot fingerprint knows each spelling of the chrome\'s index.html', () => {
+  const CHROME = [
+    "fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8')",
+    "fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')",
+    'fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8")',
+    "fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8')",
+    "fs.readFileSync(path.join(paths.PUBLIC_DIR, 'index.html'), 'utf8')",
+    'fs.readFileSync(`${PUBLIC_DIR}/index.html`, \'utf8\')',
+    "fs.readFileSync(PUBLIC_DIR + '/index.html', 'utf8')",
+  ];
+  const OTHER = [
+    // the portal picker
+    "const dir = path.join(__dirname, '..', 'lib', 'portal', 'public');\n"
+      + "const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');",
+    // the tunnel setup page
+    "const PUB = path.resolve(__dirname, '..', 'lib/server/tunnel-setup/public');\n"
+      + "const html = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');",
+    // another file under public/
+    "fs.readFileSync(path.join(PUBLIC_DIR, 'mount-runtime.js'), 'utf8')",
+  ];
+  for (const src of CHROME) assert.ok(INDEX_HTML.test(src), `not counted as the chrome's index.html: ${src}`);
+  for (const src of OTHER) assert.ok(!INDEX_HTML.test(src), `counted as the chrome's index.html: ${src}`);
 });

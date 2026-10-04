@@ -197,9 +197,11 @@ shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · captu
 lib/client/        the one daemon HTTP client
                          │  import ↓ only
 lib/core/          paths · portfiles · bus · names · fsjson · html · versions · cors ·
-                   channels · resources · mcp-seen · remote-policy · png · gif ·
-                   brand-image · brand-store · theme-identity · fonts · theme-values ·
-                   trust-marks
+                   channels · resources · mcp-seen · remote-policy · png · gif · zip ·
+                   markdown · reply · brand-image · brand-store · theme-identity ·
+                   fonts · theme-values · trust-marks · watch · redact · text ·
+                   stable-json · tool-input · prompt-class · claude-files ·
+                   claude-sessions · image-file · project-identity
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -247,7 +249,8 @@ were the only places they lived.
 | You need to… | Use | Never |
 | --- | --- | --- |
 | resolve a path under `.web-chat/` or `~/.web-chat/` | `core/paths` `projectPaths(root)` / `userPaths()` | hardcode `'.web-chat'` or call `os.homedir()` |
-| resolve a path under `.claude/` (settings, rules, skills) | `core/paths` `claudePaths(root)` / `userClaudePaths()` | hardcode `'.claude'` |
+| resolve a path under `.claude/` (settings, rules, skills), or one in Claude Code's OWN user tier (transcripts, the per-process sessions files, plans) | `core/paths` `claudePaths(root)` / `userClaudePaths()` — its Claude Code keys sit under `configDir`, which is `claudeConfigDir()` (`CLAUDE_CONFIG_DIR` when set, else the home directory's `.claude`), while its pack keys stay under the home directory; a project's transcript directory is `userClaudePaths().projectDir(realpath(dir))`, named by `claudeProjectSlug` | hardcode `'.claude'`, read Claude Code's tier off the home directory, or derive a slug by hand (it is lossy, and Claude Code names a project by its physical path) |
+| name a file after an id that came from outside (a Claude Code session id, a turn id) | `core/paths` `isSafeId(id)` — 1 to 100 letters, digits, underscores and hyphens, so it can never form a path; the path keys that take such an id answer null for anything else | join an id onto a directory unchecked |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
 | ask whether a path is inside a directory (a fence) | `core/paths` `isInside(parent, child)` / `realpath(p)` | `startsWith` / `path.relative` containment by hand |
 | fence a path you were HANDED (a store value, a form field), incl. one about to be created | `core/paths` `fence(parent, child)` → abs \| null (services get it as `ctx.fence`) | a lexical `path.relative` check that a symlink walks straight out of |
@@ -255,10 +258,12 @@ were the only places they lived.
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` | spin your own `readPortfile` loop |
 | ask whether a pid is alive | `core/portfiles` `isPidAlive(pid)` | `try { process.kill(pid, 0) }` inline (the type guard is the point) |
+| ask whether a pid is still the process that started at a given time, or sample many processes at once | `core/portfiles` `isPidAlive(pid, {startedAt, sample})` → true / false / null (null is no verdict, never "a different process"; pass `sample` so nothing spawns synchronously) · `sampleProcs(pids)` → start time, CPU time and run state for every pid in one async read · `parseProcStart` / `formatProcStart` (the start-time text Claude Code's sessions files carry) · `processCommand(pid)` | trust a pid read out of a file without its start time (pids are reused), or spawn a process listing per pid on a daemon tick |
 | start a detached child whose output goes to a log file | `lib/util/daemon` `spawnDetached({bin, args, log, cwd, env})` — opens the log once, closes the parent's copy of the descriptor, and derives the CLI bin from `core/paths` `PACKAGE_ROOT` | `spawn` + `openSync` at a call site (two spawners each leaked their log fd, and one opened it twice) |
 | remove a daemon's records on the way out | `lib/util/registry` `release({root, pid})` | `deletePortfile` and `deregisterInstance` separately, or either one unguarded |
 | list every surface on this machine, classified | `lib/util/registry` `rows({probe, timeoutMs})` → `{…entry, pid_alive, reachable}` | read the registry and re-derive liveness per caller |
 | ask which projects have a surface and/or a Claude Code session attached | `lib/util/registry` `sessions()` (sync, registry only) → `{root, title, surface, claude}` per root, then `enrichSessions(rows)` for the daemon-only facts (viewers, turn, active label, the release from `/api/health` `package_version`); `versionSkew`/`versionNote` for "a Claude session runs a different release than its surface" | read `role:'mcp'` rows yourself, treat `mcp-seen` as liveness, or compare a registry/health `version` (the PROTOCOL number) as a release |
+| list the live Claude Code sessions attached to ONE project (the chat mirror's discovery tick) | `lib/util/registry` `mcpSessionsFor(root)` — the presence rows whose MCP server and Claude Code parent are both alive, roots compared by realpath, each with its `interrupt` field; read-only: no lock, no prune, the registry left byte for byte as it was | a pruning reader on a timer (every tick of every daemon would become a writer), or roots compared as spelled (macOS's `/var` is `/private/var`) |
 | show that machine-wide view in the browser | `lib/server/routes/machine.js` (serving GET /api/machine/sessions — local-only: a remote/tunnel policy must refuse it, since it names every project on the box) drawn by `public/app/sessions.js` | a second classifier in the route or the page, or a button that starts another project's daemon |
 | say "this MCP process is a live session" | `lib/mcp/presence` (`startPresence` → `setChannel`/`touch`/`stop`; registry `registerMcp`/`updateMcp`/`deregisterMcp`) | a second presence file, or a write on the tool-call path |
 | stop (or clear) another project's surface | `lib/cli/reap` `reap(rows, {here, log})` / `stopRow(row)` | signal a pid out of a file, or delete a record you did not confirm is dead |
@@ -266,16 +271,33 @@ were the only places they lived.
 | subscribe to the SSE event stream | `lib/client` `subscribeSSE` | hand-roll SSE frame parsing |
 | stream a request through to a daemon and relay the live response (a proxy) | `lib/client` `pipe(port, {method, path, headers}, reqStream)` | `http.request` + `res.pipe` in the proxy |
 | decide whether a REMOTE viewer (through the tunnel portal) may reach a daemon route | `core/remote-policy` `classify(method, url, {allowDestructive})` → `{allow, key, reason, hint}` + `refusalBody(v)` — default deny, and its ratchet test fails on any daemon route the table does not name | a per-route check in the portal, or a new route left unclassified |
+| decide what a chat-mirror frame, or a body that carries conversation text, may hold for a viewer's level (basic, read, full, local) | `core/remote-policy` `projectFrame(frame, level, posture)` (`FRAME_RULES`, one row per mirror frame type: a type with no row reaches a local viewer only, and test/remote-policy.test.js fails on it) · `projectValue(schema, value)` (the typed schemas, `STATUS_ROW_SCHEMA` and kin) · `stripText(kind, key, body)` (`TEXT_RULES`: what a route's or frame's body loses below read); `MIRROR_LEVELS` / `rankLevel` / `atLeast` are the one copy of the level order | a per-route or per-frame filter of your own, or a frame or route that carries text with no row |
 | check a remote viewer's Cloudflare Access sign-in (the tunnel portal's mandatory JWT check) | `lib/portal/access-jwt` `createVerifier({team, aud, allow, jwks})` over `lib/tunnel/jwks` `createJwksCache({team, fetchJwks})` — RS256 only, the key set's refetch rate-limited, cold failure fails closed | a JWT library, a decode-and-trust, or an `alg` read off the token |
 | choose which of a remote request's headers may reach a daemon | `lib/portal/proxy` `forwardHeaders(headers, {port, origin})` — an allowlist, Origin rewritten to the daemon's own | a blocklist of the headers you happen to know the daemon trusts |
-| read or validate tunnel.json (hostname, style, Access team/AUD, allowlist, the named tunnel), or find the portal's port | `lib/tunnel/config` `loadConfig()` / `normalizeConfig(raw)` / `parseHost` / `sessionHost` / `portalPort(env)` — one normaliser for the portal, `tunnel`, and doctor; the running portal follows the file through `lib/portal/config-watch` `watchConfigFile` and reloads with the same `loadConfig` | a second reader of `tunnel.json`, a second watcher of it, or `5171` written into a command |
+| read or validate tunnel.json (hostname, style, Access team/AUD, allowlist, the named tunnel), or find the portal's port | `lib/tunnel/config` `loadConfig()` / `normalizeConfig(raw)` / `parseHost` / `sessionHost` / `portalPort(env)` — one normaliser for the portal, `tunnel`, and doctor; a project's chat-mirror opt-in is read with `mirrorLevelFor(config, session)` and written with `withMirrorLevel`. The running portal (through `lib/portal/config-watch` `watchConfigFile`, a wrapper) and the daemon's audience gate both follow the file through `lib/core/watch` `watchFile`, and reload it with the same `loadConfig` | a second reader of `tunnel.json`, a second watcher of it, or `5171` written into a command |
 | find, launch or supervise cloudflared | `lib/tunnel/cloudflared` `checkBinary()` (PATH + min version + the platform's install line) / `buildLaunch` (token in `TUNNEL_TOKEN`, never argv) / `renderIngress` / `createSupervisor` (backoff 1s→60s, reset after 5 min) / `probeReady(metricsPort)` | spawning `cloudflared` from a command, or installing it for the user |
 | register a one-per-machine process (the hub, the tunnel portal) | `lib/util/registry` `registerRole(role, {port, pid})` / `readRoleEntry(role)` / `deregisterRole(role, {pid})` (`registerHub`/`readHubEntry`/`deregisterHub` are its `'hub'` wrappers) | a second copy of `registerHub` with another name |
 | long-poll a wake condition (**driver only** — Claude wakes via the channel/queue) | `lib/driver` `waitFor` → `/api/wait` | `fetch /api/wait` + cursor bookkeeping by hand |
 | write a small JSON record durably | `core/fsjson` `writeJsonAtomic(file, value, {pretty, newline, mkdir, fsync})` | `writeFileSync(JSON.stringify(…))`, or a private temp-file + `renameSync` |
 | read one back, telling absent from torn from wrong-shaped | `core/fsjson` `readJson(file, {validate})` → `ok`/`absent`/`corrupt`/`invalid` (or `readJsonOr(file, fallback)`) | `try { JSON.parse(readFileSync(…)) } catch { return <one value> }` |
 | keep a record you could not read | `core/fsjson` `renameAside(file, {tag, keep})` | `unlinkSync` it |
+| write a file's bytes atomically (an image, any record that is not JSON) | `core/fsjson` `writeFileAtomic(file, data, {mkdir, fsync})` — `writeJsonAtomic`'s bytes half: an exclusive temp file renamed into place, so a crash never leaves half a file and a link at the destination is replaced, never written through | `writeFileSync` over a file a reader may catch half-written, or one a repository could have shipped as a link |
 | notify the surface of a change (a WS frame + an event-log entry) | `core/bus` `emit({ event, ws, except })` | hand-pair `broadcast()` + `pushEvent()` |
+| hear every Claude Code hook envelope the daemon accepts (the chat mirror, the turn guard, later the asks domain) | `lib/server/hook-tap` `createHookTap()`, exposed as `ctx.hooks`: `publish(env)` / `subscribe(fn)` / `recent(n)`. It is the change bus's SECOND instance, a 200-entry ring of `kind: 'hook'` entries with no broadcaster, so nothing on it becomes a frame; arrival order is not event order | publish hook inputs on the main bus (two per tool call would evict the surface events `get_events` reads), or a subscriber that depends on the order envelopes arrive in |
+| put a chat-mirror change on the wire, or read the mirror from a route | `lib/server/mirror` — `ctx.mirror` is its facade (`createMirror`): routes read the facade alone, and a source plugs in with `register(name, source)` under the contract written at the head of its index.js. Its frames go out on the MIRROR bus, the change bus's THIRD instance (2,000 entries, compact content-free ring events), broadcast through lib/server/ws.js, which projects every mirror frame per socket | emit a mirror frame on the main bus, reach past `ctx.mirror` into the model, or edit the facade to add a source |
+| answer a mirror route: wait for the engine, then the disabled, unavailable or failed answer | `lib/server/routes/mirror` `mirrorFor(ctx, res)` / `isUnavailable` / `sendUnavailable` / `sendFailure` / `disabledBody` | a route that words those bodies itself, or a 500 that carries an error's message |
+| decide how much of the chat mirror a request or a socket may see, or whether a request is the host's own | `lib/server/audience` `createAudience()`, exposed as `ctx.audience`: `levelOf(req)` (a network peer is always basic, whatever it sends: Q9, carve-strict; a remote viewer gets the project's opt-in; loopback without the portal's label is local) · `isHost(req)` / `requireHost()`, the ONE host-only test (local and not a browser) · `requireMirror(level)`, the mirror routes' second lock behind the portal's table · `socketLevel(ws)` / `accessView(req)` / `onChange(fn)` | read `req.socket.remoteAddress` or `X-WC-Remote` yourself, or grant anything on `X-WC-Remote` alone (it is a label, and any local caller can send it) |
+| send one socket a frame, or hear a socket connect or change mirror level | `lib/server/ws` — `attachWebSocket` returns `sendTo(ws, frame)` (projected for that socket's level), `onConnect(fn)` and `onLevelChange(fn)` beside `broadcast` | `ws.send(JSON.stringify(…))` on a socket, which skips the projection |
+| build what a hook reports to the daemon | `lib/hooks/envelope` `hookEnvelope(payload, env, {now})` → envelope v1, bounded in the hook (a tool's input through the per-tool table, the whole body at most 32 KB), or null for an event it does not know · `promptOf(payload)` (the one prompt chain) · `isSdkEntrypoint` | an envelope built by hand, a file's content or a command's output in one, or an environment variable envelope v1 does not name |
+| take a hook event in on the daemon | `lib/server/routes/hooks` `mountHookRoutes` — `/api/hooks/event`, host only, validates envelope v1 (`checkEnvelope`), answers at once and publishes on `ctx.hooks` after the response | a second intake, or one a browser, a remote viewer or a network peer can post to (a forged SessionEnd would end Claude's turn in the mirror) |
+| be told when a file may have changed (a config, a transcript, a sessions file) | `core/watch` `watchFile(file, onTrigger, {pollMs, debounceMs, dirWatch, persistent})` → `trigger` / `retarget` / `stop`. It re-arms after an atomic replace, polls as the backstop, and funnels every source into one debounced, single-flight call; it never says what changed | `fs.watch` or `fs.watchFile` at a call site (ratcheted: a watch binds the inode and goes silent after an atomic replace), or a private poll loop |
+| show, send or store text that came from Claude Code (a transcript, a tool's input or output, a prompt, a permission request) | `core/redact` `createRedactor()` (the daemon's is `ctx.redactor`, which also masks the values it was told, like the capture token) over `redactText` / `redactValue` / `redactWindow`; `MASK(label)` writes a mask. One frozen rule table, every regex linear | a second "looks like a token" regex, a mask or the PEM marker spelled outside redact.js (both ratcheted), or a window cut before it is redacted |
+| serialize a value deterministically (a node digest, a change key, a hash) | `core/stable-json` `stableStringify(v)` (the node digest's form) / `stableKey(v)` (change detection's form) / `stableHash(v)` (sha1 of the first). The two forms differ on undefined and are NOT interchangeable | `Object.keys(…).sort()` plus `JSON.stringify` by hand (ratcheted), or one form swapped for the other (it moves every digest or version hash on disk) |
+| label a Claude Code tool call, bound its input, or ask which file it touches | `core/tool-input` `projectToolInput(name, input, {profile})` (`'mirror'`: an allowlist per tool, never a file's text; `'display'`: every field, naming what a cap cut) · `toolKind` / `toolSubject` / `stepLabel` / `callLabel` · `fileOf(name, input)` (the redactor's context) · `inputHash(input)` | a second table of tool names or fields: the hooks, the engine, the asks and the redactor all read this one |
+| tell what a turn's opening text is (the user's prompt, a task notification, a channel wake, a command), or find the composer's delivery marker | `core/prompt-class` `classifyPrompt(text)` / `promptLead(text)` · `messageMarker(id)` / `messageMarkers(text)` | a second list of the harness's leading tags, or a marker regex of your own (`MESSAGE_MARKER_RE` is global, so scan with `messageMarkers`) |
+| open a file whose path came out of Claude Code's own text (a transcript, a task output, a plan, a stored tool result) | `core/claude-files` `transcriptFile` / `sessionDirFile` / `taskOutputFile` / `planFile` (each answers an absolute path or null, and never throws), then `readWindow` (one bounded window, never through a link) | `fs` on a path a model wrote (a page Claude fetched can print any path at all), or an unbounded read (one task output reached 3 GB) |
+| read Claude Code's per-process sessions files (status, what it waits for, the session id, the start time) | `core/claude-sessions` `readSessionState({pid, sessionId})` / `listSessionPids()` / `readAllSessionStates()` — the one reader. It builds every file name from a number, so the peer-token `.key` file beside each one is never opened | open anything in Claude Code's sessions directory yourself |
+| refuse or clean control, bidi and invisible characters in text from outside (a project's name, a message, an answer) | `core/text` `hasForbidden(s)` (to refuse) / `stripControls(s, {keepNewlines})` (to clean), over `CONTROL_RE` / `BIDI_RE` / `INVISIBLE_RE`; the joiners and variation selectors emoji need are left alone | a filter of your own (the conventions ratchet counts the bidi range) |
 | write the shared store (Claude's `set_store`, a driver, a pane's `store:set`, the queue's Revert) | `lib/server/domain/store` `patchStore(state, bus, patch, {source, unset, mount, gesture, except})` — applies, emits once, hands subscribers the pre-write values as `meta.prior` | `Object.assign(state.store, …)` beside a hand-written emit |
 | put a pane on the live surface, or take one off | `lib/server/domain/mounts` `setMount` / `removeMount` / `emitMount` | hand-write `state.mounts.set(…)` plus a render frame, or a delete plus a clear frame |
 | walk a node's ancestry, or list a pane's versions along it | `lib/server/domain/lineage` `ancestry(graph, id)` / `mountHistory(graph, {mountId, fromId, labels, live, includeLive})`; put a version back with `lib/server/domain/mounts` `restoreMount` | a private `parent_id` loop (no cycle guard, and a second walk for replay to diverge from) |
@@ -284,7 +306,7 @@ were the only places they lived.
 | mount HTML/JS into a shadow-rooted pane + a local store | `public/mount-runtime.js` `createStore` / `attachAndExtract` / `runScripts` | re-implement `attachShadow` + `<script>` extraction + `new Function` |
 | resolve a mount HOST element from a mount id (chrome side) | `public/app/state.js` `hostFor(id)` — scans `.mount-host` for `dataset.mountId`, because a mount id is arbitrary agent-supplied text | `document.getElementById(mountId)` / `$(mountId)`: an id like `main` or `drawer` hands you a chrome element instead of the pane |
 | resolve a named on-disk resource across project/user/builtin tiers | `core/resources` `resourceRegistry({tiers, load, write})` → `get`/`list`/`save`/`dir` | hand-roll a `readdirSync` + tier-precedence walk |
-| decide who may reach this server (bind host, `Host` gate, WS `Origin` gate, extension CORS, the preview document's CSP) | `core/cors` `LISTEN_HOST` / `requireLocalHost` / `isLocalHost` / `verifyUpgrade` / `isLocalOrigin` / `isBrowserRequest` / `setCors` / `mountCors` / `PREVIEW_CSP` / `warnIfExposed` | hardcode `127.0.0.1`, re-derive "is this local", read `req.headers.host` by hand, or copy the header block |
+| decide who may reach this server (bind host, `Host` gate, WS `Origin` gate, extension CORS, the preview document's CSP) | `core/cors` `LISTEN_HOST` / `requireLocalHost` / `isLocalHost` / `verifyUpgrade` / `isLocalOrigin` / `isBrowserRequest` / `setCors` / `mountCors` / `PREVIEW_CSP` / `warnIfExposed`; whether a PEER's address is loopback is `isLoopbackAddress`, which only `lib/server/audience` asks | hardcode `127.0.0.1`, re-derive "is this local", read `req.headers.host` by hand, or copy the header block |
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | name a design token, or ship a builtin theme pack | `lib/server/theme-packs` `CANONICAL_TOKENS` / `PACKS` (every pack defines every canonical token; Earthy = `public/app.css` verbatim, and the theme-packs test holds both) | a token only one stylesheet knows, or a pack that leaves one unset |
@@ -310,18 +332,26 @@ were the only places they lived.
 | register a project, or un-register one | `lib/setup/registration` `apply(root, {force, dryRun, runClaude})` / `remove(root, {runClaude})` | call `ensureHooks` + `reconcileManagedFiles` + `ensureMcpRegistration` in your own order, with your own stub policy |
 | build the `claude mcp add`/`remove` argv | `lib/setup/registration` `mcpArgv()` / `removeArgv()` | `path.join(__dirname, …, 'bin')` (that is the version dir, which gets pruned) |
 | name the hook events registration means | `lib/setup/registration` `hookEvents()` | iterate whatever `settings.hooks` happens to hold |
+| name the hook HANDLERS the template registers, what each is for, or what a missing or outdated one costs | `lib/setup/registration` `hookHandlers()` (each template handler with its event, subcommand and role) · `HOOK_ROLES` / `hookRole` / `roleEffect` (lifecycle, mirror, bridge, halt, and what the user loses without each) · `hookProblems(state)` (the handlers `inspect` found missing, bare or stale, grouped by role) · `driftLine(state)` (the MCP server's startup line) · `HOOK_RESTART_NOTE` (how every line asking for a hook upgrade ends) | count hooks per event (one event can carry two of ours), or word a missing handler's cost a second way |
 | say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
 | fetch / validate / plan / install a component pack | `lib/packs/*` (`installPack`, `quarantinePack`, `removePackByName`, …) | a second install path beside the CLI's |
 | decide whether a name may become a component directory (kebab grammar + reserved builtins) | `core/names` `assertComponentName` / `isComponentName` / `BUILTIN_COMPONENTS` | re-declare `/^[a-z][a-z0-9-]*$/`, or re-list the builtin names |
 | read a component's `x-trust` marks, warn about an unknown one, or say what an approval covers (and what it lets a pane do) | `core/trust-marks` `readTrustMarks` / `trustMarkWarnings` / `describeCovers` / `describeExact` / `coversProjectPath` / `pathReach` / `TRUST_MARKS` (the identity those marks enter — and each request's `covers` / `exact` — is minted in `lib/server/services.js` `mintIdentity`) | re-list `display` / `project-path`, or word the unknown-mark warning, a covers line or the `.env` sentence a second time |
 | decide whether a name is a builtin THEME (a pack, or a retired alias), or which pack it resolves to | `core/names` `isBuiltinThemeName` / `builtinThemeId` / `BUILTIN_THEME_NAMES` (the alias table `BUILTIN_THEME_ALIASES` lives here and lib/server/theme-packs re-exports it; a test holds `BUILTIN_THEME_PACKS` equal to its packs) | re-list `earthy`/`paper`/`georgetown-blue`, or a second alias table |
 | validate an image before it is shown as a logo (a Settings → Brand upload, a theme's logos) | `core/brand-image` `validate(bytes)` / `validateLogoFile(name, bytes)` / `parseLogoName(name)` (lib/server/brand.js re-exports them) | a second sniffer or SVG blocklist |
+| keep one image file in `.web-chat/` (a brand slot, a project's logo or favicon) | `core/image-file` `imageFile(root, base)` → `locate` / `read` / `meta` / `write` / `remove`: one SVG or PNG, validated when written, re-sniffed when read, never a link and never written through one, its folder fenced inside the project's state directory; `imageSize(bytes)` measures as the store will | a second reader or writer of an image there, or a path to one built from request text |
+| read or set a project's identity: its display name, its images, whether the name shows | `core/project-identity` `identity(root)` / `setName` / `resetName` / `setShowName` / `writeImage` / `removeImage` / `readImage(root, kind, {dark})` / `frame(root)`. Display-only by contract: nothing read from `project.json` widens access, because a repository can commit it. The daemon serves it at `/api/project` (lib/server/routes/project.js), and the chrome holds it in `public/app/project.js` | a second reader of `project.json`, a setting in it that grants anything, or the name used as a path, a key or a URL segment |
+| take an uploaded image in a route, or serve one | `lib/server/routes/brand` `readImageBody` (route middleware: the raw body, refused over the limit or as a type other than PNG or SVG) / `sendImage(res, {bytes, type})` (the sniffed type, nosniff, a CSP, and a cross-origin resource policy). The brand and project routes both go through them | a second raw-body parser, or an image response with headers of its own |
 | check what a theme inside a pack may carry (tokens, modes, fonts, logos — raw CSS gated by the one `THEME_CSS_POLICY`) | `lib/packs/themes` `inspectPackTheme(stageDir, name)` | a second theme check in a route or the drawer |
 | ask whether a theme token VALUE would load something (`url(` and kin, `@import`, `javascript:`, escapes) | `core/theme-values` `refusedTokenValue(v)` / `refusedTokens(map)` | a second `url(` regex in a route, the planner or the drawer |
 | know which font families web-chat bundles | `core/fonts` `fontFaces()` / `bundledFamilies()` (parses public/fonts/fonts.css) | a hard-coded family list |
 | ask the user a question in the terminal | `lib/cli/prompt` `createPrompt({log, yes, noInput})` → `confirm`/`line`/`close` | `require('node:readline')` at a call site, or gate on `process.stdin.isTTY` yourself |
 | read or write a browser storage key from the chrome | `public/app/storage.js` `getLocal` / `setLocal` / `getSession` / `getLocalJson` — every one fails open | touch `localStorage` / `sessionStorage` directly: the accessor itself throws in a private window and takes the whole module graph down with it |
 | send a frame to the daemon from the chrome (a store patch, pane state, an activity event) | `public/app/ws.js` `send(frame)` — it queues on a closed socket, coalescing per key, and drains after the reconnect's snapshot has landed | gate the call on `isOpen()` and drop the frame: `hello` catches the client up in one direction only, so the reconcile then overwrites the local copy too and the change is lost at both ends |
+| hear a frame or the `hello` in the chrome, or tell the daemon something about this client | `public/app/ws.js` `onFrame(typeOrPrefix, handler)` (a frame type, or a prefix ending in a colon for a whole family, such as every mirror frame) and `onHello(handler)`, each returning its unregister · `setClientField(key, value)` (kept, and carried by every `client` frame, so the reconnect's hello sends it again) | a new branch in ws.js's frame switch for a feature, or a client field sent once and lost at the next reconnect |
+| put a chat view, the composer or the answer frames into the chrome, or ask whether a chat view is open | `public/app/chat-slots.js` `registerChatView(view)` / `registerComposer` / `registerApprovals` · `posture()` / `chatViews()` / `closeChatViews()` / `escapeChatViews()` | one chat surface importing another to reach it |
+| take over the status bar's chips (the trays) | `public/app/chat-bar.js` `claimChips()` → `release`: the bar's "Under development" stand-ins go at once, and the bar writes nothing in the chips' host until release | render into the chips' host while the bar's stand-ins are there, or build a second tray note beside the bar's |
+| show the project's name and images in the chrome, or set the tab's title | `public/app/project.js` `initProject({onFrame, onHello})` / `getProject()` / `applyProject(identity)` — `document.title`'s one writer: the tab always reads the project's name | a title written anywhere else (the hello used to name the folder) |
 | apply a full-surface snapshot frame in the chrome — `hello`, `reset`, the restored live surface | `public/app/mounts.js` `applySnapshot(frame, {mode:'authoritative'|'reconcile'})` — it owns the preview fold and the remove-absentees / keep-unchanged reconcile | hand-roll `mountAll` + `fullReset` beside a frame handler: that is how `hello` ended up without the preview fork, overwriting a previewed node on every reconnect |
 | lay out the live page (markdown between grid runs, the Contents nav, the title, run controls, ⌘K sections) or read its sequence in the chrome | `public/app/page.js` (`layoutPage` / `segments` / `outline` / `applyPageFrame` / `commitRunOrder`); the layout and prose CSS is public/page.css, which the node preview and the export inline through `lib/server/runtime/page-css-src` | move a pane wrapper or parse headings at a call site, reorder a run by moving DOM (a moved `<iframe>` reloads — runs order with CSS `order`), or a second copy of the run / `.md-block` CSS |
 | leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
@@ -335,6 +365,9 @@ were the only places they lived.
 | draw a replay (the player document, `replay.html`, a renderer's frames) | `lib/server/replay/document` `assembleReplay` / `buildReplay(ctx, query)` — frames filled from `lib/server/preview` `previewTemplate` + `previewThemeCss` / `previewNodeJson`; the controller is `lib/server/replay/player.js` | a second player, or a frame built by escaping node JSON anywhere but `previewNodeJson` |
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
+| boot the real chrome (public/index.html and the module graph) in jsdom in a test | `test-support/chrome-shell` `bootShell({routes, onSocket, init})` → the shell's `window`, `calls`, `frame(msg)`, `setRoutes`, `restore` (fetch through one indirection, a socket the test drives, stubbed pollers, layout metrics, a viewport), once per file in a before() hook | a hand-rolled JSDOM of index.html (the harness ratchet holds those to a shrinking list) |
+| give a test a fake Claude Code user tier: transcripts, sessions files, MCP presence rows, task outputs | `test-support/claude-home` `claudeHome(t, {root, isolate})` → `writeSession` / `writeTranscript` / `addMcp` / `writeTaskOutput` / `write`, built under the sandbox and cleaned up by `t.after` | a fixture copied from a real Claude Code directory (its transcripts hold real prompts and secrets) |
+| give a redaction test credentials to find | `test-support/fake-secrets` `fakeSecrets({seed})` (one of every format the redactor knows, seeded, never real) / `fakeCorpus` / `findLeaks` | a real token, or a literal that looks like one, in a test |
 | run a test against a REAL Chrome or ffmpeg | `test-support/helpers` `e2eGate(['chrome', 'ffmpeg'])` → `{skip, chrome, ffmpeg}` (opt-in via `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1`; the harness ratchet holds any other probe for a real program in a test at zero) | skip on whether `findChrome()` found something — the suite then changes with what is installed |
 | run the one-token tunnel setup, or bring the tunnel up / down / read its status | `lib/tunnel/api-setup` (`readExisting` / `buildWant` / `runSetup` / `finishSetup` — the lines the CLI prints) and `lib/tunnel/control` (`up` / `down` / `restartPortal` / `collectStatus`) — the CLI and the ⌘K setup page both call these | a second gather→plan→apply loop, or spawning `claude-web-chat tunnel …` from the daemon |
 | serve a page that takes a secret the panes must never reach | its own listener on its own origin, like `lib/server/tunnel-setup` (exact `Origin` + a per-load nonce header + JSON + a refused preflight, strict CSP, COOP, no framing) | a route on the surface's origin — every pane runs there (routes/packs.js risk paragraph) |
@@ -371,6 +404,20 @@ else. `lib/server/paths.js` (the `resolvePaths` UPPERCASE-key adapter) and
 `lib/util/root.js` are thin compat shims over this; leave them, they keep their
 importers unchanged.
 
+**Claude Code's own files are named here too, and only read.** The chat mirror
+reads Claude Code's user tier: each project's transcripts, the per-process
+sessions files, plans. `claudeConfigDir()` is where that tier is —
+`CLAUDE_CONFIG_DIR` when it is set, else `~/.claude`, read per call like
+`homeDir()` — and `userClaudePaths()` names its files under `configDir`, apart
+from the pack keys, which stay under the home directory. A project's directory
+there is named by `claudeProjectSlug(dir)`, a lossy mapping of its PHYSICAL
+path, so pass `realpath(dir)` and never turn a slug back into a path. An id
+that arrives from outside (a session id, a turn id) names a file only through
+`isSafeId`, and the keys that take one answer null for anything else. The
+mirror and the composer read the `configDir` keys and never write them; a path
+read out of Claude Code's own text goes through `lib/core/claude-files`, and a
+sessions file through `lib/core/claude-sessions`.
+
 ### `lib/core/portfiles.js` — the portfile / discovery / probe engine
 
 Everything about "is a daemon there and how do I find it." Role-based:
@@ -394,6 +441,16 @@ Everything about "is a daemon there and how do I find it." Role-based:
 - `waitUntilReachable({role, root})` / `waitUntilGone({role, root})`
 - `isPidAlive(pid)`, plus low-level `*At(webChatDir)` variants for callers that
   still hold a raw `.web-chat` dir (e.g. tests).
+- The facts about the process a pid names. A pid read out of a file may have
+  been reused since; a start time cannot be. `isPidAlive(pid, {startedAt,
+  sample})` also asks whether it is still the process that started then, and
+  answers true, false (gone, or someone else's process now) or null (alive, but
+  its start could not be read: no verdict, never "a different process").
+  `sampleProcs(pids)` reads start time, CPU time and run state for many pids at
+  once (one async `ps` on macOS, /proc on Linux, never rejects); pass its Map as
+  `sample` and nothing spawns synchronously. `parseProcStart` /
+  `formatProcStart` are the start-time text Claude Code writes in its sessions
+  files, and `processCommand(pid)` a command line.
 
 Portfile **formats** were unified in Phase 6: `hub.json` folded into the shared
 registry (`~/.web-chat/instances.json`, owned by `lib/util/registry`) as a
@@ -439,8 +496,11 @@ Three policies are load-bearing — preserve them:
   making a mid-response death a new error class every caller must learn.
 
 - **`spawn` defaults `false`.** Only `lib/mcp/client.js` (a spawn-injecting shim)
-  opts in, so the 24 MCP tools + hooks keep auto-spawning a daemon; driver / hub /
-  CLI must never resurrect a daemon the user closed. `opts.noSpawn` always wins.
+  opts in, so the 24 MCP tools keep auto-spawning a daemon; driver / hub / CLI
+  must never resurrect a daemon the user closed, and neither may a hook: the turn
+  hooks share that shim but pass `noSpawn` (and their own root), and the `mirror`
+  and `ask` hooks post through `lib/client` with `noSpawn`. `opts.noSpawn` always
+  wins.
 - **No default socket timeout.** A driver's `/api/wait` long-poll (`lib/driver`
   `waitFor`) runs for up to `timeout_ms`; a blanket socket timeout would break it.
   `timeout` is opt-in. (Claude no longer long-polls — channels-only wake made
@@ -526,6 +586,25 @@ Never hand-pair a `broadcast()` + `pushEvent()` again — that pair *is* the dri
 bus removes. `test/bus-golden.test.js` freezes the whole wire (WS frames + event log)
 as a byte-identity tripwire.
 
+**Three instances, one engine.** `createBus` is instantiated three times in a
+daemon, each with its own ring, and a new stream of changes is a new instance,
+never a new mechanism:
+
+- **the main bus** (`ctx.bus`, 1,000 entries) — the surface's changes. Its ring is
+  what `get_events`, the SSE stream and the channel bridge read, and its
+  broadcaster is lib/server/ws.js.
+- **the hook tap** (`ctx.hooks`, lib/server/hook-tap.js, 200 entries) — every
+  Claude Code hook envelope the daemon accepts, as `kind: 'hook'` entries, with
+  NO broadcaster: nothing on it ever becomes a frame. Hook inputs are
+  high-volume internal facts (two per tool call), not surface changes, so they
+  stay off the main ring, where they would evict the events `get_events` catches
+  up on.
+- **the mirror bus** (lib/server/mirror, 2,000 entries) — the chat mirror's
+  frames and its compact, content-free `kind: 'mirror'` ring events. It shares
+  the main bus's broadcaster, and lib/server/ws.js projects every `mirror:*`
+  frame per socket for that socket's level (lib/server/audience), so nothing
+  mirror-shaped reaches a socket that may not see it.
+
 ### `public/mount-runtime.js` — the one mount runtime
 
 The shadow-root mount + local pub/sub contract, single-sourced (Phase 4). One
@@ -591,6 +670,13 @@ module. Facts that must never drift apart:
   `WEB_CHAT_HOST` says otherwise; `warnIfExposed()` prints the consequences of
   that override on startup. Never write a bind address anywhere else, and never
   bind a wildcard "for convenience" — a loopback bind is the access control.
+  Under that override the chat mirror shows network peers only Claude's status
+  (its states and timings, never the conversation) and answers none of their
+  host-only requests, the hook intake included: `lib/server/audience` holds a
+  peer whose address is not loopback (`isLoopbackAddress`) at the `basic` level
+  whatever it sends, and nothing raises it — the maintainer's carve-strict
+  ruling (Q9), so the mirror leaves the machine only through the authenticated
+  tunnel.
 - `isLocalHost(host)` / `requireLocalHost` / `verifyUpgrade` — is the NAME the
   client dialled one we answer to. A loopback bind stops a remote packet but not
   a page whose DNS is rebound to `127.0.0.1`: that fetch is *same-origin*, so it
@@ -658,6 +744,22 @@ the 403 (`{ok:false, remote:true, hint}`).
   the BODY lives in the route and is recorded on the row as a `note` — today
   exactly one: `POST /api/pane/spawn` is allowed, but the route refuses an
   `html` body when `X-WC-Remote` is set (`lib/server/routes/spawn.js`).
+- **The chat mirror's levels.** A row can name the least mirror level a remote
+  viewer needs: `basic` (the heartbeat: states, timings, counts and the kind of
+  step, with no text, paths, commands or titles), then `read`, then `full`;
+  `local` is the host's own. A remote viewer's level is its project's opt-in in
+  the user-tier `tunnel.json` (`remote.mirror`, read by `lib/tunnel/config`
+  `mirrorLevelFor`, never from the project, which a repository can ship), and
+  `basic` without one. The portal checks a row's level per request and the
+  daemon checks it again (`lib/server/audience` `requireMirror`). What a level
+  lets through is two more tables here: `FRAME_RULES`, one row per `mirror:*`
+  frame type, applied per socket by `projectFrame`; and `TEXT_RULES`, the
+  conversation text a route or a frame loses below `read` (the lock's prompt,
+  the graph's triggers and summaries, a node's reply), applied with `stripText`.
+- **A row the portal enforces is a protocol change.** Bump
+  `PORTAL_PROTOCOL_VERSION` in `lib/core/versions.js` (9 since the chat mirror's
+  rows): `tunnel up` then restarts a portal left running by an older build
+  instead of reporting it "already up".
 
 ### `lib/portal/` — the tunnel portal
 
@@ -890,17 +992,41 @@ their baselines, the `.gitignore` line. Four functions:
   and the tolerant fallback made that a write for a project that never
   existed). All three inherit `findProjectRoot`'s `$HOME` refusal.
 - **`inspect(root)`** — pure read: `installed`, `hooks` per event
-  (`ok` / `bare` / `missing`), `mcp` (`present`, `kind`, `resolvable`, `reason`,
-  `channelEnv`), `managed` (the dry-run reconcile), `gitignore`. `doctor`,
-  `status` and the MCP dispatcher all report from this one read, so they cannot
-  disagree about the same project.
+  (`ok` / `bare` / `missing` / `stale`), `handlers` per template handler (its
+  event, subcommand, role and state, with `differs` naming what a `stale` one
+  differs in), `mcp` (`present`, `kind`, `resolvable`, `reason`, `channelEnv`),
+  `managed` (the dry-run reconcile), `gitignore`. `doctor`, `status` and the MCP
+  dispatcher all report from this one read, so they cannot disagree about the
+  same project.
 - **`apply(root, {force, dryRun, runClaude})`** — hooks + managed files +
   `.gitignore` + the MCP registration, under **one** stub policy: a committed
   `${CLAUDE_PLUGIN_ROOT}` entry is never rewritten, and when it cannot resolve
   here the registration is completed with `claude mcp add --scope local`.
 - **`remove(root, {runClaude})`** — the hook handlers for `hookEvents()` only,
+  handler by handler (a group that also holds another tool's handler keeps it),
   the managed files, their `.new` sidecars and baselines, the `.mcp.json` entry,
   and the local-scope registration `apply`/`doctor` may have written.
+
+**An event can carry two of our hook handlers** (PreToolUse and PostToolUse
+each hold the mirror's and the halt's), so registration reasons per HANDLER,
+matched by subcommand, never per event. `hookHandlers()` lists the template's
+handlers, and `HOOK_ROLES` says what each is for: `lifecycle` (`turn-begin`,
+`turn-end`), `mirror`, `bridge` (`ask`) and `halt`, each with the effect the
+user loses while it is missing or cannot run (`roleEffect`). A handler is
+`stale` when it resolves but differs from the template in a managed field
+(`MANAGED_HOOK_KEYS` in `lib/update/managed-files`: `async`, `timeout`,
+`statusMessage`, `if`) or in its command's shape, and `applyHooks` — which
+`install`, `update` and `doctor` all reach — repairs every state but `ok`: it
+adds what is missing, resolves a bare command, and rewrites a stale handler's
+managed fields to the template's, leaving other keys and other tools' handlers
+alone. `hookProblems(state)` groups what needs a repair by role for `doctor` and
+`status`, and `driftLine(state)` is the MCP server's one startup line. A command
+resolves through `stableRoot()` (`~/.web-chat/current` for a managed install,
+the tree itself for a checkout), so an update or a rollback never strands one;
+the halt handlers run `lib/hooks/claude-web-chat-hook-halt.sh` under that root
+with `sh`. Every line that asks for a hook upgrade ends with
+`HOOK_RESTART_NOTE`, because whether a running Claude Code session picks up a
+hook `install` just registered is not yet known (validation gate V24 (c)).
 
 Two asymmetries are deliberate, and stated in the module header: `apply()` is
 **not** the whole of `install` (creating `.web-chat/`, running the migrations and
@@ -928,8 +1054,9 @@ where the primitives live, and `lib/packs` imports two of them — a pack instal
 must not become a dependent of a CLI-registration module. And it imports no entry
 point, which is why the `claude` shell-out is an injectable `runClaude` rather
 than something reached for from `lib/cli`. The hook template has one reader,
-`managed-files.hookTemplate()` — `ensureHooks` merges its handlers, `hookEvents()`
-takes `Object.keys` off it — and the wording for a managed-file **conflict** has
+`managed-files.hookTemplate()` — `mergeHooks` merges its handlers (`ensureHooks`
+and `applyHooks` call it), `hookEvents()` takes `Object.keys` off it and
+`hookHandlers()` walks it — and the wording for a managed-file **conflict** has
 one home too, `managed-files.conflictAdvice()` / `conflictSummary()`, which
 `install`, `update`, `init` and `status` all print.
 
@@ -956,6 +1083,116 @@ keep it small and additive, and keep the fallback in `loadRegistration` loud.
 test/release-build.test.js pins both halves of that contract — the path and the
 `apply` export in the tree, and `lib/setup/registration.js` in the release
 artifact — so a rename fails the build instead of the updaters already shipped.
+
+### `lib/core/watch.js` — the file-watch engine
+
+`watchFile(file, onTrigger, {pollMs, debounceMs, dirWatch, fileWatch, persistent,
+log})` → `{trigger(src), retarget(file), stop(), stats}`: one home for "tell me
+when this file may have changed". It never says WHAT changed. Every source — a
+file watch, the one optional directory watch, the poll, a consumer's own
+`trigger(src)` — funnels into ONE debounced, single-flight call of
+`onTrigger(src)`, and `onTrigger` goes and looks. The event names mean nothing
+reliable (FSEvents reported most appends as `rename`), so nothing branches on
+them.
+
+- **The poll is mandatory.** `fs.watch` binds an inode, so an atomic replace or a
+  delete and re-create leaves it on a file nobody reads; a network filesystem may
+  never fire; a file that does not exist yet cannot be watched. The engine stats
+  the path before every call and re-arms the file watch whenever the inode
+  changed, and the poll catches what no event reported.
+- **A directory watch is opened once at most** (`dirWatch`, which only the
+  portal's config-watch asks for): on macOS it is FSEvents, whose `close()`
+  blocked the event loop for up to 25 s under load.
+- **`trigger(src)` resolves once a call that began after it has settled**, which
+  is how a consumer waits for "read up to now"; it never rejects.
+- **Keep `persistent` (the default) while something awaits what the watch
+  delivers.** `persistent: false` unrefs everything, and on Node 22 a test
+  awaiting a promise that only unref'd handles can settle is cancelled.
+
+Consumers: the portal's config-watch (a wrapper), the daemon's follower of
+`tunnel.json` (`lib/server/audience`), the sessions-file watcher
+(`lib/server/mirror/claude-state.js`), and every watcher a mirror source makes
+through `engine.watchFile`, which `mirror.stop()` also stops.
+`test/conventions.test.js` homes `fs.watch(` here.
+
+### `lib/core/redact.js` — the one redactor
+
+The chat mirror carries the most sensitive content web-chat has ever held:
+Claude Code's conversation and every tool's input and output, where the
+validation found real JWTs, an API key, cookies and password assignments. So
+everything the mirror, the graph and the asks show passes this module first,
+server-side, before it reaches the bus, a socket, an HTTP body or a file. It is a
+pure leaf (it requires nothing, not even a builtin), and every regex in it is
+linear, because pane scripts and fetched pages write into what it reads and it
+runs synchronously in the daemon.
+
+- `redactText(text, {context, known, onMask})`, `redactValue(value, …)` (a deep
+  copy; a value under a key named like a credential is masked whole),
+  `redactWindow(…)` (redact BEFORE truncating), `sensitivePath`, `sensitiveKey`,
+  over one frozen `RULES` table, most specific first.
+- `createRedactor()` is the daemon's instance, `ctx.redactor`: the same rules
+  plus the values it was told (the capture token), which live only inside its
+  closure and are never exported, serialised or logged.
+- **The mask.** `MASK(label)` is `‹redacted:<label>›`: the label names the rule,
+  never anything about the value, and only a well-formed mark is left alone on a
+  second pass, which is what makes redaction idempotent. Its opening and the PEM
+  marker are each spelled once in this file, and `test/conventions.test.js`
+  holds both literals here. A key-named field in a mirror answer is masked whole,
+  so name a field like `next_token` something else.
+
+### `lib/server/audience.js` — who is asking, and how much of the mirror they see
+
+`createAudience({root, configFile})` → `ctx.audience`. The levels, least first,
+are `basic` (the heartbeat), `read` (all of the conversation, and nothing that
+acts), `full` (the composer, task stops, answering) and `local` (the host's own
+chrome, its panes and local processes); `lib/core/remote-policy`'s
+`MIRROR_LEVELS` is the one copy of that order.
+
+- **`levelOf(req)` decides by the peer first.** A peer whose address is not
+  loopback is `basic`, whatever it sends — only a `WEB_CHAT_HOST` bind lets one
+  in at all, and nothing raises it (Q9, carve-strict). Loopback with the portal's
+  `X-WC-Remote` label is the project's opt-in, or `basic` without one; loopback
+  without it is `local`.
+- **`isHost(req)` is the one host-only test**: local, and no browser fetch
+  metadata (`isBrowserRequest`). The hook intake and the turn routes' publish ask
+  it, so a pane's `fetch`, a remote viewer and a network peer are each refused by
+  one rule. `requireHost()` is its middleware, and `requireMirror(level)` is the
+  mirror routes' second lock behind the portal's table, and the only lock for a
+  network peer.
+- **It follows the opt-in through `lib/core/watch`**, read with `lib/tunnel/config`
+  (`loadConfig`, `mirrorLevelFor`), so an edit reaches open sockets within about
+  a second: `onChange` listeners hear it, and lib/server/ws.js re-levels each
+  remote socket and tells it (`mirror:access`).
+- **A level is a label as well as a gate.** `GET /api/health` and
+  `/api/mirror/access` report the asker's own, which grants nothing.
+
+### `lib/server/mirror/` — the chat mirror's engine
+
+`index.js` is the engine's one face, `ctx.mirror` (`createMirror`): the
+lifecycle, the toggle, ingestion from the hook tap, the source contract and its
+dispatch table, and the read boundary's redaction. Routes read the facade and
+nothing behind it. Behind it, one model (`model.js`) is the inbound redaction
+point; the turn machine (`turn-machine.js`) owns each turn's lifecycle; the
+conversation registry (`conversations.js`, with `claude-state.js`) decides
+which envelopes belong to this project and links sessions into conversations;
+`live.js` is the live-state machine and the heartbeat; and the emitter
+(`emit.js`) flushes the model's changes into frames on the mirror bus, at most
+once every 100 ms and only while there is something to send.
+
+- **A source plugs in, it is never wired in.** `mirror.register(name, source)`
+  hands a source a frozen `engine` (the tracked model, `applyChanges`, the
+  redactor, the Claude Code file fences, `watchFile`, timers the engine owns, …)
+  and reads back its hooks and its `api`. The contract is written at the head of
+  `index.js`; a later source is added to `SOURCES`, not to the facade.
+- **Arrival order is not event order.** Async hooks race, so a PostToolUse can
+  reach the daemon before its PreToolUse, and ingest is written so the outcome is
+  the same in any order.
+- **Who interrupted a turn is decided in the facade alone**, for every close.
+- **Teardown.** `mirror.stop()` clears every timer and watcher the engine owns;
+  both teardown paths call it, and a graceful shutdown gives it
+  `MIRROR_STOP_TIMEOUT_MS` (exported by lib/server/index.js). Every `withServer`
+  starts the mirror, whose timers are ref'd, so a test that closes the server
+  itself instead of through `stop()` or the graceful shutdown would hang.
 
 ### Shared small homes
 
@@ -990,6 +1227,57 @@ artifact — so a rename fails the build instead of the updaters already shipped
   engine and the migration resolve through. A global theme change is a brand
   change: `lib/server/routes/brand.js` follows every global `theme` bus event
   and emits the `brand` frame, so no theme route has to remember to.
+- `lib/core/stable-json.js` — deterministic JSON, both forms, by name.
+  `stableStringify` is the node digest's form (it writes an undefined property
+  as `"k":undefined`), `stableKey` is change detection's and pane history's (it
+  drops one), and `stableHash` is sha1 of the first. They were two private
+  copies that disagree, and merging them would move every committed node's
+  digest or every pane's version hash, so they stay two, byte-identical to the
+  functions they replaced (test/core-helpers.test.js pins both against captured
+  output). `test/conventions.test.js` homes the key sort here; the one other
+  sort, `lib/server/services.js`'s shallow `sortedBag`, keys recorded service
+  approvals and stays.
+- `lib/core/tool-input.js` — the one per-tool table. The mirror hook bounds a
+  tool's input with it before the input crosses the socket
+  (`projectToolInput(name, input, {profile: 'mirror'})`: an allowlist per tool,
+  sizes in place of a file's text), the asks show a permission request in full
+  with it (`'display'`, naming every field a cap cut), the engine labels a step
+  with it (`toolKind`, `stepLabel`, `callLabel`, `toolSubject`), and the
+  redactor learns which file a result came from with `fileOf`, so redact.js
+  keeps no list of tool names. `inputHash` matches a permission request to its
+  PreToolUse by its whole input.
+- `lib/core/prompt-class.js` — what a turn's opening text is. Claude Code writes
+  its own text into the prompt position behind a leading tag (a task
+  notification, a channel wake, a slash command, bash mode), and the turn-begin
+  hook, the turn machine and the record table all ask the same question of it:
+  `promptLead` / `classifyPrompt`. It also holds the composer's delivery marker
+  (`messageMarker` / `messageMarkers`), so the format has one home.
+- `lib/core/text.js` — the one control, bidi and invisible-character guard: a
+  field that refuses such text asks `hasForbidden`, one that cleans it calls
+  `stripControls`. The joiners and variation selectors emoji need are not in the
+  sets. `test/conventions.test.js` homes the bidi-override range here.
+- `lib/core/image-file.js` + `lib/core/project-identity.js` — one image file
+  under `.web-chat/`, and a project's identity built on it. A brand slot and a
+  project's logo or favicon are the same thing on disk: one `.svg` or `.png`,
+  validated when written (through `fsjson.writeFileAtomic`, so a link at the
+  destination is replaced, never written through), re-sniffed when read, never a
+  link. The identity (`project.json`'s name and show-name switch, the logo and
+  favicon with their dark variants, the touch icon) is display-only BY CONTRACT:
+  a repository can commit `.web-chat/`, so nothing read from it may widen
+  access, and the name is never a path, a key or a URL segment. It lives in
+  core, where the daemon (its `/api/project` routes) and the CLI can both reach
+  it.
+- `lib/core/claude-files.js` + `lib/core/claude-sessions.js` — reading Claude
+  Code's own files. Every path the mirror reads out of Claude Code's text (a
+  hook's `transcript_path`, a task's output file, a stored tool result, a plan)
+  is text a model wrote or echoed, and a page Claude fetched can make it name any
+  file at all. So nothing read out of that text reaches `fs` except through one
+  of the four fences (`transcriptFile`, `sessionDirFile`, `taskOutputFile`,
+  `planFile`: an absolute path or null, never a throw), and `readWindow` then
+  reads one bounded window, never through a link. `claude-sessions` is the one
+  reader of Claude Code's per-process sessions files, built so it never opens the
+  peer-token `.key` file beside each one. The fences are in core because the ask
+  hook reads a plan too, and lib/hooks may not import lib/server.
 
 ## The test harness — `test-support/helpers.js`
 
@@ -1054,6 +1342,32 @@ count as a phantom passing test.
   Resolves on the `101` (genuinely upgraded before the test proceeds), destroys
   on `t.after`. Two files carried the same twelve lines before.
 - `tmpRoot`, `makeApi(baseUrl)`, `safeStop`.
+- **Every `withServer` starts the chat mirror**, whose timers are ref'd, so a test
+  must stop the server through `stop()` or the graceful shutdown, never by
+  closing `srv.server` itself (that hangs on Node 26 and fails at 60 s on Node
+  22). The object `createServer` returns has a `mirror` getter, where a test
+  registers a source.
+
+The chat mirror's tests have three more helpers, each in its own file:
+
+- `test-support/chrome-shell.js` `bootShell({routes, onSocket, init})` — the one
+  boot of the real chrome in jsdom: the real `public/index.html` and module
+  graph, once per test file (a second call returns the same shell). Fetch goes
+  through one indirection (`setRoutes` for a test's own answers, every request in
+  `calls`), the socket is a fake the test drives (`frame(msg)`, `socket()`),
+  `setInterval` is stubbed so a ticker never fires on its own, jsdom's missing
+  layout and `matchMedia` are supplied (`scrollMetrics`, `setViewport`), and
+  `restore()` puts every global back. `init(shell)` runs after main.js and before
+  the socket opens: the place for a module main.js does not start yet.
+- `test-support/claude-home.js` `claudeHome(t, {root, isolate})` — a fake Claude
+  Code user tier, generated at test time and never copied from a real one:
+  transcripts, sessions files, MCP presence rows, task outputs. It plays Claude
+  Code, so it records the PHYSICAL project path, and code under test must compare
+  roots through realpath. Make an `isolate`d one before booting anything that
+  reads the Claude tier.
+- `test-support/fake-secrets.js` `fakeSecrets({seed})` — seeded fake credentials
+  in every format the redactor knows, with `fakeCorpus` and `findLeaks`. A test
+  never spells a real secret, or a literal that looks like one.
 
 `test-support/sandbox.js` is loaded by `npm test` through
 `--import ./test-support/sandbox.js`, before any test file's first `require`, and
@@ -1067,6 +1381,15 @@ developer's `~/.web-chat/instances.json` and bounce the live capture hub) and
 floor, not a replacement — `withServer` still mints a per-test home, because one
 process-wide home does not isolate tests from each other (the service trust
 store, system-scope themes and the update-check throttle all accumulate).
+
+It also scrubs Claude Code's environment, because the suite usually runs inside
+a Claude Code session and every process a test starts inherits it: it deletes
+`CLAUDE_PID`, `CLAUDECODE`, `CLAUDE_EFFORT`, every `CLAUDE_CODE_*` variable,
+`WEB_CHAT_CHANNEL` and `WEB_CHAT_CHANNEL_FORCE` before anything is required, and
+points `CLAUDE_CONFIG_DIR` into the sandbox, so `claudeConfigDir()` can never
+lead a test to the developer's real transcripts and sessions files. A test that
+needs one of those variables sets it in a subprocess's `env`.
+`test/sandbox-env.test.js` holds the scrub.
 
 Run the suite with `npm test`. It is `node --test` with **no path argument** (a
 directory mis-resolves), `--test-timeout=60000` so an unsettled await is a named
@@ -1113,6 +1436,16 @@ and both are there because they are exactly as invisible in review:
   worked example — `before` to boot, `beforeEach` to put the mutable state back,
   `after` to tear down. Shrink-only, with a named baseline for the seven shell
   files that still boot inside a test.
+- **A jsdom boot of `public/index.html` goes through `bootShell`.** A test file
+  that builds a JSDOM and names the repo's `public/index.html` hand-rolls the
+  boot, and every copy of those thirty lines had drifted from the others (which
+  globals were aliased, whether anything was put back). The file counts as naming
+  it whether it spells the path out (`public/index.html`, `'public',
+  'index.html'`) or joins `index.html` to `lib/core/paths`' `PUBLIC_DIR`; the
+  portal picker's and the setup page's own `index.html` are other documents.
+  Shrink-only, file by file: the baseline is the test files that did so when
+  `bootShell` landed, and a file converted to it leaves the list in the same
+  change.
 
 ### `lib/server/domain/page.js` — the page sequence
 
@@ -1381,8 +1714,9 @@ address it by any part of it.**
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
-`lib/` (+ `public/` for the eval, escaping and token patterns, and `public/app`
-for the browser-storage one) and holds a
+`lib/` (+ `public/` for the eval, escaping and token patterns, `public/app` for
+the browser-storage one, and `bin/`, `scripts/`, `templates/` or `extensions/`
+where a row names them) and holds a
 **per-file baseline** for every construct in the table below, then **ratchets**.
 It does not scan `test/` or `test-support/`, so the harness may use raw
 http/ws/fetch; the harness's own five constructs have their own file
@@ -1435,6 +1769,11 @@ Current homes (baselines move toward these):
 | `palettegen` (an ffmpeg palette pass) | `lib/replay/encode.js` (`createFrameEncoder` / `ffmpegPasses`) — the one ffmpeg command line: an ffconcat list with per-frame holds, a two-pass GIF palette, H.264 / VP9 in yuv420p, killed at the render's deadline | landed with replay video ✅ |
 | `localStorage` / `sessionStorage` **in `public/app` only** | `public/app/storage.js` — the one guarded home, held at a true **zero** everywhere else in the chrome | landed with the front-end one-engine pass ✅ |
 | `isOpen` imported from `./ws.js` **in `public/app` only** | `public/app/ws.js` — `send(frame)` decides what happens on a closed socket (it queues, coalesced, and drains after the reconnect's snapshot). The one importer left is `mounts.js`'s `sendFormState`, which returns instead of queueing because the reconcile re-reads the live DOM | landed with the outbound frame queue ✅ |
+| `fs.watch(` / `fs.watchFile(` | `lib/core/watch.js` — `watchFile`, which re-arms a watch on a new inode, polls as the backstop and opens a directory watch once at most. Scanned in `lib`, `bin` and `scripts`: the git-dashboard template's service (user-land component code) and the file-watcher example keep their own watchers, outside the roots on purpose | landed with the chat mirror ✅ |
+| `‹redacted:` (the redaction mask) | `lib/core/redact.js` — `MASK(label)`, whose opening is spelled once, as `MASK_OPEN` (the count there also takes two quotes of it in a comment) | landed with the chat mirror ✅ |
+| `PRIVATE KEY-----` (the PEM marker) | `lib/core/redact.js` — the `pem` rule, built from `PEM_MARKER`, its one spelling | landed with the chat mirror ✅ |
+| `\u202a-\u202e` (the bidi-override range) | `lib/core/text.js` — `hasForbidden` / `stripControls` over `BIDI_RE`; matched as an escape, a `0x` number or the raw character | landed with the chat mirror ✅ |
+| `Object.keys(…).sort()` (a sorted-keys serializer) | `lib/core/stable-json.js` — `stableStringify` / `stableKey` / `stableHash` — plus `lib/server/services.js`'s `sortedBag`, a shallow sort that keys every recorded service approval, which stable-json's deep sort would change | landed with the chat mirror ✅ |
 
 Working with it:
 

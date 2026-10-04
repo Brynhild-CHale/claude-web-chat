@@ -756,6 +756,119 @@ const PATTERNS = [
       'public/app/mounts.js': 1,
     },
   },
+  {
+    // Watching a file. fs.watch is best effort in ways that bite only later:
+    // kqueue and inotify bind the INODE, so after an atomic replace (a temp file
+    // renamed over the path, which is how writeJsonAtomic and most editors
+    // write) or a delete and re-create, a watch left alone sits on a file
+    // nobody reads and never fires again; a network or container filesystem may
+    // never fire it at all; and a directory watch is FSEvents on macOS, whose
+    // close() blocked the event loop for up to 25 s under load (validation
+    // V17). lib/core/watch is the one home: it re-arms on a new inode, polls as
+    // the backstop, funnels every source into one single-flight call, and opens
+    // a directory watcher once at most. The portal's config-watch is a wrapper
+    // over it, and the daemon's tunnel.json follower and the chat mirror's
+    // tailers are built on it. fs.watchFile (a stat poll) is the same concept by
+    // another name, so it is matched too.
+    //
+    // The roots are the code that can require lib/core. Outside them on
+    // purpose: templates/components/git-dashboard/service.js keeps its own
+    // recursive watcher (user-land component code, run as the user approved
+    // it), and examples/file-watcher.js is a driver a user copies out of the
+    // package.
+    name: 'fs.watch( / fs.watchFile(',
+    home: 'lib/core/watch.js — `watchFile(file, onTrigger, opts)`',
+    what: 'watching a file for changes',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bfs\.watch(?:File)?\(/g,
+    baseline: {
+      // The engine's two watches: the file watch it re-arms per inode, and the
+      // one long-lived directory watch (`dirWatch`).
+      'lib/core/watch.js': 2,
+    },
+  },
+  {
+    // The redaction mask's opening. Everything the chat mirror, the asks and
+    // the graph show passes lib/core/redact first, server-side (spec §5.5), and
+    // the mask is how a reader knows a value was taken out. It is also how the
+    // redactor knows not to mask again: redaction is idempotent only because a
+    // WELL-FORMED mark, as MASK writes one, is left alone. A second spelling of
+    // the opening is a second redactor, or a mark the one redactor does not
+    // recognise. Build masks with MASK(label).
+    name: '‹redacted: (the redaction mask)',
+    home: 'lib/core/redact.js — `MASK(label)` (MASK_OPEN is its one spelling)',
+    what: 'writing or matching a redaction mask',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /‹redacted:/g,
+    baseline: {
+      // MASK_OPEN, plus two quotes of it in the comment above MARK_RE (a bare
+      // opening shelters nothing after it). Counted as raw substrings like every
+      // row here, so rewording that comment lowers this number in the same
+      // change.
+      'lib/core/redact.js': 3,
+    },
+  },
+  {
+    // The PEM private-key marker: the anchor of the `pem` rule, which masks a
+    // key block from its BEGIN line to its END, or to the end of the text when
+    // the END is missing. It is spelled once, as PEM_MARKER, and the rule's
+    // patterns are built from it, so a key-block detector anywhere else would be
+    // a second redactor beside the one every read boundary uses.
+    name: 'PRIVATE KEY----- (the PEM marker)',
+    home: 'lib/core/redact.js — the `pem` rule (PEM_MARKER is its one spelling)',
+    what: 'detecting a PEM private-key block',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /PRIVATE KEY-----/g,
+    baseline: {
+      'lib/core/redact.js': 1,
+    },
+  },
+  {
+    // The directional overrides and embeddings, U+202A to U+202E: characters
+    // that make text read one way on screen and say another in its bytes.
+    // lib/core/text.js holds the one control, bidi and invisible-character set
+    // (BIDI_RE among them): a field that REFUSES such text asks hasForbidden, a
+    // field that CLEANS it calls stripControls. The first drafts of the project
+    // name, the composer and the answer frame had three different sets, and a
+    // fourth filter is how they come back. Matched in every spelling a filter
+    // writes: a \u escape (either case, braced or not), a 0x number, or the raw
+    // character itself.
+    name: '\\u202a-\\u202e (the bidi-override range)',
+    home: 'lib/core/text.js — `hasForbidden(s)` / `stripControls(s)`',
+    what: 'filtering bidi, control or invisible characters',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /(?:\\u\{?0*|\b0x)202[a-e]|[\u202a-\u202e]/gi,
+    baseline: {
+      // BIDI_RE's range, its two ends.
+      'lib/core/text.js': 2,
+    },
+  },
+  {
+    // Sorting an object's keys to serialize it the same way every time.
+    // Deterministic JSON existed as two private copies that disagree: the node
+    // digest's (domain/turns.js, which writes an undefined property as
+    // `"k":undefined`) and change detection's (diff.js, which drops it). Merging
+    // them would move every committed node's digest or every pane's version
+    // hash, so lib/core/stable-json keeps both, byte-identical, under names that
+    // say which is which (stableStringify, stableKey, and stableHash over the
+    // first). A third copy has to come through here; the key sort is what every
+    // copy starts with.
+    name: 'Object.keys(…).sort() (a sorted-keys serializer)',
+    home: 'lib/core/stable-json.js — `stableStringify` / `stableKey` / `stableHash`',
+    what: 'serializing a value deterministically',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /Object\.keys\((?:[^()]|\([^()]*\))*\)\s*\.sort\(\)/g,
+    baseline: {
+      // The two forms, one sort each.
+      'lib/core/stable-json.js': 2,
+      // services.js sortedBag: a SHALLOW sort that orders a service's params
+      // (and its x-trust declaration) for the service-consent fingerprint, which
+      // keys every approval recorded in ~/.web-chat/services/trusted.json.
+      // stable-json sorts nested keys as well, so moving it there would change
+      // the key of every approval whose params nest, and ask the user again.
+      'lib/server/services.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

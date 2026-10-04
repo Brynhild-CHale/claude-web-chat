@@ -17,9 +17,56 @@ an image for a slot, it is kept and the old file is renamed aside
 symlink is left where it is and never followed. A 0.8.2 build run against a
 migrated project shows no brand images.
 
+What you have to do:
+
+1. **Register the new hooks in every project you use web-chat in.** `claude-web-chat
+   update` does it in the project you type it in, where web-chat is registered,
+   and `update --restart-all` in each registered project whose server it
+   restarts; anywhere else, run `claude-web-chat install`. Either adds this
+   release's hook handlers to 0.8.2's two (see *Added*). A project left out
+   keeps its two: its turns still begin and commit, and the status bar still
+   says whether Claude is working, waiting on you or idle there, but shows no
+   live tool status for it (no step labels such as `Edit · paths.js`); a turn
+   there that ends on an API error still holds the lock until it times out (see
+   *Fixed*); and `claude-web-chat status` and `doctor` name what it is missing.
+2. **`/exit` and reopen Claude Code, and reload open surface tabs.** A session
+   that is already running may not pick up a hook `install` has just added, and
+   a tab needs the new chrome: the status bar, and the topbar's new corner.
+3. **Expect a remote viewer to see less.** Through the tunnel, a project that has
+   not opted in to the chat mirror shows Claude's status, and the turn lock, the
+   graph and a node's preview no longer carry your prompts or Claude's replies to
+   a remote viewer; a pane's version history and the replay still do in this
+   build (see *Security*). The portal's protocol is now 9, so `tunnel
+   up` restarts a portal left running by an older build (and `update` restarts a
+   running one).
+4. **Before rolling back with `update --to`, run `claude-web-chat uninstall` in
+   each project, then `install` again once the older build is active.** An older
+   build ships no script for the three "stop after this step" handlers and does
+   not know to remove them, so Claude Code would report a hook error on every
+   tool call (the tool still runs). The other new handlers are harmless to it:
+   it exits at once for a subcommand it does not know.
+
+### Added
+
+- **The status bar: what Claude is doing, along the bottom of the page.** A strip under the page follows this project's Claude Code conversations as they run and says what is happening now: the tool running and for how long (`Edit · paths.js · 0:12`), a permission prompt (`Permission · …`, orange) or a question (yellow) waiting in the terminal, compacting, a long silence (`Quiet 2m — check the terminal`), the last turn's result once Claude is idle (`Done · "…" · 4m ago`), a turn that was stopped (`Stopped · interrupted in the terminal`), a suspended session (`Suspended · resume it in the terminal (fg)`), and `Offline · reconnecting…` while the page cannot reach its server. It follows one conversation at a time; another one waiting on you gets a chip that switches to it. The parts later builds fill in (the step's detail, the task chips) open an "Under development" note. The bar is not drawn below 760px wide, and on a phone a grip tab at the bottom says the chat on the phone is under development. Everything it shows is redacted on the server first, so a key or token in a format the redactor knows is masked before it reaches the page.
+- **The chat mirror follows Claude Code through new hook handlers.** Beside the turn hooks, `install` now registers a `mirror` hook on SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop and PreCompact (all but SessionEnd in the background, and a tool's input cut down inside the hook: a command or a path, never a file's contents), an `ask` hook on PermissionRequest that reports the prompt without answering it, a StopFailure handler (see *Fixed*), and three "stop after this step" handlers, a small shell script that prints nothing until a stop is set. The turn hooks now also send the Claude Code session they ran in. From those events and Claude Code's own sessions files the server follows each of the project's conversations, and serves what it knows at `GET /api/mirror` and `GET /api/mirror/status`; `GET /api/mirror/access` says how much of it the asker may see, and `GET /api/health` gains a `mirror` object. Hook events arrive at `POST /api/hooks/event`, which only the host's own hooks can reach: a browser (a pane's `fetch` included), a remote viewer and a network peer are refused, so a page cannot forge Claude's state.
+
 ### Changed
 
+- **The topbar's corner is the project's: its logo and its name, beside the theme's.** The connection dot and the web-chat wordmark are gone. Left of a hairline divider sits the web-chat-wide theme's company logo (Settings → Brand, or the logos its theme pack brought); right of it, the project's own logo and name, the folder's name until one is set, and the name alone when the project has no logo. In dark mode each image shows its dark variant when one is set. The browser tab's title is the project's name alone (it was `<folder> — web-chat`). A project's name, whether the topbar shows it, and its images (a logo and a favicon, each with a dark variant, each an SVG or a PNG that is validated when written and never a link) are set through the new `/api/project` routes, which a remote viewer cannot write; a name with a control, bidi or invisible character in it is refused. All of it is display-only: a repository can commit it, so nothing in it grants anything.
+- **`install`, `update` and `doctor` repair a stale hook handler, and say what it costs.** Registration now reasons per handler, matched by what it does, so an event can carry two of web-chat's. A handler that is missing, a bare `claude-web-chat-hook` command, or one whose settings differ from this build's template is repaired by `install`, by `update` in each project it syncs, and by `doctor`, without touching another tool's hooks. `doctor` and `status` word each problem by what the handler is for ("the chat mirror shows no live tool status"); `install`'s settings line and each `update --restart-all` refresh line count the handlers added and the handlers updated (a run that only repaired some used to say "already up to date"); `init` lists the hooks it will write from the template; and every line asking for a hook upgrade ends "then restart Claude Code (or open /hooks to review them)". `uninstall` removes web-chat's handlers one by one, keeping another tool's handler that shares their group.
 - **Brand images belong to the theme they were added under.** A Settings → Brand image (logotype, lockup, seal) was the project's and showed under every theme; it is now kept with the theme that was the web-chat-wide theme when you added it. Switch theme and that theme's own images show — or, in a slot it has none in, the logos its theme pack brought — and switch back to get yours back; Remove clears only the theme on screen, and an export carries the lockup and seal of the theme the project is on. Settings → Brand says whose images it is showing ("Images for the Paper theme"). A theme whose name cannot be a folder name (a saved "Ocean Dusk") still keeps its own, every theme set without a name (`set_theme`'s raw tokens) shares one set, and a saved theme that only carries a built-in's name keeps its images apart from the pack's. Every change of the web-chat-wide theme — Settings, `apply_theme`, `set_theme`, `save_theme` with `set_default`, a pack removal that resets it — now sends every open surface a `brand` frame and logs a `brand` event naming the theme, so each topbar swaps its logotype without a refresh. `GET /api/brand` and the upload and remove replies carry the `theme` too. See `docs/themes.md#brand-images`.
+
+### Fixed
+
+- **A turn that ends on an API error commits, instead of holding the lock until it times out.** Claude Code fires StopFailure in place of Stop then, and 0.8.2 registered no hook for it. This release's runs `turn-end`, which commits the turn's node and releases the lock as a Stop does.
+- **A server that stops answering no longer holds your prompt until Claude Code's hook timeout.** Every call the turn hooks make to the server now gives up after 3 seconds; before, a call had no timeout of its own.
+
+### Security
+
+- **The chat mirror shows a remote viewer only Claude's status until its project opts in, and the turn lock, the graph and node previews no longer carry your prompts or Claude's replies to one.** The chat mirror has levels: `basic` (Claude's state, timings and the kind of step, never text, paths or commands), then `read` and `full`. A viewer through the tunnel gets its project's opt-in from the user-tier `tunnel.json` (`remote.mirror`), never from the project, and `basic` without one. Below `read`, the conversation's text is now left out of what reaches a remote viewer: the typed prompt in the turn lock (lock frames, the `hello` and `reset` snapshots, `GET /api/health`), each node's trigger summary in `node-added` frames and `GET /api/graph`, and a node's prompt, summary and reply in `GET /api/graph/node/:id` and the `/preview/node/:id` document. The portal checks each chat-mirror route's level per request, and the server checks it again. Not covered yet in this build: to a viewer below `read`, a pane's version history (`GET /api/mounts/:id/history`) still shows the start of each prompt, the replay path (`GET /api/replay/path`) still carries each step's prompt and reply, and the replay player and its downloads (`GET /replay`, `/api/replay/html`, `/api/replay/file/:name`) still caption each step with Claude's reply, and with your prompt when asked to.
+- **On a `WEB_CHAT_HOST` bind, the chat mirror shows network peers only Claude's status.** A request from an address that is not this machine's loopback is held at `basic` whatever it sends, and nothing raises it: the chat mirror leaves the machine only through the authenticated tunnel. Hook events it posts are refused, a turn route it calls tells the chat mirror nothing, it is sent none of the text the bullet above lists, and the startup warning for a non-loopback bind now says that the chat mirror shows network peers only Claude's status. Everything else on such a bind is as open to your network as before, with no authentication: the page, its panes and store, and rendering into it, as well as the history and replay routes the bullet above names as not covered yet.
+- **An image under `.web-chat/` is never read or written through a link.** A repository can commit `.web-chat/`, so a brand slot or a project image that is a symbolic link is skipped rather than served, its folder must resolve inside `.web-chat/`, and an upload replaces a link at its destination instead of writing through it.
 
 ## [0.8.2] - 2026-10-04
 
