@@ -1440,9 +1440,13 @@ and both are there because they are exactly as invisible in review:
 - **A jsdom boot of `public/index.html` goes through `bootShell`.** A test file
   that builds a JSDOM and names the repo's `public/index.html` hand-rolls the
   boot, and every copy of those thirty lines had drifted from the others (which
-  globals were aliased, whether anything was put back). Shrink-only, file by
-  file: the baseline is the test files that did so when `bootShell` landed, and
-  a file converted to it leaves the list in the same change.
+  globals were aliased, whether anything was put back). The file counts as naming
+  it whether it spells the path out (`public/index.html`, `'public',
+  'index.html'`) or joins `index.html` to `lib/core/paths`' `PUBLIC_DIR`; the
+  portal picker's and the setup page's own `index.html` are other documents.
+  Shrink-only, file by file: the baseline is the test files that did so when
+  `bootShell` landed, and a file converted to it leaves the list in the same
+  change.
 
 ### `lib/server/domain/page.js` — the page sequence
 

@@ -408,11 +408,15 @@ test('harness: a shared jsdom shell boots in a `before` hook, not in a test', ()
 // public/index.html hand-rolls the boot. The baseline is the files that did so
 // when bootShell landed. A file converted to bootShell leaves the list in the
 // same change (the stale check below says so), and a new chrome test boots
-// through bootShell. The path is matched as it is spelled, `public/index.html`
-// or `'public', 'index.html'`, so the portal picker's and the tunnel setup
-// page's own index.html, which their tests read from a variable naming their
-// directory, are other documents and are not counted.
-const INDEX_HTML = /public(?:\/|['"`]\s*,\s*['"`])index\.html/;
+// through bootShell. The path is matched as it is spelled: `public/index.html`,
+// `'public', 'index.html'`, or the repo's own constant for the directory,
+// lib/core/paths PUBLIC_DIR, joined to it (`PUBLIC_DIR, 'index.html'`,
+// `${PUBLIC_DIR}/index.html`, `PUBLIC_DIR + '/index.html'`), which is how
+// test/fonts.test.js already reads the file. The portal picker's and the tunnel
+// setup page's own index.html, which their tests read from a variable naming
+// their directory (`dir`, `PUB`), are other documents and are not counted. The
+// last test in this file pins both sides of that line.
+const INDEX_HTML = /(?:public|PUBLIC_DIR\}?)(?:\/|['"`]?\s*[,+]\s*['"`]\/?)index\.html/;
 
 const JSDOM_BOOT_BASELINE = new Set([
   // The home.
@@ -473,4 +477,34 @@ test('harness: a jsdom boot of public/index.html goes through test-support/chrom
     assert.ok(actual.has(file),
       `STALE baseline: ${file} no longer boots public/index.html in jsdom by hand. Remove it from JSDOM_BOOT_BASELINE in test/harness-conventions.test.js.`);
   }
+});
+
+// What INDEX_HTML counts as naming the chrome's index.html, and what it leaves
+// to other documents. A spelling missing from the first list is a hand-rolled
+// boot the row above cannot see; one in the second would put a portal or setup
+// page test on the baseline. The negative cases are spelled as those tests
+// spell them today (test/known-projects.test.js, the portal picker;
+// test/tunnel-setup-page-chrome.test.js, the setup page).
+test('harness: the jsdom-boot fingerprint knows each spelling of the chrome\'s index.html', () => {
+  const CHROME = [
+    "fs.readFileSync(path.join(REPO, 'public/index.html'), 'utf8')",
+    "fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')",
+    'fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8")',
+    "fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8')",
+    "fs.readFileSync(path.join(paths.PUBLIC_DIR, 'index.html'), 'utf8')",
+    'fs.readFileSync(`${PUBLIC_DIR}/index.html`, \'utf8\')',
+    "fs.readFileSync(PUBLIC_DIR + '/index.html', 'utf8')",
+  ];
+  const OTHER = [
+    // the portal picker
+    "const dir = path.join(__dirname, '..', 'lib', 'portal', 'public');\n"
+      + "const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');",
+    // the tunnel setup page
+    "const PUB = path.resolve(__dirname, '..', 'lib/server/tunnel-setup/public');\n"
+      + "const html = fs.readFileSync(path.join(PUB, 'index.html'), 'utf8');",
+    // another file under public/
+    "fs.readFileSync(path.join(PUBLIC_DIR, 'mount-runtime.js'), 'utf8')",
+  ];
+  for (const src of CHROME) assert.ok(INDEX_HTML.test(src), `not counted as the chrome's index.html: ${src}`);
+  for (const src of OTHER) assert.ok(!INDEX_HTML.test(src), `counted as the chrome's index.html: ${src}`);
 });
