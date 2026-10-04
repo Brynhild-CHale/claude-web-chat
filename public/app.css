@@ -1908,20 +1908,6 @@ body.pin-mode #main { cursor: crosshair; }
      sits under the tab. */
   .phone #stage:has(> .pull-stub:not([hidden])) .rail.open .rail-expanded { bottom: 22px; }
 }
-/* §7.4's state inks, border mix and pulse, set on the stub alone: a stand-in for
-   the status bar's section, which sets the same table on anything that carries
-   data-cs-state. Once both sections are on one branch, this block goes whole,
-   through its @keyframes; the rules after it name no state's ink, only --cs-st,
-   --cs-st-bd and --cs-pulse. */
-.pull-stub[data-cs-state="working"]   { --cs-st: var(--wc-green);   --cs-pulse: 1.2s; }
-.pull-stub[data-cs-state="question"]  { --cs-st: var(--wc-gold);    --cs-pulse: 1s; }
-.pull-stub[data-cs-state="waiting"]   { --cs-st: var(--wc-comment); --cs-pulse: .8s; }
-.pull-stub[data-cs-state="idle"]      { --cs-st: var(--wc-muted);   --cs-pulse: 0s; }
-.pull-stub[data-cs-state="offline"]   { --cs-st: color-mix(in srgb, var(--wc-gold) 55%, var(--wc-muted)); --cs-pulse: 2.4s; }
-.pull-stub[data-cs-state="suspended"] { --cs-st: var(--wc-muted);   --cs-pulse: 0s; }
-.pull-stub[data-cs-pace="quiet"]      { --cs-pulse: 0s; }
-.pull-stub[data-cs-state] { --cs-st-bd: color-mix(in srgb, var(--cs-st) 55%, transparent); }
-@keyframes wc-chat-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
 .ps-tab {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   height: 23px; min-width: 56px; margin: 0; padding: 0 12px;
