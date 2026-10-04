@@ -1102,6 +1102,30 @@ test('formerNames never joins a fork and its source', async (t) => {
   assert.deepEqual(sessionIds(h.reg.get(S1)), [S1]);
 });
 
+test('a resume the sessions file shows is remembered, so a later read never takes the session for a /clear', async (t) => {
+  const P1 = process.pid;
+  const h = setup(t);
+  const { ch, reg } = h;
+  const st1 = await liveStart(P1);
+  // Both known from an earlier run: S1, which this process had first, and S2,
+  // another (since gone) process's conversation, newer than S1.
+  writeStored(h, [
+    storedConversation(S1, { last_activity_at: Date.now() - 2 * 3600 * 1000 }),
+    storedConversation(S2, { last_activity_at: Date.now() - 3600 * 1000, process: { pid: DEAD_PID, proc_start: st1, linked_by: 'hook', linked_at: Date.now() - 3600 * 1000 } }),
+  ]);
+  // The process is first seen writing S2, which it resumed; it had S1 before.
+  ch.writeSession({ pid: P1, procStart: st1, sessionId: S2, formerNames: [{ sessionId: S1 }] });
+  await reg.start();
+  assert.equal(reg.conversationOfPid(P1), S2, 'it took over the conversation it resumed');
+  // Its claim made S2's conversation this process's own; the next reads still
+  // know how it got there.
+  await reg.discover();
+  await reg.discover();
+  apart(h, [S1, S2]);
+  assert.deepEqual(sessionIds(reg.get(S1)), [S1]);
+  assert.deepEqual(sessionIds(reg.get(S2)), [S2]);
+});
+
 test('a formerNames join waits for the SessionStart while hooks flow; without one it is a /clear, and the file is read again first', async (t) => {
   const P1 = process.pid;
   const h = setup(t);
