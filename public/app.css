@@ -893,8 +893,12 @@ kbd {
    a mode flip restyles the canvas without a relayout. */
 .muted { color: var(--wc-muted); }
 .small { font-size: 11px; }
+/* Inset at the bottom by the chat status bar's height, so the bar stays visible
+   and live under the graph (design spec §7.1, deviation 12; shell.js never makes
+   it inert). Every floating control below is positioned inside this box, so it
+   lifts with it. 0px below 760px, where no bar is drawn. */
 #overlay.overlay {
-  position: absolute; inset: 0; z-index: var(--z-overlay); overflow: hidden;
+  position: absolute; inset: 0 0 var(--cs-bar-h) 0; z-index: var(--z-overlay); overflow: hidden;
   background: var(--wc-bg); background-image: var(--wc-depth-radial);
 }
 /* segmented control — reused by the drawer tabs and Settings → Mode */
@@ -1331,12 +1335,13 @@ body.pin-mode #main { cursor: crosshair; }
    Tells the user a component's service.js is waiting and which terminal command
    approves it. Grants nothing — see public/app/service-trust.js for why the
    decision cannot be made in this page. Non-blocking: it must not sit over the
-   surface, because the user has to go read their terminal. */
+   surface, because the user has to go read their terminal. Lifted clear of the
+   chat status bar (--cs-bar-h: 0px below 760px, where no bar is drawn). */
 .svc-trust-host {
-  position: fixed; right: 18px; bottom: 18px; z-index: var(--z-notice);
+  position: fixed; right: 18px; bottom: calc(18px + var(--cs-bar-h)); z-index: var(--z-notice);
   display: flex; flex-direction: column; gap: 10px;
   max-width: min(420px, calc(100vw - 36px));
-  max-height: calc(100vh - 36px); max-height: calc(100dvh - 36px); overflow-y: auto;
+  max-height: calc(100vh - 36px - var(--cs-bar-h)); max-height: calc(100dvh - 36px - var(--cs-bar-h)); overflow-y: auto;
 }
 .svc-trust-card {
   font-family: var(--wc-font);
@@ -1739,8 +1744,10 @@ body.pin-mode #main { cursor: crosshair; }
    760px and wider. Below the one narrow breakpoint the phone pull rides the
    bottom bar instead, and the display:none at the end of this section is the
    whole of that decision: chat-bar.js never asks the width. On the topbar's
-   rung, over the page, its comment pins and the front glass. A question tints
-   it gold and a wait on the user rust, as the Final does. */
+   rung, over the page, its comment pins and the front glass; the graph overlay
+   is inset by --cs-bar-h, so the bar stays visible and live beside it, and
+   shell.js's modality layer never makes it inert (LAYERS). A question tints it
+   gold and a wait on the user rust, as the Final does. */
 #chat-statusbar {
   position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
   display: flex; align-items: center; gap: 10px; min-width: 0;

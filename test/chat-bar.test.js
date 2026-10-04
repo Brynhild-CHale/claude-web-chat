@@ -1,6 +1,6 @@
 // The chat mirror's desktop status bar (public/app/chat-bar.js), through the real
-// shell (test-support/chrome-shell.js): design spec §7.5 and §7.4's inks, and the
-// maintainer's under-development stand-ins (2026-10-02).
+// shell (test-support/chrome-shell.js): design spec §7.5, §7.1's collisions and
+// §7.4's inks, and the maintainer's under-development stand-ins (2026-10-02).
 //
 //   * The bar says what chat-present's uiState says about the store, and only
 //     that: the step's text and meta, its title the whole line, data-cs-state
@@ -15,7 +15,9 @@
 //   * Each stand-in renders with nothing registered and goes by itself when its
 //     seam registers: the step's note (registerChatView), the five muted chips
 //     (claimChips) and the act area's terminal note (registerApprovals).
-//   * Below 760px the bar is hidden by app.css alone.
+//   * Collisions: the graph overlay is inset by --cs-bar-h, the service-trust
+//     cards clear it, shell.js never makes the bar inert, and below 760px the
+//     bar is hidden by app.css alone.
 //
 // main.js does not start the store or the bar yet (the tranche's integration
 // unit wires them), so the boot's init does, as main.js will.
@@ -675,6 +677,35 @@ test('another conversation waiting gets a chip before the divider, and a click f
 });
 
 /* ── collisions ────────────────────────────────────────────────────────────── */
+
+test('#chat-statusbar is in shell.js LAYERS: no modal ever makes it inert', async (t) => {
+  const layers = /const LAYERS = '([^']*)'/.exec(read('public/app/shell.js'));
+  assert.ok(layers && layers[1].split(',').map((s) => s.trim()).includes('#chat-statusbar'), 'LAYERS names the bar');
+  t.after(() => { if (gv.isOverlayOpen()) gv.closeOverlay(); });
+  await gv.openOverlay();
+  await shell.tick();
+  assert.ok(doc.querySelector('.body-wrap').hasAttribute('inert'), 'precondition: the page behind the graph is inert');
+  assert.equal($('chat-statusbar').hasAttribute('inert'), false, 'the bar beside the graph is not');
+  gv.closeOverlay();
+  await shell.tick();
+  shell.key('k', { metaKey: true });
+  await shell.tick();
+  assert.ok(!$('cmd-palette').classList.contains('hidden'), 'precondition: ⌘K opened the palette');
+  assert.equal($('chat-statusbar').hasAttribute('inert'), false, 'nor under the palette');
+  shell.key('Escape', { target: $('cmd-input') });
+  await shell.tick();
+});
+
+test('the graph overlay is inset by --cs-bar-h and the service-trust cards clear the bar', () => {
+  const overlay = rulesFor('#overlay.overlay').filter((r) => !r.media);
+  assert.equal(overlay.length, 1);
+  assert.equal(decl(overlay[0].body, 'inset'), '0 0 var(--cs-bar-h) 0', 'the bar stays visible under the graph');
+  const trust = rulesFor('.svc-trust-host').filter((r) => !r.media);
+  assert.equal(decl(trust[0].body, 'bottom'), 'calc(18px + var(--cs-bar-h))', 'the cards sit above the bar');
+  assert.match(decl(trust[0].body, 'max-height'), /var\(--cs-bar-h\)/, 'and are no taller than the room it leaves');
+  assert.equal(decl(rulesFor('#chat-statusbar').find((r) => !r.media).body, 'height'), 'var(--cs-bar-h)',
+    'the bar\'s own height is the same one property');
+});
 
 test('below 760px the bar is hidden by app.css alone', () => {
   const rules = rulesFor('#chat-statusbar');
