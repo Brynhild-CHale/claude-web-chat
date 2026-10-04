@@ -1500,6 +1500,35 @@ test('headless (sdk-cli) conversations are flagged', async (t) => {
   assert.equal(h.reg.get(S1).headless, true);
 });
 
+test('an envelope with no pid still flags a headless conversation, and the flag outlives a restart', async (t) => {
+  const h = setup(t);
+  const { reg, clock } = h;
+  await reg.start();
+  h.start(S1, null, 'startup', { entrypoint: 'sdk-cli' }); // CLAUDE_PID is best effort (V14)
+  assert.equal(reg.get(S1).headless, true);
+  assert.equal(reg.get(S1).process, null, 'no process known');
+  assert.equal(h.seen.events.find((e) => e.change === 'added' && e.conversation.id === S1).conversation.headless, true,
+    'from its first event');
+
+  // A conversation first met with no entrypoint is flagged by the first envelope that has one.
+  reg.ingest(h.env('UserPromptSubmit', S2, { claude_pid: null, entrypoint: null }));
+  assert.equal(reg.get(S2).headless, false);
+  h.seen.events.length = 0;
+  reg.ingest(h.env('PreToolUse', S2, { claude_pid: null, entrypoint: 'sdk-cli' }));
+  assert.equal(reg.get(S2).headless, true);
+  assert.deepEqual(h.seen.events.map((e) => [e.change, e.conversation.id, e.conversation.headless]), [['updated', S2, true]]);
+  reg.ingest(h.env('PostToolUse', S2, { claude_pid: null, entrypoint: 'sdk-cli' }));
+  assert.equal(h.seen.events.length, 1, 'said once');
+
+  await reg.stop();
+  assert.equal(h.saved().conversations.find((c) => c.id === S2).entrypoint, 'sdk-cli');
+  const reg2 = createConversations({ root: h.root, now: clock.now, timers: clock.timers, redact, sampleProcs: knownSampler(), watchFile: fakeWatches().watchFile });
+  t.after(() => reg2.stop());
+  await reg2.start();
+  assert.equal(reg2.get(S1).headless, true);
+  assert.equal(reg2.get(S2).headless, true);
+});
+
 // ── the sessions-file watch ──────────────────────────────────────────────────
 
 test('claude-state watches each linked process\'s file, every 1 s while not idle and 5 s while idle', async (t) => {
