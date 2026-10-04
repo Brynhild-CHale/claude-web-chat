@@ -26,8 +26,12 @@
 //     GET /api/mirror answers the basic body;
 //   * a local socket gets mirror:update frames with the step's label; a socket
 //     with X-WC-Remote gets only mirror:status, with no label, path or prompt
-//     text, and lock and node-added frames with no prompt text; a remote
-//     GET /api/graph and GET /api/graph/node/:id carry none either;
+//     text, and lock and node-added frames with no prompt text; and every route
+//     TEXT_RULES names (lib/core/remote-policy: GET /api/graph and
+//     /api/graph/node/:id among them), read by a remote viewer and by a network
+//     peer, carries none either — but for the two whose route files the ledger
+//     has left unowned, named in TEXT_NOT_YET_STRIPPED, a list that can only
+//     shrink;
 //   * and a project that opted in shows a remote viewer the conversation at
 //     `read`: the audience its sockets and routes judge by is the server's own;
 //   * the redactor knows web-chat's capture token (spec §5.5, "Known values"):
@@ -69,6 +73,7 @@ const { sessionFields } = require('../lib/hooks/turn-begin');
 const { postEnvelope } = require('../lib/hooks/mirror');
 const { stepLabel } = require('../lib/core/tool-input');
 const { MASK } = require('../lib/core/redact');
+const { TEXT_RULES } = require('../lib/core/remote-policy');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { sampleProcs, formatProcStart } = require('../lib/core/portfiles');
@@ -164,6 +169,10 @@ function driver(ctx, ch) {
   return d;
 }
 
+// The pane the turn renders (its version history is one more carrier of the
+// prompt, below).
+const PANE = 't1e2e-pane';
+
 // One turn as Claude Code runs it: the session starts, the prompt opens the turn,
 // an Edit runs — the pane rendered during it changes the surface, so the turn
 // commits a node — and the Stop closes it. `onStep` runs while the Edit runs.
@@ -172,7 +181,7 @@ async function runTurn(d, { onStep } = {}) {
   await d.turnBegin('p1', PROMPT);
   await d.fire('PreToolUse', d.edit('toolu_1'));
   if (onStep) await onStep();
-  await client.post('/api/render', { id: 't1e2e-pane', html: '<p>a pane</p>' }, d.call);
+  await client.post('/api/render', { id: PANE, html: '<p>a pane</p>' }, d.call);
   await d.fire('PostToolUse', d.edited('toolu_1'));
   return d.turnEnd(REPLY);
 }
@@ -205,6 +214,85 @@ function stubPeers(server) {
   };
   server.prependListener('request', onRequest);
   return () => server.off('request', onRequest);
+}
+
+// ── the conversation's text, below `read` ────────────────────────────────────
+
+// The viewers below `read` (rulings Q2 and Q9): a remote viewer of a project that
+// has not opted in, and a peer on a network bind. Neither is sent the turn's text.
+const BELOW_READ = Object.freeze([
+  ['a remote viewer', Object.freeze({ 'X-WC-Remote': '1' })],
+  ['a network peer', Object.freeze({ 'x-test-peer': PEER })],
+]);
+
+// How this test reaches each route lib/core/remote-policy's TEXT_RULES names:
+// null while what it needs (the turn's committed node) does not exist yet. A key
+// the table gains and this map lacks fails the test, so a carrier the table
+// learns of is checked here too, on the daemon as wired.
+const TEXT_ROUTE_URLS = Object.freeze({
+  'GET /api/graph': () => '/api/graph',
+  'GET /api/graph/node/:id': ({ node }) => node && `/api/graph/node/${encodeURIComponent(node)}`,
+  'GET /preview/node/:id': ({ node }) => node && `/preview/node/${encodeURIComponent(node)}`,
+  'GET /api/mounts/:id/history': ({ node }) => node && `/api/mounts/${PANE}/history`,
+  'GET /api/replay/path': ({ node }) => node && '/api/replay/path',
+  'GET /api/health': () => '/api/health',
+});
+
+// The TEXT_RULES routes that do not strip their entry yet. Each route strips its
+// own (remote-policy's header names who: history.js the versions, replay.js the
+// path), and these two route files have no 0.8.5 owner in the shared-file
+// ledger (spec §11.2), so tranche 1's integration left the edit to whoever the
+// orchestrator gives them. Shrink-only: once a route strips, this test fails
+// until its entry goes.
+const TEXT_NOT_YET_STRIPPED = new Map([
+  ['GET /api/mounts/:id/history', 'routes/history.js serves each version\'s trigger_summary to every viewer'],
+  ['GET /api/replay/path', 'routes/replay.js serves each step\'s caption (prompt, reply, summary) to every viewer'],
+]);
+
+const carriesText = (s) => s.includes(PROMPT_MARK) || s.includes(REPLY_MARK);
+const bodyText = (r) => (typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
+
+// Every TEXT_RULES route, read by the host and by each viewer below `read` at
+// the points a test calls read(). A route counts as checked only where the
+// host's own copy carries the turn's text: anywhere else a clean answer below
+// `read` would prove nothing. check() then holds each route to its rule.
+function textRoutes(d) {
+  const carried = new Set();
+  const leaked = new Map(); // route → the viewers below read it served text to
+  return {
+    async read(ids) {
+      for (const [key, urlOf] of Object.entries(TEXT_ROUTE_URLS)) {
+        const url = urlOf(ids);
+        if (!url) continue;
+        const near = await d.request('GET', url);
+        if (near.status !== 200 || !carriesText(bodyText(near))) continue;
+        carried.add(key);
+        for (const [who, headers] of BELOW_READ) {
+          const far = await d.request('GET', url, null, headers);
+          assert.equal(far.status, 200, `${who}'s GET ${url}`);
+          if (!carriesText(bodyText(far))) continue;
+          const seen = leaked.get(key) || new Set();
+          leaked.set(key, seen.add(who));
+        }
+      }
+    },
+    check() {
+      const keys = Object.keys(TEXT_RULES.routes).sort();
+      assert.deepEqual(Object.keys(TEXT_ROUTE_URLS).sort(), keys, 'this test reaches every route TEXT_RULES names');
+      assert.deepEqual([...carried].sort(), keys, 'and read each one while the host\'s copy carried the turn\'s text');
+      for (const key of [...TEXT_NOT_YET_STRIPPED.keys()]) assert.ok(keys.includes(key), `${key} is a TEXT_RULES route`);
+      for (const key of keys) {
+        const who = [...(leaked.get(key) || [])];
+        if (TEXT_NOT_YET_STRIPPED.has(key)) {
+          assert.deepEqual(who, BELOW_READ.map(([w]) => w),
+            `${key} stopped serving the turn's text to ${BELOW_READ.map(([w]) => w).filter((w) => !who.includes(w)).join(' and ')}: `
+            + `take it off TEXT_NOT_YET_STRIPPED (${TEXT_NOT_YET_STRIPPED.get(key)})`);
+        } else {
+          assert.deepEqual(who, [], `${key} served the turn's prompt or reply to ${who.join(' and ')}`);
+        }
+      }
+    },
+  };
 }
 
 // ── open handles ─────────────────────────────────────────────────────────────
@@ -439,12 +527,18 @@ test('a network peer is held to the heartbeat: its hook envelope is refused (Q9)
   assert.equal(local.body.conversations[0].live.step.label, d.label);
 });
 
-test('a local socket gets the step\'s label; a remote one only mirror:status, and no prompt text in lock, node-added or the graph', async (t) => {
+test('a local socket gets the step\'s label; a remote one only mirror:status, and no prompt text in lock, node-added or any route TEXT_RULES names', async (t) => {
   const d = await daemon(t);
+  t.after(stubPeers(d.server));
   const local = await socket(t, d.port);
   const remote = await socket(t, d.port, { 'X-WC-Remote': '1' });
+  const routes = textRoutes(d);
   const end = await runTurn(d, {
-    onStep: () => waitUntil(() => local.frames.some(stepFrame(d.label)), { ...WAIT, what: 'the step\'s mirror:update' }),
+    onStep: async () => {
+      await waitUntil(() => local.frames.some(stepFrame(d.label)), { ...WAIT, what: 'the step\'s mirror:update' });
+      // The turn is open: its prompt rides the lock, in the graph and in /api/health.
+      await routes.read({});
+    },
   });
   assert.ok(end.node_id, 'the turn committed a node');
   await waitUntil(() => local.frames.some(doneFrame) && remote.of('node-added').length > 0
@@ -474,16 +568,13 @@ test('a local socket gets the step\'s label; a remote one only mirror:status, an
     assert.ok(!wire.includes(needle), `no frame the remote socket got carries ${JSON.stringify(needle)}`);
   }
 
-  // The graph, read remotely, carries no prompt or reply either; locally it does.
-  const REMOTE = { 'X-WC-Remote': '1' };
-  for (const p of ['/api/graph', `/api/graph/node/${encodeURIComponent(end.node_id)}`]) {
-    const far = await d.request('GET', p, null, REMOTE);
-    assert.equal(far.status, 200, p);
-    const farText = JSON.stringify(far.body);
-    assert.ok(!farText.includes(PROMPT_MARK) && !farText.includes(REPLY_MARK), `a remote ${p} carries no prompt or reply`);
-    const near = JSON.stringify((await d.request('GET', p)).body);
-    assert.ok(near.includes(PROMPT_MARK), `a local ${p} carries the prompt (so the probe can see it)`);
-  }
+  // Every route TEXT_RULES names — the graph, a node, its preview document, the
+  // pane's history, the replay path, /api/health — read remotely and by a
+  // network peer, carries no prompt or reply (but the two the ledger has left
+  // unowned, TEXT_NOT_YET_STRIPPED); read locally, each carries them, so the
+  // probe can see them.
+  await routes.read({ node: end.node_id });
+  routes.check();
 });
 
 test('a project that opted in shows a remote viewer the conversation at read: the server\'s audience reaches its sockets and routes', async (t) => {
