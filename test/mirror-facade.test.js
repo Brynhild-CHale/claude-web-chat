@@ -19,6 +19,12 @@
 //   * a main-bus control interrupt via tty gives the next interrupted close of
 //     its session ended_by 'web'; via hook it outlasts the Esc window and gives
 //     'hook'; with none, the transcript's marker gives 'terminal';
+//   * live.js's two decisions run on the facade's wiring: the sessions file the
+//     registry follows reaches live.js, a busy → idle flip with no Stop closes
+//     the turn in the turn machine with exactly one turn-closed {by: 'status'}
+//     carrying ended_by (none → terminal, tty and mod → web, hook → hook), and a
+//     process gone on two consecutive samples abandons the open turn and ends
+//     the conversation;
 //   * capabilities list every key, the control layer's false;
 //   * switched off, sources stop, content is dropped and ingests are ignored;
 //     switched on, the sources start again;
@@ -27,8 +33,10 @@
 //     own.
 //
 // The Claude tier is a private fake (test-support/claude-home, isolate: true),
-// HOME a throwaway (withTempHome), the facade's clock injected (its timers are
-// real), and no envelope names a Claude Code pid, so nothing is sampled.
+// HOME a throwaway (withTempHome) and the facade's clock injected. Its timers are
+// real, except in the tests that put them on the test's clock (`fakeTimers`);
+// those are the only ones whose envelopes name a Claude Code pid, and they
+// inject the process sampler and kill 0, so no process is sampled or signalled.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -46,6 +54,7 @@ const { createHookTap } = require('../lib/server/hook-tap');
 const {
   createMirror, SOURCES, DISPATCH, CAPABILITIES, INTERRUPT_HOLD_MS, HALT_HOLD_MAX_MS,
 } = require('../lib/server/mirror');
+const { STOP_GRACE_MS, PROC_SAMPLE_ACTIVE_MS } = require('../lib/server/mirror/live');
 
 const REPO = path.resolve(__dirname, '..');
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -64,16 +73,49 @@ function project(t) {
 }
 
 // A clock the test moves; it starts at the wall clock so file and record times
-// stay comparable.
+// stay comparable. A test that asks setup for `fakeTimers` also hands the engine
+// this clock's timers: nothing the engine arms fires until advance() reaches
+// it, in time order, each call followed by a turn of the event loop so the
+// promise chains it starts (a process sample, a flush) settle.
 function fakeClock() {
   let t = Date.now();
-  return { now: () => t, tick(ms = 1) { t += ms; return t; } };
+  let seq = 0;
+  const pending = new Map(); // handle → {at, fn}
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  return {
+    now: () => t,
+    tick(ms = 1) { t += ms; return t; },
+    timers: Object.freeze({
+      setTimeout(fn, ms) {
+        seq += 1;
+        pending.set(seq, { at: t + Math.max(0, Number(ms) || 0), fn });
+        return seq;
+      },
+      clearTimeout(h) { pending.delete(h); },
+    }),
+    async advance(ms = 0) {
+      const end = t + ms;
+      for (let fired = 0; ; fired++) {
+        if (fired > 10000) throw new Error('fakeClock: a timer re-arms itself without moving on');
+        let next = null;
+        for (const [h, p] of pending) if (p.at <= end && (!next || p.at < next[1].at)) next = [h, p];
+        if (!next) break;
+        pending.delete(next[0]);
+        t = Math.max(t, next[1].at);
+        next[1].fn();
+        await settle();
+      }
+      t = Math.max(t, end);
+      await settle();
+    },
+  };
 }
 
 // The facade over a fresh project and a private Claude tier, wired the way
 // createServer wires it: the hook tap, the surface's bus, the mirror bus with a
-// broadcaster of its own.
-function setup(t, options = {}) {
+// broadcaster of its own. `fakeTimers: true` puts the engine's timers on the
+// test's clock (see fakeClock); every other option goes to createMirror.
+function setup(t, { fakeTimers = false, ...options } = {}) {
   let mirror = null;
   t.after(async () => { if (mirror) await mirror.stop(); }); // first registered, first run
   withTempHome(t);
@@ -90,6 +132,7 @@ function setup(t, options = {}) {
   mirror = createMirror({
     root, hooks, mainBus, mirrorBus, redactor, now: clock.now, log: (...a) => logs.push(a.join(' ')),
     sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
+    ...(fakeTimers ? { timers: clock.timers } : {}),
     ...options,
   });
   const transitions = [];
@@ -132,6 +175,34 @@ function recorder(name, { log = [], api = {} } = {}) {
 
 // A source with an api and nothing else.
 const apiSource = (api) => () => ({ start: async () => {}, stop: async () => {}, api });
+
+// The sessions-file watches, fired by hand: claude-state's watchFile seam,
+// handed in through the registry's options. A watched file is read when the
+// test says so, on the next turn of the event loop as lib/core/watch reads it,
+// and never on a poll.
+function handWatches() {
+  const list = [];
+  function watchFile(file, onTrigger) {
+    let stopped = false;
+    const w = Object.freeze({
+      trigger: (src = 'trigger') => new Promise((resolve) => {
+        setImmediate(() => {
+          if (!stopped) { try { onTrigger(src); } catch { /* claude-state logs its own */ } }
+          resolve();
+        });
+      }),
+      retarget: () => Promise.resolve(),
+      stop: () => { stopped = true; return Promise.resolve(); },
+      stats: Object.freeze({}),
+    });
+    list.push(w);
+    return w;
+  }
+  return { watchFile, read: () => Promise.all(list.map((w) => w.trigger('poll'))) };
+}
+
+// The fields of a transition a test compares.
+const pick = (o, keys) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]]));
 
 // Transcript changes, in the change contract turn-machine.js's header writes down.
 const opener = (pid, uuid, parent, text, ts) => ({ type: 'opener', prompt_id: pid, uuid, parent_uuid: parent, kind: 'prompt', text, ts });
@@ -615,6 +686,98 @@ test('a StopFailure\'s message rides into the live state\'s last_turn', async (t
   h.publish('PreToolUse', { tool: { name: 'Read', use_id: 'tu9', kind: 'Read', label: 'Read · b.js', input: {}, input_hash: 'h9' } });
   h.publish('PostToolUse', { tool: { name: 'Read', use_id: 'tu9', kind: 'Read', label: 'Read · b.js', input: {}, input_hash: 'h9' }, result: { ok: true } });
   assert.equal(h.mirror.liveOf(S1).last_turn.error, live.last_turn.error);
+});
+
+// ── live.js's two decisions, through the facade (§2.6, §3.3) ──────────────────
+//
+// Tranche 1's only close for an Esc that fires no Stop, and the only way a
+// conversation ends. Both run on the engine's own wiring: the sessions file the
+// registry follows reaches live.js through the facade, live.js decides, and the
+// facade hands the decision to the turn machine (and, for a gone process, to the
+// registry), which close the turn and say so once.
+
+const PID = 4242;
+
+test('a busy → idle flip with no Stop closes the open turn in the turn machine: one turn-closed {by: status} saying who interrupted', async (t) => {
+  // The control event's via (none: no event) → the ended_by the close carries.
+  const cases = [[null, 'terminal'], ['tty', 'web'], ['mod', 'web'], ['hook', 'hook']];
+  for (const [via, endedBy] of cases) {
+    await t.test(`via ${via || 'none'} → ended_by ${endedBy}`, async (st) => {
+      const watches = handWatches();
+      const h = setup(st, { fakeTimers: true, conversationsOptions: { watchFile: watches.watchFile } });
+      await h.mirror.start();
+      // The sessions file Claude Code keeps for its process, as it says it.
+      const say = async (status) => {
+        const at = h.clock.now();
+        h.ch.writeSession({ pid: PID, procStart: null, sessionId: S1, status, updatedAt: at, statusUpdatedAt: at });
+        await watches.read();
+        await waitUntil(() => (h.mirror.liveOf(S1) || { evidence: {} }).evidence.sessions_file_at === at,
+          { timeout: 5000, what: `live.js to read the sessions file's ${status}` });
+      };
+      h.publish('SessionStart', { session: { source: 'startup' }, claude_pid: PID });
+      h.prompt('pA', 'run the tests');
+      h.clock.tick(100);
+      await say('busy');
+      assert.equal(h.mirror.liveOf(S1).state, 'working');
+      if (via === 'hook') {
+        // The halt flag's expiry is epoch seconds, ten minutes ahead.
+        h.interrupt({ conversation_id: S1, session_id: S1, via, expires_at: Math.floor(h.clock.now() / 1000) + 600 });
+      } else if (via) {
+        h.interrupt({ conversation_id: S1, session_id: S1, via, expires_at: h.clock.now() + 2000 });
+      }
+      h.clock.tick(800); // Claude Code goes idle about 120 ms after the Esc (V10)
+      await say('idle');
+      assert.deepEqual(h.closes(), [], 'no close inside the grace');
+      await h.clock.advance(STOP_GRACE_MS);
+
+      const closes = h.closes();
+      assert.equal(closes.length, 1, 'exactly one turn-closed: the turn machine\'s, and none from live.js beside it');
+      assert.deepEqual(pick(closes[0], ['conversation_id', 'session_id', 'turn_id', 'outcome', 'by', 'ended_by']),
+        { conversation_id: S1, session_id: S1, turn_id: 'pA', outcome: 'interrupted', by: 'status', ended_by: endedBy });
+      const conv = h.mirror.snapshot({ level: 'local' }).conversations.find((c) => c.id === S1);
+      assert.equal(conv.open_turn_id, null, 'the model\'s turn is closed, not only announced');
+      const live = h.mirror.liveOf(S1);
+      assert.deepEqual(pick(live.last_turn, ['id', 'outcome', 'ended_by']), { id: 'pA', outcome: 'interrupted', ended_by: endedBy });
+      assert.equal(live.state, 'idle');
+      assert.equal(h.mirror.stats().interrupts, 0, 'a request is spent with its turn');
+    });
+  }
+});
+
+test('the live machine\'s process-gone verdict reaches the turn machine and the registry: the open turn is abandoned and the conversation ends', async (t) => {
+  const samples = [];
+  const h = setup(t, {
+    fakeTimers: true,
+    // The process is gone, and kill 0 agrees, on every sample.
+    sampleProcs: async (pids) => {
+      samples.push([...pids]);
+      return new Map(pids.map((p) => [p, { alive: false, startedAt: null, cpuMs: null, state: null }]));
+    },
+    isPidAlive: () => false,
+  });
+  await h.mirror.start();
+  h.publish('SessionStart', { session: { source: 'startup' }, claude_pid: PID });
+  h.prompt('pA', 'build it');
+  assert.equal(h.mirror.conversationOfPid(PID), S1);
+  await h.clock.advance(0); // the first sample of a newly linked pid
+  assert.deepEqual(samples, [[PID]]);
+  assert.deepEqual(h.closes(), [], 'one missing sample is no verdict');
+  assert.equal(h.mirror.snapshot({ level: 'local' }).conversations[0].open_turn_id, 'pA');
+
+  await h.clock.advance(PROC_SAMPLE_ACTIVE_MS); // the second, consecutive: gone
+  assert.deepEqual(samples, [[PID], [PID]]);
+  const closes = h.closes();
+  assert.equal(closes.length, 1);
+  assert.deepEqual(pick(closes[0], ['conversation_id', 'turn_id', 'outcome', 'by', 'ended_by']),
+    { conversation_id: S1, turn_id: 'pA', outcome: 'abandoned', by: 'process-gone' }, 'an abandoned turn names nobody');
+  const ended = h.transitions.filter((e) => e.op === 'process-gone' || (e.op === 'conversation' && e.change === 'ended'));
+  assert.deepEqual(ended.map((e) => [e.op, e.conversation_id, e.change || e.pid]),
+    [['process-gone', S1, PID], ['conversation', S1, 'ended']], 'live.js says the process is gone, and the registry ends the conversation');
+  const conv = h.mirror.snapshot({ level: 'local' }).conversations.find((c) => c.id === S1);
+  assert.equal(conv.open_turn_id, null);
+  assert.ok(Number.isFinite(conv.ended_at), 'the conversation carries its end');
+  const live = h.mirror.liveOf(S1);
+  assert.deepEqual([live.state, live.ended_reason, live.last_turn.outcome], ['ended', 'process-gone', 'abandoned']);
 });
 
 // ── capabilities (§15.1) ─────────────────────────────────────────────────────
