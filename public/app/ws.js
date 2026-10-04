@@ -10,7 +10,7 @@
 // through three seams instead of editing this file — see "the registration
 // seams" below: onFrame, onHello and setClientField. The connection's state
 // goes out on the chrome bus as `conn` {state} whenever it changes.
-import { view, $ } from './state.js';
+import { view } from './state.js';
 import { store } from './store.js';
 import {
   applyGlobalTheme, applyNodeTheme, applyPaneTheme, setActiveNodeTheme, getActiveNodeTheme,
@@ -138,20 +138,14 @@ function flushOutbox() {
 
 // The socket's state is one input to the topbar's ONE status pill (it used to
 // own a second pill of its own, beside the node pill). While it is not live the
-// pill says so, and the brand dot goes grey; live, the green dot is the signal
-// and the pill goes back to naming the node. Every change also goes out on the
-// chrome bus as `conn` {state} — connecting, live, reconnecting — for the chat
-// chrome, which shows a dropped connection where the dot used to.
+// pill says so; live, the pill goes back to naming the node. Every change also
+// goes out on the chrome bus as `conn` {state} — connecting, live, reconnecting
+// — for the chat chrome, which shows a dropped connection (the bar's and the
+// phone tab's offline states). The brand dot that used to say it is retired:
+// the co-brand lockup took the topbar's corner (spec §9.4).
 function setConnStatus(state) {
   const changed = state !== view.conn;
   view.conn = state;
-  const dot = $('status-dot');
-  if (dot) {
-    dot.classList.toggle('off', state !== 'live');
-    const label = state === 'live' ? 'live' : state === 'reconnecting' ? 'reconnecting…' : 'connecting…';
-    dot.title = label;
-    dot.setAttribute('aria-label', label);
-  }
   updateChip();
   if (changed) bus.emit('conn', { state });
 }
@@ -227,7 +221,9 @@ const HANDLERS = {
     if (!view.previewing) applyNodeTheme(getActiveNodeTheme(), false);
     applyActive(msg.active);
     applyLock(msg.lock);
-    if (msg.project) document.title = `${msg.project} — web-chat`;
+    // The title is not this handler's: project.js, a hello hook (onHello), is
+    // the tab title's one writer — the project's name, the folder's until an
+    // identity lands (spec §9.4, ruling N1).
     ensureGraph(true).then(updateChip);
     // Re-hydrate the queue on every (re)connect — the queue isn't carried on
     // hello/reset, so a reconnect after a drop would otherwise leave the rail
