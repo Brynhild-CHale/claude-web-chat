@@ -1055,8 +1055,9 @@ where the primitives live, and `lib/packs` imports two of them — a pack instal
 must not become a dependent of a CLI-registration module. And it imports no entry
 point, which is why the `claude` shell-out is an injectable `runClaude` rather
 than something reached for from `lib/cli`. The hook template has one reader,
-`managed-files.hookTemplate()` — `ensureHooks` merges its handlers, `hookEvents()`
-takes `Object.keys` off it — and the wording for a managed-file **conflict** has
+`managed-files.hookTemplate()` — `mergeHooks` merges its handlers (`ensureHooks`
+and `applyHooks` call it), `hookEvents()` takes `Object.keys` off it and
+`hookHandlers()` walks it — and the wording for a managed-file **conflict** has
 one home too, `managed-files.conflictAdvice()` / `conflictSummary()`, which
 `install`, `update`, `init` and `status` all print.
 
