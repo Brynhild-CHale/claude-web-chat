@@ -684,10 +684,10 @@ function trickle(req, res, timers) {
 // Run the real bin as Claude Code does: the payload on stdin, the environment
 // given. Resolves when it exits; SIGKILLed (and reported so) if it outlives
 // killAfterMs.
-function runHook(args, { cwd, env = {}, input, killAfterMs = 20000 }) {
+function runHook(args, { cwd, env = {}, input, killAfterMs = 20000, nodeArgs = [] }) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [HOOK_BIN, ...args], { cwd, env: { ...process.env, ...env } });
+    const child = spawn(process.execPath, [...nodeArgs, HOOK_BIN, ...args], { cwd, env: { ...process.env, ...env } });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
@@ -789,6 +789,35 @@ test('dispatcher: SessionEnd ends itself inside the 1.5 s budget Claude Code giv
   const held = stub.requests[0].closedAt - stub.requests[0].arrivedAt;
   t.diagnostic(`process ${r.ms} ms; request held ${held} ms (SessionEnd deadline 900 ms)`);
   if (PERF) assert.ok(held < 900 + 500, `held ${held} ms`);
+});
+
+test('dispatcher: a handler that names its own hard exit replaces the table\'s (the ask bridge: none)', async (t) => {
+  // Tranche 4's ask bridge waits for an answer on its own 590 s deadline and
+  // sets deadlineMs = null in ask.js, a file it owns, never this dispatcher's
+  // table. A preload stands in for that edit here.
+  const stub = await stubDaemon(t, trickle);
+  const home = mkHome(t);
+  const root = hookProject(t, stub.port);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-hookrt-preload-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const preload = (name, value) => {
+    const file = path.join(dir, `${name}.js`);
+    fs.writeFileSync(file, `require(${JSON.stringify(require.resolve('../lib/hooks/ask'))}).deadlineMs = ${value};\n`);
+    return ['--require', file];
+  };
+  const input = { ...FIXTURES.PermissionRequest, cwd: root };
+
+  const none = await runHook(['ask'], { cwd: root, env: CHILD_ENV(home), input, nodeArgs: preload('none', 'null'), killAfterMs: 4500 });
+  assert.equal(none.signal, 'SIGKILL', 'no hard exit: it waited on the answer until it was stopped, past the table\'s 2.5 s');
+  assert.equal(stub.requests.length, 1);
+
+  const own = await runHook(['ask'], { cwd: root, env: CHILD_ENV(home), input, nodeArgs: preload('own', '300') });
+  assert.equal(own.signal, null, 'its own hard exit ended it');
+  assert.equal(own.status, 0);
+  await waitUntil(() => stub.requests[1] && stub.requests[1].closedAt !== null, { what: 'the second hook\'s socket to close', timeout: 5000 });
+  const held = stub.requests[1].closedAt - stub.requests[1].arrivedAt;
+  t.diagnostic(`request held ${held} ms (the handler's own hard exit, 300 ms)`);
+  if (PERF) assert.ok(held < 300 + 700, `held ${held} ms`);
 });
 
 test('dispatcher: with no daemon the mirror hook exits 0 and starts none', async (t) => {
