@@ -613,7 +613,17 @@ test('a project that opted in shows a remote viewer the conversation at read: th
   assert.equal(health.body.mirror.level, 'read');
 });
 
+// The capture token is the env var's when one is set (routes/capture
+// configuredToken), which would shadow the file these tests write: each runs
+// without it, and puts back whatever the environment had.
+function withoutEnvToken(t) {
+  const had = Object.hasOwn(process.env, 'WEB_CHAT_CAPTURE_TOKEN') ? process.env.WEB_CHAT_CAPTURE_TOKEN : undefined;
+  delete process.env.WEB_CHAT_CAPTURE_TOKEN;
+  t.after(() => { if (had !== undefined) process.env.WEB_CHAT_CAPTURE_TOKEN = had; });
+}
+
 test('the redactor knows web-chat\'s capture token: a reply that quotes it reaches the mirror masked', async (t) => {
+  withoutEnvToken(t);
   const token = `wct-${crypto.randomBytes(12).toString('hex')}`;
   const d = await daemon(t, { seed: ({ root }) => fs.writeFileSync(projectPaths(root).captureToken, `${token}\n`) });
   await d.fire('SessionStart', { source: 'startup', model: 'claude-test' });
@@ -627,6 +637,7 @@ test('the redactor knows web-chat\'s capture token: a reply that quotes it reach
 });
 
 test('a capture token made while the daemon runs is learned when a capture route first holds a request to it', async (t) => {
+  withoutEnvToken(t);
   const token = () => `wct-${crypto.randomBytes(12).toString('hex')}`;
   const [boot, second, third] = [token(), token(), token()];
   const d = await daemon(t, { seed: ({ root }) => fs.writeFileSync(projectPaths(root).captureToken, `${boot}\n`) });
@@ -671,9 +682,13 @@ test('gracefulShutdown() does not wait for ever on a chat mirror whose stop neve
   // A source whose stop() hangs (a later tranche's tailer mid-read, say),
   // registered on the running engine, which starts it at once.
   let asked = 0;
+  let settled = false;
   d.srv.mirror.register('stuck', () => ({
     start: async () => {},
-    stop: () => { asked += 1; return new Promise((resolve) => { letGo = resolve; }); },
+    stop: () => {
+      asked += 1;
+      return new Promise((resolve) => { letGo = resolve; }).then(() => { settled = true; });
+    },
   }));
   await waitUntil(() => d.srv.mirror.stats().sources.some((s) => s.name === 'stuck' && s.started),
     { ...WAIT, what: 'the stuck source to start' });
@@ -690,7 +705,7 @@ test('gracefulShutdown() does not wait for ever on a chat mirror whose stop neve
     console.error = realError;
   }
   assert.equal(asked, 1, 'the shutdown asked the mirror to stop, and the mirror its source');
-  assert.equal(typeof letGo, 'function', 'and settled while that stop was still pending');
+  assert.equal(settled, false, 'and settled while that stop was still pending');
   assert.equal(d.server.listening, false, 'then went on to close the server');
   assert.ok(logged.some((l) => l.includes(`mirror: stop timed out after ${MIRROR_STOP_TIMEOUT_MS} ms`)),
     `the daemon's log says why it went on: ${JSON.stringify(logged)}`);
@@ -703,6 +718,7 @@ test('gracefulShutdown() does not wait for ever on a chat mirror whose stop neve
   // Let the stop finish, so the engine ends its own timers and this file exits.
   letGo();
   await d.srv.mirror.stop();
+  assert.equal(settled, true);
   assert.equal(d.srv.mirror.stats().timers, 0, 'the engine, let go, cleared every timer it held');
 });
 
