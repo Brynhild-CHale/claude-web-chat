@@ -77,8 +77,11 @@ function labelOf(s, elsewhere) {
     case 'question':
       return `Claude has a question${where} — answer it in the terminal`;
     case 'waiting': {
+      // Where to answer, unless the line already says so in chat-present's own
+      // words (a wait it can say nothing more about reads "answer in the
+      // terminal"). A command that merely mentions a terminal still gets it.
       const what = clip(s.detail);
-      return `Claude needs you${where}: ${what}${/terminal/.test(what) ? '' : ' — answer in the terminal'}`;
+      return `Claude needs you${where}: ${what}${/answer in the terminal/.test(what) ? '' : ' — answer in the terminal'}`;
     }
     case 'offline':
       return `Chat with Claude — ${s.conn === 'connecting' ? 'connecting' : 'reconnecting'}`;

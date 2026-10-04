@@ -471,6 +471,18 @@ test('below `read` the label names the kind of step or wait, and a long command 
   assert.match(label(), /…/);
 });
 
+test('a wait\'s label says where to answer, once, even when its command mentions a terminal', async () => {
+  // The command only mentions a terminal: the label still says where to answer.
+  await show(snapshot([conversation('c1', { state: 'waiting',
+    waiting: { kind: 'permission', tool: 'Bash', summary: 'Bash(tail -f terminal.log)' } })]));
+  assert.equal(label(), 'Claude needs you: Permission · Bash(tail -f terminal.log) — answer in the terminal');
+  // A wait chat-present can say nothing more about already reads "answer in the
+  // terminal", in its own words, and the label says it once.
+  await show(snapshot([conversation('c1', { state: 'waiting', waiting: { kind: 'other' } })]));
+  assert.equal(pull().dataset.csState, 'waiting');
+  assert.equal(label(), 'Claude needs you: answer in the terminal');
+});
+
 test('another session waiting on the user outranks the one followed (§8.3)', async () => {
   await show(snapshot([
     conversation('c1', WORKING),
