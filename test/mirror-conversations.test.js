@@ -409,6 +409,31 @@ test('nested-project sessions are left to the nested daemon', async (t) => {
   assert.equal(inner.ingest(h.env('PreToolUse', S1, { cwd: nested, claude_pid: P1 })).ok, true);
 });
 
+test('a sessions file a verdict ruled out is not sampled again, until another process writes it', async (t) => {
+  const P2 = bystander(t);
+  const h = setup(t);
+  const { ch, reg } = h;
+  const st1 = await liveStart(process.pid);
+  const st2 = await liveStart(P2);
+  ch.writeSession({ pid: DEAD_PID, procStart: st1, sessionId: S3 }); // a crashed session's file, left for good
+  ch.writeSession({ pid: P2, procStart: shifted(st2), sessionId: S4 }); // left by an earlier holder of P2's pid
+  await reg.start();
+  const asc = (list) => [...list].sort((a, b) => a - b);
+  assert.deepEqual(h.sampler.calls.map(asc), [asc([P2, DEAD_PID])]);
+  await reg.discover();
+  await reg.discover();
+  assert.equal(h.sampler.calls.length, 1, 'ruled out once, not sampled again every tick');
+  assert.equal(reg.stats().dead_files, 2);
+  assert.deepEqual(reg.list(), []);
+
+  // A process holding P2 now writes its own file, with its own start: a candidate again.
+  ch.writeSession({ pid: P2, procStart: st2, sessionId: S4 });
+  await reg.discover();
+  assert.equal(h.sampler.calls.length, 2);
+  assert.deepEqual(h.sampler.calls[1], [P2]);
+  assert.deepEqual(ids(reg.list()), [S4]);
+});
+
 test('discovery with the real sampler: procStart from sampleProcs([process.pid])', async (t) => {
   const h = setup(t, { options: { sampleProcs: portfiles.sampleProcs } });
   const { ch, reg } = h;
