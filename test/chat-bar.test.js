@@ -464,6 +464,51 @@ test('with a chat view, the step closes the graph overlay first; a chat it cover
   assert.equal(seen.length, 2, 'it is opened, which shows it');
 });
 
+test('a stand-in closes the graph overlay first: its note, on the panels\' rung, would open under the graph', async (t) => {
+  await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
+  assert.equal(slots.chatViews().length, 0, 'precondition: no chat view, so the step is a stand-in');
+  t.after(() => {
+    if (gv.isOverlayOpen()) gv.closeOverlay();
+    if (noteShown()) shell.key('Escape');
+  });
+  for (const [what, el, line] of [['the step', step, LINES.chat], ['a chip', () => chip('monitors'), LINES.tasks]]) {
+    await gv.openOverlay();
+    assert.ok(gv.isOverlayOpen(), `${what}: precondition: the graph is open`);
+    shell.press(el());
+    assert.ok(!gv.isOverlayOpen(), `${what}: the graph closed`);
+    assert.ok(noteShown(), `${what}: and the note shows, in sight`);
+    assert.equal(noteLine(), line, `${what}: with its own line`);
+    assert.equal(el().getAttribute('aria-expanded'), 'true');
+    assert.equal(doc.activeElement, el(), `${what}: focus stays on it, not handed back to where the graph took it from`);
+  }
+});
+
+test('the note is the one panel open: a stand-in pressed from the keyboard closes the panel already showing', async (t) => {
+  await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
+  assert.equal(slots.chatViews().length, 0, 'precondition: the step is a stand-in');
+  t.after(() => { shell.key('Escape'); });
+  // Enter or Space on a focused stand-in is a click with no pointerdown before
+  // it, so the shell's dismiss layer never runs: the note must close the rest.
+  const queueChip = chip('queue');
+  queueChip.focus();
+  shell.key('?', { target: queueChip });   // the shortcut legend, summoned with the chip still focused
+  assert.ok(!$('key-legend').classList.contains('hidden'), 'precondition: ? opened the shortcut legend');
+  shell.click(queueChip);
+  assert.ok(noteShown(), 'the chip opened its note');
+  assert.equal(noteLine(), LINES.queue);
+  assert.ok($('key-legend').classList.contains('hidden'), 'and the legend closed');
+
+  shell.key('Escape');
+  assert.ok(!noteShown(), 'precondition: Esc closed the note');
+  shell.press($('btn-more'));
+  assert.ok(!$('more-menu').classList.contains('hidden'), 'precondition: the More menu is open');
+  shell.click(step());
+  assert.ok(noteShown(), 'the step opened its note');
+  assert.equal(noteLine(), LINES.chat);
+  assert.ok($('more-menu').classList.contains('hidden'), 'and the More menu closed');
+  assert.equal($('btn-more').getAttribute('aria-expanded'), 'false', 'its trigger says so');
+});
+
 /* ── stand-in (b): the chips, before the trays ─────────────────────────────── */
 
 test('stand-in: five muted chips with no count and no pulse, each opening the note with its own line', async (t) => {
