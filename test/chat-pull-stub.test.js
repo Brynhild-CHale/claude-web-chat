@@ -12,15 +12,20 @@
 //     as the data-cs-state the stub's section of app.css turns into the ink, the
 //     pulse and the width, with NEEDS YOU or QUESTION while Claude waits on the
 //     user; another session waiting outranks a calmer one.
+//   * It rides the bottom bar wherever app.css sizes the bar.
 //   * A tap opens the "Under development" note; a second tap, Escape and an
 //     outside tap close it (the shell's dismiss layer). No badge, no drag.
 //   * It steps aside for the real phone chat: once a chat view registers as
 //     'sheet' (chat-slots.js), its markup leaves the page for good.
 //
-// jsdom lays nothing out and loads no stylesheet, so the look is read from the
-// stub's own section of app.css: its rules are matched against the live DOM with
-// el.matches(), which is how the stub's attributes are shown to select the ink,
-// the pulse and the width the spec gives each state.
+// jsdom lays nothing out and applies no @media, so the look is read from app.css
+// itself: its rules are matched against the live DOM with el.matches() and
+// cascaded the way a browser does, which is how the stub's attributes are shown
+// to select the ink, the pulse and the width the spec gives each state. The
+// stub's own look is read from the rules it owns (its section, and the state
+// table wherever app.css keeps it); where the tab meets its neighbours (the
+// bottom bar, the queue screen) the whole sheet is read, so a later restatement
+// of a neighbour's rules is followed rather than broken.
 //
 // main.js starts neither the store nor the stub yet (the integration unit wires
 // them), so the boot's init does, as main.js will.
@@ -38,6 +43,9 @@ const CSS = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
 const PHONE = { width: 390, height: 844 };
 const NARROW = { width: 700, height: 900 };   // a terminal beside a browser: narrow, not phone-shaped
 const DESKTOP = { width: 1280, height: 800 };
+
+// The phone bottom bar's height before anything names it --bb-h (§8.2).
+const PHONE_BAR = 'calc(60px + env(safe-area-inset-bottom))';
 
 // ── the store's answers ──────────────────────────────────────────────────────
 
@@ -89,6 +97,21 @@ async function viewport(vp) {
   await shell.tick();
 }
 
+// `fn` run with the stub unhidden, as if its script had shown it, and hidden
+// again after: what the stylesheet does on its own.
+function shownAnyway(fn) {
+  const p = pull();
+  const was = p.hidden;
+  p.hidden = false;
+  try { return fn(); } finally { p.hidden = was; }
+}
+// `fn` run with `cls` on `el`, and the class as it was after.
+function withClass(el, cls, fn) {
+  const had = el.classList.contains(cls);
+  el.classList.add(cls);
+  try { return fn(); } finally { if (!had) el.classList.remove(cls); }
+}
+
 before(async () => {
   shell = await bootShell({
     routes: { '/api/mirror': () => mirrorBody },
@@ -117,47 +140,91 @@ beforeEach(async () => {
   if (isOpen()) shell.key('Escape');
 });
 
-// ── the stub's section of app.css, matched against the live DOM ─────────────
+// ── app.css, cascaded against the live DOM ───────────────────────────────────
 
-const SECTION = (() => {
-  const start = CSS.indexOf('/* ── U22c · the phone grip-tab stub');
-  const end = CSS.indexOf('/* ── ', start + 1);
-  return start < 0 || end < 0 ? '' : CSS.slice(start, end);
-})();
+// app.css with its comments blanked out, so an offset in it is one in app.css.
+const BARE = CSS.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
 
-function closingBrace(text, open) {
+// The index of the bracket that closes the '{' or '(' at `open`.
+function closing(text, open) {
+  const [o, c] = text[open] === '(' ? ['(', ')'] : ['{', '}'];
   let depth = 0;
   for (let i = open; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}' && --depth === 0) return i;
+    if (text[i] === o) depth++;
+    else if (text[i] === c && --depth === 0) return i;
   }
-  throw new Error('the stub\'s section of app.css has unbalanced braces');
+  throw new Error(`app.css has an unbalanced '${o}'`);
 }
 
-// Its rules in source order, { media, selector, decls }: comments out, @media
-// blocks opened, @keyframes left out. The section is written so a later rule on
-// the same element always out-ranks an earlier one, so source order is its
-// whole cascade.
-function parseRules(text, media = null, out = []) {
+// Its rules in source order, { at, media, selector, decls }: @media blocks
+// opened, @keyframes left out, `at` the rule's offset in app.css and `decls` its
+// [property, value] pairs in order.
+function parseRules(text, base = 0, media = null, out = []) {
   for (let i = 0; ;) {
     const open = text.indexOf('{', i);
     if (open < 0) return out;
-    const prelude = text.slice(i, open).trim();
-    const close = closingBrace(text, open);
+    const lead = text.slice(i, open);
+    const prelude = lead.trim();
+    const close = closing(text, open);
     const body = text.slice(open + 1, close);
-    if (prelude.startsWith('@media')) parseRules(body, prelude.slice('@media'.length).trim(), out);
+    if (prelude.startsWith('@media')) parseRules(body, base + open + 1, prelude.slice('@media'.length).trim(), out);
     else if (!prelude.startsWith('@')) {
-      const decls = new Map();
+      const decls = [];
       for (const d of body.split(';')) {
         const c = d.indexOf(':');
-        if (c > 0) decls.set(d.slice(0, c).trim(), d.slice(c + 1).trim());
+        if (c > 0) decls.push([d.slice(0, c).trim(), d.slice(c + 1).trim()]);
       }
-      out.push({ media, selector: prelude, decls });
+      out.push({ at: base + i + (lead.length - lead.trimStart().length), media, selector: prelude, decls });
     }
     i = close + 1;
   }
 }
-const RULES = parseRules(SECTION.replace(/\/\*[\s\S]*?\*\//g, ''));
+const SHEET = parseRules(BARE);
+
+// A selector list's selectors, split at its top-level commas.
+function selectors(list) {
+  const out = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (c === ',' && depth === 0) { out.push(list.slice(from, i)); from = i + 1; }
+  }
+  out.push(list.slice(from));
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+// One selector's specificity, [ids, classes, types]: :where() counts nothing,
+// :is(), :not() and :has() their most specific argument, any other pseudo-class
+// a class and a pseudo-element a type. Enough CSS for app.css: no escapes.
+const bySpec = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+function specificity(sel) {
+  const s = [0, 0, 0];
+  const word = (j) => (/^-?[_a-zA-Z][\w-]*/.exec(sel.slice(j)) || [''])[0];
+  for (let i = 0; i < sel.length;) {
+    const c = sel[i];
+    if (c === '#' || c === '.') { s[c === '#' ? 0 : 1]++; i += 1 + word(i + 1).length; }
+    else if (c === '[') { s[1]++; i = sel.indexOf(']', i) + 1; }
+    else if (c === ':') {
+      const element = sel[i + 1] === ':';
+      let j = i + (element ? 2 : 1);
+      const name = word(j);
+      j += name.length;
+      let args = '';
+      if (sel[j] === '(') { const end = closing(sel, j); args = sel.slice(j + 1, end); j = end + 1; }
+      if (element) s[2]++;
+      else if (/^(is|not|has|matches)$/.test(name)) {
+        const top = selectors(args).map(specificity).sort(bySpec).pop() || [0, 0, 0];
+        for (let k = 0; k < 3; k++) s[k] += top[k];
+      } else if (name !== 'where') s[1]++;
+      i = j;
+    } else if (/[a-zA-Z]/.test(c)) { s[2]++; i += word(i).length; }
+    else i++;   // '*', a combinator, whitespace
+  }
+  return s;
+}
 
 // One query list per @media condition, which the shell keeps current as the
 // viewport changes.
@@ -167,26 +234,89 @@ const holds = (media) => {
   return queries.get(media).matches;
 };
 
-// The value of `prop` the section gives `el` now: the last matching rule's,
-// among those whose @media holds for the shell's viewport.
-function declared(el, prop) {
-  let value = null;
-  for (const r of RULES) {
+// Of `rules`, the declaration of any of `props` that wins on `el` now — among
+// those whose @media holds for the shell's viewport: !important first, then the
+// more specific selector, then the later one. { prop, value }, or null.
+function cascade(el, props, rules) {
+  let win = null;
+  for (const r of rules) {
     if (r.media && !holds(r.media)) continue;
-    if (el.matches(r.selector) && r.decls.has(prop)) value = r.decls.get(prop);
+    let spec = null;
+    for (const sel of selectors(r.selector)) {
+      let hit = false;
+      try { hit = el.matches(sel); } catch { /* a selector jsdom cannot parse matches nothing here */ }
+      if (hit) {
+        const sp = specificity(sel);
+        if (!spec || bySpec(sp, spec) > 0) spec = sp;
+      }
+    }
+    if (!spec) continue;
+    r.decls.forEach(([prop, raw], pos) => {
+      if (!props.includes(prop)) return;
+      const important = /!\s*important$/.test(raw);
+      const d = { prop, value: raw.replace(/\s*!\s*important$/, ''), important, spec, at: r.at, pos };
+      if (!win || beats(d, win)) win = d;
+    });
   }
-  return value;
+  return win;
 }
+function beats(a, b) {
+  if (a.important !== b.important) return a.important;
+  return (bySpec(a.spec, b.spec) || a.at - b.at || a.pos - b.pos) > 0;
+}
+
+// The rules the stub owns: its section, and §7.4's state table wherever app.css
+// keeps it (in the section, or in the status bar's, as rules made only of the
+// data-cs-* attributes).
+const FROM = CSS.indexOf('/* ── U22c · the phone grip-tab stub');
+const TO = FROM < 0 ? -1 : CSS.indexOf('/* ── ', FROM + 1);
+const SECTION = FROM < 0 || TO < 0 ? '' : CSS.slice(FROM, TO);
+const STATE_TABLE = /^(\[data-cs-(?:state|pace|cat)(?:="[^"]*")?\])+$/;
+const OWN = SHEET.filter((r) => (r.at >= FROM && r.at < TO) || selectors(r.selector).every((s) => STATE_TABLE.test(s)));
+
+// The value of `prop` the stub's rules give `el` now, or null.
+function declared(el, prop) {
+  const d = cascade(el, [prop], OWN);
+  return d ? d.value : null;
+}
+// What all of app.css gives `el` for any of `props` (a shorthand beside its
+// longhand, say): { prop, value }, or null.
+const computed = (el, props) => cascade(el, props, SHEET);
+
 // A custom property as `el` inherits it: its own, else its nearest ancestor's.
-function inherited(el, name) {
+function inheritedIn(el, name, rules) {
   for (let n = el; n; n = n.parentElement) {
-    const v = declared(n, name);
-    if (v !== null) return v;
+    const d = cascade(n, [name], rules);
+    if (d) return d.value;
   }
   return null;
 }
+const inherited = (el, name) => inheritedIn(el, name, OWN);
 
-// What the tab looks like, as the section draws the stub's current attributes.
+// `value` with its var(--bb-h …) taken once, as a browser takes it: the --bb-h
+// `el` inherits from all of app.css, else the var()'s own fallback (null when
+// neither is there).
+function viaBbH(value, el) {
+  const start = value == null ? -1 : value.indexOf('var(--bb-h');
+  if (start < 0) return value;
+  const end = closing(value, start + 3);
+  const inner = value.slice(start + 4, end);
+  const comma = inner.indexOf(',');
+  const own = inheritedIn(el, '--bb-h', SHEET);
+  const taken = own !== null ? own : comma < 0 ? null : inner.slice(comma + 1).trim();
+  return taken === null ? null : `${value.slice(0, start)}${taken}${value.slice(end + 1)}`;
+}
+
+// One side of a box declaration (0 top, 1 right, 2 bottom, 3 left): a longhand's
+// value, or that side of its shorthand's one to four values.
+function side(d, i) {
+  if (!d) return null;
+  if (!['inset', 'margin', 'padding'].includes(d.prop)) return d.value;
+  const v = d.value.split(/\s+/);
+  return v[[[0, 0, 0, 0], [0, 1, 0, 1], [0, 1, 2, 1], [0, 1, 2, 3]][v.length - 1][i]];
+}
+
+// What the tab looks like, as the stylesheet draws the stub's current attributes.
 function look() {
   const p = pull();
   const bar = p.querySelector('.ps-bar');
@@ -230,7 +360,10 @@ test('the stub sits in the pull host, right after the bottom bar, with no badge 
   assert.equal(tab().getAttribute('aria-controls'), 'chat-sheet', 'the tab owns the note (a second tap toggles)');
   assert.equal(tab().getAttribute('aria-describedby'), 'chat-sheet', 'and a screen reader hears it on the tab');
   assert.equal($('chat-badge'), null, 'no running-tasks badge');
-  assert.deepEqual(slots.chatViews(), [], 'the stub registers no chat view: the bar asks that registry whether a chat exists');
+  // It stands in for the phone's chat view without being one: the bar asks that
+  // registry whether a chat exists, and other views (the dock) may well be in it.
+  assert.ok(!slots.chatViews().some((v) => v.id === stub.PHONE_CHAT_VIEW),
+    'no phone chat view is registered while the stub stands in for it');
 });
 
 test('nothing renders on a desktop, nor on a narrow window that is not a phone', async () => {
@@ -238,11 +371,17 @@ test('nothing renders on a desktop, nor on a narrow window that is not a phone',
   await show(snapshot([conversation('c1', WAITING)]));
   assert.equal(pull().hidden, true, 'hidden at 1280px');
   assert.equal(declared(pull(), 'display'), 'none', 'and the sheet draws nothing there');
+  // The stylesheet's own gate, apart from the script's: shown on a desktop even
+  // under <html class="phone">, the narrow breakpoint keeps it off the page.
+  shownAnyway(() => withClass(W.document.documentElement, 'phone', () =>
+    assert.equal(declared(pull(), 'display'), 'none', 'the stylesheet draws it only inside the narrow breakpoint')));
   await viewport({ width: 760, height: 1000 });
   assert.equal(pull().hidden, true, 'hidden at 760px, the first desktop width');
   await viewport(NARROW);
   assert.equal(pull().hidden, true, 'hidden on a narrow window the phone layout does not apply to');
-  assert.equal(declared(pull(), 'display'), 'none', 'the stylesheet keys it off <html class="phone">');
+  assert.equal(W.document.documentElement.classList.contains('phone'), false, 'which is no phone');
+  shownAnyway(() =>
+    assert.equal(declared(pull(), 'display'), 'none', 'and, shown there, the stylesheet keys it off <html class="phone">'));
   await viewport(PHONE);
   assert.equal(pull().hidden, false, 'shown on a phone');
   assert.deepEqual(look(), LOOKS.waiting);
@@ -419,10 +558,17 @@ test('the tab rides the bottom bar\'s top edge, right-justified, on the chat run
   assert.equal(declared(p, 'z-index'), 'var(--z-chat)', 'above the bottom bar and the pins, below every panel');
   assert.equal(declared(p, 'right'), 'env(safe-area-inset-right)', 'right-justified');
   // Its bottom is the bottom bar's height less the bar's 1px top border, which
-  // the tab covers so the two read as one. The fallback is the phone bar's own.
-  const bar = /\.phone \.bottombar \{[^}]*height:\s*([^;]+);/.exec(CSS);
-  assert.ok(bar, 'app.css sizes the phone\'s bottom bar');
-  assert.equal(declared(p, 'bottom'), `calc(var(--bb-h, ${bar[1].trim()}) - 1px)`);
+  // the tab covers so the two read as one: --bb-h once the narrow posture names
+  // the height so (§8.2), the phone bar's own until then.
+  assert.equal(declared(p, 'bottom'), `calc(var(--bb-h, ${PHONE_BAR}) - 1px)`);
+  // And it meets the bar however app.css sizes the bar: the bar's height as the
+  // whole sheet cascades it on a phone and the tab's bottom, each taken through
+  // its var(--bb-h) the way a browser takes it, are that 1px apart.
+  const bb = $('bottombar');
+  const height = computed(bb, ['height']);
+  assert.ok(height, 'app.css sizes the phone\'s bottom bar');
+  assert.ok(viaBbH(height.value, bb), `the bar's height resolves (${height.value})`);
+  assert.equal(viaBbH(declared(p, 'bottom'), p), `calc(${viaBbH(height.value, bb)} - 1px)`);
   const t = tab();
   assert.equal(declared(t, 'height'), '23px');
   assert.equal(declared(t, 'border-radius'), '10px 0 0 0');
@@ -434,10 +580,17 @@ test('the tab rides the bottom bar\'s top edge, right-justified, on the chat run
 });
 
 test('the pulse is opacity only, and it stops under reduced motion', async () => {
-  const kf = /@keyframes wc-chat-pulse \{([\s\S]*?\})\s*\}/.exec(SECTION);
-  assert.ok(kf, 'the section carries §7.4\'s pulse');
-  const props = [...kf[1].matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(props)], ['opacity'], 'opacity only, like the Final\'s wcpulse');
+  // §7.4's one pulse, wherever app.css keeps it (the stub's own block, the status
+  // bar's section, or both while they share a branch): every copy, opacity only.
+  const pulses = [...BARE.matchAll(/@keyframes\s+wc-chat-pulse\s*\{/g)].map((m) => {
+    const open = m.index + m[0].length - 1;
+    return BARE.slice(open + 1, closing(BARE, open));
+  });
+  assert.ok(pulses.length >= 1, 'app.css carries §7.4\'s pulse');
+  for (const body of pulses) {
+    const props = [...body.matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]);
+    assert.deepEqual([...new Set(props)], ['opacity'], 'opacity only, like the Final\'s wcpulse');
+  }
   await show(snapshot([conversation('c1', WORKING)]));
   assert.equal(look().pulse, '1.2s');
   shell.setViewport({ reducedMotion: true });
@@ -447,24 +600,30 @@ test('the pulse is opacity only, and it stops under reduced motion', async () =>
   } finally { shell.setViewport({ reducedMotion: false }); }
 });
 
-test('the stub runs no timer and asks no media query; it reads the one store through the one model', () => {
+test('the stub runs no timer, asks no media query and registers nothing; it reads the one store through the one model', () => {
   const src = fs.readFileSync(path.join(REPO, 'public/app/chat-pull-stub.js'), 'utf8');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(code, /\bset(?:Timeout|Interval)\b|requestAnimationFrame|matchMedia|localStorage|sessionStorage/);
   const imports = [...src.matchAll(/^import\b[^;]*?from\s*'([^']+)';$/gm)].map((m) => m[1]).sort();
   assert.deepEqual(imports, ['./bus.js', './chat-present.js', './chat-slots.js', './chat-state.js', './state.js', './viewport.js']);
+  // Of the chat slots it only asks: the phone's chat view is the real sheet's to register.
+  const fromSlots = /^import\s*\{([^}]*)\}\s*from\s*'\.\/chat-slots\.js';$/m.exec(src);
+  assert.ok(fromSlots, 'it names what it takes from chat-slots.js');
+  assert.deepEqual(fromSlots[1].split(',').map((s) => s.trim()).filter(Boolean), ['chatViews']);
+  assert.doesNotMatch(code, /\bregister(?:ChatView|Composer|Approvals)\b/);
 });
 
 /* ── the seam: the real phone chat takes its place ───────────────────────── */
 
 test('a chat view registered as \'sheet\' takes the stub off the page for good', async (t) => {
   await viewport(PHONE);
-  // The desktop dock is a chat view too, but not the phone's: the tab stays.
-  const dock = slots.registerChatView({ id: 'dock', isOpen: () => false, escape: () => false, close() {} });
+  // Any other chat view (the desktop dock is one) is not the phone's: the tab
+  // stays. A test-only id, so no real view's registration is touched.
+  const other = slots.registerChatView({ id: 'test-desktop-view', isOpen: () => false, escape: () => false, close() {} });
   await show(snapshot([conversation('c1', WORKING)]));
   assert.equal(stub.realPhoneChat(), false);
-  assert.ok(pull() && !pull().hidden, 'a desktop chat view leaves the phone tab alone');
-  dock.unregister();
+  assert.ok(pull() && !pull().hidden, 'a chat view other than the phone\'s leaves the phone tab alone');
+  other.unregister();
 
   shell.press(tab());
   assert.equal(isOpen(), true, 'the note is open when the real chat arrives');
