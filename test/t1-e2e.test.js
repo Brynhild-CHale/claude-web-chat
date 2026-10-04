@@ -30,7 +30,9 @@
 //     GET /api/graph and GET /api/graph/node/:id carry none either;
 //   * and a project that opted in shows a remote viewer the conversation at
 //     `read`: the audience its sockets and routes judge by is the server's own;
-//   * the redactor knows web-chat's capture token (spec §5.5, "Known values");
+//   * the redactor knows web-chat's capture token (spec §5.5, "Known values"):
+//     the one configured at boot, and one made later from the first request a
+//     capture route holds to it;
 //   * the server leaves no open handle through srv.stop() and through
 //     gracefulShutdown(), the chat mirror's own (its timers, a linked process's
 //     sampler and sessions-file watch, the audience's tunnel.json poll) included,
@@ -513,6 +515,34 @@ test('the redactor knows web-chat\'s capture token: a reply that quotes it reach
   assert.ok(preview.includes(REPLY_MARK), 'the reply reached the mirror');
   assert.ok(!JSON.stringify(snap).includes(token), 'without the token');
   assert.ok(preview.includes(MASK('capture-token')), 'which shows as a known value\'s mask');
+});
+
+test('a capture token made while the daemon runs is learned when a capture route first holds a request to it', async (t) => {
+  const token = () => `wct-${crypto.randomBytes(12).toString('hex')}`;
+  const [boot, second, third] = [token(), token(), token()];
+  const d = await daemon(t, { seed: ({ root }) => fs.writeFileSync(projectPaths(root).captureToken, `${boot}\n`) });
+  const replace = (value) => fs.writeFileSync(projectPaths(d.root).captureToken, `${value}\n`);
+  // The token is replaced under the running daemon, as a user (or Claude) would
+  // write .web-chat/capture-token, and the next request to a route that checks
+  // it is held to the new one at once — each of the two such routes in turn.
+  replace(second);
+  const match = (value) => d.request('GET', '/api/profile-match?url=https%3A%2F%2Fexample.test%2F', null, { 'X-WC-Token': value });
+  assert.equal((await match(boot)).status, 401, 'GET /api/profile-match holds a request to the new token');
+  assert.equal((await match(second)).status, 200);
+  replace(third);
+  const capture = await d.request('POST', '/api/capture', { url: 'https://example.test/', html: '<p>x</p>' }, { 'X-WC-Token': second });
+  assert.equal(capture.status, 401, 'and so does POST /api/capture');
+
+  await d.fire('SessionStart', { source: 'startup', model: 'claude-test' });
+  await d.turnBegin('p1', PROMPT);
+  await d.turnEnd(`${REPLY_MARK} the tokens were ${boot}, ${second} and ${third}`);
+  const snap = await d.snapshot();
+  const preview = snap.conversations[0].live.last_turn.reply_preview;
+  assert.ok(preview.includes(REPLY_MARK), 'the reply reached the mirror');
+  const wire = JSON.stringify(snap);
+  assert.ok(!wire.includes(third) && !wire.includes(second), 'without the tokens the gate honoured after boot');
+  assert.ok(!wire.includes(boot), 'nor the one they replaced: a known value stays known');
+  assert.equal(preview.split(MASK('capture-token')).length - 1, 3, 'each shows as a known value\'s mask');
 });
 
 test('srv.stop() leaves no open handle: the chat mirror, its audience and every socket stop with it', async (t) => {
