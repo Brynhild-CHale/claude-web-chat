@@ -24,7 +24,10 @@ What you have to do:
    and `update --restart-all` in each registered project whose server it
    restarts; anywhere else, run `claude-web-chat install`. Either turns 0.8.2's two hook handlers into this
    release's fourteen (see *Added*). A project left out keeps its two: its turns
-   still begin and commit, but the status bar has nothing to show for it, and
+   still begin and commit, and the status bar still says whether Claude is
+   working, waiting on you or idle there, but shows no live tool status for it
+   (no step labels such as `Edit · paths.js`); a turn there that ends on an API
+   error still holds the lock until it times out (see *Fixed*); and
    `claude-web-chat status` and `doctor` name what it is missing.
 2. **`/exit` and reopen Claude Code, and reload open surface tabs.** A session
    that is already running may not pick up a hook `install` has just added, and
