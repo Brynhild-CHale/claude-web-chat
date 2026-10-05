@@ -297,6 +297,10 @@ test('renderDiff: add, del, ctx, hunk and meta lines with their old/new numbers'
   // A fragment with no hunk header is classed by its first character, unnumbered.
   assert.equal(renderDiff('+a\n-b\n c'), '<span class="dl dl-add" data-old="" data-new="">+a</span>'
     + '<span class="dl dl-del" data-old="" data-new="">-b</span><span class="dl dl-ctx" data-old="" data-new=""> c</span>');
+  // A count-less side (`@@ -3 +4 @@`, git's form for a one-line hunk) counts one line.
+  assert.equal(renderDiff('@@ -3 +4 @@\n-a\n+b\n+c'), '<span class="dl dl-hunk" data-old="" data-new="">@@ -3 +4 @@</span>'
+    + '<span class="dl dl-del" data-old="3" data-new="">-a</span><span class="dl dl-add" data-old="" data-new="4">+b</span>'
+    + '<span class="dl dl-add" data-old="" data-new="">+c</span>');
   // {lineNumbers: false} leaves the numbers off.
   assert.equal(renderDiff('@@ -1 +1 @@\n-a\n+b', { lineNumbers: false }),
     '<span class="dl dl-hunk">@@ -1 +1 @@</span><span class="dl dl-del">-a</span><span class="dl dl-add">+b</span>');
