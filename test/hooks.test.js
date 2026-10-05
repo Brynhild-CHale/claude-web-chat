@@ -111,6 +111,7 @@ function mkTmp(prefix = 'wc-hk-') {
 // /api/health passes) and records each request's method/url/parsed body.
 // `routes` overrides the JSON body per `METHOD /url` (e.g. a fake GET
 // /api/health naming some other build); everything else answers {ok:true}.
+// A route given as { status, body } answers with that status (a 409 refusal).
 function stubServer(routes = {}) {
   const requests = [];
   const server = http.createServer((req, res) => {
@@ -120,8 +121,10 @@ function stubServer(routes = {}) {
       let json = null; try { json = body ? JSON.parse(body) : null; } catch {}
       requests.push({ method: req.method, url: req.url, body: json });
       const key = `${req.method} ${req.url}`;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(Object.prototype.hasOwnProperty.call(routes, key) ? routes[key] : { ok: true }));
+      const r = Object.prototype.hasOwnProperty.call(routes, key) ? routes[key] : { ok: true };
+      const withStatus = r && typeof r === 'object' && Number.isInteger(r.status) && 'body' in r;
+      res.writeHead(withStatus ? r.status : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(withStatus ? r.body : r));
     });
   });
   return new Promise((resolve) => {
@@ -355,6 +358,152 @@ test('skewLine: only a web-chat instance that answered is judged; a match is sil
   assert.equal(skewLine(instanceHealth({ package_version: '0.8.0' }), '0.8.0'), null);
   assert.match(skewLine(instanceHealth({ package_version: '0.8.1' }), '0.8.0'), /running v0\.8\.1, not the installed v0\.8\.0/);
   assert.match(skewLine(instanceHealth({}), '0.8.0'), /running a build older than 0\.8, not the installed v0\.8\.0/);
+});
+
+// --- turn-begin: tranche 2's repairs (spec §3.1 steps 2, 4, 5, 6; U30) ---
+
+test('turn-begin: a task notification posts author "task" and "background task: <summary>"; one with no summary says "background task"', async (t) => {
+  const { stub, root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: packageVersion() }) });
+  const posted = async (prompt) => {
+    await turnBegin({ prompt, session_id: 's1' }, { root, ...PROBE, env: {}, now: NOW });
+    return stub.requests.filter((r) => r.url === '/api/turn-begin').pop().body;
+  };
+  const withSummary = await posted('<task-notification><summary>Agent "review" finished</summary></task-notification>');
+  assert.deepStrictEqual([withSummary.author, withSummary.message], ['task', 'background task: Agent "review" finished']);
+  const bare = await posted('<task-notification><task-id>b1</task-id></task-notification>');
+  assert.deepStrictEqual([bare.author, bare.message], ['task', 'background task']);
+  const typed = await posted('mention <task-notification> later');
+  assert.deepStrictEqual([typed.author, typed.message], ['user', 'mention <task-notification> later'], 'only a leading tag');
+});
+
+test('turn-begin: a 409 is noted in hook.log, and the park is still read and claimed and the health still read', async (t) => {
+  const { stub, root } = await skewStub(t, {
+    'POST /api/turn-begin': { status: 409, body: { error: 'already locked', lock: { message: 'another session' } } },
+    'GET /api/health': instanceHealth({ package_version: packageVersion() }),
+    'GET /api/queue/pending': { pending: { id: 'pw1', envelope: { content: 'PARKED-ON-A-409' } } },
+    'POST /api/queue/pending/consume': { consumed: true },
+  });
+  const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 'sess-409' }, { root, ...PROBE })));
+  assert.deepStrictEqual(stub.requests.map((r) => `${r.method} ${r.url}`).filter((k) => !k.startsWith('HEAD')),
+    ['POST /api/turn-begin', 'GET /api/queue/pending', 'POST /api/queue/pending/consume', 'GET /api/health']);
+  assert.deepStrictEqual(stub.requests[stub.requests.length - 2].body, { id: 'pw1' }, 'the park is claimed by its id');
+  assert.match(ctx, /Parked delivery/);
+  assert.match(ctx, /PARKED-ON-A-409/);
+  const log = fs.readFileSync(projectPaths(root).hookLog, 'utf8');
+  assert.match(log, /turn-begin UserPromptSubmit session=sess-409 refused http 409/);
+  assert.ok(!log.includes('another session'), 'ids and outcomes only: never the refusal\'s body');
+});
+
+test('turn-begin: a daemon error that is not a 409 still ends the hook (no park read)', async (t) => {
+  const { stub, root } = await skewStub(t, { 'POST /api/turn-begin': { status: 500, body: { error: 'boom' } } });
+  await assert.rejects(() => turnBegin({ prompt: 'hi' }, { root, ...PROBE }), (e) => e.status === 500);
+  assert.ok(!stub.requests.some((r) => r.url === '/api/queue/pending'));
+});
+
+test('turn-begin: the parked prefix says "with this turn"', async (t) => {
+  assert.match(turnBegin.PARKED_PREFIX, /It is delivered now, with this turn\./);
+  assert.ok(!/with this message/.test(turnBegin.PARKED_PREFIX));
+  const { root } = await skewStub(t, {
+    'GET /api/health': instanceHealth({ package_version: packageVersion() }),
+    'GET /api/queue/pending': { pending: { id: 'pw2', envelope: { content: 'X' } } },
+    'POST /api/queue/pending/consume': { consumed: true },
+  });
+  const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 's1' }, { root, ...PROBE })));
+  assert.ok(ctx.startsWith(turnBegin.PARKED_PREFIX));
+});
+
+// The hooks-drift nudge (spec §1.2): a fake registration read, counted, so
+// "reads nothing" is observable; then the real engine once.
+const { hookHandlers } = require('../lib/setup/registration');
+const { claudePaths } = require('../lib/core/paths');
+function inspectState(missing = []) {
+  return {
+    hooksFile: 'ok',
+    handlers: hookHandlers().map(({ event, sub, role }) => ({ event, sub, role, state: missing.includes(event) ? 'missing' : 'ok' })),
+  };
+}
+function writeSettings(root, hooks = {}) {
+  const file = claudePaths(root).settings;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ hooks }));
+  return file;
+}
+
+test('turn-begin: the hooks-drift line is said once per session per (build, settings mtime), after the skew line', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: '0.0.1-old' }) });
+  const file = writeSettings(root);
+  let reads = 0;
+  const inspect = () => { reads += 1; return inspectState(['SessionStart', 'PreToolUse']); };
+  const run = (sid) => captureStdout(() => turnBegin({ prompt: 'hi', session_id: sid }, { root, ...PROBE, inspectRegistration: inspect }));
+
+  const ctx = oneFrame(await run('s1'));
+  const [skew, drift] = ctx.split('\n\n');
+  assert.match(skew, /claude-web-chat restart/, 'the skew line first');
+  assert.equal(drift, "[web-chat] This project's Claude Code hooks are older than the installed web-chat (missing: SessionStart, PreToolUse). Live tool status and answering prompts from the browser stay off until the user runs `claude-web-chat install` in this project. Tell them once.");
+  assert.equal(reads, 1);
+
+  assert.equal((await run('s1')).trim(), '', 'the same session has both lines already');
+  assert.equal(reads, 1, 'and the marker is checked before anything is read');
+
+  assert.match(oneFrame(await run('s2')), /hooks are older/, 'another session has not seen it');
+  assert.equal(reads, 2);
+
+  // settings.json changed: news again for the same session.
+  const later = new Date(Date.now() + 60000);
+  fs.utimesSync(file, later, later);
+  assert.match(oneFrame(await run('s1')), /hooks are older/);
+  assert.equal(reads, 3);
+});
+
+test('turn-begin: no drift line with healthy hooks, with no settings.json, or with one that does not parse', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: packageVersion() }) });
+  let reads = 0;
+  const run = (sid, inspect) => captureStdout(() => turnBegin({ prompt: 'hi', session_id: sid }, { root, ...PROBE, inspectRegistration: (r) => { reads += 1; return inspect(r); } }));
+  assert.equal((await run('s1', () => inspectState())).trim(), '', 'no settings.json: these hooks are registered elsewhere');
+  assert.equal(reads, 0);
+  writeSettings(root);
+  assert.equal((await run('s1', () => inspectState())).trim(), '', 'healthy');
+  assert.equal((await run('s2', () => ({ ...inspectState(['Stop']), hooksFile: 'unparseable' }))).trim(), '', 'doctor\'s to explain');
+  assert.equal((await run('s3', () => { throw new Error('boom'); })).trim(), '', 'a read that fails says nothing');
+});
+
+test('turn-begin: the drift line from the real registration engine names a 0.8.0 project\'s missing events', async (t) => {
+  const { root } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: packageVersion() }) });
+  writeSettings(root, {
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-begin' }] }],
+    Stop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-end' }] }],
+  });
+  const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 's1' }, { root, ...PROBE })));
+  assert.match(ctx, /^\[web-chat\] This project's Claude Code hooks are older than the installed web-chat \(missing: [^)]*SessionStart[^)]*PermissionRequest[^)]*\)/);
+});
+
+test('turn-begin: the no-server and no-viewer notices are conditional on the tool list, name doctor, carry CLAUDE_CONFIG_DIR only when set, and never say "don\'t call"', async (t) => {
+  withTempHome(t);
+  const root = tmpRoot('wc-hook-');
+  const noServer = async (env) => {
+    const orig = process.stdout.write.bind(process.stdout);
+    let out = '';
+    process.stdout.write = (chunk) => { out += chunk.toString(); return true; };
+    let pending;
+    try { pending = turnBegin({ prompt: 'hi' }, { root, ...PROBE, env }); } finally { process.stdout.write = orig; }
+    await pending;
+    return JSON.parse(out).hookSpecificOutput.additionalContext;
+  };
+  const { root: viewerRoot } = await skewStub(t, { 'GET /api/health': instanceHealth({ package_version: packageVersion(), viewers: 0 }) });
+  const noViewer = async (env) => oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: `s-${Math.random()}` }, { root: viewerRoot, ...PROBE, env })));
+
+  for (const [name, say] of [['no server', noServer], ['no viewer', noViewer]]) {
+    const plain = await say({});
+    assert.match(plain, /mcp__web-chat__\*/, `${name}: conditional on Claude's own tool list`);
+    assert.match(plain, /If web-chat's tools are not in your tool list, its MCP server is not loaded in this session: tell the user to run `claude-web-chat doctor` in this project, then restart Claude Code\./, name);
+    assert.ok(!/CLAUDE_CONFIG_DIR/.test(plain), `${name}: no prefix without the variable`);
+    assert.ok(!/don.t call|do not call/i.test(plain), `${name}: never "don't call"`);
+    const dir = await say({ CLAUDE_CONFIG_DIR: '/x/claude cfg' });
+    assert.match(dir, /`CLAUDE_CONFIG_DIR='\/x\/claude cfg' claude-web-chat doctor`/, `${name}: the session's config dir, quoted`);
+    assert.match(await say({ CLAUDE_CONFIG_DIR: '/x/cfg' }), /`CLAUDE_CONFIG_DIR=\/x\/cfg claude-web-chat doctor`/);
+  }
+  assert.match(await noServer({}), /MCP tools still work if they are in your tool list/);
+  assert.match(await noViewer({}), /no browser is watching/);
 });
 
 // --- turn-end (in-process) ---
