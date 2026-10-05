@@ -14,7 +14,11 @@
 //   * restart: a new mirror resumes from the saved index at index.resume, an
 //     appended turn gives every turn exactly once, and a task notification's
 //     item (three carriers) keeps its seq — before, after, and on a whole-file
-//     read (THE SEQ RULE);
+//     read (THE SEQ RULE); a turn open at stop resumes just before its opener
+//     and closes whole;
+//   * meta (the title, through upsertConversation and noteTitle) and a delivery
+//     marker's transition reach the facade; SessionEnd keeps the current session
+//     followed;
 //   * /clear: the old file is drained before the new one is followed, both
 //     sessions' turns in one conversation;
 //   * a --fork-session file whose first turns belong to another conversation
@@ -391,6 +395,85 @@ test('restart: the new mirror resumes at index.resume, every turn exactly once, 
   assert.equal(wholeTask[0].seq, before[0].seq, 'and the same seq on a whole-file read');
 });
 
+test('restart with a turn open: the index resumes just before its opener, and the turn closes whole', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const r = a.records();
+  closedTurn(r, 'ot-1');
+  const k = r.records.length;
+  r.prompt('prompt ot-2', { promptId: 'ot-2' });
+  r.assistant([{ type: 'tool_use', name: 'Read', input: { file_path: '/tmp/project/a.txt' }, id: 'toolu_01Open' }]);
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await waitUntil(async () => {
+    const p = await a.mirror.turns(S1, { limit: 100 });
+    return p && p.total === 2 && p.turns[1].status === 'open';
+  }, { timeout: 8000, what: 'ot-2 open' });
+  await a.mirror.stop();
+  const index = store.saved.get(S1);
+  assert.ok(index && index.resume, 'an index with a resume point');
+  assert.equal(index.resume.offset, Buffer.byteLength(jsonl(r.records.slice(0, k))), 'the open turn\'s opener, not the last record');
+
+  const b = setup(t, { store, root: a.root, ch: a.ch });
+  await b.mirror.start();
+  b.sessionStart(S1, 'resume');
+  await waitUntil(() => b.tailers.of(S1).find((x) => x.resume), { what: 'the resumed tailer' });
+  const n0 = r.records.length;
+  r.toolResult('toolu_01Open', 'contents of a');
+  r.assistant(['Read it.']);
+  r.turnDuration({ durationMs: 30 });
+  b.ch.appendTranscript(S1, r.records.slice(n0));
+  const page = await turnCount(b, 2);
+  assert.deepEqual(page.turns.map((x) => x.id), ['ot-1', 'ot-2']);
+  const full = await b.turns();
+  const turn2 = full.turns.find((x) => x.id === 'ot-2');
+  assert.deepEqual(turn2.items.map((it) => it.kind), ['prompt', 'tool_call', 'reply'], 'every item of the reopened turn, once');
+  assert.equal(turn2.items.find((it) => it.kind === 'tool_call').status, 'done');
+});
+
+test('meta, the title and a delivery marker reach the facade through the contract', async (t) => {
+  const h = setup(t);
+  const seen = [];
+  h.mirror.subscribe((e) => seen.push(e));
+  const r = h.records();
+  r.aiTitle('Fix the flaky build');
+  r.channel({ body: 'please look [web-chat message m-0123abcd]' });
+  r.assistant(['Looking.']);
+  r.turnDuration();
+  h.ch.writeTranscript(S1, r.records);
+  await h.mirror.start();
+  h.sessionStart();
+  await turnCount(h, 1);
+  await waitUntil(() => {
+    const c = h.mirror.snapshot({}).conversations.find((x) => x.id === S1);
+    return c && c.title === 'Fix the flaky build';
+  }, { what: 'the conversation\'s title, from the meta patch' });
+  await waitUntil(() => seen.find((e) => e.op === 'delivered' && e.marker === 'm-0123abcd' && e.conversation_id === S1),
+    { what: 'the delivered transition' });
+  await h.mirror.stop();
+  const { projectPaths } = require('../lib/core/paths');
+  const saved = JSON.parse(fs.readFileSync(projectPaths(h.root).mirrorConversations, 'utf8'));
+  assert.equal(saved.conversations.find((c) => c.id === S1).title, 'Fix the flaky build', 'noteTitle kept it for a restart');
+});
+
+test('SessionEnd of the current session keeps following it', async (t) => {
+  const h = setup(t);
+  await h.mirror.start();
+  h.sessionStart();
+  const r = h.records();
+  closedTurn(r, 'se-1');
+  h.ch.writeTranscript(S1, r.records);
+  await turnCount(h, 1);
+  h.publish('SessionEnd', { session: { reason: 'other' } });
+  await new Promise((res) => setTimeout(res, 200));
+  const n0 = r.records.length;
+  closedTurn(r, 'se-2');
+  h.ch.appendTranscript(S1, r.records.slice(n0));
+  const page = await turnCount(h, 2);
+  assert.deepEqual(page.turns.map((x) => x.id), ['se-1', 'se-2']);
+});
+
 // ── /clear and forks ─────────────────────────────────────────────────────────
 
 test('/clear: the old file is drained before the new one is followed; both sessions\' turns in one conversation', async (t) => {
@@ -658,5 +741,4 @@ test('a disabled session is never tailed; stop() stops every tailer and flushes 
   const snap = h.store.saved.get(S1);
   assert.equal(snap.state.sources.transcripts.v, 1, 'the source\'s own slice is in the index');
   assert.ok(!('org' in snap.state.meta) && !JSON.stringify(snap).includes('organizationUuid'));
-  void jsonl;
 });
