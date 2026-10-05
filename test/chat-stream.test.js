@@ -428,12 +428,31 @@ test('stuck within 48px: new content scrolls into view; scrolled up: "↓ 2 new"
   assert.equal(newBtn.textContent, '↓ 2 new');
   assert.equal(s.scrollTop, 500, 'not scrolled');
 
+  // Back to the bottom by hand: stuck again (decided on every user scroll), the
+  // pill gone and its count cleared, so the next news counts afresh.
+  s.scrollTop = 2400 - 400 - 10;
+  s.dispatchEvent(new W.Event('scroll'));
+  assert.equal(newBtn.hidden, true, 'a scroll to the bottom re-sticks and clears the pill');
+  s.scrollTop = 500;
+  s.dispatchEvent(new W.Event('scroll'));
+  await streamFrame({ items: [{ ...reply('rs2e', 'one more'), turn_id: 's2', seq: 2750, rev }] });
+  await waitUntil(() => newBtn.hidden === false, { what: 'the new pill again' });
+  assert.equal(newBtn.textContent, '↓ 1 new', 'counted afresh after the re-stick');
+
   shell.click(newBtn);
   assert.equal(s.scrollTop, 2400, 'the click scrolls down');
   assert.equal(newBtn.hidden, true, 'and re-sticks');
   m.scrollHeight = 2800;
   await streamFrame({ items: [{ ...reply('rs2d', 'last'), turn_id: 's2', seq: 2800, rev }] });
   await waitUntil(() => s.scrollTop === 2800, { what: 'stuck again' });
+
+  // A turn that changed without a new item (it ended: its footer grows a
+  // duration) is new content too: a stuck stream follows it down.
+  m.scrollHeight = 2900;
+  const s2 = pages.get(cid).turns[1];
+  await streamFrame({ turns: [{ ...s2, items: undefined, rev: ++rev, status: 'done' }] });
+  await waitUntil(() => turnEl('s2').querySelector('.ct-dur'), { what: 's2 closed' });
+  await waitUntil(() => s.scrollTop === 2900, { what: 'a changed turn scrolled into view while stuck' });
 });
 
 test('at most 150 turns in the DOM, pruned only while stuck', async () => {
