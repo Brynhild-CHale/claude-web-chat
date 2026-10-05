@@ -21,7 +21,8 @@ const path = require('path');
 const { waitUntil, withServer, shortLockTtl } = require('../test-support/helpers');
 const { createBus } = require('../lib/core/bus');
 const { createHookTap } = require('../lib/server/hook-tap');
-const { createTurnGuard, GONE_MS } = require('../lib/server/turn-guard');
+const { createTurnGuard, GONE_MS, BUSY_STATES } = require('../lib/server/turn-guard');
+const { ACTIVE_STATES } = require('../lib/server/mirror/live');
 const { request } = require('../lib/client');
 
 // Nothing happens for `ms`: a waitUntil that never succeeds.
@@ -407,6 +408,15 @@ test('a late Stop finds the turn its prompt_id names when the guard closed two o
   assert.equal('reply' in r.graph.nodes.get('n2').trigger, false, 'the newer turn is not the one the Stop names');
   assert.equal(r.guard.reconcileLateStop({ session_id: 'sess-1', prompt_id: 'p2', reply: 'second', ended: 'stop' }), 'n2');
   assert.equal(r.graph.nodes.get('n2').trigger.reply, 'second');
+});
+
+test('BUSY_STATES is the mirror\'s ACTIVE_STATES (U31b)', () => {
+  assert.deepStrictEqual([...BUSY_STATES].sort(), [...ACTIVE_STATES].sort());
+  assert.equal(BUSY_STATES.size, ACTIVE_STATES.length);
+  // Built from it, not copied: a state the mirror adds is busy here too.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'server', 'turn-guard.js'), 'utf8');
+  assert.match(src, /new Set\(ACTIVE_STATES\)/);
+  assert.match(src, /require\('\.\/mirror\/live'\)/);
 });
 
 test('a turn opening keeps the wake lock, like a session going busy', async (t) => {
