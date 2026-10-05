@@ -1537,7 +1537,7 @@ body.pin-mode #main { cursor: crosshair; }
   #topbar .stepper, #btn-return-active, #btn-graph { display: none !important; }
   .bottombar {
     position: relative; z-index: var(--z-topbar); flex: 0 0 auto;
-    display: flex; align-items: center; gap: 8px; height: calc(52px + env(safe-area-inset-bottom)); padding: 0 10px env(safe-area-inset-bottom);
+    display: flex; align-items: center; gap: 8px; height: var(--bb-h); padding: 0 10px env(safe-area-inset-bottom);
     box-sizing: border-box;
     border-top: 1px solid var(--wc-border); background: var(--wc-header-bg);
   }
@@ -1577,7 +1577,7 @@ body.pin-mode #main { cursor: crosshair; }
 .phone .pane.narrow .pane-type { display: inline-block; }
 .phone .pane.minimized.peek { display: flex; }      /* a minimized block, shown here only */
 .phone #dock, .phone #more-menu [data-act="wipe"] { display: none; }
-.phone .bottombar { height: calc(60px + env(safe-area-inset-bottom)); padding: 0 12px env(safe-area-inset-bottom); }
+.phone .bottombar { height: var(--bb-h); padding: 0 12px env(safe-area-inset-bottom); }
 .phone .bb-stepper button { width: 44px; height: 44px; font-size: 16px; }
 .phone :is(.bb-return, .bb-graph, .bb-queue) { height: 44px; font-size: 13px; }
 /* the glance is a bottom sheet */
@@ -1933,6 +1933,17 @@ body.pin-mode #main { cursor: crosshair; }
 }
 
 /* ── U32 · narrow posture · viewport.js ── */
+/* The bottom bar's height, the one number the things that ride its top edge
+   (the phone pull, design spec §8.2) also read. Structure, not theme — like
+   --cs-bar-h, not a --wc-* token. 0 where there is no bottom bar (760px and
+   up); the narrow bar; and the phone's taller one (.phone is on <html>, so
+   :root.phone out-ranks :root inside the one breakpoint). viewport.js keeps
+   the narrow and phone answers for script; width stays CSS's. */
+:root { --bb-h: 0px; }
+@media (max-width: 759px) {
+  :root { --bb-h: calc(52px + env(safe-area-inset-bottom)); }
+  :root.phone { --bb-h: calc(60px + env(safe-area-inset-bottom)); }
+}
 
 /* ── U33 · the chat dock · chat-dock.js ── */
 
