@@ -24,6 +24,9 @@ import { isPickingFile } from './brand.js';
 import { openSessions, toggleSessions } from './sessions.js';
 import { closePaneHistory } from './pane-history.js';
 import { isRemote } from './remote.js';
+import { bus } from './bus.js';
+import { escapeChatViews } from './chat-slots.js';
+import { closeChat, resetChatWindow } from './chat-dock.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 
@@ -98,6 +101,38 @@ function dismissFrom(el) {
   }
 }
 
+/* ---------- docks: closed only by a pointerdown on the zones they name ----------
+   A dock (the chat drawer, #chat-dock) is NOT a transient panel: it is in no
+   OPEN_PANELS class, so focus leaving it, the window blurring (the user
+   switching to the terminal) and another panel opening never close it. It
+   declares instead WHERE an outside press closes it — `data-dismiss-zone`, a
+   selector list ("#contents-nav, .well-wrap": the surface) — and it closes on a
+   pointerdown inside one of those and in no other case, so the queue rail, the
+   topbar, the status bar, a tray and every popover leave it open (design spec
+   §7.8). A window-mode dock carries no attribute and never closes this way.
+
+   Containment is composed: the target is walked up through each shadow root's
+   host (lightOf, below), because `closest` stops at a shadow boundary and a
+   press inside a pane is a press on the surface. A dock closes through its
+   owner — the chat dock without pulling focus back, since the press already put
+   the user somewhere — and any other zone element by `.hidden`. */
+const OPEN_DOCKS = '[data-dismiss-zone]:not(.hidden)';
+function closeDock(el) {
+  if (el.id === 'chat-dock') { closeChat({ returnFocus: false }); return; }
+  el.classList.add('hidden');
+  document.querySelectorAll(`[aria-controls="${el.id}"]`).forEach((c) => c.setAttribute('aria-expanded', 'false'));
+}
+function dismissDocks(el) {
+  const at = el && lightOf(el);
+  if (!at || !at.closest) return;
+  for (const dock of document.querySelectorAll(OPEN_DOCKS)) {
+    const zone = dock.getAttribute('data-dismiss-zone');
+    let inZone = false;
+    try { inZone = !!zone && !!at.closest(zone); } catch { inZone = false; }   // a malformed selector names no zone
+    if (inZone && !dock.contains(at)) closeDock(dock);
+  }
+}
+
 function initDismissLayer() {
   // The drawer opens itself (it is not a `togglePopover` panel), and must still
   // obey "one panel at a time". A window event keeps that one-way: drawer.js
@@ -106,7 +141,13 @@ function initDismissLayer() {
   window.addEventListener('wc:close-popovers', (e) => closeAllPopovers(e.detail && e.detail.keep));
   // pointerdown, not click: it beats the trigger's own click handler, which is
   // what makes the skip-the-owned-panel dance above work.
-  document.addEventListener('pointerdown', (e) => dismissFrom(eventTarget(e)), true);
+  // The same pointerdown closes an open dock pressed outside on its zones —
+  // and only this path does: focus and blur below never reach a dock.
+  document.addEventListener('pointerdown', (e) => {
+    const el = eventTarget(e);
+    dismissFrom(el);
+    dismissDocks(el);
+  }, true);
   // focus leaving a panel dismisses it too (tabbing past it, or a pane taking focus)
   document.addEventListener('focusin', (e) => {
     const el = eventTarget(e);
@@ -331,6 +372,14 @@ async function buildPalette(q) {
     { kind: 'command', label: 'Pin comment', key: 'C', run: togglePinMode },
     { kind: 'command', label: 'Settings', run: openSettings },
     { kind: 'command', label: 'Sessions…', key: 'S', run: openSessions },
+    { kind: 'command', label: 'Chat with Claude', key: 'M', run: openChatComposer },
+    // The keyboard way out of a window dragged somewhere unusable: the handles
+    // are pointer-only.
+    { kind: 'command', label: 'Reset the chat window', run: resetChatWindow },
+    // The first chip in the status bar: its own trigger, so the row opens what
+    // a click would — the "Under development" note today, the first non-empty
+    // tray once the trays own the chips. Listed only while there is one.
+    ...(firstChip() ? [{ kind: 'command', label: 'Background tasks', run: () => { const b = firstChip(); if (b) b.click(); } }] : []),
     ...(remote ? [] : [{ kind: 'command', label: 'Set up remote access…', run: openRemoteSetup }]),
   ];
   // The blocks on the page now — the design's "block" rows. What is SHOWN
@@ -423,6 +472,12 @@ function initPalette() {
   });
 }
 
+// "Message Claude": open the chat on its composer. Sent whether or not the chat
+// is open — an open dock only re-applies the focus. Nothing answers it below
+// 760px until the phone sheet does.
+function openChatComposer() { bus.emit('chat:open', { view: 'chat', focus: 'composer' }); }
+function firstChip() { const c = $('cs-chips'); return c ? c.querySelector('button') : null; }
+
 /* ---------- keyboard legend ---------- */
 const isLegendOpen = () => { const el = $('key-legend'); return !!el && !el.classList.contains('hidden'); };
 function toggleLegend(force) {
@@ -498,7 +553,10 @@ function initBottomBar() {
      1. the glance / float preview      ┐ raised from INSIDE the overlay, so they
      2. the graph rename panel          ┘ must never outlive it   (escapeInOverlay)
      3. the graph overlay itself        ┘
-     4. every chrome panel + the pinned queue rail
+     4. every chrome panel + pin mode + the pinned queue rail
+     5. the chat (chat-slots escapeChatViews) — only when 4 had nothing open,
+        so ONE layer goes per press: a tray or the bar's note, then a detail
+        view the dock pops, then the drawer (or a window holding focus)
 
    An editable chrome field that owns its own Escape (a comment reply draft, the
    bookmark / new-graph / wipe name, the palette input) still wins over 4 — but not
@@ -510,9 +568,12 @@ export function handleEscape() {
   // so it closes first — the overlay under it survives that Escape.
   if (isOverlayOpen() && isLegendOpen()) { toggleLegend(false); return; }
   if (escapeInOverlay()) return;      // glance ▸ rename panel ▸ the overlay
+  // Read BEFORE anything closes: whether this press had a chrome layer to take.
+  const hadLayer = openPanels().length > 0 || railPinned || document.body.classList.contains('pin-mode');
   closeAllPopovers();                 // the palette, the legend and a comment thread are panels too
   setPinMode(false);                  // …and Escape leaves pin mode, armed or not
   if (railPinned) { railPinned = false; setRail(false); }
+  if (!hadLayer) escapeChatViews();   // the chat is the last layer, one per press
 }
 
 /* ---------- modality: the three modal layers ----------
@@ -720,6 +781,12 @@ function initKeyboard() {
       case 's': case 'S': e.preventDefault(); toggleSessions(); break;
       case 'r': case 'R': e.preventDefault(); openReplay(); break;   // to the node on screen
       case 'c': case 'C': e.preventDefault(); togglePinMode(); break;
+      // M, "Message Claude" (the bar's step advertises aria-keyshortcuts="M").
+      // Inert under a float preview and the replay player, as ⌘K is; the
+      // overlay and an editable field already returned above.
+      case 'm': case 'M':
+        if (hasFloatPreview() || isReplayOpen()) break;
+        e.preventDefault(); openChatComposer(); break;
       case 'b': case 'B': e.preventDefault(); togglePopover('bookmark-pop', true); { const bm = $('bookmark-name'); if (bm) setTimeout(() => bm.focus(), 0); } break;
       case '[': e.preventDefault(); stepNode('up'); break;
       case ']': e.preventDefault(); stepNode('down'); break;
