@@ -222,6 +222,10 @@ test('classifyContext: quoted fragments are joined, and a glob in a credentials 
     ["cat ~/.a'w's/cred*", 'cloud'],
     ['cat < ~/.n"p"mrc', 'pkg'],
     ['echo x && cat ~/".npm"rc | head', 'pkg'],
+    // A `${...}` expansion's brace is not a glob: the glob after it is.
+    ['cat ${HOME}/.aws/*', 'cloud'],
+    ['cat ${HOME}/.kube/*', 'cloud'],
+    ['cat "${HOME}/.aws/"cred*', 'cloud'],
   ];
   for (const [command, category] of cases) {
     assert.deepEqual(classifyContext({ command }), { withhold: category, mode: null }, command);
@@ -577,7 +581,7 @@ test('adversarial command strings finish in linear time', (t) => {
     // U23b: env's option arguments, glued quoted fragments, and globs.
     'env option arguments': `env ${rep('-u x ')}`, 'env option clusters': `env ${rep('-iu ')}`, 'env long options': `env ${rep('--unset x ')}`,
     'glued fragments': rep('a"'), 'glued quoted pieces': rep('.n"p"m=rc\''), 'globs in a word': rep('a/*'),
-    'glob pieces': rep('.aws/*,'), 'a deep glob': `${rep('a/')}*`, 'brace globs': rep('{a,'),
+    'glob pieces': rep('.aws/*,'), 'a deep glob': `${rep('a/')}*`, 'brace globs': rep('{a,'), 'expansions in a path': rep('${a}/'),
   };
   let worst = ['', 0];
   const text = 'GITHUB_TOKEN=abc\nplain line';
