@@ -3,6 +3,7 @@
 // bookmark / export / wipe actions. Owns the view-state transitions
 // (applyActive/applyLock/updateChip) every other module reads.
 import { view, $ } from './state.js';
+import { bus } from './bus.js';
 import { store } from './store.js';
 import { nodeById, labelFor } from './labels.js';
 import { fullReset, applySnapshot, panes, syncReadonly } from './mounts.js';
@@ -28,6 +29,17 @@ export function pillState() {
       : { cls: 'locked', text: `locked ${labelFor(view.activeId)}` };
   }
   return { cls: '', text: `active ${labelFor(view.activeId)}` };
+}
+
+// The node on screen, as chrome-bus `view` {activeId, viewedId} (design spec
+// §7.2): emitted from updateChip — every path that moves either id ends there —
+// and only when one of them changed, since updateChip runs often. The chat
+// stream reads it for the turn whose node is on screen.
+let lastView = { activeId: undefined, viewedId: undefined };
+function emitView() {
+  if (view.activeId === lastView.activeId && view.viewedId === lastView.viewedId) return;
+  lastView = { activeId: view.activeId, viewedId: view.viewedId };
+  bus.emit('view', { ...lastView });
 }
 
 export function updateChip() {
@@ -63,6 +75,7 @@ export function updateChip() {
   if (bm && document.activeElement !== bm) bm.value = (cur && cur.name) || '';
   // the page's title slot and its H1 meta line name the node shown
   syncPageMeta();
+  emitView();
 }
 
 export function applyActive(id) {
