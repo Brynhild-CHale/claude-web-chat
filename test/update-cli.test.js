@@ -329,6 +329,19 @@ test('update names `claude-web-chat doctor` for a project registered only throug
   assert.doesNotMatch(out, /cannot resolve/, 'a resolvable entry is never diagnosed as unresolvable');
   assert.equal(fs.existsSync(path.join(cfg, '.claude.json')), false, 'update wrote nothing into Claude Code\'s config');
 
+  // A rejected .mcp.json server is not asked about at launch — its tools are
+  // hidden — so the doctor line says that, not "asks to approve".
+  const rejected = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-rej-')));
+  fs.mkdirSync(path.join(rejected, '.web-chat'));
+  fs.writeFileSync(path.join(rejected, '.mcp.json'), JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [stableBin('claude-web-chat-mcp')] } } }, null, 2) + '\n');
+  fs.mkdirSync(path.join(rejected, '.claude'));
+  fs.writeFileSync(path.join(rejected, '.claude', 'settings.local.json'), JSON.stringify({ disabledMcpjsonServers: ['web-chat'] }) + '\n');
+  out = await run(rejected);
+  assert.match(out, /⚠ web-chat was rejected in Claude Code here, so its MCP tools are hidden — run `claude-web-chat doctor` here/);
+  assert.doesNotMatch(out, /asks to approve/, 'Claude Code does not ask about a rejected server');
+  assert.doesNotMatch(out, /cannot resolve/);
+  assert.equal(fs.existsSync(path.join(cfg, '.claude.json')), false, 'update wrote nothing into Claude Code\'s config');
+
   const viaLocal = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-local-')));
   fs.mkdirSync(path.join(viaLocal, '.web-chat'));
   fs.writeFileSync(path.join(cfg, '.claude.json'), JSON.stringify({ projects: { [viaLocal]: { mcpServers: { 'web-chat': { command: 'node', args: [stableBin('claude-web-chat-mcp')] } } } } }));

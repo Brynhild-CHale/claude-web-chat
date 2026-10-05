@@ -438,6 +438,33 @@ test('an entry at another existing copy, or with a different env, is removed and
   assert.deepEqual(readConfig().projects[two].mcpServers['web-chat'].env, { WEB_CHAT_PORT: '5199' });
 });
 
+test('a repoint is verified against the entry asked for: a failed remove plus "already exists" is unverified', (t) => {
+  withTempHome(t);
+  isolateClaude(t);
+  const copy = tmpRoot('wc-mls-copy-');
+  fs.mkdirSync(path.join(copy, 'bin'));
+  fs.writeFileSync(path.join(copy, 'package.json'), JSON.stringify({ name: 'claude-web-chat' }));
+  const oldBin = path.join(copy, 'bin', 'claude-web-chat-mcp.js');
+  fs.writeFileSync(oldBin, '');
+  const root = project();
+  writeMcp(root, { 'web-chat': ownEntry() });
+  setLocalEntry(root, { command: 'node', args: [oldBin] });
+  // `remove` fails, so the old entry stays and `add` says it already exists —
+  // a web-chat entry is present, but not the one just asked for.
+  const calls = [];
+  const runClaude = (argv) => {
+    calls.push(argv[1]);
+    if (argv[1] === 'remove') return { ok: false, stderr: 'could not remove' };
+    return { ok: false, stderr: 'MCP server web-chat already exists in local config' };
+  };
+  const out = reg.apply(root, { runClaude, mcp: 'local' });
+  assert.deepEqual(calls, ['remove', 'add']);
+  assert.equal(out.mcp.status, 'unverified');
+  assert.ok(readMcp(root).mcpServers['web-chat'], 'the .mcp.json entry stays');
+  assert.equal(fs.existsSync(projectPaths(root).mcpRegistration), false, 'no record of a registration that did not happen');
+  assert.deepEqual(reg.inspectLocal(root).entry.args, [oldBin], 'the old entry is still what Claude Code has');
+});
+
 // ── the .mcp.json migration ─────────────────────────────────────────────────
 
 test('migration: an untracked own entry goes only after a VERIFIED local entry, and the empty file with it', (t) => {
@@ -532,6 +559,21 @@ test('migration: nested Claude Code keys or nested approvals keep the entry, and
   out = reg.apply(two, { runClaude: fakeClaude().fn, mcp: 'local' });
   assert.equal(out.mcp.mcpJson.reason, 'nested');
   assert.ok(reg.describeMcp(reg.mcpState(two)).notes.some((n) => n.includes(approving)));
+});
+
+test('a nested folder with both a Claude Code key and an approving settings.local.json is listed once', (t) => {
+  withTempHome(t);
+  isolateClaude(t);
+  const root = project();
+  const both = path.join(root, 'both');
+  fs.mkdirSync(claudePaths(both).dir, { recursive: true });
+  fs.writeFileSync(claudePaths(both).settingsLocal, JSON.stringify({ enabledMcpjsonServers: ['web-chat'] }));
+  writeConfig({ projects: { [both]: { hasTrustDialogAccepted: true } } });
+  writeMcp(root, { 'web-chat': ownEntry() });
+  const out = reg.apply(root, { runClaude: fakeClaude().fn, mcp: 'local' });
+  assert.equal(out.mcp.mcpJson.reason, 'nested');
+  assert.deepEqual(out.mcp.nested, [both]);
+  assert.equal(reg.mcpResultLines(out.mcp).join('\n').split(both).length - 1, 1, 'named once in the report');
 });
 
 // ── a deliberate No ─────────────────────────────────────────────────────────
