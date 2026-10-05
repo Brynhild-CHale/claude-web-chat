@@ -149,6 +149,41 @@ test('the project is --project, else the installed project at or above the cwd (
   assert.equal(viaSub.r.root, root, '`on --project` names an installed project through resolveRoot');
 });
 
+test('an absolute --project names the same project for on, status and off (resolveRoot), unless that path holds its own grant', async (t) => {
+  withTempHome(t);
+  const access = createFakeAccess();
+  const root = project(t);
+  const src = path.join(root, 'src');
+  fs.mkdirSync(src, { recursive: true });
+  writeConfig(access.config());
+
+  const on = await run(['on', '--project', src]);
+  assert.equal(on.r.root, root);
+  assert.deepEqual(readConfig().remote.mirror, { [root]: 'full' });
+
+  const status = await run(['status', '--project', src]);
+  assert.equal(status.r.project.root, root, 'status walks up to the same installed root on wrote');
+  assert.equal(status.r.project.level, 'full');
+  assert.ok(status.c.text().includes(`(${root}): the chat mirror is full`), status.c.text());
+
+  const off = await run(['off', '--project', src]);
+  assert.equal(off.r.root, root);
+  assert.equal(off.r.previous, 'full');
+  assert.equal(off.r.changed, true);
+  assert.equal(readConfig().remote.mirror, undefined, 'off took away the grant on wrote, not nothing');
+
+  // A deleted nested project under an installed parent: its own path carries
+  // the grant, so its own path is what status reads and off removes.
+  const nested = path.join(root, 'gone-nested');
+  writeConfig(access.config({ remote: { mirror: { [nested]: 'read', [root]: 'full' } } }));
+  const nestedStatus = await run(['status', '--project', nested]);
+  assert.equal(nestedStatus.r.project.root, nested);
+  assert.equal(nestedStatus.r.project.level, 'read');
+  const nestedOff = await run(['off', '--project', nested]);
+  assert.equal(nestedOff.r.root, nested);
+  assert.deepEqual(readConfig().remote.mirror, { [root]: 'full' }, 'only the nested grant went');
+});
+
 test('`on` outside a project is a userFacing error; `off --project` takes an absolute path with no .web-chat/', async (t) => {
   const home = withTempHome(t);
   const access = createFakeAccess();
