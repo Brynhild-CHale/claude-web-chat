@@ -420,7 +420,7 @@ test('hook index: enabled + no server -> emits no-server notice (exit 0)', () =>
 
 // --- the session a turn hook speaks for (in process; spec §3.1, §1.3) ---
 
-test('turn-begin: the post carries the session and the prompt section; the lock\'s message and author stay 0.8.0\'s', async (t) => {
+test('turn-begin: the post carries the session and the prompt section; a typed prompt\'s lock message and author stay 0.8.0\'s, a task notification\'s are the task\'s', async (t) => {
   withTempHome(t);
   const stub = await stubServer();
   t.after(() => stub.close());
@@ -437,12 +437,14 @@ test('turn-begin: the post carries the session and the prompt section; the lock\
   });
 
   // A background task's completion arrives as a prompt (V3, V5): the envelope
-  // says so — authored 'task', with its <summary> on one line — while the lock
-  // keeps 0.8.0's message and author (tranche 2 authors the lock, spec §3.1).
+  // says so — authored 'task', with its <summary> on one line — and from
+  // tranche 2 (U30, spec §3.1 step 2) so does the lock: author 'task', message
+  // `background task: <summary>`. (Until U30 this asserted the lock kept
+  // 0.8.0's author 'user' and the raw notification as its message.)
   const note = '<task-notification>\n<task-id>b7</task-id>\n<summary>Background command "npm test"\n  completed</summary>\n</task-notification>';
   const task = await posted(promptPayload(root, { prompt: note }));
-  assert.equal(task.message, note);
-  assert.equal(task.author, 'user');
+  assert.equal(task.message, 'background task: Background command "npm test" completed');
+  assert.equal(task.author, 'task');
   assert.deepEqual(task.prompt, { author: 'task', text: note, task_summary: 'Background command "npm test" completed' });
 
   // A prompt past the envelope's cap: the lock keeps it whole, as it always
