@@ -190,6 +190,27 @@ test('tool_result variants: error, denied, persisted, structuredPatch, images, l
   assert.strictEqual(model.serializeItem(id(1)).status, 'denied');
 });
 
+test('denied needs is_error: a successful Read whose text quotes the denial reads done', () => {
+  // U26@normalize.js:528-denied (ruled 2026-10-05): the denial text alone is
+  // content (a Read of a log, a doc quoting Claude Code); only an error result
+  // carrying it is a denial.
+  const r = createRecords({ seed: 14 });
+  r.prompt('go');
+  const calls = r.assistant([
+    { type: 'tool_use', name: 'Read', input: { file_path: '/tmp/project/notes.md' } },
+    { type: 'tool_use', name: 'Bash', input: { command: 'rm -rf build' } },
+  ]);
+  const id = (i) => calls[i].message.content[0].id;
+  r.toolResult(id(0), "The user doesn't want to proceed with this tool use, the doc says.");
+  r.toolResult(id(1), "The user doesn't want to proceed with this tool use.", { isError: true });
+  const { changes } = run(r.records);
+  const res = (i) => last(items(changes, 'tool_call'), id(i)).item;
+  assert.strictEqual(res(0).status, 'done');
+  assert.strictEqual(res(0).result.is_error, false);
+  assert.strictEqual(res(1).status, 'denied');
+  assert.strictEqual(res(1).result.is_error, true);
+});
+
 test('an interrupt marker as a tool result reads interrupted', () => {
   const r = createRecords({ seed: 13 });
   r.prompt('go');

@@ -360,7 +360,7 @@ test('catch-up: when the ids differ, a mid-turn hook\'s turn binds by order only
   f.tx(reply('r_3', 'u3c', 'u3b', 'All green.'), duration('u3d', 'u3c', 50000, { ts: 200500 }));
   assert.equal(f.model.turn('P3').duration_ms, 50000);
   assert.deepEqual(f.closes().map((x) => [x.turn_id, x.by]), [['P1', 'transcript'], ['P2', 'transcript'], ['P3', 'stop']]);
-  assert.equal(f.model.item('rl_P3'), null, 'the transcript\'s reply replaced the Stop\'s');
+  assert.equal(f.model.item('rh_P3'), null, 'the transcript\'s reply replaced the Stop\'s');
   // When the Stop came first, the transcript's turn takes the hook turn's close, unannounced.
   const g = harness({ start: 200000 });
   g.hook('PreToolUse', toolEnv('H3', 'toolu_live', 'Bash'));
@@ -369,12 +369,12 @@ test('catch-up: when the ids differ, a mid-turn hook\'s turn binds by order only
   const t3 = g.model.turn('P3');
   assert.equal(t3.status, 'done');
   assert.equal(t3.replaces, 'H3');
-  assert.equal(g.model.item('rl_P3').text, 'All green.', 'the Stop\'s provisional reply moved over');
+  assert.equal(g.model.item('rh_P3').text, 'All green.', 'the Stop\'s provisional reply moved over');
   assert.equal(g.tm.openTurnOf(C), null);
   assert.deepEqual(g.closes().map((x) => [x.turn_id, x.by]), [['H3', 'stop'], ['P1', 'transcript'], ['P2', 'transcript']]);
   assert.equal(g.tm.linkState('P3'), 'pending', 'closed, for the graph link to attach');
   g.tx(reply('r_3', 'u3c', 'u3b', 'All green.'), duration('u3d', 'u3c', 50000, { ts: 200500 }));
-  assert.equal(g.model.item('rl_P3'), null);
+  assert.equal(g.model.item('rh_P3'), null);
   assert.equal(g.model.turn('P3').status, 'done');
   // A transcript turn that began after the hook's first event is a later turn: no merge.
   const k = harness({ start: 200000 });
@@ -455,18 +455,60 @@ test('rule 3: Stop closes done, and its message is a provisional reply until the
   assert.ok(Number.isFinite(t.ended_at));
   assert.deepEqual(h.closes(), [{ kind: 'mirror', op: 'turn-closed', conversation_id: C, session_id: S, turn_id: 'pA', outcome: 'done', by: 'stop' }]);
   assert.equal(h.closed.length, 1);
-  const rl = h.model.item('rl_pA');
-  assert.equal(rl.text, 'All done.');
-  assert.equal(rl.source, 'hook');
-  assert.equal(rl.provisional, true);
+  const rh = h.model.item('rh_pA');
+  assert.equal(rh.text, 'All done.');
+  assert.equal(rh.source, 'hook');
+  assert.equal(rh.provisional, true);
   assert.equal(h.model.turn('pA').reply_preview, 'All done.');
   h.model.takeChanges();
   // The transcript's reply replaces it.
   h.tx(reply('r_m9', 'u3', 'u2', 'All done.'));
-  assert.equal(h.model.item('rl_pA'), null);
+  assert.equal(h.model.item('rh_pA'), null);
   assert.equal(h.model.item('r_m9').source, 'transcript');
   assert.deepEqual(h.model.itemsOf('pA').filter((i) => i.kind === 'reply').map((i) => i.id), ['r_m9']);
-  assert.ok(h.model.takeChanges()[0].removed_items.includes('rl_pA'));
+  assert.ok(h.model.takeChanges()[0].removed_items.includes('rh_pA'));
+});
+
+test('rule 3: the Stop\'s provisional reply is rh_<id>, so a command\'s local item rl_<id> survives every reply', () => {
+  // U26@rl-id-collision (ruled 2026-10-05): rl_<turnId> is the normalizer's local
+  // item alone (a command's or bash's output); the Stop's provisional reply is rh_.
+  const local = (pid, uuid, parent, output) =>
+    ({ type: 'item', uuid, parent_uuid: parent, item: { id: `rl_${pid}`, kind: 'local', local: '/compact', output, is_error: false } });
+  // A transcript reply in the same turn leaves the local item alone.
+  const h = harness();
+  h.hook('UserPromptSubmit', promptEnv('pA', '/compact'));
+  h.tx(opener('pA', 'u1', null, '/compact', { kind: 'command', command: '/compact' }), local('pA', 'u2', 'u1', 'Compacted.'));
+  h.tx(reply('r_1', 'u3', 'u2', 'Here is the summary.'));
+  assert.equal(h.model.item('rl_pA').kind, 'local');
+  assert.equal(h.model.item('rl_pA').output, 'Compacted.');
+  // A late Stop's provisional reply neither overwrites it nor, with turn_duration, removes it.
+  const late = harness();
+  late.hook('UserPromptSubmit', promptEnv('pA', '/compact'));
+  late.tx(opener('pA', 'u1', null, '/compact', { kind: 'command', command: '/compact' }), local('pA', 'u2', 'u1', 'Compacted.'),
+    reply('r_1', 'u3', 'u2', 'Working.'), toolItem('tu1', 'u4', 'u3', 'Read'));
+  late.hook('Stop', { prompt_id: 'pA', stop: { last_assistant_message: 'Done compacting.' } });
+  assert.equal(late.model.item('rl_pA').kind, 'local', 'the Stop did not overwrite the local item');
+  assert.equal(late.model.item('rl_pA').output, 'Compacted.');
+  const rh = late.model.item('rh_pA');
+  assert.equal(rh.kind, 'reply');
+  assert.equal(rh.text, 'Done compacting.');
+  assert.equal(rh.source, 'hook');
+  late.tx(duration('u5', 'u4', 77));
+  assert.equal(late.model.item('rh_pA'), null, 'the backstop removed the provisional reply');
+  assert.equal(late.model.item('rl_pA').output, 'Compacted.', 'and kept the local item');
+  // The provisional reply still goes when the transcript's reply lands, and the local item stays.
+  const s = harness();
+  s.hook('UserPromptSubmit', promptEnv('pA', '/compact'));
+  s.tx(opener('pA', 'u1', null, '/compact', { kind: 'command', command: '/compact' }), local('pA', 'u2', 'u1', 'Compacted.'));
+  s.hook('Stop', { prompt_id: 'pA', stop: { last_assistant_message: 'All set.' } });
+  assert.equal(s.model.item('rh_pA').text, 'All set.');
+  s.model.takeChanges();
+  s.tx(reply('r_2', 'u3', 'u2', 'All set.'));
+  assert.equal(s.model.item('rh_pA'), null);
+  assert.equal(s.model.item('rl_pA').output, 'Compacted.');
+  const removed = s.model.takeChanges()[0].removed_items;
+  assert.ok(removed.includes('rh_pA'));
+  assert.ok(!removed.includes('rl_pA'));
 });
 
 test('rule 3: no provisional reply when the transcript\'s final reply is already the last word', () => {
@@ -475,7 +517,7 @@ test('rule 3: no provisional reply when the transcript\'s final reply is already
   h.tx(opener('pA', 'u1', null, 'q'), toolItem('tu1', 'u2', 'u1', 'Read'), reply('r_1', 'u3', 'u2', 'Final.'),
     { type: 'item', uuid: 'u4', item: { id: 'n_x', kind: 'notice', notice: 'info', text: 'a file changed' } });
   h.hook('Stop', { prompt_id: 'pA', stop: { last_assistant_message: 'Final.' } });
-  assert.equal(h.model.item('rl_pA'), null);
+  assert.equal(h.model.item('rh_pA'), null);
   assert.equal(h.model.turn('pA').reply_preview, 'Final.');
 });
 
@@ -491,14 +533,14 @@ test('rule 3: turn_duration closes a turn with its duration; after a Stop it onl
   s.hook('UserPromptSubmit', promptEnv('pA', 'go'));
   s.tx(opener('pA', 'u1', null, 'go'), reply('r_1', 'u2', 'u1', 'Working on it.'), toolItem('tu1', 'u3', 'u2', 'Bash'));
   s.hook('Stop', { prompt_id: 'pA', stop: { last_assistant_message: 'Fixed.' } });
-  assert.ok(s.model.item('rl_pA'), 'the last word on disk was a tool call');
+  assert.ok(s.model.item('rh_pA'), 'the last word on disk was a tool call');
   s.tx(duration('u4', 'u3', 99));
   t = s.model.turn('pA');
   assert.equal(t.status, 'done');
   assert.equal(t.duration_ms, 99);
   assert.equal(s.closes().length, 1, 'one close, one transition');
   // The backstop: a transcript reply exists, so the provisional one goes with turn_duration.
-  assert.equal(s.model.item('rl_pA'), null);
+  assert.equal(s.model.item('rh_pA'), null);
 });
 
 test('rule 3: StopFailure closes error', () => {
@@ -576,7 +618,7 @@ test('rule 3: the first close wins, and a late Stop corrects a presumed interrup
   assert.equal(t.status, 'done');
   assert.equal('ended_by' in t, false);
   assert.equal(late.closes().length, 1, 'the late Stop emits no second close');
-  assert.equal(late.model.item('rl_pA').text, 'finished after all');
+  assert.equal(late.model.item('rh_pA').text, 'finished after all');
 });
 
 test('closeTurn with ended_by sets it on the header; without it the field stays absent', () => {
