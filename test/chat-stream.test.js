@@ -488,7 +488,9 @@ test('topbar emits `view` {activeId, viewedId} when either changes and not other
 test('"3 files +40 −12 · View changes" once code is ready, View changes only with a diff detail registered', async () => {
   const panel = await shell.importApp('chat-panel.js');
   await follow([turn('d1', 1, [prompt('d1', 'edit')], { node: { id: 'n30', label: 'n1.30', role: 'commit' },
-    code: { status: 'ready', files: 3, additions: 40, deletions: 12 } })]);
+    code: { status: 'ready', files: 3, additions: 40, deletions: 12 } }),
+  turn('d2', 2, [prompt('d2', 'chat only')], { node: { id: 'n30', label: 'n1.30', role: 'folded' },
+    folded_into: { id: 'n30', label: 'n1.30' }, code: { status: 'ready', files: 1, additions: 2, deletions: 0 } })]);
   assert.equal(text(turnEl('d1').querySelector('.ct-files')), '3 files +40 −12');
   assert.equal(turnEl('d1').querySelector('.ct-view-changes'), null, 'no diff view registered');
   const opened = [];
@@ -499,6 +501,10 @@ test('"3 files +40 −12 · View changes" once code is ready, View changes only 
     await waitUntil(() => turnEl('d1').querySelector('.ct-view-changes'), { what: 'View changes' });
     shell.click(turnEl('d1').querySelector('.ct-view-changes'));
     assert.deepEqual(opened, [{ view: 'diff', node_id: 'n30' }]);
+    // A folded turn has no node of its own: its diff is asked for by the turn.
+    await waitUntil(() => turnEl('d2').querySelector('.ct-view-changes'), { what: 'the folded turn\'s View changes' });
+    shell.click(turnEl('d2').querySelector('.ct-view-changes'));
+    assert.deepEqual(opened[1], { view: 'diff', id: 'd2' }, 'a folded turn opens the diff by its turn id');
   } finally {
     off();
     unreg();
@@ -591,6 +597,17 @@ test('a code block\'s Copy calls copyText; a click on span.md-img-remote makes a
   assert.ok(img, 'an image now');
   assert.equal(img.getAttribute('src'), 'https://example.com/cat.png');
   assert.equal(turnEl('c1').querySelector('span.md-img-remote'), null);
+  // The click re-checks the engine's gate: a placeholder whose data-src is not a
+  // remote http(s) image loads nothing.
+  const forged = doc.createElement('span');
+  forged.className = 'md-img-remote';
+  forged.setAttribute('data-src', 'javascript:alert(1)');
+  forged.textContent = 'x';
+  turnEl('c1').querySelector('.ct-prose').append(forged);
+  shell.click(forged);
+  assert.ok(forged.isConnected, 'the placeholder stays');
+  assert.equal(turnEl('c1').querySelectorAll('img').length, 1, 'no image made from a non-remote src');
+  forged.remove();
 });
 
 test('a chat h1 inside the stream has no border-bottom and keeps U35\'s size: page.css\'s .md-block rules do not reach it', async () => {
