@@ -57,6 +57,69 @@ test('golden: the page flavour reproduces every recorded output through the brow
   }
 });
 
+// The fixture's fuzz section: the same generator that recorded it (seeded LCG;
+// odd cases open with 1-7 hashes and a blank so most of them reach the heading
+// path). Change nothing here without re-recording from the OLD module.
+function fuzzInputs(seed, count) {
+  const A = ['#', ' ', '\t', 'x', '\n'];
+  let st = seed;
+  const r = () => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st / 0x7fffffff; };
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    let s = k % 2 ? '#'.repeat(1 + Math.floor(r() * 7)) + (r() < 0.5 ? ' ' : '\t') : '';
+    for (let j = 0, n = Math.floor(r() * 24); j < n; j++) s += A[Math.floor(r() * A.length)];
+    out.push(s);
+  }
+  return out;
+}
+
+test('golden: renderMarkdown() and headings() match the old module over the recorded heading fuzz', async () => {
+  const crypto = require('node:crypto');
+  const { seed, count, digests } = GOLDEN.fuzz;
+  const inputs = fuzzInputs(seed, count);
+  assert.equal(digests.length, inputs.length);
+  const mod = await importSource(browserModuleSource());
+  const digest = (m, s) => crypto.createHash('sha256').update(JSON.stringify([m.renderMarkdown(s), m.headings(s)])).digest('hex').slice(0, 10);
+  for (let k = 0; k < inputs.length; k++) {
+    assert.equal(digest(md, inputs[k]), digests[k], `server, case ${k}: ${JSON.stringify(inputs[k])}`);
+    assert.equal(digest(mod, inputs[k]), digests[k], `browser module, case ${k}: ${JSON.stringify(inputs[k])}`);
+  }
+});
+
+// The whole-line heading regex the linear heading() replaced, kept here as the
+// oracle (test/ is outside the one-heading-regex ratchet's roots).
+const OLD_HEADING_RE = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+
+test('headings: the linear heading text equals the old regex\'s capture, edge cases and fuzz', () => {
+  const textOf = (line) => {
+    const m = /^<div class="md-chat"><h([1-6])>([\s\S]*)<\/h\1><\/div>$/.exec(chat(line));
+    return m ? [Number(m[1]), m[2]] : null;
+  };
+  const oracle = (line) => { const m = OLD_HEADING_RE.exec(line); return m ? [m[1].length, m[2]] : null; };
+  for (const [line, text] of [['#  #', '#'], ['# #', '#'], ['# a #', 'a'], ['# a#', 'a#'], ['## a # # ', 'a #'],
+    ['#\t \t# x #', '# x'], ['# ##', '##'], ['# a ##\t ', 'a'], ['###### six', 'six']]) {
+    assert.deepEqual(oracle(line)[1], text, `oracle ${JSON.stringify(line)}`);
+    assert.deepEqual(textOf(line), oracle(line), JSON.stringify(line));
+  }
+  // An empty heading renders an empty element, as before.
+  assert.equal(chat('# '), '<div class="md-chat"><h1></h1></div>');
+  // A line separator in the text was never a heading (`.` stops at it).
+  assert.equal(oracle('# a\u2028b'), null);
+  assert.ok(!/<h1>/.test(chat('# a\u2028b')));
+  assert.deepEqual(md.headings('# a\u2028b'), []);
+  let seed = 11;
+  const r = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const A = ['#', ' ', '\t', 'x'];
+  for (let k = 0; k < 20000; k++) {
+    let line = '#'.repeat(1 + Math.floor(r() * 7)) + (r() < 0.5 ? ' ' : '\t');
+    for (let j = 0, n = Math.floor(r() * 16); j < n; j++) line += A[Math.floor(r() * A.length)];
+    const want = oracle(line);
+    assert.deepEqual(textOf(line), want, JSON.stringify(line));
+    const page = md.headings(line);
+    assert.deepEqual(page.length ? [page[0].level, page[0].text] : null, want && want[0] <= 3 ? want : null, JSON.stringify(line));
+  }
+});
+
 test('page: headings() stays the page\'s — levels 1-3 only, chat levels never become sections', () => {
   assert.deepEqual(md.headings('# a\n#### b\n###### c\n### d'), [
     { level: 1, text: 'a', slug: 'a' },
@@ -327,12 +390,26 @@ test('chat: a fuzzed corpus only ever emits the allowed tags and attributes', ()
 
 test('chat: long pathological runs stay linear', () => {
   for (const t of ['['.repeat(200000), '!['.repeat(100000), '['.repeat(100000) + '](' + 'a'.repeat(99990), '~~'.repeat(100000),
-    '> '.repeat(100000), '| '.repeat(100000) + '\n|-|', ('- a\n  ').repeat(40000)]) {
+    '> '.repeat(100000), '| '.repeat(100000) + '\n|-|', ('- a\n  ').repeat(40000),
+    // A heading's blank run before its text used to backtrack quadratically.
+    '# a' + ' '.repeat(199990) + 'b', '# a' + '\t'.repeat(199990) + '#x']) {
     const t0 = Date.now();
     chat(t);
     renderMarkdown(t);
     assert.ok(Date.now() - t0 < 5000, `${JSON.stringify(t.slice(0, 12))}… took ${Date.now() - t0} ms`);
   }
+});
+
+test('chat: a long run of unbalanced ) after a URL trims in linear time', () => {
+  const t = ('http://' + ')'.repeat(4089) + ' ').repeat(48);
+  const t0 = Date.now();
+  const out = chat(t);
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+  assert.ok(!/<a\b/.test(out), 'every ) is unbalanced, leaving http:// with no host');
+  // The count is kept as the end walks back: punctuation and ) interleave.
+  assert.match(chat('https://a.test/x).'), />https:\/\/a\.test\/x<\/a>\)\.</);
+  assert.match(chat('https://a.test/(x)).,'), />https:\/\/a\.test\/\(x\)<\/a>\)\.,</);
+  assert.match(chat('https://a.test/((x)).'), />https:\/\/a\.test\/\(\(x\)\)<\/a>\.</);
 });
 
 /* ======================= one engine, one module ======================= */
