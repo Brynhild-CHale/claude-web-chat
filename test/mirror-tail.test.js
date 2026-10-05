@@ -333,6 +333,46 @@ test('deleted then re-created: waits while gone, then anchors and hands over onl
   assert.deepEqual(got.recs.map((x) => x.line), linesOf([...head, ...more]));
 });
 
+// A reset that anchors at EOF hands nothing over, so the head must be re-armed
+// when the reader is placed, not by the next record: otherwise a rewrite before
+// the next append goes unseen and the reader carries on mid-line in it.
+test('after a reset anchored at EOF, an in-place rewrite before the next append is still seen', async (t) => {
+  for (const first of ['replaced', 'truncated']) {
+    await t.test(first, async (st) => {
+      const { ch, sid, file, got, make } = rig(st);
+      const { r, head, more } = anchoredSet(first === 'replaced' ? 11 : 12);
+      ch.writeTranscript(sid, head);
+      if (first === 'truncated') fs.appendFileSync(file, '{"type":"assistant","partial');
+      const tl = make();
+      await tl.start();
+      assert.equal(got.recs.length, head.length);
+      const headBytes = bytes(textOf(head));
+
+      if (first === 'replaced') {
+        fs.writeFileSync(`${file}.new`, textOf(head)); // a byte-identical copy
+        fs.renameSync(`${file}.new`, file);
+      } else {
+        fs.truncateSync(file, headBytes); // the partial line rolled back
+      }
+      await tl.drain();
+      assert.deepEqual(got.resets.map((x) => [x.reason, x.anchoredAt, x.anchored]),
+        [[first, headBytes, true]]);
+      assert.equal(got.recs.length, head.length, 'the reset anchored at EOF and handed nothing over');
+
+      const inode = fs.statSync(file).ino;
+      const prefix = [r.meta('custom-title', { title: 'renamed' })];
+      fs.writeFileSync(file, textOf([...prefix, ...head, ...more])); // same inode, new head
+      assert.equal(fs.statSync(file).ino, inode);
+      await tl.drain();
+      assert.deepEqual(got.resets.map((x) => [x.reason, x.anchoredAt, x.anchored]),
+        [[first, headBytes, true], ['rewritten', bytes(textOf([...prefix, ...head])), true]]);
+      assert.deepEqual(got.recs.map((x) => x.line), linesOf([...head, ...more]), 'each record once');
+      assert.equal(got.recs.filter((x) => x.bad).length, 0, 'no record read from mid-line');
+      assertContiguous(got.recs.slice(head.length), file);
+    });
+  }
+});
+
 test('the anchor works before the first uuid: a file that opens with uuid-less records', async (t) => {
   const { ch, sid, file, got, make } = rig(t);
   const r = createRecords({ seed: 11 });
