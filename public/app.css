@@ -2274,7 +2274,9 @@ button.cp-session:hover, button.cp-session[aria-expanded="true"] { border-color:
   display: flex; flex-direction: column; gap: 6px; padding-left: 8px; border-left: 2px solid transparent;
 }
 .ct-turn.ct-viewed { border-left-color: var(--wc-accent); }
-.ct-turn.ct-superseded { opacity: .55; }
+/* Dimmed under the rewind notice, never the notice itself: opacity cannot be
+   undone on a child, so it goes on the turn's other parts. */
+.ct-turn.ct-superseded > :not(.ct-rewind) { opacity: .55; }
 .ct-open { display: flex; flex-direction: column; gap: 4px; }
 
 /* The user's words: a bubble on the right, at most 85 % wide, as typed. */
