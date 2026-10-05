@@ -545,6 +545,28 @@ test('with graph.redactText set, the lock message, trigger message, summary, rep
   assert.deepStrictEqual(leaks((await d.api.get('/api/graph')).text), []);
 });
 
+test('with graph.redactText set, a wake lock\'s message is masked when taken and when a re-wake re-stamps it, live and in _meta.json', async (t) => {
+  const d = await daemon(t);
+  const fakes = fakeSecrets({ seed: 31 }).filter((f) => ['sk-openrouter', 'sk-openai-legacy'].includes(f.id));
+  assert.equal(fakes.length, 2);
+  const [a, b] = fakes.map((f) => f.text);
+  const redactor = createRedactor();
+  d.graph.redactText = (s) => redactor.text(s);
+  const leaks = (hay) => findLeaks(hay, fakes).map((l) => l.id);
+
+  d.turns.acquireWakeLock(d.graph, d.ctx.bus, { message: `woken with ${a}` });
+  assert.equal(d.graph.lock.author, 'wake');
+  assert.match(d.graph.lock.message, /‹redacted:/);
+  assert.deepStrictEqual(leaks(d.graph.lock), [], 'the wake lock');
+  assert.deepStrictEqual(leaks(d.meta()), [], '_meta.json');
+
+  // A second wake on the fresh wake lock re-stamps its message.
+  d.turns.acquireWakeLock(d.graph, d.ctx.bus, { message: `woken again with ${b}` });
+  assert.match(d.graph.lock.message, /‹redacted:/);
+  assert.deepStrictEqual(leaks(d.graph.lock), [], 'the re-stamped wake lock');
+  assert.deepStrictEqual(leaks(d.meta()), [], '_meta.json after the re-stamp');
+});
+
 test('a redactText that throws keeps nothing; without one the text is kept as it is', async (t) => {
   const d = await daemon(t);
   await d.host('/api/turn-begin', { message: 'plain prompt', ...S1 });
