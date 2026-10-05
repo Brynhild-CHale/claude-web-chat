@@ -139,6 +139,9 @@ test('chat: ---, *** and ___ are rules; ~~strike~~ is <del>', () => {
 test('chat: a bare https:// URL autolinks with rel=noopener noreferrer, trailing punctuation left out', () => {
   const out = chat('see https://a.test/x?q=1&r=2. and (http://b.test/y)');
   assert.match(out, /<a href="https:\/\/a\.test\/x\?q=1&amp;r=2" target="_blank" rel="noopener noreferrer">https:\/\/a\.test\/x\?q=1&amp;r=2<\/a>\. and \(<a href="http:\/\/b\.test\/y" [^>]*>http:\/\/b\.test\/y<\/a>\)/);
+  // A balanced `)` belongs to the URL; only an unbalanced one closes the sentence.
+  assert.match(chat('see https://w.test/wiki/A_(b) now'), /<a href="https:\/\/w\.test\/wiki\/A_\(b\)" [^>]*>https:\/\/w\.test\/wiki\/A_\(b\)<\/a> now/);
+  assert.match(chat('(https://w.test/wiki/A_(b))'), /^<div class="md-chat"><p>\(<a href="https:\/\/w\.test\/wiki\/A_\(b\)" [^>]*>[^<]*<\/a>\)<\/p><\/div>$/);
   // Not inside a word, not inside a link's label, not without a host.
   assert.ok(!/<a/.test(chat('xhttps://a.test')));
   assert.equal((chat('[https://a.test](https://b.test)').match(/<a /g) || []).length, 1);
