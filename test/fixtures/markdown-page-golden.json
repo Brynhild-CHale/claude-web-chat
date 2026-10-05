@@ -1,0 +1,1405 @@
+{
+ "about": "The page flavour of lib/core/markdown.js renderMarkdown(), recorded at wc085/int 29228ee before the chat flavour was added (U35). test/markdown-chat.test.js asserts the page flavour reproduces every output byte for byte, server-side and through /app/markdown.js. Never regenerate it to make a test pass: a changed output is a page-flavour regression.",
+ "cases": [
+  {
+   "input": "",
+   "output": ""
+  },
+  {
+   "input": " ",
+   "output": ""
+  },
+  {
+   "input": "\n",
+   "output": ""
+  },
+  {
+   "input": "\n\n\n",
+   "output": ""
+  },
+  {
+   "input": "   \n\t\n",
+   "output": ""
+  },
+  {
+   "input": "plain text",
+   "output": "<p>plain text</p>"
+  },
+  {
+   "input": "two\nlines",
+   "output": "<p>two\nlines</p>"
+  },
+  {
+   "input": "para one\n\npara two",
+   "output": "<p>para one</p>\n<p>para two</p>"
+  },
+  {
+   "input": "trailing spaces   \nnext",
+   "output": "<p>trailing spaces   \nnext</p>"
+  },
+  {
+   "input": "# One",
+   "output": "<h1 data-slug=\"one\">One</h1>"
+  },
+  {
+   "input": "## Two",
+   "output": "<h2 data-slug=\"two\">Two</h2>"
+  },
+  {
+   "input": "### Three",
+   "output": "<h3 data-slug=\"three\">Three</h3>"
+  },
+  {
+   "input": "#### Four",
+   "output": "<p>#### Four</p>"
+  },
+  {
+   "input": "##### Five",
+   "output": "<p>##### Five</p>"
+  },
+  {
+   "input": "###### Six",
+   "output": "<p>###### Six</p>"
+  },
+  {
+   "input": "####### Seven",
+   "output": "<p>####### Seven</p>"
+  },
+  {
+   "input": "#NoSpace",
+   "output": "<p>#NoSpace</p>"
+  },
+  {
+   "input": "#\tTab heading",
+   "output": "<h1 data-slug=\"tab-heading\">Tab heading</h1>"
+  },
+  {
+   "input": "# Closing hashes ##",
+   "output": "<h1 data-slug=\"closing-hashes\">Closing hashes</h1>"
+  },
+  {
+   "input": "## Closing # inside #",
+   "output": "<h2 data-slug=\"closing-inside\">Closing # inside</h2>"
+  },
+  {
+   "input": "#  ",
+   "output": "<h1 data-slug=\"section\"></h1>"
+  },
+  {
+   "input": "#",
+   "output": "<p>#</p>"
+  },
+  {
+   "input": "# Dup\n# Dup\n# Dup",
+   "output": "<h1 data-slug=\"dup\">Dup</h1>\n<h1 data-slug=\"dup-1\">Dup</h1>\n<h1 data-slug=\"dup-2\">Dup</h1>"
+  },
+  {
+   "input": "# Intro **bold** [link](https://a.test)",
+   "output": "<h1 data-slug=\"intro-bold-link\">Intro <strong>bold</strong> <a href=\"https://a.test\" target=\"_blank\" rel=\"noopener noreferrer\">link</a></h1>"
+  },
+  {
+   "input": "# `code` *em*",
+   "output": "<h1 data-slug=\"code-em\"><code>code</code> <em>em</em></h1>"
+  },
+  {
+   "input": "   # indented heading",
+   "output": "<p>   # indented heading</p>"
+  },
+  {
+   "input": "# \u00dcn\u00efc\u00f8d\u00e9 \u2713 \u6f22\u5b57",
+   "output": "<h1 data-slug=\"\u00fcn\u00efc\u00f8d\u00e9-\u6f22\u5b57\">\u00dcn\u00efc\u00f8d\u00e9 \u2713 \u6f22\u5b57</h1>"
+  },
+  {
+   "input": "# <script>x</script>",
+   "output": "<h1 data-slug=\"script-x-script\">&lt;script&gt;x&lt;/script&gt;</h1>"
+  },
+  {
+   "input": "# a & b \" c ' d",
+   "output": "<h1 data-slug=\"a-b-c-d\">a &amp; b &quot; c &#39; d</h1>"
+  },
+  {
+   "input": "#### not a heading\n##### nor this\n###### nor this",
+   "output": "<p>#### not a heading\n##### nor this\n###### nor this</p>"
+  },
+  {
+   "input": "# h\npara right after",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>para right after</p>"
+  },
+  {
+   "input": "para\n# heading after para",
+   "output": "<p>para</p>\n<h1 data-slug=\"heading-after-para\">heading after para</h1>"
+  },
+  {
+   "input": "# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "output": "<h1 data-slug=\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</h1>"
+  },
+  {
+   "input": "#### **bold** four",
+   "output": "<p>#### <strong>bold</strong> four</p>"
+  },
+  {
+   "input": "###### [l](javascript:x) six",
+   "output": "<p>###### l six</p>"
+  },
+  {
+   "input": "**strong**",
+   "output": "<p><strong>strong</strong></p>"
+  },
+  {
+   "input": "*em*",
+   "output": "<p><em>em</em></p>"
+  },
+  {
+   "input": "`code`",
+   "output": "<p><code>code</code></p>"
+  },
+  {
+   "input": "**unterminated strong",
+   "output": "<p>**unterminated strong</p>"
+  },
+  {
+   "input": "*unterminated em",
+   "output": "<p>*unterminated em</p>"
+  },
+  {
+   "input": "`unterminated code",
+   "output": "<p>`unterminated code</p>"
+  },
+  {
+   "input": "** spaced **",
+   "output": "<p><strong> spaced </strong></p>"
+  },
+  {
+   "input": "* not em",
+   "output": "<ul><li>not em</li></ul>"
+  },
+  {
+   "input": "***triple***",
+   "output": "<p><strong>*triple</strong>*</p>"
+  },
+  {
+   "input": "**a *b* c**",
+   "output": "<p><strong>a <em>b</em> c</strong></p>"
+  },
+  {
+   "input": "*a **b** c*",
+   "output": "<p><em>a </em><em>b</em>* c*</p>"
+  },
+  {
+   "input": "`a` `b` `c`",
+   "output": "<p><code>a</code> <code>b</code> <code>c</code></p>"
+  },
+  {
+   "input": "\\*escaped\\*",
+   "output": "<p>*escaped*</p>"
+  },
+  {
+   "input": "\\# not heading",
+   "output": "<p># not heading</p>"
+  },
+  {
+   "input": "\\`tick\\`",
+   "output": "<p>`tick`</p>"
+  },
+  {
+   "input": "\\[x\\](y)",
+   "output": "<p>[x](y)</p>"
+  },
+  {
+   "input": "back\\slash",
+   "output": "<p>back\\slash</p>"
+  },
+  {
+   "input": "trailing\\",
+   "output": "<p>trailing\\</p>"
+  },
+  {
+   "input": "~~strike~~",
+   "output": "<p>~~strike~~</p>"
+  },
+  {
+   "input": "~single~",
+   "output": "<p>~single~</p>"
+  },
+  {
+   "input": "a_b_c",
+   "output": "<p>a_b_c</p>"
+  },
+  {
+   "input": "__dunder__",
+   "output": "<p>__dunder__</p>"
+  },
+  {
+   "input": "_under_",
+   "output": "<p>_under_</p>"
+  },
+  {
+   "input": "https://bare.example/path?q=1&r=2",
+   "output": "<p>https://bare.example/path?q=1&amp;r=2</p>"
+  },
+  {
+   "input": "see http://a.test.",
+   "output": "<p>see http://a.test.</p>"
+  },
+  {
+   "input": "<https://angle.test>",
+   "output": "<p>&lt;https://angle.test&gt;</p>"
+  },
+  {
+   "input": "www.example.com",
+   "output": "<p>www.example.com</p>"
+  },
+  {
+   "input": "[ok](https://a.test/x)",
+   "output": "<p><a href=\"https://a.test/x\" target=\"_blank\" rel=\"noopener noreferrer\">ok</a></p>"
+  },
+  {
+   "input": "[ok](http://a.test)",
+   "output": "<p><a href=\"http://a.test\" target=\"_blank\" rel=\"noopener noreferrer\">ok</a></p>"
+  },
+  {
+   "input": "[mail](mailto:me@a.test)",
+   "output": "<p><a href=\"mailto:me@a.test\" target=\"_blank\" rel=\"noopener noreferrer\">mail</a></p>"
+  },
+  {
+   "input": "[rel](/rel/path)",
+   "output": "<p><a href=\"/rel/path\" target=\"_blank\" rel=\"noopener noreferrer\">rel</a></p>"
+  },
+  {
+   "input": "[rel2](rel.html)",
+   "output": "<p><a href=\"rel.html\" target=\"_blank\" rel=\"noopener noreferrer\">rel2</a></p>"
+  },
+  {
+   "input": "[frag](#frag)",
+   "output": "<p><a href=\"#frag\" target=\"_blank\" rel=\"noopener noreferrer\">frag</a></p>"
+  },
+  {
+   "input": "[UP](HTTPS://A.TEST)",
+   "output": "<p><a href=\"HTTPS://A.TEST\" target=\"_blank\" rel=\"noopener noreferrer\">UP</a></p>"
+  },
+  {
+   "input": "[js](javascript:alert(1))",
+   "output": "<p>[js](javascript:alert(1))</p>"
+  },
+  {
+   "input": "[js2](javascript:alert`1`)",
+   "output": "<p>js2</p>"
+  },
+  {
+   "input": "[JS](JavaScript:x)",
+   "output": "<p>JS</p>"
+  },
+  {
+   "input": "[vb](vbscript:x)",
+   "output": "<p>vb</p>"
+  },
+  {
+   "input": "[data](data:text/html;base64,PHA+)",
+   "output": "<p>data</p>"
+  },
+  {
+   "input": "[file](file:///etc/passwd)",
+   "output": "<p>file</p>"
+  },
+  {
+   "input": "[tab](java\tscript:x)",
+   "output": "<p>[tab](java\tscript:x)</p>"
+  },
+  {
+   "input": "[ctl](java\u0001script:x)",
+   "output": "<p>ctl</p>"
+  },
+  {
+   "input": "[nul](java\u0000script:x)",
+   "output": "<p>nul</p>"
+  },
+  {
+   "input": "[del](java\u007fscript:x)",
+   "output": "<p>del</p>"
+  },
+  {
+   "input": "[sp](  javascript:x)",
+   "output": "<p>[sp](  javascript:x)</p>"
+  },
+  {
+   "input": "[q](https://a.test/?q=1&r=\"2\")",
+   "output": "<p><a href=\"https://a.test/?q=1&amp;r=&quot;2&quot;\" target=\"_blank\" rel=\"noopener noreferrer\">q</a></p>"
+  },
+  {
+   "input": "[<x>](https://a.test)",
+   "output": "<p><a href=\"https://a.test\" target=\"_blank\" rel=\"noopener noreferrer\">&lt;x&gt;</a></p>"
+  },
+  {
+   "input": "[**b**](https://a.test)",
+   "output": "<p><a href=\"https://a.test\" target=\"_blank\" rel=\"noopener noreferrer\"><strong>b</strong></a></p>"
+  },
+  {
+   "input": "[](https://empty.label)",
+   "output": "<p><a href=\"https://empty.label\" target=\"_blank\" rel=\"noopener noreferrer\"></a></p>"
+  },
+  {
+   "input": "[no close](https://a.test",
+   "output": "<p>[no close](https://a.test</p>"
+  },
+  {
+   "input": "[a](b c)",
+   "output": "<p>[a](b c)</p>"
+  },
+  {
+   "input": "[a](<b>)",
+   "output": "<p><a href=\"&lt;b&gt;\" target=\"_blank\" rel=\"noopener noreferrer\">a</a></p>"
+  },
+  {
+   "input": "[a](b(c))",
+   "output": "<p>[a](b(c))</p>"
+  },
+  {
+   "input": "[a]",
+   "output": "<p>[a]</p>"
+  },
+  {
+   "input": "[a][ref]",
+   "output": "<p>[a][ref]</p>"
+  },
+  {
+   "input": "![alt](https://img.test/a.png)",
+   "output": "<p>!<a href=\"https://img.test/a.png\" target=\"_blank\" rel=\"noopener noreferrer\">alt</a></p>"
+  },
+  {
+   "input": "![alt](/api/mirror/items/x/attachments/0)",
+   "output": "<p>!<a href=\"/api/mirror/items/x/attachments/0\" target=\"_blank\" rel=\"noopener noreferrer\">alt</a></p>"
+  },
+  {
+   "input": "![x](data:image/png;base64,iVBORw0KGgo=)",
+   "output": "<p>!x</p>"
+  },
+  {
+   "input": "![x](javascript:x)",
+   "output": "<p>!x</p>"
+  },
+  {
+   "input": "[a](https://a.test \"title\")",
+   "output": "<p>[a](https://a.test &quot;title&quot;)</p>"
+  },
+  {
+   "input": "[a](https://a.test 't')",
+   "output": "<p>[a](https://a.test &#39;t&#39;)</p>"
+  },
+  {
+   "input": "[t](https://a.test/\"onmouseover=\"x)",
+   "output": "<p><a href=\"https://a.test/&quot;onmouseover=&quot;x\" target=\"_blank\" rel=\"noopener noreferrer\">t</a></p>"
+  },
+  {
+   "input": "- a\n- b",
+   "output": "<ul><li>a</li><li>b</li></ul>"
+  },
+  {
+   "input": "* a\n* b",
+   "output": "<ul><li>a</li><li>b</li></ul>"
+  },
+  {
+   "input": "- a\n* b",
+   "output": "<ul><li>a</li><li>b</li></ul>"
+  },
+  {
+   "input": "1. one\n2. two",
+   "output": "<ol><li>one</li><li>two</li></ol>"
+  },
+  {
+   "input": "3. three\n4. four",
+   "output": "<ol start=\"3\"><li>three</li><li>four</li></ol>"
+  },
+  {
+   "input": "1) paren",
+   "output": "<ol><li>paren</li></ol>"
+  },
+  {
+   "input": "0. zero",
+   "output": "<ol start=\"0\"><li>zero</li></ol>"
+  },
+  {
+   "input": "1234567890. too long",
+   "output": "<p>1234567890. too long</p>"
+  },
+  {
+   "input": "- a\n  continued",
+   "output": "<ul><li>a\ncontinued</li></ul>"
+  },
+  {
+   "input": "- a\n\n- b",
+   "output": "<ul><li>a</li></ul>\n<ul><li>b</li></ul>"
+  },
+  {
+   "input": "- a\n1. b",
+   "output": "<ul><li>a</li></ul>\n<ol><li>b</li></ol>"
+  },
+  {
+   "input": "1. a\n- b",
+   "output": "<ol><li>a</li></ol>\n<ul><li>b</li></ul>"
+  },
+  {
+   "input": "- [ ] task\n- [x] done",
+   "output": "<ul><li>[ ] task</li><li>[x] done</li></ul>"
+  },
+  {
+   "input": "- [X] upper",
+   "output": "<ul><li>[X] upper</li></ul>"
+  },
+  {
+   "input": "- a\n  - nested\n    - deeper\n      - deepest\n        - five",
+   "output": "<ul><li>a</li><li>nested</li><li>deeper</li><li>deepest</li><li>five</li></ul>"
+  },
+  {
+   "input": "  - indented bullet",
+   "output": "<ul><li>indented bullet</li></ul>"
+  },
+  {
+   "input": "-no space",
+   "output": "<p>-no space</p>"
+  },
+  {
+   "input": "- ",
+   "output": "<ul><li></li></ul>"
+  },
+  {
+   "input": "-",
+   "output": "<p>-</p>"
+  },
+  {
+   "input": "- **b** *e* `c` [l](https://a.test)",
+   "output": "<ul><li><strong>b</strong> <em>e</em> <code>c</code> <a href=\"https://a.test\" target=\"_blank\" rel=\"noopener noreferrer\">l</a></li></ul>"
+  },
+  {
+   "input": "- <b>raw</b>",
+   "output": "<ul><li>&lt;b&gt;raw&lt;/b&gt;</li></ul>"
+  },
+  {
+   "input": "1. a\n\n2. b",
+   "output": "<ol><li>a</li></ol>\n<ol start=\"2\"><li>b</li></ol>"
+  },
+  {
+   "input": "```\ncode\n```",
+   "output": "<pre><code>code</code></pre>"
+  },
+  {
+   "input": "```js\nconst x = \"<y>\";\n```",
+   "output": "<pre><code class=\"lang-js\">const x = &quot;&lt;y&gt;&quot;;</code></pre>"
+  },
+  {
+   "input": "```js\n# not a heading\n```",
+   "output": "<pre><code class=\"lang-js\"># not a heading</code></pre>"
+  },
+  {
+   "input": "```\nunterminated",
+   "output": "<pre><code>unterminated</code></pre>"
+  },
+  {
+   "input": "``` lang extra\nx\n```",
+   "output": "<pre><code class=\"lang-lang\">x</code></pre>"
+  },
+  {
+   "input": "```c++\nx\n```",
+   "output": "<pre><code class=\"lang-c++\">x</code></pre>"
+  },
+  {
+   "input": "```a-b_c\nx\n```",
+   "output": "<pre><code class=\"lang-a-b_c\">x</code></pre>"
+  },
+  {
+   "input": "   ```\nindented fence\n   ```",
+   "output": "<pre><code>indented fence</code></pre>"
+  },
+  {
+   "input": "    ```\nfour spaces\n```",
+   "output": "<p>    <code></code>`\nfour spaces</p>\n<pre><code></code></pre>"
+  },
+  {
+   "input": "```diff\n--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n```",
+   "output": "<pre><code class=\"lang-diff\">--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y</code></pre>"
+  },
+  {
+   "input": "```patch\n+a\n```",
+   "output": "<pre><code class=\"lang-patch\">+a</code></pre>"
+  },
+  {
+   "input": "```mermaid\ngraph TD; A-->B\n```",
+   "output": "<pre><code class=\"lang-mermaid\">graph TD; A--&gt;B</code></pre>"
+  },
+  {
+   "input": "```\n```",
+   "output": "<pre><code></code></pre>"
+  },
+  {
+   "input": "```\n\n```",
+   "output": "<pre><code></code></pre>"
+  },
+  {
+   "input": "```<script>\nx\n```",
+   "output": "<pre><code>x</code></pre>"
+  },
+  {
+   "input": "```js\n```\nafter",
+   "output": "<pre><code class=\"lang-js\"></code></pre>\n<p>after</p>"
+  },
+  {
+   "input": "````\nfour ticks\n````",
+   "output": "<p><code></code><code></code>\nfour ticks\n<code></code><code></code></p>"
+  },
+  {
+   "input": "~~~\ntilde fence\n~~~",
+   "output": "<p>~~~\ntilde fence\n~~~</p>"
+  },
+  {
+   "input": "text ``` inline fence",
+   "output": "<p>text <code></code>` inline fence</p>"
+  },
+  {
+   "input": "```\n<&>\"'\n```",
+   "output": "<pre><code>&lt;&amp;&gt;&quot;&#39;</code></pre>"
+  },
+  {
+   "input": "| a | b |\n| - | - |\n| 1 | 2 |",
+   "output": "<p>| a | b |\n| - | - |\n| 1 | 2 |</p>"
+  },
+  {
+   "input": "| L | C | R |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |",
+   "output": "<p>| L | C | R |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |</p>"
+  },
+  {
+   "input": "a | b\n--|--\n1 | 2",
+   "output": "<p>a | b\n--|--\n1 | 2</p>"
+  },
+  {
+   "input": "| x |\n|---|\n| <img src=x onerror=y> |",
+   "output": "<p>| x |\n|---|\n| &lt;img src=x onerror=y&gt; |</p>"
+  },
+  {
+   "input": "> quote",
+   "output": "<p>&gt; quote</p>"
+  },
+  {
+   "input": "> a\n> b",
+   "output": "<p>&gt; a\n&gt; b</p>"
+  },
+  {
+   "input": "> > nested",
+   "output": "<p>&gt; &gt; nested</p>"
+  },
+  {
+   "input": "> > > three\n> > > > four",
+   "output": "<p>&gt; &gt; &gt; three\n&gt; &gt; &gt; &gt; four</p>"
+  },
+  {
+   "input": "> # heading in quote",
+   "output": "<p>&gt; # heading in quote</p>"
+  },
+  {
+   "input": "---",
+   "output": "<p>---</p>"
+  },
+  {
+   "input": "***",
+   "output": "<p>***</p>"
+  },
+  {
+   "input": "___",
+   "output": "<p>___</p>"
+  },
+  {
+   "input": "- - -",
+   "output": "<ul><li>- -</li></ul>"
+  },
+  {
+   "input": "text\n---",
+   "output": "<p>text\n---</p>"
+  },
+  {
+   "input": "----------",
+   "output": "<p>----------</p>"
+  },
+  {
+   "input": "<script>alert(1)</script>",
+   "output": "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>"
+  },
+  {
+   "input": "<img src=x onerror=\"y\">",
+   "output": "<p>&lt;img src=x onerror=&quot;y&quot;&gt;</p>"
+  },
+  {
+   "input": "<a href=\"javascript:x\">x</a>",
+   "output": "<p>&lt;a href=&quot;javascript:x&quot;&gt;x&lt;/a&gt;</p>"
+  },
+  {
+   "input": "<div>block</div>\n\npara",
+   "output": "<p>&lt;div&gt;block&lt;/div&gt;</p>\n<p>para</p>"
+  },
+  {
+   "input": "&amp; &lt; &#39;",
+   "output": "<p>&amp;amp; &amp;lt; &amp;#39;</p>"
+  },
+  {
+   "input": "&",
+   "output": "<p>&amp;</p>"
+  },
+  {
+   "input": "<",
+   "output": "<p>&lt;</p>"
+  },
+  {
+   "input": ">",
+   "output": "<p>&gt;</p>"
+  },
+  {
+   "input": "\"",
+   "output": "<p>&quot;</p>"
+  },
+  {
+   "input": "'",
+   "output": "<p>&#39;</p>"
+  },
+  {
+   "input": "<!-- comment -->",
+   "output": "<p>&lt;!-- comment --&gt;</p>"
+  },
+  {
+   "input": "<style>*{}</style>",
+   "output": "<p>&lt;style&gt;*{}&lt;/style&gt;</p>"
+  },
+  {
+   "input": "<iframe src=//evil>",
+   "output": "<p>&lt;iframe src=//evil&gt;</p>"
+  },
+  {
+   "input": "<svg onload=alert(1)>",
+   "output": "<p>&lt;svg onload=alert(1)&gt;</p>"
+  },
+  {
+   "input": "\"><script>x</script>",
+   "output": "<p>&quot;&gt;&lt;script&gt;x&lt;/script&gt;</p>"
+  },
+  {
+   "input": "'\"><img src=x>",
+   "output": "<p>&#39;&quot;&gt;&lt;img src=x&gt;</p>"
+  },
+  {
+   "input": "a\u0000b",
+   "output": "<p>a\u0000b</p>"
+  },
+  {
+   "input": "a\u0001b",
+   "output": "<p>a\u0001b</p>"
+  },
+  {
+   "input": "esc\u001b[31mred",
+   "output": "<p>esc\u001b[31mred</p>"
+  },
+  {
+   "input": "vt\u000bff\f",
+   "output": "<p>vt\u000bff\f</p>"
+  },
+  {
+   "input": "del\u007f",
+   "output": "<p>del\u007f</p>"
+  },
+  {
+   "input": "nel\u0085x",
+   "output": "<p>nel\u0085x</p>"
+  },
+  {
+   "input": "line\u2028sep",
+   "output": "<p>line\u2028sep</p>"
+  },
+  {
+   "input": "para\u2029sep",
+   "output": "<p>para\u2029sep</p>"
+  },
+  {
+   "input": "evil\u202etxt.exe",
+   "output": "<p>evil\u202etxt.exe</p>"
+  },
+  {
+   "input": "a\u202db\u2069",
+   "output": "<p>a\u202db\u2069</p>"
+  },
+  {
+   "input": "\u2066isolate\u2069",
+   "output": "<p>\u2066isolate\u2069</p>"
+  },
+  {
+   "input": "zero\u200bwidth",
+   "output": "<p>zero\u200bwidth</p>"
+  },
+  {
+   "input": "\ufeff# bom heading",
+   "output": "<p>\ufeff# bom heading</p>"
+  },
+  {
+   "input": "# bidi \u202egnp.exe",
+   "output": "<h1 data-slug=\"bidi-gnp-exe\">bidi \u202egnp.exe</h1>"
+  },
+  {
+   "input": "[l\u202e](https://a.test)",
+   "output": "<p><a href=\"https://a.test\" target=\"_blank\" rel=\"noopener noreferrer\">l\u202e</a></p>"
+  },
+  {
+   "input": "[x](https://a.test/\u202e)",
+   "output": "<p><a href=\"https://a.test/\u202e\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></p>"
+  },
+  {
+   "input": "- item \u2028 sep",
+   "output": "<p>- item \u2028 sep</p>"
+  },
+  {
+   "input": "`\u202e`",
+   "output": "<p><code>\u202e</code></p>"
+  },
+  {
+   "input": "a\r\nb",
+   "output": "<p>a\nb</p>"
+  },
+  {
+   "input": "# h\r\n\r\npara",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>para</p>"
+  },
+  {
+   "input": "a\rb",
+   "output": "<p>a\nb</p>"
+  },
+  {
+   "input": "- a\r\n- b",
+   "output": "<ul><li>a</li><li>b</li></ul>"
+  },
+  {
+   "input": "```\r\ncode\r\n```",
+   "output": "<pre><code>code</code></pre>"
+  },
+  {
+   "input": "# Title\n\nIntro *text*.\n\n## Part\n\n- one\n- two\n\n```sh\nnpm test\n```\n\n### Sub\n\nDone [link](https://a.test).",
+   "output": "<h1 data-slug=\"title\">Title</h1>\n<p>Intro <em>text</em>.</p>\n<h2 data-slug=\"part\">Part</h2>\n<ul><li>one</li><li>two</li></ul>\n<pre><code class=\"lang-sh\">npm test</code></pre>\n<h3 data-slug=\"sub\">Sub</h3>\n<p>Done <a href=\"https://a.test\" target=\"_blank\" rel=\"noopener noreferrer\">link</a>.</p>"
+  },
+  {
+   "input": "## Dup\n## Dup",
+   "output": "<h2 data-slug=\"dup\">Dup</h2>\n<h2 data-slug=\"dup-1\">Dup</h2>"
+  },
+  {
+   "input": "# A *b* `c`\n\npara [l](https://x.test) [bad](javascript:x)\n\n- 1\n- 2\n\n1. x\n\n```sh\n<&>\n```",
+   "output": "<h1 data-slug=\"a-b-c\">A <em>b</em> <code>c</code></h1>\n<p>para <a href=\"https://x.test\" target=\"_blank\" rel=\"noopener noreferrer\">l</a> bad</p>\n<ul><li>1</li><li>2</li></ul>\n<ol><li>x</li></ol>\n<pre><code class=\"lang-sh\">&lt;&amp;&gt;</code></pre>"
+  },
+  {
+   "input": "<b>raw</b> **s** *e*",
+   "output": "<p>&lt;b&gt;raw&lt;/b&gt; <strong>s</strong> <em>e</em></p>"
+  },
+  {
+   "input": "# x",
+   "output": "<h1 data-slug=\"x\">x</h1>"
+  },
+  {
+   "input": "**x**",
+   "output": "<p><strong>x</strong></p>"
+  },
+  {
+   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "output": "<p>xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</p>"
+  },
+  {
+   "input": "line\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\n",
+   "output": "<p>line\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline\nline</p>"
+  },
+  {
+   "input": "- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n- item\n",
+   "output": "<ul><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li><li>item</li></ul>"
+  },
+  {
+   "input": "# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n# h\n",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<h1 data-slug=\"h-1\">h</h1>\n<h1 data-slug=\"h-2\">h</h1>\n<h1 data-slug=\"h-3\">h</h1>\n<h1 data-slug=\"h-4\">h</h1>\n<h1 data-slug=\"h-5\">h</h1>\n<h1 data-slug=\"h-6\">h</h1>\n<h1 data-slug=\"h-7\">h</h1>\n<h1 data-slug=\"h-8\">h</h1>\n<h1 data-slug=\"h-9\">h</h1>\n<h1 data-slug=\"h-10\">h</h1>\n<h1 data-slug=\"h-11\">h</h1>\n<h1 data-slug=\"h-12\">h</h1>\n<h1 data-slug=\"h-13\">h</h1>\n<h1 data-slug=\"h-14\">h</h1>\n<h1 data-slug=\"h-15\">h</h1>\n<h1 data-slug=\"h-16\">h</h1>\n<h1 data-slug=\"h-17\">h</h1>\n<h1 data-slug=\"h-18\">h</h1>\n<h1 data-slug=\"h-19\">h</h1>\n<h1 data-slug=\"h-20\">h</h1>\n<h1 data-slug=\"h-21\">h</h1>\n<h1 data-slug=\"h-22\">h</h1>\n<h1 data-slug=\"h-23\">h</h1>\n<h1 data-slug=\"h-24\">h</h1>\n<h1 data-slug=\"h-25\">h</h1>\n<h1 data-slug=\"h-26\">h</h1>\n<h1 data-slug=\"h-27\">h</h1>\n<h1 data-slug=\"h-28\">h</h1>\n<h1 data-slug=\"h-29\">h</h1>\n<h1 data-slug=\"h-30\">h</h1>\n<h1 data-slug=\"h-31\">h</h1>\n<h1 data-slug=\"h-32\">h</h1>\n<h1 data-slug=\"h-33\">h</h1>\n<h1 data-slug=\"h-34\">h</h1>\n<h1 data-slug=\"h-35\">h</h1>\n<h1 data-slug=\"h-36\">h</h1>\n<h1 data-slug=\"h-37\">h</h1>\n<h1 data-slug=\"h-38\">h</h1>\n<h1 data-slug=\"h-39\">h</h1>\n<h1 data-slug=\"h-40\">h</h1>\n<h1 data-slug=\"h-41\">h</h1>\n<h1 data-slug=\"h-42\">h</h1>\n<h1 data-slug=\"h-43\">h</h1>\n<h1 data-slug=\"h-44\">h</h1>\n<h1 data-slug=\"h-45\">h</h1>\n<h1 data-slug=\"h-46\">h</h1>\n<h1 data-slug=\"h-47\">h</h1>\n<h1 data-slug=\"h-48\">h</h1>\n<h1 data-slug=\"h-49\">h</h1>"
+  },
+  {
+   "input": "# h\n# h",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<h1 data-slug=\"h-1\">h</h1>"
+  },
+  {
+   "input": "# h\n#### h4",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>#### h4</p>"
+  },
+  {
+   "input": "# h\npara",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>para</p>"
+  },
+  {
+   "input": "# h\n- li",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "# h\n1. ol",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "# h\n```\nf\n```",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "# h\n> q",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>&gt; q</p>"
+  },
+  {
+   "input": "# h\n| a |\n| - |",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>| a |\n| - |</p>"
+  },
+  {
+   "input": "# h\n---",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>---</p>"
+  },
+  {
+   "input": "# h\n  indented",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>  indented</p>"
+  },
+  {
+   "input": "# h\n- [x] t",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "# h\n~~s~~",
+   "output": "<h1 data-slug=\"h\">h</h1>\n<p>~~s~~</p>"
+  },
+  {
+   "input": "#### h4\n# h",
+   "output": "<p>#### h4</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "#### h4\n#### h4",
+   "output": "<p>#### h4\n#### h4</p>"
+  },
+  {
+   "input": "#### h4\npara",
+   "output": "<p>#### h4\npara</p>"
+  },
+  {
+   "input": "#### h4\n- li",
+   "output": "<p>#### h4</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "#### h4\n1. ol",
+   "output": "<p>#### h4</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "#### h4\n```\nf\n```",
+   "output": "<p>#### h4</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "#### h4\n> q",
+   "output": "<p>#### h4\n&gt; q</p>"
+  },
+  {
+   "input": "#### h4\n| a |\n| - |",
+   "output": "<p>#### h4\n| a |\n| - |</p>"
+  },
+  {
+   "input": "#### h4\n---",
+   "output": "<p>#### h4\n---</p>"
+  },
+  {
+   "input": "#### h4\n  indented",
+   "output": "<p>#### h4\n  indented</p>"
+  },
+  {
+   "input": "#### h4\n- [x] t",
+   "output": "<p>#### h4</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "#### h4\n~~s~~",
+   "output": "<p>#### h4\n~~s~~</p>"
+  },
+  {
+   "input": "para\n# h",
+   "output": "<p>para</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "para\n#### h4",
+   "output": "<p>para\n#### h4</p>"
+  },
+  {
+   "input": "para\npara",
+   "output": "<p>para\npara</p>"
+  },
+  {
+   "input": "para\n- li",
+   "output": "<p>para</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "para\n1. ol",
+   "output": "<p>para</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "para\n```\nf\n```",
+   "output": "<p>para</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "para\n> q",
+   "output": "<p>para\n&gt; q</p>"
+  },
+  {
+   "input": "para\n| a |\n| - |",
+   "output": "<p>para\n| a |\n| - |</p>"
+  },
+  {
+   "input": "para\n---",
+   "output": "<p>para\n---</p>"
+  },
+  {
+   "input": "para\n  indented",
+   "output": "<p>para\n  indented</p>"
+  },
+  {
+   "input": "para\n- [x] t",
+   "output": "<p>para</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "para\n~~s~~",
+   "output": "<p>para\n~~s~~</p>"
+  },
+  {
+   "input": "- li\n# h",
+   "output": "<ul><li>li</li></ul>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "- li\n#### h4",
+   "output": "<ul><li>li</li></ul>\n<p>#### h4</p>"
+  },
+  {
+   "input": "- li\npara",
+   "output": "<ul><li>li</li></ul>\n<p>para</p>"
+  },
+  {
+   "input": "- li\n- li",
+   "output": "<ul><li>li</li><li>li</li></ul>"
+  },
+  {
+   "input": "- li\n1. ol",
+   "output": "<ul><li>li</li></ul>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "- li\n```\nf\n```",
+   "output": "<ul><li>li</li></ul>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "- li\n> q",
+   "output": "<ul><li>li</li></ul>\n<p>&gt; q</p>"
+  },
+  {
+   "input": "- li\n| a |\n| - |",
+   "output": "<ul><li>li</li></ul>\n<p>| a |\n| - |</p>"
+  },
+  {
+   "input": "- li\n---",
+   "output": "<ul><li>li</li></ul>\n<p>---</p>"
+  },
+  {
+   "input": "- li\n  indented",
+   "output": "<ul><li>li\nindented</li></ul>"
+  },
+  {
+   "input": "- li\n- [x] t",
+   "output": "<ul><li>li</li><li>[x] t</li></ul>"
+  },
+  {
+   "input": "- li\n~~s~~",
+   "output": "<ul><li>li</li></ul>\n<p>~~s~~</p>"
+  },
+  {
+   "input": "1. ol\n# h",
+   "output": "<ol><li>ol</li></ol>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "1. ol\n#### h4",
+   "output": "<ol><li>ol</li></ol>\n<p>#### h4</p>"
+  },
+  {
+   "input": "1. ol\npara",
+   "output": "<ol><li>ol</li></ol>\n<p>para</p>"
+  },
+  {
+   "input": "1. ol\n- li",
+   "output": "<ol><li>ol</li></ol>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "1. ol\n1. ol",
+   "output": "<ol><li>ol</li><li>ol</li></ol>"
+  },
+  {
+   "input": "1. ol\n```\nf\n```",
+   "output": "<ol><li>ol</li></ol>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "1. ol\n> q",
+   "output": "<ol><li>ol</li></ol>\n<p>&gt; q</p>"
+  },
+  {
+   "input": "1. ol\n| a |\n| - |",
+   "output": "<ol><li>ol</li></ol>\n<p>| a |\n| - |</p>"
+  },
+  {
+   "input": "1. ol\n---",
+   "output": "<ol><li>ol</li></ol>\n<p>---</p>"
+  },
+  {
+   "input": "1. ol\n  indented",
+   "output": "<ol><li>ol\nindented</li></ol>"
+  },
+  {
+   "input": "1. ol\n- [x] t",
+   "output": "<ol><li>ol</li></ol>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "1. ol\n~~s~~",
+   "output": "<ol><li>ol</li></ol>\n<p>~~s~~</p>"
+  },
+  {
+   "input": "```\nf\n```\n# h",
+   "output": "<pre><code>f</code></pre>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "```\nf\n```\n#### h4",
+   "output": "<pre><code>f</code></pre>\n<p>#### h4</p>"
+  },
+  {
+   "input": "```\nf\n```\npara",
+   "output": "<pre><code>f</code></pre>\n<p>para</p>"
+  },
+  {
+   "input": "```\nf\n```\n- li",
+   "output": "<pre><code>f</code></pre>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "```\nf\n```\n1. ol",
+   "output": "<pre><code>f</code></pre>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "```\nf\n```\n```\nf\n```",
+   "output": "<pre><code>f</code></pre>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "```\nf\n```\n> q",
+   "output": "<pre><code>f</code></pre>\n<p>&gt; q</p>"
+  },
+  {
+   "input": "```\nf\n```\n| a |\n| - |",
+   "output": "<pre><code>f</code></pre>\n<p>| a |\n| - |</p>"
+  },
+  {
+   "input": "```\nf\n```\n---",
+   "output": "<pre><code>f</code></pre>\n<p>---</p>"
+  },
+  {
+   "input": "```\nf\n```\n  indented",
+   "output": "<pre><code>f</code></pre>\n<p>  indented</p>"
+  },
+  {
+   "input": "```\nf\n```\n- [x] t",
+   "output": "<pre><code>f</code></pre>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "```\nf\n```\n~~s~~",
+   "output": "<pre><code>f</code></pre>\n<p>~~s~~</p>"
+  },
+  {
+   "input": "> q\n# h",
+   "output": "<p>&gt; q</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "> q\n#### h4",
+   "output": "<p>&gt; q\n#### h4</p>"
+  },
+  {
+   "input": "> q\npara",
+   "output": "<p>&gt; q\npara</p>"
+  },
+  {
+   "input": "> q\n- li",
+   "output": "<p>&gt; q</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "> q\n1. ol",
+   "output": "<p>&gt; q</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "> q\n```\nf\n```",
+   "output": "<p>&gt; q</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "> q\n> q",
+   "output": "<p>&gt; q\n&gt; q</p>"
+  },
+  {
+   "input": "> q\n| a |\n| - |",
+   "output": "<p>&gt; q\n| a |\n| - |</p>"
+  },
+  {
+   "input": "> q\n---",
+   "output": "<p>&gt; q\n---</p>"
+  },
+  {
+   "input": "> q\n  indented",
+   "output": "<p>&gt; q\n  indented</p>"
+  },
+  {
+   "input": "> q\n- [x] t",
+   "output": "<p>&gt; q</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "> q\n~~s~~",
+   "output": "<p>&gt; q\n~~s~~</p>"
+  },
+  {
+   "input": "| a |\n| - |\n# h",
+   "output": "<p>| a |\n| - |</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "| a |\n| - |\n#### h4",
+   "output": "<p>| a |\n| - |\n#### h4</p>"
+  },
+  {
+   "input": "| a |\n| - |\npara",
+   "output": "<p>| a |\n| - |\npara</p>"
+  },
+  {
+   "input": "| a |\n| - |\n- li",
+   "output": "<p>| a |\n| - |</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "| a |\n| - |\n1. ol",
+   "output": "<p>| a |\n| - |</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "| a |\n| - |\n```\nf\n```",
+   "output": "<p>| a |\n| - |</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "| a |\n| - |\n> q",
+   "output": "<p>| a |\n| - |\n&gt; q</p>"
+  },
+  {
+   "input": "| a |\n| - |\n| a |\n| - |",
+   "output": "<p>| a |\n| - |\n| a |\n| - |</p>"
+  },
+  {
+   "input": "| a |\n| - |\n---",
+   "output": "<p>| a |\n| - |\n---</p>"
+  },
+  {
+   "input": "| a |\n| - |\n  indented",
+   "output": "<p>| a |\n| - |\n  indented</p>"
+  },
+  {
+   "input": "| a |\n| - |\n- [x] t",
+   "output": "<p>| a |\n| - |</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "| a |\n| - |\n~~s~~",
+   "output": "<p>| a |\n| - |\n~~s~~</p>"
+  },
+  {
+   "input": "---\n# h",
+   "output": "<p>---</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "---\n#### h4",
+   "output": "<p>---\n#### h4</p>"
+  },
+  {
+   "input": "---\npara",
+   "output": "<p>---\npara</p>"
+  },
+  {
+   "input": "---\n- li",
+   "output": "<p>---</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "---\n1. ol",
+   "output": "<p>---</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "---\n```\nf\n```",
+   "output": "<p>---</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "---\n> q",
+   "output": "<p>---\n&gt; q</p>"
+  },
+  {
+   "input": "---\n| a |\n| - |",
+   "output": "<p>---\n| a |\n| - |</p>"
+  },
+  {
+   "input": "---\n---",
+   "output": "<p>---\n---</p>"
+  },
+  {
+   "input": "---\n  indented",
+   "output": "<p>---\n  indented</p>"
+  },
+  {
+   "input": "---\n- [x] t",
+   "output": "<p>---</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "---\n~~s~~",
+   "output": "<p>---\n~~s~~</p>"
+  },
+  {
+   "input": "  indented\n# h",
+   "output": "<p>  indented</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "  indented\n#### h4",
+   "output": "<p>  indented\n#### h4</p>"
+  },
+  {
+   "input": "  indented\npara",
+   "output": "<p>  indented\npara</p>"
+  },
+  {
+   "input": "  indented\n- li",
+   "output": "<p>  indented</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "  indented\n1. ol",
+   "output": "<p>  indented</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "  indented\n```\nf\n```",
+   "output": "<p>  indented</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "  indented\n> q",
+   "output": "<p>  indented\n&gt; q</p>"
+  },
+  {
+   "input": "  indented\n| a |\n| - |",
+   "output": "<p>  indented\n| a |\n| - |</p>"
+  },
+  {
+   "input": "  indented\n---",
+   "output": "<p>  indented\n---</p>"
+  },
+  {
+   "input": "  indented\n  indented",
+   "output": "<p>  indented\n  indented</p>"
+  },
+  {
+   "input": "  indented\n- [x] t",
+   "output": "<p>  indented</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "  indented\n~~s~~",
+   "output": "<p>  indented\n~~s~~</p>"
+  },
+  {
+   "input": "- [x] t\n# h",
+   "output": "<ul><li>[x] t</li></ul>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "- [x] t\n#### h4",
+   "output": "<ul><li>[x] t</li></ul>\n<p>#### h4</p>"
+  },
+  {
+   "input": "- [x] t\npara",
+   "output": "<ul><li>[x] t</li></ul>\n<p>para</p>"
+  },
+  {
+   "input": "- [x] t\n- li",
+   "output": "<ul><li>[x] t</li><li>li</li></ul>"
+  },
+  {
+   "input": "- [x] t\n1. ol",
+   "output": "<ul><li>[x] t</li></ul>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "- [x] t\n```\nf\n```",
+   "output": "<ul><li>[x] t</li></ul>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "- [x] t\n> q",
+   "output": "<ul><li>[x] t</li></ul>\n<p>&gt; q</p>"
+  },
+  {
+   "input": "- [x] t\n| a |\n| - |",
+   "output": "<ul><li>[x] t</li></ul>\n<p>| a |\n| - |</p>"
+  },
+  {
+   "input": "- [x] t\n---",
+   "output": "<ul><li>[x] t</li></ul>\n<p>---</p>"
+  },
+  {
+   "input": "- [x] t\n  indented",
+   "output": "<ul><li>[x] t\nindented</li></ul>"
+  },
+  {
+   "input": "- [x] t\n- [x] t",
+   "output": "<ul><li>[x] t</li><li>[x] t</li></ul>"
+  },
+  {
+   "input": "- [x] t\n~~s~~",
+   "output": "<ul><li>[x] t</li></ul>\n<p>~~s~~</p>"
+  },
+  {
+   "input": "~~s~~\n# h",
+   "output": "<p>~~s~~</p>\n<h1 data-slug=\"h\">h</h1>"
+  },
+  {
+   "input": "~~s~~\n#### h4",
+   "output": "<p>~~s~~\n#### h4</p>"
+  },
+  {
+   "input": "~~s~~\npara",
+   "output": "<p>~~s~~\npara</p>"
+  },
+  {
+   "input": "~~s~~\n- li",
+   "output": "<p>~~s~~</p>\n<ul><li>li</li></ul>"
+  },
+  {
+   "input": "~~s~~\n1. ol",
+   "output": "<p>~~s~~</p>\n<ol><li>ol</li></ol>"
+  },
+  {
+   "input": "~~s~~\n```\nf\n```",
+   "output": "<p>~~s~~</p>\n<pre><code>f</code></pre>"
+  },
+  {
+   "input": "~~s~~\n> q",
+   "output": "<p>~~s~~\n&gt; q</p>"
+  },
+  {
+   "input": "~~s~~\n| a |\n| - |",
+   "output": "<p>~~s~~\n| a |\n| - |</p>"
+  },
+  {
+   "input": "~~s~~\n---",
+   "output": "<p>~~s~~\n---</p>"
+  },
+  {
+   "input": "~~s~~\n  indented",
+   "output": "<p>~~s~~\n  indented</p>"
+  },
+  {
+   "input": "~~s~~\n- [x] t",
+   "output": "<p>~~s~~</p>\n<ul><li>[x] t</li></ul>"
+  },
+  {
+   "input": "~~s~~\n~~s~~",
+   "output": "<p>~~s~~\n~~s~~</p>"
+  },
+  {
+   "input": null,
+   "output": ""
+  },
+  {
+   "input": 42,
+   "output": "<p>42</p>"
+  },
+  {
+   "input": true,
+   "output": "<p>true</p>"
+  }
+ ]
+}
