@@ -989,6 +989,34 @@ test('a restart reads only the recorded known-value lines of the prefix and regi
   assert.deepEqual(store.saved.get(S1).state.sources.transcripts.known, slice.known, 'the next index keeps the same ranges');
 });
 
+test('a known-value line that ends exactly at the resume point is re-read on a restart', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const email = 'pat.edge-user@example.com';
+  const r = a.records();
+  closedTurn(r, 'ke-0');
+  const ctx = added(r, () => r.sessionContext({ userEmail: email })); // the last line read
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 1);
+  await a.mirror.stop();
+  const index = store.saved.get(S1);
+  const range = rangeOf(r.records, ctx);
+  assert.equal(index.resume.offset, range[1], 'the resume point is the end of the known-value line');
+  assert.deepEqual(index.state.sources.transcripts.known, [range]);
+
+  const { b, ranges } = await restartWith(t, a, store);
+  const n0 = r.records.length;
+  closedTurn(r, 'ke-1', `mail ${email}`, `Mailed ${email}.`);
+  b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(b, 2);
+  assert.deepEqual(ranges().filter((x) => x.file === `${S1}.jsonl`).map((x) => [x.from, x.to]), [range], 'the line was re-read');
+  const s = JSON.stringify([await b.ask('turns', S1, { items: 'full' }), b.frames]);
+  assert.ok(s.includes('mail '), 'the prompt is there');
+  assert.ok(!s.includes(email), 'the email is masked after the restart');
+});
+
 test('two accounts in one session: both emails are masked in text appended after a restart', async (t) => {
   const store = fakeStore();
   const a = setup(t, { store });
