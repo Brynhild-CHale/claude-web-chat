@@ -199,6 +199,41 @@ test('classifyContext: env\'s -u, -C, -P and -S take their argument with them; w
   }
 });
 
+// U23b (ruling U23@redact.js:command-path-spellings): a word's adjacent quoted
+// fragments are tried joined, and a glob's directory against the directories
+// whose files are a category. No category is added.
+test('classifyContext: quoted fragments are joined, and a glob in a credentials directory withholds under its category', () => {
+  const cases = [
+    ['cat ~/.aws/*', 'cloud'],
+    ['cat ~/.aws/cred*', 'cloud'],
+    ['head ~/.aws/c?nfig', 'cloud'],
+    ['cat ~/.aws/[cC]redentials', 'cloud'],
+    ['cat ~/.aws/{credentials,config}', 'cloud'],
+    ['cat "$HOME"/.kube/*', 'cloud'],
+    ['tar czf x.tgz ~/.docker/*.json', 'cloud'],
+    ['cat ~/.cargo/cred*', 'pkg'],
+    ['cat ~/.claude/*', 'claude'],
+    ['cat ~/.ssh/*', 'ssh'],
+    ['cat ~/.n"p"mrc', 'pkg'],
+    ["cat ~/.n'p'mrc", 'pkg'],
+    ['cat ~/.n""pmrc', 'pkg'],
+    ['cat ~/".ssh"/id_rsa', 'ssh'],
+    ['cat "$HOME/.aws/"credentials', 'cloud'],
+    ["cat ~/.a'w's/cred*", 'cloud'],
+    ['cat < ~/.n"p"mrc', 'pkg'],
+    ['echo x && cat ~/".npm"rc | head', 'pkg'],
+  ];
+  for (const [command, category] of cases) {
+    assert.deepEqual(classifyContext({ command }), { withhold: category, mode: null }, command);
+  }
+  for (const command of ['ls ~/Downloads/*', 'echo "a"b', 'cat src/*.js', 'ls *', 'cat ~/.config/*', 'echo "~/.n" pmrc', 'echo "~/.n"; pmrc',
+    'cat ~/.aws', 'ls ~/project/config/*', 'rm -rf build/*']) {
+    assert.deepEqual(classifyContext({ command }), NONE, command);
+  }
+  // A dotenv spelled in fragments is still a dotenv.
+  assert.deepEqual(classifyContext({ command: 'cat ."en"v' }), { withhold: null, mode: 'env-dotenv' });
+});
+
 test('classifyContext: an explicit mode selects the mode and never lifts a withholding; an unknown one is ignored', () => {
   assert.deepEqual(classifyContext({ command: 'printenv', mode: 'env-dotenv' }), { withhold: null, mode: 'env-dotenv' });
   assert.deepEqual(classifyContext({ file: '.env', mode: 'env-dump' }), { withhold: null, mode: 'env-dump' });
@@ -488,8 +523,10 @@ test('adversarial command strings finish in linear time', (t) => {
     'one long word': rep('a'), 'pieces in a word': rep('a=b:c,'), 'path segments': rep('a/'), 'ssh segments': rep('.ssh/'),
     'dotenv words': rep('.env '), 'history-like words': rep('x_history'), 'printer then nothing': `${rep('op ')}`,
     'everything at once': rep('"$(gh|auth)\'`token` < > & ; \\'),
-    // U23b: env's option arguments.
+    // U23b: env's option arguments, glued quoted fragments, and globs.
     'env option arguments': `env ${rep('-u x ')}`, 'env option clusters': `env ${rep('-iu ')}`, 'env long options': `env ${rep('--unset x ')}`,
+    'glued fragments': rep('a"'), 'glued quoted pieces': rep('.n"p"m=rc\''), 'globs in a word': rep('a/*'),
+    'glob pieces': rep('.aws/*,'), 'a deep glob': `${rep('a/')}*`, 'brace globs': rep('{a,'),
   };
   let worst = ['', 0];
   const text = 'GITHUB_TOKEN=abc\nplain line';
