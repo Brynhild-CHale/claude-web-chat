@@ -188,6 +188,24 @@ test('an over-long line is one oversize record and the line after it is intact',
   }
 });
 
+test('a line that crosses the cap only in the read holding its newline is still oversize', async (t) => {
+  const { ch, sid, file, got, make } = rig(t);
+  const after = { type: 'mode', mode: 'plan' }; // short: under the cap
+  // 110 bytes against a 100-byte cap and 64-byte reads: the first read leaves
+  // 64 bytes in the carry, under the cap; only the read with the newline takes
+  // the line past it.
+  const long = JSON.stringify({ type: 'pad', pad: 'p'.repeat(110 - bytes(JSON.stringify({ type: 'pad', pad: '' }))) });
+  assert.equal(bytes(long), 110);
+  ch.writeTranscript(sid, [long, after]);
+  const tl = make({ maxLineBytes: 100, chunkBytes: 64 });
+  await tl.start();
+  assert.deepEqual(got.recs.map((x) => [x.oversize, x.line === null]), [[true, true], [false, false]]);
+  assert.equal(got.recs[0].end, 111);
+  assert.equal(got.recs[1].line, JSON.stringify(after));
+  assert.deepEqual(got.recs[1].obj, after);
+  assertContiguous(got.recs, file);
+});
+
 test('a malformed or non-object line is a bad record, never a throw; an empty line is skipped', async (t) => {
   const { ch, sid, got, make } = rig(t);
   const r = createRecords({ seed: 6 });
@@ -420,6 +438,7 @@ test('resume: each mismatch re-reads from 0 after onReset(resume-mismatch)', asy
 
   const cases = {
     inode: { ...good, ino: good.ino + 1 },
+    device: { ...good, dev: good.dev + 1 },
     'size below the offset': { ...good, offset: size + 10 },
     'head hash': { ...good, headHash: crypto.createHash('sha256').update('other').digest('hex') },
     'byte before the offset is not a newline': { ...good, offset: good.offset - 1 },
@@ -528,6 +547,19 @@ test('a symlink at the transcript path is refused by the O_NOFOLLOW open', async
   fs.writeFileSync(file, textOf(sampleRecords(19, 1)));
   await tl.drain();
   assert.equal(got.recs.length, 2);
+});
+
+test('a directory at the transcript path is refused by the fstat check, and nothing is read', async (t) => {
+  const { file, got, make } = rig(t);
+  fs.mkdirSync(file, { recursive: true });
+  const tl = make();
+  await tl.start();
+  await tl.drain();
+  assert.deepEqual(got.recs, []);
+  assert.deepEqual(got.errors.map((e) => [e.code, e.reason]), [['WC_TAIL_REFUSED', 'not-a-file']],
+    'one refusal, not a read error per poll');
+  assert.equal(tl.stats.opens, 0);
+  assert.equal(tl.stats.refused, 1);
 });
 
 test('the fence runs when the file appears and after each replacement; null stops the read', async (t) => {
