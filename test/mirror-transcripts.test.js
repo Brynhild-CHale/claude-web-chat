@@ -31,7 +31,8 @@
 //     refuses bytes that are not what the block claims;
 //   * known values (session_context's email, credential_org's id) are
 //     registered before anything is stored: in no frame, no answer, no snapshot;
-//     skillFold still has the org id; no answer names a transcript, a
+//     skillFold still has the org id, and after a restart both are registered
+//     again from the file before index.resume; no answer names a transcript, a
 //     tool-results file or a task output;
 //   * a disabled session is never tailed; stop() stops every tailer and flushes
 //     the store.
@@ -701,6 +702,43 @@ test('known values are registered before anything is stored: in no frame, no ans
   const fold = h.mirror.skillFold(S1);
   assert.equal(fold.orgUuid, org, 'skillFold keeps the org id, in process');
   assert.deepEqual(fold.names, ['deploy']);
+});
+
+test('restart: the known values before index.resume are registered again (the index never holds them)', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const email = 'pat.resumed-user@example.com';
+  const org = '7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918';
+  const r = a.records();
+  r.sessionContext({ userEmail: email });
+  r.credentialOrg(org);
+  closedTurn(r, 'kr-1');
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 1);
+  await a.mirror.stop();
+  const index = store.saved.get(S1);
+  assert.ok(index && index.resume && index.resume.offset > 0, 'an index resuming past both known-value records');
+  assert.ok(!JSON.stringify(index).includes(email) && !JSON.stringify(index).includes(org), 'neither value in the index');
+
+  // A new mirror, with a new redactor that has never seen either value.
+  const b = setup(t, { store, root: a.root, ch: a.ch });
+  await b.mirror.start();
+  b.sessionStart(S1, 'resume');
+  await waitUntil(() => b.tailers.of(S1).find((x) => x.resume), { what: 'the resumed tailer' });
+  const n0 = r.records.length;
+  closedTurn(r, 'kr-2', `mail ${email} about org ${org}`, `Mailed ${email}.`);
+  b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(b, 2);
+  assert.ok(b.tailers.deliveries.filter((d) => d.file === `${S1}.jsonl`).every((d) => d.start >= index.resume.offset),
+    'the records naming them were not handed over again');
+  const answers = [await b.ask('turns', S1, { items: 'full' }), await b.ask('turn', 'kr-2')];
+  const s = JSON.stringify([answers, b.frames]);
+  assert.ok(s.includes('mail '), 'the prompt is there');
+  assert.ok(!s.includes(email), 'the email is masked after the restart');
+  assert.ok(!s.includes(org), 'the org id is masked after the restart');
+  assert.equal(b.mirror.skillFold(S1).orgUuid, org, 'skillFold has the org id again');
 });
 
 test('no api answer names the projects dir, a .jsonl, a tool-results file or a task output', async (t) => {
