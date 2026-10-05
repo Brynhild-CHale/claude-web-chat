@@ -32,7 +32,12 @@
 // first shows turns the store holds but the DOM pruned, then asks loadOlder(),
 // one request at a time; turns put in above keep the view where it was (height
 // compensation: Safari has no overflow-anchor). At most 150 turns are in the
-// DOM, pruned only while stuck.
+// DOM, pruned only while stuck. An observer speaks only when the sentinel's
+// intersection CHANGES, so a sentinel that stays in range across a moment the
+// stream could not page (the store loading, no conversation yet, a read in
+// flight, a first page too short to fill the panel, a prepend that left it in
+// range) would stall paging: every scroll checks scrollTop too, and a drawing
+// that put turns in checks again (topCheck).
 //
 // THE GRAPH LINK. topbar.js emits chrome-bus `view` {activeId, viewedId}; the
 // turn whose node is on screen carries the accent rail, and a pill names it
@@ -149,7 +154,7 @@ function onScroll() {
   if (!S) return;
   stuck = atBottom(S.stream);
   if (stuck) { newCount = 0; showNew(); }
-  if (!observer && S.stream.scrollTop < TOP_PX) older();
+  if (S.stream.scrollTop < TOP_PX) older();
   updateJump();
 }
 
@@ -175,6 +180,13 @@ function older() {
       olderBusy = false;
       schedule();
     });
+}
+
+// Is the sentinel in range now? Only for a stream that is shown (a hidden panel
+// has no height, and its scrollTop of 0 must not page the whole conversation in).
+function topCheck() {
+  if (!S || !cid) return;
+  if (S.stream.clientHeight > 0 && S.stream.scrollTop < TOP_PX) older();
 }
 
 // ── the pill to the viewed turn ──────────────────────────────────────────────
@@ -419,6 +431,10 @@ function render() {
   showNew();
   if (moved) renderPending();   // another conversation's pending messages
   updateJump();
+  // Only after a drawing that put turns in: a failed read or a reveal the
+  // 150-turn window takes straight back draws nothing new, and must not retry
+  // on every frame.
+  if (initial || prepended || changed) topCheck();
 }
 
 function schedule() {

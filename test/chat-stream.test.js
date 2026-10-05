@@ -47,6 +47,18 @@ let rev = 1000;
 let convN = 0;
 let cid = null;              // the conversation the running test follows
 
+// jsdom has no IntersectionObserver. A stub one is in place for the whole file
+// (the stream binds its sentinel once), so the observer path is the one under
+// test; `ios` holds what the stream built, and a test fires its callback.
+const ios = [];
+class StubIO {
+  constructor(cb, opts) { this.cb = cb; this.opts = opts; this.targets = []; ios.push(this); }
+  observe(el) { this.targets.push(el); }
+  unobserve() {}
+  disconnect() {}
+  takeRecords() { return []; }
+}
+
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
 function snapshot(conversationId, { level = 'local' } = {}) {
@@ -122,6 +134,7 @@ before(async () => {
     init: async (sh) => {
       (await sh.importApp('chat-dock.js')).initChatDock();
       (await sh.importApp('chat-panel.js')).initChatPanel();
+      globalThis.IntersectionObserver = StubIO;
       (await sh.importApp('chat-stream.js')).initChatStream();
     },
   });
@@ -144,7 +157,10 @@ before(async () => {
   assert.ok(dock.isChatOpen(), 'the dock is open');
 });
 
-after(() => shell.restore());
+after(() => {
+  delete globalThis.IntersectionObserver;
+  return shell.restore();
+});
 
 afterEach(() => {
   // Back to no layout: each test sets the geometry it needs.
@@ -343,6 +359,55 @@ test('the top sentinel calls loadOlder once while one read is in flight; a prepe
   assert.equal($('chat-new').hidden, true, 'history put in above is not news');
 });
 
+test('the observer\'s sentinel does not stall: one that fired while the store was loading pages once loading ends', async () => {
+  assert.equal(ios.length, 1, 'the stream observes its sentinel');
+  const io = ios[0];
+  assert.equal(io.opts.root, stream());
+  assert.equal(io.targets.length, 1);
+  const sentinel = io.targets[0];
+  assert.equal(stream().firstElementChild, sentinel, 'the sentinel tops the stream');
+
+  // A first page too short to fill the panel, held back so the store is
+  // loading when the sentinel comes into range.
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  cid = `c${++convN}`;
+  const id = cid;
+  const first = [turn('io20', 20, [prompt('io20', 'twenty')]), turn('io21', 21, [prompt('io21', 'twenty-one')])];
+  pages.set(id, gate.then(() => ({ conversation_id: id, turns: first, next_before: 20, total: 4, rev: ++rev })));
+  older.set(id, () => ({ conversation_id: id, turns: [turn('io18', 18, [prompt('io18', 'eighteen')]),
+    turn('io19', 19, [prompt('io19', 'nineteen')])], next_before: null, total: 4, rev: ++rev }));
+  const s = stream();
+  // A browser's geometry: 100px a turn, a 400px panel, scrollTop clamped to
+  // what the content allows (so a short page sits at 0, its sentinel in range).
+  let top = 0;
+  const height = () => Math.max(400, 100 * s.querySelectorAll('.ct-turn').length);
+  shell.scrollMetrics(s, { clientHeight: 400 });
+  Object.defineProperty(s, 'scrollHeight', { configurable: true, get: height });
+  Object.defineProperty(s, 'scrollTop', { configurable: true, get: () => top,
+    set: (v) => { top = Math.max(0, Math.min(Number(v) || 0, height() - 400)); } });
+  const olderCalls = () => shell.calls.filter((c) => c.url.includes(`/conversations/${id}/turns`) && c.url.includes('before='));
+  try {
+    current = snapshot(id);
+    await shell.frame(helloFrame());
+    await waitUntil(() => S.mirror.stream.conversationId === id && S.mirror.stream.loading, { what: 'the store loading' });
+    io.cb([{ isIntersecting: true, target: sentinel }], io);   // the sentinel in range: nothing to page yet
+    await shell.tick();
+    assert.equal(olderCalls().length, 0, 'nothing to page while the store loads');
+
+    release();
+    await waitUntil(() => olderCalls().length >= 1, { what: 'the older page asked for, with no new intersection' });
+    await waitUntil(() => turnIds().length === 4, { what: 'the older turns drawn' });
+    await shell.tick();
+    assert.equal(olderCalls().length, 1, 'exactly one older read');
+    assert.match(olderCalls()[0].url, /before=20/);
+    assert.deepEqual(turnIds(), ['io18', 'io19', 'io20', 'io21']);
+  } finally {
+    delete s.scrollTop;
+    delete s.scrollHeight;
+  }
+});
+
 test('stuck within 48px: new content scrolls into view; scrolled up: "↓ 2 new", whose click re-sticks', async () => {
   await follow([turn('s1', 1, [prompt('s1', 'one')]), turn('s2', 2, [prompt('s2', 'two')], { status: 'open' })]);
   const s = stream();
@@ -408,6 +473,24 @@ test('a rewound notice renders above its first superseded turn, the superseded d
   assert.equal(k2.querySelectorAll('.ct-rewind').length, 1);
   assert.deepEqual(['k1', 'k2', 'k3', 'k4'].map((id) => turnEl(id).classList.contains('ct-superseded')), [false, true, true, false]);
   assert.deepEqual(turnIds(), ['k1', 'k2', 'k3', 'k4'], 'file order, still readable');
+  // The superseded turns are dimmed UNDER the notice, never the notice: opacity
+  // multiplies down the tree, so the notice and every ancestor must stay at 1.
+  const sheet = doc.createElement('style');
+  sheet.textContent = read('public/app.css');
+  doc.head.append(sheet);
+  try {
+    const opacity = (e) => Number(W.getComputedStyle(e).opacity || '1');
+    const drawn = (e) => { let o = 1; for (let n = e; n && n.nodeType === 1; n = n.parentElement) o *= opacity(n); return o; };
+    assert.equal(drawn(notice), 1, 'the rewind notice (and its Set surface back) is drawn at full opacity');
+    assert.equal(drawn(notice.querySelector('.ct-setback')), 1);
+    const k2Own = [...k2.children].find((c) => !c.classList.contains('ct-rewind'));
+    assert.ok(k2Own, 'the superseded turn has content beside the notice');
+    assert.ok(drawn(k2Own) < 1, 'the superseded turn\'s own content is dimmed');
+    assert.ok(drawn(turnEl('k3').firstElementChild) < 1, 'and the next superseded turn\'s');
+    assert.equal(drawn(turnEl('k4').firstElementChild), 1, 'the live branch is not');
+  } finally {
+    sheet.remove();
+  }
   const back = notice.querySelector('.ct-setback');
   assert.equal(text(back), 'Set surface back to n1.12');
   const posts = () => shell.calls.filter((c) => c.url === '/api/graph/active' && c.method === 'POST');
