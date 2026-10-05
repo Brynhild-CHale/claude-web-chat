@@ -7,6 +7,7 @@ const doctor = require('../lib/cli/commands/doctor');
 const { withTempHome, withServer, withHub } = require('../test-support/helpers');
 const { recordMcpSeen } = require('../lib/core/mcp-seen');
 const { mcpArgv } = require('../lib/setup/registration');
+const { userClaudePaths } = require('../lib/core/paths');
 
 // doctor now probes the capture hub on the fixed hub port. Pin it, for the whole
 // file, at a port nothing is listening on so the check is deterministic and never
@@ -40,6 +41,43 @@ function fakeClaude(result = { ok: true }) {
 }
 
 const silent = () => {};
+
+// A runClaude that PLAYS Claude Code for `mcp add|remove --scope local`: it
+// writes the entry into the sandbox's own config file (userClaudePaths()
+// .claudeJson, which test-support/sandbox.js keeps under the throwaway HOME),
+// keyed by the physical path of the folder it runs in, as Claude Code does
+// outside a git repository. doctor verifies a registration by reading that file
+// back, so a fake that only answers ok is (rightly) reported as unverified.
+function configClaude() {
+  const calls = [];
+  const cwds = [];
+  const fn = (argv, { cwd } = {}) => {
+    calls.push(argv);
+    cwds.push(cwd);
+    const file = userClaudePaths().claudeJson;
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+    cfg.projects = cfg.projects || {};
+    const key = fs.realpathSync(cwd);
+    const proj = (cfg.projects[key] = cfg.projects[key] || {});
+    proj.mcpServers = proj.mcpServers || {};
+    const name = argv[2];
+    if (argv[1] === 'add') {
+      if (proj.mcpServers[name]) return { ok: false, stderr: `MCP server ${name} already exists in local config` };
+      const dash = argv.indexOf('--');
+      const env = {};
+      for (let i = 0; i < dash; i++) if (argv[i] === '-e') { const [k, ...v] = argv[++i].split('='); env[k] = v.join('='); }
+      proj.mcpServers[name] = { type: 'stdio', command: argv[dash + 1], args: argv.slice(dash + 2), env };
+    } else if (argv[1] === 'remove') {
+      if (!proj.mcpServers[name]) return { ok: false, stderr: `No MCP server named "${name}" in local scope` };
+      delete proj.mcpServers[name];
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(cfg, null, 2));
+    return { ok: true, stdout: '' };
+  };
+  return { fn, calls, cwds };
+}
 
 test('doctor removes a stale portfile (dead pid)', async (t) => {
   const root = project(t);
@@ -85,7 +123,7 @@ test('doctor detects and repairs a bare (unresolvable) MCP registration', async 
     path.join(root, '.mcp.json'),
     JSON.stringify({ mcpServers: { 'web-chat': { command: 'claude-web-chat-mcp' } } })
   );
-  const claude = fakeClaude({ ok: true });
+  const claude = configClaude();
   const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
 
   assert.ok(summary.checks.some((c) => c.status === 'problem' && /not resolvable/.test(c.m)));
@@ -139,17 +177,28 @@ test('doctor fails the hook check when only ONE of the two events is registered'
   assert.ok(after.hooks.Stop, 'and the repair actually added it');
 });
 
-test('doctor treats a resolved `node <abs>` MCP registration as healthy', async (t) => {
+// 0.8.5 (U95): a resolvable `node <abs>` entry in .mcp.json is no longer
+// "healthy" — it is the entry Claude Code asks approval for at every launch in
+// a folder that cannot keep the approval. doctor moves it to local scope, and
+// a project already there needs nothing.
+test('doctor moves a resolvable .mcp.json-only registration to local scope, then leaves it alone', async (t) => {
   const root = project(t);
   const bin = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
   fs.writeFileSync(
     path.join(root, '.mcp.json'),
     JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [bin] } } })
   );
-  const claude = fakeClaude();
+  const claude = configClaude();
   const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
-  assert.equal(claude.calls.length, 0, 'no repair should run for a resolvable entry');
-  assert.ok(summary.checks.some((c) => c.status === 'ok' && /resolvable/.test(c.m)));
+  assert.ok(summary.checks.some((c) => c.status === 'problem' && /only in \.mcp\.json/.test(c.m)));
+  assert.deepEqual(claude.calls, [mcpArgv()], 'one `claude mcp add … --scope local`');
+  assert.ok(summary.checks.some((c) => c.status === 'repaired' && /local scope/.test(c.m)));
+  assert.equal(fs.existsSync(path.join(root, '.mcp.json')), false, 'web-chat\'s own entry left .mcp.json, and the empty file with it');
+
+  const again = fakeClaude();
+  const second = await doctor([], { cwd: root, runClaude: again.fn, log: silent });
+  assert.equal(again.calls.length, 0, 'no repair runs for a project registered at local scope');
+  assert.ok(second.checks.some((c) => c.status === 'ok' && /registered for you \(local scope\)/.test(c.m)));
 });
 
 // doctor detects + REMOVES a stale channels env block. The polarity inverted in
@@ -372,7 +421,7 @@ test('doctor confirms the restart when the MCP server started after the write', 
 
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: root, runClaude: claude.fn, log: silent });
-  assert.ok(summary.checks.some((c) => c.status === 'ok' && /has restarted since \.mcp\.json changed/.test(c.m)));
+  assert.ok(summary.checks.some((c) => c.status === 'ok' && /has restarted since web-chat's MCP registration last changed/.test(c.m)));
   assert.ok(!summary.checks.some((c) => /restart Claude Code/i.test(c.m)));
 });
 
@@ -398,7 +447,7 @@ test('doctor prefers the live daemon sighting over the on-disk one', async (t) =
 
   const claude = fakeClaude();
   const summary = await doctor([], { cwd: ctx.root, runClaude: claude.fn, log: silent });
-  assert.ok(summary.checks.some((c) => c.status === 'ok' && /has restarted since \.mcp\.json changed/.test(c.m)));
+  assert.ok(summary.checks.some((c) => c.status === 'ok' && /has restarted since web-chat's MCP registration last changed/.test(c.m)));
 });
 
 // Boot a real hub on the PINNED port so the "hub is up" branch — which is where

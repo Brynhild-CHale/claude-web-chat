@@ -109,11 +109,10 @@ by a `--- WEB-CHAT-STATE ---` fence and one JSON object. That JSON is your input
 your tools, the MCP server has not been loaded into this session. Print exactly this
 and run nothing else:
 
-> The web-chat tools aren't in this session yet. `/exit`, reopen Claude Code in this
-> project, then run `/web-chat init` again. Claude Code reads `.mcp.json` only at
-> startup, and asks you to **approve** its `web-chat` MCP server — approve it. If you
-> declined it before, run `claude mcp reset-project-choices` in this project's
-> directory after `/exit`, and the reopened Claude Code asks again.
+> The web-chat tools aren't in this session yet. `/exit`, run `claude-web-chat doctor`
+> in this project — it registers web-chat's MCP server with Claude Code at local scope
+> if it is missing, and says why if it cannot — then reopen Claude Code here and run
+> `/web-chat init` again. Claude Code loads MCP servers only at startup.
 
 `init` and bare `/web-chat` divide the work: **`init` teaches web-chat and owns the
 wiring; bare `/web-chat` teaches web-chat about *their repo* and owns the everyday

@@ -86,7 +86,8 @@ test('status flags RESTART when the MCP server we last saw predates the .mcp.jso
   const out = await runStatus(t, (root) => {
     recordMcpSeen(root, { startedAt: Date.now() - 3600_000, now: Date.now() - 60_000 });
   });
-  assert.match(out, /MCP: +registered in \.mcp\.json/);
+  // 0.8.5 (U95): the state names what a .mcp.json-only registration costs.
+  assert.match(out, /MCP: +only in \.mcp\.json — Claude Code asks every launch here; run `claude-web-chat doctor`/);
   assert.match(out, /RESTART:/, 'the restart verdict rides right under the MCP line');
   assert.match(out, /restart Claude Code/i);
 });
