@@ -359,6 +359,28 @@ test('an edge handle resizes, clamped to the area less the rail, and writes once
   assert.ok([...el().querySelectorAll('.cd-h')].every((h) => h.getAttribute('aria-hidden') === 'true'));
 });
 
+test('a cancelled gesture puts the saved geometry back, and closing mid-drag ends the drag unsaved', async (t) => {
+  await open();
+  detach();
+  const writes = countWrites(t);
+  const grip = strip().querySelector('.cd-grip');
+  pointer(grip, 'pointerdown', { clientX: 100, clientY: 100 });
+  pointer(grip, 'pointermove', { clientX: 150, clientY: 130 });
+  assert.equal(el().style.getPropertyValue('--cd-x'), '810px', 'precondition: the window followed');
+  pointer(grip, 'pointercancel', { clientX: 150, clientY: 130 });
+  assert.equal(el().style.getPropertyValue('--cd-x'), '760px', 'cancelled: back at the saved place');
+  assert.equal(el().style.getPropertyValue('--cd-y'), '40px');
+  assert.ok(!el().classList.contains('cd-gesture'));
+
+  pointer(grip, 'pointerdown', { clientX: 100, clientY: 100 });
+  pointer(grip, 'pointermove', { clientX: 150, clientY: 130 });
+  dock.closeChat({ returnFocus: false });
+  assert.ok(!el().classList.contains('cd-gesture'), 'closing ended the drag');
+  pointer(grip, 'pointerup', { clientX: 200, clientY: 200 });
+  assert.equal(writes.length, 0, 'neither drag was saved');
+  assert.equal(saved().x, 760);
+});
+
 test('a pointerdown on a strip control never starts a drag', async (t) => {
   await open();
   detach();
