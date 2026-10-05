@@ -394,6 +394,29 @@ test('reconcileLateStop writes onto the folded entry, or onto its copy in the no
   assert.deepStrictEqual(c.graph.written, ['n7']);
 });
 
+test('a late Stop finds the turn its prompt_id names when the guard closed two of the session\'s turns', async (t) => {
+  const r = rig(t);
+  r.lock({ ...S1, prompt_id: 'p1' });
+  r.mirror.emit(closedBy('status', { ended_by: 'terminal' }));
+  await waitUntil(() => r.endTurn.calls.length === 1, { what: 'the first end' });
+  r.lock({ ...S1, prompt_id: 'p2' });
+  r.mirror.emit(closedBy('status', { ended_by: 'terminal' }));
+  await waitUntil(() => r.endTurn.calls.length === 2, { what: 'the second end' });
+  assert.equal(r.guard.reconcileLateStop({ session_id: 'sess-1', prompt_id: 'p1', reply: 'first', ended: 'stop' }), 'n1');
+  assert.equal(r.graph.nodes.get('n1').trigger.reply, 'first');
+  assert.equal('reply' in r.graph.nodes.get('n2').trigger, false, 'the newer turn is not the one the Stop names');
+  assert.equal(r.guard.reconcileLateStop({ session_id: 'sess-1', prompt_id: 'p2', reply: 'second', ended: 'stop' }), 'n2');
+  assert.equal(r.graph.nodes.get('n2').trigger.reply, 'second');
+});
+
+test('a turn opening keeps the wake lock, like a session going busy', async (t) => {
+  const r = rig(t, { mirror: fakeMirror({ rows: [{ id: 'c1', state: 'idle' }] }) });
+  r.lock({}, { author: 'wake', ago: 0 });
+  r.mirror.emit({ op: 'turn-open', conversation_id: 'c1', session_id: 'sess-1', turn_id: 't9' });
+  await quiet(200);
+  assert.equal(r.endTurn.calls.length, 0, 'it answered');
+});
+
 // ── ended(lock): the same-session question ──────────────────────────────────
 
 test('ended(lock) gives evidence for a close, a gone process or an idle flip after started_at, and false otherwise', async (t) => {
