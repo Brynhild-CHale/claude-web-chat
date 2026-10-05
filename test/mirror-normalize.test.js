@@ -385,7 +385,13 @@ test('compact_boundary: compact with tokens = preTokens, then the c_<uuid> item 
 function busySession() {
   const r = createRecords({ seed: 20 });
   oneTurn(r);
+  // A mode turned on before the boundary: the carried state must remember it,
+  // or the second half's plan_mode records announce it again.
+  r.attachment('plan_mode', {});
   const boundary = r.records.length;
+  // The anchor Claude Code writes at a turn's end names the carried leaf: no
+  // evidence, unless the state lost its leaf.
+  r.lastPrompt();
   r.slashCommand('model', 'opus');
   r.localCommandOutput('Set model to opus');
   r.prompt('and now [web-chat message m-0a1b2c3d] from the composer');
@@ -432,8 +438,10 @@ test('determinism: whole and in two halves with the state carried give identical
   assert.strictEqual(local.item.id, `rl_${ops[1].prompt_id}`);
   assert.strictEqual(local.item.local, '/model');
   assert.strictEqual(local.item.output, 'Set model to opus');
-  // The mode notice comes once for two plan_mode records.
+  // The mode notice comes once for three plan_mode records, one before the boundary.
   assert.strictEqual(items(whole.changes, 'notice').filter((c) => c.item.notice === 'mode').length, 1);
+  // Only the headless anchor is evidence; the anchor naming the carried leaf is not.
+  assert.deepStrictEqual(whole.changes.filter((c) => c.type === 'rewind-evidence').map((c) => c.leaf_uuid), [null]);
 
   const { model, tm } = machine();
   tm.applyChanges('conv', r.sessionId, whole.changes);
@@ -482,6 +490,28 @@ test('thinking: no thinkingDurationMs means no duration_ms; with it, duration_ms
   const b = last(items(changes, 'thinking'), 'th_msg_01b').item;
   assert.ok(!('duration_ms' in a));
   assert.strictEqual(b.duration_ms, 1234);
+
+  // Two thinking records of one message: one item, the chars summed, the text joined.
+  r.assistant([{ type: 'thinking', thinking: 'ab' }, { type: 'thinking', thinking: 'cde' }], { messageId: 'msg_01c' });
+  const c = last(items(run(r.records).changes, 'thinking'), 'th_msg_01c').item;
+  assert.strictEqual(c.chars, 5);
+  assert.strictEqual(c.text, 'ab\n\ncde');
+});
+
+test('stop_reason rides on each assistant change, and an agent file closes on the final one (rule 6)', () => {
+  const r = createRecords({ seed: 25 });
+  const p = r.prompt('do the subtask');
+  const recs = r.assistant([{ type: 'thinking', thinking: 'plan' }, 'Done with the subtask.'], { messageId: 'msg_01ag' });
+  const { changes } = run(r.records);
+  const of = (rec) => changes.filter((c) => c.uuid === rec.uuid);
+  assert.ok(of(recs[0]).every((c) => !('stop_reason' in c)), 'a per-block record (stop_reason null) carries none');
+  assert.deepStrictEqual(of(recs[1]).map((c) => c.stop_reason), ['end_turn']);
+
+  const { model, tm } = machine();
+  tm.applyChanges('agent-conv', r.sessionId, changes.slice(0, -1), { mode: 'agent' });
+  assert.strictEqual(model.turn(p.promptId).status, 'open', 'a null stop_reason closes nothing');
+  tm.applyChanges('agent-conv', r.sessionId, changes.slice(-1), { mode: 'agent' });
+  assert.strictEqual(model.turn(p.promptId).status, 'done');
 });
 
 test('openers of every kind, notices, a permission decision and an artifact', () => {
