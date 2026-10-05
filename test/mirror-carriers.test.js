@@ -134,6 +134,9 @@ test('task item fields: kinds, statuses, exit codes and monitor events', () => {
     { commandMode: 'task-notification' });
   r.queuedCommand(taskNotificationText({ taskId: 'b3333333', status: 'completed', summary: 'Monitor "m" script failed (exit 2)' }),
     { commandMode: 'task-notification' });
+  // A shell whose summary quotes a description that says "monitor" is still a shell.
+  r.queuedCommand(taskNotificationText({ taskId: 'b1234567', status: 'completed',
+    summary: 'Background command "restart the monitor daemon" completed (exit code 0)' }), { commandMode: 'task-notification' });
   const items = tasks(fold(r.records)).map((c) => c.item);
   assert.deepEqual(items.map((i) => [i.task_kind, i.status, i.exit_code]), [
     ['shell', 'failed', 3],
@@ -141,28 +144,106 @@ test('task item fields: kinds, statuses, exit codes and monitor events', () => {
     ['monitor', 'running', undefined],
     ['workflow', 'killed', undefined],
     ['monitor', 'done', 2],
+    ['shell', 'done', 0],
   ]);
   assert.equal(items[2].event, 'server ready on :5173');
   assert.ok(!('event' in items[0]));
 });
 
+// The item each queued id ends as, its changes merged in order (as the model
+// merges an item's writes field by field).
+function queuedItems(out) {
+  const by = new Map();
+  for (const c of out.changes) if (c.item.kind === 'queued') by.set(c.item.id, { ...(by.get(c.item.id) || {}), ...c.item });
+  return [...by.values()];
+}
+
 test('a typed-while-busy message becomes a queued item; a queue-operation content is never read into a change', () => {
+  // A typed enqueue alone: one queued item, waiting.
+  const r0 = createRecords({ seed: 139 });
+  r0.prompt('refactor the parser');
+  r0.queueOperation('enqueue', { content: 'also check the README' });
+  const recs0 = toRecs(r0.records);
+  const out0 = foldCarriers(initialCarriers(), recs0);
+  assert.equal(out0.changes.length, 1);
+  const [c0] = out0.changes;
+  assert.deepEqual(c0.item, { id: `q_o${recs0[1].start}`, kind: 'queued', text: 'also check the README', status: 'queued' });
+  assert.deepEqual(c0.offset, { start: recs0[1].start, end: recs0[1].end });
+  assert.ok(Number.isFinite(c0.ts));
+  assert.ok(!('uuid' in c0), 'an enqueue has no uuid');
+  assert.ok(!('seq' in c0) && !('seq' in c0.item));
+  assert.ok(!JSON.stringify(out0.state).includes('README'), 'the state keeps a digest, never the text');
+
+  // enqueue → remove(absorbed_mid_turn) → queued_command: ONE item, absorbed.
   const r = createRecords({ seed: 140 });
   r.prompt('refactor the parser');
-  r.queueOperation('enqueue', { content: 'ENQUEUED-TYPED-TEXT also check the README' });
-  const qc = r.queuedCommand('also check the README', { commandMode: 'prompt' });
-  r.queueOperation('remove', { content: 'ENQUEUED-TYPED-TEXT also check the README', reason: 'absorbed_mid_turn' });
+  r.queueOperation('enqueue', { content: 'also check the README' });
+  r.queueOperation('remove', { content: 'also check the README', reason: 'absorbed_mid_turn' });
+  r.queuedCommand('also check the README', { commandMode: 'prompt' });
   // A notification whose only carrier in this file is the enqueue (a subagent's task).
   r.queueOperation('enqueue', { content: taskNotificationText({ ...NOTE, taskId: 'b9999999', summary: 'ENQUEUE-ONLY-SUMMARY' }) });
   r.queueOperation('dequeue');
-  const out = fold(r.records);
-  assert.equal(out.changes.length, 1);
-  assert.deepEqual(out.changes[0].item, { id: `q_${qc.uuid}`, kind: 'queued', text: 'also check the README', status: 'absorbed' });
-  assert.equal(out.changes[0].uuid, qc.uuid);
+  const recs = toRecs(r.records);
+  const out = foldCarriers(initialCarriers(), recs);
+  assert.deepEqual(queuedItems(out), [{ id: `q_o${recs[1].start}`, kind: 'queued', text: 'also check the README', status: 'absorbed' }]);
+  assert.equal(tasks(out).length, 0);
   const json = JSON.stringify(out);
-  assert.ok(!json.includes('ENQUEUED-TYPED-TEXT'));
-  assert.ok(!json.includes('ENQUEUE-ONLY-SUMMARY'));
+  assert.ok(!json.includes('ENQUEUE-ONLY-SUMMARY'), "a notification enqueue's content is never read into a change");
   assert.ok(!JSON.stringify(out.state).includes('b9999999'), 'the state keeps a digest, never the text');
+  assert.ok(!JSON.stringify(out.state).includes('README'));
+
+  // The order the corpus shows (V5): enqueue → queued_command → remove. One item.
+  const r1 = createRecords({ seed: 142 });
+  r1.prompt('refactor the parser');
+  r1.queueOperation('enqueue', { content: 'also check the README' });
+  r1.queuedCommand('also check the README', { commandMode: 'prompt' });
+  r1.queueOperation('remove', { content: 'also check the README', reason: 'absorbed_mid_turn' });
+  const recs1 = toRecs(r1.records);
+  assert.deepEqual(queuedItems(foldCarriers(initialCarriers(), recs1)),
+    [{ id: `q_o${recs1[1].start}`, kind: 'queued', text: 'also check the README', status: 'absorbed' }]);
+
+  // A dequeue sends it (it opens the next turn as a prompt); a dequeue names no
+  // content, so it pops the queue's head — a notification enqueued first is popped first.
+  const r2q = createRecords({ seed: 143 });
+  r2q.prompt('refactor the parser');
+  r2q.queueOperation('enqueue', { content: taskNotificationText(NOTE) });
+  r2q.queueOperation('enqueue', { content: 'then run the tests' });
+  r2q.queueOperation('dequeue');
+  const mid = foldCarriers(initialCarriers(), toRecs(r2q.records));
+  assert.deepEqual(queuedItems(mid).map((i) => i.status), ['queued']);
+  r2q.queueOperation('dequeue');
+  assert.deepEqual(queuedItems(fold(r2q.records)).map((i) => [i.text, i.status]), [['then run the tests', 'sent']]);
+
+  // Any other remove marks it removed.
+  const r3q = createRecords({ seed: 144 });
+  r3q.queueOperation('enqueue', { content: 'never mind' });
+  r3q.queueOperation('remove', { content: 'never mind' });
+  assert.deepEqual(queuedItems(fold(r3q.records)).map((i) => i.status), ['removed']);
+
+  // A queued_command with no enqueue before it (a subagent's file) keeps its own item.
+  const r4q = createRecords({ seed: 145 });
+  const qc = r4q.queuedCommand('also check the README', { commandMode: 'prompt' });
+  const out4 = fold(r4q.records);
+  assert.deepEqual(out4.changes.map((c) => c.item), [{ id: `q_${qc.uuid}`, kind: 'queued', text: 'also check the README', status: 'absorbed' }]);
+  assert.equal(out4.changes[0].uuid, qc.uuid);
+
+  // A fresh-state fold of the turn's byte range names the same queued item (U28a's refill).
+  const rr = createRecords({ seed: 146 });
+  rr.prompt('first');
+  rr.assistant(['ok']);
+  rr.turnDuration();
+  const turn = rr.records.length;
+  rr.prompt('refactor the parser');
+  rr.queueOperation('enqueue', { content: 'also check the README' });
+  rr.queuedCommand('also check the README', { commandMode: 'prompt' });
+  rr.queueOperation('remove', { content: 'also check the README', reason: 'absorbed_mid_turn' });
+  rr.assistant(['done']);
+  rr.turnDuration();
+  const all = toRecs(rr.records);
+  const whole = foldCarriers(initialCarriers(), all);
+  const range = foldCarriers(initialCarriers(), all.slice(turn));
+  assert.deepEqual(range.changes, whole.changes);
+  assert.deepEqual(queuedItems(range), [{ id: `q_o${all[turn + 1].start}`, kind: 'queued', text: 'also check the README', status: 'absorbed' }]);
 
   // A paired notification's change is built from the delivery record alone.
   const r2 = createRecords({ seed: 141 });
