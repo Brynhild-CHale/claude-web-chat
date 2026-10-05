@@ -3,7 +3,8 @@
 // withholding (a sensitive file, a command that reads one or prints a
 // credential) and to a mode (a dotenv, an environment dump); redactText,
 // redactValue and redactWindow apply it; the mirror's model applies it to an
-// item's output and never to its label, call or input.
+// item's output and never to its label, call or input. Also the known-value
+// source (addKnownSource) the capture token needs.
 //
 // Fake credentials come from test-support/fake-secrets.js. Speed is measured,
 // never asserted, unless WEB_CHAT_PERF=1 (spec §10.1).
@@ -349,6 +350,106 @@ test('a real model (createModel + createRedactor): a tool_call reading ~/.ssh/id
   assert.deepEqual(it2.result, { preview: WITHHELD('credentials'), bytes: 41 });
   assert.equal(it2.call, 'gh auth token');
   assert.deepEqual(it2.input, { command: 'gh auth token' });
+});
+
+// ── addKnownSource ──────────────────────────────────────────────────────────
+
+function clocked(start = 1_000_000) {
+  const clock = { t: start };
+  clock.now = () => clock.t;
+  return clock;
+}
+
+test('addKnownSource: a value the source starts answering after the redactor was built is masked within maxAgeMs', () => {
+  const token = fake('json-key-hex-token').secrets[0];
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let current = null;
+  assert.equal(r.addKnownSource(() => current, 'capture-token'), true);
+  const line = `fetch('/api/capture?token=${token}')`;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'no value yet');
+  current = token;
+  clock.t += 1999;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'not consulted again inside maxAgeMs');
+  clock.t += 1;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, 'consulted once maxAgeMs has passed');
+  assert.ok(!r.text(line).includes(token));
+  assert.ok(!JSON.stringify(r.value({ a: [line] })).includes(token));
+  assert.ok(!r.window(`a\n${line}\n`, { startsMidFile: true }).includes(token));
+  // A rotated value replaces the old one, which leaves the set.
+  const next = fake('json-key-api-key').secrets[0];
+  current = next;
+  clock.t += 2000;
+  assert.equal(r.text(`${next} ${token}`), `${MASK('capture-token')} ${token}`);
+  // A value that stops (null, too short) leaves the set.
+  current = 'short';
+  clock.t += 2000;
+  assert.equal(r.text(`x ${next}`), `x ${next}`);
+});
+
+test('addKnownSource: the source is called at most once per maxAgeMs, lazily, and again when the clock steps back', () => {
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let calls = 0;
+  r.addKnownSource(() => { calls++; return 'someone.person@example.com'; }, 'email', { maxAgeMs: 500 });
+  assert.equal(calls, 0, 'registration consults nothing');
+  for (let i = 0; i < 50; i++) { r.text('a'); r.value({ a: 'b' }); r.window('x\ny'); clock.t += 9; }
+  assert.equal(calls, Math.ceil(50 * 9 / 500), 'once per 500 ms of clock across text, value and window');
+  const before = calls;
+  clock.t -= 10_000;
+  r.text('b');
+  assert.equal(calls, before + 1, 'a clock stepped back consults again');
+  r.text('c');
+  assert.equal(calls, before + 1);
+  const zero = createRedactor({ now: clock.now });
+  let zc = 0;
+  zero.addKnownSource(() => { zc++; return null; }, 'x', { maxAgeMs: 0 });
+  zero.text('a'); zero.text('b');
+  assert.equal(zc, 2, 'maxAgeMs 0 consults on every call');
+});
+
+test('addKnownSource: a throwing source masks nothing and breaks nothing; addKnown values keep working', () => {
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  r.addKnown('someone.person@example.com', 'email');
+  let calls = 0;
+  r.addKnownSource(() => { calls++; throw new Error('token file unreadable'); }, 'capture-token');
+  assert.equal(r.text('mail someone.person@example.com now'), `mail ${MASK('email')} now`);
+  assert.deepEqual(r.value({ a: 'plain' }), { a: 'plain' });
+  assert.equal(r.window('plain text\n'), 'plain text\n');
+  assert.equal(calls, 1);
+  assert.equal(r.addKnownSource('not a function', 'x'), false);
+  assert.equal(r.addKnownSource(null), false);
+});
+
+test('addKnownSource: a source that redacts from inside its own fn is not re-entered', () => {
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let calls = 0;
+  r.addKnownSource(() => { calls++; r.text('inner'); return 'abcdefgh-token-value'; }, 'capture-token', { maxAgeMs: 0 });
+  assert.equal(r.text('x abcdefgh-token-value'), `x ${MASK('capture-token')}`);
+  assert.equal(calls, 1);
+});
+
+test('addKnownSource: nothing of a source is serialized — JSON.stringify of a redactor is {}', () => {
+  const token = fake('json-key-hex-token').secrets[0];
+  const r = createRedactor({ now: () => 5 });
+  r.addKnownSource(() => token, 'capture-token');
+  r.text('consult it');
+  assert.equal(JSON.stringify(r), '{}');
+  assert.deepEqual(Object.keys(r).sort(), ['addKnown', 'addKnownSource', 'text', 'value', 'window']);
+  assert.ok(Object.isFrozen(r));
+  const util = require('node:util');
+  assert.ok(!util.inspect(r, { depth: 5, showHidden: true }).includes(token));
+});
+
+test('createRedactor still builds with no argument, and a bad clock falls back to consulting', () => {
+  assert.equal(JSON.stringify(createRedactor()), '{}');
+  const r = createRedactor({ now: () => { throw new Error('no clock'); } });
+  let calls = 0;
+  r.addKnownSource(() => { calls++; return null; }, 'x');
+  r.text('a'); r.text('b');
+  assert.equal(calls, 2, 'a clock that throws never freezes a stale value in place');
 });
 
 // ── linear time ─────────────────────────────────────────────────────────────
