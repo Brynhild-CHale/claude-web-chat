@@ -349,10 +349,19 @@ tunnel down        stop the portal; cloudflared stops with it (waits until
                    both have exited; a connector of that portal's still
                    running after 10s is stopped too)
 tunnel status      config, portal pid, whether the connector is READY, when the
-                   Access keys were last refreshed, every exposed project, and
-                   every hidden one with the reason
+                   Access keys were last refreshed, every exposed project (with
+                   its chat-mirror level: off, read or full), and every hidden
+                   one with the reason
 tunnel logs        the portal, cloudflared and remote access logs (--follow,
                    --portal, --cloudflared, --access, --lines <n>)
+tunnel mirror on [--read-only] [--project <dir>]
+                   show this project's Claude conversation to its remote
+                   viewers (--read-only: watch only) — see *Showing Claude's
+                   conversation remotely*
+tunnel mirror off [--project <dir>]
+                   back to Claude's status only
+tunnel mirror status [--project <dir>] [--json]
+                   this project's level, and every grant in tunnel.json
 ```
 
 `claude-web-chat doctor` has a tunnel section once setup has run.
@@ -387,7 +396,7 @@ valid edit at once:
   is refused on its next request, and any live socket it has open is closed
   within a second (code 4403 — the page's reconnect then meets the refusal).
 - `access` (team, AUD), `expose.exclude`, `remote.allowDestructive`,
-  `showRoots` — in force from the next request; a newly excluded project's
+  `remote.mirror`, `showRoots` — in force from the next request; a newly excluded project's
   open sockets are closed the same way, and a new team or AUD — how you revoke
   every outstanding sign-in — closes every open socket at once (code 4401,
   *sign in again*), so each reconnect meets the new check.
@@ -485,6 +494,74 @@ a remote viewer's phone included. The player plays as it does locally, but its
 render starts Chrome and ffmpeg on the host, which a remote viewer may not. The ⋯ → **Sessions** panel says to run
 `claude-web-chat ls` on the host instead of listing anything: it names every
 project on the machine, so it is host-only.
+
+## Showing Claude's conversation remotely
+
+The surface can also show Claude's side of the work: the chat mirror, with the
+conversation, its tool calls and their output. On this computer you always see
+all of it. Through the tunnel, each project shows one of three levels:
+
+- **basic** (the default) — Claude's *status* only: whether it is working,
+  waiting for you or idle, since when, how many steps of each kind are running,
+  and the *kind* of the current step (an edit, a command, a reply). Never any
+  text, file path, command or title. A phone shows "Working · Edit · 4:12" or
+  "Needs you · permission", and says the rest is hidden, with the command that
+  shows it.
+- **read** — the conversation itself, watch-only: prompts, replies, tool calls
+  and their output.
+- **full** — the conversation, plus what a remote viewer can *do* with it (the
+  composer and stopping tasks).
+
+The level is set **per project, on the host**:
+
+```
+claude-web-chat tunnel mirror on               # full
+claude-web-chat tunnel mirror on --read-only   # read
+claude-web-chat tunnel mirror off              # back to basic
+claude-web-chat tunnel mirror status           # this project's level, and every grant
+```
+
+Each takes `--project <dir>`; without it, the project is the one you are in.
+`off --project` also takes the absolute path of a project that no longer
+exists, so its grant can still be removed. The grant is written to
+`remote.mirror` in `~/.web-chat/tunnel/tunnel.json`, keyed by the project's
+absolute root (an 8-hex instance id, as `tunnel status` prints it, is read
+too); a value is `read` or `full`, and a grant names exactly one project, never
+the projects under it:
+
+```json
+"remote": { "allowDestructive": false, "mirror": { "/Users/me/Dev/my-app": "full" } }
+```
+
+It lives in your user tier on purpose. A project cannot grant it — nothing in a
+repository's own files is read for it — and neither can the page: the surface
+only names the command to run here. Anything other than `read` or `full` makes
+the whole file invalid, and the portal then fails closed like any other bad
+edit. Without a `tunnel.json` the command refuses (*remote access is not set
+up; the conversation is local-only*), and a `tunnel.json` it cannot read or
+validate is left exactly as it is.
+
+`on` says what it exposes, with your allowlist's size:
+
+> Remote viewers of my-app (1 allowlisted account) will see Claude's
+> conversation — prompts, replies, file contents and command output. Known
+> secret formats are masked; not every secret has a known format.
+
+Take the second sentence literally: masking catches the API keys, tokens,
+cookies and password assignments whose formats it knows, and nothing else. No
+restart is needed either way: a running portal applies the edit within a
+couple of seconds, and the project's daemon within about a second.
+
+**The mirror goes remote only through the tunnel.** A daemon bound off
+loopback with `WEB_CHAT_HOST` serves the surface to anyone on that network with
+no sign-in, so a network peer there only ever gets the basic level — Claude's
+status, never the conversation — whatever it sends, and none of the host-only
+routes. There is no setting that raises it. That includes you, in a dev
+container or VM whose port is forwarded to your own browser: through a
+`WEB_CHAT_HOST` bind you see only the status. The tunnel needs no
+`WEB_CHAT_HOST` (cloudflared and the portal both reach the daemons on
+`127.0.0.1`), so for remote access to the conversation use the tunnel and
+`tunnel mirror on`.
 
 ## The remote access log
 
@@ -602,7 +679,7 @@ Access, so nothing would check who is signing in.
 
 | file | what |
 | --- | --- |
-| `~/.web-chat/tunnel/tunnel.json` | the config (0600) — hostname, style, Access team + AUD, allowlist, the tunnel, and the sign-in the one-token setup configured |
+| `~/.web-chat/tunnel/tunnel.json` | the config (0600) — hostname, style, Access team + AUD, allowlist, the tunnel, the sign-in the one-token setup configured, and `remote.mirror` (which projects show Claude's conversation remotely, written by `tunnel mirror`) |
 | `~/.web-chat/tunnel/token` | the connector token (0600), token tunnels only |
 | `~/.web-chat/tunnel/cloudflared.yml` | the generated ingress, local tunnels only — rewritten on every start |
 | `~/.web-chat/tunnel/portal.log`, `cloudflared.log` | what `tunnel logs` prints |
