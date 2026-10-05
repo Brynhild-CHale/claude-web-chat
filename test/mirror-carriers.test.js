@@ -112,6 +112,16 @@ test('a repeated identical notification is a new item even after an earlier one 
   assert.deepEqual(t.map((c) => [c.item.status, c.item.event]), [['running', 'tick'], ['running', 'tick']]);
 });
 
+test('two notification blocks of one task in one record are two items with distinct ids', () => {
+  const r = createRecords({ seed: 126 });
+  const text = `${taskNotificationText({ taskId: 'b6666666', status: null, summary: 'Monitor event', event: 'one' })}\n`
+    + taskNotificationText({ taskId: 'b6666666', status: null, summary: 'Monitor event', event: 'two' });
+  const del = r.queuedCommand(text, { commandMode: 'task-notification' });
+  const t = tasks(fold(r.records));
+  assert.deepEqual(t.map((c) => [c.item.id, c.item.event]),
+    [[`t_b6666666_${del.uuid}`, 'one'], [`t_b6666666_${del.uuid}_1`, 'two']]);
+});
+
 test('task item fields: kinds, statuses, exit codes and monitor events', () => {
   const r = createRecords({ seed: 130 });
   r.queuedCommand(taskNotificationText({ taskId: 'b1111111', status: 'failed', summary: 'Background command "t" failed with exit code 3' }),
