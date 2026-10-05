@@ -2101,6 +2101,154 @@ div.md-chat pre.md-diff { padding: 4px 0; }
 .dl-more { font-style: italic; }
 
 /* ── U36 · the chat panel and the awaiting card · chat-panel.js, chat-awaiting.js ── */
+/* The chat panel (design spec §7.9): ONE element, built by chat-panel.js, that
+   moves into whichever host was announced last (the dock's #cd-body, the phone
+   sheet's Chat page later), so everything here is scoped to .chat-panel and its
+   own classes. Tokens only (§7.4's mapping): the panel on --wc-panel-bg, the
+   strip and the composer on --wc-header-bg, code boxes on --wc-content-bg, the
+   title in --wc-accent-text. State inks come from U17's [data-cs-state] rules
+   and wc-chat-pulse, reused, never redefined. #cp-stop and #cp-ops belong to
+   later tranches (the Stop control, the session controls) and take no room
+   while empty. A [hidden] part is gone whatever display its class gives it. */
+.chat-panel [hidden] { display: none !important; }
+.chat-panel {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--wc-panel-bg); color: var(--wc-fg); font: 12px var(--wc-font);
+}
+.cp-head {
+  flex: none; display: flex; align-items: center; gap: 8px; min-width: 0;
+  height: 34px; padding: 0 8px 0 12px; box-sizing: border-box;
+  border-bottom: 1px solid var(--wc-border-soft);
+}
+.cp-title {
+  flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 10px var(--wc-mono); letter-spacing: .14em; color: var(--wc-accent-text);
+}
+.cp-stop, .cp-ops { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.cp-stop:empty, .cp-ops:empty { display: none; }
+.cp-close {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px; cursor: pointer;
+  border: 0; border-radius: var(--wc-radius-sm); background: transparent;
+  font: 500 11px var(--wc-font); color: var(--wc-text-2);
+}
+.cp-close:hover { color: var(--wc-fg-bright); }
+
+/* The strip: dot · LABEL · detail, chat-present's uiState line in its state ink
+   (a question tints it gold, a wait on the user rust, as the bar does). */
+.cp-strip {
+  flex: none; display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 7px 12px; border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+  font: 11px var(--wc-mono); white-space: nowrap;
+}
+.cp-strip:is([data-cs-state="question"], [data-cs-state="waiting"]) { border-bottom-color: var(--cs-st-bd); background: var(--cs-st-tint); }
+.cp-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--cs-st);
+  animation: wc-chat-pulse var(--cs-pulse) ease-in-out infinite;
+}
+.cp-label { flex: none; font-weight: 600; letter-spacing: .1em; color: var(--cs-st); }
+.cp-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--wc-fg); }
+.cp-text:not(:empty)::before { content: "· "; color: var(--wc-muted-dim); }
+
+/* The meta line: the session (a button opening the switcher when there are two
+   or more), the model, the mode words (bypass permissions in comment ink), and
+   tokens while live or the cost once ended. */
+.cp-meta {
+  position: relative; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0;
+  padding: 5px 12px; border-bottom: 1px solid var(--wc-border-soft);
+  font: 11px var(--wc-mono); color: var(--wc-muted);
+}
+.cp-session { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; font: 600 11px var(--wc-font); color: var(--wc-fg-bright); }
+button.cp-session {
+  padding: 1px 5px; margin-left: -5px; cursor: pointer;
+  border: 1px solid transparent; border-radius: var(--wc-radius-sm); background: transparent;
+}
+button.cp-session:hover, button.cp-session[aria-expanded="true"] { border-color: var(--wc-border-soft); background: var(--wc-header-bg); }
+.cp-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-caret { color: var(--wc-muted); }
+.cp-sep { color: var(--wc-muted-dim); }
+.cp-ink-comment { font-weight: 600; color: var(--wc-comment); }
+.popover.cp-sessions {
+  top: calc(100% - 2px); right: auto; left: 8px; min-width: 220px; max-width: calc(100% - 16px);
+  max-height: 260px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; outline: none;
+}
+.cp-session-opt, .cp-show-headless {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer;
+  border-radius: var(--wc-radius-sm); font: 12px var(--wc-font); color: var(--wc-fg); outline: none;
+}
+.cp-session-opt:is(:hover, :focus), .cp-show-headless:is(:hover, :focus) { background: color-mix(in srgb, var(--wc-fg-bright) 7%, transparent); }
+.cp-session-opt[aria-selected="true"] { font-weight: 600; color: var(--wc-fg-bright); }
+.cp-session-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-tag { flex: none; font: 10px var(--wc-mono); color: var(--wc-muted); }
+.cp-show-headless { color: var(--wc-accent-text); }
+
+/* Notices: a remote viewer below read (with the command that allows more), a
+   disabled mirror (the server's hint), and offline over the kept stream. */
+.cp-notice {
+  flex: none; padding: 8px 12px; border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-content-bg);
+  font: 12px/1.45 var(--wc-font); color: var(--wc-text-2);
+}
+.cp-notice-line { margin: 0; }
+.cp-notice-line + .cp-notice-line { margin-top: 4px; }
+.cp-notice code { font: 11px var(--wc-mono); color: var(--wc-fg-bright); }
+
+/* The awaiting card: what blocks the terminal, in its state's ink. An answer
+   frame mounted into its body draws its own controls; the read-only card shows
+   the request, then "Answer in the terminal". */
+.cp-awaiting {
+  flex: none; margin: 10px 12px 0; padding: 9px 11px; outline: none;
+  border: 1px solid var(--cs-st-bd); border-radius: var(--wc-radius); background: var(--cs-st-tint);
+}
+.cp-awaiting:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.cp-aw-title { margin-bottom: 6px; font: 600 10px var(--wc-mono); letter-spacing: .12em; color: var(--cs-st); }
+.cp-aw-code {
+  margin: 0 0 6px; padding: 6px 8px; max-height: 160px; overflow: auto;
+  border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm); background: var(--wc-content-bg);
+  font: 12px/1.45 var(--wc-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--wc-fg-bright);
+}
+.cp-aw-text, .cp-aw-qtext { margin: 0 0 6px; font: 13px/1.45 var(--wc-reading); color: var(--wc-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cp-aw-qtext { font-weight: 600; }
+.cp-aw-masked, .cp-aw-note { margin: 0 0 6px; font: italic 11px/1.4 var(--wc-font); color: var(--wc-muted); }
+.cp-aw-options { margin: 0 0 6px; padding-left: 18px; font: 12px/1.5 var(--wc-font); color: var(--wc-fg); }
+.cp-aw-optdesc { color: var(--wc-muted); }
+.cp-aw-plan { max-height: 220px; overflow-y: auto; margin-bottom: 6px; }
+.cp-aw-hint { margin: 0; font: 600 11px var(--wc-font); color: var(--wc-text-2); }
+.cp-aw-showplan, .cp-back {
+  margin: 0 0 6px; padding: 2px 8px; cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: var(--wc-panel-bg);
+  font: 500 11px var(--wc-font); color: var(--wc-text-2);
+}
+.cp-aw-showplan:hover, .cp-back:hover { color: var(--wc-fg-bright); border-color: var(--wc-accent); }
+
+/* The views: the stream (chat-stream.js fills it), its "↓ N new" pill, and the
+   detail views pushed OVER it — the stream stays laid out underneath, so its
+   scroll position survives a detail. The detail host comes last in #chat-views,
+   so it paints over the stream and the pill with no z-index of its own. */
+.cp-views { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.cp-stream { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px; outline: none; }
+.cp-new {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); padding: 3px 10px; cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: 999px; background: var(--wc-header-bg); box-shadow: var(--wc-shadow);
+  font: 500 11px var(--wc-font); color: var(--wc-fg-bright);
+}
+.cp-detail { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--wc-panel-bg); }
+.cp-dview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.cp-dhead {
+  flex: none; display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 6px 12px; border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+}
+.cp-dhead .cp-back { margin: 0; }
+.cp-dtitle { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
+.cp-dbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+
+/* The composer slot: the registered composer, or where to reply instead. */
+.cp-composer { flex: none; padding: 8px 12px; border-top: 1px solid var(--wc-border-soft); background: var(--wc-header-bg); }
+.cp-composer-note { margin: 0; font: 12px/1.45 var(--wc-font); color: var(--wc-muted); }
+
+:is(.cp-close, button.cp-session, .cp-aw-showplan, .cp-back, .cp-new):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+/* The phone sheet's variant: a tap-sized Close. */
+.chat-panel[data-variant="sheet"] .cp-close { min-height: 44px; padding: 0 12px; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .cp-dot { animation: none; } }
 
 /* ── U37 · the stream · chat-stream.js, chat-turns.js ── */
 
