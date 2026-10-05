@@ -168,6 +168,8 @@ async function close(id) {
   card(id).open = false;
   await shell.tick();
 }
+// The tool cards' ticker (the bar and the panel run 1 s tickers of their own).
+const toolTickers = () => shell.intervals().filter((i) => /refreshLive/.test(String(i.fn)));
 const click = (elt) => elt.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
 
 before(async () => {
@@ -267,7 +269,20 @@ test('a task row\'s change repaints the live header without the stream redrawing
     { ...fixtureTasks(now)[2], conversation_id: cid, rev: 2, meta: { events: 9 } }] });
   await waitUntil(() => metaOf('tu_mon') === '9 events', { what: 'the monitor\'s new count' });
   assert.equal(card('tu_mon'), before, 'the same card');
-  assert.ok(shell.intervals().length >= 1, 'a ticker runs while a live card runs');
+  assert.equal(toolTickers().length, 1, 'a ticker runs while a live card runs');
+});
+
+test('the 1 s ticker stops once no live card runs', async () => {
+  const now = Date.now();
+  const mon = fixtureTasks(now)[2];
+  await follow([fixtureItems(now)[10]], { tasks: [mon] });
+  await shell.frame({ type: 'mirror:update', rev: ++rev, conversation_id: cid, tasks: [
+    { ...mon, conversation_id: cid, rev: 2, meta: { events: 8 } }] });
+  await waitUntil(() => metaOf('tu_mon') === '8 events', { what: 'the monitor\'s new count' });
+  assert.equal(toolTickers().length, 1, 'one ticker while the monitor runs');
+  await shell.frame({ type: 'mirror:update', rev: ++rev, conversation_id: cid, tasks: [
+    { ...mon, conversation_id: cid, rev: 3, status: 'done', ended_at: now, meta: { events: 8 } }] });
+  await waitUntil(() => toolTickers().length === 0, { what: 'the ticker cleared once nothing runs' });
 });
 
 // ── the lazy body ────────────────────────────────────────────────────────────
