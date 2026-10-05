@@ -107,6 +107,22 @@ test('status admits "unknown" rather than guessing when no MCP client was ever s
   assert.doesNotMatch(out, /RESTART:/);
 });
 
+// U95@status.js:unparseable-two-lines (ruled 2026-10-05): a .mcp.json that does
+// not parse once gave status two `MCP:` lines — "error reading .mcp.json" and
+// then the state. It prints exactly one, the five-state line, with the parse
+// failure as a note beneath it, the way doctor reports it.
+test('status with an unparseable .mcp.json prints one MCP: line and a could-not-parse note beneath it', async (t) => {
+  const out = await runStatus(t, (root) => {
+    fs.writeFileSync(path.join(root, '.mcp.json'), '{ "mcpServers": { "web-chat": ');
+  });
+  const lines = out.split('\n');
+  const mcp = lines.filter((l) => l.startsWith('MCP:'));
+  assert.equal(mcp.length, 1, out);
+  const at = lines.indexOf(mcp[0]);
+  assert.match(lines[at], /^MCP: +not registered — run `claude-web-chat doctor`$/);
+  assert.match(lines[at + 1], /^ +⚠ could not parse \.mcp\.json$/, out);
+});
+
 // cli-setup-6, status's half. This line used to count handler GROUPS while
 // doctor counted individual handlers — two numbers for the same file, and
 // neither noticed a MISSING event. The turn lifecycle needs both:
