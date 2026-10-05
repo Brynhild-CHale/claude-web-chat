@@ -183,6 +183,79 @@ test('classifyContext: each environment dump is env-dump, as the command, after 
   }
 });
 
+// U23b: env's option arguments are consumed with their flag, so `env -u FOO`
+// with nothing after it dumps, while `env -u FOO cmd` still runs cmd.
+test('classifyContext: env\'s -u, -C, -P and -S take their argument with them; with no utility after, it is still a dump', () => {
+  const dumps = ['env -u FOO', 'sudo env -u A -u B', 'env -C dir', 'env -P path', "env -S 'x'", 'env --unset FOO', 'env --chdir /tmp',
+    "env --split-string 'x'", 'env -iu FOO', 'env -u FOO -i', 'env -u FOO BAR=1', 'env -uFOO -C /tmp', '/usr/bin/env -u HOME'];
+  for (const d of dumps) {
+    for (const command of [d, `${d} | sort`, `cd /srv && ${d}`, `echo x | ${d} | grep -i path`, `echo $(${d})`]) {
+      assert.deepEqual(classifyContext({ command }), { withhold: null, mode: 'env-dump' }, command);
+    }
+  }
+  for (const command of ['env -u FOO cmd', 'env -u FOO node app.js | sort', 'sudo env -u A -u B make', 'env -C dir ls', 'env -P /bin ls',
+    "env -S 'x' y", 'env --unset FOO cmd', 'env -ui cmd', 'env -i -u FOO BAR=1 node app.js']) {
+    assert.deepEqual(classifyContext({ command }), NONE, command);
+  }
+});
+
+// U23b (ruling U23@redact.js:command-path-spellings): a word's adjacent quoted
+// fragments are tried joined, and a glob's directory against the directories
+// whose files are a category. No category is added.
+test('classifyContext: quoted fragments are joined, and a glob in a credentials directory withholds under its category', () => {
+  const cases = [
+    ['cat ~/.aws/*', 'cloud'],
+    ['cat ~/.aws/cred*', 'cloud'],
+    ['head ~/.aws/c?nfig', 'cloud'],
+    ['cat ~/.aws/[cC]redentials', 'cloud'],
+    ['cat ~/.aws/{credentials,config}', 'cloud'],
+    ['cat "$HOME"/.kube/*', 'cloud'],
+    ['tar czf x.tgz ~/.docker/*.json', 'cloud'],
+    ['cat ~/.cargo/cred*', 'pkg'],
+    ['cat ~/.claude/*', 'claude'],
+    ['cat ~/.ssh/*', 'ssh'],
+    ['cat ~/.n"p"mrc', 'pkg'],
+    ["cat ~/.n'p'mrc", 'pkg'],
+    ['cat ~/.n""pmrc', 'pkg'],
+    ['cat ~/".ssh"/id_rsa', 'ssh'],
+    ['cat "$HOME/.aws/"credentials', 'cloud'],
+    ["cat ~/.a'w's/cred*", 'cloud'],
+    ['cat < ~/.n"p"mrc', 'pkg'],
+    ['echo x && cat ~/".npm"rc | head', 'pkg'],
+    // A `${...}` expansion's brace is not a glob: the glob after it is.
+    ['cat ${HOME}/.aws/*', 'cloud'],
+    ['cat ${HOME}/.kube/*', 'cloud'],
+    ['cat "${HOME}/.aws/"cred*', 'cloud'],
+  ];
+  for (const [command, category] of cases) {
+    assert.deepEqual(classifyContext({ command }), { withhold: category, mode: null }, command);
+  }
+  for (const command of ['ls ~/Downloads/*', 'echo "a"b', 'cat src/*.js', 'ls *', 'cat ~/.config/*', 'echo "~/.n" pmrc', 'echo "~/.n"; pmrc',
+    'cat ~/.aws', 'ls ~/project/config/*', 'rm -rf build/*', 'cat ~/.n "pmrc"', "cat ~/.n 'pmrc'"]) {
+    assert.deepEqual(classifyContext({ command }), NONE, command);
+  }
+  // A dotenv spelled in fragments is still a dotenv.
+  assert.deepEqual(classifyContext({ command: 'cat ."en"v' }), { withhold: null, mode: 'env-dotenv' });
+});
+
+// Every credentials FILE sensitivePath names inside a directory (its
+// pair(dir, file) rules) is one a glob in that directory may expand to, so
+// globCategory's DIR_FILES must carry it: a pair added without it would let
+// `cat ~/<dir>/*` through. The children that are themselves directories are
+// none (a bare directory is no category).
+test('classifyContext: a glob in every credentials directory sensitivePath pairs withholds under its file\'s category', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../lib/core/redact'), 'utf8');
+  const DIRECTORY_CHILDREN = new Set(['gcloud', 'sessions', 'keychains']);
+  const pairs = [...src.matchAll(/pair\('([^']+)', '([^']+)'\)/g)].map((m) => [m[1], m[2]]);
+  assert.ok(pairs.length >= 10, `found the pair rules (${pairs.length})`);
+  for (const [dir, child] of pairs) {
+    if (DIRECTORY_CHILDREN.has(child)) continue;
+    const { withhold } = classifyContext({ command: `cat ~/${dir}/${child}` });
+    assert.ok(withhold, `~/${dir}/${child} is withheld`);
+    assert.deepEqual(classifyContext({ command: `cat ~/${dir}/*` }), { withhold, mode: null }, `cat ~/${dir}/*`);
+  }
+});
+
 test('classifyContext: an explicit mode selects the mode and never lifts a withholding; an unknown one is ignored', () => {
   assert.deepEqual(classifyContext({ command: 'printenv', mode: 'env-dotenv' }), { withhold: null, mode: 'env-dotenv' });
   assert.deepEqual(classifyContext({ file: '.env', mode: 'env-dump' }), { withhold: null, mode: 'env-dump' });
@@ -422,6 +495,57 @@ test('addKnownSource: a throwing source masks nothing and breaks nothing; addKno
   assert.equal(r.addKnownSource(null), false);
 });
 
+// U23b (ruling U23@redact.js:addKnownSource-throw-evicts): a transient read
+// error (EMFILE, EACCES mid-rewrite) never unmasks a still-valid token.
+test('addKnownSource: a source that throws after a good read keeps masking its last value; an explicit null drops it after maxAgeMs', () => {
+  const token = fake('json-key-hex-token').secrets[0];
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let answer = () => token;
+  let calls = 0;
+  r.addKnownSource(() => { calls++; return answer(); }, 'capture-token');
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, 'the good read');
+  answer = () => { const e = new Error('EMFILE: too many open files'); e.code = 'EMFILE'; throw e; };
+  for (let i = 0; i < 3; i++) {
+    clock.t += 2000;
+    assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, `throw ${i + 1} keeps the last good value`);
+    assert.ok(!JSON.stringify(r.value({ a: token })).includes(token));
+    assert.ok(!r.window(`a\n${token}\n`, { startsMidFile: true }).includes(token));
+  }
+  assert.equal(calls, 4, 'a throwing source is still consulted once per maxAgeMs');
+  // An explicit null drops it, but only once maxAgeMs has passed.
+  answer = () => null;
+  clock.t += 1999;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, 'not consulted again inside maxAgeMs');
+  clock.t += 1;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'null drops the value');
+  // A throw after null brings nothing back.
+  answer = () => { throw new Error('EACCES'); };
+  clock.t += 2000;
+  assert.equal(r.text(`x ${token}`), `x ${token}`);
+  // undefined drops a value just as null does.
+  answer = () => token;
+  clock.t += 2000;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`);
+  answer = () => undefined;
+  clock.t += 2000;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'undefined drops the value');
+});
+
+test('addKnownSource: a throw before any good read masks nothing; the first good read after it masks', () => {
+  const token = fake('json-key-api-key').secrets[0];
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let fail = true;
+  r.addKnownSource(() => { if (fail) throw new Error('ENOENT'); return token; }, 'capture-token', { maxAgeMs: 100 });
+  assert.equal(r.text(`x ${token}`), `x ${token}`);
+  clock.t += 100;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'a second throw still masks nothing');
+  fail = false;
+  clock.t += 100;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`);
+});
+
 test('addKnownSource: a source that redacts from inside its own fn is not re-entered', () => {
   const clock = clocked();
   const r = createRedactor({ now: clock.now });
@@ -472,6 +596,10 @@ test('adversarial command strings finish in linear time', (t) => {
     'one long word': rep('a'), 'pieces in a word': rep('a=b:c,'), 'path segments': rep('a/'), 'ssh segments': rep('.ssh/'),
     'dotenv words': rep('.env '), 'history-like words': rep('x_history'), 'printer then nothing': `${rep('op ')}`,
     'everything at once': rep('"$(gh|auth)\'`token` < > & ; \\'),
+    // U23b: env's option arguments, glued quoted fragments, and globs.
+    'env option arguments': `env ${rep('-u x ')}`, 'env option clusters': `env ${rep('-iu ')}`, 'env long options': `env ${rep('--unset x ')}`,
+    'glued fragments': rep('a"'), 'glued quoted pieces': rep('.n"p"m=rc\''), 'globs in a word': rep('a/*'),
+    'glob pieces': rep('.aws/*,'), 'a deep glob': `${rep('a/')}*`, 'brace globs': rep('{a,'), 'expansions in a path': rep('${a}/'),
   };
   let worst = ['', 0];
   const text = 'GITHUB_TOKEN=abc\nplain line';
