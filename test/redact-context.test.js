@@ -231,11 +231,29 @@ test('classifyContext: quoted fragments are joined, and a glob in a credentials 
     assert.deepEqual(classifyContext({ command }), { withhold: category, mode: null }, command);
   }
   for (const command of ['ls ~/Downloads/*', 'echo "a"b', 'cat src/*.js', 'ls *', 'cat ~/.config/*', 'echo "~/.n" pmrc', 'echo "~/.n"; pmrc',
-    'cat ~/.aws', 'ls ~/project/config/*', 'rm -rf build/*']) {
+    'cat ~/.aws', 'ls ~/project/config/*', 'rm -rf build/*', 'cat ~/.n "pmrc"', "cat ~/.n 'pmrc'"]) {
     assert.deepEqual(classifyContext({ command }), NONE, command);
   }
   // A dotenv spelled in fragments is still a dotenv.
   assert.deepEqual(classifyContext({ command: 'cat ."en"v' }), { withhold: null, mode: 'env-dotenv' });
+});
+
+// Every credentials FILE sensitivePath names inside a directory (its
+// pair(dir, file) rules) is one a glob in that directory may expand to, so
+// globCategory's DIR_FILES must carry it: a pair added without it would let
+// `cat ~/<dir>/*` through. The children that are themselves directories are
+// none (a bare directory is no category).
+test('classifyContext: a glob in every credentials directory sensitivePath pairs withholds under its file\'s category', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../lib/core/redact'), 'utf8');
+  const DIRECTORY_CHILDREN = new Set(['gcloud', 'sessions', 'keychains']);
+  const pairs = [...src.matchAll(/pair\('([^']+)', '([^']+)'\)/g)].map((m) => [m[1], m[2]]);
+  assert.ok(pairs.length >= 10, `found the pair rules (${pairs.length})`);
+  for (const [dir, child] of pairs) {
+    if (DIRECTORY_CHILDREN.has(child)) continue;
+    const { withhold } = classifyContext({ command: `cat ~/${dir}/${child}` });
+    assert.ok(withhold, `~/${dir}/${child} is withheld`);
+    assert.deepEqual(classifyContext({ command: `cat ~/${dir}/*` }), { withhold, mode: null }, `cat ~/${dir}/*`);
+  }
 });
 
 test('classifyContext: an explicit mode selects the mode and never lifts a withholding; an unknown one is ignored', () => {
