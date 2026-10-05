@@ -22,7 +22,8 @@
 //   * /clear: the old file is drained before the new one is followed, both
 //     sessions' turns in one conversation;
 //   * a --fork-session file whose first turns belong to another conversation
-//     calls markFork and adds no copied turn;
+//     calls markFork and adds no copied turn, and a boot with no index reads
+//     the fork's source before the fork, so the fork never takes its turns;
 //   * the LRU: an evicted turn holding a task notification is refilled through
 //     store.readRange before turns() answers, its task item back with its seq;
 //   * itemField pages a persisted tool result through sessionDirFile with to =
@@ -529,6 +530,39 @@ test('a --fork-session file whose first turns belong to another conversation cal
     return c && c.forked_from === S1;
   }, { what: 'forked_from' });
   assert.deepEqual((await h.turns(S1)).turns.map((x) => x.id), ['src-1', 'src-2'], 'the source untouched');
+});
+
+test('a boot with no index reads a fork\'s source before the fork: the fork never takes the source\'s turns', async (t) => {
+  const a = setup(t);
+  await a.mirror.start();
+  a.sessionStart(S1);
+  const r1 = a.records(S1, 1);
+  closedTurn(r1, 'src-1');
+  closedTurn(r1, 'src-2');
+  a.ch.writeTranscript(S1, r1.records);
+  await turnCount(a, 2);
+  const copied = r1.records.map((x) => (x.sessionId ? { ...x, sessionId: S3 } : x));
+  const r3 = a.records(S3, 3);
+  closedTurn(r3, 'fork-own-1');
+  a.ch.writeTranscript(S3, [...copied, ...r3.records]);
+  a.sessionStart(S3, 'resume');
+  await turnCount(a, 1, S3, 'the fork\'s own turn');
+  await waitUntil(() => {
+    const c = a.mirror.snapshot({}).conversations.find((x) => x.id === S3);
+    return c && c.forked_from === S1;
+  }, { what: 'forked_from' });
+  await a.mirror.stop();
+
+  // A second mirror on the same root and Claude tier, with no index at all: the
+  // registry lists the fork first (the newest activity), its source after it.
+  const b = setup(t, { store: fakeStore(), root: a.root, ch: a.ch });
+  await b.mirror.start();
+  const src = await turnCount(b, 2, S1, 'the source\'s turns');
+  const fork = await turnCount(b, 1, S3, 'the fork\'s own turn');
+  assert.deepEqual(src.turns.map((x) => x.id), ['src-1', 'src-2'], 'the source keeps its turns');
+  assert.deepEqual(fork.turns.map((x) => x.id), ['fork-own-1'], 'the fork has only its own');
+  const order = b.tailers.list.map((x) => path.basename(x.file));
+  assert.ok(order.indexOf(`${S1}.jsonl`) < order.indexOf(`${S3}.jsonl`), 'the source was opened first');
 });
 
 // ── the LRU ──────────────────────────────────────────────────────────────────
