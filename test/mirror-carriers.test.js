@@ -216,6 +216,7 @@ test('a typed-while-busy message becomes a queued item; a queue-operation conten
 
   // Any other remove marks it removed.
   const r3q = createRecords({ seed: 144 });
+  r3q.prompt('refactor the parser'); // busy: an idle enqueue makes no item (THE IDLE RULE)
   r3q.queueOperation('enqueue', { content: 'never mind' });
   r3q.queueOperation('remove', { content: 'never mind' });
   assert.deepEqual(queuedItems(fold(r3q.records)).map((i) => i.status), ['removed']);
@@ -254,6 +255,63 @@ test('a typed-while-busy message becomes a queued item; a queue-operation conten
   assert.equal(ch.uuid, del.uuid);
   assert.deepEqual(ch.offset, { start: rec.start, end: rec.end });
   assert.equal(ch.ts, Date.parse(del.timestamp));
+});
+
+test('an enqueue made while Claude is idle makes no queued change, nor does its dequeue (THE IDLE RULE)', () => {
+  // (a) a channel wake after a closed turn: enqueue, dequeue, the channel opener.
+  const ra = createRecords({ seed: 180 });
+  ra.prompt('first');
+  ra.assistant(['ok']);
+  ra.turnDuration();
+  ra.queueOperation('enqueue', { content: channelText({ body: '[web-chat message m-0000000a] hi' }) });
+  ra.queueOperation('dequeue');
+  ra.channel({ body: '[web-chat message m-0000000a] hi' });
+  const outA = fold(ra.records);
+  assert.deepEqual(queuedItems(outA), []);
+  assert.deepEqual(outA.delivered.map(({ via, marker }) => ({ via, marker })), [{ via: 'channel', marker: 'm-0000000a' }]);
+  assert.equal(outA.state.busy, true, 'the channel opener started a turn');
+
+  // (b) a typed prompt after a closed turn: enqueue 'next', dequeue, prompt('next').
+  const rb = createRecords({ seed: 181 });
+  rb.prompt('first');
+  rb.assistant(['ok']);
+  rb.turnDuration();
+  rb.queueOperation('enqueue', { content: 'next' });
+  rb.queueOperation('dequeue');
+  rb.prompt('next');
+  assert.deepEqual(fold(rb.records).changes, []);
+
+  // (c) enqueue + dequeue at the file's start, before any opener.
+  const rc = createRecords({ seed: 182 });
+  rc.queueOperation('enqueue', { content: 'hello' });
+  rc.queueOperation('dequeue');
+  rc.prompt('hello');
+  const outC = fold(rc.records);
+  assert.deepEqual(outC.changes, []);
+  assert.deepEqual(outC.state.queue, [], 'the idle enqueue was still popped by its dequeue');
+
+  // The flag rides the state across batches: a turn closed in one batch makes the
+  // next batch's enqueue idle; an opener in one batch makes the next one's busy.
+  const rd = createRecords({ seed: 183 });
+  rd.prompt('first');
+  rd.turnDuration();
+  const closed = foldCarriers(initialCarriers(), toRecs(rd.records));
+  assert.equal(closed.state.busy, false);
+  const idle = foldCarriers(closed.state, toRecs([rd.queueOperation('enqueue', { content: 'later' })], 10_000));
+  assert.deepEqual(idle.changes, []);
+  const opened = foldCarriers(closed.state, toRecs([rd.prompt('second')], 20_000));
+  assert.equal(opened.state.busy, true);
+  const busy = foldCarriers(opened.state, toRecs([rd.queueOperation('enqueue', { content: 'also this' })], 30_000));
+  assert.deepEqual(queuedItems(busy), [{ id: 'q_o30000', kind: 'queued', text: 'also this', status: 'queued' }]);
+
+  // A notification enqueued while idle still pairs with its delivery: one task item.
+  const re = createRecords({ seed: 184 });
+  re.queueOperation('enqueue', { content: taskNotificationText(NOTE) });
+  re.queueOperation('dequeue');
+  re.taskNotification(NOTE);
+  const outE = fold(re.records);
+  assert.equal(tasks(outE).length, 1);
+  assert.deepEqual(queuedItems(outE), []);
 });
 
 test('delivery markers: a channel record, a channel queued_command and a hook context, once each, with the right via', () => {
