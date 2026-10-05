@@ -183,6 +183,22 @@ test('classifyContext: each environment dump is env-dump, as the command, after 
   }
 });
 
+// U23b: env's option arguments are consumed with their flag, so `env -u FOO`
+// with nothing after it dumps, while `env -u FOO cmd` still runs cmd.
+test('classifyContext: env\'s -u, -C, -P and -S take their argument with them; with no utility after, it is still a dump', () => {
+  const dumps = ['env -u FOO', 'sudo env -u A -u B', 'env -C dir', 'env -P path', "env -S 'x'", 'env --unset FOO', 'env --chdir /tmp',
+    "env --split-string 'x'", 'env -iu FOO', 'env -u FOO -i', 'env -u FOO BAR=1', 'env -uFOO -C /tmp', '/usr/bin/env -u HOME'];
+  for (const d of dumps) {
+    for (const command of [d, `${d} | sort`, `cd /srv && ${d}`, `echo x | ${d} | grep -i path`, `echo $(${d})`]) {
+      assert.deepEqual(classifyContext({ command }), { withhold: null, mode: 'env-dump' }, command);
+    }
+  }
+  for (const command of ['env -u FOO cmd', 'env -u FOO node app.js | sort', 'sudo env -u A -u B make', 'env -C dir ls', 'env -P /bin ls',
+    "env -S 'x' y", 'env --unset FOO cmd', 'env -ui cmd', 'env -i -u FOO BAR=1 node app.js']) {
+    assert.deepEqual(classifyContext({ command }), NONE, command);
+  }
+});
+
 test('classifyContext: an explicit mode selects the mode and never lifts a withholding; an unknown one is ignored', () => {
   assert.deepEqual(classifyContext({ command: 'printenv', mode: 'env-dotenv' }), { withhold: null, mode: 'env-dotenv' });
   assert.deepEqual(classifyContext({ file: '.env', mode: 'env-dump' }), { withhold: null, mode: 'env-dump' });
@@ -472,6 +488,8 @@ test('adversarial command strings finish in linear time', (t) => {
     'one long word': rep('a'), 'pieces in a word': rep('a=b:c,'), 'path segments': rep('a/'), 'ssh segments': rep('.ssh/'),
     'dotenv words': rep('.env '), 'history-like words': rep('x_history'), 'printer then nothing': `${rep('op ')}`,
     'everything at once': rep('"$(gh|auth)\'`token` < > & ; \\'),
+    // U23b: env's option arguments.
+    'env option arguments': `env ${rep('-u x ')}`, 'env option clusters': `env ${rep('-iu ')}`, 'env long options': `env ${rep('--unset x ')}`,
   };
   let worst = ['', 0];
   const text = 'GITHUB_TOKEN=abc\nplain line';
