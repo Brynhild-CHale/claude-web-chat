@@ -133,6 +133,27 @@
       <!-- chat-host:dock · U33, public/app/chat-dock.js — #chat-dock goes here,
            .body's sibling: the drawer right of the well, or the floating window. Both
            markers stay: test/chrome-shell.test.js holds the host's place by them. -->
+      <!-- The chat dock: one element in two modes (data-mode drawer|window), so a
+           detach never re-parents the panel inside it. Openness is .hidden; the
+           strip's controls are built by chat-dock.js; the chat panel moves itself
+           into #cd-body on chat:host (its #chat-title names the dialog; until it
+           is there, aria-label does). data-dismiss-zone names where an outside
+           pointerdown closes the drawer (shell.js); window mode drops it. Not a
+           .drawer and not a .popover: it must not close with the panels. -->
+      <section id="chat-dock" class="chat-dock hidden" data-mode="drawer" role="dialog" aria-modal="false"
+               aria-labelledby="chat-title" aria-label="Chat with Claude"
+               data-dismiss-zone="#contents-nav, .well-wrap" tabindex="-1">
+        <div id="cd-strip" class="cd-strip"></div>
+        <div id="cd-body" class="cd-body"></div>
+        <div class="cd-h" data-edge="n" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="s" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="e" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="w" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="ne" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="nw" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="se" aria-hidden="true"></div>
+        <div class="cd-h" data-edge="sw" aria-hidden="true"></div>
+      </section>
       <!-- /chat-host:dock -->
     </div>
 

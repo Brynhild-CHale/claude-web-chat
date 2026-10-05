@@ -1946,6 +1946,89 @@ body.pin-mode #main { cursor: crosshair; }
 }
 
 /* ── U33 · the chat dock · chat-dock.js ── */
+/* The dock (design spec §7.7): ONE element, two modes, so a detach never
+   re-parents the chat panel in #cd-body. .body's sibling inside .body-wrap
+   (positioned against it, never inside .body's stacking context, which sits
+   under #pin-layer), on the chat rung: above the pins and the front glass,
+   below every panel. Openness is .hidden; the mode is data-mode.
+
+   The drawer: full height, right of the page well and left of the queue rail —
+   64px collapsed, 272px while the rail is open, moving with the rail's own curve.
+   The window: placed by --cd-x/-y/-w/-h (chat-dock.js clamps them into
+   .body-wrap less the rail), faded to --cd-op, and with Solid ([data-solid])
+   back to full strength under the pointer or with focus inside — focus-within,
+   so a keyboard user can read a faded window. The eight edge handles exist in
+   window mode only. Colours are tokens; nothing animates on close, or at all
+   under prefers-reduced-motion. */
+.chat-dock {
+  position: absolute; z-index: var(--z-chat);
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; box-sizing: border-box;
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-border); box-shadow: var(--wc-shadow);
+  outline: none;
+}
+.chat-dock[data-mode="drawer"] {
+  top: 0; bottom: 0; right: 64px; width: min(400px, calc(100% - 64px));
+  border-width: 0 1px;
+  transition: right .2s cubic-bezier(.2,.8,.2,1);
+}
+.body-wrap:has(.rail.open) .chat-dock[data-mode="drawer"] { right: 272px; }
+.chat-dock[data-mode="window"] {
+  left: var(--cd-x); top: var(--cd-y); width: var(--cd-w); height: var(--cd-h);
+  opacity: var(--cd-op, 1);
+  border-radius: var(--wc-radius-lg); overflow: hidden;
+}
+.chat-dock[data-mode="window"][data-solid]:is(:hover, :focus-within) { opacity: 1; }
+.chat-dock:not(.hidden)[data-mode="drawer"] { animation: cd-slide .26s cubic-bezier(.3,.7,.2,1); }
+.chat-dock:not(.hidden)[data-mode="window"] { animation: cd-pop .26s cubic-bezier(.3,.7,.2,1); }
+@keyframes cd-slide { from { transform: translateX(32px); opacity: 0; } }
+@keyframes cd-pop { from { transform: scale(.96); opacity: 0; } }
+.chat-dock.cd-gesture { user-select: none; }
+
+/* The strip: DOCKED + Detach in the drawer; Close, the grip, the opacity range
+   and its readout, Solid and Attach in the window. Only the grip moves it. */
+.cd-strip {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0;
+  height: 30px; padding: 0 8px; box-sizing: border-box;
+  border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+  font: 600 10px var(--wc-mono); letter-spacing: .1em; color: var(--wc-muted);
+  white-space: nowrap; user-select: none;
+}
+.cd-spacer { flex: 1; }
+.cd-btn {
+  font: 500 11px var(--wc-mono); letter-spacing: 0; color: var(--wc-text-2);
+  background: transparent; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm);
+  padding: 1px 7px; cursor: pointer;
+}
+.cd-btn:hover, .cd-btn:focus-visible { color: var(--wc-fg); border-color: var(--wc-border); }
+.cd-close { border-color: transparent; padding: 1px 5px; }
+.cd-solid[aria-pressed="true"] { color: var(--wc-accent-text); border-color: var(--wc-accent); }
+.cd-grip { padding: 0 4px; font-size: 13px; color: var(--wc-muted-dim); cursor: grab; touch-action: none; }
+.chat-dock.cd-gesture .cd-grip { cursor: grabbing; }
+.cd-op { display: inline-flex; align-items: center; gap: 4px; }
+.cd-op-range { width: 72px; accent-color: var(--wc-accent); }
+.cd-op-val { min-width: 4ch; text-align: right; font-weight: 500; letter-spacing: 0; }
+.cd-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* The handles: four edges and four corners, inside the window's box (it clips
+   its overflow), the corners last in the markup so they paint over the edges. */
+.cd-h { position: absolute; touch-action: none; }
+.chat-dock[data-mode="drawer"] .cd-h { display: none; }
+.cd-h[data-edge="n"] { top: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.cd-h[data-edge="s"] { bottom: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.cd-h[data-edge="e"] { right: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.cd-h[data-edge="w"] { left: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.cd-h[data-edge="ne"] { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.cd-h[data-edge="nw"] { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.cd-h[data-edge="se"] { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.cd-h[data-edge="sw"] { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+
+/* Below the one narrow breakpoint the chat is the phone sheet's (tranche 5);
+   chat-dock.js already closes the dock on that flip and ignores chat:open there. */
+@media (max-width: 759px) { .chat-dock { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-dock[data-mode], .chat-dock:not(.hidden)[data-mode] { animation: none; transition: none; }
+}
 
 /* ── U35 · the chat markdown flavour · lib/core/markdown.js ── */
 /* The chat flavour of the one markdown engine: renderMarkdown(text, {flavor:
