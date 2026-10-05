@@ -389,6 +389,44 @@ describe('the tab icon in the chrome', () => {
     assert.deepStrictEqual(titleWrites, []);
   });
 
+  test('a re-composition that fails drops the old badge for the plain image it was drawing', async () => {
+    await status('waiting');
+    await waitUntil(() => icons()[0].startsWith('data:'), { timeout: 2000 });
+    assert.deepStrictEqual(loads, ['/favicon.png']);
+    // The browser goes dark and the gold W cannot be drawn: the light badge must
+    // not linger on the tab.
+    makeCanvas = () => fakeCanvas({ context: false });
+    shell.setViewport({ dark: true });
+    await waitUntil(() => loads.length === 2, { timeout: 2000 });
+    await shell.tick();
+    assert.deepStrictEqual(icons(), both('/favicon-dark.png'));
+    // Likewise an image that fails to load.
+    makeCanvas = () => fakeCanvas();
+    shell.setViewport({ dark: false });
+    await waitUntil(() => icons()[0].startsWith('data:'), { timeout: 2000 });
+    loadImage = async () => { throw new Error('404'); };
+    shell.setViewport({ dark: true });
+    await waitUntil(() => loads.length === 4, { timeout: 2000 });
+    await shell.tick();
+    assert.deepStrictEqual(icons(), both('/favicon-dark.png'));
+  });
+
+  test('a 2x display composes on a 64px canvas', async () => {
+    const win = shell.window;
+    const had = Object.getOwnPropertyDescriptor(win, 'devicePixelRatio');
+    Object.defineProperty(win, 'devicePixelRatio', { configurable: true, get: () => 2 });
+    try {
+      const made = [];
+      makeCanvas = () => { const c = fakeCanvas(); made.push(c); return c; };
+      await status('waiting');
+      await waitUntil(() => made.length === 1 && icons()[0].startsWith('data:'), { timeout: 2000 });
+      assert.deepStrictEqual([made[0].width, made[0].height], [64, 64]);
+      assert.deepStrictEqual(made[0].log[1].slice(2), [0, 0, 64, 64], 'the image fills the 64px canvas');
+    } finally {
+      if (had) Object.defineProperty(win, 'devicePixelRatio', had); else delete win.devicePixelRatio;
+    }
+  });
+
   test('a composition that lands after the wait ended is dropped', async () => {
     let release;
     loadImage = (src) => new Promise((r) => { release = () => r({ src }); });
