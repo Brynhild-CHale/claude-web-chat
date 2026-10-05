@@ -272,6 +272,45 @@ test('doctor without a runnable claude writes no .mcp.json and says web-chat sta
   assert.match(text, /claude mcp add web-chat --scope local -- node /);
 });
 
+// U95b@registration.js:noClaudeLines-kind: without `claude`, doctor's words
+// come from the state it holds, not only from whether .mcp.json has an entry.
+// A stale local entry (another copy's bin) it meant to repoint stays exactly as
+// it was, so the words say it is still registered there — never "stays
+// unregistered" under a ✗ line that says it is registered — and the lines to
+// run are the remove before the add, as the repoint itself does them.
+test('doctor without a runnable claude, over a stale local entry or a rejected one: each stays as it was, and the words say so', async (t) => {
+  withTempHome(t);
+  isolateClaude(t);
+  const noClaude = () => ({ ok: false, notFound: true, stderr: 'not found' });
+  const root = tmpRoot();
+  fs.mkdirSync(projectPaths(root).dir);
+  const oldBin = '/old/checkout/bin/claude-web-chat-mcp.js';
+  writeConfig({ projects: { [claudeKey(root)]: { mcpServers: { 'web-chat': { type: 'stdio', command: 'node', args: [oldBin], env: {} } } } } });
+  const cfgBefore = fs.readFileSync(userClaudePaths().claudeJson, 'utf8');
+
+  const lines = [];
+  await doctor([], { cwd: root, runClaude: noClaude, log: (l) => lines.push(l) });
+  const text = lines.join('\n');
+  assert.equal(fs.readFileSync(userClaudePaths().claudeJson, 'utf8'), cfgBefore, 'the local entry is byte-unchanged');
+  assert.equal(fs.existsSync(path.join(root, '.mcp.json')), false, 'doctor wrote no .mcp.json');
+  assert.doesNotMatch(text, /stays unregistered/);
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(text, new RegExp(`so web-chat stays registered at local scope running ${esc(oldBin)}`));
+  assert.match(text, new RegExp(`claude mcp remove web-chat --scope local, then claude mcp add web-chat --scope local -- node ${esc(BIN())}`));
+
+  // A rejected .mcp.json entry, registered over with --register-mcp: without
+  // `claude` it stays rejected — hidden, not asked about at launch.
+  const rej = rejectedProject();
+  const mcpBefore = fs.readFileSync(path.join(rej, '.mcp.json'), 'utf8');
+  const rejLines = [];
+  await doctor(['--register-mcp'], { cwd: rej, runClaude: noClaude, log: (l) => rejLines.push(l) });
+  const rejText = rejLines.join('\n');
+  assert.equal(fs.readFileSync(path.join(rej, '.mcp.json'), 'utf8'), mcpBefore);
+  assert.doesNotMatch(rejText, /asks you to approve it at launch/);
+  assert.match(rejText, /so web-chat stays rejected in \.mcp\.json here: Claude Code keeps its MCP tools hidden/);
+  assert.match(rejText, new RegExp(`run this in .*: claude mcp add web-chat --scope local -- node ${esc(BIN())}`));
+});
+
 // ── init ────────────────────────────────────────────────────────────────────
 
 test('init\'s default-Yes refresh does not register over a rejection: its own question defaults to No', async (t) => {
