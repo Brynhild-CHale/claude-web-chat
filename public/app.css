@@ -2381,6 +2381,74 @@ button.cp-session:hover, button.cp-session[aria-expanded="true"] { border-color:
 @media (prefers-reduced-motion: reduce) { .ct-gdot { animation: none; } .ct-caret { transition: none; } }
 
 /* ── U38 · tool cards · chat-tools.js ── */
+/* One card per tool call inside a turn's group (design spec §7.10): a header
+   (the label, then the status glyph and the meta) and a body built on the first
+   expand. Tokens only; a card below `read` is a flat .tc-flat header with no
+   body. Bodies are text boxes and U35's renderDiff lines / div.md-chat, never
+   form controls (a Todo is glyphs). */
+.tc { min-width: 0; font: 11px/1.5 var(--wc-mono); color: var(--wc-fg); }
+.tc-head {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 1px 0; list-style: none;
+}
+details.tc > .tc-head { cursor: pointer; }
+.tc-head::-webkit-details-marker { display: none; }
+details.tc > .tc-head::before {
+  content: "▸"; flex: none; width: 1em; color: var(--wc-muted-dim); transition: transform .12s;
+}
+details.tc[open] > .tc-head::before { transform: rotate(90deg); }
+.tc-flat > .tc-head { padding-left: calc(1em + 6px); }
+.tc-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-status { flex: none; display: inline-flex; align-items: baseline; gap: 4px; color: var(--wc-muted); white-space: nowrap; }
+.tc-glyph { color: var(--wc-muted); }
+.tc[data-status="done"] .tc-glyph { color: var(--wc-green); }
+.tc[data-status="error"] .tc-glyph, .tc[data-status="denied"] .tc-glyph { color: var(--wc-rust); }
+.tc[data-status="interrupted"] .tc-glyph { color: var(--wc-comment); }
+.tc[data-status="denied"] .tc-meta, .tc[data-status="interrupted"] .tc-meta { font-style: italic; }
+.tc-add { color: var(--wc-green); }
+.tc-del { color: var(--wc-rust); }
+.tc-phases { flex: none; display: inline-flex; gap: 2px; align-self: center; }
+.tc-phase { width: 10px; height: 4px; border-radius: 2px; background: var(--wc-border); }
+.tc-phase[data-state="done"] { background: var(--wc-green); }
+.tc-phase[data-state="running"] { background: var(--wc-accent); }
+.tc-phase[data-state="error"] { background: var(--wc-rust); }
+.tc-body {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin: 2px 0 6px calc(1em + 6px);
+  min-width: 0;
+}
+.tc-body > * { max-width: 100%; box-sizing: border-box; }
+.tc-pre {
+  align-self: stretch; margin: 0; padding: 6px 8px; max-height: 240px; overflow: auto;
+  border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm); background: var(--wc-panel-bg);
+  font: 11px/1.45 var(--wc-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--wc-fg);
+}
+.tc-cmd { color: var(--wc-text-2); max-height: 96px; }
+.tc-input { color: var(--wc-text-2); }
+pre.tc-diff {
+  align-self: stretch; margin: 0; padding: 4px 0; max-height: 320px; overflow: auto;
+  border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm); background: var(--wc-panel-bg);
+}
+.tc-md, .tc-prompt { align-self: stretch; padding: 6px 8px; border-left: 2px solid var(--wc-border-soft); }
+.tc-prompt { font: 12px/1.45 var(--wc-reading); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--wc-text-2); }
+.tc-note { font: italic 11px var(--wc-font); color: var(--wc-muted); }
+.tc-error { display: flex; align-items: center; gap: 8px; color: var(--wc-rust); }
+.tc-open, .tc-reveal, .tc-more, .tc-retry {
+  padding: 1px 8px; cursor: pointer; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm);
+  background: var(--wc-panel-bg); font: 600 10px var(--wc-mono); color: var(--wc-accent-text);
+}
+.tc-open:hover, .tc-reveal:hover, .tc-more:hover, .tc-retry:hover { border-color: var(--wc-accent); }
+.tc-more:disabled { cursor: default; color: var(--wc-muted); }
+:is(.tc-head, .tc-open, .tc-reveal, .tc-more, .tc-retry):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.tc-todo { margin: 0; padding: 0; list-style: none; }
+.tc-todo-item { display: flex; gap: 6px; }
+.tc-todo-glyph { flex: none; width: 1.2em; color: var(--wc-muted); }
+.tc-todo-item[data-state="completed"] .tc-todo-glyph { color: var(--wc-green); }
+.tc-todo-item[data-state="completed"] .tc-todo-text { color: var(--wc-muted); text-decoration: line-through; }
+.tc-todo-item[data-state="in_progress"] .tc-todo-glyph { color: var(--wc-accent-text); }
+.tc-q { display: flex; flex-direction: column; gap: 2px; }
+.tc-q-head { font: 600 10px var(--wc-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--wc-muted); }
+.tc-q-text { font: 12px/1.45 var(--wc-reading); color: var(--wc-fg); }
+.tc-q-opts { margin: 0; padding-left: 18px; color: var(--wc-text-2); }
+@media (prefers-reduced-motion: reduce) { details.tc > .tc-head::before { transition: none; } }
 
 /* ── U46 · chips and trays · chat-trays.js, chat-rows.js, chat-actions.js ── */
 
