@@ -117,13 +117,23 @@ test('fresh + no TTY + no --yes: prints the write list and writes NOTHING', asyn
   const log = sink();
   const install = fakeDoctor(); // reuse the call recorder — shape does not matter
 
-  await init([], { cwd: root, log, ...inertDeps({ install }), noOpenGuard: true });
+  await init([], { cwd: root, log, ...inertDeps({ install, hasClaude: () => true }), noOpenGuard: true });
 
   assert.equal(install.calls.length, 0, 'install must not run without an explicit --yes');
   assert.equal(fs.existsSync(path.join(root, '.web-chat')), false, 'nothing created');
   const text = log.text();
-  assert.match(text, /\.mcp\.json/, 'the write list is still printed');
+  // 0.8.5 (U95): the MCP server goes into Claude Code's own config at local
+  // scope, and the write list names that file.
+  assert.match(text, /Claude Code's own config \(.*\.claude\.json\): web-chat's MCP server for this folder \(local scope\)/,
+    'the write list is still printed');
   assert.match(text, /Not a terminal — nothing written\. Re-run with --yes/);
+
+  // With no `claude` to register it, the fallback is the project's .mcp.json,
+  // and the list says that instead.
+  const log2 = sink();
+  await init([], { cwd: root, log: log2, ...inertDeps({ install, hasClaude: () => false }), noOpenGuard: true });
+  assert.match(log2.text(), /\.mcp\.json +the web-chat MCP server entry \(no `claude` found/);
+  assert.doesNotMatch(log2.text(), /Claude Code's own config/);
 });
 
 // The write list is the user's consent, so its counts must be what the install
@@ -188,13 +198,15 @@ test('fresh + --yes: installs, opens nothing, mounts no tour', async (t) => {
   assert.doesNotMatch(text, /Your tour is on the surface/);
 });
 
-// H-7. init runs install with { nextSteps: false }, which drops install's
-// "Approve the .mcp.json trust prompt" line — the only place that said it. A
-// user who dismissed or declined Claude Code's approval question then met the
-// same missing tools on every reopen, with nothing on screen naming the way
-// out. init's own closing block has to say both halves: approve it, and how to
-// be asked again.
-test('fresh init\'s closing lines say to approve the MCP server, and how to be asked again', async (t) => {
+// H-7, as 0.8.5 (U95) leaves it. init runs install with { nextSteps: false },
+// so its own closing block is the only place that says what is left — and
+// with the MCP server registered at Claude Code's local scope, which needs no
+// approval, the only step left is the restart. The approval and
+// `claude mcp reset-project-choices` lines it used to print described a loop:
+// in a non-git folder inside a trusted one, Claude Code cannot keep the
+// approval, so "approve it" and "reset your choices" only re-armed the dialog
+// whose default answer rejects web-chat for good.
+test('fresh init\'s closing lines name the restart as the only step left — no approval, no reset', async (t) => {
   withTempHome(t);
   const root = tmpDir();
   const log = sink();
@@ -204,13 +216,10 @@ test('fresh init\'s closing lines say to approve the MCP server, and how to be a
 
   const lines = log.lines;
   const reopen = lines.findIndex((l) => /\/exit and reopen Claude Code/.test(l));
-  const approve = lines.findIndex((l) => /approve this project's web-chat MCP server/.test(l));
-  const reset = lines.findIndex((l) => l.includes('`claude mcp reset-project-choices`'));
   const next = lines.findIndex((l) => /Then type \/web-chat init/.test(l));
-  assert.ok(reopen >= 0 && approve > reopen, `the approval line follows the restart instruction:\n${log.text()}`);
-  assert.ok(reset > approve, 'the declined-it-before recovery follows the approval line');
-  assert.match(lines[reset], /declined/, 'the reset command is offered for a server that was declined');
-  assert.ok(next > reset, 'both come before "Then type /web-chat init", the step that needs the tools');
+  assert.ok(reopen >= 0 && next > reopen, `the restart comes before "Then type /web-chat init":\n${log.text()}`);
+  assert.ok(!lines.some((l) => /approve/i.test(l)), 'nothing asks the user to approve the MCP server');
+  assert.ok(!lines.some((l) => l.includes('reset-project-choices')), 'and nothing sends them to reset their choices');
 });
 
 // R2-4. 0.7.x asked "Install into your home directory anyway?" and installed on
