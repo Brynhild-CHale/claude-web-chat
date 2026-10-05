@@ -58,7 +58,10 @@
 //     blocks: a string (text), {type:'text', text}, {type:'thinking', thinking,
 //     durationMs?}, {type:'tool_use', name, input, id?}; tool_use ids default
 //     to fresh 'toolu_01…' ids, a thinking block gets a fake signature, and
-//     `durationMs` becomes the record's thinkingDurationMs (placement guessed).
+//     `durationMs` becomes the record's thinkingDurationMs (placement guessed:
+//     no record of the validation corpus carries thinkingDurationMs anywhere,
+//     not in the assistant record's keys, message keys or the thinking block's
+//     keys, record-inventory.json, so a reader must treat it as optional).
 //     The last record carries stopReason (default 'end_turn', or 'tool_use'
 //     when the last block is a tool_use); earlier ones stop_reason null.
 //   r.apiErrorMessage(text, {status})    an assistant record with isApiErrorMessage

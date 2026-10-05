@@ -302,6 +302,18 @@ test('nothing throws on a record with no type, a non-object message or a huge co
   }
   assert.equal(kindOf(null), '<no-type>');
   assert.equal(rowOf(kindOf({ type: 'user', message: 5 })), TABLE['user/no-content']);
+  // Where the prototype answers at all, the port answers the same: falsy
+  // subtypes and attachment types, odd flags, non-string text.
+  const edges = [...odd, { type: 'system', subtype: '' }, { type: 'system', subtype: 0 },
+    { type: 'system', subtype: false }, { type: 'attachment', attachment: { type: '' } },
+    { type: 'attachment', attachment: { type: 0 } }, { type: 'user', isCompactSummary: 1, message: { content: 5 } },
+    { type: 'user', isMeta: 1, message: { content: '' } }, { type: 'user', message: { content: [{ type: 'text', text: 7 }] } },
+    { type: 'user', message: { content: [{ type: 'text', text: ['<task-notification>'] }] } }];
+  for (const rec of edges) {
+    let want;
+    try { want = PROTOTYPE.kindOf(rec); } catch { continue; }   // the prototype throws: no parity to keep
+    assert.equal(kindOf(rec), want, JSON.stringify(rec));
+  }
   const huge = new Array(500000).fill({ type: 'text', text: 'x' });
   huge.push({ type: 'image' });
   assert.equal(kindOf({ type: 'user', message: { content: huge } }), 'user/prompt+image');
