@@ -262,6 +262,10 @@ test('`tunnel mirror status` prints this project\'s level and every grant (and -
   assert.equal(parsed.project.level, 'full');
   assert.equal(parsed.project.root, elsewhere);
   assert.deepEqual(parsed.grants, { [root]: 'read', [eid]: 'full', '/abs/third': 'read' });
+  // A grant under the project's instance id is marked as this project's too.
+  const byId = (await run(['status', '--project', elsewhere])).c.text();
+  assert.ok(byId.includes(`full  ${eid}  (${elsewhere})  (this project)`), byId);
+  assert.doesNotMatch(byId, new RegExp(`read  ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}  \\(this project\\)`));
 
   // Outside any project: no level, every grant still listed.
   const bare = fs.mkdtempSync(path.join(path.dirname(userPaths().root), 'wc-bare-'));
