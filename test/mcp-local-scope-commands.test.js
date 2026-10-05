@@ -230,6 +230,46 @@ test('no runnable claude: install writes .mcp.json and says the three things', a
   assert.match(out, /Claude Code will ask you to approve it/);
   assert.match(out, /may not keep that approval in this folder/);
   assert.match(out, /claude-web-chat doctor` finishes the registration once `claude` is available/);
+  // U95b: doctor's no-claude wording changed; install's fallback did not.
+  assert.match(out, /`claude` command was not found \(not on PATH, in ~\/\.local\/bin or in ~\/\.claude\/local\), so web-chat is registered in \.mcp\.json instead\./);
+});
+
+// U95@doctor.js:no-claude-none (ruled 2026-10-05): doctor's fallback is 'none'
+// — it never writes a .mcp.json entry when `claude` cannot run — so its words
+// say what did happen: web-chat stays unregistered (or only in .mcp.json), with
+// the command to run once `claude` is on PATH. And the state line doctor prints
+// does not send the user to run doctor.
+test('doctor without a runnable claude writes no .mcp.json and says web-chat stays unregistered, with the command', async (t) => {
+  withTempHome(t);
+  isolateClaude(t);
+  const noClaude = () => ({ ok: false, notFound: true, stderr: 'not found' });
+  const runDoctor = async (root) => {
+    const lines = [];
+    const s = await doctor([], { cwd: root, runClaude: noClaude, log: (l) => lines.push(l) });
+    return { s, text: lines.join('\n') };
+  };
+
+  const root = tmpRoot();
+  fs.mkdirSync(projectPaths(root).dir);
+  let { s, text } = await runDoctor(root);
+  assert.equal(fs.existsSync(path.join(root, '.mcp.json')), false, 'doctor wrote no .mcp.json');
+  assert.doesNotMatch(text, /registered in \.mcp\.json instead/);
+  assert.doesNotMatch(text, /not registered — run `claude-web-chat doctor`/);
+  assert.ok(s.checks.some((c) => c.status === 'problem' && /^web-chat's MCP server is not registered$/.test(c.m)), text);
+  assert.match(text, /`claude` command was not found .*so web-chat stays unregistered here/);
+  assert.match(text, new RegExp(`claude mcp add web-chat --scope local -- node ${BIN().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(readConfig().projects, undefined, 'nothing reached Claude Code\'s config');
+
+  // With web-chat's entry already in .mcp.json, it stays there, untouched.
+  const two = tmpRoot();
+  fs.mkdirSync(projectPaths(two).dir);
+  const body = JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [BIN()] } } }, null, 2) + '\n';
+  fs.writeFileSync(path.join(two, '.mcp.json'), body);
+  ({ text } = await runDoctor(two));
+  assert.equal(fs.readFileSync(path.join(two, '.mcp.json'), 'utf8'), body);
+  assert.doesNotMatch(text, /registered in \.mcp\.json instead/);
+  assert.match(text, /so web-chat stays only in \.mcp\.json here/);
+  assert.match(text, /claude mcp add web-chat --scope local -- node /);
 });
 
 // ── init ────────────────────────────────────────────────────────────────────
