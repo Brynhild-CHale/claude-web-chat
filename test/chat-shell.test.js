@@ -109,13 +109,18 @@ test('a pointerdown inside a pane\'s shadow root counts as the surface', async (
 
 test('an outside close does not pull focus back to where it was', async (t) => {
   const { inner } = addPane(t);
-  const back = $('btn-up') || $('cmd-trigger');
+  const back = $('cmd-trigger');
   back.focus();
+  assert.equal(W.document.activeElement, back, 'precondition: focus was on the topbar before the chat opened');
   await open();
+  assert.notEqual(W.document.activeElement, back, 'precondition: opening moved focus into the chat');
   W.document.activeElement.blur();
   pointerdown(inner);
   assert.ok(!isOpen());
-  assert.notEqual(W.document.activeElement, back, 'closeChat ran with returnFocus: false');
+  // closeChat's default return goes to the opener, else #cs-step: neither may
+  // take focus from an outside press.
+  assert.notEqual(W.document.activeElement, back, 'focus did not go back to the opener');
+  assert.notEqual(W.document.activeElement, $('cs-step'), 'nor to the bar\'s step');
 });
 
 for (const [what, target] of [
@@ -403,9 +408,13 @@ test('⌘K "Background tasks" shows while #cs-chips holds a button, and clicks t
   await openPalette();
   const r = row('Background tasks');
   assert.ok(r, 'listed while there is a chip');
+  const chips = [...$('cs-chips').querySelectorAll('button')];
+  assert.ok(chips.length > 1, 'precondition: more than one chip, so "the first" is a choice');
   runRow(r);
   await shell.tick();
-  assert.ok(note(), 'running it clicked the first chip: the note opened');
+  assert.ok(note(), 'running it clicked a chip: the note opened');
+  assert.deepEqual(chips.map((c) => c.getAttribute('aria-expanded')),
+    chips.map((_, i) => String(i === 0)), 'the first chip opened it, no other');
   shell.key('Escape');
 
   const release = bar.claimChips();      // the trays' claim: the stand-ins go
