@@ -4,6 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>web-chat</title>
+  <!-- the tab's favicon: web-chat's W, blue in a light browser and gold in a dark
+       one, until favicon.js puts the project's mark (and the waiting badge) on
+       both links; the home-screen icon likewise (spec §9.7) -->
+  <link rel="icon" id="wc-favicon" href="/favicon.png" media="(prefers-color-scheme: light)">
+  <link rel="icon" id="wc-favicon-dark" href="/favicon-dark.png" media="(prefers-color-scheme: dark)">
+  <link rel="apple-touch-icon" id="wc-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/fonts/fonts.css">
   <link rel="stylesheet" href="/app.css">
   <!-- the page sequence (runs, prose) — shared with the node preview and the export -->
