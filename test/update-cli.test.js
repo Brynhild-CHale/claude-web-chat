@@ -288,6 +288,81 @@ test('update prints the local-scope command instead of shelling out to `claude`'
     'the command is printed for the user to run deliberately, not executed mid-upgrade');
 });
 
+// 0.8.5 (U95): web-chat registers its MCP server at Claude Code's local scope,
+// but only install, init and doctor make that move — `update` never writes
+// Claude Code's own config. For a project still registered only through
+// .mcp.json it names the command instead, one line; a project already at local
+// scope hears nothing, and is not given its .mcp.json entry back.
+test('update names `claude-web-chat doctor` for a project registered only through .mcp.json, and nothing else', async (t) => {
+  withTempHome(t);
+  const prevCfg = process.env.CLAUDE_CONFIG_DIR;
+  const cfg = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-cfg-')));
+  process.env.CLAUDE_CONFIG_DIR = cfg;
+  t.after(() => { if (prevCfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevCfg; });
+  const paths = installPaths();
+  fakeVersion(paths, '0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+  const { stableBin } = require('../lib/update/managed-files');
+  const run = async (project) => {
+    const prevCwd = process.cwd();
+    process.chdir(project);
+    try {
+      const d = deps({
+        paths,
+        describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+        fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+        fetchAndUnpack: async ({ release, versionDir }) => { fakeVersion(paths, release.version); return { version: release.version, dir: versionDir }; },
+      });
+      await update([], d);
+      return d.log.text();
+    } finally {
+      process.chdir(prevCwd);
+    }
+  };
+
+  const viaMcpJson = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-only-')));
+  fs.mkdirSync(path.join(viaMcpJson, '.web-chat'));
+  fs.writeFileSync(path.join(viaMcpJson, '.mcp.json'), JSON.stringify({ mcpServers: { 'web-chat': { command: 'node', args: [stableBin('claude-web-chat-mcp')] } } }, null, 2) + '\n');
+  let out = await run(viaMcpJson);
+  assert.match(out, /⚠ web-chat's MCP server is registered only through \.mcp\.json, so Claude Code asks to approve it at launch — run `claude-web-chat doctor` here/);
+  assert.doesNotMatch(out, /cannot resolve/, 'a resolvable entry is never diagnosed as unresolvable');
+  assert.equal(fs.existsSync(path.join(cfg, '.claude.json')), false, 'update wrote nothing into Claude Code\'s config');
+
+  const viaLocal = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-upd-local-')));
+  fs.mkdirSync(path.join(viaLocal, '.web-chat'));
+  fs.writeFileSync(path.join(cfg, '.claude.json'), JSON.stringify({ projects: { [viaLocal]: { mcpServers: { 'web-chat': { command: 'node', args: [stableBin('claude-web-chat-mcp')] } } } } }));
+  const before = fs.readFileSync(path.join(cfg, '.claude.json'), 'utf8');
+  out = await run(viaLocal);
+  assert.match(out, /Syncing managed files/, 'a local-scope registration counts as registered');
+  assert.doesNotMatch(out, /registered only through \.mcp\.json/);
+  assert.equal(fs.existsSync(path.join(viaLocal, '.mcp.json')), false, 'and is not given a .mcp.json entry back');
+  assert.equal(fs.readFileSync(path.join(cfg, '.claude.json'), 'utf8'), before);
+});
+
+test('update --restart-all puts the doctor line under each .mcp.json-only project it refreshes', async (t) => {
+  const paths = onVersion(t);
+  inProjectCwd(t);
+  const prevCfg = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-cfg-')));
+  t.after(() => { if (prevCfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevCfg; });
+  const registration = require('../lib/setup/registration');
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ra-only-')));
+  fs.mkdirSync(path.join(other, '.web-chat'));
+  registration.apply(other, { force: false, runClaude: () => ({ ok: false }) });
+  const d = upgradeDeps(paths, {
+    registration,
+    readInstances: () => [{ root: other, port: 1 }],
+    runningBuild: async () => '0.5.0',
+    restart: restartLikeStart,
+  });
+  await update(['--restart-all'], d);
+  const lines = d.log.text().split('\n');
+  const at = lines.findIndex((l) => l.includes(`${other}  v0.5.0 → v0.6.0`));
+  assert.ok(at >= 0, d.log.text());
+  assert.equal(lines[at + 2], '      web-chat\'s MCP server is registered only through .mcp.json, so Claude Code asks to approve it at launch — run `claude-web-chat doctor` there.');
+});
+
 test('a target version with no registration engine falls back LOUDLY', async (t) => {
   withTempHome(t);
   const paths = installPaths();

@@ -113,6 +113,40 @@ test('mcpWrittenAt reads the .mcp.json mtime, null when absent', (t) => {
   assert.ok(Math.abs(mcpWrittenAt(root) - Date.now()) < 10_000);
 });
 
+// 0.8.5 (U95): web-chat registers its MCP server at Claude Code's local scope,
+// in Claude Code's own config (whose mtime every session moves), so the
+// moment the registration changed is the record lib/setup/registration writes:
+// .web-chat/mcp-registration.json's `at`. The verdict keys on the later of the
+// two.
+test('mcpWrittenAt keys on the local-scope registration record too, and the verdict follows it', (t) => {
+  const { tmpRoot } = require('../test-support/helpers');
+  const { projectPaths } = require('../lib/core/paths');
+  const root = tmpRoot('wc-mcprec-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  const rec = projectPaths(root).mcpRegistration;
+  fs.mkdirSync(path.dirname(rec), { recursive: true });
+  const now = Date.now();
+  fs.writeFileSync(rec, JSON.stringify({ scope: 'local', at: now - 10 * MIN }));
+  assert.equal(mcpWrittenAt(root), now - 10 * MIN, 'the record alone, with no .mcp.json');
+
+  // An MCP server that started before the registration is stale; after, fresh.
+  const before = describeRestart({ seen: { seen_at: now - MIN, started_at: now - 20 * MIN }, mcpWrittenAt: mcpWrittenAt(root), now });
+  assert.equal(before.state, 'stale');
+  assert.match(before.line, /before web-chat's MCP registration last changed/);
+  const after = describeRestart({ seen: { seen_at: now - MIN, started_at: now - 5 * MIN }, mcpWrittenAt: mcpWrittenAt(root), now });
+  assert.equal(after.state, 'fresh');
+
+  // Beside an older .mcp.json, the later of the two wins — either way round.
+  fs.writeFileSync(path.join(root, '.mcp.json'), '{}');
+  const old = new Date(now - 60 * MIN);
+  fs.utimesSync(path.join(root, '.mcp.json'), old, old);
+  assert.equal(mcpWrittenAt(root), now - 10 * MIN);
+  fs.writeFileSync(rec, JSON.stringify({ scope: 'local', at: now - 90 * MIN }));
+  assert.equal(Math.round(mcpWrittenAt(root)), Math.round(old.getTime()));
+  fs.writeFileSync(rec, '{ torn');
+  assert.equal(Math.round(mcpWrittenAt(root)), Math.round(old.getTime()), 'a torn record is no record');
+});
+
 test('the daemon records an MCP-tagged request and exposes it on /api/health', async (t) => {
   const { api, root } = await withServer(t);
   const before = await api.get('/api/health');
