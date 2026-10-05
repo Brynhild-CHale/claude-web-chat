@@ -139,9 +139,20 @@ test('one #chat-panel, in #cd-body; chat:open keeps it there; another chat:host 
 
   const stream = $('chat-stream');
   for (let i = 0; i < 5; i++) stream.append(doc.createElement('p'));
-  shell.scrollMetrics(stream, { scrollHeight: 2000, clientHeight: 400, scrollTop: 700 });
+  const metrics = shell.scrollMetrics(stream, { scrollHeight: 2000, clientHeight: 400, scrollTop: 700 });
   const other = doc.createElement('div');
   doc.body.append(other);
+  // A browser drops an element's scroll offset when it leaves the document;
+  // jsdom keeps it. Each host drops it on append, so only the panel's own
+  // restore can keep it.
+  const dropsScroll = (host) => {
+    host.append = function append(...nodes) {
+      W.Element.prototype.append.apply(this, nodes);
+      stream.scrollTop = 0;
+    };
+    return () => { delete host.append; };
+  };
+  const undrop = [dropsScroll(other), dropsScroll($('cd-body'))];
   try {
     bus.emit('chat:host', { host: other, variant: 'sheet' });
     assert.equal($('chat-panel'), el, 'the same element');
@@ -157,7 +168,19 @@ test('one #chat-panel, in #cd-body; chat:open keeps it there; another chat:host 
     assert.equal(stream.scrollTop, 700);
     assert.equal(el.dataset.variant, 'desktop');
     assert.ok(el.querySelector('.cp-close kbd'), 'the desktop close wears <kbd>Esc</kbd>');
+
+    // Stuck to the bottom (within 48px): it lands at the bottom of the new host.
+    stream.scrollTop = 1580;
+    metrics.scrollHeight = 2000;
+    bus.emit('chat:host', { host: other, variant: 'sheet' });
+    assert.equal(el.parentElement, other);
+    assert.equal(stream.scrollTop, 2000, 'the stuck stream stays at its bottom');
+    bus.emit('chat:host', { host: $('cd-body'), variant: 'desktop' });
+    assert.equal(el.parentElement, $('cd-body'));
   } finally {
+    for (const u of undrop) u();
+    // A failed assertion above must not leave the panel in a host about to go.
+    if (el.parentElement !== $('cd-body')) bus.emit('chat:host', { host: $('cd-body'), variant: 'desktop' });
     stream.replaceChildren();
     other.remove();
   }
