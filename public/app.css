@@ -1948,6 +1948,71 @@ body.pin-mode #main { cursor: crosshair; }
 /* ── U33 · the chat dock · chat-dock.js ── */
 
 /* ── U35 · the chat markdown flavour · lib/core/markdown.js ── */
+/* The chat flavour of the one markdown engine: renderMarkdown(text, {flavor:
+   'chat'}) wraps a reply in .md-chat; renderDiff's .dl lines are also drawn
+   bare by the Edit cards and the diff views, so they are not scoped to it.
+   Line numbers come from the lines' data-old / data-new, never from the text. */
+.md-chat { font: 13px/1.55 var(--wc-reading); color: var(--wc-fg); overflow-wrap: anywhere; }
+.md-chat > :first-child { margin-top: 0; }
+.md-chat > :last-child { margin-bottom: 0; }
+.md-chat p { margin: 0 0 8px; white-space: pre-line; }
+.md-chat h1, .md-chat h2, .md-chat h3, .md-chat h4, .md-chat h5, .md-chat h6 {
+  margin: 12px 0 6px; font-family: var(--wc-display); font-weight: 600; line-height: 1.3; color: var(--wc-fg-bright);
+}
+.md-chat h1 { font-size: 16px; }
+.md-chat h2 { font-size: 15px; }
+.md-chat h3 { font-size: 14px; }
+.md-chat h4, .md-chat h5, .md-chat h6 { font-size: 13px; }
+.md-chat h5, .md-chat h6 { color: var(--wc-muted); }
+.md-chat strong { font-weight: 600; color: var(--wc-fg-bright); }
+.md-chat del { color: var(--wc-muted); }
+.md-chat a { color: var(--wc-accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.md-chat code { font: 12px var(--wc-mono); padding: 1px 4px; border-radius: var(--wc-radius-sm); background: var(--wc-header-bg); }
+.md-chat pre {
+  margin: 0 0 8px; padding: 8px 10px; overflow-x: auto; border: 1px solid var(--wc-border-soft);
+  border-radius: var(--wc-radius-sm); background: var(--wc-header-bg); font: 12px/1.45 var(--wc-mono); white-space: pre;
+}
+.md-chat pre code { padding: 0; background: none; }
+.md-chat ul, .md-chat ol { margin: 0 0 8px; padding-left: 22px; }
+.md-chat li > ul, .md-chat li > ol { margin: 2px 0 0; }
+.md-chat li.md-task { list-style: none; }
+.md-chat .md-tick { display: inline-block; width: 1.2em; margin-left: -1.2em; color: var(--wc-muted); }
+.md-chat .md-tick.md-done { color: var(--wc-green); }
+.md-chat blockquote { margin: 0 0 8px; padding: 2px 0 2px 10px; border-left: 3px solid var(--wc-border); color: var(--wc-muted); }
+.md-chat blockquote > :last-child { margin-bottom: 0; }
+.md-chat hr { margin: 12px 0; border: 0; border-top: 1px solid var(--wc-border); }
+.md-chat .md-table { margin: 0 0 8px; overflow-x: auto; }
+.md-chat table { border-collapse: collapse; font-size: 12px; }
+.md-chat th, .md-chat td { padding: 4px 8px; border: 1px solid var(--wc-border-soft); vertical-align: top; }
+.md-chat th { font-weight: 600; background: var(--wc-header-bg); color: var(--wc-fg-bright); }
+.md-chat img { max-width: 100%; max-height: 320px; border-radius: var(--wc-radius-sm); vertical-align: middle; }
+.md-chat .md-img-alt { font-style: italic; color: var(--wc-muted); }
+/* A remote image is never fetched until the user asks: the placeholder names
+   it, and the stream (U37) swaps in the <img> on click. */
+.md-chat .md-img-remote {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; cursor: pointer;
+  border: 1px dashed var(--wc-border); border-radius: var(--wc-radius-sm); color: var(--wc-muted); font-size: 12px;
+}
+.md-chat .md-img-remote::after { content: "load image"; color: var(--wc-accent-text); text-decoration: underline; }
+.md-chat .md-img-remote:hover, .md-chat .md-img-remote:focus-visible { border-color: var(--wc-accent); color: var(--wc-fg); }
+.md-chat .md-mermaid code { display: block; }
+.md-chat .md-fence-label {
+  display: block; margin: -2px 0 6px; font: 600 10px var(--wc-font); letter-spacing: .04em;
+  text-transform: uppercase; color: var(--wc-muted);
+}
+.md-chat .md-note { font-size: 12px; font-style: italic; color: var(--wc-muted); }
+.md-chat pre.md-diff { padding: 4px 0; }
+.dl { display: block; min-height: 1.45em; padding-right: 10px; font: 12px/1.45 var(--wc-mono); white-space: pre; color: var(--wc-fg); }
+.dl[data-old]::before {
+  content: attr(data-old) " " attr(data-new); display: inline-block; min-width: 9ch; margin-right: 8px; padding: 0 6px;
+  text-align: right; color: var(--wc-muted-dim); border-right: 1px solid var(--wc-border-soft); user-select: none;
+}
+.dl-add { background: color-mix(in srgb, var(--wc-green) 16%, transparent); }
+.dl-del { background: color-mix(in srgb, var(--wc-rust) 16%, transparent); }
+.dl-ctx { color: var(--wc-fg); }
+.dl-hunk { color: var(--wc-accent-text); background: color-mix(in srgb, var(--wc-accent) 8%, transparent); }
+.dl-meta { color: var(--wc-muted); }
+.dl-more { font-style: italic; }
 
 /* ── U36 · the chat panel and the awaiting card · chat-panel.js, chat-awaiting.js ── */
 
