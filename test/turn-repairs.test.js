@@ -388,6 +388,83 @@ test('with no guard, or closedRecently false, or a page\'s Stop, the unlocked-tu
   assert.deepStrictEqual(d.ctx.turnGuard.calls.closedRecently, []);
 });
 
+test('a late Stop the guard answers null for (a prompt_id it never closed) goes on down the lockless path (U31b)', async (t) => {
+  const d = await daemon(t);
+  d.ctx.turnGuard = fakeGuard({ closed: () => true, reconcile: () => null });
+  // Clean: no-lock, as with no guard.
+  assert.deepStrictEqual((await d.host('/api/turn-end', { author: 'claude', ...S1, prompt_id: 'p9' })).body, { ok: true, skipped: 'no-lock' });
+  // Dirty: an unlocked-turn node carrying the Stop's reply.
+  d.dirty();
+  const u = await d.host('/api/turn-end', { author: 'claude', reply: 'whose?', ...S1, prompt_id: 'p9' });
+  assert.equal(u.body.unlocked, true);
+  assert.equal(u.body.reconciled, undefined);
+  const node = d.graph.nodes.get(u.body.node_id);
+  assert.deepStrictEqual([node.trigger.kind, node.trigger.reply], ['unlocked-turn', 'whose?']);
+  assert.equal(d.ctx.turnGuard.calls.reconcileLateStop.length, 2, 'the guard was asked each time');
+  // A guard that throws in reconcileLateStop answers "no" the same way.
+  d.ctx.turnGuard = { closedRecently: () => true, reconcileLateStop() { throw new Error('boom'); } };
+  d.dirty();
+  assert.equal((await d.host('/api/turn-end', { author: 'claude', ...S1 })).body.unlocked, true);
+});
+
+test('turn-begin tells the guard which turn it ended as interrupted: noteEnded(held lock, endTurn\'s answer, {ended, since}) (U31b)', async (t) => {
+  const d = await daemon(t);
+  const noted = [];
+  d.ctx.turnGuard = { ...fakeGuard({ ended: { by: 'status', ended_by: 'terminal' } }), noteEnded: (...a) => { noted.push(a); return true; } };
+  await d.host('/api/turn-begin', { message: 'first', ...S1 });
+  d.dirty();
+  const t0 = Date.now();
+  const r = await d.host('/api/turn-begin', { message: 'second', ...S1, prompt_id: 'p2' });
+  assert.ok(r.body.interrupted);
+  assert.equal(noted.length, 1);
+  const [lock, result, opts] = noted[0];
+  assert.deepStrictEqual([lock.message, lock.session_id, lock.prompt_id], ['first', 'sess-1', 'p1']);
+  assert.deepStrictEqual(result, { ok: true, node_id: r.body.interrupted });
+  assert.equal(opts.ended, 'interrupted');
+  assert.ok(opts.since >= t0 && opts.since <= Date.now());
+  // A joined prompt ends nothing, so it notes nothing.
+  d.ctx.turnGuard = { ...fakeGuard({ ended: null }), noteEnded: (...a) => { noted.push(a); } };
+  assert.deepStrictEqual((await d.host('/api/turn-begin', { message: 'absorbed', ...S1, prompt_id: 'p3' })).body, { ok: true, joined: true });
+  assert.equal(noted.length, 1);
+});
+
+test('a Stop of the held lock\'s session naming another prompt_id that the guard closed is reconciled; the held turn stays open (U31b)', async (t) => {
+  const d = await daemon(t);
+  await d.host('/api/turn-begin', { message: 'held', ...S1, prompt_id: 'p2' });
+  const held = d.graph.lock;
+  d.dirty();
+  const guard = fakeGuard({ closed: (sid) => sid === 'sess-1', reconcile: (a) => (a.prompt_id === 'p1' ? 'n-old' : null) });
+  d.ctx.turnGuard = guard;
+  const r = await d.host('/api/turn-end', { author: 'claude', reply: 'the old turn\'s reply', ...S1, prompt_id: 'p1' });
+  assert.deepStrictEqual([r.status, r.body], [200, { ok: true, reconciled: 'n-old' }]);
+  assert.deepStrictEqual(guard.calls.reconcileLateStop, [{ session_id: 'sess-1', prompt_id: 'p1', reply: 'the old turn\'s reply', ended: 'stop' }]);
+  assert.equal(d.graph.lock, held);
+  assert.equal(d.graph.nodes.size, 0);
+
+  // A prompt_id the guard does not know: the held turn ends, as before.
+  const r2 = await d.host('/api/turn-end', { author: 'claude', ...S1, prompt_id: 'p7' });
+  assert.ok(r2.body.node_id);
+  assert.equal(d.graph.lock, null);
+
+  // The lock's own prompt_id, or none, never asks the guard: the held turn ends.
+  for (const fields of [{ ...S1, prompt_id: 'p4' }, { session_id: 'sess-1', claude_pid: S1.claude_pid }]) {
+    await d.host('/api/turn-begin', { message: 'again', ...S1, prompt_id: 'p4' });
+    d.dirty();
+    d.ctx.turnGuard = fakeGuard({ closed: () => true, reconcile: () => 'n-wrong' });
+    const e = await d.host('/api/turn-end', { author: 'claude', ...fields });
+    assert.ok(e.body.node_id, 'ended the held turn');
+    assert.deepStrictEqual(d.ctx.turnGuard.calls.reconcileLateStop, []);
+  }
+
+  // closedRecently false: the held turn ends; another session's Stop folds as before.
+  await d.host('/api/turn-begin', { message: 'again', ...S1, prompt_id: 'p5' });
+  d.ctx.turnGuard = fakeGuard({ closed: () => false, reconcile: () => 'n-wrong' });
+  assert.deepStrictEqual((await d.host('/api/turn-end', { author: 'claude', ...S2 })).body, { ok: true, skipped: 'other-session' });
+  d.dirty();
+  assert.ok((await d.host('/api/turn-end', { author: 'claude', ...S1, prompt_id: 'p1' })).body.node_id);
+  assert.deepStrictEqual(d.ctx.turnGuard.calls.reconcileLateStop, []);
+});
+
 // ── endTurn ─────────────────────────────────────────────────────────────────
 
 test('mountGraphRoutes returns {endTurn}; it ends a held lock exactly as the route does', async (t) => {

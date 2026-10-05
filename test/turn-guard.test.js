@@ -21,7 +21,8 @@ const path = require('path');
 const { waitUntil, withServer, shortLockTtl } = require('../test-support/helpers');
 const { createBus } = require('../lib/core/bus');
 const { createHookTap } = require('../lib/server/hook-tap');
-const { createTurnGuard, GONE_MS } = require('../lib/server/turn-guard');
+const { createTurnGuard, GONE_MS, BUSY_STATES } = require('../lib/server/turn-guard');
+const { ACTIVE_STATES } = require('../lib/server/mirror/live');
 const { request } = require('../lib/client');
 
 // Nothing happens for `ms`: a waitUntil that never succeeds.
@@ -409,6 +410,90 @@ test('a late Stop finds the turn its prompt_id names when the guard closed two o
   assert.equal(r.graph.nodes.get('n2').trigger.reply, 'second');
 });
 
+test('a late Stop naming a prompt_id no remembered turn had is reconciled to nothing; one naming none takes the newest (U31b)', async (t) => {
+  const r = rig(t);
+  r.lock({ ...S1, prompt_id: 'p1' });
+  r.mirror.emit(closedBy('status', { ended_by: 'terminal' }));
+  await waitUntil(() => r.endTurn.calls.length === 1, { what: 'the first end' });
+  r.lock({ ...S1, prompt_id: 'p2' });
+  r.mirror.emit(closedBy('status', { ended_by: 'terminal' }));
+  await waitUntil(() => r.endTurn.calls.length === 2, { what: 'the second end' });
+
+  // Ruling U31@pick-prompt-mismatch: no fallback to the session's newest record.
+  assert.equal(r.guard.closedRecently('sess-1'), true);
+  assert.equal(r.guard.reconcileLateStop({ session_id: 'sess-1', prompt_id: 'p9', reply: 'stray', ended: 'stop' }), null);
+  for (const id of ['n1', 'n2']) {
+    const tr = r.graph.nodes.get(id).trigger;
+    assert.deepStrictEqual([tr.ended, tr.ended_by, 'reply' in tr], ['interrupted', 'terminal', false], `${id} untouched`);
+  }
+  assert.deepStrictEqual(r.graph.written, []);
+
+  // A Stop without a prompt_id keeps 0.8.5's first rule: the session's newest.
+  assert.equal(r.guard.reconcileLateStop({ session_id: 'sess-1', reply: 'late', ended: 'stop' }), 'n2');
+  assert.equal(r.graph.nodes.get('n2').trigger.reply, 'late');
+  assert.equal('reply' in r.graph.nodes.get('n1').trigger, false);
+});
+
+test('noteEnded remembers a turn the turn-begin route ended, node or folded; unbound it remembers nothing (U31b)', async (t) => {
+  const r = rig(t);
+  const held = { base: null, started_at: Date.now() - 50, message: 'held', author: 'user', ...S1 };
+  r.graph.nodes.set('n5', { id: 'n5', created_at: Date.now(), trigger: { kind: 'turn', ended: 'interrupted', ended_by: 'web' } });
+  assert.equal(r.guard.noteEnded(held, { ok: true, node_id: 'n5' }, { ended: 'interrupted', since: Date.now() }), true);
+  assert.equal(r.guard.closedRecently('sess-1'), true);
+  assert.equal(r.guard.reconcileLateStop({ session_id: 'sess-1', prompt_id: 'p1', reply: 'after all', ended: 'stop' }), 'n5');
+  const tr = r.graph.nodes.get('n5').trigger;
+  assert.deepStrictEqual([tr.reply, tr.ended, 'ended_by' in tr], ['after all', 'stop', false]);
+
+  // A fold: the entry endTurn just pushed is the one the Stop lands on.
+  const f = rig(t);
+  const since = Date.now();
+  f.graph.pendingFolded.push({ at: Date.now(), author: 'claude', kind: 'turn', message: 'held', summary: '', ended: 'interrupted' });
+  assert.equal(f.guard.noteEnded({ ...held, prompt_id: 'p3' }, { ok: true, skipped: 'no-change', accumulated: 1 }, { ended: 'interrupted', since }), true);
+  assert.equal(f.guard.reconcileLateStop({ session_id: 'sess-1', prompt_id: 'p3', reply: 'chat only', ended: 'stop' }), 'folded');
+  assert.deepStrictEqual([f.graph.pendingFolded[0].reply, f.graph.pendingFolded[0].ended], ['chat only', 'stop']);
+
+  // Nothing to remember: no session, no result, or no endTurn bound.
+  assert.equal(f.guard.noteEnded({ base: null, started_at: 1, message: 'm', author: 'user' }, { ok: true, node_id: 'n1' }), false);
+  assert.equal(f.guard.noteEnded(held, null), false);
+  const u = rig(t, { bind: false });
+  assert.equal(u.guard.noteEnded(held, { ok: true, node_id: 'n5' }), false);
+  assert.equal(u.guard.closedRecently('sess-1'), false);
+});
+
+test('the late Stop of a remembered turn on the tap does not cancel what the guard armed for the held turn (U31b)', async (t) => {
+  const r = rig(t);
+  r.lock({ ...S1, prompt_id: 'p1' });
+  r.mirror.emit(closedBy('status', { ended_by: 'terminal' }));
+  await waitUntil(() => r.endTurn.calls.length === 1, { what: 'the first end' });
+  r.lock({ ...S1, prompt_id: 'p2' });
+  r.mirror.emit(closedBy('status', { ended_by: 'web' }));
+  // p1's Stop arrives inside p2's settle window: it is p1's, not p2's.
+  r.hooks.publish({ v: 1, event: 'Stop', session_id: 'sess-1', claude_pid: 4001, prompt_id: 'p1' });
+  await waitUntil(() => r.endTurn.calls.length === 2, { what: 'the held turn\'s interrupted end' });
+  assert.deepStrictEqual([r.endTurn.calls[1].prompt_id, r.endTurn.calls[1].ended], ['p2', 'interrupted']);
+
+  // The held turn's own Stop (its prompt_id, or none) still cancels it.
+  for (const stopFields of [{ prompt_id: 'p3' }, {}]) {
+    const before = r.endTurn.calls.length;
+    r.lock({ ...S1, prompt_id: 'p3' });
+    r.mirror.emit(closedBy('status'));
+    r.hooks.publish({ v: 1, event: 'Stop', session_id: 'sess-1', claude_pid: 4001, ...stopFields });
+    await quiet(150);
+    assert.equal(r.endTurn.calls.length, before, 'cancelled');
+    r.graph.lock = null;
+    r.bus.emit({ event: { kind: 'graph', op: 'unlock', had: true } });
+  }
+});
+
+test('BUSY_STATES is the mirror\'s ACTIVE_STATES (U31b)', () => {
+  assert.deepStrictEqual([...BUSY_STATES].sort(), [...ACTIVE_STATES].sort());
+  assert.equal(BUSY_STATES.size, ACTIVE_STATES.length);
+  // Built from it, not copied: a state the mirror adds is busy here too.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'server', 'turn-guard.js'), 'utf8');
+  assert.match(src, /new Set\(ACTIVE_STATES\)/);
+  assert.match(src, /require\('\.\/mirror\/live'\)/);
+});
+
 test('a turn opening keeps the wake lock, like a session going busy', async (t) => {
   const r = rig(t, { mirror: fakeMirror({ rows: [{ id: 'c1', state: 'idle' }] }) });
   r.lock({}, { author: 'wake', ago: 0 });
@@ -633,4 +718,58 @@ test('on a daemon: a Stop inside settleMs wins; a same-session prompt after an E
   assert.deepStrictEqual(late.body, { ok: true, reconciled: 'folded' });
   assert.equal(entry.reply, 'just chat');
   assert.equal(entry.ended, 'stop');
+});
+
+// ── U31b: a late Stop naming another prompt; a turn a new prompt closed ─────
+
+test('on a daemon: a late Stop naming a prompt_id the guard never closed is not reconciled, and a dirty surface commits an unlocked-turn node (U31b)', async (t) => {
+  const d = await daemonWithGuard(t);
+  await d.host('/api/turn-begin', { message: 'refactor it', author: 'user', ...S1 });
+  d.ctx.state.store.k = 1;
+  d.mirror.emit(closedBy('status', { ended_by: 'terminal', ts: d.graph.lock.started_at + 1 }));
+  const id = await waitUntil(() => !d.graph.lock && d.graph.active, { what: 'the guard\'s commit' });
+  d.ctx.state.store.k = 2; // something changed the surface since
+
+  const late = await d.host('/api/turn-end', { author: 'claude', reply: 'not that turn\'s reply', ended: 'stop', ...S1, prompt_id: 'p-other' });
+  assert.equal(late.status, 200);
+  assert.equal(late.body.reconciled, undefined, 'attached to no closed turn');
+  assert.equal(late.body.unlocked, true, 'the lockless path ran');
+  const stray = d.graph.nodes.get(late.body.node_id);
+  assert.equal(stray.trigger.kind, 'unlocked-turn');
+  assert.equal(stray.trigger.reply, 'not that turn\'s reply');
+  const tr = d.graph.nodes.get(id).trigger;
+  assert.deepStrictEqual([tr.ended, tr.ended_by, 'reply' in tr], ['interrupted', 'terminal', false], 'the guard\'s node is untouched');
+
+  // The turn's own Stop is still reconciled.
+  const own = await d.host('/api/turn-end', { author: 'claude', reply: 'Refactored.', ended: 'stop', ...S1 });
+  assert.deepStrictEqual(own.body, { ok: true, reconciled: id });
+  assert.equal(d.graph.nodes.get(id).trigger.reply, 'Refactored.');
+});
+
+test('on a daemon: a turn the turn-begin route ended as interrupted takes its late Stop while the next turn holds the lock; the held turn stays open (U31b)', async (t) => {
+  const d = await daemonWithGuard(t, { settleMs: 60000 });
+  await d.host('/api/turn-begin', { message: 'one', ...S1 });
+  d.ctx.state.store.k = 1;
+  d.mirror.emit(closedBy('status', { ended_by: 'terminal', ts: d.graph.lock.started_at + 1 }));
+  const next = await d.host('/api/turn-begin', { message: 'two', ...S1, prompt_id: 'p2' });
+  const old = next.body.interrupted;
+  assert.ok(old && d.graph.nodes.has(old), 'the route ended the held turn as interrupted');
+  const held = d.graph.lock;
+  assert.equal(held.prompt_id, 'p2');
+  d.ctx.state.store.k = 2; // the held turn's own work
+
+  const late = await d.host('/api/turn-end', { author: 'claude', reply: 'Finished one.', ended: 'stop', ...S1 });
+  assert.deepStrictEqual([late.status, late.body], [200, { ok: true, reconciled: old }]);
+  const tr = d.graph.nodes.get(old).trigger;
+  assert.deepStrictEqual([tr.message, tr.reply, tr.ended, 'ended_by' in tr], ['one', 'Finished one.', 'stop', false]);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(d.root, '.web-chat', 'graph', `${old}.json`), 'utf8')).trigger.reply, 'Finished one.');
+  assert.equal(d.graph.lock, held, 'the held turn stays open');
+  assert.equal(d.graph.nodes.size, 1);
+
+  // The held turn's own Stop ends it as always.
+  const own = await d.host('/api/turn-end', { author: 'claude', reply: 'Finished two.', ...S1, prompt_id: 'p2' });
+  assert.ok(own.body.node_id);
+  assert.equal(d.graph.lock, null);
+  const t2 = d.graph.nodes.get(own.body.node_id).trigger;
+  assert.deepStrictEqual([t2.message, t2.reply, t2.ended], ['two', 'Finished two.', 'stop']);
 });
