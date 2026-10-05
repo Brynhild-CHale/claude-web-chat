@@ -281,7 +281,7 @@ test('GET …/attachments/:n: HTML, an SVG, any other type, 21 MiB and a body th
   m.answers.attachment = { media_type: 'image/webp', bytes: Buffer.alloc(ATTACHMENT_MAX_BYTES, 7) };
   const at = await h.raw(ATTACH_URL(0));
   assert.equal(at.status, 200);
-  assert.equal(at.bytes.length, 20 * 1024 * 1024);
+  assert.equal(at.bytes.length, ATTACHMENT_MAX_BYTES);
 });
 
 // ── parameters ──────────────────────────────────────────────────────────────

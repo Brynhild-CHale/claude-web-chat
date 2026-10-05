@@ -64,7 +64,11 @@ modelModule.createModel = (opts) => realCreateModel(lruOverride ? { ...opts, lru
 
 const { createMirror, SOURCES } = require('../lib/server/mirror');
 const { createTailer } = require('../lib/server/mirror/tail');
-const { createTranscriptsSource, parseLines, mergeChanges } = require('../lib/server/mirror/transcripts');
+const {
+  createTranscriptsSource, parseLines, mergeChanges, SLICE_VERSION, ATTACHMENT_MAX_BYTES, KNOWN_RANGES_MAX,
+} = require('../lib/server/mirror/transcripts');
+const { createIndexStore } = require('../lib/server/mirror/index-store');
+const claudeFiles = require('../lib/core/claude-files');
 
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
@@ -811,6 +815,292 @@ test('a disabled session is never tailed; stop() stops every tailer and flushes 
   assert.ok(h.store.saved.get(S1), 'S1\'s index written');
   assert.equal(h.store.saved.get(S2), undefined);
   const snap = h.store.saved.get(S1);
-  assert.equal(snap.state.sources.transcripts.v, 1, 'the source\'s own slice is in the index');
+  assert.equal(snap.state.sources.transcripts.v, SLICE_VERSION, 'the source\'s own slice is in the index');
+  assert.equal(SLICE_VERSION, 2, 'the slice carries the known-value ranges since U28b@known-ranges');
   assert.ok(!('org' in snap.state.meta) && !JSON.stringify(snap).includes('organizationUuid'));
+});
+
+// ── the attachment limit (ruled U28b@attachment-limit) ───────────────────────
+
+// The real index store (lib/server/mirror/index-store.js), so readRange keeps
+// its 8 MiB line rule.
+const realStore = () => ({ create: (o) => createIndexStore(o), log: { ranges: [] } });
+// A PNG of exactly `n` bytes: the signature, then padding.
+function pngOf(n) {
+  const b = Buffer.alloc(n, 0x41);
+  TINY_PNG.copy(b, 0, 0, Math.min(TINY_PNG.length, n));
+  return b;
+}
+
+test('the attachment limit is 6 MiB − 48 KiB, and the content route serves up to the same number', () => {
+  assert.equal(ATTACHMENT_MAX_BYTES, 6242304);
+  assert.equal(ATTACHMENT_MAX_BYTES, 6 * 1024 * 1024 - 48 * 1024);
+  // Its base64 leaves 64 KiB of readWindow's 8 MiB for the record around it.
+  assert.equal(claudeFiles.WINDOW_MAX_BYTES - Math.ceil(ATTACHMENT_MAX_BYTES / 3) * 4, 64 * 1024);
+  // routes/mirror-content.js requires only ./mirror (its own test), so it spells
+  // the number; this pins the two equal.
+  assert.equal(require('../lib/server/routes/mirror-content').ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_BYTES);
+});
+
+test('an attachment of exactly the limit is served; one byte more answers null before its base64 is decoded', async (t) => {
+  const h = setup(t, { store: realStore() });
+  const r = h.records();
+  const exact = pngOf(ATTACHMENT_MAX_BYTES);
+  r.promptImage('the largest one', { promptId: 'att-max', png: exact });
+  r.assistant(['Seen.']);
+  r.turnDuration();
+  r.promptImage('one byte more', { promptId: 'att-over', png: pngOf(ATTACHMENT_MAX_BYTES + 1) });
+  r.assistant(['Too big.']);
+  r.turnDuration();
+  h.ch.writeTranscript(S1, r.records);
+  await h.mirror.start();
+  h.sessionStart();
+  await turnCount(h, 2);
+  const realFrom = Buffer.from;
+  let decodes = 0;
+  const spy = function from(v, enc, ...rest) {
+    if (enc === 'base64') decodes += 1;
+    return realFrom.call(Buffer, v, enc, ...rest);
+  };
+  Buffer.from = spy;
+  let a = null;
+  let over = 'unset';
+  try {
+    a = await h.mirror.attachment('p_att-max', 1);
+    assert.ok(decodes >= 1, 'the spy sees a decode');
+    decodes = 0;
+    over = await h.mirror.attachment('p_att-over', 1);
+  } finally {
+    Buffer.from = realFrom;
+  }
+  assert.ok(a, 'the exact limit is served');
+  assert.equal(a.media_type, 'image/png');
+  assert.equal(a.bytes.length, ATTACHMENT_MAX_BYTES);
+  assert.ok(Buffer.from(a.bytes).equals(exact), 'its bytes, decoded');
+  assert.equal(over, null, 'one byte more answers null');
+  assert.equal(decodes, 0, 'without decoding its base64');
+});
+
+test('a record whose two attachments, each under the limit, make a line over 8 MiB answers null for both', async (t) => {
+  const h = setup(t, { store: realStore() });
+  const r = h.records();
+  const half = pngOf(4.5 * 1024 * 1024);
+  r.prompt('look at both', { promptId: 'att-two' });
+  r.assistant([{ type: 'tool_use', name: 'Read', input: { file_path: '/tmp/project/both.png' }, id: 'toolu_01Two' }]);
+  r.toolResult('toolu_01Two', 'two images', { images: [half, half] });
+  r.assistant(['Too much for one line.']);
+  r.turnDuration();
+  // The control: the same shape, small.
+  r.prompt('look at these', { promptId: 'att-small' });
+  r.assistant([{ type: 'tool_use', name: 'Read', input: { file_path: '/tmp/project/small.png' }, id: 'toolu_01Small' }]);
+  r.toolResult('toolu_01Small', 'two images', { images: [TINY_PNG, TINY_PNG] });
+  r.assistant(['Both fine.']);
+  r.turnDuration();
+  h.ch.writeTranscript(S1, r.records);
+  assert.ok(Buffer.byteLength(JSON.stringify(r.records.find((x) => JSON.stringify(x).includes('toolu_01Two') && x.type === 'user')))
+    > claudeFiles.WINDOW_MAX_BYTES, 'the record\'s line is over 8 MiB');
+  await h.mirror.start();
+  h.sessionStart();
+  await turnCount(h, 2);
+  const small = [await h.mirror.attachment('toolu_01Small', 1), await h.mirror.attachment('toolu_01Small', 2)];
+  assert.ok(small.every((x) => x && Buffer.from(x.bytes).equals(TINY_PNG)), 'the small record answers both');
+  assert.equal(await h.mirror.attachment('toolu_01Two', 1), null, 'the first answers null');
+  assert.equal(await h.mirror.attachment('toolu_01Two', 2), null, 'the second answers null');
+});
+
+// ── known values across a restart (ruled U28b@known-ranges) ──────────────────
+
+// The byte range [start, end) of record `rec` in `records` written as jsonl.
+function rangeOf(records, rec) {
+  const i = records.indexOf(rec);
+  const start = Buffer.byteLength(jsonl(records.slice(0, i)));
+  return [start, start + Buffer.byteLength(jsonl([rec]))];
+}
+// Push one record through `fn` and answer it.
+function added(r, fn) {
+  const n = r.records.length;
+  fn();
+  return r.records[n];
+}
+
+// Count lib/core/claude-files readWindow calls on S1's transcript from now on
+// (the facade captures readWindow when a mirror is built, so this wraps it
+// before one is). Answers the list; the wrap comes off at the test's end.
+function countWindows(t) {
+  const real = claudeFiles.readWindow;
+  const calls = [];
+  claudeFiles.readWindow = (file, opts) => {
+    if (path.basename(String(file)) === `${S1}.jsonl`) calls.push({ ...opts });
+    return real(file, opts);
+  };
+  t.after(() => { claudeFiles.readWindow = real; });
+  return { calls, off: () => { claudeFiles.readWindow = real; } };
+}
+
+async function restartWith(t, a, store, { windows = true } = {}) {
+  const w = windows ? countWindows(t) : null;
+  const ranges0 = store.log.ranges.length;
+  const b = setup(t, { store, root: a.root, ch: a.ch });
+  if (w) w.off(); // only the new mirror's facade holds the counting wrap
+  await b.mirror.start();
+  b.sessionStart(S1, 'resume');
+  await waitUntil(() => b.tailers.of(S1).find((x) => x.resume), { what: 'the resumed tailer' });
+  return { b, windows: w ? w.calls : [], ranges: () => store.log.ranges.slice(ranges0) };
+}
+
+test('a restart reads only the recorded known-value lines of the prefix and registers both values again', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const email = 'pat.ranged-user@example.com';
+  const org = '5d4c3b2a-1908-4f7e-8d6c-5b4a39281706';
+  const r = a.records();
+  closedTurn(r, 'kn-0');
+  const ctx = added(r, () => r.sessionContext({ userEmail: email }));
+  const cred = added(r, () => r.credentialOrg(org));
+  closedTurn(r, 'kn-1');
+  added(r, () => r.sessionContext({ userEmail: email })); // the same value again: no second range
+  closedTurn(r, 'kn-2');
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 3);
+  await a.mirror.stop();
+  const index = store.saved.get(S1);
+  const slice = index.state.sources.transcripts;
+  assert.equal(slice.v, SLICE_VERSION);
+  assert.deepEqual(slice.known, [rangeOf(r.records, ctx), rangeOf(r.records, cred)], 'one range per distinct value, the first line');
+  assert.ok(!JSON.stringify(index).includes(email) && !JSON.stringify(index).includes(org), 'ranges, never a value');
+
+  const { b, windows, ranges } = await restartWith(t, a, store);
+  const n0 = r.records.length;
+  closedTurn(r, 'kn-3', `mail ${email} about org ${org}`, `Mailed ${email}.`);
+  b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(b, 4);
+  assert.deepEqual(windows.filter((c) => (c.from || 0) < index.resume.offset), [], 'no readWindow of the prefix');
+  assert.deepEqual(ranges().filter((x) => x.file === `${S1}.jsonl`).map((x) => [x.from, x.to]), slice.known,
+    'store.readRange read exactly the recorded lines');
+  assert.ok(b.tailers.deliveries.filter((d) => d.file === `${S1}.jsonl`).every((d) => d.start >= index.resume.offset));
+  const s = JSON.stringify([await b.ask('turns', S1, { items: 'full' }), b.frames]);
+  assert.ok(s.includes('mail '), 'the prompt is there');
+  assert.ok(!s.includes(email), 'the email is masked after the restart');
+  assert.ok(!s.includes(org), 'the org id is masked after the restart');
+  assert.equal(b.mirror.skillFold(S1).orgUuid, org, 'skillFold has the org id again');
+  await b.mirror.stop();
+  assert.deepEqual(store.saved.get(S1).state.sources.transcripts.known, slice.known, 'the next index keeps the same ranges');
+});
+
+test('a known-value line that ends exactly at the resume point is re-read on a restart', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const email = 'pat.edge-user@example.com';
+  const r = a.records();
+  closedTurn(r, 'ke-0');
+  const ctx = added(r, () => r.sessionContext({ userEmail: email })); // the last line read
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 1);
+  await a.mirror.stop();
+  const index = store.saved.get(S1);
+  const range = rangeOf(r.records, ctx);
+  assert.equal(index.resume.offset, range[1], 'the resume point is the end of the known-value line');
+  assert.deepEqual(index.state.sources.transcripts.known, [range]);
+
+  const { b, ranges } = await restartWith(t, a, store);
+  const n0 = r.records.length;
+  closedTurn(r, 'ke-1', `mail ${email}`, `Mailed ${email}.`);
+  b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(b, 2);
+  assert.deepEqual(ranges().filter((x) => x.file === `${S1}.jsonl`).map((x) => [x.from, x.to]), [range], 'the line was re-read');
+  const s = JSON.stringify([await b.ask('turns', S1, { items: 'full' }), b.frames]);
+  assert.ok(s.includes('mail '), 'the prompt is there');
+  assert.ok(!s.includes(email), 'the email is masked after the restart');
+});
+
+test('two accounts in one session: both emails are masked in text appended after a restart', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const first = 'first.account@example.com';
+  const second = 'second.account@example.org';
+  const r = a.records();
+  r.sessionContext({ userEmail: first });
+  closedTurn(r, 'acc-1');
+  r.sessionContext({ userEmail: second });
+  closedTurn(r, 'acc-2');
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 2);
+  await a.mirror.stop();
+  assert.equal(store.saved.get(S1).state.sources.transcripts.known.length, 2, 'a range for each account');
+
+  const { b, windows } = await restartWith(t, a, store);
+  const n0 = r.records.length;
+  closedTurn(r, 'acc-3', `forward ${first} to ${second}`, `Forwarded ${first} to ${second}.`);
+  b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(b, 3);
+  assert.deepEqual(windows, [], 'no walk');
+  const s = JSON.stringify([await b.ask('turns', S1, { items: 'full' }), await b.ask('turn', 'acc-3'), b.frames]);
+  assert.ok(s.includes('forward '), 'the prompt is there');
+  assert.ok(!s.includes(first), 'the first account is masked');
+  assert.ok(!s.includes(second), 'the second account is masked');
+});
+
+test('a slice without ranges (an older index) falls back to the walk once; the next restart reads ranges only', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const email = 'pat.walked-user@example.com';
+  const org = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+  const r = a.records();
+  closedTurn(r, 'wk-1');
+  const ctx = added(r, () => r.sessionContext({ userEmail: email }));
+  const cred = added(r, () => r.credentialOrg(org));
+  closedTurn(r, 'wk-2');
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 2);
+  await a.mirror.stop();
+  // An index written before SLICE_VERSION 2: no ranges.
+  const old = store.saved.get(S1);
+  const slice = old.state.sources.transcripts;
+  slice.v = 1;
+  delete slice.known;
+
+  const one = await restartWith(t, a, store);
+  await turnCount(one.b, 2);
+  assert.ok(one.windows.some((c) => (c.from || 0) === 0), 'the walk read the prefix from 0');
+  assert.deepEqual(one.ranges(), [], 'no range to read');
+  const n0 = r.records.length;
+  closedTurn(r, 'wk-3', `mail ${email} about ${org}`);
+  one.b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(one.b, 3);
+  const s = JSON.stringify([await one.b.ask('turn', 'wk-3'), one.b.frames]);
+  assert.ok(!s.includes(email) && !s.includes(org), 'both values registered by the walk');
+  await one.b.mirror.stop();
+  const next = store.saved.get(S1).state.sources.transcripts;
+  assert.equal(next.v, SLICE_VERSION);
+  assert.deepEqual(next.known, [rangeOf(r.records, ctx), rangeOf(r.records, cred)], 'the walk recorded the ranges');
+
+  const two = await restartWith(t, a, store);
+  await turnCount(two.b, 3);
+  assert.deepEqual(two.windows, [], 'the next restart does not walk');
+  assert.deepEqual(two.ranges().map((x) => [x.from, x.to]), next.known, 'it reads the ranges only');
+  assert.equal(two.b.mirror.skillFold(S1).orgUuid, org);
+});
+
+test('at most KNOWN_RANGES_MAX ranges a session, the newest kept', async (t) => {
+  const store = fakeStore();
+  const h = setup(t, { store });
+  const r = h.records();
+  const recs = [];
+  for (let i = 0; i < KNOWN_RANGES_MAX + 2; i++) recs.push(added(r, () => r.sessionContext({ userEmail: `user-${i}@example.com` })));
+  closedTurn(r, 'many-1');
+  h.ch.writeTranscript(S1, r.records);
+  await h.mirror.start();
+  h.sessionStart();
+  await turnCount(h, 1);
+  await h.mirror.stop();
+  assert.equal(KNOWN_RANGES_MAX, 32);
+  assert.deepEqual(store.saved.get(S1).state.sources.transcripts.known, recs.slice(-KNOWN_RANGES_MAX).map((x) => rangeOf(r.records, x)));
 });
