@@ -335,8 +335,10 @@ test('query parameters: defaults, the bounds accepted, and a 400 for each malfor
       assert.deepStrictEqual(m.calls, [], `${url}: the facade is not asked`);
     }
   }
-  // A parameter given twice is no single value.
-  for (const url of [`${TURNS_URL}?limit=5&limit=6`, `${ITEM_URL}?field=text&field=input`, `${TURNS_URL}?before[a]=1`]) {
+  // A parameter given twice is no single value, and neither is a one-element
+  // list or an object (Express 4's qs parser makes both from brackets).
+  for (const url of [`${TURNS_URL}?limit=5&limit=6`, `${ITEM_URL}?field=text&field=input`, `${TURNS_URL}?before[a]=1`,
+    `${TURNS_URL}?limit[]=5`, `${ITEM_URL}?field[]=text`]) {
     const r = await h.get(url);
     assert.equal(r.status, 400, url);
   }
