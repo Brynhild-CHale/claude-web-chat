@@ -473,6 +473,57 @@ test('addKnownSource: a throwing source masks nothing and breaks nothing; addKno
   assert.equal(r.addKnownSource(null), false);
 });
 
+// U23b (ruling U23@redact.js:addKnownSource-throw-evicts): a transient read
+// error (EMFILE, EACCES mid-rewrite) never unmasks a still-valid token.
+test('addKnownSource: a source that throws after a good read keeps masking its last value; an explicit null drops it after maxAgeMs', () => {
+  const token = fake('json-key-hex-token').secrets[0];
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let answer = () => token;
+  let calls = 0;
+  r.addKnownSource(() => { calls++; return answer(); }, 'capture-token');
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, 'the good read');
+  answer = () => { const e = new Error('EMFILE: too many open files'); e.code = 'EMFILE'; throw e; };
+  for (let i = 0; i < 3; i++) {
+    clock.t += 2000;
+    assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, `throw ${i + 1} keeps the last good value`);
+    assert.ok(!JSON.stringify(r.value({ a: token })).includes(token));
+    assert.ok(!r.window(`a\n${token}\n`, { startsMidFile: true }).includes(token));
+  }
+  assert.equal(calls, 4, 'a throwing source is still consulted once per maxAgeMs');
+  // An explicit null drops it, but only once maxAgeMs has passed.
+  answer = () => null;
+  clock.t += 1999;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`, 'not consulted again inside maxAgeMs');
+  clock.t += 1;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'null drops the value');
+  // A throw after null brings nothing back.
+  answer = () => { throw new Error('EACCES'); };
+  clock.t += 2000;
+  assert.equal(r.text(`x ${token}`), `x ${token}`);
+  // undefined drops a value just as null does.
+  answer = () => token;
+  clock.t += 2000;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`);
+  answer = () => undefined;
+  clock.t += 2000;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'undefined drops the value');
+});
+
+test('addKnownSource: a throw before any good read masks nothing; the first good read after it masks', () => {
+  const token = fake('json-key-api-key').secrets[0];
+  const clock = clocked();
+  const r = createRedactor({ now: clock.now });
+  let fail = true;
+  r.addKnownSource(() => { if (fail) throw new Error('ENOENT'); return token; }, 'capture-token', { maxAgeMs: 100 });
+  assert.equal(r.text(`x ${token}`), `x ${token}`);
+  clock.t += 100;
+  assert.equal(r.text(`x ${token}`), `x ${token}`, 'a second throw still masks nothing');
+  fail = false;
+  clock.t += 100;
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`);
+});
+
 test('addKnownSource: a source that redacts from inside its own fn is not re-entered', () => {
   const clock = clocked();
   const r = createRedactor({ now: clock.now });
