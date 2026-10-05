@@ -8,7 +8,9 @@
 //   * (a) a branch: the turn machine supersedes the abandoned turns under one
 //     'branch' notice; the rewinds source calls nothing;
 //   * (b) a first-prompt reset: the turns before it under ONE 'reset' notice, the
-//     new turn live; (b′) a compaction and (b″) a resume supersede nothing;
+//     new turn live, and a hook other than SessionStart between the two
+//     turn_durations does not stop it; (b′) a compaction and (b″) a resume
+//     supersede nothing;
 //   * (c) each anchor form (rewound, an earlier leafUuid, a null one) supersedes
 //     the turns after the anchor under 'anchor'; (c′) a last-prompt naming the
 //     leaf, or a record of the newest turn, supersedes nothing;
@@ -276,6 +278,23 @@ test('(b) the thresholds: exactly at them supersedes, one short of either does n
   const h3 = await run(t, shortRecords);
   assertExpected(await verdict(h3), shortRecords, 'first-turn records one short');
   await h3.mirror.stop();
+});
+
+test('(b) only a SessionStart keeps a reset from reading as one: another hook between does not', async (t) => {
+  // A live session sends other hook envelopes between the two turn_durations
+  // (a Notification while the reset prompt's turn runs). None is a SessionStart,
+  // so the reset still reads as one.
+  const f = build('reset');
+  const tsOf = (rec) => Date.parse(rec.timestamp);
+  const tds = f.records.filter((x) => x.type === 'system' && x.subtype === 'turn_duration');
+  assert.equal(tds.length, 4);
+  const [td3, td4] = [tsOf(tds[2]), tsOf(tds[3])];
+  assert.ok(td4 - td3 > 2);
+  f.hooks.push({ event: 'Notification', ts: td3 + 1 });
+  f.hooks.push({ event: 'Notification', ts: td4 - 1 });
+  const h = await run(t, f);
+  assertExpected(await verdict(h), f, 'a reset with other hooks between');
+  assert.equal(realCalls(h).length, 1);
 });
 
 test('(b′) a compaction with re-sent attachments and a lower count is never a reset', async (t) => {
