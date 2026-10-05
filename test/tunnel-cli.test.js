@@ -639,17 +639,51 @@ test('logs includes the remote access log; --access shows only it', async (t) =>
 
 // ── doctor ──────────────────────────────────────────────────────────────────
 
-function doctorProject(t) {
+function doctorProject(t, { under = '' } = {}) {
   withTempHome(t);
-  const dir = fs.mkdtempSync(path.join(userPaths().root, '..', 'doc-'));
+  const parent = path.join(userPaths().root, '..', under);
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'doc-'));
   fs.mkdirSync(path.join(dir, '.web-chat', 'graph'), { recursive: true });
   return dir;
 }
 
+// The tunnel section's own lines, by where doctor prints them: after the
+// hooks section (every line of which names a hook or .claude/settings.json)
+// and before the replay-renderer notes, which always close the run. A path
+// another section prints — the install path in the MCP registration line, the
+// project root, Claude Code's config file — can contain "tunnel" without
+// being a tunnel line, so the check never reads those.
+function tunnelSection(checks) {
+  const end = checks.findIndex((c) => /^replay GIFs: /.test(c.m));
+  assert.ok(end > 0, 'doctor closes with the replay notes');
+  let start = end;
+  while (start > 0 && !/hook|\.claude\/settings\.json/.test(checks[start - 1].m)) start--;
+  assert.ok(start > 0, 'the hooks section comes before the tunnel section');
+  return checks.slice(start, end);
+}
+
 test('doctor: no tunnel section at all until setup has run', async (t) => {
-  const root = doctorProject(t);
-  const s = await doctor([], { cwd: root, runClaude: () => ({ ok: true }), log: () => {} });
-  assert.ok(!s.checks.some((c) => /tunnel|cloudflared/i.test(c.m)), s.checks.map((c) => c.m).join('\n'));
+  // A project (and its Claude Code config) under a folder named for tunnels:
+  // paths doctor prints elsewhere say "tunnel", and are not a tunnel section.
+  const root = doctorProject(t, { under: 'tunnel-projects' });
+  const prevCfg = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = path.join(path.dirname(root), '.claude-config');
+  t.after(() => { if (prevCfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevCfg; });
+
+  let s = await doctor([], { cwd: root, runClaude: () => ({ ok: true }), log: () => {} });
+  const all = s.checks.map((c) => c.m).join('\n');
+  assert.match(all, /tunnel-projects/, 'the run prints a path that says "tunnel" (otherwise this proves nothing)');
+  assert.deepEqual(tunnelSection(s.checks).filter((c) => /tunnel|cloudflared/i.test(c.m)), [], all);
+
+  // Once setup has run, the same anchor finds the section.
+  writeConfig(goodRaw(createFakeAccess()));
+  const env = { ...process.env, WEB_CHAT_PORTAL_PORT: String(await freePort()) };
+  delete env.WEB_CHAT_HOST;
+  s = await doctor([], { cwd: root, runClaude: () => ({ ok: true }), log: () => {}, env, checkBinary: () => ({ ok: true, version: '2025.8.1', bin: '/fake/cloudflared' }) });
+  const section = tunnelSection(s.checks).map((c) => c.m);
+  assert.ok(section.some((m) => /^tunnel config is valid/.test(m)), section.join('\n'));
+  assert.ok(section.some((m) => /^the tunnel is down/.test(m)), section.join('\n'));
 });
 
 test('doctor: reports the tunnel config, cloudflared, the token and a down tunnel', async (t) => {
