@@ -462,3 +462,147 @@ test('resample area-averages (premultiplied), and encode is png.encodePng', () =
   const im = decodePng(ICON);
   assert.ok(icon.encode(im).equals(require('../lib/core/png').encodePng(im.data, im.width, im.height)));
 });
+
+// ── pad and crop (ruling U50@skill:wide-logo-pad, D1 d: U49b) ────────────────
+
+// The RGBA at (x, y) of a decoded image.
+const px = (im, x, y) => [...im.data.subarray((y * im.width + x) * 4, (y * im.width + x) * 4 + 4)];
+// Rows of the image that hold no opaque-ish pixel at all.
+const blankRow = (im, y) => { for (let x = 0; x < im.width; x++) if (im.data[(y * im.width + x) * 4 + 3]) return false; return true; };
+
+test('a 3:1 favicon is still refused without pad; with pad it is a square, transparent margins above and below, tile and touch opaque, with the padding note', () => {
+  assert.throws(() => icon.prepare(oval(300, 100), { kind: 'favicon' }), refused('not-square'));
+  assert.throws(() => icon.prepare(oval(300, 100), { kind: 'favicon', pad: false }), refused('not-square'));
+  const r = icon.prepare(oval(300, 100), { kind: 'favicon', pad: true });
+  checkVariants(r);
+  assert.equal(r.square, true);
+  const t = r.variants.transparent.image;
+  assert.equal(t.width, t.height, `${t.width}×${t.height}`);
+  assert.equal(r.variants.tile.image.width, r.variants.tile.image.height);
+  // The margins above and below are transparent; the artwork is centred.
+  const mid = Math.floor(t.height / 2);
+  assert.ok(blankRow(t, 0) && blankRow(t, t.height - 1), 'the top and bottom rows are margin');
+  assert.ok(blankRow(t, Math.floor(t.height * 0.2)) && blankRow(t, Math.ceil(t.height * 0.8)), 'a 3:1 artwork fills only the middle third');
+  assert.equal(px(t, Math.floor(t.width / 2), mid)[3], 255, 'the artwork is at the centre');
+  // The tile and the home-screen icon fill those margins with the tile colour.
+  assert.deepEqual(px(r.variants.tile.image, Math.floor(r.variants.tile.image.width / 2), 0), [0, 0, 0, 255]);
+  assert.deepEqual(px(r.variants.touch.image, 90, 2), [0, 0, 0, 255]);
+  assert.ok(r.notes.some((n) => /^padded to a square: the \d+×\d+ px artwork \(3\.\d\d:1\) is centred, with margins above and below/.test(n)),
+    r.notes.join(' | '));
+});
+
+test('a 6:1 wordmark padded adds the unreadable-at-16-px warning; a 2:1 one does not', () => {
+  assert.equal(icon.TAB_ICON_SIDE, 16);
+  assert.ok(Number.isInteger(icon.TAB_TEXT_MIN_PX) && icon.TAB_TEXT_MIN_PX > 0);
+  const six = icon.prepare(oval(360, 60), { kind: 'favicon', pad: true });
+  checkVariants(six);
+  assert.ok(six.notes.some((n) => /^padded to a square/.test(n)));
+  const warn = six.notes.find((n) => /unreadable/.test(n));
+  assert.match(warn || '', /^in the 16 px tab the padded artwork is only \d\.\d px tall: text in it will be unreadable at 16 px$/, six.notes.join(' | '));
+  assert.ok(Number(/only (\d\.\d) px/.exec(warn)[1]) < icon.TAB_TEXT_MIN_PX);
+  const two = icon.prepare(oval(240, 120), { kind: 'favicon', pad: true });
+  assert.ok(two.notes.some((n) => /^padded to a square/.test(n)), 'padded');
+  assert.ok(!two.notes.some((n) => /unreadable/.test(n)), `no warning at 2:1: ${two.notes.join(' | ')}`);
+  // A tall one is padded left and right.
+  const tall = icon.prepare(oval(60, 360), { kind: 'favicon', pad: true });
+  assert.equal(tall.square, true);
+  assert.ok(tall.notes.some((n) => /margins left and right/.test(n)));
+  assert.ok(tall.notes.some((n) => /px wide: text in it will be unreadable/.test(n)));
+});
+
+test('pad on a pixel-art wordmark pads in cells; pad on a logo is a TypeError; pad must be a boolean', () => {
+  const im = canvas(30 * 4 + 8, 10 * 4 + 8);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 120; x++) {
+    const c = PALETTE[(Math.floor(x / 4) + Math.floor(y / 4)) % PALETTE.length];
+    im.data.set([...c, 255], ((y + 4) * im.width + (x + 4)) * 4);
+  }
+  const r = icon.prepare(asPng(im), { kind: 'favicon', pad: true });
+  checkVariants(r);
+  assert.equal(r.pixel_art, true);
+  const t = r.variants.transparent.image;
+  assert.equal(t.width, t.height);
+  assert.ok(r.notes.some((n) => /^padded to a square: the 30×10 cell artwork \(3\.00:1\)/.test(n)), r.notes.join(' | '));
+  assert.ok(!r.notes.some((n) => /cells, padded to a square$/.test(n)), 'one padding note, not two');
+  assert.throws(() => icon.prepare(asPng(im), { kind: 'logo', pad: true }), (e) => e instanceof TypeError && /favicon only/.test(e.message));
+  assert.throws(() => icon.prepare(ICON, { kind: 'logo', pad: true }), TypeError, 'even a square logo');
+  assert.throws(() => icon.prepare(ICON, { kind: 'favicon', pad: 'yes' }), TypeError);
+});
+
+// A wide source: a square mark (a disc, 100 px) at the left, a long bar (the
+// "wordmark") at the right, on transparency.
+function markAndWord() {
+  const im = canvas(400, 140);
+  ellipse(im, 70, 70, 50, 50, gradient);
+  ellipse(im, 270, 70, 110, 30, () => [40, 40, 40]);
+  return im;
+}
+function region(im, x, y, w, h) {
+  const out = canvas(w, h);
+  for (let r = 0; r < h; r++) im.data.copy(out.data, r * w * 4, ((y + r) * im.width + x) * 4, ((y + r) * im.width + x + w) * 4);
+  return out;
+}
+
+test('cropping a wide source to its square mark makes a favicon with no refusal, exactly as the mark alone would', () => {
+  const src = asPng(markAndWord());
+  assert.throws(() => icon.prepare(src, { kind: 'favicon' }), refused('not-square'), 'the whole source is too wide');
+  const box = { x: 10, y: 10, w: 120, h: 120 };
+  const r = icon.prepare(src, { kind: 'favicon', crop: box });
+  checkVariants(r);
+  assert.equal(r.square, true);
+  assert.ok(r.notes.includes('cropped to 120×120 at 10,10 of the 400×140 image'), r.notes.join(' | '));
+  // The crop runs the pipeline as any image would: the same variants as the
+  // mark's own 120×120 file.
+  const alone = icon.prepare(asPng(region(markAndWord(), 10, 10, 120, 120)), { kind: 'favicon' });
+  for (const v of ['transparent', 'tile', 'touch']) assert.ok(r.variants[v].bytes.equals(alone.variants[v].bytes), v);
+  // A crop works on a logo too.
+  assert.equal(icon.prepare(src, { kind: 'logo', crop: box }).square, true);
+});
+
+test('a crop that is still too wide is refused as not-square, or padded when pad is asked too', () => {
+  const src = asPng(markAndWord());
+  const box = { x: 150, y: 30, w: 250, h: 80 };
+  assert.throws(() => icon.prepare(src, { kind: 'favicon', crop: box }), refused('not-square'));
+  const r = icon.prepare(src, { kind: 'favicon', crop: box, pad: true });
+  checkVariants(r);
+  assert.equal(r.square, true);
+  assert.ok(r.notes.some((n) => /^cropped to 250×80 at 150,30/.test(n)) && r.notes.some((n) => /^padded to a square/.test(n)), r.notes.join(' | '));
+});
+
+test("a box outside the image is IconError 'bad-crop', its hint naming the image's size; a malformed box is a TypeError", () => {
+  const src = asPng(markAndWord());
+  for (const box of [{ x: 300, y: 0, w: 120, h: 120 }, { x: 0, y: 30, w: 100, h: 111 }, { x: -1, y: 0, w: 10, h: 10 },
+    { x: 0, y: 0, w: 0, h: 10 }, { x: 0, y: 0, w: 10, h: -5 }, { x: 400, y: 140, w: 1, h: 1 }]) {
+    assert.throws(() => icon.prepare(src, { kind: 'favicon', crop: box }), (e) => e instanceof icon.IconError
+      && e.code === 'bad-crop' && /400×140/.test(e.hint) && /x \+ w ≤ 400 and y \+ h ≤ 140/.test(e.hint), JSON.stringify(box));
+  }
+  assert.equal(icon.prepare(src, { kind: 'logo', crop: { x: 0, y: 0, w: 400, h: 140 } }).square, false, 'the whole image is a crop too');
+  for (const box of [{ x: 0, y: 0, w: 1.5, h: 10 }, { x: '0', y: 0, w: 10, h: 10 }, { x: 0, y: 0, w: 10 }, [0, 0, 10, 10], 'x']) {
+    assert.throws(() => icon.prepare(src, { kind: 'favicon', crop: box }), TypeError, JSON.stringify(box));
+  }
+});
+
+test('an SVG with pad or with crop is refused: it is never rasterised', () => {
+  const wide = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100"><rect width="300" height="100" fill="#123"/></svg>');
+  const square = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#123"/></svg>');
+  const asIs = (re) => (e) => e instanceof icon.IconError && e.code === 'svg-as-is' && re.test(e.message)
+    && /never rasterised/.test(e.message) && /PNG/.test(e.hint);
+  assert.throws(() => icon.prepare(wide, { kind: 'favicon', pad: true }), asIs(/cannot be padded/));
+  assert.throws(() => icon.prepare(square, { kind: 'favicon', pad: true }), asIs(/cannot be padded/), 'even a square one');
+  assert.throws(() => icon.prepare(wide, { kind: 'logo', crop: { x: 0, y: 0, w: 100, h: 100 } }), asIs(/cannot be cropped/));
+  assert.throws(() => icon.prepare(wide, { kind: 'favicon', pad: true, crop: { x: 0, y: 0, w: 10, h: 10 } }), asIs(/padded or cropped/));
+});
+
+test('without pad or crop prepare is unchanged; pad leaves a favicon within 1.25:1 as it was', () => {
+  for (const [bytes, kind] of [[ICON, 'favicon'], [ICON, 'logo'], [oval(240, 200), 'favicon'], [oval(300, 100), 'logo']]) {
+    const a = icon.prepare(bytes, { kind });
+    const b = icon.prepare(bytes, { kind, pad: false, crop: null });
+    assert.deepEqual(b.notes, a.notes);
+    for (const v of ['transparent', 'tile', 'touch']) assert.ok(a.variants[v].bytes.equals(b.variants[v].bytes), `${kind} ${v}`);
+  }
+  const plain = icon.prepare(oval(240, 200), { kind: 'favicon' });
+  const padded = icon.prepare(oval(240, 200), { kind: 'favicon', pad: true });
+  assert.deepEqual(padded.notes, plain.notes, 'no padding note: within 1.25:1 is padded anyway');
+  assert.ok(padded.variants.transparent.bytes.equals(plain.variants.transparent.bytes));
+  const ref = icon.prepare(ICON, { kind: 'favicon', pad: true });
+  assert.ok(ref.variants.touch.bytes.equals(icon.prepare(ICON, { kind: 'favicon' }).variants.touch.bytes), 'the reference is untouched');
+});
