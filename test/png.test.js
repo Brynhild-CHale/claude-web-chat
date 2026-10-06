@@ -290,3 +290,25 @@ test('encodePng writes 8-bit RGBA, no interlace, filter 0 on every row, deflate 
   assert.ok(c.IDAT[0].equals(zlib.deflateSync(raw, { level: 9 })), 'deflated at level 9');
   assert.deepEqual(Object.keys(c), ['IHDR', 'IDAT', 'IEND']);
 });
+
+test("make-icons' in-memory output for each of the eight extension icons decodes pixel-equal to the shipped file", (t) => {
+  const { SIZES, SUPER, EXTENSIONS } = require('../extensions/make-icons');
+  const { resample } = require('../lib/core/icon');
+  assert.equal(EXTENSIONS.length * SIZES.length, 8);
+  let sameBytes = 0;
+  for (const ext of EXTENSIONS) {
+    const master = Buffer.alloc(SUPER * SUPER * 4);
+    ext.draw(master, SUPER);
+    for (const size of SIZES) {
+      const made = writePng(resample(master, SUPER, SUPER, size, size), size, size);
+      const shipped = fs.readFileSync(path.join(REPO, 'extensions', ext.dir, 'icons', `icon${size}.png`));
+      assert.ok(decodePng(made).data.equals(decodePng(shipped).data), `${ext.dir} icon${size}: pixel-equal`);
+      assert.ok(chunksOf(made).IHDR[0].equals(chunksOf(shipped).IHDR[0]), `${ext.dir} icon${size}: the same IHDR`);
+      if (made.equals(shipped)) sameBytes++;
+    }
+  }
+  // Byte equality holds where this Node's zlib deflates as the one that wrote
+  // the files did (official 22.x and 24.x builds, and Node 26 here, all agree);
+  // it is logged, not asserted.
+  t.diagnostic(`byte-identical: ${sameBytes}/8 (zlib ${process.versions.zlib})`);
+});
