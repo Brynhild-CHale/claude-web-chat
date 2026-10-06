@@ -551,6 +551,34 @@ test('a failing items fetch shows one error line with Retry, and Retry fetches a
   assert.equal(bodyOf('tu_grep').querySelector('.tc-error'), null);
 });
 
+// A Web card's second fetch (its input, for the prompt) fails on its own: the
+// result shows, the one error line with Retry shows too, and Retry asks again
+// for the input alone.
+test('a Web card whose input fetch fails shows one error line with Retry; Retry refetches the input alone', async () => {
+  const prompt = 'Summarise the changelog';
+  let fail = true;
+  itemAnswer = (url) => {
+    const field = new URL(url, 'http://x').searchParams.get('field');
+    if (field === 'input' && fail) return respond({ ok: false, error: 'boom' }, { status: 500 });
+    const text = field === 'input' ? JSON.stringify({ url: 'https://docs.example.com/c', prompt }) : 'the page';
+    return { id: 'tu_web_f', field, text, from: 0, to: text.length, total: text.length, eof: true };
+  };
+  await follow([{ ...fixtureItems()[7], id: 'tu_web_f' }]);
+  await open('tu_web_f');
+  await waitUntil(() => bodyOf('tu_web_f').querySelector('.tc-error') && bodyOf('tu_web_f').textContent.includes('the page'),
+    { what: 'the result and the input\'s error line' });
+  assert.equal(bodyOf('tu_web_f').querySelectorAll('.tc-error').length, 1, 'one error line');
+  assert.equal(bodyOf('tu_web_f').querySelector('.tc-prompt'), null, 'no prompt yet');
+
+  fail = false;
+  click(bodyOf('tu_web_f').querySelector('.tc-retry'));
+  await waitUntil(() => bodyOf('tu_web_f').querySelector('.tc-prompt'), { what: 'the retried prompt' });
+  assert.equal(bodyOf('tu_web_f').querySelector('.tc-prompt').textContent, prompt);
+  assert.equal(bodyOf('tu_web_f').querySelector('.tc-error'), null);
+  assert.equal(itemCalls('tu_web_f', 'input').length, 2, 'Retry fetched the input again');
+  assert.equal(itemCalls('tu_web_f', 'result').length, 1, 'and not the result');
+});
+
 test('a fetch that rejects outright is the same error line, never a throw', async () => {
   itemAnswer = () => { throw new Error('socket hang up'); };
   await follow([fixtureItems()[7]]);
