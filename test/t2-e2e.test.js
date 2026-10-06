@@ -391,8 +391,8 @@ test('a synthetic transcript and its hooks give one closed turn, one tool group 
 
   await waitUntil(() => local.of('mirror:stream').some((f) => f.conversation_id === S1
     && (f.items || []).some((it) => it.kind === 'reply' && it.text === REPLY_MD)), { ...WAIT, what: 'the reply on a stream frame' });
-  assert.ok(local.of('mirror:stream').some((f) => (f.items || []).some((it) => it.kind === 'tool_call' && it.tool_kind === 'Read')),
-    'the Read went out as a stream item');
+  await waitUntil(() => local.of('mirror:stream').some((f) => (f.items || []).some((it) => it.kind === 'tool_call' && it.tool_kind === 'Read')),
+    { ...WAIT, what: 'the Read went out as a stream item' });
   assert.equal(quiet.of('mirror:stream').length, 0, 'a socket whose chat is closed gets no stream frames (posture)');
 });
 

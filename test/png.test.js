@@ -128,6 +128,50 @@ test('it refuses what it does not fully understand, naming it', () => {
   refuses(short, /fewer scanlines/);
 });
 
+test('a second IHDR is refused: the size every check read is the only size decoded', () => {
+  const good = encodePng(sample(4, 4), 4, 4);
+  const ihdr = good.subarray(16, 29);
+  const big = Buffer.from(ihdr);
+  big.writeUInt32BE(6000, 0);
+  big.writeUInt32BE(6000, 4);
+  // pngSize (the pixel cap's reader) sees the first, 4 x 4; a decoder that let
+  // the second win would decode 36,000,000 pixels (U49's measured case: 35 KB).
+  const raw = Buffer.alloc((4 * 4 + 1) * 4);
+  const twice = Buffer.concat([good.subarray(0, 8), chunk('IHDR', ihdr), chunk('IHDR', big), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+  assert.deepStrictEqual(pngSize(twice), { width: 4, height: 4 });
+  assert.throws(() => decodePng(twice), (e) => e instanceof PngError && /more than one IHDR/.test(e.message));
+});
+
+test('an IDAT that inflates past its IHDR\'s size is refused without allocating the excess', (t) => {
+  // 1 x 1 RGBA: (4 + 1) x 1 bytes of scanline; the stream inflates to 8 MiB.
+  const ihdr = encodePng(sample(1, 1), 1, 1).subarray(16, 29);
+  const bomb = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.alloc(8 * 1024 * 1024))), chunk('IEND', Buffer.alloc(0)),
+  ]);
+  assert.ok(bomb.length < 16 * 1024, `the bomb is small (${bomb.length} bytes)`);
+  // Watch the one inflate: it must be bounded, and must never hand back the 8 MiB.
+  const real = zlib.inflateSync;
+  const seen = [];
+  zlib.inflateSync = (buf, opts) => {
+    const call = { max: opts && opts.maxOutputLength, out: null };
+    seen.push(call);
+    const out = real(buf, opts);
+    call.out = out.length;
+    return out;
+  };
+  t.after(() => { zlib.inflateSync = real; });
+  assert.throws(() => decodePng(bomb), (e) => e instanceof PngError && /inflates past/.test(e.message));
+  assert.equal(seen.length, 1);
+  assert.ok(Number.isInteger(seen[0].max) && seen[0].max < 64 * 1024, `inflate was bounded by the IHDR (max ${seen[0].max})`);
+  assert.equal(seen[0].out, null, 'no inflated buffer came back');
+  zlib.inflateSync = real;
+  // A stream a few bytes over its scanlines (inside the slack) still decodes.
+  const pad = Buffer.concat([Buffer.from([0, 1, 2, 3, 255]), Buffer.alloc(16)]);
+  const padded = Buffer.concat([bomb.subarray(0, 33), chunk('IDAT', zlib.deflateSync(pad)), chunk('IEND', Buffer.alloc(0))]);
+  assert.deepStrictEqual([...decodePng(padded).data], [1, 2, 3, 255]);
+});
+
 test('pngSize reads the dimensions from IHDR without decoding, and refuses what is not a PNG', () => {
   const rgba = Buffer.alloc(7 * 3 * 4, 200);
   assert.deepEqual(pngSize(encodePng(rgba, 7, 3)), { width: 7, height: 3 });
