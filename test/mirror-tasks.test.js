@@ -373,6 +373,13 @@ test('a fake key is masked in the line and the output; an ssh key read is withhe
   h.ch.writeTranscript(S1, r.records);
   await h.waitRow(a, (x) => x.status === 'running');
   await h.waitRow(b, (x) => x.status === 'running');
+  // Both turns read in one batch: each row sits in its own call's turn, not
+  // the conversation's open one (the second).
+  const turnA = h.probe.engine.model.item(`toolu_01${a}`).turn_id;
+  const turnB = h.probe.engine.model.item(`toolu_01${b}`).turn_id;
+  assert.notEqual(turnA, turnB);
+  assert.equal(h.row(a).turn_id, turnA, 'the first row is in the first call\'s turn');
+  assert.equal(h.row(b).turn_id, turnB);
   h.ch.appendTaskOutput(S1, a, `boot\n${fake.text}\n`);
   h.ch.appendTaskOutput(S1, b, 'ssh-ed25519-private-material-AAAAC3Nza\nsecond line of it\n');
   const rowA = await h.waitRow(a, (x) => x.line && x.line !== 'boot' && x.line.length > 0, 'the key line');
@@ -761,6 +768,35 @@ test('restart: the persisted slice brings the running row back and its watch res
   assert.equal(b.rows().length, 1);
   await b.mirror.stop();
   assertNoPath(b, file, 'the restored row');
+});
+
+// ── the watch cap ────────────────────────────────────────────────────────────
+
+test('at most TASKS_WATCH_MAX watches; a waiting row is watched when a slot frees', async (t) => {
+  const h = setup(t, { pollMs: 200 });
+  await h.mirror.start();
+  h.sessionStart();
+  const r = h.records();
+  const n = tasks.TASKS_WATCH_MAX + 2;
+  for (let i = 0; i < n; i++) {
+    const id = `bcap${String(i).padStart(3, '0')}`;
+    bgTurn(r, { id, file: h.ch.writeTaskOutput(S1, id, 'up\n') });
+    r.turnDuration({ durationMs: 10 });
+  }
+  h.ch.writeTranscript(S1, r.records);
+  await waitUntil(() => h.rows().filter((x) => x.line === 'up').length === n, { timeout: 15000, what: 'every row read once' });
+  await waitUntil(() => h.spy.watches.length === tasks.TASKS_WATCH_MAX, { timeout: 8000, what: 'the cap reached' });
+  await new Promise((res) => setTimeout(res, 100));
+  assert.equal(h.spy.watches.length, tasks.TASKS_WATCH_MAX, 'no watch past the cap');
+  assert.equal(h.mirror.snapshot({}).diagnostics.tasks.watching, tasks.TASKS_WATCH_MAX);
+  assert.equal(h.mirror.snapshot({}).diagnostics.tasks.running, n);
+  const first = path.basename(h.spy.watches[0], '.output');
+  h.ch.appendTaskOutput(S1, first, '[exited with code 0]\n');
+  await h.waitRow(first, (x) => x.status === 'done', 'the watched row ends');
+  await waitUntil(() => h.spy.watches.length === tasks.TASKS_WATCH_MAX + 1, { timeout: 8000, what: 'a waiting row takes the slot' });
+  assert.equal(h.mirror.snapshot({}).diagnostics.tasks.watching, tasks.TASKS_WATCH_MAX);
+  assert.equal(new Set(h.spy.watches).size, tasks.TASKS_WATCH_MAX + 1, 'a new file, not the ended one again');
+  await h.mirror.stop();
 });
 
 // ── stop ─────────────────────────────────────────────────────────────────────
