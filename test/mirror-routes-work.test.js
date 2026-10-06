@@ -28,7 +28,8 @@
 //     viewer below `read` with the hint and letting a local one through; the
 //     portal's table (classify) agrees with no row of these modules' own;
 //   * no path to a Claude Code file is ever returned;
-//   * both modules require only routes/mirror.js.
+//   * both modules require only routes/mirror.js and routes/mirror-query.js,
+//     which requires only routes/mirror.js.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -599,12 +600,15 @@ test('mounting without an audience gate throws rather than serve the work ungate
 
 // ── thin ────────────────────────────────────────────────────────────────────
 
-test('both modules are thin: each requires only routes/mirror.js (no fs, claude-files or domain/refs)', () => {
-  for (const rel of MODULES) {
+const QUERY_MODULE = 'lib/server/routes/mirror-query.js';
+
+test('both modules are thin: each requires only routes/mirror.js and routes/mirror-query.js (no fs, claude-files or domain/refs)', () => {
+  for (const rel of [...MODULES, QUERY_MODULE]) {
     const src = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
     const code = src.replace(/^\s*\/\/.*$/gm, '');
     const requires = [...code.matchAll(/require\(\s*(['"])([^'"]+)\1\s*\)/g)].map((x) => x[2]);
-    assert.deepStrictEqual(requires, ['./mirror'], rel);
+    // The shared parsers' home requires only the shared answers.
+    assert.deepStrictEqual(requires, rel === QUERY_MODULE ? ['./mirror'] : ['./mirror', './mirror-query'], rel);
     assert.ok(!/require\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/.test(code), `${rel}: fs`);
     assert.ok(!/claude-files|domain\/refs|resolveNodeRef/.test(code), `${rel}: claude-files or refs`);
     assert.ok(!/\bimport\s*\(/.test(code), `${rel}: no dynamic import`);
@@ -612,3 +616,4 @@ test('both modules are thin: each requires only routes/mirror.js (no fs, claude-
     assert.ok(!/\bredact\w*\s*\(|\bfence\s*\(|readWindow|sessionDirFile|taskOutputFile/.test(code), rel);
   }
 });
+
