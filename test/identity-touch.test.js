@@ -263,6 +263,54 @@ test('a touch icon re-derived from a stored image keeps that image\'s tile colou
   }
 });
 
+// ── a padded or cropped mark (ruling U50@skill:wide-logo-pad, D1 d: U49b) ───
+
+// The box of the pixels that are not the tile colour, in an opaque image.
+function inkBox(img, tile) {
+  let x0 = img.width, y0 = img.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const i = (y * img.width + x) * 4;
+      if (Math.max(...[0, 1, 2].map((c) => Math.abs(img.data[i + c] - tile[c]))) <= 8) continue;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  return { x0, y0, x1, y1, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+test('a favicon written with --pad gets a touch icon derived with the pad: 180×180, opaque, the whole logo centred', async (t) => {
+  await eachMode(t, async ({ root }) => {
+    const { r, text } = await run(['favicon', WIDE3, '--pad'], { cwd: root });
+    assert.equal(project.identity(root).mark, 'favicon');
+    assert.equal(r.touch.op, 'set');
+    assert.equal(r.touch.from, 'favicon');
+    assert.equal(r.touch.pad, true);
+    assert.match(text, /✓ the home-screen icon follows the padded favicon, on an opaque #000000 tile: PNG 180×180/);
+    const bytes = touchBytes(root);
+    const want = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, pad: true });
+    assert.ok(bytes.equals(want.variants.touch.bytes), 'the padded prepare\'s own touch variant, byte for byte');
+    const img = decodePng(bytes);
+    assert.deepEqual([img.width, img.height], [180, 180]);
+    for (let i = 3; i < img.data.length; i += 4) assert.equal(img.data[i], 255, 'every pixel opaque');
+    const box = inkBox(img, [0, 0, 0]);
+    assert.ok(box.w / box.h > 2.5, `the whole 3:1 logo, not a crop of it: ${box.w}×${box.h}`);
+    assert.ok(Math.abs(box.x0 - (179 - box.x1)) <= 1, `centred across: ${box.x0} | ${179 - box.x1}`);
+    assert.ok(Math.abs(box.y0 - (179 - box.y1)) <= 1, `centred down: ${box.y0} | ${179 - box.y1}`);
+  });
+});
+
+test('a favicon written with --crop gets a touch icon derived with the crop', async (t) => {
+  const root = directProject(t);
+  const crop = { x: 0, y: 0, w: 18, h: 18 };
+  const { r, text } = await run(['favicon', WIDE3, '--crop', '0,0,18,18', '--background', 'tile:#ffffff'], { cwd: root });
+  assert.deepEqual(r.touch.crop, crop);
+  assert.match(text, /✓ the home-screen icon follows the cropped favicon, on an opaque #ffffff tile/);
+  const want = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: [255, 255, 255], crop });
+  assert.ok(touchBytes(root).equals(want.variants.touch.bytes));
+  const box = inkBox(decodePng(touchBytes(root)), [255, 255, 255]);
+  assert.ok(box.w / box.h < 1.25, `the cropped square mark: ${box.w}×${box.h}`);
+});
+
 // ── show and clear ──────────────────────────────────────────────────────────
 
 test('show lists the home-screen icon both ways', async (t) => {
