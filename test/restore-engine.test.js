@@ -222,6 +222,60 @@ test('an ignored file, a symlinked directory leading out and an over-cap file ar
   assert.deepEqual(gitDirDigest(repo), digest);
 });
 
+test('a write under a file the plan deletes still goes to check-ignore: ignored now, it is listed and never written; undo puts the file back', async (t) => {
+  withTempHome(t);
+  const repo = treesnapRepo(t, { files: { 'keep.txt': 'keep\n' } });
+  const { shadow, restore } = engineFor(repo);
+  repo.write('a/b.log', 'log then\n');
+  const earlier = await snap(shadow);
+  repo.remove('a');
+  repo.write('a', 'now a file\n');
+  repo.ignore('*.log');
+  const later = await snap(shadow);
+  const digest = gitDirDigest(repo);
+  const pv = await restore.preview(earlier.tree);
+  assert.equal(pv.ok, true, JSON.stringify(pv));
+  assert.deepEqual(pv.notCovered, [{ path: 'a/b.log', reason: 'ignored' }]);
+  assert.deepEqual(pv.written, []);
+  assert.deepEqual(pv.deleted, ['a']);
+  const res = await restore.apply(earlier.tree, { expect: pv.current_tree });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.residual, []);
+  assert.deepEqual(res.notCovered, pv.notCovered);
+  assert.throws(() => fs.lstatSync(path.join(repo.root, 'a/b.log')), { code: 'ENOENT' }, 'the ignored path is not written');
+  const un = await restore.undo(res.restore_id);
+  assert.equal(un.ok, true, JSON.stringify(un));
+  assert.deepEqual(un.residual, []);
+  assert.ok(fs.lstatSync(path.join(repo.root, 'a')).isFile(), '\'a\' is a file again');
+  assert.deepEqual(repo.read('a'), Buffer.from('now a file\n'));
+  assert.deepEqual(repo.read('a'), repo.bytesAt(later.tree, 'a'));
+  assert.deepEqual(gitDirDigest(repo), digest);
+});
+
+test('a sub root: the directories a restore prunes never include the root', async (t) => {
+  withTempHome(t);
+  const repo = treesnapRepo(t, { sub: 'proj', files: { 'proj/keep.txt': 'keep\n' } });
+  const { shadow, restore } = engineFor(repo);
+  const earlier = await snap(shadow);
+  repo.write('proj/x.txt', 'directly in the root\n');
+  repo.write('proj/n/y.txt', 'in a new directory\n');
+  const rootReal = fs.realpathSync(repo.root);
+  const tried = [];
+  const rmdirSync = fs.rmdirSync;
+  t.mock.method(fs, 'rmdirSync', function (d, ...rest) {
+    tried.push(path.resolve(d));
+    return rmdirSync.call(fs, d, ...rest);
+  });
+  const res = await restore.apply(earlier.tree);
+  t.mock.restoreAll();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.deleted.sort(), ['n/y.txt', 'x.txt']);
+  assert.ok(tried.includes(path.join(rootReal, 'n')), 'the new directory is on the list');
+  assert.equal(tried.some((d) => d === rootReal || d === repo.root), false, `never the root: ${JSON.stringify(tried)}`);
+  assert.equal(fs.existsSync(path.join(repo.root, 'n')), false);
+  assert.ok(fs.statSync(repo.root).isDirectory());
+});
+
 test('nested repositories and a worktree: listed nested-repo, nothing written inside them, the rest restored', async (t) => {
   withTempHome(t);
   const repo = treesnapRepo(t, { files: { 'a.txt': 'a1\n' } });
