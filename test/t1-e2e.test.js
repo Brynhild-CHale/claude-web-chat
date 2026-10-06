@@ -552,9 +552,18 @@ test('a local socket gets the step\'s label; a remote one only mirror:status, an
   assert.ok(local.of('lock').some((f) => f.lock && f.lock.message === PROMPT));
   assert.ok(local.of('node-added').some((f) => f.node.trigger_summary.includes(PROMPT_MARK)));
 
-  // The remote socket: the heartbeat, and no conversation text anywhere.
-  assert.deepEqual([...new Set(remote.frames.filter(isMirror).map((f) => f.type))], ['mirror:status'],
-    'only mirror:status of the mirror\'s frames');
+  // The remote socket: the heartbeat, and no conversation text anywhere. Since
+  // tranche 2 registers the transcripts source, a catch-up's end also sends a
+  // mirror:reset, which basic gets as its reason and conversation id alone
+  // (remote-policy RESET_SCHEMA): no content frame ever reaches it.
+  const remoteTypes = [...new Set(remote.frames.filter(isMirror).map((f) => f.type))];
+  assert.ok(remoteTypes.includes('mirror:status'), 'the heartbeat reached the remote socket');
+  assert.deepEqual(remoteTypes.filter((type) => type !== 'mirror:status' && type !== 'mirror:reset'), [],
+    'only mirror:status and a content-free mirror:reset of the mirror\'s frames');
+  for (const f of remote.of('mirror:reset')) {
+    assert.deepEqual(Object.keys(f).filter((k) => !['type', 'reason', 'conversation_id'].includes(k)), [],
+      `a remote mirror:reset carries its reason and conversation id alone: ${JSON.stringify(f)}`);
+  }
   assert.ok(remote.of('mirror:status').some((f) => f.conversations.some((r) => r.state === 'working' && r.step_kind === 'Edit')),
     'the heartbeat itself: working, an Edit');
   const lockFrames = remote.of('lock');

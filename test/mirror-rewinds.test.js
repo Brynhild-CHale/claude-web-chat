@@ -146,7 +146,7 @@ function setup(t, { store = fakeStore(), root = null, ch = null } = {}) {
     root, hooks, mainBus: createBus(), mirrorBus: createBus({ maxEvents: 2000 }), redactor: createRedactor(), log: () => {},
     sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
     isPidAlive: () => true,
-    sources: [...SOURCES,
+    sources: [...SOURCES.filter((s) => s.name === 'live'),
       { name: 'transcripts', attach: source.attach },
       { name: 'rewinds', attach: spied },
       { name: 'replayer', attach: replayer }],

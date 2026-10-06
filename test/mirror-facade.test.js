@@ -118,6 +118,8 @@ function fakeClock() {
 // createServer wires it: the hook tap, the surface's bus, the mirror bus with a
 // broadcaster of its own. `fakeTimers: true` puts the engine's timers on the
 // test's clock (see fakeClock); every other option goes to createMirror.
+const LIVE_ONLY = SOURCES.filter((s) => s.name === 'live');
+
 function setup(t, { fakeTimers = false, ...options } = {}) {
   let mirror = null;
   t.after(async () => { if (mirror) await mirror.stop(); }); // first registered, first run
@@ -135,6 +137,10 @@ function setup(t, { fakeTimers = false, ...options } = {}) {
   mirror = createMirror({
     root, hooks, mainBus, mirrorBus, redactor, now: clock.now, log: (...a) => logs.push(a.join(' ')),
     sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
+    // The facade alone, with `live` (the sessions registry is part of it): these
+    // tests register their own fake sources under the dispatch table's names,
+    // which tranche 2's real transcripts and rewinds would otherwise hold.
+    sources: LIVE_ONLY,
     ...(fakeTimers ? { timers: clock.timers } : {}),
     ...options,
   });
@@ -332,7 +338,7 @@ test('a source\'s catch-up runs in index mode: no stream frame until it ends, th
 
 test('register refuses a bad name, a second source of one name and an attach that returns no source', (t) => {
   const h = setup(t);
-  assert.deepEqual(SOURCES.map((s) => s.name), ['live'], 'tranche 1 registers live');
+  assert.deepEqual(SOURCES.map((s) => s.name), ['live', 'transcripts', 'rewinds'], 'tranche 1 registers live; tranche 2 transcripts, then rewinds');
   assert.throws(() => h.mirror.register('live', apiSource({})), /already registered/);
   for (const bad of ['', 'Transcripts', '1x', 'a b', null, 'x'.repeat(33)]) assert.throws(() => h.mirror.register(bad, apiSource({})), /lowercase word/);
   assert.throws(() => h.mirror.register('x', {}), /attach/);
