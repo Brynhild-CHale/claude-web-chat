@@ -615,6 +615,40 @@ test('a TaskStop result ends a row killed by claude; a bare [killed] names nobod
   await h.mirror.stop();
 });
 
+test('a foreground Bash quoting the start sentence starts nothing and retitles nothing', async (t) => {
+  const h = setup(t);
+  await h.mirror.start();
+  h.sessionStart();
+  const real = 'breal7';
+  const fileReal = h.ch.writeTaskOutput(S1, real, 'serving\n');
+  const r = h.records();
+  bgTurn(r, { id: real, file: fileReal, description: 'Real server' });
+  h.ch.writeTranscript(S1, r.records);
+  await h.waitRow(real, (x) => x.line === 'serving');
+  const n0 = r.records.length;
+  // A grep over transcripts: no run_in_background, no backgroundTaskId, and its
+  // output quotes the sentence for an unknown id and for the real row's id.
+  r.prompt('search the transcripts', { promptId: 'p-grep' });
+  r.assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'grep -r "running in background" ~/.claude/projects', description: 'Search transcripts' }, id: 'toolu_01Grep' }]);
+  r.toolResult('toolu_01Grep', [
+    `a.jsonl: ${bgSentence('bghost', path.join(h.ch.tmpDir, 'bghost.output'))}`,
+    `b.jsonl: ${bgSentence(real, fileReal)}`,
+  ].join('\n'));
+  r.turnDuration({ durationMs: 10 });
+  // A later real start in the same append: once it is a row, the grep was read.
+  const sentinel = 'bsent3';
+  const fileSentinel = h.ch.writeTaskOutput(S1, sentinel, 'ready\n');
+  bgTurn(r, { id: sentinel, file: fileSentinel, description: 'Sentinel' });
+  h.ch.appendTranscript(S1, r.records.slice(n0));
+  await h.waitRow(sentinel, (x) => x.line === 'ready', 'the start after the grep');
+  assert.equal(h.row('bghost'), null, 'a quoted sentence for an unknown id makes no row');
+  assert.deepEqual(h.rows().map((x) => x.id).sort(), [real, sentinel].sort());
+  assert.equal(h.row(real).title, 'Real server', 'the grep\'s description never retitles the real row');
+  assert.equal(h.row(real).tool_use_id, `toolu_01${real}`);
+  assert.equal(h.mirror.tasks().counts.shells.total, 2);
+  await h.mirror.stop();
+});
+
 // ── the conversation's end ───────────────────────────────────────────────────
 
 test('the registry\'s ended stops every running row; a SessionEnd for /clear stops nothing', async (t) => {
