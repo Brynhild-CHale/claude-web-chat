@@ -332,22 +332,10 @@ async function exitsClean(t, teardown, { lock = false } = {}) {
   }
   await teardown(d);
   assert.equal(d.server.listening, false, 'the server is closed');
-  // KNOWN, and not tranche 2's: a held lock's stale timer (lib/server/domain/
-  // turns.js syncStaleTimer: unref'd, one per graph, due at the lock's TTL)
-  // outlives srv.stop(), which no teardown path clears — 0.8.0's, recorded in
-  // U40's hand-off for the file's owner. Exactly that one timer is let through;
-  // the turn guard's own (its pid check) must be gone.
-  const ttl = 15 * 60 * 1000;
-  const isStaleTimer = (h) => {
-    const m = /^Timeout\((\d+) ms, unref'd\)$/.exec(h);
-    return Boolean(m) && Number(m[1]) > ttl - 60000 && Number(m[1]) <= ttl + 1;
-  };
-  const opened = () => {
-    const out = tracker.open();
-    const i = lock ? out.findIndex(isStaleTimer) : -1;
-    if (i >= 0) out.splice(i, 1);
-    return out;
-  };
+  // Nothing is let through: a held lock's stale timer (lib/server/domain/
+  // turns.js syncStaleTimer) is cleared by the graph's own stop (stopGraph),
+  // which both teardown paths call, and the turn guard's (its pid check) too.
+  const opened = () => tracker.open();
   const left = await waitUntil(() => {
     const open = opened();
     const more = excess(base);
