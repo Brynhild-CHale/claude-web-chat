@@ -156,6 +156,11 @@ tunnel [verb]       reach your surfaces from your phone or another machine:
                     remote-access.md); mirror on | off | status shows (or
                     stops showing) this project's conversation to remote
                     viewers, who otherwise see only Claude's status
+identity [verb]     set the project's name, logo and favicon (show | name |
+                    show-name | logo | favicon | clear): the topbar lockup, the
+                    tab title, the tab's favicon and the home-screen icon; logo
+                    and favicon take a dark variant (--dark auto or a file) and
+                    --dry-run / --preview to compare candidates first
 ```
 
 Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start above.
