@@ -44,6 +44,7 @@ async function daemon(t, { lockTtlMs = DEFAULT_LOCK_TTL_MS, env = {} } = {}) {
   const s = await withServer(t, { createServer });
   const { ctx } = cap;
   const graph = ctx.graph;
+  let dirtied = 0;
   return {
     ...s,
     ctx,
@@ -57,8 +58,9 @@ async function daemon(t, { lockTtlMs = DEFAULT_LOCK_TTL_MS, env = {} } = {}) {
       const r = await s.api.post(p, body);
       return { status: r.status, body: r.json };
     },
-    // Make the live surface differ from the active node.
-    dirty: (k = 'k', v = Date.now()) => { ctx.state.store[k] = v; },
+    // Make the live surface differ from the active node: a value no earlier call wrote, so two calls
+    // in the same millisecond still leave it dirty.
+    dirty: (k = 'k', v = `dirty-${++dirtied}`) => { ctx.state.store[k] = v; },
     events: (op) => ctx.bus.events.filter((e) => e.kind === 'graph' && (!op || e.op === op)),
     meta: () => JSON.parse(fs.readFileSync(path.join(s.root, '.web-chat', 'graph', '_meta.json'), 'utf8')),
     nodeFile: (id) => fs.readFileSync(path.join(s.root, '.web-chat', 'graph', `${id}.json`), 'utf8'),
