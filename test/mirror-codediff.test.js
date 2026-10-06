@@ -599,6 +599,37 @@ test('sensitive and large files in a turn: withheld, with and without counts, no
   assert.ok(!raw.includes('never-in-a-record') && !raw.includes('v2-not-in-the-patch'));
   assert.match(rec.patch, /\+a2/);
   assert.deepEqual(rec.totals, { files: 4, additions: 2, deletions: 2 });
+  // The untracked .env changed in place, then gone: still withheld, still no counts.
+  await h.run('pS2', () => repo.write('.env', 'SECRET_THING=changed-and-longer-never-in-a-record\n'));
+  assert.deepEqual(h.record('pS2').files, [{ path: '.env', status: 'M', withheld: 'sensitive' }]);
+  await h.run('pS3', () => fs.rmSync(path.join(repo.top, '.env')));
+  assert.deepEqual(h.record('pS3').files, [{ path: '.env', status: 'D', withheld: 'sensitive' }]);
+  for (const id of ['pS2', 'pS3']) {
+    const r = fs.readFileSync(projectPaths(h.root).mirrorDiff(id), 'utf8');
+    assert.ok(!r.includes('never-in-a-record'), `${id}: no .env content on disk`);
+  }
+});
+
+test('the patch caps: a file over PATCH_FILE_MAX is cut at a line end and marked, the whole stays under PATCH_MAX', async (t) => {
+  const repo = scratchRepo(t, { files: { 'big.txt': 'b\n', 'small1.txt': 's1\n', 'small2.txt': 's2\n' } });
+  const h = await mirrorOn(t, repo, { source: { limits: { PATCH_FILE_MAX: 200, PATCH_MAX: 300 } } });
+  h.session();
+  await h.run('pCap', () => {
+    repo.write('big.txt', Array.from({ length: 60 }, (_, i) => `line ${String(i).padStart(3, '0')} of the big file`).join('\n') + '\n');
+    repo.write('small1.txt', 'small one changed\n');
+    repo.write('small2.txt', 'small two changed\n');
+  });
+  const rec = h.record('pCap');
+  const by = Object.fromEntries(rec.files.map((f) => [f.path, f]));
+  assert.equal(by['big.txt'].truncated, true, 'the big file is marked truncated');
+  assert.equal(by['big.txt'].additions, 60, 'its counts are whole');
+  assert.equal('truncated' in by['small1.txt'], false);
+  assert.equal(rec.patch_truncated, true, 'the whole patch hit PATCH_MAX');
+  assert.ok(Buffer.byteLength(rec.patch) <= 300, `patch ${Buffer.byteLength(rec.patch)} bytes`);
+  assert.match(rec.patch, /^diff --git a\/big\.txt b\/big\.txt/);
+  assert.ok(rec.patch.endsWith('\n'), 'cut at a line end');
+  assert.ok(!rec.patch.includes('small2.txt'), 'a file past PATCH_MAX has no hunk');
+  assert.deepEqual(rec.totals, { files: 3, additions: 62, deletions: 3 });
 });
 
 test('guards: index-too-large and too-many-untracked make that turn unavailable; two slow snapshots turn it off', async (t) => {
