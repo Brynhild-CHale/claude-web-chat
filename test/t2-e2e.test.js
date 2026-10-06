@@ -324,7 +324,8 @@ async function exitsClean(t, teardown, { lock = false } = {}) {
   await closedTurnPage(d, S1);
   const linked = async () => (await d.snapshot()).conversations.find((c) => c.process && c.process.pid === process.pid);
   await waitUntil(linked, { ...WAIT, what: 'the mirror to link the session\'s process' });
-  assert.deepEqual(d.srv.mirror.stats().sources.map((s) => [s.name, s.started]),
+  // Tranche 2's sources lead SOURCES; tranche 3's follow them (t3-e2e pins those).
+  assert.deepEqual(d.srv.mirror.stats().sources.slice(0, 3).map((s) => [s.name, s.started]),
     [['live', true], ['transcripts', true], ['rewinds', true]], 'tranche 2\'s sources are running');
   if (lock) {
     await d.turnBegin('p2', 'one more thing');
@@ -349,7 +350,8 @@ async function exitsClean(t, teardown, { lock = false } = {}) {
 test('the server boots with tranche 2\'s sources running, the content routes mounted and the turn guard on it', async (t) => {
   const d = await daemon(t);
   await d.srv.mirror.ready;
-  assert.deepEqual(d.srv.mirror.stats().sources.map((s) => s.name), ['live', 'transcripts', 'rewinds'],
+  // Tranche 2's sources lead SOURCES; tranche 3's follow them (t3-e2e pins those).
+  assert.deepEqual(d.srv.mirror.stats().sources.slice(0, 3).map((s) => s.name), ['live', 'transcripts', 'rewinds'],
     'SOURCES: live, then transcripts, then rewinds (it hears only what transcripts applied)');
   for (const m of ['bindEndTurn', 'ended', 'closedRecently', 'reconcileLateStop', 'noteEnded', 'stop']) {
     assert.equal(typeof d.srv.turnGuard[m], 'function', `the server's turn guard has ${m}`);
