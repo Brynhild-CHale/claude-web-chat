@@ -2662,6 +2662,24 @@ pre.dv-diff {
 /* ── U77 · the favicon and its attention badge · favicon.js ── */
 
 /* ── U80 · a node's turns in the graph inspector · graph-turns.js ── */
+/* The rewind mark: left of a node glyph or stack (SVG), or in a sleeve row (HTML). */
+.gv-rewound { font: 700 12px var(--wc-mono); fill: var(--wc-gold); color: var(--wc-gold); }
+.gv-srow .gv-rewound { flex: none; font-size: 11px; }
+/* A node's chat turns, under the inspector's GRAPH / WHEN / CHANGED block. */
+.gi-turns { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--wc-border-soft); }
+.gi-turns-head { font: 600 10px var(--wc-mono); letter-spacing: .06em; color: var(--wc-muted); }
+.gi-turns-sum { font: 12px var(--wc-font); color: var(--wc-gold); }
+.gi-turns-empty { font: 12px var(--wc-font); color: var(--wc-muted-dim); }
+.gi-turns-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.gi-turn { display: grid; grid-template-columns: 14px 1fr; gap: 1px 6px; font: 12px var(--wc-font); }
+.gi-turn-role { grid-row: span 2; font: 11px var(--wc-mono); line-height: 18px; color: var(--wc-muted-dim); }
+.gi-turn[data-role="commit"] .gi-turn-role { color: var(--wc-accent-text); }
+.gi-turn-text { min-width: 0; color: var(--wc-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gi-turn-meta { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font: 10.5px var(--wc-mono); color: var(--wc-muted-dim); }
+.gi-turn-tag { font: 600 9px var(--wc-mono); letter-spacing: .04em; padding: 1px 5px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); color: var(--wc-muted); }
+.gi-turn-rewound { opacity: .55; }
+.gi-turn-tag-rewound { color: var(--wc-gold); border-color: color-mix(in srgb, var(--wc-gold) 45%, transparent); }
+.gi-turn-gone .gi-turn-text { font-style: italic; color: var(--wc-muted-dim); }
 
 /* ── U85 · the control frame and the Stop control · session-control.js ── */
 

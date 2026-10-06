@@ -244,6 +244,7 @@ export async function refreshGraph() {
   await ensureGraph(true);
   layoutAndRender();
   updateHead();
+  refreshMarker();
 }
 
 // Keep the inspector's Set active / Branch in sync (called on lock changes too).
@@ -453,15 +454,117 @@ function updateHead() {
 // so held arrows can never leave the panel describing one node while A/⚑/↧ act on
 // another.
 let inspectorSeq = 0;
+// The node body the panel describes now (what an extension action is handed).
+let inspected = null;   // { id, node } | null
+
+/* ---------- extension seams (0.8.5) ----------
+   Three hooks other chrome modules register into, each inert until something
+   does — so with nothing registered the inspector and the canvas are exactly
+   0.8.0's. graph-turns.js (a node's chat turns, the rewind marks) is the first
+   user; tranche 4's Restore files is an inspector action.
+
+     onInspectorRender(fn)          fn({box, id, node, current()}) after each paint;
+                                    current() is false once a newer selection won.
+     registerInspectorAction(a)     {id, label, title, applies(node), run(id, node)}:
+                                    a button after ▶ Replay where applies(node).
+     setNodeMarker(m)               {mark(id) → null | {text, title}, refresh() →
+                                    Promise<boolean>}: a glyph to the LEFT of a
+                                    node (the folded count sits to its right).
+
+   Each returns its unregister. A hook that throws is reported and skipped; it
+   never breaks the panel or the canvas. */
+const inspectorHooks = new Set();
+export function onInspectorRender(fn) {
+  if (typeof fn !== 'function') return () => {};
+  const entry = { fn };   // one registration, removed exactly (the same fn may register twice)
+  inspectorHooks.add(entry);
+  return () => { inspectorHooks.delete(entry); };
+}
+function runInspectorHooks(ctx) {
+  for (const { fn } of [...inspectorHooks]) {
+    try {
+      const r = fn(ctx);
+      if (r && typeof r.then === 'function') r.then(null, (e) => console.error('[web-chat] an inspector hook failed', e));
+    } catch (e) { console.error('[web-chat] an inspector hook failed', e); }
+  }
+}
+
+const ACTION_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const inspectorActions = new Map();   // id → action, in registration order
+export function registerInspectorAction(action) {
+  const a = action || {};
+  if (!ACTION_ID.test(String(a.id || '')) || typeof a.run !== 'function') {
+    throw new TypeError('registerInspectorAction: needs an id ([A-Za-z0-9_-], ≤ 64) and a run(id, node)');
+  }
+  const entry = {
+    id: a.id, label: String(a.label || a.id), title: a.title ? String(a.title) : '',
+    applies: typeof a.applies === 'function' ? a.applies : () => true, run: a.run,
+  };
+  inspectorActions.delete(entry.id);   // a re-registration replaces (and goes last)
+  inspectorActions.set(entry.id, entry);
+  return () => {
+    if (inspectorActions.get(entry.id) !== entry) return;
+    inspectorActions.delete(entry.id);
+    const box = $('gv-inspector');
+    const b = box && box.querySelector(`[data-act="x:${entry.id}"]`);
+    if (b) b.remove();
+  };
+}
+function actionButtons(node) {
+  let html = '';
+  for (const a of inspectorActions.values()) {
+    let yes = false;
+    try { yes = !!a.applies(node); } catch (e) { console.error('[web-chat] an inspector action\'s applies() failed', e); }
+    if (!yes) continue;
+    html += `<button class="gv-act" data-act="x:${esc(a.id)}"${a.title ? ` title="${esc(a.title)}"` : ''}>${esc(a.label)}</button>`;
+  }
+  return html;
+}
+function runInspectorAction(actId, id) {
+  const a = inspectorActions.get(actId);
+  if (!a) return;
+  const node = inspected && inspected.id === id ? inspected.node : null;
+  try {
+    const r = a.run(id, node);
+    if (r && typeof r.then === 'function') r.then(null, (e) => console.error(`[web-chat] inspector action '${actId}' failed`, e));
+  } catch (e) { console.error(`[web-chat] inspector action '${actId}' failed`, e); }
+}
+
+let nodeMarker = null;
+export function setNodeMarker(marker) {
+  const m = marker && typeof marker.mark === 'function' ? marker : null;
+  nodeMarker = m;
+  return () => { if (nodeMarker === m) nodeMarker = null; };
+}
+// One node's mark, or null: what the marker answers, checked.
+function markOf(id) {
+  if (!nodeMarker) return null;
+  let mk = null;
+  try { mk = nodeMarker.mark(id); } catch (e) { console.error('[web-chat] the node marker failed', e); return null; }
+  if (!mk || typeof mk.text !== 'string' || !mk.text) return null;
+  return { text: mk.text, title: typeof mk.title === 'string' ? mk.title : '' };
+}
+// Ask the marker to refresh, never awaited; a change redraws the open canvas.
+function refreshMarker() {
+  const m = nodeMarker;
+  if (!m || typeof m.refresh !== 'function') return;
+  let p;
+  try { p = m.refresh(); } catch (e) { console.error('[web-chat] the node marker\'s refresh failed', e); return; }
+  Promise.resolve(p).then((changed) => {
+    if (changed === true && nodeMarker === m && isOverlayOpen()) layoutAndRender();
+  }, (e) => console.error('[web-chat] the node marker\'s refresh failed', e));
+}
+
 async function renderInspector(id) {
   const box = $('gv-inspector');
   if (!box) return;
   const seq = ++inspectorSeq;
-  if (!id) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  if (!id) { inspected = null; box.classList.add('hidden'); box.innerHTML = ''; return; }
   let node = null;
   try { node = await fetch('/api/graph/node/' + encodeURIComponent(id)).then((r) => r.ok ? r.json() : null); } catch {}
   if (seq !== inspectorSeq) return;   // a newer selection won the race
   box.classList.remove('hidden');
+  inspected = node ? { id, node } : null;
   if (!node) { box.innerHTML = '<div class="gv-empty">Node unavailable.</div>'; return; }
   const n = nodeById(id) || node;
   const inStack = computeRuns().has(id);
@@ -496,11 +599,13 @@ async function renderInspector(id) {
         : `<button class="gv-act" data-act="bookmark" title="Bookmark (B)">⚑ Bookmark</button>`) +
       `<button class="gv-act" data-act="export" title="Export (E)">↧ Export</button>` +
       `<button class="gv-act" data-act="replay" title="Replay up to this node (R)">▶ Replay</button>` +
+      actionButtons(node) +
     `</div>`;
 
   drawPreview($('gv-preview'), id, (node.mounts || []).length);
   renderChanged(id, node, seq);
   updateSidebarButtons();
+  runInspectorHooks({ box, id, node, current: () => seq === inspectorSeq });
 }
 
 // The real node surface as a thumbnail: a scaled-down iframe of /preview/node/:id
@@ -1217,6 +1322,13 @@ function svgEl_(tag, attrs, text) {
   if (text != null) el.textContent = text;
   return el;
 }
+// The node marker's glyph (setNodeMarker): right-aligned so it ends just left
+// of the node, its title the hover text.
+function markGlyph(x, y, mk) {
+  const t = svgEl_('text', { x, y, 'text-anchor': 'end', class: 'gv-rewound' }, mk.text);
+  if (mk.title) t.appendChild(svgEl_('title', {}, mk.title));
+  return t;
+}
 export const bookmarkCaption = (n) => n.wipe ? '⌫ wipe' + (n.name ? ' · ' + n.name : '') : '⚑ ' + (n.name || labelFor(n.id));
 
 // Every colour is a CSS class reading a --wc-* token (app.css, "graph screen"),
@@ -1288,6 +1400,13 @@ export function layoutAndRender() {
       grp.appendChild(svgEl_('text', { x: g.x, y: g.y + 4, 'text-anchor': 'middle', class: 'gv-card-count' }, '×' + g.count));
       grp.appendChild(svgEl_('text', { x: g.x, y: g.y + RANGE_DY, 'text-anchor': 'middle', class: 'gv-card-range' },
         g.headLabel === g.tailLabel ? g.headLabel : `${g.headLabel}…${g.tailLabel}`));
+      // A stack carries a member's mark: the first marked member's glyph, every
+      // marked member's line in the tooltip.
+      const marked = g.ids.map((id) => [id, markOf(id)]).filter(([, mk]) => mk);
+      if (marked.length) {
+        const title = marked.map(([id, mk]) => `${labelFor(id)}: ${mk.title || mk.text}`).join('\n');
+        grp.appendChild(markGlyph(g.x - STACK_W / 2 - 5, g.y + 4, { text: marked[0][1].text, title }));
+      }
       rootG.appendChild(grp);
       continue;
     }
@@ -1325,6 +1444,8 @@ export function layoutAndRender() {
     if (g.folded) {
       grp.appendChild(svgEl_('text', { x: g.x + r + 5, y: g.y + 4, class: 'gv-fold-n' }, '⋯' + g.folded));
     }
+    const mk = markOf(g.id);   // the node marker's glyph, on the other side
+    if (mk) grp.appendChild(markGlyph(g.x - r - 5, g.y + 4, mk));
     rootG.appendChild(grp);
   }
 
@@ -1384,8 +1505,10 @@ function renderSleeves(sleeves, filtering, dimNode) {
       if (r.id === view.selectedNodeId) cls.push('selected');
       if (dimNode(n)) cls.push('dim');
       const t = nodeTime(n);
+      const mk = markOf(r.id);
       return `<button type="button" class="${cls.join(' ')}" data-id="${esc(r.id)}" title="${esc(n.trigger_summary || n.label)}">` +
         `<span class="dot"></span><span class="id">${esc(n.label || r.id)}</span>` +
+        (mk ? `<span class="gv-rewound"${mk.title ? ` title="${esc(mk.title)}"` : ''}>${esc(mk.text)}</span>` : '') +
         `<span class="trig">${esc(n.trigger_summary || '')}</span><span class="t">${esc(t)}</span></button>`;
     }).join('');
     el.innerHTML =
@@ -1490,6 +1613,7 @@ export function initGraph() {
     ({ active: () => setActive(id), branch: () => branchFrom(id), glance: () => toggleFloatPreview(),
        bookmark: () => bookmarkNode(id), unmark: () => unmarkNode(id), export: () => exportNode(id),
        replay: () => openReplay({ to: id }) })[b.dataset.act]?.();
+    if (b.dataset.act.startsWith('x:')) runInspectorAction(b.dataset.act.slice(2), id);
   });
 
   // ⚑ Marked / ⑃ Forks — independent toggles; they dim, never hide
