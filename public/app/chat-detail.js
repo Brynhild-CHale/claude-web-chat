@@ -145,6 +145,7 @@ function createView(body, ctx) {
     timers: new Set(),
     clock: null,           // () → whether it still needs the ticker; repaints on each tick
     onMirror: null,
+    lastMeta: null,        // the status words last painted (statusOf), kept once the row is gone
     observer: null,
     unshared: false,       // showing NOT_SHARED: nothing here fetches again
   };
@@ -249,6 +250,19 @@ function rowModelOf(row) {
   const cat = CAT_OF[row.kind];
   const entry = categories(mirror, null, { now: serverNow() }).find((e) => e.cat === cat);
   return (entry && entry.rows.find((r) => r.id === row.id)) || null;
+}
+
+// A view's row as its status line reads it: `model` is the live RowModel (null
+// once the row has left the store, so nothing offers an action on it), and
+// `meta` the tray's wording — once the row has gone, the last one painted. A
+// gone row has no RowModel, and its raw status would turn a finished shell's
+// 'exit 0 · 2m ago' into 'done' just as "No longer running" goes up.
+function statusOf(v, row) {
+  if (v.gone) return { model: null, meta: v.lastMeta || null };
+  const model = rowModelOf(row);
+  const meta = model && model.meta ? model.meta : null;
+  if (meta) v.lastMeta = meta;
+  return { model, meta };
 }
 
 // The tool_call item in the followed conversation's stream that started this
@@ -413,7 +427,7 @@ function outputView(v, current, kind) {
     const row = current();
     h.title.textContent = row.title || KIND_WORD[kind];
     const now = serverNow();
-    const model = v.gone ? null : rowModelOf(row);
+    const { meta } = statusOf(v, row);
     const stopping = h.head.dataset.stopping === 'true';
     const parts = [];
     if (isRunning(row) && !finite(row.stop_requested_at) && !stopping && shell) {
@@ -422,7 +436,7 @@ function outputView(v, current, kind) {
     } else if (stopping && isRunning(row)) {
       parts.push({ text: 'stopping…', cls: 'dv-status' });
     } else {
-      parts.push({ text: model ? model.meta : row.status, cls: 'dv-status' });
+      parts.push({ text: meta || row.status, cls: 'dv-status' });
     }
     paintLine(h.line, parts);
     // A monitor's command: the Monitor call that started it, when the stream holds it.
@@ -504,15 +518,15 @@ function agentView(v, current, opts) {
     const row = current();
     h.title.textContent = row.title || 'Agent';
     const now = serverNow();
-    const model = v.gone ? null : rowModelOf(row);
+    const { model, meta: said } = statusOf(v, row);
     const asked = h.head.dataset.stopping === 'true';   // this view's own request, before the store says so
     const stopping = asked || (isRunning(row) && finite(row.stop_requested_at));
     const parts = [];
     let status;
     if (asked && isRunning(row) && !finite(row.stop_requested_at)) status = 'stopping…';
-    else if (stopping && isRunning(row)) status = model && model.meta ? model.meta : 'stopping…';
+    else if (stopping && isRunning(row)) status = said || 'stopping…';
     else if (isRunning(row)) status = 'running';
-    else status = model && model.meta ? model.meta : row.status;
+    else status = said || row.status;
     parts.push({ text: status, cls: 'dv-status' });
     parts.push({ text: elapsed(row, now), cls: 'dv-elapsed' });
     if (row.meta && finite(row.meta.tools)) parts.push({ text: plural(row.meta.tools, 'tool'), cls: 'dv-tools' });
@@ -786,9 +800,9 @@ function workflowView(v, current, opts) {
   v.paint = () => {
     const row = current();
     h.title.textContent = row.title || 'Workflow';
-    const model = v.gone ? null : rowModelOf(row);
-    const parts = [{ text: isRunning(row) ? 'running' : (model && model.meta) || row.status, cls: 'dv-status' }];
-    if (isRunning(row) && model && model.meta) parts.push({ text: model.meta, cls: 'dv-part' });
+    const { meta } = statusOf(v, row);
+    const parts = [{ text: isRunning(row) ? 'running' : meta || row.status, cls: 'dv-status' }];
+    if (isRunning(row) && meta) parts.push({ text: meta, cls: 'dv-part' });
     parts.push({ text: elapsed(row, serverNow()), cls: 'dv-elapsed' });
     paintLine(h.line, parts);
     paintPhases();

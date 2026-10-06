@@ -571,6 +571,20 @@ test('a row removed from the store while its view is open keeps the content unde
   await show();
 });
 
+test('a finished shell removed from the store while its view is open keeps its status line (\'exit 0 · …\'), not the raw \'done\'', async () => {
+  const S3 = task({ id: 's3', kind: 'shell', title: 'npm run build', status: 'done', exit_code: 0, ended_at: T - min(2) });
+  outputs.s3 = () => ({ task_id: 's3', text: 'built\n', from: 0, to: 6, size: 6, eof: true, ended: true, footer: '[exit 0]' });
+  await show({ tasks: [...TASKS, S3] });
+  await open({ view: 'task', id: 's3' });
+  await waitUntil(() => q('.dv-out').textContent === 'built\n', { what: 'the output' });
+  const status = q('.dv-status').textContent;
+  assert.match(status, /^exit 0 · /, 'the tray\'s wording while the row is in the store');
+  await update([], { removed_tasks: ['s3'] });
+  await waitUntil(() => q('.dv-gone'), { what: 'the banner' });
+  assert.equal(q('.dv-status').textContent, status, 'the last painted status line is kept');
+  await show();
+});
+
 /* ── code changes ─────────────────────────────────────────────────────────── */
 
 const PATCH = [
