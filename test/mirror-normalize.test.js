@@ -597,3 +597,35 @@ test('the input state is never mutated', () => {
   normalize(recsOf([r.assistant(['more'], { messageId: 'msg_01m' })]), a.state);
   assert.strictEqual(JSON.stringify(a.state), snap);
 });
+
+test('a uuid-less cost-state (the exit tail) is forwarded as a cost-state record change; other meta rows are not', () => {
+  // When a process leaves a session Claude Code writes a uuid-less cost-state at
+  // the end of the file (V37); the rewinds source reads it as a session boundary
+  // (U78b), so the normalizer forwards it with the record's ts, seq and offset.
+  const r = createRecords({ seed: 25 });
+  r.prompt('go');
+  r.assistant(['done']);
+  r.turnDuration({ messageCount: 4 });
+  r.costState();
+  r.aiTitle('A title');
+  r.mode('normal');
+  const recs = recsOf(r.records);
+  const { changes } = normalize(recs, initialState(), { session_id: 'sess' });
+  const cost = changes.filter((c) => c.type === 'record' && c.kind === 'cost-state');
+  assert.strictEqual(cost.length, 1);
+  const c = cost[0];
+  const at = r.records.findIndex((x) => x.type === 'cost-state');
+  assert.deepStrictEqual(Object.keys(c).sort(), ['kind', 'offset', 'seq', 'ts', 'type']);
+  assert.strictEqual(c.seq, at + 1, 'the record\'s file ordinal');
+  assert.deepStrictEqual(c.offset, { start: recs[at].start, end: recs[at].end });
+  const td = changes.find((x) => x.type === 'turn-duration');
+  assert.strictEqual(c.ts, td.ts, 'no timestamp of its own: the last one the file showed');
+  assert.ok(!('uuid' in c) && !('parent_uuid' in c));
+  // The other uuid-less meta rows still yield nothing.
+  assert.ok(!changes.some((x) => x.kind === 'ai-title' || x.kind === 'mode'));
+  // The turn machine takes it without opening or closing anything.
+  const { model, tm } = machine();
+  tm.applyChanges('conv', r.sessionId, changes);
+  assert.strictEqual(model.turnsOf('conv').length, 1);
+  assert.strictEqual(model.turnsOf('conv')[0].status, 'done');
+});
