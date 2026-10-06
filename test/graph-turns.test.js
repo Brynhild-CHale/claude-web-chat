@@ -272,6 +272,9 @@ test('below read: no #gi-turns, no marks, and nothing under /api/mirror/ is requ
   gv.closeOverlay();
   await setLevel('basic');
   try {
+    // Past the marks' refresh gap, so the open below would ask /api/mirror/nodes
+    // if the level did not stop it (inside the gap the throttle alone would).
+    await shell.tick(2100);
     const n = shell.calls.length;
     await gv.openOverlay();
     await gv.selectNode('n4');
