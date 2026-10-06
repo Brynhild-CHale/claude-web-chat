@@ -224,7 +224,12 @@ Don't POST the graph routes from a driver (see the three-actor model).
   case) with no auth — any local process can read and write the store and render
   arbitrary HTML/JS into the user's browser. The bind address IS the access
   control. Treat the surface as a same-machine trust domain; don't expose the port
-  off-box, and don't render untrusted third-party HTML through it.
+  off-box, and don't render untrusted third-party HTML through it. One thing a
+  `WEB_CHAT_HOST` bind does NOT open: the chat mirror shows a peer on the network
+  only Claude's status — the heartbeat (state, timings, the kind of step), never
+  a prompt, a reply, a path or a command — and nothing it sends raises that
+  (`lib/server/audience.js`); Claude's conversation leaves the machine only
+  through the authenticated tunnel (`docs/remote-access.md`).
 - **Pane code runs with the chrome's authority.** A pane's script is not
   sandboxed: it runs in the surface page's own window (its shadow root scopes
   styles, not privilege, and is open), so it can do whatever the chrome can. It
@@ -259,7 +264,8 @@ Don't POST the graph routes from a driver (see the three-actor model).
   set to a **wildcard** (`0.0.0.0`, `::`) the check is skipped entirely, because
   every name that resolves to this machine is then legitimate and none is
   distinguishable — a wildcard bind is back to "the bind address is the access
-  control", which is what `warnIfExposed` warns about at boot. Point the browser
+  control" (for everything but the chat mirror, which still shows a network peer
+  only Claude's status), which is what `warnIfExposed` warns about at boot. Point the browser
   extension at a non-local hub and you must bind that host explicitly, or its
   requests are refused.
 - **The WS upgrade is gated on `Origin`** (and on `Host`, as above — the upgrade
