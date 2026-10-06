@@ -18,6 +18,8 @@
 //     counts nothing), its expiry ends it 'expired', and an hour of silence
 //     leaves it running;
 //   * TaskStop → killed by 'claude'; a bare [killed] → killed, nobody named;
+//     a grep, a Read or a TaskStop for another id quoting the stopped
+//     sentence ends nothing;
 //   * the registry's 'ended' stops the conversation's rows (session-end); a
 //     SessionEnd for /clear stops nothing;
 //   * Stop's background_tasks makes a row for an unknown id and reads the
@@ -613,6 +615,49 @@ test('a TaskStop result ends a row killed by claude; a bare [killed] names nobod
   h.ch.appendTaskOutput(S1, a, '\n[killed]\n');
   await new Promise((res) => setTimeout(res, 150));
   assert.equal(h.row(a).stopped_by, 'claude');
+  await h.mirror.stop();
+});
+
+test('a foreground Bash quoting the stopped sentence leaves the row running; a TaskStop result ends it', async (t) => {
+  const h = setup(t);
+  await h.mirror.start();
+  h.sessionStart();
+  const a = 'bquot1';
+  const fileA = h.ch.writeTaskOutput(S1, a, 'serving\n');
+  const r = h.records();
+  bgTurn(r, { id: a, file: fileA });
+  r.turnDuration({ durationMs: 10 });
+  h.ch.writeTranscript(S1, r.records);
+  await h.waitRow(a, (x) => x.line === 'serving');
+  let n0 = r.records.length;
+  // A grep (and a cat) whose output quotes the TaskStop sentence for the live
+  // row; then a TaskStop whose input names ANOTHER task while its result quotes
+  // this one. None of them is this row's stop (spec §2.5).
+  r.prompt('search the transcripts', { promptId: 'p-qgrep' });
+  r.assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'grep -r "Successfully stopped" ~/.claude/projects', description: 'Search transcripts' }, id: 'toolu_01QGrep' }]);
+  r.toolResult('toolu_01QGrep', `x.jsonl: Successfully stopped task: ${a} (npm run dev)`);
+  r.assistant([{ type: 'tool_use', name: 'Read', input: { file_path: '/tmp/notes.txt' }, id: 'toolu_01QRead' }]);
+  r.toolResult('toolu_01QRead', `Successfully stopped task: ${a}`);
+  r.assistant([{ type: 'tool_use', name: 'TaskStop', input: { task_id: 'bother9' }, id: 'toolu_01QOther' }]);
+  r.toolResult('toolu_01QOther', `Successfully stopped task: ${a} (npm run dev)`);
+  r.turnDuration({ durationMs: 10 });
+  // A later real start in the same append: once it is a row, the quotes were read.
+  const sentinel = 'bsent4';
+  const fileSentinel = h.ch.writeTaskOutput(S1, sentinel, 'ready\n');
+  bgTurn(r, { id: sentinel, file: fileSentinel, description: 'Sentinel' });
+  h.ch.appendTranscript(S1, r.records.slice(n0));
+  await h.waitRow(sentinel, (x) => x.line === 'ready', 'the start after the quotes');
+  assert.equal(h.row(a).status, 'running', 'a quoted stop sentence ends nothing');
+  assert.equal(h.row(a).stopped_by, undefined);
+  // The real TaskStop still ends it, killed by claude.
+  n0 = r.records.length;
+  r.assistant([{ type: 'tool_use', name: 'TaskStop', input: { task_id: a }, id: 'toolu_01QStop' }]);
+  r.toolResult('toolu_01QStop', `Successfully stopped task: ${a} (npm run dev)`, { toolUseResult: { message: `Successfully stopped task: ${a} (npm run dev)`, task_id: a, task_type: 'local_bash' } });
+  h.ch.appendTranscript(S1, r.records.slice(n0));
+  const stopped = await h.waitRow(a, (x) => x.status !== 'running', 'the TaskStop');
+  assert.equal(stopped.status, 'killed');
+  assert.equal(stopped.stopped_by, 'claude');
+  assert.equal(h.row(sentinel).status, 'running');
   await h.mirror.stop();
 });
 
