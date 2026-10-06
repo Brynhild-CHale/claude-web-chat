@@ -733,7 +733,17 @@ test('C1 a′ through the routes: a locked turn-end Stop whose prompt_id names n
   hook('UserPromptSubmit', 'p4', { prompt: { author: 'user', text: 'p4' } });
   hook('Stop', 'p4', { stop: { last_assistant_message: 'ok' } });
   h.dirty();
+  // A guard that closed this session's turn a moment ago but has no record of
+  // this prompt_id: reconcileLateStop answers null, and the Stop falls through
+  // to the lockless commit (U31b).
+  const asked = [];
+  h.ctx.turnGuard = {
+    closedRecently: (sid) => sid === S1,
+    reconcileLateStop: (a) => { asked.push(a.prompt_id); return null; },
+  };
   const late = await endAt('p-late');
+  delete h.ctx.turnGuard;
+  assert.deepEqual(asked, ['p-late'], 'the guard was asked, and had no record');
   assert.equal(late.body.unlocked, true, JSON.stringify(late.body));
   assert.deepEqual(roleOf(h.nodeFile(late.body.node_id)), { p4: 'folded' });
   assert.deepEqual(liveIds(h), [], 'every turn attached');
