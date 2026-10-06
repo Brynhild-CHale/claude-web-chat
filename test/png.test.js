@@ -307,8 +307,9 @@ test("make-icons' in-memory output for each of the eight extension icons decodes
       if (made.equals(shipped)) sameBytes++;
     }
   }
-  // Byte equality holds where this Node's zlib deflates as the one that wrote
-  // the files did (official 22.x and 24.x builds, and Node 26 here, all agree);
-  // it is logged, not asserted.
+  // Byte equality holds only where this Node's zlib deflates as the one that
+  // wrote the files did: Node 26 here (zlib 1.2.12) reproduces all eight, the
+  // official v22.23.3 binary (zlib 1.3.1) none of them, pixel-equal everywhere.
+  // So it is logged, not asserted.
   t.diagnostic(`byte-identical: ${sameBytes}/8 (zlib ${process.versions.zlib})`);
 });

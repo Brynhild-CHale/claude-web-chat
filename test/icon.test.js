@@ -279,6 +279,34 @@ test('a smooth gradient disc on white is not pixel art: keyed softly, area-avera
   for (let i = 3; i < t.data.length; i += 4) { if (t.data[i] === 0) clear++; else if (t.data[i] < 255) partial++; }
   assert.ok(clear > 0 && partial > 0, `soft edges: ${partial} partly transparent pixels`);
   assert.equal(t.data[3], 0, 'the white corner is keyed out');
+  // The soft key un-mixes each colour from the ground: a partly transparent
+  // pixel laid back over white gives the source pixel again. The content here
+  // (240 px) is within the size bounds, so the variant is the keyed crop 1:1,
+  // centred with its 1/32 margin. Without the un-mix the edge reads as a halo,
+  // up to ~18 levels off.
+  const src = disc(300, 240);
+  let x0 = 300, y0 = 300, x1 = -1, y1 = -1;
+  for (let y = 0; y < 300; y++) for (let x = 0; x < 300; x++) {
+    const i = (y * 300 + x) * 4;
+    if (Math.max(...[0, 1, 2].map((c) => 255 - src.data[i + c])) > icon.INK_DISTANCE) {
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+  }
+  const cw = x1 - x0 + 1; const ch = y1 - y0 + 1;
+  assert.equal(t.width, cw + 2 * Math.round(Math.max(cw, ch) / 32), 'the crop, unscaled, with its margin');
+  const ox = (t.width - cw) >> 1; const oy = (t.height - ch) >> 1;
+  let edges = 0;
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const o = ((y + oy) * t.width + x + ox) * 4; const a = t.data[o + 3];
+    if (!a || a === 255) continue;
+    edges++;
+    const s = ((y + y0) * 300 + x + x0) * 4;
+    for (let c = 0; c < 3; c++) {
+      const over = (t.data[o + c] * a + 255 * (255 - a)) / 255;
+      assert.ok(Math.abs(over - src.data[s + c]) <= 1, `un-mixed at ${x},${y}: ${over} vs ${src.data[s + c]}`);
+    }
+  }
+  assert.ok(edges > 0, 'the edge is there to check');
 });
 
 test('a 40 px smooth input is upscaled to 128, with the note saying so', () => {
