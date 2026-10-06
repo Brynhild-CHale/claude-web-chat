@@ -938,7 +938,7 @@ Debugging:
 **These are enforced — `pack install` refuses on any of them:**
 
 - [ ] `name` is kebab-case — lowercase, starts with a letter, `[a-z][a-z0-9-]*`. It becomes a directory name.
-- [ ] `name` is not `capture-profile` or `respond-to-comment` — skills web-chat manages itself, and the next `install` would revert yours.
+- [ ] `name` is not `capture-profile`, `respond-to-comment` or `project-identity` — skills web-chat manages itself, and the next `install` would revert yours.
 - [ ] No component is named `form-renderer`, `node-render`, `website`, `git-dashboard`, `file-editor` or `web-chat-tour`. Built-in names are refused in either tier, for either actor, **with no override**.
 - [ ] Every component name is kebab-case, listed once, and has a real `components/<name>/component.html`.
 - [ ] Every theme listed in `themes` has a real `themes/<name>/theme.json`, is not a built-in theme name, and carries no raw CSS; its logos and fonts pass the checks in §8.
