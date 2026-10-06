@@ -2552,6 +2552,11 @@ pre.tc-diff {
 .cs-row[data-density="touch"] :is(.cs-row-act, .cs-confirm-yes, .cs-confirm-no, .cs-row-full) {
   height: 40px; min-width: 64px; padding: 0 12px; font-size: 13px;
 }
+/* A registered stopper's confirm slot at the touch density (chat-actions.js
+   registerStopper, §15.5): the full row's width, and 44px targets for the
+   control frame it mounts (§8.6). */
+.cs-row-confirm.cs-row-confirm-touch { min-height: 44px; margin: 10px 0 0; padding: 0; gap: 8px; align-items: stretch; }
+.cs-row-confirm-touch > * { min-height: 44px; }
 @media (prefers-reduced-motion: reduce) {
   .cs-chip-dot[data-pulse], .cs-row[data-pulse] .cs-row-dot { animation: none; }
 }

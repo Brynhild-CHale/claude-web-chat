@@ -12,6 +12,12 @@
 //     reverts), two taps at the touch density (3 s or another tap reverts);
 //     a yes posts POST /api/queue/task-stop {task_id} once and the row reads
 //     "stopping…"; a refusal's hint shows in the row.
+//   * The stopper (ruling E1 a): with registerStopper({mount, unmount}) a stop
+//     action makes the confirm slot where the inline confirm goes and hands it
+//     to mount(slot, row, {density}); a mount answering true owns the stop (no
+//     POST), Escape / another stop action / a redraw dropping it / the row
+//     leaving revert it with one unmount; a mount answering false or throwing
+//     leaves the inline confirm exactly as before.
 //   * Queue rows: Remove → DELETE /api/queue/:id, Hold / Stage → PATCH {staged}.
 //   * Open and "Open full output" emit chat:open {view: 'task', id}.
 //
@@ -462,6 +468,305 @@ test('without capabilities.task_stop, or below full, no stop button is drawn', a
   } finally {
     await show();
   }
+});
+
+/* ── the stopper ──────────────────────────────────────────────────────────── */
+
+// A stopper that records its calls. `answer` is what mount returns, or 'throw'.
+// An owning mount puts a control of its own into the slot, as a frame would.
+function spyStopper(...args) {
+  const answer = args.length ? args[0] : true;
+  const log = { mounts: [], unmounts: [] };
+  const stopper = {
+    mount(slot, row, opts) {
+      log.mounts.push({ slot, row, opts, parent: slot.parentNode, prev: slot.previousElementSibling,
+        connected: slot.isConnected });
+      if (answer === 'throw') throw new Error('no frame for you');
+      if (answer === true) {
+        const b = doc.createElement('button');
+        b.type = 'button';
+        b.className = 'test-stopper-control';
+        b.textContent = 'Stop now';
+        slot.append(b);
+      }
+      return answer;
+    },
+    unmount(slot) { log.unmounts.push(slot); },
+  };
+  return { stopper, log };
+}
+
+const stopPosts = () => calls(/\/api\/queue\/task-stop/);
+let unregisters = [];
+const register = (s) => {
+  const off = A.registerStopper(s);
+  unregisters.push(off);
+  return off;
+};
+afterEach(() => {
+  for (const off of unregisters) off();
+  unregisters = [];
+});
+
+test('a stopper missing mount or unmount is refused with a TypeError and never stored', async () => {
+  shell.setRoutes({ '/api/queue/task-stop': { ok: true } });
+  const keep = spyStopper(true);
+  register(keep.stopper);
+  for (const bad of [null, undefined, {}, { mount() { return true; } }, { unmount() {} },
+    { mount: true, unmount() {} }, { mount() { return true; }, unmount: 'no' }]) {
+    assert.throws(() => A.registerStopper(bad), TypeError, `refused: ${JSON.stringify(bad)}`);
+  }
+  // The refused ones replaced nothing: the registered stopper still takes the stop.
+  const el = mount(modelOf('shells', 's1'));
+  shell.click(btn(el, 'kill'));
+  assert.equal(keep.log.mounts.length, 1, 'the earlier stopper is still the one');
+  shell.key('Escape', { target: el.querySelector('.test-stopper-control') });
+  // And with none registered, a refused one does not become the stopper either.
+  for (const off of unregisters) off();
+  assert.throws(() => A.registerStopper({ mount() { return true; } }), TypeError);
+  const other = mount(modelOf('shells', 's1'));
+  shell.click(btn(other, 'kill'));
+  assert.ok(other.querySelector('.cs-confirm-text'), 'the inline confirm: nothing was stored');
+});
+
+test('stopper: Kill on a tray row mounts the slot where the inline confirm goes, with the row and {density: \'compact\'}; no POST', async () => {
+  shell.setRoutes({ '/api/queue/task-stop': { ok: true } });
+  const { stopper, log } = spyStopper(true);
+  register(stopper);
+  const m = modelOf('shells', 's1');
+  const el = mount(m);
+  shell.click(btn(el, 'kill'));
+  assert.equal(log.mounts.length, 1, 'mount called once');
+  const { slot, row, opts, parent, prev, connected } = log.mounts[0];
+  assert.deepEqual(row, m, 'the row\'s model');
+  assert.equal(row.id, 's1');
+  assert.deepEqual(opts, { density: 'compact' });
+  assert.ok(connected, 'the slot is in the document when mount runs');
+  assert.equal(slot.tagName, 'DIV');
+  assert.ok(slot.classList.contains('cs-row-confirm'));
+  assert.ok(!slot.classList.contains('cs-row-confirm-touch'));
+  assert.equal(slot.getAttribute('role'), 'group');
+  assert.equal(parent, el, 'in the row');
+  assert.ok(prev.classList.contains('cs-row-main'), 'right after the row\'s main line, as the inline confirm');
+  assert.equal(el.querySelectorAll('.cs-row-confirm').length, 1, 'one slot, no inline confirm beside it');
+  assert.equal(el.querySelector('.cs-confirm-text'), null, 'no inline confirm');
+  assert.ok(el.querySelector('.cs-row-actions').hidden, 'the actions step aside, as for the inline confirm');
+  assert.ok(slot.querySelector('.test-stopper-control'), 'the stopper\'s own control lives in the slot');
+  await shell.tick();
+  await pause(20);
+  assert.equal(stopPosts().length, 0, 'no POST /api/queue/task-stop: the stopper owns the stop');
+  assert.equal(el.dataset.stopping, undefined, 'the row is not marked stopping by this module');
+  assert.equal(log.unmounts.length, 0);
+});
+
+test('stopper: Cancel on an agent row and Remove on a monitor row reach it too', async () => {
+  const monitor = { id: 'm1', kind: 'monitor', conversation_id: 'c1', title: 'build errors', status: 'running',
+    started_at: T - min(1), meta: {} };
+  await show({ tasks: [shellTask, agentTask, workflowTask, monitor] });
+  try {
+    const { stopper, log } = spyStopper(true);
+    register(stopper);
+    const agent = mount(modelOf('agents', 'a1'));
+    shell.click(btn(agent, 'cancel'));
+    const mon = mount(modelOf('monitors', 'm1'));
+    assert.ok(btn(mon, 'remove'), 'a monitor row offers Remove');
+    shell.click(btn(mon, 'remove'));
+    assert.deepEqual(log.mounts.map((c) => c.row.id), ['a1', 'm1']);
+    assert.equal(log.mounts[1].parent, mon);
+    await shell.tick();
+    assert.equal(stopPosts().length, 0);
+  } finally {
+    await show();
+  }
+});
+
+test('stopper: a mount answering false, or throwing, leaves the inline confirm as before; unmount is never called', async () => {
+  shell.setRoutes({ '/api/queue/task-stop': { ok: true } });
+  for (const answer of [false, 'throw', undefined, 'yes', 1]) {
+    for (const off of unregisters) off();
+    unregisters = [];
+    const { stopper, log } = spyStopper(answer);
+    register(stopper);
+    const m = modelOf('shells', 's1');
+    const el = mount(m);
+    const n = stopPosts().length;
+    shell.click(btn(el, 'kill'));
+    assert.equal(log.mounts.length, 1, `${String(answer)}: mount was asked`);
+    assert.equal(log.mounts[0].slot.isConnected, false, `${String(answer)}: its slot is gone`);
+    const boxes = el.querySelectorAll('.cs-row-confirm');
+    assert.equal(boxes.length, 1, `${String(answer)}: one box, the inline confirm`);
+    assert.equal(boxes[0].querySelector('.cs-confirm-text').textContent, m.actions.find((a) => a.id === 'kill').confirm.text);
+    assert.ok(el.querySelector('.cs-row-actions').hidden);
+    shell.click(boxes[0].querySelector('.cs-confirm-yes'));
+    await shell.tick();
+    assert.equal(stopPosts().length, n + 1, `${String(answer)}: its yes sends the POST`);
+    assert.deepEqual(stopPosts()[n].body, { task_id: 's1' });
+    assert.equal(log.unmounts.length, 0, `${String(answer)}: unmount never called`);
+    list.replaceChildren();
+    await show();
+  }
+});
+
+test('stopper: unregister() restores the inline confirm', async () => {
+  const { stopper, log } = spyStopper(true);
+  const off = register(stopper);
+  off();
+  const el = mount(modelOf('shells', 's1'));
+  shell.click(btn(el, 'kill'));
+  assert.equal(log.mounts.length, 0, 'not asked');
+  assert.ok(el.querySelector('.cs-confirm-text'), 'the inline confirm');
+  shell.click(el.querySelector('.cs-confirm-no'));
+  off();   // a second unregister is harmless
+});
+
+test('stopper: a second registerStopper replaces the first, and the first\'s unregister() then does nothing', async () => {
+  const one = spyStopper(true);
+  const two = spyStopper(true);
+  const offOne = register(one.stopper);
+  const offTwo = register(two.stopper);
+  const a = mount(modelOf('shells', 's1'));
+  shell.click(btn(a, 'kill'));
+  assert.equal(one.log.mounts.length, 0, 'the replaced stopper is not asked');
+  assert.equal(two.log.mounts.length, 1);
+  offOne();
+  const b = mount(modelOf('agents', 'a1'));
+  shell.click(btn(b, 'cancel'));
+  assert.equal(two.log.mounts.length, 2, 'still the second stopper after the first\'s unregister()');
+  assert.equal(b.querySelector('.cs-confirm-text'), null);
+  offTwo();
+  const c = mount(modelOf('shells', 's1'));
+  shell.click(btn(c, 'kill'));
+  assert.ok(c.querySelector('.cs-confirm-text'), 'none registered: the inline confirm');
+  assert.equal(one.log.mounts.length + two.log.mounts.length, 2);
+});
+
+test('stopper: Escape in a mounted slot calls unmount once, removes the slot and brings the actions back', async () => {
+  const { stopper, log } = spyStopper(true);
+  register(stopper);
+  const el = mount(modelOf('shells', 's1'));
+  shell.click(btn(el, 'kill'));
+  const { slot } = log.mounts[0];
+  const e = shell.key('Escape', { target: slot.querySelector('.test-stopper-control') });
+  assert.ok(e.defaultPrevented, 'Escape is the slot\'s, not the tray\'s');
+  assert.deepEqual(log.unmounts, [slot], 'unmount once, with the slot');
+  assert.equal(slot.isConnected, false, 'the slot is removed');
+  assert.equal(el.querySelector('.cs-row-confirm'), null);
+  assert.ok(!el.querySelector('.cs-row-actions').hidden, 'the actions are back');
+  assert.equal(doc.activeElement, btn(el, 'kill'), 'focus back on Kill');
+  shell.key('Escape', { target: el });
+  await shell.tick();
+  assert.equal(log.unmounts.length, 1, 'still once');
+  assert.equal(stopPosts().length, 0);
+  // Kill again mounts a fresh slot.
+  shell.click(btn(el, 'kill'));
+  assert.equal(log.mounts.length, 2);
+  assert.notEqual(log.mounts[1].slot, slot);
+});
+
+test('stopper: another stop action on the row, a redraw that drops the slot, and the row leaving each revert it with one unmount', async () => {
+  const { stopper, log } = spyStopper(true);
+  register(stopper);
+  // Another stop action on the row (the detail view calls runAction itself).
+  const m = modelOf('shells', 's1');
+  const el = mount(m);
+  shell.click(btn(el, 'kill'));
+  assert.equal(A.runAction(m, 'kill', { rowEl: el, density: 'compact', button: btn(el, 'kill') }), true);
+  assert.deepEqual(log.unmounts, [log.mounts[0].slot], 'reverted, not a second slot');
+  assert.equal(log.mounts.length, 1);
+  assert.equal(el.querySelector('.cs-row-confirm'), null);
+  assert.ok(!el.querySelector('.cs-row-actions').hidden);
+  // A redraw whose buttons change drops the slot (chat-rows.js removes an open confirm).
+  shell.click(btn(el, 'kill'));
+  const second = log.mounts[1].slot;
+  let refreshes = 0;
+  el.addEventListener('wc:row-refresh', () => { refreshes += 1; });
+  R.updateRow(el, { ...m, actions: m.actions.filter((a) => a.id !== 'kill') });
+  assert.equal(second.isConnected, false, 'the redraw dropped it');
+  await waitUntil(() => log.unmounts.length === 2, { timeout: 2000, what: 'the unmount' });
+  assert.equal(log.unmounts[1], second);
+  assert.ok(!el.querySelector('.cs-row-actions').hidden, 'the actions are back');
+  assert.equal(btn(el, 'kill'), null, 'the redraw\'s own buttons');
+  assert.equal(refreshes, 1, 'a dropped slot asks the row to settle its actions once (the detail view hides an emptied box)');
+  // The row leaving.
+  const gone = mount(modelOf('shells', 's1'));
+  shell.click(btn(gone, 'kill'));
+  const third = log.mounts[2].slot;
+  let goneRefreshes = 0;
+  gone.addEventListener('wc:row-refresh', () => { goneRefreshes += 1; });
+  gone.remove();
+  await waitUntil(() => log.unmounts.length === 3, { timeout: 2000, what: 'the unmount' });
+  assert.equal(goneRefreshes, 0, 'a row that left is not asked to redraw');
+  assert.equal(log.unmounts[2], third);
+  assert.equal(third.parentNode, null, 'the slot is removed');
+  // A mutation elsewhere later calls nothing more.
+  list.append(doc.createElement('div'));
+  await shell.tick();
+  assert.equal(log.unmounts.length, 3);
+  assert.equal(stopPosts().length, 0);
+});
+
+test('stopper, touch: the slot carries cs-row-confirm-touch, the row\'s other buttons are disabled, mount sees {density: \'touch\'}', async () => {
+  const { stopper, log } = spyStopper(true);
+  register(stopper);
+  const el = mount(modelOf('shells', 's1'), 'touch');
+  shell.press(btn(el, 'kill'));
+  assert.equal(log.mounts.length, 1);
+  const { slot, opts, parent, prev } = log.mounts[0];
+  assert.deepEqual(opts, { density: 'touch' });
+  assert.ok(slot.classList.contains('cs-row-confirm'));
+  assert.ok(slot.classList.contains('cs-row-confirm-touch'));
+  assert.equal(parent, el);
+  assert.ok(prev.classList.contains('cs-row-main'));
+  assert.ok(btn(el, 'output').disabled, 'the other buttons are disabled while it is mounted');
+  assert.ok(!btn(el, 'kill').disabled, 'the stop action itself stays pressable');
+  assert.equal(btn(el, 'kill').textContent, 'Kill', 'no two-tap arming');
+  assert.equal(btn(el, 'kill').dataset.confirming, undefined);
+  await shell.tick();
+  assert.equal(stopPosts().length, 0);
+  // A second press of the stop action steps back out.
+  shell.press(btn(el, 'kill'));
+  assert.deepEqual(log.unmounts, [slot]);
+  assert.equal(slot.isConnected, false);
+  assert.ok(!btn(el, 'output').disabled, 'the other buttons come back');
+  assert.equal(log.mounts.length, 1, 'that press opened no second slot');
+});
+
+test('stopper, touch: a declining mount leaves the two taps as before', async () => {
+  shell.setRoutes({ '/api/queue/task-stop': { ok: true } });
+  const { stopper, log } = spyStopper(false);
+  register(stopper);
+  const el = mount(modelOf('shells', 's1'), 'touch');
+  shell.press(btn(el, 'kill'));
+  assert.equal(log.mounts.length, 1);
+  assert.equal(el.querySelector('.cs-row-confirm'), null, 'no slot left');
+  assert.equal(btn(el, 'kill').textContent, 'Confirm kill');
+  assert.ok(btn(el, 'output').disabled, 'disabled by the two taps');
+  shell.press(btn(el, 'kill'));
+  await shell.tick();
+  assert.equal(stopPosts().length, 1);
+  assert.equal(log.unmounts.length, 0);
+  // The second tap reached the armed button, not the stopper again.
+  assert.equal(log.mounts.length, 1);
+});
+
+test('the touch stopper slot is styled in the U46 section: 44px targets, tokens only', () => {
+  const css = read('public/app.css');
+  const start = css.indexOf('/* ── U46 · chips and trays');
+  const end = css.indexOf('/* ── U47 · detail views');
+  const mine = stripComments(css.slice(start, end));
+  const rule = /\.cs-row-confirm\.cs-row-confirm-touch\s*\{([^}]*)\}/.exec(mine);
+  assert.ok(rule, 'the touch slot is styled');
+  assert.match(rule[1], /min-height:\s*44px/);
+  assert.match(mine, /\.cs-row-confirm-touch > \*\s*\{[^}]*min-height:\s*44px/);
+  assert.doesNotMatch(mine, /#[0-9a-fA-F]{3,8}\b/);
+});
+
+test('the header documents the seam: registerStopper in the export list, the held sentence gone', () => {
+  const src = read('public/app/chat-actions.js');
+  const head = src.slice(0, src.indexOf('import '));
+  assert.match(head, /registerStopper\(\{mount, unmount\}\) → unregister/);
+  assert.doesNotMatch(head, /is held on the maintainer's ruling/);
+  assert.match(head, /A mount answering true OWNS the stop/);
 });
 
 /* ── queue rows ───────────────────────────────────────────────────────────── */
