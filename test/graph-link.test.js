@@ -15,12 +15,14 @@
 //   * the documents that draw a node: previewNodeJson, GET /preview/node/:id,
 //     the export and the replay carry no `mirror`, and GET /api/graph/node/:id
 //     drops it below read.
+// And the graph-level stop that clears a held lock's stale timer.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { createHook } = require('async_hooks');
 const express = require('express');
 const { home: SANDBOX } = require('../test-support/sandbox');
 const { claudeHome } = require('../test-support/claude-home');
@@ -688,4 +690,28 @@ test('GET /preview/node/:id, the export and the replay of a node carrying mirror
   assert.equal(replay.ok, true);
   assert.ok(replay.html.includes('pane-b-mark'), 'the replay draws the page');
   assert.ok(!replay.html.includes(MARK_TURN), 'no replay frame carries it');
+});
+
+// ── the graph-level stop ─────────────────────────────────────────────────────
+
+test('stopGraph clears a held lock\'s stale timer and keeps it cleared', async (t) => {
+  const root = tmpRoot('wc-glink-stop-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { graph } = graphFor(root);
+  const bus = createBus();
+  const timers = [];
+  const hook = createHook({ init(_id, type, _trigger, resource) { if (type === 'Timeout') timers.push(resource); } }).enable();
+  t.after(() => hook.disable());
+  const r = turns.acquireLock(graph, bus, { message: 'hold', author: 'user', draftPath: graph.draftPath });
+  assert.equal(r.ok, true);
+  const ttl = turns.LOCK_TTL_MS;
+  const staleTimer = () => timers.filter((tm) => !tm._destroyed && !tm.hasRef() && tm._idleTimeout > ttl - 60000 && tm._idleTimeout <= ttl + 1);
+  assert.equal(staleTimer().length, 1, 'a held lock arms its stale timer');
+  turns.stopGraph(graph);
+  assert.equal(staleTimer().length, 0, 'the stop clears it');
+  turns.releaseLock(graph, bus);
+  turns.acquireLock(graph, bus, { message: 'again', author: 'user', draftPath: graph.draftPath });
+  assert.equal(staleTimer().length, 0, 'a lock change after the stop arms nothing');
+  turns.stopGraph(graph); // idempotent
+  turns.stopGraph(null);
 });
