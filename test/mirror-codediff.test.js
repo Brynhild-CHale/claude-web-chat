@@ -327,6 +327,15 @@ test('.web-chat/ is never in a tree, untracked or tracked', async (t) => {
   const paths = await treePaths(store, s.tree);
   assert.deepEqual(paths.filter((p) => p.includes('.web-chat')), []);
   assert.ok(paths.includes('a.txt'));
+  // A tracked .web-chat/ file the daemon has since rewritten (a committed
+  // theme.json, a component): the index copy differs from the worktree, and
+  // the snapshot still succeeds with no .web-chat path in its tree.
+  repo.write('.web-chat/tracked.json', '{"rewritten":true}\n');
+  const s2 = await store.snapshot();
+  assert.equal(s2.ok, true, JSON.stringify(s2));
+  const paths2 = await treePaths(store, s2.tree);
+  assert.deepEqual(paths2.filter((p) => p.includes('.web-chat')), []);
+  assert.ok(paths2.includes('a.txt'));
 });
 
 test('an untracked .env never enters the shadow store; a large untracked file is excluded and listed', async (t) => {
