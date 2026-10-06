@@ -678,18 +678,24 @@ test('stopper: another stop action on the row, a redraw that drops the slot, and
   // A redraw whose buttons change drops the slot (chat-rows.js removes an open confirm).
   shell.click(btn(el, 'kill'));
   const second = log.mounts[1].slot;
+  let refreshes = 0;
+  el.addEventListener('wc:row-refresh', () => { refreshes += 1; });
   R.updateRow(el, { ...m, actions: m.actions.filter((a) => a.id !== 'kill') });
   assert.equal(second.isConnected, false, 'the redraw dropped it');
   await waitUntil(() => log.unmounts.length === 2, { timeout: 2000, what: 'the unmount' });
   assert.equal(log.unmounts[1], second);
   assert.ok(!el.querySelector('.cs-row-actions').hidden, 'the actions are back');
   assert.equal(btn(el, 'kill'), null, 'the redraw\'s own buttons');
+  assert.equal(refreshes, 1, 'a dropped slot asks the row to settle its actions once (the detail view hides an emptied box)');
   // The row leaving.
   const gone = mount(modelOf('shells', 's1'));
   shell.click(btn(gone, 'kill'));
   const third = log.mounts[2].slot;
+  let goneRefreshes = 0;
+  gone.addEventListener('wc:row-refresh', () => { goneRefreshes += 1; });
   gone.remove();
   await waitUntil(() => log.unmounts.length === 3, { timeout: 2000, what: 'the unmount' });
+  assert.equal(goneRefreshes, 0, 'a row that left is not asked to redraw');
   assert.equal(log.unmounts[2], third);
   assert.equal(third.parentNode, null, 'the slot is removed');
   // A mutation elsewhere later calls nothing more.
