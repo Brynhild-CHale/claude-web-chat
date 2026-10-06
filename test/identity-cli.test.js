@@ -486,6 +486,29 @@ test('--preview mounts identity-preview with the queue signal, and every data: U
   });
 });
 
+test('--preview of a 3:1 logo keeps its aspect at every size, and its mock tab says it is not the tab\'s icon', async (t) => {
+  await withServer(t, { writePortfile: true }, async (h) => {
+    const { r, text } = await run(['logo', WIDE3, '--dry-run', '--preview'], { cwd: h.root });
+    const hello = await h.wsHello();
+    const pane = hello.mounts.find((m) => m.id === identity.PREVIEW_ID);
+    assert.ok(pane, 'the preview pane is on the surface');
+    const byB64 = new Map(r.candidates.map((c) => [c.bytes.toString('base64'), c]));
+    const imgs = [...pane.html.matchAll(/<img[^>]*src="data:[^;]+;base64,([A-Za-z0-9+/=]+)"[^>]*width="(\d+)" height="(\d+)"/g)];
+    assert.ok(imgs.length >= r.candidates.length * 2 * 4, 'every candidate at the four sizes on both grounds');
+    for (const [, b64, w, h_] of imgs) {
+      const c = byB64.get(b64);
+      assert.ok(c, 'a candidate\'s bytes');
+      assert.ok(c.width / c.height > icon.NEAR_SQUARE, `a wide candidate (${c.width}×${c.height}: the 3:1 artwork within its margins)`);
+      assert.equal(Number(w), Math.round((Number(h_) * c.width) / c.height),
+        `drawn ${w}×${h_}: its own aspect, never squashed into a square`);
+    }
+    assert.ok(!/width="16" height="16"/.test(pane.html), 'no 16×16 mock tab icon for a wordmark');
+    assert.match(pane.html, /Not the tab&#39;s icon: a logo that is not square never shows in the tab/);
+    assert.doesNotMatch(text, /mock tab/, 'the summary names no mock tab');
+    assert.match(text, /beside the topbar lockup/);
+  });
+});
+
 // ── the skill ───────────────────────────────────────────────────────────────
 
 test('the project-identity skill is a managed file, and an install writes it', (t) => {
