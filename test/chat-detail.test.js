@@ -489,8 +489,11 @@ test('workflow: a store row whose rev changes refetches the detail, at most once
     assert.ok(at[1] - at[0] >= WINDOW - 10, `the second read waited for the window (${at[1] - at[0]} ms)`);
     await settle(WINDOW + 100);
     assert.equal(at.length, 2, 'one read for the whole burst');
-    // The same rev again is no change.
-    await update([{ ...W1, rev: 4, line: 'same rev' }]);
+    // A store change that leaves the workflow's rev where it was is no change:
+    // another row moving still reaches the view (a 'mirror' event), and reads nothing.
+    const moved = S.mirror.rev;
+    await update([{ ...S2, rev: 2, line: 'another row moved' }]);
+    await waitUntil(() => S.mirror.rev > moved, { what: 'the other row\'s update' });
     await settle(WINDOW + 100);
     assert.equal(at.length, 2, 'an unchanged rev reads nothing');
     // Past the window, a change reads at once.
