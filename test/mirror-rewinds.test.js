@@ -23,7 +23,14 @@
 //   * an anchor that is also a branch yields one notice, whichever came first;
 //   * nothing under the project's .web-chat/ but mirror/ changes (no graph or
 //     node file); the thresholds are exported, and the reset fixture at exactly
-//     those thresholds supersedes while one short of either does not.
+//     those thresholds supersedes while one short of either does not;
+//   * resumes the daemon did not hear (U78b, the V37 shapes): a same-file drop
+//     across an exit tail (cost-state) reads no reset, also across a restart
+//     between the tail and the resume; a new-file continuation whose copied
+//     chain drops the count reads no reset, whether the copies reach this source
+//     (the new session linked into the same conversation) or the fork filter
+//     drops them (another conversation); the spec's 86 → 16 in process reads a
+//     reset; 3031 → 2922 does not (RESET_MAX_AFTER_COUNT, at and one over).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -41,8 +48,11 @@ const { createTranscriptsSource } = require('../lib/server/mirror/transcripts');
 const rewinds = require('../lib/server/mirror/rewinds');
 const fx = require('../test-support/rewind-fixtures');
 
-const { createRewindsSource, FIRST_TURN_KINDS, RESET_MIN_COUNT_DROP, RESET_MIN_FIRST_TURN_RECORDS } = rewinds;
+const {
+  createRewindsSource, FIRST_TURN_KINDS, RESET_MIN_COUNT_DROP, RESET_MIN_FIRST_TURN_RECORDS, RESET_MAX_AFTER_COUNT,
+} = rewinds;
 const SID = fx.DEFAULT_SESSION;
+const NEXT = fx.NEXT_SESSION;
 
 // ── the harness ──────────────────────────────────────────────────────────────
 
@@ -228,6 +238,7 @@ test('the reset rule\'s thresholds are exported constants', () => {
   assert.ok(Object.isFrozen(FIRST_TURN_KINDS));
   assert.equal(RESET_MIN_COUNT_DROP, 1);
   assert.equal(RESET_MIN_FIRST_TURN_RECORDS, 1);
+  assert.equal(RESET_MAX_AFTER_COUNT, 64);
   assert.equal(typeof createRewindsSource().attach, 'function');
   const src = fs.readFileSync(require.resolve('../lib/server/mirror/rewinds.js'), 'utf8');
   for (const banned of ['markSuperseded', 'upsertItem', 'patchTurn', 'writeJsonAtomic', 'require(\'fs\')', 'require(\'./turn-machine\')']) {
@@ -325,6 +336,153 @@ test('(b″) a --resume (SessionStart resume, appended records) is never a reset
   flat.hooks = flat.hooks.filter((x) => !(x.session && x.session.source === 'resume'));
   const h3 = await run(t, flat);
   assertExpected(await verdict(h3), flat, 'a resume with a higher count');
+});
+
+// ── resumes the daemon did not hear (U78b, V37) ──────────────────────────────
+
+test('(b) the spec\'s in-process reset, 86 → 16 with the first-turn records between, reads as one', async (t) => {
+  const f = build('reset', { last: 86, drop: 70 });
+  assert.equal(f.expect.reason, 'reset');
+  const h = await run(t, f);
+  assertExpected(await verdict(h), f, '86 → 16');
+  assert.equal(realCalls(h).length, 1);
+  await assertNoGraphWrite(h);
+});
+
+test('(b) 3031 → 2922 with five first-turn records between lands above RESET_MAX_AFTER_COUNT: no reset', async (t) => {
+  const f = build('reset', { last: 3031, drop: 109, firstTurnRecords: 5 });
+  assert.equal(f.expect.reason, null);
+  const h = await run(t, f);
+  assertExpected(await verdict(h), f, '3031 → 2922');
+  assert.equal(h.calls.length, 0, 'not even a call');
+  await h.mirror.stop();
+  // The bound itself: a drop landing exactly on it is a reset, one over is not.
+  const at = build('reset', { last: 100, drop: 100 - RESET_MAX_AFTER_COUNT });
+  assert.equal(at.expect.reason, 'reset');
+  const h2 = await run(t, at);
+  assertExpected(await verdict(h2), at, `landing on ${RESET_MAX_AFTER_COUNT}`);
+  await h2.mirror.stop();
+  const over = build('reset', { last: 100, drop: 100 - RESET_MAX_AFTER_COUNT - 1 });
+  assert.equal(over.expect.reason, null);
+  const h3 = await run(t, over);
+  assertExpected(await verdict(h3), over, `landing on ${RESET_MAX_AFTER_COUNT + 1}`);
+});
+
+test('(b‴) a resume in the same file across an exit tail, with no SessionStart heard, is never a reset', async (t) => {
+  const f = build('exitTail');
+  assert.ok(f.hooks.every((x) => x.session.source === 'startup'), 'the resume sent no hook the daemon heard');
+  assert.ok(f.records.some((x) => x.type === 'cost-state' && !('uuid' in x)), 'a uuid-less cost-state');
+  const h = await run(t, f);
+  assertExpected(await verdict(h), f, 'across the exit tail');
+  assert.equal(h.calls.length, 0, 'not even a call');
+  await assertNoGraphWrite(h);
+  // The exit tail is what keeps it from one: without it, the same drop is a reset.
+  const bare = build('exitTail', { tail: false });
+  const h2 = await run(t, bare);
+  assertExpected(await verdict(h2), bare, 'the same drop with no exit tail');
+  assert.equal(realCalls(h2).length, 1);
+});
+
+test('(b‴) the exit tail is persisted: a restart between it and the resume still reads no reset', async (t) => {
+  const store = fakeStore();
+  const f = build('exitTail');
+  const cut = splitAt(f, 'rw-4');
+  assert.equal(f.records[cut - 1].type, 'file-history-snapshot', 'the cut falls just after the exit tail');
+  const a = setup(t, { store });
+  await a.mirror.start();
+  for (const hook of f.hooks) a.publish(hook);
+  a.ch.writeTranscript(SID, f.records.slice(0, cut));
+  await settled(a, 3);
+  await a.mirror.stop();
+  const slice = store.saved.get(SID).state.sources.rewinds;
+  assert.equal(slice.exit, true, 'the exit tail rides in the index');
+  const b = setup(t, { store, root: a.root, ch: a.ch });
+  await b.mirror.start();
+  await settled(b, 3);
+  b.ch.appendTranscript(SID, f.records.slice(cut));
+  await settled(b, 4);
+  assertExpected(await verdict(b), f, 'across a restart');
+  assert.equal(b.calls.length, 0);
+  await assertNoGraphWrite(b);
+});
+
+test('(b‴) the exit tail bounds only the pair it lies between: a later in-process reset after the resume still reads as one', async (t) => {
+  // The resume across the exit tail reads no reset; two turns later the resumed
+  // process rewinds to the first prompt in process (the first-turn append again,
+  // the count collapsing to 16, no exit tail and no SessionStart between).
+  const f = build('exitTail');
+  f.r.prompt('prompt rw-5', { promptId: 'rw-5' });
+  f.r.assistant(['reply to rw-5']);
+  f.r.turnDuration({ durationMs: 40, messageCount: 36 });
+  f.r.prompt('prompt rw-6', { promptId: 'rw-6' });
+  fx.firstTurnAppend(f.r);
+  f.r.assistant(['reply to rw-6']);
+  f.r.turnDuration({ durationMs: 40, messageCount: 16 });
+  f.turns.push('rw-5', 'rw-6');
+  f.expect = { reason: 'reset', superseded: f.turns.slice(0, -1), live: ['rw-6'], open: null };
+  const h = await run(t, f);
+  assertExpected(await verdict(h), f, 'an in-process reset after a resume');
+  assert.equal(realCalls(h).length, 1);
+  await assertNoGraphWrite(h);
+});
+
+// The two files of a continuation, the earlier one's turns first; the new
+// session's hook is a SessionStart dated before every record (so no SessionStart
+// falls between two turn-durations: it stands in for a link the registry makes
+// with no hook heard, a sessions-file switch or formerNames). `link: true` sends
+// it as a /clear from the same process (one conversation); otherwise as a
+// startup from another (its own conversation).
+async function runContinuation(t, f, { link }) {
+  const h = setup(t);
+  await h.mirror.start();
+  const pid = 4242;
+  const first = f.hooks[0];
+  h.hooks.publish(fx.envelope({ ...first, claude_pid: pid }, { sessionId: SID, transcriptPath: h.ch.transcript(SID), cwd: h.ch.cwd }));
+  h.ch.writeTranscript(SID, f.records);
+  await settled(h, f.turns.length);
+  const next = link
+    ? { event: 'SessionStart', ts: first.ts + 500, claude_pid: pid, session: { source: 'clear' } }
+    : { event: 'SessionStart', ts: first.ts + 500, claude_pid: pid + 1, session: { source: 'startup' } };
+  h.hooks.publish(fx.envelope(next, { sessionId: NEXT, transcriptPath: h.ch.transcript(NEXT), cwd: h.ch.cwd }));
+  h.ch.writeTranscript(NEXT, f.next.records);
+  return h;
+}
+
+test('(b⁗) a continuation into a new file whose copied chain drops the count is never a reset', async (t) => {
+  const f = build('continuation');
+  const tds = f.next.records.filter((x) => x.type === 'system' && x.subtype === 'turn_duration');
+  assert.equal(tds.length, 4, 'three copied turn-durations and the new process\'s first');
+  const copiedCount = tds[2].messageCount;
+  const ownCount = tds[3].messageCount;
+  assert.ok(copiedCount - ownCount >= RESET_MIN_COUNT_DROP && ownCount <= RESET_MAX_AFTER_COUNT,
+    'the copied count and the new one would read as a reset');
+  assert.ok(!f.next.records.some((x) => x.type === 'cost-state'), 'no exit tail between them in the new file');
+
+  // Linked into the earlier session's conversation: the copies reach the rewinds
+  // source, and a copied turn-duration never seeds the comparison.
+  const h = await runContinuation(t, f, { link: true });
+  await settled(h, 4);
+  const v = await verdict(h);
+  assert.deepEqual(v.superseded, [], 'linked: nothing superseded');
+  assert.deepEqual(v.live, [...f.turns, ...f.next.turns]);
+  assert.equal(v.notices.length, 0);
+  assert.equal(h.calls.length, 0, 'linked: not even a call');
+  const diag = h.mirror.snapshot({ level: 'local' }).diagnostics.sources.rewinds;
+  assert.ok(diag.copies >= 3, `linked: the copied turn-durations reached the source and were set aside (${diag.copies})`);
+  await assertNoGraphWrite(h);
+
+  // Its own conversation: the fork filter drops the copies before the turn
+  // machine, so the source never hears them.
+  const g = build('continuation');
+  const h2 = await runContinuation(t, g, { link: false });
+  const p = await waitUntil(async () => {
+    const page = await h2.mirror.turns(NEXT, { items: 'full', limit: 100 });
+    return page && page.total === 1 && page.turns[0].status !== 'open' ? page : null;
+  }, { timeout: 8000, what: 'the new conversation\'s turn' });
+  assert.deepEqual(p.turns.map((x) => [x.id, !!x.superseded]), [['rw-4', false]]);
+  assertExpected(await verdict(h2), g, 'the earlier conversation');
+  assert.equal(h2.calls.length, 0);
+  assert.equal(h2.mirror.snapshot({ level: 'local' }).diagnostics.sources.rewinds.copies, 0, 'unlinked: no copy reached the source');
 });
 
 // ── (c) the headless anchor ──────────────────────────────────────────────────
