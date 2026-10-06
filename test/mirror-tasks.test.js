@@ -49,6 +49,7 @@ const tasks = require('../lib/server/mirror/tasks');
 
 const { createTasksSource } = tasks;
 const S1 = '11111111-1111-4111-8111-111111111111';
+const S2 = '22222222-2222-4222-8222-222222222222';
 const PID = 4242;
 const AGENT = 'a0123456789abcdef';
 
@@ -666,6 +667,14 @@ test('the registry\'s ended stops every running row; a SessionEnd for /clear sto
     result: { ok: true, fields: { taskId: 'bmon02' } },
   });
   assert.equal(h.row('bmon02').kind, 'monitor');
+  // Another conversation's monitor: S1's end is not its end.
+  h.publish('SessionStart', { session: { source: 'startup' }, claude_pid: PID + 1 }, S2);
+  h.publish('PostToolUse', {
+    tool: { name: 'Monitor', use_id: 'toolu_01M3', input: { command: 'tail -f y', description: 'Tail y' } },
+    result: { ok: true, fields: { taskId: 'bmon03' } },
+  }, S2);
+  assert.ok(h.row('bmon03'), 'the other conversation\'s monitor');
+  assert.notEqual(h.row('bmon03').conversation_id, h.row('bmon02').conversation_id);
   h.publish('SessionEnd', { session: { reason: 'clear' } });
   await new Promise((res) => setTimeout(res, 100));
   assert.equal(h.row(id).status, 'running', 'background tasks outlive /clear');
@@ -678,6 +687,7 @@ test('the registry\'s ended stops every running row; a SessionEnd for /clear sto
   const b = h.row('bmon02');
   assert.equal(b.status, 'stopped');
   assert.equal(b.stopped_by, 'session-end');
+  assert.equal(h.row('bmon03').status, 'running', 'only the ended conversation\'s rows stop');
   await h.mirror.stop();
 });
 
@@ -695,6 +705,19 @@ test('Stop\'s background_tasks: an unknown id makes a row, a running row left ou
   h.ch.writeTranscript(S1, r.records);
   await h.waitRow(id, (x) => x.line === 'building');
   await waitUntil(() => h.spy.watches.length === 1, { what: 'the watch' });
+  // A running shell of another conversation, whose file also ends unseen: a
+  // Stop of S1's conversation reconciles S1's rows only.
+  h.publish('SessionStart', { session: { source: 'startup' }, claude_pid: PID + 1 }, S2);
+  const other = 'bother';
+  const otherFile = h.ch.writeTaskOutput(S2, other, 'elsewhere\n');
+  h.publish('PostToolUse', {
+    tool: { name: 'Bash', use_id: 'toolu_01Other', input: { command: 'make other', description: 'Other build', run_in_background: true } },
+    result: { ok: true, fields: { backgroundTaskId: other, outputFile: otherFile } },
+  }, S2);
+  await h.waitRow(other, (x) => x.line === 'elsewhere', 'the other conversation\'s row');
+  assert.notEqual(h.row(other).conversation_id, h.row(id).conversation_id);
+  await waitUntil(() => h.spy.watches.length === 2, { what: 'the other watch' });
+  h.ch.appendTaskOutput(S2, other, '[exited with code 0]\n');
   h.ch.appendTaskOutput(S1, id, 'linked\n[exited with code 0]\n');
   await new Promise((res) => setTimeout(res, 150));
   assert.equal(h.row(id).status, 'running', 'nothing has looked yet');
@@ -712,6 +735,8 @@ test('Stop\'s background_tasks: an unknown id makes a row, a running row left ou
   assert.equal(done.status, 'done');
   assert.equal(done.exit_code, 0);
   assert.equal(done.line, 'linked');
+  await new Promise((res) => setTimeout(res, 150));
+  assert.equal(h.row(other).status, 'running', 'another conversation\'s row is not this Stop\'s to read');
   await h.mirror.stop();
 });
 
