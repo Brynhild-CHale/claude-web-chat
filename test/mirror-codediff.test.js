@@ -4,8 +4,8 @@
 //
 // Pinned, on scratch repositories in the sandbox (git init with a fixed
 // -c user.name / user.email and commit.gpgsign=false, never the developer's
-// config — HOME is a throwaway, and the repositories are built by the small
-// private builder below, ruling U43-U79@fixture-builder):
+// config — HOME is a throwaway, and the repositories are built by the one
+// builder in test-support/treesnap-fixture.js, ruling U43-U79@fixture-builder):
 //   * a snapshot leaves every file under .git byte-identical; the shadow's
 //     at and duration_ms start in its held slot, so time queued behind
 //     other git work never marks it slow;
@@ -41,12 +41,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const { execFileSync } = require('child_process');
 const { home: SANDBOX } = require('../test-support/sandbox');
 const { claudeHome } = require('../test-support/claude-home');
 const { withTempHome, waitUntil } = require('../test-support/helpers');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
+const { treesnapRepo: scratchRepo, gitIn, digestTree } = require('../test-support/treesnap-fixture');
 const { createRedactor } = require('../lib/core/redact');
 const { createBus } = require('../lib/core/bus');
 const { projectPaths } = require('../lib/core/paths');
@@ -61,54 +60,9 @@ const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
 const LIVE_ONLY = SOURCES.filter((s) => s.name === 'live');
 
-// ── the scratch-repository builder (private to this file) ────────────────────
-
-const GIT_ID = ['-c', 'user.name=wc-test', '-c', 'user.email=wc-test@example.com', '-c', 'commit.gpgsign=false', '-c', 'init.defaultBranch=main'];
-
-function gitIn(cwd, args, opts = {}) {
-  const env = { ...process.env };
-  for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
-  return execFileSync('git', [...GIT_ID, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], ...opts });
-}
-
-// files: {rel: content}; returns {top, root, git, write, read}.
-function scratchRepo(t, { files = { 'a.txt': 'alpha\n' }, sub = '', objectFormat = null, webChat = true } = {}) {
-  const top = fs.realpathSync(fs.mkdtempSync(path.join(SANDBOX, 'wc-codediff-')));
-  t.after(() => fs.rmSync(top, { recursive: true, force: true }));
-  gitIn(top, ['init', '-q', ...(objectFormat ? [`--object-format=${objectFormat}`] : [])]);
-  const write = (rel, data) => {
-    const p = path.join(top, rel);
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, data);
-  };
-  for (const [rel, data] of Object.entries(files)) write(rel, data);
-  gitIn(top, ['add', '-A']);
-  gitIn(top, ['commit', '-q', '-m', 'init']);
-  const root = sub ? path.join(top, sub) : top;
-  fs.mkdirSync(root, { recursive: true });
-  if (webChat) fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
-  return {
-    top,
-    root,
-    git: (args, opts) => gitIn(top, args, opts),
-    write,
-    read: (rel) => fs.readFileSync(path.join(top, rel)),
-  };
-}
-
-// sha256 of every file under dir, by relative path.
-function digestTree(dir) {
-  const out = {};
-  const walk = (d) => {
-    for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, ent.name);
-      if (ent.isDirectory()) walk(p);
-      else if (ent.isFile()) out[path.relative(dir, p)] = crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-    }
-  };
-  walk(dir);
-  return out;
-}
+// ── the scratch-repository builder ───────────────────────────────────────────
+// The one builder lives in test-support/treesnap-fixture.js (ruling
+// U43-U79@fixture-builder, B2 b); this file keeps its old local names.
 
 // The bytes a tree holds at a toplevel-relative path, from the shadow.
 async function blobAt(store, tree, topRel) {
