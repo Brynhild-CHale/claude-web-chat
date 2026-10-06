@@ -426,6 +426,18 @@ test('--out inside .web-chat/ is refused, --out without --dry-run is refused, an
   assert.equal(fs.existsSync(path.join(root, '.web-chat', 'x')), false);
 });
 
+test('--out through a link that reaches .web-chat/ is refused, and nothing lands there', async (t) => {
+  const root = directProject(t);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-identity-link-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const link = path.join(outside, 'state');
+  fs.symlinkSync(path.join(root, '.web-chat'), link);
+  const before = fs.readdirSync(projectPaths(root).dir).sort();
+  await refused(['logo', ICON, '--dry-run', '--out', path.join(link, 'cands')], { cwd: root }, /inside \.web-chat/);
+  await refused(['logo', ICON, '--dry-run', '--out', link], { cwd: root }, /inside \.web-chat/);
+  assert.deepEqual(fs.readdirSync(projectPaths(root).dir).sort(), before, 'nothing written under .web-chat/');
+});
+
 test('--preview without a running surface refuses: run claude-web-chat open first', async (t) => {
   const root = directProject(t);
   await refused(['logo', ICON, '--preview'], { cwd: root }, /claude-web-chat open first/);
