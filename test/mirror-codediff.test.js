@@ -30,6 +30,10 @@
 //     before_racy (Edit sets it, WebFetch does not); the guards; not a
 //     repository and git missing; lazy init; WEB_CHAT_MIRROR_DIFFS=0; node
 //     diffs and their cache; stop() during a snapshot; a restart.
+//   * the before (ruling U43@before-snapshot-timing): a snapshot in flight under
+//     REUSE_MS serves a second turn's before; a failed one falls back to the
+//     previous after-tree (previous-turn-close); a sensitive name holding glob
+//     characters is still excluded (its exclude line escaped).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -354,6 +358,17 @@ test('an untracked .env never enters the shadow store; a large untracked file is
   assert.equal(await inShadow(store, id), false, 'the .env blob is not in the shadow');
   const paths = await treePaths(store, s.tree);
   assert.ok(!paths.includes('.env') && !paths.includes('big.bin'));
+  // A sensitive name holding gitignore glob characters: its exclude line must
+  // be escaped, or `/server[1].key` matches only `server1.key` and the key's
+  // bytes enter the shadow store.
+  const key = '-----KEY never-stored-either-----\n';
+  repo.write('server[1].key', key);
+  const s2 = await store.snapshot();
+  assert.equal(s2.ok, true);
+  assert.deepEqual(s2.excluded.sensitive.map((x) => x.path).sort(), ['.env', 'server[1].key']);
+  const keyId = gitIn(repo.top, ['hash-object', '--stdin'], { input: key }).toString().trim();
+  assert.equal(await inShadow(store, keyId), false, 'the glob-named key\'s blob is not in the shadow');
+  assert.ok(!(await treePaths(store, s2.tree)).includes('server[1].key'));
 });
 
 test('a git without --attr-source: no call carries it, init passes no --object-format, and the shadow initialises', async (t) => {
@@ -586,6 +601,67 @@ test('before_racy: a mutating PreToolUse during the before-snapshot sets it; a W
   await h2.settled('pW');
   assert.equal(h2.record('pW').flags.before_racy, false);
   assert.ok(READ_ONLY_KINDS.includes('Web') && !READ_ONLY_KINDS.includes('WebFetch'), 'kinds, never tool names');
+});
+
+test('the before (U43@before-snapshot-timing): one in flight under REUSE_MS is reused; a failed one falls back to the previous after-tree', async (t) => {
+  // Reuse: S2's turn opens while S1's before-snapshot is held at its add.
+  const gates = [];
+  const slow = wrapRunner(runGit, {
+    delay: (args) => (args.includes('add') ? new Promise((r) => gates.push(r)) : undefined),
+  });
+  const release = async () => { await waitUntil(() => gates.length, { timeout: 10000, what: 'the add' }); gates.shift()(); };
+  const writeTrees = () => slow.calls.filter((c) => c.args.includes('write-tree')).length;
+  const repo = scratchRepo(t, { files: { 'a.txt': 'a1\n', 'b.txt': 'b1\n' } });
+  const h = await mirrorOn(t, repo, { source: { runGit: slow } });
+  h.session(S1);
+  h.session(S2);
+  h.prompt('pA', S1);
+  await waitUntil(() => gates.length, { timeout: 10000, what: 'the before-snapshot' });
+  h.prompt('pB', S2);
+  await release();
+  await h.snapshots(1);
+  await sleep(150);
+  assert.equal(gates.length, 0, 'no second before-snapshot was started');
+  assert.equal(writeTrees(), 1, 'one snapshot served both befores');
+  h.tool('PreToolUse', 'Edit', 'Edit', 'tu-a', S1);
+  repo.write('a.txt', 'a2\n');
+  h.stop(S1);
+  await release();
+  await h.settled('pA');
+  h.tool('PreToolUse', 'Edit', 'Edit', 'tu-b', S2);
+  repo.write('b.txt', 'b2\n');
+  h.stop(S2);
+  await release();
+  await h.settled('pB');
+  assert.equal(h.record('pB').before.tree, h.record('pA').before.tree);
+  assert.equal(h.record('pB').before.source, 'turn-open');
+
+  // Fallback: the next before-snapshot's write-tree fails.
+  let failNext = false;
+  const flaky = wrapRunner(runGit, {
+    answer: (args) => {
+      if (failNext && args.includes('write-tree')) { failNext = false; return { stdout: '', stderr: 'injected', code: 1 }; }
+      return undefined;
+    },
+  });
+  const repo2 = scratchRepo(t, { files: { 'a.txt': 'a1\n' } });
+  const h2 = await mirrorOn(t, repo2, { source: { runGit: flaky } });
+  h2.session();
+  await h2.run('p1', () => repo2.write('a.txt', 'a2\n'));
+  failNext = true;
+  h2.prompt('p2');
+  await waitUntil(() => !failNext, { timeout: 10000, what: 'the failed before-snapshot' });
+  await sleep(50);
+  h2.tool('PreToolUse', 'Edit', 'Edit', 'tu-2');
+  repo2.write('a.txt', 'a3\n');
+  h2.tool('PostToolUse', 'Edit', 'Edit', 'tu-2');
+  h2.stop();
+  assert.equal((await h2.settled('p2')).status, 'ready');
+  const rec = h2.record('p2');
+  assert.equal(rec.before.source, 'previous-turn-close');
+  assert.equal(rec.before.tree, h2.record('p1').after.tree);
+  assert.equal(rec.totals.files, 1);
+  assert.equal(rec.outside, null);
 });
 
 test('sensitive and large files in a turn: withheld, with and without counts, no hunk', async (t) => {
