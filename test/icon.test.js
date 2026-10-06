@@ -571,11 +571,14 @@ test('a crop that is still too wide is refused as not-square, or padded when pad
 test("a box outside the image is IconError 'bad-crop', its hint naming the image's size; a malformed box is a TypeError", () => {
   const src = asPng(markAndWord());
   for (const box of [{ x: 300, y: 0, w: 120, h: 120 }, { x: 0, y: 30, w: 100, h: 111 }, { x: -1, y: 0, w: 10, h: 10 },
-    { x: 0, y: 0, w: 0, h: 10 }, { x: 0, y: 0, w: 10, h: -5 }, { x: 400, y: 140, w: 1, h: 1 }]) {
+    { x: 0, y: 0, w: 0, h: 10 }, { x: 0, y: 0, w: 10, h: -5 }, { x: 400, y: 140, w: 1, h: 1 },
+    // one pixel past the right edge, and one past the bottom (the boundary itself)
+    { x: 281, y: 0, w: 120, h: 100 }, { x: 0, y: 41, w: 100, h: 100 }]) {
     assert.throws(() => icon.prepare(src, { kind: 'favicon', crop: box }), (e) => e instanceof icon.IconError
       && e.code === 'bad-crop' && /400×140/.test(e.hint) && /x \+ w ≤ 400 and y \+ h ≤ 140/.test(e.hint), JSON.stringify(box));
   }
   assert.equal(icon.prepare(src, { kind: 'logo', crop: { x: 0, y: 0, w: 400, h: 140 } }).square, false, 'the whole image is a crop too');
+  assert.equal(icon.prepare(src, { kind: 'logo', crop: { x: 280, y: 40, w: 120, h: 100 } }).format, 'png', 'a box flush with the right and bottom edges fits');
   for (const box of [{ x: 0, y: 0, w: 1.5, h: 10 }, { x: '0', y: 0, w: 10, h: 10 }, { x: 0, y: 0, w: 10 }, [0, 0, 10, 10], 'x']) {
     assert.throws(() => icon.prepare(src, { kind: 'favicon', crop: box }), TypeError, JSON.stringify(box));
   }

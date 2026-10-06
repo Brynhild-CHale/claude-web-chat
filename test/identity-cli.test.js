@@ -539,6 +539,18 @@ test('favicon <wide.png> --pad --dry-run --out writes square candidates, with th
   assert.equal(project.identity(root).favicon, null);
 });
 
+test('--pad and --crop shape a --dark <file> as they shape the light image', async (t) => {
+  const root = directProject(t);
+  const out = outDirFor(t);
+  await run(['favicon', WIDE3, '--pad', '--dark', WIDE3, '--dry-run', '--out', out], { cwd: root });
+  const want = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, pad: true });
+  assert.ok(fs.readFileSync(path.join(out, 'favicon-dark.png')).equals(want.variants.transparent.bytes), 'the dark file, padded');
+  const cropOut = outDirFor(t);
+  await run(['favicon', WIDE3, '--crop', CROP_BOX, '--dark', WIDE3, '--dry-run', '--out', cropOut], { cwd: root });
+  const cropped = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, crop: CROP });
+  assert.ok(fs.readFileSync(path.join(cropOut, 'favicon-dark.png')).equals(cropped.variants.transparent.bytes), 'the dark file, cropped');
+});
+
 test('favicon <wide.png> --crop x,y,w,h --dry-run --out writes the cropped candidates', async (t) => {
   const root = directProject(t);
   const out = outDirFor(t);
