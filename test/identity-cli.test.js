@@ -486,6 +486,29 @@ test('--preview mounts identity-preview with the queue signal, and every data: U
   });
 });
 
+test('--preview of a 3:1 logo keeps its aspect at every size, and its mock tab says it is not the tab\'s icon', async (t) => {
+  await withServer(t, { writePortfile: true }, async (h) => {
+    const { r, text } = await run(['logo', WIDE3, '--dry-run', '--preview'], { cwd: h.root });
+    const hello = await h.wsHello();
+    const pane = hello.mounts.find((m) => m.id === identity.PREVIEW_ID);
+    assert.ok(pane, 'the preview pane is on the surface');
+    const byB64 = new Map(r.candidates.map((c) => [c.bytes.toString('base64'), c]));
+    const imgs = [...pane.html.matchAll(/<img[^>]*src="data:[^;]+;base64,([A-Za-z0-9+/=]+)"[^>]*width="(\d+)" height="(\d+)"/g)];
+    assert.ok(imgs.length >= r.candidates.length * 2 * 4, 'every candidate at the four sizes on both grounds');
+    for (const [, b64, w, h_] of imgs) {
+      const c = byB64.get(b64);
+      assert.ok(c, 'a candidate\'s bytes');
+      assert.ok(c.width / c.height > icon.NEAR_SQUARE, `a wide candidate (${c.width}×${c.height}: the 3:1 artwork within its margins)`);
+      assert.equal(Number(w), Math.round((Number(h_) * c.width) / c.height),
+        `drawn ${w}×${h_}: its own aspect, never squashed into a square`);
+    }
+    assert.ok(!/width="16" height="16"/.test(pane.html), 'no 16×16 mock tab icon for a wordmark');
+    assert.match(pane.html, /Not the tab&#39;s icon: a logo that is not square never shows in the tab/);
+    assert.doesNotMatch(text, /mock tab/, 'the summary names no mock tab');
+    assert.match(text, /beside the topbar lockup/);
+  });
+});
+
 // ── the skill ───────────────────────────────────────────────────────────────
 
 test('the project-identity skill is a managed file, and an install writes it', (t) => {
@@ -499,4 +522,23 @@ test('the project-identity skill is a managed file, and an install writes it', (
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   reg.apply(root, { runClaude: () => ({ ok: true }) });
   assert.equal(fs.readFileSync(path.join(root, row.dest), 'utf8'), tpl);
+});
+
+// Ruling U50@skill:wide-logo-pad (b, provisional): icon.prepare refuses a
+// favicon wider than NEAR_SQUARE and identity has no pad option, so the skill's
+// step 3 offers padding only for a logo up to 1.25:1 — never for a wider one.
+test('the skill\'s step 3 offers padding only up to 1.25:1; a wider logo gets a square image or the W; both copies identical', () => {
+  const tpl = fs.readFileSync(path.join(templatesDir(), 'skills/project-identity/SKILL.md'), 'utf8');
+  const dogfood = fs.readFileSync(path.join(REPO, '.claude/skills/project-identity/SKILL.md'), 'utf8');
+  assert.equal(dogfood, tpl, 'the dogfood copy is the template, byte for byte');
+  assert.equal(icon.NEAR_SQUARE, 1.25, 'the skill\'s 1.25:1 is the engine\'s threshold');
+  const at = tpl.indexOf('3. **Wide, or a wordmark?**');
+  assert.ok(at >= 0, 'step 3 is there');
+  const step = tpl.slice(at, tpl.indexOf('\n4. **', at));
+  const choices = step.split('\n').filter((l) => /^\s+- /.test(l)).map((l) => l.trim());
+  assert.equal(choices.length, 3);
+  assert.match(choices[0], /^- a separate square image/);
+  assert.match(choices[1], /^- keep web-chat's W/);
+  assert.match(choices[2], /^- only for a logo up to 1\.25:1: pad the whole logo/, 'padding is offered only up to 1.25:1');
+  assert.match(step.replace(/\s+/g, ' '), /A logo wider than 1\.25:1 cannot be padded .* so for one, offer only the first two\./);
 });

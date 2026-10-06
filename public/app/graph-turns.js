@@ -11,6 +11,9 @@
 //     files ±, an interrupted/stopped tag, and superseded turns dimmed as
 //     "rewound". The rows are not buttons: the inspector → chat link is
 //     deferred (§2.8, §13).
+//     Its "↶ N of M turns rewound" line reads the marks below: it waits for
+//     a refresh of them in flight, and a refresh that changes them draws the
+//     open node's section again.
 //   * setNodeMarker — a ↶ to the left of each node whose turns a rewind in the
 //     terminal superseded, from GET /api/mirror/nodes (§15.4). Canvas and
 //     inspector only: the phone's graph log draws none in 0.8.5 (notes-B Q18,
@@ -60,6 +63,7 @@ async function getJson(url) {
 let summaries = new Map();   // node id → {turns, superseded, rewound_at?}
 let lastFetch = -Infinity;
 let inFlight = null;
+let marksRev = 0;            // bumped whenever a refresh changes a mark
 
 // "2 of 3 turns rewound in the terminal at 14:02"
 function rewoundSentence(s) {
@@ -97,19 +101,25 @@ function refresh() {
   if (!readable()) {
     const had = [...summaries.values()].some((s) => s.superseded > 0);
     summaries = new Map();
+    if (had) marksRev++;
     return Promise.resolve(had);
   }
   if (inFlight) return inFlight;
   if (Date.now() - lastFetch < REFRESH_GAP_MS) return Promise.resolve(false);
   lastFetch = Date.now();
-  inFlight = (async () => {
+  const p = (async () => {
     const body = await getJson('/api/mirror/nodes');
     const next = readable() ? readSummaries(body) : new Map();
     const changed = marksChanged(summaries, next);
     summaries = next;
+    if (changed) marksRev++;
     return changed;
-  })().finally(() => { inFlight = null; });
-  return inFlight;
+  })().finally(() => { if (inFlight === p) inFlight = null; });
+  inFlight = p;
+  // A change re-runs the open node's section, whichever caller asked (the
+  // graph's own refresh, or the stream-change one-shot below).
+  p.then((changed) => { if (changed) rerunOpen(); }, () => {});
+  return p;
 }
 
 function mark(id) {
@@ -215,9 +225,18 @@ function section(id, turns) {
   return sec;
 }
 
-async function onInspector({ box, id, current }) {
+// The last inspector paint's hook context: what a change of the marks re-runs.
+let open = null;
+
+async function onInspector(ctx) {
+  const { box, id, current } = ctx;
   if (!id || !box || !readable()) return;
+  open = ctx;
   const body = await getJson('/api/mirror/node/' + encodeURIComponent(id));
+  if (!current() || !readable()) return;
+  // The summary line reads the marks: a refresh of them in flight is waited
+  // for, so the line is not painted from the cache it is about to replace.
+  if (inFlight) { try { await inFlight; } catch { /* the marks stay as they were */ } }
   if (!current() || !readable()) return;
   const turns = turnsOf(body);
   if (!turns) return;
@@ -225,7 +244,20 @@ async function onInspector({ box, id, current }) {
   if (!meta) return;
   const old = document.getElementById('gi-turns');
   if (old) old.remove();
-  meta.after(section(id, turns));
+  const sec = section(id, turns);
+  sec.dataset.marks = String(marksRev);
+  meta.after(sec);
+}
+
+// The marks changed: the open node's section, painted from the older marks,
+// is drawn again (its turns too: a rewind dims them). One painted after the
+// change, or none at all, is left alone.
+function rerunOpen() {
+  const o = open;
+  if (!o || !offs || !isOverlayOpen() || !o.current()) return;
+  const sec = document.getElementById('gi-turns');
+  if (!sec || sec.dataset.marks === String(marksRev)) return;
+  onInspector(o).catch((e) => console.error('[web-chat] the chat turns section failed', e));
 }
 
 /* ── lifecycle ────────────────────────────────────────────────────────────── */
@@ -243,6 +275,7 @@ export function initGraphTurns() {
 export function stopGraphTurns() {
   clearTimer();
   summaries = new Map();
+  open = null;
   if (!offs) return;
   for (const off of offs) { try { off(); } catch { /* already gone */ } }
   offs = null;
