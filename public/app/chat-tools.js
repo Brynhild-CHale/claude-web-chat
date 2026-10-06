@@ -5,6 +5,10 @@
 //                            setToolRenderer (U37); idempotent. → the restore
 //   stopChatTools()          puts the stream's generic card back
 //   renderToolCard(item, {turn, prev})   one card (the renderer itself)
+//   expandCard(itemId)       opens a drawn card and runs its own expand (the
+//                            body fetched once, as a click does) → whether a
+//                            card was there; bus `chat:expand-tool` {id} asks
+//                            the same (chat-awaiting.js's Show plan)
 //   fmtDur(ms)               '1.2s', '42s', '1:12'
 //   diffStats(patch)         {add, del, created} of a unified-diff text
 //
@@ -23,7 +27,9 @@
 // so collapsing, expanding again and every keyed re-render of the turn (the
 // stream hands the old card back as `prev`, and the card is reused) request
 // nothing more. Only Read's 'Show more' asks again, for the next page, on its
-// own click, up to BODY_CAP. A failed fetch is one line with Retry; nothing here
+// own click, up to BODY_CAP. A Web card also fetches its input once (its prompt:
+// the projection keeps only the url), under the same cache, keyed apart from
+// the result. A failed fetch is one line with Retry; nothing here
 // throws into the stream. A running call has no result yet: its body shows what
 // the store holds and fetches once the call has ended.
 //
@@ -38,7 +44,9 @@
 // row (chat-state's mirror.tasks) for the meta ('running 1:12 · 6 tools', 'N
 // events', the phase bar). The stream redraws a card only when its item
 // changes, so those cards repaint their header on every `mirror` event and, while
-// one runs, on one 1 s ticker that stops when none does.
+// one runs, on one 1 s ticker that stops when none does. The stream puts a card
+// in the DOM after this module draws it, so a live card's first draw looks for
+// the ticker again once the stream's pass is over (a microtask later).
 //
 // OPEN. 'Open task', 'Open agent', 'Open workflow' and 'Open monitor' emit bus
 // `chat:open` {view: 'task', id}; the views that answer it are tranche 3's
@@ -60,6 +68,9 @@ const TICK_MS = 1000;
 
 const GLYPH = Object.freeze({ running: '◌', done: '✓', error: '✗', denied: '⊘', interrupted: '✕' });
 const STATUS_WORD = Object.freeze({ denied: 'denied', interrupted: 'interrupted' });
+// §7.10's Plan row: approved, rejected or pending. A declined plan is `denied`
+// (normalize.js reads Claude Code's "doesn't want to proceed" reply so).
+const PLAN_WORD = Object.freeze({ running: 'pending', done: 'approved', denied: 'rejected', error: 'error', interrupted: 'interrupted' });
 const SEP = ' · ';
 
 // web-chat's own tools that put an item on the page (its MCP server, not Claude
@@ -198,6 +209,7 @@ function label(item, kind) {
 // The meta after the glyph: [{text, cls?}] parts.
 function meta(item, kind) {
   const status = item.status || 'running';
+  if (kind === 'Plan') return [{ text: PLAN_WORD[status] || status }];
   if (STATUS_WORD[status]) return [{ text: STATUS_WORD[status] }];
   const r = isObj(item.result) ? item.result : {};
   const dur = fmtDur(item.duration_ms);
@@ -269,8 +281,6 @@ function meta(item, kind) {
     }
     case 'Question':
       return [{ text: status === 'running' ? 'waiting for an answer' : status === 'error' ? 'error' : 'answered' }];
-    case 'Plan':
-      return [{ text: status === 'running' ? 'pending' : status === 'done' ? 'approved' : 'rejected' }];
     case 'Todo':
       return status === 'error' ? [{ text: 'error' }] : [];
     default:
@@ -298,6 +308,16 @@ function fieldOf(item, kind) {
   if (item.status === 'running') return null;   // no result yet
   return 'result';
 }
+
+// A second field a body shows beside its result, fetched once on the first
+// expand too: a Web call's prompt is in its full input (the projection keeps the
+// url alone), unless the store already holds it.
+function extraOf(item, kind) {
+  if (kind === 'Web' && !str(inputOf(item).prompt)) return 'input';
+  return null;
+}
+// The cache key of an item's extra field (a tool_use id holds no NUL).
+const extraKey = (id) => `${id}\u0000extra`;
 
 // Where the first fetch starts, and how much: a shell's TAIL, else the head.
 function firstPage(item, kind) {
@@ -358,16 +378,21 @@ function load(card, { force = false } = {}) {
   if (!st || !canRead()) return;
   const { item, kind } = st;
   const field = fieldOf(item, kind);
-  if (!field) return;
-  const held = cache.get(item.id);
+  if (field) fetchOnce(card, item.id, item.id, field, firstPage(item, kind), force);
+  const extra = extraOf(item, kind);
+  if (extra) fetchOnce(card, extraKey(item.id), item.id, extra, { from: 0, max: PAGE }, force);
+}
+
+// One field of an item into the cache under `key`, unless it is held already.
+function fetchOnce(card, key, id, field, page, force) {
+  const held = cache.get(key);
   if (held && held.field === field && (!force || held.status !== 'error')) {
     held.card = card;
     return;
   }
-  const page = firstPage(item, kind);
   const entry = { field, status: 'loading', text: '', from: page.from, to: page.from, total: null, eof: false, more: null, card };
-  remember(item.id, entry);
-  getField(item.id, field, page.from, page.max).then((r) => {
+  remember(key, entry);
+  getField(id, field, page.from, page.max).then((r) => {
     Object.assign(entry, { status: 'ok', text: r.text, from: r.from, to: r.to, total: r.total, eof: r.eof });
   }, (e) => {
     entry.status = 'error';
@@ -642,12 +667,25 @@ function bodyNodes(card) {
       out.push(...resultNodes(card, entry));
       break;
     }
-    default:   // Grep, Glob, Web, Search, Skill, Stop, MCP, an unknown tool, Tool
+    case 'Web': {
+      add(inputPreview(item));
+      const x = cache.get(extraKey(item.id));
+      let prompt = str(inputOf(item).prompt);
+      if (!prompt && x && x.status === 'ok') {
+        const parsed = parseJson(x.text);
+        prompt = isObj(parsed) ? str(parsed.prompt) : '';
+      }
+      if (prompt) add(el('div', 'tc-prompt', prompt));
+      out.push(...resultNodes(card, entry));
+      break;
+    }
+    default:   // Grep, Glob, Search, Skill, Stop, MCP, an unknown tool, Tool
       add(inputPreview(item));
       out.push(...resultNodes(card, entry));
   }
-  if (entry && entry.status === 'loading') add(note('Loading…'));
-  if (entry && entry.status === 'error') add(errorLine(card, () => { load(card, { force: true }); paintBody(card); }));
+  const fetches = [entry, cache.get(extraKey(item.id))].filter(Boolean);
+  if (fetches.some((e) => e.status === 'loading')) add(note('Loading…'));
+  if (fetches.some((e) => e.status === 'error')) add(errorLine(card, () => { load(card, { force: true }); paintBody(card); }));
   if (!out.length) add(note('Nothing to show.'));
   return out;
 }
@@ -697,8 +735,10 @@ export function renderToolCard(item, { prev = null } = {}) {
   states.set(card, st);
   card.dataset.kind = kind;
   paintHead(card);
-  const held = cache.get(item.id);
-  if (held) held.card = card;
+  for (const key of [item.id, extraKey(item.id)]) {
+    const held = cache.get(key);
+    if (held) held.card = card;
+  }
   if (readable && (card.open || st.built)) {
     if (card.open) load(card);
     paintBody(card);
@@ -706,7 +746,24 @@ export function renderToolCard(item, { prev = null } = {}) {
   if (isLive(item, kind)) live.add(card);
   else live.delete(card);
   tick();
+  if (live.has(card) && !card.isConnected) tickWhenDrawn();
   return card;
+}
+
+// Open the drawn card of `itemId` and run its own expand: the body built and
+// fetched once, as a click on its header does (the toggle event that follows
+// finds the body held). → whether there was a card to open.
+export function expandCard(itemId) {
+  if (typeof itemId !== 'string' || !itemId || !canRead()) return false;
+  let card = null;
+  for (const c of document.querySelectorAll('details.tc')) {
+    const st = states.get(c);
+    if (st && st.item && st.item.id === itemId) { card = c; break; }
+  }
+  if (!card) return false;
+  if (!card.open) card.open = true;
+  expand(card);
+  return true;
 }
 
 // ── live headers ─────────────────────────────────────────────────────────────
@@ -722,6 +779,18 @@ function refreshLive() {
     if (!card.isConnected) { live.delete(card); continue; }
     try { paintHead(card); } catch (e) { console.error('[web-chat] a tool card header failed', e); }
   }
+}
+
+// A live card is drawn before the stream puts it in the DOM: look again once
+// the stream's pass is over.
+let tickPending = false;
+function tickWhenDrawn() {
+  if (tickPending) return;
+  tickPending = true;
+  Promise.resolve().then(() => {
+    tickPending = false;
+    if (restore) tick();
+  });
 }
 
 // One ticker while a live card runs; none otherwise.
@@ -740,15 +809,19 @@ function tick() {
 
 let restore = null;
 let offMirror = null;
+let offExpand = null;
 
 export function initChatTools() {
   if (restore) return restore;
   const off = setToolRenderer((item, opts) => renderToolCard(item, opts || {}));
   offMirror = bus.on('mirror', () => { refreshLive(); tick(); });
+  offExpand = bus.on('chat:expand-tool', (d) => { if (d && typeof d.id === 'string') expandCard(d.id); });
   restore = () => {
     off();
     if (offMirror) offMirror();
+    if (offExpand) offExpand();
     offMirror = null;
+    offExpand = null;
     restore = null;
   };
   return restore;

@@ -48,14 +48,15 @@ class StubIO {
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
-function snapshot(conversationId, { level = 'local', tasks = [] } = {}) {
+function snapshot(conversationId, { level = 'local', tasks = [], asks = [] } = {}) {
   const content = level !== 'basic';
   const row = content
     ? { id: conversationId, rev: 1, headless: false, counts: ZERO, live: { state: 'idle', since: T0, last_activity_at: T0 } }
     : { id: conversationId, state: 'idle', since: T0, last_activity_at: T0, counts: ZERO };
   return { v: 1, enabled: true, now: Date.now(), rev: ++rev, content, access: { level, remote: level === 'basic' },
     capabilities: {}, primary: conversationId, aggregate: { state: 'idle' }, conversations: [row],
-    tasks: content ? tasks.map((t) => ({ conversation_id: conversationId, rev: 1, ...t })) : [], asks: [] };
+    tasks: content ? tasks.map((t) => ({ conversation_id: conversationId, rev: 1, ...t })) : [],
+    asks: asks.map((a) => ({ conversation_id: conversationId, ...a })) };
 }
 
 const bytes = (s) => Buffer.byteLength(s, 'utf8');
@@ -135,11 +136,11 @@ function turn(id, seq, items, extra = {}) {
   };
 }
 
-async function follow(items, { level = 'local', tasks = [] } = {}) {
+async function follow(items, { level = 'local', tasks = [], asks = [] } = {}) {
   cid = `c${++convN}`;
   const t = turn('t1', 1, items);
   pages.set(cid, { conversation_id: cid, turns: [t], next_before: null, total: 1, rev: ++rev });
-  current = snapshot(cid, { level, tasks });
+  current = snapshot(cid, { level, tasks, asks });
   await shell.frame(helloFrame());
   if (level === 'basic') {
     await waitUntil(() => S.mirror.access.level === 'basic', { what: 'the basic snapshot' });
@@ -283,6 +284,34 @@ test('the 1 s ticker stops once no live card runs', async () => {
   await shell.frame({ type: 'mirror:update', rev: ++rev, conversation_id: cid, tasks: [
     { ...mon, conversation_id: cid, rev: 3, status: 'done', ended_at: now, meta: { events: 8 } }] });
   await waitUntil(() => toolTickers().length === 0, { what: 'the ticker cleared once nothing runs' });
+});
+
+// U38@ticker-first-render: the stream draws a card before it puts it in the
+// DOM, so a running live card starts the ticker once it is there, with no
+// `mirror` event after it.
+test('a running Agent card starts its 1 s ticker when the stream first draws it, with no further frame', async () => {
+  tools.stopChatTools();   // no ticker left over from an earlier test
+  tools.initChatTools();
+  assert.equal(toolTickers().length, 0);
+  const agent = { ...fixtureItems()[8], id: 'tu_agent_first', links: { agent_id: 'ag_first' } };
+  await follow([agent]);
+  await shell.tick();
+  assert.equal(glyphOf('tu_agent_first'), '◌', 'the card is running');
+  assert.equal(toolTickers().length, 1, 'one refreshLive interval, started by the first draw');
+});
+
+// U38@plan-rejected: §7.10's Plan row reads approved, rejected or pending.
+test('Plan: approved, rejected or pending — a declined plan reads rejected, an error stays error', async () => {
+  const plan = (id, status, extra = {}) => call(id, 'ExitPlanMode', 'Plan', 'Plan', { status, input: { planFilePath: '/p/plan.md' }, ...extra });
+  await follow([
+    plan('tu_pl_run', 'running'),
+    plan('tu_pl_ok', 'done', { result: result('User has approved your plan.') }),
+    // Claude Code's reply to a declined plan; normalize.js classifies it denied.
+    plan('tu_pl_no', 'denied', { result: result("The user doesn't want to proceed with this tool use.", { is_error: true }) }),
+    plan('tu_pl_err', 'error', { result: result('boom', { is_error: true }) }),
+  ]);
+  assert.deepEqual(['tu_pl_run', 'tu_pl_ok', 'tu_pl_no', 'tu_pl_err'].map((id) => [glyphOf(id), metaOf(id)]),
+    [['◌', 'pending'], ['✓', 'approved'], ['⊘', 'rejected'], ['✗', 'error']]);
 });
 
 // ── the lazy body ────────────────────────────────────────────────────────────
@@ -437,6 +466,59 @@ test('Plan: the plan\'s markdown when the full input carries it, else "the plan 
   assert.equal(bodyOf('tu_plan2').querySelector('strong').textContent, 'one');
 });
 
+// U36's Show plan → U38b's expandCard: the plan card itself opens, as a click
+// would, and its body is requested once.
+test('showPlan on a pending plan leaves the Plan card expanded, its body requested once', async () => {
+  const aw = await shell.importApp('chat-awaiting.js');
+  itemAnswer = () => {
+    const text = JSON.stringify({ plan: '# The plan\n\n- **step**' });
+    return { id: 'tu_plan_show', field: 'input', text, from: 0, to: text.length, total: text.length, eof: true };
+  };
+  const item = { ...fixtureItems()[12], id: 'tu_plan_show', awaiting: { ask_id: 'ask-plan-show', kind: 'plan', status: 'pending' } };
+  await follow([item], { asks: [{ id: 'ask-plan-show', kind: 'plan', state: 'pending', tool_use_id: 'tu_plan_show' }] });
+  await waitUntil(() => aw.pendingAsk() && aw.pendingAsk().id === 'ask-plan-show', { what: 'the pending plan ask' });
+  assert.equal(card('tu_plan_show').open, false, 'collapsed before Show plan');
+  assert.equal(itemCalls('tu_plan_show', 'input').length, 0);
+
+  assert.equal(aw.showPlan(), true);
+  assert.equal(card('tu_plan_show').open, true, 'the Plan card is expanded');
+  await waitUntil(() => bodyOf('tu_plan_show').querySelector('div.md-chat h1'), { what: 'the plan in the card' });
+  await shell.tick();   // the details' own toggle event has run too
+  assert.equal(itemCalls('tu_plan_show', 'input').length, 1, 'its body requested once');
+  assert.equal(tools.expandCard('tu_plan_show'), true, 'expanding an open card again');
+  await shell.tick();
+  assert.equal(itemCalls('tu_plan_show', 'input').length, 1, 'still once');
+  assert.equal(tools.expandCard('tu_no_such_card'), false, 'no card, nothing expanded');
+});
+
+// U38@webfetch-prompt: §7.10 gives Web cards prompt and result previews; the
+// projection keeps only the url, so the first expand fetches the input once.
+test('a Web card shows its prompt above the result, the input fetched once on the first expand', async () => {
+  const prompt = 'List the install steps';
+  itemAnswer = (url) => {
+    const u = new URL(url, 'http://x');
+    const field = u.searchParams.get('field');
+    const text = field === 'input' ? JSON.stringify({ url: 'https://docs.example.com/a', prompt }) : 'the fetched page';
+    return { id: 'tu_web_p', field, text, from: 0, to: text.length, total: text.length, eof: true };
+  };
+  await follow([{ ...fixtureItems()[7], id: 'tu_web_p' }]);
+  assert.equal(itemCalls('tu_web_p', 'input').length, 0, 'nothing before the first expand');
+  await open('tu_web_p');
+  await waitUntil(() => bodyOf('tu_web_p').querySelector('.tc-prompt') && bodyOf('tu_web_p').textContent.includes('the fetched page')
+    && !/Loading/.test(bodyOf('tu_web_p').textContent), { what: 'the prompt and the result' });
+  const p = bodyOf('tu_web_p').querySelector('.tc-prompt');
+  assert.equal(p.textContent, prompt);
+  const out = [...bodyOf('tu_web_p').querySelectorAll('pre')].find((x) => x.textContent === 'the fetched page');
+  assert.ok(out && (p.compareDocumentPosition(out) & W.Node.DOCUMENT_POSITION_FOLLOWING), 'the prompt sits above the result');
+  assert.equal(itemCalls('tu_web_p', 'input').length, 1, 'the input once');
+  assert.equal(itemCalls('tu_web_p', 'result').length, 1, 'the result once');
+  await close('tu_web_p');
+  await open('tu_web_p');
+  assert.equal(itemCalls('tu_web_p', 'input').length, 1, 'collapse and expand again: nothing more');
+  assert.equal(itemCalls('tu_web_p', 'result').length, 1);
+  assert.equal(bodyOf('tu_web_p').querySelector('.tc-prompt').textContent, prompt);
+});
+
 test('Question: the questions, their options and the answer', async () => {
   await follow([fixtureItems()[11]]);
   await open('tu_q');
@@ -467,6 +549,34 @@ test('a failing items fetch shows one error line with Retry, and Retry fetches a
   await waitUntil(() => bodyOf('tu_grep').textContent.includes('a.js\nb.js'), { what: 'the retried body' });
   assert.equal(itemCalls('tu_grep', 'result').length, 2, 'Retry fetched again');
   assert.equal(bodyOf('tu_grep').querySelector('.tc-error'), null);
+});
+
+// A Web card's second fetch (its input, for the prompt) fails on its own: the
+// result shows, the one error line with Retry shows too, and Retry asks again
+// for the input alone.
+test('a Web card whose input fetch fails shows one error line with Retry; Retry refetches the input alone', async () => {
+  const prompt = 'Summarise the changelog';
+  let fail = true;
+  itemAnswer = (url) => {
+    const field = new URL(url, 'http://x').searchParams.get('field');
+    if (field === 'input' && fail) return respond({ ok: false, error: 'boom' }, { status: 500 });
+    const text = field === 'input' ? JSON.stringify({ url: 'https://docs.example.com/c', prompt }) : 'the page';
+    return { id: 'tu_web_f', field, text, from: 0, to: text.length, total: text.length, eof: true };
+  };
+  await follow([{ ...fixtureItems()[7], id: 'tu_web_f' }]);
+  await open('tu_web_f');
+  await waitUntil(() => bodyOf('tu_web_f').querySelector('.tc-error') && bodyOf('tu_web_f').textContent.includes('the page'),
+    { what: 'the result and the input\'s error line' });
+  assert.equal(bodyOf('tu_web_f').querySelectorAll('.tc-error').length, 1, 'one error line');
+  assert.equal(bodyOf('tu_web_f').querySelector('.tc-prompt'), null, 'no prompt yet');
+
+  fail = false;
+  click(bodyOf('tu_web_f').querySelector('.tc-retry'));
+  await waitUntil(() => bodyOf('tu_web_f').querySelector('.tc-prompt'), { what: 'the retried prompt' });
+  assert.equal(bodyOf('tu_web_f').querySelector('.tc-prompt').textContent, prompt);
+  assert.equal(bodyOf('tu_web_f').querySelector('.tc-error'), null);
+  assert.equal(itemCalls('tu_web_f', 'input').length, 2, 'Retry fetched the input again');
+  assert.equal(itemCalls('tu_web_f', 'result').length, 1, 'and not the result');
 });
 
 test('a fetch that rejects outright is the same error line, never a throw', async () => {

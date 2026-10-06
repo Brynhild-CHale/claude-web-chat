@@ -32,6 +32,7 @@
 // redraw never churns it and an answer frame is never remounted under a click.
 //
 // It reads chat-state.js only, and fetches nothing: the store is the one copy.
+import { bus } from './bus.js';
 import { mirror, followed, awaitingOf, atLeast } from './chat-state.js';
 import { approvals } from './chat-slots.js';
 import { renderMarkdown } from './markdown.js';
@@ -223,7 +224,9 @@ function fillRead(body, m) {
 }
 
 // Show plan: the plan's tool card in the stream (the stream marks each card with
-// data-item-id, U37/U38), its turn group opened, scrolled to and focused.
+// data-item-id, U37/U38), its turn group opened, the card itself expanded
+// (chat-tools.js expandCard, asked over the bus: `chat:expand-tool`), scrolled
+// to and focused.
 export function showPlan() {
   const ask = pendingAsk();
   if (!ask || ask.kind !== 'plan') return false;
@@ -235,6 +238,7 @@ export function showPlan() {
   for (let p = target.parentElement; p && p !== stream; p = p.parentElement) {
     if (p.tagName === 'DETAILS') p.open = true;
   }
+  bus.emit('chat:expand-tool', { id: item.id });
   if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start', behavior: 'smooth' });
   if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
   try { target.focus({ preventScroll: true }); } catch { /* not focusable here */ }
