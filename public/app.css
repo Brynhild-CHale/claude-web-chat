@@ -2558,6 +2558,90 @@ pre.tc-diff {
 @media (max-width: 759px) { .popover.cs-tray { display: none; } }
 
 /* ── U47 · detail views · chat-detail.js ── */
+/* The detail views over the stream (design spec §7.12): a task's header, a
+   shell's or monitor's followed tail, an agent's own transcript (U38's tool
+   cards and U35's div.md-chat, never a page .md-block), a workflow's phase bar
+   and agents table, and a set of code changes as one <details> per file (U35's
+   renderDiff lines). Tokens only; the body scrolls in U36's .cp-dbody. */
+.dv-head { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; min-width: 0; }
+.dv-title { font: 600 13px/1.4 var(--wc-font); color: var(--wc-fg-bright); overflow-wrap: anywhere; }
+.dv-title.dv-mono { font: 600 12px/1.4 var(--wc-mono); }
+.dv-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; font: 11px/1.45 var(--wc-mono); color: var(--wc-muted); }
+.dv-sep { color: var(--wc-muted-dim); }
+.dv-type, .dv-model { color: var(--wc-text-2); }
+.dv-actions { display: flex; gap: 6px; margin-top: 4px; }
+.dv-cancel {
+  padding: 2px 10px; cursor: pointer; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm);
+  background: var(--wc-panel-bg); font: 600 11px var(--wc-font); color: var(--wc-rust);
+}
+.dv-cancel:hover { border-color: var(--wc-rust); }
+.dv-gone {
+  margin: 0 0 8px; padding: 4px 8px; border-left: 2px solid var(--wc-comment); border-radius: var(--wc-radius-sm);
+  background: var(--wc-header-bg); font: 600 11px var(--wc-font); color: var(--wc-comment);
+}
+.dv-note { margin: 4px 0; font: italic 12px/1.45 var(--wc-font); color: var(--wc-muted); }
+.dv-problem, .dv-unavailable { color: var(--wc-rust); font-style: normal; }
+.dv-cmd, .dv-out {
+  margin: 0 0 6px; padding: 6px 8px; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm);
+  background: var(--wc-content-bg); font: 11px/1.45 var(--wc-mono); color: var(--wc-fg);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.dv-cmd { color: var(--wc-text-2); }
+.dv-out:empty { display: none; }
+.dv-footer { font: 500 10.5px var(--wc-mono); color: var(--wc-muted); }
+.dv-prompt { margin: 0 0 8px; }
+.dv-prompt-sum, .dv-think-sum { cursor: pointer; font: 600 11px var(--wc-font); color: var(--wc-muted); }
+.dv-items { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dv-prose { min-width: 0; font: 13px/1.5 var(--wc-reading); color: var(--wc-fg); }
+.dv-think-text { padding: 4px 8px; border-left: 2px solid var(--wc-border-soft); font: italic 12px/1.45 var(--wc-reading);
+  color: var(--wc-text-2); white-space: pre-wrap; }
+.dv-sys { font: 11px var(--wc-mono); color: var(--wc-muted); }
+.dv-earlier, .dv-agent-open, .dv-show, .dv-turn-open, .dv-retry {
+  padding: 1px 8px; cursor: pointer; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm);
+  background: var(--wc-panel-bg); font: 600 11px var(--wc-font); color: var(--wc-accent-text);
+}
+.dv-earlier { align-self: center; margin: 0 auto 8px; display: block; }
+:is(.dv-earlier, .dv-agent-open, .dv-show, .dv-turn-open, .dv-retry):hover { border-color: var(--wc-accent); }
+.dv-result { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--wc-border-soft); }
+.dv-result-head { margin-bottom: 4px; font: 600 10px var(--wc-mono); letter-spacing: .04em; text-transform: uppercase; color: var(--wc-muted); }
+.dv-phases { display: flex; gap: 3px; margin: 0 0 4px; }
+.dv-phase { flex: 1 1 0; max-width: 48px; height: 5px; border-radius: 3px; background: var(--wc-border); }
+.dv-phase[data-state="done"] { background: var(--wc-green); }
+.dv-phase[data-state="running"] { background: var(--wc-accent); }
+.dv-phase[data-state="error"] { background: var(--wc-rust); }
+.dv-phase-line { margin: 0 0 8px; font: 11px var(--wc-mono); color: var(--wc-text-2); }
+.dv-agents { width: 100%; border-collapse: collapse; font: 11px/1.45 var(--wc-mono); color: var(--wc-fg); }
+.dv-agents th { text-align: left; font: 600 10px var(--wc-font); letter-spacing: .04em; text-transform: uppercase;
+  color: var(--wc-muted); border-bottom: 1px solid var(--wc-border-soft); padding: 2px 6px 2px 0; }
+.dv-agents td { padding: 3px 6px 3px 0; border-bottom: 1px solid var(--wc-border-soft); vertical-align: baseline; }
+.dv-agent { cursor: pointer; }
+.dv-agent:hover { background: var(--wc-header-bg); }
+.dv-agent[data-state="error"] .dv-agent-state, .dv-agent[data-state="failed"] .dv-agent-state { color: var(--wc-rust); }
+.dv-agent-time { white-space: nowrap; color: var(--wc-muted); }
+.dv-totals { margin: 0 0 6px; font: 600 11px var(--wc-mono); color: var(--wc-text-2); }
+.dv-files { display: flex; flex-direction: column; gap: 2px; }
+.dv-file-head, .dv-turn-file { display: flex; align-items: baseline; gap: 6px; min-width: 0; font: 11px/1.5 var(--wc-mono); }
+.dv-file-head { cursor: pointer; }
+.dv-fstatus { flex: none; width: 1.2em; font-weight: 600; color: var(--wc-muted); }
+.dv-fstatus[data-status="A"] { color: var(--wc-green); }
+.dv-fstatus[data-status="D"] { color: var(--wc-rust); }
+.dv-fpath { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wc-fg); }
+.dv-add { color: var(--wc-green); }
+.dv-del { color: var(--wc-rust); }
+.dv-file-body { margin: 2px 0 6px calc(1.2em + 6px); min-width: 0; }
+pre.dv-diff {
+  margin: 0; padding: 4px 0; overflow: auto; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm);
+  background: var(--wc-panel-bg);
+}
+.dv-turn { margin: 0 0 10px; padding: 6px 8px; border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm); }
+.dv-turn-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.dv-turn-name { flex: 1 1 auto; min-width: 0; font: 12px/1.4 var(--wc-reading); color: var(--wc-fg-bright); }
+.dv-turn-totals { flex: none; font: 11px var(--wc-mono); color: var(--wc-muted); }
+.dv-turn-files { margin: 0 0 6px; padding: 0; list-style: none; }
+:is(.dv-head, .dv-actions, .dv-out, .dv-cmd, .dv-footer, .dv-prompt, .dv-earlier, .dv-result, .dv-phases, .dv-phase-line,
+  .dv-agents, .dv-note, .dv-diff)[hidden] { display: none; }
+:is(.dv-cancel, .dv-earlier, .dv-agent-open, .dv-show, .dv-turn-open, .dv-retry, .dv-file-head, .dv-prompt-sum,
+  .dv-think-sum):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 
 /* ── U56 · the chrome's asks and the answer frames · asks.js ── */
 
