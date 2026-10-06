@@ -18,8 +18,10 @@
 //   * Escape: an addEscapeStep layer first, then the drawer closes; a window
 //     closes only with focus inside it.
 //
-// main.js does not call initChatDock yet (U40 wires it), so the boot's init
-// does, as main.js will. The geometry itself is plain-node tested in
+// main.js inits the dock (U40), and the panel it hosts with the stream and the
+// tool cards inside; the boot's init calls initChatDock again (idempotent) and
+// stops the other three and takes the panel out of #cd-body, so the dock is
+// tested alone, as a host: the panel has test/chat-panel.test.js. The geometry itself is plain-node tested in
 // test/chat-dock-geometry.test.js; jsdom cannot lay out.
 const test = require('node:test');
 const { before, after, afterEach } = test;
@@ -42,6 +44,11 @@ before(async () => {
     init: async (s) => {
       const d = await s.importApp('chat-dock.js');
       d.initChatDock();
+      (await s.importApp('chat-tools.js')).stopChatTools();
+      (await s.importApp('chat-stream.js')).stopChatStream();
+      (await s.importApp('chat-panel.js')).stopPanel();
+      const panel = s.document.getElementById('chat-panel');
+      if (panel) panel.remove();
     },
   });
   W = shell.window;

@@ -19,8 +19,10 @@
 //   * Attachments: a thumbnail under the route's limit; over it (alone or with
 //     its record) a chip that requests nothing; a failed thumbnail → that chip.
 //
-// main.js does not init the dock, the panel or the stream yet (U40 wires them),
-// so the boot's init does, as main.js will. Each test follows a conversation of
+// main.js inits the dock, the panel, the stream and the tool cards (U40); the
+// boot's init calls the first three again (each is idempotent) and stops the
+// tool cards, whose renderer test/chat-tools.test.js covers: this file is the
+// stream's own generic card. Each test follows a conversation of
 // its own (a fresh snapshot naming it primary), so each starts on a fresh stream.
 const test = require('node:test');
 const { before, after, afterEach } = test;
@@ -119,6 +121,8 @@ const turnIds = () => [...stream().querySelectorAll('.ct-turn')].map((e) => e.da
 const text = (e) => (e ? e.textContent : null);
 
 before(async () => {
+  // In place before the boot: main.js binds the stream, and its sentinel, once.
+  globalThis.IntersectionObserver = StubIO;
   shell = await bootShell({
     routes: {
       '/api/mirror': () => current,
@@ -134,8 +138,8 @@ before(async () => {
     init: async (sh) => {
       (await sh.importApp('chat-dock.js')).initChatDock();
       (await sh.importApp('chat-panel.js')).initChatPanel();
-      globalThis.IntersectionObserver = StubIO;
       (await sh.importApp('chat-stream.js')).initChatStream();
+      (await sh.importApp('chat-tools.js')).stopChatTools();
     },
   });
   W = shell.window;

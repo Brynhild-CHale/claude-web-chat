@@ -942,15 +942,21 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     }
   });
 
-  test('the stand-ins: the step, a chip and the phone tab each open an "Under development" note', async () => {
+  test('the stand-ins: a chip and the phone tab each open an "Under development" note; the step, the dock tranche 2 wired', async () => {
     const note = () => $('cs-tray');
     const shown = (el) => !!el && !el.classList.contains('hidden') && !el.hidden;
 
+    // Tranche 2's main.js registers the chat dock, so the step is no longer a
+    // stand-in: it opens the chat (test/chat-bar.test.js holds the stand-in
+    // step, with no chat view registered).
     shell.press($('cs-step'));
-    assert.ok(shown(note()) && note().classList.contains('cs-dev'), 'the step opens the note');
-    assert.equal(note().querySelector('.cs-dev-title').textContent, 'Under development');
+    assert.equal($('cs-step').getAttribute('aria-controls'), 'chat-dock', 'the step controls the dock');
+    assert.ok(!shown(note()), 'and opens no note');
+    await shell.tick();
+    assert.ok(shown($('chat-dock')), 'the step opens the chat dock');
     shell.key('Escape');
-    assert.ok(!shown(note()));
+    await shell.tick();
+    assert.ok(!shown($('chat-dock')), 'Esc closes it');
 
     const chip = $('cs-chips').querySelector('.cs-devchip');
     assert.ok(chip, 'the chips stand in for the trays');

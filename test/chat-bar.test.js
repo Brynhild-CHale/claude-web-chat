@@ -8,7 +8,8 @@
 //   * ONE setInterval ticker, never a setTimeout chain (§10.1): it redraws a
 //     running clock every second while the page is visible, a still line every
 //     30th tick, and stopBar() stops it.
-//   * The step opens the chat (chat:open) once a chat view is registered,
+//   * The step opens the chat (chat:open) once a chat view is registered —
+//     main.js registers the dock at boot, so it does from the first frame —
 //     closing the graph overlay first; Answer › and Review › open the chat on
 //     the wait; an answer frame mounts into #cs-act; another conversation
 //     waiting gets a chip that follows it; #cs-stop stays empty.
@@ -19,8 +20,11 @@
 //     cards clear it, shell.js never makes the bar inert, and below 760px the
 //     bar is hidden by app.css alone.
 //
-// main.js does not start the store or the bar yet (the tranche's integration
-// unit wires them), so the boot's init does, as main.js will.
+// main.js starts the store and the bar, and (tranche 2) registers the dock: the
+// boot's init restarts the bar to own its ticker. The stand-in cases are about
+// the bar with NO chat view registered, so the first of them takes the dock's
+// registration off (noChatView, below) after one case has proved the step
+// against the real, registered dock.
 //
 // TIME. Every frame and snapshot carries the daemon's clock as `now` = T, and
 // the store's serverNow() is that plus the time since the fold. Each test runs
@@ -178,6 +182,20 @@ function fakeView(t, id = 'test-dock') {
   const reg = slots.registerChatView(view);
   t.after(() => reg.unregister());
   return { view, reg };
+}
+// The bar with no chat view, as it stood before the dock: main.js registers
+// the dock at boot (public/app/chat-dock.js, view id 'dock'); a view
+// registered under that id replaces the dock's registration, and
+// unregistering it leaves none. The dock is not put back — chat-slots keeps no
+// way to, and the dock's init runs once — so every case after the first that
+// calls this runs on the seam with views of its own (fakeView), as the whole
+// file did before main.js registered one. A tick lets the bar see the seam move.
+function noChatView() {
+  if (slots.chatViews().some((v) => v.id === 'dock')) {
+    slots.registerChatView({ id: 'dock', isOpen: () => false, escape: () => false, close() {} }).unregister();
+    tickAt();
+  }
+  assert.equal(slots.chatViews().length, 0, 'precondition: no chat view');
 }
 // An approvals provider as the answer frames will register one.
 function fakeApprovals(t, { mount = true } = {}) {
@@ -377,9 +395,35 @@ test('the ticker redraws a running clock every second, and a still line or a hid
   assert.deepEqual(still.map(([got]) => got), still.map(([, want]) => want), 'still: redrawn on the 30th tick alone');
 });
 
+/* ── the dock main.js registers ─────────────────────────────────────────────── */
+
+test('main.js registers the dock at boot: the step controls #chat-dock, offers M, and opens it (chat:open)', async (t) => {
+  const dock = await shell.importApp('chat-dock.js');
+  await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
+  t.after(() => { if (dock.isChatOpen()) dock.closeChat({ returnFocus: false }); });
+  assert.deepEqual(slots.chatViews(), [{ id: 'dock', open: false }], 'the dock, and only it, registered at boot');
+  tickAt();
+  assert.equal(step().getAttribute('aria-controls'), 'chat-dock', 'the step controls the dock, not the note');
+  assert.equal(step().getAttribute('aria-expanded'), 'false');
+  assert.equal(step().getAttribute('aria-keyshortcuts'), 'M');
+  assert.equal(step().hasAttribute('aria-disabled'), false);
+  const seen = opens(t);
+
+  shell.press(step());
+  assert.deepEqual(seen, [{ view: 'chat', focus: 'composer', covered: false }], 'chat:open, to the composer');
+  assert.ok(!noteShown(), 'and no note');
+  await shell.tick();
+  assert.ok(dock.isChatOpen(), 'the dock heard it and opened');
+  assert.equal(step().getAttribute('aria-expanded'), 'true', 'the step says the chat is open');
+  shell.press(step());
+  assert.ok(!dock.isChatOpen(), 'with the chat open, the step closes it');
+  assert.equal(seen.length, 1, 'and opens nothing');
+});
+
 /* ── stand-in (a): the step, before any chat view ──────────────────────────── */
 
 test('stand-in: with no chat view the step is enabled and opens the "Under development" note', async (t) => {
+  noChatView();
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
   t.after(() => { if (noteShown()) shell.key('Escape'); });
   assert.equal(slots.chatViews().length, 0, 'precondition: no chat view');
@@ -417,6 +461,7 @@ test('stand-in: with no chat view the step is enabled and opens the "Under devel
 });
 
 test('stand-in replaced: once a chat view registers, the step opens the chat and the note goes', async (t) => {
+  noChatView();
   await quietly(live('idle', { last_turn: { id: 't3', outcome: 'done', ended_at: T - min(3), reply_preview: 'Done.' } }));
   shell.press(step());
   assert.ok(noteShown(), 'precondition: the note is open');
@@ -465,6 +510,7 @@ test('with a chat view, the step closes the graph overlay first; a chat it cover
 });
 
 test('a stand-in closes the graph overlay first: its note, on the panels\' rung, would open under the graph', async (t) => {
+  noChatView();
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
   assert.equal(slots.chatViews().length, 0, 'precondition: no chat view, so the step is a stand-in');
   t.after(() => {
@@ -484,6 +530,7 @@ test('a stand-in closes the graph overlay first: its note, on the panels\' rung,
 });
 
 test('the note is the one panel open: a stand-in pressed from the keyboard closes the panel already showing', async (t) => {
+  noChatView();
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
   assert.equal(slots.chatViews().length, 0, 'precondition: the step is a stand-in');
   t.after(() => { shell.key('Escape'); });
@@ -745,7 +792,11 @@ test('approve: the answer frame mounts once per ask, and goes when the wait does
   assert.equal(calls.mountBar.length, 1, 'not mounted again by a tick or a frame');
 
   await show(one(live('working')));
-  assert.deepEqual(calls.unmount, [act()], 'unmounted from #cs-act when the wait ended');
+  // The bar's own unmounts: since main.js inits the chat panel, its awaiting
+  // card asks the provider too (mountCard, refused by this fake, then
+  // unmount of the card's own body), which is not the bar's to count.
+  assert.deepEqual(calls.unmount.filter((el) => el === act() || $('chat-statusbar').contains(el)), [act()],
+    'unmounted from #cs-act when the wait ended');
   assert.equal(act().childNodes.length, 0);
 
   // A wait this viewer may not answer is no frame's: the wording for no frame.

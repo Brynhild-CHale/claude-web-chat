@@ -18,8 +18,10 @@
 //     closes the dock), chat:open's view applied after the host shows.
 //   * ONE setInterval ticker, only while the chat is open; stopPanel clears it.
 //
-// main.js does not init the dock or the panel yet (U40 wires them), so the
-// boot's init does, as main.js will.
+// main.js inits the dock and the panel (U40), and the stream and the tool cards
+// that draw inside #chat-stream; the boot's init calls the first two again (each
+// is idempotent) and stops the other two, emptying #chat-stream as the panel
+// built it, so the panel is tested alone: the stream has test/chat-stream.test.js.
 //
 // TIME. Every snapshot carries the daemon's clock as `now` = T, and each test
 // holds Date.now still (beforeEach), so the panel and the test's own uiState
@@ -92,6 +94,11 @@ before(async () => {
     init: async (sh) => {
       (await sh.importApp('chat-dock.js')).initChatDock();
       (await sh.importApp('chat-panel.js')).initChatPanel();
+      (await sh.importApp('chat-tools.js')).stopChatTools();
+      (await sh.importApp('chat-stream.js')).stopChatStream();
+      // #chat-stream as the panel builds it, empty: the stream's scaffolding out.
+      const stream = sh.document.getElementById('chat-stream');
+      if (stream) stream.replaceChildren();
     },
   });
   W = shell.window;
