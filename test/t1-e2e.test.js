@@ -29,9 +29,7 @@
 //     text, and lock and node-added frames with no prompt text; and every route
 //     TEXT_RULES names (lib/core/remote-policy: GET /api/graph and
 //     /api/graph/node/:id among them), read by a remote viewer and by a network
-//     peer, carries none either — but for the two whose route files the ledger
-//     has left unowned, named in TEXT_NOT_YET_STRIPPED, a list that can only
-//     shrink;
+//     peer, carries none either;
 //   * and a project that opted in shows a remote viewer the conversation at
 //     `read`: the audience its sockets and routes judge by is the server's own;
 //   * the redactor knows web-chat's capture token (spec §5.5, "Known values"):
@@ -256,17 +254,6 @@ const TEXT_ROUTE_URLS = Object.freeze({
   'GET /api/health': () => '/api/health',
 });
 
-// The TEXT_RULES routes that do not strip their entry yet. Each route strips its
-// own (remote-policy's header names who: history.js the versions, replay.js the
-// path), and these two route files have no 0.8.5 owner in the shared-file
-// ledger (spec §11.2), so tranche 1's integration left the edit to whoever the
-// orchestrator gives them. Shrink-only: once a route strips, this test fails
-// until its entry goes.
-const TEXT_NOT_YET_STRIPPED = new Map([
-  ['GET /api/mounts/:id/history', 'routes/history.js serves each version\'s trigger_summary to every viewer'],
-  ['GET /api/replay/path', 'routes/replay.js serves each step\'s caption (prompt, reply, summary) to every viewer'],
-]);
-
 const carriesText = (s) => s.includes(PROMPT_MARK) || s.includes(REPLY_MARK);
 const bodyText = (r) => (typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
 
@@ -298,16 +285,9 @@ function textRoutes(d) {
       const keys = Object.keys(TEXT_RULES.routes).sort();
       assert.deepEqual(Object.keys(TEXT_ROUTE_URLS).sort(), keys, 'this test reaches every route TEXT_RULES names');
       assert.deepEqual([...carried].sort(), keys, 'and read each one while the host\'s copy carried the turn\'s text');
-      for (const key of [...TEXT_NOT_YET_STRIPPED.keys()]) assert.ok(keys.includes(key), `${key} is a TEXT_RULES route`);
       for (const key of keys) {
         const who = [...(leaked.get(key) || [])];
-        if (TEXT_NOT_YET_STRIPPED.has(key)) {
-          assert.deepEqual(who, BELOW_READ.map(([w]) => w),
-            `${key} stopped serving the turn's text to ${BELOW_READ.map(([w]) => w).filter((w) => !who.includes(w)).join(' and ')}: `
-            + `take it off TEXT_NOT_YET_STRIPPED (${TEXT_NOT_YET_STRIPPED.get(key)})`);
-        } else {
-          assert.deepEqual(who, [], `${key} served the turn's prompt or reply to ${who.join(' and ')}`);
-        }
+        assert.deepEqual(who, [], `${key} served the turn's prompt or reply to ${who.join(' and ')}`);
       }
     },
   };
@@ -588,9 +568,8 @@ test('a local socket gets the step\'s label; a remote one only mirror:status, an
 
   // Every route TEXT_RULES names — the graph, a node, its preview document, the
   // pane's history, the replay path, /api/health — read remotely and by a
-  // network peer, carries no prompt or reply (but the two the ledger has left
-  // unowned, TEXT_NOT_YET_STRIPPED); read locally, each carries them, so the
-  // probe can see them.
+  // network peer, carries no prompt or reply; read locally, each carries them,
+  // so the probe can see them.
   await routes.read({ node: end.node_id });
   routes.check();
 });
