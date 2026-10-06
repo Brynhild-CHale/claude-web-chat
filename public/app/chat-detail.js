@@ -336,7 +336,7 @@ function goneBanner(v) {
 // banner up; any other change repaints.
 function watchRow(v, rowId, { inStore }) {
   let seen = inStore;
-  v.row = () => (mirror.tasks instanceof Map ? mirror.tasks.get(rowId) : null) || null;
+  v.row = () => findRow(rowId);
   v.gone = false;
   v.onMirror = () => {
     const row = v.row();

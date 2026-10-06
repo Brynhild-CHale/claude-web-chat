@@ -602,6 +602,32 @@ test('a finished agent and a finished workflow removed from the store keep their
   await show();
 });
 
+test('an agent view opened on a provisional row (its tool_use id) keeps following once the store re-keys it to its agentId', async () => {
+  const P = task({ id: 'toolu_p9', kind: 'agent', title: 'Provisional agent', tool_use_id: 'toolu_p9', meta: { tools: 0 } });
+  const K = { ...P, id: 'a9rekeyed', rev: 2, meta: { tools: 2 } };
+  let row = P;
+  let n = 0;
+  // The route answers the first id through the source's alias (U42).
+  agents.toolu_p9 = (p) => {
+    if (p.has('after')) {
+      n += 1;
+      return { agent: row, items: n === 2 ? [item(2, 'reply', { agent: 'p9', text: 'still going' })] : [], next_before: null, rev: 1 };
+    }
+    return agentPage(row, [item(1, 'reply', { agent: 'p9', text: 'started' })]);
+  };
+  await show({ tasks: [...TASKS, P] });
+  await open({ view: 'task', id: 'toolu_p9' });
+  await waitUntil(() => /started/.test(q('.dv-items').textContent), { what: 'the provisional agent\'s view' });
+  assert.match(q('.dv-status').textContent, /^running/);
+  row = K;
+  await update([K], { removed_tasks: ['toolu_p9'] });
+  await waitUntil(() => /still going/.test(q('.dv-items').textContent), { what: 'the follower after the re-key' });
+  await settle();
+  assert.equal(q('.dv-gone'), null, 'no "No longer running" banner');
+  assert.match(q('.dv-status').textContent, /^running/, 'the status line reads the re-keyed running row');
+  await show();
+});
+
 /* ── code changes ─────────────────────────────────────────────────────────── */
 
 const PATCH = [
