@@ -489,7 +489,10 @@ test('a live turn that edits a file: code pending → ready, the record on disk,
   assert.deepEqual(rec.flags, { concurrent_sessions: false, before_racy: false, skipped_large_untracked: [] });
   assert.equal(rec.outside, null);
   assert.equal(rec.attr_exact, true);
-  assert.equal('head' in rec, false, 'no head key (U43-U79@head-on-record is held)');
+  // B1 (a), U43-U79@head-on-record: the project's HEAD on both sides, read read-only.
+  const head = repo.git(['rev-parse', 'HEAD']).toString().trim();
+  assert.equal(rec.before.head, head, 'before.head is the scratch repo\'s HEAD');
+  assert.equal(rec.after.head, head, 'after.head is the scratch repo\'s HEAD');
   // The bar's last turn, without a process sample.
   assert.equal(h.mirror.liveOf(S1).last_turn.code.files, 1);
   // Through the facade: host paths masked on the way out.
