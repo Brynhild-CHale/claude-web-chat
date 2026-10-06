@@ -1,13 +1,14 @@
 // The graph link (spec §2.8, §2.12, §15.4; U44, U44b): each closed chat turn
-// and the graph node it rode into. U44b builds the ruling of 2026-10-06 on the
-// commit-role fallback: the locked turn-end path only (C1 a′).
+// and the graph node it rode into. U44b builds the rulings of 2026-10-06: the
+// commit-role fallback on the locked turn-end path only (C1 a′), and the attach
+// staged until the commit's graph event confirms it, after the write (C2 b).
 //
 // Three rigs, in the order the brief asks for them:
 //   * the source on an engine built from the mirror's real model and turn
 //     machine (no facade), over a graph from lib/server/graph createGraph, with
 //     graph.mirror pointing at the source's attachToNode and commits made by
 //     domain/turns commitNode — the rules: attach, the commit match, the label,
-//     the orphans, the boot rebuild, nodeTurns and summaries;
+//     the confirm, the orphans, the boot rebuild, nodeTurns and summaries;
 //   * a real facade (lib/server/mirror createMirror, with `live` and this source
 //     registered) under the graph routes on a BARE Express app whose ctx carries
 //     the hook tap and the real audience, the turn routes posted through
@@ -96,7 +97,7 @@ function rig(t, { start = true } = {}) {
   const source = createGraphLinkSource().attach(engine);
   graph.mirror = { attachToNode: (...a) => source.api.attachToNode(...a) };
   const r = {
-    root, paths, state, graph, bus, model, tm, source, logs,
+    root, paths, state, graph, bus, model, tm, source, logs, sourceModel,
     api: source.api,
     tick: (ms = 1) => { clock += ms; return clock; },
     now: () => clock,
@@ -340,6 +341,102 @@ test('the label: once the commit\'s graph event has gone out, every attached hea
   const preserve = r.commit({ op: 'commit' });
   assert.equal(r.model.serializeTurn('pB').node.label, r.label(preserve));
   assert.notEqual(r.label(preserve), preserve);
+});
+
+// ── the confirm (ruling U44@commitNode-writeNode-throw, C2 b) ──────────────────
+
+// Every attachTurn call the source makes on the engine's model, as [turnId, node].
+function spyAttach(r) {
+  const calls = [];
+  const real = r.sourceModel.attachTurn;
+  r.sourceModel.attachTurn = (id, node) => { calls.push([id, { ...node }]); return real(id, node); };
+  return calls;
+}
+
+test('the confirm: the turns are attached once, from the commit\'s own event, with the node\'s real label — never first under the node id, and not before the write', async (t) => {
+  const r = await rig(t);
+  r.commit({ op: 'commit' });
+  r.commit({ op: 'commit' });
+  r.turn(S1, 'pA');
+  r.turn(S2, 'qA');
+  const calls = spyAttach(r);
+  const atWrite = [];
+  const write = r.graph.writeNode;
+  r.graph.writeNode = (node) => {
+    atWrite.push(['pA', 'qA'].map((id) => r.tm.linkState(id)));
+    return write.call(r.graph, node);
+  };
+  const id = r.commit({ session_id: S1, prompt_id: 'pA', locked: true });
+  const label = r.label(id);
+  assert.equal(label, 'n1.2', 'the third node of the tree, not its id');
+  assert.deepEqual(atWrite, [['pending', 'pending']], 'nothing is attached while the node is written');
+  assert.deepEqual(calls, [
+    ['pA', { id, label, role: 'commit' }],
+    ['qA', { id, label, role: 'folded' }],
+  ], 'one attach per turn, with the label');
+  assert.deepEqual(roleOf(r.nodeFile(id)), { pA: 'commit', qA: 'folded' });
+  for (const tid of ['pA', 'qA']) assert.equal(r.tm.linkState(tid), 'attached');
+
+  // The next api call and the next commit attach nothing again.
+  r.api.summaries();
+  r.turn(S1, 'pB');
+  const next = r.commit({ session_id: S1, prompt_id: 'pB', locked: true });
+  assert.deepEqual(calls.slice(2), [['pB', { id: next, label: r.label(next), role: 'commit' }]]);
+  assert.deepEqual(roleOf(r.nodeFile(next)), { pB: 'commit' });
+});
+
+test('the confirm: a writeNode that throws fails the commit as before, registers nothing, leaves every turn pending; the next commit attaches them with their roles', async (t) => {
+  const r = await rig(t);
+  r.turn(S1, 'pA');
+  r.turn(S1, 'pB');
+  r.turn(S2, 'qA');
+  const calls = spyAttach(r);
+  const write = r.graph.writeNode;
+  r.graph.writeNode = () => { throw new Error('EIO'); };
+  const before = r.graph.nodes.size;
+  const active = r.graph.active;
+  const failedId = `n${r.graph.nextSeq}`;
+  assert.throws(() => r.commit({ session_id: S1, prompt_id: 'pB', locked: true }), /EIO/);
+  assert.equal(r.graph.nodes.size, before, 'no node registers');
+  assert.equal(r.graph.active, active);
+  assert.equal(r.graph.nodes.has(failedId), false);
+  for (const tid of ['pA', 'pB', 'qA']) {
+    assert.equal(r.tm.linkState(tid), 'pending', `${tid} is still pending`);
+    assert.equal(r.model.serializeTurn(tid).node, null);
+  }
+  assert.deepEqual(calls, [], 'nothing was attached');
+  // An api call between the failure and the next commit attaches nothing to the
+  // node that never registered.
+  assert.deepEqual(r.api.nodeTurns('live').turns.map((x) => x.id), ['pA', 'pB', 'qA']);
+  assert.deepEqual(r.api.summaries(), { nodes: {} });
+
+  // The write works again: the retried Stop's commit takes every turn, roles and all.
+  r.graph.writeNode = write;
+  const id = r.commit({ session_id: S1, prompt_id: 'pB', locked: true });
+  assert.notEqual(id, failedId);
+  assert.deepEqual(roleOf(r.nodeFile(id)), { pA: 'folded', pB: 'commit', qA: 'folded' });
+  const label = r.label(id);
+  for (const [tid, role] of [['pA', 'folded'], ['pB', 'commit'], ['qA', 'folded']]) {
+    assert.equal(r.tm.linkState(tid), 'attached');
+    assert.deepEqual(r.model.serializeTurn(tid).node, { id, label, role });
+  }
+  assert.ok(calls.every(([, node]) => node.id === id), 'nothing ever attached to the failed node');
+  assert.equal(calls.length, 3);
+});
+
+test('the confirm: a missed commit event is confirmed by the next reconcile that finds the node registered', async (t) => {
+  const r = await rig(t);
+  r.turn(S1, 'pA');
+  // A graph event that never reaches the source: stand in for it with a bus
+  // whose emit drops the event (the WS frame is irrelevant here).
+  const emit = r.bus.emit;
+  r.bus.emit = () => null;
+  const id = r.commit({ session_id: S1, prompt_id: 'pA', locked: true });
+  r.bus.emit = emit;
+  assert.equal(r.tm.linkState('pA'), 'pending', 'no event, no attach yet');
+  r.api.summaries();
+  assert.equal(r.tm.linkState('pA'), 'attached');
+  assert.deepEqual(r.model.serializeTurn('pA').node, { id, label: r.label(id), role: 'commit' });
 });
 
 // ── orphans ──────────────────────────────────────────────────────────────────
