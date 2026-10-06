@@ -7,6 +7,8 @@
 // config — HOME is a throwaway, and the repositories are built by the small
 // private builder below, ruling U43-U79@fixture-builder):
 //   * a snapshot leaves every file under .git byte-identical; the shadow's
+//     at and duration_ms start in its held slot, so time queued behind
+//     other git work never marks it slow;
 //     alternates line is relative; a sha256 repository snapshots too;
 //   * Q-D fix 1: a same-second same-size edit is captured — the blob equals the
 //     file's bytes — and with limits.keepIndexTimes: false it is missed (the
@@ -254,6 +256,39 @@ test('a snapshot inside a slot the caller holds (U79\'s restore) initialises thr
   const s = await runGit.exclusive((git) => store.snapshot({ git }));
   assert.equal(s.ok, true, JSON.stringify(s));
   assert.deepEqual(await blobAt(store, s.tree, 'a.txt'), Buffer.from('held\n'));
+});
+
+test('a snapshot queued behind slow git work is not marked slow: at and duration_ms start in its held slot', async (t) => {
+  withTempHome(t);
+  const repo = scratchRepo(t);
+  // A private queue whose diff-tree holds the slot until the test lets it go,
+  // and moves the store's clock past SLOW_SNAPSHOT_MS while it holds it.
+  // The guard's threshold, injected small: the source marks a snapshot slow
+  // when its duration_ms is over SLOW_SNAPSHOT_MS.
+  const SLOW = 1000;
+  let clock = 1e12;
+  const base = createGitRunner();
+  let started = false;
+  let release = null;
+  const gate = new Promise((r) => { release = r; });
+  const slowDiff = Object.assign((args, opts) => (args.includes('diff-tree')
+    ? base.exclusive(async (git) => { started = true; await gate; clock += 5 * SLOW; return git(args, opts); })
+    : base(args, opts)), { exclusive: base.exclusive, features: base.features });
+  const runner = wrapRunner(slowDiff);
+  const store = storeFor(repo, { runGit: runner, now: () => clock });
+  const first = await store.snapshot();
+  assert.equal(first.ok, true, JSON.stringify(first));
+  const d = store.diff(first.tree, first.tree);
+  await waitUntil(() => started, { timeout: 10000, what: 'the diff-tree slot' });
+  const queued = store.snapshot();
+  await sleep(50);
+  assert.equal(runner.calls.filter((c) => c.args.includes('write-tree')).length, 1, 'the second snapshot waits for the slot');
+  release();
+  assert.equal((await d).ok, true);
+  const s = await queued;
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.ok(s.duration_ms <= SLOW, `not slow: duration_ms ${s.duration_ms}`);
+  assert.equal(s.at, clock, 'at is the start of the held slot');
 });
 
 test('Q-D fix 1: a same-second same-size edit is captured byte for byte; without the index times it is missed', async (t) => {
