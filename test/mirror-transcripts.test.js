@@ -1089,6 +1089,136 @@ test('a slice without ranges (an older index) falls back to the walk once; the n
   assert.equal(two.b.mirror.skillFold(S1).orgUuid, org);
 });
 
+// U28b@restoreState-v1-slice: a slice written before SLICE_VERSION 2 still
+// hands its normalizer and carrier states on. With a turn open at stop (and a
+// task notification's first carrier pending) those states are the boundary's,
+// which a resumed read cannot rebuild: were the v1 slice refused, the restart
+// would read on from the boundary with a file-from-0 state.
+test('a v1 slice keeps its norm and carriers across a restart with a turn open at the boundary', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const r = a.records();
+  closedTurn(r, 'v1-1');
+  const text = require('../test-support/claude-records').taskNotificationText(NOTE);
+  r.queueOperation('enqueue', { content: text }); // its delivery comes after the restart
+  const k = r.records.length;
+  r.prompt('prompt v1-2', { promptId: 'v1-2' });
+  r.assistant([{ type: 'tool_use', name: 'Read', input: { file_path: '/tmp/project/b.txt' }, id: 'toolu_01V1Open' }]);
+  a.ch.writeTranscript(S1, r.records);
+  await a.mirror.start();
+  a.sessionStart();
+  await waitUntil(async () => {
+    const p = await a.mirror.turns(S1, { limit: 100 });
+    return p && p.total === 2 && p.turns[1].status === 'open';
+  }, { timeout: 8000, what: 'v1-2 open' });
+  await a.mirror.stop();
+  const index = store.saved.get(S1);
+  assert.equal(index.resume.offset, Buffer.byteLength(jsonl(r.records.slice(0, k))), 'the index resumes at the open turn\'s opener');
+  // An index written before SLICE_VERSION 2: no ranges.
+  const slice = index.state.sources.transcripts;
+  slice.v = 1;
+  delete slice.known;
+  assert.ok(slice.norm.seq > 0 && slice.norm.turn === 'v1-1', 'the boundary\'s norm is not a file-from-0 state');
+  assert.equal(slice.carriers.queue.length, 1, 'the notification\'s enqueue is pending at the boundary');
+  const v1 = JSON.parse(JSON.stringify(index));
+
+  // The restart re-reads the opener and the open call, so the boundary it
+  // saves again is built from the restored states.
+  const one = await restartWith(t, a, store, { windows: false });
+  await waitUntil(async () => {
+    const p = await one.b.mirror.turns(S1, { items: 'full', limit: 100 });
+    return p && p.total === 2 && p.turns[1].status === 'open' && p.turns[1].items.some((it) => it.kind === 'tool_call');
+  }, { timeout: 8000, what: 'v1-2 open again' });
+  await one.b.mirror.stop();
+  const next = store.saved.get(S1).state.sources.transcripts;
+  assert.equal(next.v, SLICE_VERSION, 'the restarted mirror wrote its own slice');
+  assert.deepEqual(next.norm, slice.norm, 'the v1 slice\'s norm survived the restart');
+  assert.deepEqual(next.carriers, slice.carriers, 'and its carriers');
+
+  // From the same v1 index, the turn then closes whole and the pending carrier
+  // still makes one task item, numbered by its delivery record.
+  store.saved.set(S1, v1);
+  const two = await restartWith(t, a, store, { windows: false });
+  const n0 = r.records.length;
+  const delivery = r.taskNotification(NOTE);
+  r.queuedCommand(text, { commandMode: 'task-notification' });
+  r.toolResult('toolu_01V1Open', 'contents of b');
+  r.assistant(['Read it.']);
+  r.turnDuration({ durationMs: 30 });
+  two.b.ch.appendTranscript(S1, r.records.slice(n0));
+  const page = await turnCount(two.b, 2);
+  assert.deepEqual(page.turns.map((x) => x.id), ['v1-1', 'v1-2']);
+  const full = await two.b.turns();
+  const turn2 = full.turns.find((x) => x.id === 'v1-2');
+  assert.equal(turn2.items.find((it) => it.kind === 'prompt').seq, k + 1, 'the opener keeps its file ordinal');
+  assert.equal(turn2.items.find((it) => it.kind === 'tool_call').status, 'done');
+  const tasks = taskItems(full);
+  assert.equal(tasks.length, 1, 'one task item for the carriers either side of the restart');
+  assert.equal(tasks[0].seq, ordinalOf(r, delivery), 'its seq is its delivery record\'s file ordinal');
+});
+
+// U28b@scanKnown-cut-short: a walk of the prefix that stops after its first
+// page has recorded the ranges of that page alone, which may miss a value — so
+// the snapshot after it carries no `known`, and the next restart walks again.
+test('a walk cut short after its first page leaves `known` out of the next slice; the next restart walks again', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  const email = 'pat.cut-user@example.com';
+  const org = '9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a';
+  const r = a.records();
+  const ctx = added(r, () => r.sessionContext({ userEmail: email })); // in the walk's first page
+  for (let i = 0; i < 3; i++) closedTurn(r, `cut-${i}`, `prompt cut-${i}`, `${'x'.repeat(400 * 1024)} ${i}`);
+  const cred = added(r, () => r.credentialOrg(org)); // past the first 1 MiB page
+  closedTurn(r, 'cut-3');
+  a.ch.writeTranscript(S1, r.records);
+  assert.ok(rangeOf(r.records, cred)[0] > 1024 * 1024, 'the org line lies past the walk\'s first page');
+  await a.mirror.start();
+  a.sessionStart();
+  await turnCount(a, 4);
+  await a.mirror.stop();
+  // An index written before SLICE_VERSION 2: no ranges, so the restart walks.
+  const slice = store.saved.get(S1).state.sources.transcripts;
+  const resumeAt = store.saved.get(S1).resume.offset;
+  slice.v = 1;
+  delete slice.known;
+
+  // Every readWindow of the prefix after the walk's first page fails.
+  const real = claudeFiles.readWindow;
+  const walk = [];
+  claudeFiles.readWindow = (file, opts) => {
+    if (path.basename(String(file)) === `${S1}.jsonl` && ((opts && opts.from) || 0) < resumeAt) {
+      walk.push({ ...opts });
+      if (((opts && opts.from) || 0) > 0) throw new Error('EIO: the walk cut short');
+    }
+    return real(file, opts);
+  };
+  t.after(() => { claudeFiles.readWindow = real; });
+  const one = await restartWith(t, a, store, { windows: false });
+  claudeFiles.readWindow = real; // the new facade holds the failing wrap; nothing else does
+  assert.ok(walk.length >= 2 && walk[0].from === 0 && walk[1].from > 0, 'the walk read its first page, then failed on the next');
+  const n0 = r.records.length;
+  closedTurn(r, 'cut-4'); // a record read after the walk, so the restarted mirror writes its own slice
+  one.b.ch.appendTranscript(S1, r.records.slice(n0));
+  await turnCount(one.b, 5);
+  await one.b.mirror.stop();
+  const next = store.saved.get(S1).state.sources.transcripts;
+  assert.equal(next.v, SLICE_VERSION, 'the restarted mirror wrote its own slice');
+  assert.ok(!('known' in next), 'a walk cut short hands on no ranges');
+
+  // So the next restart walks again, all the way, and records both ranges.
+  const two = await restartWith(t, a, store);
+  assert.ok(two.windows.some((c) => (c.from || 0) === 0), 'the next restart walks from 0');
+  const n1 = r.records.length;
+  closedTurn(r, 'cut-5', `mail ${email} about ${org}`);
+  two.b.ch.appendTranscript(S1, r.records.slice(n1));
+  await turnCount(two.b, 6);
+  const s = JSON.stringify([await two.b.ask('turn', 'cut-5'), two.b.frames]);
+  assert.ok(!s.includes(email) && !s.includes(org), 'both values registered by the second walk');
+  await two.b.mirror.stop();
+  assert.deepEqual(store.saved.get(S1).state.sources.transcripts.known, [rangeOf(r.records, ctx), rangeOf(r.records, cred)],
+    'the whole walk recorded both ranges');
+});
+
 test('at most KNOWN_RANGES_MAX ranges a session, the newest kept', async (t) => {
   const store = fakeStore();
   const h = setup(t, { store });
