@@ -1,5 +1,6 @@
-// The graph link (spec §2.8, §2.12, §15.4; U44): each closed chat turn and the
-// graph node it rode into.
+// The graph link (spec §2.8, §2.12, §15.4; U44, U44b): each closed chat turn
+// and the graph node it rode into. U44b builds the ruling of 2026-10-06 on the
+// commit-role fallback: the locked turn-end path only (C1 a′).
 //
 // Three rigs, in the order the brief asks for them:
 //   * the source on an engine built from the mirror's real model and turn
@@ -122,13 +123,15 @@ function rig(t, { start = true } = {}) {
     },
     dirty(k = 'k') { state.store[k] = clock++; },
     // A commit as the routes make it: turn-end ('turn-end', with the Stop's
-    // session) or a manual one / a preserve ('commit').
-    commit({ op = 'turn-end', session_id, prompt_id, parentId } = {}) {
+    // session) or a manual one / a preserve ('commit'). `locked` makes it the
+    // locked turn-end commit (clearLock true, as endTurn's locked branch);
+    // without it a 'turn-end' is the shape of the unlocked-turn commit.
+    commit({ op = 'turn-end', session_id, prompt_id, parentId, locked = false } = {}) {
       r.dirty();
       return turns.commitNode(graph, bus, {
         draftPath: graph.draftPath, parentId: parentId === undefined ? graph.active : parentId, author: 'claude',
-        triggerKind: op === 'turn-end' ? 'turn' : 'manual', message: 'm', clearLock: false, op,
-        includeLabelAndUnlock: op === 'turn-end', session_id, prompt_id,
+        triggerKind: op === 'turn-end' ? (locked ? 'turn' : 'unlocked-turn') : 'manual', message: 'm',
+        clearLock: locked === true, op, includeLabelAndUnlock: op === 'turn-end', session_id, prompt_id,
       }).node_id;
     },
     nodeFile: (id) => JSON.parse(fs.readFileSync(path.join(paths.GRAPH_DIR, `${id}.json`), 'utf8')),
@@ -202,12 +205,61 @@ test('the commit match: by the turn\'s id or the hook id its header `replaces`; 
   assert.deepEqual(roleOf(r.nodeFile(id)), { txP: 'commit' });
 });
 
-test('the commit match: a prompt_id that names no pending turn (an absorbed prompt) gives no turn commit — every turn folded (held: U44@commit-match-fallback)', async (t) => {
+// Ruling U44@commit-match-fallback (C1 a′, 2026-10-06): the fallback is the
+// locked turn-end path's alone.
+test('the commit match, locked turn-end: a prompt_id that names no pending turn (an absorbed prompt) gives the session\'s most recently ended pending turn commit, every other turn folded', async (t) => {
   const r = await rig(t);
   r.turn(S1, 'pA');
   r.turn(S1, 'pB');
-  const id = r.commit({ session_id: S1, prompt_id: 'p-absorbed' });
-  assert.deepEqual(roleOf(r.nodeFile(id)), { pA: 'folded', pB: 'folded' });
+  r.turn(S2, 'qA'); // ended later, but another session's
+  const id = r.commit({ session_id: S1, prompt_id: 'p-absorbed', locked: true });
+  assert.deepEqual(roleOf(r.nodeFile(id)), { pA: 'folded', pB: 'commit', qA: 'folded' });
+  assert.equal(r.model.serializeTurn('pB').node.role, 'commit');
+
+  // A prompt_id that does name a pending turn still names it, on the locked path too.
+  r.turn(S1, 'pC');
+  r.turn(S1, 'pD');
+  const named = r.commit({ session_id: S1, prompt_id: 'pC', locked: true });
+  assert.deepEqual(roleOf(r.nodeFile(named)), { pC: 'commit', pD: 'folded' });
+
+  // No prompt_id at all names no turn either: the same fallback.
+  r.turn(S1, 'pE');
+  r.turn(S1, 'pF');
+  const bare = r.commit({ session_id: S1, locked: true });
+  assert.deepEqual(roleOf(r.nodeFile(bare)), { pE: 'folded', pF: 'commit' });
+
+  // The Stop's session has no pending turn: nothing is inferred from another's.
+  r.turn(S2, 'qB');
+  const other = r.commit({ session_id: S1, prompt_id: 'p-absorbed', locked: true });
+  assert.deepEqual(roleOf(r.nodeFile(other)), { qB: 'folded' });
+});
+
+test('the commit match, locked turn-end fallback: the greatest ended_at wins, a tie goes to the higher seq', async (t) => {
+  const r = await rig(t);
+  const at = Date.now() - 1000;
+  r.tm.restoreTurns(S1, [restored(S1, 'pA', 1, at), restored(S1, 'pB', 2, at), restored(S1, 'pC', 3, at - 5)]);
+  r.tm.restoreTurns(S2, [restored(S2, 'qA', 1, at + 50)]);
+  const id = r.commit({ session_id: S1, prompt_id: 'p-absorbed', locked: true });
+  assert.deepEqual(roleOf(r.nodeFile(id)), { pA: 'folded', pB: 'commit', pC: 'folded', qA: 'folded' });
+});
+
+test('the commit match, every other path: the unlocked-turn commit (and a late Stop that falls through to it), /api/commit and the preserves infer nothing — every turn folded', async (t) => {
+  const r = await rig(t);
+  r.turn(S1, 'pA');
+  r.turn(S1, 'pB');
+  const unlocked = r.commit({ session_id: S1, prompt_id: 'p-absorbed' }); // op 'turn-end', no lock
+  assert.deepEqual(roleOf(r.nodeFile(unlocked)), { pA: 'folded', pB: 'folded' });
+  assert.equal(r.graph.nodes.get(unlocked).trigger.kind, 'unlocked-turn');
+  r.turn(S1, 'pC');
+  const bare = r.commit({ session_id: S1 });
+  assert.deepEqual(roleOf(r.nodeFile(bare)), { pC: 'folded' }, 'no prompt_id, no lock: nothing inferred');
+  r.turn(S1, 'pD');
+  const manual = r.commit({ op: 'commit', session_id: S1, prompt_id: 'p-absorbed' });
+  assert.deepEqual(roleOf(r.nodeFile(manual)), { pD: 'folded' }, 'op commit is never the locked path');
+  // A matching prompt_id on the unlocked path is still a match (§2.8): the Stop closed that turn.
+  r.turn(S1, 'pE');
+  const matched = r.commit({ session_id: S1, prompt_id: 'pE' });
+  assert.deepEqual(roleOf(r.nodeFile(matched)), { pE: 'commit' });
 });
 
 test('the commit match: a commit with no session, or a session with no pending turn, makes every turn folded', async (t) => {
@@ -545,6 +597,49 @@ test('every commit path attaches: the locked turn-end (commit), the unlocked-tur
   assert.ok(stolen.body.preserved, JSON.stringify(stolen.body));
   assert.deepEqual(roleOf(h.nodeFile(stolen.body.preserved)), { p3: 'folded' });
   assert.deepEqual(liveIds(h), [], 'q3 is open: nothing pending');
+});
+
+test('C1 a′ through the routes: a locked turn-end Stop whose prompt_id names no pending turn gives the session\'s most recently ended turn commit; the same Stop through the lockless path gives every turn folded', async (t) => {
+  const h = await routesRig(t);
+  // Locked: p0 closed earlier (a no-change turn, pending), p1 holds the lock;
+  // the Stop names a prompt the mirror never saw.
+  await h.begin(S1, 'p0');
+  assert.equal((await h.end(S1, 'p0')).body.skipped, 'no-change');
+  h.tapTurn(S2, 'q0');
+  assert.equal((await h.begin(S1, 'p1')).status, 200);
+  h.dirty();
+  const locked = await h.end(S1, 'p-absorbed');
+  assert.ok(locked.body.node_id && !locked.body.unlocked, JSON.stringify(locked.body));
+  assert.deepEqual(roleOf(h.nodeFile(locked.body.node_id)), { p0: 'folded', p1: 'commit', q0: 'folded' });
+  assert.equal(h.mirror.nodeTurns(locked.body.node_id).turns.find((x) => x.id === 'p1').node.role, 'commit');
+
+  // Lockless (endTurn's no-lock branch, dirty surface): the same kind of Stop,
+  // and the request a late Stop the turn guard had no record of falls through
+  // to — nothing inferred, every turn folded.
+  // (The rig's hook clock lags the routes' Date.now() once a route has
+  // published; these hooks, and the Stops below, carry one clock of their own
+  // that starts at real time, so the turn machine sees them in order.)
+  const at = { ts: Date.now() };
+  const hook = (event, pid, extra) => h.publish(event, S1, { prompt_id: pid, ts: ++at.ts, ...extra });
+  const endAt = (pid) => h.post('/api/turn-end', {
+    session_id: S1, transcript_path: h.ch.transcript(S1), cwd: h.ch.cwd, prompt_id: pid, ts: ++at.ts,
+    last_assistant_message: 'ok', reply: 'ok',
+  });
+  hook('UserPromptSubmit', 'p2', { prompt: { author: 'user', text: 'p2' } });
+  hook('Stop', 'p2', { stop: { last_assistant_message: 'ok' } });
+  hook('UserPromptSubmit', 'p3', { prompt: { author: 'user', text: 'no lock' } });
+  h.dirty();
+  assert.equal(h.graph.lock, null);
+  const lockless = await endAt('p-absorbed-2');
+  assert.equal(lockless.body.unlocked, true, JSON.stringify(lockless.body));
+  assert.deepEqual(roleOf(h.nodeFile(lockless.body.node_id)), { p2: 'folded', p3: 'folded' });
+  hook('UserPromptSubmit', 'p4', { prompt: { author: 'user', text: 'p4' } });
+  hook('Stop', 'p4', { stop: { last_assistant_message: 'ok' } });
+  h.dirty();
+  const late = await endAt('p-late');
+  assert.equal(late.body.unlocked, true, JSON.stringify(late.body));
+  assert.deepEqual(roleOf(h.nodeFile(late.body.node_id)), { p4: 'folded' });
+  assert.deepEqual(liveIds(h), [], 'every turn attached');
 });
 
 test('a no-change turn (skipTurn) and another session\'s Stop (foldOtherSession) stay pending and ride into the next commit folded', async (t) => {
