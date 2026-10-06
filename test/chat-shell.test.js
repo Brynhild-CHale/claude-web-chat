@@ -58,6 +58,17 @@ const pointerdown = (target) => target.dispatchEvent(new W.PointerEvent('pointer
   { bubbles: true, cancelable: true, composed: true, button: 0, pointerId: 1 }));
 const note = () => { const n = $('cs-tray'); return n && !n.classList.contains('hidden') ? n : null; };
 const firstChip = () => $('cs-chips').querySelector('button');
+// main.js starts the trays (tranche 3), whose claimChips() takes the bar's
+// stand-in chips (and the note they open, a .popover) at boot. A case that
+// presses a stand-in takes the trays off first — stopTrays() calls claimChips'
+// release(), and the stand-ins are back — and puts them on again after it.
+async function standIns(t) {
+  const trays = await shell.importApp('chat-trays.js');
+  trays.stopTrays();
+  t.after(() => { trays.initChatTrays(); });
+  await shell.tick();
+  assert.ok(W.document.querySelector('#cs-chips .cs-devchip'), 'precondition: the bar\'s stand-in chips are back');
+}
 const railPinnedOpen = () => $('queue-rail').classList.contains('open');
 function listen(t, type) {
   const seen = [];
@@ -137,7 +148,8 @@ for (const [what, target] of [
   });
 }
 
-test('a pointerdown inside a popover (the bar\'s note) leaves the drawer open', async () => {
+test('a pointerdown inside a popover (the bar\'s note) leaves the drawer open', async (t) => {
+  await standIns(t);
   await open();
   shell.press(firstChip());              // the bar is no zone either
   assert.ok(isOpen(), 'pressing a chip left the drawer open');
@@ -209,7 +221,8 @@ test('any other zone element closes by .hidden, its controller told', async (t) 
 
 /* ------------------------------ Escape ------------------------------ */
 
-test('Escape with the bar\'s note open closes the note and leaves the drawer; a second closes the drawer', async () => {
+test('Escape with the bar\'s note open closes the note and leaves the drawer; a second closes the drawer', async (t) => {
+  await standIns(t);
   await open();
   shell.click(firstChip());
   assert.ok(note(), 'precondition: the note is open');
@@ -233,6 +246,7 @@ test('an addEscapeStep layer pops before the drawer closes', async (t) => {
 });
 
 test('a popover goes before an Escape step: one layer per press', async (t) => {
+  await standIns(t);
   await open();
   let asked = 0;
   t.after(dock.addEscapeStep(() => { asked++; return true; }));
@@ -403,7 +417,8 @@ test('⌘K lists "Reset the chat window", which puts the defaults back', async (
   assert.equal(JSON.parse(W.localStorage.getItem('wc:chat-window')).mode, 'drawer', 'and the defaults were saved');
 });
 
-test('⌘K "Background tasks" shows while #cs-chips holds a button, and clicks the first', async () => {
+test('⌘K "Background tasks" shows while #cs-chips holds a button, and clicks the first', async (t) => {
+  await standIns(t);
   assert.ok(firstChip(), 'precondition: the bar\'s stand-in chips are up');
   await openPalette();
   const r = row('Background tasks');

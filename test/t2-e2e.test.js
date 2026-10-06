@@ -324,7 +324,8 @@ async function exitsClean(t, teardown, { lock = false } = {}) {
   await closedTurnPage(d, S1);
   const linked = async () => (await d.snapshot()).conversations.find((c) => c.process && c.process.pid === process.pid);
   await waitUntil(linked, { ...WAIT, what: 'the mirror to link the session\'s process' });
-  assert.deepEqual(d.srv.mirror.stats().sources.map((s) => [s.name, s.started]),
+  // Tranche 2's sources lead SOURCES; tranche 3's follow them (t3-e2e pins those).
+  assert.deepEqual(d.srv.mirror.stats().sources.slice(0, 3).map((s) => [s.name, s.started]),
     [['live', true], ['transcripts', true], ['rewinds', true]], 'tranche 2\'s sources are running');
   if (lock) {
     await d.turnBegin('p2', 'one more thing');
@@ -332,22 +333,10 @@ async function exitsClean(t, teardown, { lock = false } = {}) {
   }
   await teardown(d);
   assert.equal(d.server.listening, false, 'the server is closed');
-  // KNOWN, and not tranche 2's: a held lock's stale timer (lib/server/domain/
-  // turns.js syncStaleTimer: unref'd, one per graph, due at the lock's TTL)
-  // outlives srv.stop(), which no teardown path clears — 0.8.0's, recorded in
-  // U40's hand-off for the file's owner. Exactly that one timer is let through;
-  // the turn guard's own (its pid check) must be gone.
-  const ttl = 15 * 60 * 1000;
-  const isStaleTimer = (h) => {
-    const m = /^Timeout\((\d+) ms, unref'd\)$/.exec(h);
-    return Boolean(m) && Number(m[1]) > ttl - 60000 && Number(m[1]) <= ttl + 1;
-  };
-  const opened = () => {
-    const out = tracker.open();
-    const i = lock ? out.findIndex(isStaleTimer) : -1;
-    if (i >= 0) out.splice(i, 1);
-    return out;
-  };
+  // Nothing is let through: a held lock's stale timer (lib/server/domain/
+  // turns.js syncStaleTimer) is cleared by the graph's own stop (stopGraph),
+  // which both teardown paths call, and the turn guard's (its pid check) too.
+  const opened = () => tracker.open();
   const left = await waitUntil(() => {
     const open = opened();
     const more = excess(base);
@@ -361,7 +350,8 @@ async function exitsClean(t, teardown, { lock = false } = {}) {
 test('the server boots with tranche 2\'s sources running, the content routes mounted and the turn guard on it', async (t) => {
   const d = await daemon(t);
   await d.srv.mirror.ready;
-  assert.deepEqual(d.srv.mirror.stats().sources.map((s) => s.name), ['live', 'transcripts', 'rewinds'],
+  // Tranche 2's sources lead SOURCES; tranche 3's follow them (t3-e2e pins those).
+  assert.deepEqual(d.srv.mirror.stats().sources.slice(0, 3).map((s) => s.name), ['live', 'transcripts', 'rewinds'],
     'SOURCES: live, then transcripts, then rewinds (it hears only what transcripts applied)');
   for (const m of ['bindEndTurn', 'ended', 'closedRecently', 'reconcileLateStop', 'noteEnded', 'stop']) {
     assert.equal(typeof d.srv.turnGuard[m], 'function', `the server's turn guard has ${m}`);

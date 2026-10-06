@@ -230,6 +230,12 @@ before(async () => {
       // Once main.js starts the bar itself, it is running already: this file
       // wants a ticker of its own, counted from its start.
       bar.stopBar();
+      // main.js also starts the trays (tranche 3), whose claimChips() takes the
+      // five stand-in chips and the note's #cs-tray at boot. This file is about
+      // the bar and its stand-ins, so it takes the trays off: stopTrays() calls
+      // claimChips' release(), and the stand-ins are back as they stood before
+      // the trays (the trays' own takeover: chat-trays.test.js, t3-e2e-chrome).
+      (await sh.importApp('chat-trays.js')).stopTrays();
       const known = new Set(sh.intervals().map((i) => i.id));
       bar.initChatBar();
       const mine = sh.intervals().filter((i) => !known.has(i.id));
