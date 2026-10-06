@@ -7,9 +7,11 @@ description: Set, change or remove this web-chat project's identity — the name
 
 A web-chat project's **identity** is what the topbar's lockup, the tab and the
 phone show for it: a **name** (the folder's, until one is set), a **logo** (any
-shape, beside the name), a **favicon** (square, for the tab and the home-screen
-icon), an optional **dark variant** of each image, and whether the name shows
-beside the logo (**show-name**, off for a wordmark that already spells it).
+shape, beside the name), a **favicon** (square, for the tab), an optional
+**dark variant** of each image, and whether the name shows beside the logo
+(**show-name**, off for a wordmark that already spells it). The home-screen
+icon is made from the **mark** — the favicon, else a square logo — so a
+favicon is for the tab and the home-screen icon only as the mark.
 
 All of it is set on this machine with `claude-web-chat identity`. The work —
 cropping, keying the background, finding a pixel-art grid, padding, resampling,
@@ -61,13 +63,26 @@ not this skill's.
    as the logo and it is also the mark (the phone and the tab draw it). Content
    within 1.25:1 is padded to an exact square.
 3. **Wide, or a wordmark?** Set it as the logo, then settle the favicon with the
-   user. Offer the choices, with a `--dry-run --preview` of each where it applies:
-   - a separate square image the user supplies (`identity favicon <square file>`);
-   - keep web-chat's W as the favicon (set nothing);
-   - only for a logo up to 1.25:1: pad the whole logo to a square
-     (`identity favicon <file>`; warn that text is unreadable at 16 px). A logo
-     wider than 1.25:1 cannot be padded — the CLI refuses it as a favicon and has
-     no option to pad it — so for one, offer only the first two.
+   user.
+   - **A logo up to 1.25:1**: offer, with a `--dry-run --preview` of each where
+     it applies, a separate square image the user supplies
+     (`identity favicon <square file>`), keeping web-chat's W as the favicon
+     (set nothing), or padding the whole logo to a square
+     (`identity favicon <file>`; warn that text is unreadable at 16 px).
+   - **A logo wider than 1.25:1**: first tell the user it is wider than 1.25:1,
+     so it cannot be the tab's square icon as it is, and ask whether they can
+     provide a different (square) image, or want web-chat's favicon (the W: set
+     nothing). Offer nothing else yet. Only if they want to use this logo after
+     all, offer one of two ways to make it square:
+     - pad: `identity favicon <file> --pad` centres the whole logo on a square
+       (see it first with `--dry-run --preview --pad`). When the CLI's note
+       says text in it will be unreadable at 16 px, tell the user so;
+     - crop: `identity favicon <file> --crop x,y,w,h` keeps only that box (in the
+       file's pixels), such as the logo's symbol. Show it first with
+       `--dry-run --preview --crop x,y,w,h`, so the user sees the result before
+       anything is set.
+   - **A wide SVG**: offer only a different image or web-chat's W. An SVG is
+     never rasterised, so it can be neither padded nor cropped.
 4. **Does the logo contain the name?** Ask whether to hide the text name
    (`identity show-name off`).
 5. **Check contrast in both modes.** The topbar is light in light mode and dark
@@ -88,8 +103,9 @@ not this skill's.
 
    The CLI posts one pane, `identity-preview`, itself: each candidate
    (transparent, tile, and their dark variants) at 16, 20, 24 and 32 px on a
-   light and a dark ground, beside a mock tab and, for a logo, the topbar
-   lockup. Each **Use this** button writes the signal `identity_pick`
+   light and a dark ground, beside a mock tab when the candidate is square (one
+   that is not shows a note that it is not the tab's icon instead) and, for a
+   logo, the topbar lockup. Each **Use this** button writes the signal `identity_pick`
    `{seq, kind, background, dark}`, which reaches you when the user presses
    **Push** (P). Tell the user that. It needs a running surface
    (`claude-web-chat open`). `--dry-run --out <dir>` also writes every candidate
@@ -101,15 +117,18 @@ not this skill's.
    claude-web-chat identity favicon <file> [the same options]
    ```
 
-   A run without `--dark` that changes the image removes its old dark variant
-   (it was made for the old image); the CLI says so.
+   A favicon previewed with `--pad` or `--crop x,y,w,h` is applied with the same
+   flag; the home-screen icon follows the padded or cropped mark. A run without
+   `--dark` that changes the image removes its old dark variant (it was made for
+   the old image); the CLI says so.
 8. **Verify** the topbar lockup and the phone's mark in both modes (the ◑
    toggle), and the tab's favicon in a light and a dark browser. Tell the user a
    browser may keep showing the old favicon until a hard refresh.
 
-To take something away: `claude-web-chat identity clear logo|logo-dark|favicon|favicon-dark|name|all`
-(a light image takes its dark variant with it; `all` clears the four images and
-the name, and shows the name again).
+To take something away: `claude-web-chat identity clear logo|logo-dark|favicon|favicon-dark|name|all|touch`
+(a light image takes its dark variant with it; `touch` removes the home-screen
+icon alone; `all` clears the four images, the home-screen icon and the name, and
+shows the name again).
 
 ## Rules
 

@@ -509,6 +509,132 @@ test('--preview of a 3:1 logo keeps its aspect at every size, and its mock tab s
   });
 });
 
+// ── --pad and --crop (ruling U50@skill:wide-logo-pad, D1 d: U49b) ───────────
+
+// WIDE3's left 18×18: its blue half's 15×14 end, with transparent corners.
+const CROP_BOX = '0,0,18,18';
+const CROP = { x: 0, y: 0, w: 18, h: 18 };
+const outDirFor = (t) => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-identity-shape-'));
+  t.after(() => fs.rmSync(out, { recursive: true, force: true }));
+  return out;
+};
+const sizeOf = (file) => { const im = decodePng(fs.readFileSync(file)); return [im.width, im.height]; };
+
+test('favicon <wide.png> --pad --dry-run --out writes square candidates, with the padding note, and applies nothing', async (t) => {
+  const root = directProject(t);
+  const out = outDirFor(t);
+  const { r, text } = await run(['favicon', WIDE3, '--pad', '--dry-run', '--out', out], { cwd: root });
+  assert.equal(r.applied, false);
+  assert.deepEqual(fs.readdirSync(out).sort(), ['favicon-tile.png', 'favicon-touch.png', 'favicon.png']);
+  for (const f of fs.readdirSync(out)) {
+    const [w, h] = sizeOf(path.join(out, f));
+    assert.equal(w, h, `${f} is square: ${w}×${h}`);
+  }
+  const want = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, pad: true });
+  assert.ok(fs.readFileSync(path.join(out, 'favicon.png')).equals(want.variants.transparent.bytes), 'the engine\'s padded bytes');
+  assert.ok(fs.readFileSync(path.join(out, 'favicon-touch.png')).equals(want.variants.touch.bytes));
+  assert.match(text, /· padded to a square: the \d+×\d+ (px|cell) artwork \(3\.00:1\) is centred/);
+  assert.match(text, /text in it will be unreadable at 16 px/);
+  assert.equal(project.identity(root).favicon, null);
+});
+
+test('favicon <wide.png> --crop x,y,w,h --dry-run --out writes the cropped candidates', async (t) => {
+  const root = directProject(t);
+  const out = outDirFor(t);
+  const { r, text } = await run(['favicon', WIDE3, '--crop', CROP_BOX, '--dry-run', '--out', out], { cwd: root });
+  assert.equal(r.applied, false);
+  const want = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, crop: CROP });
+  for (const [f, v] of [['favicon.png', 'transparent'], ['favicon-tile.png', 'tile'], ['favicon-touch.png', 'touch']]) {
+    assert.ok(fs.readFileSync(path.join(out, f)).equals(want.variants[v].bytes), f);
+    const [w, h] = sizeOf(path.join(out, f));
+    assert.equal(w, h, `${f} is square`);
+  }
+  assert.match(text, /· cropped to 18×18 at 0,0 of the 48×18 image/);
+  // --crop=… spells the same, and a logo takes it too.
+  const again = await run(['logo', WIDE3, `--crop=${CROP_BOX}`, '--dry-run'], { cwd: root });
+  assert.ok(again.r.candidates.every((c) => c.width === c.height), 'a square logo');
+});
+
+test('--pad and --crop apply: the favicon is the padded or cropped artwork, and the mark', async (t) => {
+  const root = directProject(t);
+  await run(['favicon', WIDE3, '--pad'], { cwd: root });
+  let f = project.identity(root).favicon;
+  assert.ok(f && f.width === f.height, `square: ${f && `${f.width}×${f.height}`}`);
+  assert.ok(project.readImage(root, 'favicon').bytes.equals(
+    icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, pad: true }).variants.transparent.bytes));
+  await run(['favicon', WIDE3, '--crop', CROP_BOX, '--background', 'tile'], { cwd: root });
+  f = project.identity(root).favicon;
+  assert.ok(f && f.width === f.height);
+  assert.ok(project.readImage(root, 'favicon').bytes.equals(
+    icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, crop: CROP }).variants.tile.bytes));
+  assert.equal(project.identity(root).mark, 'favicon');
+});
+
+test('--preview of a padded favicon mounts the square candidates, with the mock tab and the flag in the apply line', async (t) => {
+  await withServer(t, { writePortfile: true }, async (h) => {
+    const { r, text } = await run(['favicon', WIDE3, '--pad', '--dry-run', '--preview'], { cwd: h.root });
+    assert.equal(project.identity(h.root).favicon, null, 'a preview applies nothing');
+    const pane = (await h.wsHello()).mounts.find((m) => m.id === identity.PREVIEW_ID);
+    assert.ok(pane, 'the preview pane is on the surface');
+    const shown = new Set([...pane.html.matchAll(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g)].map((m) => m[1]));
+    for (const c of r.candidates) {
+      assert.equal(c.width, c.height, `${c.name} is square`);
+      assert.ok(shown.has(c.bytes.toString('base64')), `${c.name} is on the pane`);
+    }
+    assert.match(pane.html, /class="idp-tab idp-light"><img src="data:image\/png;base64,[^"]+" width="16" height="16"/, 'a square candidate gets the mock tab');
+    assert.match(text, /beside a mock tab/);
+    assert.match(text, /Then apply the pick: claude-web-chat identity favicon \S+ --pad --background <background>/);
+    await run(['favicon', WIDE3, '--crop', CROP_BOX, '--dry-run', '--preview'], { cwd: h.root });
+    const cropped = (await h.wsHello()).mounts.find((m) => m.id === identity.PREVIEW_ID);
+    const want = icon.prepare(fs.readFileSync(WIDE3), { kind: 'favicon', mode: 'auto', tile: null, crop: CROP });
+    assert.ok(cropped.html.includes(want.variants.transparent.bytes.toString('base64')), 'the cropped candidate is mounted');
+  });
+});
+
+test('an SVG with --pad or --crop is refused with a hint, and nothing is written', async (t) => {
+  const root = directProject(t);
+  const text = await refused(['favicon', SVG, '--pad'], { cwd: root }, /an SVG cannot be padded: it is stored as it is and never rasterised\n {2}bring a PNG/);
+  assert.equal(text, '');
+  await refused(['logo', SVG, '--crop', '0,0,16,16'], { cwd: root }, /an SVG cannot be cropped[\s\S]*\n {2}bring a PNG/);
+  await refused(['favicon', SVG, '--crop', '0,0,16,16', '--dry-run'], { cwd: root }, /never rasterised/);
+  assert.equal(project.identity(root).favicon, null);
+  assert.equal(project.identity(root).logo, null);
+});
+
+test('a malformed --crop, a box outside the image and --pad on a logo are refused; a wide favicon hears of both flags', async (t) => {
+  const root = directProject(t);
+  for (const bad of ['1,2,3', 'a,b,c,d', '0,0,0,5', '-1,0,4,4', '1.5,0,4,4', '0,0,4,4,4', '']) {
+    await refused(['favicon', WIDE3, '--crop', bad], { cwd: root }, /--crop .*use x,y,w,h — four whole numbers[\s\S]*--dry-run --preview/);
+  }
+  await refused(['favicon', WIDE3, '--crop', '40,0,14,14'], { cwd: root }, /the crop is not inside the image[\s\S]*the image is 48×18 px/);
+  await refused(['logo', WIDE3, '--pad'], { cwd: root }, /--pad is for a favicon only: a logo keeps its aspect[\s\S]*identity favicon \S+wide3\.png --pad/);
+  await refused(['logo', ICON, '--pad', '--dry-run'], { cwd: root }, /--pad is for a favicon only/);
+  await refused(['favicon', WIDE3, '--pad=yes'], { cwd: root }, /--pad takes no value/);
+  await refused(['favicon', WIDE3], { cwd: root }, /crop the artwork to its mark[\s\S]*--pad centres it on a square[\s\S]*--crop x,y,w,h/);
+  // A crop still too wide is refused as not square, unless --pad is asked too.
+  await refused(['favicon', WIDE3, '--crop', '0,0,48,18'], { cwd: root }, /a favicon must be square/);
+  await run(['favicon', WIDE3, '--crop', '0,0,48,18', '--pad'], { cwd: root });
+  assert.equal(project.identity(root).mark, 'favicon');
+  assert.match(identity.USAGE, /--crop x,y,w,h/);
+  assert.match(identity.USAGE, /--pad {2,}a favicon only/);
+});
+
+test('an SVG logo with no viewBox gets the not-the-tab note in the preview, never the 16 px mock tab', async (t) => {
+  const noBox = fixture('nobox.svg', '<svg xmlns="http://www.w3.org/2000/svg"><rect width="40" height="10" fill="#3366ff"/></svg>\n');
+  await withServer(t, { writePortfile: true }, async (h) => {
+    const { r, text } = await run(['logo', noBox, '--dry-run', '--preview'], { cwd: h.root });
+    assert.equal(r.candidates.length, 1);
+    assert.equal(r.candidates[0].width, null, 'its size is unknown');
+    const pane = (await h.wsHello()).mounts.find((m) => m.id === identity.PREVIEW_ID);
+    assert.ok(pane, 'the preview pane is on the surface');
+    assert.ok(!pane.html.includes('class="idp-tab'), 'no mock tab');
+    assert.match(pane.html, /Not the tab&#39;s icon: a logo that is not square never shows in the tab/);
+    assert.ok(!/NaN/.test(pane.html), 'every size is a number');
+    assert.doesNotMatch(text, /mock tab/);
+  });
+});
+
 // ── the skill ───────────────────────────────────────────────────────────────
 
 test('the project-identity skill is a managed file, and an install writes it', (t) => {
@@ -524,21 +650,50 @@ test('the project-identity skill is a managed file, and an install writes it', (
   assert.equal(fs.readFileSync(path.join(root, row.dest), 'utf8'), tpl);
 });
 
-// Ruling U50@skill:wide-logo-pad (b, provisional): icon.prepare refuses a
-// favicon wider than NEAR_SQUARE and identity has no pad option, so the skill's
-// step 3 offers padding only for a logo up to 1.25:1 — never for a wider one.
-test('the skill\'s step 3 offers padding only up to 1.25:1; a wider logo gets a square image or the W; both copies identical', () => {
+// Ruling U50@skill:wide-logo-pad (D1 d, 2026-10-06, superseding the provisional
+// (b) this test pinned before): for a logo wider than 1.25:1 the skill FIRST
+// says so and asks for a different (square) image or web-chat's W, and only if
+// the user wants this logo offers --pad or --crop; a wide SVG gets only those
+// two. The offer of padding for a logo up to 1.25:1 is kept as it was.
+test('the skill\'s step 3 asks for a different image or web-chat\'s W before it offers pad or crop; a wide SVG gets only those two; both copies identical', () => {
   const tpl = fs.readFileSync(path.join(templatesDir(), 'skills/project-identity/SKILL.md'), 'utf8');
   const dogfood = fs.readFileSync(path.join(REPO, '.claude/skills/project-identity/SKILL.md'), 'utf8');
   assert.equal(dogfood, tpl, 'the dogfood copy is the template, byte for byte');
   assert.equal(icon.NEAR_SQUARE, 1.25, 'the skill\'s 1.25:1 is the engine\'s threshold');
   const at = tpl.indexOf('3. **Wide, or a wordmark?**');
   assert.ok(at >= 0, 'step 3 is there');
-  const step = tpl.slice(at, tpl.indexOf('\n4. **', at));
-  const choices = step.split('\n').filter((l) => /^\s+- /.test(l)).map((l) => l.trim());
-  assert.equal(choices.length, 3);
-  assert.match(choices[0], /^- a separate square image/);
-  assert.match(choices[1], /^- keep web-chat's W/);
-  assert.match(choices[2], /^- only for a logo up to 1\.25:1: pad the whole logo/, 'padding is offered only up to 1.25:1');
-  assert.match(step.replace(/\s+/g, ' '), /A logo wider than 1\.25:1 cannot be padded .* so for one, offer only the first two\./);
+  const step = tpl.slice(at, tpl.indexOf('\n4. **', at)).replace(/\s+/g, ' ');
+  const part = (head, next) => {
+    const i = step.indexOf(head);
+    assert.ok(i >= 0, `step 3 has ${head}`);
+    return step.slice(i, next ? step.indexOf(next, i) : undefined);
+  };
+  const upTo = part('**A logo up to 1.25:1**', '**A logo wider than 1.25:1**');
+  const wide = part('**A logo wider than 1.25:1**', '**A wide SVG**');
+  const svg = part('**A wide SVG**');
+  // Up to 1.25:1: the three choices as before, padding among them.
+  assert.match(upTo, /a separate square image/);
+  assert.match(upTo, /keeping web-chat's W/);
+  assert.match(upTo, /padding the whole logo to a square \(`identity favicon <file>`; warn that text is unreadable at 16 px\)/);
+  // Wider: tell, then ask for a different image or the W, BEFORE pad or crop.
+  const asked = wide.search(/ask whether they can provide a different \(square\) image, or want web-chat's favicon \(the W/);
+  assert.ok(asked >= 0, wide);
+  assert.ok(wide.search(/first tell the user it is wider than 1\.25:1/) < asked, 'the issue is surfaced first');
+  const pad = wide.indexOf('--pad'); const crop = wide.indexOf('--crop');
+  assert.ok(pad > asked && crop > asked, 'pad and crop are offered only after the question');
+  assert.match(wide.slice(asked), /Only if they want to use this logo/);
+  assert.match(wide, /`identity favicon <file> --pad`/);
+  assert.match(wide, /unreadable at 16 px/);
+  assert.match(wide, /`identity favicon <file> --crop x,y,w,h`/);
+  assert.match(wide, /Show it first with `--dry-run --preview --crop x,y,w,h`/);
+  // A wide SVG: only the different image or the W.
+  assert.match(svg, /offer only a different image or web-chat's W/);
+  assert.doesNotMatch(svg, /--pad|--crop/);
+  assert.match(svg, /neither padded nor cropped/);
+  // U77b's wording: the favicon is the home-screen icon's source only as the mark; clear lists touch.
+  assert.doesNotMatch(tpl, /square, for the tab and the home-screen\s+icon/);
+  assert.match(tpl.replace(/\s+/g, ' '), /The home-screen icon is made from the \*\*mark\*\* — the favicon, else a square logo/);
+  assert.match(tpl, /identity clear logo\|logo-dark\|favicon\|favicon-dark\|name\|all\|touch`/);
+  // Step 6: a mock tab only for a square candidate.
+  assert.match(tpl.replace(/\s+/g, ' '), /beside a mock tab when the candidate is square \(one that is not shows a note that it is not the tab's icon instead\)/);
 });
