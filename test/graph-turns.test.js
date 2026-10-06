@@ -471,6 +471,8 @@ test('the summary line waits for a marks refresh in flight, and a later change o
     gv.refreshGraph();                              // the marker's refresh, held at the gate
     await waitUntil(() => nodesCalls() > n, { timeout: 2000, what: 'the gated /api/mirror/nodes' });
     await selectAndSettle('n4');
+    await shell.tick(40);
+    assert.equal(turnsEl(), null, 'nothing is painted from the marks the gated refresh is about to replace');
     release();
     await waitUntil(() => sum() && /^↶ 2 of 2 /.test(sum().textContent), { timeout: 2000, what: 'the refreshed summary line' });
     assert.equal(sum().textContent, `↶ 2 of 2 turns rewound in the terminal at ${hhmm(T + 120000)}`);

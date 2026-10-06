@@ -585,6 +585,23 @@ test('a finished shell removed from the store while its view is open keeps its s
   await show();
 });
 
+test('a finished agent and a finished workflow removed from the store keep their status lines, not the raw \'done\'', async () => {
+  const A9 = task({ id: 'a9', kind: 'agent', title: 'Finished agent', status: 'done', ended_at: T - min(3) });
+  const W9 = task({ id: 'w9', kind: 'workflow', title: 'finished-flow', status: 'done', ended_at: T - min(3) });
+  agents.a9 = () => agentPage(A9, [item(1, 'reply', { agent: 'a9', text: 'nine' })]);
+  for (const [row, ready] of [[A9, () => /nine/.test(q('.dv-items').textContent)], [W9, () => q('.dv-status')]]) {
+    await show({ tasks: [...TASKS, A9, W9] });
+    await open({ view: 'task', id: row.id });
+    await waitUntil(ready, { what: `${row.id}'s view` });
+    const status = q('.dv-status').textContent;
+    assert.notEqual(status, 'done', `${row.id}: the tray's wording while the row is in the store`);
+    await update([], { removed_tasks: [row.id] });
+    await waitUntil(() => q('.dv-gone'), { what: 'the banner' });
+    assert.equal(q('.dv-status').textContent, status, `${row.id}: the last painted status line is kept`);
+  }
+  await show();
+});
+
 /* ── code changes ─────────────────────────────────────────────────────────── */
 
 const PATCH = [
