@@ -24,7 +24,8 @@
 //   * attachments: the five types sent with the four security headers; any
 //     other type, an SVG, HTML, 21 MiB or a body that is not bytes is 404;
 //   * no path to a Claude Code file is ever returned;
-//   * the route module requires neither fs nor lib/core/claude-files.
+//   * the route module requires neither fs nor lib/core/claude-files: only
+//     routes/mirror.js and the shared query parsers, routes/mirror-query.js.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -556,11 +557,11 @@ test('no path to a Claude Code file is ever returned: a body is cut to §2.10\'s
   assert.equal(a.headers.get('content-disposition'), null);
 });
 
-test('the route module is thin: it requires neither fs nor lib/core/claude-files, only routes/mirror.js', () => {
+test('the route module is thin: it requires neither fs nor lib/core/claude-files, only routes/mirror.js and routes/mirror-query.js', () => {
   const src = fs.readFileSync(MODULE, 'utf8');
   const code = src.replace(/^\s*\/\/.*$/gm, '');
   const requires = [...code.matchAll(/require\(\s*(['"])([^'"]+)\1\s*\)/g)].map((x) => x[2]);
-  assert.deepStrictEqual(requires, ['./mirror']);
+  assert.deepStrictEqual(requires, ['./mirror', './mirror-query']);
   assert.ok(!/require\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/.test(code), 'fs');
   assert.ok(!/claude-files/.test(code), 'lib/core/claude-files');
   assert.ok(!/\bimport\s*\(/.test(code), 'no dynamic import');

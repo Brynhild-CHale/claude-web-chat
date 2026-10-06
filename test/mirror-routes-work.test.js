@@ -28,7 +28,9 @@
 //     viewer below `read` with the hint and letting a local one through; the
 //     portal's table (classify) agrees with no row of these modules' own;
 //   * no path to a Claude Code file is ever returned;
-//   * both modules require only routes/mirror.js.
+//   * both modules require only routes/mirror.js and routes/mirror-query.js,
+//     which requires only routes/mirror.js; the query parsers and the JSON
+//     route are defined once, in routes/mirror-query.js (U45b).
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -599,16 +601,65 @@ test('mounting without an audience gate throws rather than serve the work ungate
 
 // ── thin ────────────────────────────────────────────────────────────────────
 
-test('both modules are thin: each requires only routes/mirror.js (no fs, claude-files or domain/refs)', () => {
-  for (const rel of MODULES) {
+const QUERY_MODULE = 'lib/server/routes/mirror-query.js';
+
+test('both modules are thin: each requires only routes/mirror.js and routes/mirror-query.js (no fs, claude-files or domain/refs)', () => {
+  for (const rel of [...MODULES, QUERY_MODULE]) {
     const src = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
     const code = src.replace(/^\s*\/\/.*$/gm, '');
     const requires = [...code.matchAll(/require\(\s*(['"])([^'"]+)\1\s*\)/g)].map((x) => x[2]);
-    assert.deepStrictEqual(requires, ['./mirror'], rel);
+    // The shared parsers' home requires only the shared answers.
+    assert.deepStrictEqual(requires, rel === QUERY_MODULE ? ['./mirror'] : ['./mirror', './mirror-query'], rel);
     assert.ok(!/require\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/.test(code), `${rel}: fs`);
     assert.ok(!/claude-files|domain\/refs|resolveNodeRef/.test(code), `${rel}: claude-files or refs`);
     assert.ok(!/\bimport\s*\(/.test(code), `${rel}: no dynamic import`);
     // Nor does it redact, fence or read a window on its own (§2.9).
     assert.ok(!/\bredact\w*\s*\(|\bfence\s*\(|readWindow|sessionDirFile|taskOutputFile/.test(code), rel);
+  }
+});
+
+// ── one home for the query parsers (U45b) ───────────────────────────────────
+
+test('the query parsers and the JSON route are defined once, in routes/mirror-query.js', () => {
+  const dir = path.join(REPO_ROOT, 'lib/server/routes');
+  const files = fs.readdirSync(dir).filter((f) => /^mirror(?:-[a-z]+)?\.js$/.test(f));
+  assert.ok(files.includes('mirror-query.js') && files.includes('mirror-content.js'), files.join(', '));
+  const DEFS = {
+    BadParam: /\bclass\s+BadParam\b/g,
+    NotFound: /\bclass\s+NotFound\b/g,
+    param: /\bfunction\s+param\s*\(/g,
+    intIn: /\bfunction\s+intIn\s*\(/g,
+    finiteAtLeastZero: /\bfunction\s+finiteAtLeastZero\s*\(/g,
+    oneOf: /\bfunction\s+oneOf\s*\(/g,
+    notBoth: /\bfunction\s+notBoth\s*\(/g,
+    idParam: /\bfunction\s+idParam\s*\(/g,
+    idOk: /\bfunction\s+idOk\s*\(/g,
+    pick: /\bfunction\s+pick\s*\(/g,
+    jsonRoute: /\bfunction\s+jsonRoute\s*\(/g,
+    INT_RE: /\bconst\s+INT_RE\s*=/g,
+    NUM_RE: /\bconst\s+NUM_RE\s*=/g,
+    // The integer rule itself, under any name — except in routes/mirror.js,
+    // whose own `since` (SINCE_RE) is its: mirror-query requires mirror.js, so
+    // that one cannot come from here.
+    'the digits-only regex': /\/\^\\d\{1,16\}\$\//g,
+  };
+  const where = {};
+  for (const f of files) {
+    const code = fs.readFileSync(path.join(dir, f), 'utf8').replace(/^\s*\/\/.*$/gm, '');
+    for (const [name, re] of Object.entries(DEFS)) {
+      if (f === 'mirror.js' && name === 'the digits-only regex') continue;
+      for (let i = (code.match(re) || []).length; i > 0; i--) (where[name] = where[name] || []).push(f);
+    }
+  }
+  for (const name of Object.keys(DEFS)) {
+    assert.deepStrictEqual(where[name], ['mirror-query.js'], `${name} is defined in ${(where[name] || []).join(', ') || 'no file'}`);
+  }
+  // And the three route modules take them from there.
+  const q = require('../lib/server/routes/mirror-query');
+  for (const name of ['BadParam', 'param', 'intIn', 'finiteAtLeastZero', 'idOk', 'pick', 'jsonRoute', 'INT_RE', 'NUM_RE']) {
+    assert.ok(q[name] !== undefined, `mirror-query exports ${name}`);
+  }
+  for (const rel of [...MODULES, 'lib/server/routes/mirror-content.js']) {
+    assert.match(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'), /require\('\.\/mirror-query'\)/, rel);
   }
 });
