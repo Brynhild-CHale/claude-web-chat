@@ -5,54 +5,18 @@
 // This script IS the source: run `node extensions/make-icons.js` and the PNGs
 // under extensions/<name>/icons/ are rewritten from the shape code below.
 //
-// Zero dependencies: zlib (for the IDAT stream) and a CRC32 are all a valid PNG
-// needs — and the CRC32 comes from lib/core/zip, the one home for it, because a
-// PNG chunk and a ZIP entry carry the same IEEE checksum and this script used to
-// keep a second copy of it. Everything is drawn once at 4x into an RGBA buffer
-// and area-averaged down to each target size, which is where the antialiasing
+// Zero dependencies. The PNG encoder is lib/core/png's (the one encoder: 8-bit
+// RGBA, filter 0, deflate level 9 — the bytes this script wrote when it kept a
+// private copy). Everything is drawn once at 4x into an RGBA buffer and
+// area-averaged down to each target size, which is where the antialiasing
 // comes from.
 
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
-const { crc32 } = require('../lib/core/zip');
+const { encodePng } = require('../lib/core/png');
 
 const SIZES = [16, 32, 48, 128];
 const SUPER = 512; // master canvas; every size is an area-average of this
-
-// ---------------------------------------------------------------- PNG encoding
-
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body), 0);
-  return Buffer.concat([len, body, crc]);
-}
-
-// 8-bit RGBA (color type 6), no interlace, filter 0 on every scanline.
-function encodePng(rgba, w, h) {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(w, 0);
-  ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8;  // bit depth
-  ihdr[9] = 6;  // color type: truecolour with alpha
-  ihdr[10] = 0; // compression
-  ihdr[11] = 0; // filter
-  ihdr[12] = 0; // interlace
-  const raw = Buffer.alloc(h * (w * 4 + 1));
-  for (let y = 0; y < h; y++) {
-    raw[y * (w * 4 + 1)] = 0; // filter type: None
-    rgba.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4);
-  }
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 // ------------------------------------------------------------------- rendering
 
@@ -188,4 +152,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { encodePng, resample, SIZES };
+module.exports = { SIZES };

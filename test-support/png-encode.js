@@ -1,10 +1,12 @@
 // A PNG encoder for the tests — and ONLY for the tests.
 //
-// lib/core/png.js decodes; the package never writes a PNG outside
-// extensions/make-icons.js (which only ever uses filter 0). To pin the decoder's
-// handling of every scanline filter, the tests need images filtered each way,
-// and the fake Chrome (test-support/fake-chrome.js) needs screenshots to hand
-// back. This writes 8-bit RGB or RGBA with a chosen filter per row.
+// lib/core/png.js is the package's one PNG decoder and one encoder, and its
+// encoder writes one form only (8-bit RGBA, filter 0 on every row). To pin the
+// decoder's handling of every scanline filter and every colour type and bit
+// depth, the tests need images written each of those ways, and the fake Chrome
+// (test-support/fake-chrome.js) needs screenshots to hand back. encodePng writes
+// 8-bit RGB or RGBA with a chosen filter per row; rawPng writes any IHDR, with
+// PLTE / tRNS, from scanlines the test packed itself (packRow), filtered here.
 
 const zlib = require('zlib');
 const { crc32 } = require('../lib/core/zip');
@@ -25,19 +27,13 @@ function paeth(a, b, c) {
   return pb <= pc ? b : c;
 }
 
-// rgba: width*height*4. opts: { alpha = true, filter = 0 | 1 | 2 | 3 | 4 |
-// (y) => type, extra: [[type, Buffer]] ancillary chunks placed before IDAT }.
-function encodePng(rgba, width, height, { alpha = true, filter = 0, extra = [], idatSplit = 0 } = {}) {
-  const bpp = alpha ? 4 : 3;
-  const stride = width * bpp;
-  const raw = Buffer.alloc((stride + 1) * height);
+// Filter unfiltered scanlines (each `stride` bytes) with `filter` (0–4, or
+// (y) => type), `bpp` bytes back for the left neighbour. → the raw IDAT stream.
+function filterRows(rows, bpp, filter) {
+  const stride = rows[0].length;
+  const raw = Buffer.alloc((stride + 1) * rows.length);
   let prev = Buffer.alloc(stride);
-  for (let y = 0; y < height; y++) {
-    const cur = Buffer.alloc(stride);
-    for (let x = 0; x < width; x++) {
-      const s = (y * width + x) * 4;
-      for (let c = 0; c < bpp; c++) cur[x * bpp + c] = rgba[s + c];
-    }
+  rows.forEach((cur, y) => {
     const type = typeof filter === 'function' ? filter(y) : filter;
     const at = y * (stride + 1);
     raw[at] = type;
@@ -50,11 +46,12 @@ function encodePng(rgba, width, height, { alpha = true, filter = 0, extra = [], 
       raw[at + 1 + i] = (cur[i] - pred) & 0xff;
     }
     prev = cur;
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; ihdr[9] = alpha ? 6 : 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  });
+  return raw;
+}
+
+// The signature, IHDR, extra chunks, IDAT (split when asked) and IEND.
+function assemble(ihdr, raw, { extra = [], idatSplit = 0 } = {}) {
   const z = zlib.deflateSync(raw);
   // Split the stream across several IDAT chunks when asked: a decoder has to
   // concatenate them, and Chrome's encoder does write more than one.
@@ -74,6 +71,61 @@ function encodePng(rgba, width, height, { alpha = true, filter = 0, extra = [], 
   ]);
 }
 
+function ihdrOf(width, height, depth, colorType, interlace = 0) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = depth; ihdr[9] = colorType; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = interlace;
+  return ihdr;
+}
+
+// rgba: width*height*4. opts: { alpha = true, filter = 0 | 1 | 2 | 3 | 4 |
+// (y) => type, extra: [[type, Buffer]] ancillary chunks placed before IDAT }.
+function encodePng(rgba, width, height, { alpha = true, filter = 0, extra = [], idatSplit = 0 } = {}) {
+  const bpp = alpha ? 4 : 3;
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    const cur = Buffer.alloc(width * bpp);
+    for (let x = 0; x < width; x++) {
+      const s = (y * width + x) * 4;
+      for (let c = 0; c < bpp; c++) cur[x * bpp + c] = rgba[s + c];
+    }
+    rows.push(cur);
+  }
+  return assemble(ihdrOf(width, height, 8, alpha ? 6 : 2), filterRows(rows, bpp, filter), { extra, idatSplit });
+}
+
+// Pack one scanline's samples (a flat array, channel by channel) at `depth`:
+// MSB first under 8 bits (the last byte zero-padded), big-endian at 16.
+function packRow(samples, depth) {
+  if (depth === 8) return Buffer.from(samples);
+  if (depth === 16) {
+    const out = Buffer.alloc(samples.length * 2);
+    samples.forEach((v, i) => out.writeUInt16BE(v, i * 2));
+    return out;
+  }
+  const out = Buffer.alloc(Math.ceil((samples.length * depth) / 8));
+  samples.forEach((v, i) => {
+    const bit = i * depth;
+    out[bit >> 3] |= v << (8 - depth - (bit & 7));
+  });
+  return out;
+}
+
+// A PNG of any IHDR from unfiltered scanlines (packRow's), filtered with
+// `filter`. opts: { plte, trns (Buffers, placed before IDAT), filter, extra,
+// interlace, idatSplit }. The filter's left-neighbour distance is the PNG
+// spec's: max(1, channels × depth / 8) bytes.
+const CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+function rawPng({ width, height, depth, colorType, rows, plte = null, trns = null, filter = 0, extra = [], interlace = 0, idatSplit = 0 }) {
+  const bpp = Math.max(1, ((CHANNELS[colorType] || 1) * depth) >> 3);
+  const chunks = [];
+  if (plte) chunks.push(['PLTE', plte]);
+  if (trns) chunks.push(['tRNS', trns]);
+  return assemble(ihdrOf(width, height, depth, colorType, interlace), filterRows(rows, bpp, filter),
+    { extra: [...chunks, ...extra], idatSplit });
+}
+
 // A solid-colour RGBA frame, with an optional filled rectangle on top.
 function solid(width, height, [r, g, b], rect) {
   const buf = Buffer.alloc(width * height * 4);
@@ -90,4 +142,4 @@ function solid(width, height, [r, g, b], rect) {
   return buf;
 }
 
-module.exports = { encodePng, solid, chunk };
+module.exports = { encodePng, rawPng, packRow, solid, chunk };
