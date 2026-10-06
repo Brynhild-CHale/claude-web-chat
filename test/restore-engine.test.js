@@ -21,7 +21,8 @@
 //   * refusals: 'stale' (nothing written, no safety ref), 'tree-missing',
 //     'unknown', 'bad-tree'; features(): ok, git-too-old (2.39), not-a-git-repo,
 //     git-missing — and preview/apply/undo refuse with the same reason;
-//   * residuals: a concurrent write between the write and the verify; an
+//   * residuals: a concurrent write (or an exec bit flipped: the verify
+//     compares the mode too) between the write and the verify; an
 //     EACCES part way stops, reports residuals, and undo restores every file;
 //   * headMoved; safety refs (the 21st apply leaves 20, newest first) and
 //     `git gc --prune=now` in the shadow keeping every tree a ref names;
@@ -397,6 +398,26 @@ test('a concurrent write between the write and the verify is a residual, and ok 
   assert.equal(un.ok, true, JSON.stringify(un));
   assert.deepEqual(repo.read('a.txt'), Buffer.from('a2\n'));
   assert.deepEqual(repo.read('b.txt'), Buffer.from('b2\n'));
+});
+
+test('the verify compares the mode too: an exec bit flipped between the write and the verify is a residual, the bytes notwithstanding', async (t) => {
+  withTempHome(t);
+  const repo = treesnapRepo(t, { files: { 'a.txt': 'a1\n' } });
+  let armed = false;
+  const runner = hookedRunner({
+    after: (args) => {
+      if (armed && args.includes('checkout-index')) { armed = false; fs.chmodSync(repo.abs('a.txt'), 0o755); }
+    },
+  });
+  const { shadow, restore } = engineFor(repo, { runGit: runner });
+  const earlier = await snap(shadow);
+  repo.write('a.txt', 'a2\n');
+  armed = true;
+  const res = await restore.apply(earlier.tree);
+  assert.equal(armed, false, 'the hook ran');
+  assert.deepEqual(repo.read('a.txt'), Buffer.from('a1\n'), 'the bytes are the target\'s');
+  assert.equal(res.ok, false);
+  assert.deepEqual(res.residual, [{ path: 'a.txt', reason: 'mismatch' }]);
 });
 
 test('an EACCES part way (a read-only directory) stops, reports residuals, and undo restores every file', { skip: process.getuid && process.getuid() === 0 ? 'root ignores directory modes' : false }, async (t) => {
