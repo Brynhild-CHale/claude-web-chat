@@ -7,6 +7,7 @@
 //   followAgentItems(id, {after, intervalMs, alive}, onItems)         → stop
 //   confirmAction(button, {density, confirm, run, revertMs})          → revert
 //   runAction(row, action, {rowEl, density, button})
+//   registerStopper({mount, unmount}) → unregister
 //   canRun(actionId, row)    whether runAction can perform it (chat-rows.js
 //                            draws a button for nothing else)
 //   stopFollowers(root?)     ends every follower whose row is inside root (all
@@ -32,9 +33,27 @@
 // button into confirm.touch and disables its siblings, the second runs, and
 // TOUCH_REVERT_MS or any other tap reverts. After the request the row reads
 // "stopping…" until its stop_requested_at arrives (chat-present then words it),
-// and a refusal's hint shows inline. registerStopper (the mod's immediate stop,
-// §15.7) is held on the maintainer's ruling U46@registerStopper-shape: with no
-// stopper, the route is the only path.
+// and a refusal's hint shows inline.
+//
+// THE STOPPER (ruling E1 a; the mod's immediate stop, §15.7, registers one in
+// tranche 6). registerStopper({mount(slotEl, row, {density}) → boolean,
+// unmount(slotEl)}) → unregister puts a stopper's own control into the row's
+// stop, inside runAction, so the trays and the detail views' Cancel inherit it.
+// One at a time: a second registration replaces the first, whose unregister()
+// then does nothing; one missing either function is a TypeError, never stored.
+// With a stopper, Kill, Cancel or Remove opens no inline confirm and posts
+// nothing: it makes the CONFIRM SLOT, a div.cs-row-confirm (role group) where
+// the inline confirm goes, the row's actions hidden (compact) or, with the
+// class cs-row-confirm-touch, the row's other buttons disabled (touch), and
+// calls mount(slot, row, {density}). A mount answering true OWNS the stop: its
+// control frame (§15.5) lives in the slot and stops the task itself; nothing
+// here posts or marks the row stopping. The slot reverts on Escape inside it,
+// on another stop action of the row, when a redraw drops it or the row leaves
+// (then the row is asked to redraw once more, to settle its actions):
+// unmount(slot) once, the slot removed, the actions back. A mount
+// answering anything but true, or throwing, gets no unmount; its slot goes and
+// the inline confirm runs as above (a touch button that fallback armed takes
+// its second tap there, unasked). With no stopper, the route is the only path.
 //
 // THE ROW is chat-rows.js's element; this module touches it through its
 // documented parts only: `.cs-row-actions` (the buttons), `.cs-row-body` (the
@@ -180,11 +199,18 @@ function rowOf(button) {
   return (button && typeof button.closest === 'function' && button.closest('[role="listitem"]')) || null;
 }
 
-function compactConfirm(button, confirm, run) {
+// Where a row's confirm goes: under the row's main line when it has one
+// (chat-rows.js), else after the buttons. The inline confirm and the stopper's
+// slot both sit there.
+function confirmPlace(button) {
   const row = rowOf(button);
   const actions = (button.closest && button.closest('.cs-row-actions')) || button.parentElement;
-  // Under the row's main line when it has one (chat-rows.js), else after the buttons.
   const anchor = (row && row.querySelector('.cs-row-main')) || actions;
+  return { actions, anchor };
+}
+
+function compactConfirm(button, confirm, run) {
+  const { actions, anchor } = confirmPlace(button);
   if (!anchor || !anchor.parentNode) return () => {};
   const box = document.createElement('div');
   box.className = 'cs-row-confirm';
@@ -279,6 +305,91 @@ export function confirmAction(button, { density = 'compact', confirm, run, rever
   const copy = confirm && typeof confirm === 'object' ? confirm : {};
   if (density === 'touch') return touchConfirm(button, copy, run, revertMs);
   return compactConfirm(button, copy, run);
+}
+
+// ── the stopper ──────────────────────────────────────────────────────────────
+
+let stopper = null;            // {s}: the one registered stopper, boxed so a replaced unregister misses
+const slots = new WeakMap();   // a row element → its mounted slot's revert
+
+// The row a slot belongs to: the caller's rowEl, else the element the slot sits in.
+function slotKey(rowEl, button) {
+  if (rowEl) return rowEl;
+  const { anchor } = confirmPlace(button);
+  return (anchor && anchor.parentNode) || null;
+}
+
+export function registerStopper(s) {
+  if (!s || typeof s.mount !== 'function' || typeof s.unmount !== 'function') {
+    throw new TypeError('registerStopper takes {mount(slotEl, row, {density}) → boolean, unmount(slotEl)}');
+  }
+  const entry = { s };
+  stopper = entry;
+  return () => { if (stopper === entry) stopper = null; };
+}
+
+// Offers the stop to the registered stopper. Answers true when its mount took
+// the slot; false (slot gone, nothing changed) when it declined or threw.
+function stopperSlot(entry, row, host, button, density) {
+  const { actions, anchor } = confirmPlace(button);
+  if (!anchor || !anchor.parentNode) return false;
+  const key = slotKey(host, button);
+  const touch = density === 'touch';
+  const slot = document.createElement('div');
+  slot.className = touch ? 'cs-row-confirm cs-row-confirm-touch' : 'cs-row-confirm';
+  slot.setAttribute('role', 'group');
+  const siblings = touch && actions
+    ? [...actions.querySelectorAll('button')].filter((b) => b !== button && !b.disabled) : [];
+  const give = () => {
+    if (actions && !touch) actions.hidden = false;
+    for (const b of siblings) b.disabled = false;
+  };
+  if (actions && !touch) actions.hidden = true;
+  for (const b of siblings) b.disabled = true;
+  anchor.after(slot);
+  let owned = false;
+  try {
+    owned = entry.s.mount(slot, row, { density: touch ? 'touch' : 'compact' }) === true;
+  } catch {
+    owned = false;
+  }
+  if (!owned) {
+    slot.remove();
+    give();
+    return false;
+  }
+  const root = slot.getRootNode();
+  let done = false;
+  let watch = null;
+  function revert({ focus = true, dropped = false } = {}) {
+    if (done) return;
+    done = true;
+    if (watch) watch.disconnect();
+    if (slots.get(key) === revert) slots.delete(key);
+    try { entry.s.unmount(slot); } catch { /* the stopper's own teardown */ }
+    slot.remove();
+    give();
+    // Dropped by a redraw: let the row settle its own actions again.
+    if (dropped && key.isConnected) refresh(key);
+    if (focus && button.isConnected) {
+      try { button.focus({ preventScroll: true }); } catch { /* not focusable here */ }
+    }
+  }
+  // A redraw that drops the slot, or the row leaving, reverts it: the slot is
+  // no longer where it was mounted.
+  const MO = typeof window !== 'undefined' ? window.MutationObserver : null;
+  if (typeof MO === 'function') {
+    watch = new MO(() => { if (slot.getRootNode() !== root) revert({ focus: false, dropped: true }); });
+    watch.observe(root, { childList: true, subtree: true });
+  }
+  slot.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.preventDefault();
+    revert();
+  });
+  slots.set(key, revert);
+  return true;
 }
 
 // ── the actions ──────────────────────────────────────────────────────────────
@@ -397,6 +508,11 @@ export function runAction(row, action, { rowEl = null, density = 'compact', butt
   }
   if (isStopAction(row, a)) {
     if (!btn) return false;
+    // A stop action on a row whose stopper slot is open steps back out of it.
+    const open = slots.get(slotKey(rowEl, btn));
+    if (open) { open(); return true; }
+    // A touch button armed by a declined stopper's fallback takes its second tap.
+    if (stopper && !armed.has(btn) && stopperSlot(stopper, row, rowEl, btn, density)) return true;
     confirmAction(btn, { density, confirm: a.confirm, run: () => { requestStop(row, rowEl); } });
     return true;
   }
