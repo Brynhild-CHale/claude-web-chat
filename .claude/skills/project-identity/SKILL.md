@@ -62,10 +62,12 @@ not this skill's.
    within 1.25:1 is padded to an exact square.
 3. **Wide, or a wordmark?** Set it as the logo, then settle the favicon with the
    user. Offer the choices, with a `--dry-run --preview` of each where it applies:
-   - pad the whole logo to a square (`identity favicon <file>` takes an image up
-     to 1.25:1; warn that text is unreadable at 16 px);
    - a separate square image the user supplies (`identity favicon <square file>`);
-   - keep web-chat's W as the favicon (set nothing).
+   - keep web-chat's W as the favicon (set nothing);
+   - only for a logo up to 1.25:1: pad the whole logo to a square
+     (`identity favicon <file>`; warn that text is unreadable at 16 px). A logo
+     wider than 1.25:1 cannot be padded — the CLI refuses it as a favicon and has
+     no option to pad it — so for one, offer only the first two.
 4. **Does the logo contain the name?** Ask whether to hide the text name
    (`identity show-name off`).
 5. **Check contrast in both modes.** The topbar is light in light mode and dark

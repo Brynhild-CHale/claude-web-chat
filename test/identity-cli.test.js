@@ -523,3 +523,22 @@ test('the project-identity skill is a managed file, and an install writes it', (
   reg.apply(root, { runClaude: () => ({ ok: true }) });
   assert.equal(fs.readFileSync(path.join(root, row.dest), 'utf8'), tpl);
 });
+
+// Ruling U50@skill:wide-logo-pad (b, provisional): icon.prepare refuses a
+// favicon wider than NEAR_SQUARE and identity has no pad option, so the skill's
+// step 3 offers padding only for a logo up to 1.25:1 — never for a wider one.
+test('the skill\'s step 3 offers padding only up to 1.25:1; a wider logo gets a square image or the W; both copies identical', () => {
+  const tpl = fs.readFileSync(path.join(templatesDir(), 'skills/project-identity/SKILL.md'), 'utf8');
+  const dogfood = fs.readFileSync(path.join(REPO, '.claude/skills/project-identity/SKILL.md'), 'utf8');
+  assert.equal(dogfood, tpl, 'the dogfood copy is the template, byte for byte');
+  assert.equal(icon.NEAR_SQUARE, 1.25, 'the skill\'s 1.25:1 is the engine\'s threshold');
+  const at = tpl.indexOf('3. **Wide, or a wordmark?**');
+  assert.ok(at >= 0, 'step 3 is there');
+  const step = tpl.slice(at, tpl.indexOf('\n4. **', at));
+  const choices = step.split('\n').filter((l) => /^\s+- /.test(l)).map((l) => l.trim());
+  assert.equal(choices.length, 3);
+  assert.match(choices[0], /^- a separate square image/);
+  assert.match(choices[1], /^- keep web-chat's W/);
+  assert.match(choices[2], /^- only for a logo up to 1\.25:1: pad the whole logo/, 'padding is offered only up to 1.25:1');
+  assert.match(step.replace(/\s+/g, ' '), /A logo wider than 1\.25:1 cannot be padded .* so for one, offer only the first two\./);
+});
