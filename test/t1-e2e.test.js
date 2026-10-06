@@ -29,9 +29,7 @@
 //     text, and lock and node-added frames with no prompt text; and every route
 //     TEXT_RULES names (lib/core/remote-policy: GET /api/graph and
 //     /api/graph/node/:id among them), read by a remote viewer and by a network
-//     peer, carries none either — but for the two whose route files the ledger
-//     has left unowned, named in TEXT_NOT_YET_STRIPPED, a list that can only
-//     shrink;
+//     peer, carries none either;
 //   * and a project that opted in shows a remote viewer the conversation at
 //     `read`: the audience its sockets and routes judge by is the server's own;
 //   * the redactor knows web-chat's capture token (spec §5.5, "Known values"):
@@ -256,17 +254,6 @@ const TEXT_ROUTE_URLS = Object.freeze({
   'GET /api/health': () => '/api/health',
 });
 
-// The TEXT_RULES routes that do not strip their entry yet. Each route strips its
-// own (remote-policy's header names who: history.js the versions, replay.js the
-// path), and these two route files have no 0.8.5 owner in the shared-file
-// ledger (spec §11.2), so tranche 1's integration left the edit to whoever the
-// orchestrator gives them. Shrink-only: once a route strips, this test fails
-// until its entry goes.
-const TEXT_NOT_YET_STRIPPED = new Map([
-  ['GET /api/mounts/:id/history', 'routes/history.js serves each version\'s trigger_summary to every viewer'],
-  ['GET /api/replay/path', 'routes/replay.js serves each step\'s caption (prompt, reply, summary) to every viewer'],
-]);
-
 const carriesText = (s) => s.includes(PROMPT_MARK) || s.includes(REPLY_MARK);
 const bodyText = (r) => (typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
 
@@ -298,16 +285,9 @@ function textRoutes(d) {
       const keys = Object.keys(TEXT_RULES.routes).sort();
       assert.deepEqual(Object.keys(TEXT_ROUTE_URLS).sort(), keys, 'this test reaches every route TEXT_RULES names');
       assert.deepEqual([...carried].sort(), keys, 'and read each one while the host\'s copy carried the turn\'s text');
-      for (const key of [...TEXT_NOT_YET_STRIPPED.keys()]) assert.ok(keys.includes(key), `${key} is a TEXT_RULES route`);
       for (const key of keys) {
         const who = [...(leaked.get(key) || [])];
-        if (TEXT_NOT_YET_STRIPPED.has(key)) {
-          assert.deepEqual(who, BELOW_READ.map(([w]) => w),
-            `${key} stopped serving the turn's text to ${BELOW_READ.map(([w]) => w).filter((w) => !who.includes(w)).join(' and ')}: `
-            + `take it off TEXT_NOT_YET_STRIPPED (${TEXT_NOT_YET_STRIPPED.get(key)})`);
-        } else {
-          assert.deepEqual(who, [], `${key} served the turn's prompt or reply to ${who.join(' and ')}`);
-        }
+        assert.deepEqual(who, [], `${key} served the turn's prompt or reply to ${who.join(' and ')}`);
       }
     },
   };
@@ -572,9 +552,18 @@ test('a local socket gets the step\'s label; a remote one only mirror:status, an
   assert.ok(local.of('lock').some((f) => f.lock && f.lock.message === PROMPT));
   assert.ok(local.of('node-added').some((f) => f.node.trigger_summary.includes(PROMPT_MARK)));
 
-  // The remote socket: the heartbeat, and no conversation text anywhere.
-  assert.deepEqual([...new Set(remote.frames.filter(isMirror).map((f) => f.type))], ['mirror:status'],
-    'only mirror:status of the mirror\'s frames');
+  // The remote socket: the heartbeat, and no conversation text anywhere. Since
+  // tranche 2 registers the transcripts source, a catch-up's end also sends a
+  // mirror:reset, which basic gets as its reason and conversation id alone
+  // (remote-policy RESET_SCHEMA): no content frame ever reaches it.
+  const remoteTypes = [...new Set(remote.frames.filter(isMirror).map((f) => f.type))];
+  assert.ok(remoteTypes.includes('mirror:status'), 'the heartbeat reached the remote socket');
+  assert.deepEqual(remoteTypes.filter((type) => type !== 'mirror:status' && type !== 'mirror:reset'), [],
+    'only mirror:status and a content-free mirror:reset of the mirror\'s frames');
+  for (const f of remote.of('mirror:reset')) {
+    assert.deepEqual(Object.keys(f).filter((k) => !['type', 'reason', 'conversation_id'].includes(k)), [],
+      `a remote mirror:reset carries its reason and conversation id alone: ${JSON.stringify(f)}`);
+  }
   assert.ok(remote.of('mirror:status').some((f) => f.conversations.some((r) => r.state === 'working' && r.step_kind === 'Edit')),
     'the heartbeat itself: working, an Edit');
   const lockFrames = remote.of('lock');
@@ -588,9 +577,8 @@ test('a local socket gets the step\'s label; a remote one only mirror:status, an
 
   // Every route TEXT_RULES names — the graph, a node, its preview document, the
   // pane's history, the replay path, /api/health — read remotely and by a
-  // network peer, carries no prompt or reply (but the two the ledger has left
-  // unowned, TEXT_NOT_YET_STRIPPED); read locally, each carries them, so the
-  // probe can see them.
+  // network peer, carries no prompt or reply; read locally, each carries them,
+  // so the probe can see them.
   await routes.read({ node: end.node_id });
   routes.check();
 });
@@ -954,15 +942,21 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     }
   });
 
-  test('the stand-ins: the step, a chip and the phone tab each open an "Under development" note', async () => {
+  test('the stand-ins: a chip and the phone tab each open an "Under development" note; the step, the dock tranche 2 wired', async () => {
     const note = () => $('cs-tray');
     const shown = (el) => !!el && !el.classList.contains('hidden') && !el.hidden;
 
+    // Tranche 2's main.js registers the chat dock, so the step is no longer a
+    // stand-in: it opens the chat (test/chat-bar.test.js holds the stand-in
+    // step, with no chat view registered).
     shell.press($('cs-step'));
-    assert.ok(shown(note()) && note().classList.contains('cs-dev'), 'the step opens the note');
-    assert.equal(note().querySelector('.cs-dev-title').textContent, 'Under development');
+    assert.equal($('cs-step').getAttribute('aria-controls'), 'chat-dock', 'the step controls the dock');
+    assert.ok(!shown(note()), 'and opens no note');
+    await shell.tick();
+    assert.ok(shown($('chat-dock')), 'the step opens the chat dock');
     shell.key('Escape');
-    assert.ok(!shown(note()));
+    await shell.tick();
+    assert.ok(!shown($('chat-dock')), 'Esc closes it');
 
     const chip = $('cs-chips').querySelector('.cs-devchip');
     assert.ok(chip, 'the chips stand in for the trays');

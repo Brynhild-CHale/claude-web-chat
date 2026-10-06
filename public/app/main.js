@@ -19,6 +19,11 @@ import { initCobrand } from './cobrand.js';
 import { initPaneHistory } from './pane-history.js';
 import { initChatState } from './chat-state.js';
 import { initChatBar } from './chat-bar.js';
+import { initChatDock } from './chat-dock.js';
+import { initChatPanel } from './chat-panel.js';
+import { initChatStream } from './chat-stream.js';
+import { initChatTools } from './chat-tools.js';
+import { initFavicon } from './favicon.js';
 import { initPullStub } from './chat-pull-stub.js';
 import { connect, onFrame, onHello } from './ws.js';
 
@@ -39,9 +44,18 @@ initProject({ onFrame, onHello });
 initCobrand();    // the topbar's co-brand lockup: the theme's company image │ the project
 initPaneHistory({ forwardEscapeFrom }); // a block's ◷ history popover (Make current)
 // The chat mirror: its one store (the mirror:* frames, and GET /api/mirror after
-// every hello), then what draws from it — the desktop status bar and, on a
-// phone, the grip tab's "Under development" stand-in until the real pull lands.
+// every hello), then what draws from it — the desktop status bar; the chat
+// itself (the dock it opens in, the panel inside it, the stream of turns and
+// the tool cards the stream draws with); the tab's icon, which reads the
+// project's identity and the mirror's waiting state, so it comes after both;
+// and, on a phone, the grip tab's "Under development" stand-in until the real
+// pull lands. Each init is idempotent.
 initChatState({ onFrame, onHello, conn: view.conn });
 initChatBar();
+initChatDock();   // the desktop drawer / window: chat:open shows it
+initChatPanel();  // header, state strip, meta line, awaiting card, #chat-stream
+initChatStream(); // the turns, grouped, rewind-aware
+initChatTools();  // the tool cards (setToolRenderer)
+initFavicon();    // the tab icon (light and dark) and its waiting badge
 initPullStub();
 connect();

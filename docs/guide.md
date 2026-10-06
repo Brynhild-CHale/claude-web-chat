@@ -50,6 +50,8 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Narrow windows and phones.** Below 900px each run of blocks stacks to one column in reading order — unless it is set to *fixed grid*, which keeps its grid and scrolls sideways (**FIXED GRID · SCROLL →**). Below 760px a bar along the bottom carries ↑/↓, ↩ active (while you are viewing an older node), **Graph** and **Queue [n]** — which opens the queue as a full screen; **‹ Page** goes back. From 1100px up the Contents column sits beside the page (hidden while the page has no headings). On a phone — a window under 760px wide that is also portrait-tall (narrower than 3:4), whatever the pointer; a phone on its side is not one, and a desktop window dragged that narrow and tall is — what is inside a block works exactly as on a desktop — type, tick, submit, press its buttons — but the layout is fixed: each block's header shows only its title and type, nothing can be moved, resized, pinned, locked, minimized or closed (a layout gesture that gets through says *Layout editing is available on a larger screen*), no block is added from ＋ or ⌘K, and a minimized block's chip only shows it on that phone. An older node you are previewing is read-only there too, as everywhere. You talk to Claude from the queue (stage or hold items, add a comment, Push) and act on the graph, which on a phone is a newest-first log of one graph with its forks drawn in a gutter: each turn names the sections it changed (**# Results +2 ~1** — blocks and prose added, changed, removed under that heading); tap a turn, then ◫ Glance, ⚑ bookmark (with a name), ⑃ Branch, ↧ Export or **Set active**. The graph name at the top switches graphs, and **⋯ N folded** shows the turns that changed nothing.
 
+**Follow Claude's conversation in the chat.** The bar along the bottom of the page says what Claude is doing right now; click its step (or press `M`, or ⌘K *Chat with Claude*) and the chat opens in a drawer beside the page, following the same conversation: your prompts, Claude's replies in markdown, and each turn's tool calls folded into one group (*▸ 3 tool calls · Read, Edit, Bash · 42s*) — open the group, and a card, to see a call's input and output. It is read from Claude Code's own transcript as it is written, and kept across a server restart. A question or a permission Claude is waiting on shows as a card at the top; you still answer it in the terminal for now. When you rewind the conversation in the terminal, the turns you abandoned stay in the stream, dimmed under a *↶ Rewound in the terminal* note. **⇱ Detach** floats the chat as a window you can move and resize, with an opacity slider and **Solid** (opaque while the pointer or focus is on it); **⇥ Attach** puts it back; ⌘K *Reset the chat window* restores its size and place. `Esc` closes one layer at a time — a card's detail, then the chat — and a click on the page closes the drawer, while a click on the queue rail or the topbar leaves it open. The chat needs a window at least 760px wide for now. Through the tunnel, a remote viewer sees only Claude's status until you run `claude-web-chat tunnel mirror on` in the project (see [`remote-access.md`](remote-access.md#showing-claudes-conversation-remotely)).
+
 **Other processes can draw too.** A dev server or test runner can render panes and write data between Claude's turns, so a panel can reflect live external state. See [`driving-the-surface.md`](driving-the-surface.md).
 
 ## Service-backed components
@@ -122,7 +124,10 @@ ls [--reap|--json]  every web-chat surface on this machine, which project each
                     --json prints the whole row; --reap asks the others to
                     shut down (uncommitted surface saved) and clears entries
                     whose process is gone
-doctor              diagnose and repair daemon / lock / MCP / hook issues
+doctor              diagnose and repair daemon / lock / MCP / hook issues;
+                    registers web-chat's MCP server with Claude Code at local
+                    scope (--register-mcp: over a No recorded in Claude Code,
+                    or a tracked .mcp.json, without a terminal)
 trust [name]        approve (or --deny) a component's host-side service.js;
                     with no name, list what's waiting; --all takes everything
                     waiting (or every variant of one name), --params-fp / --key
@@ -148,7 +153,9 @@ tunnel [verb]       reach your surfaces from your phone or another machine:
                     setup | up | down | status | logs, through a Cloudflare
                     tunnel behind Cloudflare Access — an emailed code plus your
                     device's biometrics by default, or Google (see
-                    remote-access.md)
+                    remote-access.md); mirror on | off | status shows (or
+                    stops showing) this project's conversation to remote
+                    viewers, who otherwise see only Claude's status
 ```
 
 Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start above.
@@ -160,7 +167,7 @@ The server binds **loopback only** (`127.0.0.1`) and is deliberately unauthentic
 - Other programs on your machine can drive the surface — that's the point (see "Other processes can draw too" above), and it means you should treat a component from an untrusted source the way you'd treat running its code, because that is what it is.
 - The WebSocket upgrade is gated on `Origin`, so a random web page you happen to visit can't open a socket to `ws://localhost:<port>` and read your store. Non-browser clients (drivers, the CLI) send no `Origin` and are unaffected.
 - Captures are only readable cross-origin by the browser extension, not by any site you're browsing.
-- `WEB_CHAT_HOST` overrides the bind address for the deliberate remote case (a dev container, a remote workstation). Setting it exposes all of the above to that interface with no authentication, and the server says so on startup.
+- `WEB_CHAT_HOST` overrides the bind address for the deliberate remote case (a dev container, a remote workstation). Setting it exposes all of the above to that interface with no authentication, and the server says so on startup. The chat mirror is the exception: it shows network peers only Claude's status (what it is doing, never your prompts, its replies or a file), whatever they send — Claude's conversation leaves this machine only through the authenticated tunnel, below.
 - To reach your surfaces from **outside** this machine, don't widen the bind — use `claude-web-chat tunnel`: the daemons stay on loopback, and a separate portal admits only an email address you allowlisted, verified by Cloudflare Access and again locally (sign-in is an emailed code plus your device's biometrics by default, or Google). The walkthrough and the security model are in [`remote-access.md`](remote-access.md).
 
 ## When something's stuck
@@ -168,7 +175,7 @@ The server binds **loopback only** (`127.0.0.1`) and is deliberately unauthentic
 Start with `claude-web-chat doctor` — it checks the daemon, portfile, MCP registration, and hooks, and repairs what it can. A few situations worth naming:
 
 - **Claude's tools return "disabled".** Some scope has web-chat off; `claude-web-chat status` shows which one.
-- **The web-chat tools never show up in Claude Code.** Claude Code starts a project's `.mcp.json` server only after you approve it, and asks when it first starts in the project. If you declined, it stays declined on every restart: `/exit`, run `claude mcp reset-project-choices` in the project directory, and start Claude Code again — it asks again.
+- **The web-chat tools never show up in Claude Code.** Run `claude-web-chat doctor` in the project, then `/exit` and start Claude Code again. web-chat registers its MCP server with Claude Code for you at *local scope* (in Claude Code's own config, for this folder), which needs no approval at launch; `doctor` makes that registration when it is missing, and `claude-web-chat status` says which state the project is in (*registered for you (local scope)*, *only in .mcp.json*, *REJECTED*, *disabled*). If you once answered No to Claude Code's dialog for web-chat, `doctor` asks before registering over it (it defaults to No; `--register-mcp` does it without a terminal). If you disabled web-chat through `/mcp`, `doctor` leaves that alone: re-enable it there.
 - **The graph won't let you navigate.** An interrupted turn can leave the turn lock held, and Set active, ⑃ Branch and `A` stay off (*locked — turn in progress*) until it goes stale — 15 minutes after Claude's last write, 3 for a channel wake. Then the next click takes it over, keeping the abandoned turn's work as a node of its own; `claude-web-chat unlock` clears it at once.
 - **A dashboard pane is sitting there empty.** Its component ships a `service.js` that hasn't been approved. `claude-web-chat trust` lists what's waiting.
 - **You've lost track of which port is which project.** `claude-web-chat ls` maps every running surface back to its project; `--reap` asks the ones you're done with to shut down cleanly.

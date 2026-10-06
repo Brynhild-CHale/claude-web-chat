@@ -247,19 +247,25 @@ test('the portal follows a remote.mirror edit within a poll (no directory watche
     },
   });
   // The portal's own refusal for the mirror level — not the daemon's answer.
+  // The conversation probe is a path under GET /api/mirror/* (read) that no
+  // daemon route serves: since tranche 2 mounts the content routes, the daemon
+  // would refuse /api/mirror/turns/:id itself with the same body (its audience
+  // reads the sandbox's tunnel.json, not this test's), so only a 404 from the
+  // daemon shows the portal let the request through.
+  const CONVERSATION = '/api/mirror/portal-probe';
   const refusedFor = (res) => (res.status === 403 && res.json && res.json.remote === true && res.json.mirror) || null;
   const health = async () => (await p.request('/api/health', { host: `127.0.0.1:${p.port}` })).json;
 
   // Off (no key): the heartbeat routes pass the portal; the conversation is refused with the host command.
   assert.equal(refusedFor(await req('/api/mirror/status')), null, 'a basic row reaches the daemon');
-  const before = await req('/api/mirror/turns/t1');
+  const before = await req(CONVERSATION);
   assert.equal(refusedFor(before), 'basic');
   assert.equal(before.json.hint, MIRROR_HINT);
   assert.equal((await req('/api/graph')).status, 200, 'the surface is unaffected');
 
   // `tunnel mirror on --read-only`, by the project's root: applied within a poll.
   writeJsonAtomic(file, withMirrorLevel(raw, { root: srv.root }, 'read'));
-  assert.ok(await waitUntil(async () => refusedFor(await req('/api/mirror/turns/t1')) === null, { timeout: 5000 }),
+  assert.ok(await waitUntil(async () => refusedFor(await req(CONVERSATION)) === null, { timeout: 5000 }),
     'the read grant is in force');
   const send = await req('/api/queue/message', { method: 'POST', body: { text: 'hi' } });
   assert.equal(refusedFor(send), 'read', 'read-only: the composer is still refused');
@@ -281,7 +287,7 @@ test('the portal follows a remote.mirror edit within a poll (no directory watche
 
   // `tunnel mirror off`: back to the heartbeat.
   writeJsonAtomic(file, raw);
-  assert.ok(await waitUntil(async () => refusedFor(await req('/api/mirror/turns/t1')) === 'basic', { timeout: 5000 }),
+  assert.ok(await waitUntil(async () => refusedFor(await req(CONVERSATION)) === 'basic', { timeout: 5000 }),
     'the grant is gone');
   assert.equal((await health()).config.state, 'ok');
 

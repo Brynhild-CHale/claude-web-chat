@@ -484,7 +484,7 @@ function setupMirror(t, { root = null, ch = null } = {}) {
     root, hooks, mainBus: createBus(), mirrorBus, redactor, log: () => {},
     sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
     isPidAlive: () => true,
-    sources: [...SOURCES, { name: 'transcripts', attach: source.attach }],
+    sources: [...SOURCES.filter((s) => s.name === 'live'), { name: 'transcripts', attach: source.attach }],
   });
   let ts = Date.now();
   const h = { root, ch, mirror, frames, redactor, tailers, deliveries, stores, snaps };

@@ -189,7 +189,7 @@ function setup(t, { store = fakeStore(), root = null, ch = null, lru = null, man
       root, hooks, mainBus, mirrorBus, redactor, log: () => {},
       sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
       isPidAlive: () => true,
-      sources: [...SOURCES, { name: 'transcripts', attach: source.attach }],
+      sources: [...SOURCES.filter((s) => s.name === 'live'), { name: 'transcripts', attach: source.attach }],
     });
   } finally {
     lruOverride = null;
