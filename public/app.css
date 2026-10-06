@@ -2451,6 +2451,111 @@ pre.tc-diff {
 @media (prefers-reduced-motion: reduce) { details.tc > .tc-head::before { transition: none; } }
 
 /* ── U46 · chips and trays · chat-trays.js, chat-rows.js, chat-actions.js ── */
+/* The chips (§7.6): one per category of background work, in #cs-chips, each in
+   its category's ink (U17's [data-cs-cat] → --cs-cat). The dot's tone: live in
+   the category's ink, muted for finished work, failed in the comment ink; it
+   pulses (wc-chat-pulse, the bar's --cs-pulse) only while Claude works on
+   something that runs in it. Below `read` a chip is counts only and opens
+   nothing (aria-disabled). */
+.cs-chip {
+  flex: none; height: 20px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius-sm); background: transparent;
+  font: 600 10px var(--wc-mono); color: var(--wc-text-2);
+}
+.cs-chip:hover, .cs-chip[aria-expanded="true"] { border-color: color-mix(in srgb, var(--cs-cat) 55%, transparent); color: var(--wc-fg-bright); }
+.cs-chip[aria-expanded="true"] { background: color-mix(in srgb, var(--cs-cat) 14%, var(--wc-header-bg)); }
+.cs-chip[aria-disabled="true"] { cursor: default; border-style: dashed; }
+.cs-chip[aria-disabled="true"]:hover { border-color: var(--wc-border-soft); color: var(--wc-text-2); }
+.cs-chip:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+:is(.cs-chip-dot, .cs-row-dot) { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cs-cat); }
+:is(.cs-chip-dot, .cs-row-dot)[data-cs-tone="muted"], .cs-row[data-cs-tone="muted"] .cs-row-dot { background: var(--wc-muted-dim); }
+:is(.cs-chip-dot, .cs-row-dot)[data-cs-tone="failed"], .cs-row[data-cs-tone="failed"] .cs-row-dot { background: var(--wc-comment); }
+.cs-chip-dot[data-pulse], .cs-row[data-pulse] .cs-row-dot { animation: wc-chat-pulse var(--cs-pulse, 1.2s) ease-in-out infinite; }
+.cs-chip-count { display: none; font-variant-numeric: tabular-nums; }
+/* Short rows: the dot and the count, the label in the title, so the step keeps
+   about 300px. */
+@media (max-width: 1000px) {
+  .cs-chip { padding: 0 6px; }
+  .cs-chip-count { display: inline; }
+  .cs-chip-label { display: none; }
+}
+
+/* The tray: a popover over the bar's right end, on the panels' rung like every
+   popover; the shell's dismiss layer closes it. Its rows scroll inside it. */
+.popover.cs-tray {
+  top: auto; right: 12px; bottom: calc(var(--cs-bar-h) + 8px); width: 440px; max-height: min(460px, calc(100% - 120px));
+  max-width: calc(100% - 24px); box-sizing: border-box; padding: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.cs-tray-head {
+  flex: none; display: flex; align-items: baseline; gap: 8px; padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+}
+.cs-tray-title { font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
+.cs-tray-sub { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 11px var(--wc-mono); color: var(--wc-muted); }
+.cs-tray-head .pane-btn { align-self: center; }
+.cs-tray-rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0; }
+
+/* A row (chat-rows.js): the dot, the title (a shell's in the mono face) and its
+   meta, the step bar, the last line, then the actions; under them a refusal's
+   note, the inline confirm and the expanded Output. */
+.cs-row { padding: 8px 12px; border-bottom: 1px solid var(--wc-border-soft); }
+.cs-row:last-child { border-bottom: 0; }
+.cs-row-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.cs-row-dot { margin-top: 5px; }
+.cs-row-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cs-row-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cs-row-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 12.5px var(--wc-font); color: var(--wc-fg-bright); }
+.cs-row-title.cs-mono { font: 600 11.5px var(--wc-mono); }
+.cs-row-meta { flex: none; margin-left: auto; font: 500 10.5px var(--wc-mono); color: var(--wc-muted); font-variant-numeric: tabular-nums; }
+.cs-row-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--wc-mono); color: var(--wc-text-2); }
+.cs-row-steps { display: flex; gap: 3px; height: 4px; }
+.cs-row-step { flex: 1 1 0; border-radius: 2px; background: var(--wc-border-soft); }
+.cs-row-step[data-step-state="done"] { background: var(--cs-cat); }
+.cs-row-step[data-step-state="running"] { background: color-mix(in srgb, var(--cs-cat) 50%, var(--wc-border-soft)); }
+.cs-row-step[data-step-state="error"] { background: var(--wc-comment); }
+.cs-row-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+:is(.cs-row-act, .cs-confirm-yes, .cs-confirm-no, .cs-row-full) {
+  height: 22px; padding: 0 9px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm);
+  background: var(--wc-panel-bg); font: 600 10.5px var(--wc-font); color: var(--wc-fg-bright); cursor: pointer;
+}
+:is(.cs-row-act, .cs-confirm-no, .cs-row-full):hover { border-color: var(--wc-muted); }
+/* Kill, Cancel and Remove, and the confirm's yes: the rust ink (§7.4). */
+:is(.cs-row-act[data-destructive], .cs-confirm-yes) {
+  color: var(--wc-rust); border-color: color-mix(in srgb, var(--wc-comment) 45%, transparent);
+}
+:is(.cs-row-act[data-destructive], .cs-confirm-yes):hover { border-color: var(--wc-comment); }
+.cs-row-act[data-confirming] { background: color-mix(in srgb, var(--wc-comment) 14%, var(--wc-panel-bg)); }
+:is(.cs-row-act, .cs-confirm-yes, .cs-confirm-no, .cs-row-full):disabled { opacity: .5; cursor: default; }
+:is(.cs-row-act, .cs-confirm-yes, .cs-confirm-no, .cs-row-full):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.cs-row-confirm {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0 0 16px; padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--wc-comment) 45%, transparent); border-radius: var(--wc-radius-sm);
+  background: color-mix(in srgb, var(--wc-comment) 8%, var(--wc-panel-bg));
+}
+.cs-confirm-text { flex: 1 1 200px; min-width: 0; font: 12px/1.4 var(--wc-font); color: var(--wc-fg); }
+.cs-row-note { margin: 6px 0 0 16px; font: 11.5px/1.4 var(--wc-font); color: var(--wc-rust); }
+.cs-row-body { margin: 8px 0 0 16px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.cs-row-tail {
+  align-self: stretch; margin: 0; max-height: 180px; overflow: auto; padding: 6px 8px;
+  border-radius: var(--wc-radius-sm); background: var(--wc-content-bg);
+  font: 11px/1.45 var(--wc-mono); color: var(--wc-fg); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cs-row-footer { font: 500 10.5px var(--wc-mono); color: var(--wc-muted); }
+:is(.cs-row-note, .cs-row-body, .cs-row-line, .cs-row-actions, .cs-row-footer)[hidden] { display: none; }
+/* The touch density (the phone's Tasks pages, §8.6): 40px actions at least
+   64px wide, 8px apart. */
+.cs-row[data-density="touch"] { padding: 12px 16px; }
+.cs-row[data-density="touch"] .cs-row-actions { gap: 8px; }
+.cs-row[data-density="touch"] :is(.cs-row-act, .cs-confirm-yes, .cs-confirm-no, .cs-row-full) {
+  height: 40px; min-width: 64px; padding: 0 12px; font-size: 13px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-chip-dot[data-pulse], .cs-row[data-pulse] .cs-row-dot { animation: none; }
+}
+@media (max-width: 759px) { .popover.cs-tray { display: none; } }
 
 /* ── U47 · detail views · chat-detail.js ── */
 
