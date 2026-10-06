@@ -66,6 +66,7 @@ let level = 'local';
 let rev = 100;
 const answers = {};            // node id → what GET /api/mirror/node/<id> answers
 let nodesAnswer = null;        // what GET /api/mirror/nodes answers
+let nodesGate = null;          // a promise GET /api/mirror/nodes waits on before answering
 
 const SUMMARIES = {
   n2: { turns: 1, superseded: 1, rewound_at: T },
@@ -128,7 +129,7 @@ before(async () => {
         const a = answers[id];
         return typeof a === 'function' ? a() : a;
       },
-      '/api/mirror/nodes': () => nodesAnswer,
+      '/api/mirror/nodes': async () => { if (nodesGate) await nodesGate; return nodesAnswer; },
     },
     init: async (sh) => {
       gt = await sh.importApp('graph-turns.js');
@@ -456,4 +457,35 @@ test('stopGraphTurns clears the pending refresh and takes the marks and the sect
   assert.ok(turnsEl());
   await gv.refreshGraph();
   await waitUntil(() => markIn(glyph('n3')), { timeout: 2000, what: 'the marks back' });
+});
+
+test('the summary line waits for a marks refresh in flight, and a later change of the marks draws it again', async () => {
+  assert.ok(gv.isOverlayOpen());
+  const sum = () => turnsEl() && turnsEl().querySelector('.gi-turns-sum');
+  let release;
+  nodesGate = new Promise((r) => { release = r; });
+  try {
+    await shell.tick(gt.REFRESH_GAP_MS + 100);     // past the gap, so the next refresh asks
+    nodesAnswer = { nodes: { ...SUMMARIES, n4: { turns: 2, superseded: 2, rewound_at: T + 120000 } }, rev: 9 };
+    const n = nodesCalls();
+    gv.refreshGraph();                              // the marker's refresh, held at the gate
+    await waitUntil(() => nodesCalls() > n, { timeout: 2000, what: 'the gated /api/mirror/nodes' });
+    await selectAndSettle('n4');
+    release();
+    await waitUntil(() => sum() && /^↶ 2 of 2 /.test(sum().textContent), { timeout: 2000, what: 'the refreshed summary line' });
+    assert.equal(sum().textContent, `↶ 2 of 2 turns rewound in the terminal at ${hhmm(T + 120000)}`);
+  } finally {
+    release();
+    nodesGate = null;
+  }
+
+  // A later stream change that takes n1.3's mark away takes the line with it.
+  await shell.tick(gt.REFRESH_GAP_MS + 100);
+  nodesAnswer = { nodes: SUMMARIES, rev: 10 };
+  const k = nodesCalls();
+  bus.emit('mirror', { what: ['stream'] });
+  await waitUntil(() => nodesCalls() > k, { timeout: 4000, what: 'the delayed /api/mirror/nodes' });
+  await waitUntil(() => turnsEl() && !sum(), { timeout: 2000, what: 'the section drawn again, with no summary line' });
+  assert.equal(turnsEl().querySelector('.gi-turns-head').textContent, 'CHAT TURNS · 2', 'still n1.3\'s section');
+  assert.equal($('gv-inspector').querySelector('.gv-insp-label').textContent, 'n1.3');
 });
