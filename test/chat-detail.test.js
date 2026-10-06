@@ -406,6 +406,27 @@ test('agent: once done, its result as chat markdown', async () => {
   await update([{ ...A1, rev: 3, status: 'running', ended_at: undefined }]);
 });
 
+test('agent: done before the stream carries its result, the result shows once the stream delivers it', async () => {
+  a1Routes();
+  const streamItem = (it) => frame({ type: 'mirror:stream', rev: ++rev, now: T, conversation_id: 'c1', items: [it] });
+  const { result: _r, ...noResult } = AGENT_CALL;
+  await streamItem({ ...noResult, status: 'running' });
+  try {
+    await open({ view: 'task', id: 'a1' });
+    await waitUntil(() => q('details.tc'), { what: 'the page' });
+    await update([{ ...A1, rev: 4, status: 'done', ended_at: T }]);
+    await waitUntil(() => q('.dv-status').textContent !== 'running', { what: 'the row done' });
+    await settle();
+    assert.equal(q('.dv-result').hidden, true, 'no result in the stream yet');
+    await streamItem({ ...AGENT_CALL, status: 'done' });
+    await waitUntil(() => !q('.dv-result').hidden, { what: 'the result, once the stream has it' });
+    assert.equal(q('.dv-result .md-chat strong').textContent, 'Found');
+  } finally {
+    await streamItem({ ...AGENT_CALL });
+    await update([{ ...A1, rev: 5, status: 'running', ended_at: undefined }]);
+  }
+});
+
 test('agent: Cancel shows only with capabilities.task_stop at `full`, and posts the task-stop route after its confirm', async () => {
   a1Routes();
   await show({ caps: {} });
@@ -695,6 +716,62 @@ test('below read every view says the conversation is not shared and fetches noth
       .filter((u) => /^\/api\/mirror\/(tasks|agents|workflows|diff)/.test(u));
     assert.deepEqual(fetched, [], 'nothing asked of the work or code routes');
   } finally {
+    await show();
+  }
+});
+
+test('a level falling below read while views are open: the views say "not shared", drop their content and fetch nothing, a held Load earlier included', async () => {
+  outputs.s1 = (p) => {
+    const from = p.has('from') ? Number(p.get('from')) : 0;
+    return { task_id: 's1', text: from ? '' : 'serving\n', from, to: 8, size: 8, eof: true, ended: false, footer: '' };
+  };
+  a1Routes();
+  await open({ view: 'task', id: 's1' });
+  await waitUntil(() => q('.dv-out') && q('.dv-out').textContent === 'serving\n', { what: 'the shell\'s output' });
+  await open({ view: 'task', id: 'a1' });
+  await waitUntil(() => q('.dv-items details.tc') && !q('.dv-earlier').hidden, { what: 'the agent\'s page' });
+  const earlier = q('.dv-earlier');
+  assert.equal(views().length, 2, 'the shell under the agent');
+  try {
+    await show({ level: 'basic' });
+    for (const dv of views()) {
+      const b = dv.querySelector('.cp-dbody');
+      assert.ok(b.querySelector('.dv-unshared'), 'the view says the conversation is not shared');
+      assert.equal(b.querySelector('.dv-unshared').textContent, 'The conversation is not shared with this viewer.');
+      assert.equal(b.querySelector('.dv-out'), null, 'no shell output kept');
+      assert.equal(b.querySelector('.dv-items'), null, 'no agent transcript kept');
+      assert.equal(b.querySelector('.dv-prompt'), null, 'no prompt kept');
+    }
+    const at = shell.calls.length;
+    shell.click(earlier);
+    await settle();
+    const fetched = shell.calls.slice(at).map((c) => c.url)
+      .filter((u) => /^\/api\/mirror\/(tasks|agents|workflows|diff)/.test(u));
+    assert.deepEqual(fetched, [], 'nothing asked of the work or code routes, the held Load earlier included');
+  } finally {
+    await show();
+  }
+  // The level back: the view on screen opens afresh.
+  await waitUntil(() => q('.dv-items details.tc'), { what: 'the agent\'s view again' });
+  assert.equal(q('.dv-unshared'), null);
+});
+
+test('a diff view open when the level falls below read drops what it showed, and its held Retry fetches nothing', async () => {
+  diffs['turn=tR'] = respond({ ok: false, error: 'boom' }, { status: 500 });
+  const n = calls('/api/mirror/diff?turn=tR').length;
+  await open({ view: 'diff', id: 'tR' });
+  await waitUntil(() => calls('/api/mirror/diff?turn=tR').length > n && q('.dv-retry'), { what: 'the failed load' });
+  const retry = q('.dv-retry');
+  try {
+    await show({ level: 'basic' });
+    assert.ok(q('.dv-unshared'), 'not shared');
+    assert.equal(q('.dv-problem'), null, 'what it showed is gone');
+    const at = calls('/api/mirror/diff').length;
+    shell.click(retry);
+    await settle();
+    assert.equal(calls('/api/mirror/diff').length, at, 'the held Retry fetches nothing');
+  } finally {
+    delete diffs['turn=tR'];
     await show();
   }
 });

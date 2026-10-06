@@ -41,7 +41,9 @@
 // last content under "No longer running" (§8.6), and its followers stop.
 //
 // BELOW `read` every view says the conversation is not shared with this viewer
-// and fetches nothing (the routes refuse it anyway, §5.4).
+// and fetches nothing (the routes refuse it anyway, §5.4). A view open when the
+// level falls drops what it showed for that line, and its followers, timers and
+// own buttons end; one showing that line opens afresh when the level rises.
 //
 // TEXT. Every string from the mirror goes in by textContent; prose through
 // renderMarkdown(text, {flavor: 'chat'}) — its own div.md-chat inside a plain
@@ -144,8 +146,13 @@ function createView(body, ctx) {
     clock: null,           // () → whether it still needs the ticker; repaints on each tick
     onMirror: null,
     observer: null,
+    unshared: false,       // showing NOT_SHARED: nothing here fetches again
   };
-  v.visible = () => !v.closed && body.isConnected && !(dview && dview.hidden) && posture() === 'full' && canRead();
+  // Whether the view may still fetch: open, and not demoted below read.
+  v.live = () => !v.closed && !v.unshared && canRead();
+  v.visible = () => v.live() && body.isConnected && !(dview && dview.hidden) && posture() === 'full';
+  // Every fetch a view makes goes through here: none once it may not.
+  v.get = (url) => (v.live() ? getJson(url) : Promise.resolve({ ok: false, status: 0, body: null }));
   // One follower: `start` answers its stop function, and calls done() once it
   // has nothing more to follow.
   v.follow = (start) => {
@@ -173,6 +180,16 @@ function createView(body, ctx) {
     const t = setTimeout(() => { v.timers.delete(t); if (!v.closed) fn(); }, ms);
     v.timers.add(t);
     return t;
+  };
+  // Below read: the one line, and nothing left running.
+  v.unshare = () => {
+    v.unshared = true;
+    v.endFollowers();
+    v.clock = null;
+    v.paint = null;
+    v.onRow = null;
+    body.replaceChildren(note(NOT_SHARED, 'dv-note dv-unshared'));
+    syncTicker();
   };
   v.close = () => {
     if (v.closed) return;
@@ -331,7 +348,7 @@ function renderTask(body, params, ctx) {
   const v = createView(body, ctx);
   ctx.setTitle('Task');
   if (!canRead()) {
-    body.replaceChildren(note(NOT_SHARED, 'dv-note dv-unshared'));
+    v.unshare();
     return () => v.close();
   }
   const row = id ? findRow(id) : null;
@@ -346,14 +363,14 @@ function renderTask(body, params, ctx) {
   // No row: ask the routes that answer for work the store does not hold.
   body.replaceChildren(note('Loading…', 'dv-note dv-loading'));
   (async () => {
-    const agent = await getJson(`/api/mirror/agents/${encodeURIComponent(id)}`);
-    if (v.closed) return;
+    const agent = await v.get(`/api/mirror/agents/${encodeURIComponent(id)}`);
+    if (!v.live()) return;
     if (agent.ok && agent.body && isObj(agent.body.agent)) {
       const r = normalizeTask(agent.body.agent);
       if (r) { openTaskKind(v, r, { inStore: false, first: agent.body }); return; }
     }
-    const wf = await getJson(`/api/mirror/workflows/${encodeURIComponent(id)}`);
-    if (v.closed) return;
+    const wf = await v.get(`/api/mirror/workflows/${encodeURIComponent(id)}`);
+    if (!v.live()) return;
     if (wf.ok && wf.body && isObj(wf.body.workflow)) {
       const r = normalizeTask(wf.body.workflow);
       if (r) { openTaskKind(v, r, { inStore: false, first: wf.body, routeId: id }); return; }
@@ -608,23 +625,25 @@ function agentView(v, current, opts) {
   }
 
   // Once the agent is done: its result as chat markdown (the Agent call's result
-  // in the stream), and one last read of the newest page for what changed.
+  // in the stream).
+  // Done only once the result is drawn: until the stream carries it, each later
+  // 'mirror' event looks again.
   function finish() {
-    finished = true;
     const call = streamCallFor(current(), 'agent_id');
     const text = call && call.result && str(call.result.preview);
     if (text) {
+      finished = true;
       result.replaceChildren(el('div', 'dv-result-head', 'Result'), prose(text, 'dv-prose dv-result-text'));
       result.hidden = false;
     }
   }
 
   earlier.addEventListener('click', async () => {
-    if (nextBefore === null || earlier.disabled) return;
+    if (nextBefore === null || earlier.disabled || !v.live()) return;
     earlier.disabled = true;
     earlier.textContent = 'Loading…';
-    const r = await getJson(`/api/mirror/agents/${encodeURIComponent(agentId)}?before=${encodeURIComponent(String(nextBefore))}`);
-    if (v.closed) return;
+    const r = await v.get(`/api/mirror/agents/${encodeURIComponent(agentId)}?before=${encodeURIComponent(String(nextBefore))}`);
+    if (!v.live()) return;
     earlier.disabled = false;
     earlier.textContent = 'Load earlier';
     if (!r.ok || !r.body) {
@@ -674,8 +693,8 @@ function agentView(v, current, opts) {
   } else {
     list.replaceChildren(note('Loading…', 'dv-note dv-loading'));
     (async () => {
-      const r = await getJson(`/api/mirror/agents/${encodeURIComponent(agentId)}`);
-      if (v.closed) return;
+      const r = await v.get(`/api/mirror/agents/${encodeURIComponent(agentId)}`);
+      if (!v.live()) return;
       list.replaceChildren();
       if (!r.ok || !r.body) {
         problem.textContent = 'The agent\'s transcript could not be loaded.';
@@ -781,13 +800,13 @@ function workflowView(v, current, opts) {
   };
 
   async function refetch() {
-    if (inFlight || v.closed) return;
+    if (inFlight || !v.live()) return;
     inFlight = true;
     pending = false;
     lastFetch = Date.now();
-    const r = await getJson(`/api/mirror/workflows/${encodeURIComponent(routeId)}`);
+    const r = await v.get(`/api/mirror/workflows/${encodeURIComponent(routeId)}`);
     inFlight = false;
-    if (v.closed) return;
+    if (!v.live()) return;
     if (r.ok && r.body) {
       detail = r.body;
       problem.hidden = true;
@@ -804,7 +823,7 @@ function workflowView(v, current, opts) {
   // end (one timer, the view's only one), and one off screen until it shows.
   function schedule() {
     pending = true;
-    if (v.closed || v.gone || !v.visible() || inFlight || v.timers.size) return;
+    if (!v.live() || v.gone || !v.visible() || inFlight || v.timers.size) return;
     const wait = lastFetch + followMs - Date.now();
     if (wait <= 0) refetch();
     else v.later(() => { if (pending) schedule(); }, wait);
@@ -992,7 +1011,7 @@ function renderDiffView(body, params, ctx) {
   const turnId = !nodeId && typeof params.id === 'string' && params.id ? params.id : null;
   ctx.setTitle(nodeId ? `Changes${SEP}${labelFor(nodeId)}` : `Changes${SEP}this turn`);
   if (!canRead()) {
-    body.replaceChildren(note(NOT_SHARED, 'dv-note dv-unshared'));
+    v.unshare();
     return () => v.close();
   }
   if (!nodeId && !turnId) {
@@ -1001,9 +1020,10 @@ function renderDiffView(body, params, ctx) {
   }
   const url = nodeId ? `/api/mirror/diff?node=${encodeURIComponent(nodeId)}` : `/api/mirror/diff?turn=${encodeURIComponent(turnId)}`;
   const load = async () => {
+    if (!v.live()) return;
     body.replaceChildren(note('Loading…', 'dv-note dv-loading'));
-    const r = await getJson(url);
-    if (v.closed) return;
+    const r = await v.get(url);
+    if (!v.live()) return;
     if (!r.ok || !r.body) {
       const line = note(r.status === 404 ? 'No changes were recorded here.' : 'The changes could not be loaded. ', 'dv-note dv-problem');
       if (r.status !== 404) {
@@ -1034,10 +1054,20 @@ function renderDiffView(body, params, ctx) {
 
 // ── the module's surface ─────────────────────────────────────────────────────
 
+// The access level first: a view the level fell under is demoted to the one
+// line, and one showing that line opens afresh once the level allows it.
 function onMirror() {
+  const read = canRead();
   for (const v of [...views]) {
-    if (!v.onMirror) continue;
-    try { v.onMirror(); } catch (e) { console.error('[web-chat] a detail view failed to update', e); }
+    if (v.closed) continue;
+    try {
+      if (!read) { if (!v.unshared) v.unshare(); continue; }
+      if (v.unshared) {
+        if (v.ctx.reopen) { v.close(); v.ctx.reopen(); }
+        continue;
+      }
+      if (v.onMirror) v.onMirror();
+    } catch (e) { console.error('[web-chat] a detail view failed to update', e); }
   }
 }
 
@@ -1047,15 +1077,27 @@ function onPosture() {
 }
 
 // Each render is guarded: a view that throws shows one line, never a blank page.
+// Its ctx carries `reopen`, which renders it afresh into the same body (the
+// level rising over a view that said "not shared"); the cleanup the panel holds
+// ends whichever render is current.
 function guarded(render) {
   return (body, params, ctx) => {
-    try {
-      return render(body, params || {}, ctx);
-    } catch (e) {
-      console.error('[web-chat] a detail view failed', e);
-      body.replaceChildren(note('This view could not be shown.', 'dv-note dv-problem'));
-      return undefined;
-    }
+    let cleanup;
+    let ended = false;
+    const open = () => {
+      try {
+        cleanup = render(body, params || {}, { ...ctx, reopen: () => { if (!ended) open(); } });
+      } catch (e) {
+        console.error('[web-chat] a detail view failed', e);
+        body.replaceChildren(note('This view could not be shown.', 'dv-note dv-problem'));
+        cleanup = undefined;
+      }
+    };
+    open();
+    return () => {
+      ended = true;
+      if (typeof cleanup === 'function') cleanup();
+    };
   };
 }
 
