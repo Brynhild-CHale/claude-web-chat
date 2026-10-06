@@ -320,6 +320,7 @@ test('ONE setInterval while the tray is open, which redraws the metas; cleared o
   try { trayTicker(known)[0].fn(); } finally { Date.now = held; }
   assert.notEqual(meta(), at, 'the tick redrew the meta');
   assert.match(meta(), /:5173$/);
+  assert.deepEqual(expanded(), ['shells'], 'a redraw keeps aria-expanded true on the open chip only');
   shell.press(chip('shells'));
   assert.equal(trayTicker(known).length, 0, 'cleared on close');
   shell.press(chip('agents'));
