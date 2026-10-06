@@ -591,8 +591,14 @@ test('topbar emits `view` {activeId, viewedId} when either changes and not other
   }
 });
 
-test('"3 files +40 −12 · View changes" once code is ready, View changes only with a diff detail registered', async () => {
+test('"3 files +40 −12 · View changes" once code is ready, View changes only with a diff detail registered', async (t) => {
   const panel = await shell.importApp('chat-panel.js');
+  // main.js registers the detail views (tranche 3: chat-detail.js, 'diff' among
+  // them) at boot: they come off for this case, so it starts with no diff view,
+  // and go on again after it.
+  const detail = await shell.importApp('chat-detail.js');
+  detail.stopChatDetail();
+  t.after(() => { detail.initChatDetail(); });
   await follow([turn('d1', 1, [prompt('d1', 'edit')], { node: { id: 'n30', label: 'n1.30', role: 'commit' },
     code: { status: 'ready', files: 3, additions: 40, deletions: 12 } }),
   turn('d2', 2, [prompt('d2', 'chat only')], { node: { id: 'n30', label: 'n1.30', role: 'folded' },

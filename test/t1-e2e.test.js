@@ -958,12 +958,30 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     await shell.tick();
     assert.ok(!shown($('chat-dock')), 'Esc closes it');
 
-    const chip = $('cs-chips').querySelector('.cs-devchip');
-    assert.ok(chip, 'the chips stand in for the trays');
-    shell.press(chip);
-    assert.ok(shown(note()), `the ${chip.dataset.csCat} chip opens the note`);
-    assert.equal(note().querySelector('.cs-dev-title').textContent, 'Under development');
-    shell.key('Escape');
+    // Tranche 3's main.js starts the trays, whose claimChips() takes the five
+    // stand-in chips at boot: #cs-chips is the trays' and #cs-tray their tray,
+    // never the bar's note.
+    assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'the trays took the stand-in chips');
+    assert.ok(note() && note().classList.contains('cs-tray') && !note().classList.contains('cs-dev'),
+      '#cs-tray is the trays\' own tray, not the bar\'s note');
+    // The stand-in itself, as it stands without the trays: stopTrays() calls
+    // claimChips' release(), the chips come back and open the note; the trays
+    // then go on again.
+    const trays = await shell.importApp('chat-trays.js');
+    trays.stopTrays();
+    try {
+      await shell.tick();
+      const chip = $('cs-chips').querySelector('.cs-devchip');
+      assert.ok(chip, 'released, the chips stand in for the trays');
+      shell.press(chip);
+      assert.ok(shown(note()), `the ${chip.dataset.csCat} chip opens the note`);
+      assert.equal(note().querySelector('.cs-dev-title').textContent, 'Under development');
+      shell.key('Escape');
+    } finally {
+      trays.initChatTrays();
+      await shell.tick();
+    }
+    assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'the trays, on again, take them back');
 
     shell.setViewport({ width: 390, height: 844 });
     await shell.tick();

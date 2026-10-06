@@ -86,6 +86,11 @@ before(async () => {
     init: async (sh) => {
       const bar = await sh.importApp('chat-bar.js');
       void bar;
+      // main.js starts the trays (tranche 3): they come off first — stopTrays()
+      // calls claimChips' release(), so the bar's stand-ins are back — and the
+      // takeover below is this file's own, as it was before main.js ran it.
+      (await sh.importApp('chat-trays.js')).stopTrays();
+      await sh.tick();
       before_ = {
         chips: [...sh.$('cs-chips').querySelectorAll('.cs-devchip')].map((b) => b.dataset.csCat),
         note: !!sh.document.querySelector('#cs-tray.cs-dev'),

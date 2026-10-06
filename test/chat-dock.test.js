@@ -150,7 +150,14 @@ test('a second chat:open while open only re-applies focus: one chat:host, one po
   assert.ok(el().contains(W.document.activeElement), 'but focus is back in the chat');
 });
 
-test('opening the chat closes every popover — the bar\'s note included', async () => {
+test('opening the chat closes every popover — the bar\'s note included', async (t) => {
+  // main.js starts the trays (tranche 3), whose claimChips() takes the bar's
+  // stand-in chips at boot: the trays come off for this case (stopTrays() calls
+  // claimChips' release(), and the stand-ins are back) and go on again after it.
+  const trays = await shell.importApp('chat-trays.js');
+  trays.stopTrays();
+  t.after(() => { trays.initChatTrays(); });
+  await shell.tick();
   const chip = W.document.querySelector('#cs-chips .cs-devchip');
   assert.ok(chip, 'precondition: the bar\'s stand-in chips');
   shell.press(chip);

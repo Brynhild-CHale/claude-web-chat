@@ -25,6 +25,9 @@ import { initChatStream } from './chat-stream.js';
 import { initChatTools } from './chat-tools.js';
 import { initFavicon } from './favicon.js';
 import { initPullStub } from './chat-pull-stub.js';
+import { initChatTrays } from './chat-trays.js';
+import { initChatDetail } from './chat-detail.js';
+import { initGraphTurns } from './graph-turns.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -58,4 +61,12 @@ initChatStream(); // the turns, grouped, rewind-aware
 initChatTools();  // the tool cards (setToolRenderer)
 initFavicon();    // the tab icon (light and dark) and its waiting badge
 initPullStub();
+// Tranche 3, after the chat above and after initGraph: the bar's chips and
+// their trays (shells, monitors, agents, workflows, the queue — they take over
+// the bar's stand-in chips), the detail views the chat pushes (a task's output,
+// an agent followed live, a workflow, a turn's code changes: View changes),
+// and a node's turns and rewind marks in the graph inspector. Each idempotent.
+initChatTrays();
+initChatDetail();
+initGraphTurns();
 connect();

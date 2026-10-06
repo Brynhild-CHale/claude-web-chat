@@ -96,6 +96,9 @@ before(async () => {
       (await sh.importApp('chat-panel.js')).initChatPanel();
       (await sh.importApp('chat-tools.js')).stopChatTools();
       (await sh.importApp('chat-stream.js')).stopChatStream();
+      // The detail views main.js registers (tranche 3: 'task' and 'diff'), off:
+      // this file registers its own through registerDetail.
+      (await sh.importApp('chat-detail.js')).stopChatDetail();
       // #chat-stream as the panel builds it, empty: the stream's scaffolding out.
       const stream = sh.document.getElementById('chat-stream');
       if (stream) stream.replaceChildren();
