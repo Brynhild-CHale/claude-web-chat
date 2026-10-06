@@ -37,15 +37,19 @@
 //     last record (r.branchFrom): the turn machine supersedes turns 2–3 under a
 //     'branch' notice; turn 4 stays live.
 //
-//   reset({drop, firstTurnRecords, ...})                          — §15.4 (b)
+//   reset({drop, firstTurnRecords, last, ...})                    — §15.4 (b)
 //     the first turn carries the first-turn append (FIRST_TURN_KINDS, all six);
-//     three closed turns with messageCount 4, 8, 12; then, with no SessionStart
-//     between, a fourth prompt whose turn re-sends `firstTurnRecords` first-turn
-//     attachments (default 6, cycling the kinds) and closes with messageCount
-//     12 − `drop` (default 8, i.e. 4). Turns 1–3 are abandoned under one 'reset'
-//     notice when drop ≥ RESET_MIN_COUNT_DROP and firstTurnRecords ≥
-//     RESET_MIN_FIRST_TURN_RECORDS (lib/server/mirror/rewinds.js); `expect` is
-//     computed from those constants.
+//     three closed turns with messageCount last − 8, last − 4, last (`last`
+//     default 12: 4, 8, 12); then, with no SessionStart between, a fourth prompt
+//     whose turn re-sends `firstTurnRecords` first-turn attachments (default 6,
+//     cycling the kinds) and closes with messageCount last − `drop` (default 8,
+//     i.e. 4). Turns 1–3 are abandoned under one 'reset' notice when drop ≥
+//     RESET_MIN_COUNT_DROP, firstTurnRecords ≥ RESET_MIN_FIRST_TURN_RECORDS and
+//     last − drop ≤ RESET_MAX_AFTER_COUNT (lib/server/mirror/rewinds.js);
+//     `expect` is computed from those constants. The V37 shapes: the spec's
+//     in-process reset is reset({last: 86, drop: 70}) (86 → 16, a reset); the
+//     2.1.287 drop that is not one is reset({last: 3031, drop: 109,
+//     firstTurnRecords: 5}) (3031 → 2922, lands above the bound).
 //
 //   compaction({...})                                              — §15.4 (b′)
 //     as reset, but a compact_boundary (and its summary) comes before the fourth
@@ -61,6 +65,30 @@
 //     case, since whether a resume lowers it at all is gate V37, which the
 //     maintainer has not run — the SessionStart is what keeps it from reading
 //     as a reset. NOT a reset.
+//
+//   exitTail({before, after, ...})                                 — V37 (b‴)
+//     a resume in the SAME file the daemon did not hear: three closed turns
+//     (counts before − 8, before − 4, `before`, default 50), then the exit tail
+//     Claude Code writes when the process leaves the session — a uuid-less
+//     cost-state, a last-prompt naming the leaf, a file-history-snapshot — then,
+//     a minute later and with NO SessionStart (the only hook is the startup one,
+//     1 s before the file), the resumed process's first prompt with the
+//     first-turn append, closing with messageCount `after` (default 32: V37's
+//     50 → 32, low enough that only the exit tail keeps it from a reset). NOT a
+//     reset. `tail: false` leaves the exit tail out (then it reads as one).
+//
+//   continuation({before, after, ...})                             — V37 (b⁗)
+//     a resume into a NEW file the daemon did not hear. The earlier session
+//     (`sessionId`) has three closed turns (counts as exitTail), its exit tail
+//     and a `continued-in {continuedInSessionId}` record. The new session
+//     (`nextSessionId`) opens with ai-title, agent-name, mode, permission-mode
+//     and atis-latch, then COPIES of the earlier file's chain (the same uuids,
+//     promptIds and original timestamps, sessionId rewritten) — so a copied
+//     turn_duration sits just before the new process's first one — then the new
+//     process's first prompt with the first-turn append, closing with
+//     messageCount `after` (default 32). The fixture's `records` are the earlier
+//     file's; `next` = {sessionId, records, turns} is the new one's, `turns`
+//     holding only the new process's turn. NOT a reset.
 //
 //   anchor({form, next, branch, open, ...})                        — §15.4 (c)
 //     three turns, then a last-prompt record:
@@ -88,11 +116,12 @@
 
 const { createRecords } = require('./claude-records');
 const {
-  FIRST_TURN_KINDS, RESET_MIN_COUNT_DROP, RESET_MIN_FIRST_TURN_RECORDS,
+  FIRST_TURN_KINDS, RESET_MIN_COUNT_DROP, RESET_MIN_FIRST_TURN_RECORDS, RESET_MAX_AFTER_COUNT,
 } = require('../lib/server/mirror/rewinds');
 
 const DEFAULT_START = Date.UTC(2026, 9, 4, 12, 0, 0);
 const DEFAULT_SESSION = '7e3a1c55-0b1d-4c2e-9f60-5a1b2c3d4e5f';
+const NEXT_SESSION = '9b4d2e66-1c2e-4d3f-8a71-6b2c3d4e5f60';
 const FIRST_TURN_APPEND = FIRST_TURN_KINDS;
 
 // One first-turn attachment of `kind` (a kind of FIRST_TURN_KINDS).
@@ -140,12 +169,21 @@ function base({ seed = 78, sessionId = DEFAULT_SESSION, start = DEFAULT_START, s
   return { r, hooks: list };
 }
 
-// Three closed turns, the first with the first-turn append: counts 4, 8, 12.
-function threeTurns(r, { openThird = false } = {}) {
-  const t1 = turn(r, 'rw-1', { count: 4, attachments: FIRST_TURN_KINDS.length });
-  const t2 = turn(r, 'rw-2', { count: 8 });
-  const t3 = turn(r, 'rw-3', { count: 12, open: openThird });
+// Three closed turns, the first with the first-turn append: counts last − 8,
+// last − 4, last (4, 8, 12 by default).
+function threeTurns(r, { openThird = false, last = 12 } = {}) {
+  const t1 = turn(r, 'rw-1', { count: last - 8, attachments: FIRST_TURN_KINDS.length });
+  const t2 = turn(r, 'rw-2', { count: last - 4 });
+  const t3 = turn(r, 'rw-3', { count: last, open: openThird });
   return [t1, t2, t3];
+}
+
+// The exit tail a process writes when it leaves a session (V37): uuid-less, in
+// the order the corpus shows them.
+function exitTailOf(r) {
+  r.costState();
+  r.lastPrompt({});
+  r.meta('file-history-snapshot', { messageId: r.uuid(), snapshot: { trackedFileBackups: {}, timestamp: new Date(clockOf(r)).toISOString() }, isSnapshotUpdate: false });
 }
 
 // The last chain record of each turn: the records from its prompt up to the
@@ -175,12 +213,13 @@ function branch(opts = {}) {
     { reason: 'branch', superseded: [t2.id, t3.id], live: [t1.id, t4.id], open: null });
 }
 
-function reset({ drop = 8, firstTurnRecords = FIRST_TURN_KINDS.length, ...opts } = {}) {
+function reset({ drop = 8, firstTurnRecords = FIRST_TURN_KINDS.length, last = 12, ...opts } = {}) {
   const b = base(opts);
-  const [t1, t2, t3] = threeTurns(b.r);
-  const t4 = turn(b.r, 'rw-4', { count: 12 - drop, attachments: firstTurnRecords });
+  const [t1, t2, t3] = threeTurns(b.r, { last });
+  const t4 = turn(b.r, 'rw-4', { count: last - drop, attachments: firstTurnRecords });
   const ids = [t1.id, t2.id, t3.id, t4.id];
-  const fires = drop >= RESET_MIN_COUNT_DROP && firstTurnRecords >= RESET_MIN_FIRST_TURN_RECORDS;
+  const fires = drop >= RESET_MIN_COUNT_DROP && firstTurnRecords >= RESET_MIN_FIRST_TURN_RECORDS
+    && last - drop <= RESET_MAX_AFTER_COUNT;
   return fixture('reset', b, ids, fires
     ? { reason: 'reset', superseded: [t1.id, t2.id, t3.id], live: [t4.id], open: null }
     : { reason: null, superseded: [], live: ids, open: null });
@@ -207,6 +246,45 @@ function resume({ countAfter = 5, ...opts } = {}) {
   const t4 = turn(b.r, 'rw-4', { count: countAfter, attachments: FIRST_TURN_KINDS.length });
   const ids = [t1.id, t2.id, t3.id, t4.id];
   return fixture('resume', b, ids, { reason: null, superseded: [], live: ids, open: null });
+}
+
+function exitTail({ before = 50, after = 32, tail = true, ...opts } = {}) {
+  const b = base(opts);
+  const [t1, t2, t3] = threeTurns(b.r, { last: before });
+  if (tail) exitTailOf(b.r);
+  b.r.tick(60000);
+  const t4 = turn(b.r, 'rw-4', { count: after, attachments: FIRST_TURN_KINDS.length });
+  const ids = [t1.id, t2.id, t3.id, t4.id];
+  return fixture('exit-tail', b, ids, tail
+    ? { reason: null, superseded: [], live: ids, open: null }
+    : { reason: 'reset', superseded: [t1.id, t2.id, t3.id], live: [t4.id], open: null });
+}
+
+function continuation({ before = 50, after = 32, nextSessionId = NEXT_SESSION, ...opts } = {}) {
+  const b = base(opts);
+  const [t1, t2, t3] = threeTurns(b.r, { last: before });
+  exitTailOf(b.r);
+  b.r.meta('continued-in', { continuedInSessionId: nextSessionId });
+  const earlier = b.r.records.slice();
+  // The new file: its headers, the copied chain, then the new process's turn.
+  b.r.tick(60000);
+  const n0 = b.r.records.length;
+  b.r.aiTitle('Fix the build');
+  b.r.agentName('builder');
+  b.r.mode('normal');
+  b.r.permissionMode('default');
+  b.r.meta('atis-latch', {});
+  const headers = b.r.records.slice(n0);
+  const copies = earlier.filter((x) => typeof x.uuid === 'string').map((x) => ({ ...x }));
+  const n1 = b.r.records.length;
+  const t4 = turn(b.r, 'rw-4', { count: after, attachments: FIRST_TURN_KINDS.length });
+  const own = b.r.records.slice(n1);
+  const records = [...headers, ...copies, ...own].map((x) => ({ ...x, sessionId: nextSessionId }));
+  const f = fixture('continuation', b, [t1.id, t2.id, t3.id], { reason: null, superseded: [], live: [t1.id, t2.id, t3.id], open: null });
+  f.records = earlier;
+  f.lastOf = lastsOf({ records: earlier }, f.turns);
+  f.next = { sessionId: nextSessionId, records, turns: [t4.id], expect: { reason: null, superseded: [], live: [t4.id], open: null } };
+  return f;
 }
 
 function anchor({ form = 'rewound', next = true, branch: asBranch = false, open = false, ...opts } = {}) {
@@ -254,10 +332,13 @@ module.exports = {
   reset,
   compaction,
   resume,
+  exitTail,
+  continuation,
   anchor,
   leafNamed,
   envelope,
   firstTurnAppend,
   FIRST_TURN_APPEND,
   DEFAULT_SESSION,
+  NEXT_SESSION,
 };
