@@ -5,54 +5,20 @@
 // This script IS the source: run `node extensions/make-icons.js` and the PNGs
 // under extensions/<name>/icons/ are rewritten from the shape code below.
 //
-// Zero dependencies: zlib (for the IDAT stream) and a CRC32 are all a valid PNG
-// needs — and the CRC32 comes from lib/core/zip, the one home for it, because a
-// PNG chunk and a ZIP entry carry the same IEEE checksum and this script used to
-// keep a second copy of it. Everything is drawn once at 4x into an RGBA buffer
-// and area-averaged down to each target size, which is where the antialiasing
-// comes from.
+// Zero dependencies. The PNG encoder is lib/core/png's (the one encoder: 8-bit
+// RGBA, filter 0, deflate level 9 — the bytes this script wrote when it kept a
+// private copy) and the resampler is lib/core/icon's (the one area-average
+// resampler, shared with the project-icon pipeline). Everything is drawn once at
+// 4x into an RGBA buffer and area-averaged down to each target size, which is
+// where the antialiasing comes from.
 
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
-const { crc32 } = require('../lib/core/zip');
+const { encodePng } = require('../lib/core/png');
+const { resample } = require('../lib/core/icon');
 
 const SIZES = [16, 32, 48, 128];
 const SUPER = 512; // master canvas; every size is an area-average of this
-
-// ---------------------------------------------------------------- PNG encoding
-
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body), 0);
-  return Buffer.concat([len, body, crc]);
-}
-
-// 8-bit RGBA (color type 6), no interlace, filter 0 on every scanline.
-function encodePng(rgba, w, h) {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(w, 0);
-  ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8;  // bit depth
-  ihdr[9] = 6;  // color type: truecolour with alpha
-  ihdr[10] = 0; // compression
-  ihdr[11] = 0; // filter
-  ihdr[12] = 0; // interlace
-  const raw = Buffer.alloc(h * (w * 4 + 1));
-  for (let y = 0; y < h; y++) {
-    raw[y * (w * 4 + 1)] = 0; // filter type: None
-    rgba.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4);
-  }
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 // ------------------------------------------------------------------- rendering
 
@@ -99,40 +65,6 @@ function downTriangle(x0, x1, yTop, yTip) {
     const t = (y - yTop) / (yTip - yTop);
     return Math.abs(x - cx) <= half * (1 - t);
   };
-}
-
-// Area-average resample. Handles non-integer ratios (512 -> 48), which is why
-// this isn't a plain every-Nth-pixel decimation.
-function resample(src, sw, sh, dw, dh) {
-  const out = Buffer.alloc(dw * dh * 4);
-  const fx = sw / dw;
-  const fy = sh / dh;
-  for (let y = 0; y < dh; y++) {
-    const sy0 = Math.floor(y * fy);
-    const sy1 = Math.min(sh, Math.ceil((y + 1) * fy));
-    for (let x = 0; x < dw; x++) {
-      const sx0 = Math.floor(x * fx);
-      const sx1 = Math.min(sw, Math.ceil((x + 1) * fx));
-      let r = 0, g = 0, b = 0, a = 0, n = 0;
-      for (let yy = sy0; yy < sy1; yy++) {
-        for (let xx = sx0; xx < sx1; xx++) {
-          const i = (yy * sw + xx) * 4;
-          const sa = src[i + 3] / 255;
-          // Premultiply so transparent pixels don't drag colour into the edges.
-          r += src[i] * sa; g += src[i + 1] * sa; b += src[i + 2] * sa; a += sa;
-          n++;
-        }
-      }
-      const o = (y * dw + x) * 4;
-      if (a > 0) {
-        out[o] = Math.round(r / a);
-        out[o + 1] = Math.round(g / a);
-        out[o + 2] = Math.round(b / a);
-      }
-      out[o + 3] = Math.round((a / n) * 255);
-    }
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------- the two marks
@@ -188,4 +120,7 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { encodePng, resample, SIZES };
+// SIZES for anyone listing the icons; SUPER and EXTENSIONS (each one's folder
+// and draw function) so a test can draw the two masters in memory and check the
+// shipped PNGs against them. No encoder and no resampler: those are lib/core's.
+module.exports = { SIZES, SUPER, EXTENSIONS };
