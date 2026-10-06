@@ -330,6 +330,20 @@ test('a PostToolUse before the transcript makes the row, the transcript fills th
   assert.equal(row.tool_use_id, useId);
   assert.deepEqual(row.owner, { agent_id: AGENT, title: 'general-purpose' });
   assert.deepEqual(h.mirror.tasks().counts.shells, { running: 1, total: 1 });
+
+  // An agent the model already holds names the owner by its row's title.
+  const agent2 = 'a00000000000000b2';
+  h.probe.engine.model.upsertTask({
+    id: agent2, conversation_id: S1, kind: 'agent', title: 'Explore the repo', status: 'running', started_at: Date.now(),
+    line: '', meta: {}, turn_id: null, tool_use_id: null, can: { output: false, open: true, stop: true },
+  });
+  h.publish('PostToolUse', {
+    tool: { name: 'Bash', use_id: 'toolu_01Hook2', input: { command: 'sleep 99', description: 'Wait', run_in_background: true } },
+    result: { ok: true, fields: { backgroundTaskId: 'b7hook2' } },
+    agent: { id: agent2, type: 'Explore' },
+  });
+  assert.deepEqual(h.row('b7hook2').owner, { agent_id: agent2, title: 'Explore the repo' }, 'the agent row\'s title, before its type');
+  assert.equal(h.row('b7hook2').can.output, false, 'no outputFile, no output');
   await h.mirror.stop();
   assertNoPath(h, file, 'the hook row');
 });
