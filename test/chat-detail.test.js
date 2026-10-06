@@ -391,6 +391,16 @@ test('agent: type and model from the followed stream\'s Agent call, absent when 
   await waitUntil(() => q('.dv-type'), { what: 'the route\'s meta' });
   assert.equal(q('.dv-type').textContent, 'Plan', 'U42\'s meta keys on the route\'s answer');
   assert.equal(q('.dv-model').textContent, 'opus');
+  await popAll();
+
+  // Both sources at once (the stream's Agent call says Explore / sonnet): the
+  // route's meta comes first (U47@agent-type-model-source).
+  agents.a1 = () => agentPage(A1, [item(1, 'reply', { text: 'both sources' })], null,
+    { agent_type: 'Plan', model: 'opus' });
+  await open({ view: 'task', id: 'a1' });
+  await waitUntil(() => /both sources/.test(q('.dv-items').textContent) && q('.dv-type'), { what: 'a1 with route meta' });
+  assert.equal(q('.dv-type').textContent, 'Plan', 'the route\'s agent_type over the stream\'s subagent_type');
+  assert.equal(q('.dv-model').textContent, 'opus', 'the route\'s model over the stream\'s');
 });
 
 test('agent: once done, its result as chat markdown', async () => {
