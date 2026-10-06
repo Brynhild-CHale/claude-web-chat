@@ -249,6 +249,20 @@ test('the touch icon follows the mark: a square logo makes it, a favicon takes o
   });
 });
 
+test('a touch icon re-derived from a stored image keeps that image\'s tile colour', async (t) => {
+  const root = directProject(t);
+  await run(['logo', SQUARE, '--background', 'tile:#1e66f5'], { cwd: root });
+  await run(['favicon', ICON], { cwd: root });
+  const { r } = await run(['clear', 'favicon'], { cwd: root });
+  assert.equal(r.touch.op, 'set');
+  assert.equal(r.touch.from, 'logo');
+  const img = decodePng(touchBytes(root));
+  for (const [x, y] of [[0, 0], [179, 0], [0, 179], [179, 179]]) {
+    const i = (y * img.width + x) * 4;
+    assert.deepEqual([...img.data.slice(i, i + 4)], [0x1e, 0x66, 0xf5, 255], `corner ${x},${y}: the stored logo's tile, not black`);
+  }
+});
+
 // ── show and clear ──────────────────────────────────────────────────────────
 
 test('show lists the home-screen icon both ways', async (t) => {
@@ -258,6 +272,16 @@ test('show lists the home-screen icon both ways', async (t) => {
   await run(['favicon', ICON], { cwd: root });
   ({ text } = await run(['show'], { cwd: root }));
   assert.match(text, /^ {2}home screen {3}180×180 PNG \(from the favicon\)$/m);
+  // It reports the touch icon itself, not the mark: cleared alone, the default
+  // shows beside a favicon that is still set.
+  await run(['clear', 'touch'], { cwd: root });
+  ({ text } = await run(['show'], { cwd: root }));
+  assert.match(text, /^ {2}home screen {3}web-chat's default$/m);
+  // A square logo that is the mark (no favicon) makes it too, and show says so.
+  await run(['clear', 'favicon'], { cwd: root });
+  await run(['logo', SQUARE], { cwd: root });
+  ({ text } = await run(['show'], { cwd: root }));
+  assert.match(text, /^ {2}home screen {3}180×180 PNG \(from the logo\)$/m);
 });
 
 test('clear favicon, clear all and clear touch remove the touch icon; clear logo does not', async (t) => {
