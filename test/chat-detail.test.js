@@ -464,6 +464,50 @@ test('agent: Cancel shows only with capabilities.task_stop at `full`, and posts 
   await show();
 });
 
+test('agent: with a stopper registered (registerStopper, E1 a), Cancel calls its mount and sends no POST', async () => {
+  const A = await shell.importApp('chat-actions.js');
+  const log = { mounts: [], unmounts: [] };
+  const off = A.registerStopper({
+    mount(slot, row, opts) {
+      log.mounts.push({ slot, row, opts });
+      const b = shell.document.createElement('button');
+      b.type = 'button';
+      b.textContent = 'Stop now';
+      slot.append(b);
+      return true;
+    },
+    unmount(slot) { log.unmounts.push(slot); },
+  });
+  try {
+    a1Routes();
+    await show({ caps: { task_stop: true }, level: 'full' });
+    await open({ view: 'task', id: 'a1' });
+    await waitUntil(() => q('.dv-cancel'), { what: 'Cancel' });
+    const posts = () => shell.calls.filter((c) => c.url === '/api/queue/task-stop' && c.method === 'POST');
+    const n = posts().length;
+    shell.click(q('.dv-cancel'));
+    assert.equal(log.mounts.length, 1, 'the stopper\'s mount, once');
+    const { slot, row, opts } = log.mounts[0];
+    assert.equal(row.id, 'a1');
+    assert.deepEqual(opts, { density: 'compact' });
+    assert.ok(slot.classList.contains('cs-row-confirm'));
+    assert.equal(slot.parentNode, q('.dv-head'), 'the slot is in the view\'s header');
+    assert.ok(slot.previousElementSibling.classList.contains('dv-actions'), 'where the inline confirm goes');
+    assert.equal(q('.cs-confirm-text'), null, 'no inline confirm');
+    await settle();
+    assert.equal(posts().length, n, 'no POST /api/queue/task-stop');
+    assert.equal(q('.dv-status').textContent, 'running', 'not "stopping…": the stopper owns the stop');
+    assert.ok(q('.dv-actions').hidden, 'the header keeps Cancel aside while the slot is open');
+    shell.key('Escape', { target: slot.firstChild });
+    assert.deepEqual(log.unmounts, [slot]);
+    assert.equal(slot.isConnected, false);
+    assert.ok(!q('.dv-actions').hidden, 'Cancel is back');
+  } finally {
+    off();
+    await show();
+  }
+});
+
 /* ── a workflow ───────────────────────────────────────────────────────────── */
 
 function w1Route() {
