@@ -406,6 +406,26 @@ test('(b‴) the exit tail is persisted: a restart between it and the resume sti
   await assertNoGraphWrite(b);
 });
 
+test('(b‴) the exit tail bounds only the pair it lies between: a later in-process reset after the resume still reads as one', async (t) => {
+  // The resume across the exit tail reads no reset; two turns later the resumed
+  // process rewinds to the first prompt in process (the first-turn append again,
+  // the count collapsing to 16, no exit tail and no SessionStart between).
+  const f = build('exitTail');
+  f.r.prompt('prompt rw-5', { promptId: 'rw-5' });
+  f.r.assistant(['reply to rw-5']);
+  f.r.turnDuration({ durationMs: 40, messageCount: 36 });
+  f.r.prompt('prompt rw-6', { promptId: 'rw-6' });
+  fx.firstTurnAppend(f.r);
+  f.r.assistant(['reply to rw-6']);
+  f.r.turnDuration({ durationMs: 40, messageCount: 16 });
+  f.turns.push('rw-5', 'rw-6');
+  f.expect = { reason: 'reset', superseded: f.turns.slice(0, -1), live: ['rw-6'], open: null };
+  const h = await run(t, f);
+  assertExpected(await verdict(h), f, 'an in-process reset after a resume');
+  assert.equal(realCalls(h).length, 1);
+  await assertNoGraphWrite(h);
+});
+
 // The two files of a continuation, the earlier one's turns first; the new
 // session's hook is a SessionStart dated before every record (so no SessionStart
 // falls between two turn-durations: it stands in for a link the registry makes
