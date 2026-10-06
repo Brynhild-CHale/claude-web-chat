@@ -168,7 +168,9 @@ test('direct: a second logo run without --dark removes the earlier dark variant,
 
 // ── daemon mode ─────────────────────────────────────────────────────────────
 
-test('daemon: logo --dark auto is PUT logo then PUT logo-dark, as raw bytes, two project events and two frames', async (t) => {
+// The square logo is the mark here (no favicon), so its home-screen icon
+// follows it, last (U77b, ruling U77b@touch-icon-source (b)).
+test('daemon: logo --dark auto is PUT logo, PUT logo-dark, then PUT touch-icon, as raw bytes, three project events and three frames', async (t) => {
   await withServer(t, { writePortfile: true }, async (h) => {
     const calls = spyApi(t);
     const v = viewer(h, 'project');
@@ -178,7 +180,7 @@ test('daemon: logo --dark auto is PUT logo then PUT logo-dark, as raw bytes, two
     assert.equal(r.via, 'daemon');
     assert.match(text, /through the running surface/);
 
-    assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ['PUT /api/project/logo', 'PUT /api/project/logo-dark']);
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ['PUT /api/project/logo', 'PUT /api/project/logo-dark', 'PUT /api/project/touch-icon']);
     for (const c of calls) {
       assert.ok(Buffer.isBuffer(c.body), 'the image goes as a Buffer body');
       assert.equal(c.headers['Content-Type'], 'image/png');
@@ -193,14 +195,15 @@ test('daemon: logo --dark auto is PUT logo then PUT logo-dark, as raw bytes, two
     assert.ok(fs.readFileSync(`${pp.projectLogo}.png`).equals(prepared.variants.transparent.bytes));
     assert.ok(fs.readFileSync(`${pp.projectLogoDark}.png`).equals(darkBytes));
     assert.ok(calls[0].body.equals(prepared.variants.transparent.bytes) && calls[1].body.equals(darkBytes));
+    assert.ok(calls[2].body.equals(prepared.variants.touch.bytes), 'the touch icon is the pipeline\'s touch variant');
     assert.ok(samePixels(darkBytes, fs.readFileSync(ICON_DARK)), 'the generated dark variant is variant A');
 
     const id = project.identity(h.root);
     assert.ok(id.logo && id.logo_dark);
-    assert.deepEqual((await projectEvents(h)).map((e) => e.field), ['logo', 'logo_dark'], 'exactly two project events');
-    await waitUntil(() => v.frames.length >= 2, { what: 'two project frames' });
+    assert.deepEqual((await projectEvents(h)).map((e) => e.field), ['logo', 'logo_dark', 'touch'], 'exactly three project events');
+    await waitUntil(() => v.frames.length >= 3, { what: 'three project frames' });
     await new Promise((res) => setTimeout(res, 100));
-    assert.equal(v.frames.length, 2, 'one frame per change, to every viewer');
+    assert.equal(v.frames.length, 3, 'one frame per change, to every viewer');
     assert.equal(v.frames[1].identity.mark_dark, true);
     v.close();
     assert.equal(sha(ICON), sum);
@@ -335,7 +338,8 @@ for (const mode of ['direct', 'daemon']) {
       await refused(['show-name', 'maybe'], opts, /on or off/);
       if (h) {
         const fields = (await projectEvents(h)).map((e) => e.field);
-        assert.ok(fields.length > 0 && fields.every((f) => ['name', 'show_name', 'logo', 'logo_dark', 'favicon', 'favicon_dark'].includes(f)));
+        // touch: the home-screen icon follows the mark (U77b).
+        assert.ok(fields.length > 0 && fields.every((f) => ['name', 'show_name', 'logo', 'logo_dark', 'favicon', 'favicon_dark', 'touch'].includes(f)));
       }
     };
     if (mode === 'daemon') await withServer(t, { writePortfile: true }, go);
