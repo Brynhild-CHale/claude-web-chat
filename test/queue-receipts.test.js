@@ -158,6 +158,24 @@ test('a drain of the park → sending; a merge into the park only refreshes park
   assert.equal(receiptOf(state, m.msg_id).park_id, undefined);
 });
 
+test('a parked message the MAX_QUEUE cap evicts from a merged park → failed, never parked for good', () => {
+  const state = freshState({ live: false });
+  const { bus, frames } = capturedBus();
+  const m = queue.enqueueMessage(state, bus, message());
+  queue.release(state, bus, [m.id]);
+  assert.equal(stateOf(state, m.msg_id), 'parked');
+  // MAX_QUEUE later signals merged into the park: the message is its oldest item.
+  for (let i = 0; i < queue.MAX_QUEUE; i++) {
+    queue.enqueue(state, bus, { kind: 'signal', signal_key: `k${i}`, summary: 's', why_wake: 'w', source: 'browser' });
+  }
+  const { parked } = queue.flush(state, bus);
+  assert.equal(parked.batch.length, queue.MAX_QUEUE, 'the cap itself is unchanged');
+  assert.equal(parked.batch.some((it) => it.msg_id === m.msg_id), false, 'the cap dropped the message');
+  assert.equal(stateOf(state, m.msg_id), 'failed');
+  assert.deepEqual(receiptFrames(frames).filter((f) => f.msg_id === m.msg_id).map((f) => f.state), ['queued', 'parked', 'failed']);
+  assertReceiptShapes(frames, bus);
+});
+
 test('an ack while the channel is not live leaves the receipt sending', () => {
   const state = freshState();
   const { bus } = capturedBus();
