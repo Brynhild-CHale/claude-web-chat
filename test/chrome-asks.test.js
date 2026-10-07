@@ -403,14 +403,32 @@ test('two control frames silent at staggered times while the surface stays down 
   assert.equal(asksGets(), before + 2, 'one refresh per frame\'s first silence, and then no more');
   assert.equal(a.childNodes.length, 0, 'A is left empty');
   assert.equal(b.childNodes.length, 0, 'B is left empty');
-  // A refresh started by a hello still brings both back.
-  await shell.frame(helloFrame());
+  // A refresh started by a hello still brings both back, even when the hello
+  // only joins a GET a frame's silence started: a fresh frame C goes silent
+  // with the GET held, the hello shares it, and its answer revives A and B.
+  const c = host();
+  const hc = A.mountAnswerFrame(c, { kind: 'control', path: 'interrupt', query: { conversation_id: 'c3' }, layout: 'stop' });
+  assert.ok(hc);
+  let release = null;
+  asksAnswer = () => new Promise((r) => { release = () => r({ asks: [], answer: { port: 4567 } }); });
+  const held = asksGets();
+  timers.fire(3000);                        // C's first silence: the held GET
+  await shell.tick();
+  assert.equal(asksGets(), held + 1);
+  assert.equal(a.childNodes.length + b.childNodes.length, 0, 'C\'s silence revives nobody');
+  await shell.frame(helloFrame());          // joins the GET in flight
+  await shell.tick();
+  assert.equal(asksGets(), held + 1, 'the hello shares the GET in flight');
+  release();
+  asksAnswer = { asks: [], answer: { port: 4567 } };
   await shell.tick();
   assert.ok(a.querySelector('iframe') && b.querySelector('iframe'), 'the hello revives both');
   ha.unmount();
   hb.unmount();
+  hc.unmount();
   a.remove();
   b.remove();
+  c.remove();
 });
 
 /* ── the port rule ─────────────────────────────────────────────────────────── */
