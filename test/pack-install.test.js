@@ -179,6 +179,24 @@ test('a local-tier install writes no user-tier audit line', async (t) => {
   assert.deepEqual(readAudit(root, { tier: 'system' }), []);
 });
 
+// The palette reads the logs through readAudit with a byte bound: only the
+// file's tail is read, and its first line, which the bound may cut, is dropped
+// rather than parsed (a cut '1234567890' would otherwise read as 7890).
+test('readAudit with maxBytes reads only the tail and drops the cut first line', (t) => {
+  const root = project(t);
+  const file = projectPaths(root).packsAudit;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const a = { op: 'install', pack: 'a' };
+  const b = { op: 'install', pack: 'b' };
+  const text = '1234567890\n' + JSON.stringify(a) + '\n' + JSON.stringify(b) + '\n';
+  fs.writeFileSync(file, text);
+  const bytes = Buffer.byteLength(text);
+  assert.deepEqual(readAudit(root, { maxBytes: bytes - 6 }), [a, b], 'the cut line is dropped, the rest read');
+  assert.deepEqual(readAudit(root, { maxBytes: bytes - 14 }), [b], 'a bound inside the second line drops it too');
+  assert.deepEqual(readAudit(root, { maxBytes: bytes }), [1234567890, a, b], 'a bound at the size reads it all');
+  assert.equal(readAudit(root).length, 3, 'no bound reads it all');
+});
+
 test('installing over this pack\'s own earlier version replaces its units and re-records', async (t) => {
   const root = project(t);
   const v1 = packFixture({ version: '1.0.0', components: [{ name: 'deploy-board', html: '<div>v1</div>' }] });
