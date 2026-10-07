@@ -24,8 +24,10 @@ const { atLeast, fromOptIn, MIRROR_HINT, MIRROR_FULL_HINT } = require('../lib/co
 const SECRET_TEXT = 'Take this back please opal-heron-5';
 const SECOND_TEXT = 'And this one too cobalt-finch-2';
 
-function freshState({ live = true, pids = [] } = {}) {
-  const now = Date.now();
+// `now` is the test's one clock: a test that asserts against a time passes the
+// same `now` it stamped with, so no assertion straddles two Date.now() reads
+// (a millisecond tick between them once made a "stale" pid read as fresh).
+function freshState({ live = true, pids = [], now = Date.now() } = {}) {
   const state = {
     queue: [], queueSeq: 0, mounts: new Map(), store: {}, signals: {},
     wakeConsumers: live ? 1 : 0, wakeConsumerSeenAt: live ? now : 0,
@@ -53,7 +55,7 @@ const wakesIn = (bus) => bus.read({ kinds: ['wake'] }).events;
 
 test('stampChannel: a pid is live while fresh; another is not; channelLive is unchanged', () => {
   const now = Date.now();
-  const state = freshState({ pids: [111] });
+  const state = freshState({ pids: [111], now });
   assert.equal(queue.channelLiveFor(state, 111, now), true);
   assert.equal(queue.channelLiveFor(state, 222, now), false);
   assert.equal(queue.channelLiveFor(state, undefined, now), true, 'no pid: channelLive');
@@ -63,7 +65,7 @@ test('stampChannel: a pid is live while fresh; another is not; channelLive is un
   queue.stampChannel(state, 333, now + queue.CONSUMER_TTL_MS);
   assert.deepEqual([...state.channelPids.keys()], [333]);
   // Anything but a positive safe integer is ignored (the channel is still stamped).
-  const s2 = freshState({ live: true });
+  const s2 = freshState({ live: true, now });
   for (const bad of ['111', 0, -4, 1.5, null, Number.MAX_SAFE_INTEGER + 2]) {
     assert.deepEqual(queue.stampChannel(s2, bad), { pid: null, turnedLive: false });
   }
@@ -72,11 +74,11 @@ test('stampChannel: a pid is live while fresh; another is not; channelLive is un
 
 test('stampChannel: turnedLive on a first or stale stamp only; at most 32 pids, least recent dropped', () => {
   const now = Date.now();
-  const state = freshState();
+  const state = freshState({ now });
   assert.equal(queue.stampChannel(state, 111, now).turnedLive, true);
   assert.equal(queue.stampChannel(state, 111, now + 1000).turnedLive, false);
   assert.equal(queue.stampChannel(state, 111, now + 1000 + queue.CONSUMER_TTL_MS).turnedLive, true);
-  const s = freshState();
+  const s = freshState({ now });
   for (let pid = 1; pid <= queue.CHANNEL_PIDS_MAX + 3; pid++) queue.stampChannel(s, pid, now);
   assert.equal(s.channelPids.size, queue.CHANNEL_PIDS_MAX);
   assert.equal(s.channelPids.has(1), false);
@@ -84,9 +86,10 @@ test('stampChannel: turnedLive on a first or stale stamp only; at most 32 pids, 
 });
 
 test('channelLiveFor: while no consumer has reported a pid, a target is judged by channelLive (best effort)', () => {
-  const state = freshState();
-  assert.equal(queue.channelLiveFor(state, 222), true);
-  assert.equal(queue.channelLiveFor(freshState({ live: false }), 222), false);
+  const now = Date.now();
+  const state = freshState({ now });
+  assert.equal(queue.channelLiveFor(state, 222, now), true);
+  assert.equal(queue.channelLiveFor(freshState({ live: false, now }), 222, now), false);
 });
 
 // ── targeted delivery ─────────────────────────────────────────────────────────
@@ -166,8 +169,9 @@ test('a folded retain carries its target into the park (foldPendingAck, foldStal
   assert.equal(a.pendingWake.target_pid, 111);
 
   const b = live();
-  b.pendingAck.created_at = Date.now() - queue.ACK_STALE_MS - 1;
-  assert.equal(queue.foldStaleAck(b), true);
+  const now = Date.now();
+  b.pendingAck.created_at = now - queue.ACK_STALE_MS - 1;
+  assert.equal(queue.foldStaleAck(b, now), true);
   assert.equal(b.pendingWake.target_pid, 111);
 
   const c = live();
@@ -181,8 +185,10 @@ test('a folded retain carries its target into the park (foldPendingAck, foldStal
   assert.equal(again.wake.target_pid, 111);
   assert.equal(d.pendingAck.target_pid, 111);
   // …and parks when the target's channel has gone.
-  d.channelPids.set(111, Date.now() - queue.CONSUMER_TTL_MS - 1);
-  queue.stampChannel(d, 333);
+  // repush reads its own clock; 111 is stamped a full TTL before `now` and 333
+  // at `now`, so any later read keeps 111 stale and 333 fresh.
+  d.channelPids.set(111, now - queue.CONSUMER_TTL_MS - 1);
+  queue.stampChannel(d, 333, now);
   const parked = queue.repush(d, bus, d.pendingAck.seq, {});
   assert.equal(parked.mode, 'parked');
   assert.equal(parked.parked.target_pid, 111);
