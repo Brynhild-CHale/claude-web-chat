@@ -144,3 +144,67 @@ html[data-layout="bar"] .wc-answer { padding: 0 4px; height: 22px; }
 /* page: the popup; the request scrolls in a window no pane can overlay. */
 html[data-layout="page"] body { overflow: auto; }
 html[data-layout="page"] .wc-answer { max-width: 640px; margin: 0 auto; padding: 14px 16px 24px; }
+
+/* ── U85 · the control frame's layouts: stop and confirm (control-stop.js, control-confirm.js) ──
+   The same rules as above: only /answer/palette.css's tokens, each ink on a fill
+   palette.js measured it against (FRAME_TEXT, FRAME_UI) — a rule that sets a
+   `color` sets its `background` too, and every border sits on --wc-panel-bg —
+   and nothing fades, filters or transforms the frame's content. */
+
+/* stop: one button filling its slot — bar 22px, panel 28px, sheet 44px. */
+html[data-layout="stop"], html[data-layout="stop"] body { height: 22px; overflow: hidden; }
+html[data-layout="stop"][data-size="panel"], html[data-layout="stop"][data-size="panel"] body { height: 28px; }
+html[data-layout="stop"][data-size="sheet"], html[data-layout="stop"][data-size="sheet"] body { height: 44px; }
+html[data-layout="stop"] .wc-answer { padding: 0; height: 100%; }
+.ct-stop { display: flex; height: 100%; }
+.ct-stop-btn {
+  flex: 1 1 auto; min-width: 0; height: 100%; padding: 0 8px; margin: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font: 600 11px var(--wc-font, system-ui, sans-serif); white-space: nowrap; overflow: hidden; cursor: pointer;
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-comment); border-radius: var(--wc-radius-sm, 4px);
+}
+html[data-size="panel"] .ct-stop-btn { font-size: 12px; }
+html[data-size="sheet"] .ct-stop-btn { font-size: 14px; padding: 0 14px; }
+.ct-stop-label { overflow: hidden; text-overflow: ellipsis; }
+.ct-stop-glyph { width: 7px; height: 7px; flex: none; background: var(--wc-comment); border-radius: 1px; }
+html[data-size="sheet"] .ct-stop-glyph { width: 10px; height: 10px; }
+.ct-stop-btn[aria-disabled="true"] {
+  cursor: default; background: var(--wc-panel-bg); color: var(--wc-muted); border-color: var(--wc-muted);
+}
+.ct-stop[data-phase="interrupted"] .ct-stop-btn { background: var(--wc-panel-bg); color: var(--wc-fg); border-color: var(--wc-accent); }
+.ct-stop-btn:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
+
+/* confirm: the summary, its lines, one action and Keep; then the result. */
+.ct-box, .ct-result { display: flex; flex-direction: column; gap: 6px; }
+.ct-title, .ct-outcome { margin: 0; font-size: 14px; font-weight: 600; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.ct-summary, .ct-text { margin: 0; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.ct-lines, .ct-residual {
+  margin: 0; padding: 0 0 0 16px; font: 12px/1.45 var(--wc-mono, ui-monospace, monospace);
+  background: var(--wc-panel-bg); color: var(--wc-fg); overflow-wrap: anywhere;
+}
+.ct-guard, .ct-problem { margin: 0; font-size: 12px; font-weight: 600; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.ct-note { font-size: 12px; background: var(--wc-panel-bg); color: var(--wc-muted); }
+.ct-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ct-btn {
+  font: 600 12px var(--wc-font, system-ui, sans-serif);
+  min-height: 28px; padding: 0 10px; cursor: pointer;
+  background: var(--wc-panel-bg); color: var(--wc-accent-text);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}
+.ct-act { background: var(--wc-accent); color: var(--wc-accent-fg); }
+.ct-btn[aria-disabled="true"] {
+  cursor: not-allowed; background: var(--wc-panel-bg); color: var(--wc-muted); border-style: dashed; border-color: var(--wc-muted);
+}
+.ct-btn:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+html[data-size="sheet"] .ct-btn { min-height: 44px; }
+/* Review › only when the summary does not fit the frame (§4.5 item 2). */
+.ct:not([data-fit="0"]) .ct-review { display: none; }
+/* The fork's command: wraps, never scrolls; selectable for ⌘C. */
+.ct-command { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ct-code {
+  flex: 1 1 auto; min-width: 0; padding: 4px 8px; user-select: all;
+  font: 12px/1.45 var(--wc-mono, ui-monospace, monospace); overflow-wrap: anywhere;
+  background: var(--wc-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}

@@ -2710,6 +2710,19 @@ pre.dv-diff {
 .gi-turn-gone .gi-turn-text { font-style: italic; color: var(--wc-muted-dim); }
 
 /* ── U85 · the control frame and the Stop control · session-control.js ── */
+/* A control frame (asks.js's iframe.wc-answer-frame, data-kind control) is
+   sized here and nothing else: no rule dims, filters, transforms, clips or
+   masks it. A Stop fills its slot, which says its size (data-wc-stop, set by
+   session-control.js): the bar's 22px, the panel header's 28px, the sheet
+   header's 44px. Its height after load is the frame's own wc-answer:size. */
+[data-wc-stop] > .wc-answer-frame { flex: none; align-self: center; }
+[data-wc-stop="bar"] > .wc-answer-frame { width: 148px; height: 22px; }
+[data-wc-stop="panel"] > .wc-answer-frame { width: 164px; height: 28px; }
+[data-wc-stop="sheet"] > .wc-answer-frame { width: 100%; max-width: 240px; height: 44px; }
+.cs-stop[data-wc-stop] { display: inline-flex; align-items: center; flex: none; }
+/* A confirm in a task row's stopper slot (chat-actions.js registerStopper):
+   the slot's full width; touch density keeps the slot's own 44px floor. */
+.cs-row-confirm > .wc-answer-frame[data-kind="control"] { width: 100%; min-height: 22px; }
 
 /* ── U86 · turn actions: Restore files and Fork · turn-actions.js ── */
 
