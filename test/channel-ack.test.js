@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { withServer, waitUntil, openSSE } = require('../test-support/helpers');
-const { subscribeSSE } = require('../lib/client');
+const { subscribeSSE, post } = require('../lib/client');
 const { createBus } = require('../lib/core/bus');
 const { startChannelBridge } = require('../lib/channel/bridge');
 const queue = require('../lib/server/domain/queue');
@@ -175,12 +175,20 @@ test('bridge: a delivered wake is acked back, clearing the retain and emitting w
   assert.equal(rp.status, 404, 'delivery confirmed — nothing left to repush');
 });
 
+// The two channel routes are host-only (§5.7 P1): the bridge posts through
+// lib/client, which is a host process; withServer's `api` is Node's fetch,
+// which sends the Fetch Metadata headers a browser does — so it stands for a
+// pane's fetch, and is refused.
 test('route: heartbeat stamps liveness; a wrong-seq ack no-ops', async (t) => {
-  const { api } = await withServer(t);
-  const hb = (await api.post('/api/channel/heartbeat', {})).json;
+  const { api, port } = await withServer(t);
+  const host = { port, noSpawn: true };
+  const hb = await post('/api/channel/heartbeat', {}, host);
   assert.equal(hb.ok, true);
-  const ack = (await api.post('/api/channel/ack', { seq: 9999 })).json;
+  const ack = await post('/api/channel/ack', { seq: 9999 }, host);
   assert.equal(ack.acked, false, 'no matching in-flight wake');
+  // A browser (a pane's fetch) can do neither.
+  assert.equal((await api.post('/api/channel/heartbeat', {})).status, 403);
+  assert.equal((await api.post('/api/channel/ack', { seq: 9999 })).status, 403);
 });
 
 // ── the ONE liveness predicate, all the way out to the routes ────────────────
@@ -203,10 +211,10 @@ async function policyHost(t, state) {
   t.after(() => new Promise((r) => server.close(r)));
   const port = server.address().port;
   const get = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`)).json();
-  const post = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
-  })).json();
-  return { get, post };
+  // Through lib/client, as the bridge posts: the heartbeat is host-only, and
+  // Node's fetch counts as a browser (§5.7 P1).
+  const hostPost = (p) => post(p, {}, { port, noSpawn: true });
+  return { get, post: hostPost };
 }
 
 test('policy: a zombie stream (stale heartbeat) reports channel_connected false', async (t) => {
