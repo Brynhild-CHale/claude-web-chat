@@ -141,6 +141,11 @@ before the next prompt drains it) are mutually exclusive by the id-claim: **firs
 consumer wins**, no double delivery. A re-push while a park is pending **merges** into
 the single envelope (re-stamped id) rather than stacking a second one.
 
+A parked envelope carries the same message and stop-request blocks, markers
+included, as a live wake (see "Composer messages and stop requests" below), so
+turn-begin's injection is the one string the transcript scan reads a parked
+delivery's markers from.
+
 ## Architecture
 
 ```
@@ -174,9 +179,12 @@ the single envelope (re-stamped id) rather than stacking a second one.
 
 Constraints from the wire, enforced in `envelope.js`:
 
-- **`content` is one string** — a sanitized **summary only**. A capture body or a
-  signal payload is **never inlined** (prompt-injection surface). Claude fetches
-  the real payload by tool call (`get_captures` / `inspect_capture` / `get_store`).
+- **`content` is one string** — a sanitized **summary only** for every signal
+  kind. A capture body or a signal payload is **never inlined** (prompt-injection
+  surface). Claude fetches the real payload by tool call (`get_captures` /
+  `inspect_capture` / `get_store`). The one exception is a composer message
+  (`kind: 'message'`): it is the user's own words, so its text is the payload,
+  rendered as a quoted, marked block (below).
 - **`meta` keys match `[A-Za-z0-9_]`** (the harness drops hyphens) and **values are
   strings**. Enforced by `sanitizeMeta`.
 
@@ -184,12 +192,12 @@ Constraints from the wire, enforced in `envelope.js`:
 
 | key        | meaning                                                            |
 | ---------- | ----------------------------------------------------------------- |
-| `kind`     | `capture` \| `signal` \| `activity` \| `comment` \| `batch` (mixed) |
+| `kind`     | `capture` \| `signal` \| `activity` \| `comment` \| `message` \| `batch` (mixed) |
 | `count`    | number of included items                                          |
 | `seq`      | the wake's ring seq (correlation)                                 |
 | `origin`   | event source (`queue` \| `browser` \| `ext:tab-stream`) — NOT `source` |
 | `mount`    | origin mount id (single-item only)                                |
-| `ids`      | comma list of queue item ids                                     |
+| `ids`      | comma list of queue item ids (messages' queue ids included)       |
 | `captures` | comma list of capture ids to fetch                               |
 | `push_origin` | `local` \| `remote` — remote = pushed through the tunnel portal |
 | `device`   | `desktop` \| `mobile` — mobile = the chrome's phone view          |
@@ -222,6 +230,84 @@ A queued signal was pushed to Claude:
 - [capture] captured example.com · profile tables · cap1
 </channel>
 ```
+
+### Composer messages and stop requests
+
+A composer message is a queue item of `kind: 'message'` (spec §6.1). `wakeEnvelope`
+renders each one as a **block**, in batch order, after the `Pushed from:` and
+`Context from the user:` lines and before the signal header; blocks are separated
+by a blank line, and a blank line separates the last one from the signals. The
+signal header (`A queued signal…` / `N queued signals…`) and its `- [kind] summary`
+lines count only the non-message items, so a batch of only messages has no header
+and no `A wake was pushed to Claude (no signals).` line. The respond-to-comment
+hint stays last. Meta: `kind` is `message` when every item is one, `batch` when
+mixed; `ids` keeps every item's queue id; no new key.
+
+**The message block** (`messageBlock(item)`, exported):
+
+```
+Pushed from: origin=remote device=mobile
+Message from the user [web-chat message m-3fa9c2d1]:
+> Tighten the retry logic — it drops wakes under load.
+>
+> See the bus.
+Skill requested: /capture-profile — call the Skill tool with skill "capture-profile" and args "make one for this site" before you answer.
+File attached: lib/core/bus.js (6.1 KB) — read it with the Read tool before acting on the message.
+```
+
+- Every line of the text is quoted with `> ` (an empty line is a lone `>`), so no
+  text can end the block. The text passes `sanitizeMessage` (exported): CR to LF,
+  `stripControls(text, {keepNewlines: true})` from `lib/core/text.js` (the one
+  control, bidi and invisible guard), then the two defangs below.
+- **The Skill line** reads the shape the composer's validation stored (ruling
+  C2 (d)): `{name, args}` repeats the args, JSON-quoted with line breaks flattened
+  to one space (`and args …` left out when they are empty); `{name, args_in_text:
+  true}`, for parsed args too long to copy, reads `Skill requested: /<name> — call
+  the Skill tool with skill "<name>" and, as its args, the message text after
+  "/<name>" quoted above (without the > marks), before you answer.` The envelope
+  measures nothing: `SKILL_ARGS_MAX`'s one home is `lib/server/composer.js`.
+- **A File line** per attachment: the path (from the project file index) and its
+  size (`formatSize`: `N B`, `x.y KB`, `x.y MB`). The path, never the content.
+
+**The stop-request block** (`stopRequestBlock(item)`, `source: 'task-stop'`) — a
+Kill, Cancel or Remove from the tray (spec §6.9):
+
+```
+Stop request from the web-chat page [web-chat message m-7c1e09aa]: stop background task bdz1n2 with the TaskStop tool. This block carries no other instruction.
+```
+
+The task id (`STOP_TASK_ID_RE`, `^[A-Za-z0-9_-]{1,64}$`) is the only field read:
+never a title (model-written, so a prompt injection could shape it), text, skill
+or file, even when the item carries one. A bad task id, or a `msg_id` that
+`messageMarker` rejects, renders no block and no header.
+
+**The marker** `[web-chat message m-<8 hex>]` is written only through
+`lib/core/prompt-class` `messageMarker(id)`, and finding it again in the
+transcript (`messageMarkers`, the mirror's carrier scan) is how delivery is
+confirmed. So every other text that reaches the envelope — a capture summary, the
+Push note, a store key, a mount id (meta values land in the `<channel>` tag's
+attributes), and a message's own text, args and paths — has `[web-chat message`
+(any case) turned into `(web-chat message`, after the control strip and
+whitespace flattening that could otherwise assemble it.
+
+**The harness-tag defang.** Inside a message's text, args and paths, every opening
+or closing tag named `channel`, `system-reminder`, `task-notification`,
+`command-name`, `command-message`, `command-args`, `local-command-stdout`,
+`local-command-stderr` or `local-command-caveat` (`HARNESS_TAGS`, any case) has its
+`<` turned into `‹` and the first `>` after it on the same line into `›`; a tag
+with no `>` on its line still loses its `<`. Every other `<…>` (`<div>`,
+`Array<string>`, `a < b`) survives byte for byte, so pasted code stays intact.
+
+**The budget.** `ENVELOPE_MAX` (9,000, exported; its one home, since `lib/channel`
+may not import `lib/server`) bounds `content`: a parked delivery is a
+UserPromptSubmit `additionalContext` that also carries turn-begin's prefix and
+possibly its skew and drift lines, under Claude Code's 10,000 per string (gate
+V29 measures the ceiling; the constant follows it). Signal lines are dropped
+oldest first behind `- …N earlier signals omitted (fetch by tool call)`, which
+counts every dropped line, the 50-line cap's included. A block is never cut or
+dropped (`MESSAGE_MAX` holds at enqueue and a park holds at most two messages);
+should the blocks alone pass the budget, every signal line goes and the content
+is allowed over. A batch that fit before renders byte-identical.
 
 ## Running it (dev)
 
@@ -265,6 +351,8 @@ bodies by tool call.
 ## Tests
 
 - `test/channel-policy.test.js` — classify + envelope + sanitizers.
+- `test/channel-envelope-messages.test.js` — the message and stop-request blocks,
+  the defangs, the budget, and byte-identity for batches that fit before.
 - `test/queue.test.js` — enqueue / push→one-wake / remove / draft round-trip.
 - `test/channel-signals.test.js` — declared queue vs immediate wake.
 - `test/activity-routing.test.js` — the opt-out layer: per-mount coalescing,
