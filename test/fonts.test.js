@@ -28,12 +28,18 @@ function walk(dir) {
 
 // --- the bundle ---------------------------------------------------------------
 
+// Every directory whose files a browser loads as a stylesheet, page or module:
+// the chrome's public/ and the answer frames' own (the answer surface serves
+// the list as /answer/fonts.css, generated from fontFaces()).
+const REPO = path.join(__dirname, '..');
+const SCANNED = [PUBLIC_DIR, path.join(REPO, 'lib', 'server', 'answer-surface', 'public')];
+
 test('fonts.css is the one place @font-face is declared', () => {
-  const others = walk(PUBLIC_DIR)
+  const others = SCANNED.flatMap((dir) => walk(dir))
     .filter((f) => /\.(css|html|js)$/.test(f) && f !== path.join(FONTS_DIR, 'fonts.css'))
     .filter((f) => /@font-face\s*\{/.test(fs.readFileSync(f, 'utf8')));
-  assert.deepEqual(others.map((f) => path.relative(PUBLIC_DIR, f)), [],
-    'a face declared outside public/fonts/fonts.css reaches the chrome but never an export');
+  assert.deepEqual(others.map((f) => path.relative(REPO, f)), [],
+    'a face declared outside public/fonts/fonts.css reaches one surface but never an export or the other');
   // …and the chrome loads it, ahead of the stylesheet that names the families.
   const index = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
   const fontsAt = index.indexOf('href="/fonts/fonts.css"');
