@@ -418,6 +418,8 @@ test('every refusal carries a non-empty hint, and every code has one', async () 
     validateMessage({ text: 'x', files: ['p'.repeat(241)] }, deps()),
     validateMessage({ skill: { name: 'nope' } }, deps()),
     validateMessage({ skill: { name: `bad${ESC}` } }, deps()),
+    validateMessage({ skill: { name: 'a$&b c' } }, deps()),
+    validateMessage({ skill: { name: "$'x y" } }, deps()),
     validateMessage({ text: '/secret-deploy' }, deps()),
     validateMessage({ text: '/help' }, deps()),
     validateMessage({ text: 'x', files: ['a', 'b', 'c', 'd', 'e', 'f'] }, deps()),
@@ -431,5 +433,18 @@ test('every refusal carries a non-empty hint, and every code has one', async () 
     assert.ok(typeof r.hint === 'string' && r.hint.length > 0, r.refused);
     assert.equal(r.hint.includes('<name>'), false, r.hint);
     assert.equal(/[\u0000-\u001f]/.test(r.hint), false, 'a hint never carries a control character');
+  }
+});
+
+test('a refused skill name from the request is named literally: no $ pattern in it expands', async () => {
+  // String.prototype.replace treats $&, $', $` and $$ in a replacement string
+  // as patterns; a name that fails the grammar still comes from the request.
+  for (const name of ['a$&b c', "$'x y", '$`z w', 'p$$q r']) {
+    const r = await validateMessage({ skill: { name } }, deps());
+    assert.equal(r.ok, false);
+    assert.equal(r.refused, 'unknown_skill');
+    assert.equal(r.name, name);
+    assert.equal(r.hint, `/${name} is not a skill Claude can run in this conversation.`);
+    assert.equal(r.hint.includes('<name>'), false, r.hint);
   }
 });
