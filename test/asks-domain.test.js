@@ -521,6 +521,35 @@ test('supersede: a second ask of the same session and agent resolves the first; 
   assert.equal(res[0].ask.by, 'terminal');
 });
 
+test('supersede goes by age: two overlapping creates whose ensure() resolves newer-first — the older is superseded, the newer stays pending', async (t) => {
+  // The answer surface's ensure() is awaited inside create, so two creates of
+  // one session and agent can be published out of order. The test holds each
+  // ensure() and releases the newer one first.
+  const held = [];
+  const r = rig(t, { ensure: () => new Promise((res) => held.push(res)) });
+  const olderP = r.asks.create(body({ input: { command: 'older' } }));
+  await r.clock.advance(10);
+  const newerP = r.asks.create(body({ input: { command: 'newer' }, ts: T0 + 10 }));
+  assert.equal(held.length, 2, 'both creates are waiting on ensure()');
+
+  held[1]({ port: 45123 });
+  const newer = await newerP;
+  assert.equal(newer.wait, true);
+  held[0]({ port: 45123 });
+  const older = await olderP;
+  assert.equal(older.ok, true);
+
+  assert.equal(r.asks.publicView(newer.id).state, 'pending', 'the newer ask is not superseded by an older one');
+  assert.equal(r.asks.get(older.id).state, 'resolved');
+  assert.equal(r.asks.get(older.id).outcome, 'superseded');
+  assert.deepEqual(await r.asks.poll(older.id, older.secret), { state: 'resolved', by: 'terminal' });
+  assert.deepEqual(r.asks.pending().map((a) => a.id), [newer.id]);
+  const res = r.tapOf('PermissionResolved');
+  assert.equal(res.length, 1);
+  assert.equal(res[0].ask.id, older.id);
+  assert.equal(res[0].ask.outcome, 'superseded');
+});
+
 test('duplicate: an identical create within 2 s answers the first id and publishes nothing; after 2 s it supersedes', async (t) => {
   const r = rig(t);
   const first = await r.asks.create(body());
