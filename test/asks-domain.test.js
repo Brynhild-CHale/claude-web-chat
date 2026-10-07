@@ -550,6 +550,33 @@ test('supersede goes by age: two overlapping creates whose ensure() resolves new
   assert.equal(res[0].ask.outcome, 'superseded');
 });
 
+test('supersede age tie-breaks: created_at first, then the envelope ts, then create order — with ensure() released either way round', async (t) => {
+  const cases = [
+    { label: 'created_at decides even when ts disagrees', olderTs: T0 + 50, advance: 10, newerTs: T0 + 10 },
+    { label: 'equal created_at: the envelope ts decides', olderTs: T0, advance: 0, newerTs: T0 + 5 },
+    { label: 'equal created_at and ts: create order decides', olderTs: T0, advance: 0, newerTs: T0 },
+    { label: 'equal created_at and ts, released in order: create order decides', olderTs: T0, advance: 0, newerTs: T0, inOrder: true },
+  ];
+  for (const c of cases) {
+    const held = [];
+    const r = rig(t, { ensure: () => new Promise((res) => held.push(res)) });
+    const olderP = r.asks.create(body({ input: { command: 'older' }, ts: c.olderTs }));
+    if (c.advance) await r.clock.advance(c.advance);
+    const newerP = r.asks.create(body({ input: { command: 'newer' }, ts: c.newerTs }));
+    assert.equal(held.length, 2, `${c.label}: both creates wait on ensure()`);
+    let older; let newer;
+    if (c.inOrder) {
+      held[0]({ port: 45123 }); older = await olderP;
+      held[1]({ port: 45123 }); newer = await newerP;
+    } else {
+      held[1]({ port: 45123 }); newer = await newerP;
+      held[0]({ port: 45123 }); older = await olderP;
+    }
+    assert.equal(r.asks.get(older.id).outcome, 'superseded', `${c.label}: the older ask is superseded`);
+    assert.deepEqual(r.asks.pending().map((a) => a.id), [newer.id], `${c.label}: only the newer ask stays pending`);
+  }
+});
+
 test('duplicate: an identical create within 2 s answers the first id and publishes nothing; after 2 s it supersedes', async (t) => {
   const r = rig(t);
   const first = await r.asks.create(body());
