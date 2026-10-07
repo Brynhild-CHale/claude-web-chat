@@ -21,7 +21,7 @@ function harness(t, { pid = 111, boot = 'B' } = {}) {
   const logs = [];
   const notified = [];
   const client = {
-    subscribeSSE(opts) { connects.push(opts); return { close() {} }; },
+    subscribeSSE: (opts) => { connects.push(opts); return { close() {} }; },
     get: async () => ({ boot }),
     post: async (path, body) => { posts.push({ path, body }); return { ok: true }; },
   };
@@ -51,7 +51,7 @@ test('the default pid is the MCP server\'s parent, process.ppid', async (t) => {
   const connects = [];
   const bridge = startChannelBridge({
     notify: () => {},
-    client: { subscribeSSE(o) { connects.push(o); return { close() {} }; }, get: async () => ({}), post: async (p, b) => { posts.push(b); } },
+    client: { subscribeSSE: (o) => { connects.push(o); return { close() {} }; }, get: async () => ({}), post: async (p, b) => { posts.push(b); } },
     root: 'x',
   });
   t.after(() => bridge.stop());
