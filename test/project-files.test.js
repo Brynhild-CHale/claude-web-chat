@@ -286,8 +286,11 @@ async function ranked(t, names, q, limit = LIMIT_MAX) {
 }
 
 test('ranking: exact basename > basename prefix > basename substring > segment prefix > path substring > subsequence', async (t) => {
-  const order = ['x/app', 'x/apple.txt', 'x/snapp.txt', 'apps/z.txt', 'happy/z1.txt', 'a/p/p.txt'];
-  const shuffled = [order[3], order[5], 'zzz.txt', order[0], order[4], order[2], order[1]];
+  // The segment-prefix paths are longer than the path-substring one, so they
+  // outrank it only by their class (a segment prefix at the start of the path,
+  // and after a '/').
+  const order = ['x/app', 'x/apple.txt', 'x/snapp.txt', 'zz/apps/zzzzzz.txt', 'apps/zzzzzzzzzzzz.txt', 'happy/z1.txt', 'a/p/p.txt'];
+  const shuffled = [order[3], order[6], 'zzz.txt', order[0], order[5], order[2], order[4], order[1]];
   assert.deepStrictEqual(await ranked(t, shuffled, 'APP'), order, 'case-insensitive, by class');
 });
 
@@ -487,7 +490,16 @@ test('stop() ends a walk', async (t) => {
   const dir = plainDir(t);
   for (let i = 0; i < 50; i++) writeAt(dir, `d${i}/f.txt`, 'x');
   const pf = createProjectFiles({ root: dir, runGit: fakeGit({ code: 128, stdout: '', stderr: '' }) });
+  // stop() lands once the walk has opened its first directory: it opens no other.
+  const opened = [];
+  const orig = fs.promises.opendir;
+  fs.promises.opendir = function (p, ...rest) {
+    opened.push(String(p));
+    if (opened.length === 1) pf.stop();
+    return orig.call(this, p, ...rest);
+  };
+  t.after(() => { fs.promises.opendir = orig; });
   const pending = pf.search('');
-  pf.stop();
   assert.deepStrictEqual((await pending).files, []);
+  assert.deepStrictEqual(opened, [dir], 'the walk read no directory after stop()');
 });
