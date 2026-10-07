@@ -88,6 +88,7 @@ const mode = process.env.MODE;
 if (mode === 'ok') process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: process.env.NEW_SID, total_cost_usd: 0 }));
 else if (mode === 'garbage') process.stdout.write('not json at all');
 else if (mode === 'same') process.stdout.write(JSON.stringify({ session_id: process.env.SRC_SID }));
+else if (mode === 'notuuid') process.stdout.write(JSON.stringify({ session_id: 'abc; touch /tmp/wc-fork-pwned' }));
 else if (mode === 'exit1') { process.stderr.write('error: ' + process.env.LEAK + '\\n'); process.exit(1); }
 else if (mode === 'sleep') { process.stderr.write(process.env.LEAK); setTimeout(() => {}, 20000); }
 `;
@@ -302,7 +303,7 @@ test('no claude → claude-missing, with a hint that names the install, and noth
   assert.equal(s.stub.records().length, 0);
 });
 
-for (const [mode, why] of [['garbage', 'prints garbage'], ['exit1', 'exits 1'], ['sleep', 'sleeps past the timeout'], ['same', 'answers its own source']]) {
+for (const [mode, why] of [['garbage', 'prints garbage'], ['exit1', 'exits 1'], ['sleep', 'sleeps past the timeout'], ['same', 'answers its own source'], ['notuuid', 'answers a session id outside the UUID grammar']]) {
   test(`a stub that ${why} → fork-failed, with no stderr in the answer or the audit`, async (t) => {
     const s = setup(t, { mode, runner: (argv, o) => runClaudeAsync(argv, { ...o, timeoutMs: 300 }) });
     const a = await s.control.invoke('fork', { turn_id: 't2' }, {});
