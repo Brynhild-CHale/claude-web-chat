@@ -32,7 +32,7 @@ const { spawn } = require('child_process');
 
 const { createHookTap, TAP_MAX } = require('../lib/server/hook-tap');
 const {
-  mountHookRoutes, checkEnvelope, INTAKE_EVENTS, ENVELOPE_KEYS, MAX_BODY_BYTES,
+  mountHookRoutes, checkEnvelope, INTAKE_EVENTS, ENVELOPE_EVENTS, ENVELOPE_KEYS, MAX_BODY_BYTES,
 } = require('../lib/server/routes/hooks');
 const { hookEnvelope, EVENTS } = require('../lib/hooks/envelope');
 const { MIRROR_EVENTS } = require('../lib/hooks/mirror');
@@ -193,22 +193,28 @@ test('tap: a ring of 200, read back as copies', () => {
 
 // ── the intake: what it takes ───────────────────────────────────────────────
 
-test('intake: the events it takes are exactly those the mirror and ask hooks post', () => {
-  const posted = [...new Set(hookHandlers().filter((h) => h.sub === 'mirror' || h.sub === 'ask').map((h) => h.event))].sort();
+test('intake: the events it takes are exactly those the mirror hook posts; envelopes also cover the ask bridge\'s', () => {
+  // The ask bridge posts its PermissionRequest to POST /api/asks (the asks
+  // domain publishes it), so the intake takes the mirror hook's events alone;
+  // checkEnvelope, which /api/asks shares, still knows PermissionRequest.
+  const posted = [...new Set(hookHandlers().filter((h) => h.sub === 'mirror').map((h) => h.event))].sort();
   assert.deepEqual([...INTAKE_EVENTS].sort(), posted);
-  assert.deepEqual([...INTAKE_EVENTS].sort(), [...MIRROR_EVENTS, 'PermissionRequest'].sort());
-  for (const e of INTAKE_EVENTS) assert.ok(EVENTS.includes(e), `${e} is an envelope v1 event`);
+  assert.deepEqual([...INTAKE_EVENTS].sort(), [...MIRROR_EVENTS].sort());
+  assert.deepEqual([...ENVELOPE_EVENTS].sort(), [...MIRROR_EVENTS, 'PermissionRequest'].sort());
+  const asked = [...new Set(hookHandlers().filter((h) => h.sub === 'ask').map((h) => h.event))];
+  assert.deepEqual(asked, ['PermissionRequest']);
+  for (const e of ENVELOPE_EVENTS) assert.ok(EVENTS.includes(e), `${e} is an envelope v1 event`);
 });
 
 test('intake: envelope v1\'s fields are the ones hookEnvelope builds, and every envelope a hook posts passes', () => {
   for (const event of EVENTS) {
     const env = envelope(event);
     assert.deepEqual(Object.keys(env), [...ENVELOPE_KEYS], event);
-    if (INTAKE_EVENTS.includes(event)) assert.equal(checkEnvelope(env), null, `${event} passes`);
+    if (ENVELOPE_EVENTS.includes(event)) assert.equal(checkEnvelope(env), null, `${event} passes`);
     else assert.equal(checkEnvelope(env), 'not an event this intake takes', `${event} reaches the tap only through the turn routes`);
   }
   // The wire form too: what survives JSON is what arrives.
-  for (const event of INTAKE_EVENTS) assert.equal(checkEnvelope(JSON.parse(JSON.stringify(envelope(event)))), null);
+  for (const event of ENVELOPE_EVENTS) assert.equal(checkEnvelope(JSON.parse(JSON.stringify(envelope(event)))), null);
 });
 
 test('intake: its path is refused remotely, by the route table', () => {
@@ -416,7 +422,9 @@ function runHook(args, { cwd, env, input }) {
   });
 }
 
-test('intake: the real mirror and ask hooks reach the tap as the host, once each', async (t) => {
+test('intake: the real mirror hook reaches the tap as the host, once', async (t) => {
+  // The ask hook no longer posts here: the bridge posts to POST /api/asks
+  // (test/ask-hook.test.js), and the asks domain publishes its envelope.
   const h = await intakeHost(t);
   const root = tmpRoot('wc-intake-');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-intake-home-'));
@@ -434,21 +442,14 @@ test('intake: the real mirror and ask hooks reach the tap as the host, once each
   });
   assert.equal(pre.status, 0);
   assert.equal(pre.stdout, '');
-  const asked = await runHook(['ask'], {
-    cwd: root, env, input: { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'ls' } },
-  });
-  assert.equal(asked.status, 0);
-  assert.equal(asked.stdout, '');
 
-  await waitUntil(() => h.tap.recent().length === 2, { what: 'both envelopes on the tap', timeout: 5000 });
-  const [a, b] = h.tap.recent();
+  await waitUntil(() => h.tap.recent().length === 1, { what: 'the envelope on the tap', timeout: 5000 });
+  const [a] = h.tap.recent();
   assert.equal(a.kind, 'hook');
   assert.equal(a.event, 'PreToolUse');
   assert.equal(a.ts, h.bodies[0].ts, 'the hook\'s own ts');
   assert.equal(a.tool.label, 'Edit · a.js');
   assert.deepEqual(a.tool.input, { file_path: `${root}/a.js`, old_string_bytes: 8, new_string_bytes: 8 });
   assert.equal(a.claude_pid, 4242);
-  assert.equal(b.event, 'PermissionRequest');
-  assert.equal(b.tool.use_id, null);
   assert.doesNotMatch(JSON.stringify(h.tap.recent()), /OLD-TEXT|NEW-TEXT/);
 });

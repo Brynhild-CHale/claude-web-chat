@@ -612,16 +612,20 @@ test('mirror (in process): only the events it is registered for', async (t) => {
   assert.equal(calls.length, 0);
 });
 
-test('ask (in process): report mode posts the request; an SDK host gets nothing at all', async (t) => {
-  const calls = recordClient(t);
+test('ask (in process): the bridge posts the request to the asks domain; an SDK host gets nothing at all', async (t) => {
+  // Nobody can answer (wait: false): the bridge posted its ask and prints
+  // nothing. The whole bridge is test/ask-hook.test.js's.
+  const calls = recordClient(t, async () => ({ ok: true, id: 'ask_0123456789ab', wait: false, reason: 'no-viewer' }));
   const root = projectWithPortfile(45678);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.deepEqual(eventsOf(['ask']), ['PermissionRequest']);
-  assert.equal(await ask(FIXTURES.PermissionRequest, { root, now: NOW, env: ENV }), 'posted');
+  assert.equal(await ask(FIXTURES.PermissionRequest, { root, now: NOW, env: ENV }), 'no-wait');
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].opts, { port: 45678, noSpawn: true, timeout: mirror.POST_TIMEOUT_MS });
-  assert.equal(calls[0].body.event, 'PermissionRequest');
-  assert.equal(calls[0].body.ask, null);
+  assert.equal(calls[0].path, '/api/asks');
+  assert.deepEqual(calls[0].opts, { port: 45678, noSpawn: true, timeout: ask.CREATE_TIMEOUT_MS });
+  assert.equal(calls[0].body.envelope.event, 'PermissionRequest');
+  assert.equal(calls[0].body.envelope.ask, null);
+  assert.equal(calls[0].body.kind, 'permission');
   for (const entry of ['sdk-cli', 'sdk-ts', 'sdk-py']) {
     assert.equal(await ask(FIXTURES.PermissionRequest, { root, now: NOW, env: { ...ENV, CLAUDE_CODE_ENTRYPOINT: entry } }), 'sdk');
   }
@@ -792,10 +796,19 @@ test('dispatcher: SessionEnd ends itself inside the 1.5 s budget Claude Code giv
 });
 
 test('dispatcher: a handler that names its own hard exit replaces the table\'s (the ask bridge: none)', async (t) => {
-  // Tranche 4's ask bridge waits for an answer on its own 590 s deadline and
-  // sets deadlineMs = null in ask.js, a file it owns, never this dispatcher's
-  // table. A preload stands in for that edit here.
-  const stub = await stubDaemon(t, trickle);
+  // The ask bridge waits for an answer on its own 590 s deadline and sets
+  // deadlineMs = null in ask.js, a file it owns, never this dispatcher's
+  // table. A preload sets the value each run proves. The stub creates the
+  // ask and then answers its decision poll a byte at a time, forever.
+  assert.equal(ask.deadlineMs, null, 'the bridge arms no hard exit from the table');
+  const stub = await stubDaemon(t, (req, res, timers) => {
+    if (req.method === 'POST' && req.url === '/api/asks') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, id: 'ask_0123456789ab', secret: 'S', wait: true, poll_ms: 2000, deadline_ms: 590000 }));
+      return;
+    }
+    trickle(req, res, timers);
+  });
   const home = mkHome(t);
   const root = hookProject(t, stub.port);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-hookrt-preload-'));
@@ -809,14 +822,16 @@ test('dispatcher: a handler that names its own hard exit replaces the table\'s (
 
   const none = await runHook(['ask'], { cwd: root, env: CHILD_ENV(home), input, nodeArgs: preload('none', 'null'), killAfterMs: 4500 });
   assert.equal(none.signal, 'SIGKILL', 'no hard exit: it waited on the answer until it was stopped, past the table\'s 2.5 s');
-  assert.equal(stub.requests.length, 1);
+  assert.equal(none.stdout, '');
+  assert.deepEqual(stub.requests.map((r) => r.url.split('?')[0]), ['/api/asks', '/api/asks/ask_0123456789ab/decision']);
 
   const own = await runHook(['ask'], { cwd: root, env: CHILD_ENV(home), input, nodeArgs: preload('own', '300') });
   assert.equal(own.signal, null, 'its own hard exit ended it');
   assert.equal(own.status, 0);
-  await waitUntil(() => stub.requests[1] && stub.requests[1].closedAt !== null, { what: 'the second hook\'s socket to close', timeout: 5000 });
-  const held = stub.requests[1].closedAt - stub.requests[1].arrivedAt;
-  t.diagnostic(`request held ${held} ms (the handler's own hard exit, 300 ms)`);
+  assert.equal(own.stdout, '');
+  await waitUntil(() => stub.requests[3] && stub.requests[3].closedAt !== null, { what: 'the second hook\'s poll socket to close', timeout: 5000 });
+  const held = stub.requests[3].closedAt - stub.requests[2].arrivedAt;
+  t.diagnostic(`create to the poll's close ${held} ms (the handler's own hard exit, 300 ms)`);
   if (PERF) assert.ok(held < 300 + 700, `held ${held} ms`);
 });
 
@@ -877,7 +892,9 @@ test('dispatcher: a refused post goes to hook.log as ids and an outcome, never c
   assert.doesNotMatch(log, /MARKER|MESSAGING-TOKEN/);
 });
 
-test('dispatcher: ask in report mode posts, then prints nothing; under an SDK host it posts nothing', async (t) => {
+test('dispatcher: ask with nobody to answer posts the ask, then prints nothing; under an SDK host it posts nothing', async (t) => {
+  // The stub's {ok: true} carries no `wait`: nobody can answer, so the bridge
+  // leaves Claude Code's own terminal prompt standing.
   const stub = await stubDaemon(t);
   const home = mkHome(t);
   const root = hookProject(t, stub.port);
@@ -887,14 +904,14 @@ test('dispatcher: ask in report mode posts, then prints nothing; under an SDK ho
   assert.equal(r.stdout, '', 'no decision: Claude Code\'s own terminal prompt stands');
   assert.equal(r.stderr, '');
   assert.equal(stub.requests.length, 1);
-  assert.equal(stub.requests[0].url, '/api/hooks/event');
-  assert.equal(stub.requests[0].body.event, 'PermissionRequest');
-  assert.equal(stub.requests[0].body.tool.call, 'Bash(rm -rf dist && npm run build)');
+  assert.equal(stub.requests[0].url, '/api/asks');
+  assert.equal(stub.requests[0].body.envelope.event, 'PermissionRequest');
+  assert.equal(stub.requests[0].body.envelope.tool.call, 'Bash(rm -rf dist && npm run build)');
 
   for (const entry of ['sdk-cli', 'sdk-ts', 'sdk-py']) {
     const sdk = await runHook(['ask'], { cwd: root, env: CHILD_ENV(home, { CLAUDE_CODE_ENTRYPOINT: entry }), input });
     assert.equal(sdk.status, 0);
     assert.equal(sdk.stdout, '');
   }
-  assert.equal(stub.requests.length, 1, 'an SDK host\'s PermissionRequest is never reported (C38)');
+  assert.equal(stub.requests.length, 1, 'an SDK host\'s PermissionRequest is never posted (C38)');
 });
