@@ -301,6 +301,24 @@ test('a path handed by installed_plugins.json outside pluginsDir is ignored; sym
     'a listed name is kept, but nothing is read through the link');
 });
 
+test('a plugin installed for another project is not read; one installed for this project is', async (t) => {
+  const h = setup(t);
+  standardTree(h);
+  const cache = path.join(h.ch.dir, 'plugins', 'cache', 'market');
+  h.user('plugins/cache/market/elsewhere/1.0.0/skills/theirs/SKILL.md', md({ name: 'theirs' }));
+  h.user('plugins/cache/market/here/1.0.0/skills/ours/SKILL.md', md({ name: 'ours' }));
+  const other = fs.mkdtempSync(path.join(SANDBOX, 'wc-skills-other-'));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  const plugins = JSON.parse(fs.readFileSync(path.join(h.ch.dir, 'plugins', 'installed_plugins.json'), 'utf8'));
+  plugins.plugins['elsewhere@market'] = [{ scope: 'project', projectPath: other, installPath: path.join(cache, 'elsewhere', '1.0.0') }];
+  plugins.plugins['here@market'] = [{ scope: 'project', projectPath: h.root, installPath: path.join(cache, 'here', '1.0.0') }];
+  h.user('plugins/installed_plugins.json', JSON.stringify(plugins));
+  h.user('settings.json', JSON.stringify({ enabledPlugins: { 'acme@market': true, 'elsewhere@market': true, 'here@market': true } }));
+  const names = (await catalog({ root: h.root, listing: null })).skills.map((s) => s.name);
+  assert.ok(names.includes('here:ours'), 'installed for this project');
+  assert.ok(!names.includes('elsewhere:theirs'), 'installed for another project');
+});
+
 test('no listing: disk only, partial — no conversation, and skillFold unavailable', async (t) => {
   const h = setup(t);
   standardTree(h);
