@@ -1,8 +1,8 @@
 // OPT-IN: drives a REAL Claude Code `claude` (WEB_CHAT_E2E_CLAUDE=1), in a
 // sandbox — `env -i` with HOME and CLAUDE_CONFIG_DIR in a temp dir, so the
 // user's own ~/.claude.json and settings are never read or written. CI never
-// sets the variable. (Ruling U95@e2e-gate: this file gates itself; the tranche-4
-// unit that adds `claude` to test-support's e2eGate folds it in.)
+// sets the variable. (Ruling U95@e2e-gate: gated through test-support's
+// e2eGate(['claude']), folded in by U82.)
 //
 // The local-scope registration rests on behaviour Claude Code does not
 // document, measured on 2.1.289 (design/mcp-approval-local-scope.md). This
@@ -25,8 +25,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const OPTED_IN = process.env.WEB_CHAT_E2E_CLAUDE === '1';
-const skip = OPTED_IN ? false : 'opt-in: drives a real Claude Code `claude` — set WEB_CHAT_E2E_CLAUDE=1 to run it';
+const { skip } = require('../test-support/helpers').e2eGate(['claude']);
 
 // Resolved only once opted in: nothing probes the machine otherwise.
 function realClaude() {

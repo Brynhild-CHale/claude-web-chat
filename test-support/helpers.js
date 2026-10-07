@@ -574,36 +574,61 @@ function fakeBin(t, { name, script, env = {} }) {
 }
 
 // The gate on a test that drives a REAL host program — a headless Chrome, a real
-// ffmpeg — rather than a fake from fakeBin. Such a test is OPT-IN: it runs only
-// when its env var is exactly `1`, however many browsers the machine happens to
-// have, so the suite is the same suite on every box. CI sets neither;
-// test/e2e-gate.test.js holds that, and test/harness-conventions.test.js holds
-// that no test probes for a real program any other way.
+// ffmpeg, a real pseudo-terminal, a real Claude Code — rather than a fake from
+// fakeBin. Such a test is OPT-IN: it runs only when its env var is exactly `1`,
+// however many programs the machine happens to have, so the suite is the same
+// suite on every box. CI sets none; test/e2e-gate.test.js holds that, and
+// test/harness-conventions.test.js holds that no test probes for a real program
+// any other way.
 //
 //   const e2e = e2eGate(['chrome', 'ffmpeg']);
 //   test('…', { skip: e2e.skip }, () => { … e2e.chrome … e2e.ffmpeg … });
 //
-// → { skip, chrome?, ffmpeg? }: `skip` is false or a reason that names the env
-// var to set. Nothing is probed until the test is opted in; opted in but the
-// program is missing still skips, naming the override (WEB_CHAT_CHROME /
-// WEB_CHAT_FFMPEG) that points at one. `env` and `find` are for the gate's own
-// tests.
+// → { skip, chrome?, ffmpeg?, tty?, claude?, claudeConfigDir? }: `skip` is false
+// or a reason that names the env var to set. Nothing is probed until the test
+// is opted in; opted in but the program is missing still skips, naming it (and,
+// for chrome and ffmpeg, the override WEB_CHAT_CHROME / WEB_CHAT_FFMPEG that
+// points at one). `tty` is { perl, python3 } (python3's pty module hosts the
+// terminal, perl is the Esc injector's helper); `claude` is the `claude` to
+// run. An opted-in `claude` also carries `claudeConfigDir`: the logged-in
+// throwaway Claude config directory the maintainer names in
+// WEB_CHAT_E2E_CLAUDE_CONFIG_DIR (never ~/.claude), or null when unset — a test
+// that needs one skips itself, naming that variable. It is read here, through
+// the gate's env, so no test reads a WEB_CHAT_E2E_* variable itself. `env` and
+// `find` are for the gate's own tests.
 const E2E = {
   chrome: { opt: 'WEB_CHAT_E2E_CHROME', what: 'a real Chrome', missing: 'no Chrome-family browser found — set WEB_CHAT_CHROME to one' },
   ffmpeg: { opt: 'WEB_CHAT_E2E_FFMPEG', what: 'a real ffmpeg', missing: 'no ffmpeg found — set WEB_CHAT_FFMPEG to one' },
+  tty: { opt: 'WEB_CHAT_E2E_TTY', what: 'a real pseudo-terminal', missing: 'perl and python3 were not both found on PATH (python3\'s pty module hosts the terminal; perl runs the helper)' },
+  claude: { opt: 'WEB_CHAT_E2E_CLAUDE', what: 'a real Claude Code', missing: 'no `claude` found — put Claude Code on PATH' },
 };
+const E2E_CLAUDE_CONFIG_DIR = 'WEB_CHAT_E2E_CLAUDE_CONFIG_DIR';
+function e2eFinders(env) {
+  const f = require('../lib/replay/find');
+  return {
+    chrome: f.findChrome,
+    ffmpeg: f.findFfmpeg,
+    tty: () => {
+      const perl = f.onPath('perl', { env });
+      const python3 = f.onPath('python3', { env });
+      return perl && python3 ? { perl, python3 } : null;
+    },
+    claude: () => require('../lib/core/claude-cli').findClaude({ env }),
+  };
+}
 function e2eGate(needs, { env = process.env, find } = {}) {
   const off = needs.filter((k) => env[E2E[k].opt] !== '1');
   if (off.length) {
     return { skip: `opt-in: drives ${off.map((k) => E2E[k].what).join(' and ')} — set ${off.map((k) => `${E2E[k].opt}=1`).join(' ')} to run it` };
   }
   // Lazy, so a run that opts into nothing never probes the machine at all.
-  const finders = find || (() => { const f = require('../lib/replay/find'); return { chrome: f.findChrome, ffmpeg: f.findFfmpeg }; })();
+  const finders = find || e2eFinders(env);
   const out = { skip: false };
   for (const k of needs) {
     out[k] = finders[k]();
     if (!out[k]) return { skip: `${E2E[k].opt}=1, but ${E2E[k].missing}` };
   }
+  if (needs.includes('claude')) out.claudeConfigDir = env[E2E_CLAUDE_CONFIG_DIR] || null;
   return out;
 }
 
