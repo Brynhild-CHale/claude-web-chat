@@ -15,8 +15,9 @@
 //     show their reasons and mount nothing; a previewed older node says it
 //     changes files on disk now;
 //   * done 'restored' closes the dialog and opens the toast's Undo frame
-//     (restore_id=latest); 'failed' keeps the dialog and offers Undo; any
-//     other outcome does nothing; Escape and wc:close-popovers dismiss both and
+//     (restore_id=latest); 'failed' keeps the dialog and offers Undo inside
+//     it, handed to the toast when the dialog closes; any other outcome does
+//     nothing; Escape and wc:close-popovers dismiss both and
 //     unmount their frames; the toast goes after 30 s (a stubbed timer) unless
 //     hovered;
 //   * Fork: a confirm frame for turn_id, the dialog kept open on 'forked';
@@ -124,6 +125,7 @@ const isOpen = (e) => !!e && !e.classList.contains('hidden');
 const framesIn = (e) => (e ? [...e.querySelectorAll('iframe.wc-answer-frame')] : []);
 const allFrames = () => [...doc.querySelectorAll('iframe.wc-answer-frame')];
 const toasts = () => [...doc.querySelectorAll('.ta-toast')];
+const undoFrames = (e) => framesIn(e).filter((f) => new URL(f.src).pathname === '/answer/control/undo');
 const previewCalls = () => shell.calls.filter((c) => c.url.startsWith('/api/code/preview'));
 const post = (frame, data) => W.dispatchEvent(new W.MessageEvent('message', { data, origin: LOOP, source: frame.contentWindow }));
 const done = (frame, outcome, result) => post(frame, { type: 'wc-answer:done', outcome, ...(result ? { result } : {}) });
@@ -461,9 +463,43 @@ test('done \'failed\' keeps the dialog on its result and offers Undo; an outcome
   await shell.tick();
   assert.ok(isOpen(dialog()), 'failed: the dialog stays');
   assert.equal(framesIn($('ta-confirm'))[0], frame);
+  assert.equal(undoFrames(dialog()).length, 1, 'with its Undo, inside the dialog');
+  assert.equal(frameUrl(undoFrames(dialog())[0]).searchParams.get('restore_id'), 'latest');
+  assert.equal(toasts().length, 0, 'no second panel beside the dialog');
+  // A dismissal closes the dialog, and its Undo moves to the toast.
+  await closeEverything();
+  assert.ok(!isOpen(dialog()));
+  assert.equal(framesIn(dialog()).length, 0, 'the dialog\'s frames went');
   const [t] = toasts();
-  assert.ok(t, 'with the toast');
-  assert.equal(frameUrl(framesIn(t)[0]).searchParams.get('restore_id'), 'latest');
+  assert.ok(t, 'the toast took the Undo');
+  assert.equal(t.querySelector('.ta-toast-text').textContent, 'Some files could not be restored.');
+  assert.equal(frameUrl(undoFrames(t)[0]).searchParams.get('restore_id'), 'latest');
+  await closeEverything();
+  assert.equal(toasts().length, 0);
+  assert.equal(allFrames().length, 0);
+});
+
+test('done \'failed\': reading the residuals keeps the Undo; the dialog\'s ✕ hands it to the toast', async () => {
+  await openRestore('t1');
+  const [frame] = framesIn($('ta-confirm'));
+  done(frame, 'failed', { residual: 2 });
+  await shell.tick();
+  shell.press($('ta-body'));
+  await shell.tick();
+  assert.ok(isOpen(dialog()), 'a press inside keeps the dialog');
+  const undo = undoFrames(doc);
+  assert.equal(undo.length, 1, 'exactly one Undo frame mounted');
+  assert.equal(frameUrl(undo[0]).searchParams.get('restore_id'), 'latest');
+  assert.equal(frameUrl(undo[0]).searchParams.get('layout'), 'confirm');
+  assert.equal(frameUrl(undo[0]).searchParams.get('size'), 'compact');
+  shell.press(dialog().querySelector('.ta-close'));
+  await shell.tick();
+  assert.ok(!isOpen(dialog()), 'the ✕ closed the dialog');
+  const [t] = toasts();
+  assert.ok(t, 'a .ta-toast');
+  assert.equal(undoFrames(t).length, 1, 'holding the Undo frame');
+  assert.equal(frameUrl(undoFrames(t)[0]).searchParams.get('restore_id'), 'latest');
+  assert.equal(allFrames().length, 1, 'and nothing else');
   await closeEverything();
   assert.equal(toasts().length, 0);
   assert.equal(allFrames().length, 0);
@@ -573,6 +609,45 @@ test('the inspector: Restore files on a node with mirror turns reads node=<id>; 
   }
 });
 
+test('the inspector keeps its painted Restore files through a change that is not its own (capabilities.fork)', async () => {
+  const nodes = [
+    { id: 'n1', label: 'n1', parent_id: null, created_at: T0 },
+    { id: 'n2', label: 'n1.1', parent_id: 'n1', created_at: T0 + 1000 },
+  ];
+  shell.setRoutes({
+    '/api/graph': { nodes, active: 'n2' },
+    '/api/graph/node/*': (url) => {
+      const id = decodeURIComponent(url.split('?')[0].split('/').pop());
+      const n = nodes.find((x) => x.id === id) || { id };
+      return { ...n, mounts: [], store: {}, ...(id === 'n2' ? { mirror: { v: 1, turns: [{ turn_id: 't1', role: 'commit' }] } } : {}) };
+    },
+  });
+  await shell.frame(helloFrame({ active: 'n2' }));
+  await gv.openOverlay();
+  const caps = S.mirror.capabilities;
+  try {
+    const btn = () => $('gv-inspector').querySelector('[data-act="x:restore-files"]');
+    await gv.selectNode('n2');
+    await shell.tick();
+    assert.ok(btn(), 'shown on n2');
+    S.mirror.capabilities = Object.freeze({ ...caps, fork: !caps.fork });
+    bus.emit('mirror', { what: ['capabilities'] });
+    await shell.tick();
+    assert.ok(btn(), 'a fork-only flip leaves the inspector\'s button');
+    // A change that is its own still takes it away.
+    S.mirror.capabilities = Object.freeze({ ...caps, code_revert: false });
+    bus.emit('mirror', { what: ['capabilities'] });
+    await shell.tick();
+    assert.equal(btn(), null, 'code_revert false: gone');
+  } finally {
+    S.mirror.capabilities = caps;
+    bus.emit('mirror', { what: ['capabilities'] });
+    await gv.closeOverlay?.();
+    shell.setRoutes({});
+    await shell.tick();
+  }
+});
+
 /* ── stop, and what is never done ────────────────────────────────────────── */
 
 test('stopTurnActions drops the footers\' and the inspector\'s buttons and leaves no frame, timer or popover', async () => {
@@ -581,7 +656,7 @@ test('stopTurnActions drops the footers\' and the inspector\'s buttons and leave
   await openRestore('t1');
   done(framesIn($('ta-confirm'))[0], 'failed');
   await shell.tick();
-  assert.equal(allFrames().length, 2, 'the dialog\'s and the toast\'s');
+  assert.equal(allFrames().length, 2, 'the dialog\'s confirm and its Undo');
   TA.stopTurnActions();
   await waitUntil(() => actionsOf('t1').length === 0, { timeout: 2000, what: 'the footer buttons gone' });
   assert.equal(dialog(), null, 'the dialog is gone');

@@ -58,7 +58,12 @@
 //                       after TOAST_MS unless hovered or focused (leaving starts
 //                       the count again), on its ✕, or as any panel goes.
 //   restore 'failed'    (residuals) the dialog stays on the frame's result, and
-//                       the toast's Undo is offered the same way.
+//                       the toast's Undo is offered the same way — inside the
+//                       dialog, under #ta-confirm, while it stays open (shell.js
+//                       keeps one panel at a time, so a toast beside it would go
+//                       at the first press in the dialog); when the dialog
+//                       closes (its ✕, Escape, a dismissal) the Undo moves to
+//                       the toast.
 //   fork 'forked'       the dialog stays open on the frame's command until the
 //                       user closes it.
 //   'refused', 'undone' the frame shows its own result; the chrome does nothing.
@@ -111,6 +116,9 @@ const TRY_AGAIN = 'A preview is already being made: try again in a moment.';
 const REVERTED_TOO = 'Edits made since that turn, yours included, are reverted too.';
 const ON_DISK_NOW = 'This changes files on disk now, not the node you are viewing.';
 const HEAD_MOVED = 'HEAD has moved since that turn. Files go back; commits and branches do not.';
+const RESTORE_FAILED = 'Some files could not be restored.';
+const NO_UNDO = 'Undo is not available from this page right now.';
+const UNDO_SPEC = Object.freeze({ action: 'undo', params: Object.freeze({ restore_id: 'latest' }), layout: 'confirm', size: 'compact' });
 
 let timers = {
   setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
@@ -120,9 +128,12 @@ let fetchFn = (url, init) => globalThis.fetch(url, init);
 
 let inited = null;
 let offs = [];          // bus listeners
-let unregs = [];        // the three registrations
-let gateKey = null;
-let dlg = null;         // the dialog: { el, title, body, confirm, observer, handle, token, retry }
+let turnUnregs = [];    // the two turn actions
+let nodeUnregs = [];    // the inspector action
+let turnKey = null;     // what the turn actions were registered for
+let nodeKey = null;     // what the inspector action was registered for
+let couldAct = false;
+let dlg = null;         // the dialog: { el, title, body, confirm, undoSlot, observer, handle, undo, undoOwed, token, retry }
 let toast = null;       // the toast: { el, slot, handle, timer, held, observer }
 
 // ── who may act ─────────────────────────────────────────────────────────────
@@ -174,31 +185,41 @@ function buildDialog() {
   const title = el('h4', 'ta-title');
   title.id = 'ta-title';
   const close = button('ta-close', '✕', 'Close');
-  close.addEventListener('click', () => closeDialog());
+  close.addEventListener('click', () => closeDialog());   // hands an Undo off
   head.append(title, close);
   const body = el('div', 'ta-body');
   body.id = 'ta-body';
   const confirm = el('div', 'ta-confirm');
   confirm.id = 'ta-confirm';
-  box.append(head, body, confirm);
+  const undoSlot = el('div', 'ta-undo-slot');
+  box.append(head, body, confirm, undoSlot);
   document.body.append(box);
-  const d = { el: box, title, body, confirm, observer: null, handle: null, token: 0, retry: null };
-  // shell.js hides it (Escape, an outside press, another panel): its frame goes.
-  d.observer = new MutationObserver(() => { if (box.classList.contains('hidden')) dialogHidden(d); });
+  const d = { el: box, title, body, confirm, undoSlot, observer: null, handle: null, undo: null, undoOwed: false, token: 0, retry: null };
+  // shell.js hides it (Escape, an outside press, another panel): its frames go,
+  // and an Undo it was holding moves to the toast.
+  d.observer = new MutationObserver(() => { if (box.classList.contains('hidden')) dialogHidden(d, { handOff: true }); });
   d.observer.observe(box, { attributes: true, attributeFilter: ['class'] });
   return d;
 }
 
-function dialogHidden(d) {
+// handOff: the dialog closed (✕, Escape, a dismissal), so an Undo it held is
+// offered again in the toast. Re-opening it, stopping, or the viewer losing the
+// right to act hand nothing off.
+function dialogHidden(d, { handOff = false } = {}) {
   d.token++;              // an answer still in flight is dropped
   d.retry = null;
   if (d.handle) { d.handle.unmount(); d.handle = null; }
+  const owed = d.undoOwed;
+  d.undoOwed = false;
+  if (d.undo) { d.undo.unmount(); d.undo = null; }
+  d.undoSlot.replaceChildren();
+  if (owed && handOff && inited) openToast(RESTORE_FAILED);
 }
 
-function closeDialog() {
+function closeDialog({ handOff = true } = {}) {
   if (!dlg) return;
   dlg.el.classList.add('hidden');
-  dialogHidden(dlg);
+  dialogHidden(dlg, { handOff });
 }
 
 // Open (or re-open) the dialog with a title and nothing in it: → its token.
@@ -343,12 +364,24 @@ async function openRestore(ref) {
 
 function onRestoreDone(outcome) {
   if (outcome === 'restored') {
-    closeDialog();
+    closeDialog({ handOff: false });
     openToast('Files restored.');
   } else if (outcome === 'failed') {
-    openToast('Some files could not be restored.');
+    offerUndoInDialog();
   }
   // 'refused' and anything else: the frame shows its own result.
+}
+
+// 'failed': the dialog stays on the frame's result, so the Undo goes in it,
+// under #ta-confirm — the one panel that stays. Closing the dialog hands it to
+// the toast (dialogHidden).
+function offerUndoInDialog() {
+  if (!dlg || dlg.el.classList.contains('hidden')) return;
+  dlg.undoOwed = true;
+  if (dlg.undo) return;
+  dlg.undoSlot.replaceChildren();
+  dlg.undo = mountControlFrame(dlg.undoSlot, { ...UNDO_SPEC, onDone: () => {} });
+  if (!dlg.undo) dlg.undoSlot.append(el('p', 'ta-reason', NO_UNDO));
 }
 
 // ── Fork from here ──────────────────────────────────────────────────────────
@@ -415,18 +448,16 @@ function openToast(text) {
   t.observer.observe(box, { attributes: true, attributeFilter: ['class'] });
   toast = t;
   // 'undone' and 'refused': the frame says so itself.
-  t.handle = mountControlFrame(slot, {
-    action: 'undo', params: { restore_id: 'latest' }, layout: 'confirm', size: 'compact', onDone: () => {},
-  });
+  t.handle = mountControlFrame(slot, { ...UNDO_SPEC, onDone: () => {} });
   // (control-confirm.js puts `size` on its <html data-size> for answer.css.)
-  if (!t.handle) slot.append(el('p', 'ta-reason', 'Undo is not available from this page right now.'));
+  if (!t.handle) slot.append(el('p', 'ta-reason', NO_UNDO));
   armToast(t);
 }
 
 // ── registration ────────────────────────────────────────────────────────────
 
-function register() {
-  unregs = [
+function registerTurns() {
+  return [
     registerTurnAction({
       id: 'restore-files', label: 'Restore files', applies: restoreApplies,
       run: (turn) => { if (restoreApplies(turn)) openRestore({ kind: 'turn', id: turn.id }); },
@@ -435,6 +466,11 @@ function register() {
       id: 'fork', label: 'Fork from here', applies: forkApplies,
       run: (turn) => { if (forkApplies(turn)) openFork(turn); },
     }),
+  ];
+}
+
+function registerNode() {
+  return [
     registerInspectorAction({
       id: 'restore-files', label: 'Restore files', title: 'Restore files to before this node', applies: nodeApplies,
       // The U80 race: a newer selection still loading hands run a null node —
@@ -449,22 +485,32 @@ function register() {
   ];
 }
 
+function drop(list) {
+  for (const off of list.splice(0)) { try { off(); } catch { /* gone */ } }
+}
 function unregister() {
-  for (const off of unregs.splice(0)) { try { off(); } catch { /* gone */ } }
+  drop(turnUnregs);
+  drop(nodeUnregs);
+  turnKey = null;
+  nodeKey = null;
 }
 
-// Capabilities, access or the answer origin changed: the footers and the
-// inspector are drawn again through a new registration, and a viewer who may
-// no longer act loses the open dialog and toast.
+// Capabilities, access or the answer origin changed: an action whose own inputs
+// changed is registered again — the footers redraw on it. The inspector's is
+// re-registered only for its own (code_revert, may act): its unregister takes
+// the painted button away and nothing paints it back until the next selection.
+// A viewer who may no longer act loses the open dialog and toast.
 function sync() {
   if (!inited) return;
-  const key = `${caps().code_revert === true ? 1 : 0}|${caps().fork === true ? 1 : 0}|${viewerMayAct() ? 1 : 0}`;
-  if (key === gateKey) return;
-  const could = gateKey !== null && gateKey.endsWith('|1');
-  gateKey = key;
-  unregister();
-  register();
-  if (could && !viewerMayAct()) { closeDialog(); closeToast(); }
+  const cr = caps().code_revert === true ? 1 : 0;
+  const may = viewerMayAct();
+  const tk = `${cr}|${caps().fork === true ? 1 : 0}|${may ? 1 : 0}`;
+  const nk = `${cr}|${may ? 1 : 0}`;
+  if (tk !== turnKey) { turnKey = tk; drop(turnUnregs); turnUnregs = registerTurns(); }
+  if (nk !== nodeKey) { nodeKey = nk; drop(nodeUnregs); nodeUnregs = registerNode(); }
+  const could = couldAct;
+  couldAct = may;
+  if (could && !may) { closeDialog({ handOff: false }); closeToast(); }
 }
 
 function onPort() {
@@ -477,7 +523,9 @@ export function initTurnActions({ timers: t, fetch: f } = {}) {
   if (typeof f === 'function') fetchFn = f;
   if (inited) return inited;
   inited = { stop: stopTurnActions };
-  gateKey = null;
+  turnKey = null;
+  nodeKey = null;
+  couldAct = false;
   offs = [bus.on('mirror', sync), bus.on(PORT_EVENT, onPort)];
   sync();
   return inited;
@@ -488,11 +536,11 @@ export function stopTurnActions() {
   unregister();
   closeToast();
   if (dlg) {
-    closeDialog();
+    closeDialog({ handOff: false });
     dlg.observer.disconnect();
     dlg.el.remove();
     dlg = null;
   }
-  gateKey = null;
+  couldAct = false;
   inited = null;
 }
