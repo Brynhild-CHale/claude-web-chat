@@ -255,9 +255,11 @@ test('U58b: a synced skill is never offered under a plugin\'s namespace that als
   assert.ok(!r.skills.some((s) => s.name === 'document-skills:pptx'), 'a plugin namespace is never borrowed');
 
   // Several buckets ('listed' mode): a synced skill matches only its own
-  // spelling, never a plugin's entry ending in the same name.
+  // spelling, never a plugin's entry ending in the same name. Every file
+  // counts as new (sessionStart before OLD), so a wrongly matched synced
+  // skill would be offered, not just held back as old.
   h.user(`skills/synced/${ORG2}_${ACCT2}/xlsx/SKILL.md`, md({ name: 'xlsx' }));
-  const several = await catalog({ root: h.root, listing: { names: ['document-skills:docx'], descriptions: {}, orgUuid: null }, sessionStart: START });
+  const several = await catalog({ root: h.root, listing: { names: ['document-skills:docx'], descriptions: {}, orgUuid: null }, sessionStart: OLD - 1 });
   assert.deepStrictEqual(several.skills.map((s) => [s.name, s.origin]), [['document-skills:docx', 'plugin']]);
 });
 
