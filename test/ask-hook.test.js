@@ -66,6 +66,9 @@ const SECRET = 'S3CRET-for-this-ask';
 const CREATED = { ok: true, id: ID, secret: SECRET, wait: true, poll_ms: 2000, deadline_ms: 590000 };
 const NO_WAIT = { ok: true, id: ID, wait: false, reason: 'no-viewer' };
 const HANG = Symbol('hang');
+// Headers, then a byte every 100 ms, forever: a socket that is never idle, so
+// no client timeout can end the request.
+const TRICKLE = Symbol('trickle');
 
 function payload(root, extra = {}) {
   return {
@@ -123,6 +126,12 @@ async function asksStub(t, { create = CREATED, poll = () => ({ state: 'pending' 
       res.on('error', () => {});
       const send = (answer) => {
         if (answer === HANG) return;
+        if (answer === TRICKLE) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          const iv = setInterval(() => res.write(' '), 100);
+          res.on('close', () => clearInterval(iv));
+          return;
+        }
         const status = answer && Number.isInteger(answer.status) && answer.body !== undefined ? answer.status : 200;
         const out = answer && Number.isInteger(answer.status) && answer.body !== undefined ? answer.body : answer;
         res.writeHead(status, { 'content-type': 'application/json' });
@@ -678,6 +687,26 @@ test('dispatcher: SIGTERM against a daemon that never answers the withdraw still
   assert.equal(r.stdout, '');
   assert.equal(stub.withdraws().length, 1);
   t.diagnostic(`SIGTERM → exit in ${r.at - killedAt} ms with the withdraw unanswered`);
+  if (PERF) assert.ok(r.at - killedAt <= ask.SIGTERM_EXIT_MS + 150);
+});
+
+test('dispatcher: SIGTERM against a withdraw that trickles forever ends on the hook\'s own 400 ms hard exit', async (t) => {
+  // The poll's 5 s and the withdraw's 300 ms timeouts are socket IDLE timeouts
+  // (lib/client), and a trickling response is never idle: only
+  // ctx.deadline(SIGTERM_EXIT_MS), armed on SIGTERM, ends this hook. Without
+  // it the child runs until the killer's SIGKILL.
+  const stub = await asksStub(t, { poll: () => TRICKLE, withdraw: () => TRICKLE });
+  const root = project(t, stub.port);
+  const run = spawnHook({ cwd: root, env: hookEnv(t), input: payload(root), killAfterMs: 8000 });
+  await waitUntil(() => stub.polls().length === 1, { what: 'the hook to start polling', timeout: 10000 });
+  const killedAt = Date.now();
+  run.child.kill('SIGTERM');
+  const r = await run.done;
+  assert.equal(r.signal, null, 'it ended itself, on its own hard exit');
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+  assert.equal(stub.withdraws().length, 1);
+  t.diagnostic(`SIGTERM → exit in ${r.at - killedAt} ms with the withdraw trickling`);
   if (PERF) assert.ok(r.at - killedAt <= ask.SIGTERM_EXIT_MS + 150);
 });
 
