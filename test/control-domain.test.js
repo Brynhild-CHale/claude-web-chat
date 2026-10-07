@@ -515,6 +515,35 @@ test('notices: a null-conversation notice goes to the next claimer in the projec
   assert.deepEqual(notices.claim({ session_id: S1, max_chars: 9000 }).map((n) => n.text), ['for c1']);
 });
 
+// U81b: an unresolvable notice is keyed by its sessions, so two sessions'
+// notices never replace each other (an unresolvable undo of one session no
+// longer drops another session's pending restore notice).
+test('notices: two unresolvable notices for different sessions both survive, each claimed by its own session', (t) => {
+  const { notices, changes } = noticesRig(t);
+  const a = notices.put({ conversation_id: null, session_ids: [S1], text: 'restored for s1', source: 'restore' });
+  const b = notices.put({ conversation_id: null, session_ids: [S2], text: 'undone for s2', source: 'undo' });
+  assert.deepEqual(changes.map((c) => c.op), ['put', 'put'], 'the second put replaced nothing');
+  assert.deepEqual(notices.pending().map((n) => [n.id, n.session_ids]), [[a, [S1]], [b, [S2]]]);
+  // An unresolvable notice stays open to the next claimer (notes-B decision 8),
+  // so this claim has room for one notice only: oldest first, S1's comes to S1.
+  assert.deepEqual(notices.claim({ session_id: S1, max_chars: 'restored for s1'.length }), [{ id: a, text: 'restored for s1' }]);
+  assert.deepEqual(notices.claim({ session_id: S2, max_chars: 9000 }), [{ id: b, text: 'undone for s2' }]);
+  assert.deepEqual(notices.pending(), []);
+});
+
+test('notices: a second unresolvable notice for the same session replaces its first, whatever the order of its session ids', (t) => {
+  const { notices, changes } = noticesRig(t);
+  notices.put({ conversation_id: null, session_ids: [S1], text: 'restored for s1', source: 'restore' });
+  const undo = notices.put({ conversation_id: null, session_ids: [S1], text: 'the restore was undone', source: 'undo' });
+  assert.deepEqual(changes.map((c) => c.op), ['put', 'replace']);
+  assert.deepEqual(notices.pending().map((n) => n.id), [undo]);
+  notices.put({ conversation_id: null, session_ids: [S1, S2], text: 'for both' });
+  const both = notices.put({ conversation_id: null, session_ids: [S2, S1], text: 'for both, again' });
+  assert.deepEqual(changes.map((c) => c.op).slice(2), ['put', 'replace'], 'the sessions are sorted into the key');
+  assert.deepEqual(notices.pending().map((n) => n.id), [undo, both]);
+  assert.deepEqual(notices.claim({ session_id: S1, max_chars: 9000 }).map((n) => n.text), ['the restore was undone', 'for both, again']);
+});
+
 // ── the audit ───────────────────────────────────────────────────────────────
 
 test('the audit: one JSONL line with at, action, target, outcome, via, origin and device — ids only', (t) => {
