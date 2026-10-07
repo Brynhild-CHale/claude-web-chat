@@ -157,6 +157,18 @@ test('GET /api/asks?ensure=1 starts the answer surface for a local request only'
   assert.equal((await r.call('GET', '/api/asks?ensure=1')).status, 200);
 });
 
+test('GET /api/asks?ensure=1 after asks.stop() answers without starting the answer surface (U53c)', async (t) => {
+  // Teardown stops the asks before it closes the answer surface, and close()
+  // is re-openable: a straggler's ensure=1 landing after that must not open a
+  // fresh listener (and its idle timer) the teardown has already passed.
+  const r = await rig(t);
+  r.asks.stop();
+  const res = await r.call('GET', '/api/asks?ensure=1');
+  assert.equal(res.status, 200, 'the list still answers');
+  assert.deepEqual(res.json.asks, []);
+  assert.equal(r.surface.ensures, 0, 'a stopped asks domain never calls ensure()');
+});
+
 // ── host only ───────────────────────────────────────────────────────────────
 
 test('every hook-facing route answers 403 for a browser, a remote viewer and a network peer', async (t) => {
