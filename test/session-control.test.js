@@ -350,6 +350,15 @@ test('a Stop that posts no size in 3 s is remounted once at the refreshed port �
   await shell.tick();
   assert.ok($('cs-stop').matches(':empty'), 'a second silence: the slot is empty');
   assert.ok($('cp-stop').matches(':empty'));
+  // U85b: the emptied slot still says its size, and app.css keeps it hidden.
+  assert.equal($('cs-stop').getAttribute('data-wc-stop'), 'bar', 'asks.js emptied it; the slot still says its size');
+  const sheet = doc.createElement('style');
+  sheet.textContent = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
+  doc.head.append(sheet);
+  try {
+    assert.equal(W.getComputedStyle($('cs-stop')).display, 'none', 'an emptied #cs-stop stays hidden');
+    assert.equal(W.getComputedStyle($('cp-stop')).display, 'none', 'an emptied #cp-stop stays hidden');
+  } finally { sheet.remove(); }
   bus.emit('mirror', { what: ['status'] });
   await shell.tick();
   assert.ok($('cs-stop').matches(':empty'), 'and stays empty on mirror events');
@@ -358,6 +367,28 @@ test('a Stop that posts no size in 3 s is remounted once at the refreshed port �
   await shell.tick();
   assert.equal(frames('cs-stop').length, 1, 'back at the next refresh');
   await reset();
+});
+
+// U85b: .cs-stop:empty { display: none } (the bar's own rule) must always win,
+// so no rule in app.css's U85 section may set display on .cs-stop without
+// :not(:empty) — a rule of equal specificity later in the file would show an
+// emptied slot.
+test('app.css: no U85 rule sets display on .cs-stop without :not(:empty)', () => {
+  const css = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
+  const start = css.indexOf('/* ── U85 ·');
+  assert.ok(start >= 0, 'the U85 section');
+  const end = css.indexOf('/* ── U', start + 1);
+  const section = css.slice(start, end < 0 ? undefined : end).replace(/\/\*[\s\S]*?\*\//g, '');
+  let seen = 0;
+  for (const m of section.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(^|;)\s*display\s*:/.test(m[2])) continue;
+    for (const sel of m[1].split(',').map((x) => x.trim())) {
+      if (!/\.cs-stop(?![\w-])/.test(sel)) continue;
+      seen++;
+      assert.match(sel, /:not\(:empty\)/, `${sel} sets display without :not(:empty)`);
+    }
+  }
+  assert.ok(seen >= 1, 'the U85 section sizes .cs-stop');
 });
 
 /* ── the one helper ────────────────────────────────────────────────────────── */

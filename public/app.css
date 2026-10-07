@@ -2769,7 +2769,9 @@ pre.dv-diff {
 [data-wc-stop="bar"] > .wc-answer-frame { width: 148px; height: 22px; }
 [data-wc-stop="panel"] > .wc-answer-frame { width: 164px; height: 28px; }
 [data-wc-stop="sheet"] > .wc-answer-frame { width: 100%; max-width: 240px; height: 44px; }
-.cs-stop[data-wc-stop] { display: inline-flex; align-items: center; flex: none; }
+/* :not(:empty), so .cs-stop:empty always wins: asks.js may empty the slot (a
+   second silent Stop) while it still says its size, and that slot stays hidden. */
+.cs-stop[data-wc-stop]:not(:empty) { display: inline-flex; align-items: center; flex: none; }
 /* A confirm in a task row's stopper slot (chat-actions.js registerStopper):
    the slot's full width; touch density keeps the slot's own 44px floor. */
 .cs-row-confirm > .wc-answer-frame[data-kind="control"] { width: 100%; min-height: 22px; }
