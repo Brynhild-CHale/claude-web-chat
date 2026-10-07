@@ -20,8 +20,9 @@
 //   * the org and account ids appear in no answer; the account id is handed to
 //     redactor.addKnown once;
 //   * a decoy in the pack tier never appears; an installPath outside
-//     pluginsDir, a symlinked skill directory, SKILL.md or command are not
-//     followed;
+//     pluginsDir, a symlinked skill directory, SKILL.md or command, and a
+//     plugin's or synced plugin's skills/commands directory symlinked out are
+//     not followed;
 //   * no listing → disk, partial; descriptions SKILL.md first, capped, redacted;
 //     at most ENTRIES_MAX;
 //   * createSkillCatalog: the session start read from the snapshot's current
@@ -299,6 +300,41 @@ test('a path handed by installed_plugins.json outside pluginsDir is ignored; sym
   const listed = await catalog({ root: h.root, listing: { names: ['linked-dir'], descriptions: {}, orgUuid: ORG }, sessionStart: START });
   assert.deepStrictEqual(listed.skills, [{ name: 'linked-dir', description: '', origin: 'session' }],
     'a listed name is kept, but nothing is read through the link');
+});
+
+test('a plugin\'s skills or commands directory, or a synced plugin\'s skills, symlinked out is not followed', async (t) => {
+  const h = setup(t);
+  standardTree(h);
+  const outside = fs.mkdtempSync(path.join(SANDBOX, 'wc-skills-out-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(outside, 'skills', 'leak'), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'skills', 'leak', 'SKILL.md'), md({ name: 'leak', description: 'SECRET-OUTSIDE' }));
+  fs.mkdirSync(path.join(outside, 'commands'));
+  fs.writeFileSync(path.join(outside, 'commands', 'leakcmd.md'), md({ description: 'SECRET-OUTSIDE' }));
+  // An install directory that is real and inside pluginsDir, whose skills and
+  // commands directories are symlinks out of it.
+  const install = path.join(h.ch.dir, 'plugins', 'cache', 'market', 'lnk', '1.0.0');
+  fs.mkdirSync(install, { recursive: true });
+  fs.symlinkSync(path.join(outside, 'skills'), path.join(install, 'skills'));
+  fs.symlinkSync(path.join(outside, 'commands'), path.join(install, 'commands'));
+  const plugins = JSON.parse(fs.readFileSync(path.join(h.ch.dir, 'plugins', 'installed_plugins.json'), 'utf8'));
+  plugins.plugins['lnk@market'] = [{ scope: 'user', installPath: install }];
+  h.user('plugins/installed_plugins.json', JSON.stringify(plugins));
+  h.user('settings.json', JSON.stringify({ enabledPlugins: { 'acme@market': true, 'lnk@market': true } }));
+  // A synced plugin, in the one bucket, whose skills directory is a symlink out.
+  const synced = path.join(h.ch.dir, 'plugins', 'synced', `${ORG}_${ACCT}`, 'lnksync');
+  fs.mkdirSync(synced, { recursive: true });
+  fs.symlinkSync(path.join(outside, 'skills'), path.join(synced, 'skills'));
+
+  for (const listing of [null, { ...LISTING, names: [...LISTING.names, 'lnk:leak', 'lnk:leakcmd', 'lnksync:leak'] }]) {
+    const r = await catalog({ root: h.root, listing, sessionStart: 0 });
+    const all = JSON.stringify(r.skills);
+    assert.ok(!all.includes('SECRET-OUTSIDE'), 'a SKILL.md or command outside the install was read');
+    const names = r.skills.map((s) => s.name);
+    if (!listing) for (const bad of ['lnk:leak', 'lnk:leakcmd', 'lnksync:leak']) assert.ok(!names.includes(bad), `${bad} offered`);
+    assert.ok(names.includes('acme:deploy'), 'a real plugin directory is still read');
+    assert.ok(names.includes('anthropic-skills:pdf'), 'a real synced plugin directory is still read');
+  }
 });
 
 test('a plugin installed for another project is not read; one installed for this project is', async (t) => {
