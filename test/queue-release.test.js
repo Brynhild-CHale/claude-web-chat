@@ -202,6 +202,49 @@ test('send auto: a process the mirror reports gone releases now as well', (t) =>
   assert.ok(r.parked);
 });
 
+// U63b (§6.4: FIFO per conversation): a send 'auto' while older autosend
+// messages of its conversation still wait queues behind them, even when Claude
+// is already free (the 1,500 ms before the boundary's timer, or a missed
+// boundary), and the boundaries release all of them in order.
+test('send auto: a third auto send before the boundary timer queues at position 3; the three release in order', (t) => {
+  const mirror = fakeMirror({ lives: { [C1]: live('working', 111) } });
+  const h = harness(t, { mirror });
+  const a = enqueue(h, { text: 'do X' });
+  const b = enqueue(h, { text: 'then Y' });
+  assert.deepEqual(h.rel.send(a, { mode: 'auto', prov: {} }), { mode: 'queued', position: 1 });
+  assert.deepEqual(h.rel.send(b, { mode: 'auto', prov: {} }), { mode: 'queued', position: 2 });
+  mirror.lives[C1] = live('idle', 111);
+  mirror.emit({ op: 'state', conversation_id: C1, state: 'idle', prev: 'working' });
+  assert.equal(h.timers.pending().length, 1, 'the boundary armed its timer');
+  const timer = h.timers.pending()[0];
+  assert.equal(h.rel.claudeFree(C1), true, 'Claude is free before the timer fires');
+  const c = enqueue(h, { text: 'and Z' });
+  assert.deepEqual(h.rel.send(c, { mode: 'auto', prov: {} }), { mode: 'queued', position: 3 });
+  assert.equal(wakes(h.bus).length, 0, 'nothing overtook the queue');
+  assert.deepEqual(h.timers.pending(), [timer], 'the pending timer is not re-armed (no added delay)');
+  const order = [];
+  for (let i = 0; i < 3; i += 1) {
+    h.graph.lock = null;
+    if (i > 0) graphEvent(h.bus, 'unlock');
+    h.timers.fire(1500);
+    const w = wakes(h.bus);
+    order.push(w[w.length - 1].batch.map((it) => it.id).join('+'));
+  }
+  assert.deepEqual(order, [a.id, b.id, c.id], 'released in order, one per boundary');
+  assert.deepEqual(queuedIds(h.state), []);
+  // A missed boundary: free, an older message waiting and no timer armed — the
+  // new one still queues behind it, and send arms the timer that releases them.
+  const m = harness(t, { mirror: fakeMirror({ lives: { [C1]: live('working', 111) } }) });
+  const old = enqueue(m, { text: 'old' });
+  m.rel.send(old, { mode: 'auto', prov: {} });
+  m.mirror.lives[C1] = live('idle', 111);
+  const next = enqueue(m, { text: 'new' });
+  assert.deepEqual(m.rel.send(next, { mode: 'auto', prov: {} }), { mode: 'queued', position: 2 });
+  assert.equal(m.timers.pending().length, 1, 'send armed the boundary timer itself');
+  m.timers.fire(1500);
+  assert.deepEqual(queuedIds(m.state), [next.id], 'the older one went first');
+});
+
 test('send now: while working it is released at once, targeted', (t) => {
   const h = harness(t, { mirror: fakeMirror({ lives: { [C1]: live('working', 111) } }) });
   h.graph.lock = { base: null, started_at: Date.now(), message: 'x', author: 'user', claude_pid: 111 };
