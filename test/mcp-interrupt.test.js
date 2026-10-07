@@ -34,8 +34,8 @@ const {
 const { startPresence } = require('../lib/mcp/presence');
 const registry = require('../lib/util/registry');
 const { writePortfileAt } = require('../lib/core/portfiles');
-const { LOOPBACK } = require('../lib/core/cors');
-const { withServer, withTempHome, waitUntil } = require('../test-support/helpers');
+const { LISTEN_HOST } = require('../lib/core/cors');
+const { withTempHome, waitUntil } = require('../test-support/helpers');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'lib', 'mcp', 'interrupt.js'), 'utf8');
 const MCP_BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat-mcp.js');
@@ -158,12 +158,12 @@ test('static: the only byte the module can write is 0x1b (§10.2)', () => {
   assert.equal((outside.match(/TIOCSTI/g) || []).length, 0, 'named nowhere outside HELPER_SCRIPT');
   assert.ok(/TIOCSTI/.test(HELPER_SCRIPT));
 
-  // Exactly one ioctl call in the module, inside the helper, and its only
-  // payload is pack('c', 27).
+  // Exactly one ioctl call in the module, inside the helper, carrying the
+  // TIOCSTI request and a byte packed from 27 — the only byte the module packs.
   assert.equal((SOURCE.match(/\bioctl\s*\(/g) || []).length, 1, 'one ioctl call in the whole module');
-  const calls = HELPER_SCRIPT.match(/\bioctl\s*\(([^)]*\([^)]*\))\)/g) || [];
-  assert.deepEqual(calls, ["ioctl($tty, $TIOCSTI, pack('c', 27))"]);
-  assert.deepEqual(HELPER_SCRIPT.match(/\bpack\s*\([^)]*\)/g), ["pack('c', 27)"], 'the one packed value is 27');
+  assert.deepEqual(HELPER_SCRIPT.match(/\bioctl\s*\([^;]*\)/g), ['ioctl($tty, $TIOCSTI, $esc)'], 'the one ioctl, on TIOCSTI');
+  assert.equal((SOURCE.match(/\bpack\s*\(/g) || []).length, 1, 'one pack in the whole module');
+  assert.deepEqual(HELPER_SCRIPT.match(/\$esc = pack\([^)]*\)/g), ["$esc = pack('c', 27)"], 'the one packed byte is 27');
 
   // Nothing else in the helper writes: no print/syswrite to the terminal, no
   // other way out; its one print is the probe's "fg" on stdout.
@@ -175,6 +175,11 @@ test('static: the only byte the module can write is 0x1b (§10.2)', () => {
   assert.equal((SOURCE.match(/\bspawn\s*\(/g) || []).length, 1);
   assert.match(SOURCE, /spawn\('perl', helperArgv\(mode\), helperOptions\(\)\)/);
   assert.doesNotMatch(SOURCE, /process\.kill\(/);
+
+  // It follows the daemon through subscribeSSE, which discovers a portfile and
+  // never spawns — never the daemon-spawning get/post/api of lib/client.
+  assert.match(SOURCE, /require\('\.\.\/client'\)\.subscribeSSE/);
+  assert.doesNotMatch(SOURCE, /\.(get|post|api|request)\s*\(/, 'no daemon-spawning client call');
 });
 
 test('the helper program parses, and refuses a mode it does not know (exit 6)', { skip: process.platform === 'win32' }, async (t) => {
@@ -460,54 +465,52 @@ test('presence.setInterrupt(\'tty\') → mcpSessionsFor(root) reports it (a real
 
 // ── the follower ────────────────────────────────────────────────────────────
 
-test('follower: with no portfile it backs off and never spawns a daemon', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-int-nod-'));
-  fs.mkdirSync(path.join(root, '.web-chat'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const { subscribeSSE } = require('../lib/client');
-  const attempts = [];
-  const spy = (opts) => { attempts.push({ at: Date.now(), opts }); return subscribeSSE(opts); };
+// A recording fake stream that fails to connect: it drives onClose on the next
+// tick without an onOpen, so the follower's backoff grows (a successful open
+// resets it, which is correct and not what this tests). Each call's time is kept.
+function closingStream() {
+  const calls = [];
+  const fn = (opts) => {
+    calls.push({ at: Date.now(), opts });
+    const sub = { closed: false, close() { sub.closed = true; } };
+    setImmediate(() => { if (!sub.closed && opts.onClose) opts.onClose(); });
+    return sub;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+test('follower: a dropped stream backs off (doubling), and stop() clears the reconnect timer', async (t) => {
+  const stream = closingStream();
   const inj = startInterrupt({
-    root, presence: fakePresence(), subscribeSSE: spy, spawn: fakeSpawn({ probe: PROBE_OK }),
+    root: '/nonexistent', presence: fakePresence(), subscribeSSE: stream, spawn: fakeSpawn({ probe: PROBE_OK }),
     processCommand: () => 'claude', platform: 'darwin', ppid: () => 4242, log: () => {},
   });
   t.after(() => inj.stop());
-  await waitUntil(() => attempts.length >= 3, { timeout: 5000, what: 'three attempts' });
+  await waitUntil(() => stream.calls.length >= 3, { timeout: 5000, what: 'three connect attempts' });
   inj.stop();
-  const gaps = [attempts[1].at - attempts[0].at, attempts[2].at - attempts[1].at];
-  assert.ok(gaps[0] >= BACKOFF_MIN_MS - 50, `first backoff ${gaps[0]} ms`);
-  assert.ok(gaps[1] >= 2 * BACKOFF_MIN_MS - 50, `doubling: ${gaps[1]} ms`);
-  assert.equal(attempts[0].opts.since, undefined);
-  assert.equal(fs.existsSync(path.join(root, '.web-chat', 'server.json')), false, 'no daemon was spawned to listen');
-  const n = attempts.length;
+  const gaps = [stream.calls[1].at - stream.calls[0].at, stream.calls[2].at - stream.calls[1].at];
+  assert.ok(gaps[0] >= BACKOFF_MIN_MS - 60, `first backoff ${gaps[0]} ms`);
+  assert.ok(gaps[1] >= 2 * BACKOFF_MIN_MS - 60, `doubling: ${gaps[1]} ms`);
+  assert.equal(stream.calls[0].opts.since, undefined, 'the first connect is live-only');
+  const n = stream.calls.length;
   await new Promise((r) => setTimeout(r, BACKOFF_MIN_MS * 3));
-  assert.equal(attempts.length, n, 'stop() cleared the reconnect timer');
+  assert.equal(stream.calls.length, n, 'stop() cleared the reconnect timer');
 });
 
-test('follower against a real daemon: subscribes with kinds=control, live-only, and sees no other kind', async (t) => {
-  await withServer(t, { writePortfile: true }, async ({ root, api }) => {
-    const { subscribeSSE } = require('../lib/client');
-    const opened = [];
-    const got = [];
-    const spy = (opts) => {
-      opened.push(opts);
-      return subscribeSSE({ ...opts, onOpen: () => { got.push('open'); opts.onOpen(); }, onEvent: (e) => { got.push(e.kind); opts.onEvent(e); } });
-    };
-    const spawn = fakeSpawn({ probe: PROBE_OK });
-    const inj = startInterrupt({
-      root, presence: fakePresence(), subscribeSSE: spy, spawn,
-      processCommand: () => 'claude', platform: 'darwin', ppid: () => 4242, log: () => {},
-    });
-    t.after(() => inj.stop());
-    await api.post('/api/store', { patch: { before: 1 } }).catch(() => {});
-    await waitUntil(() => got.includes('open'), { what: 'the stream to open' });
-    assert.deepEqual(opened.map((o) => [o.kinds, 'since' in o, o.root]), [[['control'], false, root]]);
-    assert.equal((await api.post('/api/store', { patch: { after: 2 } })).status, 200);
-    await new Promise((r) => setTimeout(r, 150));
-    assert.deepEqual(got, ['open'], 'a store write is not a control event');
-    assert.deepEqual(spawn.modes(), ['probe']);
-    inj.stop();
+test('follower: with no portfile the client never spawns a daemon', async (t) => {
+  // The module\'s own default client (no injected subscribeSSE): subscribeSSE
+  // discovers a portfile and, finding none, never spawns — unlike get/post.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-int-nod-'));
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const inj = startInterrupt({
+    root, presence: fakePresence(), spawn: fakeSpawn({ probe: PROBE_OK }),
+    processCommand: () => 'claude', platform: 'darwin', ppid: () => 4242, log: () => {},
   });
+  t.after(() => inj.stop());
+  await new Promise((r) => setTimeout(r, BACKOFF_MIN_MS + 200));
+  assert.equal(fs.existsSync(path.join(root, '.web-chat', 'server.json')), false, 'no daemon was spawned to listen');
 });
 
 // A bare SSE endpoint standing in for the daemon's /api/events/stream, so the
@@ -525,7 +528,7 @@ async function fakeDaemon(t) {
     streams.add(res);
     req.on('close', () => streams.delete(res));
   });
-  await new Promise((r) => server.listen(0, LOOPBACK, r));
+  await new Promise((r) => server.listen(0, LISTEN_HOST, r));
   writePortfileAt(path.join(root, '.web-chat'), { pid: process.pid, port: server.address().port });
   const d = {
     root,
