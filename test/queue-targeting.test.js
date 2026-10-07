@@ -486,6 +486,26 @@ test('a heartbeat never folds or overwrites an in-flight wake: the targeted park
   assert.deepEqual(last.batch.map((x) => x.id), [m.id]);
 });
 
+test('a park the user chose (Hold) is not drained by a heartbeat from its already-live target', async (t) => {
+  const h = await host(t);
+  await h.hostPost('/api/channel/heartbeat', { pid: 111 });
+  const m = queue.enqueueMessage(h.state, h.bus, message());
+  const { wake } = queue.release(h.state, h.bus, [m.id], { target_pid: 111 });
+  assert.equal(wake.target_pid, 111, 'a live target wakes');
+  // The rail's ack timed out and the user pressed Hold.
+  const held = await h.hostPost('/api/queue/repush', { seq: wake.seq, park: true });
+  assert.equal(held.mode, 'parked');
+  const parkId = h.state.pendingWake.id;
+  assert.equal(h.state.pendingWake.target_pid, 111);
+  const n = wakesIn(h.bus).length;
+
+  await h.hostPost('/api/channel/heartbeat', { pid: 111 });
+  assert.ok(h.state.pendingWake, 'the held park is still there');
+  assert.equal(h.state.pendingWake.id, parkId);
+  assert.equal(wakesIn(h.bus).length, n, 'and no new wake went to the channel that failed to ack');
+  assert.equal(h.state.pendingAck, null);
+});
+
 test('GET /api/queue/pending?pid=: an untargeted park or one at that pid; never another\'s; no pid serves any', async (t) => {
   const h = await host(t, { live: false });
   queue.enqueue(h.state, h.bus, signal());
