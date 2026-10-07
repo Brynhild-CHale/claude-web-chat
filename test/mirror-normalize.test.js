@@ -629,3 +629,35 @@ test('a uuid-less cost-state (the exit tail) is forwarded as a cost-state record
   assert.strictEqual(model.turnsOf('conv').length, 1);
   assert.strictEqual(model.turnsOf('conv')[0].status, 'done');
 });
+
+// ── a web message's device (ruling D2 (a), U65) ─────────────────────────────
+
+test('a web message\'s prompt item takes the device its delivery\'s "Pushed from" line names', () => {
+  const r = createRecords({ seed: 26 });
+  const web = r.channel({ body: 'Pushed from: origin=remote device=mobile\n'
+    + 'Message from the user [web-chat message m-1a2b3c4d]:\n> Tighten the retry logic' });
+  r.assistant(['On it.']);
+  r.turnDuration();
+  // A Push of signals names a device too, but carries no composer marker: no device.
+  const signals = r.channel({ body: 'Pushed from: origin=local device=desktop\n2 queued signals' });
+  r.assistant(['Seen.']);
+  r.turnDuration();
+  // A marker with no "Pushed from" line: a web author, no device.
+  const bare = r.prompt('and now [web-chat message m-0a1b2c3d] from the composer');
+  r.assistant(['Sure.']);
+  r.turnDuration();
+  const { changes } = run(r.records);
+  const ops = changes.filter((c) => c.type === 'opener');
+  assert.deepStrictEqual(ops.map((c) => c.author || null), ['web', null, 'web']);
+  assert.ok(!('device' in ops[0]), 'the opener itself is unchanged: the device rides an item update');
+  const devices = items(changes).filter((c) => 'device' in c.item);
+  assert.deepStrictEqual(devices.map((c) => c.item), [{ id: `p_${web.promptId}`, device: 'mobile' }]);
+
+  const { model, tm } = machine();
+  tm.applyChanges('conv', r.sessionId, changes);
+  assert.strictEqual(model.item(`p_${web.promptId}`).device, 'mobile');
+  assert.strictEqual(model.item(`p_${web.promptId}`).kind, 'prompt');
+  assert.ok(!('device' in model.item(`p_${signals.promptId}`)));
+  assert.ok(!('device' in model.item(`p_${bare.promptId}`)));
+  assert.strictEqual(tm.diagnostics().items_without_turn, 0);
+});

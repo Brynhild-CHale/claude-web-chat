@@ -2726,6 +2726,106 @@ pre.dv-diff {
 }
 
 /* ── U65 · the composer · chat-composer.js ── */
+/* The composer (design spec §7.13) in the panel's #chat-composer-slot: a field
+   34 px tall growing to five lines, the hint and Send (28 px); the sheet's
+   variant 44 px with 16 px text (iOS zooms into anything smaller, §8.5). Its
+   `/` and `@` popup is laid out INSIDE the composer, above the field, and its
+   max-height comes from the panel (chat-composer.js listMaxHeight): never fixed
+   to the viewport and never a viewport unit, because the sheet's keyboard mode
+   moves the panel. The pending messages (§7.10) are dimmed bubbles after the
+   stream's last turn. Tokens only. A [hidden] part is gone whatever its class. */
+.cc-root [hidden] { display: none !important; }
+.cc-root { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.cc-off { margin: 0; font: 12px/1.45 var(--wc-font); color: var(--wc-muted); }
+.cc-off code { font: 11px var(--wc-mono); color: var(--wc-fg-bright); }
+.cc-form { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cc-row { display: flex; align-items: flex-end; gap: 8px; min-width: 0; }
+.cc-input {
+  flex: 1 1 auto; min-width: 0; box-sizing: border-box; height: 34px; min-height: 34px; max-height: 106px;
+  margin: 0; padding: 7px 10px; resize: none; overflow-y: auto;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-content-bg);
+  font: 13px/18px var(--wc-reading); color: var(--wc-fg-bright);
+}
+.cc-input::placeholder { color: var(--wc-muted); }
+.cc-input:focus { border-color: var(--wc-accent); outline: none; }
+.cc-input:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.cc-input[readonly] { opacity: .7; }
+.cc-send {
+  flex: none; height: 28px; margin-bottom: 3px; padding: 0 12px; cursor: pointer;
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm); background: var(--wc-accent);
+  font: 600 12px var(--wc-font); color: var(--wc-accent-fg); transition: border-color .15s;
+}
+.cc-send:hover:not(:disabled) { border-color: var(--wc-fg-bright); }
+.cc-send:disabled { opacity: .55; cursor: default; }
+.cc-chips { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.cc-chip {
+  display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 2px 1px 8px;
+  border: 1px solid var(--wc-border-soft); border-radius: 999px; background: var(--wc-content-bg);
+  font: 11px var(--wc-mono); color: var(--wc-fg);
+}
+.cc-chip-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-chip-x {
+  flex: none; width: 18px; height: 18px; padding: 0; cursor: pointer;
+  border: 0; border-radius: 50%; background: transparent; font: 10px var(--wc-font); color: var(--wc-muted);
+}
+.cc-chip-x:hover { color: var(--wc-fg-bright); background: color-mix(in srgb, var(--wc-fg-bright) 10%, transparent); }
+.cc-foot { display: flex; justify-content: space-between; gap: 8px; min-width: 0; font: 10.5px var(--wc-mono); color: var(--wc-muted); }
+.cc-count { margin-left: auto; }
+.cc-count[data-over="true"] { font-weight: 600; color: var(--wc-rust); }
+.cc-msg { margin: 0; font: 11.5px/1.4 var(--wc-font); color: var(--wc-rust); overflow-wrap: anywhere; }
+
+/* The popup: above the field, inside the composer, as wide as it. The list
+   scrolls inside it; the footer (skills only) stays. */
+.cc-pop {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 4px); max-height: 280px;
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius); background: var(--wc-panel-bg); box-shadow: var(--wc-shadow);
+}
+.cc-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0; padding: 4px; list-style: none; }
+.cc-opt {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 8px; padding: 5px 8px; cursor: pointer;
+  border-radius: var(--wc-radius-sm); font: 12px var(--wc-font); color: var(--wc-fg);
+}
+.cc-opt:hover, .cc-opt[aria-selected="true"] { background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
+.cc-opt-name { min-width: 0; overflow-wrap: anywhere; font: 600 12px var(--wc-mono); color: var(--wc-fg-bright); }
+.cc-opt-tag { flex: none; font: 10px var(--wc-mono); color: var(--wc-muted); }
+.cc-opt-desc { flex: 1 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--wc-font); color: var(--wc-text-2); }
+.cc-pop-status { margin: 0; padding: 8px 10px; font: italic 11.5px var(--wc-font); color: var(--wc-muted); }
+.cc-pop-foot {
+  flex: none; margin: 0; padding: 6px 10px; border-top: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+  font: 11px var(--wc-font); color: var(--wc-muted);
+}
+
+/* The pending messages: the user's words, dimmed and dashed, right-aligned like
+   a prompt bubble, each with its state; a failed or unread one at full ink. */
+.cc-pending { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; opacity: .72; }
+.cc-pending:is([data-state="failed"], [data-state="unconfirmed"]) { opacity: 1; }
+.cc-pbubble {
+  max-width: 85%; padding: 7px 10px; box-sizing: border-box;
+  border: 1px dashed var(--wc-border); border-radius: var(--wc-radius) var(--wc-radius) var(--wc-radius-sm) var(--wc-radius);
+  background: var(--wc-header-bg); font: 13px/1.5 var(--wc-reading); color: var(--wc-fg-bright);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cc-pbubble.cc-phidden { font-style: italic; color: var(--wc-muted); }
+.cc-pmeta { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 2px 8px; max-width: 85%; font: 10.5px var(--wc-mono); color: var(--wc-muted); }
+.cc-pending[data-state="failed"] .cc-pstate, .cc-pnote { color: var(--wc-rust); }
+.cc-pending[data-state="unconfirmed"] .cc-pstate { color: var(--wc-gold); }
+.cc-pact {
+  height: 20px; margin-left: 4px; padding: 0 7px; cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: var(--wc-panel-bg);
+  font: 600 10.5px var(--wc-font); color: var(--wc-accent-text); transition: border-color .15s;
+}
+.cc-pact:hover { border-color: var(--wc-accent); }
+.cc-pact:disabled { opacity: .5; cursor: default; }
+.cc-pfiles, .cc-pdevice { white-space: nowrap; }
+:is(.cc-send, .cc-chip-x, .cc-pact):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+
+/* The phone sheet's variant: 44 px targets and 16 px text. */
+.cc-root[data-variant="sheet"] .cc-input { height: 44px; min-height: 44px; max-height: 132px; padding: 10px 12px; font-size: 16px; line-height: 22px; }
+.cc-root[data-variant="sheet"] .cc-send { height: 44px; min-width: 64px; margin-bottom: 0; font-size: 14px; }
+.cc-root[data-variant="sheet"] .cc-chip-x { width: 32px; height: 32px; font-size: 12px; }
+.cc-root[data-variant="sheet"] .cc-opt { min-height: 44px; align-content: center; font-size: 14px; }
+@media (prefers-reduced-motion: reduce) { .cc-send, .cc-pact { transition: none; } }
 
 /* ── U68 · the pull and its drag · chat-sheet.js, sheet-drag.js ── */
 
