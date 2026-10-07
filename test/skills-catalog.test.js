@@ -204,7 +204,7 @@ test('the synced bucket: the org\'s is read; another org\'s is not', async (t) =
   const r = await catalog({ root: h.root, listing: LISTING, sessionStart: START });
   const got = byName(r);
   assert.equal(got['anthropic-skills:pptx'] && got['anthropic-skills:pptx'].origin, 'synced',
-    'an unlisted new synced skill takes the namespace the listing gives the others');
+    'an unlisted new synced skill is spelled anthropic-skills:<name>');
   assert.ok(!r.skills.some((s) => /xlsx/.test(s.name)), 'another organisation\'s bucket is not read');
   assert.equal(got['anthropic-skills:docx'].description, 'Word documents.');
 });
@@ -213,7 +213,9 @@ test('the synced bucket: no org and one bucket → that one; several → only li
   const h = setup(t);
   standardTree(h);
   const one = await catalog({ root: h.root, listing: null });
-  assert.equal(byName(one).docx && byName(one).docx.origin, 'synced', 'one bucket, disk only: its bare name');
+  assert.equal(byName(one)['anthropic-skills:docx'] && byName(one)['anthropic-skills:docx'].origin, 'synced',
+    'one bucket, disk only: anthropic-skills:<name> (U58b), never bare');
+  assert.equal(byName(one).docx, undefined);
   assert.equal(byName(one)['anthropic-skills:pdf'].origin, 'synced');
 
   h.user(`skills/synced/${ORG2}_${ACCT2}/xlsx/SKILL.md`, md({ name: 'xlsx', description: 'Sheets.' }), NEW);
@@ -226,6 +228,57 @@ test('the synced bucket: no org and one bucket → that one; several → only li
   assert.ok(!several.skills.some((s) => /xlsx|pptx/.test(s.name)), 'several buckets: nothing unlisted is added');
   const severalDisk = await catalog({ root: h.root, listing: null });
   assert.ok(!severalDisk.skills.some((s) => s.origin === 'synced'), 'several buckets, nothing listed: no synced skill');
+});
+
+// U58b: Claude Code (2.1.292) names every synced skill (loadedFrom
+// 'syncedSkills') `anthropic-skills:<name>`; its bare name is only an alias it
+// drops whenever another command holds that name. So the catalog spells it
+// that way whatever the listing holds, and never borrows a plugin's namespace.
+test('U58b: a synced skill is never offered under a plugin\'s namespace that also holds its name', async (t) => {
+  const h = setup(t);
+  const cache = path.join(h.ch.dir, 'plugins', 'cache', 'market');
+  h.user('plugins/cache/market/document-skills/1.0.0/skills/docx/SKILL.md', md({ name: 'docx', description: 'Plugin docx.' }));
+  h.user('plugins/installed_plugins.json', JSON.stringify({
+    version: 2,
+    plugins: { 'document-skills@market': [{ scope: 'user', installPath: path.join(cache, 'document-skills', '1.0.0') }] },
+  }));
+  h.user('settings.json', JSON.stringify({ enabledPlugins: { 'document-skills@market': true } }));
+  h.user(`skills/synced/${ORG}_${ACCT}/docx/SKILL.md`, md({ name: 'docx', description: 'Synced docx.' }));
+  h.user(`skills/synced/${ORG}_${ACCT}/pptx/SKILL.md`, md({ name: 'pptx', description: 'Synced pptx.' }), NEW);
+  const listing = { names: ['document-skills:docx', 'anthropic-skills:docx'], descriptions: {}, orgUuid: ORG };
+  const r = await catalog({ root: h.root, listing, sessionStart: START });
+  assert.deepStrictEqual(r.skills.map((s) => [s.name, s.origin, s.description]), [
+    ['document-skills:docx', 'plugin', 'Plugin docx.'],
+    ['anthropic-skills:docx', 'synced', 'Synced docx.'],
+    ['anthropic-skills:pptx', 'synced', 'Synced pptx.'],
+  ]);
+  assert.ok(!r.skills.some((s) => s.name === 'document-skills:pptx'), 'a plugin namespace is never borrowed');
+
+  // Several buckets ('listed' mode): a synced skill matches only its own
+  // spelling, never a plugin's entry ending in the same name.
+  h.user(`skills/synced/${ORG2}_${ACCT2}/xlsx/SKILL.md`, md({ name: 'xlsx' }));
+  const several = await catalog({ root: h.root, listing: { names: ['document-skills:docx'], descriptions: {}, orgUuid: null }, sessionStart: START });
+  assert.deepStrictEqual(several.skills.map((s) => [s.name, s.origin]), [['document-skills:docx', 'plugin']]);
+});
+
+test('U58b: with no listing, a synced skill is offered as anthropic-skills:<name>, never bare', async (t) => {
+  const h = setup(t);
+  standardTree(h);
+  h.user(`skills/synced/${ORG}_${ACCT}/pptx/SKILL.md`, md({ name: 'pptx', description: 'Slides.' }));
+  const r = await catalog({ root: h.root, listing: null });
+  const synced = r.skills.filter((s) => s.origin === 'synced').map((s) => s.name);
+  assert.deepStrictEqual(synced, ['anthropic-skills:docx', 'anthropic-skills:pptx', 'anthropic-skills:pdf']);
+  for (const bare of ['docx', 'pptx']) assert.ok(!r.skills.some((s) => s.name === bare), `${bare} offered bare`);
+
+  // A listing naming no synced skill: still the namespace, never bare.
+  const fresh = await catalog({ root: h.root, listing: { names: ['proj-skill'], descriptions: {}, orgUuid: ORG }, sessionStart: OLD - 1 });
+  assert.ok(byName(fresh)['anthropic-skills:docx'], 'an unlisted synced skill takes its own namespace');
+  assert.ok(!fresh.skills.some((s) => s.name === 'docx' || s.name === 'pptx'), 'never bare');
+
+  // resolve answers 'skill' only for the catalog's own spelling.
+  const inst = createSkillCatalog({ root: h.root });
+  assert.equal(await inst.resolve('anthropic-skills:docx'), 'skill');
+  assert.equal(await inst.resolve('docx'), null);
 });
 
 test('the organisation and account ids never leave; the account id is registered once', async (t) => {
@@ -364,7 +417,7 @@ test('no listing: disk only, partial — no conversation, and skillFold unavaila
     assert.equal(r.partial, true);
     assert.deepStrictEqual(r.skills.map((s) => [s.name, s.origin]), [
       ['proj-skill', 'project'], ['user-skill', 'user'], ['proj-cmd', 'command'], ['user-cmd', 'command'],
-      ['acme:deploy', 'plugin'], ['acme:ship', 'plugin'], ['docx', 'synced'], ['anthropic-skills:pdf', 'synced'],
+      ['acme:deploy', 'plugin'], ['acme:ship', 'plugin'], ['anthropic-skills:docx', 'synced'], ['anthropic-skills:pdf', 'synced'],
     ]);
   }
   const inst = createSkillCatalog({ root: h.root, mirror: { skillFold: () => ({ unavailable: true }), snapshot: () => ({ primary: 'c1', conversations: [] }) } });
