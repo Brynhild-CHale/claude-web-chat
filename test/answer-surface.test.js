@@ -562,6 +562,9 @@ test('contrastRatio is exported from palette.js and is the WCAG ratio', () => {
   assert.equal(Math.round(palette.contrastRatio('#767676', '#fff') * 100) / 100, 4.54);
   assert.equal(Math.round(palette.contrastRatio('rgb(118, 118, 118)', '#ffffff') * 100) / 100, 4.54);
   assert.ok(Number.isNaN(palette.contrastRatio('#000', 'rgba(255,255,255,0.5)')), 'a translucent fill is unmeasured');
+  // A translucent ink is measured as it lands: composited over the fill first.
+  assert.equal(palette.contrastRatio('rgba(0, 0, 0, 0.5)', '#ffffff'), palette.contrastRatio('rgb(127.5, 127.5, 127.5)', '#ffffff'));
+  assert.ok(palette.contrastRatio('#00000080', '#ffffff') < 4.5, 'half-transparent black on white is not body text');
   assert.ok(Number.isNaN(palette.contrastRatio('red', '#fff')));
   // Every builtin pack passes the frame's check in both modes.
   for (const p of PACKS) assert.equal(palette.checkTheme(p).ok, true, p.name);
