@@ -818,6 +818,47 @@ test('displayView: why_not too-long, remote-off, resolved; plan.html is the chat
   assert.equal(r.asks.displayView('ask_000000000000'), null);
 });
 
+test('displayView: web_chose_terminal says the web chose the terminal, and nothing else of the decision', async (t) => {
+  const r = rig(t);
+  const KEYS = ['id', 'kind', 'tool_name', 'agent', 'state', 'outcome', 'version', 'subject', 'masked', 'complete', 'detail', 'can_answer', 'why_not', 'web_chose_terminal'];
+  // The web chose "answer in the terminal"; the hook collected it and handed it.
+  const a = await r.asks.create(body({ input: { command: 'deploy --target secret-prod' } }));
+  assert.equal(r.asks.displayView(a.id).web_chose_terminal, false, 'pending');
+  r.asks.decide(a.id, { behavior: 'terminal' }, { version: 1 });
+  assert.equal(r.asks.displayView(a.id).web_chose_terminal, true, 'decided');
+  assert.equal((await r.asks.poll(a.id, a.secret)).state, 'decided');
+  assert.equal(r.asks.handed(a.id, a.secret).ok, true);
+  const v = r.asks.displayView(a.id);
+  assert.equal(v.state, 'resolved');
+  assert.equal(v.outcome, 'terminal');
+  assert.equal(v.web_chose_terminal, true, 'collected and resolved: the terminal prompt still stands');
+  assert.deepEqual(Object.keys(v), KEYS, 'no decision, no by, no behavior');
+
+  // The terminal itself answered.
+  const b = await r.asks.create(body({ session: 's-b' }));
+  r.asks.withdraw(b.id, b.secret, 'resolved-elsewhere');
+  const vb = r.asks.displayView(b.id);
+  assert.equal(vb.outcome, 'terminal');
+  assert.equal(vb.web_chose_terminal, false);
+  assert.deepEqual(Object.keys(vb), KEYS);
+
+  // The web chose the terminal, but the hook never collected it before the
+  // terminal answered: the choice never reached the hook, so no flag.
+  const c = await r.asks.create(body({ session: 's-c' }));
+  r.asks.decide(c.id, { behavior: 'terminal' }, { version: 1 });
+  r.asks.withdraw(c.id, c.secret, 'resolved-elsewhere');
+  const vc = r.asks.displayView(c.id);
+  assert.equal(vc.state, 'resolved');
+  assert.equal(vc.web_chose_terminal, false);
+
+  // A web answer that is not the terminal never carries it.
+  const d = await r.asks.create(body({ session: 's-d' }));
+  r.asks.decide(d.id, { behavior: 'allow' }, { version: 1 });
+  await r.asks.poll(d.id, d.secret);
+  r.asks.handed(d.id, d.secret);
+  assert.equal(r.asks.displayView(d.id).web_chose_terminal, false);
+});
+
 test('waitView: answers once the version moves, or when the wait runs out', async (t) => {
   const r = rig(t);
   const a = await r.asks.create(body());
