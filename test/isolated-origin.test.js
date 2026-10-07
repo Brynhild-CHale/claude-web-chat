@@ -3,7 +3,8 @@
 // today, the answer surface next. What is pinned:
 //   * the gates every request passes before handle() runs: the Host check
 //     (421), the remote refusal (403, unless allowRemote), the preflight
-//     refusal (403, no CORS header);
+//     refusal (403, no CORS header); onRefused(req, 'host' | 'preflight'),
+//     called after the refusal is sent and unable to change it;
 //   * the headers every response carries, a refusal's included, and the CSP's
 //     frame-ancestors (with X-Frame-Options only when framing is refused);
 //   * the kit: the call gate's codes, keyed nonces (eviction, no consume, gone
@@ -130,6 +131,59 @@ test('OPTIONS is 403 with no Access-Control-* header', async (t) => {
   assert.deepEqual(r.json, { ok: false, error: 'no cross-origin calls' });
   for (const h of Object.keys(r.headers)) assert.ok(!h.startsWith('access-control-'), h);
   assert.deepEqual(calls, []);
+});
+
+// The Host and OPTIONS refusals are the engine's own; onRefused reports them
+// to the caller (the answer surface's refusal audit). It runs after the
+// response's end(), and a hook that throws or rejects changes nothing.
+test('onRefused: called with (req, \'host\' | \'preflight\') after the response is sent; absent or throwing, the response is unchanged', async (t) => {
+  const order = [];
+  const end = http.ServerResponse.prototype.end;
+  t.mock.method(http.ServerResponse.prototype, 'end', function (...a) {
+    order.push(`end ${this.statusCode}`);
+    return end.apply(this, a);
+  });
+  const preflight = (port, host) => req(port, {
+    method: 'OPTIONS', path: '/call',
+    headers: { host, origin: 'http://localhost:5173', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,x-wc-test' },
+  });
+  const shape = (r) => ({ status: r.status, json: r.json, cors: Object.keys(r.headers).filter((h) => h.startsWith('access-control-')) });
+
+  // Absent: the responses every refusal test above pins.
+  const plain = await boot(t);
+  const hostPlain = shape(await req(plain.port, { path: '/x', headers: { host: `localhost:${plain.port}` } }));
+  const prePlain = shape(await preflight(plain.port, plain.host));
+  assert.deepEqual(hostPlain, { status: 421, json: { ok: false, error: 'host not allowed' }, cors: [] });
+  assert.deepEqual(prePlain, { status: 403, json: { ok: false, error: 'no cross-origin calls' }, cors: [] });
+
+  // Present: called once per refusal, with the request and the code, after end().
+  const seen = [];
+  const hooked = await boot(t, {
+    onRefused: (rq, code) => { order.push(`hook ${code}`); seen.push({ code, method: rq.method, url: rq.url }); },
+  });
+  order.length = 0;
+  assert.deepEqual(shape(await req(hooked.port, { path: '/x?a=1', headers: { host: 'evil.example' } })), hostPlain);
+  assert.deepEqual(shape(await preflight(hooked.port, hooked.host)), prePlain);
+  assert.deepEqual(seen, [
+    { code: 'host', method: 'GET', url: '/x?a=1' },
+    { code: 'preflight', method: 'OPTIONS', url: '/call' },
+  ]);
+  assert.deepEqual(order, ['end 421', 'hook host', 'end 403', 'hook preflight'], 'the hook runs after the response is sent');
+  assert.deepEqual(hooked.calls, [], 'handle() never ran');
+  // Nothing else is reported: a passing request, a handler's own 403, and the
+  // remote refusal (allowRemote's to note) never reach the hook.
+  await hooked.get('/x');
+  await hooked.call(hooked.good('forged'));
+  await hooked.get('/x', { 'x-wc-remote': '1' });
+  assert.equal(seen.length, 2);
+
+  // Throwing, or rejecting: the same responses, and the engine keeps serving.
+  for (const onRefused of [() => { throw new Error('hook broke'); }, async () => { throw new Error('hook broke'); }]) {
+    const b = await boot(t, { onRefused });
+    assert.deepEqual(shape(await req(b.port, { path: '/x', headers: { host: `localhost:${b.port}` } })), hostPlain);
+    assert.deepEqual(shape(await preflight(b.port, b.host)), prePlain);
+    assert.equal((await b.get('/x')).status, 200);
+  }
 });
 
 test('frameAncestors null: frame-ancestors \'none\' and X-Frame-Options DENY', async (t) => {
