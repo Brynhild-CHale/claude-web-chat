@@ -401,6 +401,91 @@ test('resolution: a subagent\'s Stop does not resolve the main agent\'s ask; an 
   assert.equal(r.asks.publicView(a.id).state, 'pending');
 });
 
+// A mirror like live.js: subscribed to the tap, it draws the session's state
+// from the NEWEST pending ask of any agent (waitingOf: a question → 'question',
+// else 'waiting'; none → 'working') and emits the transition synchronously
+// inside the publish, as ingest does.
+function liveishMirror(conversations = { 4242: 'conv_1' }) {
+  const subs = new Set();
+  const asks = new Map(); // session → [{id, kind, ts}]
+  const state = new Map();
+  const emit = (tr) => { for (const fn of [...subs]) fn({ kind: 'mirror', ...tr }); };
+  const stateOf = (sid) => {
+    let newest = null;
+    for (const a of asks.get(sid) || []) if (!newest || a.ts >= newest.ts) newest = a;
+    if (!newest) return 'working';
+    return newest.kind === 'question' ? 'question' : 'waiting';
+  };
+  return {
+    subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
+    conversationOfPid: (pid) => conversations[pid] || null,
+    attach(tap) {
+      tap.subscribe((env) => {
+        const sid = env.session_id;
+        const list = asks.get(sid) || [];
+        if (env.event === 'PermissionRequest' && env.ask) list.push({ id: env.ask.id, kind: env.ask.kind, ts: env.ts });
+        else if (env.event === 'PermissionResolved' && env.ask) {
+          const i = list.findIndex((a) => a.id === env.ask.id);
+          if (i < 0) return;
+          list.splice(i, 1);
+          emit({ op: 'waiting-cleared', conversation_id: 'conv_1', session_id: sid, ask_id: env.ask.id, by: env.ask.by });
+        } else return;
+        asks.set(sid, list);
+        const prev = state.get(sid) || 'working';
+        const next = stateOf(sid);
+        if (next === prev) return;
+        state.set(sid, next);
+        emit({ op: 'state', conversation_id: 'conv_1', session_id: sid, state: next, prev });
+      });
+    },
+  };
+}
+
+test('resolution: waiting ⇄ question (another agent\'s ask opening or closing) resolves nothing', async (t) => {
+  const mirror = liveishMirror();
+  const r = rig(t, { mirror });
+  mirror.attach(r.hooks);
+  const perm = await r.asks.create(body({ ts: T0 }));
+  assert.equal(perm.wait, true);
+  await r.clock.advance(10);
+  // A subagent asks a question: the mirror moves waiting → question.
+  const q = await question(r, [QUESTION()], { agent: { id: 'agent-9', type: 'Explore' }, ts: T0 + 10 });
+  assert.equal(q.wait, true);
+  assert.equal(r.asks.publicView(perm.id).state, 'pending', 'the main agent\'s permission ask stands');
+  assert.equal(r.asks.publicView(q.id).state, 'pending', 'the new question stands');
+  assert.deepEqual(await r.asks.poll(q.id, q.secret), { state: 'pending' }, 'the second create\'s answer is pollable');
+  assert.equal(r.tapOf('PermissionResolved').length, 0);
+  // The question is answered elsewhere: question → waiting.
+  r.asks.withdraw(q.id, q.secret, 'resolved-elsewhere');
+  assert.equal(r.asks.publicView(q.id).state, 'resolved');
+  assert.equal(r.asks.publicView(perm.id).state, 'pending', 'question → waiting does not resolve the permission ask');
+  assert.deepEqual(await r.asks.poll(perm.id, perm.secret), { state: 'pending' });
+  assert.equal(r.tapOf('PermissionResolved').length, 1);
+});
+
+test('resolution: an unbound ask is not resolved by a hash-equal PostToolUse older than it', async (t) => {
+  const r = rig(t);
+  const a = await r.asks.create(body({ ts: T0 }));
+  assert.equal(r.asks.get(a.id).tool_use_id, null, 'unbound');
+  hookEvent(r, 'PostToolUse', { useId: 'toolu_old', ts: T0 - 50 });
+  hookEvent(r, 'PostToolUseFailure', { useId: 'toolu_old2', ts: T0 - 10 });
+  assert.equal(r.asks.publicView(a.id).state, 'pending', 'a late PostToolUse of an earlier identical call');
+  assert.equal(r.tapOf('PermissionResolved').length, 0);
+  hookEvent(r, 'PostToolUse', { useId: 'toolu_new', ts: T0 + 50 });
+  assertResolvedOnce(r, a.id, 'tool-ran', 'terminal');
+});
+
+test('resolution: a decided ask the hook never collected resolves like a pending one', async (t) => {
+  const r = rig(t);
+  const a = await r.asks.create(body());
+  assert.equal(r.asks.decide(a.id, { behavior: 'deny', message: 'no' }, { via: 'web', version: 1 }).ok, true);
+  // The terminal answered before the hook's next poll: the state leaves waiting.
+  r.mirror.emit({ op: 'state', conversation_id: 'conv_1', session_id: 'sess-1', state: 'working', prev: 'waiting' });
+  assertResolvedOnce(r, a.id, 'terminal', 'terminal');
+  assert.deepEqual(await r.asks.poll(a.id, a.secret), { state: 'resolved', by: 'terminal' });
+  assert.equal(r.asks.publicView(a.id).outcome, 'terminal');
+});
+
 test('withdraw: sigterm → terminal, deadline → expired, resolved-elsewhere → terminal; a bad secret is 403', async (t) => {
   for (const [reason, outcome] of [['sigterm', 'terminal'], ['deadline', 'expired'], ['resolved-elsewhere', 'terminal']]) {
     const r = rig(t);
@@ -647,6 +732,19 @@ test('displayView: why_not too-long, remote-off, resolved; plan.html is the chat
   const big = 'z'.repeat(200_001);
   const pl = await r.asks.create(body({ name: 'ExitPlanMode', input: { plan: 'p' }, session: 's-p', plan: { text: big, file: null, from_file: false, truncated: false } }));
   assert.equal(r.asks.displayView(pl.id).why_not, 'too-long');
+
+  // The engine cuts on UTF-16 length: 195,011 code points, 205,011 units.
+  const astral = 'word '.repeat(37_000) + '\u{1F600}'.repeat(10_000) + 'END-OF-PLAN';
+  assert.ok(Array.from(astral).length <= 200_000 && astral.length > 200_000 && Buffer.byteLength(astral) < 256 * 1024);
+  const pa = await r.asks.create(body({ name: 'ExitPlanMode', input: { plan: 'p' }, session: 's-pa', plan: { text: astral, file: null, from_file: false, truncated: false } }));
+  const va = r.asks.displayView(pa.id);
+  assert.equal(va.why_not, 'too-long');
+  assert.equal(va.complete, false);
+  assert.equal(va.can_answer, false);
+  const refused = r.asks.decide(pa.id, { behavior: 'approve', mode: 'default' }, { version: va.version });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.why_not, 'too-long');
+  assert.equal(r.asks.publicView(pa.id).state, 'pending');
 
   const text = `# Plan\n\nRotate the key ${SK} in **prod**.`;
   const ok = await r.asks.create(body({ name: 'ExitPlanMode', input: { plan: 'p' }, session: 's-ok', plan: { text, file: '/p/plans/x.md', from_file: true, truncated: false } }));
