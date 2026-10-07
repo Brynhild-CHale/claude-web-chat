@@ -144,7 +144,22 @@ the single envelope (re-stamped id) rather than stacking a second one.
 A parked envelope carries the same message and stop-request blocks, markers
 included, as a live wake (see "Composer messages and stop requests" below), so
 turn-begin's injection is the one string the transcript scan reads a parked
-delivery's markers from.
+delivery's markers from. A park holds **at most one typed message**: a second
+one stays queued (`waiting: 'parked_message'`) and goes at the next idle, which
+always follows the park's consumption. **Stop requests are exempt** — a Kill,
+Cancel or Remove parks beside a parked message (a block of about 170 characters),
+so a stop never waits behind a typed prompt. A park can be **targeted** (see
+Targeting below): turn-begin claims only a park aimed at its own `CLAUDE_PID` or
+at none (`GET /api/queue/pending?pid=`), and a hook with no pid claims as before.
+
+**Take back** (`POST /api/queue/pending/recall {id}`, JSON only; `full` for a
+remote viewer when the park holds a message): on a park that holds a typed
+message the rail offers **Take back** instead of Cancel. It returns the park's
+**message items only** to the queue, in order, staged and with autosend off, and
+leaves its stop requests and signals parked under a re-stamped id; the park is
+cleared only when nothing and no note is left. A park of signals only (or of stop
+requests only) keeps Cancel. The answer is `{ok, recalled: true, ids,
+pending_id}`, or `{ok, recalled: false}` when the id is stale.
 
 ## Architecture
 
@@ -309,6 +324,57 @@ dropped (`MESSAGE_MAX` holds at enqueue and a park holds at most two messages);
 should the blocks alone pass the budget, every signal line goes and the content
 is allowed over. A batch that fit before renders byte-identical.
 
+### Targeting — one message, one session
+
+Two sessions with live channels in one project would both run a message, since
+every bridge receives every wake. So a release resolves the message's
+conversation to its Claude Code process (`ctx.queueRelease`, `targetFor`), and the
+`wake` event and the park carry **`target_pid`**. The bridge skips a wake whose
+`target_pid` is not its own `process.ppid` (the MCP server's parent is the Claude
+Code process; the skip spends the seq and logs one line, with no notify and no
+ack), and its heartbeat (`POST /api/channel/heartbeat {pid}`, host only) reports
+that pid, so the queue knows which pids have a live channel (`stampChannel`, at
+most 32, pruned past the consumer TTL). Once any bridge has reported a pid, a
+release aimed at a pid with no live channel parks at once; while none has (every
+bridge older than the `{pid}` heartbeat), a targeted release falls back to the
+untargeted rule. A message to an ended conversation, or one whose process is
+gone, parks untargeted. Two parks with different targets merge into an
+untargeted one. Targeting is best effort: with no pid known, delivery is
+untargeted.
+
+### The liveness proof — the bridge starts only in a session that loaded the channel
+
+`WEB_CHAT_CHANNEL=1` still declares the MCP capability (it must be declared
+before `connect`), but the bridge starts only when the session loaded the channel
+(`lib/mcp/channel-proof` `channelProof`): its parent `claude`'s command line
+(`processCommand(process.ppid)`) carries `--dangerously-load-development-channels
+server:web-chat`, or `--channels` naming `web-chat` (`server:web-chat`,
+`web-chat` or `plugin:web-chat@<x>`); or `WEB_CHAT_CHANNEL_FORCE=1` is set, for a
+launcher the `ps` read cannot see through. Reading Claude Code's `initialize`
+capabilities instead waits on gate V26 (`INITIALIZE_PROOF` is false until then).
+Otherwise the server writes one stderr line (`[claude-web-chat] channel:
+WEB_CHAT_CHANNEL is set, but …`) and a Push parks for the next message — an
+inherited `WEB_CHAT_CHANNEL` in a session never launched with the flag no longer
+starts a bridge that would drain the park and ack writes nobody reads.
+
+### What else a message wake carries
+
+- **The wake lock** a message batch takes reads `web message m-…` (the first
+  message's id, `, +N` for more), never the message's text, because the lock
+  record goes to every socket and into the committed node's trigger.
+- **Receipts.** Each message has a receipt (`noteReceipt`, frames `{type:
+  'queue', op: 'receipt', msg_id, state, at}`): `queued`, `sending`, `sent` (the
+  bridge's ack: transmission only), `parked`, `handed_over` (turn-begin claimed
+  the park), `confirmed` (the mirror's transcript scan found the marker),
+  `unconfirmed`, `failed`. Until gate V30 is recorded, `CONFIRM_VERIFIED`
+  (`lib/server/queue-release.js`) is false and a live `sent` message never turns
+  `unconfirmed`; the chrome says Sent.
+- **Repeats.** A second release inside the few milliseconds before a live wake's
+  ack folds that wake into the park, so a message can reach Claude twice while
+  its receipt confirms once. Both copies carry the same marker, and the rules file
+  tells Claude that a marker it has already seen is a repeat delivery, not a new
+  request.
+
 ## Running it (dev)
 
 Requires Claude Code ≥ v2.1.80 and **Anthropic auth** (no Bedrock/Vertex/Foundry;
@@ -319,8 +385,10 @@ Team/Enterprise needs `channelsEnabled`). Custom/development channels need the
 WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-chat
 ```
 
-- `WEB_CHAT_CHANNEL=1` gates the capability declaration + bridge start. It is
-  supplied **only on this launch line**, never written into the project's
+- `WEB_CHAT_CHANNEL=1` gates the capability declaration; the bridge also needs
+  the session to have loaded the channel (the flag above, or `--channels
+  web-chat`), or `WEB_CHAT_CHANNEL_FORCE=1` — see "The liveness proof" above. It
+  is supplied **only on this launch line**, never written into the project's
   `.mcp.json`. It used to be: that made the bridge start in *every* session,
   including ones launched without the flag, where it would write a Push to stdout
   with nothing behind it, self-ack, and report "Delivered to Claude ✓" while the
@@ -332,6 +400,13 @@ WEB_CHAT_CHANNEL=1 claude --dangerously-load-development-channels server:web-cha
   harness** — but the daemon is the buffer of record (queue/store/graph persist), and
   a Push with no consumer **parks** rather than dropping (parked delivery), so the UX
   degrades to catch-up-on-next-prompt, never data loss.
+
+**What restarts after which edit.** `lib/channel/*` (the bridge, the envelope
+and its blocks, the policy) and `lib/mcp/*` (`channel-proof.js` included) run
+inside the MCP process Claude Code spawned: `/exit` and reopen Claude Code. The
+queue, the release scheduler and the routes are `lib/server`:
+`claude-web-chat restart`. The turn-begin hook that claims a park runs fresh
+per prompt, so an edit to it takes effect at the next prompt.
 
 ## Smoke test (no live session needed)
 
@@ -361,6 +436,13 @@ bodies by tool call.
   dedupe/reconnect.
 - `test/channel-mcp.test.js` — the env-gated capability (off = 24 tools, no
   experimental; on = `experimental['claude/channel']`).
+- `test/channel-proof.test.js` — the liveness proof: the bridge starts only with
+  the launch flag or `WEB_CHAT_CHANNEL_FORCE=1`.
+- `test/channel-bridge-target.test.js`, `test/queue-targeting.test.js` — a wake
+  for another pid is skipped; per-pid liveness; targeted parks; Take back.
+- `test/queue-messages.test.js`, `test/queue-receipts.test.js`,
+  `test/queue-release.test.js` — message items, receipts, and when and to whom a
+  message is released.
 - `test/conventions.test.js` — the meta vocabulary tripwire.
 
 ## Turn-begin-on-push (the turn-lock model after channels)
