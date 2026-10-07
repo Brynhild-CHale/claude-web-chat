@@ -61,10 +61,13 @@ function sink() {
   return fn;
 }
 
+// `channel` also sets WEB_CHAT_CHANNEL_FORCE: the test runner is this server's
+// parent and carries no channel flag, so without the override the
+// channel-liveness proof (spec §6.7) rightly keeps the bridge off.
 function spawnMcp(t, { cwd, home, channel = false, preload = null }) {
   const child = spawn(process.execPath, preload ? ['--require', preload, MCP_BIN] : [MCP_BIN], {
     cwd,
-    env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_CHANNEL: channel ? '1' : '', WEB_CHAT_PORT: '' },
+    env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_CHANNEL: channel ? '1' : '', WEB_CHAT_CHANNEL_FORCE: channel ? '1' : '', WEB_CHAT_PORT: '' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   child.stdout.resume();

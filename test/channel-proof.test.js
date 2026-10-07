@@ -79,6 +79,11 @@ test('channelProof: the flag in the parent command → by argv', () => {
   }
   // The dev flag loads a server by its full name only.
   assert.equal(channelProof({ parentCommand: `claude ${DEV} web-chat`, env: {} }).start, false);
+  // A near-name is another channel: --channels names web-chat exactly, or its plugin.
+  for (const v of ['server:web-chat-dev', 'web-chatty', 'plugin:web-chat-x@market', 'plugin:not-web-chat@market', 'plugin:web-chat@']) {
+    assert.equal(channelProof({ parentCommand: `claude --channels ${v}`, env: {} }).start, false, v);
+  }
+  assert.equal(channelProof({ parentCommand: `claude ${DEV} server:web-chat-dev`, env: {} }).start, false);
 });
 
 test('channelProof: a client capability alone does not start while INITIALIZE_PROOF is false', () => {
