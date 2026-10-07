@@ -182,14 +182,16 @@ test('the step bar comes from steps', () => {
   assert.equal(el.querySelector('.cs-row-steps'), null, 'no steps, no bar');
 });
 
-test('\'edit\' and \'send-now\' render no button (U62\'s, tranche 4); Remove does', () => {
+test('\'edit\' and \'send-now\' render on a message row (U62, tranche 4), and on no other queue row', () => {
   const el = mount({ id: 'm1', kind: 'message', cat: 'queue', tone: 'live', pulse: false, title: 'hello', mono: false,
     meta: 'next', steps: null, line: '', actions: [
       { id: 'edit', label: 'Edit', destructive: false, confirm: null },
       { id: 'send-now', label: 'Send now', destructive: false, confirm: null },
       { id: 'remove', label: 'Remove', destructive: true, confirm: null },
     ] });
-  assert.deepEqual(buttons(el), ['Remove']);
+  assert.deepEqual(buttons(el), ['Edit', 'Send now', 'Remove']);
+  assert.equal(A.canRun('edit', { cat: 'queue', kind: 'message' }), true);
+  assert.equal(A.canRun('send-now', { cat: 'queue', kind: 'message' }), true);
   assert.equal(A.canRun('edit', { cat: 'queue' }), false);
   assert.equal(A.canRun('send-now', { cat: 'queue' }), false);
 });
