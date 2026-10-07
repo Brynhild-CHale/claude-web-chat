@@ -318,10 +318,17 @@ test('decide refused before asks.decide: each shape answers 403 and is noted on 
   assert.deepEqual({ id: asks.refusals.at(-1).id, reason: asks.refusals.at(-1).reason }, { id: ASK, reason: 'remote' });
 
   // A Host that is not 127.0.0.1:<port> (DNS rebinding) and a preflight. The
-  // engine answers both before the surface's handler runs and offers it no
-  // hook, so these two are not noted (U55's hand-off, open issue 1).
+  // engine answers both before the surface's handler runs, and its onRefused
+  // hook notes each on the ask, reasons 'host' and 'preflight' (U55b).
+  const beforeHost = asks.refusals.length;
   const host = await decideReq(port, origin, nonce, { headers: { host: `localhost:${port}` } });
   assert.equal(host.status, 421);
+  assert.equal(asks.refusals.length, beforeHost + 1, 'a bad Host is noted');
+  assert.deepEqual(
+    { id: asks.refusals.at(-1).id, reason: asks.refusals.at(-1).reason, origin: asks.refusals.at(-1).origin },
+    { id: ASK, reason: 'host', origin: 'local' },
+  );
+  const beforePre = asks.refusals.length;
   const pre = await req(port, {
     method: 'OPTIONS',
     path: `/answer/api/asks/${ASK}/decide`,
@@ -329,6 +336,11 @@ test('decide refused before asks.decide: each shape answers 403 and is noted on 
   });
   assert.equal(pre.status, 403);
   assert.deepEqual(Object.keys(pre.headers).filter((h) => h.startsWith('access-control-')), []);
+  assert.equal(asks.refusals.length, beforePre + 1, 'a preflight is noted');
+  assert.deepEqual(
+    { id: asks.refusals.at(-1).id, reason: asks.refusals.at(-1).reason, origin: asks.refusals.at(-1).origin },
+    { id: ASK, reason: 'preflight', origin: 'local' },
+  );
 
   assert.equal(asks.decides.length, 0, 'asks.decide never ran');
 });
