@@ -604,9 +604,13 @@ test('messages: only wc-answer:mode is accepted, only from the parent, and it fl
   assert.equal(de.dataset.mode, 'light');
 });
 
-test('runtime: another kind\'s layout is a module of its own, loaded by name — none yet, so the frame says so', async (t) => {
-  const p = await openPage(t, { kind: 'control', id: 'interrupt', layout: 'stop', fetch: () => json({}) });
+test('runtime: another kind\'s layout is a module of its own, loaded by name — a layout with no module falls back to saying the control is not available', async (t) => {
+  // 'nolayout' passes the name check but has no control-nolayout.js, so the
+  // import fails and answer.js's catch answers (control-stop.js says the same
+  // words on its own, so the stop layout no longer reaches this path).
+  const p = await openPage(t, { kind: 'control', id: 'interrupt', layout: 'nolayout', fetch: () => json({}) });
   assert.equal(p.handle.rt.kind, 'control');
+  assert.ok(p.handle.error, 'the import failed and the catch answered');
   assert.equal(p.doc.getElementById('wc-answer').textContent, 'This control is not available here');
 });
 
