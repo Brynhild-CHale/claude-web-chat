@@ -202,6 +202,81 @@ test('send auto: a process the mirror reports gone releases now as well', (t) =>
   assert.ok(r.parked);
 });
 
+// U63b (§6.4's table): "ended, or a process gone → parks it for the next
+// prompt typed in the project" — a park, never an untargeted live wake that
+// another session's live bridge would run (the double run targeting prevents).
+test('send auto and a boundary: a message for a gone process parks and emits no wake while another session\'s channel is live', (t) => {
+  const gone = { state: 'working', process: { pid: 111, alive: false }, evidence: { proc: 'gone' } };
+  const mirror = fakeMirror({ lives: { [C1]: gone, [C2]: live('idle', 222) }, pids: { 222: C2 } });
+  const h = harness(t, { mirror });
+  queue.stampChannel(h.state, 222);
+  assert.ok(queue.channelLive(h.state), 'the other session\'s channel is live');
+  const item = enqueue(h, { text: 'for the gone one' });
+  const r = h.rel.send(item, { mode: 'auto', prov: {} });
+  assert.ok(r.parked, 'parked');
+  assert.equal(r.wake, null);
+  assert.equal(r.parked.target_pid, undefined, 'untargeted: the next prompt typed in the project claims it');
+  assert.ok(queue.pendingFor(h.state, 222), 'any session\'s next prompt may claim it');
+  assert.equal(receiptState(h.state, item.msg_id), 'parked');
+  assert.deepEqual(queuedIds(h.state), []);
+  // A boundary: an autosend message queued while its conversation worked, which
+  // then ended.
+  const h2 = harness(t, { mirror: fakeMirror({ lives: { [C1]: live('working', 111), [C2]: live('idle', 222) } }) });
+  queue.stampChannel(h2.state, 222);
+  const a = enqueue(h2, { text: 'later' });
+  assert.deepEqual(h2.rel.send(a, { mode: 'auto', prov: {} }), { mode: 'queued', position: 1 });
+  h2.mirror.lives[C1] = { ...live('ended', 111), process: { pid: 111, alive: false } };
+  h2.mirror.emit({ op: 'state', conversation_id: C1, state: 'ended', prev: 'working' });
+  h2.timers.fire(1500);
+  assert.deepEqual(queuedIds(h2.state), []);
+  assert.ok(h2.state.pendingWake && h2.state.pendingWake.batch.some((it) => it.id === a.id), 'parked');
+  assert.equal(h2.state.pendingWake.target_pid, undefined);
+  assert.equal(wakes(h.bus).length + wakes(h2.bus).length, 0, 'no wake reached the live channel');
+});
+
+// U63b (§6.4: FIFO per conversation): a send 'auto' while older autosend
+// messages of its conversation still wait queues behind them, even when Claude
+// is already free (the 1,500 ms before the boundary's timer, or a missed
+// boundary), and the boundaries release all of them in order.
+test('send auto: a third auto send before the boundary timer queues at position 3; the three release in order', (t) => {
+  const mirror = fakeMirror({ lives: { [C1]: live('working', 111) } });
+  const h = harness(t, { mirror });
+  const a = enqueue(h, { text: 'do X' });
+  const b = enqueue(h, { text: 'then Y' });
+  assert.deepEqual(h.rel.send(a, { mode: 'auto', prov: {} }), { mode: 'queued', position: 1 });
+  assert.deepEqual(h.rel.send(b, { mode: 'auto', prov: {} }), { mode: 'queued', position: 2 });
+  mirror.lives[C1] = live('idle', 111);
+  mirror.emit({ op: 'state', conversation_id: C1, state: 'idle', prev: 'working' });
+  assert.equal(h.timers.pending().length, 1, 'the boundary armed its timer');
+  const timer = h.timers.pending()[0];
+  assert.equal(h.rel.claudeFree(C1), true, 'Claude is free before the timer fires');
+  const c = enqueue(h, { text: 'and Z' });
+  assert.deepEqual(h.rel.send(c, { mode: 'auto', prov: {} }), { mode: 'queued', position: 3 });
+  assert.equal(wakes(h.bus).length, 0, 'nothing overtook the queue');
+  assert.deepEqual(h.timers.pending(), [timer], 'the pending timer is not re-armed (no added delay)');
+  const order = [];
+  for (let i = 0; i < 3; i += 1) {
+    h.graph.lock = null;
+    if (i > 0) graphEvent(h.bus, 'unlock');
+    h.timers.fire(1500);
+    const w = wakes(h.bus);
+    order.push(w[w.length - 1].batch.map((it) => it.id).join('+'));
+  }
+  assert.deepEqual(order, [a.id, b.id, c.id], 'released in order, one per boundary');
+  assert.deepEqual(queuedIds(h.state), []);
+  // A missed boundary: free, an older message waiting and no timer armed — the
+  // new one still queues behind it, and send arms the timer that releases them.
+  const m = harness(t, { mirror: fakeMirror({ lives: { [C1]: live('working', 111) } }) });
+  const old = enqueue(m, { text: 'old' });
+  m.rel.send(old, { mode: 'auto', prov: {} });
+  m.mirror.lives[C1] = live('idle', 111);
+  const next = enqueue(m, { text: 'new' });
+  assert.deepEqual(m.rel.send(next, { mode: 'auto', prov: {} }), { mode: 'queued', position: 2 });
+  assert.equal(m.timers.pending().length, 1, 'send armed the boundary timer itself');
+  m.timers.fire(1500);
+  assert.deepEqual(queuedIds(m.state), [next.id], 'the older one went first');
+});
+
 test('send now: while working it is released at once, targeted', (t) => {
   const h = harness(t, { mirror: fakeMirror({ lives: { [C1]: live('working', 111) } }) });
   h.graph.lock = { base: null, started_at: Date.now(), message: 'x', author: 'user', claude_pid: 111 };
@@ -210,6 +285,48 @@ test('send now: while working it is released at once, targeted', (t) => {
   assert.equal(r.wake.target_pid, 111);
   assert.equal(r.wake.origin, 'remote');
   assert.equal(r.wake.device, 'mobile');
+});
+
+// U63b (§6.4's table, for Send now as for autosend): a conversation that has
+// ended, or whose process is gone, parks the message for the next prompt typed
+// in the project — never an untargeted live wake another session would run.
+test('send now: a message for a gone process parks and emits no wake while another session\'s channel is live', (t) => {
+  const gone = { state: 'working', process: { pid: 111, alive: false }, evidence: { proc: 'gone' } };
+  for (const c1 of [gone, { ...live('ended', 111), process: { pid: 111, alive: false } }, live('ended')]) {
+    const mirror = fakeMirror({ lives: { [C1]: c1, [C2]: live('idle', 222) }, pids: { 222: C2 } });
+    const h = harness(t, { mirror });
+    queue.stampChannel(h.state, 222);
+    assert.ok(queue.channelLive(h.state), 'the other session\'s channel is live');
+    const item = enqueue(h, { text: 'for the gone one' });
+    const r = h.rel.send(item, { mode: 'now', prov: {} });
+    assert.ok(r.parked, `parked (${c1.state})`);
+    assert.equal(r.wake, null);
+    assert.equal(r.parked.target_pid, undefined, 'untargeted: the next prompt typed in the project claims it');
+    assert.ok(queue.pendingFor(h.state, 222), 'any session\'s next prompt may claim it');
+    assert.equal(receiptState(h.state, item.msg_id), 'parked');
+    assert.deepEqual(queuedIds(h.state), []);
+    assert.equal(wakes(h.bus).length, 0, 'no wake reached the live channel');
+  }
+});
+
+// U63b (the grant: flush passes `park` to parkHoldBack as `force`, so one
+// message per park still holds): a second message for a gone conversation does
+// not join the park beside the first, even while another session's channel is
+// live — it stays queued, waiting for the park to be consumed, and nothing wakes.
+test('a forced park still holds one typed message: a second send for a gone process stays queued, waiting', (t) => {
+  const gone = { state: 'working', process: { pid: 111, alive: false }, evidence: { proc: 'gone' } };
+  const mirror = fakeMirror({ lives: { [C1]: gone, [C2]: live('idle', 222) }, pids: { 222: C2 } });
+  const h = harness(t, { mirror });
+  queue.stampChannel(h.state, 222);
+  const a = enqueue(h, { text: 'first' });
+  assert.ok(h.rel.send(a, { mode: 'now', prov: {} }).parked, 'the first parks');
+  const b = enqueue(h, { text: 'second' });
+  const r = h.rel.send(b, { mode: 'auto', prov: {} });
+  assert.deepEqual(queuedIds(h.state), [b.id], 'the second stays queued');
+  assert.equal(b.waiting, 'parked_message');
+  assert.deepEqual(r.heldBack, [b.id]);
+  assert.deepEqual(h.state.pendingWake.batch.filter(queue.isTypedMessage).map((it) => it.id), [a.id], 'one typed message per park');
+  assert.equal(wakes(h.bus).length, 0, 'no wake reached the live channel');
 });
 
 // ── boundaries ──
