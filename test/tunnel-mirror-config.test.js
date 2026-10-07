@@ -19,6 +19,7 @@ const { withServer, withPortal, waitUntil } = require('../test-support/helpers')
 const { createFakeAccess } = require('../test-support/fake-access');
 const { registerInstance, instanceId } = require('../lib/util/registry');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
+const { userPaths } = require('../lib/core/paths');
 const {
   normalizeConfig, configFingerprint, mirrorLevelFor, withMirrorLevel, sessionHost, MIRROR_VALUES,
 } = require('../lib/tunnel/config');
@@ -272,6 +273,11 @@ test('the portal follows a remote.mirror edit within a poll (no directory watche
   assert.equal(send.json.hint, MIRROR_FULL_HINT);
 
   // A grant by the instance id this time (a hand edit; the CLI writes roots): full.
+  // Since tranche 4 the daemon serves POST /api/queue/message and checks the
+  // level itself (its second lock, §6.3), reading the sandbox's tunnel.json,
+  // not this test's: the grant goes to that file too, so only the portal's
+  // refusal can keep the send out.
+  writeJsonAtomic(userPaths().tunnelConfig, { ...raw, remote: { mirror: { [id]: 'full' } } });
   writeJsonAtomic(file, { ...raw, remote: { mirror: { [id]: 'full' } } });
   assert.ok(await waitUntil(async () => refusedFor(await req('/api/queue/message', { method: 'POST', body: { text: 'hi' } })) === null,
     { timeout: 5000 }), 'the full grant is in force');

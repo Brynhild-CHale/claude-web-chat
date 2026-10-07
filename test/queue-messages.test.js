@@ -191,7 +191,9 @@ test('deliver: a transport answering {via} takes its message out of the wake; nu
     assert.deepEqual(r.wake.batch.map((it) => it.id), [s.id]);
     assert.equal(state.queue.length, 0);
   }
-  for (const transport of [() => null, () => { throw new Error('boom'); }]) {
+  // Anything but {via: <non-empty string>} declines — an empty via, a bare
+  // object, a Promise (the seam is synchronous) or a throw.
+  for (const transport of [() => null, () => { throw new Error('boom'); }, () => ({ via: '' }), () => ({}), async () => ({ via: 'mod' })]) {
     const state = freshState();
     const { bus } = capturedBus();
     const { m, s } = batchOf(state, bus);
