@@ -24,13 +24,23 @@ reports a spurious failure. The timeout is load-bearing: without it one leaked
 handle or never-settling await hangs the whole run indefinitely. Do not add
 `--test-force-exit` — it would turn that hang into a silent pass.
 
-The tests that drive a **real** headless Chrome or a real ffmpeg are opt-in:
-they skip unless `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1` is set, however
-much the machine has installed, and each skip names the variable. Everything they
-cover also runs on every box against fakes (`test-support/fake-chrome.js`,
-`fake-ffmpeg.js`); CI sets neither. To run them, opt in (pointing
-`WEB_CHAT_CHROME` / `WEB_CHAT_FFMPEG` at a binary where discovery would miss it):
-`WEB_CHAT_E2E_CHROME=1 WEB_CHAT_E2E_FFMPEG=1 npm test`.
+The tests that drive a **real** headless Chrome, a real ffmpeg, a real
+pseudo-terminal or a real Claude Code are opt-in: they skip unless
+`WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1` / `WEB_CHAT_E2E_TTY=1` /
+`WEB_CHAT_E2E_CLAUDE=1` is set, however much the machine has installed, and each
+skip names the variable. Everything they cover also runs on every box against
+fakes (`test-support/fake-chrome.js`, `fake-ffmpeg.js`, a fake Esc-injector
+helper, a stubbed `claude` that prints what a fork answers); CI sets none of
+them. To run them, opt in (pointing `WEB_CHAT_CHROME` / `WEB_CHAT_FFMPEG` at a
+binary where discovery would miss it):
+`WEB_CHAT_E2E_CHROME=1 WEB_CHAT_E2E_FFMPEG=1 npm test`, and for the control
+layer `WEB_CHAT_E2E_TTY=1 WEB_CHAT_E2E_CLAUDE=1 npm test`. The tty tests inject
+an Esc into a real pseudo-terminal (they need perl and python3); the claude
+tests run a real Claude Code (the halt handlers stopping a headless turn, a
+fork, web-chat's MCP registration) and also want
+`WEB_CHAT_E2E_CLAUDE_CONFIG_DIR` naming a logged-in throwaway Claude config
+directory, never `~/.claude`, skipping with that name when it is unset. They
+are the maintainer's runs.
 
 **Do not use `npm link`.** npm's global prefix is a shared mutable directory: any
 later `npm i -g` of anything rewrites what lives there, and that is not
@@ -208,7 +218,8 @@ lib/core/          paths · portfiles · bus · names · fsjson · html · versi
                    markdown · reply · brand-image · brand-store · theme-identity ·
                    fonts · theme-values · trust-marks · watch · redact · text ·
                    stable-json · tool-input · prompt-class · claude-files ·
-                   claude-sessions · image-file · project-identity · icon
+                   claude-sessions · claude-cli · image-file · project-identity ·
+                   icon
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -310,6 +321,22 @@ were the only places they lived.
 | send one socket a frame, or hear a socket connect or change mirror level | `lib/server/ws` — `attachWebSocket` returns `sendTo(ws, frame)` (projected for that socket's level), `onConnect(fn)` and `onLevelChange(fn)` beside `broadcast` | `ws.send(JSON.stringify(…))` on a socket, which skips the projection |
 | build what a hook reports to the daemon | `lib/hooks/envelope` `hookEnvelope(payload, env, {now})` → envelope v1, bounded in the hook (a tool's input through the per-tool table, the whole body at most 32 KB), or null for an event it does not know · `promptOf(payload)` (the one prompt chain) · `isSdkEntrypoint` | an envelope built by hand, a file's content or a command's output in one, or an environment variable envelope v1 does not name |
 | take a hook event in on the daemon | `lib/server/routes/hooks` `mountHookRoutes` — `/api/hooks/event`, host only, validates envelope v1 (`checkEnvelope`), answers at once and publishes on `ctx.hooks` after the response | a second intake, or one a browser, a remote viewer or a network peer can post to (a forged SessionEnd would end Claude's turn in the mirror) |
+| hold a permission prompt, a question or a plan the ask hook is waiting on, and decide it | `lib/server/domain/asks` `createAsks({bus, hooks, mirror, getViewers, audience, answerSurface, redactor, root})`, exposed as `ctx.asks`: `create` / `poll` / `decide(id, decision, {via, remote, device})` / `withdraw` / `handed` / `displayView` / `waitView` / `list({level})`. A create matching a pending ask within `DUPLICATE_MS` (2 s) answers `duplicate`; an ask whose hook has not polled for `HOOK_SILENT_MS` (15 s) resolves `expired`; a question's answer is stored as picks by index; outcomes go out on the MIRROR bus as ring kind `ask` so `get_events` and SSE drivers do not see them. Its routes are `lib/server/routes/asks` `mountAskRoutes` (the hook's create, poll, handed and withdraw, host only) | a second store of pending prompts, a decide route on the main origin, or an ask outcome on the main bus |
+| print the ask hook's answer for Claude Code (allow, deny, a question's answers, a plan's approval) | `lib/hooks/ask-output` `buildAskOutput(kind, local, decision)` — maps the stored picks onto the hook's own unredacted copy of the request, and prints nothing (throwing, so the hook log records it) when it cannot; `lib/hooks/ask` is the hook that polls for the decision, reading a plan only from inside the configured plans directory (`plansDirectoryOf`) | a second `hookEventName: 'PermissionRequest'` (the ratchet holds it) |
+| show a pending ask in a frame, or add a kind of frame to the answer origin | `lib/server/answer-surface` `createAnswerSurface({asks, mainPort, audience, root})`, exposed as `ctx.answerSurface`: `ensure()` / `info()` / `register(kind, {document, api, nonceKey, keepAlive, onRefused})` → unregister (the control layer is kind `control`); built on the isolated-origin engine, with the decide gate's rules (Host, `Origin`, `Sec-Fetch-Site`, JSON, the nonce minted for one action on one target) | a decide or control route on the main origin, or a frame kind that mints its own nonces |
+| paint an answer frame in the active theme, or check a palette's contrast | `lib/server/answer-surface/palette` `framePalette({root})` / `renderPalette` — the active global theme when it is a builtin pack, or an installed pack the terminal installed or approved (the pack audit's actor `cli`, its digest matching), and only while every pair the frame paints passes `contrastRatio(ink, fill)` (4.5:1 text, 3:1 controls); else the Earthy palette | a second contrast ratio (the ratchet holds the sRGB linearisation, `/ 12.92`), or a frame that follows any theme a pane could have saved |
+| validate a composer message (its text, a leading `/skill`, its `@` files, the send mode) or refuse one with its hint | `lib/server/composer` `validateMessage(body, {skills, projectFiles})` / `validateEdit(item, body, deps)` / `parseLeadingSkill` / `createRateLimit`; `BUILTIN_COMMANDS` lists Claude Code's own commands a web message may never run, `MESSAGE_MAX` and its siblings are the limits, `HINTS` the refusals' words | a second limit, grammar or built-in list (the chrome's composer pins its limits to this module) |
+| find a project file for the composer's `@` | `lib/server/project-files` `createProjectFiles({root})`, exposed as `ctx.projectFiles`: `search(q, {limit})` (git's listing through `runGit`, else a bounded walk) / `check(rel)` (refused, in this order: outside, sensitive, missing, symlink, not a file, ignored); its route is `lib/server/routes/files` `mountFilesRoutes` | a second index of the project's files for the composer |
+| list the skills a conversation can run, for the composer's `/` | `lib/server/skills` `createSkillCatalog({root, mirror, redactor})`, exposed as `ctx.skills`: `catalog(cid)` / `resolve(name, {conversation_id})` / `lookup(name, cid)` (a synced skill is spelled `anthropic-skills:<name>`); a SKILL.md's frontmatter is read by `lib/packs/manifest` `parseFrontmatter` / `frontmatterFlag`; its route is `lib/server/routes/skills` `mountSkillsRoutes` | a second frontmatter parser, or a skill list of your own |
+| queue a composer message or a task's stop request, edit it, take it back, or hand a batch to Claude | `lib/server/domain/queue` `enqueueMessage` / `editMessage` / `release` / `deliver` — THE delivery: a wake to a live channel (targeted at one Claude Code by `target_pid`), else the park; a message item may first be taken by `state.messageTransport`, the transport seam a later transport plugs into — and `recallPending` (Take back: a park's message items only, its stop requests and signals stay parked) · `noteReceipt` (the one receipt setter) / `confirmDelivered` / `markUnconfirmed` | a second send path, or a receipt state written by hand |
+| decide when a queued message goes, and to which session | `lib/server/queue-release` `createQueueRelease({state, bus, graph, mirror, asks})`, exposed as `ctx.queueRelease`: `send(item, {mode, prov})` — `auto` waits for its conversation's next turn boundary (oldest first), `now` releases at once; an ended conversation's message parks, untargeted. `CONFIRM_VERIFIED` stays false until gate V30 is recorded, so a live channel's receipt says Sent, never Unconfirmed | a release timer or a target of your own |
+| write a composer message or a stop request into what Claude reads | `lib/channel/envelope` `messageBlock(item)` / `stopRequestBlock(item)` (rendered inside `wakeEnvelope`): the quoted block under its `[web-chat message m-…]` marker (`core/prompt-class` `messageMarker`), the Skill and File lines, `ENVELOPE_MAX`; a stop request carries the task id and no other text | message text outside its quoted block, or a second spelling of the marker |
+| decide whether web-chat's MCP server starts the channel bridge | `lib/mcp/channel-proof` `channelProof({clientCapabilities, parentCommand, env})` — only when the session loaded the channel (its `claude` was launched with `--dangerously-load-development-channels server:web-chat` or `--channels web-chat`), or `WEB_CHAT_CHANNEL_FORCE=1`; `WEB_CHAT_CHANNEL=1` alone only declares the capability | start the bridge on `WEB_CHAT_CHANNEL` alone (a Push would then wake a session that never reads it) |
+| take an acting control from the browser (Stop, Restore files, Undo, Fork) | `lib/server/control` `createControl({root, paths, bus, mirror, graph, audience, answerSurface, getViewers})`, exposed as `ctx.control`: ONE action table, `action(name, {fields, params, key, layouts, limit, describe, check, run, state, features})` → unregister, served as kind `control` on the answer origin (the frame's nonce is the click token) with the rate limits, the audit (`audit`) and Claude's one-shot notices (`notices`; claimed by turn-begin through `lib/server/routes/control` `mountControlRoutes`, host only) | an acting control route on the main origin, a pane-callable one, or a `control` event emitted outside the table (the ratchet holds `kind: 'control'`) |
+| interrupt a turn | `lib/server/control/interrupt` `createInterrupt({mirror, bus, userPaths})` — the table's `interrupt` row takes the first path that applies: a later tier's abort (`addPath`), the Esc injector for a LOCAL request to a conversation whose MCP server holds its terminal (a `control` event with `target_pid` and an `expires_at` 2 s ahead), else the halt flag ("Stop after this step"), removed when the turn closes and swept at start; at most once per 1.5 s per conversation | a halt flag written anywhere else (the ratchet holds `haltFlag(`) |
+| inject the Esc that interrupts Claude Code | `lib/mcp/interrupt` `startInterrupt({root, presence})`, run by web-chat's MCP server: `probeInterrupt` puts `tty` or null on the presence row, `guard` refuses an expired, misaddressed or too-soon event, and the helper (`HELPER_SCRIPT`) writes one byte, 0x1b, never text, Enter or Ctrl-C | `TIOCSTI` anywhere else (the ratchet holds it), or any byte but Esc |
+| restore a turn's files from the chrome, or undo a restore | `lib/server/control/revert` `installRevert(control, {restore, mirror, graph, root, paths, bus, redactor})` → the `restore` and `undo` rows (refused while the lock is held, while a conversation of the project is working, waiting, asking or compacting, while `claude agents` lists a busy session inside the root, or when the tree changed since the preview) and `preview(q)`, read at GET /api/code/preview through `lib/server/routes/code` `mountCodeRoutes`; a turn restores to its own before-tree, a node to its first turn's | a restore route on the main origin, or a gate of your own |
+| fork a conversation from before a turn | `lib/server/control/fork` `installFork(control, {mirror, graph, root, bus})` → the `fork` row: `forkArgv` (ids and web-chat's own label, never user text), run by `lib/core/claude-cli` `runClaudeAsync`; it answers the new session id and `claude --resume <id>` to paste | an argv holding user text, or `claude` run another way |
 | be told when a file may have changed (a config, a transcript, a sessions file) | `core/watch` `watchFile(file, onTrigger, {pollMs, debounceMs, dirWatch, persistent})` → `trigger` / `retarget` / `stop`. It re-arms after an atomic replace, polls as the backstop, and funnels every source into one debounced, single-flight call; it never says what changed | `fs.watch` or `fs.watchFile` at a call site (ratcheted: a watch binds the inode and goes silent after an atomic replace), or a private poll loop |
 | show, send or store text that came from Claude Code (a transcript, a tool's input or output, a prompt, a permission request) | `core/redact` `createRedactor()` (the daemon's is `ctx.redactor`, which also masks the values it was told, like the capture token) over `redactText` / `redactValue` / `redactWindow`; `MASK(label)` writes a mask. One frozen rule table, every regex linear | a second "looks like a token" regex, a mask or the PEM marker spelled outside redact.js (both ratcheted), or a window cut before it is redacted |
 | serialize a value deterministically (a node digest, a change key, a hash) | `core/stable-json` `stableStringify(v)` (the node digest's form) / `stableKey(v)` (change detection's form) / `stableHash(v)` (sha1 of the first). The two forms differ on undefined and are NOT interchangeable | `Object.keys(…).sort()` plus `JSON.stringify` by hand (ratcheted), or one form swapped for the other (it moves every digest or version hash on disk) |
@@ -330,7 +357,7 @@ were the only places they lived.
 | escape HTML (host) | `core/html` `escapeHtml(s)` | inline a `.replace` chain or a `{'&':'&amp;'}` map |
 | sanitise or render `--wc-*` design tokens | `lib/server/theme` `sanitizeTokens(tokens)` / `tokenDecls(tokens, indent)` | re-declare `TOKEN_RE` or strip your own character set |
 | name a design token, or ship a builtin theme pack | `lib/server/theme-packs` `CANONICAL_TOKENS` / `PACKS` (every pack defines every canonical token; Earthy = `public/app.css` verbatim, and the theme-packs test holds both) | a token only one stylesheet knows, or a pack that leaves one unset |
-| declare a bundled font face, or inline the ones a theme names into a document with no origin | public/fonts/fonts.css — THE @font-face list — and `lib/server/fonts` `inlineFontCss(strings)` / `fontFaces()`, which read it (test/fonts.test.js refuses a face declared anywhere else) | an `@font-face` in `app.css` or a pane, or a hot-linked font CDN |
+| declare a bundled font face, or inline the ones a theme names into a document with no origin | public/fonts/fonts.css — THE @font-face list — and `lib/server/fonts` `inlineFontCss(strings)` / `fontFaces()`, which read it; the answer frames get the same list, rewritten to their own origin, at `/answer/fonts.css` (test/fonts.test.js refuses a face declared anywhere else, the answer frames' public files included) | an `@font-face` in `app.css` or a pane, or a hot-linked font CDN |
 | store, validate, list or inline a brand image (logotype / lockup / seal) | `lib/server/brand` `write` / `read` / `list` / `remove` / `dataUri` / `snapshot` (sniffs PNG/SVG, refuses active SVG, works on the CURRENT global theme's images — `themeOf`); the files' layout and fence are `core/brand-store` `slotFile`, which the v2→v3 migration shares; the chrome only ever `<img>`s `/brand/<slot>` (`public/app/brand.js`) | a second reader of `.web-chat/brand/`, a slot path built by hand, or SVG markup inlined into a document |
 | ask which theme a project is on BY NAME — the stored record that wins, whether it is an applied builtin, the key its per-theme files are kept under | `core/theme-identity` `projectTheme(root)` → `{key, name, builtin}` / `globalThemeRecord(files)` / `appliedBuiltinId(t)` / `themeKey(record)` (one safe path segment: a pack id, a kebab name, `_unnamed`, or a digest) — `lib/server/theme` `resolveDefault` normalizes the same record | a second resolution order (project → user tier → default pack), or a theme name joined into a path |
 | resolve a theme's light/dark mode, or merge layers at one | `lib/server/theme` `flattenTheme(t, mode)` / `mergeTokensAt(mode, layers)` / `cascadeMode` (the chrome's mirror is `public/app/theme.js`) | read `theme.tokens` alone off a theme that may carry `modes` |
@@ -353,7 +380,7 @@ were the only places they lived.
 | register a project, or un-register one | `lib/setup/registration` `apply(root, {force, dryRun, runClaude})` / `remove(root, {runClaude})` | call `ensureHooks` + `reconcileManagedFiles` + `ensureMcpRegistration` in your own order, with your own stub policy |
 | build the `claude mcp add`/`remove` argv | `lib/setup/registration` `mcpArgv()` / `removeArgv()` / `localAddArgv()` (and `redactArgv` before one is printed or recorded) | `path.join(__dirname, …, 'bin')` (that is the version dir, which gets pruned) |
 | read, word or make web-chat's MCP registration with Claude Code (local scope, `.mcp.json`, rejected, disabled) | `lib/setup/registration` `mcpState(root)` (pure: `kind` is `disabled` / `local` / `rejected` / `mcpjson` / `none`) → `describeMcp(state)` (the one line status, doctor and open print) · `inspectLocal` / `inspectApprovals` · register with `apply(root, {mcp: 'local', consent})` (`applyMcp`), asking first with `mcpQuestions` / `mcpConsent` | read or write Claude Code's `.claude.json` yourself, re-enable a server `/mcp` disabled, or register over a No without asking |
-| run Claude Code's own `claude` command | `lib/core/claude-cli` `findClaude({env})` (PATH, then ~/.local/bin, then ~/.claude/local) / `runClaude(argv, {cwd})` (no shell, a timeout, `claudeEnv`'s scrubbed environment) | `execFileSync('claude', …)` at a call site, or a child that inherits `CLAUDE_CODE_*` / `WEB_CHAT_*` |
+| run Claude Code's own `claude` command | `lib/core/claude-cli` `findClaude({env})` (PATH, then ~/.local/bin, then ~/.claude/local) / `runClaude(argv, {cwd})` (the CLI's, synchronous) / `runClaudeAsync(argv, {cwd, timeoutMs, signal})` (the daemon's: spawned with stdin closed, SIGTERM then SIGKILL past the timeout, output capped, never rejects) — both with no shell and `claudeEnv`'s scrubbed environment, running the binary `findClaude` resolved | a literal `'claude'` program in `execFile` / `execFileSync` / `spawn` / `spawnSync` (the ratchet holds it at zero), or a child that inherits `CLAUDE_CODE_*` / `WEB_CHAT_*` |
 | name the hook events registration means | `lib/setup/registration` `hookEvents()` | iterate whatever `settings.hooks` happens to hold |
 | name the hook HANDLERS the template registers, what each is for, or what a missing or outdated one costs | `lib/setup/registration` `hookHandlers()` (each template handler with its event, subcommand and role) · `HOOK_ROLES` / `hookRole` / `roleEffect` (lifecycle, mirror, bridge, halt, and what the user loses without each) · `hookProblems(state)` (the handlers `inspect` found missing, bare or stale, grouped by role) · `driftLine(state)` (the MCP server's startup line) · `HOOK_RESTART_NOTE` (how every line asking for a hook upgrade ends) | count hooks per event (one event can carry two of ours), or word a missing handler's cost a second way |
 | say what a managed-file conflict means and how it ends, incl. the reminder an unmerged `.new` leaves | `lib/update/managed-files` `conflictAdvice(results)` / `conflictSummary(results)` | a fifth wording of "review and merge, then re-run install" (the step that resolves one is: merge, then delete the `.new`) |
@@ -382,6 +409,11 @@ were the only places they lived.
 | put a stopper's own control into a task row's stop | `public/app/chat-actions.js` `registerStopper({mount(slotEl, row, {density}) → boolean, unmount(slotEl)})` → unregister: one stopper at a time, mounted into the row's confirm slot inside runAction's stop path; `mount` answering true owns the stop | a second confirm or stop path |
 | show a task's output, an agent followed live, a workflow or a turn's code changes in the chat | `public/app/chat-detail.js` `initChatDetail({followMs})` — it registers the 'task' and 'diff' views with chat-panel's `registerDetail`; `stopChatDetail()` | a second detail host, or a view drawn outside the panel |
 | add a section or an action to the graph inspector, or mark a node on the canvas | `public/app/graph-view.js` `onInspectorRender(fn)` / `registerInspectorAction({id, label, applies, run})` / `setNodeMarker({mark, refresh})`, each returning its unregister · `public/app/graph-turns.js` `initGraphTurns()` (a node's turns and rewind marks, through all three) | an edit to the inspector's own render for a feature |
+| mount an answer frame in the chrome (an ask, or any kind registered on the answer origin) | `public/app/asks.js` `mountAnswerFrame(container, {kind, id, path, query, layout, onDone})` → `{frame, unmount}`, null until the answer origin's port is known (`answerFrameOrigin()`; ask again on `PORT_EVENT`); inside the frame, `lib/server/answer-surface/public/answer` `createGuard` and `lib/server/answer-surface/public/answer-gate` `createGate` hold a decision back until the frame is visibly unobscured and the click is the user's (a popup in Firefox and Safari) | an iframe of your own, or a decide or control button in the chrome's realm |
+| put Stop, or the confirm of a control action, into the chrome | `public/app/session-control.js` `mountStop(container, {conversationId, size})` (labelled for the path it will take: "Interrupt" or "Stop after this step") / `mountControlFrame(container, {action, params, layout, onDone})` / `mayAct()` (local, or remote at `full`) | a fetch to an acting control route |
+| offer Restore files or Fork from here on a turn or a graph node | `public/app/turn-actions.js` `initTurnActions()` — the preview dialog, the confirm frame and the Undo toast, registered through chat-turns' `registerTurnAction` and graph-view's `registerInspectorAction` | a second dialog, or a confirm outside a control frame |
+| send a composer message from the chrome, edit it, send it now or take it back | `public/app/queue.js` `sendMessage` / `editMessage` / `sendNow` / `recallPending` — THE send path, every refusal normalised — and `queueSnapshot().messages` for the rows and bubbles | a second fetch of the message routes (the ratchet holds them) |
+| draw the composer (its `/` and `@` menus, its queued bubbles and receipts) | `public/app/chat-composer.js` `initChatComposer()`, mounted through `public/app/chat-slots.js` `registerComposer` | a second input that posts messages |
 | apply a full-surface snapshot frame in the chrome — `hello`, `reset`, the restored live surface | `public/app/mounts.js` `applySnapshot(frame, {mode:'authoritative'|'reconcile'})` — it owns the preview fold and the remove-absentees / keep-unchanged reconcile | hand-roll `mountAll` + `fullReset` beside a frame handler: that is how `hello` ended up without the preview fork, overwriting a previewed node on every reconnect |
 | lay out the live page (markdown between grid runs, the Contents nav, the title, run controls, ⌘K sections) or read its sequence in the chrome | `public/app/page.js` (`layoutPage` / `segments` / `outline` / `applyPageFrame` / `commitRunOrder`); the layout and prose CSS is public/page.css, which the node preview and the export inline through `lib/server/runtime/page-css-src` | move a pane wrapper or parse headings at a call site, reorder a run by moving DOM (a moved `<iframe>` reloads — runs order with CSS `order`), or a second copy of the run / `.md-block` CSS |
 | leave the detached node preview | `public/app/topbar.js` `leavePreview({activeId, restoreSnapshot})` | hand-copy `previewing = false` + drop the snapshot + un-gate `#main` (it reached eight copies) |
@@ -399,9 +431,9 @@ were the only places they lived.
 | give a test a fake Claude Code user tier: transcripts, sessions files, MCP presence rows, task outputs | `test-support/claude-home` `claudeHome(t, {root, isolate})` → `writeSession` / `writeTranscript` / `addMcp` / `writeTaskOutput` / `write`, built under the sandbox and cleaned up by `t.after` | a fixture copied from a real Claude Code directory (its transcripts hold real prompts and secrets) |
 | build a synthetic Claude Code transcript (or a rewind in one) in a test | `test-support/claude-records` `createRecords({seed, sessionId, cwd})` (records with Claude Code's own keys; `jsonl`, chunked appends) · `test-support/rewind-fixtures` (`branch` / `reset` / `exitTail` / `anchor` …, each with the hooks and its expected verdict) | a record shape written by hand, or one copied from a real transcript |
 | give a redaction test credentials to find | `test-support/fake-secrets` `fakeSecrets({seed})` (one of every format the redactor knows, seeded, never real) / `fakeCorpus` / `findLeaks` | a real token, or a literal that looks like one, in a test |
-| run a test against a REAL Chrome or ffmpeg | `test-support/helpers` `e2eGate(['chrome', 'ffmpeg'])` → `{skip, chrome, ffmpeg}` (opt-in via `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1`; the harness ratchet holds any other probe for a real program in a test at zero) | skip on whether `findChrome()` found something — the suite then changes with what is installed |
+| run a test against a REAL Chrome, ffmpeg, pseudo-terminal or Claude Code | `test-support/helpers` `e2eGate(['chrome', 'ffmpeg', 'tty', 'claude'])` → `{skip, chrome, ffmpeg, tty, claude, claudeConfigDir}` (opt-in via `WEB_CHAT_E2E_CHROME=1` / `WEB_CHAT_E2E_FFMPEG=1` / `WEB_CHAT_E2E_TTY=1` / `WEB_CHAT_E2E_CLAUDE=1`; an opted-in `claude` carries `claudeConfigDir` from `WEB_CHAT_E2E_CLAUDE_CONFIG_DIR`, or null; the harness ratchet holds any other probe for a real program, and any test reading a `WEB_CHAT_E2E_*` variable itself, at zero) | skip on whether `findChrome()` found something — the suite then changes with what is installed — or read `process.env.WEB_CHAT_E2E_*` in the test |
 | run the one-token tunnel setup, or bring the tunnel up / down / read its status | `lib/tunnel/api-setup` (`readExisting` / `buildWant` / `runSetup` / `finishSetup` — the lines the CLI prints) and `lib/tunnel/control` (`up` / `down` / `restartPortal` / `collectStatus`) — the CLI and the ⌘K setup page both call these | a second gather→plan→apply loop, or spawning `claude-web-chat tunnel …` from the daemon |
-| serve a page that takes a secret the panes must never reach | its own listener on its own origin, like `lib/server/tunnel-setup` (exact `Origin` + a per-load nonce header + JSON + a refused preflight, strict CSP, COOP, no framing) | a route on the surface's origin — every pane runs there (routes/packs.js risk paragraph) |
+| serve a page or an API no pane may script (one that takes a secret, or one whose click must be the user's: the tunnel setup page, the answer origin) | `lib/server/isolated-origin` `createIsolatedOrigin({name, idleMs, keepAlive, csp, frameAncestors, nonce, allowRemote, headers, publicDir, handle, onRefused})` → `ensure()` / `close()` — its own loopback listener and origin, closed when idle; the kit handed to `handle` (`issueNonce` / `checkNonce` / `refusal` / `send` / `serveAsset` / `readBody`) gates the exact `Origin`, `Sec-Fetch-Site`, JSON and a per-action nonce, refuses a preflight and a foreign `Host`, and puts no-store, nosniff, CORP and the CSP (with its `frame-ancestors`) on every response; `lib/server/tunnel-setup` and `lib/server/answer-surface` stand on it | a route on the surface's origin — every pane runs there (routes/packs.js risk paragraph) — or a private `listen(0, LOOPBACK)` beside the engine (the ratchet holds it) |
 | talk to the Cloudflare API | `lib/tunnel/cf-api` `createCfApi({token, env})` (every call names the token permission a refusal means) — over `lib/util/outbound` | a hand-built `https.request` to api.cloudflare.com |
 | make a small JSON request to the public internet | `lib/util/outbound` `request` / `fetchJson` (https only, loopback http for a test fake, bounded in time and size) | `require('https')` in a new file |
 | fake the Cloudflare API in a test | `test-support/fake-cloudflare` `withFakeCloudflare(t)` (records every call, `writes()`; `sim` for missing permissions, MFA refused (`mfaRefused: true|'org'|'app'`), 429, no Zero Trust, a bad token, and `fail` — a matching request failing N times, a run that dies half way) + `WEB_CHAT_CF_API` / `createCfApi({base})` | the real API |
@@ -1483,8 +1515,12 @@ structural leak detectors.
 `test-support` — the deadline loop, a poll-helper definition, `subscribeSSE(`,
 `createServer({ root`, `.server.listen(` and `Sec-WebSocket-Key:` — with named
 exemptions (the two heredoc daemons, the fake clients injected into the channel
-bridge). It also holds at **zero** a construct of a different species: a
-hardcoded MCP tool count (`tools.length, <n>`). That is not a primitive the
+bridge). It also holds at **zero** three constructs of a different species: a
+bare probe for a real Chrome or ffmpeg, a test reading a `WEB_CHAT_E2E_*`
+variable itself (both belong to `e2eGate`, which alone decides whether a real
+Chrome, ffmpeg, pseudo-terminal or Claude Code runs, and hands an opted-in
+`claude` test its `claudeConfigDir`), and
+a hardcoded MCP tool count (`tools.length, <n>`). The tool count is not a primitive the
 harness re-implements but a truth it re-states — `test-support/doc-truth.js`'s
 `mcpTools()` reads `lib/mcp/tools/`, and a test that copies the number instead
 goes stale silently, with the stale copy passing. `doc-truth.js` is the home for
@@ -1792,6 +1828,33 @@ time with `unfenced:true` could ride along on the approval the user meant for th
 fenced one. **Address a request by its key. Do not re-derive it, and do not
 address it by any part of it.**
 
+### The answer origin and the control layer — what a pane can never reach
+
+Every decision the user makes from the browser that Claude Code or the disk then
+acts on — Allow and Deny on a permission prompt, a question's answers, a plan's
+approval, Stop, Restore files, Undo, Fork — is a button inside a frame served by
+a **second origin** (`lib/server/answer-surface`, on `lib/server/isolated-origin`),
+never a button in the chrome's realm. A pane's script runs on the surface's own
+origin: it cannot script that frame, forge its `Origin`, or read the nonce the
+daemon minted for one action on one target, so these actions are never callable
+from a pane. The daemon checks the Host, the exact `Origin`, `Sec-Fetch-Site`, a
+JSON body and that nonce; inside the frame, `createGuard` waits until the frame is
+visibly unobscured and the click is the user's own, and Firefox and Safari, which
+cannot prove visibility, get a small popup instead.
+
+- **Answering.** The ask hook (`lib/hooks/ask`) creates an ask in `ctx.asks`
+  and long-polls it; the frame decides through the answer origin; the hook prints
+  `buildAskOutput`'s line. With no decision the hook prints nothing and the
+  terminal's own prompt stays up: the design fails closed.
+- **Control.** `ctx.control` is one action table. A row names its fields, its
+  layouts (`stop` or `confirm`), its rate limit, its gates (`check`) and its
+  effect (`run`); the interrupt, restore, undo and fork rows are the four that
+  exist. Each action and each refusal writes one audit line, and an accepted one
+  emits one `control` event on the main bus.
+- **The main origin keeps only reads** (`GET /api/code/preview`, the asks list)
+  and the host-only notices claim the turn-begin hook makes. A new acting control
+  is a row in the table, not a route.
+
 ## The conventions tripwire
 
 `test/conventions.test.js` is the automated half of the one-engine rule. It walks
@@ -1800,7 +1863,7 @@ the browser-storage one, and `bin/`, `scripts/`, `templates/` or `extensions/`
 where a row names them) and holds a
 **per-file baseline** for every construct in the table below, then **ratchets**.
 It does not scan `test/` or `test-support/`, so the harness may use raw
-http/ws/fetch; the harness's own five constructs have their own file
+http/ws/fetch; the harness's own constructs have their own file
 (`test/harness-conventions.test.js`, described under the test harness above).
 The ratchet works the same way in both:
 
@@ -1855,6 +1918,22 @@ Current homes (baselines move toward these):
 | `PRIVATE KEY-----` (the PEM marker) | `lib/core/redact.js` — the `pem` rule, built from `PEM_MARKER`, its one spelling | landed with the chat mirror ✅ |
 | `\u202a-\u202e` (the bidi-override range) | `lib/core/text.js` — `hasForbidden` / `stripControls` over `BIDI_RE`; matched as an escape, a `0x` number or the raw character | landed with the chat mirror ✅ |
 | `Object.keys(…).sort()` (a sorted-keys serializer) | `lib/core/stable-json.js` — `stableStringify` / `stableKey` / `stableHash` — plus `lib/server/services.js`'s `sortedBag`, a shallow sort that keys every recorded service approval, which stable-json's deep sort would change | landed with the chat mirror ✅ |
+| `listen(0, LOOPBACK` (a private loopback origin) | `lib/server/isolated-origin.js` (`createIsolatedOrigin`), the one listener behind the tunnel setup page and the answer origin — plus `scripts/readme-media/record.js`, a developer script that boots a throwaway daemon to record the README's media | landed with the answer origin ✅ |
+| `hookEventName: 'PermissionRequest'` (the ask hook's output) | `lib/hooks/ask-output.js` (`buildAskOutput`), scanned in `lib` and `bin` | landed with answering ✅ |
+| `TIOCSTI` (typing into the terminal) | `lib/mcp/interrupt.js` (`HELPER_SCRIPT`, the Esc injector): the helper's request constant, its guard and its one ioctl | landed with the control layer ✅ |
+| `document.title =` **in `public/app` only** | `public/app/project.js`, the tab title's one writer | landed with the chat mirror ✅ |
+| `claudeSessionStateFile(` | `lib/core/claude-sessions.js` (the reader) and `lib/server/mirror/claude-state.js` (the live-state follower); `lib/core/paths.js` builds the path | landed with the chat mirror ✅ |
+| `remoteAddress` **in `lib/server` only** | `lib/server/audience.js` — who is asking is decided there, once | landed with the chat mirror ✅ |
+| `express.raw(` (a raw-bytes request body) | `lib/server/routes/brand.js` (`readImageBody`, the image upload) | landed with the project identity ✅ |
+| `graph.redactText` (on lines that are not comments) | `lib/server/domain/turns.js` reads it (`redactGraphText`), `lib/server/index.js` installs it | landed with the graph link ✅ |
+| `'claude'` as a literal program (in `execFile` / `execFileSync` / `spawn` / `spawnSync`) | `lib/core/claude-cli.js` (`runClaudeAsync` / `runClaude`), which runs the binary `findClaude` resolved — so the count is zero everywhere | landed with Fork from here ✅ |
+| `'git'` as a literal program (in `execFile` / `execFileSync` / `spawn` / `spawnSync`) | `lib/server/git-run.js` (`runGit`), which runs a variable — plus `lib/setup/registration.js`'s read-only git facts, which the CLI reads outside any daemon, and the release build's one `rev-parse` | landed with the code diffs ✅ |
+| `chunk('IHDR'` (a PNG writer) | `lib/core/png.js` (`encodePng`) | landed with the icon engine ✅ |
+| `Area-average resample` (the icon resampler) | `lib/core/icon.js` (`resample`) | landed with the icon engine ✅ |
+| `haltFlag(` (the hook halt flag) | `lib/server/control/interrupt.js` — written with an expiry, removed when the turn closes, swept at start | landed with the control layer ✅ |
+| `kind: 'control'` (a control event, on lines that are not comments) | `lib/server/control/` — the interrupt, restore, undo and fork rows of the one action table | landed with the control layer ✅ |
+| `/ 12.92` (the sRGB linearisation of a contrast ratio) | `lib/server/answer-surface/palette.js` (`contrastRatio`) | landed with the answer frames ✅ |
+| `/api/queue/message` · `/api/queue/pending/recall` **in `public/` only** | `public/app/queue.js` (`sendMessage` / `recallPending`), the chrome's one send path | landed with the composer ✅ |
 
 Working with it:
 
@@ -1862,7 +1941,10 @@ Working with it:
   means you should call the engine. If it's genuinely unavoidable, raise that
   file's baseline with a justifying comment — and expect review pushback.
 - **The tripwire counts raw substrings, comments included.** Writing
-  `os.homedir()` in a comment inflates the count. Reword the comment.
+  `os.homedir()` in a comment inflates the count. Reword the comment. Two rows
+  (`graph.redactText` and `kind: 'control'`) count only lines that are not `//`
+  comments, because the comments that explain their one home are quoted
+  outside it; their names say so.
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.

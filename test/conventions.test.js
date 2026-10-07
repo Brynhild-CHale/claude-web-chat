@@ -869,6 +869,262 @@ const PATTERNS = [
       'lib/server/services.js': 1,
     },
   },
+  // ── Tranche 4 (U66b, spec §10.2): answering, the composer and control ──────
+  {
+    // A second origin the daemon serves on loopback: a page or an API no pane
+    // may script, because a pane's script cannot reach across origins. The
+    // tunnel setup page and the answer surface both stand on one engine, which
+    // owns the listener, the idle close, the Host and Origin gates, the
+    // per-action nonce pool and the common headers (no-store, nosniff, CORP,
+    // the CSP and frame-ancestors). A private `listen(0, LOOPBACK` beside it is
+    // a third origin with its own idea of those gates.
+    name: 'listen(0, LOOPBACK (a private loopback origin)',
+    home: 'lib/server/isolated-origin.js — `createIsolatedOrigin(opts)`',
+    what: 'standing up a second loopback origin',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /listen\(\s*0\s*,\s*LOOPBACK/g,
+    baseline: {
+      // The engine's one listen.
+      'lib/server/isolated-origin.js': 1,
+      // A developer script that records the README's screen media: it boots a
+      // throwaway daemon (createServer) on an ephemeral loopback port. Not an
+      // origin the daemon serves, and never shipped as one (notes-D Q-D14 (a)).
+      'scripts/readme-media/record.js': 1,
+    },
+  },
+  {
+    // The ask hook's output to Claude Code. Allow, deny, a question's answers
+    // and a plan's approval are each a PermissionRequest decision, and the
+    // shape decides whether Claude Code honours the user's answer or falls back
+    // to the terminal. buildAskOutput maps a decision onto the hook's own
+    // unredacted copy of the request (ruling A3: picks by index), so a second
+    // builder is a second place a masked answer could be mapped wrongly.
+    name: "hookEventName: 'PermissionRequest' (the ask hook's output)",
+    home: 'lib/hooks/ask-output.js — `buildAskOutput(kind, local, decision)`',
+    what: 'printing a PermissionRequest decision for Claude Code',
+    roots: ['lib', 'bin'],
+    re: /hookEventName\s*:\s*['"`]PermissionRequest['"`]/g,
+    baseline: {
+      'lib/hooks/ask-output.js': 1,
+    },
+  },
+  {
+    // Pushing a byte into the terminal's input queue. The Esc injector writes
+    // exactly one byte, 0x1b, through a fixed helper, only for an unexpired
+    // `control` interrupt addressed to its own Claude Code, and never twice in
+    // 1.5 s (spec §15.2). The ioctl that does it can type anything, so it lives
+    // in one file whose test asserts the only byte it can write.
+    name: 'TIOCSTI (typing into the terminal)',
+    home: 'lib/mcp/interrupt.js — `HELPER_SCRIPT` (the Esc injector)',
+    what: 'injecting input into the controlling terminal',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /TIOCSTI/g,
+    baseline: {
+      // The helper's request constant, its guard and its one ioctl.
+      'lib/mcp/interrupt.js': 3,
+    },
+  },
+  {
+    // The tab's title. It is the project's name (or the page's `#` title in
+    // the page view), and project.js decides which; a second writer flips it
+    // back and forth on every frame the two disagree about.
+    name: 'document.title = (the tab title)',
+    home: 'public/app/project.js — the identity applier',
+    what: 'writing the browser tab title',
+    roots: ['public/app'],
+    re: /\bdocument\.title\s*=(?!=)/g,
+    baseline: {
+      'public/app/project.js': 1,
+    },
+  },
+  {
+    // Claude Code's per-pid session state file (~/.claude/sessions/<pid>.json),
+    // the liveness and identity record the mirror's process facts read. The
+    // path is built in one place (lib/core/paths userClaudePaths, which checks
+    // the pid) and read by the two readers below; a third reader is a third
+    // idea of which pid is still that session.
+    name: 'claudeSessionStateFile( (reading a Claude Code session state file)',
+    home: 'lib/core/paths.js `userClaudePaths().claudeSessionStateFile` · read through lib/core/claude-sessions.js',
+    what: "reading Claude Code's per-pid session state",
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bclaudeSessionStateFile\(/g,
+    baseline: {
+      // The reader, and its header comment naming the call.
+      'lib/core/claude-sessions.js': 2,
+      // The mirror's live-state follower, which watches the same file.
+      'lib/server/mirror/claude-state.js': 1,
+    },
+  },
+  {
+    // Who is asking: loopback host, portal, or a network peer. The audience
+    // decides it once per request (and the mirror level that follows from
+    // it); a route that reads the socket's address itself is a second answer
+    // that skips the portal's X-WC-Remote rule.
+    name: 'remoteAddress (in lib/server)',
+    home: 'lib/server/audience.js — `isHost` / `levelOf` / `requireHost`',
+    what: "classifying a request by its peer's address",
+    roots: ['lib/server'],
+    re: /\bremoteAddress\b/g,
+    baseline: {
+      'lib/server/audience.js': 1,
+    },
+  },
+  {
+    // A raw request body. The brand upload is the one route that takes bytes
+    // rather than JSON, with its own type list and a size cap one byte over the
+    // limit so an oversize body is refused, not truncated. A second raw parser
+    // is a second upload path with neither.
+    name: 'express.raw( (a raw-bytes request body)',
+    home: 'lib/server/routes/brand.js — `rawImage` (the image upload)',
+    what: 'accepting a raw request body',
+    roots: ['lib'],
+    re: /\bexpress\.raw\(/g,
+    baseline: {
+      'lib/server/routes/brand.js': 1,
+    },
+  },
+  {
+    // Graph text (the lock's message, a node's trigger, summary, reply and end
+    // error) can hold what a user typed, so it passes the redactor before it is
+    // kept (spec §3.2). createServer installs the redactor on the graph once;
+    // domain/turns redactGraphText is its one reader. A second reader is a
+    // second fallback for a graph with no redactor. What this row holds is that
+    // single reader, not that every write is redacted: the turn tests prove the
+    // writes. Counted on lines that are not `//` comments, so the comments that
+    // explain the hook do not set the baseline.
+    name: 'graph.redactText (the graph-text redactor hook)',
+    home: 'lib/server/domain/turns.js — `redactGraphText(graph, s)`',
+    what: 'redacting text before the graph keeps it',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /^(?![ \t]*\/\/).*\bgraph\.redactText\b/gm,
+    baseline: {
+      // The one read.
+      'lib/server/domain/turns.js': 1,
+      // The one install, in createServer.
+      'lib/server/index.js': 1,
+    },
+  },
+  {
+    // Running `claude`. The daemon and the CLI run a RESOLVED binary
+    // (findClaude) with stdin closed, a scrubbed environment (every
+    // CLAUDE_CODE_* and WEB_CHAT_* removed) and a timeout; a literal 'claude'
+    // program runs whatever PATH says, with this process's whole environment,
+    // and waits as long as it likes. Zero everywhere: claude-cli itself spawns
+    // a variable.
+    name: "'claude' as a literal program (execFile/execFileSync/spawn/spawnSync)",
+    home: 'lib/core/claude-cli.js — `runClaudeAsync` (the daemon) / `runClaude` (the CLI), over `findClaude`',
+    what: 'running Claude Code',
+    roots: ['lib', 'bin', 'scripts', 'templates', 'extensions', 'public'],
+    re: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*['"`]claude['"`]/g,
+    baseline: {},
+  },
+  {
+    // Running git from the daemon. git-run is the one runner: a module queue
+    // (snapshots, the @ index and restores take turns), the scrubbed git
+    // environment, a timeout and an output cap. It runs a variable `bin`.
+    name: "'git' as a literal program (execFile/execFileSync/spawn/spawnSync)",
+    home: 'lib/server/git-run.js — `runGit` / `createGitRunner`',
+    what: 'running git',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*['"`]git['"`]/g,
+    baseline: {
+      // Registration's read-only git facts (is this a repository, is a file
+      // tracked), run by the CLI outside any daemon; ruling U95@git-facts keeps
+      // its own small helper.
+      'lib/setup/registration.js': 1,
+      // The release build's one `rev-parse --short HEAD` for its summary: a
+      // developer script, not the daemon, with nothing to queue behind.
+      'scripts/build-release.js': 1,
+    },
+  },
+  {
+    // A PNG writer. Every PNG the package writes (a favicon, a touch icon, a
+    // dark variant, a brand image) is encoded once, with one CRC home (zip.js)
+    // and one filter choice; a writer's first chunk is its fingerprint.
+    name: "chunk('IHDR' (a PNG writer)",
+    home: 'lib/core/png.js — `encodePng`',
+    what: 'encoding a PNG',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /\bchunk\(\s*['"]IHDR/g,
+    baseline: { 'lib/core/png.js': 1 },
+  },
+  {
+    // The image resampler. Icons and touch icons are scaled by area average
+    // (non-integer ratios such as 512 → 48 included); a second resampler is a
+    // second idea of how a logo looks at 16 px. Its header comment is the
+    // fingerprint.
+    name: 'Area-average resample (the icon resampler)',
+    home: 'lib/core/icon.js — `resample` (with `prepare` / `darkVariant`)',
+    what: 'resampling an image',
+    roots: ['lib', 'public', 'templates', 'extensions', 'scripts', 'bin'],
+    re: /Area-average resample/g,
+    baseline: { 'lib/core/icon.js': 1 },
+  },
+  {
+    // The halt flag (userPaths().haltFlag(session_id)): "Stop after this step".
+    // The halt handlers stop the session's turn at its next tool call while the
+    // flag holds an unexpired time, so a flag that outlives its turn stops the
+    // NEXT turn at its first tool. The interrupt path writes it with an expiry
+    // at most 30 minutes ahead, removes it when the turn closes and sweeps
+    // stale ones at start; nothing else may touch it.
+    name: 'haltFlag( (the hook halt flag)',
+    home: 'lib/server/control/interrupt.js — the hook path of `createInterrupt`',
+    what: 'writing or removing a halt flag',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bhaltFlag\(/g,
+    baseline: {
+      // The write, and the header comment describing it.
+      'lib/server/control/interrupt.js': 2,
+    },
+  },
+  {
+    // A `control` event on the main bus: an interrupt (which the Esc injector
+    // acts on when it is addressed to its own Claude Code), a restore, an undo
+    // or a fork. The engine reads who stopped a turn from it. Only the control
+    // domain emits one, after its gates (the answer origin's nonce, the rate
+    // limits, the audit); an event built anywhere else skips all three.
+    // Counted on lines that are not `//` comments: the injector's header quotes
+    // the event it follows.
+    name: "kind: 'control' (a control event)",
+    home: 'lib/server/control/ — the action table (`createControl().action`)',
+    what: 'emitting a control event',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /^(?![ \t]*\/\/).*\bkind\s*:\s*['"`]control['"`]/gm,
+    baseline: {
+      'lib/server/control/interrupt.js': 1,
+      'lib/server/control/revert.js': 1,
+      'lib/server/control/fork.js': 1,
+    },
+  },
+  {
+    // The WCAG contrast ratio, whose sRGB linearisation divides by 12.92. The
+    // answer frames follow the active theme only while every pair they paint
+    // passes 4.5:1 (text) and 3:1 (controls), else they fall back to Earthy
+    // (ruling A6 (b)); a second ratio is a second verdict on the same palette.
+    // test/theme-contrast.test.js keeps its own copy (test/ is not scanned).
+    name: '/ 12.92 (the sRGB linearisation of a contrast ratio)',
+    home: 'lib/server/answer-surface/palette.js — `contrastRatio(ink, fill)`',
+    what: 'computing a colour contrast ratio',
+    roots: ['lib', 'public', 'templates', 'scripts', 'bin'],
+    re: /\/\s*12\.92\b/g,
+    baseline: { 'lib/server/answer-surface/palette.js': 1 },
+  },
+  {
+    // Sending a composer message from the chrome. queue.js is the one send
+    // path: it adds the device, normalises every refusal, remembers the text
+    // for the bubble and folds the receipt that follows. A second fetch of the
+    // message routes is a message the rail and the stream never hear about.
+    name: '/api/queue/message · /api/queue/pending/recall (in the chrome)',
+    home: 'public/app/queue.js — `sendMessage` / `recallPending`',
+    what: 'sending or taking back a composer message from the chrome',
+    roots: ['public'],
+    re: /\/api\/queue\/(?:message|pending\/recall)\b/g,
+    baseline: {
+      // The header's two route lines, sendMessage's comment, and the two
+      // requests.
+      'public/app/queue.js': 5,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
