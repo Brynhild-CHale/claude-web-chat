@@ -337,6 +337,21 @@ test('recall: a signal-only park is left as it is', () => {
   assert.equal(state.queue.length, 0);
 });
 
+test('recall: a park left with only its Push note keeps the note parked', () => {
+  const state = freshState({ live: false });
+  const { bus } = capturedBus();
+  const m = queue.enqueueMessage(state, bus, message());
+  queue.flush(state, bus, { note: 'look at the second tab' });
+  const park = state.pendingWake;
+  const r = queue.recallPending(state, bus, park.id);
+  assert.deepEqual(r.ids, [m.id]);
+  assert.ok(state.pendingWake, 'the note is still in it, so the park stays');
+  assert.equal(r.park.id, state.pendingWake.id);
+  assert.deepEqual(state.pendingWake.batch, []);
+  assert.equal(state.pendingWake.note, 'look at the second tab');
+  assert.ok(!state.pendingWake.envelope.content.includes('opal-heron-5'), 'the message block is gone');
+});
+
 // ── the routes ───────────────────────────────────────────────────────────────
 
 // test/queue-messages.test.js's fake audience: a plain loopback request is
