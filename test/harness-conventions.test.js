@@ -17,6 +17,7 @@
 //   a jsdom boot of public/index.html -> test-support/chrome-shell's bootShell
 //                              (file by file, at the bottom of this file)
 //   probing for a real Chrome/ffmpeg -> e2eGate (opt-in, WEB_CHAT_E2E_*)
+//   reading an opt-in variable -> e2eGate (Chrome, ffmpeg, a tty, a claude)
 //   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
 //
 // The last two, the Chrome/ffmpeg probe and the tool count, are a slightly
@@ -169,15 +170,33 @@ const PATTERNS = [
     // Probing THIS machine for a real Chrome or ffmpeg. A test that runs because
     // a binary happened to be found makes the suite a different suite on every
     // box — a dev machine with Chrome ran real headless renders nobody asked
-    // for. Real-program tests are opt-in (WEB_CHAT_E2E_CHROME / _FFMPEG), and the
-    // one place that decides is e2eGate, which probes only once opted in. ZERO
-    // everywhere: the gate calls the finders through a table, and a test that
-    // describes a machine passes { env, isExecutable } and so is not a bare call.
+    // for. Real-program tests are opt-in (WEB_CHAT_E2E_CHROME / _FFMPEG, and
+    // for the control layer WEB_CHAT_E2E_TTY, a real pseudo-terminal, and
+    // WEB_CHAT_E2E_CLAUDE, a real Claude Code), and the one place that decides
+    // is e2eGate, which probes only once opted in. ZERO everywhere: the gate
+    // calls the finders through a table, and a test that describes a machine
+    // passes { env, isExecutable } and so is not a bare call.
     name: 'findChrome() / findFfmpeg() (a bare probe of this machine)',
-    home: "test-support/helpers.js — `e2eGate(['chrome'|'ffmpeg'])`",
+    home: "test-support/helpers.js — `e2eGate(['chrome'|'ffmpeg'|'tty'|'claude'])`",
     what: 'running a test because a real host program was found',
     roots: ROOTS,
     re: /find(?:Chrome|Ffmpeg)\(\s*\)/g,
+    baseline: {},
+  },
+  {
+    // Reading an opt-in variable. Whether a real Chrome, ffmpeg, pseudo-terminal
+    // or Claude Code runs is the gate's to say, and so is the opted-in Claude
+    // config directory (`e2eGate(['claude']).claudeConfigDir`, never ~/.claude):
+    // a test that reads WEB_CHAT_E2E_* itself opts in on its own terms, which is
+    // how a self-gated file ran a real `claude` on a box that had one. U82
+    // folded the last self-gate (test/mcp-local-scope-e2e.test.js) into
+    // e2eGate. ZERO everywhere, the gate included: it reads `env[opt]` through
+    // its table, with `env` defaulting to process.env.
+    name: 'process.env.WEB_CHAT_E2E_* (a test reading an opt-in variable itself)',
+    home: "test-support/helpers.js — `e2eGate(needs)` (and its `claudeConfigDir`)",
+    what: 'deciding by itself that a real host program runs',
+    roots: ROOTS,
+    re: /process\.env(?:\.WEB_CHAT_E2E_|\[\s*['"`]WEB_CHAT_E2E_)/g,
     baseline: {},
   },
   {

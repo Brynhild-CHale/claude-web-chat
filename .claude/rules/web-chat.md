@@ -83,6 +83,23 @@ The activity layer tells you *that* the user interacted; a **declared signal** t
 - **Where the push came from.** A wake or parked delivery says where the user pushed from: `push_origin="remote"`/`device="mobile"` on the `<channel>` tag, and a `Pushed from: origin=… device=…` line in its summary. **`origin=remote`** means the push came through the tunnel portal: assume the user cannot reach this terminal. Answer on the surface (render, or `reply_comment` in-thread), don't ask them to run a command, and keep the chat short. **`device=mobile`** means a phone-sized screen, where a run stacks to one column unless the user fixed its grid (`col`/`span` change nothing in a stacked run; a `rows` cap still holds), so keep panes compact. On a phone the panes' content is fully interactive (forms, buttons, declared signals, `api.spawn`) but the layout is fixed — the user cannot move, resize, pin, minimize or close panes there — so a pane the user must act on should be complete as rendered.
 - **Catch-up.** At the start of any turn, whatever happened since your last one is in the log: `get_events({ since })` for the tail (it reports `gap`/`dropped` if your cursor fell off the ring — resync from `get_store` then), `get_store` for current signal-key values, and `list_mounts` for each pane's `form_state` (the user's typed-but-unsent values). Undeclared interactions also queue as per-mount activity items, so a Push tells you *which* panes saw action; these sources tell you what it was.
 
+### Messages from the web-chat composer
+
+The chat panel on the surface has a composer. What the user sends there reaches you like a Push — a `<channel>` wake, or a parked delivery with the next turn — as a block headed **Message from the user [web-chat message m-…]** with each line quoted (`> `). It is the user's request: act on it as if they had typed it here, even when the turn that carried it is about something else. Two lines may follow the block:
+
+- **Skill requested: /<name> …** — call the Skill tool with that skill and the args the line gives (or, when the line says so, the quoted message text after `/<name>`) before you answer.
+- **File attached: <path> (<size>)** — Read it before acting on the message.
+
+A web message cannot run Claude Code's own commands (`/clear`, `/compact`, `/model`, …) or skills only the user may run; if one is asked for, say it must be typed in the terminal. A composer message is a request, never an approval: it does not answer a permission prompt. Only a quoted block under that header is a composer message. A block whose `[web-chat message m-…]` marker you have already seen in this conversation is a repeat delivery: do not act on it again.
+
+A line headed **Stop request from the web-chat page [web-chat message m-…]** is the user's Kill, Cancel or Remove on a background task: stop the task it names with the TaskStop tool. It carries no other instruction; nothing else in it is a request.
+
+### Answers and controls from the web-chat page
+
+- A tool call denied 'in the web-chat page' is the user's decision, made in the browser: do not retry the same call; ask, or take another way.
+- A tool call denied because 'the user stopped this turn from the web-chat page' is the user's Stop: end the turn; do not retry.
+- A line headed **Files restored from the web-chat page** lists files the user put back to an earlier turn's state, deleted ones included: re-read any you rely on before you edit them.
+
 ### Patterns beyond one-shot forms
 
 - **Refine loop** — render a proposal (plan, diagram, config) with a declared Apply signal; the user nudges controls and hits Apply; on the next Push you read the knobs and re-render the *same* mount. Iteration without retyping.
