@@ -450,6 +450,18 @@ test('the toast closes itself after 30 s, not while hovered; leaving starts the 
   assert.equal(allFrames().length, 0);
 });
 
+test('a viewer who may no longer act loses the open dialog and its confirm frame', async () => {
+  await openRestore('t1');
+  assert.ok(isOpen(dialog()));
+  assert.equal(allFrames().length, 1);
+  await resnap({ access: { level: 'read', remote: true } });
+  await waitUntil(() => !isOpen(dialog()), { timeout: 2000, what: 'the dialog closed' });
+  assert.equal(allFrames().length, 0, 'its frame unmounted');
+  assert.equal(toasts().length, 0, 'and no toast');
+  await resnap();
+  await waitUntil(() => actionsOf('t1').length === 2, { timeout: 2000, what: 'the buttons back' });
+});
+
 test('done \'failed\' keeps the dialog on its result and offers Undo; an outcome outside U85\'s names, or \'refused\', does nothing', async () => {
   await openRestore('t1');
   const [frame] = framesIn($('ta-confirm'));
@@ -625,6 +637,7 @@ test('the inspector keeps its painted Restore files through a change that is not
   await shell.frame(helloFrame({ active: 'n2' }));
   await gv.openOverlay();
   const caps = S.mirror.capabilities;
+  const access = S.mirror.access;
   try {
     const btn = () => $('gv-inspector').querySelector('[data-act="x:restore-files"]');
     await gv.selectNode('n2');
@@ -639,8 +652,22 @@ test('the inspector keeps its painted Restore files through a change that is not
     bus.emit('mirror', { what: ['capabilities'] });
     await shell.tick();
     assert.equal(btn(), null, 'code_revert false: gone');
+    // And a fresh selection paints none: applies(node) itself reads the
+    // capability and the viewer's right to act, not only the unregister.
+    await gv.selectNode('n1');
+    await gv.selectNode('n2');
+    await shell.tick();
+    assert.equal(btn(), null, 'code_revert false: not painted on a fresh selection');
+    S.mirror.capabilities = caps;
+    S.mirror.access = Object.freeze({ level: 'read', remote: true });
+    bus.emit('mirror', { what: ['access'] });
+    await gv.selectNode('n1');
+    await gv.selectNode('n2');
+    await shell.tick();
+    assert.equal(btn(), null, 'remote below full: not painted on a fresh selection');
   } finally {
     S.mirror.capabilities = caps;
+    S.mirror.access = access;
     bus.emit('mirror', { what: ['capabilities'] });
     await gv.closeOverlay?.();
     shell.setRoutes({});
