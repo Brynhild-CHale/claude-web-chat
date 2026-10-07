@@ -23,7 +23,7 @@ const { projectPaths } = require('../lib/core/paths');
 const { fakeSecrets } = require('../test-support/fake-secrets');
 const asksMod = require('../lib/server/domain/asks');
 
-const { createAsks, TTL_MS, HOOK_SILENT_MS, DUPLICATE_MS, LOCAL_RECENT_MS, AUDIT_MAX_BYTES } = asksMod;
+const { createAsks, TTL_MS, HOOK_SILENT_MS, DUPLICATE_MS, LOCAL_RECENT_MS, AUDIT_MAX_BYTES, RESOLVED_KEEP_MS } = asksMod;
 
 const T0 = 1_790_000_000_000;
 const PERF = process.env.WEB_CHAT_PERF === '1';
@@ -314,6 +314,15 @@ test('correlation: a PreToolUse arriving 30 ms after binds and does not resolve;
   assert.equal(r.tapOf('PermissionResolved').length, 0);
 });
 
+test('correlation: of two PreToolUse within 3 s before, the newest binds', async (t) => {
+  const r = rig(t);
+  hookEvent(r, 'PreToolUse', { useId: 'toolu_older', ts: T0 - 2000 });
+  hookEvent(r, 'PreToolUse', { useId: 'toolu_newer', ts: T0 - 20 });
+  hookEvent(r, 'PreToolUse', { useId: 'toolu_stale', ts: T0 - 3001 });
+  const a = await r.asks.create(body());
+  assert.equal(r.asks.publicView(a.id).tool_use_id, 'toolu_newer');
+});
+
 test('correlation: the envelope\'s own tool.use_id wins', async (t) => {
   const r = rig(t);
   const a = await r.asks.create(body({ useId: 'toolu_own' }));
@@ -552,6 +561,19 @@ test('decide: an acting answer on a request that cannot be shown whole is refuse
   const b = await r.asks.create(body({ input: { command: 'ok' }, session: 'sess-2' }));
   assert.equal(r.asks.decide(b.id, { behavior: 'allow' }, { version: 1, remote: true }).why_not, 'remote-off');
   assert.equal(r.asks.decide(a.id, { behavior: 'terminal' }, { version: 1 }).ok, true, 'answering in the terminal is always allowed');
+});
+
+test('retention: a resolved ask answers a late decide 409 for RESOLVED_KEEP_MS, then is dropped', async (t) => {
+  const r = rig(t);
+  const a = await r.asks.create(body());
+  r.asks.withdraw(a.id, a.secret, 'sigterm');
+  await r.clock.advance(RESOLVED_KEEP_MS - 1000);
+  await r.asks.create(body({ session: 'sess-2' }));
+  const late = r.asks.decide(a.id, { behavior: 'allow' }, { version: 1 });
+  assert.deepEqual(late, { ok: false, status: 409, state: 'resolved', outcome: 'terminal', decision: null }, 'how a late web answer learns it lost');
+  await r.clock.advance(1000);
+  await r.asks.create(body({ session: 'sess-3' }));
+  assert.equal(r.asks.decide(a.id, { behavior: 'allow' }, { version: 1 }).status, 404);
 });
 
 test('decide: the hook\'s long-poll wakes within one tick', async (t) => {
