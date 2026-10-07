@@ -180,7 +180,9 @@ export function focusChat(focus = 'composer') {
   if (focus === 'composer' || focus === undefined || focus === null) {
     const c = composer();
     if (c) {
-      try { c.focus(); return true; } catch (e) { console.error('[web-chat] the composer failed to take focus', e); }
+      try { c.focus(); } catch (e) { console.error('[web-chat] the composer failed to take focus', e); }
+      // A composer showing a note (off, or the host's) takes no focus: fall through.
+      if (els.dock && els.dock.contains(document.activeElement)) return true;
     }
   }
   const stream = document.getElementById('chat-stream');
