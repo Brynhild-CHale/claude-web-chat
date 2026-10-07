@@ -3,12 +3,13 @@
 // today, the answer surface next. What is pinned:
 //   * the gates every request passes before handle() runs: the Host check
 //     (421), the remote refusal (403, unless allowRemote), the preflight
-//     refusal (403, no CORS header); onRefused(req, 'host' | 'preflight'),
-//     called after the refusal is sent and unable to change it;
+//     refusal (403, no CORS header), the opt-in documents() Sec-Fetch-Dest
+//     refusal (403); onRefused(req, 'host' | 'preflight' | 'dest'), called
+//     after the refusal is sent and unable to change it;
 //   * the headers every response carries, a refusal's included, and the CSP's
 //     frame-ancestors (with X-Frame-Options only when framing is refused);
 //   * the kit: the call gate's codes, keyed nonces (eviction, no consume, gone
-//     on close), the body reader, the asset server's fence, a handler's throw
+//     on close, pools that never evict each other), the body reader, the asset server's fence, a handler's throw
 //     that never echoes its message, and the theme tokens;
 //   * the lifecycle: lazy start shared by concurrent callers, idle close with
 //     keepAlive, a close racing a start, a failed listen that can be retried;
@@ -293,6 +294,71 @@ test('a nonce minted before an IDLE close fails after the next ensure()', async 
   assert.equal(kit.checkNonce(n), false);
 });
 
+test('nonce pools: 64 nonces in one pool never evict another pool\'s; each pool keeps its own caps', async (t) => {
+  // The answer surface's caps: 64 a pool, 8 a key.
+  const { kit } = await boot(t, { nonce: { ttlMs: 60_000, max: 64, perKey: 8, pools: { tiny: { max: 2 } } } });
+  const control = kit.issueNonce('control:restore:t1', { pool: 'control' });
+  const setup = kit.issueNonce();
+  const asks = [];
+  for (let i = 0; i < 64; i++) asks.push(kit.issueNonce(`ask:a${i % 8}`, { pool: 'ask' }));
+  assert.ok(kit.checkNonce(control, 'control:restore:t1'), '64 ask-pool nonces leave the control pool\'s standing');
+  assert.ok(kit.checkNonce(setup), '... and the default pool\'s');
+  assert.ok(asks.every((n, i) => kit.checkNonce(n, `ask:a${i % 8}`)), 'the ask pool holds its 64');
+  kit.issueNonce('ask:a0', { pool: 'ask' });
+  assert.equal(kit.checkNonce(asks[0], 'ask:a0'), false, 'the 65th evicts the ask pool\'s oldest');
+  assert.ok(kit.checkNonce(control, 'control:restore:t1'), 'and nothing of another pool');
+
+  // And the other way: a control flood never touches an ask nonce.
+  const ask = kit.issueNonce('ask:live', { pool: 'ask' });
+  for (let i = 0; i < 64; i++) kit.issueNonce(`control:restore:x${i}`, { pool: 'control' });
+  assert.equal(kit.checkNonce(control, 'control:restore:t1'), false, 'the control pool evicted its own oldest');
+  assert.ok(kit.checkNonce(ask, 'ask:live'));
+
+  // A key checks only for itself, whatever the pool.
+  assert.equal(kit.checkNonce(ask, 'control:restore:t1'), false);
+  // A declared pool's own caps.
+  const t1 = kit.issueNonce('a', { pool: 'tiny' });
+  kit.issueNonce('b', { pool: 'tiny' });
+  kit.issueNonce('c', { pool: 'tiny' });
+  assert.equal(kit.checkNonce(t1, 'a'), false, 'tiny holds two');
+  assert.ok(kit.checkNonce(ask, 'ask:live'));
+});
+
+test('documents(): a document request whose Sec-Fetch-Dest is not iframe or document is 403 before handle(), and reported \'dest\'', async (t) => {
+  const seen = [];
+  const b = await boot(t, {
+    documents: (rq) => rq.method === 'GET' && rq.url.startsWith('/page'),
+    onRefused: (rq, code) => seen.push({ code, url: rq.url }),
+  });
+  for (const dest of ['image', 'empty', 'script', 'style', 'object', 'embed', 'frame', '']) {
+    const r = await b.get('/page?key=k', { 'sec-fetch-dest': dest });
+    assert.equal(r.status, 403, dest);
+    assert.deepEqual(r.json, { ok: false, refused: 'dest', error: 'this document only loads in a frame or a window' });
+    assert.equal(r.headers['cache-control'], 'no-store', 'the common headers, as on every refusal');
+  }
+  assert.deepEqual(b.calls, [], 'handle() never ran, so no nonce was minted');
+  assert.equal(seen.length, 8);
+  assert.deepEqual(seen[0], { code: 'dest', url: '/page?key=k' });
+
+  for (const dest of ['iframe', 'document', null]) {
+    const r = await b.get('/page?key=k', dest == null ? {} : { 'sec-fetch-dest': dest });
+    assert.equal(r.status, 200, String(dest));
+    assert.ok(b.kit.checkNonce(nonceIn(r), 'k'), `${dest}: served with a live nonce`);
+  }
+  // Not a document (an asset, an API): its Sec-Fetch-Dest is its own business.
+  assert.equal((await b.get('/x', { 'sec-fetch-dest': 'image' })).status, 200);
+  assert.equal(seen.length, 8);
+
+  // A documents() that throws fails closed; none passed is today's engine.
+  const thrower = await boot(t, { documents: () => { throw new Error('broke'); } });
+  assert.equal((await thrower.get('/x', { 'sec-fetch-dest': 'image' })).status, 403);
+  assert.equal((await thrower.get('/x', { 'sec-fetch-dest': 'iframe' })).status, 200);
+  const plain = await boot(t);
+  const r = await plain.get('/page', { 'sec-fetch-dest': 'image' });
+  assert.equal(r.status, 200, 'no documents(): no Sec-Fetch-Dest gate');
+  assert.ok(plain.kit.checkNonce(nonceIn(r)));
+});
+
 test('readBody: {} when empty, 400 for bad JSON, 413 over maxBody', async (t) => {
   const { port, host } = await boot(t, { maxBody: 1024 });
   const post = (body, extra = {}) => req(port, { method: 'POST', path: '/body', headers: { host, 'content-type': 'application/json', ...extra }, body });
@@ -465,6 +531,14 @@ test('the setup page keeps its refusal wording on the engine', async (t) => {
   const m = /<meta name="wc-setup-token" content="([^"]+)">/.exec(page.text);
   assert.ok(m, 'the page carries its nonce');
   const n = m[1];
+  // The setup page passes no documents(): any Sec-Fetch-Dest loads the same
+  // page (its own fetch-metadata rules, if any, are the page's).
+  const strip = (r) => r.text.replace(/content="[A-Za-z0-9_-]{40,}"/g, 'content="N"');
+  for (const dest of ['image', 'empty', 'document']) {
+    const other = await req(port, { path: '/setup/tunnel', headers: { host, 'sec-fetch-dest': dest } });
+    assert.equal(other.status, page.status, dest);
+    assert.equal(strip(other), strip(page), dest);
+  }
   const good = (extra = {}) => ({ host, origin, 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-wc-setup': n, ...extra });
   const post = (headers) => req(port, { method: 'POST', path: '/setup/tunnel/status', headers, body: {} });
   const err = async (headers) => { const r = await post(headers); assert.equal(r.status, 403, r.text); return r.json.error; };
