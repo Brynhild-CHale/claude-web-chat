@@ -898,12 +898,14 @@ const PATTERNS = [
     // shape decides whether Claude Code honours the user's answer or falls back
     // to the terminal. buildAskOutput maps a decision onto the hook's own
     // unredacted copy of the request (ruling A3: picks by index), so a second
-    // builder is a second place a masked answer could be mapped wrongly.
+    // builder is a second place a masked answer could be mapped wrongly. The
+    // key may be quoted too (`"hookEventName": "PermissionRequest"`, the
+    // spelling a JSON literal or a printed line would use).
     name: "hookEventName: 'PermissionRequest' (the ask hook's output)",
     home: 'lib/hooks/ask-output.js — `buildAskOutput(kind, local, decision)`',
     what: 'printing a PermissionRequest decision for Claude Code',
     roots: ['lib', 'bin'],
-    re: /hookEventName\s*:\s*['"`]PermissionRequest['"`]/g,
+    re: /\bhookEventName['"`]?\s*:\s*['"`]PermissionRequest['"`]/g,
     baseline: {
       'lib/hooks/ask-output.js': 1,
     },
@@ -1084,12 +1086,12 @@ const PATTERNS = [
     // domain emits one, after its gates (the answer origin's nonce, the rate
     // limits, the audit); an event built anywhere else skips all three.
     // Counted on lines that are not `//` comments: the injector's header quotes
-    // the event it follows.
+    // the event it follows. The key may be quoted too (`"kind": "control"`).
     name: "kind: 'control' (a control event)",
     home: 'lib/server/control/ — the action table (`createControl().action`)',
     what: 'emitting a control event',
     roots: ['lib', 'bin', 'scripts'],
-    re: /^(?![ \t]*\/\/).*\bkind\s*:\s*['"`]control['"`]/gm,
+    re: /^(?![ \t]*\/\/).*\bkind['"`]?\s*:\s*['"`]control['"`]/gm,
     baseline: {
       'lib/server/control/interrupt.js': 1,
       'lib/server/control/revert.js': 1,
