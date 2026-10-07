@@ -58,6 +58,9 @@ const SPEC_TEMPLATE = {
 
 const HOOK_BIN = path.join(PACKAGE_ROOT, 'bin', 'claude-web-chat-hook.js');
 const HALT_SCRIPT = path.join(PACKAGE_ROOT, 'lib', 'hooks', 'claude-web-chat-hook-halt.sh');
+// A resolved halt handler's argv tail: the script's own file name and its event.
+// Anchored on it so no match can come from the checkout path before it.
+const HALT_TAIL = /\/claude-web-chat-hook-halt\.sh" (?:pre|post|batch)$/;
 
 function tmpRoot(prefix = 'wc-hooks-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -170,7 +173,7 @@ test('resolveHookCommand: a checkout resolves halt to `sh "<root>/lib/hooks/…-
     assert.equal(out, `sh "${HALT_SCRIPT}" ${ev}`);
     assert.equal(mf.resolveHookCommand(out), out, 'the resolved form is recognised as resolved');
     assert.ok(reg.hookCommandResolvable(out), 'and it names the script this tree ships');
-    assert.match(out, /claude-web-chat-hook/, 'the script\'s name keeps the token every reader keys on');
+    assert.match(out, HALT_TAIL, 'the script\'s name keeps the token every reader keys on');
   }
   assert.ok(fs.existsSync(HALT_SCRIPT));
   for (const sub of ['mirror', 'turn-begin', 'turn-end', 'ask']) {
@@ -454,7 +457,12 @@ test('an event holding the mirror handler but not the halt one is stale; apply a
   const root = installedRoot(t);
   reg.apply(root, { runClaude: fakeClaude().fn });
   const s = readSettings(root);
-  s.hooks.PreToolUse[0].hooks = s.hooks.PreToolUse[0].hooks.filter((h) => !/halt/.test(h.command));
+  // Drop the halt handler by its argv's own tail (`…-halt.sh" pre`), never by a
+  // bare /halt/: the command carries the checkout path, and a checkout whose
+  // path holds 'halt' would lose the mirror handler too.
+  s.hooks.PreToolUse[0].hooks = s.hooks.PreToolUse[0].hooks.filter((h) => !HALT_TAIL.test(h.command));
+  assert.deepStrictEqual(s.hooks.PreToolUse[0].hooks.map((h) => mf.parseHookCommand(h.command).sub), ['mirror'],
+    'the filter took the halt handler, and only it');
   writeSettings(root, s);
 
   const st = reg.inspect(root);
@@ -468,6 +476,17 @@ test('an event holding the mirror handler but not the halt one is stale; apply a
   assert.deepStrictEqual(readSettings(root).hooks.PreToolUse, resolvedTemplate().PreToolUse,
     'beside the mirror handler, in the template\'s own shape — not a second group');
   assert.ok(reg.inspect(root).handlers.every((r) => r.state === 'ok'));
+});
+
+test('the halt handler is told apart by its argv tail, never by a checkout path that holds "halt"', (t) => {
+  withTempHome(t);
+  // The resolved template's PreToolUse pair as it reads from a worktree like
+  // wc085-halt-hook: both commands carry that path.
+  const haltPath = path.join(path.dirname(PACKAGE_ROOT), 'wc085-halt-hook');
+  const [mirror, halt] = resolvedTemplate().PreToolUse[0].hooks.map((h) => h.command.split(PACKAGE_ROOT).join(haltPath));
+  assert.ok(/halt/.test(mirror), 'the old bare /halt/ filter would drop the mirror handler too');
+  assert.ok(!HALT_TAIL.test(mirror), 'the anchored tail does not');
+  assert.ok(HALT_TAIL.test(halt), 'and it still takes the halt handler');
 });
 
 test('a halt handler in the Node form is stale (its shape), and apply rewrites it to the script', (t) => {
