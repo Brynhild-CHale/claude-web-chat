@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en" data-mode="{{MODE}}" data-kind="{{KIND}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<!-- this load's answer nonce (lib/server/answer-surface) — read by answer.js, sent as X-WC-Answer -->
+<meta name="wc-answer-nonce" content="{{NONCE}}">
+{{META}}
+<title>web-chat · waiting for you</title>
+<link rel="stylesheet" href="/answer/palette.css">
+<link rel="stylesheet" href="/answer/answer.css">
+<script type="module" src="/answer/answer.js"></script>
+</head>
+<body>
+<main id="wc-answer" class="wc-answer" aria-live="polite"></main>
+</body>
+</html>
