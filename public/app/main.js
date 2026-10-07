@@ -28,6 +28,10 @@ import { initPullStub } from './chat-pull-stub.js';
 import { initChatTrays } from './chat-trays.js';
 import { initChatDetail } from './chat-detail.js';
 import { initGraphTurns } from './graph-turns.js';
+import { initAsks } from './asks.js';
+import { initChatComposer } from './chat-composer.js';
+import { initSessionControl } from './session-control.js';
+import { initTurnActions } from './turn-actions.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -69,4 +73,16 @@ initPullStub();
 initChatTrays();
 initChatDetail();
 initGraphTurns();
+// Tranche 4, after the chat, its trays and the graph's turns: the asks (the
+// answer frames on the answer origin; registering the approvals retires the
+// bar's and the card's "answering … is under development" stand-ins once the
+// first answer-surface port is known), the composer (it takes over the
+// panel's note; after initChatStream), the Stop control on the bar and the
+// panel (control frames, after initAsks), and the turn actions — Restore
+// files and Fork from here (after initSessionControl, whose frames they
+// mount). Each idempotent; the composer's promise is fire-and-forget.
+initAsks({ onFrame, onHello });
+initChatComposer();
+initSessionControl();
+initTurnActions();
 connect();
