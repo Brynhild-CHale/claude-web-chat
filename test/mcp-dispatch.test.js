@@ -85,7 +85,7 @@ test('tools/call disabled BY THE MARKER still points at `claude-web-chat on`', a
   assert.ok(!payload.hint.includes('--'), 'project hint carries no scope flag');
 });
 
-test('tools/call disabled at user scope beats project and appends --user', async (t) => {
+test('tools/call disabled at user scope beats project and appends --global, the flag `on` reads', async (t) => {
   const home = mkTmp();
   fs.mkdirSync(path.join(home, '.web-chat'), { recursive: true });
   fs.writeFileSync(path.join(home, '.web-chat', 'disabled'), '');
@@ -94,7 +94,7 @@ test('tools/call disabled at user scope beats project and appends --user', async
   assert.equal(res.isError, true);
   const payload = JSON.parse(res.content[0].text);
   assert.equal(payload.scope, 'user');
-  assert.match(payload.hint, /--user/);
+  assert.match(payload.hint, /claude-web-chat on --global`/);
 });
 
 test('tools/call unknown tool while enabled -> error, no daemon spawned', async (t) => {
