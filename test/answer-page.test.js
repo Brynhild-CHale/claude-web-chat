@@ -526,6 +526,38 @@ test('runtime: a refusal and a lost race are said in the frame; a 409 shows what
   assert.equal(p.posts.filter((x) => x.msg.type === 'wc-answer:done').length, 0, 'no done for an answer that lost');
 });
 
+test('runtime: after the frame\'s own `Answer in terminal` it says "Answer it in the terminal"; only a terminal that resolved it reads "Answered in the terminal"', async (t) => {
+  // The view's words, by state: the user's own choice (decided) and the
+  // terminal's answer (resolved) share the outcome 'terminal'.
+  for (const layout of ['card', 'bar', 'sheet']) {
+    const mine = V.renderAsk(blankDoc(), view({ why_not: 'resolved', state: 'decided', outcome: 'terminal', can_answer: false }), { layout });
+    assert.equal(mine.root.querySelector('.aw-status').textContent, 'Answer it in the terminal', `decided (${layout})`);
+    const theirs = V.renderAsk(blankDoc(), view({ why_not: 'resolved', state: 'resolved', outcome: 'terminal', can_answer: false }), { layout });
+    assert.equal(theirs.root.querySelector('.aw-status').textContent, 'Answered in the terminal', `resolved (${layout})`);
+  }
+  // The frame's own click, end to end through the runtime.
+  const decided = view({ state: 'decided', outcome: 'terminal', why_not: 'resolved', can_answer: false, version: 4 });
+  let release = null;
+  const fetch = (u, init) => {
+    if (init && init.method === 'POST') return json({ ok: true, state: 'decided', outcome: 'terminal', version: 4 });
+    if (/\?v=3/.test(u)) return new Promise((r) => { release = () => r(json(decided)); });
+    if (/\?v=/.test(u)) return HANG();
+    return json(view());
+  };
+  const p = await openPage(t, { layout: 'card', proof: true, fetch });
+  await settle();
+  const terminal = $(p.doc, '.aw-terminal');
+  makeReady(p, terminal);
+  click(p, terminal);
+  await settle();
+  assert.deepEqual(decides(p)[0].body.decision, { behavior: 'terminal' });
+  assert.equal($(p.doc, '.aw-status').textContent, 'Answer it in the terminal', 'right after the decide');
+  assert.deepEqual(p.posts.at(-1).msg, { type: 'wc-answer:done', id: ID, outcome: 'terminal' });
+  release();
+  await settle();
+  assert.equal($(p.doc, '.aw-status').textContent, 'Answer it in the terminal', 'and after the long-poll redraws the decided ask');
+});
+
 /* ══ the messages ════════════════════════════════════════════════════════════ */
 
 test('messages: the first post is a size; size is clamped to 22-480 and sent only when it changes', async (t) => {
