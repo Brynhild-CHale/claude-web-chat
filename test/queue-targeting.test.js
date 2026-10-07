@@ -255,6 +255,19 @@ test('one message per park: with an empty park the first of two typed messages g
   assert.deepEqual(state.queue.map((q) => q.id), [b.id]);
 });
 
+test('one message per park: a parked stop request leaves room for a typed message', () => {
+  const state = freshState({ live: false });
+  const { bus } = capturedBus();
+  const stop = stopRequest(state, bus);
+  assert.ok(queue.release(state, bus, [stop.id]).parked);
+  const m = queue.enqueueMessage(state, bus, message());
+  const r = queue.release(state, bus, [m.id]);
+  assert.equal(r.heldBack, undefined, 'a stop request is not the park\'s one message');
+  assert.ok(r.parked);
+  assert.deepEqual(state.pendingWake.batch.filter(queue.isMessage).map((x) => x.id), [stop.id, m.id]);
+  assert.equal(state.queue.length, 0);
+});
+
 test('one message per park: a live channel holds nothing back; a fold may join a second message', () => {
   const state = freshState({ live: false });
   const { bus } = capturedBus();
