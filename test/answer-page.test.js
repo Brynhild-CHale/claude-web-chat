@@ -558,6 +558,37 @@ test('runtime: after the frame\'s own `Answer in terminal` it says "Answer it in
   assert.equal($(p.doc, '.aw-status').textContent, 'Answer it in the terminal', 'and after the long-poll redraws the decided ask');
 });
 
+test('runtime: a frame loaded after the hook collected the web\'s terminal choice reads "Answer it in the terminal"; a terminal-answered ask reads "Answered in the terminal"', async (t) => {
+  // The view's words: both are resolved with the outcome 'terminal'; only the
+  // web's own choice carries web_chose_terminal.
+  for (const layout of ['card', 'bar', 'sheet']) {
+    const handed = V.renderAsk(blankDoc(), view({ why_not: 'resolved', state: 'resolved', outcome: 'terminal', web_chose_terminal: true, can_answer: false }), { layout });
+    assert.equal(handed.root.querySelector('.aw-status').textContent, 'Answer it in the terminal', `collected web choice (${layout})`);
+    const theirs = V.renderAsk(blankDoc(), view({ why_not: 'resolved', state: 'resolved', outcome: 'terminal', web_chose_terminal: false, can_answer: false }), { layout });
+    assert.equal(theirs.root.querySelector('.aw-status').textContent, 'Answered in the terminal', `terminal answered (${layout})`);
+  }
+  // A reload: the frame's first GET already reads the collected choice.
+  const collected = view({ state: 'resolved', outcome: 'terminal', web_chose_terminal: true, why_not: 'resolved', can_answer: false, version: 6 });
+  const p = await openPage(t, { layout: 'card', fetch: (u) => (/\?v=/.test(u) ? HANG() : json(collected)) });
+  await settle();
+  assert.equal($(p.doc, '.aw-status').textContent, 'Answer it in the terminal', 'reloaded frame');
+  assert.equal($$(p.doc, 'button[data-act="decide"]').length, 0);
+  // The 409 refresh path: a click that lost to the hook's collection.
+  let current = view();
+  const fetch = (u, init) => {
+    if (init && init.method === 'POST') return json({ ok: false, state: 'resolved', outcome: 'terminal' }, 409);
+    if (/\?v=/.test(u)) return HANG();
+    return json(current);
+  };
+  const q = await openPage(t, { layout: 'card', proof: true, fetch });
+  await settle();
+  makeReady(q, $(q.doc, '.aw-allow'));
+  current = collected;
+  click(q, $(q.doc, '.aw-allow'));
+  await settle();
+  assert.equal($(q.doc, '.aw-status').textContent, 'Answer it in the terminal', 'after a 409');
+});
+
 /* ══ the messages ════════════════════════════════════════════════════════════ */
 
 test('messages: the first post is a size; size is clamped to 22-480 and sent only when it changes', async (t) => {
