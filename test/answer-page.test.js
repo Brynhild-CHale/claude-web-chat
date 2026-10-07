@@ -479,8 +479,13 @@ test('runtime: a new version restarts the cooldown and the proof', async (t) => 
   assert.equal($(p.doc, 'pre.aw-code').textContent, 'npm run build', 'redrawn');
   click(p, $(p.doc, '.aw-allow'));
   assert.equal(decides(p).length, 0, 'the new request is not answered by a click meant for the old one');
-  p.vis.report();
+  // Past the cooldown, but the new container has not been proven visible yet:
+  // the old container's proof does not carry over.
   p.clock.t += 700;
+  click(p, $(p.doc, '.aw-allow'));
+  assert.equal(decides(p).length, 0, 'the proof starts again for the new container');
+  p.vis.report();
+  p.clock.t += 600;
   click(p, $(p.doc, '.aw-allow'));
   await settle();
   assert.equal(decides(p)[0].body.version, 4);
