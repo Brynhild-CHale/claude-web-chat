@@ -111,7 +111,12 @@ function mkTmp(prefix = 'wc-hk-') {
 // /api/health passes) and records each request's method/url/parsed body.
 // `routes` overrides the JSON body per `METHOD /url` (e.g. a fake GET
 // /api/health naming some other build); everything else answers {ok:true}.
-// A route given as { status, body } answers with that status (a 409 refusal).
+// A route given as { status, body } answers with that status (a 409 refusal);
+// one given as a function is called with the request's parsed body and answers
+// what it returns; HANG reads the request and never answers; RAW answers a
+// body that is not JSON.
+const HANG = Symbol('hang');
+const RAW = Symbol('raw');
 function stubServer(routes = {}) {
   const requests = [];
   const server = http.createServer((req, res) => {
@@ -121,7 +126,10 @@ function stubServer(routes = {}) {
       let json = null; try { json = body ? JSON.parse(body) : null; } catch {}
       requests.push({ method: req.method, url: req.url, body: json });
       const key = `${req.method} ${req.url}`;
-      const r = Object.prototype.hasOwnProperty.call(routes, key) ? routes[key] : { ok: true };
+      let r = Object.prototype.hasOwnProperty.call(routes, key) ? routes[key] : { ok: true };
+      if (typeof r === 'function') r = r(json);
+      if (r === HANG) return;
+      if (r === RAW) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{not json'); return; }
       const withStatus = r && typeof r === 'object' && Number.isInteger(r.status) && 'body' in r;
       res.writeHead(withStatus ? r.status : 200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(withStatus ? r.body : r));
@@ -263,7 +271,7 @@ test('turn-begin/turn-end: every daemon call is pinned to THIS root and never sp
   portfiles.probeReachable = async (port, ms) => { probes.push(ms); return false; };
   await turnEnd({}, { root, ...PROBE });
 
-  assert.deepEqual(calls.map((c) => c.path), ['/api/turn-begin', '/api/queue/pending', '/api/health', '/api/turn-end', '/api/unlock'],
+  assert.deepEqual(calls.map((c) => c.path), ['/api/turn-begin', '/api/queue/pending', '/api/control/notices/claim', '/api/health', '/api/turn-end', '/api/unlock'],
     'every daemon call either hook makes');
   for (const c of calls) {
     assert.equal(c.opts.root, root, `${c.path} must pin the root it was fired for`);
@@ -385,8 +393,8 @@ test('turn-begin: a 409 is noted in hook.log, and the park is still read and cla
   });
   const ctx = oneFrame(await captureStdout(() => turnBegin({ prompt: 'hi', session_id: 'sess-409' }, { root, ...PROBE })));
   assert.deepStrictEqual(stub.requests.map((r) => `${r.method} ${r.url}`).filter((k) => !k.startsWith('HEAD')),
-    ['POST /api/turn-begin', 'GET /api/queue/pending', 'POST /api/queue/pending/consume', 'GET /api/health']);
-  assert.deepStrictEqual(stub.requests[stub.requests.length - 2].body, { id: 'pw1' }, 'the park is claimed by its id');
+    ['POST /api/turn-begin', 'GET /api/queue/pending', 'POST /api/queue/pending/consume', 'POST /api/control/notices/claim', 'GET /api/health']);
+  assert.deepStrictEqual(stub.requests.find((r) => r.url === '/api/queue/pending/consume').body, { id: 'pw1' }, 'the park is claimed by its id');
   assert.match(ctx, /Parked delivery/);
   assert.match(ctx, /PARKED-ON-A-409/);
   const log = fs.readFileSync(projectPaths(root).hookLog, 'utf8');
@@ -504,6 +512,165 @@ test('turn-begin: the no-server and no-viewer notices are conditional on the too
   }
   assert.match(await noServer({}), /MCP tools still work if they are in your tool list/);
   assert.match(await noViewer({}), /no browser is watching/);
+});
+
+// --- turn-begin: the targeted park and the control layer's notices (tranche 4, U63; spec §3.1 step 5, §6.4, §15.3) ---
+
+const promptClass = require('../lib/core/prompt-class');
+const CLAIM = 'POST /api/control/notices/claim';
+const BUDGET = 10000 - 500;
+
+// A stub project whose park holds `content` (claimable once) and whose claim
+// route answers `claim` (a value, or a function of the posted body).
+async function noticeStub(t, { content = null, claim = { ok: true, notices: [] }, health = instanceHealth({ package_version: packageVersion() }), extra = {} } = {}) {
+  let parked = content;
+  const routes = {
+    'GET /api/health': health,
+    'GET /api/queue/pending': () => ({ pending: parked ? { id: 'pw7', envelope: { content: parked } } : null }),
+    'GET /api/queue/pending?pid=4242': () => ({ pending: parked ? { id: 'pw7', envelope: { content: parked } } : null }),
+    'POST /api/queue/pending/consume': () => { const ok = parked != null; parked = null; return { consumed: ok }; },
+    [CLAIM]: claim,
+    ...extra,
+  };
+  return skewStub(t, routes);
+}
+const claims = (stub) => stub.requests.filter((r) => `${r.method} ${r.url}` === CLAIM);
+const begin = (root, payload, env = ENV) => captureStdout(() => turnBegin(payload, { root, ...PROBE, env, now: NOW }));
+
+test('turn-begin: the parked prefix lives in lib/core/prompt-class and turn-begin re-exports it', () => {
+  assert.equal(turnBegin.PARKED_PREFIX, promptClass.PARKED_PREFIX);
+  assert.ok(promptClass.PARKED_PREFIX.startsWith(promptClass.PARKED_HEAD));
+  assert.equal(promptClass.PARKED_HEAD, '[web-chat] Parked delivery');
+  assert.equal(turnBegin.CONTEXT_MAX - turnBegin.CONTEXT_MARGIN, BUDGET);
+});
+
+test('turn-begin: with CLAUDE_PID it reads only its own or an untargeted park (?pid=), without one the plain route', async (t) => {
+  const { stub, root } = await noticeStub(t, { content: 'TARGETED' });
+  const ctx = oneFrame(await begin(root, promptPayload(root)));
+  const keys = stub.requests.map((r) => `${r.method} ${r.url}`).filter((k) => !k.startsWith('HEAD'));
+  assert.deepStrictEqual(keys, ['POST /api/turn-begin', 'GET /api/queue/pending?pid=4242', 'POST /api/queue/pending/consume', CLAIM, 'GET /api/health']);
+  assert.ok(ctx.startsWith(turnBegin.PARKED_PREFIX) && ctx.includes('TARGETED'));
+
+  const plain = await noticeStub(t, { content: 'ANY' });
+  await begin(plain.root, promptPayload(plain.root), {});
+  assert.ok(plain.stub.requests.some((r) => r.method === 'GET' && r.url === '/api/queue/pending'));
+  assert.ok(!plain.stub.requests.some((r) => r.url.startsWith('/api/queue/pending?')), 'no pid, no query');
+});
+
+test('turn-begin: the claim posts {session_id, claude_pid, max_chars}, max_chars the budget less the parked part', async (t) => {
+  const { stub, root } = await noticeStub(t, { content: 'P'.repeat(1234) });
+  await begin(root, promptPayload(root));
+  assert.equal(claims(stub).length, 1);
+  assert.deepStrictEqual(claims(stub)[0].body, {
+    session_id: SID, claude_pid: 4242, max_chars: BUDGET - (turnBegin.PARKED_PREFIX.length + 1234),
+  });
+  // Nothing parked: the whole budget.
+  await begin(root, promptPayload(root));
+  assert.deepStrictEqual(claims(stub)[1].body, { session_id: SID, claude_pid: 4242, max_chars: BUDGET });
+});
+
+test('turn-begin: each notice\'s text follows the parked part, in order; a malformed entry is skipped', async (t) => {
+  const notices = [
+    { id: 'n1', text: '[web-chat] Files restored from the web-chat page to before turn 3: a.js rewritten.' },
+    { id: 'n2' },
+    'just a string',
+    null,
+    { id: 'n3', text: { nested: 'object' } },
+    { id: 'n4', text: '' },
+    { id: 'n5', text: 'SECOND NOTICE' },
+  ];
+  const { root } = await noticeStub(t, { content: 'PARKED-X', claim: { ok: true, notices } });
+  const ctx = oneFrame(await begin(root, promptPayload(root)));
+  assert.deepStrictEqual(ctx.split('\n\n').slice(-3), [
+    'PARKED-X', notices[0].text, 'SECOND NOTICE',
+  ], 'the parked part (whose prefix ends in a blank line), then each notice\'s text');
+  assert.ok(!ctx.includes('[object Object]') && !ctx.includes('just a string'));
+});
+
+test('turn-begin: with nothing parked the notices come first, before the no-viewer line', async (t) => {
+  const { root } = await noticeStub(t, {
+    claim: { ok: true, notices: [{ id: 'n1', text: 'NOTICE-ONE' }] },
+    health: instanceHealth({ package_version: packageVersion(), viewers: 0 }),
+  });
+  const ctx = oneFrame(await begin(root, promptPayload(root)));
+  const [first, second] = ctx.split('\n\n');
+  assert.equal(first, 'NOTICE-ONE');
+  assert.match(second, /no browser is watching/);
+});
+
+test('turn-begin: a refusal, a 404, a 500, a malformed body and a timeout each add nothing, and the parked part still appears', async (t) => {
+  for (const [name, claim] of [
+    ['refused', { status: 403, body: { ok: false, hint: 'host only' } }],
+    ['404 (an older daemon)', { status: 404, body: { error: 'not found' } }],
+    ['500', { status: 500, body: { ok: false, error: 'claim failed' } }],
+    ['not JSON', RAW],
+    ['ok:false', { ok: false, notices: [{ id: 'n1', text: 'NO' }] }],
+    ['no notices array', { ok: true, notices: 'NO' }],
+  ]) {
+    const { root } = await noticeStub(t, { content: 'STILL-PARKED', claim });
+    const ctx = oneFrame(await begin(root, promptPayload(root)));
+    assert.equal(ctx, `${turnBegin.PARKED_PREFIX}STILL-PARKED`, name);
+  }
+});
+
+test('turn-begin: a claim that never answers times out (3 s) and adds nothing', async (t) => {
+  const { stub, root } = await noticeStub(t, { content: 'STILL-PARKED', claim: HANG });
+  const ctx = oneFrame(await begin(root, promptPayload(root)));
+  assert.equal(ctx, `${turnBegin.PARKED_PREFIX}STILL-PARKED`);
+  assert.equal(claims(stub).length, 1);
+});
+
+test('turn-begin: a task turn claims too', async (t) => {
+  const { stub, root } = await noticeStub(t, { claim: { ok: true, notices: [{ id: 'n1', text: 'FOR-THE-TASK-TURN' }] } });
+  const note = '<task-notification><task-id>b1</task-id><summary>done</summary></task-notification>';
+  const ctx = oneFrame(await begin(root, promptPayload(root, { prompt: note })));
+  assert.equal(stub.requests.find((r) => r.url === '/api/turn-begin').body.author, 'task');
+  assert.equal(claims(stub).length, 1);
+  assert.equal(ctx, 'FOR-THE-TASK-TURN');
+});
+
+test('turn-begin: a 9,000-character park and a pending notice stay under 10,000 characters; the notice comes with a later turn', async (t) => {
+  const notice = { id: 'n1', text: `[web-chat] Files restored from the web-chat page: ${'f'.repeat(900)}` };
+  let pending = [notice];
+  // The daemon returns only whole notices that fit, and keeps the rest.
+  const claim = (body) => {
+    const fit = pending.filter((n) => n.text.length <= body.max_chars);
+    pending = pending.filter((n) => !fit.includes(n));
+    return { ok: true, notices: fit };
+  };
+  const { stub, root } = await noticeStub(t, {
+    content: `${'p'.repeat(8990)}END-PARKED`, claim,
+    health: instanceHealth({ package_version: '0.0.1-old' }),
+  });
+  writeSettings(root);
+  const inspect = () => inspectState(['SessionStart', 'PreToolUse']);
+  const run = () => captureStdout(() => turnBegin(promptPayload(root), { root, ...PROBE, env: ENV, now: NOW, inspectRegistration: inspect }));
+
+  const first = oneFrame(await run());
+  assert.ok(first.length <= BUDGET, `${first.length} characters`);
+  assert.ok(first.startsWith(turnBegin.PARKED_PREFIX) && first.includes('END-PARKED'), 'the park whole');
+  assert.ok(!first.includes('Files restored'), 'the notice waits');
+  assert.ok(!/hooks are older/.test(first), 'the drift line had no room');
+  assert.equal(claims(stub)[0].body.max_chars, BUDGET - turnBegin.PARKED_PREFIX.length - 9000);
+
+  // The next turn: nothing parked, the whole budget — the notice, and the
+  // drift line it had no room for (it was not recorded as said).
+  const second = oneFrame(await run());
+  assert.ok(second.startsWith(notice.text));
+  assert.match(second, /hooks are older/);
+  assert.ok(second.length <= BUDGET);
+  assert.deepStrictEqual(pending, []);
+});
+
+test('turn-begin: a park that leaves no room drops the skew line too, and makes no claim', async (t) => {
+  const content = 'q'.repeat(BUDGET - turnBegin.PARKED_PREFIX.length);
+  const { stub, root } = await noticeStub(t, { content, health: instanceHealth({ package_version: '0.0.1-old' }) });
+  const ctx = oneFrame(await begin(root, { prompt: 'hi', session_id: 's-full' }));
+  assert.equal(ctx.length, BUDGET);
+  assert.ok(!/claude-web-chat restart/.test(ctx), 'no room for the skew line');
+  assert.equal(claims(stub).length, 0, 'max_chars under 1: the notices wait');
+  // The skew line was not recorded as said: the next prompt says it.
+  assert.match(oneFrame(await begin(root, { prompt: 'hi', session_id: 's-full' })), /claude-web-chat restart/);
 });
 
 // --- turn-end (in-process) ---
