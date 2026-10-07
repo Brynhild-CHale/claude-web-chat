@@ -612,7 +612,13 @@ async function revertItem(id) {
 // the rail's own buttons; a refusal (a remote viewer below `full` removing a
 // message) re-reads the queue, so the item comes back rather than vanishing
 // here while the daemon keeps it. Answers whether the daemon removed it.
+// A removed message leaves the pending list with it: the daemon drops its
+// receipt with no frame of its own, and the remove frame that follows finds
+// the item already gone from `items`. The re-read after a refusal learns it
+// back.
 export async function removeItem(id) {
+  const it = items.find((x) => x.id === id);
+  if (isMessage(it) && it.msg_id) { known.delete(it.msg_id); receipts.delete(it.msg_id); confirmedAt.delete(it.msg_id); }
   items = items.filter((x) => x.id !== id);
   render();
   let ok = false;

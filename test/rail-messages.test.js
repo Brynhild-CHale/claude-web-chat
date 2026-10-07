@@ -232,6 +232,14 @@ test('a message removed (not delivered) leaves the pending list', async () => {
   assert.equal(byMsg(MID(6)), undefined);
 });
 
+test('a message the user removes with ⟲ leaves the pending list (its remove frame finds it already gone)', async () => {
+  await setQueue([msg(1)], [{ msg_id: MID(1), state: 'queued', at: 1 }]);
+  shell.click(row('q1').querySelector('.qi-revert'));
+  await shell.tick();
+  await shell.frame({ type: 'queue', op: 'remove', ids: ['q1'], id: 'q1', reason: 'removed', count: 0 });
+  assert.equal(byMsg(MID(1)), undefined, 'a removed message is not still queued at position 1');
+});
+
 /* ── positions ───────────────────────────────────────────────────────────── */
 
 test('positions: per conversation among queued autosend messages; held has none; null is the primary\'s', async () => {

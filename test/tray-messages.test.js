@@ -21,7 +21,7 @@ const ZERO = { shells: 0, agents: 0, workflows: 0, monitors: 0 };
 let shell, S, Q, A, trays, $;
 let current = null;
 let rev = 5000;
-const daemon = { items: [], answers: {} };
+const daemon = { items: [], answers: {}, receipts: null };
 
 const conversation = (id) => ({ id, rev: 1, title: `title of ${id}`, headless: false, counts: ZERO,
   live: { state: 'working', since: T - 60000, last_activity_at: T - 1000 } });
@@ -42,7 +42,7 @@ const signal = (n) => ({ id: `s${n}`, kind: 'signal', source: 'pane', summary: `
 function route(url, init = {}) {
   const method = String(init.method || 'GET').toUpperCase();
   const p = url.split('?')[0];
-  if (p === '/api/queue' && method === 'GET') return { items: daemon.items, count: daemon.items.length, receipts: [] };
+  if (p === '/api/queue' && method === 'GET') return { items: daemon.items, count: daemon.items.length, receipts: daemon.receipts || [] };
   if (p === '/api/queue/pending') return { pending: null };
   const a = daemon.answers[`${method} ${p}`];
   if (typeof a === 'function') return a(url, init);
@@ -90,6 +90,7 @@ after(() => shell.restore());
 
 afterEach(() => {
   daemon.answers = {};
+  daemon.receipts = null;
   trays.closeTray({ returnFocus: false });
 });
 
@@ -190,6 +191,19 @@ test('Send now posts push {ids: [id]} and shows the waiting hint', async () => {
   shell.click(act(el, 'send-now'));
   await waitUntil(() => note(el).textContent === 'Sending a message needs full access.', { timeout: 2000 });
   assert.equal(note(el).dataset.tone, undefined, 'a refusal is in the refusal ink');
+});
+
+test('Remove takes a message off the pending list too (its remove frame finds it already gone)', async () => {
+  daemon.receipts = [{ msg_id: MID(1), state: 'queued', at: 1 }];
+  await show();
+  assert.equal(Q.queueSnapshot().messages.find((m) => m.msg_id === MID(1)).state, 'queued');
+  shell.click(act(trayRow('q1'), 'remove'));
+  await waitUntil(() => calls('DELETE', '/api/queue/q1').length > 0, { timeout: 2000 });
+  daemon.items = daemon.items.filter((it) => it.id !== 'q1');
+  daemon.receipts = [];
+  await shell.frame({ type: 'queue', op: 'remove', ids: ['q1'], id: 'q1', reason: 'removed', count: 2 });
+  assert.equal(Q.queueSnapshot().messages.find((m) => m.msg_id === MID(1)), undefined,
+    'a removed message is not still queued at position 1');
 });
 
 test('the stop path is unchanged: Kill with a registered stopper mounts it and posts nothing; with none the inline confirm posts', async () => {
