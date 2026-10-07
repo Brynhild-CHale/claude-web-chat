@@ -564,6 +564,18 @@ async function runDoctor(root, opts = {}) {
   return doctor([], { cwd: root, runClaude: fakeClaude().fn, log: () => {}, findChrome: () => null, findFfmpeg: () => null, ...opts });
 }
 
+// doctor's hook repair line, told apart by its own opening words. A bare /hook/
+// also matched doctor's MCP repair line ('register web-chat at local scope:
+// claude mcp add … <checkout>/bin/claude-web-chat-mcp.js') whenever the checkout
+// path held 'hook', so these tests went red in a worktree named for a hook unit.
+const HOOK_REPAIR = /^(?:rewrote the web-chat hook command\(s\)|registered the missing hook\(s\)|updated the outdated hook\(s\))/;
+
+function hookRepair(summary) {
+  const found = summary.checks.filter((c) => c.status === 'repaired' && HOOK_REPAIR.test(c.m));
+  assert.equal(found.length, 1, `one hook repair in:\n${summary.checks.map((c) => `${c.status}: ${c.m}`).join('\n')}`);
+  return found[0];
+}
+
 function seedMcp(root) {
   fs.writeFileSync(path.join(root, '.mcp.json'), JSON.stringify({
     mcpServers: { 'web-chat': { command: 'node', args: [path.join(PACKAGE_ROOT, 'bin', 'claude-web-chat-mcp.js')] } },
@@ -585,7 +597,7 @@ test('doctor words each role: what a 0.8.0 project lacks, and what that costs', 
   has(/^bridge hook\(s\) missing for PermissionRequest — prompts cannot be answered from the browser$/);
   has(/^halt hook\(s\) missing for PreToolUse, PostToolUse, PostToolBatch — "Stop after this step" from the browser does nothing$/);
   assert.ok(!problems.some((m) => /turns never begin/.test(m)), 'a 0.8.0 project still begins and commits its turns');
-  const repair = summary.checks.find((c) => c.status === 'repaired' && /hook/.test(c.m));
+  const repair = hookRepair(summary);
   assert.ok(repair && repair.dry);
   assert.match(repair.m, /registered the missing hook\(s\): StopFailure, SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact, PermissionRequest, PostToolBatch/);
   assert.match(repair.m, /then restart Claude Code \(or open \/hooks to review them\)$/);
@@ -595,6 +607,21 @@ test('doctor words each role: what a 0.8.0 project lacks, and what that costs', 
   assert.ok(reg.inspect(root).handlers.every((r) => r.state === 'ok'), 'a real run repairs it');
   const again = await runDoctor(root);
   assert.ok(again.checks.some((c) => c.status === 'ok' && c.m === '14 web-chat hook handlers on 12 events registered and resolvable (lifecycle, mirror, bridge, halt)'));
+});
+
+test('the hook repair is found by its wording, never by a checkout path that holds "hook"', async (t) => {
+  withTempHome(t);
+  const root = installedRoot(t);
+  seedMcp(root);
+  writeSettings(root, { hooks: V080_HOOKS() });
+  const summary = await runDoctor(root, { dryRun: true });
+  const mcp = summary.checks.find((c) => c.status === 'repaired' && /^register web-chat at local scope: /.test(c.m));
+  assert.ok(mcp && mcp.m.includes(PACKAGE_ROOT), 'doctor\'s MCP repair line carries the checkout path');
+  // The same line as doctor words it from a worktree like wc085-ask-hook.
+  const hooky = mcp.m.split(PACKAGE_ROOT).join(path.join(path.dirname(PACKAGE_ROOT), 'wc085-ask-hook'));
+  assert.ok(/hook/.test(hooky), 'the old bare /hook/ find would take it');
+  assert.ok(!HOOK_REPAIR.test(hooky), 'the anchored find does not');
+  assert.equal(hookRepair({ checks: [{ status: 'repaired', m: hooky }, ...summary.checks] }), hookRepair(summary));
 });
 
 test('doctor words lifecycle in full where turns really stop, and names stale and bare handlers', async (t) => {
@@ -615,7 +642,7 @@ test('doctor words lifecycle in full where turns really stop, and names stale an
   has(/^lifecycle hook\(s\) missing for Stop — turns never begin or never commit$/);
   has(/^lifecycle hook\(s\) use a bare PATH-dependent command \(UserPromptSubmit\) — it only runs where the package is on PATH, so turns never begin or never commit$/);
   has(/^halt hook\(s\) on PostToolUse, PostToolBatch differ from this build's template \(timeout, command\) — as registered, "Stop after this step" from the browser does nothing$/);
-  const repair = summary.checks.find((c) => c.status === 'repaired' && /hook/.test(c.m));
+  const repair = hookRepair(summary);
   assert.match(repair.m, /^rewrote the web-chat hook command\(s\) to absolute paths; registered the missing hook\(s\): Stop; updated the outdated hook\(s\) on PostToolUse, PostToolBatch — then restart Claude Code/);
 });
 
