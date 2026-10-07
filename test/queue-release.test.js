@@ -202,6 +202,38 @@ test('send auto: a process the mirror reports gone releases now as well', (t) =>
   assert.ok(r.parked);
 });
 
+// U63b (§6.4's table): "ended, or a process gone → parks it for the next
+// prompt typed in the project" — a park, never an untargeted live wake that
+// another session's live bridge would run (the double run targeting prevents).
+test('send auto and a boundary: a message for a gone process parks and emits no wake while another session\'s channel is live', (t) => {
+  const gone = { state: 'working', process: { pid: 111, alive: false }, evidence: { proc: 'gone' } };
+  const mirror = fakeMirror({ lives: { [C1]: gone, [C2]: live('idle', 222) }, pids: { 222: C2 } });
+  const h = harness(t, { mirror });
+  queue.stampChannel(h.state, 222);
+  assert.ok(queue.channelLive(h.state), 'the other session\'s channel is live');
+  const item = enqueue(h, { text: 'for the gone one' });
+  const r = h.rel.send(item, { mode: 'auto', prov: {} });
+  assert.ok(r.parked, 'parked');
+  assert.equal(r.wake, null);
+  assert.equal(r.parked.target_pid, undefined, 'untargeted: the next prompt typed in the project claims it');
+  assert.ok(queue.pendingFor(h.state, 222), 'any session\'s next prompt may claim it');
+  assert.equal(receiptState(h.state, item.msg_id), 'parked');
+  assert.deepEqual(queuedIds(h.state), []);
+  // A boundary: an autosend message queued while its conversation worked, which
+  // then ended.
+  const h2 = harness(t, { mirror: fakeMirror({ lives: { [C1]: live('working', 111), [C2]: live('idle', 222) } }) });
+  queue.stampChannel(h2.state, 222);
+  const a = enqueue(h2, { text: 'later' });
+  assert.deepEqual(h2.rel.send(a, { mode: 'auto', prov: {} }), { mode: 'queued', position: 1 });
+  h2.mirror.lives[C1] = { ...live('ended', 111), process: { pid: 111, alive: false } };
+  h2.mirror.emit({ op: 'state', conversation_id: C1, state: 'ended', prev: 'working' });
+  h2.timers.fire(1500);
+  assert.deepEqual(queuedIds(h2.state), []);
+  assert.ok(h2.state.pendingWake && h2.state.pendingWake.batch.some((it) => it.id === a.id), 'parked');
+  assert.equal(h2.state.pendingWake.target_pid, undefined);
+  assert.equal(wakes(h.bus).length + wakes(h2.bus).length, 0, 'no wake reached the live channel');
+});
+
 // U63b (§6.4: FIFO per conversation): a send 'auto' while older autosend
 // messages of its conversation still wait queues behind them, even when Claude
 // is already free (the 1,500 ms before the boundary's timer, or a missed
@@ -253,6 +285,28 @@ test('send now: while working it is released at once, targeted', (t) => {
   assert.equal(r.wake.target_pid, 111);
   assert.equal(r.wake.origin, 'remote');
   assert.equal(r.wake.device, 'mobile');
+});
+
+// U63b (§6.4's table, for Send now as for autosend): a conversation that has
+// ended, or whose process is gone, parks the message for the next prompt typed
+// in the project — never an untargeted live wake another session would run.
+test('send now: a message for a gone process parks and emits no wake while another session\'s channel is live', (t) => {
+  const gone = { state: 'working', process: { pid: 111, alive: false }, evidence: { proc: 'gone' } };
+  for (const c1 of [gone, { ...live('ended', 111), process: { pid: 111, alive: false } }, live('ended')]) {
+    const mirror = fakeMirror({ lives: { [C1]: c1, [C2]: live('idle', 222) }, pids: { 222: C2 } });
+    const h = harness(t, { mirror });
+    queue.stampChannel(h.state, 222);
+    assert.ok(queue.channelLive(h.state), 'the other session\'s channel is live');
+    const item = enqueue(h, { text: 'for the gone one' });
+    const r = h.rel.send(item, { mode: 'now', prov: {} });
+    assert.ok(r.parked, `parked (${c1.state})`);
+    assert.equal(r.wake, null);
+    assert.equal(r.parked.target_pid, undefined, 'untargeted: the next prompt typed in the project claims it');
+    assert.ok(queue.pendingFor(h.state, 222), 'any session\'s next prompt may claim it');
+    assert.equal(receiptState(h.state, item.msg_id), 'parked');
+    assert.deepEqual(queuedIds(h.state), []);
+    assert.equal(wakes(h.bus).length, 0, 'no wake reached the live channel');
+  }
 });
 
 // ── boundaries ──
