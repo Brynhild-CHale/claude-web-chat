@@ -309,6 +309,26 @@ test('send now: a message for a gone process parks and emits no wake while anoth
   }
 });
 
+// U63b (the grant: flush passes `park` to parkHoldBack as `force`, so one
+// message per park still holds): a second message for a gone conversation does
+// not join the park beside the first, even while another session's channel is
+// live — it stays queued, waiting for the park to be consumed, and nothing wakes.
+test('a forced park still holds one typed message: a second send for a gone process stays queued, waiting', (t) => {
+  const gone = { state: 'working', process: { pid: 111, alive: false }, evidence: { proc: 'gone' } };
+  const mirror = fakeMirror({ lives: { [C1]: gone, [C2]: live('idle', 222) }, pids: { 222: C2 } });
+  const h = harness(t, { mirror });
+  queue.stampChannel(h.state, 222);
+  const a = enqueue(h, { text: 'first' });
+  assert.ok(h.rel.send(a, { mode: 'now', prov: {} }).parked, 'the first parks');
+  const b = enqueue(h, { text: 'second' });
+  const r = h.rel.send(b, { mode: 'auto', prov: {} });
+  assert.deepEqual(queuedIds(h.state), [b.id], 'the second stays queued');
+  assert.equal(b.waiting, 'parked_message');
+  assert.deepEqual(r.heldBack, [b.id]);
+  assert.deepEqual(h.state.pendingWake.batch.filter(queue.isTypedMessage).map((it) => it.id), [a.id], 'one typed message per park');
+  assert.equal(wakes(h.bus).length, 0, 'no wake reached the live channel');
+});
+
 // ── boundaries ──
 
 test('a graph turn-end arms one 1,500 ms timer, then releases only the oldest autosend message', (t) => {
