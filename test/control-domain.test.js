@@ -366,13 +366,15 @@ test('the decide gate for POST /answer/api/control/interrupt: every wrong shape 
     assert.deepEqual([r.status, r.json.refused], [403, 'origin']);
     assert.equal(readAudit(root).length, n + 1);
   }
-  // A wrong Host: the engine's 421, before any handler (lib/server/isolated-origin.js
-  // answers it and exposes no hook, so it is not audited — U55's open issue 1).
+  // A wrong Host: the engine's 421, before any handler. The engine reports it
+  // through its onRefused hook (U55b), so it is audited like the gate's own.
   {
     const n = before();
     const r = await post({ headers: { host: `localhost:${port}` } });
     assert.equal(r.status, 421);
-    assert.equal(readAudit(root).length, n);
+    assert.equal(readAudit(root).length, n + 1, 'a bad Host: one audit line');
+    const line = readAudit(root).at(-1);
+    assert.deepEqual([line.action, line.outcome, line.origin, line.device], ['interrupt', 'refused:host', 'local', 'desktop']);
   }
   // OPTIONS: 403 with no CORS header.
   {
