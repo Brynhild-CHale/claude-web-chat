@@ -377,6 +377,42 @@ test('a control frame with no size in 3 s is remounted once at a refreshed port 
   el.remove();
 });
 
+test('two control frames silent at staggered times while the surface stays down do not revive each other: the ensure fetches stop', async () => {
+  // B mounts as A is remounted after its first silence, so from then on both
+  // frames' 3 s checks fall due together, as they would in a browser: one
+  // fire(3000) runs every check due at that moment before the GET answers.
+  // Before the fix, each frame's first-silence refresh revived the other
+  // (dead) frame, and the pair asked GET /api/asks?ensure=1 every 3 s forever.
+  const timers = fakeTimers();
+  await reset({ timers });
+  await portFrame(4567);
+  asksAnswer = { asks: [], answer: { port: 4567 } };   // the GET answers; the frames never load
+  const a = host();
+  const b = host();
+  const ha = A.mountAnswerFrame(a, { kind: 'control', path: 'interrupt', query: { conversation_id: 'c1' }, layout: 'stop' });
+  assert.ok(ha);
+  const before = asksGets();
+  timers.fire(3000);                        // A's first silence: refresh, remount once
+  await shell.tick();
+  assert.equal(asksGets(), before + 1);
+  const hb = A.mountAnswerFrame(b, { kind: 'control', path: 'interrupt', query: { conversation_id: 'c2' }, layout: 'stop' });
+  assert.ok(hb);
+  let rounds = 0;
+  while (timers.pending().length && rounds < 20) { timers.fire(3000); await shell.tick(); rounds += 1; }
+  assert.deepEqual(timers.pending(), [], 'no silence check left running');
+  assert.equal(asksGets(), before + 2, 'one refresh per frame\'s first silence, and then no more');
+  assert.equal(a.childNodes.length, 0, 'A is left empty');
+  assert.equal(b.childNodes.length, 0, 'B is left empty');
+  // A refresh started by a hello still brings both back.
+  await shell.frame(helloFrame());
+  await shell.tick();
+  assert.ok(a.querySelector('iframe') && b.querySelector('iframe'), 'the hello revives both');
+  ha.unmount();
+  hb.unmount();
+  a.remove();
+  b.remove();
+});
+
 /* ── the port rule ─────────────────────────────────────────────────────────── */
 
 test('a new port from a later mirror:ask frame remounts a mounted frame at the new origin', async () => {

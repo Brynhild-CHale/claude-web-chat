@@ -65,7 +65,9 @@
 // button opening the page layout in a popup; a control frame is never the
 // popup — the port is refreshed and the frame remounted once at the fresh
 // port, and if that one is silent too its slot stays empty until the next
-// port refresh.
+// port refresh that may revive it: one started by a hello, a fresh mount or a
+// port change — never one started by another frame's silence, or two dead
+// frames would revive each other every 3 s while the surface stays down.
 import { bus } from './bus.js';
 import { registerApprovals } from './chat-slots.js';
 import { effectiveMode } from './theme.js';
@@ -108,6 +110,7 @@ let offs = [];
 let port = null;          // the cached answer-surface port
 let portAt = 0;           // when it was last learned or confirmed
 let refreshing = null;    // the one in-flight GET /api/asks?ensure=1
+let revive = false;       // a caller of that GET asked for dead frames to come back
 let unregister = null;    // the approvals provider's registration
 let announced = null;     // the origin PORT_EVENT last named
 let generation = 0;       // bumped by stopAsks: a refresh from before it is ignored
@@ -147,23 +150,32 @@ function learnPort(p) {
 
 // GET /api/asks?ensure=1: starts the answer surface and answers its port. One
 // at a time; every caller shares the one in flight. Never throws.
-function refreshPort() {
+// `revive: false` is a frame's own silence check: that refresh never brings a
+// dead control frame back (only a hello's, a mount's or a port change does),
+// unless another caller sharing the same GET asked for it.
+function refreshPort({ revive: wantRevive = true } = {}) {
+  if (wantRevive) revive = true;
   if (refreshing) return refreshing;
   const gen = generation;
   const run = (async () => {
+    let p = null;
     try {
       const r = await fetchFn(ASKS_URL);
-      if (!r || !r.ok) return null;
-      const j = await r.json();
-      const p = j && j.answer && j.answer.port;
-      if (gen !== generation || !validPort(p)) return null;
-      learnPort(p);
-      // A control frame left empty after a silent remount gets its next try.
-      for (const rec of [...frames]) if (rec.dead) { rec.retried = false; remount(rec); }
-      return p;
+      if (r && r.ok) {
+        const j = await r.json();
+        p = j && j.answer && j.answer.port;
+      }
     } catch {
-      return null;
+      p = null;
     }
+    if (gen !== generation) return null;
+    const reviving = revive;
+    revive = false;
+    if (!validPort(p)) return null;
+    learnPort(p);
+    // A control frame left empty after a silent remount gets its next try.
+    if (reviving) for (const rec of [...frames]) if (rec.dead) { rec.retried = false; remount(rec); }
+    return p;
   })();
   refreshing = run;
   run.then(() => { if (refreshing === run) refreshing = null; });
@@ -342,7 +354,7 @@ function silent(rec) {
   if (!rec.retried) {
     rec.retried = true;
     const mounts = rec.mounts;
-    refreshPort().then(() => {
+    refreshPort({ revive: false }).then(() => {
       // A refresh that found a NEW port has remounted it already.
       if (frames.has(rec) && !rec.sized && rec.mounts === mounts) remount(rec);
     });
@@ -445,6 +457,7 @@ export function stopAsks() {
   port = null;
   portAt = 0;
   refreshing = null;
+  revive = false;
   announced = null;
   R = remote;
 }
