@@ -103,7 +103,7 @@ test('a queue add frame for a message schedules one GET /api/queue — two in on
   const before0 = queueGets();
   daemon.items = [msg(1)];
   await shell.frame({ type: 'queue', op: 'add', item: pub(msg(1)), count: 1 });
-  await waitUntil(() => queueGets() === before0 + 1, { timeout: 2000 });
+  await waitUntil(() => queueGets() === before0 + 1, { timeout: 2000, what: 'the GET after the add frame' });
   assert.equal(row('q1').querySelector('.qi-msg-text').textContent, 'message number 1', 'the text came from the GET');
 
   const before1 = queueGets();
@@ -124,12 +124,12 @@ test('a queue add frame for a message schedules one GET /api/queue — two in on
   const before3 = queueGets();
   daemon.items = [{ ...msg(1), text: 'edited words', chars: 12 }, msg(2), msg(3), signal(9)];
   await shell.frame({ type: 'queue', op: 'update', id: 'q1', item: pub({ ...msg(1), chars: 12 }), staged: true });
-  await waitUntil(() => queueGets() === before3 + 1, { timeout: 2000 });
-  await waitUntil(() => row('q1').querySelector('.qi-msg-text').textContent === 'edited words', { timeout: 2000 });
+  await waitUntil(() => queueGets() === before3 + 1, { timeout: 2000, what: 'the GET after the update frame' });
+  await waitUntil(() => row('q1').querySelector('.qi-msg-text').textContent === 'edited words', { timeout: 2000, what: 'the edited text from the GET' });
   const before4 = queueGets();
   daemon.items = [msg(1), msg(3), signal(9)];
   await shell.frame({ type: 'queue', op: 'remove', ids: ['q2'], id: 'q2', reason: 'removed', count: 3 });
-  await waitUntil(() => queueGets() === before4 + 1, { timeout: 2000 });
+  await waitUntil(() => queueGets() === before4 + 1, { timeout: 2000, what: 'the GET after the remove frame' });
   assert.ok(!row('q2'), 'the removed message left the rail');
 });
 
@@ -393,8 +393,8 @@ test('Take back on a park with a message and a stop request: recall, then the pa
   };
   const consumes = posts('/api/queue/pending/consume').length;
   shell.click(pendingBox().querySelector('.rp-takeback'));
-  await waitUntil(() => !!row('q1'), { timeout: 2000 });
-  await waitUntil(() => visible(pendingBox().querySelector('.rp-cancel')), { timeout: 2000 });
+  await waitUntil(() => !!row('q1'), { timeout: 2000, what: 'the recalled message back on the rail' });
+  await waitUntil(() => visible(pendingBox().querySelector('.rp-cancel')), { timeout: 2000, what: 'Cancel on what is left of the park' });
   assert.deepEqual(posts('/api/queue/pending/recall').at(-1).body, { id: 'pw1' });
   assert.equal(posts('/api/queue/pending/consume').length, consumes, 'nothing consumed');
   assert.ok(!visible(pendingBox().querySelector('.rp-takeback')), 'the rest of the park has no message: Cancel again');
@@ -411,7 +411,7 @@ test('a signal-only park keeps Cancel and its consume POST', async () => {
   assert.ok(visible(box.querySelector('.rp-cancel')));
   assert.ok(!visible(box.querySelector('.rp-takeback')));
   shell.click(box.querySelector('.rp-cancel'));
-  await waitUntil(() => box.classList.contains('hidden'), { timeout: 2000 });
+  await waitUntil(() => box.classList.contains('hidden'), { timeout: 2000, what: 'the cancelled park hidden' });
   assert.deepEqual(posts('/api/queue/pending/consume').at(-1).body, { id: 'pw1' });
 });
 
