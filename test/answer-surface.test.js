@@ -307,6 +307,29 @@ test('each document kind mints into a pool of its own: 64 ask loads leave a cont
   assert.equal((await run(control)).status, 403, 'the control pool evicted its own oldest');
 });
 
+test('a kind\'s kit.issueNonce mints into that kind\'s pool, not the default one', async (t) => {
+  const { s, port, origin } = await boot(t);
+  s.register('control', {
+    // rest 'direct' mints through the kind's kit by hand; any other rest is a document.
+    document: (rq, rs, kit, { rest, query }) => (rest === 'direct'
+      ? kit.json(rs, 200, { ok: true, nonce: kit.issueNonce(`control:restore:${query.target}`) })
+      : kit.document(rs, { key: `control:${rest}:${query.target}` })),
+    api: (rq, rs, kit) => kit.json(rs, 200, { ok: true }),
+    nonceKey: (rq, { body }) => `control:${body && body.action}:${body && body.target}`,
+  });
+  const frame = (p) => req(port, { path: p, headers: { 'sec-fetch-dest': 'iframe' } });
+  const run = (n) => req(port, {
+    method: 'POST', path: '/answer/api/control/run',
+    headers: { origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', 'x-wc-answer': n },
+    body: { action: 'restore', target: 't1' },
+  });
+  const direct = (await frame('/answer/control/direct?target=t1')).json.nonce;
+  assert.equal((await run(direct)).status, 200);
+  // 64 control documents fill the control pool: the hand-minted nonce shares it.
+  for (let i = 0; i < 64; i++) assert.equal((await frame(`/answer/control/restore?target=x${i}`)).status, 200);
+  assert.equal((await run(direct)).status, 403, 'the hand-minted nonce lived in the control pool');
+});
+
 test('the headers: the exact CSP, no X-Frame-Options, the common three, COOP for page, CORP on JSON', async (t) => {
   const { port, origin } = await boot(t);
   const d = await askDoc(port);
