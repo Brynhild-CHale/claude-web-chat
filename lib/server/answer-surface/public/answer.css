@@ -1,0 +1,146 @@
+/* The answer frame's layouts (spec §4.5): bar, card, sheet and page.
+
+   Every colour is a token of /answer/palette.css, which the answer surface
+   generates from a VETTED palette only (ruling A6 (b): a built-in pack, or a
+   pack installed or approved in the terminal, that passes the contrast check;
+   else Earthy) — never the chrome's theme, which any pane can write. And each
+   ink is painted on the fill palette.js measured it against (FRAME_TEXT,
+   FRAME_UI): text --wc-fg / --wc-muted on --wc-panel-bg, --wc-fg on --wc-bg,
+   --wc-content-fg on --wc-content-bg; controls --wc-accent-fg on --wc-accent,
+   --wc-accent / --wc-accent-text / --wc-comment on --wc-panel-bg. No hex here.
+
+   Nothing in this sheet fades, filters or transforms the subject or the
+   buttons: the visibility proof (IntersectionObserver v2) would rightly read
+   that as covered. */
+
+/* The bundled faces, served by the answer surface from public/fonts (nothing
+   loads from the chrome's origin). */
+@font-face {
+  font-family: 'Geist';
+  src: url('/answer/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/answer/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html { background: var(--wc-panel-bg); color: var(--wc-fg); }
+body {
+  font: 13px/1.45 var(--wc-font, system-ui, sans-serif);
+  background: var(--wc-panel-bg);
+  color: var(--wc-fg);
+  overflow-wrap: anywhere;
+}
+.wc-answer { display: block; padding: 8px 10px; }
+[hidden] { display: none !important; }
+
+.aw-box { display: flex; flex-direction: column; gap: 6px; }
+.aw-title { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: var(--wc-fg); }
+.aw-agent, .aw-planfile, .aw-masked, .aw-guard, .aw-problem { margin: 0; font-size: 12px; color: var(--wc-muted); }
+.aw-masked { font-style: italic; }
+.aw-guard, .aw-problem { color: var(--wc-fg); font-weight: 600; }
+.aw-tool { margin: 0; font: 600 12px var(--wc-mono, ui-monospace, monospace); color: var(--wc-fg); }
+.aw-text, .aw-status { margin: 0; color: var(--wc-fg); }
+.aw-status { font-weight: 600; }
+.aw-alone { margin: 0; color: var(--wc-muted); }
+
+/* The tool call wraps and grows; it never scrolls inside the frame (§4.5). */
+.aw-field { display: flex; flex-direction: column; gap: 2px; }
+.aw-fname { font: 11px var(--wc-mono, ui-monospace, monospace); color: var(--wc-muted); }
+pre.aw-code {
+  margin: 0; padding: 6px 8px;
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden;
+  font: 12px/1.45 var(--wc-mono, ui-monospace, monospace);
+  background: var(--wc-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}
+
+/* A mask the redactor left: marked wherever it is shown (ruling A3 (a)). */
+mark.aw-mask {
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+  border: 1px dashed var(--wc-comment); border-radius: 3px; padding: 0 2px;
+}
+mark.aw-mask::before { content: 'masked '; font-size: 10px; font-weight: 600; color: var(--wc-comment); }
+
+/* Questions. */
+fieldset.aw-q { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 4px; }
+.aw-qhead { padding: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--wc-muted); }
+.aw-qtext { margin: 0; color: var(--wc-fg); }
+.aw-options { display: flex; flex-direction: column; gap: 4px; }
+.aw-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;
+  padding: 5px 8px; font: inherit; cursor: pointer;
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}
+.aw-option[aria-pressed="true"] { background: var(--wc-accent); color: var(--wc-accent-fg); }
+.aw-option[aria-pressed="true"] .aw-odesc { color: var(--wc-accent-fg); }
+.aw-option[aria-pressed="true"] mark.aw-mask { background: var(--wc-accent); color: var(--wc-accent-fg); border-color: var(--wc-accent-fg); }
+.aw-option[aria-pressed="true"] mark.aw-mask::before { color: var(--wc-accent-fg); }
+.aw-check { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+.aw-checkbox { margin: 0; accent-color: var(--wc-accent); }
+.aw-olabel { font-weight: 600; }
+.aw-odesc { font-size: 12px; color: var(--wc-muted); }
+.aw-check .aw-odesc { flex-basis: 100%; padding-left: 20px; }
+.aw-other-text, .aw-note, .aw-feedback {
+  width: 100%; padding: 4px 6px; font: inherit;
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}
+
+/* A plan, as the daemon's markdown engine rendered it. */
+.aw-plan {
+  padding: 6px 10px; border-radius: var(--wc-radius-sm, 4px);
+  background: var(--wc-content-bg); color: var(--wc-content-fg);
+  font-family: var(--wc-reading, var(--wc-font, system-ui, sans-serif));
+  overflow: hidden;
+}
+.aw-plan :is(h1, h2, h3, h4) { margin: .6em 0 .3em; font-size: 14px; color: var(--wc-content-fg); }
+.aw-plan :is(p, ul, ol) { margin: .3em 0; }
+.aw-plan :is(pre, code) { font-family: var(--wc-mono, ui-monospace, monospace); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.aw-plan a { color: var(--wc-content-fg); }
+
+/* The buttons. */
+.aw-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.aw-btn {
+  font: 600 12px var(--wc-font, system-ui, sans-serif);
+  min-height: 28px; padding: 0 10px; cursor: pointer;
+  background: var(--wc-panel-bg); color: var(--wc-accent-text);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}
+.aw-allow, .aw-approve, .aw-send { background: var(--wc-accent); color: var(--wc-accent-fg); }
+.aw-btn[aria-disabled="true"] {
+  cursor: not-allowed; background: var(--wc-panel-bg); color: var(--wc-muted); border-style: dashed; border-color: var(--wc-muted);
+}
+.aw-btn:focus-visible, .aw-option:focus-visible, .aw-checkbox:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+
+/* Review › shows only when the request does not fit (§4.5 item 2). */
+.aw:not([data-fit="0"]) .aw-review { display: none; }
+
+/* bar: one 22px line — the subject, Allow and Deny, or Review ›. */
+html[data-layout="bar"], html[data-layout="bar"] body { height: 22px; overflow: hidden; }
+html[data-layout="bar"] .wc-answer { padding: 0 4px; height: 22px; }
+.aw[data-layout="bar"] .aw-box { flex-direction: row; align-items: center; gap: 6px; height: 22px; white-space: nowrap; }
+.aw[data-layout="bar"] .aw-subject {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 12px/22px var(--wc-mono, ui-monospace, monospace); color: var(--wc-fg);
+}
+.aw[data-layout="bar"] .aw-btn { flex: none; min-height: 0; height: 20px; padding: 0 8px; font-size: 11px; }
+.aw[data-layout="bar"] .aw-status { font-size: 12px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; }
+.aw[data-layout="bar"][data-fit="0"] :is(.aw-allow, .aw-deny) { display: none; }
+
+/* sheet: the card with 44px controls. */
+.aw[data-layout="sheet"] :is(.aw-btn, .aw-option) { min-height: 44px; }
+.aw[data-layout="sheet"] :is(.aw-note, .aw-other-text) { min-height: 44px; }
+
+/* page: the popup; the request scrolls in a window no pane can overlay. */
+html[data-layout="page"] body { overflow: auto; }
+html[data-layout="page"] .wc-answer { max-width: 640px; margin: 0 auto; padding: 14px 16px 24px; }
