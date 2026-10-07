@@ -502,6 +502,11 @@ test('a registered answer frame owns the card\'s body at level local, and only t
 /* ── the composer slot ─────────────────────────────────────────────────────── */
 
 test('the composer slot mounts a registered composer, else says where to reply', async (t) => {
+  // main.js registers the real composer (U66a): it comes off for this case.
+  const real = await shell.importApp('chat-composer.js');
+  real.stopChatComposer();
+  t.after(() => real.initChatComposer());
+  await redraw();
   const slot = $('chat-composer-slot');
   assert.equal(slot.textContent, 'Reply in the terminal, or add a note in the queue rail (Q) and Push.');
   const mounts = [];

@@ -954,7 +954,8 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     assert.ok(!shown(note()), 'and opens no note');
     await shell.tick();
     assert.ok(shown($('chat-dock')), 'the step opens the chat dock');
-    shell.key('Escape');
+    // A real key goes to the focused element: the composer's field, once main.js inits the composer (U66a).
+    shell.key('Escape', { target: shell.document.activeElement });
     await shell.tick();
     assert.ok(!shown($('chat-dock')), 'Esc closes it');
 
