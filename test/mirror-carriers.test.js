@@ -319,7 +319,7 @@ test('delivery markers: a channel record, a channel queued_command and a hook co
   r.channel({ body: 'Message from the user [web-chat message m-0000000a]\nhi' });
   r.queuedCommand(channelText({ body: '[web-chat message m-0000000b] mid-turn' }),
     { commandMode: 'prompt', origin: { kind: 'channel', server: 'web-chat' } });
-  r.hookAdditionalContext('Delivered with your prompt: [web-chat message m-0000000c]');
+  r.hookAdditionalContext(`${require('../lib/core/prompt-class').PARKED_PREFIX}Message from the user [web-chat message m-0000000c]`);
   // A marker a tool result echoes, and one in a typed message, confirm nothing.
   r.toolResult('toolu_01ECHO', 'cat log: [web-chat message m-0000000d]');
   r.queuedCommand('see [web-chat message m-0000000e]', { commandMode: 'prompt' });
@@ -344,15 +344,24 @@ test('a repeated record does not deliver twice, in one batch or the next', () =>
   assert.equal(once.delivered.length, 1);
   const twice = foldCarriers(once.state, toRecs([ch]));
   assert.equal(twice.delivered.length, 0);
-  // Every hook context is scanned (the parked prefix is not importable here).
+  // A hook context counts only when it carries web-chat's parked frame
+  // (PARKED_HEAD, lib/core/prompt-class): there, wherever the head sits among
+  // the lines, its marker is a parked delivery; in any other hook's context a
+  // marker confirms nothing.
+  const { PARKED_HEAD } = require('../lib/core/prompt-class');
   const r2 = createRecords({ seed: 161 });
-  r2.hookAdditionalContext(['first line', 'second [web-chat message m-87654321]'], { hookEvent: 'PreToolUse' });
-  assert.deepEqual(fold(r2.records).delivered.map((d) => d.via), ['parked']);
+  r2.hookAdditionalContext(['first line', `${PARKED_HEAD} — second [web-chat message m-87654321]`], { hookEvent: 'PreToolUse' });
+  assert.deepEqual(fold(r2.records).delivered.map((d) => [d.via, d.marker]), [['parked', 'm-87654321']]);
+  const r3 = createRecords({ seed: 162 });
+  r3.hookAdditionalContext(['first line', 'second [web-chat message m-87654322]'], { hookEvent: 'PreToolUse' });
+  r3.hookAdditionalContext('Some other hook echoed [web-chat message m-87654323] (web-chat Parked)');
+  assert.deepEqual(fold(r3.records).delivered, [], 'no head, no delivery');
 });
 
 test('the remembered markers are bounded', () => {
   const r = createRecords({ seed: 170 });
-  for (let i = 0; i < MARKERS_MAX + 5; i++) r.hookAdditionalContext(`[web-chat message m-${i.toString(16).padStart(8, '0')}]`);
+  const { PARKED_HEAD } = require('../lib/core/prompt-class');
+  for (let i = 0; i < MARKERS_MAX + 5; i++) r.hookAdditionalContext(`${PARKED_HEAD} [web-chat message m-${i.toString(16).padStart(8, '0')}]`);
   const out = fold(r.records);
   assert.equal(out.delivered.length, MARKERS_MAX + 5);
   assert.equal(out.state.markers.length, MARKERS_MAX);
