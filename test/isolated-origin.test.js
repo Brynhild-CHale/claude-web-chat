@@ -397,6 +397,33 @@ test('themeCss(): byte-identical to the setup page\'s; a mode puts that mode\'s 
   assert.equal(bare.kit.themeCss(), CAPTURED_NONE);
 });
 
+// The setup page words its own refusals (kit.refusal hands it a code). Its
+// own test files pin the statuses; these are the strings the page showed
+// before it moved onto the engine, the expired-page line included.
+test('the setup page keeps its refusal wording on the engine', async (t) => {
+  const { createTunnelSetup } = require('../lib/server/tunnel-setup');
+  const setup = createTunnelSetup({ paths: {} });
+  t.after(() => setup.close());
+  const { port } = await setup.ensure();
+  const host = `127.0.0.1:${port}`;
+  const origin = `http://${host}`;
+  const page = await req(port, { path: '/setup/tunnel', headers: { host } });
+  const m = /<meta name="wc-setup-token" content="([^"]+)">/.exec(page.text);
+  assert.ok(m, 'the page carries its nonce');
+  const n = m[1];
+  const good = (extra = {}) => ({ host, origin, 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-wc-setup': n, ...extra });
+  const post = (headers) => req(port, { method: 'POST', path: '/setup/tunnel/status', headers, body: {} });
+  const err = async (headers) => { const r = await post(headers); assert.equal(r.status, 403, r.text); return r.json.error; };
+  assert.equal(await err(good({ origin: 'http://localhost:5173' })), 'this page only answers itself (Origin)');
+  assert.equal(await err(good({ 'sec-fetch-site': 'cross-site' })), 'this page only answers itself (Sec-Fetch-Site)');
+  assert.equal(await err(good({ 'content-type': 'text/plain' })), 'expected application/json');
+  assert.equal(await err(good({ 'x-wc-setup': 'A'.repeat(43) })), 'this setup page has expired — reopen it from ⌘K "Set up remote access…"');
+  const remote = await post(good({ 'x-wc-remote': '1' }));
+  assert.deepEqual([remote.status, remote.json], [403, { ok: false, remote: true, error: 'remote access is set up on the host, never through the tunnel' }]);
+  const rebound = await post(good({ host: `localhost:${port}` }));
+  assert.deepEqual([rebound.status, rebound.json], [421, { ok: false, error: 'host not allowed' }]);
+});
+
 test('the source: `listen(0, LOOPBACK` is spelled in lib/server/isolated-origin.js and nowhere else in lib/', () => {
   const lib = path.resolve(__dirname, '..', 'lib');
   const hits = {};
