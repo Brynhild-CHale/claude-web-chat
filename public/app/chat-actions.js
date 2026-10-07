@@ -9,7 +9,9 @@
 //   runAction(row, action, {rowEl, density, button})
 //   registerStopper({mount, unmount}) → unregister
 //   canRun(actionId, row)    whether runAction can perform it (chat-rows.js
-//                            draws a button for nothing else)
+//                            draws a button for nothing else): Output, Open,
+//                            Kill, Cancel, Remove, Hold, Stage, and a queued
+//                            message's Edit and Send now
 //   stopFollowers(root?)     ends every follower whose row is inside root (all
 //                            of them with no root)
 //
@@ -55,6 +57,15 @@
 // the inline confirm runs as above (a touch button that fallback armed takes
 // its second tap there, unasked). With no stopper, the route is the only path.
 //
+// A QUEUED MESSAGE (tranche 4, §7.6) goes through queue.js, the one send path.
+// Edit opens an inline editor in the row's .cs-row-body: a textarea holding the
+// message's text (queueSnapshot(), read from GET /api/queue), Save and Cancel.
+// Enter saves (Shift+Enter breaks the line); Escape or Cancel reverts with no
+// request. Save is editMessage(id, {text}); a refusal's hint shows in
+// .cs-row-note and the editor stays open. Send now is sendNow(id); what its
+// answer says (a refusal, or that it waits behind a parked message) shows in
+// .cs-row-note too.
+//
 // THE ROW is chat-rows.js's element; this module touches it through its
 // documented parts only: `.cs-row-actions` (the buttons), `.cs-row-body` (the
 // expanded Output, built here), `.cs-row-note` (a refusal's hint) and the
@@ -63,7 +74,7 @@
 import { bus } from './bus.js';
 import { mirror } from './chat-state.js';
 import { isRunning } from './chat-present.js';
-import { removeItem, setStaged } from './queue.js';
+import { removeItem, setStaged, editMessage, sendNow, queueSnapshot, hydrateQueue } from './queue.js';
 
 export const FOLLOW_MS = 1500;
 export const FAIL_LIMIT = 3;
@@ -395,10 +406,9 @@ function stopperSlot(entry, row, host, button, density) {
 // ── the actions ──────────────────────────────────────────────────────────────
 
 const isTaskRow = (row) => !!row && row.cat !== 'queue';
+const isMessageRow = (row) => !!row && row.cat === 'queue' && row.kind === 'message';
 
-// Whether runAction can perform this action id on this row. 'edit' and
-// 'send-now' (queue messages, tranche 4) are not here yet, so no button is
-// drawn for them.
+// Whether runAction can perform this action id on this row.
 export function canRun(actionId, row) {
   switch (actionId) {
     case 'output': return isTaskRow(row);
@@ -406,6 +416,7 @@ export function canRun(actionId, row) {
     case 'kill': case 'cancel': return isTaskRow(row);
     case 'remove': return !!row;
     case 'hold': case 'stage': return !!row && row.cat === 'queue';
+    case 'edit': case 'send-now': return isMessageRow(row);
     default: return false;
   }
 }
@@ -442,6 +453,106 @@ async function requestStop(row, rowEl) {
   const hint = body && (typeof body.hint === 'string' ? body.hint : typeof body.error === 'string' ? body.error : '');
   note(rowEl, hint || 'The stop request did not reach the daemon — stop it in the terminal.');
   return false;
+}
+
+// A queue row's note: a refusal in the row's rust ink, or (tone 'info') what
+// an answer says, quieter. The stop path keeps note() above.
+function queueNote(rowEl, text, tone = 'error') {
+  const el = rowEl && rowEl.querySelector('.cs-row-note');
+  if (!el) return;
+  el.textContent = text || '';
+  el.hidden = !text;
+  if (tone === 'info') el.dataset.tone = 'info';
+  else delete el.dataset.tone;
+}
+
+const WAITS_HINT = 'Waits: a message is already parked for your next prompt';
+const refusalHint = (r) => (r && (r.hint || r.refused)) || 'The daemon refused it.';
+
+// Edit: the inline editor in the row's body. Answers whether it opened.
+function openEditor(row, rowEl, density) {
+  const body = rowEl && rowEl.querySelector('.cs-row-body');
+  if (!body) return false;
+  const open = body.querySelector('.cs-edit-text');
+  if (open && !body.hidden) {
+    try { open.focus({ preventScroll: true }); } catch { /* not focusable here */ }
+    return true;
+  }
+  const item = queueSnapshot().items.find((it) => it.id === row.id);
+  if (!item || typeof item.text !== 'string') {
+    queueNote(rowEl, 'The message text has not arrived yet — try again in a moment.', 'info');
+    hydrateQueue();
+    return false;
+  }
+  queueNote(rowEl, '');
+  const box = document.createElement('div');
+  box.className = 'cs-edit';
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Edit the message');
+  const area = document.createElement('textarea');
+  area.className = 'cs-edit-text';
+  area.rows = 3;
+  area.value = item.text;
+  area.setAttribute('aria-label', 'Message text');
+  const bar = document.createElement('div');
+  bar.className = 'cs-edit-bar';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'cs-edit-save';
+  save.textContent = 'Save';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'cs-edit-cancel';
+  cancel.textContent = 'Cancel';
+  bar.append(save, cancel);
+  box.append(area, bar);
+  let busy = false;
+  const close = () => {
+    body.hidden = true;
+    body.replaceChildren();
+    const btn = rowEl.querySelector('.cs-row-actions [data-action="edit"]');
+    if (btn && btn.isConnected) {
+      try { btn.focus({ preventScroll: true }); } catch { /* not focusable here */ }
+    }
+  };
+  const commit = async () => {
+    if (busy) return;
+    busy = true;
+    save.disabled = true;
+    const r = await editMessage(row.id, { text: area.value });
+    busy = false;
+    save.disabled = false;
+    if (r && r.ok === true) { queueNote(rowEl, ''); close(); return; }
+    queueNote(rowEl, refusalHint(r));
+  };
+  save.addEventListener('click', (e) => { e.stopPropagation(); commit(); });
+  cancel.addEventListener('click', (e) => { e.stopPropagation(); queueNote(rowEl, ''); close(); });
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      // Out of the editor, not out of the tray: the shell's Escape is past this.
+      e.stopPropagation();
+      e.preventDefault();
+      queueNote(rowEl, '');
+      close();
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === area) {
+      e.preventDefault();
+      commit();
+    }
+  });
+  body.replaceChildren(box);
+  body.hidden = false;
+  try { area.focus({ preventScroll: true }); } catch { /* not focusable here */ }
+  return true;
+}
+
+// Send now: release the message at once (§6.4); the answer's word in the note.
+async function sendMessageNow(row, rowEl) {
+  queueNote(rowEl, '');
+  const r = await sendNow(row.id);
+  if (!r || r.ok !== true) { queueNote(rowEl, refusalHint(r)); return; }
+  if (r.waiting === 'parked_message') queueNote(rowEl, WAITS_HINT, 'info');
+  else if (r.mode === 'parked') queueNote(rowEl, 'With your next message', 'info');
+  else if (r.mode === 'wake' || r.mode === 'transported') queueNote(rowEl, 'Sent', 'info');
 }
 
 // The row's expanded Output: a bounded tail followed live, the footer under it,
@@ -517,7 +628,10 @@ export function runAction(row, action, { rowEl = null, density = 'compact', butt
     return true;
   }
   // The queue: Remove takes the item out (no revert: the rail's ⟲ keeps that);
-  // Hold and Stage go through the rail's own setStaged.
+  // Hold and Stage go through the rail's own setStaged; a message's Edit and
+  // Send now through queue.js's editMessage and sendNow.
+  if (id === 'edit') return openEditor(row, rowEl, density);
+  if (id === 'send-now') { sendMessageNow(row, rowEl); return true; }
   if (id === 'remove') { removeItem(row.id); return true; }
   if (id === 'hold') { setStaged(row.id, false); return true; }
   if (id === 'stage') { setStaged(row.id, true); return true; }

@@ -12,13 +12,74 @@
 // (chat-present.js) read it through queueSnapshot(), and every render() ends by
 // announcing the new snapshot on the chrome bus as `queue` — so the rail, the
 // `queue N` chip and the phone's Queue count the same items, from one list.
+//
+// COMPOSER MESSAGES (design spec §6.1-§6.6, U62). A message is a queue item of
+// kind 'message', and this module is the chrome's ONE send path for it:
+//
+//   sendMessage({text, skill, files, conversation_id, send}) → POST /api/queue/message
+//   editMessage(id, {text, skill?, files?})                 → PATCH /api/queue/:id
+//   sendNow(id)                                             → POST /api/queue/push {ids: [id]}
+//   recallPending(parkId)                                   → POST /api/queue/pending/recall {id}
+//
+// Each answers the daemon's parsed body ({ok: true, …} or a refusal {ok: false,
+// refused, hint, …}) and never throws: a network failure answers refused
+// 'network'. A message's TEXT never rides a frame (§6.1): a frame that touches a
+// message schedules one coalesced hydrateQueue(), and the GET serves the text
+// at `read` and above (below, `text_hidden`). The receipts (§6.6) fold from the
+// GET's `receipts` and the `receipt` frames. queueSnapshot().messages is THE
+// pending list the rail, the trays and the composer's bubbles all read: the
+// queued and held messages, and every message whose receipt is not yet
+// confirmed (a confirmed one stays, saying so, until the next hydrate or
+// CONFIRMED_HOLD_MS, whichever is first).
 import { $ } from './state.js';
 import { isCommentAnswered } from './comments.js';
 import { deviceKind } from './viewport.js';
 import { bus } from './bus.js';
+import { mirror } from './chat-state.js';
 
 let items = [];
 const isStaged = (it) => it.staged !== false; // default staged; held is explicit
+const isMessage = (it) => !!it && it.kind === 'message';
+// A message the user typed, as against a stop request (§6.9: a message item too,
+// with no text, sent at once). Take back and the pending list count these.
+const isTypedMessage = (it) => isMessage(it) && it.source !== 'task-stop';
+
+/* ---------- the pending messages: receipts and what is known of each ---------- */
+export const MESSAGE_CACHE_MAX = 50;      // as the daemon's state.messageReceipts is
+export const CONFIRMED_HOLD_MS = 10000;   // how long a confirmed message still says so
+const RECEIPT_STATES = ['queued', 'sending', 'sent', 'parked', 'handed_over', 'unconfirmed', 'failed', 'confirmed'];
+// msg_id → {state, at}: the GET's `receipts`, then the `receipt` frames.
+let receipts = new Map();
+// msg_id → when this page saw it turn confirmed (its 'Received' hold).
+const confirmedAt = new Map();
+// msg_id → the last known fields of a message, text included when this page
+// was allowed to read it: what a message that left the queue still shows.
+// Bounded like the daemon's receipts; `local` is the state a send's own answer
+// gave (wake → sending, parked → parked) until a receipt says more.
+const known = new Map();
+
+function remember(msgId, fields) {
+  if (typeof msgId !== 'string' || !msgId) return;
+  const prev = known.get(msgId);
+  const next = { ...(prev || {}), ...fields };
+  if (prev) known.delete(msgId);   // re-inserted: the newest last
+  known.set(msgId, next);
+  while (known.size > MESSAGE_CACHE_MAX) known.delete(known.keys().next().value);
+}
+
+// The fields a message item tells about itself, its text only when it has one.
+function fieldsOf(it) {
+  const f = {
+    id: it.id, msg_id: it.msg_id, chars: Number.isFinite(it.chars) ? it.chars : null,
+    skill_name: it.skill && typeof it.skill.name === 'string' ? it.skill.name : null,
+    files_count: Array.isArray(it.files) ? it.files.length : (Number.isFinite(it.files_count) ? it.files_count : 0),
+    conversation_id: it.conversation_id || null, device: it.device || null,
+    autosend: it.autosend === true, enqueued_at: it.enqueued_at || 0, source: it.source || null,
+  };
+  if (typeof it.text === 'string' && it.text_hidden !== true) f.text = it.text;
+  return f;
+}
+const learn = (it) => { if (isMessage(it) && it.msg_id) remember(it.msg_id, fieldsOf(it)); };
 
 // The in-flight push awaiting a delivery ack (see watchAck). A live wake is only
 // "sent" once the bridge acks it back as a `wake-ack` frame; until then the rail
@@ -51,10 +112,28 @@ export function setRailOpener(fn) { if (typeof fn === 'function') openRail = fn;
 // disappear), while any frame-added item the snapshot predates is preserved.
 export async function hydrateQueue() {
   let fetched;
+  let served = null;
   try {
     const r = await fetch('/api/queue').then((x) => x.json());
     fetched = Array.isArray(r.items) ? r.items : [];
+    if (Array.isArray(r.receipts)) served = r.receipts;
   } catch { return; } // leave the mirror as-is on a failed fetch
+  if (served) {
+    // The daemon's receipts are the truth (never persisted: after its restart
+    // a message it no longer tracks is unknown here too, not lost).
+    receipts = new Map();
+    for (const rec of served) {
+      if (rec && typeof rec.msg_id === 'string' && RECEIPT_STATES.includes(rec.state)) {
+        receipts.set(rec.msg_id, { state: rec.state, at: rec.at || 0 });
+      }
+    }
+    for (const [id, k] of known) {
+      if (k.local && !receipts.has(id)) known.set(id, { ...k, local: null });
+      if (receipts.has(id) && receipts.get(id).state === 'confirmed') known.delete(id);
+    }
+  }
+  // A confirmed message said 'Received' until this refresh (§7.10).
+  confirmedAt.clear();
   const serverIds = new Set(fetched.map((it) => it.id));
   const byId = new Map();
   for (const it of fetched) byId.set(it.id, it);
@@ -66,7 +145,26 @@ export async function hydrateQueue() {
     if (!serverIds.has(it.id) && (it.enqueued_at || 0) > newestServerSeq) byId.set(it.id, it);
   }
   items = [...byId.values()].sort((a, b) => (a.enqueued_at || 0) - (b.enqueued_at || 0));
+  for (const it of items) learn(it);
   render();
+}
+
+// One GET for a burst of frames that touch messages: a frame never carries a
+// message's text (§6.1), so the rail reads it again. A hydrate already in
+// flight may predate the change, so one more follows it.
+let hydrateTimer = null;
+let hydrating = null;
+let hydrateAgain = false;
+function scheduleHydrate() {
+  if (hydrateTimer !== null) return;
+  if (hydrating) { hydrateAgain = true; return; }
+  hydrateTimer = setTimeout(() => {
+    hydrateTimer = null;
+    hydrating = hydrateQueue().finally(() => {
+      hydrating = null;
+      if (hydrateAgain) { hydrateAgain = false; scheduleHydrate(); }
+    });
+  }, 0);
 }
 
 export async function initQueue() {
@@ -121,11 +219,53 @@ export async function refreshPending() {
   box.classList.toggle('hidden', !pending);
   if (!pending) return;
   const txt = box.querySelector('.rp-text');
-  if (txt) {
-    const n = parkedCount(pending);
-    const what = n === 1 ? '1 signal' : `${n} signals`;
-    txt.textContent = `⇢ Parked: ${what} deliver with your next message.`;
+  if (txt) txt.textContent = `⇢ Parked: ${parkedWhat(pending)} deliver with your next message.`;
+  // A park that holds the user's words offers Take back in place of Cancel,
+  // which would discard them (ruling C1 a); a park without one keeps Cancel.
+  const words = parkHoldsMessage(pending);
+  const cancel = box.querySelector('.rp-cancel');
+  if (cancel) cancel.hidden = words;
+  let back = box.querySelector('.rp-takeback');
+  if (words && !back) {
+    back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'rp-takeback';
+    back.textContent = 'Take back';
+    back.title = 'return the message to the queue — anything else parked still delivers';
+    back.addEventListener('click', takeBack);
+    (cancel || txt || box).insertAdjacentElement(cancel || txt ? 'afterend' : 'beforeend', back);
   }
+  if (back) back.hidden = !words;
+}
+
+// What the park holds, counted: the user's messages, stop requests, then the
+// rest as signals ('1 message, 2 signals'). A park of signals alone reads as it
+// always has ('2 signals').
+function parkedWhat(pending) {
+  const rows = (pending && Array.isArray(pending.items)) ? pending.items : [];
+  const msgs = rows.filter(isTypedMessage).length;
+  const stops = rows.filter((it) => isMessage(it) && !isTypedMessage(it)).length;
+  const signals = Math.max(0, parkedCount(pending) - msgs - stops);
+  const parts = [];
+  if (msgs) parts.push(msgs === 1 ? '1 message' : `${msgs} messages`);
+  if (stops) parts.push(stops === 1 ? '1 stop request' : `${stops} stop requests`);
+  if (signals || !parts.length) parts.push(signals === 1 ? '1 signal' : `${signals} signals`);
+  return parts.join(', ');
+}
+const parkHoldsMessage = (pending) => !!pending && Array.isArray(pending.items) && pending.items.some(isTypedMessage);
+
+// Take back (§6.3, ruling C1 a): the park's messages return to the queue,
+// staged with autosend off; its stop requests and signals stay parked, and the
+// rail then shows what is left, with Cancel.
+async function takeBack() {
+  if (!pendingId) return;
+  const r = await recallPending(pendingId);
+  if (!r.ok) {
+    const el = railBanner('rail-error');
+    if (el) { el.setAttribute('role', 'alert'); el.textContent = r.hint || 'Take back failed — try again.'; }
+  }
+  await hydrateQueue();
+  await refreshPending();
 }
 
 /* ---------- the held batch, itemised ---------- */
@@ -171,25 +311,55 @@ async function cancelPending() {
 
 // Fold a `queue` WS frame (op add|update|remove|clear) into the local mirror.
 // Called from the ws.js handler map.
+// A frame that touches a message item schedules one hydrateQueue(): the frame
+// never carries its text (§6.1). `receipt` {msg_id, state, at} moves a
+// message's receipt (§6.6).
 export function foldQueueFrame(msg) {
   if (msg.op === 'add' && msg.item) {
     if (!items.some((x) => x.id === msg.item.id)) items.push(msg.item);
+    if (isMessage(msg.item)) { learn(msg.item); scheduleHydrate(); }
   } else if (msg.op === 'update') {
     const it = items.find((x) => x.id === msg.id);
     if (!it) return;
     it.staged = msg.staged !== false;
-    // F9: a summary refresh (a queued comment's text was edited) rides the update
-    // frame as a rebuilt item — reflect it so the rail row isn't stale.
-    if (msg.item) { it.summary = msg.item.summary; it.why_wake = msg.item.why_wake; }
+    if (isMessage(it) || isMessage(msg.item)) {
+      // A message's update carries its public fields (chars, the skill's
+      // name, waiting, …), never its text: fold them, keep the text this page
+      // read, and read the queue again for the new one.
+      if (msg.item) {
+        const { skill, files_count: filesCount, text: _never, ...rest } = msg.item;
+        Object.assign(it, rest);
+        if (!it.skill || !skill || it.skill.name !== skill.name) it.skill = skill || null;
+        if (Number.isFinite(filesCount)) {
+          if (Array.isArray(it.files) && it.files.length !== filesCount) delete it.files;
+          it.files_count = filesCount;
+        }
+      }
+      learn(it);
+      scheduleHydrate();
+    } else if (msg.item) {
+      // F9: a summary refresh (a queued comment's text was edited) rides the update
+      // frame as a rebuilt item — reflect it so the rail row isn't stale.
+      it.summary = msg.item.summary; it.why_wake = msg.item.why_wake;
+    }
   } else if (msg.op === 'remove') {
     // C4: a remove frame carries `ids` (the batched flush + single removes alike);
     // `id` is a back-compat alias for a single-id removal.
     const ids = Array.isArray(msg.ids) ? msg.ids : (msg.id != null ? [msg.id] : []);
     if (!ids.length) return;
     const drop = new Set(ids);
+    const gone = items.filter((x) => drop.has(x.id) && isMessage(x));
+    // Removed, not delivered: the daemon drops its receipt, so the message
+    // leaves the pending list too. A flush keeps it: its receipt moves on.
+    if (msg.reason !== 'flushed') for (const it of gone) { known.delete(it.msg_id); receipts.delete(it.msg_id); }
     items = items.filter((x) => !drop.has(x.id));
+    if (gone.length) scheduleHydrate();
   } else if (msg.op === 'clear') {
     items = [];
+  } else if (msg.op === 'receipt') {
+    if (typeof msg.msg_id !== 'string' || !RECEIPT_STATES.includes(msg.state)) return;
+    receipts.set(msg.msg_id, { state: msg.state, at: msg.at || Date.now() });
+    if (msg.state === 'confirmed') confirmedAt.set(msg.msg_id, Date.now());
   } else {
     return;
   }
@@ -208,6 +378,7 @@ export async function pushQueue() {
   if (!items.some(isStaged) && !note) { showNothingToPush(); return; }
   openRail(); // the confirmation/rejection conversation below must be visible
   clearRailBanners(); // a new push resets the whole feedback state, not just errors
+  { const held = q('.rail-held-msgs'); if (held) held.remove(); } // outlives an ack, not a new push
   // F6: don't drop the staged rows or clear the note until the POST confirms — a
   // failed push (daemon mid-restart) must lose neither the batch nor the typed note.
   let ok = false;
@@ -223,8 +394,13 @@ export async function pushQueue() {
   // Confirmed AT THE HTTP LAYER: clear the note and drop the staged rows; held
   // ones survive. The server also emits ONE batched `queue` remove frame (C4).
   if (add) add.value = '';
-  items = items.filter((x) => !isStaged(x));
+  // Messages the push left queued (a viewer below `full`: `held_messages`; one
+  // the park had no room for: `waiting_ids`) stay on the rail.
+  const heldMsgs = result && Number.isFinite(result.held_messages) ? result.held_messages : 0;
+  const waiting = new Set(result && Array.isArray(result.waiting_ids) ? result.waiting_ids : []);
+  items = items.filter((x) => !isStaged(x) || (isMessage(x) && (heldMsgs > 0 || waiting.has(x.id))));
   render();
+  if (heldMsgs > 0 || waiting.size) scheduleHydrate();
   if (result && result.mode === 'parked') {
     // No live channel — held and delivered on the user's NEXT message. Reliable;
     // no ack to await. Copy is server-sent (result.delivers).
@@ -235,6 +411,15 @@ export async function pushQueue() {
     // that it reached Claude. Await the bridge's delivery ack; reject on timeout.
     watchAck(result.seq);
   }
+  if (heldMsgs > 0) showHeldMessages(heldMsgs);
+}
+
+// A Push from a viewer below `full` sends the staged signals and leaves every
+// message queued (§6.3): say so, until the next push.
+function showHeldMessages(n) {
+  const el = railBanner('rail-held-msgs');
+  if (!el) return;
+  el.textContent = `${n === 1 ? '1 message stays' : `${n} messages stay`} queued: sending a message from this page needs full access`;
 }
 
 // Arm the delivery-confirmation watch for a live wake `seq`. Shows a transient
@@ -448,7 +633,127 @@ export function queueSnapshot() {
     staged,
     held: list.length - staged,
     parked: parked ? Object.freeze({ id: parked.id || null, count: parkedCount(parked) }) : null,
+    messages: pendingMessages(),
   });
+}
+
+// The conversation a message's place is counted in: null is the primary's.
+const convKey = (cid) => cid || (mirror && mirror.serverPrimary) || null;
+const confirmedShown = (msgId, now) => confirmedAt.has(msgId) && now - confirmedAt.get(msgId) < CONFIRMED_HOLD_MS;
+
+// THE pending list (§7.10): the queued and held messages, then every message
+// that has left the queue and is not yet confirmed (a confirmed one for its
+// hold), oldest first. `position` numbers the queued autosend messages of one
+// conversation from 1 (§6.4's order); a held one has none. A stop request is
+// not the user's words and is not listed; a message this page knows nothing of
+// but a receipt (after a reload) is not listed either.
+function pendingMessages() {
+  const now = Date.now();
+  const out = [];
+  const inQueue = new Set();
+  for (const it of items) {
+    if (!isTypedMessage(it) || !it.msg_id) continue;
+    inQueue.add(it.msg_id);
+    const f = { ...(known.get(it.msg_id) || {}), ...fieldsOf(it) };
+    if (it.text_hidden === true) delete f.text;
+    const rec = receipts.get(it.msg_id);
+    out.push({ ...f, state: isStaged(it) ? 'queued' : 'held', at: (rec && rec.at) || it.enqueued_at || 0 });
+  }
+  for (const [msgId, k] of known) {
+    if (inQueue.has(msgId) || k.source === 'task-stop') continue;
+    const rec = receipts.get(msgId);
+    const state = rec ? rec.state : k.local;
+    if (!state) continue;
+    if (state === 'confirmed' && !confirmedShown(msgId, now)) continue;
+    out.push({ ...k, state, at: (rec && rec.at) || k.enqueued_at || 0 });
+  }
+  out.sort((a, b) => (a.enqueued_at || 0) - (b.enqueued_at || 0));
+  const places = new Map();
+  return Object.freeze(out.map((m) => {
+    let position = null;
+    if (m.state === 'queued' && m.autosend) {
+      const key = convKey(m.conversation_id);
+      position = (places.get(key) || 0) + 1;
+      places.set(key, position);
+    }
+    const e = {
+      id: m.id || null, msg_id: m.msg_id, state: m.state, at: m.at, chars: Number.isFinite(m.chars) ? m.chars : null,
+      files_count: m.files_count || 0, conversation_id: m.conversation_id || null, device: m.device || null,
+      autosend: m.autosend === true, position,
+    };
+    if (typeof m.text === 'string') e.text = m.text;
+    if (m.skill_name) e.skill_name = m.skill_name;
+    return Object.freeze(e);
+  }));
+}
+
+/* ---------- the one send path (§6.3) ---------- */
+// Every request answers the parsed body and never throws. An answer that is
+// not ok and names no `refused` (a 403 below `full`, a 415) gets one, so a
+// caller reads `refused` and `hint` alike.
+const NETWORK_HINT = 'The daemon did not answer — check that web-chat is running, then try again.';
+async function request(method, url, body) {
+  let res;
+  try {
+    res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    return { ok: false, refused: 'network', hint: NETWORK_HINT };
+  }
+  let out = null;
+  try { out = await res.json(); } catch { out = null; }
+  if (!out || typeof out !== 'object') {
+    return res.ok ? { ok: true } : { ok: false, refused: 'network', hint: NETWORK_HINT, status: res.status };
+  }
+  if (out.ok !== true && typeof out.refused !== 'string') {
+    return { ...out, ok: false, refused: res.status === 403 ? 'forbidden' : (out.code || 'error'),
+      hint: out.hint || out.error || NETWORK_HINT, status: res.status };
+  }
+  return out;
+}
+
+// A composer message: POST /api/queue/message. `send` is 'auto' (when Claude
+// is free), 'now' or 'hold'. A message the daemon delivered or parked at once
+// never sits in the queue, so the pending list keeps the words sent here.
+export async function sendMessage({ text, skill, files, conversation_id: conversationId, send = 'auto' } = {}) {
+  const body = { text, files, conversation_id: conversationId, send, device: deviceKind() };
+  if (skill !== undefined) body.skill = skill;
+  const r = await request('POST', '/api/queue/message', body);
+  if (r.ok === true && typeof r.msg_id === 'string') {
+    const local = r.mode === 'wake' || r.mode === 'transported' ? 'sending' : r.mode === 'parked' ? 'parked' : null;
+    const prev = known.get(r.msg_id) || {};
+    const fields = {
+      id: r.id || prev.id || null, msg_id: r.msg_id,
+      chars: Number.isFinite(prev.chars) ? prev.chars : (typeof text === 'string' ? text.length : 0),
+      skill_name: prev.skill_name || (skill && typeof skill.name === 'string' ? skill.name : null),
+      files_count: prev.files_count || (Array.isArray(files) ? files.length : 0),
+      conversation_id: conversationId || null, device: deviceKind(), autosend: send === 'auto',
+      enqueued_at: prev.enqueued_at || Date.now(), source: 'composer',
+    };
+    if (typeof text === 'string') fields.text = text;
+    if (local) fields.local = local;
+    remember(r.msg_id, fields);
+    render();
+  }
+  return r;
+}
+
+// Edit a queued or held message: PATCH /api/queue/:id with the fields given.
+export async function editMessage(id, { text, skill, files } = {}) {
+  const body = {};
+  if (text !== undefined) body.text = text;
+  if (skill !== undefined) body.skill = skill;
+  if (files !== undefined) body.files = files;
+  return request('PATCH', '/api/queue/' + encodeURIComponent(id), body);
+}
+
+// Send now: release this one message whatever Claude is doing (§6.4).
+export async function sendNow(id) {
+  return request('POST', '/api/queue/push', { ids: [id], device: deviceKind() });
+}
+
+// Take back a park's messages (the rail's Take back).
+export async function recallPending(parkId) {
+  return request('POST', '/api/queue/pending/recall', { id: parkId });
 }
 
 // One row builder for both lists. A PARKED row is the read-only variant: that
@@ -459,6 +764,7 @@ export function queueSnapshot() {
 // What ⟲ actually does, per kind (lib/server/domain/queue revertArtifact). Only a
 // capture's own pane is ever removed — never promise that for anything else.
 function revertTitle(kind) {
+  if (kind === 'message') return 'remove — take this message out of the queue (nothing else changes)';
   if (kind === 'comment') return 'revert — remove from queue and delete this comment pin';
   if (kind === 'capture') return 'revert — remove from queue and drop the captured pane';
   return 'revert — remove from queue and undo this interaction (the pane stays)';
@@ -486,6 +792,7 @@ function itemRow(it, { parked = false } = {}) {
   const why = document.createElement('div'); why.className = 'qi-why'; why.textContent = it.why_wake || '';
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
   body.append(top, why, sum);
+  if (!parked && isMessage(it)) messageBody(row, it, sum, body);
   if (parked) { row.append(dot, body); return row; }
   if (it.kind === 'signal' && it.signal_key) body.append(...peekControls(it));
 
@@ -498,10 +805,41 @@ function itemRow(it, { parked = false } = {}) {
   const rev = document.createElement('button');
   rev.className = 'qi-revert'; rev.textContent = '⟲';
   rev.title = revertTitle(it.kind);
-  rev.addEventListener('click', () => revertItem(it.id));
+  // Revert on a message is a plain remove (§6.1): there is no artifact to undo.
+  rev.addEventListener('click', () => (isMessage(it) ? removeItem(it.id) : revertItem(it.id)));
 
   row.append(dot, body, stage, rev);
   return row;
+}
+
+// A queued message's row: its text (read from GET /api/queue, never a frame),
+// or — the text hidden from this viewer — its length; then the skill and the
+// file count, and a wait the park imposes (§6.4).
+function messageBody(row, it, sum, body) {
+  row.classList.add('rail-msg');
+  if (!isTypedMessage(it)) return;   // a stop request: its summary names the task id
+  const f = fieldsOf(it);
+  const k = known.get(it.msg_id);
+  const text = typeof f.text === 'string' ? f.text
+    : (it.text_hidden !== true && k && typeof k.text === 'string' ? k.text : null);
+  if (text !== null) {
+    sum.className = 'qi-summary qi-msg-text';
+    sum.textContent = text;
+  } else if (it.text_hidden === true) {
+    const n = Number.isFinite(f.chars) ? f.chars : 0;
+    sum.className = 'qi-summary qi-msg-hidden';
+    sum.textContent = `message · ${n} ${n === 1 ? 'char' : 'chars'} (hidden from remote viewers of this project)`;
+  }
+  // Neither: a frame's item, its text on the way (the summary stands meanwhile).
+  const bits = [];
+  if (f.skill_name) bits.push(`/${f.skill_name}`);
+  if (f.files_count) bits.push(f.files_count === 1 ? '1 file' : `${f.files_count} files`);
+  if (it.waiting === 'parked_message') bits.push('waits: a message is already parked');
+  if (!bits.length) return;
+  const meta = document.createElement('div');
+  meta.className = 'qi-msg-meta';
+  meta.textContent = bits.join(' · ');
+  body.append(meta);
 }
 
 /* ---------- a signal's value, on request ----------
@@ -583,6 +921,8 @@ function sectionHeader(label, n, cls) {
 // snapshot) — whether or not there is a rail to draw into, so a chip never
 // waits on the rail's markup.
 function render() {
+  const now = Date.now();
+  for (const [id, t] of [...confirmedAt]) if (now - t >= CONFIRMED_HOLD_MS) confirmedAt.delete(id);
   drawRail();
   bus.emit('queue', queueSnapshot());
 }
