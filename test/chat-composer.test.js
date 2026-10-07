@@ -406,6 +406,7 @@ test('Shift+Enter breaks a line; an Enter while composing sends nothing; one req
   release();
   await waitUntil(() => input().value === '');
   assert.equal(slot().querySelector('.cc-send').disabled, false);
+  assert.equal(input().readOnly, false, 'the field is editable again');
 });
 
 test('a refusal shows its hint under the input and keeps the text', async () => {
@@ -428,6 +429,8 @@ test('a refusal shows its hint under the input and keeps the text', async () => 
     await waitUntil(() => !msgNote().hidden, { what: `the ${answer.refused} hint` });
     assert.equal(msgNote().textContent, words);
     assert.equal(input().value, 'keep these words', 'the text is kept');
+    assert.equal(input().readOnly, false, 'and editable again');
+    assert.equal(slot().querySelector('.cc-send').disabled, false, 'Send is back');
   }
   type('keep these words!');
   assert.equal(msgNote().hidden, true, 'typing clears the hint');
