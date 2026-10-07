@@ -460,7 +460,8 @@ test('mountAnswerFrame with no port: null at once, ONE shared refresh, then the 
 test('mountAnswerFrame refuses what it cannot frame: a bad kind, layout or id', () => {
   const el = host();
   for (const bad of [{ layout: 'card' }, { id: 'ask 1', layout: 'card' }, { id: 'ask_1', layout: 'Card' },
-    { kind: 'api', path: 'x', layout: 'stop' }, { kind: '../x', layout: 'stop' }, { id: 'ask_1' }]) {
+    { kind: 'api', path: 'x', layout: 'stop' }, { kind: '../x', layout: 'stop' }, { id: 'ask_1' },
+    { kind: 'control', path: '../ask/ask_1', layout: 'stop' }]) {
     assert.equal(A.mountAnswerFrame(el, bad), null, JSON.stringify(bad));
   }
   assert.equal(A.mountAnswerFrame(null, { id: 'ask_1', layout: 'card' }), null);

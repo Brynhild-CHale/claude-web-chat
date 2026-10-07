@@ -2662,7 +2662,7 @@ pre.dv-diff {
    leaves (beats `.cs-act > * { flex: none }`). */
 .cs-act > .wc-answer-frame { flex: 1 1 260px; min-width: 260px; width: auto; height: 22px; align-self: center; }
 /* In the awaiting card and the sheet: the card's full width. */
-.cp-aw-body > .wc-answer-frame { width: 100%; min-height: 22px; }
+.cp-aw-body > .wc-answer-frame { width: 100%; height: 96px; min-height: 22px; }
 /* A frame that never loaded (§4.5 item 10): the popup's button in its place. */
 .wc-answer-popup {
   height: 20px; padding: 0 9px; display: inline-flex; align-items: center; cursor: pointer;

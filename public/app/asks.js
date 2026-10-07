@@ -222,7 +222,9 @@ function normalize(opts) {
   let path = '';
   if (kind !== 'ask' && o.path != null) {
     if (typeof o.path !== 'string' || o.path.length > 512) return null;
-    path = o.path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+    const segs = o.path.split('/').filter(Boolean);
+    if (segs.some((x) => x === '.' || x === '..')) return null;   // never leave the kind's own space
+    path = segs.map(encodeURIComponent).join('/');
   }
   let query = [];
   if (o.query != null) {
