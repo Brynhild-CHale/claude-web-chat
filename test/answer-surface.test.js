@@ -34,6 +34,7 @@ const { createAnswerSurface } = require('../lib/server/answer-surface');
 const palette = require('../lib/server/answer-surface/palette');
 const { PACKS } = require('../lib/server/theme-packs');
 const { flattenTheme } = require('../lib/server/theme');
+const { fontFaces } = require('../lib/server/fonts');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { packFixture, fakeForge, repoWithArchive } = require('../test-support/packs');
 const { installPack } = require('../lib/packs/install');
@@ -633,9 +634,42 @@ test('static: modules and stylesheets by name, fonts as woff2, nothing else', as
   assert.equal(font.status, 200);
   assert.equal(font.headers['content-type'], 'font/woff2');
   assert.deepEqual(font.buf.subarray(0, 4), Buffer.from('wOF2', 'latin1'));
-  for (const p of ['/answer/fonts/fonts.css', '/answer/fonts.css', '/fonts/fonts.css', '/answer/fonts/Geist-OFL.txt', '/answer/fonts/..%2F..%2Fpackage.json']) {
+  // /answer/fonts.css is the one list's route (the next test); the chrome's
+  // copy and any non-font file are still not served here.
+  for (const p of ['/answer/fonts/fonts.css', '/fonts/fonts.css', '/answer/fonts/Geist-OFL.txt', '/answer/fonts/..%2F..%2Fpackage.json']) {
     assert.equal((await req(port, { path: p })).status, 404, p);
   }
+});
+
+test('static: /answer/fonts.css is the one @font-face list, every src moved to /answer/fonts/', async (t) => {
+  const { port } = await boot(t);
+  const r = await req(port, { path: '/answer/fonts.css' });
+  assert.equal(r.status, 200);
+  assert.match(r.headers['content-type'], /^text\/css/);
+  assert.equal(r.headers['content-security-policy'], EXACT_CSP);
+  const faces = fontFaces();
+  assert.ok(faces.length > 2, 'the bundled list');
+  assert.equal((r.text.match(/@font-face/g) || []).length, faces.length, 'every face of public/fonts/fonts.css, no other');
+  for (const face of faces) {
+    const moved = face.css.replace(/url\((['"]?)\/fonts\//g, 'url($1/answer/fonts/');
+    assert.notEqual(moved, face.css, `${face.family}: its src is rewritten`);
+    assert.ok(r.text.includes(moved), `${face.family} (${face.files[0]}) is served verbatim but for its url`);
+  }
+  assert.match(r.text, /font-family: 'Libre Caslon Text'/, 'a face a vetted theme names reaches the frame');
+  // Every url points back at this origin's font route, and each one answers.
+  const urls = [...r.text.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g)].map((m) => m[2]);
+  assert.equal(urls.length, faces.length);
+  for (const u of urls) {
+    assert.match(u, /^\/answer\/fonts\/[\w-][\w.-]*\.woff2$/, u);
+    const f = await req(port, { path: u });
+    assert.equal(f.status, 200, u);
+    assert.equal(f.headers['content-type'], 'font/woff2', u);
+  }
+  // The real frame sheet loads the list as its first statement (an @import
+  // after a rule is ignored); this suite serves a fixture publicDir, so read it.
+  const real = path.join(__dirname, '..', 'lib', 'server', 'answer-surface', 'public', 'answer.css');
+  const sheet = fs.readFileSync(real, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  assert.match(sheet, /^@import url\('\/answer\/fonts\.css'\);/, 'answer.css imports /answer/fonts.css first');
 });
 
 // ── register ────────────────────────────────────────────────────────────────
