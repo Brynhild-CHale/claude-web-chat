@@ -29,12 +29,14 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 
-const { waitUntil } = require('../test-support/helpers');
+const { waitUntil, withTempHome } = require('../test-support/helpers');
 const { createAnswerSurface } = require('../lib/server/answer-surface');
 const palette = require('../lib/server/answer-surface/palette');
 const { PACKS } = require('../lib/server/theme-packs');
 const { flattenTheme } = require('../lib/server/theme');
-const { projectPaths } = require('../lib/core/paths');
+const { projectPaths, userPaths } = require('../lib/core/paths');
+const { packFixture, fakeForge, repoWithArchive } = require('../test-support/packs');
+const { installPack } = require('../lib/packs/install');
 const { sha256 } = require('../lib/packs/store');
 
 const MAIN = 54321;
@@ -544,6 +546,35 @@ test('palette.css: an installed pack is followed only when the terminal installe
   fs.writeFileSync(projectPaths(r6).packsAudit, '');
   writeTheme(r6, { name: 'ocean' });
   assertPack(await paletteOf(t, r6), pack('earthy'), 'no audit');
+});
+
+// A system-tier pack is installed once, from one project, for every project on
+// the machine. Its audit line reaches the user tier's log too (lib/packs/store
+// appendAudit), so a second project's frames follow it, through the real
+// install pipeline; a pane's (actor http) system-tier install still is not.
+async function installSystemOcean(t, actor) {
+  withTempHome(t);
+  const from = paletteRoot();
+  const dir = packFixture({ name: 'ocean-pack', components: [], themes: [{ name: 'ocean', theme: { name: 'ocean', modes: oceanModes() } }] });
+  const forge = await fakeForge(t, { repos: { 'acme/ocean': repoWithArchive(dir) } });
+  await installPack({ url: forge.url('acme', 'ocean'), root: from, tier: 'system', actor });
+  assert.ok(fs.existsSync(path.join(userPaths().themesDir, 'ocean.json')), 'the theme is in the user tier');
+  const other = paletteRoot();
+  writeTheme(other, { name: 'ocean' });
+  assert.equal(fs.existsSync(projectPaths(other).packsAudit), false, 'the second project has no audit log of its own');
+  return other;
+}
+
+test('palette.css: a system-tier pack the terminal installed from another project is followed', async (t) => {
+  const other = await installSystemOcean(t, 'cli');
+  const css = await paletteOf(t, other);
+  assertPack(css, { modes: oceanModes() }, 'a cli system-tier install, seen from another project');
+  assert.equal(block(css, 'light', '--wc-bg'), '#f0f4f8');
+});
+
+test('palette.css: a system-tier pack installed over HTTP is not followed from another project', async (t) => {
+  const other = await installSystemOcean(t, 'http');
+  assertPack(await paletteOf(t, other), pack('earthy'), 'an http system-tier install');
 });
 
 test('palette.css: a vetted pack failing the contrast check falls back to Earthy', async (t) => {
