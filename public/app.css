@@ -2877,6 +2877,48 @@ pre.dv-diff {
 .cs-row-confirm > .wc-answer-frame[data-kind="control"] { width: 100%; min-height: 22px; }
 
 /* ── U86 · turn actions: Restore files and Fork · turn-actions.js ── */
+/* The dialog (#turn-action) and the result toast (.ta-toast), both body-appended
+   .popovers so shell.js dismisses them; on the glance rung, because the graph
+   inspector's Restore files opens the dialog from inside the overlay. Fixed, so
+   neither scrolls with the page. Paths are text, wrapped anywhere. The confirm
+   frames are sized and nothing else: no rule dims, filters, transforms, clips
+   or masks a control frame (its visibility proof would read it as covered). */
+.popover.ta-dialog {
+  position: fixed; z-index: var(--z-glance); top: 12vh; left: 0; right: 0; margin: 0 auto;
+  width: min(520px, calc(100vw - 32px)); max-height: 76vh; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px;
+}
+.ta-head, .ta-toast-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.popover .ta-title { margin: 0; font: 600 13px var(--wc-font); color: var(--wc-fg-bright); }
+.ta-close { flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--wc-radius-sm); background: transparent; color: var(--wc-muted); font: 13px var(--wc-font); cursor: pointer; }
+.ta-close:hover, .ta-close:focus-visible { color: var(--wc-fg-bright); background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+.ta-body { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; font: 12px var(--wc-font); color: var(--wc-text-1); }
+.ta-body p { margin: 0; }
+.ta-target { font: 600 12px var(--wc-font); color: var(--wc-fg); }
+.ta-counts { font: 11px var(--wc-mono); color: var(--wc-muted); }
+.ta-list-head { margin: 0 0 4px; font: 600 10px var(--wc-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--wc-muted); }
+.ta-paths { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow: auto; }
+.ta-path { display: flex; flex-wrap: wrap; gap: 2px 8px; font: 11.5px var(--wc-mono); }
+.ta-path-name { min-width: 0; overflow-wrap: anywhere; color: var(--wc-fg); }
+.ta-path-why { color: var(--wc-muted-dim); font-family: var(--wc-font); }
+.ta-note { padding: 6px 8px; border-left: 2px solid var(--wc-border); color: var(--wc-text-1); }
+.ta-head-moved, .ta-on-disk { border-left-color: var(--wc-gold); color: var(--wc-fg); }
+.ta-aside, .ta-wait { color: var(--wc-muted-dim); }
+.ta-reason { margin: 0; font: 12px var(--wc-font); color: var(--wc-fg); }
+.ta-blocked { color: var(--wc-gold); }
+.ta-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ta-confirm:empty { display: none; }
+.ta-again { height: 26px; padding: 0 10px; border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: transparent; color: var(--wc-fg); font: 12px var(--wc-font); cursor: pointer; }
+.ta-again:hover, .ta-again:focus-visible { border-color: var(--wc-accent); }
+/* After a partial restore the dialog holds the Undo under #ta-confirm. */
+.ta-undo-slot { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--wc-border-soft); }
+.ta-undo-slot:empty { display: none; }
+.ta-confirm > .wc-answer-frame, .ta-toast-slot > .wc-answer-frame, .ta-undo-slot > .wc-answer-frame { width: 100%; min-height: 22px; }
+/* The result toast: the chat's corner, above the status bar. */
+.popover.ta-toast {
+  position: fixed; z-index: var(--z-glance); top: auto; right: 16px; bottom: calc(var(--cs-bar-h) + 12px);
+  width: min(340px, calc(100vw - 32px)); min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+}
+.ta-toast-text { font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
 
 /* ── U91 · the composer on the mod · composer-mod.js ── */
 
