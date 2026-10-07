@@ -3,6 +3,10 @@
 //   * the ask document: the fixture page with a fresh nonce minted per load
 //     and per ask (8 live per ask), the mode and the kind substituted, nothing
 //     of the ask inlined, a bad layout refused;
+//   * a document load (an ask's or a kind's) whose Sec-Fetch-Dest is not
+//     iframe or document refused 403, minting nothing, noted; each document
+//     kind's nonces in a pool of their own, so ask loads never evict a
+//     control frame's (ruling F2);
 //   * the headers: §4.4's CSP with frame-ancestors at the main port, no
 //     X-Frame-Options, no-referrer, nosniff, no-store, COOP for the page
 //     layout, CORP on JSON;
@@ -215,6 +219,92 @@ test('the ninth document for one ask evicts the first nonce', async (t) => {
   const second = await decideReq(port, origin, nonces[1]);
   assert.equal(second.status, 200);
   assert.equal(asks.decides.length, 1);
+});
+
+// ── ruling F2: no page can churn the frames' nonces ────────────────────────
+test('a document GET whose Sec-Fetch-Dest is not iframe or document is refused, mints no nonce, and is noted', async (t) => {
+  const { s, port, origin, asks } = await boot(t);
+  const kindRefused = [];
+  s.register('control', {
+    document: (rq, rs, kit, { rest, query }) => kit.document(rs, { key: `control:${rest}:${query.target}` }),
+    api: (rq, rs, kit) => kit.json(rs, 200, { ok: true }),
+    nonceKey: (rq, { body }) => `control:${body && body.action}:${body && body.target}`,
+    onRefused: (info) => kindRefused.push(info),
+  });
+  const dest = (d) => (d == null ? {} : { 'sec-fetch-dest': d });
+
+  // The live frame: an iframe load serves the page and its nonce.
+  const live = await req(port, { path: `/answer/ask/${ASK}?layout=card`, headers: dest('iframe') });
+  assert.equal(live.status, 200);
+  const n = nonceOf(live);
+  assert.match(n, /^[A-Za-z0-9_-]{40,}$/);
+
+  // An <img>, a no-cors fetch and the rest: 403 before the handler, no page,
+  // no nonce — eight of them used to evict the live frame's (8 a key).
+  for (const d of ['image', 'empty', 'image', 'empty', 'script', 'style', 'object', 'embed', 'image', 'empty']) {
+    const r = await req(port, { path: `/answer/ask/${ASK}?layout=card&device=mobile`, headers: dest(d) });
+    assert.equal(r.status, 403, d);
+    assert.deepEqual(r.json, { ok: false, refused: 'dest', error: 'this document only loads in a frame or a window' });
+    assert.doesNotMatch(r.text, /wc-answer-nonce/);
+  }
+  assert.equal(asks.refusals.length, 10, 'each refusal is noted on the ask');
+  assert.deepEqual(asks.refusals[0], { id: ASK, reason: 'dest', origin: 'local', device: 'mobile', ua: null });
+  const ok = await decideReq(port, origin, n);
+  assert.equal(ok.status, 200, 'the live frame\'s nonce still answers');
+
+  // A top-level window (layout=page) and a client that sends no fetch metadata
+  // still get the page.
+  const page = await req(port, { path: `/answer/ask/${OTHER}?layout=page`, headers: dest('document') });
+  assert.equal(page.status, 200);
+  assert.equal(page.headers['cross-origin-opener-policy'], 'same-origin');
+  assert.equal((await req(port, { path: `/answer/ask/${OTHER}` })).status, 200);
+  // A malformed id is refused the same, and noted nowhere (it names no ask).
+  const before = asks.refusals.length;
+  assert.equal((await req(port, { path: '/answer/ask/..%2Fx', headers: dest('image') })).status, 403);
+  assert.equal(asks.refusals.length, before);
+
+  // A kind's document: the same gate, reported to the kind's onRefused.
+  const img = await req(port, { path: '/answer/control/restore?target=t1', headers: dest('image') });
+  assert.equal(img.status, 403);
+  assert.deepEqual(img.json, { ok: false, refused: 'dest', error: 'this document only loads in a frame or a window' });
+  assert.equal(kindRefused.length, 1);
+  assert.equal(kindRefused[0].code, 'dest');
+  assert.equal(kindRefused[0].method, 'GET');
+  assert.equal(kindRefused[0].rest, 'restore');
+  assert.equal((await req(port, { path: '/answer/control/restore?target=t1', headers: dest('iframe') })).status, 200);
+
+  // The frame's own subresources load with their own dests.
+  assert.equal((await req(port, { path: '/answer/answer.js', headers: dest('script') })).status, 200);
+  assert.equal((await req(port, { path: '/answer/palette.css', headers: dest('style') })).status, 200);
+  assert.equal((await req(port, { path: `/answer/api/asks/${ASK}`, headers: { ...dest('empty'), 'x-wc-answer': n } })).status, 200);
+});
+
+test('each document kind mints into a pool of its own: 64 ask loads leave a control frame\'s nonce valid, and the other way', async (t) => {
+  const { s, port, origin } = await boot(t);
+  s.register('control', {
+    document: (rq, rs, kit, { rest, query }) => kit.document(rs, { key: `control:${rest}:${query.target}` }),
+    api: (rq, rs, kit, { body }) => kit.json(rs, 200, { ok: true, body }),
+    nonceKey: (rq, { body }) => `control:${body && body.action}:${body && body.target}`,
+  });
+  const frame = (p) => req(port, { path: p, headers: { 'sec-fetch-dest': 'iframe' } });
+  const control = nonceOf(await frame('/answer/control/restore?target=t1'));
+  const ask = nonceOf(await frame(`/answer/ask/${ASK}`));
+  const run = (n) => req(port, {
+    method: 'POST', path: '/answer/api/control/run',
+    headers: { origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', 'x-wc-answer': n },
+    body: { action: 'restore', target: 't1' },
+  });
+
+  // 64 ask documents, each for an ask of its own: a full ask pool.
+  for (let i = 0; i < 64; i++) assert.equal((await frame(`/answer/ask/ask_flood${String(i).padStart(4, '0')}`)).status, 200);
+  assert.equal((await run(control)).status, 200, 'the control frame\'s nonce survives an ask flood');
+  assert.equal((await decideReq(port, origin, ask)).status, 403, 'the ask pool evicted its own oldest');
+
+  // And 64 control documents leave a fresh ask nonce standing.
+  const ask2 = nonceOf(await frame(`/answer/ask/${ASK}`));
+  for (let i = 0; i < 64; i++) assert.equal((await frame(`/answer/control/restore?target=x${i}`)).status, 200);
+  assert.equal((await decideReq(port, origin, ask2)).status, 200, 'the ask frame\'s nonce survives a control flood');
+  assert.equal((await run(control)).status, 403, 'the control pool evicted its own oldest');
 });
 
 test('the headers: the exact CSP, no X-Frame-Options, the common three, COOP for page, CORP on JSON', async (t) => {
