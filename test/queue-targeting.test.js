@@ -64,6 +64,14 @@ test('stampChannel: a pid is live while fresh; another is not; channelLive is un
   assert.equal(queue.channelLiveFor(state, 111, now + queue.CONSUMER_TTL_MS), false);
   queue.stampChannel(state, 333, now + queue.CONSUMER_TTL_MS);
   assert.deepEqual([...state.channelPids.keys()], [333]);
+  // The pid's own TTL, with the channel itself still fresh: a sibling pid
+  // stamped 1 ms later keeps channelLive true at now + TTL, so only 111's age
+  // (exactly the TTL) can make it false.
+  const s3 = freshState({ pids: [111], now });
+  queue.stampChannel(s3, 444, now + 1);
+  assert.equal(queue.channelLive(s3, now + queue.CONSUMER_TTL_MS), true);
+  assert.equal(queue.channelLiveFor(s3, 111, now + queue.CONSUMER_TTL_MS), false, 'a pid a full TTL old is stale');
+  assert.equal(queue.channelLiveFor(s3, 444, now + queue.CONSUMER_TTL_MS), true);
   // Anything but a positive safe integer is ignored (the channel is still stamped).
   const s2 = freshState({ live: true, now });
   for (const bad of ['111', 0, -4, 1.5, null, Number.MAX_SAFE_INTEGER + 2]) {
