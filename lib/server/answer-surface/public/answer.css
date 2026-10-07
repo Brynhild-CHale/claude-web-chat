@@ -13,22 +13,12 @@
    buttons: the visibility proof (IntersectionObserver v2) would rightly read
    that as covered. */
 
-/* The bundled faces, served by the answer surface from public/fonts (nothing
-   loads from the chrome's origin). */
-@font-face {
-  font-family: 'Geist';
-  src: url('/answer/fonts/Geist-Variable.woff2') format('woff2-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('/answer/fonts/GeistMono-Variable.woff2') format('woff2-variations');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+/* The bundled faces: /answer/fonts.css, which the answer surface generates
+   from THE @font-face list (public/fonts/fonts.css) with each src on this
+   origin's /answer/fonts/ (nothing loads from the chrome's origin). Imported
+   here rather than linked, so the document still links only palette, sheet
+   and script. No @font-face in this file: test/fonts.test.js refuses one. */
+@import url('/answer/fonts.css');
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
