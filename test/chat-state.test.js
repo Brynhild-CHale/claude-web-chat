@@ -835,3 +835,14 @@ test('initChatState registers mirror: frames and a hello hook, follows the socke
   bus.emit('conn', { state: 'live' });
   assert.equal(store.mirror.conn, 'reconnecting', 'and stops listening');
 });
+
+// ruling D2 (a), U65: a web prompt's push-batch device survives the normalizer;
+// anything but desktop or mobile does not.
+test('normalizeItem keeps a prompt item\'s device (desktop or mobile) and nothing else there', () => {
+  const p = (device) => shared.normalizeItem({ id: 'p_t1', turn_id: 't1', kind: 'prompt', text: 'hi', origin: 'peer', device });
+  assert.equal(p('mobile').device, 'mobile');
+  assert.equal(p('desktop').device, 'desktop');
+  assert.ok(!('device' in p('tablet')), 'an unknown device is dropped');
+  assert.ok(!('device' in p(7)));
+  assert.ok(!('device' in shared.normalizeItem({ id: 'p_t2', turn_id: 't2', kind: 'prompt', text: 'hi' })));
+});

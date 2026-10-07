@@ -429,6 +429,7 @@ function itemSchema(c) {
     // prompt, reply, thinking
     origin: F.word, command: F.text(2048), attachments: F.list(ATTACHMENT, 32), model: F.text(200),
     message_id: F.text(128), chars: F.count, duration_ms: F.num,
+    device: F.oneOf('desktop', 'mobile'), // a web prompt's push batch (ruling D2 (a))
     // tool_call
     tool: F.text(200), server: F.text(200), tool_kind: F.text(64), label: F.text(c.label), call: F.text(c.call),
     status: F.word, started_at: F.num, ended_at: F.num,
