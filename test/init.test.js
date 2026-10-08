@@ -97,16 +97,158 @@ test('init detects existing mode from an installed root', async (t) => {
   assert.equal(state.schema, 3);
 });
 
-test('init run from a SUBDIR of an installed project resolves to the parent, not a second install', async (t) => {
+// 0.8.5 (U96, the maintainer's call): init sets up the folder it is typed in,
+// or the one named, even inside another install; --nearest-parent keeps 0.8.0's
+// rule (walk up to the enclosing install), which is what /web-chat init runs.
+test('init run from a SUBDIR of an installed project is a fresh setup there, and names the install above', async (t) => {
   const root = installedProject(t);
   const sub = path.join(root, 'src', 'deep');
   fs.mkdirSync(sub, { recursive: true });
 
   const log = sink();
   const state = await init(['--json'], { cwd: sub, log, ...inertDeps() });
+  assert.equal(state.mode, 'fresh', 'a subdir with no .web-chat/ of its own is a fresh setup');
+  assert.equal(state.root, sub);
+  assert.equal(state.root_rule, 'here');
+  assert.equal(state.enclosing, root, 'the report names the install above');
+  assert.equal(fs.existsSync(path.join(sub, '.web-chat')), false, '--json wrote nothing');
+
+  // The preamble a terminal user reads names it too, before the write list.
+  const log2 = sink();
+  await init([], { cwd: sub, log: log2, ...inertDeps({ install: fakeDoctor(), hasClaude: () => true }), noOpenGuard: true });
+  const lines = log2.lines;
+  const note = lines.findIndex((l) => l.includes(`${root} has its own web-chat`));
+  assert.ok(note >= 0, `the enclosing line, in:\n${log2.text()}`);
+  assert.match(lines[note], /`claude-web-chat init --nearest-parent` checks or repairs that one instead/);
+  assert.ok(note < lines.findIndex((l) => l === 'This will create or edit:'), 'before the write list');
+});
+
+test('init --nearest-parent from a SUBDIR resolves to the installed parent (0.8.0\'s rule), not a second install', async (t) => {
+  const root = installedProject(t);
+  const sub = path.join(root, 'src', 'deep');
+  fs.mkdirSync(sub, { recursive: true });
+
+  const log = sink();
+  const state = await init(['--json', '--nearest-parent'], { cwd: sub, log, ...inertDeps() });
   assert.equal(state.mode, 'existing', 'a subdir of an installed project is NOT a fresh install');
   assert.equal(state.root, root, 'the resolved root is the installed parent');
+  assert.equal(state.root_rule, 'nearest-parent');
+  assert.equal(state.enclosing, null);
   assert.equal(fs.existsSync(path.join(sub, '.web-chat')), false, 'no second .web-chat/ in the subdir');
+});
+
+test('init --report <folder> reports that folder, not the cwd', async (t) => {
+  const root = installedProject(t);
+  const elsewhere = tmpDir();
+  const log = sink();
+  const doctor = fakeDoctor();
+  const state = await init(['--json', root], { cwd: elsewhere, log, ...inertDeps({ doctor }) });
+  assert.equal(state.mode, 'existing');
+  assert.equal(state.root, root);
+  assert.equal(doctor.calls[0].cwd, root, 'doctor ran against the folder');
+
+  const rel = await init(['--json', path.relative(elsewhere, root)], { cwd: elsewhere, log: sink(), ...inertDeps() });
+  assert.equal(rel.root, root, 'a relative folder resolves against the cwd');
+});
+
+test('init refuses a missing folder and two folders, writing nothing', async (t) => {
+  withTempHome(t);
+  const cwd = tmpDir();
+  const prevExit = process.exitCode;
+  t.after(() => { process.exitCode = prevExit; });
+  const prevErr = console.error;
+  const errs = [];
+  console.error = (...a) => errs.push(a.join(' '));
+  try {
+    for (const [args, re] of [[['--yes', 'gone'], /gone does not exist/], [['a', 'b'], /takes one folder, not 2: a b/]]) {
+      process.exitCode = 0;
+      const install = fakeDoctor();
+      const out = await init(args, { cwd, log: sink(), ...inertDeps({ install }) });
+      assert.equal(out, null);
+      assert.equal(process.exitCode, 1);
+      assert.equal(install.calls.length, 0);
+      assert.match(errs.join('\n'), re);
+      assert.match(errs.join('\n'), /Usage: claude-web-chat init \[folder\] \[--nearest-parent\]/);
+    }
+  } finally {
+    console.error = prevErr;
+  }
+  assert.deepEqual(fs.readdirSync(cwd), []);
+});
+
+test('a fresh init --yes <folder> installs into the folder and runs open and the tour against it, not the cwd', async (t) => {
+  withTempHome(t);
+  const cwd = tmpDir();
+  const folder = tmpDir();
+  const calls = { install: [], open: [], posts: [] };
+  const install = async (args, opts) => {
+    calls.install.push({ args, cwd: opts.cwd, processCwd: process.cwd() });
+    fs.mkdirSync(path.join(folder, '.web-chat'), { recursive: true });
+    writePortfileAt(path.join(folder, '.web-chat'), { pid: process.pid, port: 1 });
+  };
+  const open = async (args) => { calls.open.push(process.cwd()); };
+  const client = {
+    get: async (p) => (p === '/api/health' ? { viewers: 1 } : {}),
+    post: async (p, body, opts) => { calls.posts.push(opts.root); return { ok: true }; },
+  };
+  const prompt = { interactive: true, confirm: async () => true, line: async () => '', close: () => {} };
+
+  await init(['--yes', folder], { cwd, log: sink(), prompt, ...inertDeps({ install, open, client }) });
+
+  assert.equal(calls.install.length, 1);
+  assert.equal(calls.install[0].cwd, folder, 'install is pointed at the folder');
+  assert.equal(calls.install[0].processCwd, folder, 'and runs from it');
+  assert.deepEqual(calls.open, [folder], 'open runs from the folder');
+  assert.deepEqual(calls.posts, [folder, folder], 'both tour panes go to the folder\'s surface');
+  const onboarded = JSON.parse(fs.readFileSync(path.join(process.env.HOME, '.web-chat', 'onboarded.json'), 'utf8'));
+  assert.ok(onboarded.projects[folder], 'the folder is stamped');
+  assert.deepEqual(fs.readdirSync(cwd), [], 'nothing in the cwd');
+  assert.notEqual(process.cwd(), folder, 'and the cwd is put back');
+});
+
+// init's precheck line says what will happen to .gitignore, judged the way the
+// install judges it: by git, for a subfolder of a repository too.
+test('fresh init\'s .gitignore line is truthful in a subfolder of a git repository', async (t) => {
+  withTempHome(t);
+  const { execFileSync } = require('child_process');
+  const repo = tmpDir();
+  execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore' });
+  const sub = path.join(repo, 'pkg');
+  fs.mkdirSync(sub);
+  const run = async () => {
+    const log = sink();
+    await init([], { cwd: sub, log, ...inertDeps({ install: fakeDoctor() }), noOpenGuard: true });
+    return log.text();
+  };
+  assert.match(await run(), /✓ git repo — \.web-chat\/ gets a \.gitignore line/);
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.web-chat/\n');
+  const covered = await run();
+  assert.match(covered, /✓ git repo — \.web-chat\/ is already ignored here, so \.gitignore is left alone/);
+  assert.doesNotMatch(covered, /^ {2}\.gitignore +one line/m, 'and the write list does not promise the line');
+  const plain = tmpDir();
+  const log = sink();
+  await init([], { cwd: plain, log, ...inertDeps({ install: fakeDoctor() }), noOpenGuard: true });
+  assert.match(log.text(), /• not a git repo — the \.gitignore line is skipped/);
+  assert.equal(fs.existsSync(path.join(sub, '.gitignore')), false);
+});
+
+// /web-chat init runs in a Claude Code session, and a session started in a
+// child folder uses the nearest install above it: its report describes that one.
+test('/web-chat init runs `init --report --nearest-parent`, passing the user\'s arguments on', () => {
+  const { execFileSync } = require('child_process');
+  const repo = path.join(__dirname, '..');
+  const tpl = fs.readFileSync(path.join(repo, 'templates', 'commands', 'web-chat.md'), 'utf8');
+  assert.equal(fs.readFileSync(path.join(repo, '.claude', 'commands', 'web-chat.md'), 'utf8'), tpl, 'the tracked copy is identical');
+  const line = tpl.split('\n').find((l) => l.startsWith('!')).slice(1);
+  const dir = tmpDir('wc-cmd-');
+  const bin = path.join(dir, 'claude-web-chat');
+  fs.writeFileSync(bin, '#!/bin/sh\nprintf "ARGV:%s\\n" "$*"\n');
+  fs.chmodSync(bin, 0o755);
+  const run = (a) => execFileSync('/bin/sh', ['-c', line.split('$ARGUMENTS').join(a)], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+  }).trim();
+  assert.equal(run('init'), 'ARGV:init --report --nearest-parent');
+  assert.equal(run('init --json'), 'ARGV:init --report --nearest-parent --json');
 });
 
 // ------------------------------------------------------- non-interactive ----
