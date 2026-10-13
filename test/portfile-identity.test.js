@@ -428,15 +428,15 @@ test('an explicit port and WEB_CHAT_PORT still win over a dead-pid record', asyn
   const { root } = await recordAt(t, await deadPid());
   const explicit = await closedPort();
   assert.equal(portfiles.discoverPort({ role: 'server', root, port: explicit, env: true }), explicit);
-  assert.equal(portfiles.discoverPort({ role: 'server', root, port: String(explicit) }), explicit);
+  assert.strictEqual(portfiles.discoverPort({ role: 'server', root, port: String(explicit) }), explicit);
   assert.equal(createDriver({ owner: 'pf-test', root, port: explicit }).port, explicit);
 
   const envPort = await closedPort();
   process.env.WEB_CHAT_PORT = String(envPort);
   t.after(() => { delete process.env.WEB_CHAT_PORT; });
-  assert.equal(portfiles.discoverPort({ role: 'server', root, env: true }), envPort);
-  assert.equal(createDriver({ owner: 'pf-test', root }).port, envPort);
-  assert.equal(client.discoverPort({ root }), envPort);
+  assert.strictEqual(portfiles.discoverPort({ role: 'server', root, env: true }), envPort);
+  assert.strictEqual(createDriver({ owner: 'pf-test', root }).port, envPort);
+  assert.strictEqual(client.discoverPort({ root }), envPort);
   // env stays opt-in on the core engine: without it the dead record is no daemon.
   assert.equal(portfiles.discoverPort({ role: 'server', root }), null);
 });
