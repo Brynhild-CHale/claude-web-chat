@@ -8,8 +8,8 @@
 //     and every popover leave it open; focus moving out, a window blur and
 //     another panel opening never close it; a window-mode dock (no attribute)
 //     never closes on an outside press.
-//   * Escape, one layer per press: a popover (the bar's "Under development"
-//     note), the pinned rail and pin mode each take a press of their own before
+//   * Escape, one layer per press: a popover (the More menu, say), the pinned
+//     rail and pin mode each take a press of their own before
 //     the chat's (chat-slots escapeChatViews: an addEscapeStep layer, then the
 //     drawer, or a window that holds focus).
 //   * M emits chat:open {view: 'chat', focus: 'composer'}, and is inert under the
@@ -56,18 +56,33 @@ const open = async () => { bus.emit('chat:open', { view: 'chat', focus: 'compose
 const q = (sel) => W.document.querySelector(sel);
 const pointerdown = (target) => target.dispatchEvent(new W.PointerEvent('pointerdown',
   { bubbles: true, cancelable: true, composed: true, button: 0, pointerId: 1 }));
-const note = () => { const n = $('cs-tray'); return n && !n.classList.contains('hidden') ? n : null; };
+// A popover of the shell's own: the More menu, opened from the topbar (no zone).
+// It stands where the bar's "Under development" note stood until U116 removed it.
+const popover = () => { const n = $('more-menu'); return n && !n.classList.contains('hidden') ? n : null; };
+const openPopover = () => {
+  shell.press($('btn-more'));
+  const n = popover();
+  assert.ok(n && n.classList.contains('popover'), 'precondition: the More menu is open, a .popover');
+  return n;
+};
 const firstChip = () => $('cs-chips').querySelector('button');
-// main.js starts the trays (tranche 3), whose claimChips() takes the bar's
-// stand-in chips (and the note they open, a .popover) at boot. A case that
-// presses a stand-in takes the trays off first — stopTrays() calls claimChips'
-// release(), and the stand-ins are back — and puts them on again after it.
-async function standIns(t) {
-  const trays = await shell.importApp('chat-trays.js');
-  trays.stopTrays();
-  t.after(() => { trays.initChatTrays(); });
-  await shell.tick();
-  assert.ok(W.document.querySelector('#cs-chips .cs-devchip'), 'precondition: the bar\'s stand-in chips are back');
+// Chips as the trays render them into #cs-chips (main.js starts the trays,
+// which claim it at boot): this file's mirror has no task, so it has none of
+// its own. Each records its clicks, and goes after the case.
+function trayChips(t, n = 2) {
+  assert.equal(firstChip(), null, 'precondition: #cs-chips holds no chip of its own');
+  const chips = [];
+  for (let i = 0; i < n; i++) {
+    const b = W.document.createElement('button');
+    b.type = 'button';
+    b.className = 'test-chip';
+    b.dataset.clicks = '0';
+    b.addEventListener('click', () => { b.dataset.clicks = String(Number(b.dataset.clicks) + 1); });
+    $('cs-chips').append(b);
+    chips.push(b);
+  }
+  t.after(() => { for (const b of chips) b.remove(); });
+  return chips;
 }
 const railPinnedOpen = () => $('queue-rail').classList.contains('open');
 function listen(t, type) {
@@ -148,16 +163,13 @@ for (const [what, target] of [
   });
 }
 
-test('a pointerdown inside a popover (the bar\'s note) leaves the drawer open', async (t) => {
-  await standIns(t);
+test('a pointerdown inside a popover (the More menu) leaves the drawer open', async () => {
   await open();
-  shell.press(firstChip());              // the bar is no zone either
-  assert.ok(isOpen(), 'pressing a chip left the drawer open');
-  const n = note();
-  assert.ok(n && n.classList.contains('popover'), 'precondition: the chip opened the bar\'s note, a .popover');
+  const n = openPopover();               // the topbar is no zone either
+  assert.ok(isOpen(), 'opening the popover left the drawer open');
   shell.press(n);
   assert.ok(isOpen(), 'a press inside the popover left the drawer open');
-  assert.ok(note(), 'and the popover itself');
+  assert.ok(popover(), 'and the popover itself');
 });
 
 test('another panel opening never closes the drawer', async () => {
@@ -221,13 +233,11 @@ test('any other zone element closes by .hidden, its controller told', async (t) 
 
 /* ------------------------------ Escape ------------------------------ */
 
-test('Escape with the bar\'s note open closes the note and leaves the drawer; a second closes the drawer', async (t) => {
-  await standIns(t);
+test('Escape with a popover open closes the popover and leaves the drawer; a second closes the drawer', async () => {
   await open();
-  shell.click(firstChip());
-  assert.ok(note(), 'precondition: the note is open');
+  openPopover();
   shell.key('Escape');
-  assert.ok(!note(), 'the first Escape closed the note');
+  assert.ok(!popover(), 'the first Escape closed the popover');
   assert.ok(isOpen(), '…and left the drawer');
   shell.key('Escape');
   assert.ok(!isOpen(), 'the second closed the drawer');
@@ -246,13 +256,12 @@ test('an addEscapeStep layer pops before the drawer closes', async (t) => {
 });
 
 test('a popover goes before an Escape step: one layer per press', async (t) => {
-  await standIns(t);
   await open();
   let asked = 0;
   t.after(dock.addEscapeStep(() => { asked++; return true; }));
-  shell.click(firstChip());
+  openPopover();
   shell.key('Escape');
-  assert.ok(!note(), 'the note closed');
+  assert.ok(!popover(), 'the popover closed');
   assert.equal(asked, 0, 'and the chat was not asked on the same press');
   shell.key('Escape');
   assert.equal(asked, 1, 'the next press reached the chat');
@@ -418,29 +427,27 @@ test('⌘K lists "Reset the chat window", which puts the defaults back', async (
 });
 
 test('⌘K "Background tasks" shows while #cs-chips holds a button, and clicks the first', async (t) => {
-  await standIns(t);
-  assert.ok(firstChip(), 'precondition: the bar\'s stand-in chips are up');
+  await openPalette();
+  assert.equal(row('Background tasks'), undefined, 'not listed with no chip: the bar puts none in #cs-chips');
+  shell.key('Escape');
+
+  const chips = trayChips(t);
+  assert.ok(chips.length > 1, 'precondition: more than one chip, so "the first" is a choice');
   await openPalette();
   const r = row('Background tasks');
   assert.ok(r, 'listed while there is a chip');
-  const chips = [...$('cs-chips').querySelectorAll('button')];
-  assert.ok(chips.length > 1, 'precondition: more than one chip, so "the first" is a choice');
   runRow(r);
   await shell.tick();
-  assert.ok(note(), 'running it clicked a chip: the note opened');
-  assert.deepEqual(chips.map((c) => c.getAttribute('aria-expanded')),
-    chips.map((_, i) => String(i === 0)), 'the first chip opened it, no other');
+  assert.deepEqual(chips.map((c) => c.dataset.clicks), chips.map((_, i) => String(i === 0 ? 1 : 0)),
+    'running it clicked the first chip, no other');
   shell.key('Escape');
 
-  const release = bar.claimChips();      // the trays' claim: the stand-ins go
-  try {
-    assert.equal(firstChip(), null, 'precondition: no chip');
-    await openPalette();
-    assert.equal(row('Background tasks'), undefined, 'not listed with no chip');
-    shell.key('Escape');
-  } finally {
-    release();
-  }
+  for (const b of chips) b.remove();
+  await shell.tick();
+  assert.equal(firstChip(), null, 'precondition: no chip');
+  await openPalette();
+  assert.equal(row('Background tasks'), undefined, 'not listed with no chip');
+  shell.key('Escape');
 });
 
 /* ------------------------------ the legend ------------------------------ */

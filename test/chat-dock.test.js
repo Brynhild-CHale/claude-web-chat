@@ -152,26 +152,21 @@ test('a second chat:open while open only re-applies focus: one chat:host, one po
   assert.ok(el().contains(W.document.activeElement), 'but focus is back in the chat');
 });
 
-test('opening the chat closes every popover — the bar\'s note included', async (t) => {
-  // main.js starts the trays (tranche 3), whose claimChips() takes the bar's
-  // stand-in chips at boot: the trays come off for this case (stopTrays() calls
-  // claimChips' release(), and the stand-ins are back) and go on again after it.
-  const trays = await shell.importApp('chat-trays.js');
-  trays.stopTrays();
-  t.after(() => { trays.initChatTrays(); });
+test('opening the chat closes every popover — the More menu, say', async () => {
+  // The bar's "Under development" note was this case's popover until U116
+  // removed it; no stand-in is left to open one.
   await shell.tick();
-  const chip = W.document.querySelector('#cs-chips .cs-devchip');
-  assert.ok(chip, 'precondition: the bar\'s stand-in chips');
-  shell.press(chip);
+  assert.equal(W.document.querySelector('#cs-chips .cs-devchip'), null, 'precondition: no stand-in chip');
+  shell.press($('btn-more'));
   await shell.tick();
-  const note = $('cs-tray');
-  assert.ok(note && !note.classList.contains('hidden'), 'precondition: the note is open');
+  const menu = $('more-menu');
+  assert.ok(menu.classList.contains('popover') && !menu.classList.contains('hidden'), 'precondition: the More menu is open');
   let closes = 0;
   const onClose = () => closes++;
   W.addEventListener('wc:close-popovers', onClose);
   try { await open(); } finally { W.removeEventListener('wc:close-popovers', onClose); }
   assert.equal(closes, 1, 'wc:close-popovers, once');
-  assert.ok(note.classList.contains('hidden'), 'the note closed');
+  assert.ok(menu.classList.contains('hidden'), 'the More menu closed');
   assert.ok(isShown(), 'and the chat is open');
 });
 

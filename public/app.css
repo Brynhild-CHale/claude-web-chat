@@ -1779,21 +1779,13 @@ body.pin-mode #main { cursor: crosshair; }
    states, the Stop slot until its control mounts, a step with no clock. */
 .cs-step-meta:empty, .cs-act:empty, .cs-stop:empty { display: none; }
 /* The act area: Answer › (a question) and Review › (a permission or a plan)
-   open the chat on what Claude is waiting for; once answering lands, the answer
-   frame mounts here instead. Until then a wait reads "Answer in the terminal",
-   with the hint "answering from the browser is under development". The slot
-   and the hint draw no box of their own (display: contents), so what they hold
-   sits in the bar's row: the note and the buttons never shrink, nor do the
-   hint's last words, "under development", so the bar says so at every width it
-   is drawn at (the 2026-10-02 ruling); the hint's lead has only the room the
-   rest leave free (a zero basis, grown up to its own width first), so it gives
-   way, to its ellipsis, before a word of the step does. */
+   open the chat on what Claude is waiting for, and an answer frame mounts here
+   where one may answer it; with no answer frame registered, a wait reads
+   "Answer in the terminal". The slot draws no box of its own (display:
+   contents), so what it holds sits in the bar's row, and never shrinks. */
 .cs-act { display: contents; }
 .cs-act > * { flex: none; }
 .cs-act-note { color: var(--wc-fg-bright); }
-.cs-act-hint { display: contents; color: var(--wc-muted); }
-.cs-act-hint-lead { flex: 1000 1 0; min-width: 0; max-width: max-content; overflow: hidden; text-overflow: ellipsis; }
-.cs-act-hint-tail { flex: none; }
 .cs-answer, .cs-review {
   height: 20px; padding: 0 9px; display: inline-flex; align-items: center;
   border-radius: var(--wc-radius-sm); font: 600 10.5px var(--wc-font);
@@ -1815,33 +1807,9 @@ body.pin-mode #main { cursor: crosshair; }
    with no chip there is nothing for the divider to divide. */
 .cs-chips { flex: none; display: flex; align-items: center; gap: 6px; }
 .cs-chips:empty, .cs-div:has(+ .cs-chips:empty) { display: none; }
-/* Until the trays land, five muted stand-ins: dashed, a still dot, no count. */
-.cs-devchip {
-  height: 20px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px;
-  border: 1px dashed var(--wc-border); border-radius: var(--wc-radius-sm); background: transparent;
-  font: 600 10px var(--wc-mono); color: var(--wc-muted);
-}
-.cs-devchip:hover, .cs-devchip[aria-expanded="true"] { border-color: var(--wc-muted-dim); color: var(--wc-text-2); }
-.cs-devchip-dot {
-  flex: none; width: 5px; height: 5px; border-radius: 50%;
-  background: color-mix(in srgb, var(--cs-cat) 40%, var(--wc-muted-dim));
-}
-:is(.cs-step, .cs-answer, .cs-review, .cs-other, .cs-devchip):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
-/* The one "Under development" note the bar's stand-ins open: a popover (the
-   shell's dismiss layer closes it: Esc, an outside click, another panel), above
-   the step or above the chips, whichever opened it. */
-.popover.cs-dev {
-  top: auto; right: auto; left: 12px; bottom: calc(var(--cs-bar-h) + 8px);
-  min-width: 0; width: max-content; max-width: min(360px, calc(100% - 24px)); padding: 10px 12px;
-}
-.popover.cs-dev[data-cs-anchor="chips"] { left: auto; right: 12px; }
-.cs-dev-title { margin-bottom: 4px; font: 600 10px var(--wc-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--wc-gold); }
-.cs-dev-line { margin: 0; font: 12px/1.45 var(--wc-font); color: var(--wc-fg); }
+:is(.cs-step, .cs-answer, .cs-review, .cs-other):focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .cs-dot { animation: none; } }
-/* Short rows: the chips (and their tray, later) keep the dot and move the word
-   into the tooltip, so the step keeps about 300px. */
-@media (max-width: 1000px) { .cs-devchip { padding: 0 6px; } .cs-devchip-label { display: none; } }
-@media (max-width: 759px) { #chat-statusbar, .popover.cs-dev { display: none; } }
+@media (max-width: 759px) { #chat-statusbar { display: none; } }
 
 /* ── U20 · the co-brand lockup · cobrand.js ── */
 /* The topbar's top-left (design spec §9.4): the global theme's company image │

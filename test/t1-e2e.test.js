@@ -943,13 +943,13 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     }
   });
 
-  test('the stand-ins: a chip opens an "Under development" note; the step, the dock tranche 2 wired; the phone tab, the sheet tranche 5 wired', async () => {
+  test('no stand-ins: the step opens the dock tranche 2 wired; #cs-chips is the trays\'; the phone tab, the sheet tranche 5 wired', async () => {
     const note = () => $('cs-tray');
     const shown = (el) => !!el && !el.classList.contains('hidden') && !el.hidden;
 
-    // Tranche 2's main.js registers the chat dock, so the step is no longer a
-    // stand-in: it opens the chat (test/chat-bar.test.js holds the stand-in
-    // step, with no chat view registered).
+    // Tranche 2's main.js registers the chat dock, so the step opens the chat
+    // (test/chat-bar.test.js holds the step with no chat view registered: a
+    // plain, disabled label).
     shell.press($('cs-step'));
     assert.equal($('cs-step').getAttribute('aria-controls'), 'chat-dock', 'the step controls the dock');
     assert.ok(!shown(note()), 'and opens no note');
@@ -960,30 +960,30 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     await shell.tick();
     assert.ok(!shown($('chat-dock')), 'Esc closes it');
 
-    // Tranche 3's main.js starts the trays, whose claimChips() takes the five
-    // stand-in chips at boot: #cs-chips is the trays' and #cs-tray their tray,
-    // never the bar's note.
-    assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'the trays took the stand-in chips');
+    // Tranche 3's main.js starts the trays, whose claimChips() takes #cs-chips
+    // at boot: #cs-chips is the trays' and #cs-tray their tray, and the bar
+    // never stood a chip or a note in for them (U116 removed the stand-ins).
+    assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'no stand-in chip');
     assert.ok(note() && note().classList.contains('cs-tray') && !note().classList.contains('cs-dev'),
-      '#cs-tray is the trays\' own tray, not the bar\'s note');
-    // The stand-in itself, as it stands without the trays: stopTrays() calls
-    // claimChips' release(), the chips come back and open the note; the trays
-    // then go on again.
+      '#cs-tray is the trays\' own tray, not a note of the bar\'s');
+    // The release/claim round trip: stopTrays() calls claimChips' release()
+    // and #cs-chips goes back empty (app.css hides it) with no #cs-tray; the
+    // trays then claim it again.
     const trays = await shell.importApp('chat-trays.js');
     trays.stopTrays();
     try {
       await shell.tick();
-      const chip = $('cs-chips').querySelector('.cs-devchip');
-      assert.ok(chip, 'released, the chips stand in for the trays');
-      shell.press(chip);
-      assert.ok(shown(note()), `the ${chip.dataset.csCat} chip opens the note`);
-      assert.equal(note().querySelector('.cs-dev-title').textContent, 'Under development');
-      shell.key('Escape');
+      await shell.tick();
+      assert.equal($('cs-chips').childNodes.length, 0, 'released, #cs-chips is empty: nothing stands in for the trays');
+      assert.equal(note(), null, 'and there is no #cs-tray');
+      assert.equal(shell.document.querySelector('.cs-dev'), null, 'nor a note');
     } finally {
       trays.initChatTrays();
       await shell.tick();
     }
-    assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'the trays, on again, take them back');
+    assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'the trays, on again, claim it with no stand-in');
+    assert.ok(note() && note().classList.contains('cs-tray'), 'and #cs-tray is their tray again');
+    assert.equal(shell.document.querySelectorAll('[id="cs-tray"]').length, 1, 'only ever the one');
 
     // Tranche 5's main.js stamps the real pull (chat-sheet.js): a tap on the
     // tab opens the sheet on Chat, and nothing says "Under development".

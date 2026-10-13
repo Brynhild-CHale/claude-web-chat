@@ -6,7 +6,7 @@
 //                  frame) and on ONE ticker; idempotent. main.js calls it once the
 //                  store runs.
 //   stopBar()      stops it: the ticker, the pending frame, the listeners.
-//   claimChips()   the trays take #cs-chips over (see "stand-ins") → release
+//   claimChips()   the trays take #cs-chips over (see "the chips") → release
 //
 // WHAT IT SAYS is never decided here. chat-present.js's uiState words the store
 // (chat-state.js), so the bar, the chat panel's strip and the phone's tab never
@@ -32,24 +32,14 @@
 // (spec §15.5): this module never writes it. ANOTHER conversation waiting on the
 // user gets one chip before the divider; a click follows that conversation.
 //
-// STAND-INS (the maintainer's ruling of 2026-10-02): what a later build brings
-// is on the bar already, saying it is under development, and each stand-in goes
-// by itself the moment the real thing registers:
+// THE CHIPS are the trays' (chat-trays.js): they claim #cs-chips at boot
+// (claimChips) and the bar never writes there; released, it stays empty, and
+// app.css hides it. #cs-tray is the trays' tray alone.
 //
-//   * the step, with no chat view registered (chat-slots registerChatView), is
-//     enabled and opens the "Under development" note;
-//   * five muted chips, shells · agents · workflows · monitors · queue, with no
-//     count and no pulse, each opening the note with its own line, until the
-//     trays call claimChips() (no chat-slots seam fits the chips, so the bar
-//     keeps the decision behind that one export);
-//   * a question, permission or plan waiting with no answer frame registered
-//     (chat-slots registerApprovals) reads "Answer in the terminal", with the
-//     hint that answering from the browser is under development.
-//
-// The note is one .popover, so the shell's dismiss layer closes it (Esc, an
-// outside click, another panel opening). It borrows the trays' reserved id,
-// #cs-tray (every stand-in's aria-controls), and is built only while no #cs-tray
-// exists: the trays' own tray replaces it, and is never written here.
+// THE FALLBACKS, should a chrome module fail before it registers: with no chat
+// view (chat-slots registerChatView) the step is a plain label, disabled, that
+// opens nothing; with no answer frame (chat-slots registerApprovals) a
+// question, permission or plan waiting reads "Answer in the terminal".
 //
 // Below 760px the bar is not displayed, and that is app.css's alone: this
 // module never asks the width.
@@ -62,26 +52,7 @@ import { isOverlayOpen, closeOverlay } from './graph-view.js';
 const TICK_MS = 1000;
 const SLOW_TICKS = 30;     // a still line (no running clock, or a hidden page) is redrawn every 30th tick
 
-// The stand-ins' words: "Under development" and one line saying what is coming.
-const NOTE_TITLE = 'Under development';
-const NOTE_LINES = {
-  chat: 'Talking to Claude from this page lands in a later 0.8.5 build; for now the bar shows what Claude is doing.',
-  tasks: 'Background shells, agents, workflows and monitors show here in a later 0.8.5 build.',
-  queue: 'Messages queued for Claude show here in a later 0.8.5 build.',
-};
-// The five chips, in the trays' fixed order (spec §7.3): category, its note line,
-// and what its tooltip calls it.
-const STAND_IN_CHIPS = [
-  ['shells', 'tasks', 'Background shells'],
-  ['agents', 'tasks', 'Agents'],
-  ['workflows', 'tasks', 'Workflows'],
-  ['monitors', 'tasks', 'Monitors'],
-  ['queue', 'queue', 'Messages queued for Claude'],
-];
 const TERMINAL_NOTE = 'Answer in the terminal';
-// The hint, one sentence in two halves: app.css lets the lead give way when the
-// row is short and never the tail, so "under development" shows at every width.
-const TERMINAL_HINT = ['answering from the browser is', 'under development'];
 
 let els = null;            // the bar's elements, while it runs
 let ticker = null;
@@ -99,7 +70,6 @@ let mounted = null;        // { impl, id }: the answer frame in #cs-act
 let refused = null;        // { impl, id, version }: an ask whose frame would not mount, not asked again
 let other = null;          // the other-conversation chip, while one waits
 let chipsClaim = null;     // the trays' claim on #cs-chips (claimChips); outlives a stop
-let noteOpener = null;     // the stand-in that opened the note
 
 const setText = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 function setAttr(el, name, value) {
@@ -157,92 +127,6 @@ function unmountFrame() {
   actKey = null;
 }
 
-// ── the note the stand-ins open ──────────────────────────────────────────────
-
-function ownNote() {
-  const el = document.getElementById('cs-tray');
-  return el && el.classList.contains('cs-dev') ? el : null;
-}
-
-// The note, built on first need. Never a second #cs-tray: once the trays' own
-// is on the page, there is no note to build.
-function notePopover() {
-  const mine = ownNote();
-  if (mine || !els || document.getElementById('cs-tray')) return mine;
-  const p = document.createElement('div');
-  p.id = 'cs-tray';
-  p.className = 'popover cs-dev hidden';
-  p.setAttribute('role', 'status');
-  const title = document.createElement('div');
-  title.className = 'cs-dev-title';
-  title.textContent = NOTE_TITLE;
-  const line = document.createElement('p');
-  line.className = 'cs-dev-line';
-  p.append(title, line);
-  els.bar.after(p);   // a child of #stage, among the panels: the modality layer keeps it live
-  return p;
-}
-
-const noteOpen = (p) => !!p && !p.classList.contains('hidden');
-
-// aria-expanded on the bar's own stand-ins, true on the one whose note is
-// showing, and on nothing else: the five muted chips (none once the trays claim
-// #cs-chips), and the step while it controls the note (with a chat view,
-// paintStep gives it the chat's). Never every [aria-controls="cs-tray"]: the
-// trays' own chips carry that too (spec §7.6), and their state is theirs alone.
-function markStandIns() {
-  if (!els) return;
-  const open = noteOpen(ownNote());
-  const mark = (t) => setAttr(t, 'aria-expanded', String(open && t === noteOpener));
-  if (els.step.getAttribute('aria-controls') === 'cs-tray') mark(els.step);
-  for (const t of els.chips.querySelectorAll('.cs-devchip')) mark(t);
-}
-
-function closeNote() {
-  const p = ownNote();
-  noteOpener = null;
-  if (p) p.classList.add('hidden');
-  markStandIns();
-}
-
-// A stand-in's click: show its line in the note, above the step or above the
-// chips; the same stand-in again closes it, another swaps the line.
-function toggleNote(trigger, line, anchor) {
-  const p = notePopover();
-  if (!p) return;
-  const covered = isOverlayOpen();
-  if (covered) {
-    closeOverlay();   // the note would open under the graph
-    refocus(trigger);
-  }
-  if (!covered && noteOpen(p) && noteOpener === trigger) {
-    closeNote();
-    return;
-  }
-  window.dispatchEvent(new CustomEvent('wc:close-popovers', { detail: { keep: p } }));
-  noteOpener = trigger;
-  p.dataset.csAnchor = anchor;
-  p.classList.remove('hidden');
-  p.querySelector('.cs-dev-line').textContent = NOTE_LINES[line] || '';   // after showing: role=status reads it
-  markStandIns();
-}
-
-// Is this element (still) a stand-in on the bar?
-function isStandIn(el, seam) {
-  if (!el || !els) return false;
-  if (el === els.step) return !seam.views;
-  return el.classList.contains('cs-devchip') && el.isConnected && !chipsClaim;
-}
-
-// After a render: the note exists while any stand-in shows, and goes when the
-// one that opened it is no stand-in any more (the chat or the trays arrived).
-function syncNote(seam) {
-  const standing = !seam.views || !chipsClaim;
-  const p = standing ? notePopover() : ownNote();
-  if (p && noteOpen(p) && !isStandIn(noteOpener, seam)) closeNote();
-  else markStandIns();
-}
-
 // ── painting ─────────────────────────────────────────────────────────────────
 
 function paintStep(s, seam) {
@@ -250,35 +134,24 @@ function paintStep(s, seam) {
   setText(els.meta, s.meta);
   setAttr(els.step, 'title', s.text);
   if (seam.views) {
+    if (els.step.disabled) els.step.disabled = false;
     setAttr(els.step, 'aria-controls', 'chat-dock');
     setAttr(els.step, 'aria-expanded', String(seam.open));
     setAttr(els.step, 'aria-keyshortcuts', 'M');
   } else {
-    // The stand-in: enabled, and its aria-expanded is the note's (markStandIns).
-    setAttr(els.step, 'aria-controls', 'cs-tray');
+    // No chat to open: a plain label, which controls and promises nothing.
+    if (!els.step.disabled) els.step.disabled = true;
+    setAttr(els.step, 'aria-controls', null);
+    setAttr(els.step, 'aria-expanded', null);
     setAttr(els.step, 'aria-keyshortcuts', null);
   }
 }
 
 function terminalNote() {
-  const [leadText, tailText] = TERMINAL_HINT;
-  const sentence = `${leadText} ${tailText}`;
-  const title = sentence.charAt(0).toUpperCase() + sentence.slice(1);   // the whole hint, wherever the row cuts it
   const note = document.createElement('span');
   note.className = 'cs-act-note';
   note.textContent = TERMINAL_NOTE;
-  note.title = title;
-  const lead = document.createElement('span');
-  lead.className = 'cs-act-hint-lead';
-  lead.textContent = leadText;
-  lead.title = title;
-  const tail = document.createElement('span');
-  tail.className = 'cs-act-hint-tail';
-  tail.textContent = tailText;
-  const hint = document.createElement('span');
-  hint.className = 'cs-act-hint';
-  hint.append(lead, ' ', tail);   // its text stays the one sentence
-  return [note, hint];
+  return note;
 }
 
 function openButton(act, id) {
@@ -302,7 +175,7 @@ function paintAct(s, seam) {
   const key = waits ? `${s.act}|${id}|${note ? 1 : 0}|${opens}` : '';
   if (key === actKey) return;
   actKey = key;
-  const nodes = note ? terminalNote() : [];
+  const nodes = note ? [terminalNote()] : [];
   if (opens) nodes.push(openButton(opens, id));
   els.act.replaceChildren(...nodes);
 }
@@ -331,29 +204,6 @@ function paintOther(s) {
   setAttr(other, 'title', `${o.title ? `“${o.title}”` : 'Another Claude session'} is waiting on you — follow it here`);
 }
 
-function paintChips() {
-  if (chipsClaim || els.chips.querySelector('.cs-devchip')) return;
-  for (const [cat, line, what] of STAND_IN_CHIPS) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'cs-devchip';
-    b.dataset.csCat = cat;
-    b.dataset.line = line;
-    b.setAttribute('aria-controls', 'cs-tray');
-    b.setAttribute('aria-expanded', 'false');
-    b.setAttribute('aria-label', `${cat}: under development`);
-    b.title = `${what}: under development`;
-    const dot = document.createElement('span');
-    dot.className = 'cs-devchip-dot';
-    dot.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span');
-    label.className = 'cs-devchip-label';
-    label.textContent = cat;
-    b.append(dot, label);
-    els.chips.append(b);
-  }
-}
-
 function render() {
   if (frame !== null) {
     cancelFrame(frame);
@@ -373,8 +223,6 @@ function render() {
   paintStep(s, seam);
   paintAct(s, seam);
   paintOther(s);
-  paintChips();
-  syncNote(seam);
   const said = announce(shown, s, { gate });
   if (said) els.live.textContent = said;
   shown = s;
@@ -419,10 +267,7 @@ function tick() {
 
 function onStep() {
   const views = chatViews();
-  if (!views.length) {
-    toggleNote(els.step, 'chat', 'step');
-    return;
-  }
+  if (!views.length) return;   // a plain label: no chat to open
   const covered = isOverlayOpen();
   if (covered) {
     closeOverlay();   // the chat opens under the graph: the graph goes first
@@ -452,7 +297,7 @@ function onClick(e) {
   else if (btn.classList.contains('cs-other')) {
     if (btn.dataset.conversation) followConversation(btn.dataset.conversation);
     schedule();
-  } else if (btn.classList.contains('cs-devchip')) toggleNote(btn, btn.dataset.line, 'chips');
+  }
 }
 
 // ── the module's surface ─────────────────────────────────────────────────────
@@ -489,32 +334,24 @@ export function stopBar() {
   if (els && typeof document !== 'undefined') {
     els.bar.removeEventListener('click', onClick);
     unmountFrame();
-    closeNote();
   }
   els = null;
   mounted = null;
   refused = null;
   other = null;
-  noteOpener = null;
   actKey = null;
   shown = null;
   clocking = false;
 }
 
-// The trays take #cs-chips over: the five stand-ins go at once, and the bar
-// never writes there again, not even an attribute of the trays' own chips,
-// until the returned release() is called. A second claim takes over from the
-// first, whose release then does nothing.
+// The trays take #cs-chips over: the bar never writes there, not even an
+// attribute of the trays' own chips. Released, #cs-chips is left as it is (the
+// trays empty it first), and there is nothing for the bar to put back. A second
+// claim takes over from the first, whose release then does nothing.
 export function claimChips() {
   const claim = {};
   chipsClaim = claim;
-  if (els) {
-    for (const b of els.chips.querySelectorAll('.cs-devchip')) b.remove();
-    syncNote(seams());
-  }
   return function release() {
-    if (chipsClaim !== claim) return;
-    chipsClaim = null;
-    schedule();
+    if (chipsClaim === claim) chipsClaim = null;
   };
 }
