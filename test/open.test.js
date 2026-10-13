@@ -213,3 +213,104 @@ test('the check never gets in the way: a throwing read, or a root that is not in
   assert.equal(asked, 0, 'a directory with no .web-chat/ is not inspected');
   assert.equal(staleManagedLine(root, { inspect: () => ({ managed: [], managedError: 'unreadable' }) }), null);
 });
+
+// ── what `open` adopts (U105b; lifecycle-bugs.md bug 2) ──────────────────────
+//
+// `open` adopts only what lib/util/registry daemonFor returns: this root's
+// daemon, found through its portfile or its registry entry, and accepted only
+// once /api/health on that port names its pid and this root. A port that merely
+// answers is not enough — a stale portfile whose port another project's daemon
+// (or any HTTP server) now holds was browsed as ours.
+//
+// These cases use the REAL daemonFor against in-process servers on ephemeral
+// ports this file opened (withServer, a loopback http.createServer); the spawn,
+// the wait, the bounce and the browser are stubbed. No port in the 5173.. range,
+// where the maintainer's daemons listen, is ever probed: the stub wait hands back
+// a URL nothing reads, and every registry write goes to the sandbox HOME.
+
+const http = require('http');
+const { withServer } = require('../test-support/helpers');
+const registry = require('../lib/util/registry');
+const { projectPaths } = require('../lib/core/paths');
+const { LISTEN_HOST } = require('../lib/core/cors');
+
+const NEVER_PROBED = 'http://localhost:1'; // what the stub wait reports; only recorded
+
+// The real daemonFor, recording the roots it was asked about.
+function adoptDeps(root, extra = {}) {
+  const calls = { browsed: [], logs: [], errs: [], exits: [], spawned: [], asked: [] };
+  const d = {
+    root,
+    launchBrowser: (u) => calls.browsed.push(u),
+    log: (m) => calls.logs.push(String(m)),
+    errlog: (m) => calls.errs.push(String(m)),
+    exit: (c) => calls.exits.push(c),
+    daemonFor: async (r) => { calls.asked.push(r); return registry.daemonFor(r); },
+    spawnDaemonProcess: (r) => calls.spawned.push(r),
+    waitForPortfile: async () => ({ port: 1, url: NEVER_PROBED, pid: 1 }),
+    restartIfStale: async () => ({ restarted: false }),
+    ...extra,
+  };
+  return { calls, deps: d };
+}
+
+function writeServerJson(root, rec) {
+  fs.writeFileSync(projectPaths(root).serverJson, JSON.stringify(rec));
+}
+
+test("a portfile naming another project's daemon: open does not browse it, and spawns this project's", async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  registry.registerInstance({ root: other.root, port: other.port, pid: process.pid });
+  const root = project(t);
+  // The same pid (both in-process) and a port that answers /api/health: only
+  // the instance id says it is not this root's.
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+
+  const { calls, deps: d } = adoptDeps(root);
+  await open([], d);
+  assert.deepEqual(calls.asked, [root]);
+  assert.ok(!calls.browsed.some((u) => u.startsWith(other.baseUrl)), `browsed another project's daemon: ${JSON.stringify(calls.browsed)}`);
+  assert.deepEqual(calls.spawned, [root], "this project's daemon is spawned");
+  assert.deepEqual(calls.browsed, [NEVER_PROBED], 'the one it spawned is opened');
+  assert.equal(calls.logs.some((l) => /already running/.test(l)), false, JSON.stringify(calls.logs));
+});
+
+test('a portfile naming a port any HTTP server answers is not adopted either', async (t) => {
+  const srv = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: true }));
+  });
+  await new Promise((r) => srv.listen(0, LISTEN_HOST, r));
+  t.after(() => new Promise((r) => { srv.closeAllConnections?.(); srv.close(() => r()); }));
+  const port = srv.address().port;
+  await withServer(t); // a sandbox HOME with an empty registry
+  const root = project(t);
+  writeServerJson(root, { pid: process.pid, port, url: `http://localhost:${port}` });
+
+  const { calls, deps: d } = adoptDeps(root);
+  await open([], d);
+  assert.deepEqual(calls.spawned, [root]);
+  assert.deepEqual(calls.browsed, [NEVER_PROBED]);
+});
+
+test("this project's live daemon, known through its portfile: open adopts it and spawns nothing", async (t) => {
+  const root = project(t);
+  const { port } = await withServer(t, { root, writePortfile: true });
+  const { calls, deps: d } = adoptDeps(root);
+  await open([], d);
+  assert.deepEqual(calls.spawned, []);
+  assert.deepEqual(calls.browsed, [`http://localhost:${port}`]);
+  assert.ok(calls.logs.includes(`web-chat server already running at http://localhost:${port}`), JSON.stringify(calls.logs));
+});
+
+test("this project's live daemon, known only through the registry: open adopts it and spawns nothing", async (t) => {
+  const root = project(t);
+  const { port } = await withServer(t, { root });
+  registry.registerInstance({ root, port, pid: process.pid });
+  assert.equal(fs.existsSync(projectPaths(root).serverJson), false, 'the fixture has no portfile');
+
+  const { calls, deps: d } = adoptDeps(root);
+  await open([], d);
+  assert.deepEqual(calls.spawned, []);
+  assert.deepEqual(calls.browsed, [`http://localhost:${port}`]);
+});
