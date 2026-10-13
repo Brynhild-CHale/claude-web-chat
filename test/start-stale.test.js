@@ -11,7 +11,8 @@
 // none, so a regression in start's branch (say `stale.restarted` never read)
 // shipped with every test green. Nothing here starts a daemon: the live-daemon
 // lookup (daemonFor), the spawn and the wait are all injected, and the real
-// restartIfStale runs with its own build and restart injected.
+// restartIfStale runs with its own build and restart injected. The last case
+// runs the real wait (daemonFor polled) against stand-ins this file opened.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -34,7 +35,7 @@ function project(t) {
 // Every seam start --daemon has, each one recording what reached it. `build`
 // is the release the running daemon says it serves; this CLI is v0.8.0.
 function harness(root, { build = '0.7.6', restartOk = true, portfile = INFO, reachable = true } = {}) {
-  const h = { lines: [], errs: [], exits: [], spawned: [], restarts: [], asked: [], found: [], waited: 0 };
+  const h = { lines: [], errs: [], exits: [], spawned: [], restarts: [], asked: [], found: [], handed: [], waited: 0 };
   h.live = () => (portfile && reachable ? { ...portfile, source: 'portfile' } : null);
   h.deps = {
     root,
@@ -46,18 +47,22 @@ function harness(root, { build = '0.7.6', restartOk = true, portfile = INFO, rea
     daemonFor: async (r) => { h.found.push(r); return portfile && reachable ? { ...portfile, source: 'portfile' } : null; },
     restartIfStale: (r, o) => {
       h.asked.push(r);
+      h.handed.push(o.daemon);
       return stale.restartIfStale(r, {
         ...o,
         expected: '0.8.0',
-        // U107b: the bounce acts only on a daemon daemonFor verified (start
-        // passes none, so restartIfStale asks); this models that lookup.
-        daemonFor: async () => h.live(),
+        // U107b: the bounce acts only on a daemon daemonFor verified. U107c:
+        // start hands it the record its own daemonFor call verified (o.daemon),
+        // so this lookup is the fallback only and is not reached here.
+        daemonFor: async () => { throw new Error('start hands restartIfStale its verified daemon; it must not look again'); },
         build: async () => build,
         restart: async (args, d) => { h.restarts.push(d.root); return { ok: restartOk }; },
       });
     },
     spawnDaemonProcess: (r) => { h.spawned.push(r); return { pid: 31337 }; },
-    waitUntilReachable: async () => { h.waited++; return { url: 'http://localhost:6000', pid: 31337 }; },
+    // U107c: start --daemon waits for a record daemonFor verified, not the raw
+    // portfile (waitUntilReachable); this is that wait's seam.
+    waitForDaemon: async () => { h.waited++; return { url: 'http://localhost:6000', pid: 31337, source: 'portfile' }; },
   };
   return h;
 }
@@ -68,6 +73,7 @@ test('start --daemon: a reachable daemon on another build is restarted onto this
   await start(['--daemon'], h.deps);
 
   assert.deepEqual(h.asked, [root], 'restartIfStale is asked about THIS project');
+  assert.deepEqual(h.handed, [{ ...INFO, source: 'portfile' }], 'handed the daemon start verified (U107c)');
   assert.deepEqual(h.restarts, [root], 'and restarts it through restart, for that root');
   assert.deepEqual(h.lines, ['Restarted the web-chat server on v0.8.0 — it was still running v0.7.6.']);
   assert.deepEqual(h.spawned, [], 'no second daemon beside the restarted one');
@@ -183,7 +189,6 @@ test('start --daemon: a live daemon found through the registry on an older build
     return stale.restartIfStale(r, {
       ...o,
       expected: '0.8.0',
-      daemonFor: async () => h.live(),
       build: async () => '0.7.6',
       restart: async (args, d) => { h.restarts.push(d.root); targets.push(d.target); return { ok: true }; },
     });
@@ -194,4 +199,70 @@ test('start --daemon: a live daemon found through the registry on an older build
   assert.deepEqual(h.lines, ['Restarted the web-chat server on v0.8.0 — it was still running v0.7.6.']);
   assert.deepEqual(h.exits, []);
   assert.deepEqual(h.spawned, []);
+});
+
+// U107c: the 'started as daemon at' line names THIS root's new daemon. A
+// .web-chat/ copied from another project carries a portfile naming THAT
+// project's live daemon; start --daemon used to wait on the raw portfile
+// (waitUntilReachable) and print the other project's URL as the one it had just
+// started. Now it waits for a record lib/util/registry daemonFor verifies. The
+// real wait and the real daemonFor run here, against two stand-ins on ports
+// this file opened: the other project's (its health names its own instance)
+// behind the copied portfile, and this root's "new daemon", which the injected
+// spawn brings up and registers in the sandboxed registry.
+const http = require('http');
+const { withTempHome } = require('../test-support/helpers');
+const portfiles = require('../lib/core/portfiles');
+const registry = require('../lib/util/registry');
+
+async function standIn(t, instance) {
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/health') return res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid, instance }));
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { srv.close(); srv.closeAllConnections(); });
+  return srv.address().port;
+}
+
+test('start --daemon with a copied portfile: the "started as daemon at" line names this root\'s new daemon', async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  const otherRoot = project(t);
+  const otherPort = await standIn(t, registry.instanceId(otherRoot));
+  // The copied record: this root's portfile names the other project's daemon.
+  portfiles.writePortfile('server', { root, pid: process.pid, port: otherPort });
+  t.after(() => { try { portfiles.deletePortfile('server', { root, pid: process.pid }); } catch {} });
+
+  // The stand-in for the daemon start spawns: listening already, but no
+  // record names it until the injected spawn registers it, a moment later, in
+  // the registry only (its portfile write would lose to the live record there).
+  const minePort = await standIn(t, registry.instanceId(root));
+  let timer = null;
+  t.after(() => {
+    clearTimeout(timer);
+    try { registry.deregisterInstance(root, { pid: process.pid }); } catch {}
+  });
+
+  const lines = [];
+  const errs = [];
+  const exits = [];
+  await start(['--daemon'], {
+    root,
+    log: (m) => lines.push(String(m)),
+    errlog: (m) => errs.push(String(m)),
+    exit: (c) => exits.push(c),
+    restartIfStale: async () => { throw new Error('no live daemon of this root: nothing to bounce'); },
+    spawnDaemonProcess: (r) => {
+      timer = setTimeout(() => registry.registerInstance({ root: r, port: minePort, pid: process.pid }), 150);
+      return { pid: process.pid };
+    },
+  });
+
+  assert.deepEqual(errs, []);
+  assert.deepEqual(exits, []);
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], new RegExp(`^web-chat server started as daemon at http://localhost:${minePort} \\(pid ${process.pid}, log `));
+  assert.doesNotMatch(lines[0], new RegExp(`:${otherPort}\\b`), "never the other project's URL");
 });
