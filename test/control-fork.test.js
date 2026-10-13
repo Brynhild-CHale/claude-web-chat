@@ -90,7 +90,7 @@ else if (mode === 'garbage') process.stdout.write('not json at all');
 else if (mode === 'same') process.stdout.write(JSON.stringify({ session_id: process.env.SRC_SID }));
 else if (mode === 'notuuid') process.stdout.write(JSON.stringify({ session_id: 'abc; touch /tmp/wc-fork-pwned' }));
 else if (mode === 'exit1') { process.stderr.write('error: ' + process.env.LEAK + '\\n'); process.exit(1); }
-else if (mode === 'sleep') { process.stderr.write(process.env.LEAK); setTimeout(() => {}, 60000); }
+else if (mode === 'sleep') { process.stderr.write(process.env.LEAK); setTimeout(() => {}, 120000); }
 `;
 
 function stubClaude(t, mode) {
@@ -305,9 +305,11 @@ test('no claude → claude-missing, with a hint that names the install, and noth
 
 // Timeouts with headroom for a loaded machine (spec §10.1): a stub that answers
 // at once is ended by its answer, so its timeout is generous and never the
-// clock that ends it; the 'sleep' stub records its run before it sleeps 60 s,
+// clock that ends it; the 'sleep' stub records its run before it sleeps 120 s,
 // and its 2 s timeout leaves a Node child's start-up under load room to land
-// that record before the runner kills it.
+// that record before the runner kills it. The sleep is far past the suite's
+// 60 s per-test timeout, so a runner that never kills it fails the case by a
+// whole minute, not by the few ms a sleep equal to that timeout would leave.
 const ANSWER_TIMEOUT_MS = 15_000;
 const SLEEP_TIMEOUT_MS = 2_000;
 for (const [mode, why] of [['garbage', 'prints garbage'], ['exit1', 'exits 1'], ['sleep', 'sleeps past the timeout'], ['same', 'answers its own source'], ['notuuid', 'answers a session id outside the UUID grammar']]) {
