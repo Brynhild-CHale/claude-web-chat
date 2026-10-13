@@ -220,6 +220,16 @@ test('below read (the fixture at level basic): counts only on every line, and on
   assert.equal(txt(line('shells'), '.sh-lmeta'), '2 running');
   assert.equal(txt(line('monitors'), '.sh-lmeta'), '2 watching');
   assert.equal(txt(line('queue'), '.sh-lmeta'), '2 queued');
+  // No live state below read: the status row says Claude works, so the dots move;
+  // the row going idle stills them (the queue's never moves).
+  assert.equal(line('shells').querySelector('.sh-dot').dataset.pulse, 'true', 'the status row is working');
+  assert.equal(line('queue').querySelector('.sh-dot').dataset.pulse, undefined);
+  const idleBasic = clone(mirrorBody);
+  idleBasic.conversations[0].state = 'idle';
+  idleBasic.aggregate = { state: 'idle' };
+  await show(idleBasic);
+  for (const l of lines()) assert.equal(l.querySelector('.sh-dot').dataset.pulse, undefined, `${l.dataset.csCat} is still below read`);
+  await showFinal({ level: 'basic' });
   shell.click(line('shells'));
   await shell.tick();
   assert.equal(sheet.sheetState().page, null, 'a counts-only row opens nothing');
