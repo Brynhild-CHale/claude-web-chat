@@ -350,11 +350,23 @@ test('stop: a daemon that exits without releasing is reaped, not called a surviv
 
 const registry = require('../lib/util/registry');
 
-// A second project whose portfile is a copy of `from`'s.
-function copiedProject(t, from) {
+// A second project whose portfile is a copy of `from`'s. `legacy` (the default)
+// copies it as a daemon before 0.8.5 wrote it — without the `root`, `instance`
+// and `proc_start` a 0.8.5 daemon stamps (U112) — because such a copy still
+// reads as a record, and stop's /api/health gate is what keeps the other
+// project's daemon safe from it. A 0.8.5 copy (legacy:false) reads as no record
+// at all: the last case below.
+function copiedProject(t, from, { legacy = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-copy-'));
   fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
-  fs.copyFileSync(portfiles.portfilePathFor('server', from), portfiles.portfilePathFor('server', root));
+  const src = portfiles.portfilePathFor('server', from);
+  const dst = portfiles.portfilePathFor('server', root);
+  if (legacy) {
+    const { root: _root, instance: _instance, proc_start: _ps, ...older } = JSON.parse(fs.readFileSync(src, 'utf8'));
+    fs.writeFileSync(dst, JSON.stringify(older, null, 2));
+  } else {
+    fs.copyFileSync(src, dst);
+  }
   t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   return root;
 }
@@ -388,6 +400,26 @@ test("stop and restart leave another project's daemon named by a copied portfile
   assert.equal(scanned.left_alone && scanned.left_alone.pid, other.info.pid);
   assert.doesNotMatch(slog.text(), /no server running/);
   assert.equal(portfiles.isPidAlive(other.info.pid), true);
+});
+
+test("a 0.8.5 portfile copied from another project reads as no daemon: stop and restart never reach the other project's", async (t) => {
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-other-'));
+  t.after(() => { try { fs.rmSync(otherRoot, { recursive: true, force: true }); } catch {} });
+  const other = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf', WC_TEST_INSTANCE: registry.instanceId(otherRoot) });
+  const root = copiedProject(t, other.root, { legacy: false });
+
+  const log = collector();
+  const res = await stop([], { root, log, signalWaitMs: 600 });
+  assert.equal(res.pid, null, 'the copy names no daemon of this project');
+  assert.notEqual(res.reason, 'identity');
+  assert.doesNotMatch(log.text(), /SIGTERM/);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true, 'never asked, never signalled');
+
+  let started = 0;
+  const r = await restart([], { root, log: collector(), signalWaitMs: 600, start: async () => { started++; } });
+  assert.equal(r.ok, true, 'nothing of this project runs, so restart just starts it');
+  assert.equal(started, 1);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true, 'restart does not reach it either');
 });
 
 test('restart handed a target (the bounce\'s verified daemon) stops exactly that pid, not the portfile\'s', async (t) => {
