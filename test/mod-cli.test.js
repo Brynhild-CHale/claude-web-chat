@@ -483,6 +483,56 @@ test('uninstall takes the mod off through remove(), touching no daemon', async (
   assert.equal(fs.existsSync(reg.modPaths(root).installed), false);
 });
 
+// uninstall's row for the mod: what happened to it, and the commands to run
+// when it could not be taken off (the plugin then stays installed).
+const runUninstall = (root, runClaude) => printed(() => require('../lib/cli/commands/uninstall')(['--keep-running'], {
+  cwd: root, runClaude, knownRoots: [], scanPorts: [],
+}));
+// The label column pads to the longest managed path: compare label | value.
+const modRow = (text) => text.split('\n').filter((l) => l.includes('Claude Code (the mod)')).map((l) => l.trim().replace(/ {3,}/, ' | '));
+
+test('uninstall prints the mod\'s row: removed', async (t) => {
+  isolate(t);
+  const root = project(t);
+  reg.applyMod(root, { runClaude: fakeClaude().fn });
+  const { text } = await runUninstall(root, fakeClaude().fn);
+  assert.deepEqual(modRow(text), ['Claude Code (the mod) | web-chat mod removed (plugin and marketplace, local scope)']);
+});
+
+test('uninstall prints the mod\'s row: claude not on PATH, with the commands to run from the root', async (t) => {
+  isolate(t);
+  const root = project(t);
+  reg.applyMod(root, { runClaude: fakeClaude().fn });
+  const name = reg.modMarketplaceName(root);
+  const { text } = await runUninstall(root, fakeClaude({ version: null }).fn);
+  assert.deepEqual(modRow(text), [
+    `Claude Code (the mod) | claude not on PATH — run in ${root}: claude plugin uninstall web-chat-mod@${name} --scope local --json; claude plugin marketplace remove ${name} --scope local`,
+  ]);
+  assert.ok(fs.existsSync(reg.modPaths(root).installed), 'nothing removed: the record stays');
+});
+
+test('uninstall prints the mod\'s row: could not remove, with Claude Code\'s error and the commands', async (t) => {
+  isolate(t);
+  const root = project(t);
+  reg.applyMod(root, { runClaude: fakeClaude().fn });
+  const name = reg.modMarketplaceName(root);
+  const base = fakeClaude().fn;
+  const refusing = (argv, o) => (argv[0] === 'plugin' && argv[1] === 'uninstall' ? { ok: false, stderr: 'EACCES: permission denied\nmore' } : base(argv, o));
+  const { text } = await runUninstall(root, refusing);
+  assert.deepEqual(modRow(text), [
+    `Claude Code (the mod) | could not remove (EACCES: permission denied) — run in ${root}: claude plugin uninstall web-chat-mod@${name} --scope local --json; claude plugin marketplace remove ${name} --scope local`,
+  ]);
+  assert.ok(fs.existsSync(reg.modPaths(root).installed));
+});
+
+test('uninstall prints no mod row for a project that never had the mod', async (t) => {
+  isolate(t);
+  const root = project(t);
+  const { text } = await runUninstall(root, fakeClaude().fn);
+  assert.match(text, /web-chat uninstalled from/);
+  assert.deepEqual(modRow(text), []);
+});
+
 // ── install's default (ruling C1 (b)) ───────────────────────────────────────
 
 const NO_TTY = Object.freeze({ interactive: false, confirm: async () => { throw new Error('asked a question with no terminal'); }, close() {} });
