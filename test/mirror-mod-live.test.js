@@ -24,8 +24,10 @@
 //     turn opened, closed, bound or superseded, a batch of changes;
 //   * a fake secret in a delta (cut across two writes) and in a tool input is
 //     masked in the stored item and in every frame;
+//   * a blank step writes no reply, so none is left behind or shown twice;
 //   * an event with no open turn waits up to 2 s for one, then is dropped and
-//     counted; an unknown session's never reaches the source; a non-synthetic
+//     counted, and holds back no event that has a turn (a mid-turn
+//     prompt.submit); an unknown session's never reaches the source; a non-synthetic
 //     envelope and another synthetic one are ignored;
 //   * lifecycle events are progress evidence; prompt.submit patches mod_origin
 //     and nothing else;
@@ -50,7 +52,7 @@ const { createMirror, SOURCES } = require('../lib/server/mirror');
 const { createTranscriptsSource } = require('../lib/server/mirror/transcripts');
 const { createIndexStore } = require('../lib/server/mirror/index-store');
 const { initialState, normalize } = require('../lib/server/mirror/normalize');
-const { createModLiveSource } = require('../lib/server/mirror/mod-live');
+const { createModLiveSource, BUFFER_MS, PROMPT_SKEW_MS } = require('../lib/server/mirror/mod-live');
 const { createBridge } = require('../lib/server/domain/bridge');
 
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -394,6 +396,59 @@ test('a streamed r_ reply that is the Stop\'s message is not shown twice', async
   assert.deepEqual((await h.items()).filter((it) => it.kind === 'reply').map((it) => it.id), ['rh_p-dup']);
 });
 
+test('a blank step is no reply: with a message id nothing is left behind, and without ids the transcript\'s reply is not shown twice', async (t) => {
+  // (a) A tool-only model request's chunk names its message and carries no text.
+  const clock = fakeClock();
+  const h = await ready(t, { pid: 'p-blank', clock });
+  h.mod('turn.start', { turn_id: 'mt-b1' });
+  h.step('mt-b1', 0, '', 'msg_01ToolOnly');
+  clock.advance(150);
+  assert.equal(await h.item('r_msg_01ToolOnly'), null, 'a blank step writes nothing');
+  h.toolCall('toolu_01Blank', 'Bash', { command: 'ls' });
+  h.step('mt-b1', 1, 'Done.', 'msg_01Text');
+  clock.advance(150);
+  assert.equal((await h.item('r_msg_01Text')).text, 'Done.');
+  h.stop('p-blank', 'Done.');
+  const r = h.records();
+  r.prompt('prompt p-blank', { promptId: 'p-blank' });
+  r.assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'ls' }, id: 'toolu_01Blank' }], { messageId: 'msg_01ToolOnly' });
+  r.toolResult('toolu_01Blank', 'a.md');
+  r.assistant(['Done.'], { messageId: 'msg_01Text' });
+  r.turnDuration({ durationMs: 30 });
+  h.ch.writeTranscript(S1, r.records);
+  await waitUntil(async () => {
+    const items = await h.items();
+    return !items.some((it) => it.id === 'rh_p-blank') && items.some((it) => it.id === 'r_msg_01Text' && it.source === 'transcript');
+  }, { timeout: 8000, what: 'the transcript\'s reply in place of the Stop\'s' });
+  const replies = (await h.items()).filter((it) => it.kind === 'reply');
+  assert.deepEqual(replies.filter((it) => it.source === 'hook').map((it) => it.id), [], 'no provisional reply left in the closed turn');
+  assert.deepEqual(replies.map((it) => it.id), ['r_msg_01Text']);
+
+  // (b) Without ids: a blank step 0, then the text of step 1.
+  const clock2 = fakeClock();
+  const h2 = await ready(t, { pid: 'p-blank2', clock: clock2 });
+  h2.mod('turn.start', { turn_id: 'mt-b2' });
+  h2.step('mt-b2', 0, '');
+  clock2.advance(150);
+  h2.toolCall('toolu_01Blank2', 'Bash', { command: 'ls' });
+  h2.step('mt-b2', 1, 'Answer.');
+  clock2.advance(150);
+  assert.equal(await h2.item('rm_p-blank2_0'), null, 'a blank step writes nothing');
+  assert.equal((await h2.item('rm_p-blank2_1')).text, 'Answer.');
+  const r2 = h2.records();
+  r2.prompt('prompt p-blank2', { promptId: 'p-blank2' });
+  r2.assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'ls' }, id: 'toolu_01Blank2' }]);
+  r2.toolResult('toolu_01Blank2', 'a.md');
+  r2.assistant(['Answer.']);
+  h2.ch.writeTranscript(S1, r2.records);
+  await waitUntil(async () => (await h2.items()).some((it) => it.kind === 'reply' && it.source === 'transcript'), { timeout: 8000, what: 'the transcript\'s reply' });
+  await waitUntil(async () => !(await h2.item('rm_p-blank2_1')), { timeout: 8000, what: 'rm_1 removed' });
+  const shown = (await h2.items()).filter((it) => it.kind === 'reply');
+  assert.deepEqual(shown.map((it) => [it.text, it.source]), [['Answer.', 'transcript']], 'the reply shown once');
+  assertNeverWritten(h);
+  assertNeverWritten(h2);
+});
+
 test('turn.complete with no reply sets the provisional reply; with the transcript\'s already there it writes nothing', async (t) => {
   const h = await ready(t, { pid: 'p-done' });
   h.mod('turn.start', { turn_id: 'mt-5' });
@@ -529,6 +584,30 @@ test('nothing is written to a superseded turn: a bound step, a new step and a to
   assert.ok(h.diag().dropped_no_turn >= dropped + 2, `dropped and counted (${h.diag().dropped_no_turn})`);
   assert.equal(h.diag().waiting, 0);
   assert.equal(clock.pending(), 0);
+});
+
+test('a mid-turn prompt.submit that finds no turn holds back no tool card, and only it is dropped', async (t) => {
+  const clock = fakeClock();
+  const h = await ready(t, { pid: 'p-mid', clock });
+  // The open turn started more than PROMPT_SKEW_MS ago: a submit now is a
+  // queued mid-turn prompt that opens no turn. The bridge publishes the submit
+  // and the tool.call of one batch in the same ms.
+  clock.advance(PROMPT_SKEW_MS + 1000);
+  const at = h.tick(PROMPT_SKEW_MS + 1000);
+  h.mod('prompt.submit', { origin: { kind: 'user' } }, { ts: at });
+  h.toolCall('toolu_01Mid', 'Bash', { command: 'make' }, { ts: at });
+  const it = await h.item('toolu_01Mid');
+  assert.ok(it, 'the card is written at once');
+  assert.equal(it.status, 'running');
+  assert.equal(it.turn_id, 'p-mid');
+  assert.equal(h.diag().waiting, 1, 'only the submit waits');
+  clock.advance(BUFFER_MS + 1);
+  assert.equal(h.diag().dropped_no_turn, 1, 'only the submit is dropped');
+  assert.equal(h.diag().waiting, 0);
+  assert.equal(clock.pending(), 0);
+  assert.deepEqual(h.calls.patchTurn, [], 'no turn patched');
+  assert.equal((await h.item('toolu_01Mid')).status, 'running');
+  assertNeverWritten(h);
 });
 
 test('an unknown session\'s event never reaches the source; a non-synthetic envelope and another synthetic one are ignored', async (t) => {
