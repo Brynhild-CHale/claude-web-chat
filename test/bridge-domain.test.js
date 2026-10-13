@@ -500,7 +500,7 @@ test('events: past 30 envelopes per second, turn.step deltas of one turn merge i
   const h = setup(t);
   const token = h.attach();
   const at = h.clock.now() - 5000;
-  const steps = Array.from({ length: 40 }, (_, i) => ({ kind: 'turn.step', at: at + i, turn_id: 't1', index: i, delta: `d${i};` }));
+  const steps = Array.from({ length: 40 }, (_, i) => ({ kind: 'turn.step', at: at + i, turn_id: 't1', index: 0, delta: `d${i};` }));
   h.bridge.events(token, { events: [...steps, { kind: 'tool.call', at: at + 41, tool_use_id: 'tu', tool: 'Read', input: {} }] });
   await settle();
   assert.equal(h.published.length, 30, 'the second\'s cap');
@@ -508,11 +508,118 @@ test('events: past 30 envelopes per second, turn.step deltas of one turn merge i
   assert.equal(h.published.length, 31, 'the merged deltas, one envelope, when the second turns over');
   const merged = h.published[30].mod;
   assert.equal(merged.delta, Array.from({ length: 10 }, (_, i) => `d${i + 30};`).join(''));
-  assert.equal(merged.index, 39);
+  assert.equal(merged.index, 0);
   assert.equal(merged.merged, 10);
   const c = h.bridge.status().counters;
   assert.equal(c.events_merged, 10);
   assert.equal(c.events_rate_dropped, 1, 'the tool.call past the cap');
+});
+
+// U87b: a merge never crosses a step. mod-live keys provisional replies by
+// (turn, index) or message_id, so a crossed merge moved step n's tail onto
+// step n+1 until the transcript landed.
+const stepEv = (at, turn, index, mid, delta) => ({
+  kind: 'turn.step', at, turn_id: turn, index, ...(mid ? { message_id: mid } : {}), delta,
+});
+
+test('events: past the cap, two steps\' deltas in one second give two envelopes, each with its own index, message_id and whole delta, in order', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const at = h.clock.now() - 5000;
+  const fill = Array.from({ length: 30 }, (_, i) => stepEv(at + i, 't1', 0, 'msg_a', `f${i};`));
+  const tail0 = Array.from({ length: 5 }, (_, i) => stepEv(at + 30 + i, 't1', 0, 'msg_a', `a${i};`));
+  const step1 = Array.from({ length: 5 }, (_, i) => stepEv(at + 35 + i, 't1', 1, 'msg_b', `b${i};`));
+  h.bridge.events(token, { events: [...fill, ...tail0, ...step1] });
+  await settle();
+  assert.equal(h.published.length, 30, 'the second\'s cap');
+  await h.clock.advance(1000);
+  assert.equal(h.published.length, 32, 'one envelope per step when the second turns over');
+  const [e0, e1] = h.published.slice(30);
+  assert.deepEqual(
+    { index: e0.mod.index, message_id: e0.mod.message_id, delta: e0.mod.delta, merged: e0.mod.merged },
+    { index: 0, message_id: 'msg_a', delta: 'a0;a1;a2;a3;a4;', merged: 5 },
+    'step 0 keeps its whole tail under its own index and id',
+  );
+  assert.deepEqual(
+    { index: e1.mod.index, message_id: e1.mod.message_id, delta: e1.mod.delta, merged: e1.mod.merged },
+    { index: 1, message_id: 'msg_b', delta: 'b0;b1;b2;b3;b4;', merged: 5 },
+    'step 1 gets only its own deltas',
+  );
+  assert.ok(e0.ts < e1.ts, 'in order');
+  const c = h.bridge.status().counters;
+  assert.equal(c.events_merged, 10);
+  assert.equal(c.events_rate_dropped, 0, 'no delta of either step is dropped');
+  assert.equal(c.events_published, 32);
+});
+
+test('events: past the cap, a new message_id at the same index is a new step; another turn\'s step is held behind, not dropped; a step\'s late message_id joins it', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const at = h.clock.now() - 5000;
+  const fill = Array.from({ length: 30 }, (_, i) => ({ kind: 'turn.start', at: at + i, turn_id: `f${i}` }));
+  h.bridge.events(token, {
+    events: [
+      ...fill,
+      stepEv(at + 30, 't1', 2, null, 'p;'), // the step before its message id is known
+      stepEv(at + 31, 't1', 2, 'msg_c', 'q;'),
+      stepEv(at + 32, 't1', 2, null, 'r;'),
+      stepEv(at + 33, 't1', 2, 'msg_d', 's;'), // same index, another message: a new step
+      stepEv(at + 34, 't2', 0, null, 'u;'),
+      stepEv(at + 35, 't2', 0, null, 'v;'),
+    ],
+  });
+  await settle();
+  assert.equal(h.published.length, 30);
+  await h.clock.advance(1000);
+  const out = h.published.slice(30).map((e) => ({
+    turn_id: e.mod.turn_id, index: e.mod.index, message_id: e.mod.message_id, delta: e.mod.delta,
+  }));
+  assert.deepEqual(out, [
+    { turn_id: 't1', index: 2, message_id: 'msg_c', delta: 'p;q;r;' },
+    { turn_id: 't1', index: 2, message_id: 'msg_d', delta: 's;' },
+    { turn_id: 't2', index: 0, message_id: undefined, delta: 'u;v;' },
+  ]);
+  assert.equal(h.bridge.status().counters.events_rate_dropped, 0);
+});
+
+test('events: past the cap, at most 30 envelopes are held; a further step is dropped and counted, and the held ones publish in order inside the cap', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const at = h.clock.now() - 5000;
+  const fill = Array.from({ length: 30 }, (_, i) => ({ kind: 'turn.start', at: at + i, turn_id: `f${i}` }));
+  h.bridge.events(token, { events: fill });
+  // 31 one-delta steps past the cap (one batch holds at most 50 events).
+  h.bridge.events(token, { events: Array.from({ length: 31 }, (_, i) => stepEv(at + 30 + i, 't1', i, null, `s${i};`)) });
+  await settle();
+  assert.equal(h.published.length, 30);
+  const c0 = h.bridge.status().counters;
+  assert.equal(c0.events_merged, 30, 'thirty held');
+  assert.equal(c0.events_rate_dropped, 1, 'the thirty-first step');
+  await h.clock.advance(1000);
+  assert.equal(h.published.length, 60, 'the held envelopes fill the next second, no more');
+  assert.deepEqual(h.published.slice(30).map((e) => e.mod.index), Array.from({ length: 30 }, (_, i) => i));
+  assert.deepEqual(h.published.slice(30).map((e) => e.mod.delta), Array.from({ length: 30 }, (_, i) => `s${i};`));
+  await h.clock.advance(1000);
+  assert.equal(h.published.length, 60, 'nothing more: the dropped step is gone, nothing is held');
+  assert.equal(h.bridge.status().counters.events_published, 60);
+});
+
+test('events: past the cap, one step\'s deltas still merge into one envelope under that step\'s index and message_id', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const at = h.clock.now() - 5000;
+  const fill = Array.from({ length: 30 }, (_, i) => ({ kind: 'turn.start', at: at + i, turn_id: `f${i}` }));
+  const run = Array.from({ length: 15 }, (_, i) => stepEv(at + 30 + i, 't1', 3, i < 3 ? null : 'msg_e', `x${i};`));
+  h.bridge.events(token, { events: [...fill, ...run] });
+  await settle();
+  await h.clock.advance(1000);
+  assert.equal(h.published.length, 31);
+  const m = h.published[30].mod;
+  assert.equal(m.index, 3);
+  assert.equal(m.message_id, 'msg_e');
+  assert.equal(m.delta, Array.from({ length: 15 }, (_, i) => `x${i};`).join(''));
+  assert.equal(m.merged, 15);
+  assert.equal(h.bridge.status().counters.events_merged, 15);
 });
 
 test('a real mirror ingests the envelope without changing any turn, ask or live state but its progress clocks; an unknown session is ignored', async (t) => {
