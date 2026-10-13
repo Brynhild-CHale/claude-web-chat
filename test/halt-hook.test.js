@@ -22,7 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const { userPaths, PACKAGE_ROOT } = require('../lib/core/paths');
 const { withTempHome } = require('../test-support/helpers');
@@ -49,6 +49,54 @@ function fire(home, event, { sid = SID, input = '{"hook_event_name":"PreToolUse"
   if (sid !== null) env.CLAUDE_CODE_SESSION_ID = sid;
   const args = event === null ? [SCRIPT] : [SCRIPT, event];
   return spawnSync(shell, args, { env, input, encoding: 'utf8', timeout: 10000 });
+}
+
+// The test runner's budget for this file (`--test-timeout`, which `npm test`
+// sets and the runner hands each file's process in its execArgv; 0 means none).
+// A large-payload fire gets half of it as its own deadline, so a stalled child
+// is killed and named before the runner's timeout cancels the test.
+const TEST_BUDGET_MS = (() => {
+  const flag = [...process.execArgv].reverse().find((a) => a.startsWith('--test-timeout='));
+  const ms = flag ? Number(flag.slice('--test-timeout='.length)) : NaN;
+  return Number.isFinite(ms) && ms > 0 ? ms : 60000;
+})();
+
+// One fire with a large payload, written the way Claude Code writes a hook's
+// stdin: an async spawn whose parent writes the payload, ends the stream and
+// then closes it. NOT spawnSync: spawnSync ends its input with shutdown(SHUT_WR)
+// and keeps the socket open until the child exits, and on macOS that EOF is
+// sometimes never delivered to a reader already blocked in read() — the child's
+// `cat` has every byte and waits for an EOF that only a close() brings, so the
+// fire sat out its whole timeout (about 1 in 800 fires under a loaded machine,
+// with the hook script and with a bare `exec cat`; never once the writer closes).
+// Same contract as fire(): resolves {status, signal, stdout, stderr, error}.
+function fireLarge(home, event, { sid = SID, input, shell = 'sh' } = {}) {
+  const env = { PATH: process.env.PATH, HOME: home };
+  if (sid !== null) env.CLAUDE_CODE_SESSION_ID = sid;
+  return new Promise((resolve) => {
+    const child = spawn(shell, [SCRIPT, event], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let error;
+    child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
+    child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
+    child.on('error', (e) => { error = error || e; });
+    // An EPIPE here is the writer meeting a hook that left without reading. It
+    // reaches end()'s callback (and 'error', unless the destroy below beat it).
+    child.stdin.on('error', (e) => { error = error || e; });
+    child.stdin.end(input, (e) => {
+      if (e) error = error || e;
+      child.stdin.destroy();
+    });
+    const deadline = setTimeout(() => {
+      error = error || Object.assign(new Error(`${shell} ${event}: no exit within ${TEST_BUDGET_MS / 2} ms`), { code: 'ETIMEDOUT' });
+      child.kill('SIGKILL');
+    }, TEST_BUDGET_MS / 2);
+    child.on('close', (status, signal) => {
+      clearTimeout(deadline);
+      resolve({ status, signal, stdout, stderr, error });
+    });
+  });
 }
 
 function assertSilent(r, label) {
@@ -202,15 +250,15 @@ test('a session id longer than the path engine allows has no flag, even if a fil
   }
 });
 
-test('a 1 MB payload on stdin causes no error, with or without a flag', (t) => {
+test('a 1 MB payload on stdin causes no error, with or without a flag', async (t) => {
   const home = withTempHome(t);
   const big = JSON.stringify({ hook_event_name: 'PostToolUse', tool_response: { stdout: 'x'.repeat(1 << 20) } });
   for (const shell of SHELLS) {
     // Claude Code writes the whole payload; a hook that left without reading it
     // would hand the writer an EPIPE.
-    assertSilent(fire(home, 'post', { input: big, shell }), `${shell} no flag`);
+    assertSilent(await fireLarge(home, 'post', { input: big, shell }), `${shell} no flag`);
     writeFlag(`${nowS() + 600}\n`);
-    const r = fire(home, 'post', { input: big, shell });
+    const r = await fireLarge(home, 'post', { input: big, shell });
     assert.equal(r.error, undefined, `${shell}: no EPIPE for the writer`);
     assert.equal(r.status, 0);
     assert.equal(r.stderr, '');
