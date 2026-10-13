@@ -436,6 +436,20 @@ test('pass on undecided: a web-decided ask sends only its decision — handed, r
   }
 });
 
+test('pass on undecided: a settings-hook ask never sends to the mod, however it ends', async (t) => {
+  const r = rig(t);
+  const viaHook = await r.asks.create(r.hookBody());
+  assert.equal(viaHook.wait, true);
+  assert.equal(r.asks.get(viaHook.id).transport, 'hook');
+  r.mirror.emit({ op: 'state', session_id: SID, prev: 'waiting', state: 'working' });
+  assert.equal(r.asks.get(viaHook.id).state, 'resolved');
+  const pending = await r.asks.create(r.hookBody({ input: { command: 'ls' } }));
+  assert.equal(pending.wait, true);
+  r.asks.stop();
+  await settle();
+  assert.deepEqual(r.sent, [], 'the hook polls its answer: `send` is the mod\'s alone');
+});
+
 // ── switched off ────────────────────────────────────────────────────────────
 
 test('the transport ships switched off: MOD_PERMISSION_WAIT_MS is 0 (ruled D2 (a), until gate V41)', () => {
