@@ -200,8 +200,10 @@ describe('tranche 5 on a phone: the real main.js in jsdom', () => {
     const calls = [...MAIN.matchAll(/^(init\w+|connect)\(/gm)].map((m) => m[1]);
     for (const name of TRANCHE5) assert.equal(calls.filter((c) => c === name).length, 1, `${name} once`);
     const at5 = calls.indexOf('initChatSheet');
-    assert.deepEqual(calls.slice(at5 - 1, at5 + TRANCHE5.length + 1), ['initTurnActions', ...TRANCHE5, 'connect'],
-      'right after initTurnActions, then connect()');
+    assert.deepEqual(calls.slice(at5 - 1, at5 + TRANCHE5.length), ['initTurnActions', ...TRANCHE5],
+      'right after initTurnActions');
+    // Tranche 6's inits follow initTabDock (test/t6-e2e-chrome.test.js pins them).
+    assert.ok(calls.indexOf('connect') > calls.indexOf('initTabDock'), 'then, later, connect()');
     assert.doesNotMatch(MAIN, /chat-pull-stub|initPullStub|Under development/, 'the stand-in is gone from main.js');
 
     const slots = await shell.importApp('chat-slots.js');
