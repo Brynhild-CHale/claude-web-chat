@@ -107,6 +107,13 @@ test('a hello frame triggers one /api/comments refresh — and none while hidden
   setVisibility('visible');
   await shell.tick();
   assert.equal(commentGets(), n + 1, 'it is sent on the return to visible');
+
+  // The put-off refresh is sent ONCE: a later hide/show with nothing asked for
+  // in between makes no further request.
+  setVisibility('hidden');
+  setVisibility('visible');
+  await shell.tick();
+  assert.equal(commentGets(), n + 1, 'a hide/show with nothing put off sends nothing');
 });
 
 test('with no pins the 500 ms pass does no layout work', async () => {
