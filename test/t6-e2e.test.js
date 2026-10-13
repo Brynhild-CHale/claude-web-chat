@@ -29,8 +29,8 @@
 //   * with no mod every path takes tier 1;
 //   * the server exits with no open handles through srv.stop() and through
 //     gracefulShutdown(), with a mod attached, its op long-poll held open, a
-//     mod ask pending and the transport set; state.messageTransport is null
-//     after either.
+//     mod ask pending, a context reading held and the transport set;
+//     state.messageTransport is null and the readings are empty after either.
 // Beyond §11.9 (as U66a added four, notes-C D9):
 //   * an Elicitation hook subprocess (bin/claude-web-chat-hook.js elicit)
 //     against the daemon with a local viewer: a decision posted through the
@@ -48,7 +48,9 @@
 //     say 'web message m-…', never the text (U91's turn-begin line);
 //   * GET /api/mirror at local: capabilities.mod true with the fake mod
 //     attached (and the conversation's process.mod) and false after its pid
-//     dies; rewind_in_place true only with the flag and a mod;
+//     dies; rewind_in_place true only with the flag and a mod; and the mod's
+//     session.measure on the real tap reaches GET /api/mirror/context (U93's
+//     readings and route, as createServer wires them);
 //   * test/bus-golden.test.js is byte-identical.
 
 const test = require('node:test');
@@ -706,13 +708,23 @@ test('GET /api/mirror at local: capabilities.mod (and process.mod) true with the
   assert.deepEqual([s.capabilities.mod, s.capabilities.rewind_in_place], [false, false], 'no mod yet');
   assert.equal(s.conversations.find((c) => c.id === S1).process.mod, false);
 
-  await d.attach();
+  const { mod } = await d.attach();
   s = await waitUntil(async () => {
     const x = await d.snapshot();
     const c = x.conversations.find((y) => y.id === S1);
     return x.capabilities.mod === true && c.process && c.process.mod === true ? x : null;
   }, { ...WAIT, what: 'capabilities.mod and process.mod true' });
   assert.equal(s.capabilities.rewind_in_place, true, 'the flag and a mod');
+  // The context meter's reading (U93): the mod's session.measure on the real
+  // tap reaches the readings createServer wired, and GET /api/mirror/context
+  // is mounted on the daemon (503 unwired; 404 unmounted).
+  assert.deepEqual(await d.get(`/api/mirror/context?conversation=${S1}`), { ok: true, context: null }, 'no reading yet');
+  await mod.events([{ kind: 'session.measure', at: Date.now(), changed: ['context'], context: { tokens: 76000, window: 200000 } }]);
+  const ctxRead = await waitUntil(async () => {
+    const r = await d.get(`/api/mirror/context?conversation=${S1}`);
+    return r.ok === true && r.context ? r : null;
+  }, { ...WAIT, what: 'the reading on GET /api/mirror/context' });
+  assert.deepEqual([ctxRead.context.tokens, ctxRead.context.window, ctxRead.context.percent], [76000, 200000, 38]);
 
   child.kill('SIGKILL');
   await exited;
@@ -777,6 +789,8 @@ async function exitsClean(t, teardown) {
   await mod.events([{ kind: 'permission.request', at: Date.now(), request_id: 'pr_t6_down', tool: 'Bash', input: { command: 'rm -rf dist' } }]);
   await waitUntil(async () => ((await d.get('/api/asks')).asks || []).some((a) => a.state === 'pending'), { ...WAIT, what: 'the pending mod ask' });
   assert.equal(typeof d.srv.messageTransport, 'function', 'the transport is set');
+  await mod.events([{ kind: 'session.measure', at: Date.now(), changed: ['context'], context: { tokens: 1000, window: 200000 } }]);
+  await waitUntil(() => d.srv.contextReadings.size() === 1, { ...WAIT, what: 'the context reading held' });
   const held = mod.poll({ wait: 20000 }).catch((e) => ({ error: e })); // the op long-poll, held open
   await waitUntil(() => d.srv.bridge.status().sessions.some((s) => s.polling), { ...WAIT, what: 'the long-poll held' });
 
@@ -787,6 +801,7 @@ async function exitsClean(t, teardown) {
   assert.equal(d.srv.messageTransport, null, 'state.messageTransport is back to null');
   assert.equal(d.srv.bridge.any(), false, 'no mod attached');
   assert.equal(d.srv.bridge.status().running, false, 'the bridge stopped');
+  assert.equal(d.srv.contextReadings.size(), 0, 'the readings stopped: their tap subscription is off and the readings forgotten');
   const left = await waitUntil(() => (tracker.open().length === 0 && excess(base).length === 0 ? 'clean' : null), { timeout: 15000, interval: 20 })
     .catch(() => null);
   assert.ok(left, `left behind — handles and timers: [${tracker.open().join(', ')}]; beyond the baseline: [${excess(base).join(', ')}]`);
