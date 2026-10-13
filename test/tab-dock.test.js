@@ -469,3 +469,25 @@ test('stopTabDock unregisters: a later sideways drag reaches no handler; initTab
   assert.ok(drag.dockHandler(), 'registered again');
   dock.stopTabDock();
 });
+
+test('the dock follows the tab\'s centre, not the finger: a grab off the tab\'s middle lands by where the tab goes', async () => {
+  W.localStorage.removeItem(KEY);
+  dock.initTabDock();
+  assert.equal(pull().dataset.dock, 'right');
+  placeTab();
+  const id = ++pid;
+  // Grabbed 22px right of the tab's centre (362): the tab's centre ends at 120,
+  // in the left third (under 130), while the finger ends at 142, in the middle.
+  const x0 = tabCentre() + 22;
+  const dx = 120 - tabCentre();
+  pe('pointerdown', { pointerId: id, clientX: x0, clientY: 676 });
+  for (let i = 1; i <= 3; i++) {
+    pe('pointermove', { pointerId: id, clientX: x0 + (dx * i) / 3, clientY: 676 }, doc);
+    await shell.tick(5);
+  }
+  pe('pointerup', { pointerId: id, clientX: x0 + dx, clientY: 676 }, doc);
+  await shell.tick(5);
+  assert.equal(pull().dataset.dock, 'left', 'the tab\'s centre picks the third');
+  assert.equal(stored(), 'left');
+  dock.stopTabDock();
+});
