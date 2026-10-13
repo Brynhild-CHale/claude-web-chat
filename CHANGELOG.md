@@ -52,7 +52,7 @@ What you have to do:
    replies to a remote viewer; the replay player and its downloads still do in
    this build (see *Security*). `claude-web-chat tunnel mirror on` in a project
    shows its conversation to remote viewers (see *Added*). The portal's protocol
-   is now 9, so `tunnel up` restarts a portal left running by an older build
+   is now 10, so `tunnel up` restarts a portal left running by an older build
    (and `update` restarts a running one).
 5. **Before rolling back with `update --to`, run `claude-web-chat uninstall` in
    each project, then `install` again once the older build is active.** An older
