@@ -1,0 +1,5 @@
+{
+  "name": "web-chat-mod",
+  "description": "web-chat's bridge into this Claude Code session: the live chat mirror and the browser's controls (Stop, task stop, the composer) for a project with web-chat installed. Does nothing elsewhere.",
+  "author": { "name": "web-chat" }
+}

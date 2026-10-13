@@ -1,0 +1,708 @@
+// The web-chat mod package (templates/claude-mod/, spec §15.7, U88): its
+// files, and its hooks module's behaviour against a fake `$` and a REAL bridge
+// (lib/server/domain/bridge + lib/server/routes/bridge on a bare Express app,
+// as test/bridge-routes.test.js mounts them). No test runs `claude`: the fake
+// host below stands in for Claude Code — it registers the module's hooks,
+// fires events through them, and answers `$` (its $.http.fetch goes through
+// lib/client, which sends no Origin and no Sec-Fetch-*, as the mod's own
+// fetch; Node's fetch would be refused as a browser).
+//
+// The fake host's clock fires each timer after a SHORT real delay (default
+// min(ms, 15)) and records the ms asked for, so a 60 s back-off runs in
+// milliseconds while the test still reads 1000, 2000, … 60000. In `strict`
+// mode every `$` call made outside a dispatch — a hook running, or a timer's
+// callback — throws, which is what drives the op loop onto the clock
+// (ruling C-defaults (a)).
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const express = require('express');
+const { pathToFileURL } = require('url');
+
+const { mountBridgeRoutes } = require('../lib/server/routes/bridge');
+const { createBridge } = require('../lib/server/domain/bridge');
+const { createHookTap } = require('../lib/server/hook-tap');
+const { createAudience } = require('../lib/server/audience');
+const { request } = require('../lib/client');
+const P = require('../lib/core/mod-protocol');
+const { fakeMod } = require('../test-support/fake-mod');
+const { waitUntil } = require('../test-support/helpers');
+
+const TPL = path.join(__dirname, '..', 'templates', 'claude-mod');
+const REGISTER = path.join(TPL, 'hooks', 'register.js');
+const SRC = fs.readFileSync(REGISTER, 'utf8');
+const SID = '33333333-3333-4333-8333-333333333333';
+const HOOKED = [
+  'classic.PermissionRequest', 'prompt.submit', 'session.append', 'session.compact', 'session.end',
+  'session.measure', 'session.start', 'tool.call', 'turn.complete', 'turn.start', 'turn.step',
+];
+
+let registerFn = null;
+test.before(async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-mod-register-'));
+  const file = path.join(dir, 'register.mjs');
+  fs.writeFileSync(file, SRC);
+  registerFn = (await import(pathToFileURL(file).href)).register;
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function tmp(t, prefix) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+// A project (a folder holding .web-chat/) and a home whose own .web-chat/ is
+// the per-user folder, never a project.
+function project(t) {
+  const root = tmp(t, 'wc-mod-proj-');
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  const home = tmp(t, 'wc-mod-home-');
+  fs.mkdirSync(path.join(home, '.web-chat'));
+  return { root, home };
+}
+
+function writeServerJson(root, rec) {
+  fs.writeFileSync(path.join(root, '.web-chat', 'server.json'), JSON.stringify(rec));
+}
+
+async function freePort() {
+  const s = http.createServer();
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const { port } = s.address();
+  await new Promise((r) => s.close(r));
+  return port;
+}
+
+// A real bridge on a bare Express app, rooted at `root`.
+async function bridgeHost(t, root) {
+  const hooks = createHookTap();
+  const published = [];
+  hooks.subscribe((e) => { if (e.event === P.MOD_EVENT) published.push(e.mod); });
+  const audience = createAudience({ configFile: null });
+  const mirror = { subscribe: () => () => {}, conversationOf: () => null };
+  const bridge = createBridge({ root, hooks, mirror });
+  bridge.start();
+  const app = express();
+  app.use(express.json({ limit: '200mb' }));
+  mountBridgeRoutes(app, { audience, hooks, mirror, bridge });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(async () => {
+    await bridge.stop();
+    audience.stop();
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  });
+  return { port: server.address().port, bridge, published, root };
+}
+
+// A daemon that hands out whatever ops the test queues — forged ops the real
+// bridge would refuse before they ever reached a mod.
+async function rawDaemon(t) {
+  const queue = [];
+  const results = [];
+  const app = express();
+  app.use(express.json());
+  app.post('/api/bridge/hello', (req, res) => res.json({
+    ok: true, token: 'f'.repeat(48), protocol: 1, wait_max_ms: 200, flush_ms: 100, permission_wait_ms: 0,
+  }));
+  app.get('/api/bridge/ops', (req, res) => {
+    if (queue.length) return res.json({ ok: true, ops: queue.splice(0) });
+    setTimeout(() => { if (!res.writableEnded) res.json({ ok: true, ops: queue.splice(0) }); }, 40);
+    return undefined;
+  });
+  app.post('/api/bridge/result', (req, res) => { results.push(req.body); res.json({ ok: true }); });
+  app.post('/api/bridge/events', (req, res) => res.json({ ok: true, accepted: req.body.events.length, dropped: 0 }));
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(async () => { server.closeAllConnections(); await new Promise((r) => server.close(r)); });
+  return { port: server.address().port, queue, results };
+}
+
+// The fake Claude Code: hooks, dispatches and `$`.
+function fakeHost(t, {
+  cwd, home, strict = false, delay = (ms) => Math.min(ms, 15), sessionId = SID, ccVersion = '2.1.296', handlers = {},
+} = {}) {
+  const hooks = new Map();
+  let registering = true;
+  const lateOn = [];
+  const on = (event, a, b) => {
+    const fn = typeof a === 'function' ? a : b;
+    if (!registering) lateOn.push(event);
+    hooks.set(event, fn);
+    return { catch() { return this; } };
+  };
+  registerFn(on);
+  registering = false;
+
+  let depth = 0;
+  let disposed = false;
+  let inflight = 0;
+  const calls = [];
+  const requested = [];
+  const live = new Set();
+
+  function dispatch(fn) {
+    depth += 1;
+    let r;
+    try { r = fn(); } catch (e) { depth -= 1; throw e; }
+    if (r && typeof r.then === 'function') return Promise.resolve(r).finally(() => { depth -= 1; });
+    depth -= 1;
+    return r;
+  }
+
+  const g = (name, fn, { sync = false } = {}) => (...args) => {
+    calls.push({ name, args });
+    if (strict && depth === 0) {
+      const err = new Error(`${name}: called outside a hook`);
+      if (sync) throw err;
+      return Promise.reject(err);
+    }
+    return fn(...args);
+  };
+
+  function timer(kind, ms, fn) {
+    requested.push({ kind, ms });
+    const h = { kind, ms, id: null };
+    if (disposed) return { cancel() {} };
+    const run = () => {
+      if (kind === 'after') live.delete(h);
+      try { const r = dispatch(fn); if (r && typeof r.catch === 'function') r.catch(() => {}); } catch {}
+    };
+    h.id = kind === 'after' ? setTimeout(run, delay(ms)) : setInterval(run, Math.max(1, delay(ms)));
+    live.add(h);
+    return { cancel() { if (kind === 'after') clearTimeout(h.id); else clearInterval(h.id); live.delete(h); } };
+  }
+
+  const $ = {
+    session: {
+      id: g('session.id', async () => sessionId),
+      cwd: g('session.cwd', async () => cwd),
+      version: g('session.version', async () => ({ version: ccVersion, base: ccVersion, builtAt: '2026-10-01T00:00:00Z' })),
+      usage: g('session.usage', async () => ({
+        startedAt: 1760000000000,
+        context: { used: 1200, window: 200000, percent: 0.6, label: 'a secret label' },
+        rateLimits: [{ name: 'five_hour', percentUsed: 3 }],
+        cost: { usd: 0.42, note: 'words' },
+      })),
+      messages: g('session.messages', async () => [
+        { role: 'user', text: 'a secret prompt', toolUses: [] },
+        { role: 'assistant', text: 'a secret reply', toolUses: [] },
+      ]),
+    },
+    env: { get: g('env.get', async (name) => (name === 'HOME' ? home : undefined)) },
+    fs: {
+      exists: g('fs.exists', async (p) => fs.existsSync(p)),
+      read: g('fs.read', async (p) => fs.readFileSync(p, 'utf8')),
+      stat: g('fs.stat', async (p, o) => {
+        const s = fs.statSync(p);
+        const out = { kind: s.isDirectory() ? 'dir' : 'file', size: s.size, mtimeMs: s.mtimeMs, isLink: false };
+        if (o && o.resolve) out.realPath = fs.realpathSync(p);
+        return out;
+      }),
+    },
+    http: {
+      fetch: g('http.fetch', async (url, init = {}) => {
+        inflight += 1;
+        try {
+          const u = new URL(url);
+          const r = await request(Number(u.port), init.method || 'GET', u.pathname + u.search,
+            init.body !== undefined ? init.body : null, { headers: init.headers || {} });
+          return { status: r.status, ok: r.status >= 200 && r.status < 300, headers: {}, text: JSON.stringify(r.body) };
+        } finally { inflight -= 1; }
+      }),
+    },
+    clock: {
+      now: g('clock.now', async () => Date.now()),
+      sleep: g('clock.sleep', (ms) => new Promise((r) => setTimeout(r, delay(ms)))),
+      after: g('clock.after', (ms, fn) => timer('after', ms, fn), { sync: true }),
+      every: g('clock.every', (ms, fn) => timer('every', ms, fn), { sync: true }),
+    },
+    turn: { abort: g('turn.abort', async (a) => (handlers.abort ? handlers.abort(a) : undefined)) },
+    tool: { call: g('tool.call', async (a) => (handlers.toolCall ? handlers.toolCall(a) : { result: {}, text: '' })) },
+    prompt: {
+      submit: g('prompt.submit', async (a) => (handlers.submit ? handlers.submit(a) : { text: a.text })),
+      fill: g('prompt.fill', async () => ({ isFilled: true })),
+    },
+    command: { run: g('command.run', async (a) => (handlers.command ? handlers.command(a) : { text: '' })) },
+  };
+
+  let ended = false;
+  const host = {
+    $, hooks, lateOn, calls, requested,
+    called: (name) => calls.filter((c) => c.name === name),
+    fetches: (pathPart) => calls.filter((c) => c.name === 'http.fetch' && String(c.args[0]).includes(pathPart || '')),
+    liveTimers: () => live.size,
+    inflight: () => inflight,
+    fire(event, e, next) {
+      const fn = hooks.get(event);
+      return dispatch(() => fn($, e, next || (async (x) => ({ echoed: x }))));
+    },
+    start() {
+      return host.fire('session.start', { cwd, surface: 'terminal', isInteractive: true }, async (x) => ({ cwd: x.cwd }));
+    },
+    async end(reason = 'prompt_input_exit') {
+      if (ended) return null;
+      ended = true;
+      return host.fire('session.end', { reason, sessionId, resume: {} }, async () => ({ sessionId }));
+    },
+    async step(e, chunks, result) {
+      const fn = hooks.get('turn.step');
+      const next = () => (async function* gen() { for (const c of chunks) yield c; return result; })();
+      depth += 1;
+      const out = [];
+      let r;
+      try {
+        const gen = fn($, e, next);
+        for (;;) {
+          const { value, done } = await gen.next();
+          if (done) { r = value; break; }
+          out.push(value);
+        }
+      } finally { depth -= 1; }
+      return { chunks: out, result: r };
+    },
+    dispose() {
+      disposed = true;
+      for (const h of live) { clearTimeout(h.id); clearInterval(h.id); }
+      live.clear();
+    },
+  };
+  t.after(async () => {
+    try { await host.end(); } catch {}
+    await waitUntil(() => inflight === 0, { timeout: 3000 });
+    host.dispose();
+  });
+  return host;
+}
+
+const attachedTo = (b, sid = SID) => b.bridge.status().sessions.find((s) => s.session_id === sid);
+
+async function attachedHost(t, opts = {}) {
+  const { root, home } = project(t);
+  const b = await bridgeHost(t, root);
+  if (opts.permissionWaitMs) b.bridge.setPermissionWait(opts.permissionWaitMs);
+  writeServerJson(root, { pid: process.pid, port: b.port, root });
+  const host = fakeHost(t, { cwd: root, home, ...opts });
+  await host.start();
+  await waitUntil(() => attachedTo(b), { timeout: 5000, what: 'the mod\'s hello' });
+  return { root, home, b, host };
+}
+
+// ── the package's files ─────────────────────────────────────────────────────
+
+test('plugin.json names web-chat-mod, with no version (mod on stamps it) and no capabilities field', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(TPL, '.claude-plugin', 'plugin.json'), 'utf8'));
+  assert.equal(manifest.name, 'web-chat-mod');
+  assert.match(manifest.name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'kebab-case');
+  assert.equal(manifest.version, undefined);
+  assert.equal(manifest.capabilities, undefined, '2.1.296: capabilities is no longer read');
+  assert.equal(typeof manifest.description, 'string');
+  assert.deepEqual(manifest.author, { name: 'web-chat' });
+});
+
+test('hooks/hooks.json names the one module, exactly as 2.1.296 scaffolds it', () => {
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(TPL, 'hooks', 'hooks.json'), 'utf8')), { modules: ['./register.js'] });
+  assert.deepEqual(fs.readdirSync(path.join(TPL, 'hooks')).sort(), ['hooks.json', 'register.js']);
+  assert.deepEqual(fs.readdirSync(TPL).sort(), ['.claude-plugin', 'hooks'], 'no MCP server, skill or command in the plugin');
+});
+
+test('register.js is one self-contained module: no import or require, no process., no messaging token, one version line', () => {
+  assert.doesNotMatch(SRC, /^\s*import\s/m);
+  assert.doesNotMatch(SRC, /\bimport\s*\(/);
+  assert.doesNotMatch(SRC, /\brequire\s*\(/);
+  assert.doesNotMatch(SRC, /\bprocess\./);
+  assert.doesNotMatch(SRC, /CLAUDE_CODE_MESSAGING_TOKEN/);
+  assert.equal(SRC.split("const MOD_VERSION = '0.0.0-template';").length, 2, 'exactly one MOD_VERSION placeholder');
+  assert.equal((SRC.match(/^export /gm) || []).length, 1);
+  assert.match(SRC, /^export function register\(on\) \{/m);
+});
+
+test('register.js\'s WIRE literal is lib/core/mod-protocol\'s wire', () => {
+  const m = /const WIRE = Object\.freeze\((\{[\s\S]*?\n\})\);/.exec(SRC);
+  assert.ok(m, 'a WIRE literal');
+  const wire = JSON.parse(m[1]);
+  for (const k of ['MOD_PROTOCOL', 'MOD_MIN_CLAUDE', 'OPS', 'MOD_COMMANDS', 'EVENT_KINDS', 'BRIDGE_ONLY_KINDS', 'BATCH_MAX', 'DELTA_MAX', 'TEXT_MAX', 'INPUT_MAX']) {
+    assert.ok(Object.hasOwn(wire, k), `WIRE carries ${k}`);
+  }
+  for (const [k, v] of Object.entries(wire)) assert.deepEqual(v, P[k], `WIRE.${k} equals mod-protocol's`);
+});
+
+test('register(on) hooks exactly the events the wire needs, and registers nothing after it returns', async (t) => {
+  const { home } = project(t);
+  const elsewhere = tmp(t, 'wc-mod-none-');
+  const host = fakeHost(t, { cwd: elsewhere, home });
+  assert.deepEqual([...host.hooks.keys()].sort(), HOOKED);
+  await host.start();
+  await host.fire('turn.start', { turnId: 't1', text: '' });
+  await host.fire('tool.call', { tool: 'Read', tool_use_id: 'tu_1', file_path: 'a' });
+  await host.fire('turn.complete', { turnId: 't1', answer: 'ok', reason: 'answer', durationMs: 1, isAborted: false });
+  await host.end();
+  assert.deepEqual(host.lateOn, []);
+});
+
+// ── the gate ────────────────────────────────────────────────────────────────
+
+test('with no .web-chat above the session (only $HOME\'s, which is not a project) a whole session makes no network call', async (t) => {
+  const { home } = project(t);
+  const cwd = path.join(home, 'code', 'app');
+  fs.mkdirSync(cwd, { recursive: true });
+  const host = fakeHost(t, { cwd, home });
+  await host.start();
+  await waitUntil(() => host.called('fs.exists').some((c) => c.args[0] === '/.web-chat'), { timeout: 3000, what: 'the walk to /' });
+  for (let i = 0; i < 3; i++) {
+    await host.fire('prompt.submit', { text: 'hi', origin: { kind: 'composer' } });
+    await host.fire('tool.call', { tool: 'Bash', tool_use_id: `tu_${i}`, command: 'ls' });
+  }
+  await new Promise((r) => setTimeout(r, 150));
+  await host.end();
+  assert.deepEqual(host.fetches(), []);
+  assert.ok(!host.called('fs.exists').some((c) => c.args[0] === `${home}/.web-chat`), '$HOME\'s .web-chat is never taken for a project');
+});
+
+for (const [what, marker] of [
+  ['the project is switched off', (root) => path.join(root, '.web-chat', 'disabled')],
+  ['the user switched web-chat off', (root, home) => path.join(home, '.web-chat', 'disabled')],
+  ['this session is switched off', (root, home) => path.join(home, '.web-chat', 'sessions', `${SID}.json`)],
+]) {
+  test(`with a disabled marker (${what}) the mod idles, re-checks every 30 s and makes no network call`, async (t) => {
+    const { root, home } = project(t);
+    const b = await bridgeHost(t, root);
+    writeServerJson(root, { pid: process.pid, port: b.port, root });
+    const file = marker(root, home);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{}');
+    const host = fakeHost(t, { cwd: root, home, delay: (ms) => (ms >= 30000 ? 60000 : Math.min(ms, 15)) });
+    await host.start();
+    await waitUntil(() => host.requested.some((r) => r.kind === 'after' && r.ms === 30000), { timeout: 3000, what: 'the 30 s re-check' });
+    await host.fire('prompt.submit', { text: 'hi', origin: { kind: 'composer' } });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(host.fetches(), []);
+    assert.equal(b.bridge.status().sessions.length, 0);
+  });
+}
+
+test('a server.json naming another project\'s root, or no root, is no daemon of this project: no hello until one names its own', async (t) => {
+  const { root, home } = project(t);
+  const other = tmp(t, 'wc-mod-other-');
+  const b = await bridgeHost(t, root);
+  writeServerJson(root, { pid: process.pid, port: b.port, root: other });
+  const host = fakeHost(t, { cwd: root, home });
+  await host.start();
+  await waitUntil(() => host.called('fs.read').length >= 3, { timeout: 3000, what: 'server.json read again' });
+  assert.deepEqual(host.fetches(), [], 'a copied record: never asked');
+  writeServerJson(root, { pid: process.pid, port: b.port });
+  const reads = host.called('fs.read').length;
+  await waitUntil(() => host.called('fs.read').length >= reads + 3, { timeout: 5000, what: 'server.json read again' });
+  assert.deepEqual(host.fetches(), [], 'no root: never asked');
+  assert.ok(host.requested.some((r) => r.kind === 'after' && r.ms >= 1000), 'it backs off');
+  writeServerJson(root, { pid: process.pid, port: b.port, root });
+  await waitUntil(() => attachedTo(b), { timeout: 70000, what: 'the hello once server.json names this root' });
+  assert.equal(host.fetches('/api/bridge/hello').length, 1);
+});
+
+test('a hello answered 409 wrong-project is handled like a network failure: back off, read server.json again, attach later', async (t) => {
+  const { root, home } = project(t);
+  const elsewhere = tmp(t, 'wc-mod-elsewhere-');
+  const wrong = await bridgeHost(t, elsewhere);
+  const right = await bridgeHost(t, root);
+  writeServerJson(root, { pid: process.pid, port: wrong.port, root }); // a portfile that claims this root
+  const host = fakeHost(t, { cwd: root, home });
+  await host.start();
+  await waitUntil(() => host.fetches('/api/bridge/hello').length >= 2, { timeout: 5000, what: 'a second hello' });
+  assert.equal(wrong.bridge.status().sessions.length, 0);
+  assert.ok(host.requested.some((r) => r.kind === 'after' && r.ms >= 1000), 'backed off between them');
+  writeServerJson(root, { pid: process.pid, port: right.port, root });
+  await waitUntil(() => attachedTo(right), { timeout: 70000, what: 'the hello to this project\'s daemon' });
+});
+
+test('a daemon that is down: back off 1 s, 2 s, … up to 60 s, reading server.json each time, then attach to the new port', async (t) => {
+  const { root, home } = project(t);
+  const dead = await freePort();
+  writeServerJson(root, { pid: process.pid, port: dead, root });
+  const host = fakeHost(t, { cwd: root, home, delay: () => 2 });
+  await host.start();
+  const backoffs = () => host.requested.filter((r) => r.kind === 'after' && r.ms >= 1000 && r.ms !== 3000).map((r) => r.ms);
+  await waitUntil(() => backoffs().filter((ms) => ms === 60000).length >= 2, { timeout: 10000, what: 'the 60 s ceiling, twice' });
+  assert.deepEqual(backoffs().slice(0, 8), [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]);
+  const serverReads = host.called('fs.read').filter((c) => c.args[0].endsWith('server.json')).length;
+  assert.ok(serverReads >= 8, `server.json read before every try (${serverReads})`);
+  const b = await bridgeHost(t, root);
+  writeServerJson(root, { pid: process.pid, port: b.port, root });
+  await waitUntil(() => attachedTo(b), { timeout: 5000, what: 'the hello on the new port' });
+});
+
+// ── the hello and the op loop, against a real bridge ────────────────────────
+
+test('it says hello within one flush, as this session, with the template\'s version and its project root', async (t) => {
+  const t0 = Date.now();
+  const { b, root } = await attachedHost(t);
+  assert.ok(Date.now() - t0 < 2000);
+  const s = attachedTo(b);
+  assert.equal(s.cc_version, '2.1.296');
+  assert.equal(s.mod_version, '0.0.0-template');
+  const log = fs.readFileSync(path.join(root, '.web-chat', 'mod', 'bridge.log'), 'utf8');
+  assert.match(log, /"what":"hello"/);
+});
+
+test('abort: $.turn.abort on the open turn, then TaskStop for a foreground Bash it left running backgrounded', async (t) => {
+  let release = null;
+  let releaseBg = null;
+  let releaseRead = null;
+  const aborted = [];
+  const stops = [];
+  const { b, host } = await attachedHost(t, {
+    handlers: {
+      abort: async (a) => {
+        aborted.push(a);
+        // Claude Code backgrounds the running foreground Bash.
+        release({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash_7' }, text: 'moved to the background' });
+        // Calls that are not a foreground Bash settle too, even carrying a
+        // task id: never the abort's to stop (a background task is the user's).
+        releaseBg({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash_bg' }, text: 'running in the background' });
+        releaseRead({ result: { backgroundTaskId: 'read_1' }, text: '' });
+      },
+      toolCall: async (a) => { stops.push(a); return { result: { message: 'stopped' }, text: 'stopped' }; },
+    },
+  });
+  await host.fire('turn.start', { turnId: 'turn_1', text: 'go' });
+  const bash = host.fire('tool.call', { tool: 'Bash', tool_use_id: 'tu_bash', command: 'sleep 30' },
+    () => new Promise((r) => { release = r; }));
+  const bg = host.fire('tool.call', { tool: 'Bash', tool_use_id: 'tu_bg', command: 'npm run dev', run_in_background: true },
+    () => new Promise((r) => { releaseBg = r; }));
+  const read = host.fire('tool.call', { tool: 'Read', tool_use_id: 'tu_read', file_path: '/x' },
+    () => new Promise((r) => { releaseRead = r; }));
+  const r = await b.bridge.enqueue(SID, { op: 'abort', args: {} });
+  assert.deepEqual(r, { ok: true, result: { aborted: true, stopped: ['bash_7'] } });
+  assert.deepEqual(aborted, [{ turnId: 'turn_1' }]);
+  assert.deepEqual(stops, [{ tool: 'TaskStop', task_id: 'bash_7' }], 'only the foreground Bash the abort backgrounded');
+  await Promise.all([bg, read]);
+  const done = await bash;
+  assert.equal(done.result.backgroundTaskId, 'bash_7', 'the tool call\'s own result is untouched');
+});
+
+test('abort with no turn running is refused no-turn; taskStop runs TaskStop', async (t) => {
+  const stops = [];
+  const { b, host } = await attachedHost(t, { handlers: { toolCall: async (a) => { stops.push(a); return { result: {}, text: 'ok' }; } } });
+  const r = await b.bridge.enqueue(SID, { op: 'abort', args: {} });
+  assert.equal(r.ok, false);
+  assert.equal(r.refused, 'no-turn');
+  assert.equal(host.called('turn.abort').length, 0);
+  const s = await b.bridge.enqueue(SID, { op: 'taskStop', args: { task_id: 'bg_9' } });
+  assert.deepEqual(s, { ok: true, result: { stopped: true } });
+  assert.deepEqual(stops, [{ tool: 'TaskStop', task_id: 'bg_9' }]);
+});
+
+test('submit, command, fill, usage and messages run through $ — numbers and counts only, never content', async (t) => {
+  const { b, host } = await attachedHost(t);
+  assert.deepEqual(await b.bridge.enqueue(SID, { op: 'submit', args: { text: 'hello from the browser' } }), { ok: true, result: { submitted: true } });
+  assert.deepEqual(host.called('prompt.submit').map((c) => c.args[0]), [{ text: 'hello from the browser', asUser: true }]);
+
+  assert.deepEqual(await b.bridge.enqueue(SID, { op: 'command', args: { name: 'plan' } }), { ok: true, result: { ran: true } });
+  assert.deepEqual(host.called('command.run').map((c) => c.args[0]), [{ command: 'plan' }]);
+  await b.bridge.enqueue(SID, { op: 'command', args: { name: 'rename', args: 'my fork' } });
+  assert.deepEqual(host.called('command.run')[1].args[0], { command: 'rename', args: 'my fork' });
+
+  assert.deepEqual(await b.bridge.enqueue(SID, { op: 'fill', args: { text: 'draft' } }), { ok: true, result: { filled: true } });
+  assert.deepEqual(host.called('prompt.fill').map((c) => c.args[0]), [{ text: 'draft', mode: 'replace' }]);
+
+  const u = await b.bridge.enqueue(SID, { op: 'usage', args: {} });
+  assert.equal(u.ok, true);
+  assert.deepEqual(u.result, { startedAt: 1760000000000, context: { used: 1200, window: 200000, percent: 0.6 }, rateLimits: [{ percentUsed: 3 }], cost: { usd: 0.42 } });
+  const m = await b.bridge.enqueue(SID, { op: 'messages', args: {} });
+  assert.deepEqual(m, { ok: true, result: { count: 2 } });
+  assert.doesNotMatch(JSON.stringify([u, m]), /secret|words/);
+});
+
+test('forged ops (past the daemon) are refused by the mod itself: a /command as a submit, a config-persisting command, an expired op', async (t) => {
+  const { root, home } = project(t);
+  const d = await rawDaemon(t);
+  writeServerJson(root, { pid: process.pid, port: d.port, root });
+  const host = fakeHost(t, { cwd: root, home });
+  await host.start();
+  d.queue.push(
+    { id: 'op_a1', op: 'submit', args: { text: '/model x' }, expires_at: Date.now() + 60000 },
+    { id: 'op_a2', op: 'command', args: { name: 'model', args: 'x' }, expires_at: Date.now() + 60000 },
+    { id: 'op_a3', op: 'command', args: { name: 'config' }, expires_at: Date.now() + 60000 },
+    { id: 'op_a4', op: 'usage', args: {}, expires_at: Date.now() - 1000 },
+    { id: 'op_a5', op: 'eval', args: {}, expires_at: Date.now() + 60000 },
+  );
+  await waitUntil(() => d.results.length >= 5, { timeout: 5000, what: 'five results' });
+  const by = Object.fromEntries(d.results.map((r) => [r.id, r]));
+  assert.equal(by.op_a1.ok, false);
+  assert.equal(by.op_a1.refused, 'not-allowed');
+  assert.equal(by.op_a2.refused, 'not-allowed');
+  assert.equal(by.op_a3.refused, 'not-allowed');
+  assert.equal(by.op_a4.refused, 'expired');
+  assert.equal(by.op_a5.refused, 'not-allowed');
+  assert.equal(host.called('prompt.submit').length, 0);
+  assert.equal(host.called('command.run').length, 0);
+  assert.equal(host.called('session.usage').length, 0);
+});
+
+// ── the hooks never alter what they see ─────────────────────────────────────
+
+test('tool.call passes e on and returns next(e)\'s very value; a throw while forwarding changes neither', async (t) => {
+  const { b, host } = await attachedHost(t);
+  const e = Object.freeze({ tool: 'Read', tool_use_id: 'tu_r1', file_path: '/x' });
+  const R = Object.freeze({ result: { file: {} }, text: 'contents', ref: 3 });
+  let seen = null;
+  const r = await host.fire('tool.call', e, async (x) => { seen = x; return R; });
+  assert.equal(r, R);
+  assert.equal(seen, e);
+
+  const hostile = new Proxy({ tool: 'Bash', tool_use_id: 'tu_r2', command: 'ls' }, { ownKeys() { throw new Error('boom'); } });
+  let seen2 = null;
+  const r2 = await host.fire('tool.call', hostile, async (x) => { seen2 = x; return R; });
+  assert.equal(r2, R);
+  assert.equal(seen2, hostile);
+
+  await waitUntil(() => b.published.some((m) => m.kind === 'tool.done' && m.tool_use_id === 'tu_r1'), { timeout: 3000, what: 'tool.done' });
+  const call = b.published.find((m) => m.kind === 'tool.call' && m.tool_use_id === 'tu_r1');
+  assert.ok(call, 'tool.call forwarded');
+  const doneEv = b.published.find((m) => m.kind === 'tool.done' && m.tool_use_id === 'tu_r1');
+  assert.equal(doneEv.ok, true);
+});
+
+test('turn.step yields every chunk of next() unchanged and in order, and the forwarded deltas join to the text', async (t) => {
+  const { b, host } = await attachedHost(t);
+  // A chunk whose fields throw when read (not `then`: an async generator awaits
+  // what it yields, so a real chunk is plain data).
+  const hostile = new Proxy({}, { get(o, k) { if (k === 'then') return undefined; throw new Error('a chunk that throws when read'); } });
+  const chunks = [
+    { kind: 'engine', ref: 1 },
+    { kind: 'text', index: 0, text: 'Hel' },
+    { kind: 'thinking', index: 1, text: 'hmm' },
+    hostile,
+    { kind: 'text', index: 0, text: 'lo, ' },
+    { kind: 'text', index: 0, text: 'world' },
+    { kind: 'stop', stopReason: 'end_turn', usage: null },
+  ];
+  const result = { turnId: 'turn_s', index: 0, answer: 'Hello, world', toolUses: [], stopReason: 'end_turn', usage: null };
+  await host.fire('turn.start', { turnId: 'turn_s', text: '' });
+  const out = await host.step({ turnId: 'turn_s', index: 0, model: 'm', messageCount: 1 }, chunks, result);
+  assert.equal(out.chunks.length, chunks.length);
+  out.chunks.forEach((c, i) => assert.equal(c, chunks[i], `chunk ${i} is the same object`));
+  assert.equal(out.result, result);
+  await waitUntil(() => b.published.filter((m) => m.kind === 'turn.step').map((m) => m.delta).join('') === 'Hello, world',
+    { timeout: 3000, what: 'the deltas' });
+});
+
+test('an event goes to the bridge within one flush (100 ms)', async (t) => {
+  const { b, host } = await attachedHost(t);
+  const n = host.requested.length;
+  await host.fire('prompt.submit', { text: 'a secret prompt', origin: { kind: 'composer' } });
+  assert.ok(host.requested.slice(n).some((r) => r.kind === 'after' && r.ms === P.FLUSH_MS), 'a flush asked for 100 ms on');
+  await waitUntil(() => b.published.some((m) => m.kind === 'prompt.submit'), { timeout: 2000, what: 'the event' });
+  const ev = b.published.find((m) => m.kind === 'prompt.submit');
+  assert.deepEqual(ev.origin, { kind: 'composer' });
+  assert.doesNotMatch(JSON.stringify(b.published), /a secret prompt/, 'the prompt\'s origin, never its text');
+});
+
+test('a batch goes at once at 50 events; at most 200 wait while the bridge is away', async (t) => {
+  const { root, home } = project(t);
+  const b = await bridgeHost(t, root);
+  // The flush timer (100 ms) is held back here, so what arrives arrived without it.
+  const host = fakeHost(t, { cwd: root, home, delay: (ms) => (ms === P.FLUSH_MS ? 600000 : Math.min(ms, 15)) });
+  await host.start();
+  for (let i = 0; i < 300; i++) await host.fire('prompt.submit', { text: 'x', origin: { kind: 'composer' } });
+  writeServerJson(root, { pid: process.pid, port: b.port, root });
+  await waitUntil(() => attachedTo(b), { timeout: 70000, what: 'the hello' });
+  await waitUntil(() => attachedTo(b).counters.events_accepted >= 150, { timeout: 3000, what: 'the backlog, on attaching' });
+  await new Promise((r) => setTimeout(r, 100));
+  const c = attachedTo(b).counters;
+  assert.equal(c.events_accepted + c.events_dropped, 200, 'the 200 newest waited; the rest were dropped and counted');
+
+  const before = attachedTo(b).counters.events_accepted;
+  for (let i = 0; i < 49; i++) await host.fire('prompt.submit', { text: 'y', origin: { kind: 'composer' } });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(attachedTo(b).counters.events_accepted, before, '49 wait for the (held) timer');
+  await host.fire('prompt.submit', { text: 'y', origin: { kind: 'composer' } });
+  await waitUntil(() => attachedTo(b).counters.events_accepted === before + 50, { timeout: 3000, what: 'the batch at 50' });
+});
+
+test('a 401 (the token superseded) makes the mod say hello again', async (t) => {
+  const { b, host } = await attachedHost(t);
+  const other = fakeMod({ port: b.port, sessionId: SID, root: b.root });
+  await other.hello();
+  assert.equal(attachedTo(b).mod_version, '0.8.5-test');
+  await waitUntil(() => attachedTo(b) && attachedTo(b).mod_version === '0.0.0-template', { timeout: 5000, what: 'the second hello' });
+  assert.ok(host.fetches('/api/bridge/hello').length >= 2);
+});
+
+test('session.end ends the loop and the session at the bridge, with no timer left', async (t) => {
+  const { b, host } = await attachedHost(t);
+  await host.fire('turn.start', { turnId: 'turn_e', text: '' });
+  const r = await host.end('prompt_input_exit');
+  assert.deepEqual(r, { sessionId: SID });
+  await waitUntil(() => !attachedTo(b), { timeout: 3000, what: 'the detach' });
+  await waitUntil(() => host.inflight() === 0 && host.liveTimers() === 0, { timeout: 5000, what: 'no fetch and no timer' });
+  const n = host.calls.length;
+  await new Promise((r2) => setTimeout(r2, 100));
+  assert.equal(host.calls.length, n, 'nothing after the end');
+});
+
+// ── PermissionRequest: the transport (U92 builds its meaning) ───────────────
+
+test('classic.PermissionRequest with permission_wait_ms 0 returns next(e) at once and forwards nothing', async (t) => {
+  const { b, host } = await attachedHost(t);
+  const R = { echoed: true };
+  const e = { session_id: SID, tool_name: 'Bash', tool_input: { command: 'rm -rf x' }, hook_event_name: 'PermissionRequest' };
+  let seen = null;
+  const r = await host.fire('classic.PermissionRequest', e, async (x) => { seen = x; return R; });
+  assert.equal(r, R);
+  assert.equal(seen, e);
+  await new Promise((r2) => setTimeout(r2, 150));
+  assert.ok(!b.published.some((m) => m.kind === 'permission.request'));
+});
+
+test('classic.PermissionRequest with a wait: a decision answers the hook; {pass: true} or no answer in time leaves it to the terminal', async (t) => {
+  const { b, host } = await attachedHost(t, { permissionWaitMs: 4000, delay: (ms) => (ms === 4000 ? 300 : Math.min(ms, 15)) });
+  const e = { session_id: SID, tool_name: 'Bash', tool_input: { command: 'ls' }, hook_event_name: 'PermissionRequest' };
+  const R = { terminal: true };
+  const ask = async (decision) => {
+    const before = b.published.filter((m) => m.kind === 'permission.request').length;
+    const p = host.fire('classic.PermissionRequest', e, async () => R);
+    if (decision === undefined) return p;
+    await waitUntil(() => b.published.filter((m) => m.kind === 'permission.request').length > before, { timeout: 3000, what: 'permission.request' });
+    const req = b.published.filter((m) => m.kind === 'permission.request')[before];
+    assert.equal(req.tool, 'Bash');
+    const answered = await b.bridge.enqueue(SID, { op: 'permissionDecision', args: { request_id: req.request_id, decision } });
+    assert.equal(answered.ok, true);
+    return p;
+  };
+  assert.deepEqual(await ask({ behavior: 'allow' }), { decision: { behavior: 'allow' } });
+  assert.deepEqual(await ask({ behavior: 'deny', message: 'no' }), { decision: { behavior: 'deny', message: 'no' } });
+  assert.equal(await ask({ pass: true }), R, 'the pass-through sentinel (D5 (a)): next(e) at once');
+  assert.equal(await ask(undefined), R, 'no answer in time: next(e)');
+  await waitUntil(() => b.published.filter((m) => m.kind === 'permission.settled').length >= 4, { timeout: 3000, what: 'four settles' });
+  assert.deepEqual(b.published.filter((m) => m.kind === 'permission.settled').map((m) => m.by), ['web', 'web', 'terminal', 'timeout']);
+});
+
+// ── the op loop's driver (ruling C-defaults (a)) ────────────────────────────
+
+for (const [strict, driver] of [[false, 'loop'], [true, 'clock']]) {
+  test(`with a $ that ${strict ? 'refuses calls made outside a hook' : 'answers anywhere'}, the op loop runs on the ${driver} and diag says so`, async (t) => {
+    const { b, host } = await attachedHost(t, { strict });
+    const u = await b.bridge.enqueue(SID, { op: 'messages', args: {} });
+    assert.deepEqual(u, { ok: true, result: { count: 2 } });
+    await host.fire('turn.start', { turnId: 'turn_d', text: '' });
+    await host.fire('session.append', {
+      door: 'prompt', origin: { kind: 'composer' }, uuid: '44444444-4444-4444-8444-444444444444',
+      message: { type: 'user', role: 'user', content: [{ type: 'text', text: 'hi' }] },
+    }, async (x) => ({ message: x.message, uuid: x.uuid }));
+    await host.fire('turn.complete', { turnId: 'turn_d', answer: 'ok', reason: 'answer', durationMs: 5, isAborted: false });
+    await waitUntil(() => attachedTo(b) && attachedTo(b).shapes.driver, { timeout: 5000, what: 'the diag' });
+    const s = attachedTo(b);
+    assert.deepEqual(s.shapes.driver, [driver]);
+    assert.ok(s.shapes['turn.complete'].includes('turnId'), 'key names of turn.complete');
+    assert.ok(s.shapes['session.append'].includes('message.content'), 'key names of a row');
+    assert.doesNotMatch(JSON.stringify(s.shapes), /\bhi\b|composer/, 'names, never values');
+    assert.equal(host.called('clock.every').length > 0, strict, strict ? 'the clock drives' : 'no clock needed');
+  });
+}

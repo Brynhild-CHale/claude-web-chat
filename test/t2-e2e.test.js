@@ -644,7 +644,9 @@ test('U95: install in a fresh non-git project registers at local scope, writes n
   const { text } = await printed(() => install([], {
     cwd: root, prompt: NO_TTY, restartIfStale: async () => ({ restarted: false }), nextSteps: false,
   }));
-  assert.deepEqual(cc.calls().map((c) => c.argv), [reg.localAddArgv()], 'one `claude mcp add web-chat --scope local`');
+  // Then the mod's probe (ruling C1 (b)); this fake claude plays no
+  // --version, so the mod stays tier 1 and nothing more runs.
+  assert.deepEqual(cc.calls().map((c) => c.argv), [reg.localAddArgv(), reg.modArgv('version')], 'one `claude mcp add web-chat --scope local`, then the mod\'s probe');
   assert.equal(cc.calls()[0].cwd, root, 'run from the project root: local scope is per folder');
   assert.deepEqual(cc.config().projects[root].mcpServers['web-chat'], { type: 'stdio', command: 'node', args: [BIN()], env: {} });
   assert.match(text, /Claude Code \(local scope\) +web-chat's MCP server registered for this folder/);
@@ -655,7 +657,7 @@ test('U95: install in a fresh non-git project registers at local scope, writes n
 
   const st = await printed(() => status([], { cwd: root }));
   assert.match(mcpLineOf(st.text), /^registered for you \(local scope\)/, st.text);
-  assert.equal(cc.calls().length, 1, 'status never runs `claude`');
+  assert.equal(cc.calls().length, 2, 'status never runs `claude`');
 });
 
 test('U95: a 0.8.2 .mcp.json entry rejected in settings.local.json reads REJECTED, and doctor with no terminal only reports it', async (t) => {

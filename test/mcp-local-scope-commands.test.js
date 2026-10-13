@@ -155,7 +155,9 @@ test('a fresh install in a non-git folder registers at local scope, with no .mcp
   writeConfig({ projects: { [parent]: { hasTrustDialogAccepted: true } } });
   const claude = fakeClaude();
   const out = await runInstall(root, [], { claude, nextSteps: true });
-  assert.deepEqual(claude.calls, [reg.mcpArgv()]);
+  // Then the mod's probe (ruling C1 (b): install switches the mod on where
+  // Claude Code can run it); this fake answers no version, so it stops there.
+  assert.deepEqual(claude.calls, [reg.mcpArgv(), reg.modArgv('version')]);
   assert.equal(reg.inspectLocal(root).state, 'present');
   assert.equal(fs.existsSync(path.join(root, '.mcp.json')), false, 'no .mcp.json entry, so no approval dialog');
   assert.match(out, /Claude Code \(local scope\) +web-chat's MCP server registered for this folder/);
@@ -196,7 +198,7 @@ test('a recorded rejection: install on an existing project asks a separate quest
   const q = prompt.asked.find((a) => /Register web-chat's MCP server for this folder at local scope anyway\?/.test(a.question));
   assert.ok(q, out);
   assert.equal(q.def, false, 'the question defaults to No');
-  assert.deepEqual(claude.calls, [], 'and its default registers nothing');
+  assert.deepEqual(claude.calls, [reg.modArgv('version')], 'and its default registers nothing (only the mod\'s read-only probe runs, ruling C1 (b))');
   assert.match(out, /claude-web-chat off/);
   assert.match(out, /NOT registered — web-chat was rejected in Claude Code here/);
 
@@ -212,7 +214,7 @@ test('a recorded rejection: no terminal, or --yes, only reports — --register-m
     const root = rejectedProject();
     const claude = fakeClaude();
     const out = await runInstall(root, args, { claude, prompt: { interactive: false, confirm: async () => { throw new Error('asked'); }, close() {} } });
-    assert.deepEqual(claude.calls, [], `${args.join(' ') || 'no terminal'}: nothing registered`);
+    assert.deepEqual(claude.calls, [reg.modArgv('version')], `${args.join(' ') || 'no terminal'}: nothing registered (only the mod's read-only probe runs, ruling C1 (b))`);
     assert.match(out, /not asked: no terminal, or --yes — pass --register-mcp to do it/);
   }
   const root = rejectedProject();
