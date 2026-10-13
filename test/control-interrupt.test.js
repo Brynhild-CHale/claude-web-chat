@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { withTempHome, tmpRoot } = require('../test-support/helpers');
+const { withTempHome, tmpRoot, waitUntil } = require('../test-support/helpers');
 const { home: SANDBOX } = require('../test-support/sandbox');
 const { claudeHome } = require('../test-support/claude-home');
 const { createBus } = require('../lib/core/bus');
@@ -24,7 +24,7 @@ const { createHookTap } = require('../lib/server/hook-tap');
 const { createRedactor } = require('../lib/core/redact');
 const { createMirror, SOURCES } = require('../lib/server/mirror');
 const { createControl } = require('../lib/server/control');
-const { HALT_TTL_S, TTY_EXPIRY_MS, INTERRUPT_GAP_MS } = require('../lib/server/control/interrupt');
+const { HALT_TTL_S, TTY_EXPIRY_MS, INTERRUPT_GAP_MS, createInterrupt } = require('../lib/server/control/interrupt');
 
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
@@ -389,4 +389,50 @@ test('the long-poll returns at the change and at its wait cap; stop() releases e
   assert.ok(released.every((x) => x.status === 200));
   // The test file ends with no handle open: a 20 s timer left behind would hold
   // the runner past its own end.
+});
+
+// ── refresh(): a fact outside the mirror moved (U115) ───────────────────────
+
+test('refresh() wakes a held long-poll whose view moved (a probe changed), nothing when no waiter or the view is unchanged, and nothing after stop()', async (t) => {
+  withTempHome(t);
+  const mirror = fakeMirror([conv('c1', { pid: null }), conv('c2', { sid: S2, pid: null })]);
+  const h = createInterrupt({ mirror });
+  t.after(() => h.stop());
+  let attached = true; // a mod on c1's session only
+  h.addPath(async () => null, { probe: (c) => (attached && c.id === 'c1' ? 'mod' : null) });
+  const tick = () => new Promise((res) => setImmediate(res));
+  const hold = (cid, v) => {
+    const w = { settled: null };
+    w.promise = h.row.state({ conversation_id: cid }, {}, { v, waitMs: 20000 }).then((x) => { w.settled = x; return x; });
+    return w;
+  };
+
+  h.refresh(); // no waiter: nothing to do, nothing thrown
+  const v1 = await h.row.state({ conversation_id: 'c1' });
+  const v2 = await h.row.state({ conversation_id: 'c2' });
+  assert.deepEqual([v1.path, v1.label], ['mod', 'Interrupt']);
+  assert.deepEqual([v2.path, v2.label], ['hook', 'Stop after this step']);
+
+  const a = hold('c1', v1.v);
+  const b = hold('c2', v2.v);
+  h.refresh();
+  await tick(); await tick();
+  assert.deepEqual([a.settled, b.settled], [null, null], 'views unchanged: refresh() resolves nothing');
+
+  attached = false;
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(a.settled, null, 'a probe that changed wakes nothing by itself');
+  h.refresh();
+  assert.ok(await waitUntil(() => a.settled, { timeout: 5000 }), 'refresh() woke the moved view, not its 20 s wait');
+  assert.deepEqual([a.settled.path, a.settled.label], ['hook', 'Stop after this step']);
+  assert.ok(a.settled.v > v1.v);
+  await tick();
+  assert.equal(b.settled, null, 'the conversation whose view did not move stays held');
+
+  h.stop(); // releases b at once
+  await b.promise;
+  attached = true;
+  assert.equal(h.refresh(), undefined, 'a no-op after stop()');
+  const after = await h.row.state({ conversation_id: 'c1' }, {}, { v: 0, waitMs: 20000 });
+  assert.equal(after.conversation_id, 'c1', 'a poll after stop() answers at once');
 });

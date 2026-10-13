@@ -32,7 +32,7 @@ const path = require('path');
 const http = require('http');
 const express = require('express');
 
-const { withTempHome, tmpRoot } = require('../test-support/helpers');
+const { withTempHome, tmpRoot, waitUntil } = require('../test-support/helpers');
 const { home: SANDBOX } = require('../test-support/sandbox');
 const { claudeHome } = require('../test-support/claude-home');
 const { createBus } = require('../lib/core/bus');
@@ -299,6 +299,60 @@ test("the state view says path 'mod' and 'Interrupt' for an attached conversatio
   assert.equal(v2.path, 'hook', 'the probe goes with unregister');
 });
 
+// A mod attaching or leaving wakes the Stop frame's held long-poll at once
+// (bridge.onChange → control.interrupt.refresh()), not at the poll's own wait.
+// OPEN (U115): createControl's `interrupt` facade (lib/server/control/index.js
+// :535, outside U115's grant) must carry `refresh: interrupt.refresh` for
+// control/mod.js to reach it; until that one-line patch lands these two cases
+// are todo. Drop the todo with the patch.
+const REFRESH_TODO = 'needs lib/server/control/index.js to expose interrupt.refresh on control.interrupt (U115 open issue)';
+
+function heldPoll(r, v) {
+  const out = { settled: null };
+  out.promise = stateRead(r.surface, { action: 'interrupt', conversation_id: 'c1', v: String(v), wait: '20000' })
+    .then((x) => { out.settled = x; return x; });
+  return out;
+}
+
+test('a held Stop-frame long-poll wakes at once when the mod detaches, and again when it attaches', { todo: REFRESH_TODO }, async (t) => {
+  const r = await rig(t, { mirror: fakeMirror({ conversations: [conv('c1', { pid: null })] }) });
+  const v0 = (await stateRead(r.surface, { action: 'interrupt', conversation_id: 'c1' })).body;
+  assert.deepEqual([v0.path, v0.label], ['mod', 'Interrupt']);
+
+  const a = heldPoll(r, v0.v);
+  await new Promise((res) => setImmediate(res));
+  assert.equal(a.settled, null, 'held while nothing changed');
+  r.bridge.detach(S1);
+  assert.ok(await waitUntil(() => a.settled, { timeout: 5000 }), 'the detach woke the poll, not its 20 s wait');
+  assert.deepEqual([a.settled.body.path, a.settled.body.label], ['hook', 'Stop after this step']);
+  assert.ok(a.settled.body.v > v0.v);
+
+  const b = heldPoll(r, a.settled.body.v);
+  await new Promise((res) => setImmediate(res));
+  assert.equal(b.settled, null);
+  r.bridge.attach(S1);
+  assert.ok(await waitUntil(() => b.settled, { timeout: 5000 }), 'the attach woke the poll');
+  assert.deepEqual([b.settled.body.path, b.settled.body.label], ['mod', 'Interrupt']);
+});
+
+test('after mod.unregister() a detach wakes no held poll: the subscription went with it', { todo: REFRESH_TODO }, async (t) => {
+  const r = await rig(t, { mirror: fakeMirror({ conversations: [conv('c1', { pid: null })] }) });
+  // While installed, the feed is subscribed; unregister() removes it.
+  const before = r.bridge.listeners.size;
+  assert.ok(before >= 1, 'subscribed while installed');
+  r.mod.unregister();
+  assert.equal(r.bridge.listeners.size, before - 1, 'unregister() removed the subscription');
+  const v0 = (await stateRead(r.surface, { action: 'interrupt', conversation_id: 'c1' })).body;
+  assert.deepEqual([v0.path, v0.label], ['hook', 'Stop after this step'], 'the probe went with unregister too');
+  const held = heldPoll(r, v0.v);
+  await new Promise((res) => setImmediate(res));
+  r.bridge.detach(S1);
+  await new Promise((res) => setTimeout(res, 100));
+  assert.equal(held.settled, null, 'nothing woke it');
+  await r.control.stop(); // releases the waiter, leaving no 20 s timer behind
+  await held.promise;
+});
+
 // ── 2. task-stop ────────────────────────────────────────────────────────────
 
 const TASKS = [
@@ -544,6 +598,8 @@ test('resume: the fill goes to the fork\'s session once its mod says hello, wait
   };
   const fork = stubFork();
   const r = await rig(t, { mirror: resumeMirror(), forkTurn: fork.fn, env: ON, timers });
+  // The install's own feed (the Stop label's refresh, U115) stays subscribed.
+  const base = r.bridge.listeners.size;
   // The switch ends the old session at once; the fork's hello comes later.
   r.bridge.answers.command = () => { r.bridge.detach(S1); return { ok: true, result: null }; };
   const running = resumeTurn(r, 't2');
@@ -554,7 +610,7 @@ test('resume: the fill goes to the fork\'s session once its mod says hello, wait
   assert.equal(a.filled, true);
   assert.deepEqual(r.bridge.ops.at(-1), { sid: NEW, op: 'fill', args: { text: PROMPT }, opts: { deliverWithinMs: 3000, resultWithinMs: 3000 } });
   assert.equal(pending.size, 0, 'the wait is cleared');
-  assert.equal(r.bridge.listeners.size, 0, 'and unsubscribed');
+  assert.equal(r.bridge.listeners.size, base, 'and unsubscribed');
 
   // Both attached (the fork's hello before the old session's detach): the fork's.
   r.clock.tick(5001);
