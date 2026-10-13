@@ -2,8 +2,8 @@
 // (test-support/chrome-shell.js): design spec §7.7, §7.1's rail collision,
 // §7.8's focus paragraph, and U33's brief.
 //
-//   * It registers ONE chat view, 'dock' (never 'sheet', which retires the
-//     phone stub), and the posture goes out only through chat-slots' changed():
+//   * It registers ONE chat view, 'dock' (never 'sheet', the phone sheet's
+//     own, which main.js also registers from tranche 5), and the posture goes out only through chat-slots' changed():
 //     the socket's next `client` frame says mirror 'full' while it is open and
 //     'status' once it closes.
 //   * chat:open (wide only) shows it, closes every popover, announces chat:host
@@ -101,10 +101,12 @@ function listen(t, type) {
 test('the dock registers one chat view, "dock", and never "sheet"', () => {
   const ids = slots.chatViews().map((v) => v.id);
   assert.deepEqual(ids.filter((id) => id === 'dock'), ['dock']);
-  assert.ok(!ids.includes('sheet'), 'the phone stub retires on a view named sheet');
+  // 'sheet' is the phone sheet's own view (chat-sheet.js, which main.js inits
+  // from tranche 5): one of it, never the dock's.
+  assert.deepEqual(ids, ['dock', 'sheet'], 'the dock\'s view and the sheet\'s, one each');
   assert.equal(dock.dockEl, el(), 'dockEl is the section');
   assert.equal(dock.initChatDock(), el(), 'idempotent: a second init hands back the same dock');
-  assert.deepEqual(slots.chatViews().map((v) => v.id).filter((id) => id === 'dock'), ['dock'], 'still one view');
+  assert.deepEqual(slots.chatViews().map((v) => v.id), ['dock', 'sheet'], 'still one view each');
   assert.ok(!el().classList.contains('drawer') && !el().classList.contains('popover'),
     'not a panel: it must not close with them');
 });
@@ -223,7 +225,14 @@ test('at 759px chat:open is ignored, and a flip to narrow while open closes the 
   t.after(() => shell.setViewport({ width: 1280, height: 800 }));
   shell.setViewport({ width: 759, height: 800 });
   await open();
-  assert.ok(!isShown(), 'ignored while narrow (the phone sheet takes it in tranche 5)');
+  assert.ok(!isShown(), 'ignored while narrow: the phone sheet takes it (tranche 5)');
+  // The open chat view is now the sheet (chat-sheet.js, main.js), so the
+  // posture is the sheet's; it is closed before the flip.
+  const sheet = await shell.importApp('chat-sheet.js');
+  assert.equal(sheet.sheetState().open, true, 'the sheet opened on chat:open');
+  assert.deepEqual(slots.chatViews(), [{ id: 'dock', open: false }, { id: 'sheet', open: true }]);
+  assert.equal(slots.posture(), 'full', 'the sheet\'s posture');
+  sheet.closeSheet({ returnFocus: false });
   assert.equal(slots.posture(), 'status');
 
   shell.setViewport({ width: 1280, height: 800 });

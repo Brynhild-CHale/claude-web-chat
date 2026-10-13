@@ -4,12 +4,12 @@
 // the sheet stamps in), B2 (a) (the sheet's Stop) and B-defaults (a) (M on a
 // narrow window that is not a phone).
 //
-// main.js does not start the sheet until U73 wires it, so the boot's init does
-// (spec §10.1). jsdom lays nothing out: #topbar and #bottombar get rectangles
-// (shell.scrollMetrics) so the available height is 644 (full 622, half 341),
-// or 500 (full 478, half 265) where a case needs half under 320; app.css is
-// read the way test/chat-pull-stub.test.js reads it — its rules matched against
-// the live DOM and cascaded as a browser does.
+// main.js starts the sheet (U73); the boot's init calls initChatSheet again,
+// which adds nothing (it is idempotent). jsdom lays nothing out: #topbar and
+// #bottombar get rectangles (shell.scrollMetrics) so the available height is
+// 644 (full 622, half 341), or 500 (full 478, half 265) where a case needs
+// half under 320; app.css is read as a browser would — its rules matched
+// against the live DOM and cascaded.
 const test = require('node:test');
 const { before, beforeEach, after } = test;
 const assert = require('node:assert');
@@ -56,7 +56,7 @@ const ASK = { id: 'ask-1', conversation_id: 'c1', kind: 'permission', state: 'pe
 let mirrorBody = snapshot([]);
 let queueBody = { items: [], count: 0 };
 
-let shell, W, doc, $, bus, slots, sheet, drag, model, stub, panel, viewportMod;
+let shell, W, doc, $, bus, slots, sheet, drag, model, panel, viewportMod;
 
 const pull = () => $('chat-pull');
 const tab = () => $('chat-tab');
@@ -110,7 +110,6 @@ before(async () => {
   sheet = await shell.importApp('chat-sheet.js');
   drag = await shell.importApp('sheet-drag.js');
   model = await shell.importApp('sheet-model.js');
-  stub = await shell.importApp('chat-pull-stub.js');
   panel = await shell.importApp('chat-panel.js');
   viewportMod = await shell.importApp('viewport.js');
   bus.on('sheet', (d) => sheetEvents.push(d));
@@ -132,7 +131,7 @@ beforeEach(async () => {
   sheetEvents.length = 0;
 });
 
-// ── app.css, cascaded against the live DOM (as test/chat-pull-stub.test.js) ──
+// ── app.css, cascaded against the live DOM ──
 
 const BARE = CSS.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
 function closing(text, open) {
@@ -296,7 +295,6 @@ test('stamping: #chat-scrim then #chat-pull, direct children of #stage between t
     assert.equal(doc.querySelectorAll(`[id="${id}"]`).length, 1, `#${id} appears once`);
   }
   assert.equal(doc.querySelector('.pull-stub'), null, 'the stand-in\'s element is gone');
-  assert.equal(stub.realPhoneChat(), true, 'and it knows the real phone chat is here');
   assert.ok(doc.querySelector('template.chat-pull-tpl'), 'the template stays, the markup\'s home');
   assert.equal(pull().dataset.stop, 'closed');
   assert.ok(sh().hasAttribute('inert'), 'a closed sheet is inert');
@@ -339,11 +337,18 @@ test('the CSS: tokens only, the geometry of §8.2, no filters, transitions off u
   assert.equal(value(p, 'transition'), 'none', '.dragging has no transition');
   p.classList.remove('dragging');
   assert.equal(value(tab(), 'touch-action'), 'none', 'the tab alone takes touch');
-  assert.equal(value(tab(), 'left'), '100%');
-  assert.equal(value(tab(), 'transform'), 'translateX(-100%)');
-  assert.equal(value(tab(), 'height'), '23px');
-  assert.equal(value(tab(), 'border-radius'), '10px 0 0 0');
-  assert.equal(value(badge(), 'right'), 'calc(var(--tab-w) + 4px)');
+  // U68's own geometry, before U72's dock (main.js sets data-dock at boot):
+  // without data-dock this section's rules stand (test/tab-dock.test.js has
+  // the docks).
+  const dockAttr = p.dataset.dock;
+  delete p.dataset.dock;
+  try {
+    assert.equal(value(tab(), 'left'), '100%');
+    assert.equal(value(tab(), 'transform'), 'translateX(-100%)');
+    assert.equal(value(tab(), 'height'), '23px');
+    assert.equal(value(tab(), 'border-radius'), '10px 0 0 0');
+    assert.equal(value(badge(), 'right'), 'calc(var(--tab-w) + 4px)');
+  } finally { if (dockAttr !== undefined) p.dataset.dock = dockAttr; }
   assert.equal(value(scrim(), 'pointer-events'), 'none');
   assert.equal(value(scrim(), 'top'), 'var(--chat-top, 0px)');
   scrim().classList.add('on');
@@ -968,10 +973,13 @@ test('a mirror event while closed changes the tab, the badge and .sh-run only', 
   // drawing (the panel, when it is there, redraws itself: chat-panel.js).
   bus.emit('chat:host', { host: $('cd-body'), variant: 'desktop' });
   const changed = new Set();
+  // #queue-rail sits in Tasks → Queue's kept page from boot (U70, main.js)
+  // and redraws itself on every hello (queue.js), as the panel does: it is
+  // not the sheet's own drawing either.
   const mo = new W.MutationObserver((recs) => {
     for (const r of recs) {
       const n = r.target.nodeType === 1 ? r.target : r.target.parentElement;
-      changed.add(n.id || n.className);
+      if (!n.closest('#queue-rail')) changed.add(n.id || n.className);
     }
   });
   mo.observe(sh(), { subtree: true, childList: true, attributes: true, characterData: true });
@@ -1037,14 +1045,15 @@ test('pages: pushPage builds .sh-page > .sh-phead + .sh-pbody, hides the page un
 
 test('a keep page stays in the DOM, hidden, across pops; ensurePage builds it once; showPage pushes it by key', () => {
   let built = 0;
-  const spec = { key: 'queue', title: 'Queue', back: '‹ Tasks', keep: true, render: () => { built += 1; } };
+  // Not 'queue': U70's Queue page (main.js) holds that key from boot.
+  const spec = { key: 'kept', title: 'Kept', back: '‹ Tasks', keep: true, render: () => { built += 1; } };
   const h1 = sheet.ensurePage('tasks', spec);
   assert.equal(built, 1);
   assert.equal(h1.page.hidden, true, 'built hidden');
   assert.equal(sheet.ensurePage('tasks', spec).page, h1.page, 'once');
-  assert.equal(sheet.showPage('tasks', 'queue'), true);
+  assert.equal(sheet.showPage('tasks', 'kept'), true);
   assert.equal(h1.page.hidden, false);
-  assert.equal(sheet.sheetState().view === 'tasks' ? sheet.sheetState().page : 'queue', 'queue');
+  assert.equal(sheet.sheetState().view === 'tasks' ? sheet.sheetState().page : 'kept', 'kept');
   sheet.popPage('tasks');
   assert.equal(h1.page.isConnected, true, 'kept in the document');
   assert.equal(h1.page.hidden, true);

@@ -44,8 +44,9 @@
 //     sent; the tab reads the project's name after hello and after a project
 //     frame renames it, and nothing but project.js writes it; the lockup draws
 //     the project's logo (and the phone's mark) from the URLs the daemon served
-//     it at, light and dark; the step, a chip and the phone tab each open an
-//     "Under development" note;
+//     it at, light and dark; the step and a chip each open an "Under
+//     development" note, and the phone tab (tranche 5's real pull) opens the
+//     sheet on Chat with no such note;
 //   * a chrome test file that boots main.js still exits: this one (its shell,
 //     restored, leaves nothing behind) and one that hand-rolls its boot, run in a
 //     child process. On Node 22 (CI's), --test-timeout bounds a whole FILE, so
@@ -942,7 +943,7 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     }
   });
 
-  test('the stand-ins: a chip and the phone tab each open an "Under development" note; the step, the dock tranche 2 wired', async () => {
+  test('the stand-ins: a chip opens an "Under development" note; the step, the dock tranche 2 wired; the phone tab, the sheet tranche 5 wired', async () => {
     const note = () => $('cs-tray');
     const shown = (el) => !!el && !el.classList.contains('hidden') && !el.hidden;
 
@@ -984,14 +985,22 @@ describe('the real main.js in jsdom, on what the daemon sent', () => {
     }
     assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'the trays, on again, take them back');
 
+    // Tranche 5's main.js stamps the real pull (chat-sheet.js): a tap on the
+    // tab opens the sheet on Chat, and nothing says "Under development".
     shell.setViewport({ width: 390, height: 844 });
     await shell.tick();
+    const sheet = await shell.importApp('chat-sheet.js');
     try {
-      assert.equal($('chat-pull').hidden, false, 'on a phone the grip tab shows');
-      shell.press($('chat-tab'));
-      assert.ok(shown($('chat-sheet')), 'a tap opens its note');
-      assert.equal($('chat-sheet').querySelector('h4').textContent, 'Under development');
+      assert.ok($('chat-pull').classList.contains('chat-pull'), 'on a phone the real pull');
+      assert.equal(shell.document.querySelector('.pull-stub'), null, 'no stand-in');
+      shell.click($('chat-tab'));
+      await shell.tick();
+      assert.equal(sheet.sheetState().open, true, 'a tap opens the sheet');
+      assert.equal(sheet.sheetState().view, 'chat', 'on Chat');
+      assert.equal($('chat-tab').getAttribute('aria-expanded'), 'true');
+      assert.ok(!/under development/i.test($('chat-sheet').textContent), 'no "Under development" note');
       shell.key('Escape');
+      assert.equal(sheet.sheetState().open, false, 'Esc closes it');
     } finally {
       shell.setViewport({ width: 1280, height: 800 });
       await shell.tick();
