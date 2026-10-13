@@ -385,6 +385,31 @@ test('a checkbox in the sheet is no editable: focusing it never enters keyboard 
   } finally { box.remove(); }
 });
 
+test('a [contenteditable] in the sheet is an editable unless it says "false"', async () => {
+  sheet.openSheet({ view: 'chat' });
+  const off = doc.createElement('div');
+  off.setAttribute('contenteditable', 'false');
+  off.tabIndex = 0;
+  $('sh-chat').append(off);
+  try {
+    off.focus();
+    assert.equal(doc.activeElement, off);
+    await viewport({ visualHeight: 508 });
+    assert.equal(pull().classList.contains('kb'), false, 'contenteditable="false" raises no keyboard');
+  } finally { off.remove(); }
+  await viewport({ visualHeight: 844 });
+  const on = doc.createElement('div');
+  on.setAttribute('contenteditable', '');
+  on.tabIndex = 0;
+  $('sh-chat').append(on);
+  try {
+    on.focus();
+    assert.equal(doc.activeElement, on);
+    await viewport({ visualHeight: 508 });
+    assert.ok(pull().classList.contains('kb'), 'an empty contenteditable is editable');
+  } finally { on.remove(); }
+});
+
 test('closing the sheet in keyboard mode leaves it at once, with no scroll', async () => {
   await keyboardUp({ visualHeight: 508, visualTop: 40 });
   assert.ok(pull().classList.contains('kb'));
