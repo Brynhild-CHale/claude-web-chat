@@ -503,18 +503,19 @@ test('every editable in the sheet is 16px: the composer, the rail\'s note field 
   await shell.tick();
   assert.equal(value(composerInput(), 'font-size'), '16px', 'the composer\'s input');
 
-  // The rail's note field: 14px at narrow widths in the rail's own place, 16px
-  // once the rail sits in the sheet. (U70 moves it there; its module is not on
-  // this branch, so the case moves the rail as U70 does — into Tasks — and back.)
+  // The rail's note field: 16px once the rail sits in the sheet — where U70
+  // (main.js) moved it at boot, into Tasks → Queue — and 14px at narrow widths
+  // in the rail's own place in .body (the case takes it there and back).
   const rail = $('queue-rail');
   const add = $('rail-add');
   assert.ok(rail && add && add.classList.contains('rail-add'));
-  assert.equal(value(add, 'font-size'), '14px', 'outside the sheet the narrow .rail-add stands');
+  assert.ok($('chat-sheet').contains(rail), 'the rail is in the sheet (U70)');
+  assert.equal(value(add, 'font-size'), '16px', 'in the sheet the id-scoped rule wins');
   const parent = rail.parentNode;
   const next = rail.nextSibling;
-  $('sh-tasks').append(rail);
+  doc.querySelector('.body').append(rail);
   try {
-    assert.equal(value(add, 'font-size'), '16px', 'in the sheet the id-scoped rule wins');
+    assert.equal(value(add, 'font-size'), '14px', 'outside the sheet the narrow .rail-add stands');
   } finally { parent.insertBefore(rail, next); }
 
   // U62's inline message editor: a textarea in a row's .cs-row-body.

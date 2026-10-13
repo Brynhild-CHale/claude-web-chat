@@ -184,15 +184,17 @@ function fakeView(t, id = 'test-dock') {
   return { view, reg };
 }
 // The bar with no chat view, as it stood before the dock: main.js registers
-// the dock at boot (public/app/chat-dock.js, view id 'dock'); a view
-// registered under that id replaces the dock's registration, and
+// the dock at boot (public/app/chat-dock.js, view id 'dock') and, from
+// tranche 5, the phone's sheet (public/app/chat-sheet.js, view id 'sheet'); a
+// view registered under either id replaces that registration, and
 // unregistering it leaves none. The dock is not put back — chat-slots keeps no
 // way to, and the dock's init runs once — so every case after the first that
 // calls this runs on the seam with views of its own (fakeView), as the whole
 // file did before main.js registered one. A tick lets the bar see the seam move.
 function noChatView() {
-  if (slots.chatViews().some((v) => v.id === 'dock')) {
-    slots.registerChatView({ id: 'dock', isOpen: () => false, escape: () => false, close() {} }).unregister();
+  for (const id of ['dock', 'sheet']) {
+    if (!slots.chatViews().some((v) => v.id === id)) continue;
+    slots.registerChatView({ id, isOpen: () => false, escape: () => false, close() {} }).unregister();
     tickAt();
   }
   assert.equal(slots.chatViews().length, 0, 'precondition: no chat view');
@@ -407,7 +409,8 @@ test('main.js registers the dock at boot: the step controls #chat-dock, offers M
   const dock = await shell.importApp('chat-dock.js');
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
   t.after(() => { if (dock.isChatOpen()) dock.closeChat({ returnFocus: false }); });
-  assert.deepEqual(slots.chatViews(), [{ id: 'dock', open: false }], 'the dock, and only it, registered at boot');
+  assert.deepEqual(slots.chatViews(), [{ id: 'dock', open: false }, { id: 'sheet', open: false }],
+    'the dock and the phone\'s sheet (tranche 5), and only they, registered at boot');
   tickAt();
   assert.equal(step().getAttribute('aria-controls'), 'chat-dock', 'the step controls the dock, not the note');
   assert.equal(step().getAttribute('aria-expanded'), 'false');

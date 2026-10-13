@@ -24,8 +24,8 @@
 //     the bar displays (mirror.followed);
 //   * a REMOTE viewer (no X-WC-Answer-Origin, tranche 4) sees Review › in the
 //     bar and the read-only card — never the "under development" stand-in;
-//   * on a phone the grip tab's stub (tranche 5's) still reads "Under
-//     development".
+//   * on a phone the grip tab is tranche 5's real pull: a tap opens the
+//     sheet, and nothing reads "Under development".
 
 const test = require('node:test');
 const { describe, before, after } = test;
@@ -260,15 +260,19 @@ describe('the real main.js in jsdom, on what a tranche-4 daemon sent', () => {
     }
   });
 
-  test('on a phone the grip tab\'s stub still reads "Under development" (tranche 5\'s)', async () => {
+  test('on a phone the grip tab is the real pull (tranche 5): a tap opens the sheet, with no "Under development"', async () => {
     shell.setViewport({ width: 390, height: 844 });
     await shell.tick();
+    const sheet = await shell.importApp('chat-sheet.js');
     try {
-      assert.equal($('chat-pull').hidden, false, 'on a phone the grip tab shows');
-      shell.press($('chat-tab'));
+      assert.ok($('chat-pull').classList.contains('chat-pull'), 'on a phone the real pull');
+      assert.equal(doc.querySelector('.pull-stub'), null, 'no stand-in');
+      shell.click($('chat-tab'));
       await shell.tick();
-      assert.equal($('chat-sheet').querySelector('h4').textContent, 'Under development');
+      assert.equal(sheet.sheetState().open, true, 'a tap opens the sheet');
+      assert.ok(!/under development/i.test($('chat-sheet').textContent), 'no "Under development" note');
       shell.key('Escape');
+      assert.equal(sheet.sheetState().open, false);
     } finally {
       shell.setViewport({ width: 1280, height: 800 });
       await shell.tick();

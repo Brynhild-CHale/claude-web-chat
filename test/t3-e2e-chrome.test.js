@@ -29,9 +29,8 @@
 //   * the favicon: #wc-favicon / #wc-favicon-dark move to the project's mark
 //     from the CLI's project frames, light and dark;
 //   * the stand-ins: the trays took the bar's chips (no "Under development"
-//     chip, and a chip opens its tray), while the phone's grip tab — tranche
-//     5's — still opens its "Under development" note (rulings, Install
-//     checkpoints: 0.8.5-alpha.2).
+//     chip, and a chip opens its tray), and the phone's grip tab is tranche
+//     5's real pull: a tap opens the sheet, never an "Under development" note.
 
 const test = require('node:test');
 const { describe, before, after } = test;
@@ -323,7 +322,7 @@ describe('the real main.js in jsdom, on what a tranche-3 daemon sent', () => {
     shell.setViewport({ dark: false });
   });
 
-  test('the stand-ins: the trays took the bar\'s chips, while the phone\'s grip tab still opens "Under development"', async () => {
+  test('the stand-ins: the trays took the bar\'s chips, and the phone\'s grip tab is the real one (tranche 5)', async () => {
     await show(rec.running);
     assert.equal($('cs-chips').querySelector('.cs-devchip'), null, 'no stand-in chip');
     assert.ok(!/under development/i.test($('cs-chips').textContent), 'no chip says it is under development');
@@ -339,12 +338,16 @@ describe('the real main.js in jsdom, on what a tranche-3 daemon sent', () => {
 
     shell.setViewport({ width: 390, height: 844 });
     await shell.tick();
+    const sheet = await shell.importApp('chat-sheet.js');
     try {
-      assert.equal($('chat-pull').hidden, false, 'on a phone the grip tab shows');
-      shell.press($('chat-tab'));
-      assert.ok(!$('chat-sheet').hidden && !$('chat-sheet').classList.contains('hidden'), 'a tap opens its note');
-      assert.equal($('chat-sheet').querySelector('h4').textContent, 'Under development');
+      assert.ok($('chat-pull').classList.contains('chat-pull'), 'on a phone the real pull');
+      assert.equal(shell.document.querySelector('.pull-stub'), null, 'no stand-in');
+      shell.click($('chat-tab'));
+      await shell.tick();
+      assert.equal(sheet.sheetState().open, true, 'a tap opens the sheet');
+      assert.ok(!/under development/i.test($('chat-sheet').textContent), 'no "Under development" note');
       shell.key('Escape');
+      assert.equal(sheet.sheetState().open, false);
     } finally {
       shell.setViewport({ width: 1280, height: 800 });
       await shell.tick();

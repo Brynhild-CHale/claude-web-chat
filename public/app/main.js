@@ -24,7 +24,6 @@ import { initChatPanel } from './chat-panel.js';
 import { initChatStream } from './chat-stream.js';
 import { initChatTools } from './chat-tools.js';
 import { initFavicon } from './favicon.js';
-import { initPullStub } from './chat-pull-stub.js';
 import { initChatTrays } from './chat-trays.js';
 import { initChatDetail } from './chat-detail.js';
 import { initGraphTurns } from './graph-turns.js';
@@ -32,6 +31,11 @@ import { initAsks } from './asks.js';
 import { initChatComposer } from './chat-composer.js';
 import { initSessionControl } from './session-control.js';
 import { initTurnActions } from './turn-actions.js';
+import { initChatSheet } from './chat-sheet.js';
+import { initSheetTasks } from './chat-sheet-tasks.js';
+import { initSheetQueue } from './chat-sheet-queue.js';
+import { initSheetKeyboard } from './sheet-keyboard.js';
+import { initTabDock } from './tab-dock.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -54,9 +58,8 @@ initPaneHistory({ forwardEscapeFrom }); // a block's ◷ history popover (Make c
 // every hello), then what draws from it — the desktop status bar; the chat
 // itself (the dock it opens in, the panel inside it, the stream of turns and
 // the tool cards the stream draws with); the tab's icon, which reads the
-// project's identity and the mirror's waiting state, so it comes after both;
-// and, on a phone, the grip tab's "Under development" stand-in until the real
-// pull lands. Each init is idempotent.
+// project's identity and the mirror's waiting state, so it comes after both.
+// Each init is idempotent.
 initChatState({ onFrame, onHello, conn: view.conn });
 initChatBar();
 initChatDock();   // the desktop drawer / window: chat:open shows it
@@ -64,7 +67,6 @@ initChatPanel();  // header, state strip, meta line, awaiting card, #chat-stream
 initChatStream(); // the turns, grouped, rewind-aware
 initChatTools();  // the tool cards (setToolRenderer)
 initFavicon();    // the tab icon (light and dark) and its waiting badge
-initPullStub();
 // Tranche 3, after the chat above and after initGraph: the bar's chips and
 // their trays (shells, monitors, agents, workflows, the queue — they take over
 // the bar's stand-in chips), the detail views the chat pushes (a task's output,
@@ -85,4 +87,17 @@ initAsks({ onFrame, onHello });
 initChatComposer();
 initSessionControl();
 initTurnActions();
+// Tranche 5, the phone, after tranche 4's: below 760px the pull (the grip tab,
+// its badge and the half/full sheet holding Chat | Tasks) stamps itself in from
+// index.html's template and registers chat view 'sheet' — after the panel, the
+// composer and the Stop control, whose seams it announces into (chat:host);
+// then the sheet's views: Tasks (its root and pages), the queue (it moves
+// #queue-rail into Tasks → Queue and routes the bottom bar's Queue and Q), the
+// keyboard (the pull pinned over it); and LAST the tab's dock (data-dock on the
+// stamped #chat-pull, read back from wc:chat-tab). Each idempotent.
+initChatSheet();
+initSheetTasks();
+initSheetQueue();
+initSheetKeyboard();
+initTabDock();
 connect();

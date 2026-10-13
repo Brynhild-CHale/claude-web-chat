@@ -554,7 +554,11 @@ test('bus \'mirror\' and \'queue\' coalesce to one animation frame: nothing draw
 
 test('a closed sheet renders nothing on a mirror event; open on Chat, neither', async () => {
   const seen = [];
-  const watch = new W.MutationObserver((recs) => { for (const r of recs) seen.push(r); });
+  // #queue-rail lives in Tasks → Queue's kept page from boot (U70, main.js) and
+  // redraws itself on every hello (queue.js), as the panel does in Chat: what
+  // is pinned here is that Tasks itself draws nothing.
+  const own = (r) => !(r.target.nodeType === 1 ? r.target : r.target.parentElement).closest('#queue-rail');
+  const watch = new W.MutationObserver((recs) => { for (const r of recs) if (own(r)) seen.push(r); });
   watch.observe($('sh-tasks'), { subtree: true, childList: true, attributes: true, characterData: true });
   const changed = clone(mirrorBody);
   changed.tasks.find((t) => t.id === 'b1').line = 'closed-sheet change';

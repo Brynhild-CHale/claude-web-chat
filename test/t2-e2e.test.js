@@ -884,7 +884,9 @@ describe('the real main.js in jsdom, on what the daemons sent', () => {
       icons: [$('wc-favicon').getAttribute('href'), $('wc-favicon-dark').getAttribute('href')],
     });
     const once = shape();
-    assert.deepEqual(once.views, ['dock'], 'the dock is the one chat view');
+    // The dock is tranche 2's one chat view; 'sheet' is the phone sheet's,
+    // which main.js registers from tranche 5 (chat-sheet.js).
+    assert.deepEqual(once.views, ['dock', 'sheet'], 'the dock is tranche 2\'s one chat view (and the sheet tranche 5\'s)');
     assert.equal(once.panels, 1);
     assert.equal(once.streams, 1);
     (await shell.importApp('chat-dock.js')).initChatDock();
