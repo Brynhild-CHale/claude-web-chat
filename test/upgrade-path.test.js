@@ -131,6 +131,24 @@ test('runningBuild with exact:false names a pre-0.8 daemon LEGACY_BUILD from hea
   assert.equal(await stale.isLegacyBuild(await freePort()), false, 'nothing answering is never called old');
 });
 
+// U107b: the bounce asks the build of the daemon daemonFor verified, by pid. A
+// port that now answers as some other pid is not that daemon: its build is
+// nobody's business, and it is never called old. No port is opened: the probe
+// is injected.
+test('runningBuild with `pid`: an answer naming another pid is null, and isLegacyBuild says no', async () => {
+  const { LEGACY_BUILD } = require('../lib/util/registry');
+  const asked = [];
+  const probeHealth = async (port) => { asked.push(port); return { ok: true, role: 'instance', pid: 4242, package_version: '0.7.9' }; };
+  const legacyProbe = async () => ({ ok: true, role: 'instance', pid: 4242 });
+  assert.equal(await stale.runningBuild(45200, { pid: 4242, probeHealth }), '0.7.9');
+  assert.equal(await stale.runningBuild(45200, { pid: 4243, probeHealth }), null, 'the port answers as another pid');
+  assert.equal(await stale.runningBuild(45200, { probeHealth }), '0.7.9', 'no pid given: as before');
+  assert.deepEqual(asked, [45200, 45200, 45200]);
+  assert.equal(await stale.runningBuild(45200, { pid: 4242, exact: false, probeHealth: legacyProbe }), LEGACY_BUILD);
+  assert.equal(await stale.isLegacyBuild(45200, { pid: 4243, probeHealth: legacyProbe }), false);
+  assert.equal(await stale.isLegacyBuild(45200, { pid: 4242, probeHealth: legacyProbe }), true);
+});
+
 // A stand-in for the daemon a restart replaces, owning `root`'s portfile (as
 // this process, so the pid is alive), that acknowledges POST /api/shutdown the
 // way a real one does — by dropping its portfile — unless `wedge` says to ack
