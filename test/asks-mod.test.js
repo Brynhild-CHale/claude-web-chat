@@ -225,6 +225,9 @@ test('a question, a plan, no viewer and an input the transport cut pass through 
     ['no viewer', { viewers: { local: 0, last_local_at: null } }, { request_id: 'pr_v' }],
     ['a cut input', {}, { request_id: 'pr_c', input: { command: 'x'.repeat(INPUT_MAX * 3) } }],
     ['an input past the transport\'s key bound', {}, { request_id: 'pr_k', tool: 'mcp__x__y', input: Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`k${i}`, i])) }],
+    // Whole on the wire (under half of INPUT_MAX), but past the display's own
+    // 1,000-character text bound: the page could not show it whole.
+    ['an input the display caps', {}, { request_id: 'pr_d', tool: 'mcp__x__y', input: { a: 'q'.repeat(3000) } }],
   ];
   for (const [what, opts, raw] of cases) {
     const r = rig(t, opts);
@@ -270,6 +273,16 @@ test('permission.settled by web after a decision is the hand-off; another reques
   assert.equal(r.asks.get(ask.id).state, 'decided');
   r.settled('pr_1', 'web');
   assert.deepEqual([r.asks.get(ask.id).state, r.asks.get(ask.id).by, r.asks.get(ask.id).outcome], ['resolved', 'web', 'allowed']);
+});
+
+test('permission.settled by terminal while the web\'s decision is still in flight: the terminal answered, not the web', async (t) => {
+  const r = rig(t, { send: () => new Promise(() => {}) });
+  r.request();
+  const ask = await waitUntil(() => r.modAsks()[0], { what: 'the mod ask' });
+  r.asks.decide(ask.id, { behavior: 'allow' }, { version: ask.version });
+  assert.equal(r.asks.get(ask.id).state, 'decided');
+  r.settled('pr_1', 'terminal');
+  assert.deepEqual([r.asks.get(ask.id).state, r.asks.get(ask.id).by, r.asks.get(ask.id).outcome], ['resolved', 'terminal', 'terminal']);
 });
 
 test('permission.settled of another session with the same request id is not this ask', async (t) => {
