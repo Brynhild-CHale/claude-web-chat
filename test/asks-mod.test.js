@@ -75,10 +75,11 @@ function rig(t, { viewers = { local: 1 }, send: sendImpl, withSend = true } = {}
     return sendImpl ? sendImpl(msg) : Promise.resolve({ ok: true, result: { answered: true } });
   };
   const v = { ...viewers };
+  const lines = [];
   const surface = { port: 47003, ensure: async () => ({ port: 47003 }), remoteAnswering: () => false };
   const asks = createAsks({
     bus, hooks, mirror, getViewers: () => ({ ...v }), answerSurface: () => surface,
-    redactor: createRedactor(), audit: () => {}, now: () => now, timers,
+    redactor: createRedactor(), audit: (l) => lines.push(l), now: () => now, timers,
     ...(withSend ? { send } : {}),
   });
   t.after(() => asks.stop());
@@ -104,7 +105,7 @@ function rig(t, { viewers = { local: 1 }, send: sendImpl, withSend = true } = {}
   });
   const modAsks = () => asks.pending().filter((a) => a.transport === 'mod');
   return {
-    asks, hooks, bus, frames, mirror, sent, viewers: v, advance, request, settled, hookBody, modAsks,
+    asks, hooks, bus, frames, mirror, sent, lines, viewers: v, advance, request, settled, hookBody, modAsks,
     now: () => now, tap: (event) => hooks.recent().filter((e) => e.event === event),
   };
 }
@@ -173,6 +174,7 @@ test('decide allow: send is called once with {session_id, request_id, decision: 
   const op = validateOp('permissionDecision', { request_id: 'pr_allow', decision: r.sent[0].decision });
   assert.equal(op.ok, true, 'the bridge takes the op');
   assert.equal(r.tap('PermissionResolved').length, 1);
+  assert.deepEqual(r.lines.map((l) => [l.outcome, l.transport]), [['allowed', 'mod'], ['allowed', 'mod']], 'the audit names the transport');
 });
 
 test('decide deny: the message is exactly what ask-output.js builds for a web deny, and nothing more', async (t) => {
