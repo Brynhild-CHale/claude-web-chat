@@ -29,7 +29,7 @@ const { buildAskOutput, DENY_MESSAGE, WROTE } = require('../lib/hooks/ask-output
 const asksMod = require('../lib/server/domain/asks');
 const { waitUntil } = require('../test-support/helpers');
 
-const { createAsks, MOD_PERMISSION_WAIT_MS, PASS, HOOK_SILENT_MS, DEADLINE_MS } = asksMod;
+const { createAsks, MOD_PERMISSION_WAIT_MS, PASS, HOOK_SILENT_MS, DEADLINE_MS, MOD_WAIT_FLAG, modPermissionWait } = asksMod;
 
 const SID = '9f8e7d6c-5b4a-4392-8a1b-0c2d3e4f5a6b';
 const T0 = 1_790_500_000_000;
@@ -299,4 +299,13 @@ test('the mod\'s hook cannot poll its ask: it has no secret', async (t) => {
 test('the transport ships switched off: MOD_PERMISSION_WAIT_MS is 0 (ruled D2 (a), until gate V41)', () => {
   assert.equal(MOD_PERMISSION_WAIT_MS, 0);
   assert.equal(DEADLINE_MS, 590_000, 'the figure a recorded V41 turns it to');
+  // V41's knob: the daemon's environment raises it for one measured run.
+  assert.equal(MOD_WAIT_FLAG, 'WEB_CHAT_MOD_PERMISSION_WAIT_MS');
+  assert.equal(modPermissionWait({}), 0);
+  assert.equal(modPermissionWait(undefined), 0);
+  assert.equal(modPermissionWait({ [MOD_WAIT_FLAG]: '60000' }), 60_000);
+  assert.equal(modPermissionWait({ [MOD_WAIT_FLAG]: '590000' }), 590_000);
+  for (const bad of ['590001', '-1', '1.5', 'sixty', '', ' 60000', '1e5']) {
+    assert.equal(modPermissionWait({ [MOD_WAIT_FLAG]: bad }), 0, JSON.stringify(bad));
+  }
 });
