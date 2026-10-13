@@ -531,6 +531,9 @@ export function hasDetail(kind) {
   return details.has(kind);
 }
 
+// The registered render of a kind, or null: the phone's Tasks pages show §7.12's views in their own stack (ruling B3 a).
+export function detailOf(kind) { return details.get(kind) || null; }
+
 function showTop() {
   const open = stack.length > 0;
   P.detailHost.hidden = !open;
