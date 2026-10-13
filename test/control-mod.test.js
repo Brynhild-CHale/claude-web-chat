@@ -37,7 +37,7 @@ const { home: SANDBOX } = require('../test-support/sandbox');
 const { claudeHome } = require('../test-support/claude-home');
 const { createBus } = require('../lib/core/bus');
 const { userPaths } = require('../lib/core/paths');
-const { MASK } = require('../lib/core/redact');
+const { MASK, WITHHELD, PARTIAL_LINE } = require('../lib/core/redact');
 const { createHookTap } = require('../lib/server/hook-tap');
 const { createRedactor } = require('../lib/core/redact');
 const { createMirror, SOURCES } = require('../lib/server/mirror');
@@ -428,6 +428,8 @@ function resumeMirror(o = {}) {
       t2: turnOf('t2'),
       tmask: turnOf('tmask', { text: `use ${MASK('token')} please` }),
       tcut: turnOf('tcut', { truncated: true }),
+      twith: turnOf('twith', { text: `read this: ${WITHHELD('env')}` }),
+      tpart: turnOf('tpart', { text: `the log said ${PARTIAL_LINE} then stopped` }),
       tbusy: turnOf('tbusy', { cid: 'c2' }),
       tnomod: turnOf('tnomod', { cid: 'c3' }),
       tsup: turnOf('tsup'),
@@ -437,6 +439,8 @@ function resumeMirror(o = {}) {
       t2: { session_id: S1, parent_uuid: PARENT },
       tmask: { session_id: S1, parent_uuid: PARENT },
       tcut: { session_id: S1, parent_uuid: PARENT },
+      twith: { session_id: S1, parent_uuid: PARENT },
+      tpart: { session_id: S1, parent_uuid: PARENT },
       tsup: { refused: 'superseded' },
       t1: { refused: 'first' },
     },
@@ -504,12 +508,14 @@ test('resume happy path: one fork, one command op resume <fork id>, one fill wit
 test('resume: a masked or truncated prompt is not refilled, and the answer says so; a fill the mod refuses says so too', async (t) => {
   const fork = stubFork();
   const r = await rig(t, { mirror: resumeMirror(), forkTurn: fork.fn, env: ON });
-  for (const id of ['tmask', 'tcut']) {
+  // A redaction mask, a withheld file and an omitted partial line are each a
+  // prompt the mirror does not hold whole (lib/core/redact's three marks).
+  for (const id of ['tmask', 'tcut', 'twith', 'tpart']) {
     const a = await resumeTurn(r, id);
     assert.deepEqual(a, { ok: true, via: 'mod', said: SAID.notWhole, filled: false }, id);
     r.clock.tick(5001);
   }
-  assert.deepEqual(r.bridge.ops.map((o) => o.op), ['command', 'command'], 'no fill op');
+  assert.deepEqual(r.bridge.ops.map((o) => o.op), ['command', 'command', 'command', 'command'], 'no fill op');
   assert.ok(SAID.notWhole.length <= 120 && SAID.filled.length <= 120);
   r.bridge.answers.fill = { ok: false, refused: 'failed', delivered: true };
   assert.equal((await resumeTurn(r, 't2')).said, SAID.fillFailed);
@@ -550,7 +556,16 @@ test('resume: the fill goes to the fork\'s session once its mod says hello, wait
   assert.equal(pending.size, 0, 'the wait is cleared');
   assert.equal(r.bridge.listeners.size, 0, 'and unsubscribed');
 
+  // Both attached (the fork's hello before the old session's detach): the fork's.
   r.clock.tick(5001);
+  r.bridge.answers.command = { ok: true, result: null };
+  r.bridge.set.add(S1);
+  const both = await resumeTurn(r, 't2');
+  assert.equal(both.filled, true);
+  assert.equal(r.bridge.ops.at(-1).sid, NEW, 'the fork\'s session takes the fill');
+
+  r.clock.tick(5001);
+  r.bridge.answers.command = () => { r.bridge.detach(S1); return { ok: true, result: null }; };
   r.bridge.set.add(S1);
   r.bridge.set.delete(NEW);
   const again = resumeTurn(r, 't2');
