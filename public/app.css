@@ -3153,3 +3153,60 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 
 
 /* ── U93 · session controls on the mod · session-ops.js ── */
+/* #cp-ops, filled only while the followed conversation has a web-chat mod and
+   the viewer may act (session-ops.js; empty, and so hidden, otherwise): the
+   context meter, Compact now, Plan mode and ⋯, whose ONE .popover holds the ⋯
+   menu or a single confirm frame. Tokens only; the meter's width is the
+   --so-pct custom property session-ops.js sets, never an inline width. In the
+   phone sheet (the panel's data-variant="sheet") the controls are 44px and
+   #cp-ops wraps onto its own row of the head, under the title, Stop and Close
+   (ruled (a), 2026-10-13: four 44px controls do not fit a 375px head line). */
+.chat-panel .cp-ops:not(:empty) { position: relative; min-width: 0; }
+.so-meter { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 11px var(--wc-mono); color: var(--wc-text-2); white-space: nowrap; }
+.so-bar { flex: none; width: 48px; height: 4px; border-radius: var(--wc-radius-sm); background: var(--wc-border-soft); overflow: hidden; }
+.so-fill { display: block; width: var(--so-pct, 0%); height: 100%; background: var(--wc-accent); transition: width .3s ease; }
+.so-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.so-meter[data-so-level="amber"] .so-fill { background: var(--wc-gold); }
+.so-meter[data-so-level="amber"] .so-text { color: var(--wc-gold); }
+.so-meter[data-so-note] .so-text { color: var(--wc-fg); }
+.so-meter[data-so-note="failed"] { white-space: normal; }
+.so-meter[data-so-note="failed"] .so-text { color: var(--wc-gold); }
+.so-btn {
+  flex: none; height: 22px; padding: 0 8px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: transparent;
+  font: 500 11px var(--wc-font); color: var(--wc-text-1); transition: border-color .15s, color .15s;
+}
+.so-btn:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.so-btn:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.so-more { padding: 0 6px; font-size: 13px; }
+.so-more[aria-expanded="true"] { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.so-plan-on { flex: none; font: 500 11px var(--wc-font); color: var(--wc-accent-text); white-space: nowrap; }
+.popover.so-pop {
+  top: calc(100% + 6px); right: 0; min-width: 0; width: min(340px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 8px; padding: 8px;
+}
+.so-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.so-menu { display: flex; flex-direction: column; }
+.so-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; }
+.so-item[aria-current="true"] { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); }
+.so-empty, .so-wait { margin: 0; padding: 6px 8px; font: 12px var(--wc-font); color: var(--wc-muted); }
+.so-rename { display: flex; align-items: center; gap: 6px; }
+.popover .so-name { flex: 1 1 auto; min-width: 0; }
+.so-go { height: 28px; }
+.so-confirm { display: flex; flex-direction: column; }
+.so-confirm:empty { display: none; }
+.so-confirm > .wc-answer-frame { width: 100%; min-height: 22px; }
+/* The phone sheet: #cp-ops is a row of its own, its controls 44px (§8.5). */
+.chat-panel[data-variant="sheet"] .cp-head { flex-wrap: wrap; row-gap: 0; }
+.chat-panel[data-variant="sheet"] .cp-ops:not(:empty) {
+  order: 10; flex-basis: 100%; flex-grow: 1; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 0 0 6px;
+}
+.chat-panel[data-variant="sheet"] .so-btn { min-width: 44px; min-height: 44px; padding: 0 12px; font-size: 13px; }
+.chat-panel[data-variant="sheet"] .so-meter { flex: 1 1 100%; min-height: 24px; font-size: 12px; }
+.chat-panel[data-variant="sheet"] .so-bar { flex: 1 1 auto; max-width: 160px; height: 6px; }
+.chat-panel[data-variant="sheet"] .so-plan-on { min-height: 44px; display: inline-flex; align-items: center; font-size: 13px; }
+.chat-panel[data-variant="sheet"] .popover.so-pop { left: 0; right: 0; width: auto; }
+.chat-panel[data-variant="sheet"] .so-pop .menu-item { min-height: 44px; font-size: 14px; }
+.chat-panel[data-variant="sheet"] .so-go { min-height: 44px; }
+.chat-panel[data-variant="sheet"] .popover .so-name { height: 44px; font-size: 16px; }
+@media (prefers-reduced-motion: reduce) { .so-fill, .so-btn { transition: none; } }
