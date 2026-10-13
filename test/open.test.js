@@ -190,7 +190,12 @@ test('a cold start reports it too, after the server and extension lines', async 
 
 test('after bouncing a stale daemon, the managed line follows the restart', async (t) => {
   const root = project(t);
+  // daemonFor finds the old daemon, then (after the restart) the new one.
+  let asked = 0;
   const { calls, deps: d } = deps(root, {
+    daemonFor: async () => (asked++ === 0
+      ? { pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }
+      : { pid: 2, port: 6001, url: 'http://localhost:6001', source: 'portfile' }),
     restartIfStale: async (r, { log }) => { log('Restarted the web-chat server on v9.9.9'); return { restarted: true }; },
   });
   await open([], d);
@@ -313,4 +318,112 @@ test("this project's live daemon, known only through the registry: open adopts i
   await open([], d);
   assert.deepEqual(calls.spawned, []);
   assert.deepEqual(calls.browsed, [`http://localhost:${port}`]);
+});
+
+// ── the stale-build bounce acts only on this root's daemon (U107b) ────────────
+//
+// `open` bounces a daemon an update left on an older build. It used to ask the
+// portfile's port for the build and then restart whatever the portfile named —
+// so a .web-chat/ copied from another project, whose portfile names THAT
+// project's live daemon, had the other project's daemon restarted while this
+// root's own daemon (found through the registry) was adopted and left alone.
+// Here the real daemonFor and the real restartIfStale run against in-process
+// servers on ports this file opened; `expected` is a release no build serves, so
+// every daemon looks older, and the restart is a recorder: in-process daemons
+// share the test runner's pid and cannot be stopped from it. What it stands in
+// for, the new daemon of `root`, it brings up as `start --daemon` would: another
+// in-process daemon on a port this file opened, registered for `root`.
+// After the restart `open` browses only a daemon daemonFor verifies as this
+// root's and that is not the one stopped — never the portfile read raw.
+
+const stale = require('../lib/cli/stale-daemon');
+const { probeHealth } = require('../lib/core/portfiles');
+
+function bounceDeps(t, root, restarts, { comesUp = true, stopsOld, extra = {} } = {}) {
+  const fresh = [];
+  const out = adoptDeps(root, {
+    restartIfStale: (r, o) => stale.restartIfStale(r, {
+      ...o,
+      expected: '0.0.0-not-this-build',
+      restart: async (args, deps) => {
+        restarts.push({ root: deps.root, target: deps.target });
+        if (stopsOld) await stopsOld.stop();
+        if (comesUp) {
+          const next = await withServer(t, { root: deps.root });
+          registry.registerInstance({ root: deps.root, port: next.port, pid: process.pid });
+          fresh.push(next);
+        }
+        return { ok: true };
+      },
+    }),
+    ...extra,
+  });
+  return { ...out, fresh };
+}
+
+test("a portfile naming another project's older daemon, this root's only in the registry: the bounce restarts this root's, never the other", async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  registry.registerInstance({ root: other.root, port: other.port, pid: process.pid });
+  const root = project(t);
+  const mine = await withServer(t, { root });
+  registry.registerInstance({ root, port: mine.port, pid: process.pid });
+  // The copied .web-chat/: the portfile names the other project's daemon.
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+
+  const restarts = [];
+  const { calls, deps: d, fresh } = bounceDeps(t, root, restarts);
+  await open([], d);
+
+  assert.deepEqual(calls.spawned, []);
+  assert.equal(restarts.length, 1, JSON.stringify(restarts));
+  assert.equal(fresh.length, 1);
+  assert.deepEqual(calls.browsed, [`http://localhost:${fresh[0].port}`],
+    "the browser goes to this root's restarted daemon");
+  assert.ok(!calls.browsed.some((u) => u.endsWith(`:${other.port}`)), `browsed the other project's daemon: ${JSON.stringify(calls.browsed)}`);
+  assert.equal(restarts[0].root, root);
+  assert.deepEqual(restarts[0].target && [restarts[0].target.pid, restarts[0].target.port, restarts[0].target.source],
+    [process.pid, mine.port, 'registry'], "the restart is handed this root's daemon, not the portfile's");
+  assert.ok(!restarts.some((r) => r.target && r.target.port === other.port), 'the other project\'s daemon is never the target');
+  const h = await probeHealth(other.port, 1000);
+  assert.ok(h && h.ok !== false && h.instance === registry.instanceId(other.root), 'and the other daemon keeps running');
+});
+
+test('a portfile naming another project\'s older daemon and no daemon of this root: nothing is restarted, a fresh one is spawned', async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  const root = project(t);
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+
+  const restarts = [];
+  const { calls, deps: d } = bounceDeps(t, root, restarts);
+  await open([], d);
+  assert.deepEqual(restarts, []);
+  assert.deepEqual(calls.spawned, [root]);
+});
+
+test("this root's own daemon on an older build: the bounce restarts it, as before", async (t) => {
+  const root = project(t);
+  const mine = await withServer(t, { root, writePortfile: true });
+
+  const restarts = [];
+  const { calls, deps: d, fresh } = bounceDeps(t, root, restarts, { stopsOld: mine });
+  await open([], d);
+  assert.deepEqual(restarts.map((r) => [r.root, r.target.pid, r.target.port, r.target.source]),
+    [[root, process.pid, mine.port, 'portfile']]);
+  assert.ok(calls.logs.some((l) => /^Restarted the web-chat server on v0\.0\.0-not-this-build/.test(l)), JSON.stringify(calls.logs));
+  assert.deepEqual(calls.spawned, []);
+  assert.equal(fresh.length, 1);
+  assert.deepEqual(calls.browsed, [`http://localhost:${fresh[0].port}`], 'the browser goes to the restarted daemon');
+});
+
+test('a restart after which no daemon of this root comes up: open says so, exits 1 and opens nothing', async (t) => {
+  const root = project(t);
+  await withServer(t, { root, writePortfile: true });
+
+  const restarts = [];
+  const { calls, deps: d } = bounceDeps(t, root, restarts, { comesUp: false, extra: { restartedWithinMs: 300 } });
+  await open([], d);
+  assert.equal(restarts.length, 1);
+  assert.deepEqual(calls.browsed, [], 'the stopped daemon is not browsed as if it were the new one');
+  assert.deepEqual(calls.exits, [1]);
+  assert.match(calls.errs.join('\n'), /did not come up/);
 });

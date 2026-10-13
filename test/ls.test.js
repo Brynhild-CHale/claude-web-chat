@@ -75,7 +75,11 @@ function stubDaemon(t, { root, pid, ack = true, drain = false }) {
   const server = http.createServer((req, res) => {
     if (req.url === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, role: 'server', pid }));
+      // role 'instance', as every daemon's health has said (lib/server/routes/
+      // health.js): stop acts on a portfile's daemon only once its health shows
+      // it is this root's (lib/util/registry answersFor, U107b), and no daemon
+      // ever answered 'server'.
+      return res.end(JSON.stringify({ ok: true, role: 'instance', pid }));
     }
     if (req.url === '/api/shutdown' && req.method === 'POST') {
       if (!ack) { res.writeHead(500); return res.end('{}'); }
