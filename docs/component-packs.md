@@ -211,7 +211,7 @@ neither can the page's reach in, except through theme tokens.
 </div>
 
 <script>
-  // `root`, `store`, `params`, `mountId` are injected. See §4.
+  // `root`, `store`, `params`, `mountId` and `api` are injected. See §4.
   const rows = root.querySelector('#rows');
   root.querySelector('#title').textContent = `Deploys · ${params.env}`;
 
@@ -227,6 +227,7 @@ neither can the page's reach in, except through theme tokens.
 
   paint(store.get('deploys'));              // paint what is already there
   store.subscribe('deploys', paint);        // and react to the service's pushes
+                                            // (released when the pane goes; §4)
 
   root.querySelector('#refresh').addEventListener('click', () => {
     store.set({ deploy_ctl: { seq: Date.now(), env: params.env } });
@@ -298,6 +299,41 @@ titles.
 Omit `id` and you get a fresh mount every time, stacking panes forever. Pick a
 stable id per logical pane and reuse it.
 
+### What a pane script sets up ends with the pane
+
+A pane's script runs again every time the pane is mounted (a re-render, a
+`reset`, each preview step and the return from one), and each old instance
+goes. What its script set up must go with it, or every remount leaves one more
+handler, timer or observer working into a pane nobody can see. Most of it ends
+by itself:
+
+- subscriptions made through the injected `store` are released;
+- timers made with the bare `setTimeout`, `setInterval` and
+  `requestAnimationFrame` are cleared — inside a pane script those names are the
+  pane's own;
+- `api.signal` is an `AbortSignal` aborted when the pane goes: pass it to
+  listeners and fetches — `addEventListener(type, fn, { signal: api.signal })`,
+  `fetch(url, { signal: api.signal })`. A listener on the pane's own elements
+  goes with its DOM; one on `window` or `document` needs the signal;
+- `api.onUnmount(fn)` is for anything else — a `MutationObserver`, a
+  `WebSocket`, an `EventSource`. Each `fn` runs once, while the pane is still on
+  the page, before its timers are cleared; one registered after the pane has
+  gone runs at once.
+
+`window.store` and `window.setInterval` (and `window.setTimeout`,
+`window.requestAnimationFrame`) are the page's own and are never tracked: a
+subscription or a timer made through them outlives the pane. In an export or a
+node preview nothing is taken down: `api.signal` never aborts and
+`api.onUnmount` does nothing.
+
+```js
+const watch = new MutationObserver(redraw);
+watch.observe(document.documentElement, { attributes: true });
+api.onUnmount(() => watch.disconnect());
+window.addEventListener('resize', relayout, { signal: api.signal });
+setInterval(refreshClock, 1000);          // cleared with the pane
+```
+
 ### Re-rendering does not reset what the user typed
 
 Every pane's form state (inputs, textareas, selects, contenteditable) is captured
@@ -354,7 +390,7 @@ it.
 ```js
 store.get('deploys')                    // read
 store.set({ deploy_ctl: { … } })        // write (broadcast to everyone)
-store.subscribe('deploys', fn)          // react
+store.subscribe('deploys', fn)          // react (released when the pane goes)
 ```
 
 Three different things can happen when a pane writes, and picking the right one
@@ -436,6 +472,8 @@ Pane-scoped and graph-aware: the service runs only while its pane is a live
 mount on the **active** node and at least one browser is connected. Navigate away
 and it stops; navigate back and it respawns. There is no warm idle — `stop()`
 must actually release everything, and `start()` must be able to run again.
+That is the host half; the pane half ends with the pane by itself (§4, *What a
+pane script sets up ends with the pane*).
 
 A service that crashes is recorded and **not** auto-respawned at the same
 version, so a broken service does not hot-loop. Editing `service.js` produces a
@@ -961,6 +999,7 @@ with `--replace`. You cannot fix that from your side; just pick distinctive name
 - [ ] Every `x-trust` mark is `display` or `project-path`, and only on a param that widens nothing (`pack review` warns about any other value).
 - [ ] No `document` *queries* in any pane script — `root.querySelector`, never `document.querySelector`/`getElementById`. (`document.createElement` is fine; it is how you build DOM from data without `innerHTML`.)
 - [ ] No `<script src>`, no CDN, no external fetch you cannot justify.
+- [ ] Nothing in a pane script outlives the pane: subscriptions through the injected `store`, bare timer names, `{ signal: api.signal }` on `window`/`document` listeners, `api.onUnmount` for observers and sockets — never `window.store` or `window.setInterval`.
 - [ ] No `innerHTML` on anything you did not author.
 - [ ] Colors reference `--wc-*` tokens; the pack looks right under every builtin theme (earthy light and dark, paper, georgetown-blue).
 - [ ] Stable mount ids documented in `SKILL.md`.

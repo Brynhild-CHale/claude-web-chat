@@ -419,6 +419,16 @@ service ──setStore({ git: {...} })──►  store  ──subscribe('git')�
   pane  ──store.set({ git_ctl:{...} })─►  store  ──SSE store events──►  service
 ```
 
+The pane's half ends with the pane. Its script runs again on every re-render,
+`reset` and preview step, and each old instance goes: subscriptions made through
+the injected `store` are released, and timers made with the bare `setTimeout`,
+`setInterval` and `requestAnimationFrame` are cleared. `api.signal` is an
+`AbortSignal` aborted when the pane goes, for listeners and fetches
+(`addEventListener(type, fn, { signal: api.signal })`); `api.onUnmount(fn)` is
+for anything else (observers, sockets). `window.store` and `window.setInterval`
+are never tracked: a subscription or timer made through them outlives the pane.
+The service's half is yours: its `stop()` (above, *Lifecycle*).
+
 **A control key is untrusted input.** The store is a shared bus: every pane
 script in the page can write your control key, and so can any local process that
 reaches the daemon. Pane code is compiled with `new Function` in the surface's
