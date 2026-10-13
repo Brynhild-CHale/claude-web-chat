@@ -198,3 +198,33 @@ test('the queue rail makes Push legible: reveal, empty-push notice, standing par
     await new Promise((res) => setTimeout(res, 400)); // drain deferred timers
   } finally { restore(); }
 });
+
+// U70b: the rail's message rows run Edit and Send now through chat-actions.js,
+// which imports queue.js; so queue.js must never reach chat-actions.js, not
+// directly and not through anything it imports (an ES module cycle). The
+// actions come in through queue.js's setRowActions, registered by chat-actions.
+test('queue.js never imports chat-actions.js, directly or transitively; chat-actions hands its actions in', () => {
+  const APP = path.join(REPO, 'public/app');
+  const importsOf = (file) => {
+    const src = fs.readFileSync(file, 'utf8');
+    const out = [];
+    for (const m of src.matchAll(/^\s*(?:import|export)\b[^'"`;]*?from\s*['"](\.\/[^'"]+)['"]|^\s*import\s*['"](\.\/[^'"]+)['"]|\bimport\(\s*['"](\.\/[^'"]+)['"]\s*\)/gm)) {
+      out.push(path.resolve(path.dirname(file), m[1] || m[2] || m[3]));
+    }
+    return out;
+  };
+  const seen = new Set();
+  const walk = (file) => {
+    if (seen.has(file) || !fs.existsSync(file)) return;
+    seen.add(file);
+    for (const dep of importsOf(file)) walk(dep);
+  };
+  const queue = path.join(APP, 'queue.js');
+  const actions = path.join(APP, 'chat-actions.js');
+  walk(queue);
+  assert.ok(seen.size > 1, 'the walk followed queue.js\'s imports');
+  assert.equal(seen.has(actions), false, `queue.js reaches chat-actions.js through: ${[...seen].map((f) => path.relative(APP, f)).join(', ')}`);
+  assert.ok(importsOf(actions).includes(queue), 'chat-actions.js imports queue.js (the direction the seam serves)');
+  const src = fs.readFileSync(actions, 'utf8');
+  assert.match(src, /^setRowActions\(\{ rows: queueRows, canRun, run: runAction \}\);$/m, 'and registers the one engine\'s actions');
+});

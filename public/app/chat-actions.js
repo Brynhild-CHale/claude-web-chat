@@ -14,6 +14,8 @@
 //                            message's Edit and Send now
 //   stopFollowers(root?)     ends every follower whose row is inside root (all
 //                            of them with no root)
+//   queueRows()              Map item id → the queue tray's RowModel: what the
+//                            rail's message rows offer (THE RAIL, below)
 //
 // THE FOLLOWER is a bounded setTimeout chain, never a setInterval: it ends by
 // itself (spec §10.1). followTaskOutput reads GET /api/mirror/tasks/:id/output,
@@ -66,15 +68,27 @@
 // answer says (a refusal, or that it waits behind a parked message) shows in
 // .cs-row-note too.
 //
+// THE RAIL (§8.7, U70b). The queue rail's typed-message rows carry Edit and
+// Send now too, on the desktop and in the phone's Tasks → Queue page: queue.js
+// draws the buttons and this module does what they do, through the same
+// canRun and runAction. queue.js cannot import this module (this one imports
+// it), so at import this module hands it, through queue.js's setRowActions,
+// {rows: queueRows, canRun, run: runAction}; queueRows() → Map item id → the
+// queue tray's RowModel, from chat-present.js's categories(), so the rail
+// offers exactly what the tray does. The rail's row is not chat-rows.js's
+// element, but it carries the same documented parts below.
+//
 // THE ROW is chat-rows.js's element; this module touches it through its
 // documented parts only: `.cs-row-actions` (the buttons), `.cs-row-body` (the
 // expanded Output, built here), `.cs-row-note` (a refusal's hint) and the
 // `data-stopping` flag, after which it asks the row to redraw itself with the
 // 'wc:row-refresh' event (chat-rows.js answers it with its last model).
 import { bus } from './bus.js';
-import { mirror } from './chat-state.js';
-import { isRunning } from './chat-present.js';
-import { removeItem, setStaged, editMessage, sendNow, queueSnapshot, hydrateQueue } from './queue.js';
+import { mirror, serverNow } from './chat-state.js';
+import { isRunning, categories } from './chat-present.js';
+import {
+  removeItem, setStaged, editMessage, sendNow, queueSnapshot, hydrateQueue, setRowActions,
+} from './queue.js';
 
 export const FOLLOW_MS = 1500;
 export const FAIL_LIMIT = 3;
@@ -637,3 +651,13 @@ export function runAction(row, action, { rowEl = null, density = 'compact', butt
   if (id === 'stage') { setStaged(row.id, true); return true; }
   return false;
 }
+
+// ── the rail ─────────────────────────────────────────────────────────────────
+
+// The queue tray's rows, by item id: what the rail's message rows offer.
+export function queueRows() {
+  const entry = categories(mirror, queueSnapshot(), { now: serverNow() }).find((c) => c.cat === 'queue');
+  return new Map(entry ? entry.rows.map((r) => [r.id, r]) : []);
+}
+
+setRowActions({ rows: queueRows, canRun, run: runAction });

@@ -1,7 +1,9 @@
 // The queue in the phone sheet (public/app/chat-sheet-queue.js, shell.js's
 // setQueueRoute, U70's section of app.css), through the real shell
 // (test-support/chrome-shell.js) at 390×844: design spec §8.7, §8.4's Queue and
-// push-feedback rows, §7.8 (Escape's one owner), deviation 17.
+// push-feedback rows, §7.8 (Escape's one owner), deviation 17. And U70b: the
+// rail's message rows carry Edit and Send now (chat-actions.js's, handed in
+// through queue.js's setRowActions), on the page and on the desktop rail.
 //
 // main.js does not start the sheet, its Tasks view or this one until U73 wires
 // them, so the boot's init does. #topbar and #bottombar get rectangles
@@ -24,6 +26,7 @@ const DESKTOP = { width: 1280, height: 800 };
 
 let queueBody = { items: [], count: 0 };
 let parked = null;
+let mirrorBody = {};        // GET /api/mirror: {} (no mirror) unless a case gives one
 let pushAnswer = { ok: true, mode: 'parked', pending_id: 'pw1', delivers: 'Pushed — delivers with your next message.' };
 
 let shell, W, $, bus, sheet, sq, shellMod, Q, model;
@@ -63,7 +66,7 @@ before(async () => {
   shell = await bootShell({
     viewport: PHONE,
     routes: {
-      '/api/mirror': () => ({}),
+      '/api/mirror': () => mirrorBody,
       '/api/queue': () => queueBody,
       '/api/queue/pending': () => ({ pending: parked }),
       '/api/queue/push': () => {
@@ -447,6 +450,160 @@ test('setQueueRoute: one at a time; a replaced route\'s unregister does nothing;
   assert.ok(onQueuePage(), 'the sheet\'s route again');
 });
 
+/* ── a message row's Edit and Send now (U70b) ──────────────────────────────── */
+// The rail's typed-message rows carry Edit and Send now (§8.7, §7.6), drawn by
+// queue.js and performed by chat-actions.js's runAction — the trays' one
+// engine — handed in through queue.js's setRowActions. They follow the queue
+// tray's RowModel: Edit under capabilities.queue_message at `full`, Send now on
+// the first staged message only.
+
+let mirrorRev = 9000;
+const mirrorSnap = (caps) => ({ v: 1, enabled: true, now: Date.now(), rev: ++mirrorRev, content: true,
+  access: { level: 'local', remote: false }, capabilities: caps, primary: null, aggregate: { state: 'idle' },
+  conversations: [], tasks: [], asks: [] });
+
+// Give the page a mirror (or none: {}), read again on its own — no hello, so
+// nothing reads the queue again: only the mirror's change redraws the rail.
+async function setMirror(body) {
+  mirrorBody = body;
+  const S = await shell.importApp('chat-state.js');
+  await S.hydrateMirror();
+  if (body && body.rev) await waitUntil(() => S.mirror.rev >= body.rev, { timeout: 2000, what: 'the mirror' });
+  else await waitUntil(() => !(S.mirror.capabilities && S.mirror.capabilities.queue_message), { timeout: 2000, what: 'no mirror' });
+  await shell.tick();
+}
+
+const qmsg = (n, over = {}) => ({ id: `q${n}`, kind: 'message', msg_id: `m-${String(n).padStart(8, '0')}`,
+  conversation_id: null, text: `message number ${n}`, skill: null, files: [], chars: 16, autosend: true, staged: true,
+  source: 'composer', why_wake: 'message from the user', summary: 'message · 16 chars', origin: 'local',
+  device: 'mobile', enqueued_at: 1000 + n, ...over });
+const railRow = (id) => RAIL.querySelector(`.rail-item[data-id="${id}"]`);
+const railAct = (id, a) => railRow(id) && railRow(id).querySelector(`.cs-row-actions [data-action="${a}"]`);
+const railActs = (id) => [...railRow(id).querySelectorAll('.cs-row-actions button')].map((b) => b.textContent);
+const railEditor = (id) => railRow(id).querySelector('.cs-row-body .cs-edit');
+
+test('from the page: a message row\'s Edit opens its editor (kept across redraws) and Save PATCHes; Send now posts for that item', async () => {
+  try {
+    await setQueue([qmsg(7, { text: 'tighten the retry' }), qmsg(8), item(9)]);
+    shell.click(bb());
+    await shell.tick();
+    assert.ok(onQueuePage());
+    assert.equal(railAct('q7', 'edit'), null, 'no mirror, no queue_message capability: no Edit, as in the tray');
+    await setMirror(mirrorSnap({ queue_message: true }));
+    assert.deepEqual(railActs('q7'), ['Edit', 'Send now'], 'the mirror\'s capability arriving redraws the rail');
+    assert.deepEqual(railActs('q8'), ['Edit'], 'Send now on the first staged message only');
+    assert.equal(railRow('q9').querySelector('.cs-row-actions'), null, 'a signal row is as it was');
+    assert.ok(railRow('q7').querySelector('.qi-stage') && railRow('q7').querySelector('.qi-revert'), '−/+ and ⟲ stay');
+    assert.ok(railAct('q7', 'edit').closest('.rail.in-sheet'), 'in the sheet: the touch density');
+
+    // Edit: the engine's inline editor, in the row's body.
+    shell.click(railAct('q7', 'edit'));
+    const area = railEditor('q7') && railEditor('q7').querySelector('textarea.cs-edit-text');
+    assert.ok(area, 'Edit opened the editor on the page');
+    assert.equal(area.value, 'tighten the retry');
+    assert.equal(W.document.activeElement, area, 'the editor has the cursor');
+    area.value = 'tighten the retry, twice';
+    area.setSelectionRange(5, 5);
+    // The rail redraws whole (a poll, a frame): the editor and its cursor stay.
+    await Q.refreshPending();
+    await shell.tick();
+    assert.equal(railRow('q7').querySelector('textarea.cs-edit-text'), area, 'the same editor after a redraw');
+    assert.equal(area.value, 'tighten the retry, twice', 'with what was typed');
+    assert.equal(W.document.activeElement, area, 'and the cursor');
+    assert.equal(area.selectionStart, 5);
+    const n0 = posts('/api/queue/q7', 'PATCH').length;
+    shell.click(railEditor('q7').querySelector('.cs-edit-save'));
+    await waitUntil(() => !railEditor('q7'), { timeout: 2000, what: 'the editor to close' });
+    assert.equal(posts('/api/queue/q7', 'PATCH').length, n0 + 1, 'Save PATCHes once');
+    assert.deepEqual(posts('/api/queue/q7', 'PATCH').at(-1).body, { text: 'tighten the retry, twice' });
+
+    // Send now: POST /api/queue/push {ids: [q7]}, its answer in the row's note.
+    const p0 = posts('/api/queue/push').length;
+    shell.click(railAct('q7', 'send-now'));
+    await waitUntil(() => posts('/api/queue/push').length > p0, { timeout: 2000, what: 'the send-now post' });
+    assert.deepEqual(posts('/api/queue/push').at(-1).body, { ids: ['q7'], device: 'mobile' });
+    await waitUntil(() => !railRow('q7').querySelector('.cs-row-note').hidden, { timeout: 2000, what: 'the note' });
+    assert.equal(railRow('q7').querySelector('.cs-row-note').textContent, 'With your next message');
+    assert.ok(onQueuePage(), 'still on the queue page');
+  } finally {
+    await setMirror({});
+  }
+  assert.equal(railAct('q7', 'edit'), null, 'the capability gone: Edit gone with it');
+});
+
+test('on the desktop rail the same row carries Edit and Send now, and they work', async () => {
+  await viewport(DESKTOP);
+  try {
+    assert.equal(RAIL.parentNode, shell.document.querySelector('.body'), 'the rail is home');
+    await setMirror(mirrorSnap({ queue_message: true }));
+    await setQueue([qmsg(4, { device: 'desktop' })]);
+    assert.deepEqual(railActs('q4'), ['Edit', 'Send now']);
+    assert.equal(railAct('q4', 'edit').closest('.rail.in-sheet'), null, 'the compact density');
+    shell.click(railAct('q4', 'edit'));
+    const area = railEditor('q4').querySelector('textarea');
+    assert.equal(area.value, 'message number 4');
+    const n0 = posts('/api/queue/q4', 'PATCH').length;
+    shell.key('Escape', { target: area });
+    assert.equal(railEditor('q4'), null, 'Escape closes it');
+    assert.equal(posts('/api/queue/q4', 'PATCH').length, n0, 'with no request');
+    shell.click(railAct('q4', 'send-now'));
+    await waitUntil(() => posts('/api/queue/push').some((c) => c.body && Array.isArray(c.body.ids) && c.body.ids[0] === 'q4'),
+      { timeout: 2000, what: 'the send-now post' });
+    assert.equal(posts('/api/queue/push').at(-1).body.device, 'desktop');
+  } finally {
+    await setMirror({});
+    await viewport(PHONE);
+    layout(644);
+  }
+});
+
+test('with the actions on: a message row\'s ⟲ removes it and a park\'s Take back recalls it', async () => {
+  try {
+    await setMirror(mirrorSnap({ queue_message: true }));
+    await setQueue([qmsg(5), qmsg(6)]);
+    shell.click(bb());
+    await shell.tick();
+    assert.deepEqual(railActs('q5'), ['Edit', 'Send now']);
+    shell.click(railRow('q6').querySelector('.qi-revert'));
+    await waitUntil(() => posts('/api/queue/q6', 'DELETE').length > 0, { timeout: 2000, what: '⟲' });
+    assert.equal(railRow('q6'), null, 'the row is gone');
+    parked = { id: 'w3', envelope: { meta: { count: 1 } }, items: [qmsg(6)] };
+    await Q.refreshPending();
+    const back = RAIL.querySelector('.rail-pending .rp-takeback');
+    assert.ok(back && !back.hidden, 'Take back');
+    shell.click(back);
+    await waitUntil(() => posts('/api/queue/pending/recall').length > 0, { timeout: 2000, what: 'Take back' });
+    assert.deepEqual(posts('/api/queue/pending/recall').at(-1).body, { id: 'w3' });
+    const parkedRow = RAIL.querySelector('.rail-item.parked');
+    assert.ok(!parkedRow || !parkedRow.querySelector('.cs-row-actions'), 'a parked row has no actions');
+  } finally {
+    await setMirror({});
+  }
+});
+
+test('setRowActions: a TypeError on a bad shape; one provider at a time; a replaced unregister does nothing', async () => {
+  const A = await shell.importApp('chat-actions.js');
+  assert.throws(() => Q.setRowActions({ rows() {}, canRun() {} }), TypeError);
+  await setQueue([qmsg(3)]);
+  const ran = [];
+  const stub = { rows: () => new Map([['q3', { id: 'q3', kind: 'message', cat: 'queue', actions: [{ id: 'edit', label: 'Edit' }, { id: 'send-now', label: 'Send now' }, { id: 'remove', label: 'Remove' }] }]]),
+    canRun: (id) => id === 'edit', run: (row, id, o) => ran.push([row.id, id, o.density, o.rowEl === railRow('q3')]) };
+  const off = Q.setRowActions(stub);   // replaces chat-actions.js's
+  try {
+    assert.deepEqual(railActs('q3'), ['Edit'], 'only the rail\'s own two (never Remove: that is ⟲), and of those only what canRun allows (not Send now here)');
+    shell.click(railAct('q3', 'edit'));
+    assert.deepEqual(ran, [['q3', 'edit', 'touch', true]]);
+    const offB = Q.setRowActions({ rows: () => { throw new Error('boom'); }, canRun: () => true, run: () => {} });
+    off();                                // replaced: nothing
+    assert.equal(railRow('q3').querySelector('.cs-row-actions'), null, 'a provider that throws: the row as before U70b');
+    assert.ok(railRow('q3').querySelector('.qi-msg-text'), 'still drawn');
+    offB();
+    assert.equal(railRow('q3').querySelector('.cs-row-actions'), null, 'none registered: no actions');
+  } finally {
+    Q.setRowActions({ rows: A.queueRows, canRun: A.canRun, run: A.runAction });
+  }
+});
+
 /* ── the source and the stylesheet ─────────────────────────────────────────── */
 
 test('U70\'s section carries §8.7\'s rules; shell.js routes Queue, Q and the opener through one seam', () => {
@@ -467,4 +624,15 @@ test('U70\'s section carries §8.7\'s rules; shell.js routes Queue, Q and the op
   assert.match(SHELL_SRC, /setRailOpener\(\(\) => \{ if \(viaRoute\('open'\)\) return;/);
   assert.match(SHELL_SRC, /on\('bb-queue', \(\) => toggleRail\(\)\)/);
   assert.match(SHELL_SRC, /case 'q': case 'Q': e\.preventDefault\(\); toggleRail\(\); break;/);
+});
+
+test('U70b\'s section: the rail\'s message actions are 44px in the sheet and on the narrow rail; tokens only', () => {
+  const start = CSS.indexOf('/* ── U70b · the rail\'s message actions');
+  const end = CSS.indexOf('/* ── U71 ·');
+  assert.ok(start > 0 && end > start);
+  const sec = CSS.slice(start, end);
+  assert.match(sec, /\.chat-sheet \.rail\.in-sheet \.rail-item :is\(\.qi-acts \.cs-row-act, \.cs-edit-save, \.cs-edit-cancel\) \{ height: 44px; min-width: 64px; \}/);
+  assert.match(sec, /@media \(max-width: 759px\) \{[\s\S]*?\.rail-item :is\(\.qi-acts \.cs-row-act, \.cs-edit-save, \.cs-edit-cancel\) \{ height: 44px;/);
+  assert.match(sec, /\.rail-item \.cs-edit-text \{ min-height: 44px; \}/);
+  assert.doesNotMatch(sec, /#[0-9a-f]{3,8}\b|rgb\(/i, 'tokens only');
 });

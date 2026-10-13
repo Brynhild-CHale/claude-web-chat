@@ -31,6 +31,30 @@
 // queued and held messages, and every message whose receipt is not yet
 // confirmed (a confirmed one stays, saying so, until the next hydrate or
 // CONFIRMED_HOLD_MS, whichever is first).
+//
+// A MESSAGE ROW'S EDIT AND SEND NOW (§8.7, §7.6; U70b). The rail draws them on
+// a typed message's row, on the desktop and in the phone's Tasks → Queue page
+// alike, but performs neither: chat-actions.js's runAction is the one engine,
+// the trays' rows run them through it too. chat-actions.js imports this
+// module, so its actions are handed IN, never imported:
+//
+//   setRowActions({rows, canRun, run}) → unregister
+//     rows()                          → Map item id → the queue tray's RowModel
+//                                       (chat-present.js), read once per draw
+//     canRun(actionId, rowModel)      → whether run can perform it
+//     run(rowModel, actionId, {rowEl, density, button})
+//
+// One at a time (a later registration replaces the first, whose unregister
+// then does nothing); a provider missing a function is a TypeError, never
+// stored. With none, a message row is as it was: text, −/+ and ⟲. The row shows
+// the RAIL_MESSAGE_ACTIONS its RowModel offers (Edit under the queue_message
+// capability at `full`, Send now on the first staged message only) in a
+// `.cs-row-actions` group, and keeps the `.cs-row-note` and `.cs-row-body` the
+// engine writes into — the same element across redraws, so an open editor or a
+// refusal's hint outlives the rail's next draw. `density` is 'touch' while the
+// rail is in the sheet (`.in-sheet`, where app.css makes them 44px), else
+// 'compact'. A mirror change that changes which actions the rows offer redraws
+// the rail.
 import { $ } from './state.js';
 import { isCommentAnswered } from './comments.js';
 import { deviceKind } from './viewport.js';
@@ -776,8 +800,12 @@ function revertTitle(kind) {
   return 'revert — remove from queue and undo this interaction (the pane stays)';
 }
 
-function itemRow(it, { parked = false } = {}) {
-  const row = document.createElement('div');
+function itemRow(it, { parked = false, acts = null } = {}) {
+  // A typed message's row is kept across draws (its note and body hold what the
+  // row actions wrote); every other row is built afresh.
+  const kept = !parked && acts && isTypedMessage(it) ? msgParts.get(it.id) : null;
+  const row = kept ? kept.row : document.createElement('div');
+  if (kept) row.replaceChildren();
   const staged = !parked && isStaged(it);
   row.className = parked ? 'rail-item parked' : ('rail-item' + (staged ? '' : ' held'));
   if (it.id) row.dataset.id = it.id;
@@ -799,6 +827,7 @@ function itemRow(it, { parked = false } = {}) {
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
   body.append(top, why, sum);
   if (!parked && isMessage(it)) messageBody(row, it, sum, body);
+  if (!parked && acts && isTypedMessage(it)) messageActions(row, it, body, acts);
   if (parked) { row.append(dot, body); return row; }
   if (it.kind === 'signal' && it.signal_key) body.append(...peekControls(it));
 
@@ -846,6 +875,131 @@ function messageBody(row, it, sum, body) {
   meta.className = 'qi-msg-meta';
   meta.textContent = bits.join(' · ');
   body.append(meta);
+}
+
+/* ---------- the row actions seam (U70b; see the head of this file) ---------- */
+export const RAIL_MESSAGE_ACTIONS = Object.freeze(['edit', 'send-now']);
+let rowActions = null;          // {p}: the one provider, boxed so a replaced unregister misses
+// item id → {row, note, body}: a typed message's row and the parts the engine
+// writes into, kept while the item is queued. Pruned in drawRail.
+const msgParts = new Map();
+let actionsDrawn = '';           // the offered actions at the last draw (see actionsSig)
+
+export function setRowActions(p) {
+  if (!p || typeof p.rows !== 'function' || typeof p.canRun !== 'function' || typeof p.run !== 'function') {
+    throw new TypeError('setRowActions takes {rows() → Map, canRun(actionId, row), run(row, actionId, {rowEl, density, button})}');
+  }
+  const entry = { p };
+  rowActions = entry;
+  if (items.some(isTypedMessage)) drawRail();
+  return () => {
+    if (rowActions !== entry) return;
+    rowActions = null;
+    if (items.some(isTypedMessage)) drawRail();
+  };
+}
+
+// What a draw needs of the provider: each typed message's RowModel and the
+// actions its row offers. Null with no provider, or when rows() throws (the
+// rail then draws as it did before U70b, never not at all).
+function actionsCtx() {
+  if (!rowActions) return null;
+  const { p } = rowActions;
+  let models;
+  try { models = p.rows(); } catch { return null; }
+  const offered = new Map();     // item id → {model, acts: the RowModel actions drawn}
+  for (const it of items) {
+    if (!isTypedMessage(it)) continue;
+    const model = models && typeof models.get === 'function' ? models.get(it.id) : null;
+    const list = model && Array.isArray(model.actions) ? model.actions : [];
+    const acts = list.filter((a) => {
+      if (!a || !RAIL_MESSAGE_ACTIONS.includes(a.id)) return false;
+      try { return p.canRun(a.id, model) === true; } catch { return false; }
+    });
+    offered.set(it.id, { model, acts });
+  }
+  return { p, offered };
+}
+
+// The density a row's action runs at: 'touch' while the rail is in the sheet.
+const densityOf = (rowEl) => (rowEl.closest('.rail.in-sheet') ? 'touch' : 'compact');
+
+// A signature of what the rows offer: a mirror change redraws only when it
+// changes (the capability arriving, the level moving), not on every frame.
+const actionsSig = (ctx) => (ctx
+  ? [...ctx.offered].map(([id, o]) => `${id}:${o.acts.map((a) => a.id).join(',')}`).join(';')
+  : '');
+
+function messageActions(row, it, body, ctx) {
+  let parts = msgParts.get(it.id);
+  if (!parts || parts.row !== row) {
+    const note = document.createElement('div');
+    note.className = 'cs-row-note';
+    note.setAttribute('role', 'status');
+    note.hidden = true;
+    const extra = document.createElement('div');
+    extra.className = 'cs-row-body';
+    extra.hidden = true;
+    parts = { row, note, body: extra };
+    msgParts.set(it.id, parts);
+  }
+  const { model, acts } = ctx.offered.get(it.id) || { model: null, acts: [] };
+  if (model && acts.length) {
+    const bar = document.createElement('div');
+    bar.className = 'cs-row-actions qi-acts';
+    bar.setAttribute('role', 'group');
+    bar.setAttribute('aria-label', 'message actions');
+    for (const a of acts) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cs-row-act';
+      btn.dataset.action = a.id;
+      btn.textContent = a.label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { ctx.p.run(model, a.id, { rowEl: row, density: densityOf(row), button: btn }); } catch { /* the engine's own */ }
+      });
+      bar.append(btn);
+    }
+    body.append(bar);
+  }
+  body.append(parts.note, parts.body);
+}
+
+// A mirror change can change what the rows offer (Edit and Send now wait on the
+// queue_message capability and the level); the stream's frames never do.
+bus.on('mirror', (d) => {
+  const what = d && Array.isArray(d.what) ? d.what : [];
+  if (!rowActions || (what.length && what.every((w) => w === 'stream'))) return;
+  if (railEl() && actionsSig(actionsCtx()) !== actionsDrawn) drawRail();
+});
+
+// The rail is redrawn whole: focus inside a kept message row (its editor, or
+// one of its actions) goes back to the same element, or the same action.
+function keepFocus(list) {
+  const a = typeof document !== 'undefined' ? document.activeElement : null;
+  if (!a || !list.contains(a)) return null;
+  const row = a.closest('.rail-item');
+  return {
+    el: a,
+    id: row ? row.dataset.id : null,
+    action: a.dataset ? a.dataset.action || null : null,
+    start: typeof a.selectionStart === 'number' ? a.selectionStart : null,
+    end: typeof a.selectionEnd === 'number' ? a.selectionEnd : null,
+  };
+}
+function restoreFocus(list, f) {
+  if (!f) return;
+  let el = f.el.isConnected && list.contains(f.el) ? f.el : null;
+  if (!el && f.id && f.action) {
+    el = [...list.querySelectorAll('.rail-item')].find((r) => r.dataset.id === f.id) || null;
+    el = el && el.querySelector(`.cs-row-actions [data-action="${f.action}"]`);
+  }
+  if (!el || document.activeElement === el) return;
+  try { el.focus({ preventScroll: true }); } catch { return; }
+  if (f.start !== null && typeof el.setSelectionRange === 'function') {
+    try { el.setSelectionRange(f.start, f.end === null ? f.start : f.end); } catch { /* not a text field */ }
+  }
 }
 
 /* ---------- a signal's value, on request ----------
@@ -940,6 +1094,9 @@ function drawRail() {
   const staged = items.filter(isStaged);
   const held = items.filter((x) => !isStaged(x));
   for (const id of peeks.keys()) if (!items.some((x) => x.id === id)) peeks.delete(id);
+  const acts = actionsCtx();
+  actionsDrawn = actionsSig(acts);
+  for (const id of msgParts.keys()) if (!acts || !items.some((x) => x.id === id && isTypedMessage(x))) msgParts.delete(id);
 
   const countEl = rail.querySelector('.rail-count'); if (countEl) countEl.textContent = String(count);
   const badge = rail.querySelector('.rail-head .badge'); if (badge) badge.textContent = String(count);
@@ -964,6 +1121,7 @@ function drawRail() {
 
   const list = rail.querySelector('.rail-items');
   if (list) {
+    const focus = keepFocus(list);
     list.innerHTML = '';
     if (!count && !parkedList.length) {
       const empty = document.createElement('div');
@@ -973,10 +1131,10 @@ function drawRail() {
     } else {
       if (count) {
         list.appendChild(sectionHeader('Staged', staged.length, 'staged'));
-        for (const it of staged) list.appendChild(itemRow(it));
+        for (const it of staged) list.appendChild(itemRow(it, { acts }));
         if (held.length) {
           list.appendChild(sectionHeader('Held', held.length, 'held'));
-          for (const it of held) list.appendChild(itemRow(it));
+          for (const it of held) list.appendChild(itemRow(it, { acts }));
         }
       }
       if (parkedList.length) {
@@ -985,6 +1143,7 @@ function drawRail() {
         for (const it of parkedList) list.appendChild(itemRow(it, { parked: true }));
       }
     }
+    restoreFocus(list, focus);
   }
 
   updatePushLabel();

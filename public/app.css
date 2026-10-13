@@ -3029,6 +3029,22 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 .chat-sheet .rail.in-sheet .rail-items { overscroll-behavior: contain; }
 .chat-sheet .rail.in-sheet .qi-peek { min-height: 44px; }
 
+/* ── U70b · the rail's message actions · queue.js setRowActions, chat-actions.js ── */
+/* A typed message's row on the rail carries Edit and Send now (design spec
+   §8.7, §7.6): chat-actions.js's buttons (.cs-row-act), its inline editor and
+   its note, under the message's text in .qi-body — flush with it, not indented
+   as in a tray row. On the narrow full-screen rail and in the sheet (the touch
+   density) every one of them is a 44px target. Tokens only. */
+.rail-item .qi-acts { flex-wrap: wrap; margin-top: 4px; }
+.rail-item :is(.cs-row-note, .cs-row-body) { margin-left: 0; }
+.rail-item .cs-row-body { margin-top: 6px; }
+@media (max-width: 759px) {
+  .rail-item .qi-acts { gap: 8px; margin-top: 8px; }
+  .rail-item :is(.qi-acts .cs-row-act, .cs-edit-save, .cs-edit-cancel) { height: 44px; min-width: 64px; padding: 0 12px; font-size: 13px; }
+  .rail-item .cs-edit-text { min-height: 44px; }
+}
+.chat-sheet .rail.in-sheet .rail-item :is(.qi-acts .cs-row-act, .cs-edit-save, .cs-edit-cancel) { height: 44px; min-width: 64px; }
+
 /* ── U71 · the keyboard · sheet-keyboard.js ── */
 /* Keyboard mode (design spec §8.5): while an editable in the sheet has focus
    and the on-screen keyboard is up, sheet-keyboard.js gives #chat-pull .kb and
