@@ -11,7 +11,9 @@
 //     call handed the snapshot's level (the route projects below read);
 //   * provide('capabilities') turns each provided key on only on an exact
 //     `true`; task_stop also needs the tasks source's markStopRequested; mod
-//     and rewind_in_place stay false whatever is provided (tranche 6's);
+//     and rewind_in_place follow their predicates too since tranche 6 (U94a)
+//     wired them through this seam (each conversation's process.mod, the 'mod'
+//     provider's, is pinned end to end in test/t6-e2e.test.js);
 //   * a provider or a predicate that throws, or answers the wrong shape, counts
 //     as absent; a second provide replaces the first, and the first's remover
 //     then removes nothing; a name outside PROVIDER_NAMES is a TypeError;
@@ -76,7 +78,7 @@ const onKeys = (c) => Object.keys(c).filter((k) => c[k]).sort();
 
 test('no provider: asks [] at every level, and the six provided capabilities false', async (t) => {
   const { mirror } = await setup(t, { tasks: true });
-  assert.deepEqual(PROVIDER_NAMES, ['asks', 'capabilities']);
+  assert.deepEqual(PROVIDER_NAMES, ['asks', 'capabilities', 'mod']);
   for (const level of ['local', 'full', 'read', 'basic']) {
     assert.deepEqual(mirror.snapshot({ level }).asks, [], `${level}: no asks without a provider`);
   }
@@ -99,12 +101,12 @@ test('provide(\'asks\') feeds the snapshot at local and below read, handed the s
   assert.deepEqual(mirror.snapshot().asks, [view('local')], 'no level is local');
 });
 
-test('provide(\'capabilities\'): each key on only for an exact true; task_stop also needs the tasks source; mod and rewind_in_place stay off', async (t) => {
+test('provide(\'capabilities\'): each key on only for an exact true; task_stop also needs the tasks source; mod and rewind_in_place follow theirs', async (t) => {
   const { mirror } = await setup(t);
   const all = Object.fromEntries([...PROVIDED, 'mod', 'rewind_in_place', 'turn_diff'].map((k) => [k, () => true]));
   mirror.provide('capabilities', all);
-  assert.deepEqual(onKeys(caps(mirror)), ['answer', 'code_revert', 'fork', 'interrupt', 'queue_message'],
-    'task_stop waits on the tasks source; mod, rewind_in_place and a source-backed key are never provided');
+  assert.deepEqual(onKeys(caps(mirror)), ['answer', 'code_revert', 'fork', 'interrupt', 'mod', 'queue_message', 'rewind_in_place'],
+    'task_stop waits on the tasks source; a source-backed key is never provided');
   mirror.register('tasks', { attach: () => ({ start: async () => {}, stop: async () => {}, api: { markStopRequested: () => null } }) });
   assert.equal(caps(mirror).task_stop, true, 'with the tasks source, task_stop follows its predicate');
 

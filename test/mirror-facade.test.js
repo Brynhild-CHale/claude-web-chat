@@ -338,8 +338,8 @@ test('a source\'s catch-up runs in index mode: no stream frame until it ends, th
 
 test('register refuses a bad name, a second source of one name and an attach that returns no source', (t) => {
   const h = setup(t);
-  assert.deepEqual(SOURCES.map((s) => s.name), ['live', 'transcripts', 'rewinds', 'tasks', 'agents', 'workflows', 'codediff', 'graph-link'],
-    'tranche 1 registers live; tranche 2 transcripts, then rewinds; tranche 3 tasks, agents, workflows, codediff, then graph-link');
+  assert.deepEqual(SOURCES.map((s) => s.name), ['live', 'transcripts', 'rewinds', 'tasks', 'agents', 'workflows', 'codediff', 'graph-link', 'mod-live'],
+    'tranche 1 registers live; tranche 2 transcripts, then rewinds; tranche 3 tasks, agents, workflows, codediff, then graph-link; tranche 6 mod-live');
   assert.throws(() => h.mirror.register('live', apiSource({})), /already registered/);
   for (const bad of ['', 'Transcripts', '1x', 'a b', null, 'x'.repeat(33)]) assert.throws(() => h.mirror.register(bad, apiSource({})), /lowercase word/);
   assert.throws(() => h.mirror.register('x', {}), /attach/);

@@ -36,6 +36,9 @@ import { initSheetTasks } from './chat-sheet-tasks.js';
 import { initSheetQueue } from './chat-sheet-queue.js';
 import { initSheetKeyboard } from './sheet-keyboard.js';
 import { initTabDock } from './tab-dock.js';
+import { initModControls } from './mod-controls.js';
+import { initComposerMod } from './composer-mod.js';
+import { initSessionOps } from './session-ops.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -100,4 +103,16 @@ initSheetTasks();
 initSheetQueue();
 initSheetKeyboard();
 initTabDock();
+// Tranche 6, the mod, after tranche 5's (the tab's dock stays tranche 5's
+// last): with a web-chat mod attached, the immediate controls — the trays'
+// Kill, Cancel and Remove through the mod's stopper, and the experimental
+// Fork-here-and-switch turn action (after initTurnActions and
+// initSessionControl, whose frames they mount); the composer's mod half —
+// the five safe commands in the `/` list and images by path (after
+// initChatComposer); and the session controls in #cp-ops — the context meter,
+// Compact now, Plan mode and the ⋯ menu (after initSessionControl). With no
+// mod each draws nothing: tier 1. Each idempotent.
+initModControls();
+initComposerMod();
+initSessionOps();
 connect();
