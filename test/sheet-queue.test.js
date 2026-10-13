@@ -139,15 +139,26 @@ test('each breakpoint crossing moves the same element: home to .body at its plac
   assert.equal(RAIL.parentNode, body, 'back in .body');
   assert.equal(RAIL.previousElementSibling, body.querySelector('.well-wrap'), 'after the page well, where index.html has it');
   assert.equal(RAIL.classList.contains('in-sheet'), false);
+  // index.html puts the rail last in .body, so an append would look like a
+  // return to its place: an element after it tells the remembered next sibling
+  // from the end of the parent.
+  const after = shell.document.createElement('i');
+  after.className = 'u70-sentinel';
+  body.insertBefore(after, RAIL.nextSibling);
   HOME = { parent: RAIL.parentNode, next: RAIL.nextSibling };
+  assert.equal(HOME.next, after);
   assert.equal(bb().getAttribute('aria-expanded'), 'false');
-  await viewport(PHONE);
-  assert.equal(rail(), RAIL);
-  assert.equal(RAIL.parentNode, queueBodyEl(), 'moved in again');
-  assert.ok(RAIL.classList.contains('in-sheet'));
-  await viewport(DESKTOP);
-  assert.equal(RAIL.parentNode, HOME.parent, 'the same parent');
-  assert.equal(RAIL.nextSibling, HOME.next, 'and the same next sibling');
+  try {
+    await viewport(PHONE);
+    assert.equal(rail(), RAIL);
+    assert.equal(RAIL.parentNode, queueBodyEl(), 'moved in again');
+    assert.ok(RAIL.classList.contains('in-sheet'));
+    await viewport(DESKTOP);
+    assert.equal(RAIL.parentNode, HOME.parent, 'the same parent');
+    assert.equal(RAIL.nextSibling, HOME.next, 'and the same next sibling');
+  } finally {
+    after.remove();
+  }
   await viewport(PHONE);
   assert.equal(rail(), RAIL);
   assert.equal(document_count('#queue-rail'), 1);
