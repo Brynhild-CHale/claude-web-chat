@@ -2828,6 +2828,138 @@ pre.dv-diff {
 @media (prefers-reduced-motion: reduce) { .cc-send, .cc-pact { transition: none; } }
 
 /* ── U68 · the pull and its drag · chat-sheet.js, sheet-drag.js ── */
+/* The phone's pull (design spec §8.1–§8.4): #chat-scrim, then #chat-pull, direct
+   children of #stage, stamped from index.html's template by chat-sheet.js. Shown
+   by this stylesheet alone, at every width under 760px — a phone or not (§8.1) —
+   and nowhere else; script never asks a media query. The pull rides the bottom
+   bar (--bb-h, U32) on the chat rung, and is as tall as the open sheet:
+   chat-sheet.js writes --sheet-h and --sheet-frac on #chat-pull and --sheet-frac
+   and --chat-top on #chat-scrim — never on #stage. Height, not transform, so the
+   composer stays on the sheet's bottom edge at half. The tab sits on the pull's
+   top edge, docked right by default through left: 100% and translateX(-100%),
+   the two properties U72's left and centre docks transition; the badge on its
+   inner side. State inks are U17's [data-cs-state] rules and wc-chat-pulse,
+   reused. Tokens only; no backdrop-filter, filter or mix-blend-mode anywhere
+   here (WebKit pays for them on every frame: the Safari report). Every scroller
+   in the sheet keeps its scroll to itself (overscroll-behavior: contain). */
+.chat-pull, .chat-scrim { display: none; }
+@media (max-width: 759px) {
+  .chat-scrim {
+    display: block; position: absolute; z-index: var(--z-chat);
+    top: var(--chat-top, 0px); bottom: var(--bb-h); left: 0; right: 0;
+    background: var(--wc-scrim); opacity: var(--sheet-frac, 0); pointer-events: none;
+  }
+  /* Deviation 13 (Q11): the dimmed page takes the tap that closes the sheet and
+     passes nothing through. The mockup let taps through: drop this one rule to
+     go back to it. */
+  .chat-scrim.on { pointer-events: auto; touch-action: none; }
+  .chat-pull {
+    display: block; position: absolute; z-index: var(--z-chat);
+    bottom: var(--bb-h); left: env(safe-area-inset-left); right: env(safe-area-inset-right);
+    height: var(--sheet-h, 0px);
+    transition: height .32s cubic-bezier(.3,.7,.2,1);
+  }
+  /* The queue screen (the open rail over the page) ends where the tab begins. */
+  #stage:has(> .chat-pull) .rail.open .rail-expanded { bottom: 22px; }
+}
+.chat-pull { --tab-w: 56px; }
+.chat-pull:is([data-cs-state="question"], [data-cs-state="waiting"]) { --tab-w: 124px; }
+.chat-pull.dragging { transition: none; }
+
+/* The grip tab: 23px, on the pull's top edge, 1px over the bottom bar's border. */
+.chat-tab {
+  position: absolute; bottom: 100%; left: 100%; transform: translateX(-100%);
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: var(--tab-w); height: 23px; margin: 0 0 -1px; padding: 0 10px; box-sizing: border-box;
+  border: 1px solid var(--wc-border); border-right: 0; border-bottom: 0; border-radius: 10px 0 0 0;
+  background: var(--wc-header-bg); color: var(--wc-fg); font: inherit; cursor: grab;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: width .25s, border-color .2s, background-color .2s;
+}
+.chat-pull.dragging .chat-tab { cursor: grabbing; }
+.chat-tab:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
+.ct-bar {
+  flex: none; width: 26px; height: 4px; border-radius: 2px; background: var(--cs-st);
+  animation: wc-chat-pulse var(--cs-pulse) ease-in-out infinite;
+}
+.chat-pull:is([data-cs-state="idle"], [data-cs-state="suspended"], [data-cs-pace="quiet"]) .ct-bar { animation: none; }
+.ct-word { display: none; font: 700 10px var(--wc-mono); letter-spacing: .08em; white-space: nowrap; color: var(--cs-st); }
+.chat-pull:is([data-cs-state="question"], [data-cs-state="waiting"]) .ct-word { display: inline; }
+.ct-count { display: none; font: 700 10px var(--wc-mono); color: var(--wc-fg); }
+.chat-pull[data-stop="closed"][data-cs-state="question"] .chat-tab { background: var(--cs-st-tint); }
+.chat-pull[data-stop="closed"][data-cs-state="waiting"] .chat-tab { border-color: var(--cs-st-bd); }
+
+/* The running-tasks badge, on the tab's inner side (N2): left of the default dock. */
+.chat-badge {
+  position: absolute; bottom: 100%; right: calc(var(--tab-w) + 4px); margin: 0 0 1px;
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; box-sizing: border-box;
+  border: 1px solid var(--wc-border); border-radius: 10px; background: var(--wc-header-bg);
+  color: var(--wc-fg); font: 700 10px var(--wc-mono); cursor: pointer; opacity: .75;
+  transition: opacity .2s, right .25s;
+}
+.chat-pull[data-cs-state="working"] .chat-badge { opacity: 1; }
+.chat-pull .chat-badge.off { opacity: 0; pointer-events: none; }
+.chat-badge:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.cb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--wc-green); }
+
+/* The sheet: a column filling the pull. Its borders sit inside the clip, so a
+   closed (0px) sheet draws nothing. */
+.chat-sheet {
+  position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+}
+.chat-pull.open .chat-sheet { box-shadow: 0 -10px 24px -14px color-mix(in srgb, var(--wc-fg) 35%, transparent); }
+.sh-head {
+  flex: none; display: flex; align-items: center; padding: 6px 12px;
+  border-top: 1px solid var(--wc-border); border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+}
+.sh-seg {
+  flex: 1 1 auto; display: flex; gap: 2px; padding: 2px; min-width: 0;
+  border: 1px solid var(--wc-border-soft); border-radius: var(--wc-radius); background: var(--wc-panel-bg);
+}
+.sh-seg > button {
+  flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0;
+  height: 36px; margin: 0; padding: 0 10px; border: 0; border-radius: var(--wc-radius-sm);
+  background: transparent; color: var(--wc-muted); font: 600 13px var(--wc-font); cursor: pointer;
+}
+.sh-seg > button.on { background: var(--wc-header-bg); color: var(--wc-fg-bright); box-shadow: 0 0 0 1px var(--wc-border); }
+.sh-seg > button:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
+.sh-run { font: 600 11px var(--wc-mono); color: var(--wc-green); }
+.sh-run:empty { display: none; }
+.sh-view {
+  position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+/* A view with pages pushed keeps its root laid out (the stream keeps its scroll)
+   but out of sight and out of the tab order, under the top page. */
+.sh-view[data-depth] > :not(.sh-page) { visibility: hidden; }
+
+/* A page: its head (‹ back, title, sub; 44px targets) over its body; a later
+   sibling of the view's root, so it paints over it with no z-index. */
+.sh-page { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--wc-panel-bg); }
+.sh-page[hidden] { display: none; }
+.sh-phead {
+  flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; min-width: 0;
+  padding: 0 12px 0 0; border-bottom: 1px solid var(--wc-border-soft); background: var(--wc-header-bg);
+}
+.sh-back {
+  flex: none; min-width: 44px; height: 44px; margin: 0; padding: 0 12px; border: 0; background: transparent;
+  color: var(--wc-accent-text); font: 600 13px var(--wc-font); cursor: pointer; white-space: nowrap;
+}
+.sh-back:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
+.sh-ptitle { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 14px var(--wc-font); color: var(--wc-fg-bright); }
+.sh-psub { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--wc-mono); color: var(--wc-muted); }
+.sh-pbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* The chat panel in the sheet's Chat page: its header holds the 44px Close and
+   the 44px Stop, and its scrollers keep their scroll to themselves. */
+.chat-sheet .cp-head { height: auto; min-height: 44px; }
+.chat-sheet :is(.cp-stream, .cp-dbody) { overscroll-behavior: contain; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-pull, .chat-tab, .chat-badge { transition: none; }
+  .ct-bar { animation: none; }
+}
 
 /* ── U69 · tasks in the sheet · chat-sheet-tasks.js ── */
 

@@ -217,6 +217,30 @@
         <p>Chat and tasks on your phone land in a later 0.8.5 build; the tab already shows what Claude is doing.</p>
       </div>
     </div>
+    <!-- The real pull (design spec §8.2), inert until public/app/chat-sheet.js's
+         initChatSheet() stamps it in: it takes out whatever holds #chat-pull (the
+         stand-in above) and puts #chat-scrim, then #chat-pull, in its place, as
+         direct children of #stage. CSS alone shows them, below 760px. -->
+    <template class="chat-pull-tpl">
+      <div id="chat-scrim" class="chat-scrim" aria-hidden="true"></div>
+      <div id="chat-pull" class="chat-pull" data-cs-state="idle" data-stop="closed">
+        <button type="button" id="chat-badge" class="chat-badge off" tabindex="-1" aria-controls="chat-sheet"
+                aria-label="No running tasks"><span class="cb-dot" aria-hidden="true"></span><span class="cb-n">0</span></button>
+        <button type="button" id="chat-tab" class="chat-tab" aria-controls="chat-sheet" aria-expanded="false"
+                aria-label="Chat with Claude — idle"><span class="ct-bar" aria-hidden="true"></span><span class="ct-word" aria-hidden="true"></span><span class="ct-count" aria-hidden="true"></span></button>
+        <section id="chat-sheet" class="chat-sheet" role="dialog" aria-modal="false" aria-label="Chat and tasks" inert>
+          <div class="sh-head">
+            <div class="sh-seg" role="tablist" aria-label="Chat or tasks">
+              <button type="button" role="tab" id="sh-tab-chat" class="on" aria-selected="true" aria-controls="sh-chat">Chat</button>
+              <button type="button" role="tab" id="sh-tab-tasks" aria-selected="false" aria-controls="sh-tasks">Tasks<span class="sh-run"></span></button>
+            </div>
+          </div>
+          <div id="sh-chat" class="sh-view" role="tabpanel" aria-labelledby="sh-tab-chat"></div>
+          <div id="sh-tasks" class="sh-view hidden" role="tabpanel" aria-labelledby="sh-tab-tasks"></div>
+        </section>
+        <div id="chat-live" class="sr-only" role="status" aria-live="polite"></div>
+      </div>
+    </template>
     <!-- /chat-host:pull -->
 
     <!-- front glass (scanline + highlight), above content -->
