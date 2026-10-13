@@ -301,11 +301,6 @@ test("the state view says path 'mod' and 'Interrupt' for an attached conversatio
 
 // A mod attaching or leaving wakes the Stop frame's held long-poll at once
 // (bridge.onChange → control.interrupt.refresh()), not at the poll's own wait.
-// OPEN (U115): createControl's `interrupt` facade (lib/server/control/index.js
-// :535, outside U115's grant) must carry `refresh: interrupt.refresh` for
-// control/mod.js to reach it; until that one-line patch lands these two cases
-// are todo. Drop the todo with the patch.
-const REFRESH_TODO = 'needs lib/server/control/index.js to expose interrupt.refresh on control.interrupt (U115 open issue)';
 
 function heldPoll(r, v) {
   const out = { settled: null };
@@ -314,7 +309,7 @@ function heldPoll(r, v) {
   return out;
 }
 
-test('a held Stop-frame long-poll wakes at once when the mod detaches, and again when it attaches', { todo: REFRESH_TODO }, async (t) => {
+test('a held Stop-frame long-poll wakes at once when the mod detaches, and again when it attaches', async (t) => {
   const r = await rig(t, { mirror: fakeMirror({ conversations: [conv('c1', { pid: null })] }) });
   const v0 = (await stateRead(r.surface, { action: 'interrupt', conversation_id: 'c1' })).body;
   assert.deepEqual([v0.path, v0.label], ['mod', 'Interrupt']);
@@ -335,7 +330,7 @@ test('a held Stop-frame long-poll wakes at once when the mod detaches, and again
   assert.deepEqual([b.settled.body.path, b.settled.body.label], ['mod', 'Interrupt']);
 });
 
-test('after mod.unregister() a detach wakes no held poll: the subscription went with it', { todo: REFRESH_TODO }, async (t) => {
+test('after mod.unregister() a detach wakes no held poll: the subscription went with it', async (t) => {
   const r = await rig(t, { mirror: fakeMirror({ conversations: [conv('c1', { pid: null })] }) });
   // While installed, the feed is subscribed; unregister() removes it.
   const before = r.bridge.listeners.size;
