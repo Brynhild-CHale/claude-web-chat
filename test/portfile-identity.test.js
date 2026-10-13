@@ -368,3 +368,75 @@ test('a dead-pid record: lib/client discovery returns null and api() takes the s
   await assert.rejects(client.api('GET', '/api/health', null, { root, spawn: true }), (e) => e instanceof client.NoServerError);
   assert.deepEqual(spawned, [root], 'the spawn path, for this root');
 });
+
+// ── a dead pid, through the core engine (U117) ──────────────────────────────
+// lib/core/portfiles discoverPort is what the driver, `profile reload` and a
+// pack's announce use. A crashed daemon's record still names its port, and
+// that port is often another project's daemon now: here, a listener this test
+// opened, which counts every request it sees.
+
+// A pid that was real and is gone: a child spawned and awaited to exit.
+async function deadPid() {
+  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  await new Promise((r) => child.once('exit', r));
+  assert.equal(portfiles.isPidAlive(child.pid), false, 'the child has exited');
+  return child.pid;
+}
+
+// A root whose portfile names `pid` and a listener's port.
+async function recordAt(t, pid) {
+  withTempHome(t);
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-pf-identity-'));
+  t.after(() => { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} });
+  const root = projectIn(base, 'p');
+  const other = await standIn(t, projectIn(base, 'other'));
+  portfiles.writePortfile('server', { root, pid, port: other.port });
+  return { root, other };
+}
+
+test('a dead-pid record: portfiles.discoverPort is null, createDriver throws NoServerError, profile reload finds no daemon, and the port\'s new owner sees nothing', async (t) => {
+  const { root, other } = await recordAt(t, await deadPid());
+  assert.equal(portfiles.discoverPort({ role: 'server', root, env: true }), null);
+
+  let driver = null;
+  let err = null;
+  try { driver = createDriver({ owner: 'pf-test', root }); } catch (e) { err = e; }
+  // Were a driver handed back, show what it would do: write to that surface.
+  if (driver) await driver.getStore().catch(() => {});
+  assert.ok(err instanceof client.NoServerError, `createDriver threw ${err && err.message}`);
+
+  const profile = require('../lib/cli/commands/profile');
+  const cwd = process.cwd();
+  let out;
+  try {
+    process.chdir(root);
+    out = await captureLog(() => profile(['reload']));
+  } finally { process.chdir(cwd); }
+  assert.match(out, /no running daemon/);
+
+  assert.deepEqual(other.requests, [], 'the listener on the dead daemon\'s port is never reached');
+});
+
+test('the same record with a live pid (this process) discovers its port (control)', async (t) => {
+  const { root, other } = await recordAt(t, process.pid);
+  assert.equal(portfiles.discoverPort({ role: 'server', root, env: true }), other.port);
+  assert.equal(createDriver({ owner: 'pf-test', root }).port, other.port);
+  assert.equal(client.discoverPort({ root }), other.port);
+});
+
+test('an explicit port and WEB_CHAT_PORT still win over a dead-pid record', async (t) => {
+  const { root } = await recordAt(t, await deadPid());
+  const explicit = await closedPort();
+  assert.equal(portfiles.discoverPort({ role: 'server', root, port: explicit, env: true }), explicit);
+  assert.strictEqual(portfiles.discoverPort({ role: 'server', root, port: String(explicit) }), explicit);
+  assert.equal(createDriver({ owner: 'pf-test', root, port: explicit }).port, explicit);
+
+  const envPort = await closedPort();
+  process.env.WEB_CHAT_PORT = String(envPort);
+  t.after(() => { delete process.env.WEB_CHAT_PORT; });
+  assert.strictEqual(portfiles.discoverPort({ role: 'server', root, env: true }), envPort);
+  assert.strictEqual(createDriver({ owner: 'pf-test', root }).port, envPort);
+  assert.strictEqual(client.discoverPort({ root }), envPort);
+  // env stays opt-in on the core engine: without it the dead record is no daemon.
+  assert.equal(portfiles.discoverPort({ role: 'server', root }), null);
+});
