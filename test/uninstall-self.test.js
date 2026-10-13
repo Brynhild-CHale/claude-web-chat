@@ -206,11 +206,21 @@ test('--self --keep-running stops no daemon and not the hub, and prints the kill
   const old = await stubServer(t, { health: instanceHealth(oldPid.pid, null), onShutdown: () => {} });
   const hubPid = bystander(t);
   registry.registerHub({ port: 1, pid: hubPid.pid });
+  // A registered row whose port answers as another pid: listed as an out-of-date
+  // record ('identity'), not as a running server, and never asked.
+  const recorded = bystander(t);
+  const answering = bystander(t);
+  const stale = projectRoot(t, 'wc-unself-stale-');
+  const staleStub = await stubServer(t, { health: instanceHealth(answering.pid, registry.instanceId(stale)), onShutdown: () => {} });
+  registry.registerInstance({ root: stale, port: staleStub.port, pid: recorded.pid });
 
   const { res, text } = await captured(() => uninstall(['--self', '--keep-running'], {
     cwd: projectRoot(t),
     ...seams(order, { scanPorts: [a.port, old.port] }),
   }));
+  assert.equal(res.unverified.find((u) => u.pid === recorded.pid).reason, 'identity');
+  assert.equal(res.unverified.find((u) => u.pid === a.pid).reason, 'running');
+  assert.equal(staleStub.shutdowns, 0);
 
   assert.equal(a.stub.shutdowns, 0);
   assert.equal(old.shutdowns, 0);
