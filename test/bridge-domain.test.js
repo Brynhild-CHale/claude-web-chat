@@ -582,6 +582,27 @@ test('events: past the cap, a new message_id at the same index is a new step; an
   assert.equal(h.bridge.status().counters.events_rate_dropped, 0);
 });
 
+test('events: past the cap, the same index in another turn is another step, even before either names its message', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const at = h.clock.now() - 5000;
+  const fill = Array.from({ length: 30 }, (_, i) => ({ kind: 'turn.start', at: at + i, turn_id: `f${i}` }));
+  h.bridge.events(token, {
+    events: [
+      ...fill,
+      stepEv(at + 30, 't1', 0, null, 'a;'),
+      stepEv(at + 31, 't1', 0, null, 'b;'),
+      stepEv(at + 32, 't2', 0, null, 'c;'),
+    ],
+  });
+  await settle();
+  await h.clock.advance(1000);
+  assert.deepEqual(h.published.slice(30).map((e) => ({ turn_id: e.mod.turn_id, index: e.mod.index, delta: e.mod.delta })), [
+    { turn_id: 't1', index: 0, delta: 'a;b;' },
+    { turn_id: 't2', index: 0, delta: 'c;' },
+  ]);
+});
+
 test('events: past the cap, at most 30 envelopes are held; a further step is dropped and counted, and the held ones publish in order inside the cap', async (t) => {
   const h = setup(t);
   const token = h.attach();
