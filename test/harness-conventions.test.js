@@ -223,7 +223,9 @@ const PATTERNS = [
     // by U111, added by U94b (tranche 6). test/css-cascade.test.js keeps its own
     // tripwire for the same thing beside the helper's unit tests. Counted on
     // lines that are not `//` comments: the helper's header names both.
-    name: 'function specificity( / function parseRules( (a private cascade reader)',
+    // (The name avoids spelling the definition itself: css-cascade.test.js's
+    // tripwire reads this file too.)
+    name: 'a specificity / parseRules definition (a private cascade reader)',
     home: 'test-support/css-cascade.js — `createCascade(css, {win})` → `value` / `cascade` / `inherited`',
     what: "reading a stylesheet's cascade in a chrome test",
     roots: ROOTS,
