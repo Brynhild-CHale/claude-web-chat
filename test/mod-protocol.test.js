@@ -300,6 +300,12 @@ test('validateEvent: diag drops a shape key or path the redactor would change, k
   });
   assert.deepEqual(d, { kind: 'diag', at: AT, shapes: { 'tool.call': ['tool_name', 'input.command'], driver: ['driver'] } });
   assert.deepEqual(findLeaks(JSON.stringify(d), fakes), []);
+
+  // The per-kind cap counts the paths that are KEPT: a dropped secret takes no
+  // slot, and a kind keeps exactly SHAPE_PATHS_MAX (64) of 70 ordinary paths.
+  const many = Array.from({ length: 70 }, (_, i) => `p${i}`);
+  const capped = validateEvent('diag', { at: AT, shapes: { 'tool.call': [ghs, ...many] } });
+  assert.deepEqual(capped.shapes['tool.call'], many.slice(0, 64));
 });
 
 // ── the hello and the result ────────────────────────────────────────────────
