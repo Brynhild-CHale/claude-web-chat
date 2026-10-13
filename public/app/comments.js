@@ -8,7 +8,6 @@
 // shared pins via get_comments.
 import { view, $, hostFor } from './state.js';
 import { esc } from './esc.js';
-import { onHello } from './ws.js';
 
 // The cadences (design spec §10.1: each perpetual chrome poller is ONE
 // setInterval). The WS `comments` frame is the primary path; the fetch is a
@@ -463,6 +462,10 @@ export function initComments() {
   document.addEventListener('visibilitychange', onVisibility);
   setInterval(markerPass, MARKER_MS); // reflow / preview-transition fallback; rebuilds only on a pin-set change (F11)
   setInterval(refresh, REFRESH_MS);   // fallback sync — the WS `comments` frame is the primary path (F13)
-  onHello(() => { refresh(); });      // a (re)connect may have missed a `comments` frame
+  // A (re)connect may have missed a `comments` frame. ws.js is loaded lazily:
+  // a top-level import would pull ws.js -> store.js (which reads `window` at
+  // module evaluation) into the graph of every module that imports this one,
+  // and queue.js and chat-composer.js are imported by no-DOM module tests.
+  import('./ws.js').then(({ onHello }) => onHello(() => { refresh(); }));
   refresh();
 }
