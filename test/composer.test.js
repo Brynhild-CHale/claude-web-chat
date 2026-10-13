@@ -77,9 +77,11 @@ test('normalizeText: line breaks, the guard, trailing whitespace', () => {
   assert.equal(normalizeText(null), '');
 });
 
-test('BUILTIN_COMMANDS is §6.3\'s 37 names, in order, frozen', () => {
+test('BUILTIN_COMMANDS is §6.3\'s 37 names, then plan, rename and recap, in order, frozen', () => {
+  // U91 (ruled D-defaults (a), U91@builtin-additions; F1 (a)): the three
+  // 2.1.296 built-ins §6.3's list predates are appended.
   assert.equal(SPEC_BUILTINS.length, 37);
-  assert.deepStrictEqual([...BUILTIN_COMMANDS], SPEC_BUILTINS);
+  assert.deepStrictEqual([...BUILTIN_COMMANDS], [...SPEC_BUILTINS, 'plan', 'rename', 'recap']);
   assert.equal(Object.isFrozen(BUILTIN_COMMANDS), true);
   assert.throws(() => { 'use strict'; BUILTIN_COMMANDS.push('x'); });
 });
@@ -447,4 +449,151 @@ test('a refused skill name from the request is named literally: no $ pattern in 
     assert.equal(r.hint, `/${name} is not a skill Claude can run in this conversation.`);
     assert.equal(r.hint.includes('<name>'), false, r.hint);
   }
+});
+
+// ── the composer on the mod (U91, spec §15.7; ruled D4 (a), D-defaults (a)) ──
+
+const { SAFE_MOD_COMMANDS, RENAME_MAX, parseModCommand } = composer;
+const { MOD_COMMANDS, validateOp } = require('../lib/core/mod-protocol');
+
+// A catalog with a mod: modCommands answers `answer` (a value, a Promise, or
+// a function to call), and records what it was asked.
+function modSkills(answer) {
+  const s = fakeSkills();
+  s.modCalls = [];
+  s.modCommands = (cid) => {
+    s.modCalls.push(cid);
+    return typeof answer === 'function' ? answer(cid) : answer;
+  };
+  return s;
+}
+const MOD_HINT = (name) => `/${name} runs from this page only with the web-chat mod (claude-web-chat mod on); otherwise type it in the terminal.`;
+
+test('SAFE_MOD_COMMANDS is the five, frozen, each a built-in and a mod command', () => {
+  assert.deepStrictEqual([...SAFE_MOD_COMMANDS], ['plan', 'compact', 'context', 'rename', 'recap']);
+  assert.equal(Object.isFrozen(SAFE_MOD_COMMANDS), true);
+  for (const name of SAFE_MOD_COMMANDS) {
+    assert.ok(BUILTIN_COMMANDS.includes(name), `${name} is a built-in`);
+    assert.ok(MOD_COMMANDS.includes(name), `${name} is one of mod-protocol's MOD_COMMANDS`);
+  }
+  // /clear and /resume stay behind the control frame (U93); no config command.
+  for (const name of ['clear', 'resume', 'model', 'config', 'permissions', 'autocompact']) assert.ok(!SAFE_MOD_COMMANDS.includes(name), name);
+  assert.ok(REFUSALS.includes('command_files'));
+  assert.equal(HINTS.command_files, 'A command takes no files: send the files in a message of their own.');
+});
+
+test('parseModCommand: a leading safe /name, lowercased; its args trimmed and guarded; a rename is one line of 1-64', () => {
+  assert.deepStrictEqual(parseModCommand('/Rename  new name '), { command: 'rename', args: 'new name' });
+  assert.equal(parseModCommand('/rename first\nsecond'), null);
+  assert.equal(parseModCommand('/rename'), null);
+  assert.equal(parseModCommand(`/rename ${'x'.repeat(RENAME_MAX + 1)}`), null);
+  assert.deepStrictEqual(parseModCommand(`/rename ${'x'.repeat(RENAME_MAX)}`), { command: 'rename', args: 'x'.repeat(RENAME_MAX) });
+  assert.deepStrictEqual(parseModCommand('/plan'), { command: 'plan', args: '' });
+  assert.deepStrictEqual(parseModCommand('  /PLAN  '), { command: 'plan', args: '' });
+  assert.deepStrictEqual(parseModCommand('/compact keep\n  the\ttests'), { command: 'compact', args: 'keep the tests' });
+  assert.deepStrictEqual(parseModCommand(`/compact a${BIDI_OVERRIDE}b${ZWSP}c`), { command: 'compact', args: 'abc' });
+  for (const t of ['/model', '/clear', '/resume x', 'plan', 'run /plan', '/plan/x', '', null, 7]) assert.equal(parseModCommand(t), null, String(t));
+  // RENAME_MAX is the mod's own bound for the command op.
+  assert.equal(validateOp('command', { name: 'rename', args: 'x'.repeat(RENAME_MAX) }).ok, true);
+  assert.equal(validateOp('command', { name: 'rename', args: 'x'.repeat(RENAME_MAX + 1) }).ok, false);
+});
+
+test('classifySkill: a safe name with a mod is mod_command, checked before the built-ins; anything but true is no mod', async () => {
+  assert.equal(await classifySkill('plan', { skills: modSkills(true) }), 'mod_command');
+  assert.equal(await classifySkill('Compact', { skills: modSkills(Promise.resolve(true)) }), 'mod_command');
+  for (const answer of [false, 'yes', 1, null, Promise.resolve(false), () => { throw new Error('boom'); }, () => Promise.reject(new Error('x'))]) {
+    assert.equal(await classifySkill('plan', { skills: modSkills(answer) }), 'builtin', String(answer));
+  }
+  assert.equal(await classifySkill('plan', { skills: fakeSkills() }), 'builtin');
+  assert.equal(await classifySkill('model', { skills: modSkills(true) }), 'builtin');
+  const s = modSkills(true);
+  await classifySkill('recap', { skills: s, conversation_id: 'c-9' });
+  assert.deepStrictEqual(s.modCalls, ['c-9']);
+  // Only a safe name asks the adapter.
+  const t = modSkills(true);
+  await classifySkill('model', { skills: t });
+  await classifySkill('review', { skills: t });
+  assert.deepStrictEqual(t.modCalls, []);
+});
+
+test('a safe command with a mod is accepted as plain text, kept exactly as typed', async () => {
+  for (const skills of [modSkills(true), modSkills(Promise.resolve(true))]) {
+    for (const text of ['/plan', '/compact', '/context', '/rename v40 test', '/recap', '/Plan']) {
+      const r = await validateMessage({ text }, deps({ skills }));
+      assert.equal(r.ok, true, `${text}: ${r.hint}`);
+      assert.equal(r.message.text, text);
+      assert.equal(r.message.skill, null);
+      assert.deepStrictEqual(r.message.files, []);
+    }
+  }
+});
+
+test('a safe command with args follows the mod\'s command op: accepted where it takes them, else refused with its words', async () => {
+  // Claude Code 2.1.296 takes '/plan <description>' and '/compact
+  // <instructions>'; lib/core/mod-protocol decides what the op carries, and
+  // the validation follows it rather than failing after the send.
+  for (const [text, name, args] of [['/plan x', 'plan', 'x'], ['/compact keep the tests', 'compact', 'keep the tests']]) {
+    const r = await validateMessage({ text }, deps({ skills: modSkills(true) }));
+    const v = validateOp('command', { name, args });
+    if (v.ok) {
+      assert.equal(r.ok, true);
+      assert.equal(r.message.text, text);
+      assert.equal(r.message.skill, null);
+    } else {
+      assert.equal(r.ok, false);
+      assert.equal(r.refused, 'builtin_command');
+      assert.equal(r.hint, `${v.hint} — type /${name} in the terminal to run it that way.`);
+    }
+  }
+  const multi = await validateMessage({ text: '/rename one\ntwo' }, deps({ skills: modSkills(true) }));
+  assert.equal(multi.ok, false);
+  assert.equal(multi.refused, 'builtin_command');
+  assert.match(multi.hint, /one line/);
+  const slash = await validateMessage({ text: '/rename /etc' }, deps({ skills: modSkills(true) }));
+  assert.equal(slash.ok, false);
+  assert.equal(slash.refused, 'builtin_command');
+});
+
+test('without a mod a safe command is refused builtin_command with the mod hint; /model and every other built-in, with or without one', async () => {
+  for (const skills of [fakeSkills(), modSkills(false), modSkills(() => { throw new Error('x'); }), modSkills(() => Promise.reject(new Error('y')))]) {
+    const r = await validateMessage({ text: '/plan x' }, deps({ skills }));
+    assert.equal(r.ok, false);
+    assert.equal(r.refused, 'builtin_command');
+    assert.equal(r.hint, MOD_HINT('plan'));
+  }
+  const odd = await validateMessage({ text: '/Re$&cap' }, deps({ skills: fakeSkills() }));
+  assert.equal(odd.ok, true, 'not a command name: plain text');
+  const cased = await validateMessage({ text: '/Recap' }, deps({ skills: fakeSkills() }));
+  assert.equal(cased.hint, MOD_HINT('Recap'));
+  for (const skills of [fakeSkills(), modSkills(true)]) {
+    for (const name of BUILTIN_COMMANDS.filter((n) => !SAFE_MOD_COMMANDS.includes(n))) {
+      const r = await validateMessage({ text: `/${name}` }, deps({ skills }));
+      assert.equal(r.ok, false, name);
+      assert.equal(r.refused, 'builtin_command', name);
+      assert.equal(r.hint, `/${name} is a Claude Code command: type it in the terminal.`, name);
+    }
+  }
+});
+
+test('a mod command with a file is refused command_files; an explicit skill field naming a command stays builtin_command', async () => {
+  const r = await validateMessage({ text: '/compact', files: ['a.js'] }, deps({ skills: modSkills(true) }));
+  assert.equal(r.ok, false);
+  assert.equal(r.refused, 'command_files');
+  assert.equal(r.hint, HINTS.command_files);
+  for (const name of ['plan', 'compact', 'model']) {
+    const e = await validateMessage({ skill: { name } }, deps({ skills: modSkills(true) }));
+    assert.equal(e.ok, false);
+    assert.equal(e.refused, 'builtin_command');
+    assert.equal(e.hint, `/${name} is a Claude Code command: type it in the terminal.`);
+  }
+});
+
+test('an edit re-validates a mod command against the item\'s conversation', async () => {
+  const skills = modSkills((cid) => cid === 'c-mod');
+  const ok = await validateEdit({ text: 'hi', conversation_id: 'c-mod' }, { text: '/context' }, deps({ skills }));
+  assert.equal(ok.ok, true);
+  assert.equal(ok.message.text, '/context');
+  const no = await validateEdit({ text: 'hi', conversation_id: 'c-other' }, { text: '/context' }, deps({ skills }));
+  assert.equal(no.refused, 'builtin_command');
+  assert.equal(no.hint, MOD_HINT('context'));
 });
