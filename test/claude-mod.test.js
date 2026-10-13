@@ -624,6 +624,28 @@ test('a batch goes at once at 50 events; at most 200 wait while the bridge is aw
   assert.equal(attachedTo(b).counters.events_accepted, before, '49 wait for the (held) timer');
   await host.fire('prompt.submit', { text: 'y', origin: { kind: 'composer' } });
   await waitUntil(() => attachedTo(b).counters.events_accepted === before + 50, { timeout: 3000, what: 'the batch at 50' });
+
+  // The first turn.complete queues the diag (turn.complete + diag = 2 events);
+  // 48 more fill the next batch of 50, so it goes without the held timer. The
+  // diag counts what the mod dropped: 301 events waited (session.start, then
+  // the 300 prompts) and the 101 oldest of them went.
+  await host.fire('turn.complete', { turnId: 't_b', answer: 'ok', reason: 'answer', durationMs: 1, isAborted: false });
+  for (let i = 0; i < 48; i++) await host.fire('prompt.submit', { text: 'z', origin: { kind: 'composer' } });
+  await waitUntil(() => attachedTo(b).shapes.driver, { timeout: 3000, what: 'the diag' });
+  assert.deepEqual(attachedTo(b).shapes.dropped, ['101'], 'the diag says how many events the mod dropped');
+  assert.deepEqual(attachedTo(b).shapes.failed, ['0']);
+});
+
+test('the diag counts what the mod failed to handle: a handler that threw', async (t) => {
+  const { b, host } = await attachedHost(t);
+  // A turn.complete whose turnId throws on read: the handler's catch counts it.
+  const bad = { answer: 'ok', reason: 'answer', get turnId() { throw new Error('unreadable'); } };
+  await host.fire('turn.complete', bad);
+  assert.equal(attachedTo(b).shapes.driver, undefined, 'a handler that threw sends no diag');
+  await host.fire('turn.complete', { turnId: 't_f', answer: 'ok', reason: 'answer', durationMs: 1, isAborted: false });
+  await waitUntil(() => attachedTo(b).shapes.driver, { timeout: 5000, what: 'the diag' });
+  assert.deepEqual(attachedTo(b).shapes.failed, ['1'], 'the diag says how many the mod failed to handle');
+  assert.deepEqual(attachedTo(b).shapes.dropped, ['0']);
 });
 
 test('a 401 (the token superseded) makes the mod say hello again', async (t) => {

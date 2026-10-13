@@ -31,7 +31,8 @@
 //      Claude Code refuses `$` calls made outside a hook, it falls back to
 //      driving each step from $.clock.every, so every call runs inside a
 //      dispatch Claude Code scheduled (ruling C-defaults (a)); the `diag` event
-//      says which driver ran, for gate V35.
+//      says which driver ran, for gate V35, and how many events were dropped
+//      or failed to send.
 //   4. The events, batched (every flush_ms, or at once at BATCH_MAX), at most
 //      200 waiting (the oldest dropped and counted).
 //   5. PermissionRequest transport: with the hello's permission_wait_ms > 0, a
@@ -728,7 +729,19 @@ export function register(on) {
     if (st.diagSent) return;
     st.diagSent = true;
     const driver = st.driver || 'loop';
-    push('diag', { shapes: { ...st.shapes, driver: [driver] }, driver });
+    // The bridge keeps only `shapes` of a diag (validateEvent), so the driver
+    // and the two counters ride inside it as one-entry lists: how many events
+    // this mod dropped (over the 200 waiting, or one too big for a batch) and
+    // how many it failed to send or build, up to this diag.
+    push('diag', {
+      shapes: {
+        ...st.shapes,
+        driver: [driver],
+        dropped: [String(st.counters.dropped)],
+        failed: [String(st.counters.failed)],
+      },
+      driver,
+    });
   }
 
   // ── ops ──
