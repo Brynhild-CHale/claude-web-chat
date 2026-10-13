@@ -14,6 +14,12 @@
 //       whitespace is normalised (index.html split one across a line break).
 //       U94b may drop this pin once tranche 6 is accepted.
 //   (c) `claude-web-chat help`'s stop row says what stop does since U107.
+//   (d) the shipped chrome describes no later build (U116, tranche 7): the
+//       stand-ins of the 2026-10-02 ruling went once every real thing had
+//       registered, so no tracked file under public/, lib/ or templates/ says
+//       "under development" (any case), "later 0.8.5 build" or "until tranche
+//       4", after whitespace is normalised. test/ is not scanned: its absence
+//       pins quote the phrase.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -90,4 +96,22 @@ test('(c) help: stop\'s row says it stops every server rooted at the project', (
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+// U116: what a later build would bring is no longer on the page.
+const LATER_BUILD = ['under development', 'later 0.8.5 build', 'until tranche 4'];
+
+test('(d) no tracked file under public/, lib/ or templates/ describes a later build', () => {
+  assert.equal(normalise('is under\n// Development').toLowerCase(), 'is under development');
+  const files = tracked('public', 'lib', 'templates');
+  assert.ok(files.includes('public/app/chat-bar.js') && files.includes('lib/server/mirror/index.js')
+    && files.some((f) => f.startsWith('templates/')), 'precondition: the scan reaches public/, lib/ and templates/');
+  const hits = [];
+  for (const f of files) {
+    const buf = fs.readFileSync(path.join(REPO, f));
+    if (buf.includes(0)) continue;   // an image or a font: no prose to say it
+    const text = normalise(buf.toString('utf8')).toLowerCase();
+    for (const p of LATER_BUILD) if (text.includes(p)) hits.push(`${f}: "${p}"`);
+  }
+  assert.deepEqual(hits, [], 'a fallback says what is true in this build, never what a later one brings');
 });
