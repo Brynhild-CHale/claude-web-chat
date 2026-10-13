@@ -3010,6 +3010,24 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 }
 
 /* ── U70 · the queue in the sheet · chat-sheet-queue.js ── */
+/* The queue in the sheet (design spec §8.7, deviation 17): below 760px
+   chat-sheet-queue.js MOVES #queue-rail (never a copy) into the Tasks → Queue
+   page's body (.sh-qbody) with .in-sheet, and returns it to its place at 760px
+   and wider. Here it is a plain column filling the page: no strip, no head (the
+   page's own head carries the title and the counts), no hover width, no shadow;
+   its items scroll and keep their scroll to themselves. The narrow 44px rules
+   (.qi-stage, .qi-revert, .rail-add, .rail-push, Cancel delivery, Take back, the
+   error actions) name the rail's parts, not its place, so they hold here too;
+   a peek, 32px on the narrow full-screen rail, is 44px in the sheet. The 16px
+   editables are U71's id-scoped rule. Tokens only. */
+.chat-sheet .sh-pbody.sh-qbody { display: flex; flex-direction: column; overflow: hidden; }
+.chat-sheet .rail.in-sheet { position: static; display: flex; flex-direction: column; flex: 1; min-height: 0; width: auto;
+  height: auto; overflow: hidden; background: transparent; border: 0; box-shadow: none; transition: none; }
+.chat-sheet .rail.in-sheet::before, .chat-sheet .rail.in-sheet :is(.rail-collapsed, .rail-head) { display: none; }
+.chat-sheet .rail.in-sheet .rail-expanded { position: static; flex: 1; min-height: 0; width: auto; opacity: 1;
+  pointer-events: auto; padding: 8px 16px 12px; }
+.chat-sheet .rail.in-sheet .rail-items { overscroll-behavior: contain; }
+.chat-sheet .rail.in-sheet .qi-peek { min-height: 44px; }
 
 /* ── U71 · the keyboard · sheet-keyboard.js ── */
 /* Keyboard mode (design spec §8.5): while an editable in the sheet has focus
