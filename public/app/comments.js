@@ -9,6 +9,16 @@
 import { view, $, hostFor } from './state.js';
 import { esc } from './esc.js';
 
+// The cadences (design spec §10.1: each perpetual chrome poller is ONE
+// setInterval). The WS `comments` frame is the primary path; the fetch is a
+// fallback that re-reads what a reconnect may have missed (every hello) and,
+// at most every 30 s, anything else — never while the tab is hidden. The
+// marker pass follows reflow and the preview transition, and does its layout
+// work only with pins on a visible page (ruled U103@comments-poll, A-defaults).
+const REFRESH_MS = 30000;
+const MARKER_MS = 500;
+const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
 // Module-level pin-mode state, shared between the #btn-pin-mode click handler
 // (wired in initComments) and the exported togglePinMode()/setPinMode() the
 // keyboard layer calls. `btn` is assigned once initComments runs.
@@ -26,7 +36,7 @@ let closePopFn = null;
 export function closePinPop() { if (closePopFn) closePopFn(); }
 
 // F13: apply a pushed `comments` WS frame — swap the live pin set and repaint
-// markers immediately (the 3s poll is now only a fallback). Exported for ws.js.
+// markers immediately (the 30 s poll and the hello refresh are the fallback). Exported for ws.js.
 export function applyCommentsFrame(comments) {
   liveComments = Array.isArray(comments) ? comments : [];
   if (renderMarkersFn) renderMarkersFn();
@@ -76,7 +86,12 @@ export function initComments() {
 
   const cssEsc = (window.CSS && CSS.escape) ? CSS.escape.bind(CSS) : (s) => s;
 
+  // A refresh asked for while the tab is hidden (the 30 s poll, a hello) is
+  // not sent: it is remembered, and the tab's return to visible sends it.
+  let stale = false;
   async function refresh() {
+    if (isHidden()) { stale = true; return; }
+    stale = false;
     try {
       const r = await fetch('/api/comments').then((x) => x.json());
       liveComments = Array.isArray(r.comments) ? r.comments : [];
@@ -426,10 +441,31 @@ export function initComments() {
   }
   renderMarkersFn = renderMarkers; // expose for applyCommentsFrame (F13)
 
+  // The periodic pass: nothing at all on a hidden page, or with no pins and no
+  // marker left to take down — resolving anchors and reading their rects is a
+  // forced layout, which an idle page must not pay twice a second.
+  function markerPass() {
+    if (isHidden()) return;
+    if (!liveComments.length && !layer.firstChild) return;
+    renderMarkers();
+  }
+  // Back to visible: one pass at once, or the refresh a hidden tab put off
+  // (which ends in a pass of its own).
+  function onVisibility() {
+    if (isHidden()) return;
+    if (stale) refresh(); else markerPass();
+  }
+
   // Scroll/resize only reposition (F11) — cheap and non-destructive.
   window.addEventListener('scroll', positionMarkers, true);
   window.addEventListener('resize', positionMarkers);
-  setInterval(renderMarkers, 500); // reflow / preview-transition fallback; rebuilds only on a pin-set change (F11)
-  setInterval(refresh, 3000);      // fallback sync — the WS `comments` frame is now the primary path (F13)
+  document.addEventListener('visibilitychange', onVisibility);
+  setInterval(markerPass, MARKER_MS); // reflow / preview-transition fallback; rebuilds only on a pin-set change (F11)
+  setInterval(refresh, REFRESH_MS);   // fallback sync — the WS `comments` frame is the primary path (F13)
+  // A (re)connect may have missed a `comments` frame. ws.js is loaded lazily:
+  // a top-level import would pull ws.js -> store.js (which reads `window` at
+  // module evaluation) into the graph of every module that imports this one,
+  // and queue.js and chat-composer.js are imported by no-DOM module tests.
+  import('./ws.js').then(({ onHello }) => onHello(() => { refresh(); }));
   refresh();
 }
