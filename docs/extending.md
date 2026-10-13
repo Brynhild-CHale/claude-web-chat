@@ -219,7 +219,7 @@ lib/core/          paths · portfiles · bus · names · fsjson · html · versi
                    fonts · theme-values · trust-marks · watch · redact · text ·
                    stable-json · tool-input · prompt-class · claude-files ·
                    claude-sessions · claude-cli · image-file · project-identity ·
-                   icon
+                   icon · mod-protocol
                                                      (zero deps on the rest of lib/)
 ```
 
@@ -233,6 +233,14 @@ lib/core/          paths · portfiles · bus · names · fsjson · html · versi
   points. It may import another shared library (`lib/packs` uses `lib/update`'s
   archive reader); it may never import an entry point.
 - A helper that seems to belong in two layers belongs in the lower one.
+- **The web-chat mod is outside all of this.** `templates/claude-mod/` is a
+  Claude Code plugin that runs inside Claude Code's own runtime, so it requires
+  nothing from `lib/` and is not in the graph the test parses. What it shares
+  with the daemon — the op and command allowlists, the event kinds, the caps —
+  is `lib/core/mod-protocol` (a core leaf), copied into `hooks/register.js` as
+  a JSON literal (`WIRE`) that `test/claude-mod.test.js` holds equal to the
+  module's exports, and the conventions ratchet holds the allowlists to those
+  two homes.
 
 **`test/dependency-direction.test.js` enforces this.** It parses every relative
 `require()` under `lib/`, maps it to an edge between two subsystems, and fails
@@ -270,9 +278,11 @@ were the only places they lived.
 | resolve a path under `.claude/` (settings, rules, skills), or one in Claude Code's OWN user tier (transcripts, the per-process sessions files, plans) | `core/paths` `claudePaths(root)` / `userClaudePaths()` — its Claude Code keys sit under `configDir`, which is `claudeConfigDir()` (`CLAUDE_CONFIG_DIR` when set, else the home directory's `.claude`), while its pack keys stay under the home directory; a project's transcript directory is `userClaudePaths().projectDir(realpath(dir))`, named by `claudeProjectSlug` | hardcode `'.claude'`, read Claude Code's tier off the home directory, or derive a slug by hand (it is lossy, and Claude Code names a project by its physical path) |
 | name a file after an id that came from outside (a Claude Code session id, a turn id) | `core/paths` `isSafeId(id)` — 1 to 100 letters, digits, underscores and hyphens, so it can never form a path; the path keys that take such an id answer null for anything else | join an id onto a directory unchecked |
 | find the project root (nearest `.web-chat` ancestor) | `core/paths` `findProjectRoot(dir)` | walk parent dirs yourself |
+| ask whether a folder is the home directory, or holds the user tier (and so can never be a project root) | `core/paths` `isHomeDir(dir)` — `$HOME` by path or its native real path, OR a folder whose `.web-chat/` holds the user tier (`holdsUserTier(dir)`: any of the version store, the `current` link, the machine registry or the known-projects list, read with lstat) — so every home guard (`findProjectRoot`'s walk, `rememberProject`, install, init, start's handed root) covers a HOME pointed elsewhere | a `$HOME` comparison of your own, or a root accepted because HOME points somewhere else today |
 | ask whether a path is inside a directory (a fence) | `core/paths` `isInside(parent, child)` / `realpath(p)` | `startsWith` / `path.relative` containment by hand |
 | fence a path you were HANDED (a store value, a form field), incl. one about to be created | `core/paths` `fence(parent, child)` → abs \| null (services get it as `ctx.fence`) | a lexical `path.relative` check that a symlink walks straight out of |
 | read / write / discover a daemon portfile | `core/portfiles` `readPortfile` / `writePortfile` / `discoverPort` | read `server.json` by hand |
+| know whose a portfile is, or a project's instance id | `core/portfiles` `instanceId(root)` (sha1 of `canonicalRoot(root)`: a symlinked or differently-cased spelling of one folder is one project, and a physical root keeps the id it always had) · `sameRoot(a, b)` · `rootOfPortfile(file)` — `writePortfileFile` stamps `root`, `instance` and (for its own pid) `proc_start`; a read whose `root` is not this file's root answers null, and `{includeForeign: true}` (doctor and status only: they report or remove the copy) answers it marked `foreign`; `deletePortfileFile` removes a foreign copy, or a live pid whose start differs | hash a root yourself, or act on a copied portfile (another project's `root`) |
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` — the raw primitives, for a caller that does not need to know WHOSE daemon answers; after a spawn, wait with `lib/util/daemon` `waitForDaemon` (below) | spin your own `readPortfile` loop |
 | wait for THIS root's daemon after a spawn (verified, not just reachable) | `lib/util/daemon` `waitForDaemon(root, {maxMs, intervalMs, daemonFor, not})` — polls registry `daemonFor` until it verifies this root's daemon (skipping the `not` pid and port, the daemon a bounce replaced) → the record or null; `DAEMON_WAIT_MS`; `start --daemon`, `open` and `spawnDaemon` all wait through it | `waitUntilReachable` or a raw-portfile loop after a spawn (a copied portfile names another project's daemon), or a private daemonFor polling loop |
@@ -327,6 +337,8 @@ were the only places they lived.
 | take a hook event in on the daemon | `lib/server/routes/hooks` `mountHookRoutes` — `/api/hooks/event`, host only, validates envelope v1 (`checkEnvelope`), answers at once and publishes on `ctx.hooks` after the response | a second intake, or one a browser, a remote viewer or a network peer can post to (a forged SessionEnd would end Claude's turn in the mirror) |
 | hold a permission prompt, a question or a plan the ask hook is waiting on, and decide it | `lib/server/domain/asks` `createAsks({bus, hooks, mirror, getViewers, audience, answerSurface, redactor, root})`, exposed as `ctx.asks`: `create` / `poll` / `decide(id, decision, {via, remote, device})` / `withdraw` / `handed` / `displayView` / `waitView` / `list({level})`. A create matching a pending ask within `DUPLICATE_MS` (2 s) answers `duplicate`; an ask whose hook has not polled for `HOOK_SILENT_MS` (15 s) resolves `expired`; a question's answer is stored as picks by index; outcomes go out on the MIRROR bus as ring kind `ask` so `get_events` and SSE drivers do not see them. Its routes are `lib/server/routes/asks` `mountAskRoutes` (the hook's create, poll, handed and withdraw, host only) | a second store of pending prompts, a decide route on the main origin, or an ask outcome on the main bus |
 | print the ask hook's answer for Claude Code (allow, deny, a question's answers, a plan's approval) | `lib/hooks/ask-output` `buildAskOutput(kind, local, decision)` — maps the stored picks onto the hook's own unredacted copy of the request, and prints nothing (throwing, so the hook log records it) when it cannot; `lib/hooks/ask` is the hook that polls for the decision, reading a plan only from inside the configured plans directory (`plansDirectoryOf`) | a second `hookEventName: 'PermissionRequest'` (the ratchet holds it) |
+| answer an MCP server's form request (an elicitation) from the browser | `lib/hooks/elicitation` `elicit(payload, ctx)` — the `elicit` hook on Elicitation: it waits only while a local viewer is connected, at most `ELICIT_WAIT_MS` (45 s), for a flat form of strings, numbers, booleans and string enums (`formSchema`; never `mode: 'url'`), long-polls the asks domain like the ask hook, and prints `buildElicitationOutput(decision, schema)` — the one builder, each value typed from the hook's OWN copy of the schema — or nothing, and the terminal's dialog appears; the asks domain's `kind: 'elicitation'` is local only at every level, and the form's content is never logged or kept past its print · `public/app/prompts-mod.js` `pendingElicitation` / `elicitationLine` (the bar's *MCP input · <server>*) | a second `hookEventName: 'Elicitation'` (the ratchet holds it), a field filled for the user, or the content in a log |
+| carry a permission prompt through the mod instead of the ask hook | `lib/server/domain/asks` `createFromMod(env)` / `withdrawFromMod(env)` (the domain hears the mod's `permission.request` and `permission.settled` on the hook tap itself) and the `send` it is created with (U94a wires it to ONE `bridge.enqueue(sid, {op: 'permissionDecision'})`); an ask that ends with no web decision sends `PASS` (`{pass: true}`) once, so the terminal's dialog answers at once; `modPermissionWait(env)` → `MOD_PERMISSION_WAIT_MS`, 0 (every prompt passes to the existing path) until gate V41, `WEB_CHAT_MOD_PERMISSION_WAIT_MS` read once at boot | a second store of pending prompts, a decision granting `bypassPermissions` or a `setMode` outside ask-output (both ratcheted) |
 | show a pending ask in a frame, or add a kind of frame to the answer origin | `lib/server/answer-surface` `createAnswerSurface({asks, mainPort, audience, root})`, exposed as `ctx.answerSurface`: `ensure()` / `info()` / `register(kind, {document, api, nonceKey, keepAlive, onRefused})` → unregister (the control layer is kind `control`); built on the isolated-origin engine, with the decide gate's rules (Host, `Origin`, `Sec-Fetch-Site`, JSON, the nonce minted for one action on one target) | a decide or control route on the main origin, or a frame kind that mints its own nonces |
 | paint an answer frame in the active theme, or check a palette's contrast | `lib/server/answer-surface/palette` `framePalette({root})` / `renderPalette` — the active global theme when it is a builtin pack, or an installed pack the terminal installed or approved (the pack audit's actor `cli`, its digest matching), and only while every pair the frame paints passes `contrastRatio(ink, fill)` (4.5:1 text, 3:1 controls); else the Earthy palette | a second contrast ratio (the ratchet holds the sRGB linearisation, `/ 12.92`), or a frame that follows any theme a pane could have saved |
 | validate a composer message (its text, a leading `/skill`, its `@` files, the send mode) or refuse one with its hint | `lib/server/composer` `validateMessage(body, {skills, projectFiles})` / `validateEdit(item, body, deps)` / `parseLeadingSkill` / `createRateLimit`; `BUILTIN_COMMANDS` lists Claude Code's own commands a web message may never run, `MESSAGE_MAX` and its siblings are the limits, `HINTS` the refusals' words | a second limit, grammar or built-in list (the chrome's composer pins its limits to this module) |
@@ -339,6 +351,13 @@ were the only places they lived.
 | take an acting control from the browser (Stop, Restore files, Undo, Fork) | `lib/server/control` `createControl({root, paths, bus, mirror, graph, audience, answerSurface, getViewers})`, exposed as `ctx.control`: ONE action table, `action(name, {fields, params, key, layouts, limit, describe, check, run, state, features})` → unregister, served as kind `control` on the answer origin (the frame's nonce is the click token) with the rate limits, the audit (`audit`) and Claude's one-shot notices (`notices`; claimed by turn-begin through `lib/server/routes/control` `mountControlRoutes`, host only) | an acting control route on the main origin, a pane-callable one, or a `control` event emitted outside the table (the ratchet holds `kind: 'control'`) |
 | interrupt a turn | `lib/server/control/interrupt` `createInterrupt({mirror, bus, userPaths})` — the table's `interrupt` row takes the first path that applies: a later tier's abort (`addPath`), the Esc injector for a LOCAL request to a conversation whose MCP server holds its terminal (a `control` event with `target_pid` and an `expires_at` 2 s ahead), else the halt flag ("Stop after this step"), removed when the turn closes and swept at start; at most once per 1.5 s per conversation | a halt flag written anywhere else (the ratchet holds `haltFlag(`) |
 | inject the Esc that interrupts Claude Code | `lib/mcp/interrupt` `startInterrupt({root, presence})`, run by web-chat's MCP server: `probeInterrupt` puts `tty` or null on the presence row, `guard` refuses an expired, misaddressed or too-soon event, and the helper (`HELPER_SCRIPT`) writes one byte, 0x1b, never text, Enter or Ctrl-C | `TIOCSTI` anywhere else (the ratchet holds it), or any byte but Esc |
+| let the web-chat mod reach the daemon, or hand a mod-attached session an op | `lib/server/domain/bridge` `createBridge({root, paths, hooks, mirror, …})`, `ctx.bridge`: `hello(body)` (the mod's session, pid, versions and `root`; a token minted here and held in memory by both sides — never Claude Code's messaging token), `poll(token, {waitMs, signal})`, `result(token, body)`, `events(token, body)` (each event published ONCE on the hook tap as a synthetic `ModEvent` envelope, rate-capped, a stream's deltas merged within one step only), `enqueue(sid, {op, args}, {deliverWithinMs, resultWithinMs})` → `{ok, result}` or `{ok: false, refused, delivered}`, `attached` / `sessionOf` / `any` / `onChange` / `status` / `setPermissionWait` · `lib/server/routes/bridge` `mountBridgeRoutes` (POST /api/bridge/hello, GET /api/bridge/ops, POST /api/bridge/result and POST /api/bridge/events: host only, token-checked, refused remotely) · `lib/core/mod-protocol` (a core leaf: `OPS`, `MOD_COMMANDS`, `EVENT_KINDS`, `MOD_EVENT`, the caps; `validateOp` / `validateEvent` / `validateHello` / `validateResult`) | a chrome-facing op route (C46: the chrome reaches the mod only through control actions and the queue), an op or a command outside the allowlist, a third copy of it (the ratchet holds `OPS`, `MOD_COMMANDS` and `'ModEvent'` to mod-protocol and register.js's test-held `WIRE`), or the messaging token read anywhere (ratcheted) |
+| ship, switch on or switch off the web-chat mod | `lib/setup/registration` — the mod section: `probeMod` / `stageMod` / `applyMod(root, {runClaude, respectOptOut})` / `inspectMod` / `removeMod`, `recordModOptOut` / `clearModOptOut`, `modPaths(root)` / `modArgv(kind, arg)` / `modMarketplaceName` (the plugin staged into .web-chat/mod/package as the project's own marketplace and installed at LOCAL scope by Claude Code's own `claude plugin` commands; `apply()` switches it on for `install` and `init` where Claude Code 2.1.287+ can run it, answers `would switch on` for `update`, and respects a recorded opt-out; `remove()` takes it off) · `lib/cli/commands/mod` (`mod on` / `mod off` / `mod status`) — the package itself is templates/claude-mod/ (plugin.json, hooks/hooks.json, hooks/register.js), outside lib/ and the dependency graph | write a Claude Code settings file yourself, switch it on over `mod off`'s recorded opt-out, switch it on from `update`, or require anything from lib/ in the mod (it runs inside Claude Code; its `WIRE` copy is test-held) |
+| stop a turn or a background task at once through the mod, or switch the terminal into a fork | `lib/server/control/mod` `installModControl(control, {bridge, mirror, forkTurn, bus, env, log})` → `{features, unregister}`: the interrupt's first path through `control.interrupt.addPath` (one `abort` op for a mod-attached session; `via: 'mod'`), the `task-stop` row (one `taskStop` op, `markStopRequested`) and the experimental `resume` row (fork, `command: resume`, then a `fill` only for a whole, unmasked prompt) behind `WEB_CHAT_REWIND_IN_PLACE=1`, read once at boot (`FLAG`) · `public/app/mod-controls.js` `initModControls()` — `modStopper` through chat-actions' `registerStopper`, so Kill, Cancel and Remove confirm in a control frame | an `abort` or `taskStop` op queued outside those rows (the ratchet holds it), the pane-callable `POST /api/queue/task-stop` reaching the mod, or the resume on by default before gate V33 |
+| follow a mod-attached session live in the chat mirror | `lib/server/mirror/mod-live` `createModLiveSource({coalesceMs, bufferMs})` (in SOURCES after graph-link): tool cards from `tool.call` / `tool.done` at once, reply text from `turn.step` coalesced to about 10 Hz as a provisional reply the transcript's replaces, keyed so the tailer's later copy wins; a subagent's events ignored · `lib/server/mirror` — the `mod` provider (`PROVIDER_NAMES`, `provide('mod', {attached, onChange})`), which sets each conversation's `process.mod` and `capabilities.mod` | a second reader of the mod's events, streamed text kept past its step or persisted, or a mod row the transcript cannot replace |
+| hand a composer message to a mod-attached session, or run a safe command from the composer | `lib/server/mod-transport` `createModTransport({bridge, mirror, state, bus, log, graph})` → the queue's `state.messageTransport` (assigned only in lib/server/index.js; the ratchet holds it): one `submit` op whose text is `wakeEnvelope`'s own block, or one `command` op for a `SAFE_MOD_COMMANDS` name; a submit handed back goes to `queue.handBack`, a command's receipt confirms on the mod's ok and fails on its refusal · `withModCommands(skills, {bridge, mirror})` (the `/` rows) · `lib/server/composer` `SAFE_MOD_COMMANDS` (plan, compact, context, rename, recap) / `parseModCommand`, beside `BUILTIN_COMMANDS` · `public/app/composer-mod.js` `initComposerMod()` | a second message block or delivery path, a command that rides a message block, a stop request through the mod's submit (it keeps the channel or the park), or a transport set anywhere else |
+| take an image the user adds to a message | `lib/server/routes/attachments` `mountAttachmentRoutes(app, ctx)` (POST /api/attachments, at `full`: PNG, JPEG, GIF or WebP by `sniffImage`, at most `ATTACHMENT_MAX_BYTES` (5 MB), 20 a minute, saved under `projectPaths(root).attachmentsDir`, the newest `ATTACHMENTS_KEEP` (50) kept) and `withAttachments(projectFiles, {root})` (the message's file check accepts a saved image by its path; the image is never served back) · `lib/server/routes/brand` `rawBodyReader({types, maxBytes, refuse})` (the one raw-body reader; `readImageBody` is built on it) | a write or read under `attachmentsDir` anywhere else (ratcheted), an attachment served back, image bytes in a message, or a second raw-body parser (`express.raw(` is ratcheted) |
+| compact, plan, rename, clear or resume a session from the page, or show its context meter | `lib/server/control/session-ops` `installSessionOps(control, {bridge, mirror, env, log})` (rows `session-compact`, `session-plan`, `session-rename`, `session-clear`, `session-resume` — the last behind `WEB_CHAT_REWIND_IN_PLACE` — each ONE `command` op through `bridge.enqueue`) and `createContextReadings({hooks, mirror})` (`ctx.contextReadings`: the mod's latest `session.measure`, numbers only) · `lib/server/routes/mirror-context` `mountMirrorContextRoutes` (GET /api/mirror/context) · `public/app/session-ops.js` `initSessionOps()` (in `#cp-ops`: the meter, hidden until the first reading, Compact now, Plan mode and the ⋯ menu) | a model, effort or config command (Q10), an acting route outside the control table, or a meter reading from the transcript (that fallback is not built, ruling D1 (a)) |
 | restore a turn's files from the chrome, or undo a restore | `lib/server/control/revert` `installRevert(control, {restore, mirror, graph, root, paths, bus, redactor})` → the `restore` and `undo` rows (refused while the lock is held, while a conversation of the project is working, waiting, asking or compacting, while `claude agents` lists a busy session inside the root, or when the tree changed since the preview) and `preview(q)`, read at GET /api/code/preview through `lib/server/routes/code` `mountCodeRoutes`; a turn restores to its own before-tree, a node to its first turn's | a restore route on the main origin, or a gate of your own |
 | fork a conversation from before a turn | `lib/server/control/fork` `installFork(control, {mirror, graph, root, bus})` → the `fork` row: `forkArgv` (ids and web-chat's own label, never user text), run by `lib/core/claude-cli` `runClaudeAsync`; it answers the new session id and `claude --resume <id>` to paste | an argv holding user text, or `claude` run another way |
 | be told when a file may have changed (a config, a transcript, a sessions file) | `core/watch` `watchFile(file, onTrigger, {pollMs, debounceMs, dirWatch, persistent})` → `trigger` / `retarget` / `stop`. It re-arms after an atomic replace, polls as the backstop, and funnels every source into one debounced, single-flight call; it never says what changed | `fs.watch` or `fs.watchFile` at a call site (ratcheted: a watch binds the inode and goes silent after an atomic replace), or a private poll loop |
@@ -442,6 +461,7 @@ were the only places they lived.
 | boot a server in a test | `test-support/helpers` `withServer(t, …)` | copy `tmpRoot`/`listen`/`stop` |
 | boot the capture hub in a test | `test-support/helpers` `withHub(t, {port})` | `createHub` + `server.listen` in the test body |
 | boot the real chrome (public/index.html and the module graph) in jsdom in a test | `test-support/chrome-shell` `bootShell({routes, onSocket, init})` → the shell's `window`, `calls`, `frame(msg)`, `setRoutes`, `restore` (fetch through one indirection, a socket the test drives, stubbed pollers, layout metrics, a viewport), once per file in a before() hook | a hand-rolled JSDOM of index.html (the harness ratchet holds those to a shrinking list) |
+| read a stylesheet's cascade in a jsdom chrome test (a property's winning value, @media against the shell's window) | `test-support/css-cascade` `createCascade(CSS, {win: () => W})` → `value(el, prop)` / `cascade(el, props)` / `inherited(el, name)` (specificity with `:is()`/`:not()`/`:where()`, `!important`, source order, media queries read live) | a private `parseRules` / `specificity` copy (the harness ratchet holds it) |
 | give a test a fake Claude Code user tier: transcripts, sessions files, MCP presence rows, task outputs | `test-support/claude-home` `claudeHome(t, {root, isolate})` → `writeSession` / `writeTranscript` / `addMcp` / `writeTaskOutput` / `write`, built under the sandbox and cleaned up by `t.after` | a fixture copied from a real Claude Code directory (its transcripts hold real prompts and secrets) |
 | build a synthetic Claude Code transcript (or a rewind in one) in a test | `test-support/claude-records` `createRecords({seed, sessionId, cwd})` (records with Claude Code's own keys; `jsonl`, chunked appends) · `test-support/rewind-fixtures` (`branch` / `reset` / `exitTail` / `anchor` …, each with the hooks and its expected verdict) | a record shape written by hand, or one copied from a real transcript |
 | give a redaction test credentials to find | `test-support/fake-secrets` `fakeSecrets({seed})` (one of every format the redactor knows, seeded, never real) / `fakeCorpus` / `findLeaks` | a real token, or a literal that looks like one, in a test |
@@ -1090,7 +1110,7 @@ their baselines, the `.gitignore` line. Four functions:
 each hold the mirror's and the halt's), so registration reasons per HANDLER,
 matched by subcommand, never per event. `hookHandlers()` lists the template's
 handlers, and `HOOK_ROLES` says what each is for: `lifecycle` (`turn-begin`,
-`turn-end`), `mirror`, `bridge` (`ask`) and `halt`, each with the effect the
+`turn-end`), `mirror`, `bridge` (`ask` and `elicit`) and `halt`, each with the effect the
 user loses while it is missing or cannot run (`roleEffect`). A handler is
 `stale` when it resolves but differs from the template in a managed field
 (`MANAGED_HOOK_KEYS` in `lib/update/managed-files`: `async`, `timeout`,
@@ -1528,7 +1548,9 @@ structural leak detectors.
 
 `test/harness-conventions.test.js` ratchets the constructs above back into
 `test-support` — the deadline loop, a poll-helper definition, `subscribeSSE(`,
-`createServer({ root`, `.server.listen(` and `Sec-WebSocket-Key:` — with named
+`createServer({ root`, `.server.listen(`, `Sec-WebSocket-Key:` and a private
+cascade reader (`function specificity(` / `function parseRules(`, whose home is
+`test-support/css-cascade.js`) — with named
 exemptions (the two heredoc daemons, the fake clients injected into the channel
 bridge). It also holds at **zero** three constructs of a different species: a
 bare probe for a real Chrome or ffmpeg, a test reading a `WEB_CHAT_E2E_*`
@@ -1869,6 +1891,52 @@ cannot prove visibility, get a small popup instead.
 - **The main origin keeps only reads** (`GET /api/code/preview`, the asks list)
   and the host-only notices claim the turn-begin hook makes. A new acting control
   is a row in the table, not a route.
+- **An MCP server's form** (an elicitation) is answered the same way: the
+  `elicit` hook creates an ask of kind `elicitation`, waits only while a local
+  viewer is connected and at most 45 s (the terminal shows no dialog while it
+  waits), and prints `buildElicitationOutput`'s line or nothing. Remote answers
+  to a form are refused at every level in 0.8.5.
+
+### The web-chat mod (tier 2) — the bridge, and what reaches it
+
+A Claude Code plugin of function hooks (`templates/claude-mod/`, Claude Code
+2.1.287 and newer, early access) that makes some controls immediate. It is never
+a dependency: every path it serves has a tier-1 fallback, and no tier-1 test
+needs it.
+
+- **Switching it on.** `install` (and `init`) switch it on wherever Claude Code
+  can run it (`lib/setup/registration` `applyMod`: the version probe, hooks not
+  disabled, `claude plugin validate` of the staged copy), from the project's own
+  marketplace in `.web-chat/mod/package`, installed at local scope by Claude
+  Code's own commands, so no user settings are written. `update` prints the
+  command instead. `claude-web-chat mod off` takes it off and records the
+  project's opt-out, which a later `install` respects until `mod on`;
+  `uninstall` takes it off too.
+- **The bridge** (`ctx.bridge`, `lib/server/domain/bridge`). The mod says hello
+  with its session, pid, versions and project root, gets a token of the
+  bridge's own (never Claude Code's messaging token, which nothing reads), long-polls its
+  session's op queue and posts results and events. The routes are host only and
+  token-checked; a remote viewer, a network peer and a browser are refused. Each
+  event is published once on the hook tap as a synthetic `ModEvent` envelope,
+  where the live feed (`mirror/mod-live`), the asks domain and the context meter
+  read it.
+- **What may reach the mod.** Only the allowlist (`lib/core/mod-protocol`
+  `OPS`, `MOD_COMMANDS`): `abort` and `taskStop` from the control rows in
+  `lib/server/control/mod.js` (an interrupt, a Kill, Cancel or Remove, each
+  through a control frame), `command` from the session rows and the composer's
+  safe commands, `submit` from the queue's transport seam (the same marked
+  block a channel carries), `fill` from the in-place resume,
+  `permissionDecision` from the asks domain (`usage` and `messages` are in the
+  allowlist, and nothing in the daemon queues them yet). There is no chrome-facing op route
+  (C46): the pane-callable task-stop route still only sends the stop-request
+  message. No config-persisting command (`/model`, `/config`, …), no model or
+  effort switch, and no answer that grants `bypassPermissions`.
+- **Off by default, behind gates.** The in-place resume needs
+  `WEB_CHAT_REWIND_IN_PLACE=1` until gate V33; permission prompts through the
+  mod are built but pass to the existing path (`MOD_PERMISSION_WAIT_MS` 0) until
+  gate V41. A network policy that refuses the mod's loopback call leaves the
+  project on tier 1 (`mod status` words it `network refused: tier 1`); the file
+  channel that would carry it is deferred to 0.8.6.
 
 ## The conventions tripwire
 
