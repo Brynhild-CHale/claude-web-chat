@@ -446,6 +446,32 @@ test('stop: a portfile daemon that never answers /api/health is refused as befor
   assert.equal(portfiles.isPidAlive(info.pid), true, 'never asked, never signalled');
 });
 
+// The scan's half (U107d). A daemon of this project with NO portfile — known
+// only through its registry row — reached `stop` through daemonsFor (400 ms)
+// and stopTarget's identity re-check answersAs (400 ms): a busy one was not
+// found, or found and then left alone. Both now give it PORTFILE_PROBE_MS.
+// `scanPorts: []`: no port but the stand-in's (opened by this file) is probed.
+test("stop's scan: a registry-only daemon of this project answering /api/health after 600 ms is stopped", async (t) => {
+  const mineRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-mine-'));
+  t.after(() => { try { fs.rmSync(mineRoot, { recursive: true, force: true }); } catch {} });
+  // The stand-in lives in its own directory (its portfile and health-delay
+  // there); it answers as `mineRoot`'s instance, and only the registry names it.
+  const d = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf', WC_TEST_INSTANCE: registry.instanceId(mineRoot) });
+  fs.writeFileSync(path.join(d.root, '.web-chat', 'health-delay'), '600');
+  fs.mkdirSync(path.join(mineRoot, '.web-chat'), { recursive: true });
+  registry.registerInstance({ root: mineRoot, port: d.info.port, pid: d.info.pid });
+  t.after(() => { try { registry.deregisterInstance(mineRoot, { pid: d.info.pid }); } catch {} });
+  assert.equal(portfiles.readPortfile('server', { root: mineRoot }), null, 'the fixture has no portfile');
+
+  const log = collector();
+  const res = await stop([], { root: mineRoot, log, scan: true, scanPorts: [], signalWaitMs: 2_000 });
+  assert.equal(res.ok, true, log.text());
+  assert.equal(res.pid, d.info.pid, log.text());
+  assert.equal(res.results.length, 1);
+  assert.doesNotMatch(log.text(), /left alone|no server running/);
+  assert.equal(portfiles.isPidAlive(d.info.pid), false, 'stopped');
+});
+
 // A plain `restart` (no target handed in) now asks lib/util/registry daemonFor
 // which daemon is this root's. With a portfile copied from another project and
 // this root's daemon in the registry only, it restarts this root's daemon,
