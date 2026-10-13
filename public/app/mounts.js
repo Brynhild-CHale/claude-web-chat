@@ -623,6 +623,7 @@ export function mount(m) {
   try { mountPane(m); }
   catch (e) {
     const id = m && m.id;
+    releasePane(panes.get(id));
     panes.delete(id);
     dropOrphanDom(id);
     layoutPage();
@@ -663,6 +664,7 @@ function mountPane(m) {
   const slot = slotFor(target);
   const existing = panes.get(id);
   if (existing) {
+    releasePane(existing);
     if (existing.wrapper.parentElement) existing.wrapper.parentElement.removeChild(existing.wrapper);
     panes.delete(id);
   } else {
@@ -700,6 +702,9 @@ function mountPane(m) {
     theme: theme || null,
     owner: m.owner || null,
     spec: { id, html, target: target || 'main', params: params || {}, component: m.component, owner: m.owner || undefined, pane_state: ps, form_state: form_state || undefined, theme: theme || undefined },
+    // What this instance's script subscribed through its store facade, and
+    // whether the record has been dropped (releasePane).
+    subs: new Set(), released: false,
   };
   panes.set(id, rec);
   layoutPage();
@@ -750,7 +755,7 @@ function mountPane(m) {
       const gesture = !!p && (Date.now() - (p._lastGestureAt || 0)) < GESTURE_WINDOW_MS;
       store.set(patch, { ...(opts || {}), mount: id, gesture });
     },
-    subscribe: (a, b) => store.subscribe(a, b),
+    subscribe: (a, b) => subscribeFor(rec, a, b),
   };
   window.__wcMount.runScripts(root, scripts, paneStore, params || {}, id, (err, scriptIndex) => {
     // Forward the failure to the daemon so it lands in the event ring
@@ -798,10 +803,50 @@ function mountPane(m) {
   layoutPage();
 }
 
+// ── a pane's store subscriptions end with the pane ─────────────────────────
+// A pane script subscribes through its injected `store`; the facade records
+// the unsubscribe the shared store hands back, and releasePane runs them all
+// when the record is dropped. Every path that drops one calls it: a re-render
+// of the same id (mountPane), a mount that fails partway (mount), a `clear` by
+// id and every reconcile removal (removePane), a clear-all (clearTarget), and
+// every full replacement — a `reset`, each preview step, the return from a
+// preview (fullReset). Without it each of those left the old instance's
+// handlers on the store, running into a detached shadow root on every write:
+// the Safari slowdown (design/tools/t567-inputs/safari-report.md, item 1).
+//
+// The unsubscribe a script gets is idempotent — the shared store keys a
+// subscription by its function, so a second call of the raw one would take a
+// later re-subscription of the same function with it. A subscribe made after
+// the record was released (a script that awaited something first) subscribes
+// nothing and answers a no-op. A pane that reaches for window.store instead of
+// its injected store is not tracked.
+function subscribeFor(rec, keyOrFn, maybeFn) {
+  if (rec.released) return () => {};
+  const off = store.subscribe(keyOrFn, maybeFn);
+  let done = false;
+  const unsubscribe = () => {
+    if (done) return;
+    done = true;
+    rec.subs.delete(unsubscribe);
+    off();
+  };
+  rec.subs.add(unsubscribe);
+  return unsubscribe;
+}
+
+function releasePane(rec) {
+  if (!rec || rec.released) return;
+  rec.released = true;
+  for (const unsubscribe of [...rec.subs]) {
+    try { unsubscribe(); } catch (e) { console.error('[web-chat] unsubscribe failed', e); }
+  }
+  rec.subs.clear();
+}
+
 // Remove a single pane by id (WS 'clear' with an explicit id).
 export function removePane(id) {
   const p = panes.get(id);
-  if (p) { if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
+  if (p) { releasePane(p); if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
   else dropOrphanDom(id); // a legacy bare host, or a failed mount's leftovers
   layoutPage();
 }
@@ -836,6 +881,7 @@ export function clearTarget(target, frame = {}) {
     if (target && pane && pane.paneTarget !== target) return;
     const keep = kept ? kept.has(id) : survivesClear(pane && pane.pane_state, frame);
     if (keep) return;
+    releasePane(pane);
     if (id) panes.delete(id);
     p.remove();
   });
@@ -862,6 +908,7 @@ function mountAll(mounts) {
 // order, run flags), set FIRST so every pane mounts straight into its run.
 export function fullReset({ mounts, store: newStore, page: pageRec, updatedAt = null }) {
   for (const [, p] of panes) {
+    releasePane(p);
     if (p.wrapper.parentElement) p.wrapper.parentElement.removeChild(p.wrapper);
   }
   panes.clear();
