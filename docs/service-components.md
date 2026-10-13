@@ -429,6 +429,22 @@ for anything else (observers, sockets). `window.store` and `window.setInterval`
 are never tracked: a subscription or timer made through them outlives the pane.
 The service's half is yours: its `stop()` (above, *Lifecycle*).
 
+**Publish on change, not on a clock.** Re-read as often as you like, but write
+the data key only when what you read differs from what you last wrote. Every
+`setStore` is a frame to every viewer, and the store is part of the surface, so a
+write also makes the live surface differ from the active node: while your pane is
+on it, a turn that only answered in chat commits a node instead of folding, and
+**Set active** preserves "work" nobody did. So keep the payload free of anything
+that changes by itself — a read-time stamp, a relative date ("5 minutes ago"):
+send the absolute time and let the pane format it on its own timer — and compare
+before you push. A respawn is not a change either: the supervisor restarts a
+service on a reconnect or when its pane returns to the active node, so read your
+own key back at startup and adopt it as what you last wrote. `git-dashboard`
+keeps the last payload's key (stable JSON without `seq` and `at`) and pushes only
+when a rebuild's differs; `file-editor` rebuilds its view at startup and writes
+nothing when it equals the stored one, carrying its `load` and `seq` on from the
+stored values so the pane never reloads its buffer over typing not yet saved.
+
 **A control key is untrusted input.** The store is a shared bus: every pane
 script in the page can write your control key, and so can any local process that
 reaches the daemon. Pane code is compiled with `new Function` in the surface's
@@ -445,7 +461,8 @@ a git argument. Paths get `ctx.fence` (above); argv gets this.
 The service observes control writes over SSE (`driver.streamEvents({ kinds:['store'] })`)
 and reacts. Because the SSE stream has **no auto-reconnect** and isn't live during
 the spawn window, read the control key with `getStore` on startup and re-read it on
-a slow poll, so a write missed during startup or an SSE drop self-heals:
+a slow poll, so a write missed during startup or an SSE drop self-heals (the
+poll re-reads; `rebuild()` publishes only when the result changed, above):
 
 ```js
 const applyCtl = (c) => { /* adopt if c.seq is newer than the last applied */ };
@@ -473,11 +490,14 @@ Signals wake *Claude*; a control key drives the *service*.
 `templates/components/git-dashboard/` ships as a builtin:
 
 - `service.js` runs `git log` / `git branch` / `git show --numstat` in the repo the
-  daemon runs in, writes `{ git: { branch, branches, commits, detail } }`, and
-  re-reads on any `.git` change (`fs.watch`, debounced) plus a 5 s poll. It reacts
-  to `git_ctl { viewing, open }` — the branch to list and the commit to drill into.
-- `component.html` renders the branch chips and commit log, and on click writes
-  `git_ctl`, then renders the detail the service returns.
+  daemon runs in, writes `{ git: { branch, branches, commits, detail } }` when
+  that changes, and re-reads on any `.git` change (`fs.watch`, debounced) and on
+  a slow poll that only catches what the watcher missed: an idle repo writes
+  nothing. Commits carry their absolute time. It reacts to `git_ctl { viewing,
+  open }` — the branch to list and the commit to drill into.
+- `component.html` renders the branch chips and commit log, writes each commit's
+  "N minutes ago" itself (refreshed every minute), and on click writes `git_ctl`,
+  then renders the detail the service returns.
 
 The result is a live, clickable history/branch browser with zero per-turn driving.
 

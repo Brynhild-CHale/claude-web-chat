@@ -610,6 +610,21 @@ test('the startup-replay snippet says a mutating action must not be replayed', (
     'a host-mutating control action must not run from it — the shape that let a persisted `save` re-fire on respawn');
 });
 
+test('the control-key section says a service publishes only on change', () => {
+  const service = read('templates/components/git-dashboard/service.js');
+  assert.match(service, /if \(key === lastKey\) return;/,
+    'git-dashboard no longer compares a rebuild with what it last published before it pushes — every poll ' +
+    'wrote the store again, a frame to every viewer and a node the next chat-only turn committed; the doc ' +
+    'teaches that compare, so re-read both');
+
+  const section = read('docs/service-components.md').match(/## Talking to the pane[\s\S]*?## Worked example/);
+  assert.ok(section, 'docs/service-components.md no longer has the control-key section');
+  const flat = flatten(section[0]);
+  assert.ok(/publish on change/i.test(flat) && /compare before you push/i.test(flat),
+    'the control-key section no longer tells authors to publish only on change: the generic snippet re-reads on a ' +
+    '5 s poll, and a service that writes on every read keeps the live surface dirty and every viewer busy');
+});
+
 // ---------------------------------------------------------------------------
 // Counting prose.
 //
