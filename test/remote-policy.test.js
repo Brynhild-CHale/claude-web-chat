@@ -42,6 +42,7 @@ const {
   FRAME_RULES, projectFrame, projectValue,
   STATUS_SCHEMA, STATUS_ROW_SCHEMA, ASK_SCHEMA, ASK_FRAME_SCHEMA, RESET_SCHEMA,
   TEXT_RULES, stripText,
+  ANSWER_RULES, ANSWER_HINT, classifyAnswer,
 } = require('../lib/core/remote-policy');
 const { withServer } = require('../test-support/helpers');
 
@@ -514,6 +515,103 @@ test('mirror: a portal still on the protocol-8 table refuses every new route by 
       'POST /api/queue/task-stop → * /api/queue/*',
     ], `${release}'s portal`);
   }
+});
+
+// ── the answer host: ANSWER_RULES (U74; spec §4.6, §15.5) ──────────────────
+
+const ANSWER_PUBLIC = path.join(REPO_ROOT, 'lib/server/answer-surface/public');
+// The two stylesheets the surface generates rather than serves from publicDir.
+const GENERATED_ASSETS = ['palette.css', 'fonts.css'];
+const literalAssetRows = () => ANSWER_RULES
+  .map((r) => /^\/answer\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/.exec(r.path))
+  .filter(Boolean).map((m) => m[1]);
+
+test('ANSWER_RULES: well-formed — frozen, every row an allow at full with ANSWER_HINT, GET or POST only', () => {
+  assert.ok(Object.isFrozen(ANSWER_RULES));
+  for (const r of ANSWER_RULES) {
+    assert.ok(Object.isFrozen(r), keyOf(r));
+    assert.equal(r.allow, true, keyOf(r));
+    assert.equal(r.mirror, 'full', `${keyOf(r)}: every allow row needs full`);
+    assert.equal(r.hint, ANSWER_HINT, keyOf(r));
+    assert.ok(Array.isArray(r.methods) && r.methods.every((m) => m === 'GET' || m === 'POST'), keyOf(r));
+    assert.ok(r.path.startsWith('/answer/'), `${keyOf(r)}: nothing outside /answer/`);
+    assert.ok(!r.path.endsWith('*'), `${keyOf(r)}: no wildcard`);
+    assert.ok(!/^\/answer\/:[a-z]+$/.test(r.path), `${keyOf(r)}: never /answer/:asset (it would match a kind's root document)`);
+  }
+  assert.match(ANSWER_HINT, /claude-web-chat tunnel mirror on/);
+  assert.equal(new Set(ANSWER_RULES.map(keyOf)).size, ANSWER_RULES.length, 'no row twice');
+  assert.deepEqual(ANSWER_RULES.filter((r) => !literalAssetRows().includes(r.path.slice('/answer/'.length))).map(keyOf), [
+    'GET /answer/ask/:id',
+    'GET /answer/api/asks/:id',
+    'POST /answer/api/asks/:id/decide',
+    'GET /answer/control/:action',
+    'GET /answer/api/control/state',
+    'POST /answer/api/control/:action',
+    'GET /answer/fonts/:file',
+  ]);
+});
+
+test('ANSWER_RULES ratchet: every .js and .css file the answer surface serves has a literal row, and every literal row a file', () => {
+  const files = fs.readdirSync(ANSWER_PUBLIC).filter((f) => /\.(js|css)$/.test(f)).sort();
+  assert.ok(files.includes('elicitation-form.js'), 'tranche 6\'s layout file is among them');
+  assert.ok(files.length >= 7, files.join(', '));
+  const rows = literalAssetRows();
+  for (const f of files) {
+    assert.ok(rows.includes(f), `lib/server/answer-surface/public/${f} has no ANSWER_RULES row: add a literal GET /answer/${f} row (a remote frame cannot load it otherwise)`);
+  }
+  for (const f of rows) {
+    assert.ok(files.includes(f) || GENERATED_ASSETS.includes(f), `ANSWER_RULES names /answer/${f}, which the surface does not serve`);
+  }
+  for (const f of GENERATED_ASSETS) assert.ok(rows.includes(f), f);
+});
+
+test('classifyAnswer: first match wins, default deny; every row refused below full with reason mirror and the hint', () => {
+  const allowed = [
+    ['GET', '/answer/ask/ask_0123456789ab?layout=bar'],
+    ['GET', '/answer/api/asks/ask_0123456789ab?v=3&wait=20000'],
+    ['POST', '/answer/api/asks/ask_0123456789ab/decide'],
+    ['GET', '/answer/control/interrupt?conversation_id=c&layout=stop'],
+    ['GET', '/answer/control/task-stop?task_id=b1&layout=confirm'],
+    ['GET', '/answer/api/control/state?action=interrupt&conversation_id=c'],
+    ['POST', '/answer/api/control/interrupt'],
+    ['POST', '/answer/api/control/session-compact'],
+    ['GET', '/answer/fonts/inter.woff2'],
+    ['HEAD', '/answer/answer.js'],
+    ['GET', '/answer/elicitation-form.js'],
+    ['GET', '/answer/palette.css'],
+  ];
+  for (const [m, u] of allowed) {
+    assert.equal(classifyAnswer(m, u, { mirror: 'full' }).allow, true, `${m} ${u} at full`);
+    for (const optIn of [undefined, 'off', 'read', 'bogus']) {
+      const v = classifyAnswer(m, u, { mirror: optIn });
+      assert.deepEqual([v.allow, v.reason, v.hint, v.need], [false, 'mirror', ANSWER_HINT, 'full'], `${m} ${u} at ${optIn}`);
+      assert.deepEqual(refusalBody(v), { ok: false, remote: true, hint: ANSWER_HINT, mirror: optIn === 'read' ? 'read' : 'basic' });
+    }
+  }
+  for (const [m, u, reason] of [
+    ['GET', '/api/graph', 'unknown'],
+    ['GET', '/api/health', 'unknown'],
+    ['GET', '/api/bridge/status', 'unknown'],
+    ['POST', '/api/bridge/hello', 'unknown'],
+    ['GET', '/', 'unknown'],
+    ['GET', '/answer/index.html', 'unknown'],
+    ['GET', '/answer/bridge', 'unknown'],
+    ['GET', '/answer/control', 'unknown'],
+    ['POST', '/answer/api/asks/x/withdraw', 'unknown'],
+    ['POST', '/answer/ask/x', 'unknown'],
+    ['GET', '/answer/api/asks/x/decide', 'unknown'],
+    ['DELETE', '/answer/api/control/interrupt', 'unknown'],
+    ['GET', '/answer/other.js', 'unknown'],
+    ['GET', '/answer/api/asks%2fx', 'malformed'],
+    ['GET', '/answer/ask/..', 'malformed'],
+    ['GET', '/answer/%2e%2e/api/graph', 'malformed'],
+  ]) {
+    const v = classifyAnswer(m, u, { mirror: 'full' });
+    assert.deepEqual([v.allow, v.reason], [false, reason], `${m} ${u}`);
+    assert.notEqual(v.hint, ANSWER_HINT, `${m} ${u}`);
+  }
+  // The session host's table names no answer route: /answer/* is its default deny.
+  assert.deepEqual([classify('GET', '/answer/ask/x', { mirror: 'full' }).allow, classify('GET', '/answer/ask/x', { mirror: 'full' }).reason], [false, 'unknown']);
 });
 
 // ── frames ────────────────────────────────────────────────────────────────

@@ -510,7 +510,8 @@ all of it. Through the tunnel, each project shows one of three levels:
 - **read** — the conversation itself, watch-only: prompts, replies, tool calls
   and their output.
 - **full** — the conversation, plus what a remote viewer can *do* with it (the
-  composer and stopping tasks).
+  composer and stopping tasks, and answering Claude's prompts and its controls:
+  see *Answering Claude remotely* below).
 
 The level is set **per project, on the host**:
 
@@ -563,6 +564,68 @@ container or VM whose port is forwarded to your own browser: through a
 `127.0.0.1`), so for remote access to the conversation use the tunnel and
 `tunnel mirror on`.
 
+### Answering Claude remotely
+
+At **full**, and only at full, a remote viewer can also answer what Claude is
+waiting on — a permission prompt (Allow or Deny), a question, a plan — and use
+the conversation's controls: **Stop**, **Restore files** (and its Undo),
+**Fork**, and, with the mod, stopping a background task and the session
+commands. At **read** the page shows each prompt read-only, with a note that
+answering needs full access; at basic it shows only that Claude needs you.
+`tunnel mirror on` says so when it sets full:
+
+> At full they can also answer Claude's permission prompts — which can run
+> commands on this machine — and stop Claude, restore files and fork a
+> conversation from the page.
+
+**Where the answers are served.** On this computer the frames you answer in
+live on an origin of their own (`127.0.0.1` and a port of their own), so no
+pane script — which runs with the page's authority — can click Allow for you.
+Remotely the same line holds: each project gets a second hostname, its
+**answer host**, the project's hostname with `-a` on its first label
+(`wc-0a1b2c3d.example.com` → `wc-0a1b2c3d-a.example.com`; nested
+`0a1b2c3d.wc.example.com` → `0a1b2c3d-a.wc.example.com`). It is covered by the
+wildcard DNS record and the Access application you already have, so there is
+**no new DNS or Access setup**. The portal serves only the answer frames there
+(a short fixed list of routes, refused below full with the command that
+grants it), they can be framed only by the project's own page, and the page
+learns the answer host only at full.
+
+**After changing the level, reload the remote page.** It learns the answer host
+when it loads. Lowering the level takes effect at once anyway: the portal
+refuses the answer host below full, so an open page's frames stop working
+before you reload.
+
+**Signing in, and the popup.** The answer host is a hostname your browser has
+not signed in to yet, and a frame cannot always show the Access sign-in, or
+keep the sign-in it gets inside a frame. If a prompt's frame has not
+loaded within 3 seconds, the page offers **Review & answer ↗**, which opens the
+prompt in a popup on the answer host; signing in there once may make later
+frames load in place. Firefox and Safari (every browser on an iPhone) cannot
+prove a frame is visible, so there a frame always offers **Review & answer ↗**
+(or **Review & confirm ↗**) and you answer in the popup, remotely as on this
+computer. The page itself offers no popup for the controls (Stop, Restore
+files, Fork): where their frames never load, they are not available remotely
+in that browser. *This build has not yet been checked against a real portal in
+each browser (validation gate V31): whether the frames load in place, and
+whether a sign-in in the popup changes that, is unverified.*
+
+**Stop, remotely.** A remote Stop never presses Esc in your terminal. Without
+the mod it reads **Stop after this step** and stops Claude at its next tool
+call; with the mod attached it reads **Interrupt** and the mod aborts the turn.
+
+**An MCP server's form is never answered remotely**, at any level: a form can
+ask for credentials. Answer it in the terminal or on this computer.
+
+**Everything is recorded.** Every remote answer and refusal is in the project's
+`.web-chat/asks/audit.log`, every remote control action in
+`.web-chat/control/audit.log`, each with origin `remote`; and every write to an
+answer host is in the remote access log below.
+
+The risk is the one at the terminal: an allowlisted account at full can
+approve the commands Claude asks to run on this machine. Grant full only to a
+project whose remote viewers you would hand that to (see *Residual risk*).
+
 ## The remote access log
 
 `~/.web-chat/tunnel/remote-access.log` (0600) gets one JSON line for every
@@ -582,8 +645,9 @@ without its query string. The file is capped at 1 MB: past that it moves to
 
 The portal is **access control**, so every step fails closed:
 
-1. **Host.** Only the picker hostname and project hostnames are answered;
-   anything else is refused (421).
+1. **Host.** Only the picker hostname, project hostnames and each project's
+   answer hostname (`<project host>` with `-a`) are answered; anything else is
+   refused (421).
 2. **Your sign-in, checked locally.** Cloudflare Access puts a signed token on
    every request. The portal verifies it **itself** — it does not trust that
    Cloudflare's check happened: RS256 only (an unsigned token or an HMAC trick is
@@ -638,10 +702,18 @@ The portal is **access control**, so every step fails closed:
    browser*) runs on its own loopback origin, refuses any call that is not from
    that page with its per-load nonce, and is refused through the tunnel; no
    pane can reach it.
-9. **The tunnel's own credential** (the connector token) lives in a 0600 file and
-   is handed to cloudflared in its environment, never on its command line.
-   A local tunnel's generated config also makes cloudflared itself require a
-   valid Access token for your AUD, so there are two independent checks.
+9. **The answer host** serves only the answer and control frames (a fixed list
+   of routes, default deny, each needing full mirror access): nothing else of
+   the surface, no live socket, and none of the daemon's own routes. A call
+   must come from the frame's own page (its exact `Origin`, same-origin); the
+   project's page may only open a frame or popup there. The frames can be
+   framed by the project's own hostname and nothing else, and every answer or
+   action carries the frame's own token, which no pane can read. The
+   daemon checks the level again itself.
+10. **The tunnel's own credential** (the connector token) lives in a 0600 file and
+    is handed to cloudflared in its environment, never on its command line.
+    A local tunnel's generated config also makes cloudflared itself require a
+    valid Access token for your AUD, so there are two independent checks.
 
 **Quick tunnels (`trycloudflare.com`) are refused.** They cannot sit behind
 Access, so nothing would check who is signing in.
@@ -659,6 +731,10 @@ Access, so nothing would check who is signing in.
   refused, your inbox alone — protect it); with `--signin google`, your Google
   account — use 2-step verification or a passkey on it. Anyone who can sign in as
   you, can get in.
+- **At full, an allowlisted account can answer Claude's prompts** — approve a
+  command Claude wants to run here, stop it, restore files, fork its
+  conversation — exactly as you can at the terminal. Every remote answer and
+  action is audited with origin `remote`.
 - **Pane scripts run in your remote browser as they do locally.** A component
   from an untrusted source is untrusted code in either place.
 - **Cloudflare sees the traffic** (TLS terminates at its edge). That is how every
