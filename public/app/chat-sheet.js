@@ -76,8 +76,10 @@
 // REDRAWS: bus 'mirror' and 'queue' (and a window resize, which re-measures),
 // coalesced to ONE pending animation frame, cancelled by stopChatSheet. A
 // closed sheet updates only the tab, the badge and the segment count. No
-// interval, no timeout, no observer; every listener is added once at init (or
-// per gesture, in sheet-drag.js) and removed by stopChatSheet.
+// interval and no observer; the one timeout is the live region's self-ending
+// wake for a held announcement (see announce), cleared by stopChatSheet. Every
+// listener is added once at init (or per gesture, in sheet-drag.js) and
+// removed by stopChatSheet.
 import { bus } from './bus.js';
 import { isNarrow, isPhone } from './viewport.js';
 import { registerChatView, approvals, composer } from './chat-slots.js';
@@ -107,7 +109,7 @@ let h = 0;                  // the height last written
 let opened = false;         // the open state (h > 0 once settled)
 let view = 'chat';
 let lastLook = null;
-const speech = { at: -Infinity, said: '', held: null };
+const speech = { at: -Infinity, said: '', held: null, timer: null };   // timer: the one wake for a held text
 let backPending = 0;        // history.back() calls of ours whose popstate has not come
 let backEntry = false;      // the open sheet's wcSheet entry: true, 'deferred' (a Back is landing), or none
 
@@ -472,29 +474,46 @@ function say(text) {
 }
 
 // tabAnnounce's text, at most once per ANNOUNCE_GAP_MS, the latest winning: a
-// text kept from saying is said at a later draw while its state still holds,
+// text kept from saying is said when the gap ends while its state still holds,
 // unless it is the one just said (a flapping socket says 'reconnecting' once).
+// The gap's end is ONE self-ending timeout (§10.1), armed while a text is held:
+// it schedules a draw, whose announce() says the held text — so a held text is
+// said even when the store never changes again. It is cleared when the held
+// text is replaced or dropped, and by stopChatSheet.
+function dropHold() {
+  speech.held = null;
+  if (speech.timer !== null) { clearTimeout(speech.timer); speech.timer = null; }
+}
+
+function hold(held, now) {
+  dropHold();
+  if (!held) return;
+  speech.held = held;
+  speech.timer = setTimeout(() => { speech.timer = null; schedule(); },
+    Math.max(0, speech.at + ANNOUNCE_GAP_MS - now));
+}
+
 function announce(prev, next) {
   const now = Date.now();
   const text = tabAnnounce(prev, next);
   if (text) {
     if (now - speech.at < ANNOUNCE_GAP_MS) {
-      speech.held = text === speech.said ? null : { text, state: next.state };
+      hold(text === speech.said ? null : { text, state: next.state }, now);
       return;
     }
     speech.at = now;
-    speech.held = null;
+    dropHold();
     say(text);
     return;
   }
   const held = speech.held;
   if (!held) return;
-  if (held.state !== next.state) { speech.held = null; return; }
+  if (held.state !== next.state) { dropHold(); return; }
   if (now - speech.at >= ANNOUNCE_GAP_MS) {
     speech.at = now;
-    speech.held = null;
+    dropHold();
     say(held.text);
-  }
+  } else if (speech.timer === null) hold(held, now);
 }
 
 function draw() {
@@ -755,6 +774,7 @@ export function stopChatSheet() {
   if (detachDrag) { detachDrag(); detachDrag = null; }
   for (const off of offs.splice(0)) { try { off(); } catch { /* gone */ } }
   running = false;
+  dropHold();
   if (reg) { reg.unregister(); reg = null; }
   backPending = 0;
   backEntry = false;

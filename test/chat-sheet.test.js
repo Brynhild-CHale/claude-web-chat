@@ -885,6 +885,39 @@ test('#chat-live speaks only transitions into waiting, question and offline, at 
   } finally { Date.now = realNow; }
 });
 
+test('#chat-live: a text held inside the 2 s gap is said when the gap ends, with no further store change', async () => {
+  const realNow = Date.now;
+  let t = realNow() + 3600000;   // past the clock the case above left the region at
+  Date.now = () => t;
+  try {
+    const live = () => $('chat-live').textContent;
+    await show(snapshot([conversation('c1', IDLE)]));
+    t += 3000;
+    await show(snapshot([conversation('c1', QUESTION)]));
+    assert.equal(live(), 'Claude has a question — open the chat');
+    // WAITING 500 ms later: inside the gap, so it is held, not said yet.
+    t += 500;
+    await show(snapshot([conversation('c1', WAITING)]));
+    assert.equal(live(), 'Claude has a question — open the chat', 'held inside the gap');
+    // No further mirror event: the gap's own timer (1.5 s of the shell's
+    // tracked setTimeout) says the held text once the gap has passed.
+    t += 2000;
+    await shell.tick(2000);   // real time (Date.now is frozen here, so no waitUntil)
+    assert.equal(live(), 'Claude needs you: permission prompt', 'the held text is said when the gap ends');
+    // The flap stays dropped: a repeat of the text just said, inside the gap.
+    $('chat-live').textContent = '';
+    t += 500;
+    await show(snapshot([conversation('c1', IDLE)]));
+    t += 500;
+    await show(snapshot([conversation('c1', WAITING)]));
+    t += 3000;
+    await shell.tick(2000);
+    assert.equal(live(), '', 'the repeat inside the gap is dropped, and not said later');
+    t += 3000;
+    await show(snapshot([conversation('c1', IDLE)]));
+  } finally { Date.now = realNow; }
+});
+
 /* ═════════════════════════════ the badge ═══════════════════════════════════ */
 
 test('the badge: off at 0; the Final\'s fixture reads 6, working, "6 running tasks — open Tasks"; .sh-run "6 running"', async () => {
@@ -1128,7 +1161,10 @@ test('no setInterval is created and no animation frame is left pending once idle
   await shell.tick();
   assert.equal(shell.intervals().length, intervals, 'no interval');
   assert.match(SHEET_SRC, /requestAnimationFrame/);
-  assert.doesNotMatch(SHEET_SRC + DRAG_SRC, /setInterval\(|setTimeout\(|Observer\(/, 'no interval, timeout or observer in either module');
+  assert.doesNotMatch(SHEET_SRC + DRAG_SRC, /setInterval\(|Observer\(/, 'no interval or observer in either module');
+  assert.doesNotMatch(DRAG_SRC, /setTimeout\(/, 'no timeout in the drag');
+  // The one timeout is the live region's self-ending wake for a held text (§10.1).
+  assert.equal((SHEET_SRC.match(/setTimeout\(/g) || []).length, 1, 'one timeout in the sheet: the held announcement\'s');
   await show(snapshot([conversation('c1', IDLE)]));
 });
 
