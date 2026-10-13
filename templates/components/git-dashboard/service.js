@@ -4,6 +4,14 @@
 // (branch to list, commit to drill into); the service watches store events over
 // SSE and re-reads git accordingly — no Claude round-trip. Also re-reads on any
 // .git change (debounced) plus a slow poll. v1 contract: store writes only.
+//
+// PUBLISH ON CHANGE. Re-reading is cheap; writing is not: every `git` write is a
+// frame to every viewer, and it makes the live store differ from the active
+// node's, so the next turn commits a node instead of folding. So each rebuild is
+// compared (contentKey, below) with what was last published and pushed only when
+// it differs, and a respawn adopts the store's own `git` as "last published".
+// Nothing in the payload may change by itself as time passes: commits carry the
+// absolute commit time (`time`, seconds) and the pane writes "N minutes ago".
 
 const { execFile } = require('child_process');
 const util = require('util');
@@ -22,6 +30,28 @@ let pollTimer = null;
 let stream = null;
 let stopped = false;
 let eooSupport = null; // tri-state: null = not probed yet
+
+// The order-free identity of a payload: stable JSON of it without `seq` and
+// `at`, which stamp a publish rather than describe the repo. The JSON round trip
+// first drops what the store would drop (undefined fields), so a payload read
+// back from the store keys the same as the one built here. Written out here, not
+// required from lib/: a component's service.js stands alone.
+function contentKey(g) {
+  if (!g || typeof g !== 'object') return null;
+  const rest = { ...g };
+  delete rest.seq;
+  delete rest.at;
+  const sorted = (v) => {
+    if (Array.isArray(v)) return v.map(sorted);
+    if (v && typeof v === 'object') {
+      const o = {};
+      for (const k of Object.keys(v).sort()) o[k] = sorted(v[k]);
+      return o;
+    }
+    return v;
+  };
+  return JSON.stringify(sorted(JSON.parse(JSON.stringify(rest))));
+}
 
 function git(args, cwd) {
   return pexec('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 }).then((r) => r.stdout);
@@ -53,19 +83,21 @@ async function readBranches(cwd) {
 }
 
 async function readCommits(cwd, ref) {
-  const fmt = ['%h', '%H', '%s', '%an', '%ar', '%D'].join(US);
+  // `%at` (seconds since the epoch), never git's relative `%ar`: a relative
+  // date changes by itself, and the payload must change only when the repo does.
+  const fmt = ['%h', '%H', '%s', '%an', '%at', '%D'].join(US);
   const args = ['log', '--pretty=format:' + fmt + RS, '-n', '50'];
   if (ref) args.push(...(await endOfOptions(cwd)), ref);
   args.push('--'); // disambiguate ref from a path (e.g. a `test` branch vs a test/ dir)
   const out = await git(args, cwd);
   return out.split(RS).map((s) => s.trim()).filter(Boolean).map((line) => {
-    const [short, hash, subject, author, rel, refs] = line.split(US);
-    return { short, hash, subject, author, rel, refs: refs ? refs.split(',').map((r) => r.trim()).filter(Boolean) : [] };
+    const [short, hash, subject, author, at, refs] = line.split(US);
+    return { short, hash, subject, author, time: Number(at) || null, refs: refs ? refs.split(',').map((r) => r.trim()).filter(Boolean) : [] };
   });
 }
 
 async function readDetail(cwd, hash) {
-  const hfmt = ['%H', '%h', '%s', '%an', '%ae', '%ad', '%ar'].join(US);
+  const hfmt = ['%H', '%h', '%s', '%an', '%ae', '%ad', '%at'].join(US);
   // Every option goes BEFORE the fence; `hash` is the first non-option word.
   const eoo = await endOfOptions(cwd);
   const head = (await git(['show', '-s', '--date=iso', '--format=' + hfmt, ...eoo, hash, '--'], cwd)).trim().split(US);
@@ -81,7 +113,7 @@ async function readDetail(cwd, hash) {
     return { file: parts.slice(2).join('\t'), added, removed, binary: parts[0] === '-' };
   });
   return {
-    hash: head[0], short: head[1], subject: head[2], author: head[3], email: head[4], date: head[5], rel: head[6],
+    hash: head[0], short: head[1], subject: head[2], author: head[3], email: head[4], date: head[5], time: Number(head[6]) || null,
     body, stat, files_changed: stat.length, insertions, deletions,
   };
 }
@@ -108,9 +140,9 @@ async function build(cwd, ctl) {
       try { detail = await readDetail(cwd, open); }
       catch (e) { detail = { hash: open, error: String((e && e.message) || e) }; }
     }
-    return { repo, branch, viewing, at: Date.now(), branches, commits, detail };
+    return { repo, branch, viewing, branches, commits, detail };
   } catch (e) {
-    return { repo, branch, viewing, at: Date.now(), error: String((e && e.message) || e) };
+    return { repo, branch, viewing, error: String((e && e.message) || e) };
   }
 }
 
@@ -118,6 +150,7 @@ module.exports = {
   async start(ctx) {
     const cwd = process.cwd();
     let seq = 0;
+    let lastKey = null; // contentKey of the payload last published (or found in the store)
     let ctl = { viewing: null, open: null };
     let lastCtlSeq = 0;
 
@@ -130,14 +163,39 @@ module.exports = {
       return true;
     };
 
-    const push = async () => {
+    // Compare before you push: a rebuild that reads what was last published
+    // writes nothing. `at` is when the data last CHANGED, not when it was read.
+    // Rebuilds run one at a time, so a slow read can never land after a newer
+    // one and publish stale data over it.
+    let chain = Promise.resolve();
+    const rebuild = async (view) => {
       if (stopped) return;
-      const g = await build(cwd, ctl);
-      ctx.driver.setStore({ git: { seq: ++seq, ...g } });
+      const g = await build(cwd, view);
+      if (stopped) return;
+      const key = contentKey(g);
+      if (key === lastKey) return;
+      lastKey = key;
+      ctx.driver.setStore({ git: { seq: ++seq, ...g, at: Date.now() } });
+    };
+    const push = () => {
+      const view = ctl; // the selection as it is when the rebuild is asked for
+      const run = () => rebuild(view);
+      return (chain = chain.then(run, run));
     };
 
-    // Honor any selection the pane already made before we came up.
-    try { applyCtl((await ctx.driver.getStore(['git_ctl'])).git_ctl); } catch {}
+    // A respawn (a socket flap, the pane returning to the active node) finds the
+    // store still holding what the last run published: adopt it, so the same
+    // repo data publishes nothing, and a change continues past its `seq`. Also
+    // honor any selection the pane already made before we came up.
+    try {
+      const got = await ctx.driver.getStore(['git_ctl', 'git']);
+      const prev = got && got.git;
+      if (prev && typeof prev === 'object') {
+        lastKey = contentKey(prev);
+        if (Number.isFinite(prev.seq) && prev.seq > seq) seq = prev.seq;
+      }
+      applyCtl(got && got.git_ctl);
+    } catch {}
     await push();
 
     // React to the pane's control writes (branch select / commit drill-in) live.
