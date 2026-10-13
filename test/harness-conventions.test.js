@@ -16,6 +16,7 @@
 //   a hand-written WS upgrade-> deafWs
 //   a jsdom boot of public/index.html -> test-support/chrome-shell's bootShell
 //                              (file by file, at the bottom of this file)
+//   a private cascade reader -> test-support/css-cascade's createCascade
 //   probing for a real Chrome/ffmpeg -> e2eGate (opt-in, WEB_CHAT_E2E_*)
 //   reading an opt-in variable -> e2eGate (Chrome, ffmpeg, a tty, a claude)
 //   a hardcoded tool count   -> test-support/doc-truth's mcpTools()
@@ -213,6 +214,24 @@ const PATTERNS = [
     roots: ROOTS,
     re: /tools\.length\s*(?:,|===?|!==?|>=?|<=?)\s*\d/g,
     baseline: {},
+  },
+  {
+    // A stylesheet's cascade, read in a jsdom chrome test. Four tests carried
+    // their own parser and specificity (chat-sheet, tab-dock, sheet-keyboard,
+    // t5-e2e-chrome), and a fix to one (a specificity rule, !important, a media
+    // query) left the others wrong; U111 moved them onto one helper. Proposed
+    // by U111, added by U94b (tranche 6). test/css-cascade.test.js keeps its own
+    // tripwire for the same thing beside the helper's unit tests. Counted on
+    // lines that are not `//` comments: the helper's header names both.
+    name: 'function specificity( / function parseRules( (a private cascade reader)',
+    home: 'test-support/css-cascade.js — `createCascade(css, {win})` → `value` / `cascade` / `inherited`',
+    what: "reading a stylesheet's cascade in a chrome test",
+    roots: ROOTS,
+    re: /^(?![ \t]*\/\/).*(?:\bfunction\s+(?:specificity|parseRules)\s*\(|\b(?:const|let|var)\s+(?:specificity|parseRules)\s*=)/gm,
+    baseline: {
+      // The helper's two definitions.
+      'test-support/css-cascade.js': 2,
+    },
   },
 ];
 

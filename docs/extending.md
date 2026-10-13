@@ -1949,6 +1949,20 @@ Current homes (baselines move toward these):
 | `kind: 'control'` (a control event, on lines that are not comments) | `lib/server/control/` — the interrupt, restore, undo and fork rows of the one action table | landed with the control layer ✅ |
 | `/ 12.92` (the sRGB linearisation of a contrast ratio) | `lib/server/answer-surface/palette.js` (`contrastRatio`) | landed with the answer frames ✅ |
 | `/api/queue/message` · `/api/queue/pending/recall` **in `public/` only** | `public/app/queue.js` (`sendMessage` / `recallPending`), the chrome's one send path | landed with the composer ✅ |
+| `history.pushState(` / `history.replaceState(` **in `public/app` only** | `public/app/chat-sheet.js` — its `wcSheet` entry, which the phone's Back pops, is the chrome's one History API consumer; a second consumer extracts a back-stack engine first | landed with the phone ✅ |
+| `visualViewport` **in `public/app` only** (on lines that are not comments) | `public/app/sheet-keyboard.js` (`initSheetKeyboard`), the one listener that keeps the sheet above the on-screen keyboard | landed with the phone ✅ |
+| `setDockHandler(` (a caller) **in `public/app` only** | `public/app/tab-dock.js` (`initTabDock`), the one dock handler; the regex skips the seam's definition in `sheet-drag.js` | landed with the phone ✅ |
+| `hookEventName: 'Elicitation'` (the elicit hook's output, on lines that are not comments) | `lib/hooks/elicitation.js` (`buildElicitationOutput`), which types each value from the hook's own copy of the schema | landed with the mod ✅ |
+| `messageTransport =` (filling the queue's transport seam) | `lib/server/index.js` — the mod's transport (`createModTransport`) assigned at boot and nulled in teardown | landed with the mod ✅ |
+| `attachmentsDir` (on lines that are not comments) | `lib/server/routes/attachments.js` (`mountAttachmentRoutes` writes, `withAttachments` reads) — plus `lib/core/paths.js`, which defines the key | landed with the mod ✅ |
+| `CLAUDE_CODE_MESSAGING_TOKEN` (on lines that are not comments) | read nowhere: `lib/core/redact.js`'s pattern masks it, and the mod's bridge mints a token of its own | landed with the mod ✅ |
+| `bypassPermissions` (in a decision builder, on lines that are not comments) | nowhere — scanned in `lib/hooks`, `lib/server/domain`, `lib/server/control` and `templates/claude-mod`; the only matches are the mod's refusal of a decision that carries it | landed with the mod ✅ |
+| `'setMode'` (a permission-mode change in a decision) | `lib/hooks/ask-output.js` (`buildAskOutput`: acceptEdits, at session scope) | landed with the mod ✅ |
+| `'abort', 'taskStop'` (the mod's op allowlist) | `lib/core/mod-protocol.js` (`OPS`) — plus `templates/claude-mod/hooks/register.js`'s `WIRE`, a copy `test/claude-mod.test.js` holds equal, because the mod cannot require `lib/` | landed with the mod ✅ |
+| `'plan', 'compact', 'context', 'clear'` (the mod's command allowlist) | `lib/core/mod-protocol.js` (`MOD_COMMANDS`) — plus the same test-held copy in `register.js`; the composer's narrower `SAFE_MOD_COMMANDS` is another list | landed with the mod ✅ |
+| `'ModEvent'` (the mod's event name, as a string) | `lib/core/mod-protocol.js` (`MOD_EVENT`) | landed with the mod ✅ |
+| `op: 'abort'` / `op: 'taskStop'` (on lines that are not comments) | `lib/server/control/mod.js` (`installModControl`: the interrupt's mod path and the task-stop row, after the action table's gates) | landed with the mod ✅ |
+| `writeFileSync(…JSON.stringify…)` (a JSON record written by hand, either spelling) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus the sites that predate the engine, each with its record named in the baseline (the portfile, `.mcp.json`, the settings files, saved themes and others), each lowered as it moves | counted since tranche 6; shrinking ✅ |
 
 Working with it:
 
@@ -1956,10 +1970,11 @@ Working with it:
   means you should call the engine. If it's genuinely unavoidable, raise that
   file's baseline with a justifying comment — and expect review pushback.
 - **The tripwire counts raw substrings, comments included.** Writing
-  `os.homedir()` in a comment inflates the count. Reword the comment. Two rows
-  (`graph.redactText` and `kind: 'control'`) count only lines that are not `//`
-  comments, because the comments that explain their one home are quoted
-  outside it; their names say so.
+  `os.homedir()` in a comment inflates the count. Reword the comment. Some rows
+  (`graph.redactText`, `kind: 'control'` and several of the phone's and the mod's) count only
+  lines that are not `//` comments, because the comments that explain their one
+  home are quoted outside it; their names say so, and their regex starts with
+  `^(?![ \t]*\/\/)`.
 - **Adding a new duplication-prone primitive?** Add another pattern to
   `PATTERNS` in `conventions.test.js` with today's occurrences as its baseline, so
   the next copy fails.

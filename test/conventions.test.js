@@ -1132,6 +1132,242 @@ const PATTERNS = [
       'public/app/queue.js': 5,
     },
   },
+  // ── Tranche 5 (proposed by U73 and U73b, added by U94b): the phone ─────────
+  {
+    // The phone's Back closes the chat sheet through one history entry
+    // (`wcSheet`). Two modules pushing entries would each pop the other's, so
+    // the History API has one consumer in the chrome; a second consumer
+    // extracts a back-stack engine first (spec §8.8).
+    name: 'history.pushState( / history.replaceState( (in public/app)',
+    home: 'public/app/chat-sheet.js — the `wcSheet` history entry (the one History API consumer)',
+    what: "writing the browser's history stack",
+    roots: ['public/app'],
+    re: /\bhistory\.(?:pushState|replaceState)\(/g,
+    baseline: {
+      // One push (the sheet opens) and one replace (a stale entry cleared at
+      // init and on a flip to wide).
+      'public/app/chat-sheet.js': 2,
+    },
+  },
+  {
+    // The on-screen keyboard. sheet-keyboard.js is the one listener on
+    // window.visualViewport and the one writer of `.kb` on #chat-pull; a
+    // second listener is a second idea of where the keyboard's top is.
+    // Counted on lines that are not `//` comments: the module's own header
+    // and composer-mod.js's note that it has none both name it.
+    name: 'visualViewport (in public/app, on lines that are not comments)',
+    home: 'public/app/sheet-keyboard.js — `initSheetKeyboard`',
+    what: 'following the on-screen keyboard',
+    roots: ['public/app'],
+    re: /^(?![ \t]*\/\/).*\bvisualViewport\b/gm,
+    baseline: {
+      'public/app/sheet-keyboard.js': 1,
+    },
+  },
+  {
+    // The tab's sideways drag docks it. sheet-drag.js takes the gesture and
+    // hands its sideways half to ONE dock handler; tab-dock.js is that
+    // handler. The regex skips the definition (`function setDockHandler(` in
+    // sheet-drag.js) and comment lines, so the baseline is the callers alone:
+    // a second caller would replace the first one's handler.
+    name: 'setDockHandler( (a caller, in public/app)',
+    home: 'public/app/tab-dock.js — `initTabDock`, the one dock handler (sheet-drag.js defines the seam)',
+    what: "docking the phone's grip tab",
+    roots: ['public/app'],
+    re: /^(?![ \t]*\/\/)(?!.*\bfunction\s+setDockHandler\b).*\bsetDockHandler\(/gm,
+    baseline: {
+      'public/app/tab-dock.js': 1,
+    },
+  },
+  // ── Tranche 6 (U94b, spec §15.7): the mod ──────────────────────────────────
+  {
+    // The Elicitation hook's output to Claude Code: accept with the form's
+    // content, decline or cancel. buildElicitationOutput types each value from
+    // the hook's OWN copy of the schema, so a second builder is a second place
+    // a value could reach Claude Code untyped. Counted on lines that are not
+    // `//` comments: the file's header quotes the shape it prints. The key may
+    // be quoted too.
+    name: "hookEventName: 'Elicitation' (the elicit hook's output, on lines that are not comments)",
+    home: 'lib/hooks/elicitation.js — `buildElicitationOutput(decision, schema)`',
+    what: 'printing an Elicitation decision for Claude Code',
+    roots: ['lib', 'bin'],
+    re: /^(?![ \t]*\/\/).*\bhookEventName['"`]?\s*:\s*['"`]Elicitation['"`]/gm,
+    baseline: {
+      // The decline/cancel line and the accept line.
+      'lib/hooks/elicitation.js': 2,
+    },
+  },
+  {
+    // The queue's transport seam (spec §6.1): deliver offers each message to
+    // state.messageTransport, and the mod's transport (lib/server/mod-transport)
+    // takes it. Who fills the seam is wiring, so it is assigned in one place;
+    // a second assignment is a second transport that silently replaces the
+    // first, or one nobody tears down.
+    name: 'messageTransport = (filling the queue\'s transport seam)',
+    home: 'lib/server/index.js — `createModTransport` assigned at boot, nulled in teardown',
+    what: 'setting the queue\'s message transport',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bmessageTransport\s*=(?!=)/g,
+    baseline: {
+      // The wiring, and stopModLayer's null.
+      'lib/server/index.js': 2,
+    },
+  },
+  {
+    // The images a user adds to a message (spec §15.7): sniffed, size-capped,
+    // fenced, kept as the newest 50 (ruling D6 (a)) and named by path, never
+    // served back. The attachments route is their one writer and withAttachments
+    // their one reader; any other code reaching the folder skips all of that.
+    // Counted on lines that are not `//` comments.
+    name: 'attachmentsDir (the attachments folder, on lines that are not comments)',
+    home: 'lib/server/routes/attachments.js — `mountAttachmentRoutes` / `withAttachments`',
+    what: 'writing or reading a message attachment',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /^(?![ \t]*\/\/).*\battachmentsDir\b/gm,
+    baseline: {
+      // projectPaths defines the key.
+      'lib/core/paths.js': 1,
+      // The relative name a message carries, and the upload's folder.
+      'lib/server/routes/attachments.js': 2,
+    },
+  },
+  {
+    // Claude Code's messaging token is in every hook's environment (V3). The
+    // mod's bridge mints a token of its own at hello and never uses this one
+    // (spec §15.7), and no hook or envelope reads or forwards it. Its only
+    // spelling is the redactor's pattern that masks it. Counted on lines that
+    // are not `//` comments: lib/hooks/envelope.js's comment says why it is
+    // never read.
+    name: 'CLAUDE_CODE_MESSAGING_TOKEN (on lines that are not comments)',
+    home: 'lib/core/redact.js — the pattern that masks it (read nowhere)',
+    what: "reading Claude Code's messaging token",
+    roots: ['lib', 'bin', 'scripts', 'templates'],
+    re: /^(?![ \t]*\/\/).*CLAUDE_CODE_MESSAGING_TOKEN/gm,
+    baseline: {
+      // The rule's pattern and its tail.
+      'lib/core/redact.js': 2,
+    },
+  },
+  {
+    // No answer web-chat builds for Claude Code grants bypassPermissions: the
+    // ask hook's acceptEdits is the one setMode, at session scope. Scanned in
+    // the places a decision is built or carried: the hooks, the asks domain
+    // and the bridge, the control rows, and the mod. Counted on lines that are
+    // not `//` comments, which say it is never output.
+    name: 'bypassPermissions (in a decision builder, on lines that are not comments)',
+    home: 'nowhere — the only matches are the mod\'s refusal of a decision that carries it',
+    what: 'granting bypassPermissions in an answer to Claude Code',
+    roots: ['lib/hooks', 'lib/server/domain', 'lib/server/control', 'templates/claude-mod'],
+    re: /^(?![ \t]*\/\/).*\bbypassPermissions\b/gm,
+    baseline: {
+      // forbiddenDecision: a value or a key named bypassPermissions refuses
+      // the whole decision (the daemon's validateOp refused it first).
+      'templates/claude-mod/hooks/register.js': 2,
+    },
+  },
+  {
+    // The answer the ask hook prints may change the permission mode in one
+    // way: setMode acceptEdits at session scope, for a plan approved with
+    // auto-accept. A second builder of a setMode is a second mode change.
+    name: "'setMode' (a permission-mode change in a decision)",
+    home: 'lib/hooks/ask-output.js — `buildAskOutput` (acceptEdits, destination session)',
+    what: "changing Claude Code's permission mode from an answer",
+    roots: ['lib', 'bin', 'scripts', 'templates'],
+    re: /['"`]setMode['"`]/g,
+    baseline: {
+      'lib/hooks/ask-output.js': 1,
+    },
+  },
+  {
+    // The bridge's op allowlist. The daemon validates every op against it
+    // (lib/core/mod-protocol validateOp) and the mod validates it again; the
+    // mod runs inside Claude Code and cannot require lib/core, so register.js
+    // carries a JSON copy (WIRE) that test/claude-mod.test.js holds equal to
+    // mod-protocol's exports. A third list is an op one side allows and the
+    // other never heard of. Its first two entries are the fingerprint.
+    name: "'abort', 'taskStop' (the mod's op allowlist)",
+    home: 'lib/core/mod-protocol.js — `OPS` (templates/claude-mod/hooks/register.js carries its test-held copy)',
+    what: 'listing the ops the mod may run',
+    roots: ['lib', 'public', 'templates', 'bin', 'scripts'],
+    re: /['"`]abort['"`]\s*,\s*['"`]taskStop['"`]/g,
+    baseline: {
+      'lib/core/mod-protocol.js': 1,
+      'templates/claude-mod/hooks/register.js': 1,
+    },
+  },
+  {
+    // The commands a `command` op may name (§15.7: never a config-persisting
+    // one such as /model). The composer's narrower SAFE_MOD_COMMANDS is a
+    // different list (what a web message may run) and does not match this
+    // fingerprint, which is the allowlist's opening four in order.
+    name: "'plan', 'compact', 'context', 'clear' (the mod's command allowlist)",
+    home: 'lib/core/mod-protocol.js — `MOD_COMMANDS` (templates/claude-mod/hooks/register.js carries its test-held copy)',
+    what: 'listing the commands the mod may run',
+    roots: ['lib', 'public', 'templates', 'bin', 'scripts'],
+    re: /['"`]plan['"`]\s*,\s*['"`]compact['"`]\s*,\s*['"`]context['"`]\s*,\s*['"`]clear['"`]/g,
+    baseline: {
+      'lib/core/mod-protocol.js': 1,
+      'templates/claude-mod/hooks/register.js': 1,
+    },
+  },
+  {
+    // The synthetic hook event the bridge publishes the mod's events under.
+    // Readers compare against MOD_EVENT; a second spelling is an event a
+    // reader stops hearing the day the name changes.
+    name: "'ModEvent' (the mod's event name, as a string)",
+    home: 'lib/core/mod-protocol.js — `MOD_EVENT`',
+    what: "naming the mod's synthetic hook event",
+    roots: ['lib', 'public', 'templates', 'bin', 'scripts'],
+    re: /['"`]ModEvent['"`]/g,
+    baseline: {
+      'lib/core/mod-protocol.js': 1,
+    },
+  },
+  {
+    // An abort or a TaskStop through the mod acts at once, so each is a
+    // control action (Q-C): the interrupt's mod path and the task-stop row,
+    // after the action table's gates (the answer origin's nonce, the rate
+    // limits, the audit). An op built anywhere else skips them, and the
+    // pane-callable task-stop route must never reach the mod (spec §6.9).
+    // Counted on lines that are not `//` comments; the key may be quoted.
+    name: "op: 'abort' / op: 'taskStop' (an immediate stop through the mod, on lines that are not comments)",
+    home: 'lib/server/control/mod.js — `installModControl` (the interrupt\'s mod path and the task-stop row)',
+    what: 'queueing an abort or a TaskStop for the mod',
+    roots: ['lib', 'public', 'bin', 'scripts'],
+    re: /^(?![ \t]*\/\/).*\bop['"`]?\s*:\s*['"`](?:abort|taskStop)['"`]/gm,
+    baseline: {
+      // The abort path and the task-stop row.
+      'lib/server/control/mod.js': 2,
+    },
+  },
+  {
+    // A JSON record written by hand: writeFileSync with a JSON.stringify in
+    // its arguments, in either spelling (a bare call, or one wrapped in a
+    // template literal — lib/setup/registration.js wrote the mod's manifest
+    // that way until U88b moved it to writeJsonAtomic). A plain write
+    // truncates before it writes, so a reader in between sees a torn record.
+    // The entries below are the sites that predate the engine or have not
+    // moved to it yet (counted 2026-10-13); each drops to zero when its file
+    // moves to writeJsonAtomic, and a NEW one goes through the engine.
+    name: 'writeFileSync(…JSON.stringify…) (a JSON record written by hand)',
+    home: 'lib/core/fsjson.js — `writeJsonAtomic`',
+    what: 'writing a JSON record without the durable-record engine',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bwriteFileSync\([^;]*?JSON\.stringify/g,
+    baseline: {
+      'lib/cli/commands/doctor.js': 1, // .mcp.json, after a local-scope move
+      'lib/cli/commands/init.js': 1, // onboarded.json
+      'lib/cli/commands/off.js': 1, // a session's disable marker
+      'lib/core/mcp-seen.js': 1, // an MCP server's presence record
+      'lib/core/portfiles.js': 1, // the portfile
+      'lib/packs/tree.js': 1, // a pack's plan.json in its stage
+      'lib/server/components-registry.js': 1, // a seeded builtin's meta.json
+      'lib/server/routes/theme.js': 4, // a saved theme, theme.json, theme-default.json
+      'lib/setup/registration.js': 2, // .mcp.json, .claude/settings.json
+      'lib/update/check.js': 1, // update-check.json
+      'lib/update/managed-files.js': 2, // managed.json, .claude/settings.json
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
