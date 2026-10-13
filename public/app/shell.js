@@ -493,17 +493,54 @@ function toggleLegend(force) {
 // the pane header buttons (close/minimize/pin). Q still pins it open. The rail's
 // content (items, push, count) is owned by queue.js; this file only handles the
 // reveal/toggle chrome + the P shortcut.
+//
+// THE QUEUE ROUTE (design spec §8.7): on a narrow screen the phone sheet holds
+// the rail in its Tasks → Queue page (chat-sheet-queue.js moves the element
+// there; it is never cloned). It registers a route here, setQueueRoute({active,
+// toggle, open}) → unregister: while route.active() answers true, the bottom
+// bar's Queue and Q call route.toggle(), the opener queue.js raises for push
+// feedback calls route.open(), the rail's hover does nothing while it is
+// .in-sheet, railPinned is never set, and the '‹ Page' label is never applied
+// (the route's module keeps #bb-queue's aria-expanded). With no route, or one
+// that answers false, every path below is exactly today's. One route at a time:
+// a later registration replaces the earlier one, whose unregister then does
+// nothing. No listener is added or removed here when a route comes or goes.
 let railPinned = false;
+let queueRoute = null;
+export function setQueueRoute(route) {
+  if (!route || typeof route.active !== 'function' || typeof route.toggle !== 'function' || typeof route.open !== 'function') {
+    throw new TypeError('setQueueRoute: expects {active, toggle, open}');
+  }
+  queueRoute = route;
+  return () => { if (queueRoute === route) queueRoute = null; };
+}
+// The route in force now, or null (none, or it answers false or throws).
+function routeNow() {
+  const r = queueRoute;
+  if (!r) return null;
+  try { return r.active() ? r : null; } catch (e) { console.error('[web-chat] the queue route failed to answer', e); return null; }
+}
+function viaRoute(how) {
+  const r = routeNow();
+  if (!r) return false;
+  try { r[how](); } catch (e) { console.error(`[web-chat] the queue route failed to ${how}`, e); }
+  return true;
+}
 function setRail(open) {
   const r = $('queue-rail'); if (r) r.classList.toggle('open', open);
   // Under 760px the open rail IS the queue screen (app.css), so the bottom bar's
-  // Queue [n] turns into the way back: "‹ Page".
+  // Queue [n] turns into the way back: "‹ Page". Not while the sheet holds the
+  // rail: there the bar keeps 'Queue', and its aria-expanded is the route's.
   const bb = $('bb-queue');
   if (bb) {
-    bb.setAttribute('aria-expanded', String(!!open));
-    bb.classList.toggle('on', !!open);
-    const label = bb.querySelector('.bb-queue-label'); if (label) label.textContent = open ? '‹ Page' : 'Queue';
-    bb.setAttribute('aria-label', open ? 'Back to the page' : 'Queue to Claude');
+    const routed = !!routeNow();
+    const page = !!open && !routed;
+    if (!routed) {
+      bb.setAttribute('aria-expanded', String(!!open));
+      bb.classList.toggle('on', !!open);
+    }
+    const label = bb.querySelector('.bb-queue-label'); if (label) label.textContent = page ? '‹ Page' : 'Queue';
+    bb.setAttribute('aria-label', page ? 'Back to the page' : 'Queue to Claude');
   }
 }
 function initRail() {
@@ -511,29 +548,36 @@ function initRail() {
   if (!rail) return;
   // Hover is a mouse affordance. A finger "enters" on touchstart and "leaves"
   // on lift, which opened and shut the rail inside one tap; touch takes the
-  // click-to-pin path below instead.
-  rail.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'touch') setRail(true); });
-  rail.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch' && !railPinned) setRail(false); });
+  // click-to-pin path below instead. A rail in the sheet has no hover at all.
+  const inSheet = () => rail.classList.contains('in-sheet');
+  rail.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'touch' && !inSheet()) setRail(true); });
+  rail.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch' && !inSheet() && !railPinned) setRail(false); });
   // queue.js raises push confirmations / rejections / recovery buttons inside
   // .rail-expanded. Give it the ability to PIN the rail open (not just reveal it —
   // the ack rejection lands 6s later, long after the pointer has left), so no
-  // feedback is ever posted into a container the user can't see or click.
-  setRailOpener(() => { railPinned = true; setRail(true); });
+  // feedback is ever posted into a container the user can't see or click. With
+  // the sheet's route in force it opens the sheet on Tasks → Queue instead
+  // (never a close, so the feedback always shows).
+  setRailOpener(() => { if (viaRoute('open')) return; railPinned = true; setRail(true); });
   // The design's rail opens on a click as well as a hover (a touch screen has no
   // hover), and its ESC chip is a real close — the same as Escape or Q.
   const collapsed = rail.querySelector('.rail-collapsed');
-  if (collapsed) collapsed.addEventListener('click', () => { railPinned = true; setRail(true); });
+  if (collapsed) collapsed.addEventListener('click', () => { if (viaRoute('open')) return; railPinned = true; setRail(true); });
   const close = rail.querySelector('.rail-close');
   if (close) close.addEventListener('click', () => { railPinned = false; setRail(false); });
 }
-function toggleRail() { railPinned = !railPinned; setRail(railPinned); }
+function toggleRail() {
+  if (viaRoute('toggle')) return;
+  railPinned = !railPinned; setRail(railPinned);
+}
 
 /* ---------- the narrow bottom bar ----------
    Under 760px (app.css) the topbar's ↑/↓, ↩ active and Graph move to a bar under
    the thumb, beside Queue [n]. Nothing here decides anything of its own: ↑/↓ go
    through stepNode (which clicks the topbar's buttons, so the drawn-topology rule
    and the disabled state are theirs — topbar.updateChip mirrors them onto this
-   bar), ↩ active is returnToActive, and Queue is the rail's own pin toggle. */
+   bar), ↩ active is returnToActive, and Queue is the rail's own pin toggle —
+   or, while the phone sheet holds the rail, its route (setQueueRoute). */
 function initBottomBar() {
   const on = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
   on('bb-up', () => stepNode('up'));
