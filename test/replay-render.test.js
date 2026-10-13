@@ -81,11 +81,11 @@ function fakeChrome(t, { mode = 'ok', env = {}, stubborn = false } = {}) {
 
 // Every process the fake started is gone. A SIGKILLed helper can sit as a
 // zombie for a moment until its (also killed) parent is reaped, so poll.
-async function assertNoSurvivors(fake, what) {
+async function assertNoSurvivors(fake, what, { timeout = 3000 } = {}) {
   const { browsers, helpers } = fake.pids();
   assert.ok(browsers.length >= 1, 'precondition: the fake browser started');
   const all = [...browsers, ...helpers];
-  const gone = await waitUntil(() => all.every((pid) => !isPidAlive(pid)), { timeout: 3000 });
+  const gone = await waitUntil(() => all.every((pid) => !isPidAlive(pid)), { timeout });
   assert.ok(gone, `${what}: still alive: ${all.filter(isPidAlive).join(', ')}`);
   assert.equal(liveBrowsers(), 0, `${what}: the module still counts a browser as up`);
 }
@@ -361,16 +361,20 @@ test('captureFrames: a timed-out render leaves no Chrome behind — nor its help
   const fake = fakeChrome(t, { mode: 'hang', stubborn: true });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  // The wedged fake logs its pid and its helper's before it hangs for good; a
+  // 2 s timeout leaves a Node child's start-up under load room to get there,
+  // and the pid-gone wait gets 10 s (spec §10.1).
+  const timeoutMs = 2000;
   const started = Date.now();
   await assert.rejects(captureFrames({
     chromePath: fake.bin, url: 'http://127.0.0.1:9/replay', width: 32, height: 20,
-    times: [0], tmpDir, timeoutMs: 400, onFrame: () => {}, grace: QUICK,
+    times: [0], tmpDir, timeoutMs, onFrame: () => {}, grace: QUICK,
   }), (e) => e.code === 'timeout');
   const took = Date.now() - started;
-  assert.ok(took < 400 + QUICK.closeMs + QUICK.termMs + 2500, `teardown escalates to SIGKILL without waiting it out (${took} ms)`);
+  assert.ok(took < timeoutMs + QUICK.closeMs + QUICK.termMs + 2500, `teardown escalates to SIGKILL without waiting it out (${took} ms)`);
   assert.equal(fake.pids().helpers.length, 1, 'precondition: the helper started');
   assert.ok(fake.read().some((l) => l.signal === 'SIGTERM'), 'asked with SIGTERM before SIGKILL');
-  await assertNoSurvivors(fake, 'after a timeout');
+  await assertNoSurvivors(fake, 'after a timeout', { timeout: 10_000 });
   assert.deepEqual(fs.readdirSync(tmpDir), [], 'and the profile is removed');
 });
 

@@ -90,7 +90,7 @@ else if (mode === 'garbage') process.stdout.write('not json at all');
 else if (mode === 'same') process.stdout.write(JSON.stringify({ session_id: process.env.SRC_SID }));
 else if (mode === 'notuuid') process.stdout.write(JSON.stringify({ session_id: 'abc; touch /tmp/wc-fork-pwned' }));
 else if (mode === 'exit1') { process.stderr.write('error: ' + process.env.LEAK + '\\n'); process.exit(1); }
-else if (mode === 'sleep') { process.stderr.write(process.env.LEAK); setTimeout(() => {}, 20000); }
+else if (mode === 'sleep') { process.stderr.write(process.env.LEAK); setTimeout(() => {}, 60000); }
 `;
 
 function stubClaude(t, mode) {
@@ -303,9 +303,17 @@ test('no claude → claude-missing, with a hint that names the install, and noth
   assert.equal(s.stub.records().length, 0);
 });
 
+// Timeouts with headroom for a loaded machine (spec §10.1): a stub that answers
+// at once is ended by its answer, so its timeout is generous and never the
+// clock that ends it; the 'sleep' stub records its run before it sleeps 60 s,
+// and its 2 s timeout leaves a Node child's start-up under load room to land
+// that record before the runner kills it.
+const ANSWER_TIMEOUT_MS = 15_000;
+const SLEEP_TIMEOUT_MS = 2_000;
 for (const [mode, why] of [['garbage', 'prints garbage'], ['exit1', 'exits 1'], ['sleep', 'sleeps past the timeout'], ['same', 'answers its own source'], ['notuuid', 'answers a session id outside the UUID grammar']]) {
   test(`a stub that ${why} → fork-failed, with no stderr in the answer or the audit`, async (t) => {
-    const s = setup(t, { mode, runner: (argv, o) => runClaudeAsync(argv, { ...o, timeoutMs: 300 }) });
+    const timeoutMs = mode === 'sleep' ? SLEEP_TIMEOUT_MS : ANSWER_TIMEOUT_MS;
+    const s = setup(t, { mode, runner: (argv, o) => runClaudeAsync(argv, { ...o, timeoutMs }) });
     const a = await s.control.invoke('fork', { turn_id: 't2' }, {});
     assert.deepEqual(a, { ok: false, refused: 'fork-failed', hint: HINTS['fork-failed'] });
     assert.equal(s.stub.records().length, 1, 'it ran once');
