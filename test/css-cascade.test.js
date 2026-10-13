@@ -106,6 +106,10 @@ test('equal specificity falls to source order, then declaration order; several p
   const first = createCascade('.y { color: red; color: blue }\n.z { color: green }', { win: W });
   assert.equal(first.cascade(p, 'color').pos, 0, 'the later rule\'s declaration, at its own position');
   assert.equal(first.value(p, 'color'), 'green');
+  // A rule whose list matches through several selectors weighs as its most
+  // specific match (#x), not its first (.y): it outweighs the later p.z.
+  assert.equal(createCascade('.y, #x { color: red }\np.z { color: blue }', { win: W }).value(p, 'color'), 'red',
+    'a selector list weighs as its most specific matching selector');
   // A selector jsdom cannot parse matches nothing instead of throwing.
   assert.equal(createCascade('p:unknown-thing(( { color: red }\n.y { color: blue }', { win: W }).value(p, 'color'), 'blue');
 });
