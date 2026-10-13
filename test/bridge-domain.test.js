@@ -214,6 +214,24 @@ test('hello: a second hello for one session supersedes the first; the old token 
   assert.equal(h.bridge.result(first, { id: 'op_1', ok: true }).status, 401);
 });
 
+test('hello: a re-hello answers the superseded instance\'s waiting poll [] and hands later ops only to the new token', async (t) => {
+  const h = setup(t);
+  const first = h.attach();
+  let oldAnswer = null;
+  h.bridge.poll(first, { waitMs: 20000 }).then((r) => { oldAnswer = r; });
+  await settle();
+  assert.equal(oldAnswer, null, 'the first instance waits');
+  const second = h.attach();
+  await settle();
+  assert.deepEqual(oldAnswer, { status: 200, body: { ok: true, ops: [] } }, 'answered at the re-hello, not left to take the next op');
+  assert.equal(h.bridge.status().sessions[0].polling, false);
+  const done = h.bridge.enqueue(S1, { op: 'usage' });
+  const a = await h.bridge.poll(second, { waitMs: 20000 });
+  assert.deepEqual(a.body.ops.map((o) => o.op), ['usage']);
+  h.bridge.result(second, { id: a.body.ops[0].id, ok: true, result: { n: 1 } });
+  assert.deepEqual(await done, { ok: true, result: { n: 1 } });
+});
+
 test('setPermissionWait(1500) makes the next hello answer permission_wait_ms 1500; out of range is a TypeError', (t) => {
   const h = setup(t);
   h.bridge.setPermissionWait(1500);

@@ -104,6 +104,30 @@ async function host(t, { globalJson = true, withBridge = true } = {}) {
   };
 }
 
+// A POST with no Content-Length (Transfer-Encoding: chunked), which lib/client
+// never sends: the route must then cap the body by its parsed size.
+function chunkedPost(port, p, obj, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1', port, path: p, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked', ...headers },
+    }, (res) => {
+      let b = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { b += c; });
+      res.on('end', () => {
+        let json = null;
+        try { json = JSON.parse(b); } catch {}
+        resolve({ status: res.statusCode, body: json });
+      });
+    });
+    req.on('error', reject);
+    const text = JSON.stringify(obj);
+    req.write(text.slice(0, 1024));
+    req.end(text.slice(1024));
+  });
+}
+
 // ── the fake mod, end to end ────────────────────────────────────────────────
 
 test('fake mod: hello → runOps answers a queued op through result → events reach the tap once; close() leaves nothing running', async (t) => {
@@ -230,6 +254,12 @@ for (const globalJson of [true, false]) {
     assert.equal((await h.call('POST', '/api/bridge/hello', '{"v":1,', {})).status, 400);
     const many = { events: Array.from({ length: 51 }, () => ({ kind: 'turn.start', at: Date.now(), turn_id: 't' })) };
     assert.equal((await h.call('POST', '/api/bridge/events', many, auth)).status, 400);
+    if (globalJson) {
+      // No Content-Length (chunked): the daemon's 200 MB parser has already
+      // read the body, so the cap is the parsed body's size.
+      const r = await chunkedPost(h.port, '/api/bridge/events', big, auth);
+      assert.equal(r.status, 413, 'a chunked 70 KB body, by its parsed size');
+    }
     const extra = await mod.hello({ messaging_token: 'never' });
     assert.equal(extra.status, 400);
     assert.equal(extra.body.error, 'bad_request');
