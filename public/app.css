@@ -2999,6 +2999,12 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 .sh-empty { margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--wc-border-soft); font: 13px var(--wc-font); color: var(--wc-muted); }
 .sh-gone { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--wc-border-soft); font: 600 12px var(--wc-font); color: var(--wc-muted); }
 .sh-gone[hidden] { display: none; }
+/* A detail page: .sh-pbody > .sh-dhost > .sh-dbody, the view's own body and its
+   scroller. The host's `hidden` is a signal for chat-detail.js (the view is off
+   screen: pause its followers), not a layout change — the page itself is what
+   the sheet hides — so it keeps its box and a closing sheet does not blank it. */
+.sh-dhost, .sh-dhost[hidden] { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.sh-dbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 @media (prefers-reduced-motion: reduce) {
   .sh-dot[data-pulse] { animation: none; }
 }

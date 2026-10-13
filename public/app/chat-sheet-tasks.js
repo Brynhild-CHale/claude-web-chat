@@ -26,8 +26,10 @@
 // this density), the registered stopper (E1 a), the one route; never a second
 // confirm and never a POST of this module's own. Output and Open push a DETAIL
 // PAGE ('‹ Shells', …) holding chat-detail.js's registered 'task' view
-// (chat-panel.js detailOf, B3 a), which follows, pauses while covered and says
-// "No longer running" by itself. A category that leaves the store while its
+// (chat-panel.js detailOf, B3 a), which follows and says "No longer running"
+// by itself. The view sits in a host of this module's whose `hidden` says
+// whether it is on screen — the sheet open, on Tasks, the page on top — so it
+// pauses its followers while the sheet shows Chat, as while covered. A category that leaves the store while its
 // page is open keeps its last rows, without their actions, under that line.
 //
 // RENDERING: only the visible page renders — the sheet open, on Tasks, narrow —
@@ -36,13 +38,15 @@
 // page now on screen at once. A closed sheet draws nothing here (chat-sheet.js
 // keeps the tab, the badge and the segment's count). No interval and no timer.
 // A page's cleanup ends what it added: its followers (stopFollowers) and its
-// row map, and a detail's own view.
+// row map, and a detail's own view. Every page this view pushed is tracked
+// until its cleanup runs, so the unmount pops them all, whichever segment is
+// selected.
 //
 // chat:tasks {category?}, while the sheet is active (initialised and narrow),
 // opens Tasks at least half on that category's page, or on the root when the
 // category has none; at desktop width the trays answer it (chat-trays.js).
 import { isNarrow } from './viewport.js';
-import { mirror, serverNow } from './chat-state.js';
+import { mirror, serverNow, atLeast } from './chat-state.js';
 import { categories } from './chat-present.js';
 import { queueSnapshot } from './queue.js';
 import { categoryLines } from './sheet-model.js';
@@ -218,16 +222,19 @@ function mountCategory(body, cat, entry) {
   gone.hidden = true;
   body.append(gone, list);
   const P = { cat, body, list, gone, title: entry.title, rows: new Map(), models: new Map(), isGone: false };
+  const mine = S;
   const onClick = (e) => onRowClick(P, e);
   list.addEventListener('click', onClick);
-  S.pages.set(cat, P);
+  mine.pages.set(cat, P);
+  mine.pushed.add(P);
   paintCategory(P, entry);
   return () => {
     list.removeEventListener('click', onClick);
     stopFollowers(body);
     P.rows.clear();
     P.models.clear();
-    if (S && S.pages.get(cat) === P) S.pages.delete(cat);
+    mine.pushed.delete(P);
+    if (mine.pages.get(cat) === P) mine.pages.delete(cat);
   };
 }
 
@@ -282,6 +289,20 @@ function onRowClick(P, e) {
 
 // ── a detail page: §7.12's view, inside the Tasks stack (ruling B3 a) ────────
 
+// Whether a detail page's view is on screen: the sheet open on Tasks, and the
+// page on top of its stack (or being pushed there). chat-detail.js watches the
+// host's `hidden` and pauses or resumes the view's followers with it.
+function syncHost(D, pushing = false) {
+  if (!S) return;
+  const st = S.api.state();
+  const hidden = !(st.open && st.view === VIEW && (pushing || st.page === D.key));
+  if (D.host.hidden !== hidden) D.host.hidden = hidden;
+}
+function syncHosts() {
+  if (!S) return;
+  for (const D of S.pushed) if (D.host) syncHost(D);
+}
+
 function pushDetail(model, catTitle) {
   if (!S) return null;
   const key = DETAIL + model.id;
@@ -291,15 +312,25 @@ function pushDetail(model, catTitle) {
     title: model.title || '',
     back: `‹ ${catTitle || 'Tasks'}`,
     render: (body) => {
+      const mine = S;
+      const D = { key, host: null };
+      mine.pushed.add(D);
       const render = detailOf('task');
       if (!render) {
         body.append(el('p', 'sh-gone', 'This view could not be shown.'));
-        return () => stopFollowers(body);
+        return () => { mine.pushed.delete(D); stopFollowers(body); };
       }
+      // body > .sh-dhost > the view's own body: the host is the view's parent.
+      const host = el('div', 'sh-dhost');
+      const inner = el('div', 'sh-dbody');
+      host.append(inner);
+      body.append(host);
+      D.host = host;
+      syncHost(D, true);
       const head = pageHead(body);
       let cleanup = null;
       try {
-        cleanup = render(body, { id: model.id }, {
+        cleanup = render(inner, { id: model.id }, {
           close: () => { if (api.state().page === key) api.popPage(VIEW); },
           setTitle: (t) => { if (head.title) setText(head.title, String(t || '')); },
         });
@@ -307,6 +338,7 @@ function pushDetail(model, catTitle) {
         console.error('[web-chat] a Tasks detail page failed to render', e);
       }
       return () => {
+        mine.pushed.delete(D);
         if (typeof cleanup === 'function') {
           try { cleanup(); } catch (e) { console.error('[web-chat] a Tasks detail page failed to clean up', e); }
         }
@@ -333,13 +365,13 @@ function render() {
   const at = visiblePage();
   if (!at) return;
   if (at === 'root') { renderRoot(); return; }
-  const entry = snapshot().find((x) => x.cat === at.cat);
-  if (entry && entry.hidden) {
-    // The level fell below `read`: the rows are no longer this viewer's.
-    while (S && S.api.state().page && S.pages.has(S.api.state().page)) S.api.popPage(VIEW);
+  if (!atLeast(levelOf(), 'read')) {
+    // The level fell below `read`: the rows are no longer this viewer's, whether
+    // the category is still counted or not.
+    while (S && S.pushed.size && S.api.popPage(VIEW));
     return;
   }
-  paintCategory(at, entry);
+  paintCategory(at, snapshot().find((x) => x.cat === at.cat));
 }
 
 function cancelFrame() {
@@ -372,26 +404,29 @@ function onTasks(detail) {
 function mount(api) {
   const root = el('div', 'sh-root');
   const empty = el('p', 'sh-empty');
-  S = { api, root, empty, lines: new Map(), pages: new Map(), frame: null };
+  // pages: the category pages by key; pushed: every page this view pushed
+  // (category and detail records) until its cleanup runs.
+  S = { api, root, empty, lines: new Map(), pages: new Map(), pushed: new Set(), frame: null };
   const mine = S;
   api.views.tasks.prepend(root);
   root.addEventListener('click', onRootClick);
   api.on('mirror', schedule);
   api.on('queue', schedule);
-  api.on('sheet', render);
+  api.on('sheet', () => { syncHosts(); render(); });
   api.on('chat:tasks', onTasks);
   render();
   return () => {
     if (S !== mine) return;
     cancelFrame();
-    // The pages this view pushed go with it (each one's cleanup runs on its pop).
-    for (let k = api.state().page; k && (mine.pages.has(k) || k.startsWith(DETAIL)); k = api.state().page) {
-      if (!api.popPage(VIEW)) break;
-    }
+    // The pages this view pushed go with it (each one's cleanup runs on its pop
+    // and drops it from `pushed`); popPage works on the Tasks stack whichever
+    // segment is selected.
+    while (mine.pushed.size && api.popPage(VIEW));
     root.removeEventListener('click', onRootClick);
     root.remove();
     mine.lines.clear();
     mine.pages.clear();
+    mine.pushed.clear();
     S = null;
   };
 }

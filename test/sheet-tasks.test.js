@@ -401,6 +401,27 @@ test('only the visible page renders: a mirror change under a detail page reaches
   assert.equal(line2.textContent, 'Tests 43 passed (43)', 'drawn once it showed');
 });
 
+test('a detail page left in the Tasks stack stops following while Chat is the segment, and follows again on Tasks', async () => {
+  await openTasks();
+  const shellsPage = await tapLine('shells');
+  const before_ = calls('/api/mirror/tasks/b1/output').length;
+  shell.click(act(rowOf(shellsPage, 'b1'), 'output'));
+  await shell.tick();
+  await waitUntil(() => calls('/api/mirror/tasks/b1/output').length >= before_ + 2, { what: 'the follower to follow' });
+  shell.click($('sh-tab-chat'));
+  await shell.tick();
+  assert.equal(sheet.sheetState().open, true, 'the sheet stays open, on Chat');
+  assert.equal(sheet.sheetState().view, 'chat');
+  await settle();
+  const n = calls('/api/mirror/tasks/b1/output').length;
+  await settle();
+  assert.equal(calls('/api/mirror/tasks/b1/output').length, n, 'no fetch while the Tasks view is not on screen');
+  shell.click($('sh-tab-tasks'));
+  await shell.tick();
+  assert.equal(sheet.sheetState().page, 'task:b1');
+  await waitUntil(() => calls('/api/mirror/tasks/b1/output').length > n, { what: 'the follower to follow again' });
+});
+
 test('the item leaving the store while its detail page is open: "No longer running", the last content kept', async () => {
   await openTasks();
   const shellsPage = await tapLine('shells');
@@ -434,6 +455,19 @@ test('the category emptying while its page is open: the rows stay, without actio
   await showFinal();
   assert.equal(g.hidden, true, 'back in the store: the line goes');
   assert.ok(act(rowOf(page, 'b1'), 'kill'), 'and the actions come back');
+});
+
+test('the level falling below read while a category page is open pops it, even when the counts drop the category', async () => {
+  await openTasks();
+  await tapLine('shells');
+  assert.equal(sheet.sheetState().page, 'shells');
+  const { mirrorBody: basic } = fixture({ level: 'basic' });
+  basic.conversations[0].counts = { ...basic.conversations[0].counts, shells: 0 };
+  await show(basic);
+  assert.equal(sheet.sheetState().page, null, 'the page popped');
+  const named = [...$('sh-tasks').querySelectorAll('.cs-row-title, .cs-row')].filter((e) => e.textContent.includes('npm run dev'));
+  assert.deepEqual(named, [], 'no row names the work below read');
+  assert.equal(line('shells'), undefined, 'and the root has no Shells line');
 });
 
 test('B3 (a): Open on an agent pushes its view into the Tasks stack, and its Cancel takes two taps there', async () => {
@@ -541,4 +575,31 @@ test('stopSheetTasks: the root and its pages go and a mirror event draws nothing
   await shell.tick();
   assert.ok(root(), 'mounted again, and drawn: the sheet is open on Tasks');
   assert.equal(lines().length, 5);
+});
+
+test('stopSheetTasks with a detail page left under Chat: every page this view pushed goes and nothing follows', async () => {
+  await openTasks();
+  const shellsPage = await tapLine('shells');
+  const before_ = calls('/api/mirror/tasks/b1/output').length;
+  shell.click(act(rowOf(shellsPage, 'b1'), 'output'));
+  await shell.tick();
+  await waitUntil(() => calls('/api/mirror/tasks/b1/output').length > before_, { what: 'the follower to follow' });
+  shell.click($('sh-tab-chat'));
+  await shell.tick();
+  tasks.stopSheetTasks();
+  const ours = () => pages().filter((p) => p.dataset.page !== 'queue');
+  assert.deepEqual(ours(), [], 'no page of this view is left in #sh-tasks');
+  assert.equal(shellsPage.isConnected, false);
+  await settle();
+  const n = calls('/api/mirror/tasks/b1/output').length;
+  await settle();
+  assert.equal(calls('/api/mirror/tasks/b1/output').length, n, 'no output fetch after the stop');
+  tasks.initSheetTasks();
+  shell.click($('sh-tab-tasks'));
+  await shell.tick();
+  assert.equal(sheet.sheetState().page, null, 'Tasks opens at its root');
+  assert.ok(root(), 'mounted again');
+  assert.equal(lines().length, 5);
+  const page = await tapLine('shells');
+  assert.deepEqual(rowsOf(page).map((r) => r.dataset.rowId), ['b1', 'b2'], 'a fresh page, drawn by the new mount');
 });
