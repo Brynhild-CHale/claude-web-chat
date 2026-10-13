@@ -381,6 +381,31 @@ test('mod status words installed, listed and attached from installed.json, setti
   assert.match(log.text(), /does not list web-chat-mod@/);
 });
 
+test('mod status says what the mod lost: the LAST dropped and failed counts beside the driver, and nothing when the diag carries neither', async (t) => {
+  isolate(t);
+  const root = project(t);
+  await mod(['on'], { cwd: root, runClaude: fakeClaude().fn, log: sink() });
+  const daemonFor = async (r) => (r === root ? { pid: 4242, port: 61234, url: 'http://localhost:61234' } : null);
+  const at = Date.now();
+  const session = (shapes) => ({
+    session_id: 'abcdef12-0000-4000-8000-000000000000', cc_version: '2.1.296', mod_version: VERSION,
+    attached_at: at - 90000, last_poll_at: at - 2000, shapes,
+  });
+  const lineOf = async (shapes) => {
+    const log = sink();
+    await mod(['status'], { cwd: root, log, daemonFor, get: async () => ({ ok: true, sessions: [session(shapes)] }) });
+    return log.text().split('\n').find((l) => l.includes('session abcdef12'));
+  };
+
+  // The bridge unions each list across diags: the last entry is the count now.
+  assert.match(await lineOf({ driver: ['loop'], dropped: ['0', '101'], failed: ['2'] }), / · driver loop · dropped 101, failed 2$/);
+  assert.match(await lineOf({ driver: ['loop'], dropped: ['7'] }), / · driver loop · dropped 7, failed \?$/, 'a missing count reads ?');
+  assert.match(await lineOf({ failed: ['3'] }), / ago · dropped \?, failed 3$/, 'no driver: the counts follow the poll');
+  // Neither: the line as before, ending at the driver.
+  assert.match(await lineOf({ driver: ['loop'] }), / · last poll 2s ago · driver loop$/);
+  assert.match(await lineOf(undefined), / · last poll 2s ago$/);
+});
+
 test('mod status asks only this project\'s verified daemon: a portfile copied from another project is never asked', async (t) => {
   isolate(t);
   const root = project(t);

@@ -170,6 +170,10 @@ test('forkArgv: an id outside the UUID grammar, or a label beyond web-chat\'s, t
   }
 });
 
+test('one UUID grammar: fork.js re-exports lib/core/mod-protocol\'s UUID_RE, the same object', () => {
+  assert.equal(require('../lib/server/control/fork').UUID_RE, require('../lib/core/mod-protocol').UUID_RE);
+});
+
 // ── the row through invoke() ────────────────────────────────────────────────
 
 test('a fork against a stubbed claude answers the session id and the resume command; argv, env and stdin are as specified', async (t) => {

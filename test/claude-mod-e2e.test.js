@@ -14,8 +14,8 @@
 // profile the maintainer names in WEB_CHAT_E2E_CLAUDE_CONFIG_DIR — read by
 // test-support/helpers' e2eGate(['claude']).claudeConfigDir, never here, and
 // never ~/.claude. While it is unset the test skips, naming the variable. A
-// daemon with no mod bridge yet (before U94a wires ctx.bridge) skips too,
-// saying so.
+// daemon whose GET /api/bridge/status is not 200 FAILS (U94a wired ctx.bridge):
+// an unwired bridge is a regression, never a skip.
 //
 //   WEB_CHAT_E2E_CLAUDE=1 WEB_CHAT_E2E_CLAUDE_CONFIG_DIR=<dir> \
 //     node --test --test-timeout=240000 --import ./test-support/sandbox.js test/claude-mod-e2e.test.js
@@ -52,7 +52,7 @@ test('mod on, one real `claude -p` turn attaches and its turn reaches the bridge
   await withServer(t, { writePortfile: true }, async (ctx) => {
     const status = async () => request(ctx.port, 'GET', '/api/bridge/status', null);
     const first = await status();
-    if (first.status === 404) { t.skip('this daemon has no mod bridge yet (U94a wires ctx.bridge)'); return; }
+    assert.equal(first.status, 200, 'GET /api/bridge/status answers 200: the daemon wires its mod bridge (ctx.bridge)');
 
     const lines = [];
     const on = await mod(['on'], { cwd: ctx.root, log: (l) => lines.push(l) });
