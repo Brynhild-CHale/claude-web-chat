@@ -200,9 +200,14 @@ test('intake: the events it takes are exactly those the mirror hook posts; envel
   const posted = [...new Set(hookHandlers().filter((h) => h.sub === 'mirror').map((h) => h.event))].sort();
   assert.deepEqual([...INTAKE_EVENTS].sort(), posted);
   assert.deepEqual([...INTAKE_EVENTS].sort(), [...MIRROR_EVENTS].sort());
-  assert.deepEqual([...ENVELOPE_EVENTS].sort(), [...MIRROR_EVENTS, 'PermissionRequest'].sort());
+  assert.deepEqual([...ENVELOPE_EVENTS].sort(), [...MIRROR_EVENTS, 'PermissionRequest', 'Elicitation'].sort());
   const asked = [...new Set(hookHandlers().filter((h) => h.sub === 'ask').map((h) => h.event))];
   assert.deepEqual(asked, ['PermissionRequest']);
+  // The elicit hook posts its Elicitation to the asks domain too (tranche 6):
+  // an envelope checkEnvelope knows, never an intake event.
+  const elicited = [...new Set(hookHandlers().filter((h) => h.sub === 'elicit').map((h) => h.event))];
+  assert.deepEqual(elicited, ['Elicitation']);
+  assert.ok(!INTAKE_EVENTS.includes('Elicitation'));
   for (const e of ENVELOPE_EVENTS) assert.ok(EVENTS.includes(e), `${e} is an envelope v1 event`);
 });
 

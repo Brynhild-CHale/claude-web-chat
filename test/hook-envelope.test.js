@@ -87,6 +87,15 @@ const FIXTURES = {
     background_tasks: [], session_crons: [],
   }),
   PreCompact: payload('PreCompact', { trigger: 'auto', custom_instructions: 'CUSTOM-INSTRUCTIONS' }),
+  // An MCP server's form request, from a subagent's tool call (2.1.296's input:
+  // mcp_server_name, message, mode, elicitation_id, requested_schema). The
+  // envelope keeps none of the form: the elicit hook posts that to the asks
+  // domain beside it.
+  Elicitation: payload('Elicitation', {
+    agent_id: 'a1b2c3d4', agent_type: 'Explore',
+    mcp_server_name: 'scratch', message: 'MESSAGE-TEXT', mode: 'form', elicitation_id: 'el-1',
+    requested_schema: { type: 'object', properties: { name: { type: 'string', title: 'TITLE-TEXT' } }, required: ['name'] },
+  }),
   Stop: payload('Stop', {
     last_assistant_message: 'Done — the bar now shows the step.', stop_hook_active: false, session_crons: [],
     background_tasks: [{ id: 'b7', type: 'shell', status: 'running', description: 'dev server', command: 'npm run dev' }],
@@ -110,6 +119,7 @@ const SECTIONS = {
   PreCompact: ['compact'],
   Stop: ['stop'],
   StopFailure: ['stop'],
+  Elicitation: ['agent'],
 };
 const ALL_SECTIONS = ['agent', 'tool', 'result', 'session', 'compact', 'stop', 'prompt', 'ask'];
 
@@ -169,7 +179,7 @@ test('envelope: every registered event has a fixture, and the ones that reach No
 });
 
 test('envelope: EVENTS is exactly the events the template sends to a Node subcommand', () => {
-  assert.deepEqual([...EVENTS].sort(), eventsOf(['turn-begin', 'turn-end', 'mirror', 'ask']));
+  assert.deepEqual([...EVENTS].sort(), eventsOf(['turn-begin', 'turn-end', 'mirror', 'ask', 'elicit']));
   assert.deepEqual(Object.keys(SECTIONS).sort(), [...EVENTS].sort());
 });
 
@@ -271,7 +281,7 @@ test('envelope: null for what is not a hook payload, or an event v1 does not des
   for (const p of [null, undefined, 'PreToolUse', 42, [], [FIXTURES.PreToolUse]]) assert.equal(hookEnvelope(p, ENV), null);
   assert.equal(hookEnvelope({ ...FIXTURES.PreToolUse, hook_event_name: undefined }, ENV), null);
   for (const event of ['PostToolBatch', 'Notification', 'SubagentStart', 'MessageDisplay', 'PostCompact',
-    'PermissionResolved', 'Elicitation', 'toString', '__proto__', 'constructor']) {
+    'PermissionResolved', 'ElicitationResult', 'toString', '__proto__', 'constructor']) {
     assert.equal(hookEnvelope({ ...FIXTURES.PreToolUse, hook_event_name: event }, ENV), null, event);
   }
 });
