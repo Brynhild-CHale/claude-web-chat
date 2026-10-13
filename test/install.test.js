@@ -218,6 +218,64 @@ test('ensureGitignore creates one in a git repo that has none', () => {
   assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\.web-chat\/$/m);
 });
 
+// With the git answers registration passes down (U96): inside a work tree, git
+// decides whether .web-chat/ is already ignored there, so a subfolder of a
+// repository is judged by the repository's rules, not by its own .git.
+test('ensureGitignore with git answers: a work-tree subfolder with no coverage gets its own line', () => {
+  const sub = tmpRoot();  // no .git here: a subfolder of a repository
+  assert.equal(ensureGitignore(sub, { git: { inWorkTree: true, ignored: false } }), 'added');
+  assert.equal(fs.readFileSync(path.join(sub, '.gitignore'), 'utf8'),
+    '\n# claude-web-chat per-project state (graph, components, portfile, drafts)\n.web-chat/\n');
+  // An existing file is appended to, with what it held kept.
+  const other = tmpRoot();
+  fs.writeFileSync(path.join(other, '.gitignore'), 'dist/');
+  assert.equal(ensureGitignore(other, { git: { inWorkTree: true, ignored: false } }), 'added');
+  assert.match(fs.readFileSync(path.join(other, '.gitignore'), 'utf8'), /^dist\/\n\n# claude-web-chat[^]*\n\.web-chat\/\n$/);
+});
+
+test('ensureGitignore with git answers: already ignored writes nothing; dryRun writes nothing', () => {
+  const sub = tmpRoot();
+  assert.equal(ensureGitignore(sub, { git: { inWorkTree: true, ignored: true } }), 'already-present');
+  assert.equal(fs.existsSync(path.join(sub, '.gitignore')), false);
+  assert.equal(ensureGitignore(sub, { dryRun: true, git: { inWorkTree: true, ignored: false } }), 'added');
+  assert.equal(fs.existsSync(path.join(sub, '.gitignore')), false, 'dryRun: "would add", nothing written');
+});
+
+test('ensureGitignore with git answers: outside a work tree it is today\'s rule, and a bare folder gets nothing', () => {
+  const bare = tmpRoot();
+  assert.equal(ensureGitignore(bare, { git: { inWorkTree: false, ignored: false } }), 'no-gitignore');
+  assert.equal(fs.existsSync(path.join(bare, '.gitignore')), false);
+  // Without the answers at all: exactly as before (covered by the tests above).
+  assert.equal(ensureGitignore(bare), 'no-gitignore');
+});
+
+// Against a real repository: what git itself says, through the registration
+// engine that asks it (apply passes the answers down).
+test('ensureGitignore through apply, in a real repository: unanchored root rule covers a subfolder, anchored does not', (t) => {
+  const restore = sandboxHome();
+  t.after(restore);
+  const reg = require('../lib/setup/registration');
+  const noClaude = () => ({ ok: false, notFound: true });
+  for (const [rootRule, expect] of [['.web-chat/\n', 'already-present'], ['/.web-chat/\n', 'added'], [null, 'added']]) {
+    const repo = tmpRoot();
+    gitInit(repo);
+    if (rootRule) fs.writeFileSync(path.join(repo, '.gitignore'), rootRule);
+    const sub = path.join(repo, 'pkg');
+    fs.mkdirSync(sub);
+    const dry = reg.apply(sub, { dryRun: true, runClaude: noClaude });
+    assert.equal(dry.gitignore, expect, `dry run, root rule ${JSON.stringify(rootRule)}`);
+    assert.equal(fs.existsSync(path.join(sub, '.gitignore')), false, 'the dry run wrote nothing');
+    assert.equal(reg.inspect(sub).gitignore, expect === 'added' ? 'absent' : 'covered');
+    const applied = reg.apply(sub, { runClaude: noClaude });
+    assert.equal(applied.gitignore, expect);
+    assert.equal(fs.existsSync(path.join(sub, '.gitignore')), expect === 'added');
+    assert.ok(gitIgnored(repo, 'pkg/.web-chat/'), 'either way git ignores it now');
+    const rootIgnore = path.join(repo, '.gitignore');
+    assert.equal(fs.existsSync(rootIgnore) ? fs.readFileSync(rootIgnore, 'utf8') : null, rootRule,
+      'the repository root\'s .gitignore is never edited for a subfolder');
+  }
+});
+
 // ── `install(args, { nextSteps })` ───────────────────────────────────────────
 // `claude-web-chat init` calls install IN-PROCESS and prints its own, fuller
 // closing checklist (it knows whether a browser opened and whether a tour is
@@ -336,12 +394,26 @@ test('a differs row with an unmerged .new sidecar is reported once, not twice', 
 });
 
 // ── the root install operates on ─────────────────────────────────────────────
-// Typed in a subdirectory, install used to create a SECOND nested install:
-// .web-chat/, .claude/settings.json and .mcp.json that Claude Code (which reads
-// the project root) never loads — and from then on findProjectRoot resolved the
-// nested one for every command run below it. There was no test of it at all.
+// 0.8.0 made install typed in a subdirectory ADOPT the enclosing project root.
+// 0.8.5 (U96, the maintainer's call): install sets up the folder it is typed in,
+// or the one named, even inside another install; the 0.8.0 rule is kept behind
+// --nearest-parent. The chat side is unchanged: a Claude Code session started in
+// a child folder still uses the nearest install above it (resolveRoot's other
+// modes, which every other command keeps).
 
-test('install from a SUBDIRECTORY adopts the enclosing project root', async () => {
+async function captureInstallArgs(args, cwd, opts = {}) {
+  const prevLog = console.log;
+  const lines = [];
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    await install(args, { cwd, runClaude: () => ({ ok: true }), ...opts });
+  } finally {
+    console.log = prevLog;
+  }
+  return lines.join('\n');
+}
+
+test('install from a SUBDIRECTORY of an install sets up the subdirectory, and says the parent has its own', async () => {
   const restore = sandboxHome();
   try {
     const root = tmpRoot();
@@ -351,11 +423,147 @@ test('install from a SUBDIRECTORY adopts the enclosing project root', async () =
 
     const out = await captureInstall(sub, {});
 
+    assert.match(out, new RegExp(`web-chat installed for ${sub}`));
+    assert.ok(fs.existsSync(path.join(sub, '.web-chat')), 'its own .web-chat/');
+    assert.ok(fs.existsSync(path.join(sub, '.claude', 'settings.json')), 'its own hooks');
+    const lines = out.split('\n');
+    const note = lines.findIndex((l) => l === `(${root} has its own web-chat; this sets up a separate one for ${sub}: `
+      + `Claude Code sessions started in ${sub} or below use it. --nearest-parent updates ${root} instead.)`);
+    assert.ok(note >= 0, `the enclosing line, in:\n${out}`);
+    assert.ok(note < lines.findIndex((l) => l.startsWith('web-chat installed for')), 'printed before the result table');
+    assert.deepEqual(fs.readdirSync(root).sort(), ['.web-chat', 'packages'], 'the parent is untouched');
+    assert.deepEqual(fs.readdirSync(path.join(root, '.web-chat')), []);
+  } finally {
+    restore();
+  }
+});
+
+test('install --nearest-parent from a SUBDIRECTORY adopts the enclosing project root (0.8.0\'s rule)', async () => {
+  const restore = sandboxHome();
+  try {
+    const root = tmpRoot();
+    fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+    const sub = path.join(root, 'packages', 'app');
+    fs.mkdirSync(sub, { recursive: true });
+
+    const out = await captureInstallArgs(['--nearest-parent'], sub);
+
     assert.match(out, new RegExp(`web-chat installed for ${root}`));
+    assert.match(out, new RegExp(`\\(typed in ${sub} — installing into the enclosing project root\\)`));
+    assert.doesNotMatch(out, /has its own web-chat/);
     assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the parent gets the registration');
     assert.ok(fs.existsSync(path.join(root, '.claude', 'settings.json')));
     assert.equal(fs.existsSync(path.join(sub, '.web-chat')), false, 'and no second nested surface is created');
     assert.equal(fs.existsSync(path.join(sub, '.mcp.json')), false);
+
+    // With nothing installed above, --nearest-parent sets up the folder itself.
+    const bare = tmpRoot();
+    await captureInstallArgs(['--nearest-parent'], bare);
+    assert.ok(fs.existsSync(path.join(bare, '.web-chat')));
+  } finally {
+    restore();
+  }
+});
+
+test('install <folder> sets up that folder, relative or absolute, and never the cwd', async () => {
+  const restore = sandboxHome();
+  try {
+    const cwd = tmpRoot();
+    fs.mkdirSync(path.join(cwd, 'rel'));
+    const out = await captureInstallArgs(['rel'], cwd);
+    assert.match(out, new RegExp(`web-chat installed for ${path.join(cwd, 'rel')}`));
+    assert.ok(fs.existsSync(path.join(cwd, 'rel', '.web-chat')));
+    assert.ok(fs.existsSync(path.join(cwd, 'rel', '.claude', 'settings.json')));
+
+    const abs = tmpRoot();
+    const seen = [];
+    await captureInstallArgs([abs], cwd, { restartIfStale: async (r) => { seen.push(r); return { restarted: false }; } });
+    assert.ok(fs.existsSync(path.join(abs, '.web-chat')));
+    assert.deepEqual(seen, [abs], 'the daemon asked about is the folder\'s');
+    assert.deepEqual(fs.readdirSync(cwd), ['rel'], 'nothing written in the cwd');
+  } finally {
+    restore();
+  }
+});
+
+test('install refuses a missing folder, a file and two folders, writing nothing', async () => {
+  const restore = sandboxHome();
+  try {
+    const cwd = tmpRoot();
+    fs.writeFileSync(path.join(cwd, 'notes.txt'), 'x');
+    fs.mkdirSync(path.join(cwd, 'a'));
+    fs.mkdirSync(path.join(cwd, 'b'));
+    const cases = [
+      [['missing'], new RegExp(`${path.join(cwd, 'missing')} does not exist`)],
+      [['notes.txt'], new RegExp(`${path.join(cwd, 'notes.txt')} is not a folder`)],
+      [['a', 'b'], /takes one folder, not 2: a b/],
+      [['a', 'b', '--nearest-parent'], /takes one folder, not 2: a b/],
+    ];
+    for (const [args, re] of cases) {
+      let out = '';
+      await assert.rejects(
+        async () => { out = await captureInstallArgs(args, cwd); },
+        (e) => e.userFacing === true && re.test(e.message)
+          && /Usage: claude-web-chat install \[folder\] \[--nearest-parent\]/.test(e.message),
+      );
+      assert.equal(out, '');
+    }
+    assert.deepEqual(fs.readdirSync(cwd).sort(), ['a', 'b', 'notes.txt'], 'nothing created, the missing folder included');
+    assert.deepEqual(fs.readdirSync(path.join(cwd, 'a')), []);
+    assert.deepEqual(fs.readdirSync(path.join(cwd, 'b')), []);
+  } finally {
+    restore();
+  }
+});
+
+test('install refuses $HOME named as the folder, in both modes, before writing anything', async () => {
+  const restore = sandboxHome();
+  try {
+    const home = process.env.HOME;
+    fs.mkdirSync(path.join(home, '.web-chat', 'versions'), { recursive: true });
+    const cwd = tmpRoot();
+    for (const args of [[home], [home, '--nearest-parent'], [fs.realpathSync(home), '--nearest-parent']]) {
+      await assert.rejects(
+        () => captureInstallArgs(args, cwd),
+        (e) => e.userFacing === true && /is your home directory — web-chat does not install here/.test(e.message),
+      );
+    }
+    assert.deepEqual(fs.readdirSync(home), ['.web-chat']);
+    assert.deepEqual(fs.readdirSync(path.join(home, '.web-chat')), ['versions']);
+    assert.deepEqual(fs.readdirSync(cwd), []);
+  } finally {
+    restore();
+  }
+});
+
+// A subfolder install inside a repository has to end up ignored by git. The
+// line goes in the folder's own .gitignore, unless the repository already
+// ignores it there.
+function gitInit(dir) {
+  require('child_process').execFileSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
+}
+function gitIgnored(cwd, rel) {
+  try {
+    require('child_process').execFileSync('git', ['check-ignore', '-q', '--', rel], { cwd, stdio: 'ignore' });
+    return true;
+  } catch { return false; }
+}
+
+test('a default install in a subfolder of a git repository leaves its .web-chat/ ignored by git', async () => {
+  const restore = sandboxHome();
+  try {
+    const repo = tmpRoot();
+    gitInit(repo);
+    const sub = path.join(repo, 'apps', 'web');
+    fs.mkdirSync(sub, { recursive: true });
+    assert.equal(gitIgnored(repo, 'apps/web/.web-chat/'), false);
+
+    const out = await captureInstall(sub, {});
+
+    assert.ok(gitIgnored(repo, 'apps/web/.web-chat/'), `git check-ignore says ignored:\n${out}`);
+    assert.match(fs.readFileSync(path.join(sub, '.gitignore'), 'utf8'), /^\.web-chat\/$/m, 'the line is in the folder\'s own .gitignore');
+    assert.equal(fs.existsSync(path.join(repo, '.gitignore')), false, 'the repository root\'s is left alone');
+    assert.match(out, /\.gitignore +\.web-chat\/ added/);
   } finally {
     restore();
   }

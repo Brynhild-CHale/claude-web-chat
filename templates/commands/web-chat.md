@@ -9,13 +9,15 @@ argument-hint: "[subcommand] — init, status, open, restart, doctor, trust, ls,
      the read-only `status` instead of dumping `help`, because the guided start below
      needs to know whether the surface is up before it renders into it.
 
-     `init` is special-cased to `init --report`. Bare `claude-web-chat init` INSTALLS
-     and PROMPTS; a slash command must never do either behind the user's back, and a
-     prompt has no terminal here to answer it. `--report` is the read-only twin:
-     doctor runs with dryRun, nothing is written, and the state block below is the
-     handoff Claude reads. -->
+     `init` is special-cased to `init --report --nearest-parent`. Bare `claude-web-chat
+     init` INSTALLS and PROMPTS; a slash command must never do either behind the user's
+     back, and a prompt has no terminal here to answer it. `--report` is the read-only
+     twin: doctor runs with dryRun, nothing is written, and the state block below is the
+     handoff Claude reads. `--nearest-parent` makes it report the install this session
+     uses: a session started in a child folder uses the nearest folder at or above it
+     that has web-chat, while a bare `init` describes the folder it is typed in. -->
 
-!sh -c 'case "${1:-}" in "") claude-web-chat status ;; init) shift; claude-web-chat init --report "$@" ;; *) claude-web-chat "$@" ;; esac' web-chat $ARGUMENTS
+!sh -c 'case "${1:-}" in "") claude-web-chat status ;; init) shift; claude-web-chat init --report --nearest-parent "$@" ;; *) claude-web-chat "$@" ;; esac' web-chat $ARGUMENTS
 
 ---
 
@@ -102,8 +104,10 @@ Then wait. Their Push is your next turn.
 
 ### If the subcommand was `init`
 
-The block above is `claude-web-chat init --report`: a human-readable report followed
-by a `--- WEB-CHAT-STATE ---` fence and one JSON object. That JSON is your input.
+The block above is `claude-web-chat init --report --nearest-parent`: a human-readable
+report on the web-chat install this session uses (the nearest folder at or above where
+it started that has one), followed by a `--- WEB-CHAT-STATE ---` fence and one JSON
+object. That JSON is your input.
 
 **Hard first rule — trust your own tool list over the report.** If `render` is not in
 your tools, the MCP server has not been loaded into this session. Print exactly this

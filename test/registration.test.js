@@ -270,6 +270,75 @@ test('resolveRoot inherits findProjectRoot\'s $HOME refusal', (t) => {
   assert.equal(projectPaths(under).dir, path.join(under, '.web-chat'));
 });
 
+// 0.8.5 (U96): `install` and `init` set up the folder they are pointed at. The
+// 'here' mode never walks up; it only reports the install above, so the
+// command can say a second, separate surface is being set up.
+test('resolveRoot `here` returns the folder itself, even under an install, and names the install above it', (t) => {
+  withTempHome(t);
+  const root = installedRoot();
+  const sub = path.join(root, 'packages', 'app');
+  fs.mkdirSync(sub, { recursive: true });
+
+  const r = reg.resolveRoot(sub, { mode: 'here' });
+  assert.deepEqual(r, { root: sub, from: sub, source: 'here', movedUp: false, enclosing: root });
+
+  // An installed folder is not its own enclosing install: strictly above.
+  assert.equal(reg.resolveRoot(root, { mode: 'here' }).enclosing, null);
+  assert.equal(reg.resolveRoot(root, { mode: 'here' }).root, root);
+  // Nested twice: the NEAREST one above.
+  fs.mkdirSync(path.join(root, 'packages', '.web-chat'));
+  assert.equal(reg.resolveRoot(sub, { mode: 'here' }).enclosing, path.join(root, 'packages'));
+
+  const bare = tmpRoot();
+  assert.deepEqual(reg.resolveRoot(bare, { mode: 'here' }),
+    { root: bare, from: bare, source: 'here', movedUp: false, enclosing: null });
+
+  // The old modes are untouched by it.
+  assert.equal(reg.resolveRoot(sub, { mode: 'install' }).root, path.join(root, 'packages'));
+  assert.equal(reg.resolveRoot(sub, { mode: 'existing' }).root, path.join(root, 'packages'));
+});
+
+test('resolveRoot `here` never reports $HOME as the enclosing install', (t) => {
+  const home = withTempHome(t);
+  fs.mkdirSync(path.join(home, '.web-chat', 'versions'), { recursive: true });
+  const under = path.join(home, 'code', 'app');
+  fs.mkdirSync(under, { recursive: true });
+  assert.equal(reg.resolveRoot(under, { mode: 'here' }).enclosing, null);
+  assert.equal(reg.resolveRoot(under, { mode: 'here' }).root, under);
+  // $HOME itself comes back as itself (the command refuses it), with nothing above.
+  assert.equal(reg.resolveRoot(home, { mode: 'here' }).root, path.resolve(home));
+});
+
+// The one reader of `install [folder]` / `init [folder]`, shared by both.
+test('setupRoot: one optional folder, resolved against the cwd, validated, mode by --nearest-parent', (t) => {
+  withTempHome(t);
+  const root = installedRoot();
+  const sub = path.join(root, 'sub');
+  fs.mkdirSync(sub);
+  const usage = 'claude-web-chat install [folder] [--nearest-parent]';
+
+  assert.equal(reg.setupRoot([], { cwd: sub, usage }).root, sub, 'default: the cwd itself');
+  assert.equal(reg.setupRoot([], { cwd: sub, usage }).rule, 'here');
+  assert.equal(reg.setupRoot([], { cwd: sub, usage }).enclosing, root);
+  assert.equal(reg.setupRoot(['--force'], { cwd: root, usage }).root, root, 'flags are not folders');
+  assert.equal(reg.setupRoot(['sub'], { cwd: root, usage }).root, sub, 'relative to the cwd');
+  assert.equal(reg.setupRoot([sub, '--yes'], { cwd: os.tmpdir(), usage }).root, sub, 'absolute');
+  const np = reg.setupRoot(['--nearest-parent'], { cwd: sub, usage });
+  assert.equal(np.root, root, '--nearest-parent adopts the install above');
+  assert.equal(np.rule, 'nearest-parent');
+  assert.equal(np.movedUp, true);
+  assert.equal(np.folder, sub);
+  assert.equal(reg.setupRoot(['sub', '--nearest-parent'], { cwd: root, usage }).root, root);
+
+  const refused = (args, re) => assert.throws(() => reg.setupRoot(args, { cwd: root, usage }),
+    (e) => e.userFacing === true && re.test(e.message) && e.message.includes(usage));
+  refused(['nope'], new RegExp(`${path.join(root, 'nope')} does not exist`));
+  fs.writeFileSync(path.join(root, 'file.txt'), 'x');
+  refused(['file.txt'], new RegExp(`${path.join(root, 'file.txt')} is not a folder`));
+  refused(['sub', 'other'], /takes one folder, not 2: sub other/);
+  assert.equal(fs.existsSync(path.join(root, 'nope')), false, 'a missing folder is never created');
+});
+
 // ── every consumer agrees on the root ───────────────────────────────────────
 // The guardrail for cli-setup-7: install/uninstall/on/off used to anchor on
 // process.cwd() while doctor/status walked up to findProjectRoot, so the same
@@ -299,8 +368,10 @@ test('doctor, status, install, uninstall, on and off resolve the SAME root from 
   const off = require('../lib/cli/commands/off');
 
   try {
-    await install([], { cwd: sub, runClaude: claude.fn });
-    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'install: the parent');
+    // 0.8.5 (U96): a bare `install` sets up the folder it is typed in; the
+    // nearest-parent rule this guardrail is about is behind --nearest-parent.
+    await install(['--nearest-parent'], { cwd: sub, runClaude: claude.fn });
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'install --nearest-parent: the parent');
     assert.equal(fs.existsSync(path.join(sub, '.mcp.json')), false);
 
     off([], { cwd: sub });

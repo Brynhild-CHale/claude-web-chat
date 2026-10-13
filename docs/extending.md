@@ -1130,8 +1130,9 @@ disabled project, and `inspect().installed` is defined as it.
 **`runClaude(argv, {cwd})` always takes the resolved root.** `claude mcp
 add|remove … --scope local` registers the directory `claude` runs in, so a
 shell-out from `process.cwd()` would be a second, implicit root derivation
-inside the one module that exists to have exactly one: `install` in a
-subdirectory would adopt the parent root and then register the subdirectory,
+inside the one module that exists to have exactly one: `install
+--nearest-parent` typed in a subdirectory would adopt the parent root and then
+register the subdirectory,
 and `uninstall` would leave the local-scope entry it exists to remove. The three
 call sites (`apply`, `remove`, `doctor`) all pass `{cwd: root}`; a fake in a test
 must record it, not just the argv. `update` deliberately passes a `runClaude`
