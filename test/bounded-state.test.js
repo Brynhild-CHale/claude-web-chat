@@ -381,3 +381,84 @@ test('a draft with 60 captures restored at boot: 50 live, and a trimmed capture\
   assert.equal(captureItemFor(items, 'cap1'), undefined, 'the trimmed capture\'s item did not come back');
   assert.ok(captureItemFor(items, 'cap60'), 'a live capture\'s item did');
 });
+
+// ── U102c: every removal of a live capture reaches an open rail at once ──
+//
+// The route call sites hand the bus to clearLive / retain, so the capture item's
+// removal emits the standard `queue` remove frame (an open rail drops the chip at
+// once) and lands in the event log. A restore that swaps the live captures for a
+// node's set drops the items of the captures it took off the same way.
+
+// The one queue remove the gesture emitted for `itemId`: in the event log (since
+// `before`) and as a WS frame on the socket opened before the gesture.
+async function assertRemoveReachedRail(api, log, before, itemId, what) {
+  const removes = (await events(api)).slice(before).filter((e) => e.kind === 'queue' && e.op === 'remove');
+  assert.deepEqual(removes.filter((e) => (e.ids || []).includes(itemId)).map((e) => e.ids), [[itemId]],
+    `${what}: one queue remove event naming the capture's item`);
+  await waitUntil(
+    () => log.frames.some((f) => f.type === 'queue' && f.op === 'remove' && (f.ids || []).includes(itemId)),
+    { timeout: 5000, what: `${what}: the queue remove frame for ${itemId}` });
+}
+
+for (const [name, gesture] of [
+  ['a wipe', (api) => api.post('/api/graph/wipe', {})],
+  ['a new graph', (api) => api.post('/api/graph/new', { name: 'fresh' })],
+]) {
+  test(`${name} with a queued capture: one queue remove event and frame name its item`, async (t) => {
+    const ctx = await withServer(t);
+    const { api } = ctx;
+    const cap = await capture(api, 1);
+    const item = captureItemFor(await queueItems(api), cap);
+    assert.ok(item, 'the capture is queued');
+
+    const log = await frameLog(ctx);
+    t.after(() => log.close());
+    const before = (await events(api)).length;
+    assert.equal((await gesture(api)).json.ok, true);
+    assert.equal(captureItemFor(await queueItems(api), cap), undefined, 'the item left the queue');
+    await assertRemoveReachedRail(api, log, before, item.id, name);
+  });
+}
+
+test('the 51st push\'s trim: one queue remove event and frame name the trimmed capture\'s item', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const ids = [];
+  for (let n = 1; n <= CAPTURES_LIVE_MAX; n++) ids.push(await capture(api, n));
+  const item = captureItemFor(await queueItems(api), ids[0]);
+  assert.ok(item, 'the oldest is queued');
+
+  const log = await frameLog(ctx);
+  t.after(() => log.close());
+  const before = (await events(api)).length;
+  await capture(api, CAPTURES_LIVE_MAX + 1);
+  assert.equal(captureItemFor(await queueItems(api), ids[0]), undefined, 'the trimmed capture left the queue');
+  await assertRemoveReachedRail(api, log, before, item.id, 'the trim');
+});
+
+test('Set active onto an older node: a capture it does not hold leaves the queue (event + frame); one it holds keeps its item', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const held = await capture(api, 1);
+  const oldId = (await turn(api)).json.node_id;
+  const gone = await capture(api, 2);
+  const newId = (await turn(api)).json.node_id;
+  assert.ok(oldId && newId && oldId !== newId, 'two nodes were committed');
+  const heldItem = captureItemFor(await queueItems(api), held);
+  const goneItem = captureItemFor(await queueItems(api), gone);
+  assert.ok(heldItem && goneItem, 'both captures are queued');
+
+  const log = await frameLog(ctx);
+  t.after(() => log.close());
+  const before = (await events(api)).length;
+  const r = await api.post('/api/graph/active', { id: oldId });
+  assert.equal(r.json.ok, true, JSON.stringify(r.json));
+  assert.deepEqual((await liveCaptures(api)).map((c) => c.id), [held], 'the restored node\'s captures are live');
+
+  const items = await queueItems(api);
+  assert.equal(captureItemFor(items, gone), undefined, 'the capture the restore took off left the queue');
+  assert.ok(captureItemFor(items, held), 'the capture the restored node holds keeps its item');
+  await assertRemoveReachedRail(api, log, before, goneItem.id, 'Set active');
+  const removes = (await events(api)).slice(before).filter((e) => e.kind === 'queue' && e.op === 'remove');
+  assert.equal(removes.some((e) => (e.ids || []).includes(heldItem.id)), false, 'no remove for the held capture\'s item');
+});
