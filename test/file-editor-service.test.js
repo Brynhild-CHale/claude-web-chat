@@ -661,3 +661,135 @@ test('file-editor: a quiet respawn, then one view action, still publishes the pa
   assert.equal(o.listing.dir, 'sub', 'an open keeps the file list');
   assert.ok(o.load > stored.load, 'and an explicit open reloads the buffer, past the stored token');
 });
+
+// ── the file the user opened survives a respawn (U99b) ──────────────────────
+// params.path is the file the pane was first opened on. Once the user opens
+// another file and saves it, the control key left in the store is that save,
+// which a respawn never replays — so the start path fell back to params.path,
+// published it with a `load` past the stored one, and the pane reloaded its
+// buffer with the FIRST file over the typing in the second.
+
+test('file-editor: a respawn keeps the file the user opened, not params.path, and the typing in it', async (t) => {
+  withTempHome(t);
+  const document = withDom(t);
+  const root = tmpTree('wc-fileed-other-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  fs.writeFileSync(path.join(root, 'a.txt'), 'AAA\n');
+  fs.writeFileSync(path.join(root, 'b.txt'), 'BBB\n');
+
+  const store = mountRuntime.createStore({});
+  const shadow = mountPane(t, document, store);
+  const ta = shadow.querySelector('[data-ta]');
+  const pathIn = shadow.querySelector('[data-pathin]');
+
+  const first = paneCtx(root, store, { path: 'a.txt' });
+  first.wire();
+  const svc1 = loadService();
+  t.after(async () => { try { await svc1.stop(); } catch {} });
+  await svc1.start(first.ctx);
+  await sleep(30);
+  assert.equal(ta.value, 'AAA\n', 'precondition: the pane opened params.path');
+
+  // The user opens b.txt, edits it and saves it, through the pane.
+  pathIn.value = 'b.txt';
+  shadow.querySelector('[data-open]').dispatchEvent(new global.window.MouseEvent('click', { bubbles: true }));
+  await sleep(30);
+  assert.equal(ta.value, 'BBB\n', 'precondition: b.txt is in the buffer');
+  ta.value = 'BBB saved\n';
+  ta.dispatchEvent(new global.Event('input', { bubbles: true }));
+  shadow.querySelector('[data-save]').dispatchEvent(new global.window.MouseEvent('click', { bubbles: true }));
+  await sleep(30);
+  assert.equal(fs.readFileSync(path.join(root, 'b.txt'), 'utf8'), 'BBB saved\n');
+  assert.equal(store.get('editor_ctl').action, 'save', 'precondition: the key left in the store is the save');
+
+  // ...then types without saving, and the socket flaps.
+  ta.value = 'BBB saved\ntyped, not saved\n';
+  ta.dispatchEvent(new global.Event('input', { bubbles: true }));
+  assert.equal(dirtyShown(shadow), true);
+  const stored = viaStore(store.get('editor'));
+  let editorWrites = 0;
+  store.subscribe('editor', () => { editorWrites++; });
+  await svc1.stop();
+
+  const second = paneCtx(root, store, { path: 'a.txt' });
+  second.wire();
+  const svc2 = loadService();
+  t.after(async () => { try { await svc2.stop(); } catch {} });
+  await svc2.start(second.ctx);
+  await sleep(30);
+
+  assert.equal(editorWrites, 0, 'the respawn rebuilt b.txt, found it unchanged and wrote nothing');
+  assert.deepEqual(viaStore(store.get('editor')), stored);
+  assert.equal(store.get('editor').path, 'b.txt');
+  assert.equal(pathIn.value, 'b.txt', 'the pane still shows b.txt');
+  assert.equal(ta.value, 'BBB saved\ntyped, not saved\n', 'the buffer was not reloaded over the typing');
+  assert.equal(dirtyShown(shadow), true, 'and it still reads as unsaved');
+});
+
+test('file-editor: a stored path outside the project is refused on respawn, and params.path opens instead', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-outside-');
+  const outside = root + '-outside.txt';
+  t.after(() => {
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(outside, { force: true }); } catch {}
+  });
+  fs.writeFileSync(path.join(root, 'a.txt'), 'AAA\n');
+  fs.writeFileSync(outside, 'SECRET\n');
+
+  // A stored `editor` is store input: any pane or driver can write one.
+  const forged = path.join('..', path.basename(outside));
+  const store = { editor: { root: '.', unfenced: false, start_path: 'a.txt', path: forged, exists: true, content: 'x', versions: [], listing: null, seq: 5, load: 3, ack: null } };
+  const h = await startService(t, root, store, { path: 'a.txt' });
+  assert.equal(h.writes.length, 1, 'the view changed, so it is published');
+  const e = h.writes[0].editor;
+  assert.equal(e.path, 'a.txt', 'the fence refused the stored path and params.path opened');
+  assert.equal(e.content, 'AAA\n');
+  assert.equal(e.error, null);
+  assert.ok(!JSON.stringify(h.writes).includes('SECRET'), 'nothing outside the project was read into the store');
+  assert.ok(e.load > 3, 'a different file: the pane reloads');
+});
+
+test('file-editor: a first start with no stored view opens params.path', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-firststart-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  fs.writeFileSync(path.join(root, 'a.txt'), 'AAA\n');
+  fs.writeFileSync(path.join(root, 'b.txt'), 'BBB\n');
+
+  const h = await startService(t, root, {}, { path: 'a.txt' });
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.writes[0].editor.path, 'a.txt');
+  assert.equal(h.writes[0].editor.content, 'AAA\n');
+});
+
+test('file-editor: a pane re-mounted on another params.path opens that path, not the stored file', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-remount-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  for (const f of ['a.txt', 'b.txt', 'c.txt']) fs.writeFileSync(path.join(root, f), f + '\n');
+
+  // Started on a.txt, the user opened b.txt: a respawn on the same params keeps b.txt...
+  const store = {};
+  const first = await startService(t, root, store, { path: 'a.txt' });
+  first.fire({ editor_ctl: { seq: click(), action: 'open', path: 'b.txt' } });
+  await sleep(30);
+  await first.svc.stop();
+  const same = await startService(t, root, viaStore(store), { path: 'a.txt' });
+  assert.equal(same.writes.length, 0, 'the same pane respawned: b.txt is kept, nothing is written');
+  await same.svc.stop();
+
+  // ...but Claude re-mounting the pane on c.txt is a new start path, and it opens.
+  const moved = await startService(t, root, viaStore(store), { path: 'c.txt' });
+  assert.equal(moved.writes.length, 1);
+  assert.equal(moved.writes[0].editor.path, 'c.txt');
+  assert.equal(moved.writes[0].editor.start_path, 'c.txt');
+  assert.ok(moved.writes[0].editor.load > store.editor.load, 'and the pane loads it');
+
+  // A view stored before `start_path` was recorded cannot say which it was: params.path opens, as before.
+  const legacy = viaStore(store);
+  delete legacy.editor.start_path;
+  const old = await startService(t, root, legacy, { path: 'a.txt' });
+  assert.equal(old.writes.length, 1);
+  assert.equal(old.writes[0].editor.path, 'a.txt');
+});
