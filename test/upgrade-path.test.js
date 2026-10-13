@@ -267,6 +267,31 @@ test('the checklist can never break the restart: a probe that throws, a log that
   assert.deepEqual([r.ok, started, r.checklist], [true, 2, undefined]);
 });
 
+// U107c: "was it a pre-0.8 build?" is asked of the daemon restart is about to
+// replace as lib/util/registry daemonFor verified it — here one found through
+// the registry, with no portfile at all — and by its pid. It used to read the
+// raw portfile and, finding none, answer "no" without asking. Nothing here
+// touches the network: the lookup, the health probe and the build question are
+// all injected, and the daemon's pid is one that has already exited.
+test('restart asks "pre-0.8?" of the daemon daemonFor verified, found through the registry with no portfile', async (t) => {
+  const root = hopProject(t);
+  const dead = require('child_process').spawnSync(process.execPath, ['-e', '']).pid;
+  const asked = [];
+  const lines = [];
+  let started = 0;
+  const r = await restart([], {
+    root,
+    log: (m = '') => lines.push(String(m)),
+    start: async () => { started++; },
+    daemonFor: async () => ({ pid: dead, port: 45999, url: 'http://localhost:45999', source: 'registry' }),
+    probeHealth: async () => null,
+    isLegacyBuild: async (port, o = {}) => { asked.push([port, o.pid]); return true; },
+  });
+  assert.deepEqual(asked, [[45999, dead]], 'asked of the verified record, by its port and pid');
+  assert.deepEqual([r.ok, started, r.checklist], [true, 1, true]);
+  assert.match(lines.join('\n'), /To finish the upgrade/);
+});
+
 // ── no daemon outside a project ─────────────────────────────────────────────
 
 // Asked of start.projectRoot — the one question start answers before it
