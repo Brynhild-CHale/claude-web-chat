@@ -9,8 +9,9 @@
 //   * The fork gutter is COMPUTED from the drawn parents (log-lanes.js), not
 //     hand-placed: lanes, pass-through lines and the merge curve of a fork.
 //   * The narrow bottom bar drives the topbar's own ↑/↓, ↩ active and Graph and
-//     mirrors their state; Queue [n] opens the rail as the queue screen, reads
-//     "‹ Page" while it is open, and carries the queue count.
+//     mirrors their state; Queue [n] carries the queue count and opens the chat
+//     sheet on Tasks → Queue, which holds the rail itself (the full-screen
+//     queue and its "‹ Page" are the path without the sheet's queue route).
 //   * On a phone pane CONTENT is live and the LAYOUT is fixed (maintainer,
 //     2026-09-27 — through the tunnel the phone can be the only way in): typing,
 //     toggles, submits, declared-signal store writes (with the gesture flag),
@@ -410,22 +411,72 @@ test("the bottom bar drives the topbar's own ↑/↓ and ↩ active, and mirrors
   assert.equal($('bb-return').style.display, 'none');
 });
 
-test('Queue [n] opens the queue screen, reads "‹ Page" while open, and counts', async () => {
+// The phone sheet (U68–U70) and its queue page. main.js starts them once U73
+// wires it; until then this case does, and every init is idempotent, so the
+// case holds before and after. jsdom cannot lay out: #topbar and #bottombar get
+// rectangles by hand (644px between them), as the sheet measures them.
+const appModule = (f) => import(pathToFileURL(path.join(REPO, 'public/app', f)).href);
+async function startSheet() {
+  const [cs, tasks, sq] = await Promise.all(['chat-sheet.js', 'chat-sheet-tasks.js', 'chat-sheet-queue.js'].map(appModule));
+  const rect = (top, height) => () => ({ top, bottom: top + height, height, left: 0, right: 390, width: 390, x: 0, y: top });
+  $('topbar').getBoundingClientRect = rect(0, 44);
+  $('bottombar').getBoundingClientRect = rect(44 + 644, 60);
+  cs.initChatSheet();
+  tasks.initSheetTasks();
+  sq.initSheetQueue();
+  return { cs, sq };
+}
+
+test('Queue [n] opens the chat sheet on Tasks → Queue, holding the rail itself; it keeps "Queue", and counts', async () => {
+  const { cs } = await startSheet();
   const q = $('bb-queue');
+  const rail = $('queue-rail');
+  const label = () => q.querySelector('.bb-queue-label').textContent;
+  assert.ok(rail.classList.contains('in-sheet') && $('sh-tasks').contains(rail), 'on a narrow screen the rail lives in the sheet');
   frame({ type: 'queue', op: 'add', item: { id: 'q1', kind: 'signal', summary: 'next_run', enqueued_at: 1 } });
   assert.equal($('bb-queue-count').textContent, '1', 'the bar carries the queue count');
   click(q);
-  assert.ok($('queue-rail').classList.contains('open'), 'the rail is open — on a narrow screen that is the queue screen');
-  assert.equal(q.querySelector('.bb-queue-label').textContent, '‹ Page');
+  let s = cs.sheetState();
+  assert.ok(s.open && s.view === 'tasks' && s.page === 'queue', 'Queue opened the sheet on Tasks → Queue');
+  assert.ok(s.h >= s.stops.half, 'at least half');
+  const page = $('sh-tasks').querySelector('.sh-page[data-page="queue"]');
+  assert.ok(page && !page.hidden && page.contains($('queue-rail')), 'the page on screen holds #queue-rail.in-sheet');
+  assert.equal($('queue-rail'), rail, 'the same element — moved, never copied');
+  assert.equal(label(), 'Queue', 'the label stays "Queue"');
   assert.equal(q.getAttribute('aria-expanded'), 'true');
   click(q);
-  assert.equal($('queue-rail').classList.contains('open'), false, '‹ Page goes back');
-  assert.equal(q.querySelector('.bb-queue-label').textContent, 'Queue');
+  assert.equal(cs.sheetState().open, false, 'Queue again closes');
+  assert.equal(q.getAttribute('aria-expanded'), 'false');
   click(q);
+  assert.equal(cs.sheetState().open, true);
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(q.querySelector('.bb-queue-label').textContent, 'Queue', 'Escape closing the rail resets the label too');
+  assert.equal(cs.sheetState().open, false, 'Escape closes the sheet');
+  assert.equal(label(), 'Queue');
   frame({ type: 'queue', op: 'clear' });
   assert.equal($('bb-queue-count').textContent, '0');
+});
+
+test('with the sheet\'s queue route unregistered, Queue [n] is the full-screen queue that reads "‹ Page" (today\'s path)', async () => {
+  const { sq } = await startSheet();
+  const q = $('bb-queue');
+  const label = () => q.querySelector('.bb-queue-label').textContent;
+  sq.stopSheetQueue();
+  try {
+    assert.equal($('queue-rail').classList.contains('in-sheet'), false, 'the rail is back in the page body');
+    click(q);
+    assert.ok($('queue-rail').classList.contains('open'), 'the rail is open — on a narrow screen that is the queue screen');
+    assert.equal(label(), '‹ Page');
+    assert.equal(q.getAttribute('aria-expanded'), 'true');
+    click(q);
+    assert.equal($('queue-rail').classList.contains('open'), false, '‹ Page goes back');
+    assert.equal(label(), 'Queue');
+    click(q);
+    W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(label(), 'Queue', 'Escape closing the rail resets the label too');
+  } finally {
+    sq.initSheetQueue();
+  }
+  assert.ok($('queue-rail').classList.contains('in-sheet'), 'registered again, the rail is back in the sheet');
 });
 
 // chrome-6: the collapsed rail (and its ⇢) is hidden below 760px, and Queue [n]
