@@ -328,7 +328,20 @@ describe('tranche 5 on a phone: the real main.js in jsdom', () => {
     assert.equal(drag.dockHandler(), handler, 'the same dock handler');
     // One tab listener: a tap toggles once (two would open and close).
     tap();
-    assert.equal(st().h, 341, 'one tap, one toggle: open at half');
+    assert.equal(st().h, 341, 'one tab listener: one tap, one toggle, open at half');
+    // The keyboard view at run time (not only its init line in the source): a
+    // focused composer and a shrunk visual viewport put the pull in keyboard
+    // mode, which only main.js's initSheetKeyboard could have registered.
+    const input = $('chat-composer-input');
+    assert.ok(input && $('chat-sheet').contains(input), 'the composer is in the sheet');
+    input.focus();
+    shell.setViewport({ visualHeight: 508 });
+    await shell.tick();
+    assert.equal(pull().classList.contains('kb'), true, 'main.js registered the keyboard view: the pull is in keyboard mode');
+    input.blur();
+    shell.setViewport({ visualHeight: undefined });
+    await shell.tick();
+    assert.equal(pull().classList.contains('kb'), false, 'and it leaves with the keyboard');
     await closed();
   });
 

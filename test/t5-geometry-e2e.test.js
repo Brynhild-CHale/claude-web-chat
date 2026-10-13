@@ -89,9 +89,13 @@ const SET = (what) => `(async () => {
 for (const size of SIZES) {
   test(`real Chrome at ${size.width}×${size.height} (mobile): the pull on the bottom bar, full flush under the topbar, half = computeStops(avail).half`,
     { skip: e2e.skip, timeout: 60000 }, async (t) => {
+      // The browser's close is registered BEFORE withServer's teardown (t.after
+      // hooks run in the order they were added), so Chrome exits before the
+      // daemon stops and the root holding its profile directory is removed.
+      let browser = null;
+      t.after(() => (browser ? browser.close() : undefined));
       const { port, root } = await withServer(t);
-      const browser = launchChrome({ chromePath: e2e.chrome, tmpDir: root });
-      t.after(() => browser.close());
+      browser = launchChrome({ chromePath: e2e.chrome, tmpDir: root });
       const { cdp } = browser;
       const sid = await openTab(cdp, size);
       await navigate(cdp, sid, `http://127.0.0.1:${port}/`);
