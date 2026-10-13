@@ -73,9 +73,12 @@ test('restartIfStale bounces a daemon on another build, in one line; the same bu
   const base = {
     log: (m) => lines.push(m),
     expected: '0.8.0',
-    readPortfile: () => ({ port: 5999, url: 'http://localhost:5999', pid: 1 }),
-    restart: async (args, deps) => { calls.push(deps.root); return { ok: true }; },
+    // The record lib/util/registry daemonFor verified (U107b: never the portfile
+    // read raw). Nothing listens on 5999; `build` is injected.
+    daemon: { port: 5999, url: 'http://localhost:5999', pid: 1, source: 'portfile' },
+    restart: async (args, deps) => { calls.push(deps.root); targets.push(deps.target); return { ok: true }; },
   };
+  const targets = [];
 
   let r = await stale.restartIfStale('/p', { ...base, build: async () => '0.8.0' });
   assert.deepEqual([r.restarted, calls.length, lines.length], [false, 0, 0], 'same build: nothing');
@@ -83,12 +86,15 @@ test('restartIfStale bounces a daemon on another build, in one line; the same bu
   r = await stale.restartIfStale('/p', { ...base, build: async () => null });
   assert.deepEqual([r.restarted, calls.length, lines.length], [false, 0, 0], 'unknown build: never restarted');
 
-  r = await stale.restartIfStale('/p', { ...base, readPortfile: () => null, build: async () => '0.7.6' });
+  r = await stale.restartIfStale('/p', { ...base, daemon: null, build: async () => '0.7.6' });
   assert.deepEqual([r.restarted, calls.length], [false, 0], 'no daemon: nothing');
 
-  r = await stale.restartIfStale('/p', { ...base, build: async () => '0.7.6' });
+  const asked = [];
+  r = await stale.restartIfStale('/p', { ...base, build: async (port, o) => { asked.push([port, o.pid]); return '0.7.6'; } });
   assert.equal(r.restarted, true);
   assert.deepEqual(calls, ['/p'], 'restarted through restart, for THAT root');
+  assert.deepEqual(asked, [[5999, 1]], 'the build is asked of the verified daemon\'s port, as its pid');
+  assert.deepEqual(targets, [{ pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }], 'and restart stops exactly that daemon');
   assert.deepEqual(lines, ['Restarted the web-chat server on v0.8.0 — it was still running v0.7.6.']);
 
   lines.length = 0;

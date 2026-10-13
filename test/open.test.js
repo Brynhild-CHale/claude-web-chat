@@ -314,3 +314,76 @@ test("this project's live daemon, known only through the registry: open adopts i
   assert.deepEqual(calls.spawned, []);
   assert.deepEqual(calls.browsed, [`http://localhost:${port}`]);
 });
+
+// ── the stale-build bounce acts only on this root's daemon (U107b) ────────────
+//
+// `open` bounces a daemon an update left on an older build. It used to ask the
+// portfile's port for the build and then restart whatever the portfile named —
+// so a .web-chat/ copied from another project, whose portfile names THAT
+// project's live daemon, had the other project's daemon restarted while this
+// root's own daemon (found through the registry) was adopted and left alone.
+// Here the real daemonFor and the real restartIfStale run against in-process
+// servers on ports this file opened; `expected` is a release no build serves, so
+// every daemon looks older, and the restart is a recorder: in-process daemons
+// share the test runner's pid and cannot be stopped from it.
+
+const stale = require('../lib/cli/stale-daemon');
+const { probeHealth } = require('../lib/core/portfiles');
+
+function bounceDeps(root, restarts) {
+  return adoptDeps(root, {
+    restartIfStale: (r, o) => stale.restartIfStale(r, {
+      ...o,
+      expected: '0.0.0-not-this-build',
+      restart: async (args, deps) => { restarts.push({ root: deps.root, target: deps.target }); return { ok: true }; },
+    }),
+  });
+}
+
+test("a portfile naming another project's older daemon, this root's only in the registry: the bounce restarts this root's, never the other", async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  registry.registerInstance({ root: other.root, port: other.port, pid: process.pid });
+  const root = project(t);
+  const mine = await withServer(t, { root });
+  registry.registerInstance({ root, port: mine.port, pid: process.pid });
+  // The copied .web-chat/: the portfile names the other project's daemon.
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+
+  const restarts = [];
+  const { calls, deps: d } = bounceDeps(root, restarts);
+  await open([], d);
+
+  assert.deepEqual(calls.spawned, []);
+  assert.equal(restarts.length, 1, JSON.stringify(restarts));
+  assert.equal(restarts[0].root, root);
+  assert.deepEqual(restarts[0].target && [restarts[0].target.pid, restarts[0].target.port, restarts[0].target.source],
+    [process.pid, mine.port, 'registry'], "the restart is handed this root's daemon, not the portfile's");
+  assert.ok(!restarts.some((r) => r.target && r.target.port === other.port), 'the other project\'s daemon is never the target');
+  const h = await probeHealth(other.port, 1000);
+  assert.ok(h && h.ok !== false && h.instance === registry.instanceId(other.root), 'and the other daemon keeps running');
+});
+
+test('a portfile naming another project\'s older daemon and no daemon of this root: nothing is restarted, a fresh one is spawned', async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  const root = project(t);
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+
+  const restarts = [];
+  const { calls, deps: d } = bounceDeps(root, restarts);
+  await open([], d);
+  assert.deepEqual(restarts, []);
+  assert.deepEqual(calls.spawned, [root]);
+});
+
+test("this root's own daemon on an older build: the bounce restarts it, as before", async (t) => {
+  const root = project(t);
+  const mine = await withServer(t, { root, writePortfile: true });
+
+  const restarts = [];
+  const { calls, deps: d } = bounceDeps(root, restarts);
+  await open([], d);
+  assert.deepEqual(restarts.map((r) => [r.root, r.target.pid, r.target.port, r.target.source]),
+    [[root, process.pid, mine.port, 'portfile']]);
+  assert.ok(calls.logs.some((l) => /^Restarted the web-chat server on v0\.0\.0-not-this-build/.test(l)), JSON.stringify(calls.logs));
+  assert.deepEqual(calls.spawned, []);
+});

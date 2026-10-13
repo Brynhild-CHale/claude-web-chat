@@ -69,7 +69,9 @@ const srv = http.createServer((req, res) => {
     // Alive and probe-able — this stands in for a daemon that is running fine
     // but cannot honour a shutdown REQUEST.
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid }));
+    // WC_TEST_INSTANCE: the project this stand-in says it serves (U107b); a
+    // stand-in without it names none, as a build before 0.8.5 does.
+    res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid, ...(process.env.WC_TEST_INSTANCE ? { instance: process.env.WC_TEST_INSTANCE } : {}) }));
     return;
   }
   if (req.url === '/api/shutdown' && mode === 'ack') {
@@ -324,4 +326,78 @@ test('stop: a daemon that exits without releasing is reaped, not called a surviv
   assert.doesNotMatch(log.text(), /survived both/);
   assert.doesNotMatch(log.text(), /kill -9/, 'never advise killing a pid that is not running');
   assert.match(log.text(), /not guaranteed/, 'and still say the draft snapshot is not guaranteed');
+});
+
+// ── only this project's daemon (U107b) ─────────────────────────────────────
+//
+// A .web-chat/ copied from another project carries a portfile naming THAT
+// project's live daemon. stop and restart used to ask it to shut down, and
+// signal it when it would not — a pid read out of a file. Now the portfile's
+// daemon is acted on only once /api/health shows it is this root's
+// (lib/util/registry answersFor), and the stale-build bounce hands restart the
+// daemon it verified, which restart stops exactly.
+
+const registry = require('../lib/util/registry');
+
+// A second project whose portfile is a copy of `from`'s.
+function copiedProject(t, from) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-copy-'));
+  fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+  fs.copyFileSync(portfiles.portfilePathFor('server', from), portfiles.portfilePathFor('server', root));
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  return root;
+}
+
+test("stop and restart leave another project's daemon named by a copied portfile alone", async (t) => {
+  // 'deaf': were it asked, it would 404 the request and exit on the SIGTERM
+  // that follows — so "still alive" means neither reached it.
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-other-'));
+  t.after(() => { try { fs.rmSync(otherRoot, { recursive: true, force: true }); } catch {} });
+  const other = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf', WC_TEST_INSTANCE: registry.instanceId(otherRoot) });
+  const root = copiedProject(t, other.root);
+
+  const log = collector();
+  const res = await stop([], { root, log, signalWaitMs: 600 });
+  assert.deepEqual(res, { ok: false, path: 'none', pid: other.info.pid, reason: 'identity' });
+  assert.match(log.text(), /does not answer as this project's daemon — left alone/);
+  assert.doesNotMatch(log.text(), /SIGTERM/);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true, 'never asked, never signalled');
+
+  let started = 0;
+  const rlog = collector();
+  const r = await restart([], { root, log: rlog, signalWaitMs: 600, start: async () => { started++; } });
+  assert.equal(r.ok, false);
+  assert.equal(started, 0);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true, 'restart does not reach it either');
+
+  // The CLI's stop scans on: the left-alone daemon is named, not counted.
+  const slog = collector();
+  const scanned = await stop([], { root, log: slog, scan: true, scanPorts: [] });
+  assert.equal(scanned.ok, true);
+  assert.equal(scanned.left_alone && scanned.left_alone.pid, other.info.pid);
+  assert.doesNotMatch(slog.text(), /no server running/);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true);
+});
+
+test('restart handed a target (the bounce\'s verified daemon) stops exactly that pid, not the portfile\'s', async (t) => {
+  const mine = await bootDaemon(t, REAL_DAEMON);
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-other-'));
+  t.after(() => { try { fs.rmSync(otherRoot, { recursive: true, force: true }); } catch {} });
+  const other = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf', WC_TEST_INSTANCE: registry.instanceId(otherRoot) });
+  // This root's portfile now names the other project's daemon.
+  fs.copyFileSync(other.portfile, mine.portfile);
+  const exited = once(mine.child, 'exit');
+
+  let started = 0;
+  const log = collector();
+  const res = await restart([], {
+    root: mine.root, log, signalWaitMs: 600, start: async () => { started++; },
+    target: { pid: mine.info.pid, port: mine.info.port, source: 'registry' },
+  });
+  await exited;
+  assert.equal(res.ok, true, log.text());
+  assert.equal(res.stopped.pid, mine.info.pid);
+  assert.equal(res.stopped.path, 'request');
+  assert.equal(started, 1);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true, "the portfile's daemon was never asked or signalled");
 });

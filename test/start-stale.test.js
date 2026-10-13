@@ -35,6 +35,7 @@ function project(t) {
 // is the release the running daemon says it serves; this CLI is v0.8.0.
 function harness(root, { build = '0.7.6', restartOk = true, portfile = INFO, reachable = true } = {}) {
   const h = { lines: [], errs: [], exits: [], spawned: [], restarts: [], asked: [], found: [], waited: 0 };
+  h.live = () => (portfile && reachable ? { ...portfile, source: 'portfile' } : null);
   h.deps = {
     root,
     log: (m) => h.lines.push(m),
@@ -48,7 +49,9 @@ function harness(root, { build = '0.7.6', restartOk = true, portfile = INFO, rea
       return stale.restartIfStale(r, {
         ...o,
         expected: '0.8.0',
-        readPortfile: () => portfile,
+        // U107b: the bounce acts only on a daemon daemonFor verified (start
+        // passes none, so restartIfStale asks); this models that lookup.
+        daemonFor: async () => h.live(),
         build: async () => build,
         restart: async (args, d) => { h.restarts.push(d.root); return { ok: restartOk }; },
       });
@@ -127,11 +130,12 @@ test('start --daemon: no portfile at all spawns without asking', async (t) => {
 test('start --daemon: a live daemon found through the registry is refused as the portfile case is', async (t) => {
   const root = project(t);
   const h = harness(root, { portfile: null, build: '0.8.0' });
-  h.deps.daemonFor = async (r) => { h.found.push(r); return { ...INFO, source: 'registry' }; };
+  h.live = () => ({ ...INFO, source: 'registry' });
+  h.deps.daemonFor = async (r) => { h.found.push(r); return h.live(); };
   await start(['--daemon'], h.deps);
   assert.deepEqual(h.found, [root], 'the lookup is asked about THIS project');
   assert.deepEqual(h.asked, [root]);
-  assert.deepEqual(h.restarts, [], 'no portfile: restartIfStale has nothing to bounce');
+  assert.deepEqual(h.restarts, [], 'the same build: nothing to bounce');
   assert.deepEqual(h.errs, ['already running at http://localhost:5999 (pid 4242) — use `claude-web-chat restart` to bounce it']);
   assert.deepEqual(h.exits, [1]);
   assert.deepEqual(h.spawned, []);
@@ -162,4 +166,32 @@ test('start (foreground): with no live daemon it builds and starts the server', 
   assert.deepEqual(calls, [root, 'start', 'signals']);
   assert.deepEqual(h.exits, []);
   assert.deepEqual(h.errs, []);
+});
+
+// U107b: the bounce acts on the daemon daemonFor verified, wherever it was
+// found — a registry-only daemon on an older build is restarted, and restart is
+// handed exactly that daemon as stop's target (never the portfile's pid).
+test('start --daemon: a live daemon found through the registry on an older build is bounced, as that daemon', async (t) => {
+  const root = project(t);
+  const h = harness(root, { portfile: null, build: '0.7.6' });
+  const targets = [];
+  h.live = () => ({ ...INFO, source: 'registry' });
+  h.deps.daemonFor = async (r) => { h.found.push(r); return h.live(); };
+  // the harness's bounce, with a restart recorder that keeps the target too
+  h.deps.restartIfStale = (r, o) => {
+    h.asked.push(r);
+    return stale.restartIfStale(r, {
+      ...o,
+      expected: '0.8.0',
+      daemonFor: async () => h.live(),
+      build: async () => '0.7.6',
+      restart: async (args, d) => { h.restarts.push(d.root); targets.push(d.target); return { ok: true }; },
+    });
+  };
+  await start(['--daemon'], h.deps);
+  assert.deepEqual(h.restarts, [root]);
+  assert.deepEqual(targets, [{ pid: INFO.pid, port: INFO.port, url: INFO.url, source: 'registry' }]);
+  assert.deepEqual(h.lines, ['Restarted the web-chat server on v0.8.0 — it was still running v0.7.6.']);
+  assert.deepEqual(h.exits, []);
+  assert.deepEqual(h.spawned, []);
 });
