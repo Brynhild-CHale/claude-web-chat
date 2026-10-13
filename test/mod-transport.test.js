@@ -243,12 +243,14 @@ test('a rejected enqueue falls back too; a live channel wakes it with the item\'
   assert.deepEqual(wake.batch.map((it) => it.msg_id), [item.msg_id]);
 });
 
-// The receipt of a handed-back message. lib/server/domain/queue.js's receipt
-// graph (RECEIPT_NEXT) has no step out of 'sent' but confirmed/unconfirmed, so
-// the fallback's sending/parked and a failed command's 'failed' are ignored
-// and the receipt stays 'sent' (U91's hand-off, open issue 1: a queue.js
-// change no tranche-6 cell holds). These are the behaviour the brief asks for.
-test('the fallback\'s receipt goes back through the delivery\'s states', { todo: 'needs queue.js RECEIPT_NEXT sent → sending | parked | failed (U91 open issue 1)' }, async () => {
+// The receipt of a handed-back message. The transport steps it back to
+// 'queued' before the fallback's delivery (or 'failed'), but
+// lib/server/domain/queue.js's receipt graph (RECEIPT_NEXT) has no step out of
+// 'sent' but confirmed/unconfirmed, so the receipt stays 'sent' (U91's
+// hand-off, open issue 1: the one-line queue.js patch `sent: ['confirmed',
+// 'unconfirmed', 'queued']`, which no tranche-6 cell holds; with it these two
+// pass). These are the behaviour the brief asks for.
+test('the fallback\'s receipt goes back through the delivery\'s states', { todo: "needs queue.js RECEIPT_NEXT.sent to allow 'queued' (U91 open issue 1)" }, async () => {
   const state = freshState({ live: false });
   const bus = newBus();
   state.messageTransport = createModTransport({ bridge: fakeBridge({ answer: { ok: false, refused: 'timeout', delivered: false } }), mirror: fakeMirror(), state, bus });
@@ -258,7 +260,7 @@ test('the fallback\'s receipt goes back through the delivery\'s states', { todo:
   assert.equal(receiptOf(state, item.msg_id), 'parked');
 });
 
-test('a failed command op is marked failed', { todo: 'needs queue.js RECEIPT_NEXT sent → failed (U91 open issue 1)' }, async () => {
+test('a failed command op is marked failed', { todo: "needs queue.js RECEIPT_NEXT.sent to allow 'queued' (U91 open issue 1)" }, async () => {
   const state = freshState({ live: true });
   const bus = newBus();
   state.messageTransport = createModTransport({ bridge: fakeBridge({ answer: { ok: false, refused: 'failed', delivered: true } }), mirror: fakeMirror(), state, bus });
