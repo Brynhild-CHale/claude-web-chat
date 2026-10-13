@@ -21,9 +21,11 @@
 //   off   once the keyboard has gone (the inset is back to KB_MIN or less,
 //         checked on the frames after a focusout, as the keyboard animates away),
 //         or at once when focus has moved to an editable outside the sheet. The
-//         remembered stop comes back through setStop, and window.scrollTo(0, 0)
-//         runs when the browser left the page panned. A 'sheet' event with open
-//         false (a close, or the flip to wide) leaves at once, with no scroll.
+//         remembered stop comes back through setStop. window.scrollTo(0, 0) runs
+//         only on the first of those, when the browser left the page panned: on
+//         the second the keyboard is still up and the browser has panned to show
+//         the field just focused. A 'sheet' event with open false (a close, or
+//         the flip to wide) leaves at once, with no scroll.
 //
 // Editable is the one list app.css's 16 px rule names: input (not checkbox,
 // radio, range, button, submit or file), textarea, select, or [contenteditable]
@@ -123,7 +125,11 @@ function keyboardView(vv) {
         if (up && focusedIn() && api.state().open) { enter(); write(); }
         return;
       }
-      if (!up || focusedOut()) { leave({ restore: true, scroll: true }); return; }
+      if (!up) { leave({ restore: true, scroll: true }); return; }
+      // Focus moved to an editable outside the sheet with the keyboard still up
+      // (iOS's previous/next arrows, a hardware Tab): the browser has panned to
+      // show that field, so the stop comes back but the page is never scrolled.
+      if (focusedOut()) { leave({ restore: true, scroll: false }); return; }
       write();
     }
 

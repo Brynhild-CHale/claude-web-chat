@@ -352,6 +352,26 @@ test('focus outside the sheet (a pane\'s input) with a 336px inset never enters 
   } finally { paneInput.remove(); }
 });
 
+test('focus moved to a pane\'s input with the keyboard still up leaves keyboard mode, the stop back, and never scrolls', async () => {
+  // iOS's previous/next arrows or a hardware Tab move focus out of the sheet
+  // while the keyboard stays up; iOS has panned to show that field, and a
+  // scrollTo(0, 0) would put it back under the keyboard.
+  await keyboardUp({ visualHeight: 508, visualTop: 40 });
+  assert.ok(pull().classList.contains('kb'));
+  const paneInput = doc.createElement('input');
+  doc.querySelector('.body').append(paneInput);
+  try {
+    paneInput.focus();
+    assert.equal(doc.activeElement, paneInput);
+    await shell.tick();
+    assert.equal(pull().classList.contains('kb'), false, 'keyboard mode left with the keyboard still up');
+    assert.equal(prop('--kb-top'), '');
+    assert.equal(prop('--kb-h'), '');
+    assert.equal(sheet.sheetState().stop, 'half', 'the previous stop is back');
+    assert.deepEqual(scrolled, [], 'no scroll: the inset is still 296px');
+  } finally { paneInput.remove(); }
+});
+
 test('a checkbox in the sheet is no editable: focusing it never enters keyboard mode', async () => {
   sheet.openSheet({ view: 'chat' });
   const box = doc.createElement('input');
