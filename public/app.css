@@ -2968,6 +2968,46 @@ pre.dv-diff {
 /* ── U71 · the keyboard · sheet-keyboard.js ── */
 
 /* ── U72 · docking the tab · tab-dock.js ── */
+/* The closed tab docks left, centre or right (design spec §8.9, §8.3, ruling
+   N2): tab-dock.js sets data-dock on #chat-pull and these rules place the tab
+   and the running-tasks badge from it. Every dock is one left + transform pair,
+   so a change between any two animates (.28s); during a drag (.docking) nothing
+   transitions and --tab-dx, the finger's travel, rides on each transform. The
+   badge sits on the tab's inner side and travels with it between the sides; at
+   the centre it fades out (hidden once faded, so it leaves the tab order) and
+   the count shows in the tab, after its bar — chat-sheet.js writes .ct-count
+   and the tab's ", N running" from badgeLook. Tokens only. */
+.chat-pull[data-dock] .chat-tab {
+  transform: translateX(-100%) translateX(var(--tab-dx, 0px));
+  transition: width .25s, border-color .2s, background-color .2s, left .28s, transform .28s;
+}
+.chat-pull[data-dock="left"] .chat-tab {
+  left: 0; transform: translateX(0) translateX(var(--tab-dx, 0px));
+  border-left: 0; border-right: 1px solid var(--wc-border); border-radius: 0 10px 0 0;
+}
+.chat-pull[data-dock="center"] .chat-tab {
+  left: 50%; transform: translateX(-50%) translateX(var(--tab-dx, 0px));
+  border-right: 1px solid var(--wc-border); border-radius: 10px 10px 0 0;
+}
+.chat-pull[data-dock="center"] .chat-tab:has(> .ct-count:not(:empty)) { width: calc(var(--tab-w) + 20px); }
+.chat-pull[data-dock="center"] .ct-count:not(:empty) { display: inline; animation: wc-tab-count-in .28s ease-out; }
+@keyframes wc-tab-count-in { from { opacity: 0; } }
+.chat-pull[data-dock] .chat-badge {
+  right: auto; left: calc(100% - var(--tab-w) - 4px);
+  transform: translateX(-100%) translateX(var(--tab-dx, 0px));
+  transition: opacity .28s, left .28s, transform .28s;
+}
+.chat-pull[data-dock="left"] .chat-badge { left: calc(var(--tab-w) + 4px); transform: translateX(0) translateX(var(--tab-dx, 0px)); }
+.chat-pull[data-dock="center"] .chat-badge {
+  left: 50%; transform: translateX(-50%) translateX(var(--tab-dx, 0px));
+  opacity: 0; pointer-events: none; visibility: hidden;
+  transition: opacity .28s, left .28s, transform .28s, visibility 0s .28s;
+}
+.chat-pull.docking[data-dock] :is(.chat-tab, .chat-badge) { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-pull[data-dock] :is(.chat-tab, .chat-badge) { transition: none; }
+  .chat-pull[data-dock] .ct-count { animation: none; }
+}
 
 /* ── U77 · the favicon and its attention badge · favicon.js ── */
 
