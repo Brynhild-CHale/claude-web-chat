@@ -105,7 +105,9 @@ async function daemon(t, { git = false, files } = {}) {
   // and the Claude tier are taken away (t.after runs in registration order).
   t.after(async () => { if (ctx) await ctx.stop(); });
   const repo = git ? treesnapRepo(t, { files: files || { 'README.md': 'scratch\n' } }) : null;
-  const dir = repo ? repo.root : tmpRoot('wc-t3e2e-');
+  // The real path: a CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const dir = repo ? repo.root : fs.realpathSync(tmpRoot('wc-t3e2e-'));
   const ch = claudeHome(t, { root: dir, isolate: true });
   ctx = await withServer(t, { root: dir, writePortfile: true });
   return driver(ctx, ch, repo);

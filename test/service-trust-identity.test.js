@@ -20,7 +20,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { withServer, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
+const { withServer, tmpRoot, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
 const { paramsFingerprint, serviceParams, trustKey } = require('../lib/server/services');
 const { RENDER_CONTROL_PARAMS } = require('../lib/server/domain/mounts');
 
@@ -225,7 +225,9 @@ function runCli(args, ctx) {
 }
 
 test('`trust <name>` refuses an ambiguous name and approves only the variant it is given', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   const { api } = ctx;
   const trustFile = path.join(ctx.userWebChat, 'services', 'trusted.json');
   await api.post('/api/components', { name: 'scoped', source: '<p>s</p>', description: 's', service: PID_SERVICE });
@@ -273,7 +275,9 @@ test('`trust <name>` refuses an ambiguous name and approves only the variant it 
 });
 
 test('`trust <name> --all` decides that name’s variants and no others', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   const { api } = ctx;
   const trustFile = path.join(ctx.userWebChat, 'services', 'trusted.json');
   await api.post('/api/components', { name: 'scoped', source: '<p>s</p>', description: 's', service: PID_SERVICE });

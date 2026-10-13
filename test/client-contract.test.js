@@ -219,6 +219,13 @@ test('`profile reload` reports a 404 as a failure instead of "reloaded undefined
 
 test('`unlock` reports a 404 as a failure instead of "no lock was set"', async (t) => {
   const port = await stub(t, (req, res) => {
+    // A daemon predating the route still answers /api/health with its pid (and,
+    // before 0.8.5, no instance id): unlock acts only on a daemon that does.
+    if (req.url === '/api/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid }));
+      return;
+    }
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'no such route' }));
   });
