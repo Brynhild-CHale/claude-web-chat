@@ -167,6 +167,46 @@ test('a registry entry naming another LIVE pid is left alone', async (t) => {
   assert.deepEqual(entriesFor(root).map((e) => e.pid), [other]);
 });
 
+// Rule (c)'s two last-moment checks, between the read that found the portfile
+// unowned and the write: a file that appeared meanwhile is never written over,
+// and a .web-chat/ that went meanwhile is not re-created by the write. The guard
+// reads through the portfiles module object, so the test steps in at the read.
+function interceptReads(t, onCall) {
+  const pf = require('../lib/core/portfiles');
+  const real = pf.readPortfile;
+  let n = 0;
+  pf.readPortfile = (...args) => { n++; onCall(n); return real(...args); };
+  t.after(() => { pf.readPortfile = real; });
+}
+
+test('a portfile that appears between the read and the write is not written over', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const other = otherLivePid(t);
+  const { guard, exits, probed } = guardFor(t, root);
+  guard.start();
+  // The first read finds no portfile; another daemon's lands before the re-read.
+  interceptReads(t, (n) => { if (n === 2) writePortfile('server', { root, pid: other, port: 45030 }); });
+
+  assert.equal(await guard.check(), 'raced');
+  assert.deepEqual([readPf(root).pid, readPf(root).port], [other, 45030]);
+  assert.deepEqual(exits, []);
+  assert.deepEqual(probed, []);
+});
+
+test('a .web-chat/ removed between the read and the write → state-removed, and the write does not re-create it', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const { dir } = projectPaths(root);
+  const { guard, exits } = guardFor(t, root);
+  guard.start();
+  interceptReads(t, (n) => { if (n === 2) fs.rmSync(dir, { recursive: true, force: true }); });
+
+  assert.equal(await guard.check(), 'state-removed');
+  assert.deepEqual(exits, [{ reason: 'state-removed', info: { dir, recreated: false } }]);
+  assert.equal(fs.existsSync(dir), false, 'the portfile write did not re-create the folder');
+});
+
 // ── (d): another live pid owns the portfile ────────────────────────────────
 
 test('a portfile naming another pid whose health answers with that pid and this instance → onExit(orphan), file untouched', async (t) => {
