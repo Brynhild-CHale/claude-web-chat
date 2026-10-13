@@ -26,11 +26,13 @@
 //   popPage(view) → bool · ensurePage(view, spec) → handle · showPage(view, key) → bool
 //
 // THE MARKUP is a <template class="chat-pull-tpl"> in index.html's pull host
-// (ruling B1 (a)). initChatSheet first registers the chat view 'sheet' — the
-// stand-in (U22c's) retires itself at its next draw once that view
-// exists — then takes out whatever element holds #chat-pull at that moment (the
-// stand-in's, which this module never names) and stamps the template in its
-// place: #chat-scrim, then #chat-pull, direct children of #stage, so shell.js's
+// (ruling B1 (a)). initChatSheet registers the chat view 'sheet', then stamps
+// the template: an element that holds #chat-pull and is not the sheet's own
+// (no .chat-pull class) is taken out and the template stamped in its place;
+// with none, the stamp lands just before the template; an earlier stamp is
+// kept. If the template or a part of the stamp is missing, the view is
+// unregistered again and init returns null. The stamp is #chat-scrim, then
+// #chat-pull, direct children of #stage, so shell.js's
 // modality layer makes them inert behind the palette, the graph overlay and the
 // replay player with no change there.
 //
@@ -707,7 +709,8 @@ function on(target, type, fn, opts) {
 export function initChatSheet() {
   if (typeof document === 'undefined') return null;
   if (running) return E;
-  // The view first, so the stand-in steps aside at its next draw.
+  // The view, then the stamp; a page the stamp cannot complete hands the view
+  // back below, so no 'sheet' view outlives a sheet that never appeared.
   reg = registerChatView({
     id: SHEET_VIEW,
     isOpen: () => opened,

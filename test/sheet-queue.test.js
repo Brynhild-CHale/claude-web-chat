@@ -5,8 +5,10 @@
 // rail's message rows carry Edit and Send now (chat-actions.js's, handed in
 // through queue.js's setRowActions), on the page and on the desktop rail.
 //
-// main.js does not start the sheet, its Tasks view or this one until U73 wires
-// them, so the boot's init does. #topbar and #bottombar get rectangles
+// main.js's boot starts the sheet, its Tasks view and this one (U73); the init
+// below calls initChatState, initChatSheet, initSheetTasks and initSheetQueue
+// itself on the shell, the same inits the boot runs (each idempotent, so it
+// changes nothing), to name what the file stands on. #topbar and #bottombar get rectangles
 // (shell.scrollMetrics) so the available height is 644 (full 622, half 341), as
 // in test/chat-sheet.test.js.
 const test = require('node:test');

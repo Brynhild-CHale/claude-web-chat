@@ -206,9 +206,10 @@
          riding the bottom bar below 760px. Both markers stay: test/chrome-shell.test.js
          holds the host's place by them. -->
     <!-- The real pull (design spec §8.2), inert until public/app/chat-sheet.js's
-         initChatSheet() stamps it in: it takes out whatever holds #chat-pull (the
-         stand-in above) and puts #chat-scrim, then #chat-pull, in its place, as
-         direct children of #stage. CSS alone shows them, below 760px. -->
+         initChatSheet() stamps it in: it takes out whatever element holds
+         #chat-pull, if any, and puts #chat-scrim, then #chat-pull, in its place
+         (with none, just before this template), as direct children of #stage.
+         CSS alone shows them, below 760px. -->
     <template class="chat-pull-tpl">
       <div id="chat-scrim" class="chat-scrim" aria-hidden="true"></div>
       <div id="chat-pull" class="chat-pull" data-cs-state="idle" data-stop="closed">

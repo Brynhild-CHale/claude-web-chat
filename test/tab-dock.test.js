@@ -3,8 +3,10 @@
 // §8.9, §8.3 (the badge's inner side, the merged count, the aria-label's
 // ", N running"), §8.4's axis rule and ruling N2.
 //
-// main.js does not start the sheet or the dock until U73 wires them, so the
-// boot's init does (spec §10.1): initChatState, initChatSheet, initTabDock.
+// main.js's boot starts the sheet and the dock (U73); the init below calls
+// initChatState, initChatSheet and initTabDock itself on the shell, the same
+// inits the boot runs (each idempotent, so it changes nothing), to name what
+// the file stands on (spec §10.1).
 // jsdom lays nothing out: #topbar and #bottombar get rectangles so the sheet has
 // stops (avail 644: full 622, half 341), #chat-pull a 390px one, and the tab the
 // rectangle its dock would give it. bootShell boots once per file and cannot
