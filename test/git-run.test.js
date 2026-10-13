@@ -162,7 +162,9 @@ test('a missing bin rejects git-missing, and features() says missing', async (t)
 
 test('a sleeping git rejects timeout with a short timeoutMs, and the queue moves on', async (t) => {
   const g = fakeGit(t);
-  await assert.rejects(g.runner(['x', 'sleep'], { timeoutMs: 300 }), (e) => e instanceof GitRunError && e.code === 'timeout');
+  // The fake writes its pid before it sleeps 30 s; 2 s leaves a Node child's
+  // start-up under load room to get there before the runner kills it.
+  await assert.rejects(g.runner(['x', 'sleep'], { timeoutMs: 2000 }), (e) => e instanceof GitRunError && e.code === 'timeout');
   const pid = Number(fs.readFileSync(path.join(g.dir, 'pid'), 'utf8'));
   assert.equal(isPidAlive(pid), false, 'the timed-out child is gone');
   assert.equal((await g.runner(['x', 'plain'])).code, 0);
