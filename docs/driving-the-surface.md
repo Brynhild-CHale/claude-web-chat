@@ -18,7 +18,7 @@ A live surface has up to three actors writing to the same state, concurrently:
 | Actor | Lifetime | Channel | Role |
 |---|---|---|---|
 | **Claude turn** | seconds–minutes; ends at the Stop hook | MCP tools / HTTP | Authors mounts, supervises, commits a graph node on exit. |
-| **Browser pane** | until cleared/replaced | shadow-rooted JS + `store.subscribe` over `/ws` | Renders state, captures user input, emits signal keys. |
+| **Browser pane** | until cleared/replaced — and its `store` subscriptions, bare-name timers, `api.signal` listeners and `api.onUnmount` callbacks end with it | shadow-rooted JS + `store.subscribe` over `/ws` | Renders state, captures user input, emits signal keys. |
 | **Driver (host process)** | seconds–hours; bounded by its own timeout | plain HTTP (`lib/driver.js`) | Does work the browser can't (shell, filesystem, long jobs) and pushes results to the surface. |
 
 The store (`state.store`, a plain object mutated under Node's single-threaded

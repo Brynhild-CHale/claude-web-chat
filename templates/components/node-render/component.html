@@ -175,8 +175,11 @@
     }
   });
 
-  // ◑ / T flips the mode: redraw the node in the new one. The observer lets
-  // itself go once this pane is gone (a pane script has no unmount hook).
+  // ◑ / T flips the mode: redraw the node in the new one. The observer watches
+  // the page's <html>, outside this pane, so it is disconnected when the pane
+  // goes (api.onUnmount). A frozen page (an export, a preview) never takes a
+  // pane down and its onUnmount does nothing, so the isConnected check stays as
+  // the observer's own way out there.
   const modeWatch = new MutationObserver(() => {
     if (!root.host.isConnected) { modeWatch.disconnect(); return; }
     if (!nodeId || shownMode === null || viewerMode() === shownMode) return;
@@ -184,6 +187,7 @@
     frame.src = previewUrl(nodeId) + '&t=' + Date.now();
   });
   modeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  if (api && typeof api.onUnmount === 'function') api.onUnmount(() => modeWatch.disconnect());
 
   (async () => {
     await refreshList();

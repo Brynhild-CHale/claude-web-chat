@@ -86,11 +86,106 @@
   // surface — the frozen export and the read-only previews. Both verbs answer
   // (never throw), so a pane that spawns children still mounts in a snapshot;
   // they just do nothing there.
+  //
+  // A frozen page never takes a pane down, so its `signal` never aborts and
+  // `onUnmount` registers nothing. An engine without AbortController gets a
+  // stand-in that answers the same questions (aborted:false, listeners no-ops).
   function frozenPaneApi() {
     var no = function () {
       return Promise.resolve({ ok: false, frozen: true, hint: 'this page is a read-only snapshot; panes cannot spawn or close panes here' });
     };
-    return { spawn: no, close: no };
+    return { spawn: no, close: no, signal: neverAborts(), onUnmount: function () {} };
+  }
+
+  function neverAborts() {
+    if (typeof AbortController !== 'undefined') return new AbortController().signal;
+    var nop = function () {};
+    return { aborted: false, reason: undefined, onabort: null, addEventListener: nop, removeEventListener: nop,
+      dispatchEvent: function () { return false; }, throwIfAborted: nop };
+  }
+
+  // ── a pane's timers end with the pane ────────────────────────────────────
+  // With a `life` ({timers, signal, onUnmount}), runScripts compiles each pane
+  // script with six more parameters that SHADOW the global timer functions
+  // inside it: setTimeout, clearTimeout, setInterval, clearInterval,
+  // requestAnimationFrame, cancelAnimationFrame. Each calls the global AT CALL
+  // TIME (whatever `setTimeout` names when the pane calls it, not when the pane
+  // mounted) and records the handle in `life.timers` as {handle, kind, clear}:
+  // `clear()` is the matching global clear call, which the caller runs for
+  // every entry still recorded when the pane goes (public/app/mounts.js
+  // releasePane). A timeout or frame that has fired, and anything the pane
+  // cleared itself, leaves the record. Once `life.signal` has aborted the pane
+  // is gone, so a timer asked for after that (a script that awaited something
+  // first) is never scheduled and answers 0.
+  //
+  // `window.setInterval` and friends are the globals themselves: a pane that
+  // reaches for them is not tracked.
+  var TIMER_PARAMS = 'setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame, cancelAnimationFrame';
+
+  function paneTimers(life) {
+    var timers = life.timers;
+    var gone = function () { return !!(life.signal && life.signal.aborted); };
+    // 'timer' covers timeouts and intervals: a browser clears either with
+    // either call, so the pane's clears find either.
+    function forget(handle, group) {
+      timers.forEach(function (t) { if (t.handle === handle && t.group === group) timers.delete(t); });
+    }
+    function track(handle, kind, group, clear) {
+      var entry = { handle: handle, kind: kind, group: group, clear: clear };
+      timers.add(entry);
+      return entry;
+    }
+    function wrapFire(fn, getEntry) {
+      if (typeof fn !== 'function') return fn;
+      return function () {
+        var e = getEntry();
+        if (e) timers.delete(e);
+        return fn.apply(this, arguments);
+      };
+    }
+    function oneShot(kind, schedule, clearName) {
+      return function (fn) {
+        if (gone()) return 0;
+        var entry = null;
+        var args = Array.prototype.slice.call(arguments);
+        args[0] = wrapFire(fn, function () { return entry; });
+        var handle = schedule(args);
+        entry = track(handle, kind, kind === 'frame' ? 'frame' : 'timer', function () { clearByName(clearName, handle); });
+        return handle;
+      };
+    }
+    function clearer(clearName, group) {
+      return function (handle) {
+        forget(handle, group);
+        return clearByName(clearName, handle);
+      };
+    }
+    return [
+      oneShot('timeout', function (args) { return setTimeout.apply(undefined, args); }, 'clearTimeout'),
+      clearer('clearTimeout', 'timer'),
+      function (fn) {
+        if (gone()) return 0;
+        var handle = setInterval.apply(undefined, arguments);
+        track(handle, 'interval', 'timer', function () { clearByName('clearInterval', handle); });
+        return handle;
+      },
+      clearer('clearInterval', 'timer'),
+      oneShot('frame', function (args) { return requestAnimationFrame(args[0]); }, 'cancelAnimationFrame'),
+      clearer('cancelAnimationFrame', 'frame'),
+    ];
+  }
+
+  // THE dynamic-eval site for pane scripts: (store, root, params, mountId, api),
+  // plus the six shadowed timer names when `withTimers`.
+  function compileScript(withTimers, body) {
+    return new Function('store, root, params, mountId, api' + (withTimers ? ', ' + TIMER_PARAMS : ''), body);
+  }
+
+  // The global clear by name, looked up at call time.
+  function clearByName(name, handle) {
+    if (name === 'clearTimeout') return clearTimeout(handle);
+    if (name === 'clearInterval') return clearInterval(handle);
+    if (typeof cancelAnimationFrame === 'function') return cancelAnimationFrame(handle);
   }
 
   // Compile each extracted inline-script body into its own function of
@@ -107,12 +202,28 @@
   // `api` is the pane's {spawn(spec), close(id)} (panes spawning panes): the live
   // client passes one bound to this mount id (public/app/mounts.js paneApiFor);
   // without one, a script gets frozenPaneApi().
-  function runScripts(root, scripts, store, params, mountId, onError, api) {
+  //
+  // `life` ({timers, signal, onUnmount}) is optional too: the live client passes
+  // one per pane, and each script is then compiled with the six timer names
+  // shadowed (paneTimers, above), so the bare setTimeout / setInterval /
+  // requestAnimationFrame of a pane script end with the pane. Without it the
+  // compile is exactly what it always was — the frozen export and preview pass
+  // none, and their scripts read the globals.
+  function runScripts(root, scripts, store, params, mountId, onError, api, life) {
     var paneApi = api || frozenPaneApi();
+    var timerArgs = life ? paneTimers(life) : null;
     for (var i = 0; i < scripts.length; i++) {
       try {
-        var fn = new Function('store', 'root', 'params', 'mountId', 'api', scripts[i]);
-        fn(store, root, params || {}, mountId, paneApi);
+        var fn = null;
+        if (timerArgs) {
+          // A script that declares one of the six names itself with let/const/
+          // class (`const requestAnimationFrame = …`) cannot be compiled with
+          // that name as a parameter. It keeps working, as before, on the
+          // globals: only its timers go untracked.
+          try { fn = compileScript(true, scripts[i]); } catch (e) { if (!(e instanceof SyntaxError)) throw e; }
+        }
+        if (fn) fn.apply(undefined, [store, root, params || {}, mountId, paneApi].concat(timerArgs));
+        else compileScript(false, scripts[i])(store, root, params || {}, mountId, paneApi);
       } catch (e) {
         console.error('component script error', mountId, e);
         if (onError) { try { onError(e, i); } catch (e2) {} }

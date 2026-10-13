@@ -784,9 +784,12 @@ test('no doc or tool description says a heading below the Contents depth gets a 
 
 test('render names every global the mount runtime injects into a pane script', () => {
   const src = read('public/mount-runtime.js');
-  const m = src.match(/new Function\(((?:'[A-Za-z]+',\s*)+)scripts\[i\]\)/);
+  // The pane-script compile site (compileScript) names its parameters in one
+  // quoted list; the six timer names it may append shadow globals a script
+  // has anyway, so they are not injected names render has to list.
+  const m = src.match(/new Function\('((?:[A-Za-z]+,\s*)+[A-Za-z]+)'/);
   assert.ok(m, 'public/mount-runtime.js no longer builds pane scripts with new Function — re-point this check');
-  const globals = [...m[1].matchAll(/'([A-Za-z]+)'/g)].map((x) => x[1]);
+  const globals = m[1].split(/,\s*/);
   assert.ok(globals.length >= 5, `expected the injected globals, found ${globals.join(', ')}`);
   const render = toolDescriptions().find((t) => t.rel.endsWith('/render.js'));
   const sentence = render.body.split(/(?<=\.)\s+/).find((s) => /injected as globals/.test(s));

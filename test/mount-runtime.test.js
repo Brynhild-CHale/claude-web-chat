@@ -287,3 +287,138 @@ test('runScripts + createStore: a mounted script can subscribe and receive later
   store.set({ n: 42 });
   assert.equal(root.getElementById('o').textContent, '42');
 });
+
+// ── a pane's lifecycle (U98): runScripts' `life`, frozenPaneApi's signal and onUnmount ──
+
+test('runScripts without `life` compiles as it always did: a script reading the timer names gets the globals', () => {
+  const store = mount.createStore({});
+  mount.runScripts(null, ['store.set({ si: setInterval, st: setTimeout, n: arguments.length })'], store, {}, 'm1');
+  assert.strictEqual(store.get('si'), globalThis.setInterval);
+  assert.strictEqual(store.get('st'), globalThis.setTimeout);
+  assert.strictEqual(store.get('n'), 5, 'store, root, params, mountId, api — and nothing more');
+});
+
+test('runScripts with `life` shadows the six timer names, calls the globals at call time, and records each handle', (t) => {
+  const seen = [];
+  const saved = { si: global.setInterval, ci: global.clearInterval, raf: global.requestAnimationFrame, caf: global.cancelAnimationFrame };
+  t.after(() => {
+    global.setInterval = saved.si; global.clearInterval = saved.ci;
+    if (saved.raf === undefined) delete global.requestAnimationFrame; else global.requestAnimationFrame = saved.raf;
+    if (saved.caf === undefined) delete global.cancelAnimationFrame; else global.cancelAnimationFrame = saved.caf;
+  });
+  const life = { timers: new Set(), signal: new AbortController().signal, onUnmount() {} };
+  const store = mount.createStore({});
+  const errors = [];
+  mount.runScripts(null, ['store.set({ si: setInterval, go: function () { return setInterval(function () {}, 99); } })'],
+    store, {}, 'm1', (e) => errors.push(e), null, life);
+  assert.deepStrictEqual(errors, []);
+  assert.notStrictEqual(store.get('si'), globalThis.setInterval, 'the pane sees its own setInterval');
+  // Stubbed AFTER the mount: the pane's call must reach this one.
+  global.setInterval = (fn, ms) => { seen.push(['set', ms]); return 41; };
+  global.clearInterval = (h) => { seen.push(['clear', h]); };
+  assert.strictEqual(store.get('go')(), 41);
+  assert.deepStrictEqual(seen, [['set', 99]]);
+  const [entry] = [...life.timers];
+  assert.strictEqual(entry.handle, 41);
+  assert.strictEqual(entry.kind, 'interval');
+  entry.clear();
+  assert.deepStrictEqual(seen[1], ['clear', 41], 'the entry\'s clear is the matching global clear');
+
+  // a frame, cleared by the pane itself, leaves the record
+  global.requestAnimationFrame = () => 7;
+  global.cancelAnimationFrame = (h) => seen.push(['caf', h]);
+  life.timers.clear();
+  mount.runScripts(null, ['cancelAnimationFrame(requestAnimationFrame(function () {}))'], store, {}, 'm1', (e) => errors.push(e), null, life);
+  assert.deepStrictEqual(errors, []);
+  assert.strictEqual(life.timers.size, 0);
+  assert.deepStrictEqual(seen[seen.length - 1], ['caf', 7]);
+});
+
+test('runScripts with `life`: a script that declares a timer name itself still compiles, on the globals', () => {
+  const life = { timers: new Set(), signal: new AbortController().signal, onUnmount() {} };
+  const store = mount.createStore({});
+  const errors = [];
+  mount.runScripts(null, ['const setTimeout = 5; store.set({ v: setTimeout })', 'store.set({ w: 1 +'], store, {}, 'm1',
+    (e, i) => errors.push(i), null, life);
+  assert.strictEqual(store.get('v'), 5);
+  assert.deepStrictEqual(errors, [1], 'a real syntax error is still reported, once');
+});
+
+test('frozenPaneApi: a signal that never aborts and an onUnmount that does nothing', () => {
+  const api = mount.frozenPaneApi();
+  assert.strictEqual(api.signal.aborted, false);
+  let called = 0;
+  assert.strictEqual(api.onUnmount(() => { called++; }), undefined);
+  assert.strictEqual(called, 0);
+  assert.doesNotThrow(() => api.signal.addEventListener('abort', () => {}));
+});
+
+test('frozenPaneApi: where AbortController is missing, a stand-in signal that answers the same questions', (t) => {
+  const saved = global.AbortController;
+  t.after(() => { global.AbortController = saved; });
+  delete global.AbortController;
+  const api = mount.frozenPaneApi();
+  assert.strictEqual(api.signal.aborted, false);
+  assert.doesNotThrow(() => { api.signal.addEventListener('abort', () => {}); api.signal.removeEventListener('abort', () => {}); });
+});
+
+// No parser ships with the repo, so the source is tokenised just enough to
+// drop comments and string literals (it holds no regex literals), and what is
+// left must carry no ES2015+ syntax a baked export could choke on.
+test('mount-runtime source stays ES5-ish: no arrow, let/const, class, template, spread, ** or async/await syntax', () => {
+  const s = fs.readFileSync(path.join(PUBLIC_DIR, 'mount-runtime.js'), 'utf8');
+  let code = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i], n = s[i + 1];
+    if (c === '/' && n === '/') { while (i < s.length && s[i] !== '\n') i++; code += '\n'; continue; }
+    if (c === '/' && n === '*') { i = s.indexOf('*/', i + 2) + 1; code += ' '; continue; }
+    if (c === '\'' || c === '"') {
+      i++;
+      while (i < s.length && s[i] !== c) { if (s[i] === '\\') i++; i++; }
+      code += '""';
+      continue;
+    }
+    code += c;
+  }
+  for (const [re, what] of [[/=>/, 'an arrow function'], [/\b(let|const|class)\s/, 'let/const/class'], [/`/, 'a template literal'],
+    [/\.\.\./, 'spread/rest'], [/\*\*/, 'exponentiation'], [/\b(async|await)\b/, 'async/await']]) {
+    assert.doesNotMatch(code, re, `public/mount-runtime.js uses ${what}`);
+  }
+});
+
+const LIFECYCLE_SCRIPT = '<output id="o"></output><script>'
+  + 'api.signal.addEventListener("abort", function () {});'
+  + 'window.addEventListener("resize", function () {}, { signal: api.signal });'
+  + 'api.onUnmount(function () { root.getElementById("o").textContent = "UNMOUNTED"; });'
+  + 'root.getElementById("o").textContent = "LIFE:" + api.signal.aborted;'
+  + '</script>';
+
+test('an exported page runs a pane script that uses api.signal and api.onUnmount without throwing', async () => {
+  const { assembleExport } = require('../lib/server/export');
+  const html = assembleExport({ mounts: [{ id: 'm1', html: LIFECYCLE_SCRIPT, params: {} }], store: {}, meta: { label: 'n1.0' } });
+  const { VirtualConsole } = require('jsdom');
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('error', (...a) => errors.push(a.map(String).join(' ')));
+  virtualConsole.on('jsdomError', (e) => errors.push(String(e && e.message)));
+  const dom = new JSDOM(html, { runScripts: 'dangerously', virtualConsole });
+  await new Promise((r) => setTimeout(r, 50));
+  const host = dom.window.document.getElementById('m1');
+  assert.ok(host, 'pane host mounted');
+  assert.strictEqual(host.shadowRoot.getElementById('o').textContent, 'LIFE:false');
+  assert.deepStrictEqual(errors, []);
+  dom.window.close();
+});
+
+test('a node preview runs a pane script that uses api.signal and api.onUnmount without throwing', async (t) => {
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'm1', html: LIFECYCLE_SCRIPT, params: { title: 'T' } });
+  await api.post('/api/commit', { message: 'seed' });
+  const html = await (await fetch(`http://localhost:${port}/preview/node/n0`)).text();
+  const dom = new JSDOM(html, { runScripts: 'dangerously' });
+  await new Promise((r) => setTimeout(r, 50));
+  const host = dom.window.document.getElementById('m1');
+  assert.ok(host, 'preview pane mounted');
+  assert.strictEqual(host.shadowRoot.getElementById('o').textContent, 'LIFE:false');
+  dom.window.close();
+});
