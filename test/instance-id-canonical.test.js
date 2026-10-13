@@ -1,4 +1,5 @@
-// One project, one instance id, however its path is spelled.
+// One project, one instance id, however its path is spelled; and one process
+// start per process, however often the portfile is re-written.
 //
 // instanceId(root) once hashed path.resolve(root), so a folder reached through
 // a symlink (on macOS `/tmp/x` is `/private/tmp/x`, os.tmpdir()'s /var/folders
@@ -168,4 +169,26 @@ test('init (existing), pointed at the folder through the symlink, reports the da
   const text = lines.join('\n');
   assert.match(text, /1 service approval waiting:\n {2}claude-web-chat trust deploy-board/);
   assert.ok(seen.includes('GET /api/services/pending'), seen.join(', '));
+});
+
+test('proc_start is one value across writes, even when Date.now and process.uptime move between them', (t) => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-iid-ps-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const webChat = path.join(base, '.web-chat');
+  const first = portfiles.writePortfileAt(webChat, { pid: process.pid, port: 5173 });
+  assert.ok(Number.isInteger(first.proc_start));
+  // A Linux suspend: wall time runs on an hour, the monotonic uptime does not.
+  const now = Date.now();
+  const up = process.uptime();
+  t.mock.method(Date, 'now', () => now + 3600 * 1000);
+  t.mock.method(process, 'uptime', () => up);
+  const second = portfiles.writePortfileAt(webChat, { pid: process.pid, port: 5173 });
+  assert.equal(second.started_at, now + 3600 * 1000, 'the write time moved');
+  assert.equal(second.proc_start, first.proc_start, 'the process start did not');
+  // And the other way: uptime jumps while the wall clock stands still.
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(process, 'uptime', () => up + 7200);
+  const third = portfiles.writePortfileAt(webChat, { pid: process.pid, port: 5173 });
+  assert.equal(third.proc_start, first.proc_start);
+  t.mock.restoreAll();
 });

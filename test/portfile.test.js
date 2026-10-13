@@ -134,9 +134,10 @@ test('portfile: the write carries root, instance and (for the writer\'s own pid 
   assert.ok(Math.abs(onDisk.proc_start - before) < 1000, 'it is this process\'s start, not the write time');
   assert.equal(portfiles.isPidAlive(process.pid, { startedAt: onDisk.proc_start }), true, 'and sampleProcs reads it back');
   assert.deepEqual(rec, onDisk);
-  // A re-write keeps the same start (started_at would not).
+  // A re-write keeps the same start (started_at would not): computed once per
+  // process, so exactly the same value (test/instance-id-canonical moves the clocks).
   const again = writePortfile(a.webChat, { pid: process.pid, port: 5173 });
-  assert.ok(Math.abs(again.proc_start - onDisk.proc_start) <= 2);
+  assert.equal(again.proc_start, onDisk.proc_start);
 
   const other = writePortfile(a.webChat, { pid: 999999, port: 5174 });
   assert.equal('proc_start' in other, false, 'another pid gets no proc_start');
