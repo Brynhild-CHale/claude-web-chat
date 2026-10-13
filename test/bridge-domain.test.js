@@ -27,6 +27,7 @@ const P = require('../lib/core/mod-protocol');
 const { projectToolInput, toolKind, stepLabel, callLabel, inputHash } = require('../lib/core/tool-input');
 const { createBus } = require('../lib/core/bus');
 const { createRedactor } = require('../lib/core/redact');
+const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 const { createMirror, SOURCES } = require('../lib/server/mirror');
 const { createAsks } = require('../lib/server/domain/asks');
 
@@ -460,6 +461,33 @@ test('events: a session\'s ts strictly increases and never exceeds now()', async
   await h.clock.advance(1);
   assert.equal(h.published.length, 22);
   assert.equal(h.published[21].ts, now + 1);
+});
+
+// U75b: a diag carrying a fake AWS key as a shape key and fake GitHub tokens as
+// shape paths is attached, and status() (what GET /api/bridge/status and `mod
+// status` serve) shows none of them — the intake dropped them, nothing here
+// filters a second time.
+test('events: a diag\'s secret-looking shape names never reach status()', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const fakes = fakeSecrets({ seed: 30069 });
+  const one = (id) => fakes.find((f) => f.id === id).secrets[0];
+  h.bridge.events(token, {
+    events: [{
+      kind: 'diag',
+      at: h.clock.now(),
+      shapes: {
+        'tool.call': ['tool_name', one('github-ghs'), 'input.command'],
+        driver: ['driver', one('github-ghr')],
+        [one('aws-asia')]: ['tool_name'],
+      },
+    }],
+  });
+  await settle();
+  const status = h.bridge.status();
+  assert.equal(status.sessions.length, 1);
+  assert.deepEqual(status.sessions[0].shapes, { 'tool.call': ['tool_name', 'input.command'], driver: ['driver'] });
+  assert.deepEqual(findLeaks(JSON.stringify(status), fakes), []);
 });
 
 test('events: session.end detaches and publishes nothing; diag lands in status() shapes and publishes nothing', async (t) => {
