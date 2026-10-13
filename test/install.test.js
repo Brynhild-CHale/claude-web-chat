@@ -147,7 +147,11 @@ test('install PRESERVES a portable entry outside plugin packaging and registers 
   assert.deepEqual(entry.args, ['${CLAUDE_PLUGIN_ROOT}/bin/claude-web-chat-mcp.js'],
     'the committed portable stub is never rewritten to this machine\'s path');
   assert.ok(!mcpEntryHasChannelEnv(entry));
-  assert.equal(calls.length, 1, 'and the unresolvable stub is completed at local scope');
+  // The second run is the mod's read-only probe (ruling C1 (b): install
+  // switches the mod on where Claude Code can run it; this fake answers no
+  // version, so nothing more runs).
+  assert.equal(calls.length, 2, 'and the unresolvable stub is completed at local scope');
+  assert.deepEqual(calls[1], ['--version']);
   assert.deepEqual(calls[0].slice(0, 6), ['mcp', 'add', 'web-chat', '--scope', 'local', '--']);
   // `--scope local` keys the registration to the directory `claude` runs in, so
   // the cwd is half the command: shelling out from the shell's cwd would register
