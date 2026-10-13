@@ -678,7 +678,12 @@ test('stop() leaves no timer and no accumulator; start/stop/start works', async 
   h.mod('turn.start', { turn_id: 'mt-9' });
   h.step('mt-9', 0, 'one ');
   h.step('mt-9', 0, 'two ');
-  assert.ok(clock.pending() > 0, 'a window open');
+  // A second conversation with no turn: its event is still waiting at the stop,
+  // with its expiry timer armed.
+  h.sessionStart(S2);
+  h.toolCall('toolu_01Parked', 'Bash', { command: 'make' }, { sid: S2 });
+  assert.equal(h.diag().waiting, 1, 'an event waiting at the stop');
+  assert.ok(clock.pending() >= 2, 'a window and an expiry timer armed');
   assert.equal(h.diag().accumulating, 1);
   await h.inst.stop();
   assert.equal(clock.pending(), 0, 'no timer');
@@ -732,6 +737,10 @@ test('no open handle after a stop with a window and a queue armed on the engine\
   h.step('mt-h', 0, 'a');
   h.step('mt-h', 0, 'b'); // a window open
   h.toolCall('toolu_01Q2', 'Bash', { command: 'make' });
+  // A conversation with no turn: its event still waits, its expiry armed.
+  h.sessionStart(S2);
+  h.toolCall('toolu_01Q3', 'Bash', { command: 'make' }, { sid: S2 });
+  assert.equal(h.diag().waiting, 1, 'a queue armed at the stop');
   await h.mirror.stop();
   const after = count();
   for (const k of kinds) assert.ok(after[k] <= baseline[k], `${k}: ${after[k]} after, ${baseline[k]} before`);
