@@ -413,8 +413,9 @@ test('refresh() wakes a held long-poll whose view moved (a probe changed), nothi
   assert.deepEqual([v1.path, v1.label], ['mod', 'Interrupt']);
   assert.deepEqual([v2.path, v2.label], ['hook', 'Stop after this step']);
 
-  const a = hold('c1', v1.v);
+  // c2's waiter first: refresh() must reach every held conversation, not the first.
   const b = hold('c2', v2.v);
+  const a = hold('c1', v1.v);
   h.refresh();
   await tick(); await tick();
   assert.deepEqual([a.settled, b.settled], [null, null], 'views unchanged: refresh() resolves nothing');
