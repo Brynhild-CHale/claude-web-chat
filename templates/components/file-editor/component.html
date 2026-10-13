@@ -125,6 +125,7 @@
     const seq = Date.now();
     pendingSave = seq;
     clearTimeout(saveTimer);
+    // A bare setTimeout: U98's shadowed pane timers are cleared with the pane, so no api.onUnmount is needed.
     saveTimer = setTimeout(() => {
       if (pendingSave == null) return;
       pendingSave = null;
