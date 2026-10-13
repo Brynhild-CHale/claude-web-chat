@@ -387,7 +387,7 @@ test('doctor, status, install, uninstall, on and off resolve the SAME root from 
     assert.match(lines.join('\n'), new RegExp(`\\(${root}\\)`), 'status: the parent');
 
     lines.length = 0;
-    uninstall([], { cwd: sub, runClaude: claude.fn });
+    uninstall([], { cwd: sub, runClaude: claude.fn, scanPorts: [] });
     assert.match(lines.join('\n'), new RegExp(`uninstalled from ${root}`), 'uninstall: the parent');
 
     // …including the half that leaves the project: `claude mcp add|remove …

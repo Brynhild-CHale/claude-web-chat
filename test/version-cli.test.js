@@ -100,7 +100,7 @@ test('uninstall --self removes the program; plain uninstall only touches the pro
   console.log = (m = '') => logs.push(String(m));
   // The project is PASSED, and `claude` is stubbed: uninstall now also removes
   // the local-scope registration, and no test may shell out for real.
-  const opts = { cwd: project, runClaude: () => ({ ok: true }) };
+  const opts = { cwd: project, runClaude: () => ({ ok: true }), scanPorts: [] };
   try {
     await uninstall([], opts);
     assert.ok(fs.existsSync(paths.binLink('claude-web-chat')), 'a plain uninstall must not remove the program');
