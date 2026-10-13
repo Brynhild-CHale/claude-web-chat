@@ -2966,6 +2966,17 @@ pre.dv-diff {
 /* ── U70 · the queue in the sheet · chat-sheet-queue.js ── */
 
 /* ── U71 · the keyboard · sheet-keyboard.js ── */
+/* Keyboard mode (design spec §8.5): while an editable in the sheet has focus
+   and the on-screen keyboard is up, sheet-keyboard.js gives #chat-pull .kb and
+   writes --kb-top and --kb-h (the visual viewport's top + 8px and its height −
+   8px) on it, never on #stage. The pull is pinned to the visual viewport, so
+   the composer sits on the keyboard; it stays on --z-chat, above the topbar it
+   may overlap (§7.1). The tab and the badge hide, and dragging is off. */
+.chat-pull.kb { position: fixed; top: var(--kb-top); bottom: auto; height: var(--kb-h); transition: none; }
+.chat-pull.kb :is(.chat-tab, .chat-badge) { display: none; }
+/* Every editable in the sheet is 16px: iOS zooms into a smaller one. The id
+   outranks the narrow .rail-add (14px) once the rail is in the sheet. */
+#chat-sheet :is(input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=file]), textarea, select, [contenteditable]:not([contenteditable="false"])) { font-size: 16px; }
 
 /* ── U72 · docking the tab · tab-dock.js ── */
 
