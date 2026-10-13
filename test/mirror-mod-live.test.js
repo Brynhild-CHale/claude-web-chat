@@ -141,6 +141,7 @@ function setup(t, { clock = null, coalesceMs, bufferMs } = {}) {
         ...engine, model: Object.freeze(model), live: Object.freeze(live),
         applyChanges: (...args) => { calls.applyChanges += 1; return engine.applyChanges(...args); },
       };
+      h.engine = engine; // the unwrapped engine, for a test that plays the turn machine's part
       h.inst = src.attach(Object.freeze(wrapped));
       return h.inst;
     },
@@ -500,6 +501,34 @@ test('an event with no open turn is written when one opens within 2 s, and dropp
   assert.equal(clock.pending(), 0);
   h.prompt('p-next');
   assert.equal(await h.item('toolu_01Lost'), null, 'dropped, never written');
+});
+
+test('nothing is written to a superseded turn: a bound step, a new step and a tool call are dropped and counted', async (t) => {
+  const clock = fakeClock();
+  const h = await ready(t, { pid: 'p-sup', clock });
+  h.mod('turn.start', { turn_id: 'mt-s' });
+  h.step('mt-s', 0, 'before ');
+  clock.advance(150);
+  assert.equal((await h.item('rm_p-sup_0')).text, 'before ');
+  // The turn machine's one supersede (a rewind), as the rewinds source calls it.
+  const res = h.engine.model.supersede(S1, 'p-sup', { reason: 'branch', at: Date.now() });
+  assert.deepEqual(res.superseded, ['p-sup']);
+  const writes = h.calls.upsertItem.length;
+  const dropped = h.diag().dropped_no_turn;
+  h.step('mt-s', 0, 'after');       // the bound step
+  clock.advance(150);
+  h.step('mt-s', 1, 'next step');   // a new step of the bound mod turn
+  clock.advance(150);
+  h.mod('turn.start', { turn_id: 'mt-s2' });
+  h.toolCall('toolu_01Sup', 'Bash', { command: 'ls' }); // an unbound event: the open turn is superseded
+  clock.advance(2001);
+  assert.equal(h.calls.upsertItem.length, writes, 'nothing written after the supersede');
+  assert.equal((await h.item('rm_p-sup_0')).text, 'before ', 'the bound step kept its text');
+  assert.equal(await h.item('rm_p-sup_1'), null);
+  assert.equal(await h.item('toolu_01Sup'), null);
+  assert.ok(h.diag().dropped_no_turn >= dropped + 2, `dropped and counted (${h.diag().dropped_no_turn})`);
+  assert.equal(h.diag().waiting, 0);
+  assert.equal(clock.pending(), 0);
 });
 
 test('an unknown session\'s event never reaches the source; a non-synthetic envelope and another synthetic one are ignored', async (t) => {
