@@ -148,13 +148,41 @@ test('spawnDaemon adopts a portfile-less live daemon: its port, and nothing spaw
   assert.equal(spawned, 0, 'no second daemon');
 });
 
-test('spawnDaemon with no live daemon spawns (the seam), then waits on the portfile', async (t) => {
+test('spawnDaemon with no live daemon spawns (the seam), then waits for this root\'s daemon', async (t) => {
   await withServer(t);
   const root = projectRoot(t);
   const spawnedFor = [];
   const info = await spawnDaemon(root, { maxMs: 200, spawn: (r) => { spawnedFor.push(r); } });
   assert.deepEqual(spawnedFor, [root]);
   assert.equal(info, null, 'nothing came up within maxMs');
+});
+
+// spawnDaemon's wait after a spawn (U107d) is lib/util/daemon waitForDaemon,
+// not the raw portfile: a .web-chat/ copied from another project names THAT
+// project's live daemon, which answers at once, and lib/client (the MCP server's
+// and the hooks' auto-spawn) adopted its port. The spawn seam stands in for the
+// detached `start`: this root's new daemon (an in-process server on a port this
+// file opened) writes its portfile over the copy a moment later.
+test("spawnDaemon with a copied portfile resolves to this root's new daemon, not the other project's", async (t) => {
+  const other = await withServer(t, { root: projectRoot(t, 'wc-one-daemon-other-') });
+  const root = projectRoot(t);
+  fs.writeFileSync(projectPaths(root).serverJson, JSON.stringify({ pid: process.pid, port: other.port, url: `http://localhost:${other.port}` }));
+  const mine = await withServer(t, { root });
+  let timer = null;
+  t.after(() => clearTimeout(timer));
+
+  const spawnedFor = [];
+  const info = await spawnDaemon(root, {
+    maxMs: 5000,
+    spawn: (r) => {
+      spawnedFor.push(r);
+      timer = setTimeout(() => fs.writeFileSync(projectPaths(r).serverJson,
+        JSON.stringify({ pid: process.pid, port: mine.port, url: `http://localhost:${mine.port}` })), 200);
+    },
+  });
+  assert.deepEqual(spawnedFor, [root], 'nothing of this root was live, so it spawned');
+  assert.equal(info && info.port, mine.port, `adopted ${JSON.stringify(info)}, not this root's daemon on ${mine.port}`);
+  assert.notEqual(info.port, other.port);
 });
 
 test('open adopts a portfile-less live daemon: opens it, spawns nothing', async (t) => {
@@ -170,7 +198,7 @@ test('open adopts a portfile-less live daemon: opens it, spawns nothing', async 
     errlog: (m) => logs.push(String(m)),
     exit: (c) => logs.push(`exit ${c}`),
     spawnDaemonProcess: () => { spawned++; },
-    waitForPortfile: async () => null,
+    waitForDaemon: async () => null,
     restartIfStale: async () => ({ restarted: false }),
   });
   assert.equal(spawned, 0);

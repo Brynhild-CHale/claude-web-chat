@@ -61,7 +61,7 @@ function deps(root, overrides = {}) {
     // daemonFor reports it. Nothing listens on 5999 and nothing probes it.
     daemonFor: async () => ({ pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }),
     spawnDaemonProcess: () => {},
-    waitForPortfile: async () => ({ port: 5999, url: 'http://localhost:5999', pid: 1 }),
+    waitForDaemon: async () => ({ port: 5999, url: 'http://localhost:5999', pid: 1, source: 'portfile' }),
     restartIfStale: async () => ({ restarted: false }),
     ...overrides,
   };
@@ -240,6 +240,8 @@ const { projectPaths } = require('../lib/core/paths');
 const { LISTEN_HOST } = require('../lib/core/cors');
 
 const NEVER_PROBED = 'http://localhost:1'; // what the stub wait reports; only recorded
+// The real wait (lib/util/daemon), for the cases that pin what it adopts.
+const { waitForDaemon: realWaitForDaemon } = require('../lib/util/daemon');
 
 // The real daemonFor, recording the roots it was asked about.
 function adoptDeps(root, extra = {}) {
@@ -252,7 +254,7 @@ function adoptDeps(root, extra = {}) {
     exit: (c) => calls.exits.push(c),
     daemonFor: async (r) => { calls.asked.push(r); return registry.daemonFor(r); },
     spawnDaemonProcess: (r) => calls.spawned.push(r),
-    waitForPortfile: async () => ({ port: 1, url: NEVER_PROBED, pid: 1 }),
+    waitForDaemon: async () => ({ port: 1, url: NEVER_PROBED, pid: 1, source: 'portfile' }),
     restartIfStale: async () => ({ restarted: false }),
     ...extra,
   };
@@ -278,6 +280,49 @@ test("a portfile naming another project's daemon: open does not browse it, and s
   assert.deepEqual(calls.spawned, [root], "this project's daemon is spawned");
   assert.deepEqual(calls.browsed, [NEVER_PROBED], 'the one it spawned is opened');
   assert.equal(calls.logs.some((l) => /already running/.test(l)), false, JSON.stringify(calls.logs));
+});
+
+// The cold start's wait (U107d). It used to be lib/util/daemon waitForPortfile —
+// core/portfiles waitUntilReachable on the RAW portfile — so a .web-chat/ copied
+// from another project, whose portfile names THAT project's live daemon (which
+// answers at once), had `open` print "started at" the other project's URL and
+// browse it. Now the wait is lib/util/daemon waitForDaemon (daemonFor-verified).
+// The spawn stands in for `start --daemon`: this root's new daemon (an
+// in-process server on a port this file opened) writes its portfile over the
+// copy a moment later, as a real daemon does once it binds.
+test("open's cold start with a copied portfile: 'started at' and the browser name this root's new daemon", async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  const root = project(t);
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+  const mine = await withServer(t, { root });
+  let timer = null;
+  t.after(() => clearTimeout(timer));
+
+  const { calls, deps: d } = adoptDeps(root, {
+    waitForDaemon: realWaitForDaemon,
+    startWithinMs: 5000,
+    spawnDaemonProcess: (r) => {
+      calls.spawned.push(r);
+      timer = setTimeout(() => writeServerJson(r, { pid: process.pid, port: mine.port, url: `http://localhost:${mine.port}` }), 200);
+    },
+  });
+  await open([], d);
+  assert.deepEqual(calls.spawned, [root]);
+  assert.deepEqual(calls.errs, []);
+  assert.ok(calls.logs.includes(`web-chat server started at http://localhost:${mine.port} (pid ${process.pid})`), JSON.stringify(calls.logs));
+  assert.deepEqual(calls.browsed, [`http://localhost:${mine.port}`], "the browser goes to this root's new daemon");
+  assert.ok(!calls.logs.some((l) => l.includes(`:${other.port}`)), `named the other project's daemon: ${JSON.stringify(calls.logs)}`);
+});
+
+test("open's cold start: a daemon that never answers as this root's is a failure, not the copied portfile's", async (t) => {
+  const other = await withServer(t, { root: project(t) });
+  const root = project(t);
+  writeServerJson(root, { pid: process.pid, port: other.port, url: other.baseUrl });
+  const { calls, deps: d } = adoptDeps(root, { waitForDaemon: realWaitForDaemon, startWithinMs: 300 });
+  await open([], d);
+  assert.deepEqual(calls.browsed, []);
+  assert.deepEqual(calls.exits, [1]);
+  assert.match(calls.errs.join('\n'), /failed to start/);
 });
 
 test('a portfile naming a port any HTTP server answers is not adopted either', async (t) => {
@@ -356,6 +401,7 @@ function bounceDeps(t, root, restarts, { comesUp = true, stopsOld, extra = {} } 
         return { ok: true };
       },
     }),
+    waitForDaemon: realWaitForDaemon,
     ...extra,
   });
   return { ...out, fresh };
