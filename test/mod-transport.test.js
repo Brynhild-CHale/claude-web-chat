@@ -113,17 +113,25 @@ test('a safe command with no skill and no files is one command op', async () => 
     { op: 'command', args: { name: 'recap', args: '' } },
     { op: 'command', args: { name: 'rename', args: 'v40 test' } },
   ]);
-  // '/plan open': one command op where the mod's protocol takes args for
-  // plan; declined (the channel or the park) where it does not.
-  const before = bridge.ops.length;
-  const r = t(enqueue(state, bus, { text: '/plan open' }));
-  if (validateOp('command', { name: 'plan', args: 'open' }).ok) {
-    assert.deepEqual(r, { via: 'mod' });
-    assert.deepEqual(bridge.ops.slice(before).map(({ op, args }) => ({ op, args })), [{ op: 'command', args: { name: 'plan', args: 'open' } }]);
-  } else {
-    assert.equal(r, null);
-    assert.equal(bridge.ops.length, before);
+});
+
+test('/plan and /compact carry their line: one command op each (Claude Code takes /plan <description>, /compact <instructions>)', async () => {
+  const state = freshState();
+  const bus = newBus();
+  const bridge = fakeBridge();
+  const t = createModTransport({ bridge, mirror: fakeMirror(), state, bus });
+  for (const text of ['/plan open', '/plan add a retry to the uploader', '/compact keep the failing test output']) {
+    assert.deepEqual(t(enqueue(state, bus, { text })), { via: 'mod' }, text);
   }
+  assert.deepEqual(bridge.ops.map(({ op, args }) => ({ op, args })), [
+    { op: 'command', args: { name: 'plan', args: 'open' } },
+    { op: 'command', args: { name: 'plan', args: 'add a retry to the uploader' } },
+    { op: 'command', args: { name: 'compact', args: 'keep the failing test output' } },
+  ]);
+  // A line the op refuses (a leading '/', too long) is declined: the channel
+  // or the park takes it, never a send that fails after it.
+  for (const text of ['/plan /model', `/compact ${'x'.repeat(2001)}`]) assert.equal(t(enqueue(state, bus, { text })), null, text.slice(0, 20));
+  assert.equal(bridge.ops.length, 3);
 });
 
 test('declined: a task-stop, no attached session, a sessionOf that throws, a non-message, an enqueue that throws', async () => {
@@ -243,14 +251,10 @@ test('a rejected enqueue falls back too; a live channel wakes it with the item\'
   assert.deepEqual(wake.batch.map((it) => it.msg_id), [item.msg_id]);
 });
 
-// The receipt of a handed-back message. The transport steps it back to
-// 'queued' before the fallback's delivery (or 'failed'), but
-// lib/server/domain/queue.js's receipt graph (RECEIPT_NEXT) has no step out of
-// 'sent' but confirmed/unconfirmed, so the receipt stays 'sent' (U91's
-// hand-off, open issue 1: the one-line queue.js patch `sent: ['confirmed',
-// 'unconfirmed', 'queued']`, which no tranche-6 cell holds; with it these two
-// pass). These are the behaviour the brief asks for.
-test('the fallback\'s receipt goes back through the delivery\'s states', { todo: "needs queue.js RECEIPT_NEXT.sent to allow 'queued' (U91 open issue 1)" }, async () => {
+// The receipt of a handed-back message (the main session's decision after
+// tranche 6 wave 2, U91b): queue.js's RECEIPT_NEXT.sent gains 'queued' (the
+// mod handed it back) and 'failed' (a failed command op).
+test('the fallback\'s receipt goes back through the delivery\'s states: sent → queued → parked', async () => {
   const state = freshState({ live: false });
   const bus = newBus();
   state.messageTransport = createModTransport({ bridge: fakeBridge({ answer: { ok: false, refused: 'timeout', delivered: false } }), mirror: fakeMirror(), state, bus });
@@ -258,16 +262,99 @@ test('the fallback\'s receipt goes back through the delivery\'s states', { todo:
   queue.release(state, bus, [item.id], {});
   await settle();
   assert.equal(receiptOf(state, item.msg_id), 'parked');
+  assert.deepEqual(receiptsIn(bus, item.msg_id), ['queued', 'sending', 'sent', 'queued', 'parked']);
 });
 
-test('a failed command op is marked failed', { todo: "needs queue.js RECEIPT_NEXT.sent to allow 'queued' (U91 open issue 1)" }, async () => {
+test('a failed command op is marked failed (sent → failed), with no wake and no park', async () => {
+  for (const answer of [{ ok: false, refused: 'failed', delivered: true }, { ok: false, refused: 'timeout', delivered: false }]) {
+    const state = freshState({ live: true });
+    const bus = newBus();
+    state.messageTransport = createModTransport({ bridge: fakeBridge({ answer }), mirror: fakeMirror(), state, bus });
+    const item = enqueue(state, bus, { text: '/compact' });
+    queue.release(state, bus, [item.id], {});
+    await settle();
+    assert.equal(receiptOf(state, item.msg_id), 'failed', answer.refused);
+    assert.deepEqual(receiptsIn(bus, item.msg_id), ['queued', 'sending', 'sent', 'failed']);
+    assert.equal(wakesIn(bus).length, 0);
+    assert.equal(state.pendingWake, null);
+  }
+});
+
+test('a command op\'s ok confirms its receipt (a command leaves no transcript marker); a submit\'s ok waits for the transcript', async () => {
   const state = freshState({ live: true });
   const bus = newBus();
-  state.messageTransport = createModTransport({ bridge: fakeBridge({ answer: { ok: false, refused: 'failed', delivered: true } }), mirror: fakeMirror(), state, bus });
-  const item = enqueue(state, bus, { text: '/compact' });
-  queue.release(state, bus, [item.id], {});
+  const bridge = fakeBridge({ answer: { ok: true, result: { ran: true } } });
+  state.messageTransport = createModTransport({ bridge, mirror: fakeMirror(), state, bus });
+  const cmd = enqueue(state, bus, { text: '/plan add a retry' });
+  const msg = enqueue(state, bus, { text: 'plain words' });
+  queue.release(state, bus, [cmd.id, msg.id], {});
   await settle();
-  assert.equal(receiptOf(state, item.msg_id), 'failed');
+  assert.deepEqual(bridge.ops.map((o) => o.op), ['command', 'submit']);
+  assert.equal(receiptOf(state, cmd.msg_id), 'confirmed');
+  assert.deepEqual(receiptsIn(bus, cmd.msg_id), ['queued', 'sending', 'sent', 'confirmed']);
+  assert.equal(receiptOf(state, msg.msg_id), 'sent', 'only the transcript confirms a message');
+  assert.equal(wakesIn(bus).length, 0);
+});
+
+test('two hand-backs with no live channel keep one typed message in the park; the other waits for the next idle and is offered to the mod again', async () => {
+  const state = freshState({ live: false });
+  const bus = newBus();
+  let failing = true;
+  const bridge = fakeBridge({ answer: () => (failing ? { ok: false, refused: 'timeout', delivered: false } : { ok: true, result: {} }) });
+  state.messageTransport = createModTransport({ bridge, mirror: fakeMirror(), state, bus });
+  const a = enqueue(state, bus, { text: 'first' });
+  const b = enqueue(state, bus, { text: 'second' });
+  // Each release finds the park empty (the mod took the one before), so each
+  // goes to the mod; both come back.
+  queue.release(state, bus, [a.id], {});
+  queue.release(state, bus, [b.id], {});
+  assert.equal(bridge.ops.length, 2);
+  await settle();
+  const typed = state.pendingWake.batch.filter((it) => queue.isTypedMessage(it));
+  assert.equal(typed.length, 1, 'one typed message per park');
+  assert.equal(typed[0].msg_id, a.msg_id);
+  assert.equal(receiptOf(state, a.msg_id), 'parked');
+  const waiting = state.queue.filter((it) => it.msg_id === b.msg_id);
+  assert.equal(waiting.length, 1, 'the second is back in the queue');
+  assert.equal(waiting[0].id, b.id, 'under its own queue id');
+  assert.equal(waiting[0].waiting, 'parked_message');
+  assert.equal(waiting[0].autosend, true);
+  assert.equal(receiptOf(state, b.msg_id), 'queued');
+  assert.deepEqual(receiptsIn(bus, b.msg_id), ['queued', 'sending', 'sent', 'queued']);
+  const adds = bus.read({ kinds: ['queue'] }).events.filter((e) => e.op === 'add' && e.id === b.id);
+  assert.equal(adds.length, 2, 'one add frame when it re-enters the queue');
+  assert.equal(wakesIn(bus).length, 0);
+  // The park is consumed (the user's next prompt); at the next idle the
+  // release scheduler sends it, and the mod is offered it again.
+  queue.consumePending(state, state.pendingWake.id, { bus, host: true });
+  failing = false;
+  const r = queue.release(state, bus, [b.id], {});
+  assert.deepEqual(r.transported, [{ id: b.id, via: 'mod' }]);
+  assert.equal(bridge.ops.length, 3);
+  assert.equal(receiptOf(state, b.msg_id), 'sent');
+});
+
+test('handBack: a live channel wakes as before; a stop request never waits behind a parked message; a non-message is none', async () => {
+  const live = freshState({ live: true });
+  const lbus = newBus();
+  const item = enqueue(live, lbus);
+  live.queue = []; // it has left the queue, as a transported item has
+  const out = queue.handBack(live, lbus, item, { reason: 'mod-fallback' });
+  assert.equal(out.mode, 'wake');
+  assert.deepEqual(wakesIn(lbus).map((w) => w.reason), ['mod-fallback']);
+  assert.equal(live.queue.length, 0);
+  assert.equal(queue.handBack(live, lbus, { kind: 'signal', id: 'q9' }).mode, 'none');
+
+  const off = freshState({ live: false });
+  const obus = newBus();
+  const typed = enqueue(off, obus);
+  queue.release(off, obus, [typed.id], {});
+  assert.ok(off.pendingWake, 'a typed message is parked');
+  const stop = queue.enqueueMessage(off, obus, { text: '', skill: null, files: [], chars: 0, conversation_id: 'c1' }, { source: 'task-stop', task_id: 'bdz1n2' });
+  off.queue = off.queue.filter((it) => it.id !== stop.id);
+  assert.equal(queue.handBack(off, obus, stop, {}).mode, 'parked');
+  assert.deepEqual(off.pendingWake.batch.map((it) => it.msg_id).sort(), [typed.msg_id, stop.msg_id].sort());
+  assert.equal(off.queue.length, 0);
 });
 
 test('handed out with no result ({ok:false, delivered:true}): the receipt stays sent, nothing re-sent', async () => {

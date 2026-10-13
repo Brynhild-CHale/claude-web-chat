@@ -295,6 +295,27 @@ test('the transport seam taking a message → sent (through sending); confirmed 
   assert.deepEqual(receiptFrames(frames).map((f) => f.state), ['queued', 'sending', 'sent']);
 });
 
+test('out of sent: a transport\'s hand-back → queued, a failed command op → failed; no other new step', () => {
+  // The main session's decision after tranche 6 wave 2 (U91b): RECEIPT_NEXT.sent
+  // gains 'queued' and 'failed', and nothing else in the table changes.
+  const state = freshState();
+  const { bus, frames } = capturedBus();
+  state.messageTransport = () => ({ via: 'mod' });
+  const a = queue.enqueueMessage(state, bus, message());
+  queue.release(state, bus, [a.id]);
+  assert.equal(stateOf(state, a.msg_id), 'sent');
+  for (const next of ['sending', 'parked', 'handed_over']) assert.equal(queue.noteReceipt(state, bus, a.msg_id, next), false, `sent ↛ ${next}`);
+  assert.equal(queue.noteReceipt(state, bus, a.msg_id, 'queued'), true, 'sent → queued (handed back)');
+  assert.equal(queue.noteReceipt(state, bus, a.msg_id, 'parked'), true, 'then it parks as any other');
+  const b = queue.enqueueMessage(state, bus, message());
+  queue.release(state, bus, [b.id]);
+  assert.equal(queue.noteReceipt(state, bus, b.msg_id, 'failed'), true, 'sent → failed (a failed command op)');
+  for (const next of queue.RECEIPT_STATES) assert.equal(queue.noteReceipt(state, bus, b.msg_id, next), false, 'failed stays final');
+  assert.deepEqual(receiptFrames(frames).map((f) => f.state),
+    ['queued', 'sending', 'sent', 'queued', 'parked', 'queued', 'sending', 'sent', 'failed']);
+  assertReceiptShapes(frames, bus);
+});
+
 test('removing a queued message drops its receipt with no frame of its own', () => {
   const state = freshState();
   const { bus, frames } = capturedBus();
