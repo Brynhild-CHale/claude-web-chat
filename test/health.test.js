@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { withServer } = require('../test-support/helpers');
 const { PROTOCOL_VERSION, packageVersion } = require('../lib/core/versions');
+const { instanceId } = require('../lib/util/registry');
 
 test('GET /api/health returns liveness shape', async (t) => {
   const { api } = await withServer(t);
@@ -27,6 +28,18 @@ test('health names the web-chat release beside the protocol number', async (t) =
   const { json: body } = await api.get('/api/health');
   assert.equal(body.package_version, packageVersion(), 'the release a person reads (sessions view)');
   assert.equal(body.version, PROTOCOL_VERSION, 'and `version` keeps meaning the protocol');
+});
+
+// U105: which project this pid serves, as the registry keys it — a short hash,
+// never the path. lib/util/registry daemonFor accepts a record only when the
+// daemon on its port names this id, so a port now held by another project's
+// daemon is never taken for this root's.
+test('health names the instance: the registry id of the daemon\'s root, not its path', async (t) => {
+  const { api, root } = await withServer(t);
+  const { json: body } = await api.get('/api/health');
+  assert.equal(body.instance, instanceId(root));
+  assert.match(body.instance, /^[0-9a-f]{8}$/);
+  assert.ok(!JSON.stringify(body).includes(root), 'the body carries no path to the root');
 });
 
 test('health reflects an active lock', async (t) => {
