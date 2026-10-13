@@ -19,7 +19,7 @@
 // is doing and what runs is decided there, once, for the desktop and the phone
 // alike; this module only chooses how the phone's tab, badge and lines say it.
 // No document, window, storage or timer, and no clock: `now` is passed in.
-import { uiState } from './chat-present.js';
+import { atLeast, uiState } from './chat-present.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -313,10 +313,6 @@ export const EMPTY_TASKS_NOTE = 'No background tasks right now';
 export const EMPTY_QUEUE_LINE = 'Nothing queued';
 export const PARKED_LINE = '⇢ Parked — delivers with your next message';
 
-// The levels that carry content (`read` and above); anything else, an unknown
-// level included, shows counts only.
-const CONTENT_LEVELS = new Set(['read', 'full', 'local']);
-
 // The Tasks root's lines, from categories()'s answer, in its order: each
 // category's phone line, `pulse` only while Claude works, `tappable` at `read`
 // and above (the Queue at every level), `countsOnly` below `read`, and
@@ -326,7 +322,9 @@ const CONTENT_LEVELS = new Set(['read', 'full', 'local']);
 // (`parked`: the queue snapshot's `parked` is set). `emptyNote` is the one
 // muted line when no task category is present.
 export function categoryLines(cats, { level, working = false, parked = false } = {}) {
-  const content = CONTENT_LEVELS.has(level);
+  // Content at `read` and above, on chat-state's one ladder (via chat-present);
+  // anything else, an unknown level included, ranks -1 and shows counts only.
+  const content = atLeast(level, 'read');
   const list = Array.isArray(cats) ? cats : [];
   const lines = [];
   let tasks = 0;
