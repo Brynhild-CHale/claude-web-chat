@@ -324,3 +324,60 @@ test('removeByCapture goes through the queue\'s one removal path: one standard r
   assert.deepEqual(state.queue.map((it) => it.id), ['q2']);
   assert.equal(queue.removeByCapture(state, bus, []), 0);
 });
+
+// ── U102b: a restore respects the cap ────────────────────────────────────
+
+const fakeCaptures = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => {
+  const n = from + i;
+  return { id: `cap${n}`, seq: n, url: `https://example.test/p${n}`, title: `Page ${n}`, profile: 'default', distilled: `page ${n}`, raw_ref: `captures/cap${n}.html` };
+});
+
+test('Set active onto a node holding 60 captures: 50 are live, the node still holds 60', async (t) => {
+  const first = await withServer(t);
+  await first.api.post('/api/render', { id: 'a', html: '<div>a</div>' });
+  const oldId = (await turn(first.api)).json.node_id;
+  await first.api.post('/api/render', { id: 'b', html: '<div>b</div>' });
+  const newId = (await turn(first.api)).json.node_id;
+  assert.ok(oldId && newId && oldId !== newId);
+  await first.graceful();
+
+  // A node committed before 0.8.5 could hold any number of captures.
+  const file = path.join(first.webChatDir, 'graph', `${oldId}.json`);
+  const node = JSON.parse(fs.readFileSync(file, 'utf8'));
+  node.captures = fakeCaptures(1, 60);
+  fs.writeFileSync(file, JSON.stringify(node));
+
+  const { api } = await withServer(t, { root: first.root });
+  const r = await api.post('/api/graph/active', { id: oldId });
+  assert.equal(r.json.ok, true, JSON.stringify(r.json));
+  const live = await liveCaptures(api);
+  assert.equal(live.length, CAPTURES_LIVE_MAX, 'live captures never exceed the cap after a restore');
+  assert.deepEqual(live.map((c) => c.id), fakeCaptures(11, 60).map((c) => c.id), 'the newest');
+  const held = (await api.get(`/api/graph/node/${encodeURIComponent(oldId)}`)).json;
+  assert.equal(held.captures.length, 60, 'the node still holds all 60');
+});
+
+test('a draft with 60 captures restored at boot: 50 live, and a trimmed capture\'s queue item is gone', async (t) => {
+  const first = await withServer(t);
+  await first.api.post('/api/render', { id: 'a', html: '<div>a</div>' });
+  await turn(first.api);
+  const kept = await capture(first.api, 1);
+  const item = captureItemFor(await queueItems(first.api), kept);
+  assert.ok(item, 'the capture is queued');
+  await first.graceful();
+
+  const file = path.join(first.webChatDir, 'draft.json');
+  const draft = JSON.parse(fs.readFileSync(file, 'utf8'));
+  draft.captures = fakeCaptures(1, 60);
+  // cap1's item (the real one) will be trimmed; cap60's is live and stays.
+  draft.queue = [item, { ...item, id: 'q900', capture_id: 'cap60' }];
+  fs.writeFileSync(file, JSON.stringify(draft));
+
+  const { api } = await withServer(t, { root: first.root });
+  const live = await liveCaptures(api);
+  assert.equal(live.length, CAPTURES_LIVE_MAX, 'the draft restore respects the cap');
+  assert.deepEqual(live.map((c) => c.id), fakeCaptures(11, 60).map((c) => c.id));
+  const items = await queueItems(api);
+  assert.equal(captureItemFor(items, 'cap1'), undefined, 'the trimmed capture\'s item did not come back');
+  assert.ok(captureItemFor(items, 'cap60'), 'a live capture\'s item did');
+});
