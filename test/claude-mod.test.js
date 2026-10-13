@@ -327,7 +327,7 @@ test('register.js\'s WIRE literal is lib/core/mod-protocol\'s wire', () => {
   const m = /const WIRE = Object\.freeze\((\{[\s\S]*?\n\})\);/.exec(SRC);
   assert.ok(m, 'a WIRE literal');
   const wire = JSON.parse(m[1]);
-  for (const k of ['MOD_PROTOCOL', 'MOD_MIN_CLAUDE', 'OPS', 'MOD_COMMANDS', 'EVENT_KINDS', 'BRIDGE_ONLY_KINDS', 'BATCH_MAX', 'DELTA_MAX', 'TEXT_MAX', 'INPUT_MAX']) {
+  for (const k of ['MOD_PROTOCOL', 'MOD_MIN_CLAUDE', 'OPS', 'MOD_COMMANDS', 'EVENT_KINDS', 'BRIDGE_ONLY_KINDS', 'BATCH_MAX', 'DELTA_MAX', 'TEXT_MAX', 'INPUT_MAX', 'RENAME_MAX', 'COMMAND_ARGS_MAX']) {
     assert.ok(Object.hasOwn(wire, k), `WIRE carries ${k}`);
   }
   for (const [k, v] of Object.entries(wire)) assert.deepEqual(v, P[k], `WIRE.${k} equals mod-protocol's`);
@@ -545,6 +545,35 @@ test('forged ops (past the daemon) are refused by the mod itself: a /command as 
   assert.equal(host.called('session.usage').length, 0);
 });
 
+test('the mod takes the /plan and /compact lines the protocol takes (up to COMMAND_ARGS_MAX); rename keeps RENAME_MAX', async (t) => {
+  assert.equal(P.COMMAND_ARGS_MAX, 2000);
+  assert.equal(P.RENAME_MAX, 64);
+  const { root, home } = project(t);
+  const d = await rawDaemon(t);
+  writeServerJson(root, { pid: process.pid, port: d.port, root });
+  const host = fakeHost(t, { cwd: root, home });
+  await host.start();
+  const op = (id, name, args) => ({ id, op: 'command', args: { name, args }, expires_at: Date.now() + 60000 });
+  d.queue.push(
+    op('op_c1', 'plan', 'x'.repeat(65)),
+    op('op_c2', 'compact', 'y'.repeat(2000)),
+    op('op_c3', 'plan', 'x'.repeat(2001)),
+    op('op_c4', 'compact', 'two\nlines'),
+    op('op_c5', 'rename', 'r'.repeat(64)),
+    op('op_c6', 'rename', 'r'.repeat(65)),
+  );
+  await waitUntil(() => d.results.length >= 6, { timeout: 5000, what: 'six results' });
+  const by = Object.fromEntries(d.results.map((r) => [r.id, r]));
+  assert.equal(by.op_c1.ok, true, 'a 65-character /plan line runs');
+  assert.equal(by.op_c2.ok, true, 'a 2000-character /compact line runs');
+  assert.equal(by.op_c3.refused, 'bad-args', 'a 2001-character line is refused');
+  assert.equal(by.op_c4.refused, 'bad-args', 'a newline is still refused');
+  assert.equal(by.op_c5.ok, true, 'a 64-character name runs');
+  assert.equal(by.op_c6.refused, 'bad-args', 'rename keeps its 64');
+  assert.deepEqual(host.called('command.run').map((c) => [c.args[0].command, c.args[0].args.length]),
+    [['plan', 65], ['compact', 2000], ['rename', 64]]);
+});
+
 // ── the hooks never alter what they see ─────────────────────────────────────
 
 test('tool.call passes e on and returns next(e)\'s very value; a throw while forwarding changes neither', async (t) => {
@@ -624,6 +653,28 @@ test('a batch goes at once at 50 events; at most 200 wait while the bridge is aw
   assert.equal(attachedTo(b).counters.events_accepted, before, '49 wait for the (held) timer');
   await host.fire('prompt.submit', { text: 'y', origin: { kind: 'composer' } });
   await waitUntil(() => attachedTo(b).counters.events_accepted === before + 50, { timeout: 3000, what: 'the batch at 50' });
+
+  // The first turn.complete queues the diag (turn.complete + diag = 2 events);
+  // 48 more fill the next batch of 50, so it goes without the held timer. The
+  // diag counts what the mod dropped: 301 events waited (session.start, then
+  // the 300 prompts) and the 101 oldest of them went.
+  await host.fire('turn.complete', { turnId: 't_b', answer: 'ok', reason: 'answer', durationMs: 1, isAborted: false });
+  for (let i = 0; i < 48; i++) await host.fire('prompt.submit', { text: 'z', origin: { kind: 'composer' } });
+  await waitUntil(() => attachedTo(b).shapes.driver, { timeout: 3000, what: 'the diag' });
+  assert.deepEqual(attachedTo(b).shapes.dropped, ['101'], 'the diag says how many events the mod dropped');
+  assert.deepEqual(attachedTo(b).shapes.failed, ['0']);
+});
+
+test('the diag counts what the mod failed to handle: a handler that threw', async (t) => {
+  const { b, host } = await attachedHost(t);
+  // A turn.complete whose turnId throws on read: the handler's catch counts it.
+  const bad = { answer: 'ok', reason: 'answer', get turnId() { throw new Error('unreadable'); } };
+  await host.fire('turn.complete', bad);
+  assert.equal(attachedTo(b).shapes.driver, undefined, 'a handler that threw sends no diag');
+  await host.fire('turn.complete', { turnId: 't_f', answer: 'ok', reason: 'answer', durationMs: 1, isAborted: false });
+  await waitUntil(() => attachedTo(b).shapes.driver, { timeout: 5000, what: 'the diag' });
+  assert.deepEqual(attachedTo(b).shapes.failed, ['1'], 'the diag says how many the mod failed to handle');
+  assert.deepEqual(attachedTo(b).shapes.dropped, ['0']);
 });
 
 test('a 401 (the token superseded) makes the mod say hello again', async (t) => {
