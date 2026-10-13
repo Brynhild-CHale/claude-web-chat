@@ -46,7 +46,7 @@ const crypto = require('crypto');
 const VERSION_RE = /^v\d+$/;
 const VIEW_ACTIONS = new Set(['open', 'browse']);
 // The view fields a quiet respawn must find unchanged in the stored `editor`.
-const VIEW_FIELDS = ['root', 'unfenced', 'path', 'exists', 'content', 'versions', 'listing'];
+const VIEW_FIELDS = ['root', 'unfenced', 'start_path', 'path', 'exists', 'content', 'versions', 'listing'];
 
 // Order-free JSON, so a view read back from the store compares equal to the one
 // built here. Written out here, not required from lib/: a service.js stands alone.
@@ -81,6 +81,7 @@ module.exports = {
     const root = ctx.params && ctx.params.root ? path.resolve(cwd, ctx.params.root) : cwd;
     const unfenced = !!(ctx.params && ctx.params.unfenced);
     const versionsBase = path.join(ctx.webChatDir || path.join(cwd, '.web-chat'), 'file-versions');
+    const startPath = ctx.params && ctx.params.path ? ctx.params.path : null;
 
     let seq = 0;
     let load = 0;          // bumped only when the pane should (re)load the buffer
@@ -99,7 +100,9 @@ module.exports = {
     let lastCtlSeq = startedAt;
     const st = {
       root: unfenced ? '(any host path)' : displayPath(root),
-      unfenced, path: null, exists: false, content: '', versions: [],
+      // `start_path`: the params.path this view was started on, so a respawn
+      // can tell a file the USER opened from a pane re-mounted on a new path.
+      unfenced, start_path: startPath, path: null, exists: false, content: '', versions: [],
       selected: null, diff: null, listing: null, error: null,
     };
 
@@ -258,13 +261,33 @@ module.exports = {
     if (prev && Number.isFinite(prev.seq) && prev.seq > seq) seq = prev.seq;
     if (prev && Number.isFinite(prev.load) && prev.load > load) load = prev.load;
     const storedLoad = load;
+    // params.path is the file the pane was FIRST opened on, not the one it
+    // shows: the user may have opened another since, and the control write that
+    // did it is long gone when that file was then saved (`editor_ctl` holds the
+    // save, which a respawn never replays). Opening params.path again would
+    // publish that file with a `load` past the stored one, and the pane would
+    // reload its buffer over the typing in the other file. So a respawn of the
+    // SAME pane (the stored view was started on this params.path) reopens the
+    // file the stored view names — read through the same fence as every open,
+    // since it is store input. params.path opens on a first start (no stored
+    // view), on a pane re-mounted on another path (the stored `start_path`
+    // differs, or a view stored before it was recorded), and when the stored
+    // path is refused (outside the project) or cannot be read.
+    function openStartFile(first) {
+      const stored = prev && prev.start_path === first &&
+        typeof prev.path === 'string' && prev.path ? prev.path : null;
+      if (stored) {
+        try { doOpen(stored); return; } catch {}
+      }
+      doOpen(first);
+    }
     try {
       const ctl = (await ctx.driver.getStore(['editor_ctl'])).editor_ctl;
       if (ctl && ctl.seq > lastCtlSeq) lastCtlSeq = ctl.seq;
       if (ctl && VIEW_ACTIONS.has(ctl.action)) {
         run(ctl);
       } else {
-        if (ctx.params && ctx.params.path) doOpen(ctx.params.path); else doBrowse('.');
+        if (startPath) openStartFile(startPath); else doBrowse('.');
       }
     } catch (e) { st.error = String(e.message || e); }
 
