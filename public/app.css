@@ -2962,6 +2962,52 @@ pre.dv-diff {
 }
 
 /* ── U69 · tasks in the sheet · chat-sheet-tasks.js ── */
+/* The Tasks root (§8.6): one 60px line per category in its ink (U17's
+   [data-cs-cat] → --cs-cat), the Queue line last; its dot pulses (wc-chat-pulse)
+   only while Claude works on something that runs in it. Below `read` the lines
+   are counts only and only the Queue line is a button. A category page lists
+   chat-rows.js's touch-density rows (U46's section); a category gone from the
+   store keeps them under "No longer running". Tokens only. */
+.sh-root { display: flex; flex-direction: column; }
+.sh-line {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; margin: 0; padding: 8px 16px;
+  box-sizing: border-box; border: 0; border-bottom: 1px solid var(--wc-border-soft); background: transparent;
+  color: var(--wc-fg); font: inherit; text-align: left;
+}
+button.sh-line { cursor: pointer; }
+button.sh-line:hover { background: color-mix(in srgb, var(--cs-cat) 8%, transparent); }
+button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
+.sh-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cs-cat); }
+.sh-dot[data-cs-tone="muted"] { background: var(--wc-muted-dim); }
+.sh-dot[data-cs-tone="failed"] { background: var(--wc-comment); }
+.sh-dot[data-pulse] { animation: wc-chat-pulse var(--cs-pulse, 1.2s) ease-in-out infinite; }
+.sh-ltext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sh-lhead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.sh-ltitle { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 14px var(--wc-font); color: var(--wc-fg-bright); }
+.sh-ltitle.sh-mono { font: 600 13px var(--wc-mono); }
+.sh-ltag { flex: none; font: 700 9.5px var(--wc-mono); letter-spacing: .08em; color: var(--cs-cat); }
+.sh-lmeta { flex: none; margin-left: auto; font: 500 11px var(--wc-mono); color: var(--wc-muted); font-variant-numeric: tabular-nums; }
+.sh-lline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11.5px var(--wc-mono); color: var(--wc-text-2); }
+.sh-lsteps { display: flex; gap: 3px; height: 4px; }
+.sh-lstep { flex: 1 1 0; border-radius: 2px; background: var(--wc-border-soft); }
+.sh-lstep[data-step-state="done"] { background: var(--cs-cat); }
+.sh-lstep[data-step-state="running"] { background: color-mix(in srgb, var(--cs-cat) 50%, var(--wc-border-soft)); }
+.sh-lstep[data-step-state="error"] { background: var(--wc-comment); }
+.sh-lgo { flex: none; font: 600 18px var(--wc-font); color: var(--wc-muted); }
+:is(.sh-ltag, .sh-lmeta, .sh-lline)[hidden] { display: none; }
+.sh-empty { margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--wc-border-soft); font: 13px var(--wc-font); color: var(--wc-muted); }
+.sh-gone { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--wc-border-soft); font: 600 12px var(--wc-font); color: var(--wc-muted); }
+.sh-gone[hidden] { display: none; }
+/* A detail page: .sh-pbody > .sh-dhost > .sh-dbody, the view's own body and its
+   scroller. The host's `hidden` is a signal for chat-detail.js (the view is off
+   screen: pause its followers), not a layout change — the page itself is what
+   the sheet hides — so it keeps its box and a closing sheet does not blank it. */
+.sh-dhost, .sh-dhost[hidden] { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.sh-dbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+@media (prefers-reduced-motion: reduce) {
+  .sh-dot[data-pulse] { animation: none; }
+}
 
 /* ── U70 · the queue in the sheet · chat-sheet-queue.js ── */
 

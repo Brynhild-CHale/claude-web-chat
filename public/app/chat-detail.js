@@ -544,7 +544,7 @@ function agentView(v, current, opts) {
       b.addEventListener('click', () => {
         const m = rowModelOf(current());
         if (!m) return;
-        const sheet = v.body.closest && v.body.closest('.chat-panel[data-variant="sheet"]');
+        const sheet = v.body.closest && v.body.closest('.chat-panel[data-variant="sheet"], #chat-sheet');
         runAction(m, 'cancel', { rowEl: h.head, density: sheet ? 'touch' : 'compact', button: b });
       });
       h.actions.replaceChildren(b);
