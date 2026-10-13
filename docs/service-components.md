@@ -437,11 +437,14 @@ on it, a turn that only answered in chat commits a node instead of folding, and
 **Set active** preserves "work" nobody did. So keep the payload free of anything
 that changes by itself — a read-time stamp, a relative date ("5 minutes ago"):
 send the absolute time and let the pane format it on its own timer — and compare
-before you push. A respawn is not a change either: the supervisor restarts a
-service on a reconnect or when its pane returns to the active node, so read your
-own key back at startup and adopt it as what you last wrote. `git-dashboard`
-keeps the last payload's key (stable JSON without `seq` and `at`) and pushes only
-when a rebuild's differs; `file-editor` rebuilds its view at startup and writes
+before you push — with what the store holds now, not only with what you last
+wrote, because a node restore (**Set active**, **⑃ Branch**) swaps the whole
+store under a service that keeps running and emits no store event for it. A
+respawn is not a change either: the supervisor restarts a service on a reconnect
+or when its pane returns to the active node, so read your own key back at
+startup and adopt it as what you last wrote. `git-dashboard` reads the store's
+`git` before each rebuild's compare (stable JSON without `seq` and `at`) and
+pushes only when the rebuild's differs; `file-editor` rebuilds its view at startup and writes
 nothing when it equals the stored one, carrying its `load` and `seq` on from the
 stored values so the pane never reloads its buffer over typing not yet saved.
 

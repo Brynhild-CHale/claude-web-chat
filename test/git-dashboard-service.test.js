@@ -254,6 +254,41 @@ test('git-dashboard service: after a quiet respawn, a repo change continues past
   assert.equal(again.writes[0].git.seq, 42, 'its seq continues from the stored one, never restarting below it');
 });
 
+test('git-dashboard service: a node restore that swaps an older `git` into the store is republished over on the next rebuild', async (t) => {
+  withTempHome(t);
+  const repo = makeRepo();
+  t.after(() => { try { fs.rmSync(repo.dir, { recursive: true, force: true }); } catch {} });
+
+  const store = {};
+  const h = await startService(t, repo, store);
+  assert.equal(h.writes.length, 1);
+  const older = viaStore(h.latest()); // what an older node carries: one commit on the trunk
+
+  fs.writeFileSync(path.join(repo.dir, 'c.txt'), 'three\n');
+  repo.run('add', '.');
+  repo.run('commit', '-qm', 'third commit');
+  h.fire({ git_ctl: { seq: 2, viewing: repo.trunk, open: null } });
+  assert.ok(await waitUntil(() => h.writes.length >= 2), 'the commit was published');
+  assert.equal(store.git.commits.length, 2, 'precondition: the store shows both trunk commits');
+
+  // Set active / Branch to the older node: graph.restoreLiveToNode replaces the
+  // whole store and emits no store event, and the supervisor keeps this child
+  // running because its mount and identity are the same on both nodes.
+  store.git = older;
+
+  h.fire({ git_ctl: { seq: 3, viewing: repo.trunk, open: null } });
+  assert.ok(await waitUntil(() => h.writes.length >= 3), 'the rebuild republished over the restored payload');
+  // A later, different view flushes every rebuild queued before it.
+  h.fire({ git_ctl: { seq: 4, viewing: 'feature', open: null } });
+  assert.ok(await waitUntil(() => h.writes.length >= 4));
+  assert.equal(h.writes.length, 4, 'the restored payload was written over exactly once');
+  const fixed = h.writes[2].git;
+  assert.equal(fixed.viewing, repo.trunk);
+  assert.deepEqual(fixed.commits.map((c) => c.subject), ['third commit', 'first commit'],
+    'the republished commits are the current ones, not the restored node\'s');
+  assert.ok(fixed.seq > older.seq, 'with a seq past the restored one');
+});
+
 test('git-dashboard service: rebuilds with no repo change write nothing; a new commit writes once, with a higher seq', async (t) => {
   withTempHome(t);
   const repo = makeRepo();

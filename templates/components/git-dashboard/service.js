@@ -8,8 +8,9 @@
 // PUBLISH ON CHANGE. Re-reading is cheap; writing is not: every `git` write is a
 // frame to every viewer, and it makes the live store differ from the active
 // node's, so the next turn commits a node instead of folding. So each rebuild is
-// compared (contentKey, below) with what was last published and pushed only when
-// it differs, and a respawn adopts the store's own `git` as "last published".
+// compared (contentKey, below) with the `git` the store holds at that moment and
+// pushed only when it differs — so a respawn finds its own last publish there,
+// and a node restore that swapped the store under us is republished over.
 // Nothing in the payload may change by itself as time passes: commits carry the
 // absolute commit time (`time`, seconds) and the pane writes "N minutes ago".
 
@@ -163,19 +164,31 @@ module.exports = {
       return true;
     };
 
-    // Compare before you push: a rebuild that reads what was last published
-    // writes nothing. `at` is when the data last CHANGED, not when it was read.
-    // Rebuilds run one at a time, so a slow read can never land after a newer
-    // one and publish stale data over it.
+    // Compare before you push — with the `git` the store holds NOW, not only
+    // with what this run last wrote: a node restore (Set active, Branch) swaps
+    // the whole store under a running service, so the store can hold an older
+    // node's `git` while our memory still says "published". A rebuild whose data
+    // the store already holds writes nothing. `at` is when the data last
+    // CHANGED, not when it was read. Rebuilds run one at a time and each awaits
+    // its own write, so the next one reads the store after that write landed,
+    // and a slow read can never land after a newer one and publish stale data.
     let chain = Promise.resolve();
     const rebuild = async (view) => {
       if (stopped) return;
       const g = await build(cwd, view);
       if (stopped) return;
+      try {
+        const got = await ctx.driver.getStore(['git']);
+        const held = got && got.git;
+        lastKey = contentKey(held);
+        if (held && Number.isFinite(held.seq) && held.seq > seq) seq = held.seq;
+      } catch {} // the store is unreachable: compare with what we last wrote
+      if (stopped) return;
       const key = contentKey(g);
       if (key === lastKey) return;
       lastKey = key;
-      ctx.driver.setStore({ git: { seq: ++seq, ...g, at: Date.now() } });
+      // A lost write leaves the store differing, so the next rebuild retries it.
+      try { await ctx.driver.setStore({ git: { seq: ++seq, ...g, at: Date.now() } }); } catch {}
     };
     const push = () => {
       const view = ctl; // the selection as it is when the rebuild is asked for
