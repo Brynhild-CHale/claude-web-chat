@@ -121,9 +121,9 @@ debounced `reconcile()` that diffs the *desired* set of children against the
 
 | State | When | How |
 | --- | --- | --- |
-| **running** | the pane is a live mount on the active node **and** ≥1 browser is connected | reconcile spawns it |
-| **stopped** | you navigate to a node without the pane, clear the pane, the last viewer leaves, `service.js` is edited, the pane is re-used with different params (a value its `x-trust` declaration covers restarts it with the new value and asks nothing; any other change asks again), or its approval is withdrawn (`trust --pack <name> --deny` over a key it had approved) | reconcile stops it |
-| **respawned** | you navigate back / a viewer reconnects | reconcile spawns a fresh child |
+| **running** | the pane is a live mount on the active node **and** ≥1 browser is connected (or the last one left less than the idle grace ago) | reconcile spawns it |
+| **stopped** | you navigate to a node without the pane, clear the pane, no browser has been connected for the **idle grace** (10 s), `service.js` is edited, the pane is re-used with different params (a value its `x-trust` declaration covers restarts it with the new value and asks nothing; any other change asks again), or its approval is withdrawn (`trust --pack <name> --deny` over a key it had approved) | reconcile stops it |
+| **respawned** | you navigate back / a viewer reconnects after the grace ran out | reconcile spawns a fresh child |
 
 The desired set is derived from `state.mounts` — which *is* the active surface,
 because `graph.restoreLiveToNode` repopulates it before the graph event fires. So
@@ -133,6 +133,34 @@ warm state, so a service must be cheap to start and idempotent. A crash is
 recorded and not hot-looped — the child won't respawn until `service.js` changes
 or the pane leaves the surface: `prune()` drops the crash block with the pane, so
 a mount id is not held unusable once something else is mounted under it.
+
+**The idle grace.** When the last browser leaves, nothing stops at once: the
+children keep running for `IDLE_GRACE_MS` (10 s), so a dropped socket, the
+browser's reconnect or a reload never stops and re-forks a service. A viewer
+arriving inside the grace changes nothing; the grace running out with still
+nobody watching stops every child. While it runs the surface counts as
+watched — clearing the pane or navigating away still stops its child at once,
+and a pane mounted meanwhile still starts. Daemon shutdown ignores the grace.
+
+**The log.** Every fork and every requested stop is one line in
+`.web-chat/server.log`, with what caused it:
+
+```
+[services] start git-dashboard (wc-git; trust)
+[services] no viewers — services stop in 10 s unless one returns
+[services] a viewer returned after 1180 ms — services kept
+[services] stop git-dashboard (wc-git; viewers)
+```
+
+The reason is the event that brought the reconcile round — `viewers`,
+`graph:<op>` (`graph:set-active`, …), `render`, `clear`, `packs`, `trust` —
+or, for a child whose pane is still there, what changed about it: `identity`
+(the trust key: `service.js`, its `x-trust` declaration, or a param that counts toward
+approval), `params` (a param its `x-trust` declaration covers — the child
+restarts with the new value) or `trust` (its approval was withdrawn).
+`shutdown` is the daemon stopping. The two grace lines are written only when a
+child is running as the last viewer leaves. A crash is still its own line
+(`exited unexpectedly`), not a stop.
 
 ## Trust
 
