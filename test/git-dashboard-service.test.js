@@ -233,6 +233,27 @@ test('git-dashboard service: a respawn that finds the same repo data in the stor
   assert.deepEqual(store.git, viaStore(published), 'and the stored payload (seq, at) is untouched');
 });
 
+test('git-dashboard service: after a quiet respawn, a repo change continues past the stored seq', async (t) => {
+  withTempHome(t);
+  const repo = makeRepo();
+  t.after(() => { try { fs.rmSync(repo.dir, { recursive: true, force: true }); } catch {} });
+
+  const first = await startService(t, repo, {});
+  await first.svc.stop();
+  // A stored seq well past what one run of this service would reach by itself:
+  // a respawn that restarted its counter at 0 would publish below it.
+  const store = { git: { ...viaStore(first.latest()), seq: 41 } };
+  const again = await respawn(t, store);
+  assert.equal(again.writes.length, 0, 'precondition: the respawn was quiet');
+
+  fs.writeFileSync(path.join(repo.dir, 'c.txt'), 'three\n');
+  repo.run('add', '.');
+  repo.run('commit', '-qm', 'third commit');
+  again.fire({ git_ctl: { seq: Date.now(), viewing: repo.trunk, open: null } });
+  assert.ok(await waitUntil(() => again.writes.length >= 1), 'the commit was published');
+  assert.equal(again.writes[0].git.seq, 42, 'its seq continues from the stored one, never restarting below it');
+});
+
 test('git-dashboard service: rebuilds with no repo change write nothing; a new commit writes once, with a higher seq', async (t) => {
   withTempHome(t);
   const repo = makeRepo();
