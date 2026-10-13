@@ -194,6 +194,42 @@ test('turn-begin: reachable server -> POST /api/turn-begin', async (t) => {
   });
 });
 
+// U91 (granted by ruling F7, notes-C Q-C3): a prompt the mod submitted from
+// the composer carries the marked block; the lock names the message id, never
+// its words — the words emitWake writes for the same messages (§6.4, C34).
+test('turn-begin: a composer block as the prompt locks as \'web message m-…\', emitWake\'s words; a typed prompt keeps its text', async (t) => {
+  withTempHome(t);
+  const queue = require('../lib/server/domain/queue');
+  const { wakeEnvelope } = require('../lib/channel/envelope');
+  const stub = await stubServer();
+  t.after(() => stub.close());
+  const root = tmpRoot('wc-hook-');
+  writePortfile(path.join(root, '.web-chat'), { pid: process.pid, port: stub.port });
+  const item = (msgId, text) => ({ kind: 'message', id: `q-${msgId}`, msg_id: msgId, source: 'composer', text, skill: null, files: [] });
+  const wakeLock = (batch) => {
+    const graph = { lock: null, active: 'n0', saveMeta() {} };
+    queue.emitWake(createBus({ bootId: 'b' }), batch, { graph });
+    const m = graph.lock.message;
+    graph.lock = null;
+    return m;
+  };
+  const one = [item('m-0a1b2c3d', 'Tighten the retry logic, zebra-quartz-7.')];
+  const two = [...one, item('m-4e5f6a7b', 'and the second, lantern-mosaic-3')];
+  for (const [batch, want] of [[one, 'web message m-0a1b2c3d'], [two, 'web message m-0a1b2c3d, +1']]) {
+    const prompt = wakeEnvelope(batch, { origin: 'local', device: 'desktop' }).content;
+    await turnBegin({ prompt }, { root, ...PROBE, env: {}, now: NOW });
+    const post = stub.requests.filter((r) => r.url === '/api/turn-begin').pop();
+    assert.equal(post.body.message, want);
+    assert.equal(post.body.message, wakeLock(batch), 'the same words as the wake lock');
+    assert.equal(post.body.author, 'user');
+    assert.ok(!post.body.message.includes('zebra') && !post.body.message.includes('lantern'));
+    assert.equal(turnBegin.webMessageLock(prompt), want);
+  }
+  await turnBegin({ prompt: 'just typed text' }, { root, ...PROBE, env: {}, now: NOW });
+  assert.equal(stub.requests.filter((r) => r.url === '/api/turn-begin').pop().body.message, 'just typed text');
+  assert.equal(turnBegin.webMessageLock('no marker here'), null);
+});
+
 test('turn-begin: message falls back through user_prompt when prompt is absent', async (t) => {
   withTempHome(t);
   const stub = await stubServer();

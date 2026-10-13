@@ -46,6 +46,22 @@
 // The draft {text, files} is kept per viewer under wc:chat-draft through
 // storage.js (failing open), written at most once per animation frame.
 //
+// THREE SEAMS for the composer on the mod (public/app/composer-mod.js, U91;
+// notes-C Q-C2, granted by ruling F7), each touching the composer only here:
+//   setSkillRowsProvider(fn) → unregister   fn(conversationId) → rows that
+//       lead the '/' list ({name, description?, origin?, label?}; `label`
+//       is shown in place of the origin tag). One provider at a time.
+//   addAttachment({path, bytes?, thumb?, onGone?}) → {ok} | {ok: false, hint}
+//       a chip through the chip code below, counted toward FILES_MAX (a
+//       refusal also shows its hint under the input); `thumb` a URL the chip
+//       previews, `onGone(path)` called once the chip goes (removed, sent,
+//       or the composer stopped), so its owner can revoke the URL.
+//   registerComposerTool(el, {paste, dragover, drop}?) → {remove, hint}
+//       places `el` beside Send, inside the composer's own root, so it moves
+//       with a sheet mount and survives a rebuild; the optional handlers hear
+//       the root's paste / dragover / drop events (element listeners, never
+//       document or window); hint(text) shows a line under the input.
+//
 // LOADS WITH NO DOM: the pure helpers below are tested in plain node
 // (test/chat-composer-model.test.js). chat-stream.js touches the DOM at load
 // (through graph-view.js), so its two seams are imported when init runs —
@@ -249,6 +265,9 @@ let escaping = false;
 let draftFrame = null;
 let draftDirty = false;
 const sentFiles = new Map(); // msg_id → the files that message carried (Resend)
+let rowsProvider = null;    // setSkillRowsProvider's fn (U91)
+const thumbs = new Map();   // chip path → {thumb, onGone}, from addAttachment (U91)
+const tools = [];           // registerComposerTool's {el, on} (U91), in order
 const resendNotes = new Map(); // msg_id → a Resend's refusal
 
 // The open list: its kind, the trigger it is for, its rows and the active row.
@@ -337,6 +356,10 @@ function build() {
   msg.hidden = true;
 
   form.append(pop, row, chips, footer, msg);
+  // The registered tools (U91), beside Send, and the root's paste and drop for
+  // their handlers.
+  for (const t of tools) row.insertBefore(t.el, send);
+  for (const type of ['paste', 'dragover', 'drop']) root.addEventListener(type, (e) => toolEvent(type, e));
 
   ta.addEventListener('keydown', onKey);
   ta.addEventListener('input', onInput);
@@ -360,7 +383,7 @@ function build() {
     removeFile(x.dataset.path);
   });
 
-  R = { root, off, form, pop, status, list, foot, ta, send, chips, count, msg };
+  R = { root, off, form, pop, status, list, foot, row, ta, send, chips, count, msg };
   const d = readDraft(getLocalJson(DRAFT_KEY, null));
   ta.value = d.text;
   files = d.files;
@@ -513,6 +536,13 @@ function renderChips() {
   if (!R) return;
   const kids = files.map((p) => {
     const chip = el('span', 'cc-chip');
+    const t = thumbs.get(p);
+    if (t && t.thumb) {
+      const img = el('img', 'cc-chip-thumb');
+      img.alt = '';
+      img.src = t.thumb;
+      chip.append(img);
+    }
     const name = el('span', 'cc-chip-path', p);
     name.title = p;
     const x = el('button', 'cc-chip-x', '✕');
@@ -526,14 +556,92 @@ function renderChips() {
   R.chips.hidden = kids.length === 0;
 }
 
+// The chips' previews whose chip has gone: forgotten, and their owner told.
+function dropThumbs(all = false) {
+  for (const [p, t] of [...thumbs]) {
+    if (!all && files.includes(p)) continue;
+    thumbs.delete(p);
+    if (typeof t.onGone === 'function') {
+      try { t.onGone(p); } catch (e) { console.error('[web-chat] an attachment\'s owner failed', e); }
+    }
+  }
+}
+
 function removeFile(p) {
   const at = files.indexOf(p);
   if (at < 0) return;
   files.splice(at, 1);
+  dropThumbs();
   renderChips();
   showMsg('');
   scheduleDraft();
   if (R) R.ta.focus({ preventScroll: true });
+}
+
+// ── the seams for the composer on the mod (U91) ─────────────────────────────
+
+export function setSkillRowsProvider(fn) {
+  if (typeof fn !== 'function') throw new TypeError('setSkillRowsProvider needs a function');
+  rowsProvider = fn;
+  return () => { if (rowsProvider === fn) rowsProvider = null; };
+}
+
+// The provider's rows for this conversation: well-formed ones only; a throw
+// gives none.
+function providedRows(cid) {
+  if (!rowsProvider) return [];
+  let rows;
+  try { rows = rowsProvider(cid); } catch (e) { console.error('[web-chat] the / rows provider failed', e); return []; }
+  return Array.isArray(rows) ? rows.filter((r) => r && typeof r.name === 'string' && r.name) : [];
+}
+
+export function addAttachment({ path, bytes, thumb, onGone } = {}) {
+  if (!R || !running) return { ok: false, hint: 'The composer is not open.' };
+  if (typeof path !== 'string' || !path || path.length > PATH_MAX) return { ok: false, hint: REFUSAL_HINTS.file_refused };
+  if (!files.includes(path)) {
+    if (files.length >= FILES_MAX) {
+      const hint = REFUSAL_HINTS.too_many_files;
+      showMsg(hint);
+      return { ok: false, hint };
+    }
+    files.push(path);
+  }
+  if (typeof thumb === 'string' && thumb) {
+    const prev = thumbs.get(path);
+    thumbs.set(path, { thumb, onGone: typeof onGone === 'function' ? onGone : null, bytes });
+    if (prev && typeof prev.onGone === 'function' && prev.thumb !== thumb) {
+      try { prev.onGone(path); } catch {}
+    }
+  }
+  renderChips();
+  showMsg('');
+  scheduleDraft();
+  return { ok: true };
+}
+
+export function registerComposerTool(el, on = {}) {
+  if (!el || typeof el !== 'object') throw new TypeError('registerComposerTool needs an element');
+  const t = { el, on: on && typeof on === 'object' ? on : {} };
+  tools.push(t);
+  if (R) R.row.insertBefore(el, R.send);
+  return {
+    remove() {
+      const at = tools.indexOf(t);
+      if (at >= 0) tools.splice(at, 1);
+      el.remove();
+    },
+    hint(text) {
+      if (tools.includes(t)) showMsg(text);
+    },
+  };
+}
+
+function toolEvent(type, e) {
+  for (const t of tools) {
+    const fn = t.on[type];
+    if (typeof fn !== 'function') continue;
+    try { fn(e); } catch (err) { console.error(`[web-chat] a composer tool's ${type} failed`, err); }
+  }
 }
 
 // ── the list ─────────────────────────────────────────────────────────────────
@@ -565,7 +673,7 @@ function drawList() {
     li.setAttribute('aria-selected', n === L.active ? 'true' : 'false');
     if (L.kind === 'skill') {
       li.append(el('span', 'cc-opt-name', `/${row.name}`));
-      if (row.origin) li.append(el('span', 'cc-opt-tag', row.origin));
+      if (row.label || row.origin) li.append(el('span', 'cc-opt-tag', row.label || row.origin));
       if (row.description) li.append(el('span', 'cc-opt-desc', row.description));
     } else {
       li.append(el('span', 'cc-opt-name', row.path));
@@ -671,14 +779,18 @@ async function fetchSkills() {
   if (my !== gen || skillsCtl !== ctl) return;
   skillsCtl = null;
   if (!L.open || L.kind !== 'skill') return;
+  // Tranche 6 (U91): a registered provider's rows lead the list — with a mod
+  // attached, its SAFE_MOD_COMMANDS rows (/plan, /compact, …), which Send runs
+  // through the mod (lib/server/mod-transport.js).
+  const lead = providedRows(cid);
   if (!body || body.ok !== true) {
-    skills = [];
-    setRows([], 'The skill list could not be read.');
+    skills = lead;
+    setRows(filterSkills(skills, L.trig.q), 'The skill list could not be read.');
     return;
   }
-  // Tranche 6 (U91): with a mod attached, its SAFE_MOD_COMMANDS rows (/plan,
-  // /compact, …) join this list here, and Send goes through the mod's submit.
-  skills = Array.isArray(body.skills) ? body.skills.filter((s) => s && typeof s.name === 'string' && s.name) : [];
+  const led = new Set(lead.map((s) => s.name));
+  const listed = Array.isArray(body.skills) ? body.skills.filter((s) => s && typeof s.name === 'string' && s.name && !led.has(s.name)) : [];
+  skills = [...lead, ...listed];
   setRows(filterSkills(skills, L.trig.q), body.disabled ? 'The chat mirror is off: no skills to list.' : 'No skill matches.');
 }
 
@@ -781,6 +893,7 @@ async function doSend() {
     rememberSent(r.msg_id, list);
     R.ta.value = '';
     files = [];
+    dropThumbs();
     renderChips();
     autosize();
     updateCount();
@@ -939,4 +1052,5 @@ export function stopChatComposer() {
   R = null;
   mode = null;
   files = [];
+  dropThumbs(true);
 }

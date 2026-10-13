@@ -461,3 +461,37 @@ test('parseNotifications reads every block and its tags', () => {
   assert.deepEqual(parseNotifications('no block here'), []);
   assert.deepEqual(parseNotifications(null), []);
 });
+
+// ── U91: a message the mod submitted as a typed prompt (§15.7; granted by
+// ruling F7, notes-C Q-C3; gate V40 may extend the two record kinds) ──
+
+test('delivery markers via mod: a main-chain prompt and a plugin-origin queued_command; never a tool result or a sidechain', () => {
+  const { wakeEnvelope } = require('../lib/channel/envelope');
+  const block = (msgId, text) => wakeEnvelope([{ kind: 'message', id: 'q1', msg_id: msgId, source: 'composer', text, skill: null, files: [] }],
+    { origin: 'remote', device: 'mobile' }).content;
+  const r = createRecords({ seed: 170 });
+  // Idle: the submitted block opens a turn as a typed prompt.
+  r.prompt(block('m-1a1a1a1a', 'reply with the single word ok'));
+  // Mid-turn: absorbed as a queued_command whose origin is the plugin.
+  r.queuedCommand(block('m-2b2b2b2b', 'and then this'), { commandMode: 'prompt', origin: { kind: 'plugin' } });
+  // A tool result echoing a marker, a typed queued_command and a prompt
+  // queued_command with another origin: nothing.
+  r.toolResult('toolu_01ECHO', `cat: ${block('m-3c3c3c3c', 'echo')}`);
+  r.queuedCommand('see [web-chat message m-4d4d4d4d]', { commandMode: 'prompt', origin: { kind: 'human' } });
+  const out = fold(r.records);
+  assert.deepEqual(out.delivered.map(({ via, marker }) => ({ via, marker })), [
+    { via: 'mod', marker: 'm-1a1a1a1a' },
+    { via: 'mod', marker: 'm-2b2b2b2b' },
+  ]);
+  // The plugin-origin queued_command is still the typed-while-busy item it was.
+  assert.equal(out.changes.filter((c) => c.item.kind === 'queued').length, 2);
+
+  // A subagent's file (isSidechain) never confirms through its prompt.
+  const a = createRecords({ seed: 171, agentId: 'a0123456789abcdef' });
+  a.prompt(block('m-5e5e5e5e', 'agent prompt'));
+  assert.deepEqual(fold(a.records).delivered, []);
+
+  // Once per session, as every carrier.
+  const again = foldCarriers(out.state, toRecs([r.records[0]]));
+  assert.deepEqual(again.delivered, []);
+});
