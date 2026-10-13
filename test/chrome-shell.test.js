@@ -359,7 +359,7 @@ test('conn on the chrome bus: one event per change — live, reconnecting, live 
   const sentBefore = first.sent.length;
   ws.setClientField('probe', 'while-down');
   assert.equal(first.sent.length, sentBefore, 'nothing is sent on a closed socket');
-  // ws.js reconnects a second later; the shell opens the new socket on the next tick
+  // ws.js reconnects after its backoff (0.5 s for a first drop); the shell opens the new socket on the next tick
   await waitUntil(() => shell.sockets.length === 2 && shell.socket().readyState === 1, { timeout: 5000, what: 'the reconnect' });
   assert.deepEqual(connLog.slice(start), ['reconnecting', 'live']);
   assert.equal(constructed.length, 2, 'onSocket saw the second socket too');
@@ -370,7 +370,7 @@ test('conn on the chrome bus: one event per change — live, reconnecting, live 
 /* ── restore: last, because it ends the shell ─────────────────────────────── */
 
 test('restore() puts every global back as it was, closes the window and clears the chrome\'s pending timers', async () => {
-  shell.socket().drop();   // the chrome schedules its reconnect a second from now
+  shell.socket().drop();   // the chrome schedules its reconnect on its backoff, up to 5 s from now
   const count = shell.sockets.length;
   await shell.restore();
   assert.equal(shell.restored, true);

@@ -200,6 +200,7 @@ const HANDLERS = {
   // had cleared during the gap. RECONCILE, not authoritative: nothing about the
   // surface changed, so a pane whose spec is unchanged keeps its live DOM.
   hello(msg) {
+    closesSinceHello = 0;   // the daemon is really back: the next drop retries fast again
     // A re-aim that landed while this client was disconnected can put active
     // exactly where it is previewing — attach rather than sit half-detached
     // (previewing with viewedId === activeId), the same rule `reset` carries.
@@ -463,18 +464,73 @@ function dispatch(msg) {
 // then sat on "reconnecting…" forever with nothing else to say why.
 export const wsUrl = (loc = location) => `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}/ws`;
 
+/* ── the reconnect ─────────────────────────────────────────────────────────────
+   A dropped socket is retried on a backoff: 0.5, 1, 2 and 4 s, then every 5 s,
+   each ±20 % so a daemon restart is not met by every open tab in the same
+   millisecond (ruled 2026-10-13, U101@backoff). It used to retry once a second
+   forever, so a daemon that was down was knocked on by every tab, every second.
+
+   `closesSinceHello` counts the closes since the daemon last said hello, and
+   ONLY the hello handler resets it — not onopen: a daemon that accepts the
+   upgrade and drops it at once (one shutting down, a proxy with nothing behind
+   it) must still back off.
+
+   There is ONE pending reconnect at a time (spec §10.1: a bounded single timer,
+   never a perpetual chain). A tab coming back into view, or the network coming
+   back, while that timer waits cancels it and connects at once — the user is
+   looking, and the next scheduled try may be seconds away. That does not reset
+   the count: if the daemon is still down, the next close waits as long as the
+   one before it would have. */
+const RECONNECT_STEPS_MS = [500, 1000, 2000, 4000];
+const RECONNECT_CAP_MS = 5000;
+const RECONNECT_JITTER = 0.2;
+
+// The wait before reconnect number `attempt` (0 for the first close since the
+// last hello), in ms: the step (the cap past the last one), ±20 %. Pure.
+export function reconnectDelay(attempt, rand = Math.random) {
+  const n = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
+  const base = n < RECONNECT_STEPS_MS.length ? RECONNECT_STEPS_MS[n] : RECONNECT_CAP_MS;
+  const r = Number(rand());
+  const unit = Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0.5;
+  return Math.round(base * (1 + (unit * 2 - 1) * RECONNECT_JITTER));
+}
+
+let closesSinceHello = 0;
+let reconnectTimer = null;
+
 export function connect() {
-  ws = new WebSocket(wsUrl());
+  if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  const sock = new WebSocket(wsUrl());
+  ws = sock;
   ws.onopen = () => { setConnStatus('live'); refreshBrand(); };
   ws.onclose = () => {
+    if (sock !== ws) return;   // a socket already replaced has nothing left to schedule
     setConnStatus('reconnecting');
     // The server releases its outstanding-prompt memo when the last viewer
     // drops, so any nonce we still hold is dead. Clear and let it re-prompt.
     resetTrustPrompts();
-    setTimeout(connect, 1000);
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, reconnectDelay(closesSinceHello));
+    closesSinceHello += 1;
   };
   ws.onmessage = (m) => {
     let msg; try { msg = JSON.parse(m.data); } catch { return; }
     dispatch(msg);
   };
+}
+
+// The tab is back in view, or the network is back: a reconnect that is waiting
+// goes now. With no reconnect pending (the socket open, or still connecting)
+// there is nothing to do.
+function reconnectNow() {
+  if (reconnectTimer !== null) connect();
+}
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reconnectNow();
+  });
+}
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('online', reconnectNow);
 }
