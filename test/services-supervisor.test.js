@@ -224,6 +224,9 @@ test('services: graph-aware — stops on navigate-away, respawns on navigate-bac
 test('services: last-viewer disconnect stops children; reconnect respawns', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
+  // No idle grace: the stop follows the last viewer at once, as it did before
+  // the grace existed (the grace has its own tests below).
+  ctx.srv.services.idleGraceMs = 0;
   await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
   const v1 = await openViewer(ctx);
   await useApproved(ctx, 'clock', 'm1');
@@ -544,4 +547,299 @@ test('services: a pack change reconciles — a service.js an update dropped stop
   assert.equal(removed.json.ok, true, 'the pack route ran, so the packs event fired');
 
   assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'the child stopped on the packs event');
+});
+
+// ── the idle grace, and the start/stop lines ─────────────────────────────────
+// A dropped socket used to stop every child 200 ms later and the browser's
+// reconnect a second after forked each one again. The supervisor now keeps them
+// for an idle grace (IDLE_GRACE_MS, 10 s; `idleGraceMs` is the seam these set),
+// and logs every fork and every requested stop with its reason — the lines the
+// daemon writes to .web-chat/server.log as `[services] start <name> (<mountId>;
+// <reason>)`, which validation gate V38 reads.
+
+// The supervisor's log, as the daemon wires it (lib/server/index.js:
+// console.log('[services]', …)). Only the lifecycle lines are kept; a child's
+// own stdout rides the same prefix.
+const LIFECYCLE = /^(start |stop |no viewers|a viewer returned)/;
+function captureServiceLog(t) {
+  const lines = [];
+  const orig = console.log;
+  console.log = (...a) => {
+    if (a[0] === '[services]') {
+      const line = a.slice(1).join(' ');
+      if (LIFECYCLE.test(line)) lines.push(line);
+      return;
+    }
+    orig.apply(console, a);
+  };
+  t.after(() => { console.log = orig; });
+  return lines;
+}
+
+function closeViewer(v) {
+  return new Promise((r) => { v.sock.on('close', r); v.sock.close(); });
+}
+
+test('services: IDLE_GRACE_MS is 10 s, and the supervisor starts with it', async (t) => {
+  const { IDLE_GRACE_MS } = require('../lib/server/services');
+  assert.equal(IDLE_GRACE_MS, 10_000, 'ruled U100@idle-grace (a): 10 s');
+  const ctx = await withServer(t);
+  assert.equal(ctx.srv.services.idleGraceMs, IDLE_GRACE_MS);
+});
+
+test('services: a viewer that returns inside the grace keeps the same child', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const lines = captureServiceLog(t);
+  ctx.srv.services.idleGraceMs = 1500;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: LINGERING_SERVICE });
+  const v1 = await openViewer(ctx);
+  await useApproved(ctx, 'clock', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned with a viewer present');
+  const pid = await waitUntil(async () => (await api.get('/api/store')).json.clock?.pid);
+  assert.ok(pid, 'the child is writing the store');
+  const entry = children(ctx).get('m1');
+
+  // A socket flap: the only tab drops and reconnects 300 ms later.
+  await closeViewer(v1);
+  await sleep(300);
+  assert.equal(children(ctx).get('m1'), entry, 'nothing stopped inside the grace');
+  const v2 = await openViewer(ctx);
+  t.after(() => { try { v2.sock.close(); } catch {} });
+
+  // Past the end of the grace the child is still the one forked first.
+  await sleep(1700);
+  assert.equal(children(ctx).get('m1'), entry, 'still the same tracked child after the grace would have run out');
+  assert.equal((await api.get('/api/store')).json.clock.pid, pid, 'and the same process is writing the store');
+  assert.equal(lines.filter((l) => l.startsWith('start clock (m1;')).length, 1, `one start line: ${lines.join(' | ')}`);
+  assert.equal(lines.filter((l) => l.startsWith('stop ')).length, 0, `no stop line: ${lines.join(' | ')}`);
+  assert.ok(lines.includes('no viewers — services stop in 1.5 s unless one returns'), lines.join(' | '));
+  assert.ok(lines.some((l) => /^a viewer returned after \d+ ms — services kept$/.test(l)), lines.join(' | '));
+});
+
+test('services: with nobody back by the end of the grace, the child stops (reason viewers)', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const lines = captureServiceLog(t);
+  ctx.srv.services.idleGraceMs = 300;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+  await useApproved(ctx, 'clock', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
+
+  await closeViewer(v1);
+  const leftAt = Date.now();
+  assert.ok(await waitUntil(() => !children(ctx).has('m1')), 'stopped once the grace ran out');
+  assert.ok(Date.now() - leftAt >= 250, 'not before the grace');
+  assert.ok(lines.includes('stop clock (m1; viewers)'), lines.join(' | '));
+  assert.ok(!lines.some((l) => l.startsWith('a viewer returned')), 'no viewer came back');
+
+  // A viewer arriving afterwards starts it again, and says why.
+  const v2 = await openViewer(ctx);
+  t.after(() => { try { v2.sock.close(); } catch {} });
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'respawned for the returning viewer');
+  assert.ok(await waitUntil(() => lines.includes('start clock (m1; viewers)')), lines.join(' | '));
+});
+
+test('services: a clear inside the grace stops that child at once (reason clear)', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const lines = captureServiceLog(t);
+  ctx.srv.services.idleGraceMs = 5000;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+  await useApproved(ctx, 'clock', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
+
+  await closeViewer(v1);
+  await sleep(50);
+  const clearedAt = Date.now();
+  await api.post('/api/clear', { id: 'm1' });
+  assert.ok(await waitUntil(() => !children(ctx).has('m1'), { timeout: 2000 }), 'stopped by the clear, not by the grace');
+  assert.ok(Date.now() - clearedAt < 2000, 'well inside the 5 s grace');
+  assert.ok(lines.includes('stop clock (m1; clear)'), lines.join(' | '));
+});
+
+test('services: a navigate-away inside the grace stops the child (reason graph:set-active)', async (t) => {
+  const ctx = await withServer(t);
+  const { api } = ctx;
+  const lines = captureServiceLog(t);
+  ctx.srv.services.idleGraceMs = 5000;
+  await api.post('/api/components', { name: 'clock', source: '<p>c</p>', description: 'c', service: CLOCK_SERVICE });
+  const v1 = await openViewer(ctx);
+
+  // Node A has no service pane; node B adds one.
+  await api.post('/api/render', { id: 'plain', html: '<p>plain</p>' });
+  const nodeA = (await api.post('/api/commit', { message: 'plain' })).json.node_id;
+  assert.ok(nodeA, 'committed the node without the service');
+  await useApproved(ctx, 'clock', 'm1');
+  assert.ok(await waitUntil(() => children(ctx).has('m1')), 'spawned');
+  assert.ok((await api.post('/api/commit', { message: 'has-service' })).json.node_id, 'committed the node with it');
+
+  await closeViewer(v1);
+  await sleep(50);
+  const back = await api.post('/api/graph/active', { id: nodeA });
+  assert.equal(back.json.ok, true);
+  assert.ok(await waitUntil(() => !children(ctx).has('m1'), { timeout: 2000 }), 'stopped by the navigation, inside the grace');
+  assert.ok(lines.includes('stop clock (m1; graph:set-active)'), lines.join(' | '));
+});
+
+// The lines themselves, through createServiceSupervisor with a fork-free child:
+// every reason the supervisor gives, one line per fork and per requested stop.
+function fakeChild(forks) {
+  const { EventEmitter } = require('events');
+  const child = new EventEmitter();
+  child.pid = 10_000 + forks.length;
+  child.stdout = null;
+  child.stderr = null;
+  child.sent = [];
+  child.send = (m) => {
+    child.sent.push(m);
+    if (m && m.type === 'stop') setImmediate(() => child.emit('exit', 0, null));
+  };
+  child.kill = () => {};
+  forks.push(child);
+  return child;
+}
+
+test('services: one start line per fork and one stop line per requested stop, each with its reason', async (t) => {
+  const os = require('os');
+  const { createServiceSupervisor } = require('../lib/server/services');
+  const { resolvePaths } = require('../lib/server/paths');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-grace-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = { ...resolvePaths(root), TRUSTED_SERVICES_PATH: path.join(root, 'trusted.json') };
+  const dir = path.join(paths.COMPONENTS_DIR, 'svc');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'component.html'), '<p>s</p>');
+  fs.writeFileSync(path.join(dir, 'service.js'), 'module.exports = { async start() {}, async stop() {} };\n');
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+    name: 'svc', params_schema: { type: 'object', properties: { title: { type: 'string', 'x-trust': 'display' } } },
+  }));
+
+  const state = { mounts: new Map() };
+  const bus = { emit() {}, subscribe() { return () => {}; } };
+  let viewers = 1;
+  const forks = [];
+  const lines = [];
+  const sup = createServiceSupervisor({
+    state, graph: null, paths, bus, getPort: () => 1234, getViewers: () => viewers,
+    log: (...a) => { const l = a.join(' '); if (LIFECYCLE.test(l)) lines.push(l); },
+    idleGraceMs: 60, fork: () => fakeChild(forks),
+  });
+  t.after(() => sup.stopAll());
+  const trust = (approved = true) => {
+    const file = paths.TRUSTED_SERVICES_PATH;
+    const data = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+    for (const p of sup.pendingTrust()) data[p.key] = { name: p.name, approved: true };
+    if (!approved) for (const k of Object.keys(data)) data[k] = { ...data[k], approved: false };
+    fs.writeFileSync(file, JSON.stringify(data));
+  };
+  const take = () => lines.splice(0);
+
+  state.mounts.set('m1', { component: 'svc', params: {} });
+  sup.reconcile('render');
+  assert.deepEqual(take(), [], 'an unapproved service is asked about, not started');
+  trust();
+  sup.reconcile('trust');
+  assert.deepEqual(take(), ['start svc (m1; trust)']);
+
+  // A covered param changes what the child is handed, not the key: a restart.
+  state.mounts.set('m1', { component: 'svc', params: { title: 'B' } });
+  sup.reconcile('render');
+  assert.deepEqual(take(), ['stop svc (m1; params)', 'start svc (m1; params)']);
+
+  // An identity-bearing param: a new key, asked about before it runs again.
+  state.mounts.set('m1', { component: 'svc', params: { title: 'B', depth: 2 } });
+  sup.reconcile('render');
+  assert.deepEqual(take(), ['stop svc (m1; identity)']);
+  trust();
+  sup.reconcile('trust');
+  assert.deepEqual(take(), ['start svc (m1; trust)']);
+
+  // The approval withdrawn while it runs.
+  trust(false);
+  sup.reconcile('trust');
+  assert.deepEqual(take(), ['stop svc (m1; trust)']);
+  fs.rmSync(paths.TRUSTED_SERVICES_PATH);
+  trust();
+  sup.reconcile('trust');
+  assert.deepEqual(take(), ['start svc (m1; trust)']);
+
+  // The pane leaves: the pass's own reason.
+  state.mounts.delete('m1');
+  sup.reconcile('clear');
+  assert.deepEqual(take(), ['stop svc (m1; clear)']);
+  state.mounts.set('m1', { component: 'svc', params: { title: 'B', depth: 2 } });
+  sup.reconcile('graph:set-active');
+  assert.deepEqual(take(), ['start svc (m1; graph:set-active)']);
+
+  // A flap inside the grace touches nothing.
+  const forked = forks.length;
+  viewers = 0; sup.setViewers(0);
+  await sleep(20);
+  viewers = 1; sup.setViewers(1);
+  const flap = take();
+  assert.equal(flap.length, 2, flap.join(' | '));
+  assert.equal(flap[0], 'no viewers — services stop in 0.06 s unless one returns');
+  assert.match(flap[1], /^a viewer returned after \d+ ms — services kept$/);
+  await sleep(300); // past the grace and any debounce
+  assert.deepEqual(take(), [], 'no stop, no start');
+  assert.equal(forks.length, forked, 'nothing forked');
+
+  // Two flaps in a row: the return cancels the first grace's timer, so it
+  // cannot fire inside the second grace and stop what a returning viewer kept.
+  sup.idleGraceMs = 1000;
+  viewers = 0; sup.setViewers(0);   // first grace would end at ~1000 ms
+  await sleep(50);
+  viewers = 1; sup.setViewers(1);
+  await sleep(450);
+  viewers = 0; sup.setViewers(0);   // second grace ends at ~1500 ms
+  await sleep(600);                 // ~1100 ms: past the first grace's end
+  assert.deepEqual(take().filter((l) => /^(start|stop) /.test(l)), [], 'the cancelled grace stopped nothing');
+  viewers = 1; sup.setViewers(1);
+  take();
+  assert.equal(forks.length, forked, 'nothing forked');
+  sup.idleGraceMs = 60;
+
+  // Events coalesced into one debounced pass: a viewer arriving never
+  // overwrites the surface event's reason.
+  state.mounts.delete('m1');
+  sup.scheduleReconcile('clear');
+  sup.setViewers(1);
+  await sleep(300);
+  assert.deepEqual(take(), ['stop svc (m1; clear)']);
+  state.mounts.set('m1', { component: 'svc', params: { title: 'B', depth: 2 } });
+  sup.reconcile('graph:set-active');
+  assert.deepEqual(take(), ['start svc (m1; graph:set-active)']);
+
+  // Inside the grace the surface still counts as watched: a new pane starts.
+  viewers = 0; sup.setViewers(0);
+  state.mounts.set('m2', { component: 'svc', params: { title: 'B', depth: 2 } });
+  sup.reconcile('render');
+  assert.deepEqual(take(), ['no viewers — services stop in 0.06 s unless one returns', 'start svc (m2; render)']);
+
+  // The grace runs out: every child stops, for want of a viewer.
+  await sleep(150);
+  assert.deepEqual(take().sort(), ['stop svc (m1; viewers)', 'stop svc (m2; viewers)']);
+
+  // A viewer arriving afterwards starts them through the debounced pass.
+  viewers = 1; sup.setViewers(1);
+  await sleep(300);
+  assert.deepEqual(take().sort(), ['start svc (m1; viewers)', 'start svc (m2; viewers)']);
+
+  // A grace of 0 is the old behaviour: the debounced pass stops at once.
+  sup.idleGraceMs = 0;
+  viewers = 0; sup.setViewers(0);
+  await sleep(300);
+  assert.deepEqual(take().sort(), ['stop svc (m1; viewers)', 'stop svc (m2; viewers)'], 'no grace lines, a plain stop');
+  viewers = 1; sup.setViewers(1);
+  await sleep(300);
+  take();
+
+  // Shutdown ignores the grace.
+  sup.idleGraceMs = 5000;
+  sup.stopAll();
+  assert.deepEqual(take().sort(), ['stop svc (m1; shutdown)', 'stop svc (m2; shutdown)']);
+  assert.equal(sup._children.size, 0);
 });
