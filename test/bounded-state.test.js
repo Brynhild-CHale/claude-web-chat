@@ -223,3 +223,161 @@ test('a wipe queued during a locked turn applies the same rules when it runs', a
   assert.deepEqual(node.captures.map((c) => c.id), ['cap1'], 'the committed node keeps the capture the wipe cleared');
   assert.deepEqual(node.comments.map((c) => c.id).sort(), [onGone.id, onKeep.id].sort(), 'and the pins');
 });
+
+// ── U102b: a capture that leaves the live list leaves the queue too ──────
+//
+// A Push must never deliver a capture id that get_captures does not list (and,
+// for a capture no node holds, that inspect_capture answers 404 for). The
+// capture's queue item goes through the queue's own removal path
+// (domain/queue removeByCapture), whatever removed the capture: a wipe, a new
+// graph, the 50-capture trim, a restore over the cap.
+
+const queueItems = async (api) => (await api.get('/api/queue')).json.items;
+const captureItemFor = (items, id) => items.find((it) => it.kind === 'capture' && it.capture_id === id);
+
+// A capture that renders its own pane (the default), so a wipe takes the pane
+// it came from as well as the record.
+async function capturePane(api, n) {
+  const r = await api.post('/api/capture', { url: `https://example.test/p${n}`, title: `Page ${n}`, html: PAGE(n) });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  return r.json;
+}
+
+test('a wipe takes a queued capture out of the queue with its pane and its record', async (t) => {
+  const { api } = await withServer(t);
+  const cap = await capturePane(api, 1);
+  assert.equal(cap.pane, 'rendered', `the capture rendered a pane: ${JSON.stringify(cap.pane)}`);
+  const pane = (await api.get('/api/mounts')).json.mounts.find((m) => m.owner === 'service:tab-stream');
+  assert.ok(pane, 'the capture\'s pane is on the page');
+  assert.ok(captureItemFor(await queueItems(api), cap.capture_id), 'the capture is queued');
+
+  const w = await api.post('/api/graph/wipe', {});
+  assert.equal(w.json.ok, true);
+  assert.equal((await api.get('/api/mounts')).json.mounts.some((m) => m.id === pane.id), false, 'the pane is gone');
+  assert.deepEqual(await liveCaptures(api), []);
+  assert.equal(captureItemFor(await queueItems(api), cap.capture_id), undefined, 'its queue item went with it');
+  assert.equal((await api.get(`/api/captures/${cap.capture_id}/raw`)).status, 404,
+    'the id the item named is one inspect_capture cannot answer: it must not be pushed');
+});
+
+test('a new graph takes every queued capture out of the queue', async (t) => {
+  const { api } = await withServer(t);
+  const a = await capture(api, 1);
+  const b = await capture(api, 2);
+  await api.post('/api/comments', { text: 'page note', shared: true });
+  const items = await queueItems(api);
+  assert.ok(captureItemFor(items, a) && captureItemFor(items, b), 'both captures are queued');
+
+  assert.equal((await api.post('/api/graph/new', { name: 'fresh' })).json.ok, true);
+  assert.equal((await queueItems(api)).some((it) => it.kind === 'capture'), false, 'no capture is left queued');
+});
+
+test('the capture the 51st push trims leaves the queue; the 50 it keeps stay queued', async (t) => {
+  const { api } = await withServer(t);
+  const ids = [];
+  for (let n = 1; n <= CAPTURES_LIVE_MAX; n++) ids.push(await capture(api, n));
+  assert.ok(captureItemFor(await queueItems(api), ids[0]), 'at the cap the oldest is still queued');
+
+  ids.push(await capture(api, CAPTURES_LIVE_MAX + 1));
+  const items = await queueItems(api);
+  assert.equal(captureItemFor(items, ids[0]), undefined, 'the trimmed capture left the queue');
+  for (const id of ids.slice(1)) assert.ok(captureItemFor(items, id), `${id} is live and stays queued`);
+  assert.deepEqual((await liveCaptures(api)).map((c) => c.id), ids.slice(1));
+});
+
+test('a capture a node holds, trimmed from the live list: the node still holds it and inspect_capture answers it', async (t) => {
+  const { api } = await withServer(t);
+  const first = await capture(api, 1);
+  const committed = await turn(api);
+  const nodeId = committed.json.node_id;
+  assert.ok(nodeId, `a node was committed: ${JSON.stringify(committed.json)}`);
+  for (let n = 2; n <= CAPTURES_LIVE_MAX + 1; n++) await capture(api, n);
+
+  assert.equal((await liveCaptures(api)).some((c) => c.id === first), false, 'trimmed from the live list');
+  assert.equal(captureItemFor(await queueItems(api), first), undefined, 'and from the queue');
+  const node = (await api.get(`/api/graph/node/${encodeURIComponent(nodeId)}`)).json;
+  assert.deepEqual(node.captures.map((c) => c.id), [first], 'the node still holds it');
+  const raw = await api.get(`/api/captures/${first}/raw`);
+  assert.equal(raw.status, 200, JSON.stringify(raw.json));
+  assert.match(raw.json.raw, /page 1 body/);
+});
+
+test('removeByCapture goes through the queue\'s one removal path: one standard remove frame per item', () => {
+  const queue = require('../lib/server/domain/queue');
+  const emitted = [];
+  const bus = { emit: (e) => emitted.push(e) };
+  const state = {
+    queue: [
+      { id: 'q1', kind: 'capture', capture_id: 'cap1' },
+      { id: 'q2', kind: 'comment', comment_id: 'cap1' },
+      { id: 'q3', kind: 'capture', capture_id: 'cap2' },
+    ],
+    captures: [{ id: 'cap1', seq: 1 }, { id: 'cap2', seq: 2 }, { id: 'cap3', seq: 3 }],
+    mounts: new Map(),
+  };
+  assert.deepEqual(retain(state, { max: 2, bus }), ['cap1']);
+  assert.deepEqual(state.queue.map((it) => it.id), ['q2', 'q3'], 'only the trimmed capture\'s item went');
+  assert.equal(emitted.length, 1);
+  assert.deepEqual(emitted[0].event, { kind: 'queue', op: 'remove', ids: ['q1'], reason: 'removed', id: 'q1' });
+  assert.equal(emitted[0].ws.type, 'queue');
+  assert.equal(clearLive(state), 2, 'without a bus (the boot path) the items still go, silently');
+  assert.deepEqual(state.queue.map((it) => it.id), ['q2']);
+  assert.equal(queue.removeByCapture(state, bus, []), 0);
+});
+
+// ── U102b: a restore respects the cap ────────────────────────────────────
+
+const fakeCaptures = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => {
+  const n = from + i;
+  return { id: `cap${n}`, seq: n, url: `https://example.test/p${n}`, title: `Page ${n}`, profile: 'default', distilled: `page ${n}`, raw_ref: `captures/cap${n}.html` };
+});
+
+test('Set active onto a node holding 60 captures: 50 are live, the node still holds 60', async (t) => {
+  const first = await withServer(t);
+  await first.api.post('/api/render', { id: 'a', html: '<div>a</div>' });
+  const oldId = (await turn(first.api)).json.node_id;
+  await first.api.post('/api/render', { id: 'b', html: '<div>b</div>' });
+  const newId = (await turn(first.api)).json.node_id;
+  assert.ok(oldId && newId && oldId !== newId);
+  await first.graceful();
+
+  // A node committed before 0.8.5 could hold any number of captures.
+  const file = path.join(first.webChatDir, 'graph', `${oldId}.json`);
+  const node = JSON.parse(fs.readFileSync(file, 'utf8'));
+  node.captures = fakeCaptures(1, 60);
+  fs.writeFileSync(file, JSON.stringify(node));
+
+  const { api } = await withServer(t, { root: first.root });
+  const r = await api.post('/api/graph/active', { id: oldId });
+  assert.equal(r.json.ok, true, JSON.stringify(r.json));
+  const live = await liveCaptures(api);
+  assert.equal(live.length, CAPTURES_LIVE_MAX, 'live captures never exceed the cap after a restore');
+  assert.deepEqual(live.map((c) => c.id), fakeCaptures(11, 60).map((c) => c.id), 'the newest');
+  const held = (await api.get(`/api/graph/node/${encodeURIComponent(oldId)}`)).json;
+  assert.equal(held.captures.length, 60, 'the node still holds all 60');
+});
+
+test('a draft with 60 captures restored at boot: 50 live, and a trimmed capture\'s queue item is gone', async (t) => {
+  const first = await withServer(t);
+  await first.api.post('/api/render', { id: 'a', html: '<div>a</div>' });
+  await turn(first.api);
+  const kept = await capture(first.api, 1);
+  const item = captureItemFor(await queueItems(first.api), kept);
+  assert.ok(item, 'the capture is queued');
+  await first.graceful();
+
+  const file = path.join(first.webChatDir, 'draft.json');
+  const draft = JSON.parse(fs.readFileSync(file, 'utf8'));
+  draft.captures = fakeCaptures(1, 60);
+  // cap1's item (the real one) will be trimmed; cap60's is live and stays.
+  draft.queue = [item, { ...item, id: 'q900', capture_id: 'cap60' }];
+  fs.writeFileSync(file, JSON.stringify(draft));
+
+  const { api } = await withServer(t, { root: first.root });
+  const live = await liveCaptures(api);
+  assert.equal(live.length, CAPTURES_LIVE_MAX, 'the draft restore respects the cap');
+  assert.deepEqual(live.map((c) => c.id), fakeCaptures(11, 60).map((c) => c.id));
+  const items = await queueItems(api);
+  assert.equal(captureItemFor(items, 'cap1'), undefined, 'the trimmed capture\'s item did not come back');
+  assert.ok(captureItemFor(items, 'cap60'), 'a live capture\'s item did');
+});
