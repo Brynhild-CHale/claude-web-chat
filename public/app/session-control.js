@@ -12,7 +12,7 @@
 //                     size, onDone }) → { frame, unmount() } | null
 //   mountStop(container, { conversationId, size: 'bar'|'panel'|'sheet' })
 //                                    → { frame, unmount() } | null
-//                                    (tranche 5's sheet header takes 'sheet')
+//                                    ('sheet': #cp-stop inside the phone sheet)
 //
 // WHY A FRAME (ruling U81-U85-U86@click-token (a), Q-C). Every acting control
 // is a button in a document of the answer origin: its nonce, minted there for
@@ -64,6 +64,7 @@
 import { bus } from './bus.js';
 import { mirror, statusOf, atLeast } from './chat-state.js';
 import { mountAnswerFrame, PORT_EVENT } from './asks.js';
+import { isNarrow } from './viewport.js';
 
 export const ACTIVE_STATES = Object.freeze(['working', 'compacting', 'question', 'waiting']);
 export const LINGER_MS = 1500;
@@ -156,10 +157,15 @@ export function mountStop(container, { conversationId, size = 'bar' } = {}) {
 
 // ── the Stop control ────────────────────────────────────────────────────────
 
-// The two slots: where, at what size, for which conversation.
+// The two slots: where, at what size, for which conversation, and whether the
+// slot is wanted at all. The panel's Stop is 'sheet' (44 px) while the panel
+// sits in the phone sheet (its data-variant), else 'panel'; the bar's is not
+// mounted while narrow, where the status bar is display:none — a frame loaded
+// into a hidden bar each turn is waste (ruling B2 (a), U68@phone-stop).
 const SLOTS = [
-  { id: 'cs-stop', size: 'bar', conversation: () => mirror.followed },
-  { id: 'cp-stop', size: 'panel', conversation: () => mirror.followed },
+  { id: 'cs-stop', size: () => 'bar', wanted: () => !isNarrow(), conversation: () => mirror.followed },
+  { id: 'cp-stop', size: (c) => (c && c.closest('.chat-panel[data-variant="sheet"]') ? 'sheet' : 'panel'),
+    wanted: () => true, conversation: () => mirror.followed },
 ];
 
 let inited = null;
@@ -180,19 +186,22 @@ function drop(rec) {
 
 function syncSlot(slot) {
   let rec = recs.get(slot.id);
-  if (!rec) { rec = { container: null, cid: null, handle: null, linger: null, waiting: false }; recs.set(slot.id, rec); }
+  if (!rec) { rec = { container: null, cid: null, size: null, handle: null, linger: null, waiting: false }; recs.set(slot.id, rec); }
   const container = typeof document !== 'undefined' ? document.getElementById(slot.id) : null;
   const cid = slot.conversation() || null;
-  const allowed = !!container && !!cid && mirror.capabilities.interrupt === true && mayAct();
-  // Another conversation, another host, or no right to it: the frame goes now.
-  if (rec.handle && (!allowed || rec.cid !== cid || rec.container !== container)) drop(rec);
-  if (rec.container !== container || rec.cid !== cid) rec.waiting = false;
+  const size = slot.size(container);
+  const allowed = !!container && !!cid && slot.wanted() && mirror.capabilities.interrupt === true && mayAct();
+  // Another conversation, another host, another size, or no right to it: the
+  // frame goes now (a change of size remounts like a change of host).
+  if (rec.handle && (!allowed || rec.cid !== cid || rec.container !== container || rec.size !== size)) drop(rec);
+  if (rec.container !== container || rec.cid !== cid || rec.size !== size) rec.waiting = false;
   rec.container = container;
+  rec.size = size;
   if (!allowed) { rec.cid = null; return; }
   if (isActive(cid)) {
     if (rec.linger !== null) { timers.clearTimeout(rec.linger); rec.linger = null; }
     if (rec.handle || rec.waiting) { rec.cid = cid; return; }
-    rec.handle = mountStop(container, { conversationId: cid, size: slot.size });
+    rec.handle = mountStop(container, { conversationId: cid, size });
     rec.cid = cid;
     // No origin yet: asks.js is refreshing the port; PORT_EVENT asks again.
     rec.waiting = !rec.handle;
@@ -250,6 +259,7 @@ export function initSessionControl({ timers: t } = {}) {
     bus.on('mirror', schedule),
     bus.on('chat:host', onHost),
     bus.on(PORT_EVENT, onPort),
+    bus.on('viewport:narrow', schedule),   // the bar's Stop leaves, and returns, with the narrow posture
   ];
   sync();
   return inited;

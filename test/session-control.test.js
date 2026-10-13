@@ -205,6 +205,37 @@ test('the panel: #cp-stop (size panel) on its own record; following another conv
   assert.equal(one('cp-stop').src, src('cp-stop', 'c1', 'panel'), 'back to the server\'s primary');
 });
 
+// Ruling B2 (a), U68@phone-stop (tranche 5's grant on SLOTS and syncSlot): the
+// panel's Stop is 44px ('sheet') while the panel sits in the phone sheet, and
+// the bar's is not mounted below 760px, where the status bar is not drawn.
+test('the phone: #cp-stop is sized \'sheet\' in a sheet-variant panel; #cs-stop holds no frame below 760px and returns at 1280', async () => {
+  await show();
+  const away = host();
+  const home = $('chat-panel').parentNode;
+  bus.emit('chat:host', { host: away, variant: 'sheet' });
+  await shell.tick();
+  assert.equal($('chat-panel').dataset.variant, 'sheet');
+  assert.equal($('cp-stop').getAttribute('data-wc-stop'), 'sheet', 'the sheet\'s 44px Stop');
+  assert.match(one('cp-stop').src, /[?&]size=sheet&/);
+  bus.emit('chat:host', { host: home, variant: 'desktop' });
+  await shell.tick();
+  assert.equal($('cp-stop').getAttribute('data-wc-stop'), 'panel', 'back in the dock: the panel size again');
+  away.remove();
+
+  const bar = one('cs-stop');
+  shell.setViewport({ width: 700, height: 900 });
+  await shell.tick();
+  assert.equal(frames('cs-stop').length, 0, 'narrow: no frame in the hidden bar');
+  assert.equal(frames('cp-stop').length, 1, 'the panel\'s Stop stays');
+  bus.emit('mirror', { what: ['all'] });
+  await shell.tick();
+  assert.equal(frames('cs-stop').length, 0, 'nor on the next mirror event');
+  shell.setViewport({ width: 1280, height: 800 });
+  await shell.tick();
+  assert.equal(frames('cs-stop').length, 1, 'wide again: the bar\'s Stop is back');
+  assert.notEqual(one('cs-stop'), bar, 'a fresh frame');
+});
+
 test('no frame when capabilities.interrupt is false, for a remote viewer with no answer origin, or one below full', async () => {
   await reset();
   await show({ caps: { interrupt: false } });
