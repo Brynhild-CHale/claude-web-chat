@@ -436,6 +436,24 @@ test('pass on undecided: a web-decided ask sends only its decision — handed, r
   }
 });
 
+test('decide after stop(): the mod had its PASS, so a late web decision is refused (409) and sends nothing more', async (t) => {
+  // The teardown window (U94a): stop() passes an undecided mod ask back and
+  // leaves it pending; an answer-surface POST landing before the surface has
+  // closed must not send the mod a second answer for the same request.
+  const r = rig(t);
+  r.request();
+  const ask = await waitUntil(() => r.modAsks()[0], { what: 'the mod ask' });
+  r.asks.stop();
+  assert.deepEqual(r.sent, [PASS_MSG()], 'stop() passed it back once');
+  const res = r.asks.decide(ask.id, { behavior: 'allow' }, { version: ask.version });
+  assert.equal(res.ok, false);
+  assert.equal(res.status, 409, JSON.stringify(res));
+  assert.equal(res.why_not, 'no-hook', 'answer in the terminal');
+  await settle();
+  assert.deepEqual(r.sent, [PASS_MSG()], 'no second answer for the same request');
+  assert.notEqual(r.asks.get(ask.id).state, 'decided', 'the record is not moved by the refused decision');
+});
+
 test('pass on undecided: a settings-hook ask never sends to the mod, however it ends', async (t) => {
   const r = rig(t);
   const viaHook = await r.asks.create(r.hookBody());
