@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
+const { createCascade } = require('../test-support/css-cascade');
 const { finalFixture } = require('../test-support/final-fixture');
 
 const REPO = path.resolve(__dirname, '..');
@@ -129,111 +130,9 @@ beforeEach(async () => {
   await shell.tick();
 });
 
-// ── app.css, cascaded against the live DOM (as test/chat-sheet.test.js) ──────
+// ── app.css, cascaded against the live DOM (test-support/css-cascade.js) ─────
 
-const BARE = CSS.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
-function closing(text, open) {
-  const [o, c] = text[open] === '(' ? ['(', ')'] : ['{', '}'];
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === o) depth++;
-    else if (text[i] === c && --depth === 0) return i;
-  }
-  throw new Error(`app.css has an unbalanced '${o}'`);
-}
-function parseRules(text, base = 0, media = null, out = []) {
-  for (let i = 0; ;) {
-    const open = text.indexOf('{', i);
-    if (open < 0) return out;
-    const lead = text.slice(i, open);
-    const prelude = lead.trim();
-    const close = closing(text, open);
-    const body = text.slice(open + 1, close);
-    if (prelude.startsWith('@media')) parseRules(body, base + open + 1, prelude.slice('@media'.length).trim(), out);
-    else if (!prelude.startsWith('@')) {
-      const decls = [];
-      for (const d of body.split(';')) {
-        const c = d.indexOf(':');
-        if (c > 0) decls.push([d.slice(0, c).trim(), d.slice(c + 1).trim()]);
-      }
-      out.push({ at: base + i + (lead.length - lead.trimStart().length), media, selector: prelude, decls });
-    }
-    i = close + 1;
-  }
-}
-const RULES = parseRules(BARE);
-function selectors(list) {
-  const out = [];
-  let depth = 0;
-  let from = 0;
-  for (let i = 0; i < list.length; i++) {
-    const c = list[i];
-    if (c === '(' || c === '[') depth++;
-    else if (c === ')' || c === ']') depth--;
-    else if (c === ',' && depth === 0) { out.push(list.slice(from, i)); from = i + 1; }
-  }
-  out.push(list.slice(from));
-  return out.map((s) => s.trim()).filter(Boolean);
-}
-const bySpec = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-function specificity(sel) {
-  const s = [0, 0, 0];
-  const word = (j) => (/^-?[_a-zA-Z][\w-]*/.exec(sel.slice(j)) || [''])[0];
-  for (let i = 0; i < sel.length;) {
-    const c = sel[i];
-    if (c === '#' || c === '.') { s[c === '#' ? 0 : 1]++; i += 1 + word(i + 1).length; }
-    else if (c === '[') { s[1]++; i = sel.indexOf(']', i) + 1; }
-    else if (c === ':') {
-      const element = sel[i + 1] === ':';
-      let j = i + (element ? 2 : 1);
-      const name = word(j);
-      j += name.length;
-      let args = '';
-      if (sel[j] === '(') { const end = closing(sel, j); args = sel.slice(j + 1, end); j = end + 1; }
-      if (element) s[2]++;
-      else if (/^(is|not|has|matches)$/.test(name)) {
-        const top = selectors(args).map(specificity).sort(bySpec).pop() || [0, 0, 0];
-        for (let k = 0; k < 3; k++) s[k] += top[k];
-      } else if (name !== 'where') s[1]++;
-      i = j;
-    } else if (/[a-zA-Z]/.test(c)) { s[2]++; i += word(i).length; }
-    else i++;
-  }
-  return s;
-}
-const queries = new Map();
-const holds = (media) => {
-  if (!queries.has(media)) queries.set(media, W.matchMedia(media));
-  return queries.get(media).matches;
-};
-function cascade(el, prop) {
-  let win = null;
-  for (const r of RULES) {
-    if (r.media && !holds(r.media)) continue;
-    let spec = null;
-    for (const sel of selectors(r.selector)) {
-      let hit = false;
-      try { hit = el.matches(sel); } catch { /* jsdom cannot parse it: no match */ }
-      if (hit) {
-        const sp = specificity(sel);
-        if (!spec || bySpec(sp, spec) > 0) spec = sp;
-      }
-    }
-    if (!spec) continue;
-    r.decls.forEach(([p, raw], pos) => {
-      if (p !== prop) return;
-      const important = /!\s*important$/.test(raw);
-      const d = { value: raw.replace(/\s*!\s*important$/, ''), important, spec, at: r.at, pos };
-      if (!win || beats(d, win)) win = d;
-    });
-  }
-  return win;
-}
-function beats(a, b) {
-  if (a.important !== b.important) return a.important;
-  return (bySpec(a.spec, b.spec) || a.at - b.at || a.pos - b.pos) > 0;
-}
-const value = (el, prop) => { const d = cascade(el, prop); return d ? d.value : null; };
+const { value } = createCascade(CSS, { win: () => W });
 // U72's own section of app.css.
 const FROM = CSS.indexOf('/* ── U72 · docking the tab');
 const TO = CSS.indexOf('/* ── ', FROM + 1);

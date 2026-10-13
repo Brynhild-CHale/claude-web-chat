@@ -40,6 +40,7 @@ const fs = require('fs');
 const path = require('path');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
+const { createCascade } = require('../test-support/css-cascade');
 const { finalFixture } = require('../test-support/final-fixture');
 
 const REPO = path.resolve(__dirname, '..');
@@ -84,79 +85,6 @@ const current = { mirror: fixture.mirrorBody, queue: fixture.queueBody };
 const pushAnswer = { ok: true, mode: 'parked', pending_id: 'pw1', delivers: 'Pushed — delivers with your next message.' };
 let parked = null;
 
-// ── app.css, cascaded against the live DOM (as test/tab-dock.test.js reads it) ─
-
-const BARE = CSS.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
-function closing(text, open) {
-  const [o, c] = text[open] === '(' ? ['(', ')'] : ['{', '}'];
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === o) depth++;
-    else if (text[i] === c && --depth === 0) return i;
-  }
-  throw new Error(`app.css has an unbalanced '${o}'`);
-}
-function parseRules(text, base = 0, media = null, out = []) {
-  for (let i = 0; ;) {
-    const open = text.indexOf('{', i);
-    if (open < 0) return out;
-    const lead = text.slice(i, open);
-    const prelude = lead.trim();
-    const close = closing(text, open);
-    const inner = text.slice(open + 1, close);
-    if (prelude.startsWith('@media')) parseRules(inner, base + open + 1, prelude.slice('@media'.length).trim(), out);
-    else if (!prelude.startsWith('@')) {
-      const decls = [];
-      for (const d of inner.split(';')) {
-        const c = d.indexOf(':');
-        if (c > 0) decls.push([d.slice(0, c).trim(), d.slice(c + 1).trim()]);
-      }
-      out.push({ at: base + i + (lead.length - lead.trimStart().length), media, selector: prelude, decls });
-    }
-    i = close + 1;
-  }
-}
-const RULES = parseRules(BARE);
-function selectors(list) {
-  const out = [];
-  let depth = 0;
-  let from = 0;
-  for (let i = 0; i < list.length; i++) {
-    const c = list[i];
-    if (c === '(' || c === '[') depth++;
-    else if (c === ')' || c === ']') depth--;
-    else if (c === ',' && depth === 0) { out.push(list.slice(from, i)); from = i + 1; }
-  }
-  out.push(list.slice(from));
-  return out.map((s) => s.trim()).filter(Boolean);
-}
-const bySpec = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-function specificity(sel) {
-  const s = [0, 0, 0];
-  const word = (j) => (/^-?[_a-zA-Z][\w-]*/.exec(sel.slice(j)) || [''])[0];
-  for (let i = 0; i < sel.length;) {
-    const c = sel[i];
-    if (c === '#' || c === '.') { s[c === '#' ? 0 : 1]++; i += 1 + word(i + 1).length; }
-    else if (c === '[') { s[1]++; i = sel.indexOf(']', i) + 1; }
-    else if (c === ':') {
-      const element = sel[i + 1] === ':';
-      let j = i + (element ? 2 : 1);
-      const name = word(j);
-      j += name.length;
-      let args = '';
-      if (sel[j] === '(') { const end = closing(sel, j); args = sel.slice(j + 1, end); j = end + 1; }
-      if (element) s[2]++;
-      else if (/^(is|not|has|matches)$/.test(name)) {
-        const top = selectors(args).map(specificity).sort(bySpec).pop() || [0, 0, 0];
-        for (let k = 0; k < 3; k++) s[k] += top[k];
-      } else if (name !== 'where') s[1]++;
-      i = j;
-    } else if (/[a-zA-Z]/.test(c)) { s[2]++; i += word(i).length; }
-    else i++;
-  }
-  return s;
-}
-
 describe('tranche 5 on a phone: the real main.js in jsdom', () => {
   let shell = null;
   let W = null;
@@ -165,7 +93,6 @@ describe('tranche 5 on a phone: the real main.js in jsdom', () => {
   let bus = null;
   let sheet = null;
   let RAIL = null;          // #queue-rail as the boot left it
-  const queries = new Map();
 
   const pull = () => $('chat-pull');
   const tab = () => $('chat-tab');
@@ -173,31 +100,9 @@ describe('tranche 5 on a phone: the real main.js in jsdom', () => {
   const st = () => sheet.sheetState();
   const posts = (url) => shell.calls.filter((c) => c.url === url && c.method === 'POST');
 
-  function cascade(el, prop) {
-    let win = null;
-    for (const r of RULES) {
-      if (r.media) {
-        if (!queries.has(r.media)) queries.set(r.media, W.matchMedia(r.media));
-        if (!queries.get(r.media).matches) continue;
-      }
-      let spec = null;
-      for (const sel of selectors(r.selector)) {
-        let hit = false;
-        try { hit = el.matches(sel); } catch { /* jsdom cannot parse it: no match */ }
-        if (hit) { const sp = specificity(sel); if (!spec || bySpec(sp, spec) > 0) spec = sp; }
-      }
-      if (!spec) continue;
-      r.decls.forEach(([p, raw], pos) => {
-        if (p !== prop) return;
-        const important = /!\s*important$/.test(raw);
-        const d = { value: raw.replace(/\s*!\s*important$/, ''), important, spec, at: r.at, pos };
-        const beats = !win || (d.important !== win.important ? d.important
-          : (bySpec(d.spec, win.spec) || d.at - win.at || d.pos - win.pos) > 0);
-        if (beats) win = d;
-      });
-    }
-    return win ? win.value : null;
-  }
+  // app.css, cascaded against the live DOM (test-support/css-cascade.js): the
+  // winning value of one property, media queries asked of the shell's window.
+  const cascade = createCascade(CSS, { win: () => W }).value;
 
   // A hello, then the store's GET /api/mirror (served `mirror`) folded in, then
   // the sheet's coalesced frame.
