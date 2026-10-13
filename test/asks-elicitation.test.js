@@ -365,6 +365,10 @@ test('display: a field NAME the redactor would change makes the form the termina
   assert.ok(id, 'created');
   const v = r.asks.displayView(id);
   assert.deepEqual([v.complete, v.why_not, v.can_answer, v.masked], [false, 'too-long', false, true]);
+  assert.ok(!JSON.stringify(v).includes(secret), 'the field name is shown as the redactor shows it');
+  const remote = r.asks.displayView(id, { remote: true });
+  assert.equal(remote.why_not, 'remote-off');
+  assert.ok(!JSON.stringify(remote).includes(secret), 'nor does a remote view carry it');
   assert.deepEqual(decided(r.asks, id, { behavior: 'accept', content: { n: 1 } }), { ok: false, status: 409, why_not: 'too-long' });
   assert.equal(decided(r.asks, id, { behavior: 'decline' }).ok, true, 'declining it still works');
 });
