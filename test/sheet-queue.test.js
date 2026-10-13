@@ -586,11 +586,11 @@ test('setRowActions: a TypeError on a bad shape; one provider at a time; a repla
   assert.throws(() => Q.setRowActions({ rows() {}, canRun() {} }), TypeError);
   await setQueue([qmsg(3)]);
   const ran = [];
-  const stub = { rows: () => new Map([['q3', { id: 'q3', kind: 'message', cat: 'queue', actions: [{ id: 'edit', label: 'Edit' }, { id: 'remove', label: 'Remove' }] }]]),
+  const stub = { rows: () => new Map([['q3', { id: 'q3', kind: 'message', cat: 'queue', actions: [{ id: 'edit', label: 'Edit' }, { id: 'send-now', label: 'Send now' }, { id: 'remove', label: 'Remove' }] }]]),
     canRun: (id) => id === 'edit', run: (row, id, o) => ran.push([row.id, id, o.density, o.rowEl === railRow('q3')]) };
   const off = Q.setRowActions(stub);   // replaces chat-actions.js's
   try {
-    assert.deepEqual(railActs('q3'), ['Edit'], 'only the rail\'s own two, and only what canRun allows (never Remove: that is ⟲)');
+    assert.deepEqual(railActs('q3'), ['Edit'], 'only the rail\'s own two (never Remove: that is ⟲), and of those only what canRun allows (not Send now here)');
     shell.click(railAct('q3', 'edit'));
     assert.deepEqual(ran, [['q3', 'edit', 'touch', true]]);
     const offB = Q.setRowActions({ rows: () => { throw new Error('boom'); }, canRun: () => true, run: () => {} });
