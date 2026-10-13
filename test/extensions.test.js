@@ -391,7 +391,8 @@ function openDeps(overrides = {}) {
     // daemon. Nothing listens on 5999 and nothing probes it.
     daemonFor: async () => ({ pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }),
     spawnDaemonProcess: () => {},
-    waitForPortfile: async () => ({ port: 5999, url: 'http://localhost:5999', pid: 1 }),
+    // No wait seam: open's waits are lib/util/daemon waitForDaemon over the
+    // daemonFor above (U107d), so a cold start comes up when daemonFor says so.
     restartIfStale: async () => ({ restarted: false }),
     root: '/wc-test/project',
     ...overrides,
@@ -412,7 +413,11 @@ test('`open` with no target still opens the surface root', async () => {
 });
 
 test('a cold start points at the extensions page — the only in-product mention', async () => {
-  const { calls, deps } = openDeps({ daemonFor: async () => null });
+  // Nothing live until the spawn; then the daemon it started answers.
+  let asked = 0;
+  const { calls, deps } = openDeps({
+    daemonFor: async () => (asked++ === 0 ? null : { pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }),
+  });
   await open([], deps);
   assert.ok(
     calls.logs.some((l) => /\/extensions$/.test(l)),
