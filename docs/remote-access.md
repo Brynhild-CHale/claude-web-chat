@@ -600,12 +600,15 @@ before you reload.
 not signed in to yet, and a frame cannot always show the Access sign-in, or
 keep the sign-in it gets inside a frame. If a prompt's frame has not
 loaded within 3 seconds, the page offers **Review & answer ↗**, which opens the
-prompt in a popup on the answer host; signing in there once usually makes later
-frames load in place, though a browser with strict cookie rules (Safari,
-Firefox, a phone) may need the popup every time. The controls (Stop, Restore files, Fork) have no popup: where their frames do
-not load in place, they are not available remotely in that browser. *This
-build has not yet been checked against a real portal in each browser
-(validation gate V31): which browsers load the frames in place is unverified.*
+prompt in a popup on the answer host; signing in there once may make later
+frames load in place. Firefox and Safari (every browser on an iPhone) cannot
+prove a frame is visible, so there a frame always offers **Review & answer ↗**
+(or **Review & confirm ↗**) and you answer in the popup, remotely as on this
+computer. The page itself offers no popup for the controls (Stop, Restore
+files, Fork): where their frames never load, they are not available remotely
+in that browser. *This build has not yet been checked against a real portal in
+each browser (validation gate V31): whether the frames load in place, and
+whether a sign-in in the popup changes that, is unverified.*
 
 **Stop, remotely.** A remote Stop never presses Esc in your terminal. Without
 the mod it reads **Stop after this step** and stops Claude at its next tool
