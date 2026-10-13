@@ -88,7 +88,11 @@ test('60 captures leave the newest 50 live; every sidecar stays; a node committe
   const nodeId = committed.json.node_id;
   assert.ok(nodeId, `a node was committed: ${JSON.stringify(committed.json)}`);
 
-  for (let n = 11; n <= 60; n++) await capture(api, n);
+  for (let n = 11; n <= 60; n++) {
+    await capture(api, n);
+    // "Never exceed": checked after every push past the cap, not only at the end.
+    if (n >= 50) assert.equal((await liveCaptures(api)).length, Math.min(n, CAPTURES_LIVE_MAX), `after capture ${n}`);
+  }
   const live = await liveCaptures(api);
   assert.equal(live.length, CAPTURES_LIVE_MAX, 'live captures never exceed the cap');
   assert.deepEqual(live.map((c) => c.id), Array.from({ length: 50 }, (_, i) => `cap${i + 11}`), 'the newest, in order');
@@ -166,6 +170,8 @@ test('a new graph drops every pin and every live capture; the seq counters keep 
   await pinPane(ctx, 'b');
   const p1 = await addPin(api, 'a');
   const p2 = await addPin(api, 'b');
+  // A pin with no pane anchor: a wipe keeps one, a new graph does not.
+  const loose = (await api.post('/api/comments', { text: 'page note', shared: true })).json.pin;
   await capture(api, 1);
   const c2 = await capture(api, 2);
 
@@ -175,13 +181,13 @@ test('a new graph drops every pin and every live capture; the seq counters keep 
   assert.deepEqual(await comments(api), [], 'every pin is gone');
   assert.deepEqual(await liveCaptures(api), [], 'every live capture is gone');
   const deletes = (await events(api)).slice(before).filter((e) => e.kind === 'comment' && e.op === 'delete');
-  assert.deepEqual(deletes.map((e) => e.id).sort(), [p1.id, p2.id].sort());
+  assert.deepEqual(deletes.map((e) => e.id).sort(), [p1.id, p2.id, loose.id].sort());
   assert.equal((await api.get('/api/queue')).json.items.some((it) => it.comment_id), false, 'no pin is left queued');
 
   const nextCap = await capture(api, 3);
   assert.equal(nextCap, `cap${Number(c2.slice(3)) + 1}`, 'the capture counter was not reset');
   const nextPin = await addPin(api, 'x');
-  assert.equal(nextPin.seq, p2.seq + 1, 'the comment counter was not reset');
+  assert.equal(nextPin.seq, loose.seq + 1, 'the comment counter was not reset');
   assert.notEqual(nextPin.id, p1.id);
 });
 
