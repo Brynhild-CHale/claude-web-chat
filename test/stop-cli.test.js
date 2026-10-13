@@ -57,8 +57,12 @@ srv.start({ writePortfile: false }).then(() => {
 //   unkillable — 404s, and ignores SIGTERM entirely
 //   orphan     — 404s, and exits on SIGTERM WITHOUT dropping its portfile (the
 //                shape a daemon leaves behind when it dies abruptly)
+// Busy (U107c): once the test writes <root>/.web-chat/health-delay, /api/health
+// answers that many ms late — or, for 'never', not at all — as a daemon with a
+// pegged event loop does. (Only after boot: bootDaemon's own wait is quick.)
 const STUB_DAEMON = `
 const http = require('http');
+const fs = require('fs');
 const { writePortfileAt, deletePortfileAt } = require(${JSON.stringify(path.join(REPO, 'lib/core/portfiles'))});
 const path = require('path');
 const root = process.env.WC_TEST_ROOT;
@@ -68,10 +72,17 @@ const srv = http.createServer((req, res) => {
   if (req.url === '/api/health') {
     // Alive and probe-able — this stands in for a daemon that is running fine
     // but cannot honour a shutdown REQUEST.
-    res.writeHead(200, { 'Content-Type': 'application/json' });
     // WC_TEST_INSTANCE: the project this stand-in says it serves (U107b); a
     // stand-in without it names none, as a build before 0.8.5 does.
-    res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid, ...(process.env.WC_TEST_INSTANCE ? { instance: process.env.WC_TEST_INSTANCE } : {}) }));
+    const answer = () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid, ...(process.env.WC_TEST_INSTANCE ? { instance: process.env.WC_TEST_INSTANCE } : {}) }));
+    };
+    let delay = null;
+    try { delay = fs.readFileSync(path.join(dir, 'health-delay'), 'utf8').trim(); } catch {}
+    if (delay === 'never') return;
+    if (delay) { setTimeout(answer, Number(delay)); return; }
+    answer();
     return;
   }
   if (req.url === '/api/shutdown' && mode === 'ack') {
@@ -400,4 +411,83 @@ test('restart handed a target (the bounce\'s verified daemon) stops exactly that
   assert.equal(res.stopped.path, 'request');
   assert.equal(started, 1);
   assert.equal(portfiles.isPidAlive(other.info.pid), true, "the portfile's daemon was never asked or signalled");
+});
+
+// ── this project's daemon, busy (U107c) ────────────────────────────────────
+//
+// stop's portfile gate asked /api/health with answersFor's 400 ms default, so
+// this project's own daemon, alive but slow to answer (a pegged event loop: the
+// Safari slowdown these fixes are for), was refused as not this project's — and
+// `restart` aborted. The gate now gives it 1.5 s; one that never answers is
+// still refused, exactly as before.
+
+test('stop: this project\'s daemon answering /api/health after 600 ms is still stopped', async (t) => {
+  const { root, info, portfile } = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf' });
+  fs.writeFileSync(path.join(root, '.web-chat', 'health-delay'), '600');
+
+  const log = collector();
+  const res = await stop([], { root, log, signalWaitMs: 2_000 });
+  assert.equal(res.ok, true, log.text());
+  assert.equal(res.pid, info.pid);
+  assert.notEqual(res.reason, 'identity');
+  assert.doesNotMatch(log.text(), /left alone/);
+  assert.equal(fs.existsSync(portfile), false);
+  assert.equal(portfiles.isPidAlive(info.pid), false, 'stopped');
+});
+
+test('stop: a portfile daemon that never answers /api/health is refused as before', async (t) => {
+  const { root, info } = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf' });
+  fs.writeFileSync(path.join(root, '.web-chat', 'health-delay'), 'never');
+
+  const log = collector();
+  const res = await stop([], { root, log, signalWaitMs: 600 });
+  assert.deepEqual(res, { ok: false, path: 'none', pid: info.pid, reason: 'identity' });
+  assert.match(log.text(), /left alone/);
+  assert.equal(portfiles.isPidAlive(info.pid), true, 'never asked, never signalled');
+});
+
+// A plain `restart` (no target handed in) now asks lib/util/registry daemonFor
+// which daemon is this root's. With a portfile copied from another project and
+// this root's daemon in the registry only, it restarts this root's daemon,
+// never reaches the other, and never says "the old daemon is still running".
+test('restart with a copied portfile restarts this root\'s registry daemon and leaves the portfile\'s alone', async (t) => {
+  const mine = await bootDaemon(t, REAL_DAEMON);
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-other-'));
+  t.after(() => { try { fs.rmSync(otherRoot, { recursive: true, force: true }); } catch {} });
+  const other = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf', WC_TEST_INSTANCE: registry.instanceId(otherRoot) });
+  fs.copyFileSync(other.portfile, mine.portfile);
+  // This root's daemon in the (sandboxed) registry this process reads.
+  registry.registerInstance({ root: mine.root, port: mine.info.port, pid: mine.info.pid });
+  t.after(() => { try { registry.deregisterInstance(mine.root, { pid: mine.info.pid }); } catch {} });
+  const exited = once(mine.child, 'exit');
+
+  let started = 0;
+  const log = collector();
+  const res = await restart([], { root: mine.root, log, signalWaitMs: 600, start: async () => { started++; } });
+  assert.equal(res.ok, true, log.text());
+  assert.equal(res.stopped.pid, mine.info.pid);
+  assert.equal(res.stopped.path, 'request');
+  assert.equal(started, 1);
+  assert.equal(portfiles.isPidAlive(other.info.pid), true, "the portfile's daemon was never asked or signalled");
+  assert.doesNotMatch(log.text(), /the old daemon is still running/);
+  await exited;
+});
+
+test('restart refused by a copied portfile says what is true and what to do — never "the old daemon is still running"', async (t) => {
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-stopcli-other-'));
+  t.after(() => { try { fs.rmSync(otherRoot, { recursive: true, force: true }); } catch {} });
+  const other = await bootDaemon(t, STUB_DAEMON, { WC_TEST_MODE: 'deaf', WC_TEST_INSTANCE: registry.instanceId(otherRoot) });
+  const root = copiedProject(t, other.root);
+
+  let started = 0;
+  const log = collector();
+  const r = await restart([], { root, log, signalWaitMs: 600, start: async () => { started++; } });
+  assert.equal(r.ok, false);
+  assert.equal(r.stopped.reason, 'identity');
+  assert.equal(started, 0);
+  assert.doesNotMatch(log.text(), /the old daemon is still running/);
+  assert.match(log.text(), new RegExp(`restart aborted — pid ${other.info.pid} does not answer as this project's daemon`));
+  assert.ok(log.text().includes(portfiles.portfilePathFor('server', root)), 'names the record to delete');
+  assert.match(log.text(), new RegExp(`kill ${other.info.pid}`));
+  assert.equal(portfiles.isPidAlive(other.info.pid), true);
 });
