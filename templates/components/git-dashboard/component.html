@@ -69,6 +69,28 @@
   let viewing = null; // branch name being displayed (null → service default = HEAD branch)
   let open = null;    // full commit hash drilled into, or null
 
+  // "N minutes ago", written here from the commit's absolute `time` (seconds):
+  // the service sends only what changes when the repo does, so the store sees no
+  // write while the repo is idle, and the labels age on the pane's own clock.
+  function ago(sec) {
+    if (!(sec > 0)) return '';
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - sec));
+    const unit = (n, w) => n + ' ' + w + (n === 1 ? '' : 's') + ' ago';
+    if (s < 60) return 'just now';
+    if (s < 3600) return unit(Math.floor(s / 60), 'minute');
+    if (s < 86400) return unit(Math.floor(s / 3600), 'hour');
+    if (s < 14 * 86400) return unit(Math.floor(s / 86400), 'day');
+    if (s < 70 * 86400) return unit(Math.floor(s / (7 * 86400)), 'week');
+    if (s < 365 * 86400) return unit(Math.floor(s / (30 * 86400)), 'month');
+    return unit(Math.floor(s / (365 * 86400)), 'year');
+  }
+  const agoSpan = (sec) => { const t = Number(sec) || 0; return '<span class="ago" data-time="' + t + '">' + esc(ago(t)) + '</span>'; };
+  function refreshAgo() {
+    root.querySelectorAll('.ago[data-time]').forEach((el) => { el.textContent = ago(Number(el.dataset.time)); });
+  }
+  // A bare setInterval: U98's shadowed pane timers are cleared with the pane, so no api.onUnmount is needed.
+  setInterval(refreshAgo, 60000);
+
   function sendCtl() {
     store.set({ git_ctl: { seq: Date.now(), viewing: viewing, open: open } });
   }
@@ -93,7 +115,7 @@
         '<div class="sha">' + esc(c.short) + '</div>' +
         '<div class="msg"><span class="subj">' + esc(c.subject) + '</span>' +
           (refs ? '<span class="refs">' + refs + '</span>' : '') + '</div>' +
-        '<div class="meta"><span class="who">' + esc(c.author) + '</span> · ' + esc(c.rel) + '</div>' +
+        '<div class="meta"><span class="who">' + esc(c.author) + '</span> · ' + agoSpan(c.time) + '</div>' +
       '</div>';
     }).join('');
 
@@ -130,7 +152,7 @@
     body.innerHTML = backBtn +
       '<div class="d-subj">' + esc(d.subject) + '</div>' +
       '<div class="d-meta"><span class="sha sha-d">' + esc(d.short) + '</span> · ' + esc(d.author) + ' &lt;' + esc(d.email) + '&gt;</div>' +
-      '<div class="d-meta">' + esc(d.date) + ' · ' + esc(d.rel) + '</div>' +
+      '<div class="d-meta">' + esc(d.date) + ' · ' + agoSpan(d.time) + '</div>' +
       (d.body ? '<div class="d-body">' + esc(d.body) + '</div>' : '<div style="height:10px"></div>') +
       '<div class="d-tot">' + d.files_changed + ' file' + (d.files_changed === 1 ? '' : 's') + ' changed · ' +
         '<span class="add">+' + d.insertions + '</span> · <span class="del">−' + d.deletions + '</span></div>' +

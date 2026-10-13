@@ -29,6 +29,14 @@
 //
 // Version snapshots live under <webChatDir>/file-versions/<sha1(abspath)>/ :
 // an index.json plus one raw-content file per version. Gitignored, project-local.
+//
+// PUBLISH ON CHANGE. Every push follows an action, except the one at startup —
+// and a start is not an event: the service is respawned on a socket flap, when
+// the pane returns to the active node and when the daemon restarts. So startup
+// rebuilds the view, compares it with the `editor` the store already holds (what
+// the last run published), and writes nothing when they match. `load` and `seq`
+// carry on from the stored values, never restart at 0: a fresh `load` the pane
+// has not seen makes it reload the buffer, which drops typing not yet saved.
 
 const fs = require('fs');
 const path = require('path');
@@ -37,6 +45,23 @@ const crypto = require('crypto');
 // The id shape `snapshot` mints, and the only actions a respawn may replay.
 const VERSION_RE = /^v\d+$/;
 const VIEW_ACTIONS = new Set(['open', 'browse']);
+// The view fields a quiet respawn must find unchanged in the stored `editor`.
+const VIEW_FIELDS = ['root', 'unfenced', 'path', 'exists', 'content', 'versions', 'listing'];
+
+// Order-free JSON, so a view read back from the store compares equal to the one
+// built here. Written out here, not required from lib/: a service.js stands alone.
+function stableJson(v) {
+  const sorted = (x) => {
+    if (Array.isArray(x)) return x.map(sorted);
+    if (x && typeof x === 'object') {
+      const o = {};
+      for (const k of Object.keys(x).sort()) o[k] = sorted(x[k]);
+      return o;
+    }
+    return x;
+  };
+  return JSON.stringify(sorted(v === undefined ? null : JSON.parse(JSON.stringify(v))));
+}
 
 let stream = null;
 let pollTimer = null;
@@ -181,7 +206,7 @@ module.exports = {
       st.error = null;
     }
 
-    function handle(c) {
+    function run(c) {
       ack = c.seq == null ? ack : c.seq;   // executed — the pane's Save can settle
       try {
         switch (c.action) {
@@ -190,11 +215,12 @@ module.exports = {
           case 'diff': doDiff(c.path, c.version, c.content); break;
           case 'revert': doRevert(c.path, c.version); break;
           case 'browse': doBrowse(c.dir); break;
-          default: return;
+          default: return false;
         }
       } catch (e) { st.error = String((e && e.message) || e); }
-      push();
+      return true;
     }
+    function handle(c) { if (run(c)) push(); }
 
     const applyCtl = (c) => {
       if (!c || !(c.seq > lastCtlSeq)) return false;
@@ -221,16 +247,57 @@ module.exports = {
     // to the 4 s poll below, with no respawn involved. The `startedAt` floor is
     // what covers that leg: that save was stamped when it was clicked, which is
     // before we started, so it is refused there exactly as it is here.
+    //
+    // Then publish only if the view differs from the `editor` already in the
+    // store (PUBLISH ON CHANGE, above).
+    let prev = null;
+    try {
+      const got = (await ctx.driver.getStore(['editor'])).editor;
+      if (got && typeof got === 'object' && !Array.isArray(got)) prev = got;
+    } catch {}
+    if (prev && Number.isFinite(prev.seq) && prev.seq > seq) seq = prev.seq;
+    if (prev && Number.isFinite(prev.load) && prev.load > load) load = prev.load;
+    const storedLoad = load;
     try {
       const ctl = (await ctx.driver.getStore(['editor_ctl'])).editor_ctl;
       if (ctl && ctl.seq > lastCtlSeq) lastCtlSeq = ctl.seq;
       if (ctl && VIEW_ACTIONS.has(ctl.action)) {
-        handle(ctl); // pushes
+        run(ctl);
       } else {
         if (ctx.params && ctx.params.path) doOpen(ctx.params.path); else doBrowse('.');
-        push();
       }
-    } catch (e) { st.error = String(e.message || e); push(); }
+    } catch (e) { st.error = String(e.message || e); }
+
+    // The start path builds one half of the view — the file (an `open`, or
+    // params.path) or the listing (a `browse`) — and every later push spreads
+    // `st`. The pane shows both halves the last run had, so rebuild the half the
+    // start path left empty from the stored view, re-read from disk through the
+    // same fence a control write's path goes through (it is store input, exactly
+    // like an `open` replayed from editor_ctl). Then the compare sees the whole
+    // view, and a later push never blanks the half the start path did not build.
+    if (prev && !st.error) {
+      try {
+        if (st.path == null && typeof prev.path === 'string' && prev.path) doOpen(prev.path);
+        if (st.listing == null && prev.listing && typeof prev.listing.dir === 'string') doBrowse(prev.listing.dir);
+      } catch {}
+      st.error = null; // a half that could not be rebuilt stays empty, and the compare publishes
+    }
+
+    const same = (k) => stableJson(st[k]) === stableJson(prev[k]);
+    if (prev && !st.error && VIEW_FIELDS.every(same)) {
+      // Nothing changed: the pane already shows this view. Adopt the stored
+      // stamps (doOpen's own load++ does not count) and write nothing.
+      load = storedLoad;
+      if ('ack' in prev) ack = prev.ack;
+      if ('selected' in prev) st.selected = prev.selected;
+      if ('diff' in prev) st.diff = prev.diff;
+    } else {
+      // Changed: publish. `load` moves past the stored one only when the FILE
+      // changed (a doOpen ran and read something else), so a new directory
+      // entry, or a half that could not be rebuilt, never reloads the buffer.
+      if (prev && st.path === prev.path && st.content === prev.content) load = storedLoad;
+      push();
+    }
 
     // React to the pane's control writes live; poll as a startup/SSE-drop fallback.
     try {

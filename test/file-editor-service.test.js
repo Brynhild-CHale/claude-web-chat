@@ -388,10 +388,10 @@ function mountPane(t, document, store) {
   return shadow;
 }
 
-function paneCtx(root, store) {
+function paneCtx(root, store, params = {}) {
   let handler = null;
   const ctx = {
-    mountId: 'm1', name: 'file-editor', params: { root }, log() {},
+    mountId: 'm1', name: 'file-editor', params: { root, ...params }, log() {},
     webChatDir: path.join(root, '.web-chat'),
     diff: (a, b, opts) => lineDiff(a, b, opts),
     fence: (parent, child) => fence(parent, child),
@@ -517,4 +517,147 @@ test('file-editor pane: the buffer and path are not form state, so a remount sho
   mountRuntime.applyFormState(shadow, { ':0': { value: 'notes.txt' }, ':1': { value: 'version A\n' } });
   assert.equal(ta.value, 'version B\n', 'a stale form_state no longer paints over the newer file');
   assert.equal(dirtyShown(shadow), false, 'and the pane does not read as holding unsaved work');
+});
+
+// ── publish on change (U99) ─────────────────────────────────────────────────
+// A start is not an event: the service is respawned on a socket flap, when the
+// pane returns to the active node and when the daemon restarts. Every start used
+// to publish a fresh `seq` and a `load` restarted at 0, and a `load` the pane
+// has not seen makes it reload the buffer and clear its dirty mark — so typing
+// not yet saved was replaced by the file on disk, by a reconnect.
+
+// The store hands a value back through JSON, as the daemon's does.
+const viaStore = (v) => JSON.parse(JSON.stringify(v));
+
+test('file-editor: a respawn with the file unchanged writes nothing, and the pane keeps its unsaved buffer', async (t) => {
+  withTempHome(t);
+  const document = withDom(t);
+  const root = tmpTree('wc-fileed-quiet-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  fs.writeFileSync(path.join(root, 'note.txt'), 'ON DISK\n');
+
+  const store = mountRuntime.createStore({});
+  const shadow = mountPane(t, document, store);
+  let editorWrites = 0;
+  store.subscribe('editor', () => { editorWrites++; });
+
+  const first = paneCtx(root, store, { path: 'note.txt' });
+  first.wire();
+  const svc1 = loadService();
+  t.after(async () => { try { await svc1.stop(); } catch {} });
+  await svc1.start(first.ctx);
+  await sleep(30);
+  const ta = shadow.querySelector('[data-ta]');
+  assert.equal(ta.value, 'ON DISK\n', 'precondition: the pane loaded the file');
+  assert.equal(editorWrites, 1);
+  const stored = viaStore(store.get('editor'));
+
+  // The user types and has not saved yet. Then the socket flaps: the
+  // supervisor stops the service and forks it again.
+  ta.value = 'typed, not saved\n';
+  ta.dispatchEvent(new global.Event('input', { bubbles: true }));
+  assert.equal(dirtyShown(shadow), true);
+  await svc1.stop();
+
+  const second = paneCtx(root, store, { path: 'note.txt' });
+  second.wire();
+  const svc2 = loadService();
+  t.after(async () => { try { await svc2.stop(); } catch {} });
+  await svc2.start(second.ctx);
+  await sleep(30);
+
+  assert.equal(editorWrites, 1, 'the respawn found the same view in the store and wrote nothing');
+  assert.deepEqual(viaStore(store.get('editor')), stored, 'the stored `editor` (seq, load, ack) is untouched');
+  assert.equal(ta.value, 'typed, not saved\n', 'the pane did not reload its buffer over the typing');
+  assert.equal(dirtyShown(shadow), true, 'and still shows it as unsaved');
+});
+
+test('file-editor: a respawn after the file changed on disk publishes, with a load token past the stored one', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-changed-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  const file = path.join(root, 'note.txt');
+  fs.writeFileSync(file, 'BEFORE\n');
+
+  const store = {};
+  const first = await startService(t, root, store, { path: 'note.txt' });
+  const stored = viaStore(first.latest());
+  await first.svc.stop();
+
+  fs.writeFileSync(file, 'AFTER\n');
+  const again = await startService(t, root, viaStore(store), { path: 'note.txt' });
+  assert.equal(again.writes.length, 1, 'the changed file is published');
+  const e = again.writes[0].editor;
+  assert.equal(e.content, 'AFTER\n');
+  assert.ok(e.load > stored.load, `load ${e.load} moves past the stored ${stored.load}, so the pane reloads`);
+  assert.ok(e.seq > stored.seq, 'and seq continues past the stored one');
+});
+
+test('file-editor: a respawn that finds only the listing changed publishes it without reloading the buffer', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-listing-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  fs.writeFileSync(path.join(root, 'note.txt'), 'SAME\n');
+
+  const store = {};
+  const first = await startService(t, root, store, { path: 'note.txt' });
+  first.fire({ editor_ctl: { seq: click(), action: 'browse', dir: '.' } });
+  await sleep(30);
+  const stored = viaStore(first.latest());
+  assert.ok(stored.listing && stored.path === 'note.txt', 'precondition: both halves of the view are up');
+  await first.svc.stop();
+
+  fs.writeFileSync(path.join(root, 'new.txt'), 'x\n');
+  const again = await startService(t, root, viaStore(store), { path: 'note.txt' });
+  assert.equal(again.writes.length, 1, 'the new directory entry is published');
+  const e = again.writes[0].editor;
+  assert.ok(e.listing.entries.some((x) => x.name === 'new.txt'));
+  assert.equal(e.load, stored.load, 'the file itself did not change, so the buffer is not reloaded');
+  assert.equal(e.path, 'note.txt');
+  assert.equal(e.content, 'SAME\n');
+});
+
+test('file-editor: a quiet respawn, then one view action, still publishes the path, the content and the file list', async (t) => {
+  withTempHome(t);
+  const root = tmpTree('wc-fileed-view-after-');
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  fs.writeFileSync(path.join(root, 'note.txt'), 'KEEP ME\n');
+  fs.mkdirSync(path.join(root, 'sub'));
+  fs.writeFileSync(path.join(root, 'sub', 'b.txt'), 'bee\n');
+
+  // The pane opened a file and then browsed: the stored view has both halves,
+  // and the control key left in the store is the `browse`.
+  const store = {};
+  const first = await startService(t, root, store, { path: 'note.txt' });
+  first.fire({ editor_ctl: { seq: click(), action: 'browse', dir: '.' } });
+  await sleep(30);
+  await first.svc.stop();
+  // What a respawn finds: the browse, stamped before it started (this harness's
+  // `fire` reaches the stream only, so the key is put in the store here).
+  const persisted = { ...viaStore(store), editor_ctl: { seq: stale(), action: 'browse', dir: '.' } };
+  const stored = viaStore(persisted.editor);
+
+  // The respawn replays the browse (a view action), rebuilds the file half from
+  // the stored view, finds nothing changed and writes nothing.
+  const again = await startService(t, root, persisted, { path: 'note.txt' });
+  assert.equal(again.writes.length, 0, 'a quiet respawn');
+
+  // One view action later, the push spreads the service's own state: it must
+  // still carry the half the start path did not build, or the pane blanks.
+  again.fire({ editor_ctl: { seq: click(), action: 'browse', dir: 'sub' } });
+  await sleep(30);
+  assert.equal(again.writes.length, 1);
+  const e = again.latest();
+  assert.equal(e.listing.dir, 'sub', 'the browse landed');
+  assert.equal(e.path, 'note.txt', 'with the path still there');
+  assert.equal(e.content, 'KEEP ME\n', 'and the content');
+  assert.ok(e.seq > stored.seq, 'seq carried on from the stored one');
+  assert.equal(e.load, stored.load, 'a browse never reloads the buffer');
+
+  again.fire({ editor_ctl: { seq: click(), action: 'open', path: path.join('sub', 'b.txt') } });
+  await sleep(30);
+  const o = again.latest();
+  assert.equal(o.content, 'bee\n');
+  assert.equal(o.listing.dir, 'sub', 'an open keeps the file list');
+  assert.ok(o.load > stored.load, 'and an explicit open reloads the buffer, past the stored token');
 });
