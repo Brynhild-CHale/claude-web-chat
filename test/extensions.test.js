@@ -387,8 +387,9 @@ function openDeps(overrides = {}) {
     log: (m) => calls.logs.push(m),
     errlog: (m) => calls.errs.push(m),
     exit: (c) => calls.exits.push(c),
-    readPortfile: () => ({ port: 5999, url: 'http://localhost:5999' }),
-    probeReachable: async () => true,
+    // The one adoption seam (lib/util/registry daemonFor): this project's live
+    // daemon. Nothing listens on 5999 and nothing probes it.
+    daemonFor: async () => ({ pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }),
     spawnDaemonProcess: () => {},
     waitForPortfile: async () => ({ port: 5999, url: 'http://localhost:5999', pid: 1 }),
     restartIfStale: async () => ({ restarted: false }),
@@ -411,7 +412,7 @@ test('`open` with no target still opens the surface root', async () => {
 });
 
 test('a cold start points at the extensions page — the only in-product mention', async () => {
-  const { calls, deps } = openDeps({ readPortfile: () => null });
+  const { calls, deps } = openDeps({ daemonFor: async () => null });
   await open([], deps);
   assert.ok(
     calls.logs.some((l) => /\/extensions$/.test(l)),
@@ -426,7 +427,7 @@ test('`open` outside a web-chat project refuses, naming init, and spawns nothing
   process.chdir(dir);
   t.after(() => { process.chdir(prev); fs.rmSync(dir, { recursive: true, force: true }); });
   let spawned = 0;
-  const { calls, deps } = openDeps({ root: undefined, readPortfile: () => null, spawnDaemonProcess: () => { spawned++; } });
+  const { calls, deps } = openDeps({ root: undefined, daemonFor: async () => null, spawnDaemonProcess: () => { spawned++; } });
   await open([], deps);
   assert.equal(spawned, 0);
   assert.deepEqual(calls.exits, [1]);
@@ -438,10 +439,10 @@ test('`open` outside a web-chat project refuses, naming init, and spawns nothing
 // tab `open` is about to show: it is restarted first, and the browser goes to
 // wherever the new one bound.
 test('`open` bounces a daemon on an older build, then opens the NEW one', async () => {
-  let reads = 0;
   const seen = [];
   const { calls, deps } = openDeps({
-    readPortfile: () => (reads++ === 0 ? { port: 5999, url: 'http://localhost:5999' } : { port: 6001, url: 'http://localhost:6001' }),
+    // daemonFor found the old one on 5999; the restart wrote a portfile naming 6001.
+    readPortfile: () => ({ port: 6001, url: 'http://localhost:6001' }),
     restartIfStale: async (root) => { seen.push(root); return { restarted: true, build: '0.7.6' }; },
   });
   await open([], deps);

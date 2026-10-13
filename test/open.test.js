@@ -57,8 +57,9 @@ function deps(root, overrides = {}) {
     log: (m) => calls.logs.push(String(m)),
     errlog: (m) => calls.errs.push(String(m)),
     exit: (c) => calls.exits.push(c),
-    readPortfile: () => ({ port: 5999, url: 'http://localhost:5999' }),
-    probeReachable: async () => true,
+    // The one adoption seam: this project's live daemon, as lib/util/registry
+    // daemonFor reports it. Nothing listens on 5999 and nothing probes it.
+    daemonFor: async () => ({ pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }),
     spawnDaemonProcess: () => {},
     waitForPortfile: async () => ({ port: 5999, url: 'http://localhost:5999', pid: 1 }),
     restartIfStale: async () => ({ restarted: false }),
@@ -178,7 +179,7 @@ test('an unmerged .new beside an edited file, and nothing else, prints no line',
 
 test('a cold start reports it too, after the server and extension lines', async (t) => {
   const root = project(t);
-  const { calls, deps: d } = deps(root, { readPortfile: () => null });
+  const { calls, deps: d } = deps(root, { daemonFor: async () => null });
   await open([], d);
   const started = calls.logs.findIndex((l) => /web-chat server started/.test(l));
   const extensions = calls.logs.findIndex((l) => /\/extensions$/.test(l));
