@@ -290,7 +290,11 @@ test('a second call within 2 s is rate_limited, per action per conversation; a r
   assert.deepEqual([again.status, again.json.refused], [429, 'rate_limited']);
   assert.equal(r.bridge.ops.length, 1);
   assert.equal((await r.post('session-clear', { conversation_id: 'c1' })).status, 200, 'another action has its own bucket');
-  r.clock.tick(LIMIT_MS);
+  assert.equal(LIMIT_MS, 2000, '§15.5: a session control at most once per 2 s');
+  r.clock.tick(1999);
+  const late = await r.post('session-compact', { conversation_id: 'c1' });
+  assert.deepEqual([late.status, late.json.refused], [429, 'rate_limited'], 'still inside the 2 s window at 1999 ms');
+  r.clock.tick(1);
   assert.equal((await r.post('session-compact', { conversation_id: 'c1' })).status, 200, 'after 2 s');
   // A refusal does not spend the window.
   r.mirror.set('c1', { permission_mode: 'plan' });
@@ -298,7 +302,7 @@ test('a second call within 2 s is rate_limited, per action per conversation; a r
   r.mirror.set('c1', { permission_mode: 'default' });
   assert.equal((await r.control.invoke('session-plan', { conversation_id: 'c1' }, {})).ok, true);
   assert.deepEqual(r.audit().map((l) => l.outcome),
-    ['accepted', 'refused:rate_limited', 'accepted', 'accepted', 'refused:plan-on', 'accepted']);
+    ['accepted', 'refused:rate_limited', 'accepted', 'refused:rate_limited', 'accepted', 'refused:plan-on', 'accepted']);
 });
 
 test('a body whose keys are not exactly the row\'s fields is 400 (one name per target); an unparseable target too', async (t) => {
