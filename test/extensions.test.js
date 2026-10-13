@@ -440,9 +440,13 @@ test('`open` outside a web-chat project refuses, naming init, and spawns nothing
 // wherever the new one bound.
 test('`open` bounces a daemon on an older build, then opens the NEW one', async () => {
   const seen = [];
+  let asked = 0;
   const { calls, deps } = openDeps({
-    // daemonFor found the old one on 5999; the restart wrote a portfile naming 6001.
-    readPortfile: () => ({ port: 6001, url: 'http://localhost:6001' }),
+    // daemonFor finds the old one on 5999, then, after the restart, the new one
+    // on 6001: open browses only a daemon daemonFor verified.
+    daemonFor: async () => (asked++ === 0
+      ? { pid: 1, port: 5999, url: 'http://localhost:5999', source: 'portfile' }
+      : { pid: 2, port: 6001, url: 'http://localhost:6001', source: 'portfile' }),
     restartIfStale: async (root) => { seen.push(root); return { restarted: true, build: '0.7.6' }; },
   });
   await open([], deps);
