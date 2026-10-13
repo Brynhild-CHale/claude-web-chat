@@ -375,6 +375,44 @@ starts a bridge that would drain the park and ack writes nobody reads.
   tells Claude that a marker it has already seen is a repeat delivery, not a new
   request.
 
+### The transport seam — a message typed into the session by the mod
+
+With the web-chat mod attached to the message's conversation (tier 2,
+[`mod.md`](mod.md)), delivery has a third way out beside the wake and the park.
+`deliver` (`lib/server/domain/queue.js`) offers each **message** item of a batch
+to `state.messageTransport` first, synchronously; the mod's transport
+(`lib/server/mod-transport.js`, the only one, assigned in `lib/server/index.js`)
+takes it when the conversation's session has a mod attached, and an item it
+takes leaves the batch: no `wake` and no park carries it.
+
+- **A message** becomes one `submit` op whose text is `wakeEnvelope([item])`'s
+  own content — the `Pushed from:` line and the same quoted, marked block a
+  channel carries, from the one builder. The mod types it into the session as a
+  prompt (it waits mid-turn as typed text does), so it opens a turn through
+  `UserPromptSubmit` like any prompt: `turn-begin` takes the lock as
+  `web message m-…`, and the receipt goes `sending` → `sent` at once and
+  `confirmed` when the transcript scan finds the marker, as for a parked
+  message. The rules file tells Claude the same block may arrive as a prompt
+  typed into the terminal.
+- **A command** the user picked (`/plan`, `/compact`, `/context`, `/rename`,
+  `/recap`, `SAFE_MOD_COMMANDS`) becomes one `command` op and never rides a
+  message block; it leaves no marker, so its receipt confirms on the mod's ok
+  and reads `failed` on its refusal, with no wake.
+- **A stop request** (`source: 'task-stop'`) is never offered: it keeps the
+  channel or the park. The immediate stop is the control layer's (the
+  task-stop row through the mod, a control frame), and the pane-callable route
+  never reaches the mod.
+- **The fallback.** A submit the mod never had (a timeout, a full queue, a
+  detach) goes to `queue.handBack`: its receipt steps back to `queued`, a live
+  channel wakes as before, a park already holding a typed message keeps it
+  waiting as `parked_message` for the next idle (one message per park), and
+  otherwise it parks. A submit handed out with no result stays `sent`, and the
+  transcript has the last word. A failed command is never re-sent through the
+  channel.
+- `POST /api/queue/message` answers a send the transport took with
+  `{mode: 'transported', via: 'mod'}`, beside `wake`, `parked` and `queued`;
+  with no mod, every path is the wake or the park above.
+
 ## Running it (dev)
 
 Requires Claude Code ≥ v2.1.80 and **Anthropic auth** (no Bedrock/Vertex/Foundry;
@@ -406,7 +444,11 @@ and its blocks, the policy) and `lib/mcp/*` (`channel-proof.js` included) run
 inside the MCP process Claude Code spawned: `/exit` and reopen Claude Code. The
 queue, the release scheduler and the routes are `lib/server`:
 `claude-web-chat restart`. The turn-begin hook that claims a park runs fresh
-per prompt, so an edit to it takes effect at the next prompt.
+per prompt, so an edit to it takes effect at the next prompt. The mod's
+transport (`lib/server/mod-transport.js`) is `lib/server` too:
+`claude-web-chat restart`. The mod itself (`templates/claude-mod/*`) reaches a
+session only when `claude-web-chat install` or `mod on` installs it again in
+the project and Claude Code restarts.
 
 ## Smoke test (no live session needed)
 

@@ -251,7 +251,6 @@ const ALLOW = {
     { claim: 'portal', reason: 'the tunnel portal process `tunnel up` spawns; never typed by a user' },
     { claim: 'profile', reason: 'driven by the capture-profile skill, documented there' },
     { claim: 'pack', reason: 'has its own section in docs/guide.md with the full `pack <verb>` reference' },
-    { claim: 'mod', reason: "the guide's row is U94b's (tranche 6 docs); U94b removes this entry" },
   ],
 };
 
