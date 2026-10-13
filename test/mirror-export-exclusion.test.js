@@ -312,6 +312,14 @@ test(`exports and replays carry no conversation, seed ${SEED}: no transcript tex
     assert.equal(doc.status, 200, `seed ${SEED}: GET /replay${q}: ${doc.text.slice(0, 200)}`);
     artifacts.push({ carrier: `GET /replay${q} (the player)`, text: doc.text, prompts });
   }
+  // The file the MCP tool's export({ format: 'replay' }) writes (POST
+  // /api/replay/render, its one path for a replay; no browser for 'replay').
+  for (const [extra, prompts] of [[{}, false], [{ include_prompts: true }, true]]) {
+    const out = await client.post('/api/replay/render', { format: 'replay', from, ...extra }, { port: s.port, noSpawn: true, timeout: CALL_TIMEOUT_MS });
+    assert.ok(out.ok && out.path, `seed ${SEED}: export({ format: 'replay' }): ${JSON.stringify(out)}`);
+    assert.ok(out.path.startsWith(projectPaths(s.root).dir), `seed ${SEED}: the replay file is written under .web-chat/exports: ${out.path}`);
+    artifacts.push({ carrier: `the replay file (POST /api/replay/render format 'replay'${prompts ? ', include_prompts' : ''})`, text: fs.readFileSync(out.path, 'utf8'), prompts });
+  }
   for (const q of ['', `?from=${from}`]) {
     const rp = await raw(s.port, { path: `/api/replay/path${q}` });
     assert.equal(rp.status, 200, `seed ${SEED}: GET /api/replay/path${q}: ${rp.text.slice(0, 200)}`);
