@@ -110,7 +110,7 @@ const pill = () => $('active-pill');
 const hasCls = (el, c) => el.classList.contains(c);
 
 // Let two timers lapse before the window goes: the ◑ flip's 340ms transition
-// class, and the 1s reconnect the socket-drop test schedules (it must land on
+// class, and the reconnect the socket-drop test schedules (0.5 s ±20 %; it must land on
 // the jsdom WebSocket stub, not on Node's own after restore()).
 test.after(async () => { await new Promise((r) => setTimeout(r, 1100)); restore(); });
 
