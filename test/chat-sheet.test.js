@@ -935,8 +935,10 @@ test('the badge: off at 0; the Final\'s fixture reads 6, working, "6 running tas
   assert.equal(value(badge(), 'opacity'), '1', 'the working look');
   assert.equal(badge().getAttribute('aria-label'), '6 running tasks — open Tasks');
   assert.equal($('sh-tab-tasks').querySelector('.sh-run').textContent, '6 running');
+  sheet.pushPage('tasks', { key: 'deep', title: 'Deep' });
   shell.click(badge());
   assert.equal(sheet.sheetState().view, 'tasks');
+  assert.equal(sheet.sheetState().page, null, 'Tasks at its root (§8.4): the pushed page popped');
   assert.equal(sheet.sheetState().h, 341, 'Tasks at least half');
   sheet.setStop(622);
   shell.click(badge());
@@ -1107,6 +1109,27 @@ test('Back on a phone: opening pushes {wcSheet: true}; a UI close goes back and 
   sheet.openSheet();
   assert.equal(sheet.sheetState().open, true);
   assert.equal(W.history.state.wcSheet, true);
+  sheet.closeSheet();
+  await waitUntil(() => !(W.history.state && W.history.state.wcSheet), { timeout: 2000, what: 'back' });
+  await shell.tick();
+});
+
+test('Back on a phone: opening on top of an entry that is already ours pushes none', async () => {
+  sheet.openSheet();
+  sheet.closeSheet();
+  await waitUntil(() => !(W.history.state && W.history.state.wcSheet), { timeout: 2000, what: 'the close\'s Back' });
+  await shell.tick();
+  W.history.forward();
+  await waitUntil(() => W.history.state && W.history.state.wcSheet, { timeout: 2000, what: 'Forward onto the old entry' });
+  await shell.tick();
+  assert.equal(sheet.sheetState().open, false, 'Forward does not open the sheet');
+  const length = W.history.length;
+  const pushes = [];
+  const realPush = W.history.pushState;
+  W.history.pushState = function pushState(st, ...rest) { pushes.push(st); return realPush.call(this, st, ...rest); };
+  try { sheet.openSheet(); } finally { delete W.history.pushState; }
+  assert.equal(pushes.length, 0, 'the top entry already has wcSheet: nothing pushed');
+  assert.equal(W.history.length, length);
   sheet.closeSheet();
   await waitUntil(() => !(W.history.state && W.history.state.wcSheet), { timeout: 2000, what: 'back' });
   await shell.tick();
