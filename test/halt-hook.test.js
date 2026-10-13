@@ -91,6 +91,11 @@ function fireLarge(home, event, { sid = SID, input, shell = 'sh' } = {}) {
     const deadline = setTimeout(() => {
       error = error || Object.assign(new Error(`${shell} ${event}: no exit within ${TEST_BUDGET_MS / 2} ms`), { code: 'ETIMEDOUT' });
       child.kill('SIGKILL');
+      // The kill reaches only the shell: a `cat` it forked still holds the
+      // stdout/stderr pipes, and 'close' would wait for it. Drop our ends so
+      // the fire resolves now, inside the runner's budget.
+      child.stdout.destroy();
+      child.stderr.destroy();
     }, TEST_BUDGET_MS / 2);
     child.on('close', (status, signal) => {
       clearTimeout(deadline);
