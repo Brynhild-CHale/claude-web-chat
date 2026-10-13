@@ -6,8 +6,10 @@
 //     §15.7's lists exactly;
 //   * MOD_COMMANDS shares nothing with the config-persisting and panel
 //     commands (ruling Q10);
-//   * validateOp refuses an unknown op, every forbidden command name, rename
-//     with a newline or a leading '/', resume with a non-UUID, a submit whose
+//   * validateOp refuses an unknown op, every forbidden command name, any
+//     argument to context, clear or recap, a plan or compact line over
+//     COMMAND_ARGS_MAX or with a newline, a bidi character or a leading '/',
+//     rename with a newline or a leading '/', resume with a non-UUID, a submit whose
 //     first non-blank character is '/', a permissionDecision holding
 //     'bypassPermissions' anywhere or a destination other than 'session', and
 //     any extra key;
@@ -120,11 +122,31 @@ test('validateOp: submit refuses a slash text, a blank one, an over-long one and
   assert.equal(validateOp('submit', { text: 'hi', asUser: true }).refused, 'bad-args');
 });
 
-test('validateOp: command — the argless five, rename and resume', () => {
-  for (const name of ['plan', 'compact', 'context', 'clear', 'recap']) {
+test('validateOp: command — the argless three, plan and compact with an optional line, rename and resume', () => {
+  for (const name of ['context', 'clear', 'recap']) {
     assert.deepEqual(validateOp('command', { name }), { ok: true, args: { name } });
     assert.deepEqual(validateOp('command', { name, args: '' }), { ok: true, args: { name } });
-    assert.equal(validateOp('command', { name, args: 'more' }).refused, 'bad-args', name);
+    for (const args of ['more', 'open', ' ', 7]) {
+      assert.equal(validateOp('command', { name, args }).refused, 'bad-args', `${name} ${JSON.stringify(args)}`);
+    }
+  }
+  // Claude Code 2.1.296 takes '/plan [open|<description>]' and
+  // '/compact <instructions>' (the main session's decision after wave 2).
+  assert.equal(P.COMMAND_ARGS_MAX, 2000);
+  assert.equal(P.RENAME_MAX, 64);
+  for (const name of ['plan', 'compact']) {
+    assert.deepEqual(validateOp('command', { name }), { ok: true, args: { name } });
+    assert.deepEqual(validateOp('command', { name, args: '' }), { ok: true, args: { name } });
+    assert.deepEqual(validateOp('command', { name, args: null }), { ok: true, args: { name } });
+    for (const args of ['open', 'keep the tests and the failing output', 'x'.repeat(P.COMMAND_ARGS_MAX), 'a/b', 'r\u00e9sum\u00e9 \u{1F600}']) {
+      assert.deepEqual(validateOp('command', { name, args }), { ok: true, args: { name, args } }, `${name} ${args.slice(0, 20)}`);
+    }
+    const rule = `${name} takes an optional line of at most ${P.COMMAND_ARGS_MAX} characters, with no control or bidi character, not starting with /`;
+    for (const args of ['x'.repeat(P.COMMAND_ARGS_MAX + 1), 'one\ntwo', 'one\rtwo', 'a\tb', 'a\u0000b', 'a\u202eb', 'a\u2066b', '/model', '  /model', 7, {}]) {
+      const r = validateOp('command', { name, args });
+      assert.equal(r.refused, 'bad-args', `${name} ${JSON.stringify(args)}`);
+      assert.equal(r.hint, rule, 'the refusal names the rule');
+    }
   }
   assert.deepEqual(validateOp('command', { name: 'rename', args: 'fork of n1.12' }), { ok: true, args: { name: 'rename', args: 'fork of n1.12' } });
   for (const args of ['a\nb', '/model', '', ' ', 'x'.repeat(65), 'a\u0000b', 'a‮b', undefined, 5]) {

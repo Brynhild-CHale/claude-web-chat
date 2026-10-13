@@ -528,22 +528,25 @@ test('a safe command with a mod is accepted as plain text, kept exactly as typed
   }
 });
 
-test('a safe command with args follows the mod\'s command op: accepted where it takes them, else refused with its words', async () => {
+test('a safe command with args follows the mod\'s command op: /plan and /compact take a line, anything the op refuses is refused with its words', async () => {
   // Claude Code 2.1.296 takes '/plan <description>' and '/compact
   // <instructions>'; lib/core/mod-protocol decides what the op carries, and
   // the validation follows it rather than failing after the send.
-  for (const [text, name, args] of [['/plan x', 'plan', 'x'], ['/compact keep the tests', 'compact', 'keep the tests']]) {
+  for (const [text, name, args] of [['/plan x', 'plan', 'x'], ['/plan open', 'plan', 'open'], ['/compact keep the tests', 'compact', 'keep the tests']]) {
+    const r = await validateMessage({ text }, deps({ skills: modSkills(true) }));
+    assert.equal(r.ok, true, `${text}: ${r.hint}`);
+    assert.equal(r.message.text, text);
+    assert.equal(r.message.skill, null);
+    assert.deepStrictEqual(parseModCommand(text), { command: name, args });
+    assert.deepStrictEqual(validateOp('command', { name, args }), { ok: true, args: { name, args } });
+  }
+  for (const [text, name, args] of [['/plan /model', 'plan', '/model'], [`/compact ${'x'.repeat(2001)}`, 'compact', 'x'.repeat(2001)], ['/recap now', 'recap', 'now'], ['/context more', 'context', 'more']]) {
     const r = await validateMessage({ text }, deps({ skills: modSkills(true) }));
     const v = validateOp('command', { name, args });
-    if (v.ok) {
-      assert.equal(r.ok, true);
-      assert.equal(r.message.text, text);
-      assert.equal(r.message.skill, null);
-    } else {
-      assert.equal(r.ok, false);
-      assert.equal(r.refused, 'builtin_command');
-      assert.equal(r.hint, `${v.hint} — type /${name} in the terminal to run it that way.`);
-    }
+    assert.equal(v.ok, false, text.slice(0, 20));
+    assert.equal(r.ok, false, text.slice(0, 20));
+    assert.equal(r.refused, 'builtin_command');
+    assert.equal(r.hint, `${v.hint} — type /${name} in the terminal to run it that way.`);
   }
   const multi = await validateMessage({ text: '/rename one\ntwo' }, deps({ skills: modSkills(true) }));
   assert.equal(multi.ok, false);
