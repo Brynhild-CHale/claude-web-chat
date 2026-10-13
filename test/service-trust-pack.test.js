@@ -234,7 +234,9 @@ test('--pack approves the pre-approval keys and leaves pending exact requests al
 });
 
 test('--pack with no terminal lists, answers No, and writes nothing', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   installAcme(ctx.root);
   const r = await runCli(['trust', '--pack', 'acme-ops'], { cwd: ctx.root, home: ctx.home });
   assert.equal(r.status, 0, r.stderr);
@@ -255,7 +257,9 @@ test('--pack with no terminal lists, answers No, and writes nothing', async (t) 
 // execution. An unknown flag is ignored by the parser, so this is what keeps a
 // "--yes for symmetry with pack install" from ever becoming one.
 test('--yes is not a way past the question, for --pack or --all', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   installAcme(ctx.root);
   await openViewer(t, ctx);
   await ctx.api.post('/api/components/deploy-board/use', { id: 'b', params: { env: 'prod' } });
@@ -611,7 +615,9 @@ test('--pack never resolves a unit name that is not a component name', async (t)
 });
 
 test('the consent listing prints no control character it was handed', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   const stageDir = packFixture({
     version: '1.2.0\u001b[2K\rforged\u009b31m\u007f',
     components: [{
@@ -748,7 +754,14 @@ test('--pack refuses with no daemon, and writes nothing', async (t) => {
 test('--pack against a server that predates it says to restart it, and writes nothing', async (t) => {
   withTempHome(t);
   // What a 0.8.0 daemon answers for a route it does not have: Express's 404.
+  // Its /api/health answers (with its pid, and no instance id: a build before
+  // 0.8.5 names none), so trust takes it for this project's daemon.
   const server = http.createServer((req, res) => {
+    if (req.url === '/api/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid }));
+      return;
+    }
     res.writeHead(404, { 'Content-Type': 'text/html' });
     res.end('<!DOCTYPE html><p>Cannot GET</p>');
   });

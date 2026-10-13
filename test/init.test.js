@@ -193,7 +193,11 @@ test('a fresh init --yes <folder> installs into the folder and runs open and the
   };
   const prompt = { interactive: true, confirm: async () => true, line: async () => '', close: () => {} };
 
-  await init(['--yes', folder], { cwd, log: sink(), prompt, ...inertDeps({ install, open, client }) });
+  // The folder's daemon, as daemonFor would verify it (the stand-in on port 1
+  // answers nothing; init acts only on a verified record).
+  const daemonFor = async (r) => (r === folder ? { pid: process.pid, port: 1, url: 'http://localhost:1', source: 'portfile' } : null);
+
+  await init(['--yes', folder], { cwd, log: sink(), prompt, ...inertDeps({ install, open, client, daemonFor }) });
 
   assert.equal(calls.install.length, 1);
   assert.equal(calls.install[0].cwd, folder, 'install is pointed at the folder');

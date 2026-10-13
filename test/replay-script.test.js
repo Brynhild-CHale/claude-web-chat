@@ -23,7 +23,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { JSDOM } = require('jsdom');
-const { withServer, fakeBin, wsConnect, waitUntil } = require('../test-support/helpers');
+const { withServer, tmpRoot, fakeBin, wsConnect, waitUntil } = require('../test-support/helpers');
 const { decodeGif } = require('../test-support/gif-decode');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { projectPaths } = require('../lib/core/paths');
@@ -592,7 +592,9 @@ test('export CLI: --script <file> (any format, .html by default) and --open', ()
 });
 
 test('export CLI --script runs end to end against the daemon', async (t) => {
-  const { api, port, root } = await withServer(t);
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const { api, port, root } = await withServer(t, { root: fs.realpathSync(tmpRoot()) });
   await seed(api);
   const file = path.join(root, 'walkthrough.json');
   fs.writeFileSync(file, JSON.stringify(SCRIPT));

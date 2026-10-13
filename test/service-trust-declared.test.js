@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { withServer, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
+const { withServer, tmpRoot, waitUntil: harnessWaitUntil } = require('../test-support/helpers');
 const {
   mintIdentity, trustKey, paramsFingerprint, createServiceSupervisor, MAX_PATH_DEPTH, PROOFS_PER_PASS,
 } = require('../lib/server/services');
@@ -656,7 +656,9 @@ function runCli(args, ctx) {
 }
 
 test('the listing, the notice and the grant say what each request covers, and hold to', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   const { api } = ctx;
   const viewer = await openViewer(t, ctx);
   const trustFile = path.join(ctx.userWebChat, 'services', 'trusted.json');
@@ -732,7 +734,9 @@ test('the listing, the notice and the grant say what each request covers, and ho
 // listing and the grant said it; the two listings a user reads before
 // `trust <name>` or `trust --all` printed the covers lines and not this.
 test('the plain listing and --all say what approving a project path lets a pane do, and only then', async (t) => {
-  const ctx = await withServer(t, { writePortfile: true });
+  // The real path: the CLI child's cwd is, and it acts only on a daemon that
+  // answers as that root's (lib/util/registry daemonFor).
+  const ctx = await withServer(t, { writePortfile: true, root: fs.realpathSync(tmpRoot()) });
   const { api } = ctx;
   await openViewer(t, ctx);
   const trustFile = path.join(ctx.userWebChat, 'services', 'trusted.json');
