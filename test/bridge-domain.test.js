@@ -496,7 +496,7 @@ test('events: 51 events → 400; a body that is not {events: [...]} → 400', (t
   assert.equal(h.bridge.events(token, []).status, 400);
 });
 
-test('events: past 30 envelopes per second, turn.step deltas of one turn merge into one envelope; anything else is dropped and counted', async (t) => {
+test('events: past 30 envelopes per second, turn.step deltas of one step merge into one envelope; anything else is dropped and counted', async (t) => {
   const h = setup(t);
   const token = h.attach();
   const at = h.clock.now() - 5000;
