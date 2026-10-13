@@ -530,6 +530,28 @@ test('at 1280 wide the sheet ignores chat:tasks and the tray answers', async () 
 
 /* ═══════════════════════════════ rendering ═════════════════════════════════ */
 
+test('bus \'mirror\' and \'queue\' coalesce to one animation frame: nothing draws in the emitting task, then one frame draws', async () => {
+  await openTasks();
+  const meta = line('shells').querySelector('.sh-lmeta');
+  meta.textContent = 'sentinel';
+  const raf = globalThis.requestAnimationFrame;
+  let asked = 0;
+  globalThis.requestAnimationFrame = (fn) => { asked += 1; return raf(fn); };
+  let first = 0;
+  try {
+    bus.emit('mirror', { what: ['tasks'] });
+    first = asked;
+    bus.emit('queue', {});
+    bus.emit('mirror', { what: ['tasks'] });
+    bus.emit('queue', {});
+  } finally { globalThis.requestAnimationFrame = raf; }
+  assert.equal(meta.textContent, 'sentinel', 'nothing drawn in the emitting task');
+  assert.ok(first >= 1, 'the first event asks for a frame');
+  assert.equal(asked, first, 'later events of the same frame ask for none');
+  await shell.tick();
+  assert.equal(meta.textContent, '2 running', 'the one frame drew the root');
+});
+
 test('a closed sheet renders nothing on a mirror event; open on Chat, neither', async () => {
   const seen = [];
   const watch = new W.MutationObserver((recs) => { for (const r of recs) seen.push(r); });
