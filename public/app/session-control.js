@@ -34,7 +34,9 @@
 // the fresh port (never the popup), and a port change remounts every frame.
 // onDone(outcome, result) hears only the layout's own outcomes:
 //   stop     'interrupted'
-//   confirm  'restored' · 'failed' · 'undone' · 'forked' · 'refused'
+//   confirm  'restored' · 'failed' · 'undone' · 'forked' · 'refused' · 'done'
+//            ('done': any other action's ok answer — the mod's rows; ruling F6,
+//            Q-B3 (a))
 // with `result` counts only — the chrome never receives a restore id or a fork
 // command (B-confirm (4)). It works anywhere a container is, a registerStopper
 // slot (div.cs-row-confirm, compact or touch, chat-actions.js) included, so
@@ -71,7 +73,7 @@ export const LINGER_MS = 1500;
 export const STOP_SIZES = Object.freeze(['bar', 'panel', 'sheet']);
 export const OUTCOMES = Object.freeze({
   stop: Object.freeze(['interrupted']),
-  confirm: Object.freeze(['restored', 'failed', 'undone', 'forked', 'refused']),
+  confirm: Object.freeze(['restored', 'failed', 'undone', 'forked', 'refused', 'done']),
 });
 const ACTIVE = new Set(ACTIVE_STATES);
 const ACTION_RE = /^[a-z][a-z-]{1,31}$/;

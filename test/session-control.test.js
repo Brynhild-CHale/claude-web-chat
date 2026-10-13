@@ -464,7 +464,7 @@ test('onDone hears only the layout\'s own outcomes, and never more than counts',
   post(s.frame, { type: 'wc-answer:done', outcome: 'interrupted' });
   assert.deepEqual(got, [['forked', { n: 1 }], ['stop:interrupted']]);
   assert.deepEqual([...SC.OUTCOMES.stop], ['interrupted']);
-  assert.deepEqual([...SC.OUTCOMES.confirm], ['restored', 'failed', 'undone', 'forked', 'refused']);
+  assert.deepEqual([...SC.OUTCOMES.confirm], ['restored', 'failed', 'undone', 'forked', 'refused', 'done']);
   h.unmount();
   s.unmount();
   el.remove();

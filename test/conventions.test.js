@@ -1098,6 +1098,9 @@ const PATTERNS = [
       'lib/server/control/interrupt.js': 1,
       'lib/server/control/revert.js': 1,
       'lib/server/control/fork.js': 1,
+      // The in-place resume's one event (U89, ruling F6; spec §15.6), emitted
+      // by the 'resume' row of the action table after its gates.
+      'lib/server/control/mod.js': 1,
     },
   },
   {

@@ -17,7 +17,9 @@
 //     ONE done, never carrying a restore id or a command; Keep posts nothing;
 //     a popup's result comes back to the frame that opened it.
 //   * the done outcomes (B-confirm (4)): stop posts only 'interrupted', confirm
-//     only 'restored', 'failed', 'undone', 'forked' or 'refused'.
+//     only 'restored', 'failed', 'undone', 'forked', 'refused' or — any other
+//     action's ok answer, the mod's rows (U89, ruling F6 Q-B3 (a)) — 'done',
+//     whose `said` line shows inside the frame only.
 //   * answer.css: the layouts paint only palette.css's tokens (U55's frame
 //     palette, ruling A6 (b)), each ink on a measured fill, every pair passing
 //     4.5:1 (text) or 3:1 (controls) by contrastRatio IMPORTED from palette.js,
@@ -578,8 +580,11 @@ test('confirm: a popup confirms in a top-level window and hands its result to th
 
 test('done outcomes: each layout names its own, once, and readAnswer maps every answer onto them', () => {
   assert.deepEqual([...STOP.STOP_OUTCOMES], ['interrupted']);
-  assert.deepEqual([...CONFIRM.CONFIRM_OUTCOMES], ['restored', 'failed', 'undone', 'forked', 'refused']);
+  assert.deepEqual([...CONFIRM.CONFIRM_OUTCOMES], ['restored', 'failed', 'undone', 'forked', 'refused', 'done']);
   const cases = [
+    ['task-stop', 200, { ok: true, via: 'mod', said: 'Stopping — the row confirms when the task ends' }, 'done'],
+    ['resume', 200, { ok: true, via: 'mod', said: 'Switched' }, 'done'],
+    ['task-stop', 409, { ok: false, refused: 'no-mod', hint: 'h' }, 'refused'],
     ['restore', 200, { ok: true, counts: { rewritten: 1 } }, 'restored'],
     ['undo', 200, { ok: true, counts: { rewritten: 1 } }, 'undone'],
     ['fork', 200, { ok: true, command: `claude --resume ${UUID}`, session_id: UUID }, 'forked'],
@@ -595,10 +600,43 @@ test('done outcomes: each layout names its own, once, and readAnswer maps every 
     assert.ok(CONFIRM.CONFIRM_OUTCOMES.includes(r.outcome));
     assert.ok(!JSON.stringify(r.result || {}).match(/claude|rs_|[a-f0-9]{8}-/), 'a result is counts only');
   }
+  // 'done' (U89, Q-B3 (a)): the server's `said`, cut to SAID_MAX, or nothing.
+  assert.equal(CONFIRM.readAnswer('task-stop', 200, { ok: true, said: 'x'.repeat(500) }).show.said, 'x'.repeat(CONFIRM.SAID_MAX));
+  assert.equal(CONFIRM.SAID_MAX, 120);
+  assert.equal(CONFIRM.readAnswer('task-stop', 200, { ok: true, said: 7 }).show.said, '');
+  assert.equal(CONFIRM.readAnswer('task-stop', 200, { ok: true, said: 'x' }).result, undefined, 'done carries nothing to the chrome');
   assert.equal(CONFIRM.readAnswer('fork', 200, { ok: true, command: 'rm -rf / ; claude --resume x' }).show.command, null,
     'a command that is not exactly `claude --resume <id>` is not shown');
   assert.deepEqual(CONFIRM.bodyOf({ preview: 'pv_1', layout: 'confirm', mode: 'dark', size: 'compact', device: 'mobile', v: '1', wait: '2', action: 'x', Bad: 'y' }),
     { preview: 'pv_1' });
+});
+
+test('confirm: a mod row\'s ok answer is \'done\', showing its `said` as text; done carries no `said` to the chrome (U89, Q-B3 (a))', async (t) => {
+  const said = '<b>Stopping</b> — the row confirms when the task ends';
+  const p = await confirmPage(t, {
+    action: 'task-stop', query: 'task_id=b1', meta: { title: 'Stop this task now', summary: 'Claude Code stops it with TaskStop, through the web-chat mod.', lines: ['Shell · b1'] },
+    proof: true, post: () => json({ ok: true, via: 'mod', said }),
+  });
+  readyConfirm(p);
+  p.vis.report();
+  click(p, $(p.doc, '.ct-act'));
+  await settle();
+  assert.deepEqual(posted(p)[0].body, { task_id: 'b1' });
+  const out = $(p.doc, '.ct-outcome');
+  assert.equal(out.textContent, said, 'the server\'s words, as text');
+  assert.equal(out.querySelector('b'), null, 'never markup');
+  assert.deepEqual(dones(p), [{ type: 'wc-answer:done', id: 'task-stop', outcome: 'done' }]);
+  assert.ok(!JSON.stringify(p.posts).includes('Stopping'), 'the line stays inside the frame');
+
+  const bare = await confirmPage(t, {
+    action: 'resume', query: 'turn_id=t_7', meta: { title: 'Switch this terminal to the fork?', summary: 's' },
+    proof: true, post: () => json({ ok: true, via: 'mod' }),
+  });
+  readyConfirm(bare);
+  bare.vis.report();
+  click(bare, $(bare.doc, '.ct-act'));
+  await settle();
+  assert.equal($(bare.doc, '.ct-outcome').textContent, 'Done');
 });
 
 /* ══ answer.css ══════════════════════════════════════════════════════════════ */
