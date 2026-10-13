@@ -130,6 +130,14 @@ const BASELINE = {
   'lib/portal/picker.js => lib/server/theme.js':
     'the picker themes itself from the canonical Georgetown Blue tokens via tokenDecls',
 
+  // The mod's permission transport (tranche 6, U92; ruled F8, notes-C
+  // Q-C14b (a)): a web deny sent back through the mod carries exactly the
+  // words the settings ask hook prints, from ask-output.js's one builder of
+  // PermissionRequest output — pure (lib/core/text only), and PINNED below to
+  // stay so, rather than a second copy of the words.
+  'lib/server/domain/asks.js => lib/hooks/ask-output.js':
+    'the mod transport\'s deny words come from the ask hook\'s one pure output builder',
+
   // Still owed. The components registry is server-shaped; tier resolution is
   // not. The fix is to lift the registry, not to widen the rule.
   'lib/packs/plan.js => lib/server/components-registry.js':
@@ -149,6 +157,12 @@ const PINNED = {
     process: 'the tunnel portal (the remote-facing access-control process)',
     bare: ['fs'],
     files: ['lib/server/theme-packs.js'],
+  },
+  'lib/hooks/ask-output.js': {
+    importer: 'lib/server/domain/asks.js',
+    process: 'the daemon (the asks domain)',
+    bare: [],
+    files: [],
   },
 };
 

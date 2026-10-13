@@ -135,6 +135,32 @@ html[data-layout="bar"] .wc-answer { padding: 0 4px; height: 22px; }
 html[data-layout="page"] body { overflow: auto; }
 html[data-layout="page"] .wc-answer { max-width: 640px; margin: 0 auto; padding: 14px 16px 24px; }
 
+/* ── U92 · an MCP server's form (elicitation-form.js) ──
+   The frame palette only: each ink on a fill palette.js measured it against
+   (FRAME_TEXT, FRAME_UI) — a rule that sets a `color` sets its `background`
+   too, and every border sits on --wc-panel-bg. Every control starts empty;
+   a default shows only as placeholder text. */
+.aw-emessage { white-space: pre-wrap; }
+.aw-form { display: flex; flex-direction: column; gap: 8px; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.aw-efield { display: flex; flex-direction: column; gap: 2px; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.aw-elabel { font-size: 12px; font-weight: 600; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.aw-ereq, .aw-edesc { font-size: 12px; font-weight: 400; background: var(--wc-panel-bg); color: var(--wc-muted); }
+.aw-einput, .aw-eselect {
+  width: 100%; min-height: 28px; padding: 4px 6px; font: inherit;
+  background: var(--wc-panel-bg); color: var(--wc-fg);
+  border: 1px solid var(--wc-accent); border-radius: var(--wc-radius-sm, 4px);
+}
+.aw-einput::placeholder { background: var(--wc-panel-bg); color: var(--wc-muted); }
+.aw-echeckline { display: flex; gap: 6px; align-items: center; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.aw-echeck { margin: 0; accent-color: var(--wc-accent); }
+.aw-elist { margin: 0; padding: 0 0 0 16px; font-size: 12px; background: var(--wc-panel-bg); color: var(--wc-fg); }
+.aw-accept { background: var(--wc-accent); color: var(--wc-accent-fg); }
+.aw-accept:disabled {
+  cursor: not-allowed; background: var(--wc-panel-bg); color: var(--wc-muted); border-style: dashed; border-color: var(--wc-muted);
+}
+.aw-einput:focus-visible, .aw-eselect:focus-visible, .aw-echeck:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.aw[data-layout="sheet"] :is(.aw-einput, .aw-eselect) { min-height: 44px; }
+
 /* ── U85 · the control frame's layouts: stop and confirm (control-stop.js, control-confirm.js) ──
    The same rules as above: only /answer/palette.css's tokens, each ink on a fill
    palette.js measured it against (FRAME_TEXT, FRAME_UI) — a rule that sets a

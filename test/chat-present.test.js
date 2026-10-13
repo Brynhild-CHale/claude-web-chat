@@ -66,9 +66,13 @@ const one = (live, opts = {}, extra = {}) => mirror({ conversations: [conv(live,
 test('the presentation model is DOM-free, runs no timer, and `ago` has moved to labels.js', () => {
   const src = fs.readFileSync(path.join(APP, 'chat-present.js'), 'utf8');
   const imports = [...src.matchAll(/^\s*import\b[^;]*?from\s*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ['./chat-state.js', './labels.js']);
+  // prompts-mod.js: the elicitation's line (tranche 6, U92), pure as this is.
+  assert.deepEqual(imports.sort(), ['./chat-state.js', './labels.js', './prompts-mod.js']);
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.doesNotMatch(code, /\bdocument\b|\bwindow\b|\bHTMLElement\b|\bset(?:Timeout|Interval)\b/);
+  const pm = fs.readFileSync(path.join(APP, 'prompts-mod.js'), 'utf8');
+  assert.deepEqual([...pm.matchAll(/^\s*import\b[^;]*?from\s*['"]([^'"]+)['"]/gm)].map((m) => m[1]), ['./chat-state.js']);
+  assert.doesNotMatch(pm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''), /\bdocument\b|\bwindow\b|\bHTMLElement\b|\bset(?:Timeout|Interval)\b/);
   assert.equal(P.ago, labels.ago, 'one `ago`, re-exported');
   const sessions = fs.readFileSync(path.join(APP, 'sessions.js'), 'utf8');
   assert.match(sessions, /^import \{ ago \} from '\.\/labels\.js';$/m);

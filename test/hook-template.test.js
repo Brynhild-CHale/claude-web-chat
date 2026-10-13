@@ -1,5 +1,5 @@
 // The 0.8.5 hook template and the engine that registers it (spec §1.1–1.2):
-// twelve events, fourteen handlers; handlers matched by SUBCOMMAND, so one event
+// thirteen events, fifteen handlers; handlers matched by SUBCOMMAND, so one event
 // can carry two of ours (PreToolUse and PostToolUse hold the mirror's and the
 // halt's); the per-handler fields the template owns (MANAGED_HOOK_KEYS); the
 // `stale` state; roles for honest copy; and the MCP server's startup line.
@@ -52,6 +52,7 @@ const SPEC_TEMPLATE = {
     SubagentStop: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook mirror', async: true, timeout: 10 }] }],
     PreCompact: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook mirror', async: true, timeout: 10 }] }],
     PermissionRequest: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook ask', timeout: 600 }] }],
+    Elicitation: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook elicit', timeout: 90 }] }],
     PostToolBatch: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook halt batch', timeout: 5 }] }],
   },
 };
@@ -120,14 +121,14 @@ const HANDLER_COUNT = Object.values(SPEC_TEMPLATE.hooks).reduce((n, gs) => n + g
 
 // ── the template ─────────────────────────────────────────────────────────────
 
-test('the template is §1.2 exactly: twelve events, fourteen handlers, in order', () => {
+test('the template is §1.2 exactly: thirteen events, fifteen handlers, in order', () => {
   const tpl = mf.hookTemplate();
   assert.deepStrictEqual(tpl, SPEC_TEMPLATE);
   assert.deepStrictEqual(Object.keys(tpl.hooks), ALL_EVENTS, 'event order is the spec\'s');
-  assert.equal(ALL_EVENTS.length, 12);
-  assert.equal(HANDLER_COUNT, 14);
+  assert.equal(ALL_EVENTS.length, 13);
+  assert.equal(HANDLER_COUNT, 15);
   assert.deepStrictEqual(reg.hookEvents(), ALL_EVENTS, 'hookEvents() is the template\'s keys');
-  assert.equal(reg.hookHandlers().length, 14);
+  assert.equal(reg.hookHandlers().length, 15);
   // §1.1's "on purpose" rules, pinned: no matcher anywhere, no http hook, and
   // PostToolBatch carries only the halt.
   for (const groups of Object.values(tpl.hooks)) {
@@ -158,7 +159,7 @@ test('roles: every template handler has exactly one role, and every role is used
   const count = (role) => reg.hookHandlers().filter((h) => h.role === role).length;
   assert.equal(count('lifecycle'), 3);
   assert.equal(count('mirror'), 7);
-  assert.equal(count('bridge'), 1);
+  assert.equal(count('bridge'), 2);
   assert.equal(count('halt'), 3);
   assert.equal(reg.hookRole({ type: 'command', command: 'some-other-tool notify' }), null);
   assert.equal(reg.hookRole('claude-web-chat-hook no-such-sub'), null);
@@ -269,14 +270,14 @@ test('ensureHooks returns the count of handlers ADDED: fresh, 0.8.0, again, and 
   const before = fs.readFileSync(settingsPath(old), 'utf8');
   assert.equal(mf.ensureHooks(old, { dryRun: true }), HANDLER_COUNT - 2);
   assert.equal(fs.readFileSync(settingsPath(old), 'utf8'), before, 'dry: untouched');
-  assert.equal(mf.ensureHooks(old), HANDLER_COUNT - 2, 'a 0.8.0 project gains the twelve it lacks');
+  assert.equal(mf.ensureHooks(old), HANDLER_COUNT - 2, 'a 0.8.0 project gains the thirteen it lacks');
   assert.equal(mf.ensureHooks(old), 0);
 });
 
 test('mergeHooks also counts the handlers it rewrote: a repair, a bare command, a command from another tree', (t) => {
   const home = withTempHome(t);
 
-  // A bare 0.7-era project: two PATH lookups to resolve, twelve handlers to add.
+  // A bare 0.7-era project: two PATH lookups to resolve, thirteen handlers to add.
   const bare = installedRoot(t);
   writeSettings(bare, { hooks: {
     UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'claude-web-chat-hook turn-begin' }] }],
@@ -349,7 +350,7 @@ test('install names a repair: "N hook(s) updated", then "already up to date"', a
   assert.match(await settingsLine(), /^ {2}\.claude\/settings\.json +1 hook\(s\) added, 2 hook\(s\) updated$/);
 });
 
-test('a project with only 0.8.0\'s two events reports the other ten missing', (t) => {
+test('a project with only 0.8.0\'s two events reports the other eleven missing', (t) => {
   withTempHome(t);
   const root = installedRoot(t);
   writeSettings(root, { hooks: V080_HOOKS() });
@@ -367,7 +368,7 @@ test('a project with only 0.8.0\'s two events reports the other ten missing', (t
   assert.match(by('lifecycle').effect, /API error .* turn lock until it times out/,
     'StopFailure alone does not stop turns beginning or committing — the narrower cost is named');
   assert.deepStrictEqual(by('mirror').events, ['SessionStart', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStop', 'PreCompact']);
-  assert.deepStrictEqual(by('bridge').events, ['PermissionRequest']);
+  assert.deepStrictEqual(by('bridge').events, ['PermissionRequest', 'Elicitation']);
   assert.deepStrictEqual(by('halt').events, ['PreToolUse', 'PostToolUse', 'PostToolBatch']);
 });
 
@@ -401,7 +402,7 @@ test('install and update upgrade a 0.8.0 project to exactly the template, leavin
       // What `update` runs once it has loaded the new build's engine: apply(),
       // with a runClaude that records rather than runs (lib/cli/commands/update.js).
       const applied = reg.apply(root, { force: false, runClaude: () => ({ ok: false, stderr: 'not attempted by update' }) });
-      assert.equal(applied.hooks.added, HANDLER_COUNT - 2, 'update: the twelve handlers 0.8.0 lacked');
+      assert.equal(applied.hooks.added, HANDLER_COUNT - 2, 'update: the thirteen handlers 0.8.0 lacked');
     }
 
     const after = readSettings(root);
@@ -557,7 +558,7 @@ test('remove takes every web-chat handler and nothing else', (t) => {
   writeSettings(root, s);
 
   const out = reg.remove(root, { runClaude: fakeClaude().fn });
-  assert.equal(out.hooks.removed, HANDLER_COUNT, 'every one of the fourteen');
+  assert.equal(out.hooks.removed, HANDLER_COUNT, 'every one of the fifteen');
   assert.deepStrictEqual(out.hooks.events, ALL_EVENTS);
   const after = readSettings(root);
   assert.deepStrictEqual(after.permissions, { allow: ['Bash(ls:*)'] });
@@ -613,19 +614,19 @@ test('doctor words each role: what a 0.8.0 project lacks, and what that costs', 
   const has = (re) => assert.ok(problems.some((m) => re.test(m)), `${re} in:\n${problems.join('\n')}`);
   has(/^lifecycle hook\(s\) missing for StopFailure — a turn that ends on an API error holds the turn lock until it times out$/);
   has(/^mirror hook\(s\) missing for SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact — the chat mirror shows no live tool status$/);
-  has(/^bridge hook\(s\) missing for PermissionRequest — prompts cannot be answered from the browser$/);
+  has(/^bridge hook\(s\) missing for PermissionRequest, Elicitation — prompts cannot be answered from the browser$/);
   has(/^halt hook\(s\) missing for PreToolUse, PostToolUse, PostToolBatch — "Stop after this step" from the browser does nothing$/);
   assert.ok(!problems.some((m) => /turns never begin/.test(m)), 'a 0.8.0 project still begins and commits its turns');
   const repair = hookRepair(summary);
   assert.ok(repair && repair.dry);
-  assert.match(repair.m, /registered the missing hook\(s\): StopFailure, SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact, PermissionRequest, PostToolBatch/);
+  assert.match(repair.m, /registered the missing hook\(s\): StopFailure, SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact, PermissionRequest, Elicitation, PostToolBatch/);
   assert.match(repair.m, /then restart Claude Code \(or open \/hooks to review them\)$/);
   assert.equal(fs.readFileSync(settingsPath(root), 'utf8'), before, 'a dry run writes nothing');
 
   await runDoctor(root);
   assert.ok(reg.inspect(root).handlers.every((r) => r.state === 'ok'), 'a real run repairs it');
   const again = await runDoctor(root);
-  assert.ok(again.checks.some((c) => c.status === 'ok' && c.m === '14 web-chat hook handlers on 12 events registered and resolvable (lifecycle, mirror, bridge, halt)'));
+  assert.ok(again.checks.some((c) => c.status === 'ok' && c.m === '15 web-chat hook handlers on 13 events registered and resolvable (lifecycle, mirror, bridge, halt)'));
 });
 
 test('the hook repair is found by its wording, never by a checkout path that holds "hook"', async (t) => {
@@ -675,7 +676,7 @@ test('driftLine names missing, bare and stale hooks, and leaves a healthy projec
 
   writeSettings(root, { hooks: V080_HOOKS() });
   assert.equal(reg.driftLine(reg.inspect(root)),
-    'Claude Code hooks out of date (missing: StopFailure, SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact, PermissionRequest, PostToolBatch) — run `claude-web-chat install`, then restart Claude Code (or open /hooks to review them)');
+    'Claude Code hooks out of date (missing: StopFailure, SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact, PermissionRequest, Elicitation, PostToolBatch) — run `claude-web-chat install`, then restart Claude Code (or open /hooks to review them)');
 
   // Managed-file drift alone keeps its own line, with no restart advice.
   assert.equal(reg.driftLine({ managed: [{ action: 'updated' }], hooksFile: 'ok', handlers: [] }),

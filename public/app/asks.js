@@ -88,7 +88,7 @@ const LAYOUT_RE = /^[a-z][a-z-]{0,23}$/;
 const ASK_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const OUTCOME_RE = /^[a-z][a-z-]{0,39}$/;
 const RESULT_MAX_BYTES = 2048;
-const KIND_WORD = { permission: 'permission', question: 'question', plan: 'plan' };
+const KIND_WORD = { permission: 'permission', question: 'question', plan: 'plan', elicitation: 'MCP input request' };
 
 let fetchFn = (url, init) => globalThis.fetch(url, init);
 let now = () => Date.now();

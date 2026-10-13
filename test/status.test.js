@@ -168,11 +168,11 @@ test('status words each role for a 0.8.0 project, and the narrower cost of StopF
     UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${HOOK_BIN}" turn-begin` }] }],
     Stop: [{ hooks: [{ type: 'command', command: `node "${HOOK_BIN}" turn-end` }] }],
   }));
-  assert.match(out, /Hooks: +2\/12 events registered in \.claude\/settings\.json — run `claude-web-chat install`, then restart Claude Code \(or open \/hooks to review them\)/);
+  assert.match(out, new RegExp(`Hooks: +2/${hookEvents().length} events registered in \\.claude/settings\\.json — run \`claude-web-chat install\`, then restart Claude Code \\(or open /hooks to review them\\)`));
   assert.match(out, /\n +lifecycle +missing: StopFailure — a turn that ends on an API error holds the turn lock until it times out\n/,
     'a 0.8.0 project still begins and commits its turns: its lifecycle line says what it does lose');
   assert.match(out, /\n +mirror +missing: SessionStart, SessionEnd, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, PreCompact — the chat mirror shows no live tool status\n/);
-  assert.match(out, /\n +bridge +missing: PermissionRequest — prompts cannot be answered from the browser\n/);
+  assert.match(out, /\n +bridge +missing: PermissionRequest, Elicitation — prompts cannot be answered from the browser\n/);
   assert.match(out, /\n +halt +missing: PreToolUse, PostToolUse, PostToolBatch — "Stop after this step" from the browser does nothing\n/);
   assert.doesNotMatch(out, /turns never begin/);
 });
@@ -187,7 +187,7 @@ test('status reads an outdated handler as outdated, naming the field, and a bare
     s.hooks.Stop[0].hooks[0].command = 'claude-web-chat-hook turn-end';            // bare
     fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
   });
-  assert.match(out, /Hooks: +12\/12 events registered .* — run `claude-web-chat install`/, 'registered, yet not right');
+  assert.match(out, new RegExp(`Hooks: +${hookEvents().length}/${hookEvents().length} events registered .* — run \`claude-web-chat install\``), 'registered, yet not right');
   assert.match(out, /\n +lifecycle +bare command: Stop — runs only where claude-web-chat-hook is on PATH, so turns never begin or never commit\n/);
   assert.match(out, /\n +mirror +outdated: PreToolUse \(timeout differs from this build's template\)\n/,
     'a different timeout is out of date, not broken — no loss is claimed');

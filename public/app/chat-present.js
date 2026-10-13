@@ -21,6 +21,7 @@
 // worded or announced as offline (deviation 16).
 import { ago } from './labels.js';
 import { atLeast, TASK_KEEP_MS } from './chat-state.js';
+import { pendingElicitation, elicitationLine } from './prompts-mod.js';
 
 export { ago, atLeast };
 
@@ -217,6 +218,11 @@ export function uiState(mirror, { now, approvalsReady = false } = {}) {
   // is a headless one: only its record can say, so below `read` it is never.
   const headless = !!(conversation && conversation.headless === true);
   const say = (key, head, opts = {}) => out(key, head, { ...opts, others, headless });
+
+  // An MCP server's form the page can answer (§15.7): its hook holds the
+  // terminal's dialog back, so the session reads busy while it waits.
+  const elicit = L.state === 'question' || L.state === 'waiting' ? null : pendingElicitation(m, cid);
+  if (elicit) return say('waiting', elicitationLine(elicit), { detail: elicitationLine(elicit), act: 'answer', ask: elicit });
 
   switch (L.state) {
     case 'question': {

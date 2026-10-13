@@ -37,7 +37,7 @@ import { mirror, followed, awaitingOf, atLeast } from './chat-state.js';
 import { approvals } from './chat-slots.js';
 import { renderMarkdown } from './markdown.js';
 
-const KIND_WORD = { permission: 'PERMISSION', question: 'QUESTION', plan: 'PLAN' };
+const KIND_WORD = { permission: 'PERMISSION', question: 'QUESTION', plan: 'PLAN', elicitation: 'MCP INPUT' };
 // The card's ink: a question in the question ink, every other wait in NEEDS YOU's
 // (app.css's [data-cs-state] inks, §7.4).
 const KIND_INK = { question: 'question' };

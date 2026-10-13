@@ -39,6 +39,9 @@
     "PermissionRequest": [
       { "hooks": [{ "type": "command", "command": "claude-web-chat-hook ask", "timeout": 600 }] }
     ],
+    "Elicitation": [
+      { "hooks": [{ "type": "command", "command": "claude-web-chat-hook elicit", "timeout": 90 }] }
+    ],
     "PostToolBatch": [
       { "hooks": [{ "type": "command", "command": "claude-web-chat-hook halt batch", "timeout": 5 }] }
     ]
