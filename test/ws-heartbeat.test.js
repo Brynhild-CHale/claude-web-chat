@@ -92,3 +92,27 @@ test('a deaf socket is terminated one whole interval after the ping it ignored, 
     `terminated ${closedAt - firstPingAt} ms after the ping it missed: no sooner than one interval (${INTERVAL} ms)`);
   assert.ok(closedAt - joined < 3 * INTERVAL + 1000, 'and not kept much past its second interval');
 });
+
+// The regression itself: the old 5 s per-ping timeout is longer than the
+// 100 ms interval above, so those tests cannot see it come back. Here the
+// interval is longer than 5 s and the pong comes 5.5 s after the ping: the old
+// timer dropped the socket at 5 s; now it lives to the next ping.
+test('a pong 5.5 s late, inside a 7 s interval, keeps the socket (no fixed 5 s timeout)', { timeout: 30_000 }, async (t) => {
+  const prev = wsModule.HEARTBEAT_INTERVAL_MS;
+  wsModule.HEARTBEAT_INTERVAL_MS = 7000;
+  t.after(() => { wsModule.HEARTBEAT_INTERVAL_MS = prev; });
+  const ctx = await withServer(t);
+  const sock = await openClient(t, ctx, { autoPong: false });
+  let pings = 0;
+  const late = [];
+  t.after(() => late.forEach(clearTimeout));
+  sock.on('ping', (data) => {
+    pings += 1;
+    late.push(setTimeout(() => { try { sock.pong(data); } catch {} }, 5500));
+  });
+  let closed = false;
+  sock.on('close', () => { closed = true; });
+  await waitUntil(() => pings >= 2 || closed, { timeout: 20_000, what: 'the second ping, or a drop' });
+  assert.equal(closed, false, 'dropped before the next ping: a fixed timeout shorter than the interval is back');
+  assert.equal(await viewers(ctx.api), 1);
+});
