@@ -452,6 +452,8 @@ test('it says hello within one flush, as this session, with the template\'s vers
 
 test('abort: $.turn.abort on the open turn, then TaskStop for a foreground Bash it left running backgrounded', async (t) => {
   let release = null;
+  let releaseBg = null;
+  let releaseRead = null;
   const aborted = [];
   const stops = [];
   const { b, host } = await attachedHost(t, {
@@ -460,6 +462,10 @@ test('abort: $.turn.abort on the open turn, then TaskStop for a foreground Bash 
         aborted.push(a);
         // Claude Code backgrounds the running foreground Bash.
         release({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash_7' }, text: 'moved to the background' });
+        // Calls that are not a foreground Bash settle too, even carrying a
+        // task id: never the abort's to stop (a background task is the user's).
+        releaseBg({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bash_bg' }, text: 'running in the background' });
+        releaseRead({ result: { backgroundTaskId: 'read_1' }, text: '' });
       },
       toolCall: async (a) => { stops.push(a); return { result: { message: 'stopped' }, text: 'stopped' }; },
     },
@@ -467,10 +473,15 @@ test('abort: $.turn.abort on the open turn, then TaskStop for a foreground Bash 
   await host.fire('turn.start', { turnId: 'turn_1', text: 'go' });
   const bash = host.fire('tool.call', { tool: 'Bash', tool_use_id: 'tu_bash', command: 'sleep 30' },
     () => new Promise((r) => { release = r; }));
+  const bg = host.fire('tool.call', { tool: 'Bash', tool_use_id: 'tu_bg', command: 'npm run dev', run_in_background: true },
+    () => new Promise((r) => { releaseBg = r; }));
+  const read = host.fire('tool.call', { tool: 'Read', tool_use_id: 'tu_read', file_path: '/x' },
+    () => new Promise((r) => { releaseRead = r; }));
   const r = await b.bridge.enqueue(SID, { op: 'abort', args: {} });
   assert.deepEqual(r, { ok: true, result: { aborted: true, stopped: ['bash_7'] } });
   assert.deepEqual(aborted, [{ turnId: 'turn_1' }]);
-  assert.deepEqual(stops, [{ tool: 'TaskStop', task_id: 'bash_7' }]);
+  assert.deepEqual(stops, [{ tool: 'TaskStop', task_id: 'bash_7' }], 'only the foreground Bash the abort backgrounded');
+  await Promise.all([bg, read]);
   const done = await bash;
   assert.equal(done.result.backgroundTaskId, 'bash_7', 'the tool call\'s own result is untouched');
 });
