@@ -71,6 +71,8 @@ const WIRE = Object.freeze({
   "TEXT_MAX": 32768,
   "INPUT_MAX": 8192,
   "ARG_TEXT_MAX": 16384,
+  "RENAME_MAX": 64,
+  "COMMAND_ARGS_MAX": 2000,
   "OPS_WAIT_MAX_MS": 20000,
   "FLUSH_MS": 100,
   "RESULT_MAX": 8192,
@@ -799,7 +801,7 @@ export function register(on) {
     const name = a.name;
     if (typeof name !== 'string' || !WIRE.MOD_COMMANDS.includes(name)) return refused('not-allowed');
     if (a.args !== undefined && a.args !== null && typeof a.args !== 'string') return refused('bad-args');
-    if (typeof a.args === 'string' && (a.args.length > 64 || /[\r\n]/.test(a.args))) return refused('bad-args');
+    if (typeof a.args === 'string' && (a.args.length > (name === 'rename' ? WIRE.RENAME_MAX : WIRE.COMMAND_ARGS_MAX) || /[\r\n]/.test(a.args))) return refused('bad-args');
     const input = typeof a.args === 'string' && a.args ? { command: name, args: a.args } : { command: name };
     const p = call(() => st.$.command.run(input));
     p.catch(() => {});
