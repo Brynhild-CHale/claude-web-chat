@@ -787,6 +787,32 @@ test('services: one start line per fork and one stop line per requested stop, ea
   assert.deepEqual(take(), [], 'no stop, no start');
   assert.equal(forks.length, forked, 'nothing forked');
 
+  // Two flaps in a row: the return cancels the first grace's timer, so it
+  // cannot fire inside the second grace and stop what a returning viewer kept.
+  sup.idleGraceMs = 1000;
+  viewers = 0; sup.setViewers(0);   // first grace would end at ~1000 ms
+  await sleep(50);
+  viewers = 1; sup.setViewers(1);
+  await sleep(450);
+  viewers = 0; sup.setViewers(0);   // second grace ends at ~1500 ms
+  await sleep(600);                 // ~1100 ms: past the first grace's end
+  assert.deepEqual(take().filter((l) => /^(start|stop) /.test(l)), [], 'the cancelled grace stopped nothing');
+  viewers = 1; sup.setViewers(1);
+  take();
+  assert.equal(forks.length, forked, 'nothing forked');
+  sup.idleGraceMs = 60;
+
+  // Events coalesced into one debounced pass: a viewer arriving never
+  // overwrites the surface event's reason.
+  state.mounts.delete('m1');
+  sup.scheduleReconcile('clear');
+  sup.setViewers(1);
+  await sleep(300);
+  assert.deepEqual(take(), ['stop svc (m1; clear)']);
+  state.mounts.set('m1', { component: 'svc', params: { title: 'B', depth: 2 } });
+  sup.reconcile('graph:set-active');
+  assert.deepEqual(take(), ['start svc (m1; graph:set-active)']);
+
   // Inside the grace the surface still counts as watched: a new pane starts.
   viewers = 0; sup.setViewers(0);
   state.mounts.set('m2', { component: 'svc', params: { title: 'B', depth: 2 } });
