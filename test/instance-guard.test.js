@@ -25,7 +25,8 @@ const { spawn, spawnSync } = require('child_process');
 const { withTempHome, waitUntil } = require('../test-support/helpers');
 const registry = require('../lib/util/registry');
 const { projectPaths } = require('../lib/core/paths');
-const { writePortfile, isPidAlive } = require('../lib/core/portfiles');
+const portfiles = require('../lib/core/portfiles');
+const { writePortfile, isPidAlive } = portfiles;
 const { PROTOCOL_VERSION } = require('../lib/core/versions');
 const { LISTEN_HOST } = require('../lib/core/cors');
 const { CLI_BIN } = require('../lib/util/daemon');
@@ -246,6 +247,92 @@ test('a portfile naming another live pid whose health does not answer → no exi
   assert.deepEqual(exits, []);
   assert.equal(fs.readFileSync(projectPaths(root).serverJson, 'utf8'), before);
   assert.equal(lines.filter((l) => /did not answer for this project/.test(l)).length, 1, 'said once, not every pass');
+});
+
+// ── U112: a copied portfile, and a reused pid ───────────────────────────────
+
+// A record as a 0.8.5 daemon of `root` writes it, for a pid that is not this
+// process (writePortfile stamps proc_start only for its own pid).
+function writeRecord(root, rec) {
+  const file = projectPaths(root).serverJson;
+  fs.writeFileSync(file, JSON.stringify({
+    url: `http://localhost:${rec.port}`, started_at: Date.now(),
+    root, instance: registry.instanceId(root), ...rec,
+  }, null, 2));
+}
+
+test("a portfile copied from another project (naming that project's live pid) is nobody's: one pass re-writes it", async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const otherRoot = projectRoot(t);
+  const other = otherLivePid(t);
+  writePortfile('server', { root: otherRoot, pid: other, port: 45011 });
+  fs.copyFileSync(projectPaths(otherRoot).serverJson, projectPaths(root).serverJson);
+  const { guard, exits, probed, lines } = guardFor(t, root);
+  guard.start();
+
+  assert.equal(await guard.check(), 'rewrote');
+  const pf = readPf(root);
+  assert.deepEqual([pf.pid, pf.port, pf.root], [process.pid, 45001, root]);
+  assert.deepEqual(probed, [], "the other project's daemon is never probed");
+  assert.deepEqual(exits, []);
+  assert.ok(lines.some((l) => /another project's copy/.test(l)), lines.join('\n'));
+  assert.equal(readPf(otherRoot).pid, other, "the other project's own record is untouched");
+  assert.equal(await guard.check(), 'ok');
+});
+
+test('a reused pid (live, unanswering, started at another time than its proc_start) is re-written after ONE async sample', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const other = otherLivePid(t);
+  const real = (await portfiles.sampleProcs([other])).get(other);
+  assert.equal(real.alive, true, 'the child is sampled alive');
+  writeRecord(root, { pid: other, port: 45012, proc_start: real.startedAt - 3_600_000 });
+  const samples = [];
+  const { guard, exits } = guardFor(t, root, {
+    sampleProcs: async (pids) => { samples.push([...pids]); return portfiles.sampleProcs(pids); },
+  });
+  guard.start();
+
+  assert.equal(await guard.check(), 'rewrote');
+  assert.deepEqual(samples, [[other]], 'one async sample of that pid');
+  assert.deepEqual([readPf(root).pid, readPf(root).port], [process.pid, 45001]);
+  assert.deepEqual(exits, []);
+});
+
+test("the same record with the child's real start is left alone, and sampled once however many passes", async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const other = otherLivePid(t);
+  const real = (await portfiles.sampleProcs([other])).get(other);
+  writeRecord(root, { pid: other, port: 45013, proc_start: real.startedAt });
+  const before = fs.readFileSync(projectPaths(root).serverJson, 'utf8');
+  const samples = [];
+  const { guard, exits } = guardFor(t, root, {
+    sampleProcs: async (pids) => { samples.push([...pids]); return portfiles.sampleProcs(pids); },
+  });
+  guard.start();
+
+  assert.equal(await guard.check(), 'unconfirmed');
+  assert.equal(await guard.check(), 'unconfirmed');
+  assert.equal(await guard.check(), 'unconfirmed');
+  assert.equal(samples.length, 1, 'once per distinct pid + proc_start');
+  assert.equal(fs.readFileSync(projectPaths(root).serverJson, 'utf8'), before);
+  assert.deepEqual(exits, []);
+});
+
+test('a failed sample is no verdict: the record is left alone', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const other = otherLivePid(t);
+  writeRecord(root, { pid: other, port: 45014, proc_start: Date.now() - 3_600_000 });
+  const before = fs.readFileSync(projectPaths(root).serverJson, 'utf8');
+  const { guard } = guardFor(t, root, {
+    sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: null, startedAt: null, cpuMs: null, state: null }])),
+  });
+  guard.start();
+  assert.equal(await guard.check(), 'unconfirmed');
+  assert.equal(fs.readFileSync(projectPaths(root).serverJson, 'utf8'), before);
 });
 
 test('an answer for another pid, or another project, is no proof either', async (t) => {
