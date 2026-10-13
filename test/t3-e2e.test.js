@@ -93,6 +93,8 @@ const CALL_TIMEOUT_MS = 15000;
 const WAIT = { timeout: 15000, interval: 10 };
 const TRANCHE2 = ['live', 'transcripts', 'rewinds'];
 const TRANCHE3 = ['tasks', 'agents', 'workflows', 'codediff', 'graph-link'];
+// Tranche 6's source, registered after tranche 3's (U94a): every boot runs it too.
+const TRANCHE6 = ['mod-live'];
 
 // ── the daemon, and Claude Code's side of it ─────────────────────────────────
 
@@ -290,7 +292,7 @@ async function exitsClean(t, teardown, { git, lock = false }) {
   d.ch.writeSession({ pid: process.pid, procStart, sessionId: S1, status: 'busy' });
   await startShell(d, 'bclean1');
   const st = d.srv.mirror.stats().sources;
-  assert.deepEqual(st.map((s) => [s.name, s.started]), [...TRANCHE2, ...TRANCHE3].map((n) => [n, true]),
+  assert.deepEqual(st.map((s) => [s.name, s.started]), [...TRANCHE2, ...TRANCHE3, ...TRANCHE6].map((n) => [n, true]),
     'every source is running');
   if (git) {
     await codeTurn(d, 'p-made', () => d.repo.write('made.txt', 'made\n'));
@@ -322,10 +324,10 @@ async function exitsClean(t, teardown, { git, lock = false }) {
 // ── the daemon ───────────────────────────────────────────────────────────────
 
 test('the server boots with tranche 3\'s sources running after tranche 2\'s, the work and code routes mounted, and no git at boot', async (t) => {
-  assert.deepEqual(SOURCES.map((s) => s.name), [...TRANCHE2, ...TRANCHE3], 'SOURCES, in §2.12\'s order');
+  assert.deepEqual(SOURCES.map((s) => s.name), [...TRANCHE2, ...TRANCHE3, ...TRANCHE6], 'SOURCES, in §2.12\'s order');
   const d = await daemon(t, { git: true });
   await d.srv.mirror.ready;
-  assert.deepEqual(d.srv.mirror.stats().sources.map((s) => [s.name, s.started]), [...TRANCHE2, ...TRANCHE3].map((n) => [n, true]));
+  assert.deepEqual(d.srv.mirror.stats().sources.map((s) => [s.name, s.started]), [...TRANCHE2, ...TRANCHE3, ...TRANCHE6].map((n) => [n, true]));
   const s = await d.snapshot();
   assert.equal(s.diagnostics.git.state, 'idle', 'codediff makes its shadow store at the first fresh turn, never at boot');
   assert.equal(s.diagnostics.git.snapshots, 0);
