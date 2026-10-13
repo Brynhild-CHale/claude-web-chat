@@ -71,16 +71,15 @@ initChatStream(); // the turns, grouped, rewind-aware
 initChatTools();  // the tool cards (setToolRenderer)
 initFavicon();    // the tab icon (light and dark) and its waiting badge
 // Tranche 3, after the chat above and after initGraph: the bar's chips and
-// their trays (shells, monitors, agents, workflows, the queue — they take over
-// the bar's stand-in chips), the detail views the chat pushes (a task's output,
+// their trays (shells, monitors, agents, workflows, the queue — they claim
+// the bar's #cs-chips), the detail views the chat pushes (a task's output,
 // an agent followed live, a workflow, a turn's code changes: View changes),
 // and a node's turns and rewind marks in the graph inspector. Each idempotent.
 initChatTrays();
 initChatDetail();
 initGraphTurns();
 // Tranche 4, after the chat, its trays and the graph's turns: the asks (the
-// answer frames on the answer origin; registering the approvals retires the
-// bar's and the card's "answering … is under development" stand-ins once the
+// answer frames on the answer origin, registered as the approvals once the
 // first answer-surface port is known), the composer (it takes over the
 // panel's note; after initChatStream), the Stop control on the bar and the
 // panel (control frames, after initAsks), and the turn actions — Restore

@@ -20,6 +20,7 @@
 // alike; this module only chooses how the phone's tab, badge and lines say it.
 // No document, window, storage or timer, and no clock: `now` is passed in.
 import { atLeast, uiState } from './chat-present.js';
+import { elicitationLine } from './prompts-mod.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,7 @@ function labelOf(s, elsewhere) {
       const kind = s.ask && s.ask.kind;
       if (kind === 'permission') return `Claude needs you${where}: permission prompt`;
       if (kind === 'plan') return `Claude needs you${where}: plan approval`;
+      if (kind === 'elicitation') return `Claude needs you${where}: ${elicitationLine(s.ask)}`;
       return `Claude needs you${where} — answer in the terminal`;
     }
     case 'offline':

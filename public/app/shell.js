@@ -377,8 +377,8 @@ async function buildPalette(q) {
     // are pointer-only.
     { kind: 'command', label: 'Reset the chat window', run: resetChatWindow },
     // The first chip in the status bar: its own trigger, so the row opens what
-    // a click would — the "Under development" note today, the first non-empty
-    // tray once the trays own the chips. Listed only while there is one.
+    // a click would — the trays' first non-empty tray. Listed only while there
+    // is one.
     ...(firstChip() ? [{ kind: 'command', label: 'Background tasks', run: () => { const b = firstChip(); if (b) b.click(); } }] : []),
     ...(remote ? [] : [{ kind: 'command', label: 'Set up remote access…', run: openRemoteSetup }]),
   ];

@@ -1,6 +1,7 @@
 // The chat mirror's desktop status bar (public/app/chat-bar.js), through the real
 // shell (test-support/chrome-shell.js): design spec §7.5, §7.1's collisions and
-// §7.4's inks, and the maintainer's under-development stand-ins (2026-10-02).
+// §7.4's inks, and the fallbacks left once the stand-ins of the maintainer's
+// 2026-10-02 ruling went (U116, tranche 7).
 //
 //   * The bar says what chat-present's uiState says about the store, and only
 //     that: the step's text and meta, its title the whole line, data-cs-state
@@ -13,15 +14,16 @@
 //     closing the graph overlay first; Answer › and Review › open the chat on
 //     the wait; an answer frame mounts into #cs-act; another conversation
 //     waiting gets a chip that follows it; #cs-stop stays empty.
-//   * Each stand-in renders with nothing registered and goes by itself when its
-//     seam registers: the step's note (registerChatView), the five muted chips
-//     (claimChips) and the act area's terminal note (registerApprovals).
+//   * The fallbacks, with nothing registered, say only what is true: with no
+//     chat view the step is a plain, disabled label that opens nothing; with
+//     no answer frame a wait reads "Answer in the terminal" and no hint; and
+//     the bar never writes #cs-chips, which is the trays' (claimChips).
 //   * Collisions: the graph overlay is inset by --cs-bar-h, the service-trust
 //     cards clear it, shell.js never makes the bar inert, and below 760px the
 //     bar is hidden by app.css alone.
 //
 // main.js starts the store and the bar, and (tranche 2) registers the dock: the
-// boot's init restarts the bar to own its ticker. The stand-in cases are about
+// boot's init restarts the bar to own its ticker. The fallback cases are about
 // the bar with NO chat view registered, so the first of them takes the dock's
 // registration off (noChatView, below) after one case has proved the step
 // against the real, registered dock.
@@ -50,12 +52,6 @@ const sec = (n) => n * 1000;
 const min = (n) => n * 60000;
 const ZERO = { shells: 0, agents: 0, workflows: 0, monitors: 0 };
 
-const LINES = {
-  chat: 'Talking to Claude from this page lands in a later 0.8.5 build; for now the bar shows what Claude is doing.',
-  tasks: 'Background shells, agents, workflows and monitors show here in a later 0.8.5 build.',
-  queue: 'Messages queued for Claude show here in a later 0.8.5 build.',
-};
-const CATS = ['shells', 'agents', 'workflows', 'monitors', 'queue'];
 
 // ── public/app.css, read as the browser would cascade it ─────────────────────
 
@@ -156,14 +152,9 @@ const text = () => $('cs-step-text').textContent;
 const meta = () => $('cs-step-meta').textContent;
 const state = () => $('chat-statusbar').getAttribute('data-cs-state');
 const pace = () => $('chat-statusbar').getAttribute('data-cs-pace');
-const note = () => {
-  const el = $('cs-tray');
-  return el && el.classList.contains('cs-dev') ? el : null;
-};
-const noteShown = () => !!note() && !note().classList.contains('hidden');
-const noteLine = () => note().querySelector('.cs-dev-line').textContent;
-const chips = () => [...$('cs-chips').querySelectorAll('.cs-devchip')];
-const chip = (cat) => chips().find((c) => c.dataset.csCat === cat);
+// What the stand-ins were (U116 removed them): their chips and their note.
+const devChips = () => [...$('cs-chips').querySelectorAll('.cs-devchip')];
+const devNote = () => doc.querySelector('.cs-dev');
 const act = () => $('cs-act');
 // Every chat:open from here on, with whether the graph still covered the page.
 function opens(t) {
@@ -232,11 +223,11 @@ before(async () => {
       // Once main.js starts the bar itself, it is running already: this file
       // wants a ticker of its own, counted from its start.
       bar.stopBar();
-      // main.js also starts the trays (tranche 3), whose claimChips() takes the
-      // five stand-in chips and the note's #cs-tray at boot. This file is about
-      // the bar and its stand-ins, so it takes the trays off: stopTrays() calls
-      // claimChips' release(), and the stand-ins are back as they stood before
-      // the trays (the trays' own takeover: chat-trays.test.js, t3-e2e-chrome).
+      // main.js also starts the trays (tranche 3), whose claimChips() takes
+      // #cs-chips at boot and who build #cs-tray. This file is about the bar
+      // and its fallbacks, so it takes the trays off: stopTrays() empties
+      // #cs-chips, removes the tray and calls claimChips' release() (the trays'
+      // own takeover: chat-trays.test.js, t3-e2e-chrome).
       (await sh.importApp('chat-trays.js')).stopTrays();
       const known = new Set(sh.intervals().map((i) => i.id));
       bar.initChatBar();
@@ -420,7 +411,7 @@ test('main.js registers the dock at boot: the step controls #chat-dock, offers M
 
   shell.press(step());
   assert.deepEqual(seen, [{ view: 'chat', focus: 'composer', covered: false }], 'chat:open, to the composer');
-  assert.ok(!noteShown(), 'and no note');
+  assert.equal(doc.getElementById('cs-tray'), null, 'and no #cs-tray');
   await shell.tick();
   assert.ok(dock.isChatOpen(), 'the dock heard it and opened');
   assert.equal(step().getAttribute('aria-expanded'), 'true', 'the step says the chat is open');
@@ -429,56 +420,40 @@ test('main.js registers the dock at boot: the step controls #chat-dock, offers M
   assert.equal(seen.length, 1, 'and opens nothing');
 });
 
-/* ── stand-in (a): the step, before any chat view ──────────────────────────── */
+/* ── fallback (a): the step, with no chat view ─────────────────────────────── */
 
-test('stand-in: with no chat view the step is enabled and opens the "Under development" note', async (t) => {
+test('with no chat view the step is a plain label: disabled, it controls nothing, opens nothing and builds no #cs-tray', async (t) => {
   noChatView();
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
-  t.after(() => { if (noteShown()) shell.key('Escape'); });
   assert.equal(slots.chatViews().length, 0, 'precondition: no chat view');
-  assert.equal(step().hasAttribute('aria-disabled'), false, 'enabled (the 2026-10-02 ruling), never aria-disabled');
-  assert.equal(step().disabled, false);
-  assert.equal(step().getAttribute('aria-controls'), 'cs-tray', 'it controls the note');
-  assert.equal(step().getAttribute('aria-expanded'), 'false');
-  assert.equal(step().hasAttribute('aria-keyshortcuts'), false, 'no M to promise before there is a chat');
+  assert.equal(text(), 'Edit · app.css', 'it still says what Claude is doing');
+  assert.equal(step().title, 'Edit · app.css · 0:02');
+  assert.equal(step().disabled, true, 'disabled: there is no chat to open');
+  for (const a of ['aria-controls', 'aria-expanded', 'aria-keyshortcuts']) {
+    assert.equal(step().hasAttribute(a), false, `no ${a}: it controls and promises nothing`);
+  }
   const seen = opens(t);
 
   shell.press(step());
-  assert.ok(noteShown(), 'a click opens the note');
-  assert.ok(note().classList.contains('popover'), 'a shell .popover');
-  assert.equal(note().parentElement, $('stage'), 'among the panels, a child of #stage');
-  assert.equal(note().querySelector('.cs-dev-title').textContent, 'Under development');
-  assert.equal(noteLine(), LINES.chat);
-  assert.equal(note().dataset.csAnchor, 'step', 'above the step');
-  assert.equal(step().getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(seen, [], 'and no chat:open: there is no chat to open');
-
-  shell.press(step());
-  assert.ok(!noteShown(), 'the step again closes it');
-  assert.equal(step().getAttribute('aria-expanded'), 'false');
-
-  shell.press(step());
-  shell.key('Escape');
-  assert.ok(!noteShown(), 'Esc closes it');
-  assert.equal(step().getAttribute('aria-expanded'), 'false');
-
-  shell.press(step());
-  assert.ok(noteShown());
-  shell.press($('main'));
-  assert.ok(!noteShown(), 'an outside click closes it');
-  assert.equal(step().getAttribute('aria-expanded'), 'false');
+  shell.click(step());
+  step().click();
+  await shell.tick();
+  assert.deepEqual(seen, [], 'no chat:open: there is no chat to open');
+  assert.equal(doc.getElementById('cs-tray'), null, 'and no #cs-tray: the bar builds none');
+  assert.equal(devNote(), null, 'and no note');
+  tickAt(sec(1));
+  assert.equal(step().disabled, true, 'a tick leaves it a label');
 });
 
-test('stand-in replaced: once a chat view registers, the step opens the chat and the note goes', async (t) => {
+test('once a chat view registers, the label becomes the step that opens the chat', async (t) => {
   noChatView();
   await quietly(live('idle', { last_turn: { id: 't3', outcome: 'done', ended_at: T - min(3), reply_preview: 'Done.' } }));
-  shell.press(step());
-  assert.ok(noteShown(), 'precondition: the note is open');
+  assert.equal(step().disabled, true, 'precondition: the step is a plain label');
   const seen = opens(t);
 
   const { view, reg } = fakeView(t);
   tickAt();   // no event says a view registered: the next tick sees the seam move, and redraws
-  assert.ok(!noteShown(), 'the note goes by itself when the chat registers');
+  assert.equal(step().disabled, false, 'enabled by itself when the chat registers');
   assert.equal(step().getAttribute('aria-controls'), 'chat-dock');
   assert.equal(step().getAttribute('aria-expanded'), 'false');
   assert.equal(step().getAttribute('aria-keyshortcuts'), 'M');
@@ -486,7 +461,7 @@ test('stand-in replaced: once a chat view registers, the step opens the chat and
 
   shell.press(step());
   assert.deepEqual(seen, [{ view: 'chat', focus: 'composer', covered: false }], 'chat:open, to the composer');
-  assert.ok(!noteShown(), 'and no note');
+  assert.equal(doc.getElementById('cs-tray'), null, 'and no #cs-tray');
 
   view.open = true;
   reg.changed();   // the registry announces the posture, and the bar hears it
@@ -495,6 +470,11 @@ test('stand-in replaced: once a chat view registers, the step opens the chat and
   shell.press(step());
   assert.equal(view.closes, 1, 'with the chat open, the step closes it');
   assert.equal(seen.length, 1, 'and opens nothing');
+
+  reg.unregister();
+  tickAt();
+  assert.equal(step().disabled, true, 'the view gone, the step is a label again');
+  for (const a of ['aria-controls', 'aria-expanded', 'aria-keyshortcuts']) assert.equal(step().hasAttribute(a), false, a);
 });
 
 test('with a chat view, the step closes the graph overlay first; a chat it covered is shown, not shut', async (t) => {
@@ -518,102 +498,65 @@ test('with a chat view, the step closes the graph overlay first; a chat it cover
   assert.equal(seen.length, 2, 'it is opened, which shows it');
 });
 
-test('a stand-in closes the graph overlay first: its note, on the panels\' rung, would open under the graph', async (t) => {
+test('with no chat view the step opens nothing over the graph either: the overlay stays', async (t) => {
   noChatView();
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
-  assert.equal(slots.chatViews().length, 0, 'precondition: no chat view, so the step is a stand-in');
-  t.after(() => {
-    if (gv.isOverlayOpen()) gv.closeOverlay();
-    if (noteShown()) shell.key('Escape');
-  });
-  for (const [what, el, line] of [['the step', step, LINES.chat], ['a chip', () => chip('monitors'), LINES.tasks]]) {
-    await gv.openOverlay();
-    assert.ok(gv.isOverlayOpen(), `${what}: precondition: the graph is open`);
-    shell.press(el());
-    assert.ok(!gv.isOverlayOpen(), `${what}: the graph closed`);
-    assert.ok(noteShown(), `${what}: and the note shows, in sight`);
-    assert.equal(noteLine(), line, `${what}: with its own line`);
-    assert.equal(el().getAttribute('aria-expanded'), 'true');
-    assert.equal(doc.activeElement, el(), `${what}: focus stays on it, not handed back to where the graph took it from`);
-  }
+  assert.equal(slots.chatViews().length, 0, 'precondition: no chat view, so the step is a label');
+  t.after(() => { if (gv.isOverlayOpen()) gv.closeOverlay(); });
+  const seen = opens(t);
+  await gv.openOverlay();
+  assert.ok(gv.isOverlayOpen(), 'precondition: the graph is open');
+  shell.click(step());
+  assert.ok(gv.isOverlayOpen(), 'the label closes nothing: there is nothing it would open');
+  assert.deepEqual(seen, []);
+  assert.equal(devNote(), null);
 });
 
-test('the note is the one panel open: a stand-in pressed from the keyboard closes the panel already showing', async (t) => {
+test('with no chat view the step closes no panel already showing: it opens none to replace it', async (t) => {
   noChatView();
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
-  assert.equal(slots.chatViews().length, 0, 'precondition: the step is a stand-in');
+  assert.equal(slots.chatViews().length, 0, 'precondition: the step is a label');
   t.after(() => { shell.key('Escape'); });
-  // Enter or Space on a focused stand-in is a click with no pointerdown before
-  // it, so the shell's dismiss layer never runs: the note must close the rest.
-  const queueChip = chip('queue');
-  queueChip.focus();
-  shell.key('?', { target: queueChip });   // the shortcut legend, summoned with the chip still focused
-  assert.ok(!$('key-legend').classList.contains('hidden'), 'precondition: ? opened the shortcut legend');
-  shell.click(queueChip);
-  assert.ok(noteShown(), 'the chip opened its note');
-  assert.equal(noteLine(), LINES.queue);
-  assert.ok($('key-legend').classList.contains('hidden'), 'and the legend closed');
-
-  shell.key('Escape');
-  assert.ok(!noteShown(), 'precondition: Esc closed the note');
   shell.press($('btn-more'));
   assert.ok(!$('more-menu').classList.contains('hidden'), 'precondition: the More menu is open');
-  shell.click(step());
-  assert.ok(noteShown(), 'the step opened its note');
-  assert.equal(noteLine(), LINES.chat);
-  assert.ok($('more-menu').classList.contains('hidden'), 'and the More menu closed');
-  assert.equal($('btn-more').getAttribute('aria-expanded'), 'false', 'its trigger says so');
+  shell.click(step());   // a click with no pointerdown before it: the shell's dismiss layer never runs
+  assert.ok(!$('more-menu').classList.contains('hidden'), 'the More menu stays open');
+  assert.equal($('btn-more').getAttribute('aria-expanded'), 'true', 'and its trigger says so');
+  assert.equal(doc.getElementById('cs-tray'), null, 'no #cs-tray');
 });
 
-/* ── stand-in (b): the chips, before the trays ─────────────────────────────── */
+/* ── fallback (b): #cs-chips is the trays' ──────────────────────────────────── */
 
-test('stand-in: five muted chips with no count and no pulse, each opening the note with its own line', async (t) => {
-  await show({ conversations: [conversation('c1', live('working', { step: { kind: 'Edit', label: 'Edit · app.css' } }),
-    { counts: { shells: 2, agents: 1, workflows: 1, monitors: 2 } })] });
-  t.after(() => { if (noteShown()) shell.key('Escape'); });
-  assert.deepEqual(chips().map((c) => c.dataset.csCat), CATS, 'shells, agents, workflows, monitors, queue: all five');
-  for (const c of chips()) {
-    const cat = c.dataset.csCat;
-    assert.equal(c.textContent, cat, `${cat}: its name and nothing else, never a count`);
-    assert.equal(c.getAttribute('aria-controls'), 'cs-tray');
-    assert.equal(c.getAttribute('aria-label'), `${cat}: under development`);
-    assert.equal(c.querySelector('.cs-dot'), null, `${cat}: no state dot`);
+test('the bar writes nothing into #cs-chips in any state: no .cs-devchip, and an empty row app.css hides', async (t) => {
+  t.after(() => S.followConversation(null));
+  const states = [
+    ['working, with counts', { conversations: [conversation('c1', live('working', { step: { kind: 'Edit', label: 'Edit · app.css' } }),
+      { counts: { shells: 2, agents: 1, workflows: 1, monitors: 2 } })] }],
+    ['a question', one(live('question', { waiting: { kind: 'question', summary: 'Which width?', ask_id: 'ask-c1' } }))],
+    ['a permission', one(live('waiting', { waiting: { kind: 'permission', tool: 'Bash', summary: 'Bash(ls)', ask_id: 'ask-c2' } }))],
+    ['idle', one(live('idle'))],
+    ['suspended', one(live('suspended'))],
+  ];
+  for (const [what, over] of states) {
+    await show(over);
+    tickAt(sec(1));
+    assert.deepEqual(devChips(), [], `${what}: no stand-in chip`);
+    assert.equal($('cs-chips').childNodes.length, 0, `${what}: #cs-chips is empty, the trays' to fill`);
   }
-  for (const sel of ['.cs-devchip', '.cs-devchip-dot']) {
-    for (const r of rulesFor(sel)) assert.equal(decl(r.body, 'animation'), null, `${sel}: still, nothing pulses`);
-  }
-
-  for (const cat of CATS) {
-    shell.press(chip(cat));
-    assert.ok(noteShown(), `${cat} opens the note`);
-    assert.equal(noteLine(), cat === 'queue' ? LINES.queue : LINES.tasks, `${cat}: its own line`);
-    assert.equal(note().dataset.csAnchor, 'chips', 'above the chips');
-    assert.deepEqual(chips().map((c) => c.getAttribute('aria-expanded')), CATS.map((c) => String(c === cat)),
-      `aria-expanded on ${cat} alone`);
-  }
-  shell.press(chip('queue'));
-  assert.ok(!noteShown(), 'the same chip again closes it');
-  shell.press(chip('shells'));
   shell.press(step());
-  assert.ok(noteShown(), 'the step swaps the note to its own line');
-  assert.equal(noteLine(), LINES.chat);
-  assert.equal(note().dataset.csAnchor, 'step');
-  assert.equal(chip('shells').getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(devChips(), [], 'a click on the step brings none');
+  // Empty, the row and its divider take no room; no rule styles a stand-in chip.
+  assert.ok(rulesWhere((sels) => sels.includes('.cs-chips:empty')).some((r) => decl(r.body, 'display') === 'none'));
+  assert.deepEqual(rulesWhere((sels) => sels.some((x) => /\.cs-devchip/.test(x))), []);
 });
 
-test('stand-in replaced: the trays\' claimChips() takes the chips away at once, and they stay away', async (t) => {
+test('claimChips(): the bar never writes #cs-chips, claimed or released, and a tray chip\'s state is the trays\' alone', async (t) => {
   await show(one(live('working')));
-  shell.press(chip('agents'));
-  assert.ok(noteShown(), 'precondition: a chip\'s note is open');
-
   const release = bar.claimChips();
   let released = false;
   t.after(() => { if (!released) release(); });
-  assert.deepEqual(chips(), [], 'the stand-ins went at once');
-  assert.ok(!noteShown(), 'and so did the note one of them opened');
 
-  // A tray chip as the trays render one (spec §7.6): it shares the stand-ins'
-  // aria-controls, and its aria-expanded is the trays' alone.
+  // A tray chip as the trays render one (spec §7.6): its aria-expanded is the trays' alone.
   const trays = doc.createElement('button');
   trays.className = 'test-tray-chip';
   trays.setAttribute('aria-controls', 'cs-tray');
@@ -622,30 +565,25 @@ test('stand-in replaced: the trays\' claimChips() takes the chips away at once, 
   $('cs-chips').append(trays);
   await update(live('idle'));
   tickAt();
-  assert.deepEqual(chips(), [], 'no render brings them back');
   assert.deepEqual([...$('cs-chips').children], [trays], '#cs-chips is the trays\' to fill');
   assert.equal(trays.getAttribute('aria-expanded'), 'true', 'a frame and a tick leave the tray chip\'s aria-expanded alone');
   shell.press(step());
-  assert.ok(noteShown(), 'precondition: the step, still a stand-in, opened its note');
-  assert.equal(trays.getAttribute('aria-expanded'), 'true', 'so does the note opening');
-  shell.press(step());
-  assert.ok(!noteShown());
-  assert.equal(trays.getAttribute('aria-expanded'), 'true', 'and the note closing');
-  assert.equal(step().getAttribute('aria-expanded'), 'false', 'while the step\'s own follows its note');
+  assert.equal(trays.getAttribute('aria-expanded'), 'true', 'and so does a click on the step');
 
   trays.remove();
   release();
   released = true;
+  release();   // a second call does nothing
   await shell.tick();
-  assert.deepEqual(chips().map((c) => c.dataset.csCat), CATS, 'released, the stand-ins come back');
+  tickAt();
+  assert.equal($('cs-chips').childNodes.length, 0, 'released, the bar puts nothing back: #cs-chips stays empty');
+  assert.deepEqual(devChips(), []);
 });
 
 test('once the trays own #cs-tray and #cs-chips, the bar builds no second tray and never writes a tray chip\'s state', async (t) => {
   await show(one(live('working', { step: { kind: 'Edit', label: 'Edit · app.css', started_at: T - sec(2) } })));
   fakeView(t);
-  // The trays' own tray, static in its host (spec §7.6), stands where the note
-  // stood: a page with the trays never has the note.
-  if (note()) note().remove();
+  // The trays' own tray, static in its host (spec §7.6).
   const tray = doc.createElement('div');
   tray.id = 'cs-tray';
   tray.className = 'popover cs-tray';   // open
@@ -673,52 +611,43 @@ test('once the trays own #cs-tray and #cs-chips, the bar builds no second tray a
   assert.equal(meta(), '0:02', 'precondition: the tick redrew the running clock');
   assert.equal(trayChip.getAttribute('aria-expanded'), 'true', 'and so does every tick');
   assert.equal(doc.querySelectorAll('[id="cs-tray"]').length, 1, 'one #cs-tray, the trays\': the bar builds no second');
-  assert.equal(note(), null, 'and no note');
+  assert.equal(devNote(), null, 'and no note');
 });
 
-/* ── stand-in (c): the act area, before the answer frames ──────────────────── */
+/* ── fallback (c): the act area, with no answer frame ──────────────────────── */
 
-test('stand-in: a waiting question, permission or plan reads "Answer in the terminal" with no answer frame', async () => {
+test('with no answer frame, a waiting question, permission, plan or MCP form reads "Answer in the terminal" and no hint', async () => {
+  const elicit = { id: 'ask-e1', conversation_id: 'c1', kind: 'elicitation', tool_name: 'github', tool_kind: 'elicitation',
+    state: 'pending', answerable: true, created_at: T - sec(1), version: 1, source: 'ask' };
   const kinds = [
-    ['question', live('question', { waiting: { kind: 'question', summary: 'Which width?', ask_id: 'ask-q1' } })],
-    ['permission', live('waiting', { waiting: { kind: 'permission', tool: 'Bash', summary: 'Bash(npm run build)', ask_id: 'ask-p1' } })],
-    ['plan', live('waiting', { waiting: { kind: 'plan', ask_id: 'ask-plan1' } })],
+    ['question', one(live('question', { waiting: { kind: 'question', summary: 'Which width?', ask_id: 'ask-q1' } }))],
+    ['permission', one(live('waiting', { waiting: { kind: 'permission', tool: 'Bash', summary: 'Bash(npm run build)', ask_id: 'ask-p1' } }))],
+    ['plan', one(live('waiting', { waiting: { kind: 'plan', ask_id: 'ask-plan1' } }))],
+    ['an MCP form', { ...one(live('working')), asks: [elicit] }],
   ];
   assert.equal(slots.approvals(), null, 'precondition: no answer frames');
-  for (const [kind, l] of kinds) {
-    await show(one(l));
+  assert.equal(slots.chatViews().length, 0, 'precondition: no chat view, so no Answer › or Review ›');
+  for (const [kind, over] of kinds) {
+    await show(over);
     assert.equal(act().querySelector('.cs-act-note').textContent, 'Answer in the terminal', `${kind}: the note`);
-    const hint = act().querySelector('.cs-act-hint');
-    assert.equal(hint.textContent, 'answering from the browser is under development', `${kind}: and its muted hint`);
-    // One sentence in two halves: the lead may give way on a short row, the
-    // tail never does (app.css, the next test).
-    assert.deepEqual([...hint.children].map((el) => [el.className, el.textContent]), [
-      ['cs-act-hint-lead', 'answering from the browser is'], ['cs-act-hint-tail', 'under development']]);
-    assert.equal(hint.querySelector('.cs-act-hint-lead').title, 'Answering from the browser is under development',
-      `${kind}: a lead cut short carries the whole hint in its title`);
-    assert.equal(act().querySelector('.cs-act-note').title, 'Answering from the browser is under development');
+    assert.equal(act().textContent, 'Answer in the terminal', `${kind}: and nothing else, no hint`);
+    assert.equal(act().querySelector('.cs-act-hint'), null, `${kind}: no hint element`);
     assert.equal(act().querySelector('button'), null, `${kind}: no button, with no chat to open`);
   }
+  assert.equal(text(), 'MCP input · github', 'the step names the MCP form as the phone tab does');
   await show(one(live('working')));
   assert.equal(act().childNodes.length, 0, 'nothing waits: the act area is empty');
 });
 
-test('stand-in: "under development" shows at every width the bar is drawn at, and the hint\'s lead gives way first', () => {
-  // jsdom lays nothing out, so this reads the cascade. The hint draws no box,
-  // so its halves are flex items of the bar's own row (as the act area's are):
+test('the act area\'s note shows at every width the bar is drawn at, and no rule styles a hint', () => {
+  // jsdom lays nothing out, so this reads the cascade. The act area draws no
+  // box, so what it holds are flex items of the bar's own row, never shrunk:
   assert.equal(decl(rulesFor('.cs-act').find((r) => !r.media).body, 'display'), 'contents');
-  assert.equal(decl(rulesFor('.cs-act-hint').find((r) => !r.media).body, 'display'), 'contents');
-  // "under development" never shrinks…
-  assert.equal(decl(rulesFor('.cs-act-hint-tail').find((r) => !r.media).body, 'flex'), 'none');
-  // …while the lead has only the room the rest leave free, to its ellipsis.
-  const lead = rulesFor('.cs-act-hint-lead').find((r) => !r.media).body;
-  assert.equal(decl(lead, 'flex'), '1000 1 0', 'a zero basis: it takes free room, never the step\'s');
-  assert.equal(decl(lead, 'min-width'), '0');
-  assert.equal(decl(lead, 'text-overflow'), 'ellipsis');
-  // And no rule, at any width, hides the note, the hint or its last words: only
-  // the bar's own display:none below 760px does (the test below).
-  const words = rulesWhere((sels) => sels.some((s) => /\.cs-act-(note|hint|hint-tail)(?![\w-])/.test(s)));
-  assert.ok(words.length >= 3, 'the rules for the note, the hint and its tail were found');
+  assert.equal(decl(rulesFor('.cs-act > *').find((r) => !r.media).body, 'flex'), 'none');
+  // No rule, at any width, hides the note: only the bar's own display:none
+  // below 760px does (the test below).
+  const words = rulesWhere((sels) => sels.some((x) => /\.cs-act-note(?![\w-])/.test(x)));
+  assert.ok(words.length >= 1, 'the note\'s rule was found');
   for (const r of words) {
     const where = `${r.selectors.join(', ')}${r.media ? ` in ${r.media}` : ''}`;
     assert.notEqual(decl(r.body, 'display'), 'none', `${where}: never display: none`);
@@ -726,9 +655,10 @@ test('stand-in: "under development" shows at every width the bar is drawn at, an
     assert.equal(decl(r.body, 'max-width'), null, `${where}: never capped`);
     assert.equal(decl(r.body, 'overflow'), null, `${where}: never clipped`);
   }
+  assert.deepEqual(rulesWhere((sels) => sels.some((x) => /\.cs-act-hint/.test(x))), [], 'the hint is gone, and its rules');
 });
 
-test('stand-in replaced: once an answer frame registers, the terminal note goes and the frame mounts', async (t) => {
+test('once an answer frame registers, the terminal note goes and the frame mounts', async (t) => {
   await show(one(live('suspended')));
   restartBar();
   await show({
@@ -738,7 +668,7 @@ test('stand-in replaced: once an answer frame registers, the terminal note goes 
     asks: [{ id: 'ask-ok', conversation_id: 'c1', kind: 'permission', tool_name: 'Bash', state: 'pending',
       answerable: true, created_at: T - sec(1) }],
   });
-  assert.ok(act().querySelector('.cs-act-note'), 'precondition: the stand-in is up');
+  assert.ok(act().querySelector('.cs-act-note'), 'precondition: the terminal note is up');
   assert.equal(text(), 'Permission · Bash(rm -rf dist)', 'and the step shows the whole request');
 
   const calls = fakeApprovals(t);
@@ -905,8 +835,8 @@ test('below 760px the bar is hidden by app.css alone', () => {
   assert.equal(decl(wide[0].body, 'display'), 'flex');
   const hiding = rules.filter((r) => decl(r.body, 'display') === 'none');
   assert.deepEqual(hiding.map((r) => r.media), ['@media (max-width: 759px)'], 'hidden at the one narrow breakpoint, and only there');
-  assert.ok(rulesFor('.popover.cs-dev').some((r) => r.media === '@media (max-width: 759px)' && decl(r.body, 'display') === 'none'),
-    'and its note with it');
+  assert.deepEqual(rulesWhere((sels) => sels.some((x) => /\.cs-dev(?![\w])/.test(x))), [],
+    'and no rule styles a note of the bar\'s: it has none');
   assert.doesNotMatch(codeOf('public/app/chat-bar.js'), /matchMedia|innerWidth|clientWidth|isPhone|isNarrow|viewport/,
     'chat-bar.js never asks the width');
 });

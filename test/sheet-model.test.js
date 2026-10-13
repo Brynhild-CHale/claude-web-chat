@@ -12,7 +12,8 @@
 // (N2); the Tasks root from categories()'s phone lines over the Final's fixture
 // (test-support/final-fixture.js), with the one running count (deviation 19);
 // the keyboard's inset and frame; and that the module is DOM-free, timer-free
-// and clock-free, importing only chat-present.js.
+// and clock-free, importing only chat-present.js and, for the MCP form's one
+// wording, prompts-mod.js.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -50,10 +51,11 @@ const look = (m) => M.tabLook(m, { now: NOW });
 
 // ── the module ───────────────────────────────────────────────────────────────
 
-test('the sheet model is DOM-free, timer-free and clock-free, and imports only chat-present.js', () => {
+test('the sheet model is DOM-free, timer-free and clock-free, and imports only chat-present.js and prompts-mod.js', () => {
   const src = fs.readFileSync(path.join(APP, 'sheet-model.js'), 'utf8');
   const imports = [...src.matchAll(/^\s*import\b[^;]*?from\s*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
-  assert.deepEqual(imports, ['./chat-present.js']);
+  // prompts-mod.js for elicitationLine alone: the bar's and the tab's MCP form wording is one.
+  assert.deepEqual(imports, ['./chat-present.js', './prompts-mod.js']);
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   assert.doesNotMatch(code,
     /\bdocument\b|\bwindow\b|\blocalStorage\b|\bsessionStorage\b|\bsetTimeout\b|\bsetInterval\b|\brequestAnimationFrame\b/);
@@ -318,6 +320,25 @@ test('tabLook: another session waiting outranks a followed idle one, "in another
   assert.equal(q.label, 'Claude has a question in another session — open the chat');
   const other = look(storeWith([['c1', { state: 'idle' }], ['c2', { state: 'waiting', waiting: { kind: 'other' } }]]));
   assert.equal(other.label, 'Claude needs you in another session — answer in the terminal');
+});
+
+test('tabLook: an MCP server\'s form the page can answer names it as the bar does, here or in another session', () => {
+  const elicit = (cid, tool_name) => ({ id: `ask_00e1${cid}0001`, conversation_id: cid, kind: 'elicitation', tool_name,
+    tool_kind: 'elicitation', state: 'pending', answerable: true, created_at: NOW - sec(1), version: 1, source: 'ask' });
+  const withAsks = (lives, asks) => {
+    const b = body(lives.map(([id, live]) => conv(id, live)));
+    b.asks = asks;
+    return storeOf(b, S);
+  };
+  const here = withAsks([['c1', { state: 'working', step: { kind: 'Bash', label: 'Bash · gh' } }]], [elicit('c1', 'github')]);
+  const t = look(here);
+  assert.equal(t.state, 'waiting');
+  assert.equal(t.word, 'NEEDS YOU');
+  assert.equal(t.label, 'Claude needs you: MCP input · github');
+  assert.equal(t.label, `Claude needs you: ${P.uiState(here, { now: NOW }).head}`, 'the bar\'s words, the same line');
+  const there = look(withAsks([['c1', { state: 'idle' }], ['c2', { state: 'working' }]], [elicit('c2', 'github')]));
+  assert.equal(there.conversationId, 'c2');
+  assert.equal(there.label, 'Claude needs you in another session: MCP input · github');
 });
 
 test('tabLook: another conversation working while the followed one is idle reads working (D2)', () => {

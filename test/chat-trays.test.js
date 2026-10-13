@@ -1,9 +1,9 @@
 // The status bar's chips and their tray (public/app/chat-trays.js), through the
 // real shell (test-support/chrome-shell.js): design spec §7.6.
 //
-//   * initChatTrays() takes #cs-chips over from the bar's stand-ins (chat-bar.js
-//     claimChips) and replaces the bar's "Under development" note with the one
-//     #cs-tray, inside index.html's tray host.
+//   * initChatTrays() takes #cs-chips over from the bar (chat-bar.js
+//     claimChips), which leaves it empty, and builds the one #cs-tray, inside
+//     index.html's tray host.
 //   * The chips are chat-present.js's categories(), in its order, and nothing
 //     else; below `read` they are counts only and open nothing.
 //   * The tray is a .popover: the shell's dismiss layer closes it, and never the
@@ -87,13 +87,15 @@ before(async () => {
       const bar = await sh.importApp('chat-bar.js');
       void bar;
       // main.js starts the trays (tranche 3): they come off first — stopTrays()
-      // calls claimChips' release(), so the bar's stand-ins are back — and the
-      // takeover below is this file's own, as it was before main.js ran it.
+      // empties #cs-chips and calls claimChips' release(), and the bar puts
+      // nothing back — and the takeover below is this file's own, as it was
+      // before main.js ran it.
       (await sh.importApp('chat-trays.js')).stopTrays();
       await sh.tick();
       before_ = {
-        chips: [...sh.$('cs-chips').querySelectorAll('.cs-devchip')].map((b) => b.dataset.csCat),
-        note: !!sh.document.querySelector('#cs-tray.cs-dev'),
+        chips: sh.$('cs-chips').childNodes.length,
+        devchips: sh.$('cs-chips').querySelectorAll('.cs-devchip').length,
+        trays: sh.document.querySelectorAll('[id="cs-tray"]').length,
       };
       trays = await sh.importApp('chat-trays.js');
       const known = new Set(sh.intervals().map((i) => i.id));
@@ -120,10 +122,12 @@ afterEach(() => {
 
 /* ── the takeover ─────────────────────────────────────────────────────────── */
 
-test('before initChatTrays the bar holds its five stand-ins and its note; after it, the chips are the categories', () => {
-  assert.deepEqual(before_.chips, ['shells', 'agents', 'workflows', 'monitors', 'queue'], 'the stand-ins were there');
-  assert.ok(before_.note, 'and the bar had built its Under development note as #cs-tray');
-  assert.equal($('cs-chips').querySelectorAll('.cs-devchip').length, 0, 'no stand-in is left');
+test('before initChatTrays #cs-chips is empty and there is no #cs-tray; after it, the chips are the categories', () => {
+  assert.equal(before_.chips, 0, 'the bar left #cs-chips empty: nothing stands in for the chips');
+  assert.equal(before_.devchips, 0, 'no stand-in chip');
+  assert.equal(before_.trays, 0, 'and no #cs-tray: the bar builds no note');
+  assert.equal($('cs-chips').querySelectorAll('.cs-devchip').length, 0, 'no stand-in after either');
+  assert.equal(shell.document.querySelector('.cs-dev'), null, 'and no note');
   assert.deepEqual(labels(), ['2 shells', 'agents · 1 done', 'queue 1'], 'categories() labels, in its order');
   const want = P.categories(S.mirror, Q.queueSnapshot(), { now: S.serverNow() }).map((e) => e.cat);
   assert.deepEqual(chips().map((c) => c.dataset.csCat), want, 'one chip per category categories() returns');
@@ -412,20 +416,27 @@ test('the U46 CSS sits under its own marker, with the tray\'s geometry on the pa
 
 /* ── stopping ─────────────────────────────────────────────────────────────── */
 
-test('stopTrays() gives #cs-chips back to the bar, removes the tray and leaves no interval', async () => {
+test('stopTrays() gives #cs-chips back to the bar, empty, removes the tray and leaves no interval', async () => {
   const known = new Set(shell.intervals().map((i) => i.id));
   shell.press(chip('shells'));
   assert.equal(trayTicker(known).length, 1);
   trays.stopTrays();
   assert.equal(trayTicker(known).length, 0, 'no ticker left');
   assert.equal(chips().length, 0, 'the trays\' chips are gone');
-  assert.equal(tray() && !tray().classList.contains('cs-dev') ? tray() : null, null, 'the trays\' #cs-tray is gone');
-  // release(): the bar paints its stand-ins again on its next frame.
-  await waitUntil(() => $('cs-chips').querySelectorAll('.cs-devchip').length === 5, { timeout: 2000 });
+  assert.equal(tray(), null, 'the trays\' #cs-tray is gone, and no other stands in its place');
+  // release(): the bar puts nothing back, on its next frame or after it.
+  await shell.tick();
+  await shell.tick();
+  assert.equal($('cs-chips').childNodes.length, 0, '#cs-chips stays empty');
+  assert.equal($('cs-chips').querySelectorAll('.cs-devchip').length, 0, 'no stand-in chip');
+  assert.equal(shell.document.getElementById('cs-tray'), null, 'and no #cs-tray');
+  // Empty, app.css hides it, and its divider with it.
+  assert.match(read('public/app.css'), /\.cs-chips:empty, \.cs-div:has\(\+ \.cs-chips:empty\) \{ display: none; \}/);
   trays.stopTrays();   // a second stop is harmless
-  // …and a fresh start takes them over again.
+  // …and a fresh start claims #cs-chips again.
   assert.ok(trays.initChatTrays());
   assert.equal($('cs-chips').querySelectorAll('.cs-devchip').length, 0);
   assert.deepEqual(labels(), ['2 shells', 'agents · 1 done', 'queue 1']);
   assert.equal(shell.document.querySelectorAll('#cs-tray').length, 1);
+  assert.ok(tray().classList.contains('cs-tray'), '#cs-tray is only ever the trays\' tray');
 });

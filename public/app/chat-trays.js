@@ -2,7 +2,7 @@
 // category of background work — shells, agents, workflows, monitors and the
 // queue — and one tray, a .popover over the bar, listing a category's rows.
 //
-//   initChatTrays()  takes #cs-chips over from the bar's stand-ins (chat-bar.js
+//   initChatTrays()  takes #cs-chips over from the bar (chat-bar.js
 //                    claimChips), builds #cs-tray, renders now and on every
 //                    `mirror` and `queue` bus event (one animation frame), and
 //                    answers `chat:tasks`; idempotent. → the tray element, or
@@ -157,7 +157,6 @@ function newChip() {
 
 function paintChips() {
   const have = new Map([...els.chips.querySelectorAll('.cs-chip')].map((b) => [b.dataset.csCat, b]));
-  for (const b of els.chips.querySelectorAll('.cs-devchip')) b.remove();   // a stand-in the bar left behind
   shown.forEach((entry, i) => {
     let b = have.get(entry.cat);
     have.delete(entry.cat);
@@ -366,10 +365,6 @@ export function initChatTrays() {
   const chips = document.getElementById('cs-chips');
   if (!chips) return null;
   release = claimChips();
-  for (const b of chips.querySelectorAll('.cs-devchip')) b.remove();
-  // The bar's "Under development" note borrowed this id; the tray replaces it.
-  const note = document.getElementById('cs-tray');
-  if (note && note.classList.contains('cs-dev')) note.remove();
   const stale = document.getElementById('cs-tray');
   if (stale) stale.remove();
   els = { chips, ...buildTray(document.getElementById('chat-statusbar')) };
