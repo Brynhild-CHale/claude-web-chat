@@ -3136,5 +3136,20 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 .ta-toast-text { font: 600 12px var(--wc-font); color: var(--wc-fg-bright); }
 
 /* ── U91 · the composer on the mod · composer-mod.js ── */
+/* The image tool sits beside Send (chat-composer registerComposerTool); the
+   chips' previews are the user's own File (an object URL), never the daemon's. */
+.cc-image-tool { display: inline-flex; flex: none; }
+.cc-image-tool[hidden] { display: none; }
+.cc-image {
+  flex: none; width: 28px; height: 28px; margin-bottom: 3px; padding: 0; cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: transparent;
+  font: 14px/1 var(--wc-font); color: var(--wc-muted); transition: border-color .15s, color .15s;
+}
+.cc-image:hover { border-color: var(--wc-accent); color: var(--wc-fg-bright); }
+.cc-image:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.cc-chip-thumb { flex: none; width: 16px; height: 16px; margin-right: 3px; border-radius: var(--wc-radius-sm); object-fit: cover; }
+.cc-root[data-variant="sheet"] .cc-image { width: 44px; height: 44px; margin-bottom: 0; font-size: 18px; }
+@media (prefers-reduced-motion: reduce) { .cc-image { transition: none; } }
+
 
 /* ── U93 · session controls on the mod · session-ops.js ── */
