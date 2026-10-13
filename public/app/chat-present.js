@@ -22,7 +22,7 @@
 import { ago } from './labels.js';
 import { atLeast, TASK_KEEP_MS } from './chat-state.js';
 
-export { ago };
+export { ago, atLeast };
 
 // ── time ─────────────────────────────────────────────────────────────────────
 

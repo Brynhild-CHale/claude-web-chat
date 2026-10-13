@@ -468,6 +468,31 @@ test('categoryLines: below read, counts only, and only the Queue is tappable', (
     'an unknown level shows counts only');
 });
 
+test('categoryLines: the level ladder is chat-state\'s, read through chat-present\'s atLeast', () => {
+  const { cats } = finalCats();
+  for (const level of ['read', 'full', 'local']) {
+    const { lines } = M.categoryLines(cats, { level });
+    assert.deepEqual(lines.map((l) => l.tappable), [true, true, true, true, true], `${level}: every line opens`);
+    assert.deepEqual(lines.map((l) => l.countsOnly), [false, false, false, false, false], `${level}: content, not counts`);
+    assert.equal(lines[0].line, 'npm run dev · npm test -- --watch', `${level}: the shells' line`);
+  }
+  for (const level of ['off', 'basic', 'admin', '', null, undefined]) {
+    const { lines } = M.categoryLines(cats, { level });
+    assert.deepEqual(lines.map((l) => l.countsOnly), [true, true, true, true, true], `${String(level)}: counts only`);
+    assert.deepEqual(lines.map((l) => l.tappable), [false, false, false, false, true], `${String(level)}: only the Queue opens`);
+  }
+  assert.equal(P.atLeast, S.atLeast, 'one atLeast, re-exported by chat-present');
+  assert.equal(S.atLeast('admin', 'read'), false, 'an unknown level fails closed on the ladder itself');
+  // One engine per concept: no copy of the ladder anywhere in public/app but chat-state.js.
+  const src = fs.readFileSync(path.join(APP, 'sheet-model.js'), 'utf8');
+  assert.match(src, /\batLeast\(level, 'read'\)/);
+  for (const f of fs.readdirSync(APP).filter((n) => n.endsWith('.js') && n !== 'chat-state.js')) {
+    const code = fs.readFileSync(path.join(APP, f), 'utf8');
+    assert.doesNotMatch(code, /\bCONTENT_LEVELS\b/, `${f}: no CONTENT_LEVELS`);
+    assert.doesNotMatch(code, /'read',\s*'full',\s*'local'|"read",\s*"full",\s*"local"/, `${f}: no copy of the ladder's top`);
+  }
+});
+
 test('categoryLines: the Queue line is always there', () => {
   const { mirrorBody } = finalFixture();
   const m = storeOf(mirrorBody, S);
