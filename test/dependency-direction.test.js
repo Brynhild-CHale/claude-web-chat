@@ -88,6 +88,10 @@ const BASELINE = {
   // foreground. Not a reach into another process; it is how that process boots.
   'lib/cli/commands/start.js => lib/server/index.js':
     'start runs the server in-process; this is the entry point, not a reach',
+  // The same process, one more of its parts: the foreground start arms the
+  // daemon it boots with its instance guard and owns the guard's way out (U106).
+  'lib/cli/commands/start.js => lib/server/instance-guard.js':
+    'start arms the daemon it boots with its instance guard; same process, not a reach',
 
   // doctor diagnoses a running daemon's turn lock and asks the MCP client where
   // the daemon is. Read-only introspection of state doctor exists to explain.
