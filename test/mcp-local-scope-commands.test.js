@@ -502,7 +502,7 @@ test('uninstall in a web-chat root that shares the repository\'s entry prints th
 
   const claude = fakeClaude();
   const out = capture();
-  try { await uninstall([], { cwd: b, runClaude: claude.fn, knownRoots: [] }); } finally { out.restore(); }
+  try { await uninstall([], { cwd: b, runClaude: claude.fn, knownRoots: [], scanPorts: [] }); } finally { out.restore(); }
   assert.deepEqual(claude.calls, []);
   assert.match(out.text(), /Claude Code \(local scope\) +kept — it is shared/);
   assert.match(out.text(), /to remove it anyway, run in .*: claude mcp remove web-chat --scope local/);

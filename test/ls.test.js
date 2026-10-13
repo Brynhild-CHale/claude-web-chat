@@ -259,25 +259,53 @@ test('--reap leaves an acknowledged-but-still-draining daemon alone rather than 
     'and its portfile is left where it is: the daemon removes it when it finishes');
 });
 
-// stop() answers `{ok:true, path:'none'}` for a root with no live portfile.
-// It is true that nothing was stopped, but it is not a stopped surface — the
-// daemon answered as this pid moments ago and is still up.
-test('--reap does not count a row it could not even ask as stopped', async (t) => {
+// A live row with no portfile (deleted with .web-chat/ under the daemon) used to
+// be skipped as 'no-portfile' and left running: stop() only knew how to address
+// the daemon a portfile names. It has just answered as this pid, so stopRow
+// stops it as a TARGET — the same acknowledged shutdown, then a wait on the pid
+// (lifecycle-bugs.md bug 1, U107). The stub answers for a bystander child's pid
+// and ends that child when it acknowledges, as a real daemon's exit would; its
+// own shutdown, not the reap, releases the registry entry.
+test('--reap stops a live row that has no portfile, through the acknowledged shutdown', async (t) => {
   resetRegistry();
   const root = project('r-noportfile');
-  const daemon = await stubDaemon(t, { root, pid: process.pid });
-  // No writePortfile: the record `stop` reads is missing.
-  registry.registerInstance({ root, port: daemon.port, pid: process.pid, title: 'noportfile' });
+  const innocent = bystander(t);
+  let shutdowns = 0;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, role: 'server', pid: innocent.pid }));
+    }
+    if (req.url === '/api/shutdown' && req.method === 'POST') {
+      shutdowns++;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      setTimeout(() => {
+        registry.deregisterInstance(root, { pid: innocent.pid });
+        innocent.kill('SIGKILL');
+      }, 20);
+      return;
+    }
+    res.writeHead(404); res.end('{}');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => server.close(r)));
+  const port = server.address().port;
+  // No writePortfile: the record `stop` used to need is missing.
+  registry.registerInstance({ root, port, pid: innocent.pid, title: 'noportfile' });
 
   const rows = await registry.rows({ timeoutMs: 300 });
   const log = sink();
-  const out = await reap(rows, { here: null, log, ackWaitMs: 600 });
+  const out = await reap(rows, { here: null, log, ackWaitMs: 3000 });
 
-  assert.equal(out.stopped, 0);
-  assert.deepEqual(out.skipped.map((s) => [s.row.title, s.reason]), [['noportfile', 'no-portfile']]);
-  assert.match(log.text(), /no portfile/);
-  assert.ok(registry.readAllEntries().some((e) => e.title === 'noportfile'),
-    'and the entry it left behind is still listed, so the next `ls` still shows it');
+  assert.equal(out.stopped, 1, log.text());
+  assert.deepEqual(out.skipped, []);
+  assert.equal(shutdowns, 1, 'it was ASKED — the path that writes draft.json');
+  assert.match(log.text(), /stopped cleanly/);
+  assert.doesNotMatch(log.text(), /SIGTERM/);
+  assert.equal(portfiles.isPidAlive(innocent.pid), false, 'the wait was on its pid, and it has gone');
+  assert.equal(registry.readAllEntries().some((e) => e.title === 'noportfile'), false,
+    "its registry entry is gone, released by the daemon's own shutdown");
 });
 
 test('--reap never touches the project you are standing in', async (t) => {

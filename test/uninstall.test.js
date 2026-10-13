@@ -45,7 +45,7 @@ test('uninstall removes every managed file, sidecars, baselines, and prunes empt
   }, null, 2));
 
   const claude = fakeClaude();
-  await uninstall([], { cwd: root, runClaude: claude.fn });
+  await uninstall([], { cwd: root, runClaude: claude.fn, scanPorts: [] });
   assert.deepEqual(claude.calls, [['mcp', 'remove', 'web-chat', '--scope', 'local']],
     'the local-scope registration doctor writes is undone too — otherwise Claude Code keeps spawning the MCP server');
   assert.deepEqual(claude.cwds, [root]);
@@ -105,7 +105,7 @@ test('a project whose .web-chat/ was deleted by hand is still uninstallable', as
   const prevLog = console.log;
   console.log = () => {};
   try {
-    await uninstall([], { cwd: root, runClaude: claude.fn });
+    await uninstall([], { cwd: root, runClaude: claude.fn, scanPorts: [] });
   } finally {
     console.log = prevLog;
   }
@@ -132,7 +132,7 @@ test('uninstall from a SUBDIRECTORY removes from the enclosing project root', as
   const prevLog = console.log;
   console.log = (...a) => lines.push(a.join(' '));
   try {
-    await uninstall([], { cwd: sub, runClaude: claude.fn });
+    await uninstall([], { cwd: sub, runClaude: claude.fn, scanPorts: [] });
   } finally {
     console.log = prevLog;
   }
@@ -163,7 +163,7 @@ test('uninstall strips our handlers and leaves someone else\'s alone', async () 
     },
   }, null, 2));
 
-  await uninstall([], { cwd: root, runClaude: fakeClaude().fn });
+  await uninstall([], { cwd: root, runClaude: fakeClaude().fn, scanPorts: [] });
 
   const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
   assert.equal(settings.hooks.Stop, undefined, 'the emptied event is dropped');
@@ -197,7 +197,7 @@ test('uninstall typed in $HOME removes a pre-0.8 home registration and keeps the
   const prevLog = console.log;
   console.log = (...a) => lines.push(a.join(' '));
   try {
-    await uninstall([], { cwd: home, runClaude: claude.fn });
+    await uninstall([], { cwd: home, runClaude: claude.fn, scanPorts: [] });
   } finally {
     console.log = prevLog;
   }
