@@ -237,6 +237,56 @@ test('stop with deps.target asks that daemon and waits on its pid; a port answer
   assert.equal(isPidAlive(innocent.pid), true);
 });
 
+// The target's fallback: a daemon that answers as its pid but will not
+// acknowledge the shutdown is signalled — and only while its port still answers
+// as that pid. The 500 is what a too-old or broken daemon gives the ask; `after`
+// is what /api/health says once the ask has been refused.
+async function refusingStub(t, health, after = health) {
+  let current = health;
+  const seen = { shutdowns: 0 };
+  const srv = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/health') return res.end(JSON.stringify(current));
+    if (req.url === '/api/shutdown' && req.method === 'POST') {
+      seen.shutdowns++;
+      current = after;
+      res.statusCode = 500;
+      return res.end('{}');
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  await new Promise((r) => srv.listen(0, LISTEN_HOST, r));
+  t.after(() => new Promise((r) => { srv.closeAllConnections?.(); srv.close(() => r()); }));
+  seen.port = srv.address().port;
+  return seen;
+}
+
+test('stop with deps.target falls back to SIGTERM for an unacknowledged ask only while the port still answers as that pid', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+
+  const deaf = bystander(t);
+  const d = await refusingStub(t, { ok: true, role: 'instance', pid: deaf.pid });
+  const log = sink();
+  const out = await stop([], { root, target: { pid: deaf.pid, port: d.port }, log, signalWaitMs: 3000 });
+  assert.equal(d.shutdowns, 1, 'it was asked first');
+  assert.equal(out.path, 'signal', log.text());
+  assert.equal(out.ok, true, log.text());
+  assert.match(log.text(), /falling back to SIGTERM/);
+  assert.equal(isPidAlive(deaf.pid), false, 'the signal reached the pid that answered for itself');
+
+  const innocent = bystander(t);
+  const swapped = await refusingStub(t, { ok: true, role: 'instance', pid: innocent.pid }, { ok: true, role: 'instance', pid: process.pid });
+  const log2 = sink();
+  const refused = await stop([], { root, target: { pid: innocent.pid, port: swapped.port }, log: log2, signalWaitMs: 300 });
+  assert.equal(swapped.shutdowns, 1);
+  assert.equal(refused.ok, false, log2.text());
+  assert.equal(refused.reason, 'identity');
+  assert.doesNotMatch(log2.text(), /falling back to SIGTERM/);
+  assert.equal(isPidAlive(innocent.pid), true, 'a pid its port no longer answers for is never signalled');
+});
+
 // ── uninstall ───────────────────────────────────────────────────────────────
 
 function fakeClaude() {
