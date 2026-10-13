@@ -639,7 +639,13 @@ export function mount(m) {
 // caps) is the daemon's call (lib/server/domain/spawn). Both verbs resolve to the
 // daemon's JSON envelope and never throw. A preview is read-only (D2), so there
 // they answer without writing.
-function paneApiFor(id) {
+//
+// The pane's lifecycle rides on the same object (`rec` is the pane record):
+// `api.signal` aborts when the pane leaves, for listeners and fetches
+// (`addEventListener(type, fn, {signal: api.signal})`), and `api.onUnmount(fn)`
+// registers a teardown for anything else (an observer, a socket); both are
+// released by releasePane below.
+function paneApiFor(id, rec) {
   const call = async (path, body) => {
     if (view.previewing) {
       return { ok: false, previewing: true, hint: 'the surface is showing a preview; panes cannot spawn or close panes here' };
@@ -656,6 +662,8 @@ function paneApiFor(id) {
   return {
     spawn: (spec) => call('/api/pane/spawn', { ...(spec || {}), parent: id }),
     close: (childId) => call('/api/pane/close', { id: childId, parent: id }),
+    signal: rec.life.signal,
+    onUnmount: rec.life.onUnmount,
   };
 }
 
@@ -705,6 +713,18 @@ function mountPane(m) {
     // What this instance's script subscribed through its store facade, and
     // whether the record has been dropped (releasePane).
     subs: new Set(), released: false,
+  };
+  // What else ends with this instance (releasePane): its AbortController, the
+  // onUnmount callbacks, and the timers its script made through the shadowed
+  // names (mount-runtime.js runScripts' `life`).
+  // The page's own AbortController (window.AbortController is the global one in
+  // a browser): its signal is what the page's addEventListener and fetch accept.
+  rec.abort = new window.AbortController();
+  rec.unmounts = [];
+  rec.life = {
+    timers: new Set(),
+    signal: rec.abort.signal,
+    onUnmount: (fn) => onUnmountFor(rec, fn),
   };
   panes.set(id, rec);
   layoutPage();
@@ -767,7 +787,7 @@ function mountPane(m) {
       message: String((err && err.message) || err),
       stack: err && err.stack ? String(err.stack).split('\n').slice(0, 3).join('\n') : undefined,
     });
-  }, paneApiFor(id));
+  }, paneApiFor(id, rec), rec.life);
 
   // Rehydrate persisted form values AFTER scripts ran, so a restored user draft
   // wins over a script's own initialization; the runtime dispatches input/change
@@ -834,9 +854,40 @@ function subscribeFor(rec, keyOrFn, maybeFn) {
   return unsubscribe;
 }
 
+// The rest of what a pane script set up ends here too (U98): `api.signal`
+// aborts, every `api.onUnmount` callback runs once, then every timer the script
+// made with the bare setTimeout / setInterval / requestAnimationFrame (shadowed
+// per pane by mount-runtime.js runScripts) is cleared with its matching clear
+// call; the subscriptions go last. Callbacks run before the timers and while
+// the wrapper is still in the DOM, so one may still read its pane. Each runs in
+// its own try/catch: a throwing one is logged (console.error — no frame, the
+// wire is unchanged) and stops neither the next one nor the removal. A callback
+// registered after the release runs at once.
+function onUnmountFor(rec, fn) {
+  if (typeof fn !== 'function') return;
+  if (rec.released) { runUnmount(fn); return; }
+  rec.unmounts.push(fn);
+}
+
+function runUnmount(fn) {
+  try { fn(); } catch (e) { console.error('[web-chat] a pane\'s onUnmount callback failed', e); }
+}
+
 function releasePane(rec) {
   if (!rec || rec.released) return;
   rec.released = true;
+  if (rec.abort) {
+    try { rec.abort.abort(); } catch (e) { console.error('[web-chat] a pane\'s abort listener failed', e); }
+  }
+  const unmounts = rec.unmounts || [];
+  rec.unmounts = [];
+  for (const fn of unmounts) runUnmount(fn);
+  if (rec.life) {
+    for (const t of [...rec.life.timers]) {
+      try { t.clear(); } catch (e) { console.error('[web-chat] clearing a pane timer failed', e); }
+    }
+    rec.life.timers.clear();
+  }
   for (const unsubscribe of [...rec.subs]) {
     try { unsubscribe(); } catch (e) { console.error('[web-chat] unsubscribe failed', e); }
   }
