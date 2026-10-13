@@ -25,6 +25,7 @@ const fs = require('fs');
 const path = require('path');
 
 const P = require('../lib/core/mod-protocol');
+const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 const { STOP_TASK_ID_RE } = require('../lib/channel/envelope');
 
 const {
@@ -277,6 +278,28 @@ test('validateEvent: session.measure keeps numbers only; diag keeps names only',
   const d = validateEvent('diag', { at: AT, shapes: { 'turn.step': ['turnId', 'index', 'chunk.delta', 'has space', 'x'.repeat(200)], 'bad key!': ['a'] } });
   assert.deepEqual(d, { kind: 'diag', at: AT, shapes: { 'turn.step': ['turnId', 'index', 'chunk.delta'] } });
   assert.equal(validateEvent('diag', { at: AT }), null);
+});
+
+// U75b: the redaction sweep found a fake AWS key passing as a shape KEY and a
+// fake GitHub token as a shape PATH (GET /api/bridge/status served both). A
+// name lib/core/redact would change is dropped at the one intake; a dropped key
+// drops its paths; ordinary names stay.
+test('validateEvent: diag drops a shape key or path the redactor would change, keeps ordinary names', () => {
+  const fakes = fakeSecrets({ seed: 30069 });
+  const one = (id) => fakes.find((f) => f.id === id).secrets[0];
+  const awsKey = one('aws-asia');
+  const ghs = one('github-ghs');
+  const ghr = one('github-ghr');
+  const d = validateEvent('diag', {
+    at: AT,
+    shapes: {
+      'tool.call': ['tool_name', ghs, 'input.command', `${ghr}.x`],
+      driver: ['driver'],
+      [awsKey]: ['tool_name'],
+    },
+  });
+  assert.deepEqual(d, { kind: 'diag', at: AT, shapes: { 'tool.call': ['tool_name', 'input.command'], driver: ['driver'] } });
+  assert.deepEqual(findLeaks(JSON.stringify(d), fakes), []);
 });
 
 // ── the hello and the result ────────────────────────────────────────────────
