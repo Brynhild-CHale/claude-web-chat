@@ -45,7 +45,7 @@ function root(t, prefix) {
 // The stand-in daemon. Health answers as `answerAs`'s instance (after
 // `delayMs`), with this process's pid — alive, and what the portfile names.
 // Every other request is recorded and answered with what its route returns.
-async function standIn(t, { answerAs, delayMs = 0 }) {
+async function standIn(t, { answerAs, delayMs = 0, extra = {} }) {
   const seen = [];
   const replies = {
     'GET /api/export/active': { label: 'n1.1', path: '/tmp/stand-in.html' },
@@ -55,6 +55,7 @@ async function standIn(t, { answerAs, delayMs = 0 }) {
     'POST /api/unlock': { cleared: true },
     'PUT /api/project/name': { ok: true, identity: { name: 'Acme Web', custom: true } },
     'GET /api/queue/policy': { channel_connected: false },
+    ...extra,
   };
   const server = http.createServer((req, res) => {
     req.resume();
@@ -276,4 +277,46 @@ test('init --tour: a copied portfile is "not running", and no tour goes to the o
   });
   assert.match(lines.join('\n'), /The surface is not running — start it with `claude-web-chat open`/);
   assert.deepEqual(seen, []);
+});
+
+// init's existing mode asks the daemon once more, for the pending approvals it
+// prints (step 5). That read acts on the verified record too: a copied portfile
+// prints no other project's approvals, and this project's — slow or not — does.
+function initExisting(b) {
+  const init = require('../lib/cli/commands/init');
+  const lines = [];
+  const doctor = async () => ({ ok: 1, repaired: 0, problems: 0, checks: [] });
+  return init([], {
+    cwd: b, log: (s) => lines.push(String(s)), doctor, hasClaude: () => false,
+    collectRows: async () => [], reap: async () => ({ stopped: 0, cleared: 0, skipped: [] }),
+    viewerWaitMs: 0, latest: null,
+  }).then(() => lines.join('\n'));
+}
+
+test('init (existing): a copied portfile prints no other project\'s pending approvals', async (t) => {
+  const { b, seen } = await foreign(t);
+  const text = await initExisting(b);
+  assert.doesNotMatch(text, /approval.? waiting/);
+  assert.deepEqual(seen, []);
+});
+
+test('init (existing): this project\'s daemon, even one slow to answer, lists its pending approvals', async (t) => {
+  const extra = { 'GET /api/services/pending': { ok: true, pending: [{ name: 'deploy-board' }] } };
+  for (const [label, delayMs] of [['own', 0], ['slow', 1000]]) {
+    await t.test(label, async (t) => {
+      const { b } = await own(t, { delayMs, extra });
+      const text = await initExisting(b);
+      assert.match(text, /1 service approval waiting:\n {2}claude-web-chat trust deploy-board/);
+    });
+  }
+});
+
+// The 1.5 s budget holds at each in-process seam, not only unlock's and the
+// report state's: a daemon slow to answer health is still this project's.
+test('trust and identity: a daemon that answers health only after 1 s is still this project\'s', async (t) => {
+  const { b, seen } = await own(t, { delayMs: 1000 });
+  assert.equal((await trust.fetchPending(b)).ok, true);
+  const r = await identity(['name', 'Acme Web'], { cwd: b, log: () => {} });
+  assert.equal(r.via, 'daemon');
+  assert.deepEqual(seen, ['GET /api/services/pending', 'PUT /api/project/name']);
 });
