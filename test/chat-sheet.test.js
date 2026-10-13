@@ -432,6 +432,28 @@ test('with an ask pending at avail 500 (half 265) a tap opens full; at avail 644
   await show(snapshot([conversation('c1', IDLE)]));
 });
 
+// §8.2: avail is re-measured on resize (the update banner can push the topbar
+// down), and an open sheet keeps its named stop across it.
+test('a re-measure keeps the named stop: half → the new half, or full once half has gone; full → the new full', async () => {
+  const resize = async (avail) => { layout(avail); W.dispatchEvent(new W.Event('resize')); await shell.tick(); };
+  sheet.openSheet();
+  assert.equal(sheet.sheetState().h, 341);
+  await resize(500);
+  assert.equal(sheet.sheetState().h, 265, 'half → the new half');
+  assert.equal(pull().dataset.stop, 'half');
+  await resize(300);
+  assert.equal(sheet.sheetState().stops.half, null, 'a short sheet has no half');
+  assert.equal(sheet.sheetState().h, 278, 'half went: full');
+  assert.equal(pull().dataset.stop, 'full');
+  await resize(644);
+  assert.equal(sheet.sheetState().h, 622, 'full → the new full');
+  assert.equal(pull().dataset.stop, 'full');
+  sheet.closeSheet({ returnFocus: false });
+  await resize(500);
+  assert.equal(sheet.sheetState().open, false, 'a closed sheet stays closed');
+  assert.equal(pull().dataset.stop, 'closed');
+});
+
 test('opening a closed sheet closes the other panels (wc:close-popovers)', async () => {
   let seen = 0;
   const fn = () => { seen += 1; };
