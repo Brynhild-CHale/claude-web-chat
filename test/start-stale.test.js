@@ -9,8 +9,8 @@
 //
 // `open` and `install` have call-site tests of the same bounce; this one had
 // none, so a regression in start's branch (say `stale.restarted` never read)
-// shipped with every test green. Nothing here starts a daemon: the portfile,
-// the probe, the spawn and the wait are all injected, and the real
+// shipped with every test green. Nothing here starts a daemon: the live-daemon
+// lookup (daemonFor), the spawn and the wait are all injected, and the real
 // restartIfStale runs with its own build and restart injected.
 
 const test = require('node:test');
@@ -34,14 +34,15 @@ function project(t) {
 // Every seam start --daemon has, each one recording what reached it. `build`
 // is the release the running daemon says it serves; this CLI is v0.8.0.
 function harness(root, { build = '0.7.6', restartOk = true, portfile = INFO, reachable = true } = {}) {
-  const h = { lines: [], errs: [], exits: [], spawned: [], restarts: [], asked: [], waited: 0 };
+  const h = { lines: [], errs: [], exits: [], spawned: [], restarts: [], asked: [], found: [], waited: 0 };
   h.deps = {
     root,
     log: (m) => h.lines.push(m),
     errlog: (m) => h.errs.push(m),
     exit: (c) => h.exits.push(c),
-    readPortfile: () => portfile,
-    probeReachable: async () => reachable,
+    // start asks lib/util/registry daemonFor for the live daemon (U105); the
+    // portfile + probe pair this harness models is that call's portfile arm.
+    daemonFor: async (r) => { h.found.push(r); return portfile && reachable ? { ...portfile, source: 'portfile' } : null; },
     restartIfStale: (r, o) => {
       h.asked.push(r);
       return stale.restartIfStale(r, {
@@ -116,4 +117,49 @@ test('start --daemon: no portfile at all spawns without asking', async (t) => {
   await start(['--daemon'], h.deps);
   assert.deepEqual(h.asked, []);
   assert.deepEqual(h.spawned, [root]);
+});
+
+// U105: the live daemon need not have a portfile. Deleting .web-chat/ under a
+// running daemon takes its portfile with it; daemonFor still finds it through
+// its registry entry, and start --daemon refuses it exactly as it refuses the
+// portfile case — the bounce is asked first (with no portfile it finds nothing
+// to restart), then "already running", exit 1, nothing spawned.
+test('start --daemon: a live daemon found through the registry is refused as the portfile case is', async (t) => {
+  const root = project(t);
+  const h = harness(root, { portfile: null, build: '0.8.0' });
+  h.deps.daemonFor = async (r) => { h.found.push(r); return { ...INFO, source: 'registry' }; };
+  await start(['--daemon'], h.deps);
+  assert.deepEqual(h.found, [root], 'the lookup is asked about THIS project');
+  assert.deepEqual(h.asked, [root]);
+  assert.deepEqual(h.restarts, [], 'no portfile: restartIfStale has nothing to bounce');
+  assert.deepEqual(h.errs, ['already running at http://localhost:5999 (pid 4242) — use `claude-web-chat restart` to bounce it']);
+  assert.deepEqual(h.exits, [1]);
+  assert.deepEqual(h.spawned, []);
+  assert.equal(h.waited, 0);
+});
+
+// The foreground path checked nothing (INCIDENT-2026-10-06 finding 2), and
+// every spawned daemon IS a foreground start in a detached child: it now asks
+// the same question, and never builds a server when the answer is a live one.
+test('start (foreground): a live daemon is refused before any server is built', async (t) => {
+  const root = project(t);
+  const h = harness(root, { portfile: null, build: '0.8.0' });
+  let built = 0;
+  h.deps.createServer = () => { built++; return { start: async () => {}, installSignalHandlers: () => {} }; };
+  h.deps.daemonFor = async () => ({ ...INFO, source: 'registry' });
+  await start([], h.deps);
+  assert.equal(built, 0, 'no server, no bind');
+  assert.deepEqual(h.errs, ['already running at http://localhost:5999 (pid 4242) — use `claude-web-chat restart` to bounce it']);
+  assert.deepEqual(h.exits, [1]);
+});
+
+test('start (foreground): with no live daemon it builds and starts the server', async (t) => {
+  const root = project(t);
+  const h = harness(root, { portfile: null });
+  const calls = [];
+  h.deps.createServer = (o) => { calls.push(o.root); return { start: async () => calls.push('start'), installSignalHandlers: () => calls.push('signals') }; };
+  await start([], h.deps);
+  assert.deepEqual(calls, [root, 'start', 'signals']);
+  assert.deepEqual(h.exits, []);
+  assert.deepEqual(h.errs, []);
 });
