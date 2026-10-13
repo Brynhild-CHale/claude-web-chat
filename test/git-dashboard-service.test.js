@@ -395,3 +395,49 @@ test('git-dashboard pane: renders a relative label from the commit time and refr
   assert.equal(label(), '1 hour ago', 'a minute later the label has aged with no store write');
   assert.equal(store.get('git').seq, 1);
 });
+
+// A node committed before the service sent `time` holds commit rows and a detail
+// with the service's own `rel` text and no `time`. Its preview, glance or export
+// shows that text rather than an empty date (U99b).
+test('git-dashboard pane: an old node\'s commit with only `rel` shows that text; one with `time` shows the computed age', (t) => {
+  const NOW = Date.UTC(2026, 9, 13, 12, 0, 0);
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: NOW });
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const saved = { window: global.window, document: global.document };
+  global.window = dom.window;
+  global.document = dom.window.document;
+  t.after(() => Object.assign(global, saved));
+  const host = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(host);
+
+  const oldHash = 'aaa1111'.padEnd(40, '0');
+  const newHash = 'bbb2222'.padEnd(40, '0');
+  const store = mountRuntime.createStore({
+    git: {
+      seq: 1, at: NOW, repo: 'r', branch: 'main', viewing: 'main',
+      branches: [{ current: true, name: 'main', hash: 'bbb2222', subject: 's' }],
+      commits: [
+        { short: 'bbb2222', hash: newHash, subject: 'new', author: 'T', time: NOW / 1000 - 2 * 3600, refs: [] },
+        { short: 'aaa1111', hash: oldHash, subject: 'old', author: 'T', rel: '3 days ago', refs: [] },
+      ],
+      detail: {
+        hash: oldHash, short: 'aaa1111', subject: 'old', author: 'T', email: 't@x', date: '2026-10-10 12:00',
+        rel: '3 days ago', body: '', files_changed: 0, insertions: 0, deletions: 0, stat: [],
+      },
+    },
+  });
+  const { root: shadow, scripts } = mountRuntime.attachAndExtract(host, PANE_HTML);
+  const life = { timers: new Set(), signal: new dom.window.AbortController().signal, onUnmount() {} };
+  const errors = [];
+  mountRuntime.runScripts(shadow, scripts, store, {}, 'm1', (e) => errors.push(e), null, life);
+  assert.deepEqual(errors, [], 'the pane script threw at mount');
+
+  const metas = [...shadow.querySelectorAll('.c .meta')].map((el) => el.textContent);
+  assert.equal(metas[0], 'T · 2 hours ago', 'a commit with `time` shows the age computed from it');
+  assert.equal(metas[1], 'T · 3 days ago', 'a commit with only `rel` shows the stored text');
+
+  shadow.querySelector('.c[data-hash="' + oldHash + '"]')
+    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  const dmeta = [...shadow.querySelectorAll('.d-meta')].map((el) => el.textContent);
+  assert.equal(dmeta[1], '2026-10-10 12:00 · 3 days ago', 'the old detail shows its stored text too');
+});
