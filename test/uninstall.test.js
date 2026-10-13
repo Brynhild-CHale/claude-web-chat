@@ -236,6 +236,13 @@ function managedInstall(t) {
   return paths;
 }
 
+// The --self seams (U113): the port scan, the registry inventory and the hub
+// stop. --self now stops every web-chat server and the capture hub before it
+// removes the program; these cases are about the portal and the removal, so
+// they hand it nothing to find — and nothing here may reach the real
+// machine's ports or hub (the sandbox guard refuses --self without them).
+const SELF_SEAMS = Object.freeze({ scanPorts: [], rows: async () => [], hubStop: async () => ({ stopped: false }) });
+
 function binsPresent(paths) {
   return paths.BIN_NAMES.every((n) => { try { return fs.lstatSync(paths.binLink(n)).isSymbolicLink(); } catch { return false; } });
 }
@@ -254,6 +261,7 @@ test('uninstall --self stops a registered tunnel portal with this build\'s `tunn
   let res = null;
   const out = await quietly(async () => {
     res = await uninstall(['--self'], {
+      ...SELF_SEAMS,
       cwd: tmpRoot(),
       runClaude: fakeClaude().fn,
       env: { WEB_CHAT_PORTAL_PORT: '1' },
@@ -266,7 +274,7 @@ test('uninstall --self stops a registered tunnel portal with this build\'s `tunn
   });
   assert.deepEqual(downs, [{ port: '45678', versions: true, bins: true }],
     'stopped once, on the registered port, while the command that can stop it is still installed');
-  assert.deepEqual(res, { portal: { stopped: true } });
+  assert.deepEqual(res, { portal: { stopped: true }, others: { stopped: 0, cleared: 0, skipped: [] }, hub: { stopped: false }, unverified: [] });
   assert.match(out, /Stopped the tunnel portal \(pid 4242\) and its cloudflared — remote access is off\./);
   assert.ok(out.indexOf('Stopped the tunnel portal') < out.indexOf('Removed the claude-web-chat install'));
   assert.equal(fs.existsSync(paths.versions), false, 'then the program is removed');
@@ -284,6 +292,7 @@ test('uninstall --self whose portal will not stop removes nothing — not the ve
   await assert.rejects(
     async () => {
       out = await quietly(() => uninstall(['--self'], {
+        ...SELF_SEAMS,
         cwd: root,
         runClaude: claude.fn,
         readPortal: () => ({ role: 'portal', pid: 4242, port: 45678 }),
@@ -307,6 +316,7 @@ test('uninstall --self with no portal registered never calls `tunnel down`; plai
   let downs = 0;
   let asked = 0;
   const opts = {
+    ...SELF_SEAMS,
     cwd: tmpRoot(),
     runClaude: fakeClaude().fn,
     readPortal: () => { asked++; return null; },
