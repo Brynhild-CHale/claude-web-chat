@@ -162,14 +162,10 @@ test('chrome, sandbox: a session waiting with no ask reads answer in the termina
   assert.equal(card().querySelector('.cp-aw-hint').textContent, 'Answer in the terminal', 'the read-only card says so');
 });
 
-// The chrome's store (public/app/chat-state.js ASK_KINDS) keeps only
-// permission, question and plan asks, so an elicitation from the daemon never
-// reaches m.awaiting: this waits on the one-line grant of chat-state.js named
-// in U92's hand-off. The pure path above (uiState over a store that holds the
-// ask) proves the bar's line and act.
-test('chrome: a pending answerable elicitation reads MCP input · <server> on the bar, and the awaiting card mounts the frame', {
-  todo: 'waits on chat-state.js ASK_KINDS gaining elicitation (U92 hand-off, open issue 1)',
-}, async (t) => {
+// The chrome's store keeps an elicitation ask only because chat-state.js
+// ASK_KINDS lists 'elicitation' (U92b): without it normalizeAsk drops the ask,
+// m.awaiting never holds it, and this case goes red on the bar line.
+test('chrome: a pending answerable elicitation reads MCP input · <server> on the bar, and the awaiting card mounts the frame', async (t) => {
   const calls = fakeApprovals(t);
   await show({
     live: { state: 'working', since: T - 1000, last_activity_at: T - 1000, turn_started_at: T - 5000 },
