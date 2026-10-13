@@ -357,6 +357,18 @@ test('display: an enum value the redactor would change makes the form the termin
   assert.equal(decided(r.asks, id, { behavior: 'decline' }).ok, true, 'declining it still works');
 });
 
+test('display: a field NAME the redactor would change makes the form the terminal\'s (too-long)', async (t) => {
+  const r = await rig(t);
+  const secret = FAKES.find((f) => f.id === 'sk-openai-legacy').secrets[0];
+  assert.ok(secret.length <= 100, 'a name the bounds take');
+  const { id } = await r.asks.create(body({}, { schema: { type: 'object', properties: { [secret]: { type: 'string' }, n: { type: 'number' } } } }));
+  assert.ok(id, 'created');
+  const v = r.asks.displayView(id);
+  assert.deepEqual([v.complete, v.why_not, v.can_answer, v.masked], [false, 'too-long', false, true]);
+  assert.deepEqual(decided(r.asks, id, { behavior: 'accept', content: { n: 1 } }), { ok: false, status: 409, why_not: 'too-long' });
+  assert.equal(decided(r.asks, id, { behavior: 'decline' }).ok, true, 'declining it still works');
+});
+
 // ── resolution ──────────────────────────────────────────────────────────────
 
 test('resolution: a newer elicitation of the session supersedes it; a permission ask does not, nor the other way', async (t) => {

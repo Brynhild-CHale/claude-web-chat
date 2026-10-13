@@ -272,6 +272,18 @@ test('permission.settled by web after a decision is the hand-off; another reques
   assert.deepEqual([r.asks.get(ask.id).state, r.asks.get(ask.id).by, r.asks.get(ask.id).outcome], ['resolved', 'web', 'allowed']);
 });
 
+test('permission.settled of another session with the same request id is not this ask', async (t) => {
+  const r = rig(t);
+  r.request();
+  const ask = await waitUntil(() => r.modAsks()[0], { what: 'the mod ask' });
+  const ev = validateEvent('permission.settled', { request_id: 'pr_1', by: 'terminal' });
+  const { kind, at: _at, ...payload } = ev;
+  r.hooks.publish({ v: 1, event: MOD_EVENT, synthetic: true, ts: r.now(), session_id: '00000000-1111-4222-8333-444444444444', mod: { kind, ...payload } });
+  assert.equal(r.asks.get(ask.id).state, 'pending', 'a request id is the mod\'s per session, never global');
+  r.settled('pr_1', 'terminal');
+  assert.equal(r.asks.get(ask.id).state, 'resolved');
+});
+
 test('a mod ask has no silent hook: it outlives HOOK_SILENT_MS, and the waiting → busy move and session end withdraw it', async (t) => {
   const r = rig(t);
   r.request();
