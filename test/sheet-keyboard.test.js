@@ -2,8 +2,10 @@
 // U71's section of app.css), through the real shell
 // (test-support/chrome-shell.js): design spec §8.5, §8.2, §7.13 and §7.1.
 //
-// main.js does not start the sheet or the keyboard until U73 wires them, so the
-// boot's init does (spec §10.1); the composer is registered by main.js's
+// main.js's boot starts the sheet and the keyboard (U73); the init below calls
+// initChatState, initChatSheet and initSheetKeyboard itself on the shell, the
+// same inits the boot runs (each idempotent, so it changes nothing), to name
+// what the file stands on (spec §10.1); the composer is registered by main.js's
 // tranche-4 inits. jsdom lays nothing out: #topbar and #bottombar get
 // rectangles (shell.scrollMetrics) so the available height is 644 (full 622,
 // half 341), and the keyboard is shell.setViewport({visualHeight, visualTop}),

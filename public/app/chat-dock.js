@@ -458,8 +458,10 @@ export function initChatDock() {
     if (EDGES.includes(edge)) h.addEventListener('pointerdown', (e) => startGesture(e, edge));
   }
   applyPrefs();
-  // The view id is 'dock', never 'sheet': chat-pull-stub.js retires the phone's
-  // stand-in when a view named 'sheet' registers.
+  // The view id is 'dock', never 'sheet': 'sheet' is the phone sheet's own view
+  // id (chat-sheet.js registers SHEET_VIEW), and registerChatView replaces a
+  // registration with the same id, so the dock taking 'sheet' would unregister
+  // the sheet.
   reg = registerChatView({ id: 'dock', isOpen: isChatOpen, escape: escapeDock, close: () => { closeChat(); } });
   bus.on('chat:open', openChat);
   bus.on('viewport:narrow', (d) => { if (d && d.narrow) closeChat(); });

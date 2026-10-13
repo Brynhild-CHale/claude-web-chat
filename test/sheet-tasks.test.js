@@ -5,8 +5,11 @@
 // deviation 18, rulings E1 (a) (the stopper's touch slot) and B3 (a) (detail
 // pages inside the Tasks stack; a detail's Cancel takes two taps there).
 //
-// main.js does not start the sheet or its Tasks view until U73 wires them, so
-// the boot's init does. The store reads the Final's fixture
+// main.js's boot starts the sheet and its Tasks view (U73); the init below
+// calls initChatState, initChatSheet and initSheetTasks itself on the shell,
+// the same inits the boot runs (each idempotent, so it changes nothing), to
+// name what the file stands on — and re-inits the detail views to pace their
+// followers for the test. The store reads the Final's fixture
 // (test-support/final-fixture.js, U67); #topbar and #bottombar get rectangles
 // (shell.scrollMetrics) so the available height is 644 (full 622, half 341), as
 // in test/chat-sheet.test.js.
