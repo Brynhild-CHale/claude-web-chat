@@ -502,6 +502,8 @@ const PATTERNS = [
     what: 'deciding which project a registration command operates on',
     files: [
       'lib/cli/commands/install.js',
+      // init too since 0.8.5 (U96): it resolves through setupRoot, never by hand.
+      'lib/cli/commands/init.js',
       'lib/cli/commands/uninstall.js',
       'lib/cli/commands/on.js',
       'lib/cli/commands/off.js',

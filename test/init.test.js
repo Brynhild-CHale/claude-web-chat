@@ -401,6 +401,70 @@ test('fresh init in $HOME is refused outright: no question asked, nothing writte
   }
 });
 
+// install.sh creates ~/.web-chat/ on every machine (the user tier). Since 0.8.5
+// init's default rule is "existing iff the folder has a .web-chat/", so $HOME,
+// which always has one, must still be refused rather than taken for an
+// installed project: existing mode would run doctor, which repairs hooks into
+// ~/.claude/settings.json. Typed there, named, or behind --nearest-parent.
+test('init in $HOME WITH the user tier present is refused in every rule, and never runs doctor or install', async (t) => {
+  const home = withTempHome(t);
+  fs.mkdirSync(path.join(home, '.web-chat', 'versions'), { recursive: true });
+  const elsewhere = tmpDir();
+  const prevExit = process.exitCode;
+  t.after(() => { process.exitCode = prevExit; });
+  const runs = [
+    [['--yes'], home],
+    [['--yes'], fs.realpathSync(home)],
+    [['--yes', home], elsewhere],
+    [['--yes', '--nearest-parent'], home],
+    [['--yes', '--nearest-parent', home], elsewhere],
+  ];
+  for (const [args, cwd] of runs) {
+    process.exitCode = 0;
+    const log = sink();
+    const doctor = fakeDoctor();
+    const install = fakeDoctor();
+    const opened = [];
+    const prompt = { interactive: true, confirm: async () => true, line: async () => '', close: () => {} };
+    await init(args, { cwd, log, prompt, ...inertDeps({ doctor, install, open: async (a) => { opened.push(a); } }) });
+    const what = `${JSON.stringify(args)} from ${cwd}`;
+    assert.equal(doctor.calls.length, 0, `doctor never runs on $HOME: ${what}`);
+    assert.equal(install.calls.length, 0, `nor install: ${what}`);
+    assert.deepEqual(opened, [], `nor open: ${what}`);
+    assert.equal(process.exitCode, 1, what);
+    assert.match(log.text(), /This is your home directory, and web-chat does not install here/, what);
+  }
+  assert.deepEqual(fs.readdirSync(home), ['.web-chat'], 'nothing written in $HOME');
+  assert.deepEqual(fs.readdirSync(path.join(home, '.web-chat')), ['versions']);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+});
+
+// A folder named from elsewhere: the way back to the install above must name
+// the folder too, or `init --nearest-parent` typed in the cwd walks up from
+// the wrong place.
+test('init <folder> inside another install names the folder in its --nearest-parent pointer', async (t) => {
+  const root = installedProject(t);
+  const sub = path.join(root, 'pkg');
+  fs.mkdirSync(sub);
+  const elsewhere = tmpDir();
+
+  const log = sink();
+  await init([sub], { cwd: elsewhere, log, ...inertDeps({ install: fakeDoctor(), hasClaude: () => true }), noOpenGuard: true });
+  assert.ok(log.lines.some((l) => l.includes(`\`claude-web-chat init --nearest-parent ${sub}\` checks or repairs that one instead`)),
+    `the preamble names the folder:\n${log.text()}`);
+
+  const rep = sink();
+  await init(['--report', sub], { cwd: elsewhere, log: rep, ...inertDeps() });
+  assert.ok(rep.lines.some((l) => l === `  enclosing   ${root} has its own web-chat — \`claude-web-chat init --nearest-parent ${sub}\` checks that one`),
+    `the report row names the folder:\n${rep.text()}`);
+
+  // Typed in the folder itself, nothing to name.
+  const here = sink();
+  await init(['--report'], { cwd: sub, log: here, ...inertDeps() });
+  assert.ok(here.lines.some((l) => l === `  enclosing   ${root} has its own web-chat — \`claude-web-chat init --nearest-parent\` checks that one`),
+    here.text());
+});
+
 // -------------------------------------------------------------- --report ----
 
 test('--report runs doctor with dryRun and never installs', async (t) => {
