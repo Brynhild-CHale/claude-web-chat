@@ -1978,6 +1978,55 @@ test('after a daemon restart, a restored last turn that ended after the busy was
   await live.stop();
 });
 
+test('after a daemon restart, the NEWEST restored turn end is the one a busy must beat', async () => {
+  // Two turns; the file's busy was written for the second, after the first ended.
+  const d1 = wired({ rule: cpuRate(5) });
+  d1.file('busy', { updatedAt: T0 });
+  d1.clock.set(T0 + 1000);
+  d1.hook('UserPromptSubmit', { prompt_id: 'p1', prompt: { author: 'user', text: 'one' } });
+  d1.clock.set(T0 + 5000);
+  d1.hook('Stop', { prompt_id: 'p1' });
+  d1.clock.set(T0 + 20000);
+  d1.file('busy', { updatedAt: T0 + 20000 });
+  d1.clock.set(T0 + 21000);
+  d1.hook('UserPromptSubmit', { prompt_id: 'p2', prompt: { author: 'user', text: 'two' } });
+  d1.clock.set(T0 + 30000);
+  d1.hook('Stop', { prompt_id: 'p2' });
+  const records = d1.tm.exportTurns(S);
+  assert.equal(records.length, 2);
+
+  const clock = fakeClock(T0 + 60000);
+  const sampler = fakeSampler(clock, cpuRate(5));
+  const model = createModel({ redactor });
+  const tm = createTurnMachine({ model, now: clock.now, transition: () => {} });
+  const live = createLive({
+    now: clock.now,
+    timers: clock.timers,
+    sampleProcs: (pids) => sampler.fn(pids),
+    isPidAlive: () => true,
+    redact: (s) => model.scrubText(s),
+    openTurnOf: (cid) => { const id = tm.openTurnOf(cid); return id ? model.turn(id) : null; },
+    turnOf: (id) => model.turn(tm.resolve(id)),
+    turnsOf: (cid) => model.turnsOf(cid),
+    onLive: (cid, l) => model.upsertLive(cid, l),
+  });
+  live.onConversation({ change: 'added', conversation: {
+    id: C, current_session_id: S, sessions: [{ session_id: S }], process: { pid: PID, proc_start: PROC_START, entrypoint: 'cli' },
+  } });
+  assert.equal(tm.restoreTurns(C, records).restored, 2);
+  live.noteSessionState(C, { status: 'busy', waitingFor: null, sessionId: S, procStart: PROC_START, entrypoint: 'cli', updatedAt: T0 + 20000 });
+  await live.sampleNow();
+  clock.set(T0 + 75000);
+  await live.sampleNow();
+  const l = live.liveOf(C);
+  assert.equal(l.process.cpu_pct, 5);
+  assert.equal(l.last_turn.id, 'p2', 'the newest closed turn, not the first');
+  assert.equal(l.last_turn.ended_at, T0 + 30000);
+  assert.equal(l.state, 'idle', 'the busy (T0+20 s) is older than the second turn end (T0+30 s)');
+  assert.equal(l.stale_status, true);
+  await live.stop();
+});
+
 test('no test in this file spawned a real ps (the sampler is always injected)', () => {
   assert.deepEqual(psCalls, []);
 });
