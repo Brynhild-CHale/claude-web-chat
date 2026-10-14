@@ -519,6 +519,36 @@ test('submit, command, fill, usage and messages run through $ — numbers and co
   assert.doesNotMatch(JSON.stringify([u, m]), /secret|words/);
 });
 
+// U126: Claude Code 2.1.29x RESOLVES a submit it did not take
+// ({ended: 'Prompt not submitted: …'} / {ended: 'Prompt dropped by a hook: …'});
+// m-71c5c175 read as submitted and stayed 'sent'. Such an answer is a refusal.
+test('a submit Claude Code did not take ({ended: …}, {drop: …}) answers refused not-submitted with its reason; a plain resolve is submitted', async (t) => {
+  const answers = [
+    { ended: 'Prompt not submitted: a dialog is open' },
+    { ended: 'Prompt dropped by a hook: x' },
+    { ended: { resultText: 'Prompt dropped by a hook: y' } },
+    { drop: 'the prompt did not go through prompt.submit' },
+  ];
+  let i = 0;
+  const { b, host } = await attachedHost(t, { handlers: { submit: async () => answers[i++] || { text: 'ran' } } });
+  const out = [];
+  for (let n = 0; n <= 4; n++) out.push(await b.bridge.enqueue(SID, { op: 'submit', args: { text: `message ${n}` } }));
+  assert.deepEqual(out.slice(0, 4), [
+    { ok: false, refused: 'not-submitted', error: 'Prompt not submitted: a dialog is open', delivered: true },
+    { ok: false, refused: 'not-submitted', error: 'Prompt dropped by a hook: x', delivered: true },
+    { ok: false, refused: 'not-submitted', error: 'Prompt dropped by a hook: y', delivered: true },
+    { ok: false, refused: 'not-submitted', error: 'the prompt did not go through prompt.submit', delivered: true },
+  ]);
+  assert.deepEqual(out[4], { ok: true, result: { submitted: true } }, 'a normal resolve is still submitted');
+  assert.equal(host.called('prompt.submit').length, 5);
+  // The reason is cut to the wire's ERROR_MAX.
+  i = 0;
+  answers.splice(0, answers.length, { ended: `Prompt not submitted: ${'z'.repeat(400)}` });
+  const long = await b.bridge.enqueue(SID, { op: 'submit', args: { text: 'long' } });
+  assert.equal(long.refused, 'not-submitted');
+  assert.equal(long.error.length, P.ERROR_MAX);
+});
+
 test('forged ops (past the daemon) are refused by the mod itself: a /command as a submit, a config-persisting command, an expired op', async (t) => {
   const { root, home } = project(t);
   const d = await rawDaemon(t);

@@ -916,6 +916,23 @@ async function runCommand($, st, input) {
   try { return { v: await $.command.run(input) }; } catch (e) { return { e: await fault($, st, e) }; }
 }
 
+// Why $.prompt.submit's answer says Claude Code did NOT take the prompt, or
+// null. Claude Code 2.1.29x resolves a refused submit rather than reject it:
+// {ended: 'Prompt not submitted: …'} or {ended: 'Prompt dropped by a hook: …'}
+// (its pipeline's `ended` may also be an object carrying resultText), and a
+// prompt that never went through prompt.submit settles {drop: '…'}. Each is a
+// prompt that will never run, so it must not read as submitted: the daemon
+// hands it back to the channel or the park.
+function notSubmitted(v) {
+  if (!isPlain(v)) return null;
+  const end = v.ended;
+  if (typeof end === 'string') return end || 'Prompt not submitted';
+  if (isPlain(end) && typeof end.resultText === 'string' && end.resultText) return end.resultText;
+  if (end !== undefined && end !== null && end !== false) return 'Prompt not submitted';
+  if (typeof v.drop === 'string') return v.drop || 'Prompt dropped';
+  return null;
+}
+
 async function opSubmit($, st, a) {
   const text = a.text;
   if (typeof text !== 'string' || !text.trim() || text.length > WIRE.ARG_TEXT_MAX) return refused('bad-args');
@@ -924,6 +941,8 @@ async function opSubmit($, st, a) {
   if (!r) return done({ submitted: true, queued: true });
   if (r.e) { if (marker(r.e)) throw r.e; return refused('failed', messageOf(r.e)); }
   if (r.v && typeof r.v.deny === 'string') return refused('denied', r.v.deny);
+  const why = notSubmitted(r.v);
+  if (why) return refused('not-submitted', why);
   return done({ submitted: true });
 }
 

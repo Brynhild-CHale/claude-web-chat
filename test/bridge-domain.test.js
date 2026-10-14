@@ -887,6 +887,30 @@ test('the bridge log: one line per hello, refusal, detach and settled op — nev
   assert.ok(!h.logs.join('\n').includes(token), 'nor the server log');
 });
 
+// U126: a submit Claude Code did not take answers refused 'not-submitted'
+// with Claude Code's reason; the op line says why, redacted.
+test('the bridge log: a refused op\'s line carries the mod\'s reason, redacted; an ok op\'s line has none', async (t) => {
+  const h = setup(t);
+  const token = h.attach();
+  const secret = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+  const done = h.bridge.enqueue(S1, { op: 'submit', args: { text: 'SECRET-PROMPT' } });
+  const [op] = (await h.bridge.poll(token)).body.ops;
+  h.bridge.result(token, { id: op.id, ok: false, refused: 'not-submitted', error: `Prompt dropped by a hook: ${secret}` });
+  assert.deepEqual(await done, { ok: false, refused: 'not-submitted', error: `Prompt dropped by a hook: ${secret}`, delivered: true });
+  const [line] = h.logLines().filter((l) => l.what === 'op');
+  assert.equal(line.outcome, 'not-submitted');
+  assert.match(line.error, /^Prompt dropped by a hook: /);
+  const raw = fs.readFileSync(h.logFile, 'utf8');
+  for (const needle of [secret, 'SECRET-PROMPT']) assert.ok(!raw.includes(needle), needle);
+  // A bridge-side refusal (no mod reason) and an ok carry no error field.
+  const gone = h.bridge.enqueue(S1, { op: 'usage', args: {} }, { deliverWithinMs: 2000 });
+  await h.clock.advance(2000);
+  assert.equal((await gone).refused, 'timeout');
+  const lines = h.logLines().filter((l) => l.what === 'op');
+  assert.equal(lines.length, 2);
+  assert.equal('error' in lines[1], false);
+});
+
 test('the bridge log moves to bridge.log.1 past 1 MiB', (t) => {
   const h = setup(t);
   fs.mkdirSync(path.dirname(h.logFile), { recursive: true });

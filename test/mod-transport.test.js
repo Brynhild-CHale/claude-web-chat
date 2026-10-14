@@ -427,3 +427,142 @@ test('withModCommands: the catalog answers as before; modCommands follows the br
   }
   assert.deepEqual(answers[1], answers[0]);
 });
+
+// ── U126: a submit Claude Code did not take goes back to the channel or the
+// park, never lost at 'sent' (m-71c5c175, 2026-10-14). ──────────────────────
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+// A mirror that tails the conversation (enabled, a live object), so a
+// confirmation could come.
+const tailingMirror = (over = {}) => ({ ...fakeMirror(), enabled: () => ({ enabled: true }), liveOf: () => ({ state: 'idle' }), ...over });
+const NET_MS = 40;
+
+test('U126: a refused not-submitted submit is handed back — parked with no channel, woken with one — and the reason is logged', async () => {
+  for (const live of [false, true]) {
+    const state = freshState({ live });
+    const bus = newBus();
+    const logs = [];
+    const answer = { ok: false, refused: 'not-submitted', error: 'Prompt not submitted: a dialog is open', delivered: true };
+    const bridge = fakeBridge({ answer });
+    state.messageTransport = createModTransport({ bridge, mirror: fakeMirror(), state, bus, log: (m) => logs.push(m), graph: { lock: null, active: 'n0', saveMeta() {} } });
+    const item = enqueue(state, bus);
+    queue.release(state, bus, [item.id], {});
+    await settle();
+    if (live) {
+      const [wake] = wakesIn(bus);
+      assert.ok(wake, 'a live channel wakes');
+      assert.equal(wake.reason, 'mod-fallback');
+      assert.deepEqual(wake.batch.map((it) => it.msg_id), [item.msg_id]);
+    } else {
+      assert.ok(state.pendingWake, 'parked');
+      assert.deepEqual(state.pendingWake.batch.map((it) => it.msg_id), [item.msg_id]);
+      assert.equal(receiptOf(state, item.msg_id), 'parked');
+      assert.deepEqual(receiptsIn(bus, item.msg_id), ['queued', 'sending', 'sent', 'queued', 'parked']);
+    }
+    assert.equal(bridge.ops.length, 1, 'offered to the mod once only');
+    assert.ok(logs.some((l) => l.includes(item.msg_id) && l.includes('Prompt not submitted: a dialog is open')), 'the reason is logged');
+  }
+});
+
+test('U126: the reason a refusal logs is redacted', async () => {
+  const state = freshState();
+  const bus = newBus();
+  const logs = [];
+  const secret = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+  const bridge = fakeBridge({ answer: { ok: false, refused: 'not-submitted', error: `Prompt dropped by a hook: ${secret}`, delivered: true } });
+  state.messageTransport = createModTransport({ bridge, mirror: fakeMirror(), state, bus, log: (m) => logs.push(m) });
+  queue.release(state, bus, [enqueue(state, bus).id], {});
+  await settle();
+  assert.ok(logs.some((l) => l.includes('Prompt dropped by a hook')), 'logged');
+  assert.ok(!logs.join('\n').includes(secret), 'never the secret');
+});
+
+test('U126 net: {submitted: true} with no transcript confirmation in the window is handed back once, and the log says so', async (t) => {
+  const state = freshState({ live: false });
+  const bus = newBus();
+  const logs = [];
+  const bridge = fakeBridge({ answer: { ok: true, result: { submitted: true } } });
+  const tr = createModTransport({ bridge, mirror: tailingMirror(), state, bus, log: (m) => logs.push(m), confirmWithinMs: NET_MS });
+  t.after(() => tr.stop());
+  state.messageTransport = tr;
+  const item = enqueue(state, bus);
+  queue.release(state, bus, [item.id], {});
+  await settle();
+  assert.equal(receiptOf(state, item.msg_id), 'sent');
+  assert.equal(state.pendingWake, null, 'not before the window');
+  await pause(NET_MS * 3);
+  assert.equal(receiptOf(state, item.msg_id), 'parked');
+  assert.deepEqual(receiptsIn(bus, item.msg_id), ['queued', 'sending', 'sent', 'queued', 'parked']);
+  assert.deepEqual(state.pendingWake.batch.map((it) => it.msg_id), [item.msg_id]);
+  assert.equal(bridge.ops.length, 1, 'never re-sent to the mod');
+  assert.equal(logs.filter((l) => l.includes(item.msg_id) && /transcript has not shown it/.test(l)).length, 1);
+  await pause(NET_MS * 2);
+  assert.deepEqual(receiptsIn(bus, item.msg_id), ['queued', 'sending', 'sent', 'queued', 'parked'], 'once');
+});
+
+test('U126 net: a message the transcript confirms inside the window is never handed back', async (t) => {
+  const state = freshState({ live: false });
+  const bus = newBus();
+  const tr = createModTransport({ bridge: fakeBridge({ answer: { ok: true, result: { submitted: true } } }), mirror: tailingMirror(), state, bus, confirmWithinMs: NET_MS });
+  t.after(() => tr.stop());
+  state.messageTransport = tr;
+  const item = enqueue(state, bus);
+  queue.release(state, bus, [item.id], {});
+  await settle();
+  assert.equal(queue.confirmDelivered(state, bus, item.msg_id), true);
+  await pause(NET_MS * 3);
+  assert.equal(receiptOf(state, item.msg_id), 'confirmed');
+  assert.deepEqual(receiptsIn(bus, item.msg_id), ['queued', 'sending', 'sent', 'confirmed']);
+  assert.equal(state.pendingWake, null);
+  assert.equal(wakesIn(bus).length, 0);
+});
+
+test('U126 net: {submitted: true, queued: true} arms nothing; neither does a mirror that is not tailing the conversation', async (t) => {
+  for (const [answer, mirror, word] of [
+    [{ ok: true, result: { submitted: true, queued: true } }, tailingMirror(), 'queued'],
+    [{ ok: true, result: { submitted: true } }, tailingMirror({ enabled: () => ({ enabled: false }) }), 'mirror off'],
+    [{ ok: true, result: { submitted: true } }, tailingMirror({ liveOf: () => null }), 'no live object'],
+  ]) {
+    const state = freshState({ live: false });
+    const bus = newBus();
+    const logs = [];
+    const tr = createModTransport({ bridge: fakeBridge({ answer }), mirror, state, bus, log: (m) => logs.push(m), confirmWithinMs: NET_MS });
+    t.after(() => tr.stop());
+    state.messageTransport = tr;
+    const item = enqueue(state, bus);
+    queue.release(state, bus, [item.id], {});
+    await settle();
+    await pause(NET_MS * 3);
+    assert.equal(receiptOf(state, item.msg_id), 'sent', word);
+    assert.equal(state.pendingWake, null, word);
+    if (word === 'queued') assert.equal(logs.length, 0, 'nothing armed, nothing said');
+    else assert.ok(logs.some((l) => /left as sent/.test(l)), word);
+  }
+});
+
+test('U126 net: stop() clears its timer and declines later items; the bridge stopping stops it too', async () => {
+  for (const how of ['stop', 'bridge', 'retired']) {
+    const state = freshState({ live: false });
+    const bus = newBus();
+    const listeners = [];
+    const bridge = { ...fakeBridge({ answer: { ok: true, result: { submitted: true } } }), onChange(fn) { listeners.push(fn); return () => listeners.splice(listeners.indexOf(fn), 1); } };
+    const tr = createModTransport({ bridge, mirror: tailingMirror(), state, bus, confirmWithinMs: NET_MS });
+    state.messageTransport = tr;
+    const item = enqueue(state, bus);
+    queue.release(state, bus, [item.id], {});
+    await settle();
+    assert.equal(receiptOf(state, item.msg_id), 'sent');
+    if (how === 'stop') tr.stop();
+    else if (how === 'bridge') for (const fn of [...listeners]) fn({ session_id: SID, attached: false, reason: 'stopped' });
+    else state.messageTransport = null; // stopModLayer took it off
+    await pause(NET_MS * 3);
+    assert.equal(receiptOf(state, item.msg_id), 'sent', how);
+    assert.equal(state.pendingWake, null, how);
+    if (how !== 'retired') {
+      assert.equal(listeners.length, 0, `${how}: unsubscribed from the bridge`);
+      assert.equal(tr(enqueue(state, bus)), null, `${how}: declines after stop`);
+    }
+    tr.stop(); // idempotent
+  }
+  assert.throws(() => createModTransport({ bridge: fakeBridge(), state: freshState(), bus: newBus(), confirmWithinMs: 0 }), TypeError);
+});
