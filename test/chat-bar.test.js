@@ -40,6 +40,7 @@ const fs = require('fs');
 const path = require('path');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
+const { createCascade } = require('../test-support/css-cascade');
 
 const REPO = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
@@ -475,6 +476,41 @@ test('once a chat view registers, the label becomes the step that opens the chat
   tickAt();
   assert.equal(step().disabled, true, 'the view gone, the step is a label again');
   for (const a of ['aria-controls', 'aria-expanded', 'aria-keyshortcuts']) assert.equal(step().hasAttribute(a), false, a);
+});
+
+test('hovering tints only a step that opens the chat: the disabled label keeps its plain background (U123)', async (t) => {
+  // jsdom has no pointer, so nothing ever matches :hover. Read the cascade of
+  // app.css with every :hover written as a marker class (the same specificity:
+  // a pseudo-class counts as a class), and put that class on the step.
+  const HOVER = 'wc-test-hover';
+  const { value } = createCascade(read('public/app.css').replace(/:hover\b/g, `.${HOVER}`), { win: () => shell.window });
+  const background = (hovered) => {
+    step().classList.toggle(HOVER, hovered);
+    try { return value(step(), 'background'); } finally { step().classList.remove(HOVER); }
+  };
+
+  noChatView();
+  await quietly(live('idle'));
+  assert.equal(step().disabled, true, 'precondition: the step is the disabled fallback label');
+  const plain = background(false);
+  assert.equal(plain, 'transparent', 'precondition: the step draws no box of its own');
+  assert.equal(background(true), plain, 'a disabled step is not tinted on hover: it opens nothing');
+
+  fakeView(t);
+  tickAt();
+  assert.equal(step().disabled, false, 'precondition: a chat view makes it the step that opens the chat');
+  assert.equal(step().getAttribute('aria-expanded'), 'false');
+  assert.equal(background(false), plain, 'unhovered, still no box');
+  const tint = background(true);
+  assert.match(tint, /^color-mix\(/, 'an actionable step still tints on hover');
+
+  // The open step's own tint is not undercut by the hover rule under the pointer.
+  step().setAttribute('aria-expanded', 'true');
+  try {
+    const open = background(false);
+    assert.notEqual(open, tint, 'precondition: an open step has a tint of its own');
+    assert.equal(background(true), open, 'hovering an open step keeps its open tint');
+  } finally { step().setAttribute('aria-expanded', 'false'); }
 });
 
 test('with a chat view, the step closes the graph overlay first; a chat it covered is shown, not shut', async (t) => {
