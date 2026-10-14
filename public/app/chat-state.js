@@ -316,7 +316,7 @@ const TASK_SCHEMA = {
   kind: F.oneOf(...TASK_KINDS),
   title: F.text(300),
   status: taskStatusOf,
-  stopped_by: F.oneOf('claude', 'user', 'memory', 'session-end', 'timeout'),
+  stopped_by: F.oneOf('claude', 'user', 'memory', 'session-end', 'timeout', 'agent-end'),
   stop_requested_at: F.num,
   started_at: F.num,
   ended_at: F.num,

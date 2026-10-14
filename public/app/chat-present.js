@@ -430,6 +430,7 @@ function taskMeta(t, now) {
       if (t.stopped_by === 'timeout') return `timed out${at}`;
       return `killed${at}`;
     case 'stopped':
+      if (t.stopped_by === 'agent-end') return `ended with its agent${at}`;
       return t.stopped_by && t.stopped_by !== 'session-end' ? `stopped${at}` : 'stopped at session end';
     case 'expired': {
       const n = finite(t.meta && t.meta.events) ? t.meta.events : 0;
