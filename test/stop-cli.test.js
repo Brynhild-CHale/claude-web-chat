@@ -165,6 +165,9 @@ test('stop: asks the daemon, gets an ack, and the draft survives the reboot', as
   assert.equal(res.pid, info.pid);
   assert.match(log.text(), /stopped cleanly/);
   assert.match(log.text(), /acknowledged/);
+  // U121: the line names the draft because the draft is there (checked below).
+  assert.match(log.text(), /uncommitted surface state saved to \.web-chat\/draft\.json/);
+  assert.doesNotMatch(log.text(), /nothing uncommitted to save/);
   assert.equal(fs.existsSync(portfile), false, 'a clean shutdown removes its own portfile');
 
   // The receipt has to be true, not just printed.
@@ -178,6 +181,44 @@ test('stop: asks the daemon, gets an ack, and the draft survives the reboot', as
   const { api } = await withServer(t, { root });
   const { json } = await api.get('/api/mounts');
   assert.deepEqual(json.mounts.map((m) => m.id), ['p1']);
+});
+
+// U121: writeDraft writes nothing for an empty surface, and the clean line used
+// to promise a draft.json anyway. It reads the file now: an empty surface says
+// there was nothing to save, and leaves no draft behind.
+test('stop: an empty surface says nothing uncommitted was saved, and no draft.json exists', async (t) => {
+  const { root, info, portfile } = await bootDaemon(t, REAL_DAEMON);
+
+  const log = collector();
+  const res = await stop([], { root, log });
+
+  assert.equal(res.path, 'request');
+  assert.equal(res.ok, true);
+  assert.equal(res.pid, info.pid);
+  assert.match(log.text(), /stopped cleanly/);
+  assert.match(log.text(), /there was nothing uncommitted to save/);
+  assert.doesNotMatch(log.text(), /draft\.json/, 'no claim of a draft that was not written');
+  assert.equal(fs.existsSync(portfile), false);
+  assert.equal(fs.existsSync(path.join(root, '.web-chat', 'draft.json')), false, 'an empty surface leaves no draft');
+});
+
+// A draft.json that predates the ask (an earlier shutdown's, left on disk) is
+// not this shutdown's: an empty surface still says nothing was saved.
+test('stop: a stale draft.json from before the ask is not claimed as saved', async (t) => {
+  const { root } = await bootDaemon(t, REAL_DAEMON);
+  // Written after boot (so the daemon never restored it), dated an hour back.
+  const draftFile = path.join(root, '.web-chat', 'draft.json');
+  fs.writeFileSync(draftFile, JSON.stringify({ schema_version: 1, mounts: [] }));
+  const old = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(draftFile, old, old);
+
+  const log = collector();
+  const res = await stop([], { root, log });
+
+  assert.equal(res.path, 'request');
+  assert.match(log.text(), /there was nothing uncommitted to save/);
+  assert.doesNotMatch(log.text(), /draft\.json/);
+  assert.ok(fs.statSync(draftFile).mtimeMs < Date.now() - 60_000, 'the shutdown did not rewrite it');
 });
 
 test('stop: does not resurrect a daemon it just stopped, and reports nothing to stop', async (t) => {
