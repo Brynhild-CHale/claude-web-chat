@@ -68,6 +68,7 @@ function fakeClaude({ version = '2.1.296', validate = true, testHelp = true } = 
     if (version === null) return { ok: false, notFound: true, stderr: 'claude not found' };
     if (argv[0] === '--version') return { ok: true, stdout: `${version} (Claude Code)\n` };
     if (argv[0] === 'plugin' && argv[1] === 'validate') {
+      if (typeof validate === 'function') return validate(argv);
       return validate ? { ok: true, stdout: 'Validation passed\n' } : { ok: false, stderr: 'hooks/register.js: $.fs.nope is not a call on $\nand more' };
     }
     if (argv[0] === 'plugin' && argv[1] === 'test') return testHelp ? { ok: true, stdout: 'Usage: claude plugin test\n' } : { ok: false, stderr: "error: unknown command 'test'" };
@@ -246,6 +247,54 @@ test('mod on when plugin validate refuses the mod says mod unavailable and leave
   assert.equal(log.text(), 'mod unavailable: this Claude Code does not accept the mod: hooks/register.js: $.fs.nope is not a call on $');
   assert.equal(claude.argvs().length, 2);
   assert.equal(fs.existsSync(projectPaths(root).modDir), false, 'the staged copy is gone again');
+});
+
+// Claude Code 2.1.296's real refusal of wc085/int's mod (U88c), as `claude
+// plugin validate` printed it — all on stderr — for the staged folder `plugin`.
+const REAL_REFUSAL = (plugin, extra = []) => [
+  `Validating plugin manifest: ${plugin}/.claude-plugin/plugin.json`, '',
+  `Validating hooks: ${plugin}/hooks/hooks.json`, '',
+  `✘ Found ${1 + extra.length} ${extra.length ? 'errors' : 'error'}:`, '',
+  `  ❯ modules../register.js: web-chat-mod: ${plugin}/hooks/register.js:902: $ is passed to "begin", which is not a function declared at the top of this file (a function declaration, or a const bound to one); $ is followed nowhere else; $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e, "<tier>")`,
+  ...extra.map((x) => `  ❯ ${x}`), '',
+  '✘ Validation failed', '',
+].join('\n');
+
+test('mod on refused by the real validator prints its error lines, not its "Validating … manifest:" header, and keeps the whole output', async (t) => {
+  isolate(t);
+  const root = project(t);
+  const claude = fakeClaude({ validate: (argv) => ({ ok: false, stderr: REAL_REFUSAL(argv[2]) }) });
+  const log = sink();
+  const prev = process.exitCode;
+  const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log });
+  process.exitCode = prev;
+  assert.equal(r.exitCode, 1);
+  const lines = log.text().split('\n');
+  assert.equal(lines[0], 'mod unavailable: this Claude Code does not accept the mod — `claude plugin validate` refused it:');
+  assert.equal(lines[1], '  ✘ Found 1 error:');
+  assert.ok(lines[2].startsWith('  ❯ modules../register.js: web-chat-mod: hooks/register.js:902: $ is passed to "begin", which is not a function declared at the top of this file'), lines[2]);
+  assert.ok(lines[2].length <= 402, 'each line cut to a sane length');
+  assert.equal(lines.length, 3);
+  assert.doesNotMatch(log.text(), /Validating plugin manifest|Validation failed/);
+  assert.match(r.state, /^tier 1: this Claude Code does not accept the mod: Found 1 error: modules\.\.\/register\.js: web-chat-mod: hooks\/register\.js:902: \$ is passed to "begin"/);
+  assert.doesNotMatch(r.state, /\n/, 'the state is one line');
+  assert.match(r.validate_output, /^Validating plugin manifest: .*\n[\s\S]*✘ Validation failed$/, 'the whole output is kept in the result');
+  assert.equal(fs.existsSync(projectPaths(root).modDir), false, 'the staged copy is gone again');
+});
+
+test('mod on refused with many errors prints the first three and how many more', async (t) => {
+  isolate(t);
+  const root = project(t);
+  const extra = ['b.js: two', 'c.js: three', 'd.js: four', `e.js: ${'x'.repeat(900)}`];
+  const claude = fakeClaude({ validate: (argv) => ({ ok: false, stderr: REAL_REFUSAL(argv[2], extra) }) });
+  const log = sink();
+  const prev = process.exitCode;
+  const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log });
+  process.exitCode = prev;
+  const lines = log.text().split('\n');
+  assert.equal(lines[1], '  ✘ Found 5 errors:');
+  assert.deepEqual(lines.slice(3), ['  ❯ b.js: two', '  ❯ c.js: three', '  … and 2 more']);
+  assert.match(r.state, /\(and 4 more\)$/);
 });
 
 test('mod on where plugin test is not registered installs anyway, saying mods look unavailable', async (t) => {
