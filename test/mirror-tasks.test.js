@@ -1101,6 +1101,7 @@ test('restart: a restored running row of an agent known to have ended ends; a kn
   const DONE = 'a3333333333333333';
   const LIVE = 'a4444444444444444';
   const GONE = 'a5555555555555555';
+  const SEEN = 'a6666666666666666';
   const r = a.records();
   r.prompt('hello', { promptId: 'p-r' });
   r.assistant(['Hello.']);
@@ -1110,16 +1111,17 @@ test('restart: a restored running row of an agent known to have ended ends; a kn
   hookStart(a, { id: 'brdone01', agent: DONE });
   hookStart(a, { id: 'brlive01', agent: LIVE });
   hookStart(a, { id: 'brgone01', agent: GONE });
+  hookStart(a, { id: 'brseen01', agent: SEEN });
   hookStart(a, { id: 'brmain01' });
   await a.mirror.stop();
   const slice = store.saved.get(S1).state.sources.tasks;
-  assert.equal(slice.rows.filter((x) => x.status === 'running').length, 4);
+  assert.equal(slice.rows.filter((x) => x.status === 'running').length, 5);
 
   const clock = fakeClock();
   const b = setup(t, { store, root: a.root, ch: a.ch, wrap: { clock } });
   await b.mirror.start();
   b.sessionStart('resume');
-  for (const id of ['brdone01', 'brlive01', 'brgone01', 'brmain01']) await b.waitRow(id, (x) => x.status === 'running', `restored ${id}`);
+  for (const id of ['brdone01', 'brlive01', 'brgone01', 'brseen01', 'brmain01']) await b.waitRow(id, (x) => x.status === 'running', `restored ${id}`);
   const agentRow = (id, status) => ({
     id, conversation_id: S1, kind: 'agent', title: 'Agent', status, started_at: clock.now() - 60000,
     ...(status === 'running' ? {} : { ended_at: clock.now() - 1000 }),
@@ -1127,6 +1129,8 @@ test('restart: a restored running row of an agent known to have ended ends; a kn
   });
   b.probe.engine.model.upsertTask(agentRow(DONE, 'done'));
   b.probe.engine.model.upsertTask(agentRow(LIVE, 'running'));
+  // SEEN is known to no source, but fires a hook after the restore: it is alive.
+  hookStart(b, { id: 'bseen002', agent: SEEN });
   clock.advance(tasks.AGENT_SWEEP_MS);
   const done = await b.waitRow('brdone01', (x) => x.status !== 'running', 'the ended agent\'s row');
   assert.equal(done.status, 'stopped');
@@ -1137,8 +1141,10 @@ test('restart: a restored running row of an agent known to have ended ends; a kn
   assert.equal(gone.stopped_by, 'agent-end');
   assert.equal(b.row('brlive01').status, 'running', 'a running agent\'s task stays running');
   assert.equal(b.row('brmain01').status, 'running', 'the main session\'s task stays running');
+  assert.equal(b.row('brseen01').status, 'running', 'an agent that fired a hook since the restore is alive');
   // The ended rows persist as ended, with who stopped them.
   await b.mirror.stop();
+  assert.equal(clock.held(), 0, 'stop() clears the sweep timer');
   const back = store.saved.get(S1).state.sources.tasks.rows;
   assert.equal(back.find((x) => x.id === 'brdone01').stopped_by, 'agent-end');
 });
