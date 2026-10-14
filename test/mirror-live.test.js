@@ -2027,6 +2027,24 @@ test('after a daemon restart, the NEWEST restored turn end is the one a busy mus
   await live.stop();
 });
 
+test('a busy whose write time is unknown does not beat a known turn end, the CPU ticking', async () => {
+  // First read after the Stop, the file carrying neither updatedAt nor
+  // statusUpdatedAt: nothing dates the busy after the end, so it is stale.
+  const h = harness({ rule: cpuRate(5) });
+  h.openTurn('p1', T0);
+  h.clock.set(T0 + 3000);
+  h.closeTurn('p1');
+  h.clock.set(T0 + 4000);
+  h.file('busy');
+  await h.sample();
+  h.clock.set(T0 + 20000);
+  await h.sample();
+  assert.equal(h.L().process.cpu_pct, 5, 'the CPU ticks');
+  assert.equal(h.L().evidence.sessions_file_at, null, 'no write time known');
+  assert.equal(h.state(), 'idle');
+  assert.equal(h.L().stale_status, true);
+});
+
 test('no test in this file spawned a real ps (the sampler is always injected)', () => {
   assert.deepEqual(psCalls, []);
 });
