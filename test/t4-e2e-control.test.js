@@ -313,7 +313,7 @@ test('an accepted tty interrupt, then the turn closing interrupted: its node say
   assert.equal(node.trigger.ended_by, 'web', 'the page stopped it');
 });
 
-test('the remote request: refused over HTTP until U74; through control.invoke it writes the halt flag, the halt script halts, the flag goes with the turn, ended_by \'hook\'', async (t) => {
+test('the remote request: the answer surface\'s own HTTP route refuses it below `full` (a remote viewer comes in only through the portal\'s answer host); through control.invoke it writes the halt flag, the halt script halts, the flag goes with the turn, ended_by \'hook\'', async (t) => {
   const d = await daemon(t, { session: true, tty: true });
   await working(d);
   const f = await controlFrame(d, 'interrupt', { conversation_id: S1 }, 'stop');
