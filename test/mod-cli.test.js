@@ -169,6 +169,19 @@ test('mod on: the probe, then the project\'s own marketplace and the plugin at l
   assert.ok(!Number.isNaN(Date.parse(rec.at)));
 });
 
+// A copy of the template with `edit` applied to one of its files: a web-chat
+// whose mod CONTENT differs from this one's.
+function changedTemplate(t, rel = 'hooks/register.js', edit = (s) => s.replace('// ', '//  ')) {
+  const dir = path.join(tmp(t, 'wc-modcli-tpl-'), 'claude-mod');
+  fs.cpSync(TPL, dir, { recursive: true });
+  const file = path.join(dir, ...rel.split('/'));
+  const before = fs.readFileSync(file, 'utf8');
+  const after = edit(before);
+  assert.notEqual(after, before, 'the edit changes the file');
+  fs.writeFileSync(file, after);
+  return dir;
+}
+
 test('mod on again at the same version does nothing and says so; a newer web-chat re-stages and updates', async (t) => {
   isolate(t);
   const root = project(t);
@@ -180,9 +193,14 @@ test('mod on again at the same version does nothing and says so; a newer web-cha
   assert.deepEqual(again.argvs(), [], 'no install, nothing run');
   assert.match(log.text(), /mod already on for .*: nothing to do/);
 
+  // U122: a newer web-chat whose mod is the same content is no reason to
+  // re-install; one whose mod content changed is.
+  const sameContent = fakeClaude();
+  assert.equal(reg.applyMod(root, { runClaude: sameContent.fn, packageVersion: '99.0.0' }).changed, 'none');
+  assert.deepEqual(sameContent.argvs(), []);
   const newer = fakeClaude();
   const name = reg.modMarketplaceName(root);
-  const u = reg.applyMod(root, { runClaude: newer.fn, packageVersion: '99.0.0' });
+  const u = reg.applyMod(root, { runClaude: newer.fn, packageVersion: '99.0.0', templatesDir: changedTemplate(t) });
   assert.equal(u.state, 'on');
   assert.equal(u.changed, 'updated');
   assert.deepEqual(newer.argvs(), [
@@ -194,6 +212,123 @@ test('mod on again at the same version does nothing and says so; a newer web-cha
   ]);
   assert.equal(reg.inspectMod(root).staged_version, '99.0.0');
   assert.equal(reg.inspectMod(root).version, '99.0.0');
+});
+
+// ── an unchanged mod is current, whatever its version label (U122) ──────────
+
+// The mod as an earlier build installed it: staged and recorded under an
+// older version label, the content whatever `templatesDir` holds.
+function installedByOlderBuild(root, { label = '0.8.5-alpha.10', templatesDir } = {}) {
+  const r = reg.applyMod(root, { runClaude: fakeClaude().fn, packageVersion: label, ...(templatesDir ? { templatesDir } : {}) });
+  assert.equal(r.changed, 'installed');
+  const m = reg.inspectMod(root);
+  assert.equal(m.version, label);
+  assert.equal(m.staged_version, label);
+  return m;
+}
+
+test('an installed mod with an older version label and this build\'s content is current: no stale line, and mod on runs no claude command', async (t) => {
+  isolate(t);
+  const root = project(t);
+  installedByOlderBuild(root);
+  const mp = reg.modPaths(root);
+  const stagedBefore = snapshot(mp.dir);
+
+  assert.equal(reg.modContentFingerprint(mp.plugin), reg.modContentFingerprint(TPL), 'the label is not the content');
+  assert.equal(reg.stagedModCurrent(mp), true);
+  // update's path: apply() without opts.mod
+  const seen = [];
+  const a = reg.apply(root, { force: false, runClaude: (argv) => { seen.push(argv); return { ok: false, stderr: 'not attempted by update' }; } });
+  assert.deepEqual(a.mod, { state: 'on', ran: false }, 'no stale, no command for update to name');
+
+  const claude = fakeClaude();
+  const log = sink();
+  const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log });
+  assert.equal(r.ok, true);
+  assert.equal(r.changed, 'none');
+  assert.deepEqual(claude.argvs(), [], 'no probe, no validate, no install: nothing to restart Claude Code for');
+  assert.match(log.text(), /mod already on for .* \(v0\.8\.5-alpha\.10\): nothing to do/);
+  assert.doesNotMatch(log.text(), /restart Claude Code/);
+  assert.deepEqual(snapshot(mp.dir), stagedBefore, 'nothing re-staged or re-recorded');
+
+  // install's path (apply with opts.mod 'on') agrees
+  const viaInstall = fakeClaude();
+  const i = reg.apply(root, { force: false, mod: 'on', runClaude: viaInstall.fn });
+  assert.equal(i.mod.state, 'on');
+  assert.equal(i.mod.changed, 'none');
+  assert.equal(i.mod.ran, false);
+  assert.deepEqual(viaInstall.plugin(), []);
+
+  // mod status reports the labels as they are
+  const m = reg.inspectMod(root);
+  assert.equal(m.version, '0.8.5-alpha.10');
+  assert.equal(m.staged_version, '0.8.5-alpha.10');
+});
+
+test('a staged mod whose content differs by one character is stale, and mod on re-stages and updates it', async (t) => {
+  isolate(t);
+  const root = project(t);
+  // An earlier build's mod: one character of register.js differs beyond its
+  // MOD_VERSION line.
+  installedByOlderBuild(root, { templatesDir: changedTemplate(t, 'hooks/register.js', (s) => s.replace('// ', '//_')) });
+  const mp = reg.modPaths(root);
+  assert.notEqual(reg.modContentFingerprint(mp.plugin), reg.modContentFingerprint(TPL));
+  assert.equal(reg.stagedModCurrent(mp), false);
+  const a = reg.apply(root, { force: false, runClaude: () => ({ ok: false, stderr: 'not attempted by update' }) });
+  assert.deepEqual(a.mod, { state: 'on', ran: false, stale: true, version: '0.8.5-alpha.10', command: 'claude-web-chat mod on' });
+
+  const claude = fakeClaude();
+  const log = sink();
+  const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log });
+  const name = reg.modMarketplaceName(root);
+  assert.equal(r.changed, 'updated');
+  assert.deepEqual(claude.argvs(), [
+    ['--version'],
+    ['plugin', 'validate', mp.plugin],
+    ['plugin', 'test', '--help'],
+    ['plugin', 'marketplace', 'update', name, '--json'],
+    ['plugin', 'update', `web-chat-mod@${name}`, '--scope', 'local'],
+  ]);
+  assert.match(log.text(), new RegExp(`mod updated to v${VERSION.replace(/\./g, '\\.')}`));
+  assert.equal(reg.stagedModCurrent(mp), true, 'this build\'s content is staged now');
+  assert.equal(reg.inspectMod(root).version, VERSION);
+  assert.deepEqual(reg.apply(root, { force: false, runClaude: () => ({ ok: false }) }).mod, { state: 'on', ran: false });
+});
+
+test('a changed hooks.json or plugin.json (beyond its version) is stale too', (t) => {
+  isolate(t);
+  for (const [rel, edit] of [
+    ['hooks/hooks.json', (s) => s.replace('}', ', "x": 1}')],
+    ['.claude-plugin/plugin.json', (s) => s.replace('"web-chat"', '"web-chat!"')],
+  ]) {
+    const root = project(t);
+    installedByOlderBuild(root, { templatesDir: changedTemplate(t, rel, edit) });
+    assert.equal(reg.stagedModCurrent(reg.modPaths(root)), false, rel);
+    assert.equal(reg.apply(root, { force: false, runClaude: () => ({ ok: false }) }).mod.stale, true, rel);
+  }
+});
+
+test('an installed mod whose staged copy is missing or unreadable is stale, and mod on re-installs it', async (t) => {
+  isolate(t);
+  for (const damage of [
+    (mp) => fs.rmSync(mp.pkg, { recursive: true, force: true }),
+    (mp) => fs.rmSync(path.join(mp.plugin, 'hooks', 'hooks.json')),
+    (mp) => fs.writeFileSync(path.join(mp.plugin, '.claude-plugin', 'plugin.json'), '{ torn'),
+  ]) {
+    const root = project(t);
+    installedByOlderBuild(root);
+    const mp = reg.modPaths(root);
+    damage(mp);
+    assert.equal(reg.modContentFingerprint(mp.plugin), null);
+    assert.equal(reg.stagedModCurrent(mp), false);
+    assert.equal(reg.apply(root, { force: false, runClaude: () => ({ ok: false }) }).mod.stale, true);
+    const claude = fakeClaude();
+    const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log: sink() });
+    assert.equal(r.changed, 'updated');
+    assert.ok(claude.argvs().some((argv) => argv[1] === 'validate'), 're-staged and re-validated');
+    assert.equal(reg.stagedModCurrent(mp), true);
+    assert.equal(reg.inspectMod(root).staged_version, VERSION);
+  }
 });
 
 test('mod on below 2.1.287 says mod unavailable and installs nothing', async (t) => {
@@ -794,4 +929,60 @@ test('update names `claude-web-chat mod on` once for a project where it is not o
   assert.ok(notOnIdx >= 0 && optIdx > notOnIdx, text);
   assert.ok(lines.slice(optIdx + 1).every((l) => !/mod on/.test(l)), 'nothing for the opted-out project');
   assert.equal(fs.existsSync(projectPaths(notOn).modDir), false, 'and nothing switched on');
+});
+
+test('update names no `mod on` for an installed mod an older build staged with this build\'s content, and still names it where the content changed (U122)', async (t) => {
+  withTempHome(t);
+  const cfg = tmp(t, 'wc-modcli-ucfg-');
+  const prevCfg = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = cfg;
+  t.after(() => { if (prevCfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevCfg; });
+  const paths = installPaths();
+  const fakeVersion = (v) => {
+    const dir = paths.versionDir(v);
+    fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'lib', 'cli', 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'claude-web-chat', version: v }));
+    for (const name of paths.BIN_NAMES) fs.writeFileSync(path.join(dir, 'bin', `${name}.js`), '#!/usr/bin/env node\n');
+    fs.writeFileSync(path.join(dir, 'lib', 'cli', 'commands', 'restart.js'), 'module.exports = async function restart() { return { ok: true }; };\n');
+  };
+  fakeVersion('0.5.0');
+  activate('0.5.0', paths);
+  linkBins(paths);
+  const wired = (prefix, templatesDir) => {
+    const dir = tmp(t, prefix);
+    fs.mkdirSync(path.join(dir, '.web-chat'));
+    reg.apply(dir, { runClaude: () => ({ ok: false, stderr: 'no' }) });
+    installedByOlderBuild(dir, { templatesDir });
+    return dir;
+  };
+  const here = wired('wc-modcli-usame-');
+  const changed = wired('wc-modcli-uchg-', changedTemplate(t));
+  const prevCwd = process.cwd();
+  process.chdir(here);
+  t.after(() => process.chdir(prevCwd));
+
+  const lines = [];
+  const logFn = (m = '') => lines.push(String(m));
+  const realApply = reg.apply;
+  const seen = [];
+  const registration = { ...reg, apply: (root, o) => realApply(root, { ...o, runClaude: (argv, x) => { seen.push(argv); return o.runClaude(argv, x); } }) };
+  await update(['--restart-all'], {
+    log: logFn, errlog: logFn, exit: (c) => { throw new Error(`exit ${c}`); },
+    paths,
+    describeInstall: () => require('../lib/update/install-layout').describeInstall({ packageRoot: paths.versionDir('0.5.0'), paths }),
+    fetchLatestRelease: async () => ({ tag: 'v0.6.0', version: '0.6.0', assets: [] }),
+    fetchAndUnpack: async ({ release, versionDir }) => { fakeVersion(release.version); return { version: release.version, dir: versionDir }; },
+    readInstances: () => [{ root: changed, port: 1 }],
+    runningBuild: async () => '0.4.0',
+    restart: async () => ({ ok: true }),
+    registration,
+  });
+  const text = lines.join('\n');
+  assert.deepEqual(seen.filter((a) => a[0] === 'plugin' || a[0] === '--version'), [], 'update ran no claude command for the mod');
+  const modLines = lines.filter((l) => /claude-web-chat mod on/.test(l));
+  assert.equal(modLines.length, 1, text);
+  assert.match(modLines[0], /^ {6}the web-chat mod here is v0\.8\.5-alpha\.10, older than this build's — run `claude-web-chat mod on` there\.$/);
+  const changedIdx = lines.findIndex((l) => l.includes(changed));
+  assert.ok(changedIdx >= 0 && lines.indexOf(modLines[0]) > changedIdx, text);
 });
