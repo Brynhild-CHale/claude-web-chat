@@ -82,7 +82,8 @@ async function freePort() {
 async function bridgeHost(t, root) {
   const hooks = createHookTap();
   const published = [];
-  hooks.subscribe((e) => { if (e.event === P.MOD_EVENT) published.push(e.mod); });
+  const envs = []; // the same events, each with the session it was published as
+  hooks.subscribe((e) => { if (e.event === P.MOD_EVENT) { published.push(e.mod); envs.push(e); } });
   const audience = createAudience({ configFile: null });
   const mirror = { subscribe: () => () => {}, conversationOf: () => null };
   const bridge = createBridge({ root, hooks, mirror });
@@ -98,7 +99,7 @@ async function bridgeHost(t, root) {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
   });
-  return { port: server.address().port, bridge, published, root };
+  return { port: server.address().port, bridge, published, envs, root };
 }
 
 // A daemon that hands out whatever ops the test queues — forged ops the real
@@ -124,10 +125,12 @@ async function rawDaemon(t) {
   return { port: server.address().port, queue, results };
 }
 
-// The fake Claude Code: hooks, dispatches and `$`.
+// The fake Claude Code: hooks, dispatches and `$`. `sessionId` may be a
+// function, read on every $.session.id() (a process Claude Code switches).
 function fakeHost(t, {
   cwd, home, strict = false, delay = (ms) => Math.min(ms, 15), sessionId = SID, ccVersion = '2.1.296', handlers = {},
 } = {}) {
+  const sidNow = () => (typeof sessionId === 'function' ? sessionId() : sessionId);
   const hooks = new Map();
   let registering = true;
   const lateOn = [];
@@ -181,7 +184,7 @@ function fakeHost(t, {
 
   const $ = {
     session: {
-      id: g('session.id', async () => sessionId),
+      id: g('session.id', async () => sidNow()),
       cwd: g('session.cwd', async () => cwd),
       version: g('session.version', async () => ({ version: ccVersion, base: ccVersion, builtAt: '2026-10-01T00:00:00Z' })),
       usage: g('session.usage', async () => ({
@@ -249,7 +252,8 @@ function fakeHost(t, {
     async end(reason = 'prompt_input_exit') {
       if (ended) return null;
       ended = true;
-      return host.fire('session.end', { reason, sessionId, resume: {} }, async () => ({ sessionId }));
+      const sid = sidNow();
+      return host.fire('session.end', { reason, sessionId: sid, resume: {} }, async () => ({ sessionId: sid }));
     },
     async step(e, chunks, result) {
       const fn = hooks.get('turn.step');
@@ -736,6 +740,131 @@ test('session.end for a /clear keeps the mod running: it reads the session id ag
   assert.deepEqual(r, { sessionId: SID });
   await waitUntil(() => host.fetches('/api/bridge/hello').length > hellos && attachedTo(b), { timeout: 5000, what: 'the hello after the clear' });
   assert.ok(host.called('session.id').length > ids, 'the session id is read again, not kept from before the clear');
+});
+
+// ── a session Claude Code switches the process to (U127) ────────────────────
+//
+// After /resume, /clear or plan mode's clear-context, Claude Code 2.1.300
+// fires session.end {reason} and moves the process to the next session id
+// only once its own work is done: $.session.id() answers the ENDED id for a
+// while. The mod must say hello as the conversation the terminal is in.
+
+const NEW_SID = '44444444-4444-4444-8444-444444444444';
+
+// A session id Claude Code switches: switchTo(id, lag) makes the next `lag`
+// reads still answer the old id.
+function switchingId(first = SID) {
+  const s = { id: first, old: null, lag: 0 };
+  s.read = () => { if (s.lag > 0) { s.lag -= 1; return s.old; } return s.id; };
+  s.switchTo = (id, lag) => { s.old = s.id; s.id = id; s.lag = lag; };
+  return s;
+}
+
+const helloSids = (host) => host.fetches('/api/bridge/hello').map((c) => JSON.parse(c.args[1].body).session_id);
+const logLines = (root) => fs.readFileSync(path.join(root, '.web-chat', 'mod', 'bridge.log'), 'utf8')
+  .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+for (const reason of ['resume', 'clear']) {
+  test(`after a '${reason}' end with a lagging $.session.id(), the hello carries the new id, never the ended one, and what waited goes after it`, async (t) => {
+    const ids = switchingId();
+    const { b, host, root } = await attachedHost(t, { sessionId: ids.read });
+    const before = helloSids(host).length;
+    ids.switchTo(NEW_SID, 6); // six reads after the end still answer the ended id
+    const r = await host.fire('session.end', { reason, sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+    assert.deepEqual(r, { sessionId: SID });
+    // The first prompt of the conversation the terminal is now in, while the
+    // mod waits for the switch.
+    await host.fire('turn.start', { turnId: 'turn_after', text: '' });
+    await waitUntil(() => attachedTo(b, NEW_SID), { timeout: 5000, what: 'the hello as the new session' });
+    await waitUntil(() => !attachedTo(b, SID), { timeout: 3000, what: 'the ended session detached' });
+    assert.deepEqual(helloSids(host).slice(before), [NEW_SID], 'one hello after the end, as the new session');
+    assert.ok(ids.lag === 0, 'the lagging reads were all spent before the hello');
+    const hellos = logLines(root).filter((l) => l.what === 'hello').map((l) => l.session_id);
+    assert.deepEqual(hellos, [SID, NEW_SID], 'bridge.log: never a hello as the ended session after its end');
+    await waitUntil(() => b.envs.some((e) => e.mod.kind === 'turn.start' && e.mod.turn_id === 'turn_after'), { timeout: 3000, what: 'the waiting turn.start' });
+    const ev = b.envs.find((e) => e.mod.kind === 'turn.start' && e.mod.turn_id === 'turn_after');
+    assert.equal(ev.session_id, NEW_SID, 'what was pushed during the wait went out as the new session');
+  });
+}
+
+test('a resume that keeps its id (the same conversation) still says hello, with that id, by the bound', async (t) => {
+  const { b, host, root } = await attachedHost(t);
+  const before = helloSids(host).length;
+  const reads = host.called('session.id').length;
+  await host.fire('session.end', { reason: 'resume', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  await waitUntil(() => helloSids(host).length > before && attachedTo(b), { timeout: 5000, what: 'the hello at the bound' });
+  assert.deepEqual(helloSids(host).slice(before), [SID]);
+  // SWITCH_WAIT_MS / SWITCH_POLL_MS reads (this fake's clock runs fast): the
+  // mod waited the bound out before taking the unchanged id.
+  assert.ok(host.called('session.id').length - reads >= 30, 'the id was read again until the bound');
+  assert.deepEqual(logLines(root).map((l) => l.what).filter((w) => w === 'hello' || w === 'detach'), ['hello', 'detach', 'hello']);
+});
+
+test('a turn.start whose $.session.id() changed with no end: the old session is ended at the bridge, then hello as the new one, without holding up the turn', async (t) => {
+  const ids = switchingId();
+  const { b, host, root } = await attachedHost(t, { sessionId: ids.read });
+  ids.switchTo(NEW_SID, 0);
+  const reads = host.called('session.id').length;
+  const e = { turnId: 'turn_switched', text: '' };
+  const r = host.fire('turn.start', e);
+  assert.equal(host.called('session.id').length, reads, 'turn.start returned without reading the id');
+  assert.deepEqual(await r, { echoed: e }, 'turn.start returns next(e)\'s value');
+  await waitUntil(() => attachedTo(b, NEW_SID) && !attachedTo(b, SID), { timeout: 3000, what: 'the heal' });
+  const lines = logLines(root).filter((l) => l.what === 'hello' || l.what === 'detach');
+  assert.deepEqual(lines.map((l) => [l.what, l.session_id, l.reason]), [
+    ['hello', SID, undefined], ['detach', SID, 'session-end'], ['hello', NEW_SID, undefined],
+  ], 'the old id detached by its session.end, before the new hello');
+  await waitUntil(() => b.envs.some((x) => x.mod.kind === 'turn.start' && x.mod.turn_id === 'turn_switched'), { timeout: 3000, what: 'the turn\'s event' });
+  const evs = b.envs.filter((x) => x.mod.turn_id === 'turn_switched');
+  assert.ok(evs.every((x) => x.session_id === NEW_SID), 'no event of the turn went out as the old session');
+});
+
+test('a turn.start with an unchanged id does nothing extra: one read, no hello, no detach', async (t) => {
+  const { b, host, root } = await attachedHost(t);
+  const reads = host.called('session.id').length;
+  const hellos = helloSids(host).length;
+  await host.fire('turn.start', { turnId: 'turn_same', text: '' });
+  await waitUntil(() => b.envs.some((x) => x.mod.turn_id === 'turn_same'), { timeout: 3000, what: 'the turn.start' });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(host.called('session.id').length - reads, 1, 'the id read once, where the events left');
+  assert.equal(helloSids(host).length, hellos);
+  assert.ok(attachedTo(b));
+  assert.ok(!logLines(root).some((l) => l.what === 'detach'));
+  // A subagent's turn.start is not the main thread's: no read at all.
+  await host.fire('turn.start', { turnId: 'turn_sub', agentId: 'agent_1', text: '' });
+  await waitUntil(() => b.envs.some((x) => x.mod.turn_id === 'turn_sub'), { timeout: 3000, what: 'the subagent turn.start' });
+  assert.equal(host.called('session.id').length - reads, 1);
+});
+
+test('after a switch the session-scope disable check reads the NEW id', async (t) => {
+  const ids = switchingId();
+  const { b, host, home } = await attachedHost(t, { sessionId: ids.read });
+  fs.mkdirSync(path.join(home, '.web-chat', 'sessions'), { recursive: true });
+  const newMarker = path.join(home, '.web-chat', 'sessions', `${NEW_SID}.json`);
+  const oldMarker = path.join(home, '.web-chat', 'sessions', `${SID}.json`);
+  fs.writeFileSync(newMarker, '{}');
+  const checked = () => host.called('fs.exists').map((c) => c.args[0]);
+  const n = checked().length;
+  ids.switchTo(NEW_SID, 3);
+  await host.fire('session.end', { reason: 'resume', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  await waitUntil(() => checked().slice(n).includes(newMarker), { timeout: 5000, what: 'the new session\'s marker checked' });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(!checked().slice(n).includes(oldMarker), 'the ended session\'s marker is not what it reads');
+  assert.ok(!attachedTo(b, NEW_SID) && !attachedTo(b, SID), 'the new session is disabled: no hello');
+});
+
+test('a second clear/resume end inside the wait leaves no session.end behind to detach the new session after its hello', async (t) => {
+  const ids = switchingId();
+  const { b, host, root } = await attachedHost(t, { sessionId: ids.read });
+  ids.switchTo(NEW_SID, 6);
+  await host.fire('session.end', { reason: 'resume', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  // No token now: this end's session.end cannot leave, and must not wait for
+  // the next hello either.
+  await host.fire('session.end', { reason: 'clear', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  await waitUntil(() => attachedTo(b, NEW_SID), { timeout: 5000, what: 'the hello as the new session' });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(attachedTo(b, NEW_SID), 'the new session stays attached');
+  assert.deepEqual(logLines(root).filter((l) => l.what === 'detach').map((l) => l.session_id), [SID]);
 });
 
 // ── PermissionRequest: the transport (U92 builds its meaning) ───────────────

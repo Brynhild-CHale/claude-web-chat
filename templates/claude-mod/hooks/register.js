@@ -91,6 +91,14 @@ const COMMAND_WAIT_MS = 8000; // the bridge's result window is 10 s
 const DRIVER_CHECK_MS = 3000; // how often the session.start timer looks at the loop
 const DRIVER_CHECKS = 5; // … and for how long (then a failing loop asks the next hook)
 const CLOCK_TICK_MS = 250; // the fallback driver's period
+// After a /clear or /resume end, Claude Code moves the process to its next
+// session id only once its own work is done (2.1.300's in-app resume runs the
+// SessionStart hooks first), so the id is read again every SWITCH_POLL_MS
+// until it differs from the ended one, for at most SWITCH_WAIT_MS: a resume
+// of the same conversation keeps its id, and says hello with it then.
+const SWITCH_POLL_MS = 100;
+const SWITCH_WAIT_MS = 3000;
+const SWITCH_READS = Math.ceil(SWITCH_WAIT_MS / SWITCH_POLL_MS);
 const SHAPE_PATHS = 48;
 const SAFE_ID = /^[A-Za-z0-9_-]{1,100}$/;
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -339,6 +347,10 @@ function newState() {
     project: undefined, // the directory holding .web-chat/; null: none found
     realRoot: null,
     sid: null,
+    endedSid: null, // the id a clear/resume ended, while the next one is awaited
+    switchReads: 0,
+    switchUntil: 0,
+    recheck: false, // a main-thread turn started: compare the session id before the next batch goes
     ccVersion: null,
     disabled: false,
     token: null,
@@ -576,6 +588,24 @@ function helloBody(st) {
   };
 }
 
+// After a clear/resume end: has the process moved off the ended id, or has
+// the wait run out (by reads, or by the clock)? Then the id read is the one
+// to say hello with.
+function switchSettled(st, sid) {
+  if (sid && sid.toLowerCase() !== st.endedSid.toLowerCase()) return true;
+  st.switchReads += 1;
+  return st.switchReads >= SWITCH_READS || Date.now() >= st.switchUntil;
+}
+
+// What belonged to the session the mod leaves: its open requests answer
+// null (the terminal takes them), and the next hello sends a fresh diag.
+function leaveSession(st) {
+  st.token = null;
+  st.diagSent = false;
+  for (const resolve of st.permWaiters.values()) resolve(null);
+  st.permWaiters.clear();
+}
+
 function backoff(st) {
   const ms = Math.min(BACKOFF_MAX_MS, 1000 * 2 ** Math.min(st.failures, 16));
   st.failures += 1;
@@ -607,8 +637,11 @@ async function step($, st) {
     if (!ccVersion) { st.idle = true; st.pending.length = 0; return null; }
   }
   if (!st.sid) {
-    const sid = await readSessionId($, st);
-    st.sid = typeof sid === 'string' && UUID.test(sid) ? sid : null;
+    const read = await readSessionId($, st);
+    const sid = typeof read === 'string' && UUID.test(read) ? read : null;
+    if (st.endedSid && !switchSettled(st, sid)) return SWITCH_POLL_MS;
+    st.endedSid = null;
+    st.sid = sid;
     if (!st.sid) { st.idle = true; return null; }
   }
   if (await isDisabled($, st)) {
@@ -769,11 +802,32 @@ function takeBatch(st) {
   return batch;
 }
 
+// turn.start's check, made where events leave for the bridge, so it never
+// holds up the turn and no event of that turn goes out as the wrong session:
+// a process Claude Code moved to another session id with no end the mod saw
+// (or later than the wait after one) ends the old session at the bridge
+// first — session.end, under the old token, ahead of anything waiting — and
+// says hello as the new one; what waits goes after that hello.
+async function recheckSession($, st) {
+  st.recheck = false;
+  if (!st.sid || !st.token || st.endedSid) return;
+  let read;
+  try { read = await readSessionId($, st); } catch (e) { if (marker(e)) throw e; return; }
+  if (typeof read !== 'string' || !UUID.test(read) || read.toLowerCase() === st.sid.toLowerCase() || !st.token) return;
+  const token = st.token;
+  st.sid = read; // a hello from here on is the new session's
+  try {
+    await fetchJson($, st, 'POST', st.port, '/api/bridge/events', { events: [{ kind: 'session.end', at: Date.now(), reason: 'switch' }] }, true);
+  } catch (e) { if (marker(e)) throw e; }
+  if (st.token === token) leaveSession(st);
+}
+
 async function flush($, st) {
   if (st.flushing || !st.token || !st.pending.length) return;
   st.flushing = true;
   try {
     while (st.pending.length && st.token) {
+      if (st.recheck) { await recheckSession($, st); if (!st.token) break; }
       const batch = takeBatch(st);
       if (!batch.length) break;
       let r;
@@ -1034,18 +1088,23 @@ function begin($, st, e) {
 }
 
 async function endSession($, st, reason) {
+  st.recheck = false; // the end itself says what became of the session
   push($, st, 'session.end', { reason: typeof reason === 'string' && WORD.test(reason) ? reason : undefined });
   try { await within($, st, flush($, st), 1000); } catch {}
   if (reason === 'clear' || reason === 'resume') {
     // The process goes on under another session id, and no session.start
-    // fires for it: say hello again as that session.
-    st.token = null;
+    // fires for it: say hello again as that session — once Claude Code has
+    // switched to it (step waits on switchSettled), never as the ended one.
+    st.endedSid = st.sid || st.endedSid;
+    st.switchReads = 0;
+    st.switchUntil = Date.now() + SWITCH_WAIT_MS;
+    leaveSession(st);
     st.sid = null;
     st.openTurn = null;
     st.inflight.clear();
-    st.diagSent = false;
-    for (const resolve of st.permWaiters.values()) resolve(null);
-    st.permWaiters.clear();
+    // A session.end the flush did not get out belongs to the old token: sent
+    // after the new hello it would detach the new session.
+    for (let i = st.pending.length - 1; i >= 0; i--) if (st.pending[i].kind === 'session.end') st.pending.splice(i, 1);
     return;
   }
   endAll(st);
@@ -1138,6 +1197,9 @@ export function register(on) {
     maybeClock($, st);
     try {
       if (e && !e.agentId && typeof e.turnId === 'string') st.openTurn = e.turnId;
+      // A switch the end's wait missed, or one with no end: flush compares
+      // the id before this turn's first event goes (never awaited here).
+      if (e && !e.agentId) st.recheck = true;
       push($, st, 'turn.start', { turn_id: idOr(e && e.turnId), agent_id: idOr(e && e.agentId) });
     } catch { st.counters.failed += 1; }
     return next(e);
