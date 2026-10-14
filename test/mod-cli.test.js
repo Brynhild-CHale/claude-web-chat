@@ -656,6 +656,29 @@ test('mod status asks only this project\'s verified daemon: a portfile copied fr
   assert.match(log.text(), /not running here/);
 });
 
+const MOD_ON_AGAIN = /run `claude-web-chat mod on` again/;
+
+test('mod status after a content-equal update asks for no `mod on`: the older label is reported as it is, and `mod on` would do nothing', async (t) => {
+  isolate(t);
+  const root = project(t);
+  installedByOlderBuild(root);
+  const log = sink();
+  const r = await mod(['status'], { cwd: root, log, daemonFor: noDaemon, get: noGet });
+  assert.equal(r.state, 'on');
+  const line = log.text().split('\n').find((l) => /^ {2}installed: /.test(l));
+  assert.equal(line, `  installed: v0.8.5-alpha.10 (${reg.inspectMod(root).plugin_id}, staged v0.8.5-alpha.10)`);
+  assert.doesNotMatch(log.text(), MOD_ON_AGAIN);
+});
+
+test('mod status with an older label and changed content still asks for `mod on`', async (t) => {
+  isolate(t);
+  const root = project(t);
+  installedByOlderBuild(root, { templatesDir: changedTemplate(t, 'hooks/register.js', (s) => s.replace('// ', '//_')) });
+  const log = sink();
+  await mod(['status'], { cwd: root, log, daemonFor: noDaemon, get: noGet });
+  assert.match(log.text(), new RegExp(`installed: v0\\.8\\.5-alpha\\.10 \\(web-chat-mod@web-chat-mod-[0-9a-f]{8}, staged v0\\.8\\.5-alpha\\.10\\) — this web-chat is v${VERSION.replace(/\./g, '\\.')}: run \`claude-web-chat mod on\` again`));
+});
+
 test('mod on, off and status write nothing under HOME or Claude Code\'s config, and nothing in the project outside .web-chat/mod/', async (t) => {
   const cfg = isolate(t);
   const home = process.env.HOME;
