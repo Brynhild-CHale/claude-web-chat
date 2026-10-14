@@ -188,8 +188,8 @@ What you have to do:
     a project where the mod is not on yet (and you have not opted out) or where
     this build's mod differs from the one installed there, and asks for nothing
     when the mod is unchanged. `claude-web-chat mod off` opts a project out, and
-    a later `install` respects that until `mod on`. Without the mod everything works as before
-    (see [`mod.md`](docs/mod.md)).
+    a later `install` respects that until `mod on`. Without the mod everything
+    works as before (see [`mod.md`](docs/mod.md)).
 
 ### Added
 
