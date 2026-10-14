@@ -318,11 +318,19 @@ function parentOf(dir) {
   return i <= 0 ? '/' : dir.slice(0, i);
 }
 
-// ── the mod ─────────────────────────────────────────────────────────────────
 
-export function register(on) {
-  const st = {
-    $: null,
+// ── the mod's state ─────────────────────────────────────────────────────────
+//
+// Claude Code 2.1.296 scans this module before it loads it, and follows `$`
+// only into functions declared at the top of this file: so every function
+// that reaches `$` is declared here, takes it as its first parameter (a plain
+// name) beside the state `st`, and spells every use $.noun.event(...). `$` is
+// never stored — not on `st`, not in a variable — and never handed to
+// anything but such a function. test/claude-mod-scan.test.js holds the file
+// to those rules.
+
+function newState() {
+  return {
     began: false,
     ended: false,
     idle: false, // nothing more to do this session (no project, or the bridge said stop)
@@ -357,567 +365,761 @@ export function register(on) {
     shapes: {},
     diagSent: false,
   };
+}
 
-  // ── timers, all through $.clock and all tracked ──
-  function arm(kind, ms, fn) {
-    let handle = null;
-    const t = { cancel: () => { st.timers.delete(t); try { if (handle) handle.cancel(); } catch {} } };
-    handle = st.$.clock[kind](Math.max(1, ms), () => {
-      if (kind === 'after') st.timers.delete(t);
-      return fn();
-    });
-    st.timers.add(t);
-    return t;
-  }
+// ── timers, all through $.clock and all tracked ─────────────────────────────
 
-  // Resolves true after `ms`, or false when the mod ends first; rejects when
-  // $.clock refuses (the caller's driver logic reads why).
-  function wait(ms) {
-    return new Promise((resolve, reject) => {
-      if (st.ended) { resolve(false); return; }
-      const w = { timer: null, resolve };
-      st.waits.add(w);
-      try {
-        w.timer = arm('after', ms, () => { st.waits.delete(w); resolve(true); });
-      } catch (e) {
-        st.waits.delete(w);
-        reject(e);
-      }
-    });
-  }
+function armAfter($, st, ms, fn) {
+  let handle = null;
+  const t = { cancel: () => { st.timers.delete(t); try { if (handle) handle.cancel(); } catch {} } };
+  handle = $.clock.after(Math.max(1, ms), () => {
+    st.timers.delete(t);
+    return fn();
+  });
+  st.timers.add(t);
+  return t;
+}
 
-  // `p`, or null once `ms` passes; the timer goes when `p` settles first.
-  function within(p, ms) {
-    let w = null;
-    const timeout = new Promise((resolve) => {
-      if (st.ended) { resolve(null); return; }
-      w = { timer: null, resolve: () => resolve(null) };
-      st.waits.add(w);
-      try { w.timer = arm('after', ms, () => { st.waits.delete(w); resolve(null); }); } catch { st.waits.delete(w); resolve(null); }
-    });
-    return Promise.race([p, timeout]).finally(() => {
-      if (w) { st.waits.delete(w); if (w.timer) w.timer.cancel(); }
-    });
-  }
+function armEvery($, st, ms, fn) {
+  let handle = null;
+  const t = { cancel: () => { st.timers.delete(t); try { if (handle) handle.cancel(); } catch {} } };
+  handle = $.clock.every(Math.max(1, ms), fn);
+  st.timers.add(t);
+  return t;
+}
 
-  function endAll() {
-    st.ended = true;
-    st.token = null;
-    for (const t of [...st.timers]) t.cancel();
-    for (const w of [...st.waits]) { st.waits.delete(w); if (w.timer) w.timer.cancel(); w.resolve(false); }
-    for (const resolve of st.permWaiters.values()) resolve(null);
-    st.permWaiters.clear();
-  }
-
-  // Is the mod outside any hook now? A $ call that never rejects inside one.
-  async function outsideHook() {
-    try { await st.$.clock.now(); return false; } catch (e) {
-      if (isUnloaded(e)) { endAll(); return false; }
-      return true;
-    }
-  }
-
-  // Every $ call the loop makes goes through here. A call that fails while
-  // the detached loop drives is asked whether it failed for being outside a
-  // hook (a probe that never fails inside one): then the clock takes over.
-  async function call(fn) {
-    if (st.ended) throw STOP;
+// Resolves true after `ms`, or false when the mod ends first; rejects when
+// $.clock refuses (the caller's driver logic reads why).
+function wait($, st, ms) {
+  return new Promise((resolve, reject) => {
+    if (st.ended) { resolve(false); return; }
+    const w = { timer: null, resolve };
+    st.waits.add(w);
     try {
-      return await fn();
+      w.timer = armAfter($, st, ms, () => { st.waits.delete(w); resolve(true); });
     } catch (e) {
-      if (isUnloaded(e)) { endAll(); throw STOP; }
-      if (st.driver === 'loop' && st.startReturned && await outsideHook()) throw OUTSIDE;
-      throw e;
+      st.waits.delete(w);
+      reject(e);
     }
+  });
+}
+
+// `p`, or null once `ms` passes; the timer goes when `p` settles first.
+function within($, st, p, ms) {
+  let w = null;
+  const timeout = new Promise((resolve) => {
+    if (st.ended) { resolve(null); return; }
+    w = { timer: null, resolve: () => resolve(null) };
+    st.waits.add(w);
+    try { w.timer = armAfter($, st, ms, () => { st.waits.delete(w); resolve(null); }); } catch { st.waits.delete(w); resolve(null); }
+  });
+  return Promise.race([p, timeout]).finally(() => {
+    if (w) { st.waits.delete(w); if (w.timer) w.timer.cancel(); }
+  });
+}
+
+function endAll(st) {
+  st.ended = true;
+  st.token = null;
+  for (const t of [...st.timers]) t.cancel();
+  for (const w of [...st.waits]) { st.waits.delete(w); if (w.timer) w.timer.cancel(); w.resolve(false); }
+  for (const resolve of st.permWaiters.values()) resolve(null);
+  st.permWaiters.clear();
+}
+
+// ── every $ call the loop makes ─────────────────────────────────────────────
+//
+// Each one is written out where it is made, behind alive(st), and a failure
+// goes through fault(): a call that fails while the detached loop drives is
+// asked whether it failed for being outside a hook (a probe that never fails
+// inside one): then the clock takes over.
+
+function alive(st) {
+  if (st.ended) throw STOP;
+}
+
+function marker(e) {
+  return e === OUTSIDE || e === STOP;
+}
+
+// Is the mod outside any hook now? A $ call that never rejects inside one.
+async function outsideHook($, st) {
+  try { await $.clock.now(); return false; } catch (e) {
+    if (isUnloaded(e)) { endAll(st); return false; }
+    return true;
   }
+}
 
-  const marker = (e) => e === OUTSIDE || e === STOP;
+// What a failed $ call throws on: STOP (the environment is unloaded), OUTSIDE
+// (the detached loop was refused outside a hook), or the error itself.
+async function fault($, st, e) {
+  if (isUnloaded(e)) { endAll(st); return STOP; }
+  if (st.driver === 'loop' && st.startReturned && await outsideHook($, st)) return OUTSIDE;
+  return e;
+}
 
-  // ── the gate ──
-  async function exists(p) {
-    try { return (await call(() => st.$.fs.exists(p))) === true; } catch (e) { if (marker(e)) throw e; return false; }
-  }
+// ── the gate ────────────────────────────────────────────────────────────────
 
-  async function realOf(p) {
-    try {
-      const s = await call(() => st.$.fs.stat(p, { resolve: true }));
-      if (s && typeof s.realPath === 'string' && s.realPath.startsWith('/')) return normalise(s.realPath);
-    } catch (e) { if (marker(e)) throw e; }
-    return normalise(p);
-  }
-
-  // The nearest directory above the session's holding a .web-chat/, never
-  // $HOME (its .web-chat/ is web-chat's per-user folder, not a project).
-  async function findProject(start) {
-    let dir = normalise(start);
-    const home = normalise(st.home);
-    while (dir) {
-      if (dir !== home && await exists(`${dir === '/' ? '' : dir}/.web-chat`)) return dir;
-      dir = parentOf(dir);
-    }
-    return null;
-  }
-
-  async function isDisabled() {
-    const checks = [`${st.project}/.web-chat/disabled`];
-    if (st.home) {
-      checks.push(`${st.home}/.web-chat/disabled`);
-      if (st.sid && SAFE_ID.test(st.sid)) checks.push(`${st.home}/.web-chat/sessions/${st.sid}.json`);
-    }
-    for (const p of checks) if (await exists(p)) return true;
+async function exists($, st, p) {
+  alive(st);
+  try { return (await $.fs.exists(p)) === true; } catch (e) {
+    const x = await fault($, st, e);
+    if (marker(x)) throw x;
     return false;
   }
+}
 
-  // The port of THIS project's daemon, or null: a record naming another root,
-  // or none, is no daemon of this project (decided 2026-10-13,
-  // T6-refresh@mod-portfile-identity).
-  async function readPort() {
-    const file = `${st.project}/.web-chat/server.json`;
-    if (!await exists(file)) return null;
-    let rec;
-    try { rec = JSON.parse(await call(() => st.$.fs.read(file))); } catch (e) { if (marker(e)) throw e; return null; }
-    if (!isPlain(rec) || !Number.isInteger(rec.port) || rec.port < 1 || rec.port > 65535) return null;
-    if (typeof rec.root !== 'string' || !rec.root) return null;
-    if (await realOf(rec.root) !== st.realRoot) return null;
-    return rec.port;
+async function realOf($, st, p) {
+  alive(st);
+  try {
+    const s = await $.fs.stat(p, { resolve: true });
+    if (s && typeof s.realPath === 'string' && s.realPath.startsWith('/')) return normalise(s.realPath);
+  } catch (e) {
+    const x = await fault($, st, e);
+    if (marker(x)) throw x;
   }
+  return normalise(p);
+}
 
-  // ── the wire ──
-  async function fetchJson(method, port, path, body, withToken) {
-    const init = { method, headers: {} };
-    if (body !== null && body !== undefined) {
-      init.headers['content-type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    if (withToken) init.headers['x-wc-bridge'] = st.token;
-    const res = await call(() => st.$.http.fetch(`http://${LOOPBACK}:${port}${path}`, init));
-    let parsed = null;
-    try { parsed = JSON.parse(res && typeof res.text === 'string' ? res.text : ''); } catch {}
-    return { status: res ? res.status : 0, body: parsed };
+// The nearest directory above the session's holding a .web-chat/, never
+// $HOME (its .web-chat/ is web-chat's per-user folder, not a project).
+async function findProject($, st, start) {
+  let dir = normalise(start);
+  const home = normalise(st.home);
+  while (dir) {
+    if (dir !== home && await exists($, st, `${dir === '/' ? '' : dir}/.web-chat`)) return dir;
+    dir = parentOf(dir);
   }
+  return null;
+}
 
-  function helloBody() {
-    return {
-      v: 1,
-      protocol: WIRE.MOD_PROTOCOL,
-      session_id: st.sid,
-      cc_version: st.ccVersion,
-      mod_version: MOD_VERSION,
-      ops: [...WIRE.OPS],
-      events: [...WIRE.EVENT_KINDS],
-      root: st.project,
-    };
+async function isDisabled($, st) {
+  const checks = [`${st.project}/.web-chat/disabled`];
+  if (st.home) {
+    checks.push(`${st.home}/.web-chat/disabled`);
+    if (st.sid && SAFE_ID.test(st.sid)) checks.push(`${st.home}/.web-chat/sessions/${st.sid}.json`);
   }
+  for (const p of checks) if (await exists($, st, p)) return true;
+  return false;
+}
 
-  function backoff() {
-    const ms = Math.min(BACKOFF_MAX_MS, 1000 * 2 ** Math.min(st.failures, 16));
-    st.failures += 1;
-    st.token = null;
-    return ms;
+// The port of THIS project's daemon, or null: a record naming another root,
+// or none, is no daemon of this project (decided 2026-10-13,
+// T6-refresh@mod-portfile-identity).
+async function readPort($, st) {
+  const file = `${st.project}/.web-chat/server.json`;
+  if (!await exists($, st, file)) return null;
+  let text;
+  alive(st);
+  try { text = await $.fs.read(file); } catch (e) {
+    const x = await fault($, st, e);
+    if (marker(x)) throw x;
+    return null;
   }
+  let rec;
+  try { rec = JSON.parse(text); } catch { return null; }
+  if (!isPlain(rec) || !Number.isInteger(rec.port) || rec.port < 1 || rec.port > 65535) return null;
+  if (typeof rec.root !== 'string' || !rec.root) return null;
+  if (await realOf($, st, rec.root) !== st.realRoot) return null;
+  return rec.port;
+}
 
-  function lost() {
-    st.token = null;
+// The session's facts, each read once: HOME, its directory, Claude Code's
+// version and the session id.
+async function readHome($, st) {
+  alive(st);
+  try { return (await $.env.get('HOME')) || null; } catch (e) { throw await fault($, st, e); }
+}
+
+async function readCwd($, st) {
+  alive(st);
+  try { return await $.session.cwd(); } catch (e) { throw await fault($, st, e); }
+}
+
+async function readVersion($, st) {
+  alive(st);
+  try { return await $.session.version(); } catch (e) { throw await fault($, st, e); }
+}
+
+async function readSessionId($, st) {
+  alive(st);
+  try { return await $.session.id(); } catch (e) { throw await fault($, st, e); }
+}
+
+// ── the wire ────────────────────────────────────────────────────────────────
+
+async function fetchJson($, st, method, port, path, body, withToken) {
+  const init = { method, headers: {} };
+  if (body !== null && body !== undefined) {
+    init.headers['content-type'] = 'application/json';
+    init.body = JSON.stringify(body);
   }
+  if (withToken) init.headers['x-wc-bridge'] = st.token;
+  alive(st);
+  let res;
+  try { res = await $.http.fetch(`http://${LOOPBACK}:${port}${path}`, init); } catch (e) { throw await fault($, st, e); }
+  let parsed = null;
+  try { parsed = JSON.parse(res && typeof res.text === 'string' ? res.text : ''); } catch {}
+  return { status: res ? res.status : 0, body: parsed };
+}
 
-  // One step of the op loop; the ms to wait before the next, or null when
-  // there is nothing more to do this session.
-  async function step() {
-    if (st.ended || st.idle) return null;
-    if (st.project === undefined) {
-      if (!st.home) st.home = (await call(() => st.$.env.get('HOME'))) || null;
-      if (!st.cwd) st.cwd = await call(() => st.$.session.cwd());
-      // Settled together, so a gate cut short (the fallback driver takes
-      // over) is run again whole.
-      const project = await findProject(st.cwd);
-      if (!project) { st.project = null; st.idle = true; st.pending.length = 0; return null; }
-      const realRoot = await realOf(project);
-      const ccVersion = versionOf(await call(() => st.$.session.version()));
-      st.realRoot = realRoot;
-      st.ccVersion = ccVersion;
-      st.project = project;
-      // No version to say hello with: the bridge would refuse every hello.
-      if (!ccVersion) { st.idle = true; st.pending.length = 0; return null; }
-    }
-    if (!st.sid) {
-      const sid = await call(() => st.$.session.id());
-      st.sid = typeof sid === 'string' && UUID.test(sid) ? sid : null;
-      if (!st.sid) { st.idle = true; return null; }
-    }
-    if (await isDisabled()) {
-      st.disabled = true;
-      st.pending.length = 0;
-      lost();
-      return RECHECK_MS;
-    }
-    st.disabled = false;
+function helloBody(st) {
+  return {
+    v: 1,
+    protocol: WIRE.MOD_PROTOCOL,
+    session_id: st.sid,
+    cc_version: st.ccVersion,
+    mod_version: MOD_VERSION,
+    ops: [...WIRE.OPS],
+    events: [...WIRE.EVENT_KINDS],
+    root: st.project,
+  };
+}
 
-    if (!st.token) {
-      const port = await readPort();
-      if (!port) return backoff();
-      let r;
-      try { r = await fetchJson('POST', port, '/api/bridge/hello', helloBody(), false); } catch (e) { if (marker(e)) throw e; return backoff(); }
-      const b = r.body || {};
-      if (r.status === 200 && typeof b.token === 'string' && b.token) {
-        st.token = b.token;
-        st.port = port;
-        st.hello = b;
-        st.failures = 0;
-        void flush().catch(() => {}); // what waited for the hello goes at once
-        return 0;
-      }
-      if (r.status === 409 && (b.refused === 'protocol' || b.refused === 'too-old')) { st.idle = true; st.pending.length = 0; return null; }
-      if (r.status === 409 && b.refused === 'disabled') {
-        const ms = Number.isFinite(b.retry_ms) && b.retry_ms > 0 ? Math.min(b.retry_ms, 600000) : RECHECK_MS;
-        return ms;
-      }
-      return backoff(); // wrong-project, a 5xx, anything else: as a network failure
-    }
+function backoff(st) {
+  const ms = Math.min(BACKOFF_MAX_MS, 1000 * 2 ** Math.min(st.failures, 16));
+  st.failures += 1;
+  st.token = null;
+  return ms;
+}
 
-    const waitMs = Math.min(WIRE.OPS_WAIT_MAX_MS, Math.max(0, Number(st.hello && st.hello.wait_max_ms) || WIRE.OPS_WAIT_MAX_MS));
+function lost(st) {
+  st.token = null;
+}
+
+// One step of the op loop; the ms to wait before the next, or null when
+// there is nothing more to do this session.
+async function step($, st) {
+  if (st.ended || st.idle) return null;
+  if (st.project === undefined) {
+    if (!st.home) st.home = await readHome($, st);
+    if (!st.cwd) st.cwd = await readCwd($, st);
+    // Settled together, so a gate cut short (the fallback driver takes
+    // over) is run again whole.
+    const project = await findProject($, st, st.cwd);
+    if (!project) { st.project = null; st.idle = true; st.pending.length = 0; return null; }
+    const realRoot = await realOf($, st, project);
+    const ccVersion = versionOf(await readVersion($, st));
+    st.realRoot = realRoot;
+    st.ccVersion = ccVersion;
+    st.project = project;
+    // No version to say hello with: the bridge would refuse every hello.
+    if (!ccVersion) { st.idle = true; st.pending.length = 0; return null; }
+  }
+  if (!st.sid) {
+    const sid = await readSessionId($, st);
+    st.sid = typeof sid === 'string' && UUID.test(sid) ? sid : null;
+    if (!st.sid) { st.idle = true; return null; }
+  }
+  if (await isDisabled($, st)) {
+    st.disabled = true;
+    st.pending.length = 0;
+    lost(st);
+    return RECHECK_MS;
+  }
+  st.disabled = false;
+
+  if (!st.token) {
+    const port = await readPort($, st);
+    if (!port) return backoff(st);
     let r;
-    try { r = await fetchJson('GET', st.port, `/api/bridge/ops?wait=${Math.floor(waitMs)}`, null, true); } catch (e) { if (marker(e)) throw e; return backoff(); }
-    if (r.status === 401) { lost(); return 0; }
-    if (r.status !== 200 || !r.body || !Array.isArray(r.body.ops)) return backoff();
-    st.failures = 0;
-    for (const op of r.body.ops) {
-      if (st.ended) break;
-      await runOp(op);
+    try { r = await fetchJson($, st, 'POST', port, '/api/bridge/hello', helloBody(st), false); } catch (e) { if (marker(e)) throw e; return backoff(st); }
+    const b = r.body || {};
+    if (r.status === 200 && typeof b.token === 'string' && b.token) {
+      st.token = b.token;
+      st.port = port;
+      st.hello = b;
+      st.failures = 0;
+      void flush($, st).catch(() => {}); // what waited for the hello goes at once
+      return 0;
     }
-    return 0;
-  }
-
-  // ── the drivers ──
-  async function runLoop() {
-    st.driver = 'loop';
-    try {
-      while (!st.ended && st.driver === 'loop') {
-        const ms = await step();
-        if (ms === null) return;
-        if (ms > 0 && !await wait(ms)) return;
-      }
-    } catch (e) {
-      if (e === STOP || isUnloaded(e)) { endAll(); return; }
-      // OUTSIDE (Claude Code refused a call made outside a hook), or anything
-      // else: the clock takes over rather than leave the session without a
-      // bridge — now if $.clock still answers here, else from the driver
-      // check's timer or the next hook that runs.
-      st.loopFailed = true;
-      try { startClock(); } catch { st.needClock = true; }
+    if (r.status === 409 && (b.refused === 'protocol' || b.refused === 'too-old')) { st.idle = true; st.pending.length = 0; return null; }
+    if (r.status === 409 && b.refused === 'disabled') {
+      const ms = Number.isFinite(b.retry_ms) && b.retry_ms > 0 ? Math.min(b.retry_ms, 600000) : RECHECK_MS;
+      return ms;
     }
+    return backoff(st); // wrong-project, a 5xx, anything else: as a network failure
   }
 
-  function clockTick() {
-    if (st.ended || st.busy || Date.now() < st.nextAt) return undefined;
-    st.busy = true;
-    return step().then(
-      (ms) => {
-        if (ms === null) { for (const t of [...st.timers]) t.cancel(); return; }
-        st.nextAt = Date.now() + ms;
-      },
-      (e) => {
-        if (e === STOP) return;
-        st.nextAt = Date.now() + 1000;
-      },
-    ).finally(() => { st.busy = false; });
+  const waitMs = Math.min(WIRE.OPS_WAIT_MAX_MS, Math.max(0, Number(st.hello && st.hello.wait_max_ms) || WIRE.OPS_WAIT_MAX_MS));
+  let r;
+  try { r = await fetchJson($, st, 'GET', st.port, `/api/bridge/ops?wait=${Math.floor(waitMs)}`, null, true); } catch (e) { if (marker(e)) throw e; return backoff(st); }
+  if (r.status === 401) { lost(st); return 0; }
+  if (r.status !== 200 || !r.body || !Array.isArray(r.body.ops)) return backoff(st);
+  st.failures = 0;
+  for (const op of r.body.ops) {
+    if (st.ended) break;
+    await runOp($, st, op);
   }
+  return 0;
+}
 
-  // Throws when $.clock refuses (outside a hook): the caller tries again from
-  // inside one.
-  function startClock() {
-    if (st.ended || st.driver === 'clock') return;
-    st.nextAt = 0;
-    arm('every', CLOCK_TICK_MS, clockTick);
-    st.driver = 'clock';
-    st.needClock = false;
-  }
+// ── the drivers ─────────────────────────────────────────────────────────────
 
-  // From inside any hook: the fallback a failed loop could not arm itself.
-  function maybeClock($) {
-    if (!st.needClock || st.ended) return;
-    if ($) st.$ = $;
-    try { startClock(); } catch {}
-  }
-
-  // Runs on a $.clock timer armed in session.start — inside a dispatch Claude
-  // Code scheduled — a few times, so a loop that cannot run outside a hook is
-  // replaced by the clock at once rather than at the next event.
-  function checkDriver() {
-    if (st.ended || st.idle || st.driver !== 'loop') return;
-    if (st.loopFailed) { try { startClock(); } catch { st.needClock = true; } return; }
-    st.checks += 1;
-    if (st.checks >= DRIVER_CHECKS) return;
-    try { arm('after', DRIVER_CHECK_MS, checkDriver); } catch {}
-  }
-
-  // ── events ──
-  function active() {
-    return !st.ended && st.project !== null && !st.disabled && !st.idle;
-  }
-
-  function push(kind, fields) {
-    if (!active()) return;
-    try {
-      const ev = { kind, at: Date.now() };
-      for (const k of Object.keys(fields)) if (fields[k] !== undefined) ev[k] = fields[k];
-      const last = st.pending[st.pending.length - 1];
-      if (kind === 'turn.step' && last && last.kind === 'turn.step' && last.turn_id === ev.turn_id
-        && last.index === ev.index && last.message_id === ev.message_id && last.agent_id === ev.agent_id
-        && last.delta.length + ev.delta.length <= WIRE.DELTA_MAX) {
-        last.delta += ev.delta;
-        return;
-      }
-      st.pending.push(ev);
-      while (st.pending.length > PENDING_MAX) { st.pending.shift(); st.counters.dropped += 1; }
-      if (st.pending.length >= WIRE.BATCH_MAX) void flush().catch(() => {});
-      else scheduleFlush();
-    } catch { st.counters.failed += 1; }
-  }
-
-  function flushMs() {
-    const v = Number(st.hello && st.hello.flush_ms);
-    return Number.isFinite(v) && v >= 10 && v <= 5000 ? v : WIRE.FLUSH_MS;
-  }
-
-  function scheduleFlush() {
-    if (st.flushArmed || !st.token || !st.pending.length || st.ended) return;
-    try {
-      st.flushArmed = true;
-      arm('after', flushMs(), () => { st.flushArmed = false; return flush().catch(() => {}); });
-    } catch { st.flushArmed = false; }
-  }
-
-  function takeBatch() {
-    const batch = [];
-    let bytes = 0;
-    while (st.pending.length && batch.length < WIRE.BATCH_MAX) {
-      const n = jsonLen(st.pending[0]) + 1;
-      if (n > BATCH_BYTES) { st.pending.shift(); st.counters.dropped += 1; continue; }
-      if (bytes + n > BATCH_BYTES) break;
-      batch.push(st.pending.shift());
-      bytes += n;
+// The detached loop: started from session.start and never awaited there.
+async function runLoop($, st) {
+  st.driver = 'loop';
+  try {
+    while (!st.ended && st.driver === 'loop') {
+      const ms = await step($, st);
+      if (ms === null) return;
+      if (ms > 0 && !await wait($, st, ms)) return;
     }
-    return batch;
+  } catch (e) {
+    if (e === STOP || isUnloaded(e)) { endAll(st); return; }
+    // OUTSIDE (Claude Code refused a call made outside a hook), or anything
+    // else: the clock takes over rather than leave the session without a
+    // bridge — now if $.clock still answers here, else from the driver
+    // check's timer or the next hook that runs.
+    st.loopFailed = true;
+    try { startClock($, st); } catch { st.needClock = true; }
   }
+}
 
-  async function flush() {
-    if (st.flushing || !st.token || !st.pending.length) return;
-    st.flushing = true;
-    try {
-      while (st.pending.length && st.token) {
-        const batch = takeBatch();
-        if (!batch.length) break;
-        let r;
-        try { r = await fetchJson('POST', st.port, '/api/bridge/events', { events: batch }, true); } catch (e) {
-          st.counters.failed += batch.length;
-          if (marker(e)) throw e;
-          break;
-        }
-        if (r.status === 401) { st.counters.failed += batch.length; lost(); break; }
-        if (r.status !== 200) st.counters.failed += batch.length;
-      }
-    } finally {
-      st.flushing = false;
-    }
-    scheduleFlush();
-  }
+function clockTick($, st) {
+  if (st.ended || st.busy || Date.now() < st.nextAt) return undefined;
+  st.busy = true;
+  return step($, st).then(
+    (ms) => {
+      if (ms === null) { for (const t of [...st.timers]) t.cancel(); return; }
+      st.nextAt = Date.now() + ms;
+    },
+    (e) => {
+      if (e === STOP) return;
+      st.nextAt = Date.now() + 1000;
+    },
+  ).finally(() => { st.busy = false; });
+}
 
-  function shape(kind, paths) {
-    if (st.shapes[kind] || !paths.length) return;
-    st.shapes[kind] = paths.slice(0, SHAPE_PATHS);
-  }
+// Throws when $.clock refuses (outside a hook): the caller tries again from
+// inside one. The clock's steps run on the `$` of the hook that armed it.
+function startClock($, st) {
+  if (st.ended || st.driver === 'clock') return;
+  st.nextAt = 0;
+  armEvery($, st, CLOCK_TICK_MS, () => clockTick($, st));
+  st.driver = 'clock';
+  st.needClock = false;
+}
 
-  function sendDiag() {
-    if (st.diagSent) return;
-    st.diagSent = true;
-    const driver = st.driver || 'loop';
-    // The bridge keeps only `shapes` of a diag (validateEvent), so the driver
-    // and the two counters ride inside it as one-entry lists: how many events
-    // this mod dropped (over the 200 waiting, or one too big for a batch) and
-    // how many it failed to send or build, up to this diag.
-    push('diag', {
-      shapes: {
-        ...st.shapes,
-        driver: [driver],
-        dropped: [String(st.counters.dropped)],
-        failed: [String(st.counters.failed)],
-      },
-      driver,
-    });
-  }
+// From inside any hook: the fallback a failed loop could not arm itself.
+function maybeClock($, st) {
+  if (!st.needClock || st.ended) return;
+  try { startClock($, st); } catch {}
+}
 
-  // ── ops ──
-  const refused = (word, error) => ({ ok: false, refused: word, ...(error ? { error: cut(error, WIRE.ERROR_MAX) } : {}) });
-  const done = (result) => ({ ok: true, result });
+// Runs on a $.clock timer armed in session.start — inside a dispatch Claude
+// Code scheduled — a few times, so a loop that cannot run outside a hook is
+// replaced by the clock at once rather than at the next event.
+function checkDriver($, st) {
+  if (st.ended || st.idle || st.driver !== 'loop') return;
+  if (st.loopFailed) { try { startClock($, st); } catch { st.needClock = true; } return; }
+  st.checks += 1;
+  if (st.checks >= DRIVER_CHECKS) return;
+  try { armAfter($, st, DRIVER_CHECK_MS, () => checkDriver($, st)); } catch {}
+}
 
-  async function stopTask(taskId) {
-    const t = await call(() => st.$.tool.call({ tool: 'TaskStop', task_id: taskId }));
-    if (t && typeof t.deny === 'string') return { ok: false, error: t.deny };
-    if (t && t.isError) return { ok: false, error: typeof t.text === 'string' ? t.text : 'TaskStop failed' };
-    return { ok: true };
-  }
+// ── events ──────────────────────────────────────────────────────────────────
 
-  async function opAbort() {
-    const turnId = st.openTurn;
-    if (!turnId) return refused('no-turn');
-    // The foreground Bash calls running now: the abort settles them.
-    const foreground = [...st.inflight.values()].filter((c) => c.foreground);
-    try { await call(() => st.$.turn.abort({ turnId })); } catch (e) {
-      if (marker(e)) throw e;
-      return /no turn is running|not the running turn|already ending/i.test(messageOf(e)) ? refused('no-turn', messageOf(e)) : refused('failed', messageOf(e));
-    }
-    // $.turn.abort backgrounds a running foreground Bash rather than kill it
-    // (spec §15.2): stop each one that settles backgrounded.
-    const stopped = [];
-    await Promise.all(foreground.map(async (c) => {
-      const r = await within(c.done, ABORT_SETTLE_MS);
-      const id = r && r.result && typeof r.result.backgroundTaskId === 'string' ? r.result.backgroundTaskId : null;
-      if (!id || !TASK_ID.test(id)) return;
-      try { if ((await stopTask(id)).ok) stopped.push(id); } catch (e) { if (marker(e)) throw e; }
-    }));
-    return done({ aborted: true, stopped });
-  }
+function active(st) {
+  return !st.ended && st.project !== null && !st.disabled && !st.idle;
+}
 
-  async function opTaskStop(a) {
-    if (!TASK_ID.test(a.task_id || '')) return refused('bad-args');
-    const r = await stopTask(a.task_id);
-    return r.ok ? done({ stopped: true }) : refused('failed', r.error);
-  }
-
-  async function opSubmit(a) {
-    const text = a.text;
-    if (typeof text !== 'string' || !text.trim() || text.length > WIRE.ARG_TEXT_MAX) return refused('bad-args');
-    if (text.trimStart().startsWith('/')) return refused('not-allowed', 'a text beginning with / would run as a command');
-    const p = call(() => st.$.prompt.submit({ text, asUser: true }));
-    p.catch(() => {});
-    const r = await within(p.then((v) => ({ v }), (e) => ({ e })), SUBMIT_WAIT_MS);
-    if (!r) return done({ submitted: true, queued: true });
-    if (r.e) { if (marker(r.e)) throw r.e; return refused('failed', messageOf(r.e)); }
-    if (r.v && typeof r.v.deny === 'string') return refused('denied', r.v.deny);
-    return done({ submitted: true });
-  }
-
-  async function opCommand(a) {
-    const name = a.name;
-    if (typeof name !== 'string' || !WIRE.MOD_COMMANDS.includes(name)) return refused('not-allowed');
-    if (a.args !== undefined && a.args !== null && typeof a.args !== 'string') return refused('bad-args');
-    if (typeof a.args === 'string' && (a.args.length > (name === 'rename' ? WIRE.RENAME_MAX : WIRE.COMMAND_ARGS_MAX) || /[\r\n]/.test(a.args))) return refused('bad-args');
-    const input = typeof a.args === 'string' && a.args ? { command: name, args: a.args } : { command: name };
-    const p = call(() => st.$.command.run(input));
-    p.catch(() => {});
-    const r = await within(p.then((v) => ({ v }), (e) => ({ e })), COMMAND_WAIT_MS);
-    if (!r) return done({ ran: true, pending: true });
-    if (r.e) { if (marker(r.e)) throw r.e; return refused('failed', messageOf(r.e)); }
-    if (r.v && typeof r.v.deny === 'string') return refused('denied', r.v.deny);
-    return done({ ran: true });
-  }
-
-  async function opFill(a) {
-    if (typeof a.text !== 'string' || a.text.length > WIRE.ARG_TEXT_MAX) return refused('bad-args');
-    const r = await call(() => st.$.prompt.fill({ text: a.text, mode: 'replace' }));
-    return done({ filled: !(r && r.isFilled === false) });
-  }
-
-  function opPermissionDecision(a) {
-    if (!SAFE_ID.test(a.request_id || '') || !isPlain(a.decision)) return refused('bad-args');
-    if (forbiddenDecision(a.decision)) return refused('not-allowed');
-    const resolve = st.permWaiters.get(a.request_id);
-    if (!resolve) return refused('no-request');
-    st.permWaiters.delete(a.request_id);
-    resolve(a.decision);
-    return done({ answered: true });
-  }
-
-  async function opUsage() {
-    const u = await call(() => st.$.session.usage());
-    return done(numbersOnly(u) || {});
-  }
-
-  async function opMessages() {
-    const m = await call(() => st.$.session.messages());
-    return done({ count: Array.isArray(m) ? m.length : null });
-  }
-
-  async function doOp(op) {
-    if (typeof op.expires_at === 'number' && op.expires_at < Date.now()) return refused('expired');
-    if (typeof op.op !== 'string' || !WIRE.OPS.includes(op.op)) return refused('not-allowed');
-    const a = isPlain(op.args) ? op.args : {};
-    switch (op.op) {
-      case 'abort': return opAbort();
-      case 'taskStop': return opTaskStop(a);
-      case 'submit': return opSubmit(a);
-      case 'command': return opCommand(a);
-      case 'fill': return opFill(a);
-      case 'permissionDecision': return opPermissionDecision(a);
-      case 'usage': return opUsage();
-      case 'messages': return opMessages();
-      default: return refused('not-allowed');
-    }
-  }
-
-  async function runOp(op) {
-    if (!isPlain(op) || typeof op.id !== 'string') return;
-    let out;
-    try { out = await doOp(op); } catch (e) {
-      if (marker(e)) throw e;
-      out = refused('failed', messageOf(e));
-    }
-    if (out.ok && jsonLen(out.result) > WIRE.RESULT_MAX) out = refused('too-large');
-    try { await fetchJson('POST', st.port, '/api/bridge/result', { id: op.id, ...out }, true); } catch (e) { if (marker(e)) throw e; }
-  }
-
-  // ── the session ──
-  function begin($, e) {
-    if (st.began) return;
-    st.began = true;
-    st.$ = $;
-    st.cwd = e && typeof e.cwd === 'string' ? e.cwd : null;
-    push('session.start', {});
-    try { arm('after', DRIVER_CHECK_MS, checkDriver); } catch {}
-    void runLoop();
-  }
-
-  async function ended(reason) {
-    push('session.end', { reason: typeof reason === 'string' && WORD.test(reason) ? reason : undefined });
-    try { await within(flush(), 1000); } catch {}
-    if (reason === 'clear' || reason === 'resume') {
-      // The process goes on under another session id, and no session.start
-      // fires for it: say hello again as that session.
-      st.token = null;
-      st.sid = null;
-      st.openTurn = null;
-      st.inflight.clear();
-      st.diagSent = false;
-      for (const resolve of st.permWaiters.values()) resolve(null);
-      st.permWaiters.clear();
+function push($, st, kind, fields) {
+  if (!active(st)) return;
+  try {
+    const ev = { kind, at: Date.now() };
+    for (const k of Object.keys(fields)) if (fields[k] !== undefined) ev[k] = fields[k];
+    const last = st.pending[st.pending.length - 1];
+    if (kind === 'turn.step' && last && last.kind === 'turn.step' && last.turn_id === ev.turn_id
+      && last.index === ev.index && last.message_id === ev.message_id && last.agent_id === ev.agent_id
+      && last.delta.length + ev.delta.length <= WIRE.DELTA_MAX) {
+      last.delta += ev.delta;
       return;
     }
-    endAll();
-  }
+    st.pending.push(ev);
+    while (st.pending.length > PENDING_MAX) { st.pending.shift(); st.counters.dropped += 1; }
+    if (st.pending.length >= WIRE.BATCH_MAX) void flush($, st).catch(() => {});
+    else scheduleFlush($, st);
+  } catch { st.counters.failed += 1; }
+}
 
-  // ── the hooks (every one passes `e` on and returns what next(e) returned) ──
+function flushMs(st) {
+  const v = Number(st.hello && st.hello.flush_ms);
+  return Number.isFinite(v) && v >= 10 && v <= 5000 ? v : WIRE.FLUSH_MS;
+}
+
+function scheduleFlush($, st) {
+  if (st.flushArmed || !st.token || !st.pending.length || st.ended) return;
+  try {
+    st.flushArmed = true;
+    armAfter($, st, flushMs(st), () => { st.flushArmed = false; return flush($, st).catch(() => {}); });
+  } catch { st.flushArmed = false; }
+}
+
+function takeBatch(st) {
+  const batch = [];
+  let bytes = 0;
+  while (st.pending.length && batch.length < WIRE.BATCH_MAX) {
+    const n = jsonLen(st.pending[0]) + 1;
+    if (n > BATCH_BYTES) { st.pending.shift(); st.counters.dropped += 1; continue; }
+    if (bytes + n > BATCH_BYTES) break;
+    batch.push(st.pending.shift());
+    bytes += n;
+  }
+  return batch;
+}
+
+async function flush($, st) {
+  if (st.flushing || !st.token || !st.pending.length) return;
+  st.flushing = true;
+  try {
+    while (st.pending.length && st.token) {
+      const batch = takeBatch(st);
+      if (!batch.length) break;
+      let r;
+      try { r = await fetchJson($, st, 'POST', st.port, '/api/bridge/events', { events: batch }, true); } catch (e) {
+        st.counters.failed += batch.length;
+        if (marker(e)) throw e;
+        break;
+      }
+      if (r.status === 401) { st.counters.failed += batch.length; lost(st); break; }
+      if (r.status !== 200) st.counters.failed += batch.length;
+    }
+  } finally {
+    st.flushing = false;
+  }
+  scheduleFlush($, st);
+}
+
+function shape(st, kind, paths) {
+  if (st.shapes[kind] || !paths.length) return;
+  st.shapes[kind] = paths.slice(0, SHAPE_PATHS);
+}
+
+function sendDiag($, st) {
+  if (st.diagSent) return;
+  st.diagSent = true;
+  const driver = st.driver || 'loop';
+  // The bridge keeps only `shapes` of a diag (validateEvent), so the driver
+  // and the two counters ride inside it as one-entry lists: how many events
+  // this mod dropped (over the 200 waiting, or one too big for a batch) and
+  // how many it failed to send or build, up to this diag.
+  push($, st, 'diag', {
+    shapes: {
+      ...st.shapes,
+      driver: [driver],
+      dropped: [String(st.counters.dropped)],
+      failed: [String(st.counters.failed)],
+    },
+    driver,
+  });
+}
+
+// One chunk turn.step's stream yielded: its key names once per kind, and its
+// text forwarded as deltas.
+function lookChunk($, st, c, turnId, index, agentId) {
+  try {
+    if (!isPlain(c)) return;
+    const kind = typeof c.kind === 'string' && WORD.test(c.kind) ? c.kind : 'chunk';
+    if (!st.shapes['turn.step'] || !st.shapes['turn.step'].some((p) => p.startsWith(`${kind}.`))) {
+      st.shapes['turn.step'] = [...(st.shapes['turn.step'] || []), ...Object.keys(c).map((k) => `${kind}.${k}`).filter((p) => SHAPE_KEY.test(p))].slice(0, SHAPE_PATHS);
+    }
+    if (c.kind !== 'text' || typeof c.text !== 'string' || !c.text || !turnId) return;
+    const mid = idOr(c.messageId) || idOr(c.message_id) || (isPlain(c.message) ? idOr(c.message.id) : undefined);
+    for (let i = 0; i < c.text.length; i += WIRE.DELTA_MAX) {
+      push($, st, 'turn.step', { turn_id: turnId, index, message_id: mid, delta: c.text.slice(i, i + WIRE.DELTA_MAX), agent_id: agentId });
+    }
+  } catch { st.counters.failed += 1; }
+}
+
+function finishTool($, st, rec, r, threw) {
+  try {
+    if (!rec) return;
+    st.inflight.delete(rec.id);
+    rec.settle(r || null);
+    const bg = r && r.result && typeof r.result.backgroundTaskId === 'string' ? r.result.backgroundTaskId : undefined;
+    push($, st, 'tool.done', {
+      tool_use_id: rec.id,
+      ok: !threw && !!r && typeof r.deny !== 'string' && !r.isError,
+      is_error: threw || !!(r && (r.isError || typeof r.deny === 'string')),
+      duration_ms: Math.max(0, Date.now() - rec.t0),
+      background_task_id: bg && TASK_ID.test(bg) ? bg : undefined,
+      agent_id: rec.agentId,
+    });
+  } catch { st.counters.failed += 1; }
+}
+
+// ── ops ─────────────────────────────────────────────────────────────────────
+
+function refused(word, error) {
+  return { ok: false, refused: word, ...(error ? { error: cut(error, WIRE.ERROR_MAX) } : {}) };
+}
+
+function done(result) {
+  return { ok: true, result };
+}
+
+async function stopTask($, st, taskId) {
+  alive(st);
+  let t;
+  try { t = await $.tool.call({ tool: 'TaskStop', task_id: taskId }); } catch (e) { throw await fault($, st, e); }
+  if (t && typeof t.deny === 'string') return { ok: false, error: t.deny };
+  if (t && t.isError) return { ok: false, error: typeof t.text === 'string' ? t.text : 'TaskStop failed' };
+  return { ok: true };
+}
+
+// Stops one foreground Bash call the abort left running backgrounded; its
+// task id, or null.
+async function stopSettled($, st, c) {
+  const r = await within($, st, c.done, ABORT_SETTLE_MS);
+  const id = r && r.result && typeof r.result.backgroundTaskId === 'string' ? r.result.backgroundTaskId : null;
+  if (!id || !TASK_ID.test(id)) return null;
+  try { if ((await stopTask($, st, id)).ok) return id; } catch (e) { if (marker(e)) throw e; }
+  return null;
+}
+
+async function opAbort($, st) {
+  const turnId = st.openTurn;
+  if (!turnId) return refused('no-turn');
+  // The foreground Bash calls running now: the abort settles them.
+  const foreground = [...st.inflight.values()].filter((c) => c.foreground);
+  alive(st);
+  try { await $.turn.abort({ turnId }); } catch (err) {
+    const e = await fault($, st, err);
+    if (marker(e)) throw e;
+    return /no turn is running|not the running turn|already ending/i.test(messageOf(e)) ? refused('no-turn', messageOf(e)) : refused('failed', messageOf(e));
+  }
+  // $.turn.abort backgrounds a running foreground Bash rather than kill it
+  // (spec §15.2): stop each one that settles backgrounded.
+  const stopped = [];
+  const settled = [];
+  for (const c of foreground) settled.push(stopSettled($, st, c));
+  for (const id of await Promise.all(settled)) if (id) stopped.push(id);
+  return done({ aborted: true, stopped });
+}
+
+async function opTaskStop($, st, a) {
+  if (!TASK_ID.test(a.task_id || '')) return refused('bad-args');
+  const r = await stopTask($, st, a.task_id);
+  return r.ok ? done({ stopped: true }) : refused('failed', r.error);
+}
+
+// $.prompt.submit and $.command.run, settled as {v} or {e} — never a
+// rejection, so the op can answer before they resolve.
+async function submitText($, st, text) {
+  if (st.ended) return { e: STOP };
+  try { return { v: await $.prompt.submit({ text, asUser: true }) }; } catch (e) { return { e: await fault($, st, e) }; }
+}
+
+async function runCommand($, st, input) {
+  if (st.ended) return { e: STOP };
+  try { return { v: await $.command.run(input) }; } catch (e) { return { e: await fault($, st, e) }; }
+}
+
+async function opSubmit($, st, a) {
+  const text = a.text;
+  if (typeof text !== 'string' || !text.trim() || text.length > WIRE.ARG_TEXT_MAX) return refused('bad-args');
+  if (text.trimStart().startsWith('/')) return refused('not-allowed', 'a text beginning with / would run as a command');
+  const r = await within($, st, submitText($, st, text), SUBMIT_WAIT_MS);
+  if (!r) return done({ submitted: true, queued: true });
+  if (r.e) { if (marker(r.e)) throw r.e; return refused('failed', messageOf(r.e)); }
+  if (r.v && typeof r.v.deny === 'string') return refused('denied', r.v.deny);
+  return done({ submitted: true });
+}
+
+async function opCommand($, st, a) {
+  const name = a.name;
+  if (typeof name !== 'string' || !WIRE.MOD_COMMANDS.includes(name)) return refused('not-allowed');
+  if (a.args !== undefined && a.args !== null && typeof a.args !== 'string') return refused('bad-args');
+  if (typeof a.args === 'string' && (a.args.length > (name === 'rename' ? WIRE.RENAME_MAX : WIRE.COMMAND_ARGS_MAX) || /[\r\n]/.test(a.args))) return refused('bad-args');
+  const input = typeof a.args === 'string' && a.args ? { command: name, args: a.args } : { command: name };
+  const r = await within($, st, runCommand($, st, input), COMMAND_WAIT_MS);
+  if (!r) return done({ ran: true, pending: true });
+  if (r.e) { if (marker(r.e)) throw r.e; return refused('failed', messageOf(r.e)); }
+  if (r.v && typeof r.v.deny === 'string') return refused('denied', r.v.deny);
+  return done({ ran: true });
+}
+
+async function opFill($, st, a) {
+  if (typeof a.text !== 'string' || a.text.length > WIRE.ARG_TEXT_MAX) return refused('bad-args');
+  alive(st);
+  let r;
+  try { r = await $.prompt.fill({ text: a.text, mode: 'replace' }); } catch (e) { throw await fault($, st, e); }
+  return done({ filled: !(r && r.isFilled === false) });
+}
+
+function opPermissionDecision(st, a) {
+  if (!SAFE_ID.test(a.request_id || '') || !isPlain(a.decision)) return refused('bad-args');
+  if (forbiddenDecision(a.decision)) return refused('not-allowed');
+  const resolve = st.permWaiters.get(a.request_id);
+  if (!resolve) return refused('no-request');
+  st.permWaiters.delete(a.request_id);
+  resolve(a.decision);
+  return done({ answered: true });
+}
+
+async function opUsage($, st) {
+  alive(st);
+  let u;
+  try { u = await $.session.usage(); } catch (e) { throw await fault($, st, e); }
+  return done(numbersOnly(u) || {});
+}
+
+async function opMessages($, st) {
+  alive(st);
+  let m;
+  try { m = await $.session.messages(); } catch (e) { throw await fault($, st, e); }
+  return done({ count: Array.isArray(m) ? m.length : null });
+}
+
+async function doOp($, st, op) {
+  if (typeof op.expires_at === 'number' && op.expires_at < Date.now()) return refused('expired');
+  if (typeof op.op !== 'string' || !WIRE.OPS.includes(op.op)) return refused('not-allowed');
+  const a = isPlain(op.args) ? op.args : {};
+  switch (op.op) {
+    case 'abort': return opAbort($, st);
+    case 'taskStop': return opTaskStop($, st, a);
+    case 'submit': return opSubmit($, st, a);
+    case 'command': return opCommand($, st, a);
+    case 'fill': return opFill($, st, a);
+    case 'permissionDecision': return opPermissionDecision(st, a);
+    case 'usage': return opUsage($, st);
+    case 'messages': return opMessages($, st);
+    default: return refused('not-allowed');
+  }
+}
+
+async function runOp($, st, op) {
+  if (!isPlain(op) || typeof op.id !== 'string') return;
+  let out;
+  try { out = await doOp($, st, op); } catch (e) {
+    if (marker(e)) throw e;
+    out = refused('failed', messageOf(e));
+  }
+  if (out.ok && jsonLen(out.result) > WIRE.RESULT_MAX) out = refused('too-large');
+  try { await fetchJson($, st, 'POST', st.port, '/api/bridge/result', { id: op.id, ...out }, true); } catch (e) { if (marker(e)) throw e; }
+}
+
+// ── the session ─────────────────────────────────────────────────────────────
+
+// session.start, once: the session.start event, the driver check's timer and
+// the detached op loop (never awaited: $.command.run refuses to run inside a
+// hook that holds a turn).
+function begin($, st, e) {
+  if (st.began) return;
+  st.began = true;
+  st.cwd = e && typeof e.cwd === 'string' ? e.cwd : null;
+  push($, st, 'session.start', {});
+  try { armAfter($, st, DRIVER_CHECK_MS, () => checkDriver($, st)); } catch {}
+  void runLoop($, st);
+}
+
+async function endSession($, st, reason) {
+  push($, st, 'session.end', { reason: typeof reason === 'string' && WORD.test(reason) ? reason : undefined });
+  try { await within($, st, flush($, st), 1000); } catch {}
+  if (reason === 'clear' || reason === 'resume') {
+    // The process goes on under another session id, and no session.start
+    // fires for it: say hello again as that session.
+    st.token = null;
+    st.sid = null;
+    st.openTurn = null;
+    st.inflight.clear();
+    st.diagSent = false;
+    for (const resolve of st.permWaiters.values()) resolve(null);
+    st.permWaiters.clear();
+    return;
+  }
+  endAll(st);
+}
+
+function onToolCall($, st, e) {
+  maybeClock($, st);
+  let rec = null;
+  try {
+    const id = idOr(e && e.tool_use_id);
+    if (active(st) && id && typeof e.tool === 'string' && e.tool) {
+      const args = {};
+      for (const k of Object.keys(e)) if (k !== 'tool' && k !== 'tool_use_id' && k !== 'agentId' && k !== 'consent') args[k] = e[k];
+      shape(st, 'tool.call', keyPaths(e));
+      push($, st, 'tool.call', { tool_use_id: id, tool: cut(e.tool, 200), input: bounded(args, WIRE.INPUT_MAX), agent_id: idOr(e.agentId) });
+      rec = {
+        id, t0: Date.now(), agentId: idOr(e.agentId),
+        foreground: e.tool === 'Bash' && e.run_in_background !== true,
+        settle: null, done: null,
+      };
+      rec.done = new Promise((resolve) => { rec.settle = resolve; });
+      st.inflight.set(id, rec);
+    }
+  } catch { st.counters.failed += 1; rec = null; }
+  return rec;
+}
+
+function onAppend($, st, e, r) {
+  try {
+    const uuid = r && typeof r.uuid === 'string' ? r.uuid : (e && e.uuid);
+    const message = rowOf((r && r.message) || (e && e.message));
+    shape(st, 'session.append', keyPaths(e));
+    if (typeof uuid === 'string' && UUID.test(uuid) && message) {
+      push($, st, 'session.append', { uuid, origin: originOf(e && e.origin), message, agent_id: idOr(e && e.agentId) });
+    }
+  } catch { st.counters.failed += 1; }
+}
+
+// classic.PermissionRequest: { id, waitMs } of the request forwarded and to be
+// waited on, or null (no wait asked, no bridge, no tool name): then the
+// terminal answers.
+function forwardPermission($, st, e) {
+  try {
+    const waitMs = Math.min(WIRE.PERMISSION_WAIT_MAX_MS, Math.max(0, Math.floor(Number(st.hello && st.hello.permission_wait_ms) || 0)));
+    if (waitMs > 0 && st.token && active(st) && e && typeof e.tool_name === 'string' && e.tool_name) {
+      st.seq += 1;
+      const id = `pr_${Date.now().toString(36)}_${st.seq}`;
+      push($, st, 'permission.request', {
+        request_id: id, tool: cut(e.tool_name, 200), tool_use_id: idOr(e.tool_use_id), input: bounded(e.tool_input, WIRE.INPUT_MAX),
+      });
+      void flush($, st).catch(() => {});
+      return { id, waitMs };
+    }
+  } catch {}
+  return null;
+}
+
+async function awaitDecision($, st, id, waitMs) {
+  let decision = null;
+  try {
+    const answered = new Promise((resolve) => { st.permWaiters.set(id, resolve); });
+    decision = await within($, st, answered, waitMs);
+  } catch { decision = null; }
+  st.permWaiters.delete(id);
+  return decision;
+}
+
+// ── the hooks (every one passes `e` on and returns what next(e) returned) ───
+
+export function register(on) {
+  const st = newState();
 
   on('session.start', async ($, e, next) => {
     const r = await next(e);
-    try { begin($, e); } catch { st.counters.failed += 1; }
+    try { begin($, st, e); } catch { st.counters.failed += 1; }
     st.startReturned = true;
     return r;
   });
 
   on('session.end', async ($, e, next) => {
-    maybeClock($);
+    maybeClock($, st);
     let r;
     try { r = await next(e); } finally {
-      try { await ended(e && e.reason); } catch { endAll(); }
+      try { await endSession($, st, e && e.reason); } catch { endAll(st); }
     }
     return r;
   });
 
   on('turn.start', ($, e, next) => {
-    maybeClock($);
+    maybeClock($, st);
     try {
       if (e && !e.agentId && typeof e.turnId === 'string') st.openTurn = e.turnId;
-      push('turn.start', { turn_id: idOr(e && e.turnId), agent_id: idOr(e && e.agentId) });
+      push($, st, 'turn.start', { turn_id: idOr(e && e.turnId), agent_id: idOr(e && e.agentId) });
     } catch { st.counters.failed += 1; }
     return next(e);
   });
@@ -928,27 +1130,13 @@ export function register(on) {
     const turnId = idOr(e && e.turnId);
     const index = e && Number.isSafeInteger(e.index) ? e.index : 0;
     const agentId = idOr(e && e.agentId);
-    const look = (c) => {
-      try {
-        if (!isPlain(c)) return;
-        const kind = typeof c.kind === 'string' && WORD.test(c.kind) ? c.kind : 'chunk';
-        if (!st.shapes['turn.step'] || !st.shapes['turn.step'].some((p) => p.startsWith(`${kind}.`))) {
-          st.shapes['turn.step'] = [...(st.shapes['turn.step'] || []), ...Object.keys(c).map((k) => `${kind}.${k}`).filter((p) => SHAPE_KEY.test(p))].slice(0, SHAPE_PATHS);
-        }
-        if (c.kind !== 'text' || typeof c.text !== 'string' || !c.text || !turnId) return;
-        const mid = idOr(c.messageId) || idOr(c.message_id) || (isPlain(c.message) ? idOr(c.message.id) : undefined);
-        for (let i = 0; i < c.text.length; i += WIRE.DELTA_MAX) {
-          push('turn.step', { turn_id: turnId, index, message_id: mid, delta: c.text.slice(i, i + WIRE.DELTA_MAX), agent_id: agentId });
-        }
-      } catch { st.counters.failed += 1; }
-    };
     // Every chunk next() yields is yielded up unchanged, in order; a return or
     // throw from above reaches the stream beneath.
     const observed = {
       [Symbol.asyncIterator]() { return this; },
       async next(v) {
         const r = await inner.next(v);
-        if (!r.done) look(r.value);
+        if (!r.done) lookChunk($, st, r.value, turnId, index, agentId);
         return r;
       },
       return(v) { return typeof inner.return === 'function' ? inner.return(v) : Promise.resolve({ done: true, value: v }); },
@@ -958,92 +1146,51 @@ export function register(on) {
   });
 
   on('turn.complete', ($, e, next) => {
-    maybeClock($);
+    maybeClock($, st);
     try {
       if (e && st.openTurn === e.turnId) st.openTurn = null;
-      shape('turn.complete', keyPaths(e));
-      push('turn.complete', {
+      shape(st, 'turn.complete', keyPaths(e));
+      push($, st, 'turn.complete', {
         turn_id: idOr(e && e.turnId),
         reason: e && typeof e.reason === 'string' && WORD.test(e.reason) ? e.reason : undefined,
         text: e && typeof e.answer === 'string' ? cut(e.answer, WIRE.TEXT_MAX) : undefined,
         usage: usageOf(e && e.usage),
         agent_id: idOr(e && e.agentId),
       });
-      if (e && !e.agentId) sendDiag();
+      if (e && !e.agentId) sendDiag($, st);
     } catch { st.counters.failed += 1; }
     return next(e);
   });
 
-  function finishTool(rec, r, threw) {
-    try {
-      if (!rec) return;
-      st.inflight.delete(rec.id);
-      rec.settle(r || null);
-      const bg = r && r.result && typeof r.result.backgroundTaskId === 'string' ? r.result.backgroundTaskId : undefined;
-      push('tool.done', {
-        tool_use_id: rec.id,
-        ok: !threw && !!r && typeof r.deny !== 'string' && !r.isError,
-        is_error: threw || !!(r && (r.isError || typeof r.deny === 'string')),
-        duration_ms: Math.max(0, Date.now() - rec.t0),
-        background_task_id: bg && TASK_ID.test(bg) ? bg : undefined,
-        agent_id: rec.agentId,
-      });
-    } catch { st.counters.failed += 1; }
-  }
-
   on('tool.call', async ($, e, next) => {
-    maybeClock($);
-    let rec = null;
-    try {
-      const id = idOr(e && e.tool_use_id);
-      if (active() && id && typeof e.tool === 'string' && e.tool) {
-        const args = {};
-        for (const k of Object.keys(e)) if (k !== 'tool' && k !== 'tool_use_id' && k !== 'agentId' && k !== 'consent') args[k] = e[k];
-        shape('tool.call', keyPaths(e));
-        push('tool.call', { tool_use_id: id, tool: cut(e.tool, 200), input: bounded(args, WIRE.INPUT_MAX), agent_id: idOr(e.agentId) });
-        rec = {
-          id, t0: Date.now(), agentId: idOr(e.agentId),
-          foreground: e.tool === 'Bash' && e.run_in_background !== true,
-          settle: null, done: null,
-        };
-        rec.done = new Promise((resolve) => { rec.settle = resolve; });
-        st.inflight.set(id, rec);
-      }
-    } catch { st.counters.failed += 1; rec = null; }
+    const rec = onToolCall($, st, e);
     let r;
     try {
       r = await next(e);
     } catch (err) {
-      finishTool(rec, null, true);
+      finishTool($, st, rec, null, true);
       throw err;
     }
-    finishTool(rec, r, false);
+    finishTool($, st, rec, r, false);
     return r;
   });
 
   on('session.append', async ($, e, next) => {
-    maybeClock($);
+    maybeClock($, st);
     const r = await next(e);
-    try {
-      const uuid = r && typeof r.uuid === 'string' ? r.uuid : (e && e.uuid);
-      const message = rowOf((r && r.message) || (e && e.message));
-      shape('session.append', keyPaths(e));
-      if (typeof uuid === 'string' && UUID.test(uuid) && message) {
-        push('session.append', { uuid, origin: originOf(e && e.origin), message, agent_id: idOr(e && e.agentId) });
-      }
-    } catch { st.counters.failed += 1; }
+    onAppend($, st, e, r);
     return r;
   });
 
   on('session.compact', async ($, e, next) => {
     const trigger = e && typeof e.trigger === 'string' && WORD.test(e.trigger) ? e.trigger : 'unknown';
-    try { push('session.compact', { trigger, phase: 'start', agent_id: idOr(e && e.agentId) }); } catch {}
+    try { push($, st, 'session.compact', { trigger, phase: 'start', agent_id: idOr(e && e.agentId) }); } catch {}
     let r;
     try { r = await next(e); } catch (err) {
-      try { push('session.compact', { trigger, phase: 'failed', agent_id: idOr(e && e.agentId) }); } catch {}
+      try { push($, st, 'session.compact', { trigger, phase: 'failed', agent_id: idOr(e && e.agentId) }); } catch {}
       throw err;
     }
-    try { push('session.compact', { trigger, phase: r && r.skip ? 'skipped' : 'end', agent_id: idOr(e && e.agentId) }); } catch {}
+    try { push($, st, 'session.compact', { trigger, phase: r && r.skip ? 'skipped' : 'end', agent_id: idOr(e && e.agentId) }); } catch {}
     return r;
   });
 
@@ -1055,46 +1202,30 @@ export function register(on) {
       if (context) fields.context = context;
       const cost = numbersOnly(e && e.cost);
       if (cost) fields.cost = cost;
-      push('session.measure', fields);
+      push($, st, 'session.measure', fields);
     } catch { st.counters.failed += 1; }
     return next(e);
   });
 
   on('prompt.submit', ($, e, next) => {
-    maybeClock($);
+    maybeClock($, st);
     try {
       const origin = originOf(e && e.origin);
-      if (origin) push('prompt.submit', { origin });
+      if (origin) push($, st, 'prompt.submit', { origin });
     } catch { st.counters.failed += 1; }
     return next(e);
   });
 
   on('classic.PermissionRequest', async ($, e, next) => {
-    let id = null;
-    let waitMs = 0;
-    try {
-      waitMs = Math.min(WIRE.PERMISSION_WAIT_MAX_MS, Math.max(0, Math.floor(Number(st.hello && st.hello.permission_wait_ms) || 0)));
-      if (waitMs > 0 && st.token && active() && e && typeof e.tool_name === 'string' && e.tool_name) {
-        st.seq += 1;
-        id = `pr_${Date.now().toString(36)}_${st.seq}`;
-        push('permission.request', {
-          request_id: id, tool: cut(e.tool_name, 200), tool_use_id: idOr(e.tool_use_id), input: bounded(e.tool_input, WIRE.INPUT_MAX),
-        });
-        void flush().catch(() => {});
-      }
-    } catch { id = null; }
-    if (!id) return next(e);
-    let decision = null;
-    try {
-      const answered = new Promise((resolve) => { st.permWaiters.set(id, resolve); });
-      decision = await within(answered, waitMs);
-    } catch { decision = null; }
-    st.permWaiters.delete(id);
+    const asked = forwardPermission($, st, e);
+    if (!asked) return next(e);
+    const id = asked.id;
+    const decision = await awaitDecision($, st, id, asked.waitMs);
     if (decision && !isPass(decision)) {
-      push('permission.settled', { request_id: id, by: 'web' });
+      push($, st, 'permission.settled', { request_id: id, by: 'web' });
       return decision.behavior ? { decision } : (isPlain(decision.decision) ? decision : { decision });
     }
-    push('permission.settled', { request_id: id, by: decision ? 'terminal' : 'timeout' });
+    push($, st, 'permission.settled', { request_id: id, by: decision ? 'terminal' : 'timeout' });
     return next(e);
   });
 }
