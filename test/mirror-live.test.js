@@ -1811,6 +1811,173 @@ test('ingest stays well under 5 ms an envelope (asserted only under WEB_CHAT_PER
   assert.equal(h.state(), 'working');
 });
 
+// ── THE END OF A TURN WINS over an older sessions-file `busy` (U120) ──
+// Claude Code leaves `busy` in its sessions file after a turn ends, and a
+// background session's host ticks a few percent of CPU all the time: a busy
+// written at or before the last turn's end is stale whatever the CPU does.
+
+// A ticking process (5 % of a core) whose sessions file says busy from before
+// the turn, wired to the real turn machine: a prompt, then its Stop.
+// A `busy` written after the Stop is read after it (a read never dates a write
+// later than itself).
+async function endedTurn({ busyAt = T0 }) {
+  const w = wired({ rule: cpuRate(5) });
+  if (busyAt <= T0) w.file('busy', { updatedAt: busyAt });
+  w.clock.set(T0 + 1000);
+  w.hook('UserPromptSubmit', { prompt_id: 'p1', prompt: { author: 'user', text: 'go' } });
+  assert.equal(w.state(), 'working', 'the open turn');
+  w.clock.set(T0 + 5000);
+  w.hook('Stop', { prompt_id: 'p1' });
+  if (busyAt > T0) { w.clock.set(Math.max(T0 + 5000, busyAt)); w.file('busy', { updatedAt: busyAt }); }
+  await w.live.sampleNow();
+  w.clock.set(T0 + 15000);
+  await w.live.sampleNow();
+  assert.equal(w.L().process.cpu_pct, 5, 'the CPU ticks');
+  return w;
+}
+
+test('a turn that has ended reads idle although the sessions file still says busy and the CPU ticks', async () => {
+  const w = await endedTurn({ busyAt: T0 });
+  assert.equal(w.L().last_turn.outcome, 'done');
+  assert.equal(w.L().last_turn.ended_at, T0 + 5000);
+  assert.equal(w.state(), 'idle', 'the busy was written before the Stop: stale');
+  assert.equal(w.L().stale_status, true);
+  assert.equal(w.L().turn_started_at, null);
+  assert.equal(w.L().step, null);
+  // Later reads of the same file change nothing, however long the CPU ticks.
+  w.file('busy', { updatedAt: T0 });
+  w.clock.set(T0 + 60000);
+  await w.live.sampleNow();
+  assert.equal(w.state(), 'idle');
+  assert.equal(w.L().stale_status, true);
+
+  // A busy written in the very millisecond of the Stop is no newer than it.
+  const tie = await endedTurn({ busyAt: T0 + 5000 });
+  assert.equal(tie.state(), 'idle');
+
+  // The status write decides, when the file carries one: a later updatedAt
+  // (another field written) does not freshen a busy set before the Stop.
+  const st = await endedTurn({ busyAt: T0 });
+  st.clock.set(T0 + 20000);
+  st.file('busy', { updatedAt: T0 + 20000, statusUpdatedAt: T0 });
+  assert.equal(st.state(), 'idle');
+  assert.equal(st.L().stale_status, true);
+});
+
+test('a busy written after the last turn ended still reads working, under the same CPU and STALE_BUSY_MS rules', async () => {
+  const w = await endedTurn({ busyAt: T0 + 6000 });
+  assert.equal(w.state(), 'working', 'the next prompt started in the terminal before its UserPromptSubmit arrived');
+  assert.equal(w.L().stale_status, false);
+
+  // Written after the Stop, then read: the same, without a CPU.
+  const f = harness({ pid: null });
+  f.file('busy', { updatedAt: T0 });
+  f.openTurn('p1', T0);
+  f.clock.set(T0 + 3000);
+  f.closeTurn('p1');
+  f.clock.set(T0 + 4000);
+  f.file('busy', { updatedAt: T0 + 4000 });
+  assert.equal(f.state(), 'working');
+  // Fresh, it still grows stale on the clock (STALE_BUSY_MS, no CPU here).
+  f.clock.set(T0 + 4000 + STALE_BUSY_MS + 1);
+  f.live.noteActivity(C, T0, 'transcript');
+  assert.equal(f.state(), 'idle');
+  assert.equal(f.L().stale_status, true);
+
+  // Without a status write time, a status change between two reads is the write.
+  const r = harness({ pid: null });
+  r.file('idle');
+  r.openTurn('p1', T0);
+  r.clock.set(T0 + 3000);
+  r.closeTurn('p1');
+  r.clock.set(T0 + 4000);
+  r.file('busy');
+  assert.equal(r.state(), 'working', 'idle → busy seen after the close');
+});
+
+test('an open turn is working whatever an old busy says', async () => {
+  const h = harness({ rule: cpuRate(0.5) });
+  h.file('busy', { updatedAt: T0 - 20 * 86400000 });
+  h.openTurn('p1', T0);
+  h.clock.set(T0 + 1000);
+  h.closeTurn('p1');
+  assert.equal(h.state(), 'idle');
+  h.clock.set(T0 + 2000);
+  h.prompt('p2');
+  assert.equal(h.state(), 'working');
+  h.clock.set(T0 + 20000);
+  await h.sample();
+  h.clock.set(T0 + 40000);
+  await h.sample();
+  assert.equal(h.state(), 'working', 'the open turn, the CPU low and the busy old');
+  assert.equal(h.L().stale_status, false);
+});
+
+test('no clock is armed for a busy the last turn end made stale', async () => {
+  const h = harness({ pid: null });
+  h.live.start();
+  h.file('busy', { updatedAt: T0 });
+  assert.equal(h.state(), 'working');
+  assert.ok(h.clock.count() > 0, 'a fresh busy runs out on the clock');
+  h.openTurn('p1', T0 + 1000);
+  h.clock.set(T0 + 5000);
+  h.closeTurn('p1');
+  assert.equal(h.state(), 'idle');
+  assert.equal(h.clock.count(), 0, 'nothing left for time alone to change');
+  await h.live.stop();
+});
+
+test('after a daemon restart, a restored last turn that ended after the busy was written reads idle', async () => {
+  // The first daemon: a turn and its Stop, then the turn index it persists.
+  const d1 = wired({ rule: cpuRate(5) });
+  d1.file('busy', { updatedAt: T0 });
+  d1.clock.set(T0 + 1000);
+  d1.hook('UserPromptSubmit', { prompt_id: 'p1', prompt: { author: 'user', text: 'go' } });
+  d1.clock.set(T0 + 5000);
+  d1.hook('Stop', { prompt_id: 'p1' });
+  const records = d1.tm.exportTurns(S);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].header.status, 'done');
+
+  // The second daemon: its own model, turn machine and live machine, the turns
+  // restored from the index (no close is heard), the same sessions file.
+  const clock = fakeClock(T0 + 60000);
+  const sampler = fakeSampler(clock, cpuRate(5));
+  const model = createModel({ redactor });
+  const tm = createTurnMachine({ model, now: clock.now, transition: () => {} });
+  const live = createLive({
+    now: clock.now,
+    timers: clock.timers,
+    sampleProcs: (pids) => sampler.fn(pids),
+    isPidAlive: () => true,
+    redact: (s) => model.scrubText(s),
+    openTurnOf: (cid) => { const id = tm.openTurnOf(cid); return id ? model.turn(id) : null; },
+    turnOf: (id) => model.turn(tm.resolve(id)),
+    turnsOf: (cid) => model.turnsOf(cid),
+    onLive: (cid, l) => model.upsertLive(cid, l),
+  });
+  live.onConversation({ change: 'added', conversation: {
+    id: C, current_session_id: S, sessions: [{ session_id: S }], process: { pid: PID, proc_start: PROC_START, entrypoint: 'cli' },
+  } });
+  assert.equal(tm.restoreTurns(C, records).restored, 1);
+  live.noteSessionState(C, { status: 'busy', waitingFor: null, sessionId: S, procStart: PROC_START, entrypoint: 'cli', updatedAt: T0 });
+  await live.sampleNow();
+  clock.set(T0 + 75000);
+  await live.sampleNow();
+  const l = live.liveOf(C);
+  assert.equal(l.process.cpu_pct, 5);
+  assert.equal(l.state, 'idle', 'the restored turn ended after the busy was written');
+  assert.equal(l.stale_status, true);
+  assert.equal(l.last_turn.id, 'p1');
+  assert.equal(l.last_turn.outcome, 'done');
+  assert.equal(l.last_turn.ended_at, T0 + 5000);
+
+  // The next prompt (its busy written now) is working again.
+  live.noteSessionState(C, { status: 'busy', waitingFor: null, sessionId: S, procStart: PROC_START, entrypoint: 'cli', updatedAt: T0 + 75000 });
+  assert.equal(live.stateOf(C), 'working');
+  await live.stop();
+});
+
 test('no test in this file spawned a real ps (the sampler is always injected)', () => {
   assert.deepEqual(psCalls, []);
 });
