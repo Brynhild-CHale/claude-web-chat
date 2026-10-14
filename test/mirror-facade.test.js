@@ -27,7 +27,9 @@
 //     the turn in the turn machine with exactly one turn-closed {by: 'status'}
 //     carrying ended_by (none → terminal, tty and mod → web, hook → hook), and a
 //     process gone on two consecutive samples abandons the open turn and ends
-//     the conversation;
+//     the conversation; after a restart, a restored turn that ended after the
+//     sessions file's busy is the last turn and the state reads idle, the CPU
+//     ticking or not (the facade hands live.js the model's turnsOf);
 //   * capabilities list every key, the control layer's false;
 //   * switched off, sources stop, content is dropped and ingests are ignored;
 //     switched on, the sources start again;
@@ -57,7 +59,9 @@ const { createHookTap } = require('../lib/server/hook-tap');
 const {
   createMirror, SOURCES, DISPATCH, CAPABILITIES, INTERRUPT_HOLD_MS, HALT_HOLD_MAX_MS,
 } = require('../lib/server/mirror');
-const { STOP_GRACE_MS, PROC_SAMPLE_ACTIVE_MS } = require('../lib/server/mirror/live');
+const { STOP_GRACE_MS, PROC_SAMPLE_ACTIVE_MS, PROC_SAMPLE_IDLE_MS } = require('../lib/server/mirror/live');
+const { createModel } = require('../lib/server/mirror/model');
+const { createTurnMachine } = require('../lib/server/mirror/turn-machine');
 
 const REPO = path.resolve(__dirname, '..');
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -837,6 +841,62 @@ test('the live machine\'s process-gone verdict reaches the turn machine and the 
   assert.ok(Number.isFinite(conv.ended_at), 'the conversation carries its end');
   const live = h.mirror.liveOf(S1);
   assert.deepEqual([live.state, live.ended_reason, live.last_turn.outcome], ['ended', 'process-gone', 'abandoned']);
+});
+
+test('after a daemon restart, a restored turn that ended after the sessions file\'s busy reads idle through the facade\'s own wiring, the CPU ticking', async (t) => {
+  // The turns the first daemon persisted (its own model and turn machine): one
+  // prompt and its Stop, an hour ago — after the sessions file last said busy,
+  // two hours ago (Claude Code leaves busy in place when a turn ends).
+  const T = Date.now();
+  const FILE_AT = T - 2 * 3600 * 1000;
+  const ENDED_AT = T - 3600 * 1000;
+  let at = ENDED_AT - 5000;
+  const firstModel = createModel({ redactor: createRedactor() });
+  const firstTm = createTurnMachine({ model: firstModel, now: () => at, transition: () => {} });
+  const env = (event, fields) => ({ v: 1, event, ts: at, session_id: S1, prompt_id: null, entrypoint: 'cli', agent: null, ...fields });
+  firstTm.ingest(S1, env('UserPromptSubmit', { prompt_id: 'pA', prompt: { author: 'user', text: 'go' } }));
+  at = ENDED_AT;
+  firstTm.ingest(S1, env('Stop', { prompt_id: 'pA' }));
+  const records = firstTm.exportTurns(S1);
+  assert.equal(records.length, 1);
+  assert.deepEqual([records[0].header.status, records[0].header.ended_at], ['done', ENDED_AT]);
+
+  // The second daemon: the facade, its live source as createMirror attaches it,
+  // and a background host process ticking at 5 %.
+  const watches = handWatches();
+  let h = null;
+  let cpuBase = null;
+  h = setup(t, {
+    fakeTimers: true,
+    conversationsOptions: { watchFile: watches.watchFile },
+    isPidAlive: () => true,
+    sampleProcs: async (pids) => {
+      const now = h.clock.now();
+      if (cpuBase === null) cpuBase = now;
+      return new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: (now - cpuBase) * 0.05, state: 'S' }]));
+    },
+  });
+  const probe = recorder('transcripts');
+  h.mirror.register('transcripts', probe.source);
+  await h.mirror.start();
+  h.publish('SessionStart', { session: { source: 'resume' }, claude_pid: PID });
+  // What the transcripts source does on boot: the turn index, restored. No close
+  // is heard.
+  assert.equal(probe.engine.model.restoreTurns(S1, records).restored, 1);
+  h.ch.writeSession({ pid: PID, procStart: null, sessionId: S1, status: 'busy', updatedAt: FILE_AT, statusUpdatedAt: FILE_AT });
+  await watches.read();
+  await waitUntil(() => (h.mirror.liveOf(S1) || { evidence: {} }).evidence.sessions_file_at === FILE_AT,
+    { timeout: 5000, what: 'live.js to read the sessions file\'s busy' });
+  await h.clock.advance(0);
+  await h.clock.advance(PROC_SAMPLE_IDLE_MS);
+  await h.clock.advance(PROC_SAMPLE_IDLE_MS);
+
+  const live = h.mirror.liveOf(S1);
+  assert.equal(live.process.cpu_pct, 5, 'the host process ticks');
+  assert.equal(live.state, 'idle', 'the turn ended after the busy was written');
+  assert.equal(live.stale_status, true);
+  assert.deepEqual(pick(live.last_turn || {}, ['id', 'outcome', 'ended_at']), { id: 'pA', outcome: 'done', ended_at: ENDED_AT },
+    'the restored turn is the last turn');
 });
 
 // ── capabilities (§15.1) ─────────────────────────────────────────────────────
