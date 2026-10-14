@@ -318,7 +318,7 @@ test('the remote request: the answer surface\'s own HTTP route refuses it below 
   await working(d);
   const f = await controlFrame(d, 'interrupt', { conversation_id: S1 }, 'stop');
   const http403 = await act(f, 'interrupt', { conversation_id: S1, mode: 'now' }, { headers: { 'x-wc-remote': '1' } });
-  assert.equal(http403.status, 403, 'the answer surface refuses every X-WC-Remote request in tranche 4');
+  assert.equal(http403.status, 403, 'the answer surface\'s own HTTP route refuses an X-WC-Remote request below full');
   assert.equal(http403.json.remote, true);
 
   const nodeOf = await guardNode(t, d);
