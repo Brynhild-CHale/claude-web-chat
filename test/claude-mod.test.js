@@ -698,6 +698,16 @@ test('session.end ends the loop and the session at the bridge, with no timer lef
   assert.equal(host.calls.length, n, 'nothing after the end');
 });
 
+test('session.end for a /clear keeps the mod running: it reads the session id again and says hello as that session', async (t) => {
+  const { b, host } = await attachedHost(t);
+  const ids = host.called('session.id').length;
+  const hellos = host.fetches('/api/bridge/hello').length;
+  const r = await host.fire('session.end', { reason: 'clear', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  assert.deepEqual(r, { sessionId: SID });
+  await waitUntil(() => host.fetches('/api/bridge/hello').length > hellos && attachedTo(b), { timeout: 5000, what: 'the hello after the clear' });
+  assert.ok(host.called('session.id').length > ids, 'the session id is read again, not kept from before the clear');
+});
+
 // ── PermissionRequest: the transport (U92 builds its meaning) ───────────────
 
 test('classic.PermissionRequest with permission_wait_ms 0 returns next(e) at once and forwards nothing', async (t) => {
