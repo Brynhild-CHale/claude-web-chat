@@ -229,7 +229,8 @@ Don't POST the graph routes from a driver (see the three-actor model).
   only Claude's status — the heartbeat (state, timings, the kind of step), never
   a prompt, a reply, a path or a command — and nothing it sends raises that
   (`lib/server/audience.js`); Claude's conversation leaves the machine only
-  through the authenticated tunnel (`docs/remote-access.md`).
+  through the authenticated tunnel (see
+  [Showing Claude's conversation remotely](remote-access.md#showing-claudes-conversation-remotely)).
 - **Pane code runs with the chrome's authority.** A pane's script is not
   sandboxed: it runs in the surface page's own window (its shadow root scopes
   styles, not privilege, and is open), so it can do whatever the chrome can. It
