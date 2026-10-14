@@ -331,6 +331,44 @@ test('an installed mod whose staged copy is missing or unreadable is stale, and 
   }
 });
 
+test('a changed mod whose update failed after staging stays stale, and the next mod on updates it', async (t) => {
+  isolate(t);
+  // applyMod stages this build's content before `claude plugin marketplace
+  // update` and `claude plugin update`; when either fails, installed.json
+  // keeps the old label and Claude Code keeps running the old content, so
+  // the staged content alone must not make the mod current.
+  for (const failing of ['marketplace update', 'update']) {
+    const root = project(t);
+    installedByOlderBuild(root, { templatesDir: changedTemplate(t, 'hooks/register.js', (s) => s.replace('// ', '//_')) });
+    const mp = reg.modPaths(root);
+    const name = reg.modMarketplaceName(root);
+    const base = fakeClaude();
+    const head = ['plugin', ...failing.split(' ')];
+    const broken = (argv, o) => (head.every((w, i) => argv[i] === w)
+      ? { ok: false, stderr: `fake claude: plugin ${failing} failed` } : base.fn(argv, o));
+    const f = reg.applyMod(root, { runClaude: broken });
+    assert.equal(f.changed, 'none', failing);
+    assert.equal(f.kind, 'failed', failing);
+    assert.equal(reg.inspectMod(root).version, '0.8.5-alpha.10', `${failing}: installed.json keeps the old label`);
+    assert.equal(reg.stagedModCurrent(mp), true, `${failing}: this build's content was staged`);
+
+    // update's path still says stale
+    const a = reg.apply(root, { force: false, runClaude: () => ({ ok: false, stderr: 'not attempted by update' }) });
+    assert.deepEqual(a.mod, { state: 'on', ran: false, stale: true, version: '0.8.5-alpha.10', command: 'claude-web-chat mod on' }, failing);
+
+    // and the next mod on runs the update again
+    const claude = fakeClaude();
+    const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log: sink() });
+    assert.equal(r.changed, 'updated', failing);
+    assert.deepEqual(claude.argvs().slice(-2), [
+      ['plugin', 'marketplace', 'update', name, '--json'],
+      ['plugin', 'update', `web-chat-mod@${name}`, '--scope', 'local'],
+    ], failing);
+    assert.equal(reg.inspectMod(root).version, VERSION);
+    assert.deepEqual(reg.apply(root, { force: false, runClaude: () => ({ ok: false }) }).mod, { state: 'on', ran: false }, failing);
+  }
+});
+
 test('mod on below 2.1.287 says mod unavailable and installs nothing', async (t) => {
   isolate(t);
   const root = project(t);
