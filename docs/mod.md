@@ -113,8 +113,11 @@ the page by a settings hook, not by the mod; see the guide.
 - Nothing a page can call: there is no route from the browser to the mod. The
   page reaches it only through control frames (Stop, Kill, the session
   controls), which a pane's script cannot press, and through the queue.
-- Not through the tunnel yet: the mod's controls are for you at this machine
-  until the remote portal serves the answer frames.
+- Nothing below `full` through the tunnel: a remote viewer reaches the mod's
+  controls only at the project's `full` mirror level, through the frames on its
+  answer host (a remote Stop then takes the mod's abort, never the terminal's
+  Esc), and an MCP server's form never remotely (see
+  [`remote-access.md`](remote-access.md#answering-claude-remotely)).
 
 ## The experimental in-place resume
 

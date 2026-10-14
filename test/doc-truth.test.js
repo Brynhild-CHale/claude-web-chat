@@ -654,6 +654,28 @@ test('any count of the constructs the ratchet enforces equals the number it bans
   }
 });
 
+// install.md and CLAUDE.md state how many hook handlers and events the template
+// registers. install.md said "twelve events" through tranche 6 while the
+// template carried thirteen (U94b's hand-off); the numbers come from
+// templates/settings.hooks.json, which registration's hookHandlers()/hookEvents()
+// read, so a template change that forgets the sentence fails here.
+test('install.md\'s and CLAUDE.md\'s hook counts are the template\'s', () => {
+  const { hookEvents, hookHandlers } = require('../lib/setup/registration');
+  const count = (word) => (/^\d+$/.test(word) ? Number(word) : NUMBER_WORDS[word.toLowerCase()]);
+  const install = flatten(read('docs/install.md'));
+  const m = install.match(/\*\*The hooks it registers\*\* are (\w+) handlers on (\w+) Claude Code events/);
+  assert.ok(m, 'install.md no longer says how many hook handlers and events `install` registers');
+  assert.equal(count(m[1]), hookHandlers().length,
+    `install.md says ${m[1]} handlers, but templates/settings.hooks.json carries ${hookHandlers().length}`);
+  assert.equal(count(m[2]), hookEvents().length,
+    `install.md says ${m[2]} Claude Code events, but templates/settings.hooks.json carries ${hookEvents().length}`);
+  const claude = read('CLAUDE.md');
+  const c = claude.match(/\*\*Hooks — (\w+) events, one template\.\*\*/);
+  assert.ok(c, 'CLAUDE.md no longer opens its hooks paragraph with the event count');
+  assert.equal(count(c[1]), hookEvents().length,
+    `CLAUDE.md says ${c[1]} hook events, but templates/settings.hooks.json carries ${hookEvents().length}`);
+});
+
 // ---------------------------------------------------------------------------
 // Managed-file conflicts.
 //

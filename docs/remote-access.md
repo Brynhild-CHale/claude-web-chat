@@ -124,7 +124,12 @@ project directory):
 | nested | `wc.example.com` | `0a1b2c3d.wc.example.com` | needs a certificate for `*.wc.example.com` (Advanced Certificate Manager) |
 
 Each project on its own hostname means each is its own browser origin: a page
-in one project cannot read another's.
+in one project cannot read another's. Each project also has an **answer host**,
+its hostname with `-a` on the first label (`wc-0a1b2c3d-a.example.com`, nested
+`0a1b2c3d-a.wc.example.com`), where Claude's prompts are answered remotely at
+the `full` mirror level (see *Answering Claude remotely*). The wildcard DNS
+record and the Access application above already cover it, so it needs no setup
+of its own.
 
 ## One-token setup (recommended)
 
@@ -606,9 +611,9 @@ prove a frame is visible, so there a frame always offers **Review & answer ↗**
 (or **Review & confirm ↗**) and you answer in the popup, remotely as on this
 computer. The page itself offers no popup for the controls (Stop, Restore
 files, Fork): where their frames never load, they are not available remotely
-in that browser. *This build has not yet been checked against a real portal in
-each browser (validation gate V31): whether the frames load in place, and
-whether a sign-in in the popup changes that, is unverified.*
+in that browser. *Until validation gate V31 is recorded, which browsers load
+the frames in place through a real portal, and whether a sign-in in the popup
+changes that, is unverified.*
 
 **Stop, remotely.** A remote Stop never presses Esc in your terminal. Without
 the mod it reads **Stop after this step** and stops Claude at its next tool

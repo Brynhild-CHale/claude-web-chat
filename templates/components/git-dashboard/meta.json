@@ -1,6 +1,6 @@
 {
   "name": "git-dashboard",
-  "description": "Interactive live git dashboard. Shows the current branch, all branches, and a commit log; click a branch to view its commits, click a commit to drill into full message + per-file +/- stat. Service-backed — service.js reads the repo the daemon runs in, pushes to the store key `git`, and reacts to the pane's control key `git_ctl { viewing, open }` over SSE (branch to list / commit to inspect), re-reading on any .git change plus a 5s poll. No params. Use to browse repo history/branches on the surface.",
+  "description": "Interactive live git dashboard. Shows the current branch, all branches, and a commit log; click a branch to view its commits, click a commit to drill into full message + per-file +/- stat. Service-backed — service.js reads the repo the daemon runs in, pushes to the store key `git`, and reacts to the pane's control key `git_ctl { viewing, open }` over SSE (branch to list / commit to inspect), re-reading on any .git change plus a 5s poll, and publishing to `git` only when a rebuild differs from what the store holds, so an idle repository writes nothing. No params. Use to browse repo history/branches on the surface.",
   "params_schema": {
     "type": "object",
     "properties": {}

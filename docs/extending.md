@@ -304,6 +304,9 @@ were the only places they lived.
 | stream a request through to a daemon and relay the live response (a proxy) | `lib/client` `pipe(port, {method, path, headers}, reqStream)` | `http.request` + `res.pipe` in the proxy |
 | decide whether a REMOTE viewer (through the tunnel portal) may reach a daemon route | `core/remote-policy` `classify(method, url, {allowDestructive})` → `{allow, key, reason, hint}` + `refusalBody(v)` — default deny, and its ratchet test fails on any daemon route the table does not name | a per-route check in the portal, or a new route left unclassified |
 | decide what a chat-mirror frame, or a body that carries conversation text, may hold for a viewer's level (basic, read, full, local) | `core/remote-policy` `projectFrame(frame, level, posture)` (`FRAME_RULES`, one row per mirror frame type: a type with no row reaches a local viewer only, and test/remote-policy.test.js fails on it) · `projectValue(schema, value)` (the typed schemas, `STATUS_ROW_SCHEMA` and kin) · `stripText(kind, key, body)` (`TEXT_RULES`: what a route's or frame's body loses below read); `MIRROR_LEVELS` / `rankLevel` / `atLeast` are the one copy of the level order | a per-route or per-frame filter of your own, or a frame or route that carries text with no row |
+| name a project's answer host, or tell which host a portal request came to (the picker, a session, an answer host, the portal's own loopback probe) | `lib/tunnel/config` `answerHost(config, id)` (the session host with `-a` on its first label: `wc-<id>.example.com` → `wc-<id>-a.example.com`, nested `<id>.wc.example.com` → `<id>-a.wc.example.com`) / `parseHost(config, host)` → the host's `kind` (apex, session, answer, local) or null for a 421 — exactly `<id>-a` with the 8-hex id, nothing looser | a hostname built by hand, or a second Host parser |
+| decide what a remote viewer may reach on a project's answer host | `core/remote-policy` `ANSWER_RULES` / `classifyAnswer(method, url, {mirror})` / `ANSWER_HINT` — a second table in `RULES`' grammar, default deny, every allow row needs `full`, one literal row per static file of the answer surface, and no `/api/*` row (the mod's bridge included); `RULES` is untouched by it | a second table, a wildcard row for the answer surface's files, or an answer or control route let through on the session host |
+| serve the answer and control frames through the tunnel | `lib/portal/answer.js` `proxyAnswer(req, res, {session, sessionHost, ports, proxy})` / `answerCsrfRefusal(req, origin)` (the session's page may only navigate a frame or a popup to a document; every call is the frame's own, same-origin) / `createAnswerPorts()` (the answer surface's port, asked for as a LOCAL caller with a GET of `/api/asks?ensure=1`, which starts an idle-closed surface; memoised a second) — over `lib/portal/proxy` `proxyHttp(…, {mode: 'answer', sessionHost})` (`answerSecurityHeaders`: framed by the session's own origin and nothing else) | a second proxy, the answer host reaching the daemon's main port, or the answer port read from `/api/health` (it reports it to local callers only) |
 | check a remote viewer's Cloudflare Access sign-in (the tunnel portal's mandatory JWT check) | `lib/portal/access-jwt` `createVerifier({team, aud, allow, jwks})` over `lib/tunnel/jwks` `createJwksCache({team, fetchJwks})` — RS256 only, the key set's refetch rate-limited, cold failure fails closed | a JWT library, a decode-and-trust, or an `alg` read off the token |
 | choose which of a remote request's headers may reach a daemon | `lib/portal/proxy` `forwardHeaders(headers, {port, origin})` — an allowlist, Origin rewritten to the daemon's own | a blocklist of the headers you happen to know the daemon trusts |
 | read or validate tunnel.json (hostname, style, Access team/AUD, allowlist, the named tunnel), or find the portal's port | `lib/tunnel/config` `loadConfig()` / `normalizeConfig(raw)` / `parseHost` / `sessionHost` / `portalPort(env)` — one normaliser for the portal, `tunnel`, and doctor; a project's chat-mirror opt-in is read with `mirrorLevelFor(config, session)` and written with `withMirrorLevel`. The running portal (through `lib/portal/config-watch` `watchConfigFile`, a wrapper) and the daemon's audience gate both follow the file through `lib/core/watch` `watchFile`, and reload it with the same `loadConfig` | a second reader of `tunnel.json`, a second watcher of it, or `5171` written into a command |
@@ -426,7 +429,7 @@ were the only places they lived.
 | send a frame to the daemon from the chrome (a store patch, pane state, an activity event) | `public/app/ws.js` `send(frame)` — it queues on a closed socket, coalescing per key, and drains after the reconnect's snapshot has landed | gate the call on `isOpen()` and drop the frame: `hello` catches the client up in one direction only, so the reconcile then overwrites the local copy too and the change is lost at both ends |
 | hear a frame or the `hello` in the chrome, or tell the daemon something about this client | `public/app/ws.js` `onFrame(typeOrPrefix, handler)` (a frame type, or a prefix ending in a colon for a whole family, such as every mirror frame) and `onHello(handler)`, each returning its unregister · `setClientField(key, value)` (kept, and carried by every `client` frame, so the reconnect's hello sends it again) | a new branch in ws.js's frame switch for a feature, or a client field sent once and lost at the next reconnect |
 | put a chat view, the composer or the answer frames into the chrome, or ask whether a chat view is open | `public/app/chat-slots.js` `registerChatView(view)` / `registerComposer` / `registerApprovals` · `posture()` / `chatViews()` / `closeChatViews()` / `escapeChatViews()` | one chat surface importing another to reach it |
-| take over the status bar's chips (the trays) | `public/app/chat-bar.js` `claimChips()` → `release`: the bar's "Under development" stand-ins go at once, and the bar writes nothing in the chips' host until release | render into the chips' host while the bar's stand-ins are there, or build a second tray note beside the bar's |
+| take over the status bar's chips (the trays) | `public/app/chat-bar.js` `claimChips()` → `release`: the bar never writes the chips' host itself, claimed or not; a claim keeps it off while the trays own it, a second claim supersedes the first, and `release()` gives the element back as it is | render into the chips' host from anywhere but the trays, or build a tray note beside the trays' |
 | show the project's name and images in the chrome, or set the tab's title | `public/app/project.js` `initProject({onFrame, onHello})` / `getProject()` / `applyProject(identity)` — `document.title`'s one writer: the tab always reads the project's name | a title written anywhere else (the hello used to name the folder) |
 | set the browser tab's icon, or its waiting badge | `public/app/favicon.js` `initFavicon({createCanvas, loadImage})` / `paintFavicon()` — the one writer of `#wc-favicon`, `#wc-favicon-dark` and `#wc-touch-icon`: `iconFor(identity, dark)` (by the browser's scheme), `badgeFor(mirror)`, `composeBadge(canvas, image, colour)` | a link's `href` set anywhere else, or the title changed to say Claude waits |
 | open the chat, add a layer its Escape closes, or put a detail view, a tool card or a turn action into it | `public/app/chat-dock.js` (bus `chat:open {view, id, focus}` opens it; `closeChat` / `focusChat` / `addEscapeStep`) · `public/app/chat-panel.js` `registerDetail(kind, render)` · `public/app/chat-stream.js` `setToolRenderer(fn)` / `setPendingRenderer(fn)` · `public/app/chat-turns.js` `registerTurnAction({id, label, applies, run})` | edit the module you plug into, or a second chat host beside the dock's one element |
@@ -532,8 +535,12 @@ Everything about "is a daemon there and how do I find it." Role-based:
   applies the same rule to BOTH records at once — call that from a shutdown path,
   not this one.
 - `discoverPort({role, root, port, env})` — explicit port → `WEB_CHAT_PORT`
-  (only when `env:true`) → portfile. **Don't pass `env:true` on a site that
-  doesn't honor `WEB_CHAT_PORT` today** — that silently widens behavior.
+  (only when `env:true`) → portfile, read only while the pid it names is alive
+  (`readPortfile`'s default gate), so a crashed daemon's leftover record never
+  sends a driver, `profile reload` or a pack's announce to a port another
+  program now holds. `lib/client`'s `discoverPort` delegates here: one discovery
+  rule. **Don't pass `env:true` on a site that doesn't honor `WEB_CHAT_PORT`
+  today** — that silently widens behavior.
 - `probeReachable(port)` / `probeHealth(port)` / `probeHub(port)`
 - `waitUntilReachable({role, root})` / `waitUntilGone({role, root})`
 - `isPidAlive(pid)`, plus low-level `*At(webChatDir)` variants for callers that
@@ -853,10 +860,22 @@ the 403 (`{ok:false, remote:true, hint}`).
   frame type, applied per socket by `projectFrame`; and `TEXT_RULES`, the
   conversation text a route or a frame loses below `read` (the lock's prompt,
   the graph's triggers and summaries, a node's reply), applied with `stripText`.
+- **The answer host has a table of its own.** `ANSWER_RULES` (with
+  `classifyAnswer` and `ANSWER_HINT`) is what a remote viewer may reach on a
+  project's answer host (`<session>-a`, below): the answer and control frames'
+  documents, their long-polls and actions, and one literal row per static file
+  of `lib/server/answer-surface/public/` — never a wildcard, which would also
+  match a later frame kind's document. Default deny, every allow row needs
+  `full` (answering rides the mirror opt-in; `--read-only` is watch-only), and
+  no `/api/*` row at all, so the daemon's main port and the mod's bridge are
+  unreachable there. `test/remote-policy.test.js` requires a row for every
+  `.js` and `.css` file of the answer surface and a file for every literal row.
+  `RULES` does not change with it.
 - **A row the portal enforces is a protocol change.** Bump
   `PORTAL_PROTOCOL_VERSION` in `lib/core/versions.js` (9 since the chat mirror's
-  rows): `tunnel up` then restarts a portal left running by an older build
-  instead of reporting it "already up".
+  rows, 10 since the answer host and `ANSWER_RULES`): `tunnel up` then restarts
+  a portal left running by an older build instead of reporting it "already
+  up".
 
 ### `lib/portal/` — the tunnel portal
 
@@ -877,6 +896,30 @@ top-level navigation to `/`) → the streamed proxy (`proxy.js`, over
 upstream opened with no Origin, cut at the token's `exp` + 5s with close code
 4401 so the reconnect must present a fresh token; `armDeadline` waits out an exp past setTimeout's 2^31-1 ms ceiling in capped steps).
 
+- **The answer host** (`<session>-a`, `lib/tunnel/config` `answerHost`;
+  `parseHost` answers `{kind: 'answer'}` for exactly `<id>-a`) serves a
+  session's answer and control frames on an origin of their own, so that on a
+  phone, as on the host, no pane can press Allow: the session's page is the
+  chrome's origin, and the frames are a sibling under the same wildcard DNS
+  record and Access destination (no new setup). Its gate in `index.js`: the
+  Access JWT; the session running and visible (else a JSON 404, the same for
+  hidden and stopped, never the picker's page inside a frame); the project's
+  mirror level against `ANSWER_RULES` (403 with the `tunnel mirror on` hint);
+  `answer.js` `answerCsrfRefusal` (the session's page may only navigate a frame
+  or a popup to an answer document; every call must be the frame's own,
+  same-origin); the daemon's identity, as for a session; then `proxyAnswer`,
+  which streams to the daemon's ANSWER SURFACE, never its main port, through
+  `proxy.js`'s answer mode (`proxyHttp(…, {mode: 'answer', sessionHost})`:
+  `answerSecurityHeaders` let only the session's own origin frame it). The
+  surface listens on an ephemeral port and closes when idle, so the portal asks
+  for it as a local caller (`createAnswerPorts`: a GET of
+  `/api/asks?ensure=1`, which starts it, memoised a second per id, port and
+  pid) — a phone's Stop works with no desktop browser open, and `/api/health`
+  reports that port to local callers only. No WebSocket, no picker. The chrome
+  learns the answer host from `X-WC-Answer-Origin`, which the portal adds to a
+  session's `GET /api/health` at `full` only. A remote Stop is never the Esc:
+  the control domain takes the halt flag, or the mod's abort when a mod is
+  attached.
 - **Adding a header the daemon should see remotely?** Add it to `FORWARD` in
   `proxy.js` deliberately. The allowlist is the point: the daemon trusts
   `X-WC-Token`, `X-WC-Shutdown` and the MCP-sighting headers because only local
@@ -929,7 +972,8 @@ three of them need these. `config.js` is `tunnel.json`'s one normaliser and
 loader (fails closed — an empty allowlist or a quick tunnel is an error, never
 a partial run) plus `portalPort(env)` and `routeNames(config)` (the picker,
 the wildcard DNS/ingress name and the Access destination a style needs);
-`jwks.js` is Access's key set (the portal verifies with it, `tunnel setup`
+`answerHost` and `parseHost` name a project's answer host and tell it from a
+session's; `jwks.js` is Access's key set (the portal verifies with it, `tunnel setup`
 proves the team name with it); `cf-api.js` is the Cloudflare API v4 client
 (envelope, the permission a 403 means, 429 back-off, pagination — over
 `lib/util/outbound`, base URL overridable by `WEB_CHAT_CF_API` for the fake in
@@ -1896,6 +1940,12 @@ cannot prove visibility, get a small popup instead.
   viewer is connected and at most 45 s (the terminal shows no dialog while it
   waits), and prints `buildElicitationOutput`'s line or nothing. Remote answers
   to a form are refused at every level in 0.8.5.
+- **Remotely**, at the `full` mirror level only, the same frames are served
+  through the tunnel portal on the project's answer host (`lib/portal/answer.js`,
+  `ANSWER_RULES`; see *`lib/portal/`*), which keeps them on an origin of their
+  own there too. The daemon checks the level again (the answer surface's
+  `allowRemote`), the interrupt row never takes the Esc for a remote request,
+  and the audit lines say `origin: 'remote'`.
 
 ### The web-chat mod (tier 2) — the bridge, and what reaches it
 

@@ -108,6 +108,51 @@ only encoder for MP4/WebM replays, and when present it also encodes GIFs
 | **Linux** | `ffmpeg` on `PATH` (`apt install ffmpeg` / the distro's package) | The same tests, opted in by hand (CI never sets `WEB_CHAT_E2E_FFMPEG`); the spawn plumbing is covered everywhere by a fake (`test-support/fake-ffmpeg.js`). A distro build without libx264 fails MP4 with ffmpeg's own "Unknown encoder" in a `502`; WebM and GIF are unaffected |
 | **Windows (WSL2)** | A Linux ffmpeg inside the distro, as on Linux | Not run by anyone |
 
+## Stopping Claude and the chat, per platform
+
+**Interrupt: the Esc web-chat types into your terminal.** The page's
+**Interrupt** (without the web-chat mod) is the terminal's own Esc, one byte,
+typed by web-chat's MCP server into the terminal of the Claude Code session it
+runs in (`lib/mcp/interrupt.js`, through `perl`, which macOS and most Linux
+installs carry). The server probes once, at the session's start, whether it can:
+it must run on macOS or Linux, under Claude Code, holding the terminal's
+foreground. The page offers **Interrupt** only where the probe said yes; where
+it said no, the control is **Stop after this step** (the hook halt: Claude stops
+at its next tool call), and when an Interrupt is not confirmed within 3 seconds
+the control turns into **Stop after this step** too, so a terminal where the
+byte does not read as Esc costs a second, slower stop, never a wrong one. With the
+mod attached, Stop takes the mod's abort instead and needs none of this.
+
+| Platform | The Esc | Verified by |
+| --- | --- | --- |
+| **macOS** | Typed into the session's terminal | Terminal.app only: 98–162 ms from click to the interrupt in the record the design was measured on; `test/mcp-interrupt-tty-e2e.test.js` checks the one byte at a real pseudo-terminal when opted in (`WEB_CHAT_E2E_TTY=1`) |
+| **Linux** | Typed, unless the kernel refuses it: from Linux 6.2 a kernel set to `dev.tty.legacy_tiocsti = 0` refuses, the probe reads `/proc/sys/dev/tty/legacy_tiocsti`, and the page offers **Stop after this step** | Not run on Linux by anyone (validation gate V34) |
+| **Windows (WSL2)** | As on Linux, inside the distro: WSL2's kernel decides | Not run by anyone (V34) |
+
+Other terminals (tmux, screen, the VS Code and Cursor terminals, iTerm2 with the
+kitty keyboard protocol, Claude Code's fullscreen renderer) are unverified
+beyond macOS's Terminal until V34 is recorded; the 3-second fallback covers one
+that swallows the byte. A remote Stop never types the Esc on any platform.
+
+**The web-chat mod** needs Claude Code 2.1.287 or newer and is the same on every
+platform: Claude Code installs and runs it. Where it cannot run (an older Claude
+Code, safe mode, `--bare`, `disableAllHooks`, managed settings, a network policy
+that refuses its call to web-chat's server on this machine), the project stays
+on tier 1 and everything works without it (see [`mod.md`](mod.md)). It has not
+been run in a real session on any platform yet (validation gate V35).
+
+**Firefox and Safari answer in a popup.** The frames that answer Claude's
+prompts and confirm its controls wait until they can prove they are fully
+visible; Firefox and Safari (and so every browser on an iPhone) cannot prove
+it, so there a frame offers **Review & answer ↗** (or **Review & confirm ↗**)
+and you answer in a small window, on this computer as through the tunnel.
+
+**Safari after a long session.** The causes the Safari slowdown report named
+(pane handlers outliving their panes, git-dashboard writing every 5 seconds,
+services restarted by every dropped connection, live state that only grew) are
+fixed in 0.8.5; whether a long session in Safari is now fast is validation gate
+V38, not yet recorded.
+
 ## Known issues that affect every platform
 
 Surfaced by the Windows and Linux assessments. **These are not platform
@@ -115,11 +160,12 @@ problems** — they are live on macOS today, and they are listed here rather tha
 filed on a platform branch precisely so they do not get mistaken for someone
 else's.
 
-- **PID liveness is not identity — still true in `stop`.** `stop.js` asks "does a
-  process with this pid exist", not "is it ours", so a recycled pid in
-  `.web-chat/server.json` can be signalled by its SIGTERM escalation. Wants
-  `root` on `/api/health` (it reports `pid` but not `root` today) and a gate on
-  that. `ls --reap` no longer has this hole — see "Changed deliberately" below.
+- **Your home folder is still a project folder to three commands.** Run in a
+  folder that is itself your home directory, `doctor`, `status` and web-chat's
+  MCP server still treat it as a project folder (`resolveRoot`'s `install`
+  mode in `lib/setup/registration.js` falls back to the folder it was given).
+  `install`, `init` and `start` refuse it, so no server starts there. Fixed in
+  0.8.6.
 - **The capture hub's port is machine-wide, its registry is per-user.** The hub
   binds one fixed port (5170) for the whole machine, but `registerHub` and
   `readInstances` read `~/.web-chat/instances.json`, which is per user. On a
@@ -149,6 +195,13 @@ else's.
   the same property.
 
 ### Fixed since the assessments
+
+- **PID liveness was not identity in `stop`.** `stop` used to ask only whether
+  a process with the portfile's pid existed, so a recycled pid could be
+  signalled by its SIGTERM escalation. `/api/health` now names its project
+  (`instance`), and `stop` asks a daemon to shut down, or signals it, only after
+  it answers as this project's own (`lib/util/registry` `answersFor`); a
+  process that does not is named with a `kill` hint, never signalled.
 
 - **The `$HOME` guard failed open.** `findProjectRoot` compared paths
   lexically, so with `HOME` set to a symlink, or spelled in another case on
