@@ -853,6 +853,20 @@ test('after a switch the session-scope disable check reads the NEW id', async (t
   assert.ok(!attachedTo(b, NEW_SID) && !attachedTo(b, SID), 'the new session is disabled: no hello');
 });
 
+test('a second clear/resume end inside the wait leaves no session.end behind to detach the new session after its hello', async (t) => {
+  const ids = switchingId();
+  const { b, host, root } = await attachedHost(t, { sessionId: ids.read });
+  ids.switchTo(NEW_SID, 6);
+  await host.fire('session.end', { reason: 'resume', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  // No token now: this end's session.end cannot leave, and must not wait for
+  // the next hello either.
+  await host.fire('session.end', { reason: 'clear', sessionId: SID, resume: {} }, async () => ({ sessionId: SID }));
+  await waitUntil(() => attachedTo(b, NEW_SID), { timeout: 5000, what: 'the hello as the new session' });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(attachedTo(b, NEW_SID), 'the new session stays attached');
+  assert.deepEqual(logLines(root).filter((l) => l.what === 'detach').map((l) => l.session_id), [SID]);
+});
+
 // ── PermissionRequest: the transport (U92 builds its meaning) ───────────────
 
 test('classic.PermissionRequest with permission_wait_ms 0 returns next(e) at once and forwards nothing', async (t) => {
