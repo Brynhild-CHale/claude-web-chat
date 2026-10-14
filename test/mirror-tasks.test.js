@@ -30,7 +30,15 @@
 //     it; a finished row goes 30 minutes after it ended (injected clock and
 //     timers);
 //   * a restart restores the running row and its watch resumes;
-//   * stop() leaves no watch and no timer of this source.
+//   * stop() leaves no watch and no timer of this source;
+//   * (U119) Claude Code 2.1.296's "moved to the background (ID: …)" sentence
+//     starts a row that reads its output and ends from its footer, and both
+//     older wordings still start rows; a SubagentStop (an internal agent's
+//     included) ends that agent's running shell and monitor 'stopped' by
+//     'agent-end', or with its footer's status when the file has one, and
+//     leaves the main session's and other agents' rows running; a restored
+//     running row ends once its agent is known to have ended, or after the
+//     grace when no source knows the agent.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -940,4 +948,216 @@ test('stop() leaves no watch and no timer of the source', async (t) => {
   assert.equal(h.spy.watchStops, 3, 'every watch stopped');
   assert.equal(clock.held(), 0, 'every timer cleared');
   assert.equal(h.mirror.stats().watchers, 0);
+});
+
+// ── Claude Code 2.1.296's auto-background, and a subagent's tasks (U119) ─────
+
+const autoSentence = (id, file) => `Command did not complete within its 120s timeout and was moved to the background (ID: ${id}). Output is being written to: ${file}. If it exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that — so do not end your turn to wait for it; if you need its result, wait for it before giving your final response.`;
+
+const subagentStop = (h, agentId, type = null) => h.publish('SubagentStop', {
+  agent: { id: agentId, type },
+  stop: { last_assistant_message: 'Done.', agent_transcript_path: null, background_tasks: null, error: null },
+});
+
+// A background start through the hook tap, inside `agent` (null: the main session).
+function hookStart(h, { id, agent = null, monitor = false, file = null, command = 'npm run dev', description = 'Dev' }) {
+  const fields = monitor ? { taskId: id } : { backgroundTaskId: id };
+  if (file) fields.outputFile = file;
+  h.publish('PostToolUse', {
+    tool: { name: monitor ? 'Monitor' : 'Bash', use_id: `toolu_01${id}`, input: { command, description } },
+    result: { ok: true, duration_ms: 5, fields },
+    agent: agent ? { id: agent, type: null } : null,
+  });
+}
+
+test('bgStartOf reads the three start wordings: the id, the path, and whether it is 2.1.296\'s opening the text', () => {
+  const file = '/tmp/claude-501/-p/s/tasks/b2g3z8cc.output';
+  assert.deepEqual(tasks.bgStartOf(autoSentence('b2g3z8cc', file)), { id: 'b2g3z8cc', path: file, auto: true, lead: true });
+  assert.deepEqual(tasks.bgStartOf(`x.jsonl: ${autoSentence('b2g3z8cc', file)}`), { id: 'b2g3z8cc', path: file, auto: true, lead: false }, 'quoted, it does not open the text');
+  assert.deepEqual(tasks.bgStartOf(bgSentence('b1', file)), { id: 'b1', path: file, auto: false, lead: false });
+  assert.deepEqual(tasks.bgStartOf(`Command was manually backgrounded by user with ID: b2. Output is being written to: ${file}.`), { id: 'b2', path: file, auto: false, lead: false });
+  assert.deepEqual(tasks.bgStartOf('Command did not complete within its 120s timeout and was moved to the background (ID: b3).'), { id: 'b3', path: null, auto: true, lead: true });
+  assert.equal(tasks.bgStartOf('nothing here'), null);
+  assert.equal(tasks.AUTO_BG_RE.exec(autoSentence('b4', file))[2], file, 'the path stops at .output');
+});
+
+test('2.1.296\'s "moved to the background" sentence starts a row that reads its output and ends from its footer', async (t) => {
+  const h = setup(t);
+  await h.mirror.start();
+  h.sessionStart();
+  const id = 'b2g3z8cc';
+  const file = h.ch.writeTaskOutput(S1, id, 'compiling\n');
+  const sentence = autoSentence(id, file);
+  // The hook first (its fields carry the id, never the path), then the transcript.
+  const useId = `toolu_01${id}`;
+  const input = { command: 'npm test', description: 'Run the suite' };
+  h.publish('PostToolUse', { tool: { name: 'Bash', use_id: useId, input }, result: { ok: true, fields: { backgroundTaskId: id, timedOutAfterMs: 120000 } } });
+  assert.equal(h.row(id).can.output, false, 'the hook alone names no file');
+  const r = h.records();
+  r.prompt('run the suite', { promptId: 'p-auto' });
+  r.assistant([{ type: 'tool_use', name: 'Bash', input, id: useId }]);
+  r.toolResult(useId, sentence, { taskId: id });
+  // The same sentence in a transcript that records no toolUseResult link.
+  const bare = 'b2bare01';
+  const fileBare = h.ch.writeTaskOutput(S1, bare, 'waiting\n');
+  r.assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'sleep 200', description: 'Wait' }, id: 'toolu_01bare' }]);
+  r.toolResult('toolu_01bare', autoSentence(bare, fileBare));
+  h.ch.writeTranscript(S1, r.records);
+  const row = await h.waitRow(id, (x) => x.can.output && x.line === 'compiling', 'the output read');
+  assert.equal(row.status, 'running');
+  assert.equal(h.rows().filter((x) => x.id === id).length, 1, 'one row');
+  const rowBare = await h.waitRow(bare, (x) => x.can.output && x.line === 'waiting', 'the unlinked start');
+  assert.equal(rowBare.status, 'running');
+  h.ch.appendTaskOutput(S1, id, 'all green\n[exited with code 0]\n');
+  const done = await h.waitRow(id, (x) => x.status !== 'running', 'the footer');
+  assert.equal(done.status, 'done');
+  assert.equal(done.exit_code, 0);
+  assert.equal(done.line, 'all green');
+  await h.mirror.stop();
+  assertNoPath(h, file, 'the auto-backgrounded shell');
+});
+
+test('both older start wordings still start rows with their output', async (t) => {
+  const h = setup(t);
+  await h.mirror.start();
+  h.sessionStart();
+  const a = 'bolda01';
+  const fileA = h.ch.writeTaskOutput(S1, a, 'one\n');
+  const b = 'boldb02';
+  const fileB = h.ch.writeTaskOutput(S1, b, 'two\n');
+  const manual = `Command was manually backgrounded by user with ID: ${b}. Output is being written to: ${fileB}.`;
+  const r = h.records();
+  bgTurn(r, { id: a, file: fileA });
+  r.turnDuration({ durationMs: 10 });
+  r.prompt('build', { promptId: 'p-manual' });
+  r.assistant([{ type: 'tool_use', name: 'Bash', input: { command: 'npm run build', description: 'Build' }, id: 'toolu_01manual' }]);
+  r.toolResult('toolu_01manual', manual, { taskId: b });
+  h.ch.writeTranscript(S1, r.records);
+  assert.equal((await h.waitRow(a, (x) => x.can.output && x.line === 'one')).status, 'running');
+  assert.equal((await h.waitRow(b, (x) => x.can.output && x.line === 'two')).status, 'running');
+  await h.mirror.stop();
+});
+
+test('a SubagentStop ends its agent\'s running shell and monitor (agent-end); the main session\'s and another agent\'s stay running', async (t) => {
+  const h = setup(t);
+  await h.mirror.start();
+  h.sessionStart();
+  const X = 'a8007ffc3e843d6d6';
+  const Y = 'a1111111111111111';
+  hookStart(h, { id: 'bxshell1', agent: X });
+  hookStart(h, { id: 'bxmon001', agent: X, monitor: true });
+  hookStart(h, { id: 'bmain001' });
+  hookStart(h, { id: 'byshell1', agent: Y });
+  assert.equal(h.row('bxshell1').can.output, false, 'no path is known');
+  assert.equal(h.row('bxmon001').kind, 'monitor');
+  // An internal agent's stop: no agent type.
+  subagentStop(h, X);
+  const shell = await h.waitRow('bxshell1', (x) => x.status !== 'running', 'X\'s shell ends');
+  assert.equal(shell.status, 'stopped');
+  assert.equal(shell.stopped_by, 'agent-end');
+  assert.ok(Number.isFinite(shell.ended_at));
+  assert.equal(shell.can.stop, false);
+  const mon = await h.waitRow('bxmon001', (x) => x.status !== 'running', 'X\'s monitor ends');
+  assert.equal(mon.status, 'stopped');
+  assert.equal(mon.stopped_by, 'agent-end');
+  assert.equal(h.row('bmain001').status, 'running', 'the main session\'s task outlives the subagent');
+  assert.equal(h.row('byshell1').status, 'running', 'another agent\'s task is untouched');
+  // A late hook of the ended agent: its start has ended with it.
+  hookStart(h, { id: 'bxlate01', agent: X });
+  assert.equal(h.row('bxlate01').status, 'stopped');
+  assert.equal(h.row('bxlate01').stopped_by, 'agent-end');
+  // The main session's Stop and a SessionEnd for /clear end nothing either.
+  h.publish('SessionEnd', { session: { reason: 'clear' } });
+  assert.equal(h.row('bmain001').status, 'running');
+  await h.mirror.stop();
+});
+
+test('a subagent\'s row whose file ends [exited with code 3] ends failed, exit 3, at its SubagentStop', async (t) => {
+  // No file events, no poll and held timers: only the agent's end can read the footer.
+  const h = setup(t, { wrap: { clock: fakeClock(), watchOpts: { fileWatch: false, pollMs: 600000 } } });
+  await h.mirror.start();
+  h.sessionStart();
+  const X = 'a2222222222222222';
+  const id = 'bxfoot01';
+  const file = h.ch.writeTaskOutput(S1, id, 'working\n');
+  hookStart(h, { id, agent: X, file });
+  await h.waitRow(id, (x) => x.can.output && x.line === 'working', 'the first read');
+  h.ch.appendTaskOutput(S1, id, 'broke\n[exited with code 3]\n');
+  subagentStop(h, X, 'general-purpose');
+  const row = await h.waitRow(id, (x) => x.status !== 'running', 'the agent\'s end');
+  assert.equal(row.status, 'failed', 'the footer\'s status wins');
+  assert.equal(row.exit_code, 3);
+  assert.equal(row.stopped_by, undefined);
+  assert.equal(row.line, 'broke');
+  await h.mirror.stop();
+  assertNoPath(h, file, 'the subagent\'s shell');
+});
+
+test('restart: a restored running row of an agent known to have ended ends; a known-running agent\'s stays; an unknown one ends after the grace', async (t) => {
+  const store = fakeStore();
+  const a = setup(t, { store });
+  await a.mirror.start();
+  a.sessionStart();
+  const DONE = 'a3333333333333333';
+  const LIVE = 'a4444444444444444';
+  const GONE = 'a5555555555555555';
+  const r = a.records();
+  r.prompt('hello', { promptId: 'p-r' });
+  r.assistant(['Hello.']);
+  r.turnDuration({ durationMs: 10 });
+  a.ch.writeTranscript(S1, r.records);
+  await waitUntil(async () => { const p = await a.mirror.turns(S1, { limit: 10 }); return p && p.total === 1; }, { timeout: 8000, what: 'the turn' });
+  hookStart(a, { id: 'brdone01', agent: DONE });
+  hookStart(a, { id: 'brlive01', agent: LIVE });
+  hookStart(a, { id: 'brgone01', agent: GONE });
+  hookStart(a, { id: 'brmain01' });
+  await a.mirror.stop();
+  const slice = store.saved.get(S1).state.sources.tasks;
+  assert.equal(slice.rows.filter((x) => x.status === 'running').length, 4);
+
+  const clock = fakeClock();
+  const b = setup(t, { store, root: a.root, ch: a.ch, wrap: { clock } });
+  await b.mirror.start();
+  b.sessionStart('resume');
+  for (const id of ['brdone01', 'brlive01', 'brgone01', 'brmain01']) await b.waitRow(id, (x) => x.status === 'running', `restored ${id}`);
+  const agentRow = (id, status) => ({
+    id, conversation_id: S1, kind: 'agent', title: 'Agent', status, started_at: clock.now() - 60000,
+    ...(status === 'running' ? {} : { ended_at: clock.now() - 1000 }),
+    line: '', meta: {}, turn_id: null, tool_use_id: null, can: { output: false, open: true, stop: status === 'running' },
+  });
+  b.probe.engine.model.upsertTask(agentRow(DONE, 'done'));
+  b.probe.engine.model.upsertTask(agentRow(LIVE, 'running'));
+  clock.advance(tasks.AGENT_SWEEP_MS);
+  const done = await b.waitRow('brdone01', (x) => x.status !== 'running', 'the ended agent\'s row');
+  assert.equal(done.status, 'stopped');
+  assert.equal(done.stopped_by, 'agent-end');
+  assert.equal(b.row('brgone01').status, 'running', 'an unknown agent waits out the grace');
+  clock.advance(tasks.AGENT_UNKNOWN_GRACE_MS);
+  const gone = await b.waitRow('brgone01', (x) => x.status !== 'running', 'the unknown agent\'s row');
+  assert.equal(gone.stopped_by, 'agent-end');
+  assert.equal(b.row('brlive01').status, 'running', 'a running agent\'s task stays running');
+  assert.equal(b.row('brmain01').status, 'running', 'the main session\'s task stays running');
+  // The ended rows persist as ended, with who stopped them.
+  await b.mirror.stop();
+  const back = store.saved.get(S1).state.sources.tasks.rows;
+  assert.equal(back.find((x) => x.id === 'brdone01').stopped_by, 'agent-end');
+});
+
+test('the tasks tray reads stopped_by agent-end as "ended with its agent"', async () => {
+  const { pathToFileURL } = require('url');
+  const app = (rel) => pathToFileURL(path.join(__dirname, '..', 'public', 'app', rel)).href;
+  const S = await import(app('chat-state.js'));
+  const P = await import(app('chat-present.js'));
+  const now = 1_790_000_000_000;
+  const row = S.normalizeTask({ id: 'bx1', conversation_id: 'c1', kind: 'shell', title: 'npm test', status: 'stopped', stopped_by: 'agent-end', ended_at: now - 60000 });
+  assert.equal(row.stopped_by, 'agent-end', 'the store keeps the reason');
+  const m = {
+    v: 1, conn: 'live', connSince: now - 1000, availability: 'ok', hint: null, skew: 0,
+    access: { level: 'local', remote: false }, capabilities: S.normalizeCapabilities({}),
+    conversations: new Map(), followed: 'c1', serverPrimary: 'c1', status: new Map(),
+    tasks: new Map([[row.id, row]]), awaiting: new Map(),
+    stream: { conversationId: 'c1', turns: [], hasOlder: false, loading: false }, seen: new Set(),
+  };
+  const shells = P.categories(m, null, { now }).find((c) => c.cat === 'shells');
+  assert.deepEqual(shells.rows.map((r) => r.meta), ['ended with its agent · 1m ago']);
 });
