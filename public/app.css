@@ -1767,7 +1767,11 @@ body.pin-mode #main { cursor: crosshair; }
   border: 0; border-radius: var(--wc-radius-sm); background: transparent;
   font: inherit; color: var(--wc-fg-bright); text-align: left;
 }
-.cs-step:hover { background: color-mix(in srgb, var(--wc-fg-bright) 6%, transparent); }
+/* Only a step that opens the chat tints: the disabled fallback label (no chat
+   view registered, chat-bar.js) opens nothing, so it promises nothing. The
+   :where() keeps the rule at .cs-step:hover's weight, so an open step's
+   [aria-expanded] tint below still wins under the pointer. */
+.cs-step:where(:not(:disabled)):hover { background: color-mix(in srgb, var(--wc-fg-bright) 6%, transparent); }
 .cs-step[aria-expanded="true"] { background: color-mix(in srgb, var(--wc-fg-bright) 9%, transparent); }
 .cs-dot {
   flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cs-st);
