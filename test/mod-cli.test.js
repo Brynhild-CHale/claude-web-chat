@@ -297,6 +297,22 @@ test('mod on refused with many errors prints the first three and how many more',
   assert.match(r.state, /\(and 4 more\)$/);
 });
 
+test('mod on refused with an overlong error line prints it cut to a sane length', async (t) => {
+  isolate(t);
+  const root = project(t);
+  const claude = fakeClaude({ validate: (argv) => ({ ok: false, stderr: REAL_REFUSAL(argv[2], [`long.js: ${'x'.repeat(900)}`]) }) });
+  const log = sink();
+  const prev = process.exitCode;
+  const r = await mod(['on'], { cwd: root, runClaude: claude.fn, log });
+  process.exitCode = prev;
+  const lines = log.text().split('\n');
+  assert.equal(lines.length, 4);
+  assert.ok(lines[3].startsWith('  ❯ long.js: xxx'), lines[3]);
+  assert.equal(lines[3].length, 402, 'two spaces and the line cut at 400');
+  assert.ok(lines[3].endsWith('…'));
+  assert.ok(r.state.length < 500, 'the state stays one short line');
+});
+
 test('mod on where plugin test is not registered installs anyway, saying mods look unavailable', async (t) => {
   isolate(t);
   const root = project(t);
