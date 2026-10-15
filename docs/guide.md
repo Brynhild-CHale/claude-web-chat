@@ -204,7 +204,8 @@ update              install the latest GitHub release (checksum-verified), sync,
                     managed files of each one web-chat is registered in
 uninstall           remove the hooks (your graph data is kept); --self also
                     removes the program itself
-tunnel [verb]       reach your surfaces from your phone or another machine:
+tunnel [verb]       EXPERIMENTAL and unstable (use it at your own risk):
+                    reach your surfaces from your phone or another machine:
                     setup | up | down | status | logs, through a Cloudflare
                     tunnel behind Cloudflare Access — an emailed code plus your
                     device's biometrics by default, or Google (see

@@ -69,7 +69,7 @@ claude-web-chat pack get https://github.com/acme/ops-pack    # download and revi
 
 ## From your phone
 
-`claude-web-chat tunnel` puts this machine's surfaces behind a Cloudflare tunnel, so you can open them from a phone or another computer. You sign in through Cloudflare Access, and only accounts you allowlisted get in. Nothing is reachable from outside until you run `tunnel setup` and `tunnel up`. On a phone, blocks stay interactive and the layout stays fixed. See [Remote access](docs/remote-access.md).
+`claude-web-chat tunnel` puts this machine's surfaces behind a Cloudflare tunnel, so you can open them from a phone or another computer. **It is experimental and unstable: use it at your own risk.** You sign in through Cloudflare Access, and only accounts you allowlisted get in. Nothing is reachable from outside until you run `tunnel setup` and `tunnel up`. On a phone, blocks stay interactive and the layout stays fixed. See [Remote access](docs/remote-access.md).
 
 ## Documentation
 
@@ -82,7 +82,7 @@ claude-web-chat pack get https://github.com/acme/ops-pack    # download and revi
 | [Themes](docs/themes.md) | the builtin packs (Earthy, Paper, Georgetown Blue), light and dark modes, the design tokens, brand images |
 | [Restore files](docs/code-revert.md) | putting a turn's files back from the page, Undo, what it never touches and what Claude is told |
 | [The web-chat mod](docs/mod.md) | the Claude Code plugin `install` switches on: an immediate Stop and Kill, the live chat, composer messages and commands as prompts, session controls; `mod on`/`off`/`status` |
-| [Remote access](docs/remote-access.md) | `claude-web-chat tunnel`: your surfaces from a phone or another computer, behind Cloudflare Access |
+| [Remote access](docs/remote-access.md) | `claude-web-chat tunnel` (experimental): your surfaces from a phone or another computer, behind Cloudflare Access |
 | [Capture profiles](docs/capture-profiles-and-panes.md) | how the browser extension distils a captured page, and the pane it lands in |
 | [Platform support](docs/platform-support.md) | macOS, Linux, and WSL2 |
 | [Contributing](docs/extending.md) | development setup and architecture (also [`CLAUDE.md`](CLAUDE.md)); run the tests with `npm test` |
