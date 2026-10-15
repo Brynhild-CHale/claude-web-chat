@@ -14,7 +14,7 @@
 //                            message's Edit and Send now
 //   stopFollowers(root?)     ends every follower whose row is inside root (all
 //                            of them with no root)
-//   queueRows()              Map item id → the queue tray's RowModel: what the
+//   queueRows()              Map item id → the queue's RowModel: what the
 //                            rail's message rows offer (THE RAIL, below)
 //
 // THE FOLLOWER is a bounded setTimeout chain, never a setInterval: it ends by
@@ -74,8 +74,8 @@
 // canRun and runAction. queue.js cannot import this module (this one imports
 // it), so at import this module hands it, through queue.js's setRowActions,
 // {rows: queueRows, canRun, run: runAction}; queueRows() → Map item id → the
-// queue tray's RowModel, from chat-present.js's categories(), so the rail
-// offers exactly what the tray does. The rail's row is not chat-rows.js's
+// queue's RowModel, from chat-present.js's categories(), so the rail offers
+// exactly what that model does (the bar has no queue tray). The rail's row is not chat-rows.js's
 // element, but it carries the same documented parts below.
 //
 // THE ROW is chat-rows.js's element; this module touches it through its
@@ -654,7 +654,7 @@ export function runAction(row, action, { rowEl = null, density = 'compact', butt
 
 // ── the rail ─────────────────────────────────────────────────────────────────
 
-// The queue tray's rows, by item id: what the rail's message rows offer.
+// The queue's rows, by item id: what the rail's message rows offer.
 export function queueRows() {
   const entry = categories(mirror, queueSnapshot(), { now: serverNow() }).find((c) => c.cat === 'queue');
   return new Map(entry ? entry.rows.map((r) => [r.id, r]) : []);

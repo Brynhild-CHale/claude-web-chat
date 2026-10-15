@@ -71,8 +71,8 @@ initChatStream(); // the turns, grouped, rewind-aware
 initChatTools();  // the tool cards (setToolRenderer)
 initFavicon();    // the tab icon (light and dark) and its waiting badge
 // Tranche 3, after the chat above and after initGraph: the bar's chips and
-// their trays (shells, monitors, agents, workflows, the queue — they claim
-// the bar's #cs-chips), the detail views the chat pushes (a task's output,
+// their trays (shells, monitors, agents, workflows — they claim the bar's
+// #cs-chips), the detail views the chat pushes (a task's output,
 // an agent followed live, a workflow, a turn's code changes: View changes),
 // and a node's turns and rewind marks in the graph inspector. Each idempotent.
 initChatTrays();
