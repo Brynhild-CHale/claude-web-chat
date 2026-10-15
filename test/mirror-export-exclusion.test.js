@@ -56,7 +56,7 @@ const fake = (id) => {
 // What the window search looks for (the email by its local part: its domain
 // is in every fixture's text; the dotenv fake's host is plain outside its
 // context). A window of only hex digits counts when 12 characters are there
-// (test/mirror-redaction-sweep.test.js says why).
+// (test-support/redaction-sweep.js says why).
 const SCAN = FAKES.map((f) => {
   if (f.id === 'known-email') return { ...f, secrets: [f.secrets[0].split('@')[0]] };
   if (f.id === 'env-dotenv') return { ...f, secrets: f.secrets.filter((s) => !/\.example\.org$/.test(s)) };
