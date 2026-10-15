@@ -17,7 +17,10 @@
 //      project (realpath on both sides), or one with no `root`, as "no daemon of
 //      this project": it backs off and reads the file again. It never starts a
 //      daemon.
-//   2. The hello: POST /api/bridge/hello on 127.0.0.1, which answers a token the
+//   2. The hello: after a /clear or /resume end, only once $.session.id() has
+//      moved off the ended id (at most SWITCH_WAIT_MS; a turn start re-checks
+//      it, detaches the old id and says hello again, below), then
+//      POST /api/bridge/hello on 127.0.0.1, which answers a token the
 //      mod keeps in memory only (never on disk, never in a URL, never Claude
 //      Code's own messaging token, which this file never reads). 409 protocol or
 //      too-old: it stops for the session; 409 disabled: it waits retry_ms; 409

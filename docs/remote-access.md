@@ -1,5 +1,9 @@
 # Remote access — your surfaces from anywhere
 
+> **Experimental.** Remote access — the tunnel, the portal, and the chat
+> mirror and answering through it — is unstable in this release and may change
+> or break in any update. Use it at your own risk.
+
 `claude-web-chat tunnel` puts the web-chat surfaces running on this machine
 behind a Cloudflare tunnel, so you can open them from your phone or another
 computer — signed in through Cloudflare Access (an emailed code plus your
