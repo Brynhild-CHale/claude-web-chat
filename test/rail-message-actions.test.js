@@ -1,11 +1,17 @@
-// A queued composer message in the queue tray (design spec §7.6; U62):
-// chat-present.js builds Edit (and, on the first staged message, Send now)
-// under capabilities.queue_message at level `full`, chat-rows.js draws them
+// A queued composer message on the desktop queue rail (design spec §7.6; U62,
+// U70b): chat-present.js builds Edit (and, on the first staged message, Send
+// now) under capabilities.queue_message at level `full`, the rail draws them
 // because chat-actions.js canRun()s them, and runAction performs them through
 // queue.js — Edit as an inline editor in the row's body (Save → PATCH, Escape
 // or Cancel → no request, a refusal's hint in the row's note, the editor kept),
 // Send now as POST /api/queue/push {ids: [id]}. The stop path (registerStopper
-// and the inline confirm, U46b) is unchanged beside them.
+// and the inline confirm, U46b) is unchanged beside them, on the shells tray.
+//
+// These rows were the bar's queue tray's until the maintainer's ruling of
+// 2026-10-15: the queue has its own rail and no chip, so the same engine is
+// driven through the rail's rows here. The rail's ⟲ (remove) is
+// rail-messages.test.js's; the rail in the phone's sheet, at touch density,
+// is sheet-queue.test.js's.
 const test = require('node:test');
 const { before, after, afterEach } = test;
 const assert = require('node:assert');
@@ -51,8 +57,9 @@ function route(url, init = {}) {
 }
 
 const calls = (method, url) => shell.calls.filter((c) => c.method === method && c.url === url);
-const rows = () => [...$('cs-tray-rows').children];
-const trayRow = (id) => rows().find((r) => r.dataset.rowId === id);
+// The rail redraws whole on a frame or a poll: look a row up each time.
+const railRow = (id) => $('queue-rail').querySelector(`.rail-item[data-id="${id}"]`);
+const trayRow = (id) => [...$('cs-tray-rows').children].find((r) => r.dataset.rowId === id);
 const actions = (el) => [...el.querySelectorAll('.cs-row-actions button')].map((b) => b.textContent);
 const act = (el, id) => el.querySelector(`.cs-row-actions [data-action="${id}"]`);
 const note = (el) => el.querySelector('.cs-row-note');
@@ -65,8 +72,6 @@ async function show({ items, ...over } = {}) {
   await shell.frame(helloFrame());
   await waitUntil(() => S.mirror.rev >= current.rev, { timeout: 2000 });
   await Q.hydrateQueue();
-  await shell.tick();
-  trays.openTray('queue');
   await shell.tick();
 }
 
@@ -96,11 +101,12 @@ afterEach(() => {
 
 test('with capabilities.queue_message at full: Edit on every message, Send now on the first staged one', async () => {
   await show();
-  assert.deepEqual(actions(trayRow('q1')), ['Edit', 'Send now', 'Remove']);
-  assert.deepEqual(actions(trayRow('q2')), ['Edit', 'Remove']);
-  assert.deepEqual(actions(trayRow('s3')), ['Hold', 'Remove'], 'a signal row is as it was');
+  assert.deepEqual(actions(railRow('q1')), ['Edit', 'Send now']);
+  assert.deepEqual(actions(railRow('q2')), ['Edit']);
+  assert.ok(railRow('q1').querySelector('.qi-revert'), 'removing is the rail\'s own ⟲');
+  assert.deepEqual(actions(railRow('s3')), [], 'a signal row is as it was');
   await show({ caps: { task_stop: true } });
-  assert.deepEqual(actions(trayRow('q1')), ['Remove'], 'without the capability: no Edit, no Send now');
+  assert.deepEqual(actions(railRow('q1')), [], 'without the capability: no Edit, no Send now');
 });
 
 test('canRun(\'edit\' | \'send-now\') is false on a task row and on a signal row', () => {
@@ -115,7 +121,7 @@ test('canRun(\'edit\' | \'send-now\') is false on a task row and on a signal row
 
 test('Edit opens a textarea prefilled with the text; Save PATCHes once and closes it', async () => {
   await show();
-  const el = trayRow('q1');
+  const el = railRow('q1');
   shell.click(act(el, 'edit'));
   const box = editor(el);
   assert.ok(box, 'the editor, in the row\'s body');
@@ -135,7 +141,7 @@ test('Edit opens a textarea prefilled with the text; Save PATCHes once and close
 
 test('Enter saves; Shift+Enter does not; Escape reverts with no request', async () => {
   await show();
-  const el = trayRow('q1');
+  const el = railRow('q1');
   shell.click(act(el, 'edit'));
   const area = editor(el).querySelector('.cs-edit-text');
   const n = calls('PATCH', '/api/queue/q1').length;
@@ -147,7 +153,7 @@ test('Enter saves; Shift+Enter does not; Escape reverts with no request', async 
   assert.equal(esc.defaultPrevented, true);
   await shell.tick();
   assert.equal(calls('PATCH', '/api/queue/q1').length, n, 'no request');
-  assert.ok($('cs-tray') && !$('cs-tray').classList.contains('hidden'), 'Escape left the editor, not the tray');
+  assert.equal(railRow('q1'), el, 'Escape left the editor; the row stays on the rail');
 
   shell.click(act(el, 'edit'));
   shell.click(editor(el).querySelector('.cs-edit-cancel'));
@@ -166,7 +172,7 @@ test('Enter saves; Shift+Enter does not; Escape reverts with no request', async 
 test('a not_editable refusal shows its hint in .cs-row-note and keeps the editor', async () => {
   await show();
   daemon.answers['PATCH /api/queue/q1'] = { ok: false, refused: 'not_editable', hint: 'This message has already gone.' };
-  const el = trayRow('q1');
+  const el = railRow('q1');
   shell.click(act(el, 'edit'));
   shell.click(editor(el).querySelector('.cs-edit-save'));
   await waitUntil(() => note(el).hidden === false, { timeout: 2000 });
@@ -180,7 +186,7 @@ test('a not_editable refusal shows its hint in .cs-row-note and keeps the editor
 test('Send now posts push {ids: [id]} and shows the waiting hint', async () => {
   await show();
   daemon.answers['POST /api/queue/push'] = { ok: true, pushed: 1, mode: 'queued', waiting: 'parked_message', waiting_ids: ['q1'] };
-  const el = trayRow('q1');
+  const el = railRow('q1');
   shell.click(act(el, 'send-now'));
   await waitUntil(() => note(el).hidden === false, { timeout: 2000 });
   assert.deepEqual(calls('POST', '/api/queue/push').at(-1).body, { ids: ['q1'], device: 'desktop' });
@@ -191,19 +197,6 @@ test('Send now posts push {ids: [id]} and shows the waiting hint', async () => {
   shell.click(act(el, 'send-now'));
   await waitUntil(() => note(el).textContent === 'Sending a message needs full access.', { timeout: 2000 });
   assert.equal(note(el).dataset.tone, undefined, 'a refusal is in the refusal ink');
-});
-
-test('Remove takes a message off the pending list too (its remove frame finds it already gone)', async () => {
-  daemon.receipts = [{ msg_id: MID(1), state: 'queued', at: 1 }];
-  await show();
-  assert.equal(Q.queueSnapshot().messages.find((m) => m.msg_id === MID(1)).state, 'queued');
-  shell.click(act(trayRow('q1'), 'remove'));
-  await waitUntil(() => calls('DELETE', '/api/queue/q1').length > 0, { timeout: 2000 });
-  daemon.items = daemon.items.filter((it) => it.id !== 'q1');
-  daemon.receipts = [];
-  await shell.frame({ type: 'queue', op: 'remove', ids: ['q1'], id: 'q1', reason: 'removed', count: 2 });
-  assert.equal(Q.queueSnapshot().messages.find((m) => m.msg_id === MID(1)), undefined,
-    'a removed message is not still queued at position 1');
 });
 
 test('the stop path is unchanged: Kill with a registered stopper mounts it and posts nothing; with none the inline confirm posts', async () => {
@@ -251,19 +244,4 @@ test('touch density: the editor\'s textarea is at least 44px and its buttons 40p
   assert.ok(px(rule('.cs-row[data-density="touch"] :is(.cs-edit-save, .cs-edit-cancel)'), 'height') >= 40);
   assert.doesNotMatch(sec.replace(/\/\*[\s\S]*?\*\//g, ''), /#[0-9a-fA-F]{3,8}\b/, 'tokens, no hex');
   assert.match(sec, /prefers-reduced-motion/);
-});
-
-test('a touch-density row opens the same editor (rowEl at touch, runAction with density touch)', async () => {
-  await show();
-  const R = await shell.importApp('chat-rows.js');
-  const P = await shell.importApp('chat-present.js');
-  const entry = P.categories(S.mirror, Q.queueSnapshot()).find((c) => c.cat === 'queue');
-  const model = entry.rows.find((r) => r.id === 'q1');
-  const el = R.rowEl(model, { density: 'touch' });
-  document.body.append(el);
-  try {
-    assert.equal(A.runAction(model, 'edit', { rowEl: el, density: 'touch' }), true);
-    assert.equal(el.dataset.density, 'touch');
-    assert.equal(editor(el).querySelector('.cs-edit-text').value, 'words of message 1');
-  } finally { el.remove(); }
 });

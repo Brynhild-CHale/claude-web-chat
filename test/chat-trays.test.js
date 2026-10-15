@@ -128,9 +128,9 @@ test('before initChatTrays #cs-chips is empty and there is no #cs-tray; after it
   assert.equal(before_.trays, 0, 'and no #cs-tray: the bar builds no note');
   assert.equal($('cs-chips').querySelectorAll('.cs-devchip').length, 0, 'no stand-in after either');
   assert.equal(shell.document.querySelector('.cs-dev'), null, 'and no note');
-  assert.deepEqual(labels(), ['2 shells', 'agents · 1 done', 'queue 1'], 'categories() labels, in its order');
-  const want = P.categories(S.mirror, Q.queueSnapshot(), { now: S.serverNow() }).map((e) => e.cat);
-  assert.deepEqual(chips().map((c) => c.dataset.csCat), want, 'one chip per category categories() returns');
+  assert.deepEqual(labels(), ['2 shells', 'agents · 1 done'], 'categories() labels, in its order');
+  const want = P.categories(S.mirror, null, { now: S.serverNow() }).map((e) => e.cat);
+  assert.deepEqual(chips().map((c) => c.dataset.csCat), want, 'one chip per task category categories() returns');
   const s = chip('shells');
   assert.equal(s.tagName, 'BUTTON');
   assert.equal(s.getAttribute('type'), 'button');
@@ -139,7 +139,6 @@ test('before initChatTrays #cs-chips is empty and there is no #cs-tray; after it
   assert.equal(s.getAttribute('aria-controls'), 'cs-tray');
   assert.equal(s.getAttribute('aria-expanded'), 'false');
   assert.equal(chip('agents').getAttribute('aria-label'), 'agents, 1 done — show');
-  assert.equal(chip('queue').getAttribute('aria-label'), 'queue 1 — show');
   assert.equal(s.querySelector('.cs-chip-dot').dataset.csTone, 'live');
   assert.equal(chip('agents').querySelector('.cs-chip-dot').dataset.csTone, 'muted', 'finished work: the muted dot');
   assert.equal(s.querySelector('.cs-chip-count').textContent, '2');
@@ -196,10 +195,7 @@ test('another chip swaps the content; the same chip closes the tray', () => {
   assert.equal($('cs-tray-title').textContent, 'Agents');
   assert.deepEqual(rows().map((r) => r.dataset.rowId), ['a1']);
   assert.deepEqual(expanded(), ['agents']);
-  shell.press(chip('queue'));
-  assert.equal($('cs-tray-title').textContent, 'Queue');
-  assert.deepEqual(rows().map((r) => r.dataset.rowId), ['q1']);
-  shell.press(chip('queue'));
+  shell.press(chip('agents'));
   assert.ok(!trayShown(), 'the same chip closes it');
   assert.deepEqual(expanded(), []);
   assert.equal(rows().length, 0);
@@ -303,11 +299,27 @@ test('Escape inside a row\'s inline confirm reverts the confirm and leaves the t
 });
 
 test('a tray whose category empties closes', async () => {
-  shell.press(chip('queue'));
+  shell.press(chip('agents'));
   assert.ok(trayShown());
-  await show({}, { items: [], count: 0 });
+  await show({ tasks: [shell1, shell2] });
   assert.ok(!trayShown(), 'nothing left to list');
-  assert.equal(chip('queue'), undefined, 'and its chip is gone');
+  assert.equal(chip('agents'), undefined, 'and its chip is gone');
+  await show();
+});
+
+/* ── the queue: its own rail, no chip (ruling of 2026-10-15) ─────────────── */
+
+test('the queue has no chip and no tray: an item waits on the rail, and the bar shows only Claude\'s work', async () => {
+  assert.equal(Q.queueSnapshot().items.length, 1, 'one item waits');
+  assert.equal(chip('queue'), undefined, 'no queue chip');
+  assert.equal(trays.openTray('queue'), false, 'and no queue tray');
+  assert.ok(!trayShown());
+  bus.emit('chat:tasks', { category: 'queue' });
+  assert.equal(tray().dataset.csCat, 'shells', 'chat:tasks for the queue falls back to the first task category');
+  trays.closeTray();
+  // Only the queue: no chip at all, so app.css hides #cs-chips and its divider.
+  await show({ tasks: [] }, { items: [QITEM], count: 1 });
+  assert.equal(chips().length, 0, 'no chip while only the queue holds anything');
   await show();
 });
 
@@ -436,7 +448,7 @@ test('stopTrays() gives #cs-chips back to the bar, empty, removes the tray and l
   // …and a fresh start claims #cs-chips again.
   assert.ok(trays.initChatTrays());
   assert.equal($('cs-chips').querySelectorAll('.cs-devchip').length, 0);
-  assert.deepEqual(labels(), ['2 shells', 'agents · 1 done', 'queue 1']);
+  assert.deepEqual(labels(), ['2 shells', 'agents · 1 done']);
   assert.equal(shell.document.querySelectorAll('#cs-tray').length, 1);
   assert.ok(tray().classList.contains('cs-tray'), '#cs-tray is only ever the trays\' tray');
 });

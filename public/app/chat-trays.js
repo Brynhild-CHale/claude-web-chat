@@ -1,10 +1,11 @@
 // The status bar's chips and their tray (design spec §7.6): one chip per
-// category of background work — shells, agents, workflows, monitors and the
-// queue — and one tray, a .popover over the bar, listing a category's rows.
+// category of background work — shells, agents, workflows and monitors — and
+// one tray, a .popover over the bar, listing a category's rows. The queue has no
+// chip: it has its own rail (the maintainer's ruling of 2026-10-15).
 //
 //   initChatTrays()  takes #cs-chips over from the bar (chat-bar.js
 //                    claimChips), builds #cs-tray, renders now and on every
-//                    `mirror` and `queue` bus event (one animation frame), and
+//                    `mirror` bus event (one animation frame), and
 //                    answers `chat:tasks`; idempotent. → the tray element, or
 //                    null on a page with no #cs-chips
 //   stopTrays()      undoes all of it: the chips and the tray go, the bar gets
@@ -12,9 +13,10 @@
 //   openTray(cat)    opens the tray on a category → whether it opened
 //   closeTray()
 //
-// WHAT IT SHOWS is chat-present.js's categories(mirror, queueSnapshot(), {now})
-// and nothing else: each entry's label, title, sub, tone, pulse, hidden and
-// RowModel rows. This module keeps no copy of the mirror; each render asks again.
+// WHAT IT SHOWS is chat-present.js's categories(mirror, null, {now}) — the
+// task categories, no queue — and nothing else: each entry's label, title, sub,
+// tone, pulse, hidden and RowModel rows. This module keeps no copy of the
+// mirror; each render asks again.
 //
 // THE CHIPS. A chip is button.cs-chip, data-cs-cat (U17's --cs-cat ink),
 // aria-controls="cs-tray" — so the shell's dismiss layer treats it as the tray's
@@ -40,7 +42,6 @@
 import { bus } from './bus.js';
 import { mirror, serverNow } from './chat-state.js';
 import { categories } from './chat-present.js';
-import { queueSnapshot } from './queue.js';
 import { claimChips } from './chat-bar.js';
 import { isOverlayOpen, closeOverlay } from './graph-view.js';
 import { isNarrow } from './viewport.js';
@@ -200,13 +201,17 @@ function paintTray() {
   paintRows(entry);
 }
 
+// The bar's categories: Claude's background work. The queue's entry stays
+// categories()'s, for the phone's Tasks and the rail's message rows.
+const barCategories = () => categories(mirror, null, { now: serverNow() });
+
 function render() {
   if (frame !== null) {
     cancelFrame(frame);
     frame = null;
   }
   if (!els) return;
-  shown = categories(mirror, queueSnapshot(), { now: serverNow() });
+  shown = barCategories();
   paintChips();
   paintTray();
 }
@@ -286,7 +291,7 @@ function closed() {
 
 export function openTray(cat) {
   if (!els) return false;
-  shown = categories(mirror, queueSnapshot(), { now: serverNow() });
+  shown = barCategories();
   const entry = shown.find((e) => e.cat === cat);
   if (!entry || entry.hidden) return false;
   const chip = chipFor(cat);
@@ -341,7 +346,7 @@ function onClose() { closeTray(); }
 
 function onTasks(detail) {
   if (!els || isNarrow()) return;
-  shown = categories(mirror, queueSnapshot(), { now: serverNow() });
+  shown = barCategories();
   const want = detail && typeof detail.category === 'string' ? detail.category : null;
   const pick = shown.find((e) => e.cat === want && !e.hidden) || shown.find((e) => !e.hidden && e.rows.length);
   if (pick) openTray(pick.cat);
@@ -376,7 +381,7 @@ export function initChatTrays() {
     observer = new MO(onTrayClass);
     observer.observe(els.tray, { attributes: true, attributeFilter: ['class'] });
   }
-  offs = [bus.on('mirror', schedule), bus.on('queue', schedule), bus.on('chat:tasks', onTasks),
+  offs = [bus.on('mirror', schedule), bus.on('chat:tasks', onTasks),
     bus.on('viewport:narrow', onNarrow)];
   render();
   return els.tray;

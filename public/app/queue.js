@@ -8,10 +8,11 @@
 // The queue is NOT carried on the WS hello/reset (that frame's shape is golden-
 // pinned), so we hydrate once via GET and stay live off the frames.
 //
-// The queue stays this module's: the chat chrome's chips, trays and phone Tasks
-// (chat-present.js) read it through queueSnapshot(), and every render() ends by
-// announcing the new snapshot on the chrome bus as `queue` — so the rail, the
-// `queue N` chip and the phone's Queue count the same items, from one list.
+// The queue stays this module's: the chat chrome's phone Tasks and the rail's
+// message rows (chat-present.js) read it through queueSnapshot(), and every
+// render() ends by announcing the new snapshot on the chrome bus as `queue` — so
+// the rail and the phone's Queue count the same items, from one list. The bar
+// has no queue chip: the rail is the queue's own place (ruling of 2026-10-15).
 //
 // COMPOSER MESSAGES (design spec §6.1-§6.6, U62). A message is a queue item of
 // kind 'message', and this module is the chrome's ONE send path for it:

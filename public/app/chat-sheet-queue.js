@@ -9,7 +9,7 @@
 // THE PAGE is Tasks → Queue, a KEPT page (ensurePage('tasks', {key: 'queue',
 // keep: true})): built once and only ever hidden, never removed, so what it
 // holds never leaves the document. Its head reads 'Queue' and the queue's
-// counts — the queue tray's own sub (chat-present.js categories), '⇢ parked'
+// counts — the queue entry's own sub (chat-present.js categories), '⇢ parked'
 // while a push waits for the next message, or 'Nothing queued' — redrawn on bus
 // 'queue'. chat-sheet-tasks.js's Queue line shows it (showPage).
 //
@@ -56,7 +56,7 @@ const $ = (id) => document.getElementById(id);
 
 // ── the page's head ──────────────────────────────────────────────────────────
 
-// The queue tray's sub ('2 queued · 1 held'), '⇢ parked' while a push waits for
+// The queue entry's sub ('2 queued · 1 held'), '⇢ parked' while a push waits for
 // the next message, or 'Nothing queued'.
 function subText(snap) {
   const q = snap && typeof snap === 'object' && Array.isArray(snap.items) ? snap : queueSnapshot();

@@ -6,6 +6,7 @@
 //
 //   uiState(mirror, { now, approvalsReady })   → the one state line
 //   categories(mirror, queueSnapshot, { now }) → the chips, trays and Tasks lines
+//                                                (the bar draws all but the queue's)
 //   runningCount(mirror, { now })              → the badge's and the segment's N
 //   announce(prev, next, { now, gate })        → live-region text, or null
 //   fmtClock · fmtShort · ago                  → the time phrases
@@ -601,7 +602,9 @@ function queueCategory(m, queue, now) {
 }
 
 // The chips, in their fixed order — shells, agents, workflows, monitors, queue —
-// non-empty only. Each: `label` (the chip), `title` and `sub` (the tray's head),
+// non-empty only. The bar's chips (chat-trays.js) pass no queue, so they stop at
+// monitors; the queue's entry is the phone's Queue line and the rail's message
+// rows (chat-actions.js queueRows). Each: `label` (the chip), `title` and `sub` (the tray's head),
 // `running`, `count`, `tone` (live | muted | failed: the dot), `pulse` (the dot
 // moves while Claude works on something that runs in it; the queue's never),
 // `hidden` (below `read`: counts only), `rows` (RowModel, below) and `phone`
