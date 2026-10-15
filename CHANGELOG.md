@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-10-15
+
 **Remote access is experimental.** `claude-web-chat tunnel` — the Cloudflare
 tunnel, the portal, and the chat mirror and answering through it — is unstable
 in this release and may change or break in any update. Use it at your own risk.

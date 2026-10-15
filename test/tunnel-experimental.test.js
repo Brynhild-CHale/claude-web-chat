@@ -76,7 +76,10 @@ test('the docs, the README, the rules and the release notes say it', () => {
   assert.match(read('templates/rules/web-chat.md'), /Remote access \(`claude-web-chat tunnel`\) is experimental and unstable/);
   assert.match(read('docs/guide.md'), /^tunnel \[verb\] +EXPERIMENTAL and unstable \(use it at your own risk\)/m);
   const cl = read('CHANGELOG.md');
-  const unreleased = cl.slice(cl.indexOf('## ['), cl.indexOf('## [', cl.indexOf('## [') + 4));
-  assert.match(unreleased.split('### ')[0], /\*\*Remote access is experimental\.\*\*[\s\S]*at your own risk/,
-    'the release notes open with it, before Upgrading');
+  const { version } = require('../package.json');
+  const start = cl.indexOf(`## [${version}]`);
+  assert.ok(start >= 0, `a [${version}] section`);
+  const notes = cl.slice(start, cl.indexOf('\n## [', start + 4));
+  assert.match(notes.split('### ')[0], /\*\*Remote access is experimental\.\*\*[\s\S]*at your own risk/,
+    `the ${version} notes open with it, before Upgrading`);
 });
