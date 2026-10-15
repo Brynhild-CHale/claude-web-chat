@@ -95,7 +95,8 @@ What you have to do:
    comes from the page, nothing is answered for you and the terminal's prompt
    stays up.
 
-   These block the 0.8.5 tag:
+   0.8.5 was released without a recorded run of these; the maintainer waived
+   them on day-to-day use of the release's alphas:
    - **V25 and V27 — answering from the browser.** Answering is on in 0.8.5 and
      unvalidated until V25 is recorded (a real terminal session: a terminal Yes,
      an Esc, an allow and a deny from the page, a question, a plan; and whether
@@ -109,7 +110,7 @@ What you have to do:
      forks through the project's answer host in desktop Chrome, desktop Safari
      and an iPhone; whether those frames load in place or open
      **Review & answer ↗**; and that a remote Stop never types Esc in your
-     terminal.
+     terminal. Remote access is experimental in this release (see the top).
    - **V35 — the mod's install path.** Whether `install` (and `mod on`) loads the
      mod in a 2.1.287+ session that attaches within 2 seconds, and whether
      `mod off` leaves your Claude Code settings as it found them. Because
@@ -119,7 +120,7 @@ What you have to do:
      drag and snaps, the keyboard, Back, the queue, the tab's dock, and answering
      through the tunnel.
 
-   These gate a feature, not the tag:
+   These gate a feature:
    - **V32 and V43 — stopping a background agent, and stopping through the
      mod.** A TaskStop of a background agent, by Claude and through the mod,
      settles what an agent row's **Cancel** promises; V43 times Stop and Kill
