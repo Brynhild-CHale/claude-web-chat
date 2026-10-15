@@ -621,7 +621,15 @@ test('the real MCP server the suite launches answers interrupt null (its parent 
   const exited = new Promise((r) => child.once('exit', (code, signal) => r({ code, signal })));
 
   await waitUntil(() => /interrupt: off \(/.test(stderr), { timeout: 15_000, what: 'the probe answer on stderr' });
-  assert.match(stderr, /\[claude-web-chat\] interrupt: off \(not-claude\)/);
+  // A Linux kernel that refuses TIOCSTI (dev.tty.legacy_tiocsti=0, as on CI's
+  // ubuntu runners) is answered first, before the probe looks at the parent.
+  let tiocstiOff = false;
+  if (process.platform === 'linux') {
+    try { tiocstiOff = fs.readFileSync('/proc/sys/dev/tty/legacy_tiocsti', 'utf8').trim() === '0'; } catch {}
+  }
+  assert.match(stderr, tiocstiOff
+    ? /\[claude-web-chat\] interrupt: off \(tiocsti-off\)/
+    : /\[claude-web-chat\] interrupt: off \(not-claude\)/);
   assert.doesNotMatch(stderr, /interrupt: tty|following control events/);
   const row = registry.readMcpEntries().find((e) => e.pid === child.pid);
   assert.ok(row, 'its presence row');
