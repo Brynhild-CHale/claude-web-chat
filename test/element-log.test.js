@@ -213,6 +213,17 @@ test('minting: nextSeq is 1 + the log\'s max seq, ids are c + seq, and both surv
   assert.equal(log.bySeq(a, 99), null);
 });
 
+test('minting: a version appended between mintId and the minted id\'s first version never takes its seq', (t) => {
+  const log = openIn(t, tmpDir(t));
+  const a = log.mintId();
+  assert.equal(log.nextSeq(), 2, 'the mint reserved its seq');
+  const other = log.appendVersion({ id: 'c900', payload: payloadOf(copy({ id: 'c900' })), at: 1 });
+  assert.equal(other.seq, 2, 'an unrelated version takes the next seq, not the minted one');
+  const first = log.appendVersion({ id: a, payload: payloadOf(copy({ id: a })), at: 2 });
+  assert.equal(`c${first.seq}`, a, 'the minted id is c + its first version\'s seq');
+  assert.notEqual(first.seq, other.seq);
+});
+
 test('minting: a migration\'s seq_floor, a torn aside\'s "seq" and reserveSeq each raise nextSeq', (t) => {
   const dir = tmpDir(t);
   const file = projectPaths(dir).elementsLog;
