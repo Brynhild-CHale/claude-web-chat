@@ -322,3 +322,18 @@ test('an END-only patch whose hunk header tail is a key body line: the tail is m
 test('not a string, or empty: returned as it came', () => {
   for (const v of [undefined, null, 42, '']) assert.equal(redactPatch(v), v);
 });
+
+// redact.js requires nothing, so it carries its own copy of the diff grammar
+// renderDiff reads (lib/core/markdown HUNK_RE and DIFF_META_RE). The copy is
+// held equal here, by source: a change to one without the other goes red.
+test("redactPatch's diff grammar is renderDiff's: PATCH_HUNK_RE and PATCH_META_RE match markdown.js's HUNK_RE and DIFF_META_RE", () => {
+  const fs = require('node:fs');
+  const literal = (file, name) => {
+    const src = fs.readFileSync(require.resolve(file), 'utf8');
+    const m = new RegExp(String.raw`\b${name} = (/\^.*/);$`, 'm').exec(src);
+    assert.ok(m, `${name} is declared in ${file}`);
+    return m[1];
+  };
+  assert.equal(literal('../lib/core/redact', 'PATCH_HUNK_RE'), literal('../lib/core/markdown', 'HUNK_RE'));
+  assert.equal(literal('../lib/core/redact', 'PATCH_META_RE'), literal('../lib/core/markdown', 'DIFF_META_RE').replace('/^(?:', '/^(?:@@|'));
+});
