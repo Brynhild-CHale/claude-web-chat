@@ -279,6 +279,34 @@ test('convertAnchor: the legacy locator as pin-locator@1 (ruling A1), idempotent
   assert.equal(convertAnchor({ mount: 'm', ordinal: 1.5 }).ordinal, null);
 });
 
+test('convertAnchor passes through only the full converted shape; a stored anchor that merely names the form is a legacy locator', () => {
+  // The anchor is client data (a pane's POST stores it as sent), so naming the
+  // form never skips the refusal or the conversion.
+  assert.throws(() => convertAnchor({ form: 'pin-locator@1' }), (e) => e.reason === 'anchor-without-mount');
+  assert.throws(() => convertAnchor({ form: 'pin-locator@1', heads: ['x'] }), (e) => e.reason === 'anchor-without-mount');
+  const almost = [
+    { ...CONVERTED, v: 2 },
+    { ...CONVERTED, kind: 'range' },
+    { ...CONVERTED, path: {} },
+    { ...CONVERTED, path: null },
+    { ...CONVERTED, fingerprint: { tag: 'div', classes: 'a b', text: 'T' } },
+    { ...CONVERTED, fingerprint: { tag: 'div', classes: ['a'] } },
+    { ...CONVERTED, fingerprint: null },
+    { ...CONVERTED, ordinal: 1.5 },
+    { ...CONVERTED, ordinal: undefined },
+  ];
+  for (const a of almost) {
+    const out = convertAnchor(a);
+    assert.notEqual(out, a, 'not passed through');
+    assert.equal(out.form, 'pin-locator@1');
+    assert.equal(out.mount, 'm', 'converted as a legacy locator');
+    assert.deepEqual(out.path, { selector: '' });
+  }
+  const converted = convertAnchor(ANCHOR);
+  assert.equal(convertAnchor(converted), converted, 'the full shape is returned as it is');
+  assert.equal(convertAnchor({ ...CONVERTED, ordinal: null }).ordinal, null);
+});
+
 test('convertAnchor reads only the four locator fields (C-10)', () => {
   const read = new Set();
   const legacy = { ...ANCHOR, heads: ['row text'], state: 'exact', extra: 1 };
@@ -497,6 +525,11 @@ test('appendVersion refuses a malformed version before anything is written', (t)
   assert.throws(() => log.appendVersion({ id: 'c1', payload: 'text' }), TypeError, 'no payload object');
   assert.throws(() => log.appendVersion({ id: 'c1', payload: p, seq: 0 }), TypeError, 'a seq that is not positive');
   assert.throws(() => log.appendVersion({ id: 'c1', payload: p, parent_v: 1 }), TypeError, 'a parent_v not earlier than v');
+  // Both hashes cover only {text, shared, replies, anchor}: a payload carrying
+  // anything else (a seq, a writer) is refused, never hashed.
+  assert.throws(() => log.appendVersion({ id: 'c1', payload: { ...p, seq: 3 } }), TypeError, 'a payload carrying seq');
+  assert.throws(() => log.appendVersion({ id: 'c1', payload: { ...p, writer: { class: 'claude', owner: null, verified: false } } }), TypeError, 'a payload carrying writer');
+  assert.throws(() => log.appendVersion({ id: 'c1', payload: { text: 'a', seq: 3 } }), TypeError, 'a bare payload carrying seq');
   assert.throws(() => log.appendCommit({ node: { id: 'n1' }, pins: [3] }), TypeError);
   assert.throws(() => log.appendMigration({ seq_floor: -1 }), TypeError);
   assert.equal(fs.existsSync(log.file), false, 'not even the epoch');
