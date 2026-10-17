@@ -37,6 +37,18 @@
       }
     },
     {
+      "name": "sibling-lookalike: a twinned row inserted at the path, the recorded row moved down -> B re-resolves on the one candidate (row-search)",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Omega</b><span class=\"act\">edit</span><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "re-resolved",
+        "target": "li:nth-child(3) > span.act",
+        "why": "sibling-lookalike",
+        "how": "row-search"
+      }
+    },
+    {
       "name": "row-context: a row inserted above -> B re-resolves (row-search)",
       "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
       "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Delta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",

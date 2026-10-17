@@ -243,8 +243,10 @@ test('C-8 wave rows: every anchorable element of each row reads exact under ever
 
 test('a data-wc-chrome element changes no path, no index entry, no record and no answer', () => {
   const c = caseNamed('row-context:');
+  // The pane carries its own <style> elements (as rendered panes do), so a chrome
+  // style that leaked into the same-tag sibling count would shift their `sib`.
   const themed = (html, where) => {
-    const root = mount(html);
+    const root = mount(`<style>.row { color: red }</style>${html}<style>b { font-weight: 700 }</style>`);
     const style = W.document.createElement('style');
     style.setAttribute('data-wc-chrome', 'theme');
     style.textContent = ':host { --wc-bg: #101010 }';
