@@ -51,13 +51,14 @@
 // OPEN. 'Open task', 'Open agent', 'Open workflow' and 'Open monitor' emit bus
 // `chat:open` {view: 'task', id}; the views that answer it are tranche 3's
 // (U47). 'Show on page' on a web-chat call that put up a pane calls mounts.js
-// revealPane(id).
+// revealPane(id), and on one that wrote a markdown item page.js revealMarkdown(id).
 import { bus } from './bus.js';
 import { mirror, atLeast, serverNow } from './chat-state.js';
 import { fmtClock } from './chat-present.js';
 import { setToolRenderer } from './chat-stream.js';
 import { renderMarkdown, renderDiff } from './markdown.js';
 import { revealPane } from './mounts.js';
+import { revealMarkdown } from './page.js';
 
 export const PAGE = 65536;          // one fetched page of a field (characters or bytes)
 export const BODY_CAP = 262144;     // the most a body shows: §2.4's full-read cap
@@ -660,6 +661,9 @@ function bodyNodes(card) {
         b.addEventListener('click', () => {
           let ok = false;
           try { ok = revealPane(id) === true; } catch (e) { console.error('[web-chat] Show on page failed', e); }
+          if (!ok) {
+            try { ok = revealMarkdown(id) === true; } catch (e) { console.error('[web-chat] Show on page failed', e); }
+          }
           b.textContent = ok ? 'Show on page' : 'Not on the page now';
         });
         add(b);
