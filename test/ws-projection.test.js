@@ -13,6 +13,12 @@
 // `req.socket.remoteAddress` on its upgrade (spec §10.1). The last test boots
 // the real daemon (withServer): with the server's audience or without one, a
 // project that has not opted in holds a remote viewer to the heartbeat.
+//
+// The annotation engine's frame rows (PLAN.md 1B.2, 1B.3, 1D.4): the comments
+// frame reaches no socket below `read` and a remote one without its private
+// pins; a queue frame's comment item carries no pin text below `read`; an
+// element frame no row names reaches local sockets only — on the rig, and on
+// the real daemon after real comment writes.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -20,8 +26,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { withServer, waitUntil, wsConnect } = require('../test-support/helpers');
+const { withServer, waitUntil, wsConnect, tmpRoot } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
+const { userPaths } = require('../lib/core/paths');
 const { createBus } = require('../lib/core/bus');
 const { createState } = require('../lib/server/state');
 const { createAudience } = require('../lib/server/audience');
@@ -447,4 +454,131 @@ test('the daemon: a remote viewer of a project that has not opted in gets no pro
   assert.equal(added(remote).node.trigger_summary, undefined);
   assert.equal(added(remote).node.id, added(local).node.id, 'the rest of the node is the same');
   assert.ok(!JSON.stringify(remote).includes('a prompt only the host sees'));
+});
+
+// ── the annotation engine's frame rows (comments, queue, element:<type>) ────
+
+const PIN_SHARED = Object.freeze({ id: 'c1', seq: 1, shared: true, text: 'wc-shared-mark', anchor: { mount: 'm1' } });
+const PIN_PRIVATE = Object.freeze({ id: 'c2', seq: 2, shared: false, text: 'wc-private-mark', anchor: { mount: 'm1' } });
+const COMMENT_ITEM = Object.freeze({ id: 'q1', kind: 'comment', source: 'browser', comment_id: 'c1', why_wake: 'comment pinned for Claude',
+  summary: 'm1 · "wc-shared-mark"', origin_mount: 'm1', seq: 1, staged: true });
+
+test('frame rows: comments, queue and element frames per socket — local whole, read without private records, basic without a pin or its text', async (t) => {
+  const host = await wsHost(t, { optIn: 'read' });
+  const local = await connect(t, host);
+  const reader = await connect(t, host, { 'X-WC-Remote': '1' });
+  const basic = await connect(t, host, { 'x-test-peer': '10.0.0.7' });
+  assert.deepStrictEqual([local, reader, basic].map((c) => c.server._wc.level), ['local', 'read', 'basic']);
+
+  const comments = { type: 'comments', comments: [PIN_SHARED, PIN_PRIVATE] };
+  const queueAdd = { type: 'queue', op: 'add', item: COMMENT_ITEM, count: 1 };
+  const capture = { type: 'queue', op: 'add', item: { id: 'q2', kind: 'capture', summary: 'example.test · a page' }, count: 2 };
+  const element = { type: 'element:comment', op: 'add', elements: [{ id: 'e1', shared: true, text: 'kept' }, { id: 'e2', shared: false, text: 'wc-private-mark' }] };
+  const unknown = { type: 'element:unknown', elements: [{ id: 'u1', shared: true, text: 'wc-unknown-mark' }] };
+  const sent = [comments, queueAdd, capture, element, unknown];
+  const before = local.raw.length;
+  for (const f of sent) host.api.broadcast(f);
+  await settle(host, [local, reader, basic]);
+
+  assert.deepStrictEqual(local.raw.slice(before, before + sent.length), sent.map((f) => JSON.stringify(f)),
+    'a local socket: every frame, byte for byte, private pins and the unknown element type included');
+  assert.deepStrictEqual(reader.of('comments'), [{ type: 'comments', comments: [PIN_SHARED] }]);
+  assert.deepStrictEqual(reader.of('queue'), [queueAdd, capture], 'read: the queue whole, the pin text included');
+  assert.deepStrictEqual(reader.of('element:comment'), [{ ...element, elements: [element.elements[0]] }]);
+  assert.deepStrictEqual(basic.of('comments'), [], 'below read: no comments frame');
+  assert.deepStrictEqual(basic.of('queue'), [
+    { ...queueAdd, item: { ...COMMENT_ITEM, summary: 'm1 · comment', text_hidden: true } }, capture]);
+  assert.deepStrictEqual(basic.of('element:comment'), []);
+  for (const c of [reader, basic]) {
+    assert.deepStrictEqual(c.of('element:unknown'), [], `${c.server._wc.level}: an element frame no row names`);
+    assert.ok(!c.raw.some((r) => r.includes('wc-private-mark') || r.includes('wc-unknown-mark')), `${c.server._wc.level}: no private text`);
+  }
+  assert.ok(!basic.raw.some((r) => r.includes('wc-shared-mark')), 'basic: no pin text at all');
+});
+
+test('frame rows: a rowed frame is projected, never the broadcast fast path — one serialization per distinct result', async (t) => {
+  const host = await wsHost(t, { optIn: 'read' });
+  await connect(t, host);
+  await connect(t, host, { 'X-WC-Remote': '1' });
+  await connect(t, host, { 'x-test-peer': '10.0.0.7' });
+  const count = (frame) => {
+    const real = JSON.stringify;
+    let n = 0;
+    JSON.stringify = function spy(v, ...rest) {
+      if (v && typeof v === 'object' && v.type === frame.type) n++;
+      return real.call(this, v, ...rest);
+    };
+    try { host.api.broadcast(frame); } finally { JSON.stringify = real; }
+    return n;
+  };
+  assert.equal(count({ type: 'comments', comments: [PIN_SHARED, PIN_PRIVATE] }), 2, 'whole (local) and without the private pin (read); basic nothing');
+  assert.equal(count({ type: 'comments', comments: [PIN_SHARED] }), 1, 'nothing private: one string for local and read');
+  assert.equal(count({ type: 'queue', op: 'add', item: COMMENT_ITEM, count: 1 }), 2, 'whole, and with the label below read');
+  assert.equal(count({ type: 'queue', op: 'remove', ids: ['q1'], reason: 'removed', count: 0 }), 1);
+  assert.equal(count({ type: 'element:unknown', elements: [] }), 1, 'local only');
+});
+
+// The real daemon, its comment routes and its wake policy: two projects on one
+// HOME, one opted in at read (tunnel.json, as `tunnel mirror on --read-only`
+// writes it) and one not. A socket records every frame it gets, raw.
+async function daemonSocket(t, port, headers) {
+  const ws = wsConnect(port, '/ws', headers ? { headers } : undefined);
+  t.after(() => { try { ws.terminate(); } catch {} });
+  const raw = [];
+  const frames = [];
+  ws.on('message', (d) => { raw.push(d.toString()); try { frames.push(JSON.parse(d.toString())); } catch {} });
+  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+  await waitUntil(() => frames.some((f) => f.type === 'hello'), { timeout: 10000, interval: 5, what: 'the hello' });
+  return { raw, frames, of: (type) => frames.filter((f) => f.type === type) };
+}
+
+// A store write every socket gets: once a socket has it, it has every frame
+// broadcast before it.
+let daemonMark = 0;
+async function daemonSettle(api, sockets) {
+  const n = ++daemonMark;
+  await api.post('/api/store', { patch: { wc_settle: n } });
+  await waitUntil(() => sockets.every((c) => c.frames.some((f) => f.type === 'store:patch' && f.patch && f.patch.wc_settle === n)),
+    { timeout: 15000, interval: 5, what: `settle ${n} on every socket` });
+}
+
+test('the daemon: a remote viewer below read gets no comments frame and no pin text on the queue; at read, no private pin; locally, the frame\'s own bytes', async (t) => {
+  const readRoot = tmpRoot('wc-wsproj-read-');
+  const seed = () => writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(readRoot)]: 'read' } } });
+  const basicD = await withServer(t, { seed });
+  const readD = await withServer(t, { root: readRoot });
+  for (const d of [basicD, readD]) {
+    d.local = await daemonSocket(t, d.port);
+    d.remote = await daemonSocket(t, d.port, { 'X-WC-Remote': '1' });
+    const r = await d.api.post('/api/render', { id: 'm1', html: '<p>plan</p>' });
+    assert.equal(r.status, 200, r.text);
+    const a = await d.api.post('/api/comments', { text: 'wc-shared-mark', shared: true, anchor: { mount: 'm1', text: 'plan' } });
+    const b = await d.api.post('/api/comments', { text: 'wc-private-mark', shared: false, anchor: { mount: 'm1', text: 'plan' } });
+    assert.equal(a.status, 200, a.text);
+    assert.equal(b.status, 200, b.text);
+    d.pins = [a.json.pin, b.json.pin];
+    await daemonSettle(d.api, [d.local, d.remote]);
+  }
+  assert.equal((await basicD.api.get('/api/queue')).json.items.filter((it) => it.kind === 'comment').length, 1,
+    'the shared pin put a comment item on the queue');
+
+  for (const d of [basicD, readD]) {
+    const frames = d.local.raw.filter((r) => r.startsWith('{"type":"comments"'));
+    assert.equal(frames.length, 2, 'one comments frame a write');
+    assert.equal(frames[1], JSON.stringify({ type: 'comments', comments: d.pins }), 'local: the emitted frame, byte for byte');
+    assert.ok(d.local.of('queue').some((f) => f.item && f.item.summary.includes('wc-shared-mark')), 'local: the queue item quotes the pin');
+  }
+  // Below read (no opt-in).
+  assert.deepStrictEqual(basicD.remote.of('comments'), [], 'basic: no comments frame');
+  const basicItem = basicD.remote.of('queue').find((f) => f.item && f.item.kind === 'comment');
+  assert.ok(basicItem, 'basic: the queue frame itself still comes');
+  assert.equal(basicItem.item.summary, 'm1 · comment');
+  assert.equal(basicItem.item.text_hidden, true);
+  assert.ok(!basicD.remote.raw.some((r) => r.includes('wc-shared-mark') || r.includes('wc-private-mark')), 'basic: no pin text in any frame');
+  // At read.
+  const readFrames = readD.remote.of('comments');
+  assert.equal(readFrames.length, 2);
+  assert.deepStrictEqual(readFrames[1].comments, [readD.pins[0]], 'read: the shared pin only');
+  assert.ok(!readD.remote.raw.some((r) => r.includes('wc-private-mark')), 'read: no private pin text in any frame');
+  assert.ok(readD.remote.of('queue').some((f) => f.item && f.item.summary.includes('wc-shared-mark')), 'read: the queue item whole');
 });

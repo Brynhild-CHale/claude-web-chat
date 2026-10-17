@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Upgrading from 0.8.5
+
+- **The tunnel portal's protocol is now 11.** Remote viewers reach the comment
+  pins only at the mirror level their project opted into (reading at
+  `--read-only`, writing at full). Run `claude-web-chat tunnel up` once: it
+  restarts a portal left running by 0.8.5. Then reload any remote page.
+
 ## [0.8.5] - 2026-10-15
 
 **Remote access is experimental.** `claude-web-chat tunnel` — the Cloudflare

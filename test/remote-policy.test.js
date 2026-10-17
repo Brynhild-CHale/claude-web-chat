@@ -29,6 +29,14 @@
 //      replies serves none of them, once each entry is stripped, from any
 //      route the table lets a `basic` viewer GET — save the replay documents,
 //      the one carrier still waiting on the maintainer's decision.
+//
+//   4. THE ANNOTATION ENGINE (protocol 11, PLAN.md 1B.1-1B.3, 1D.4): the
+//      comment routes at read and full, the element floor, the writer leases
+//      and the answer host's report row; a portal on protocol 10 or 8 lets
+//      through only the comment routes (and, on 8, the two queue writes); the
+//      frame row kind (comments, queue, element:<type>), PRIVATE_RULES and the
+//      queue's comment-item text; and a census of every frame type sent under
+//      lib/server/.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -39,9 +47,9 @@ const path = require('path');
 const {
   classify, classifier, keyOf, refusalBody, RULES,
   MIRROR_HINT, MIRROR_FULL_HINT, MIRROR_LEVELS, rankLevel, atLeast, fromOptIn,
-  FRAME_RULES, projectFrame, projectValue,
+  FRAME_RULES, SURFACE_FRAMES, projectFrame, projectValue,
   STATUS_SCHEMA, STATUS_ROW_SCHEMA, ASK_SCHEMA, ASK_FRAME_SCHEMA, RESET_SCHEMA,
-  TEXT_RULES, stripText,
+  TEXT_RULES, stripText, stripItemText, PRIVATE_RULES, dropPrivate,
   ANSWER_RULES, ANSWER_HINT, classifyAnswer,
 } = require('../lib/core/remote-policy');
 const { withServer } = require('../test-support/helpers');
@@ -155,8 +163,6 @@ const ALLOWED = [
   ['GET', '/preview/node/abc'],
   ['POST', '/api/graph/active'], ['POST', '/api/graph/bookmark'],
   ['GET', '/api/store'], ['POST', '/api/store'], ['GET', '/api/mounts'], ['POST', '/api/clear'],
-  ['GET', '/api/comments'], ['POST', '/api/comments'], ['PATCH', '/api/comments/c1'],
-  ['POST', '/api/comments/c1/reply'], ['DELETE', '/api/comments/c1'],
   ['GET', '/api/queue'], ['GET', '/api/queue/policy'], ['POST', '/api/queue/push'], ['POST', '/api/queue/repush'],
   ['GET', '/api/queue/pending'], ['POST', '/api/queue/pending/consume'], ['PATCH', '/api/queue/q1'],
   ['DELETE', '/api/queue/q1'],
@@ -476,28 +482,170 @@ function digest(v) {
   return crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex').slice(0, 16);
 }
 
-test('mirror: a portal still on the protocol-8 table refuses every new route by the default deny (a rollback fails safe)', () => {
-  const PIN = 'a row a protocol-8 portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin';
-  const added = new Set(SPEC_ROWS.map(keyOf));
-  const older = RULES.filter((r) => !added.has(keyOf(r)));
-  // That is protocol 8's table as 0.8.2 ships it, byte for byte: the release
-  // added rows and changed none, so an older portal enforces exactly this.
+// ── the annotation engine's rows (protocol 11) ──────────────────────────────
+
+const SPEC_UNKNOWN_HINT = 'this route is not available remotely — use it on the host';
+
+// Every row protocol 11 adds or changes, as PLAN-T1's U211 brief writes them:
+// the comment routes at the conversation's levels (in place of protocol 8's
+// and 10's single `* /api/comments/*` allow), the element floor
+// (lib/core/element-policy floorRules, worded here), and the writer leases.
+const T1_ROWS = [
+  { methods: '*', path: '/api/writers/*', allow: false, hint: SPEC_HOST_ONLY },
+  { methods: ['GET'], path: '/api/comments', allow: true, mirror: 'read', hint: SPEC_MIRROR_HINT },
+  { methods: ['POST', 'PATCH', 'DELETE'], path: '/api/comments/*', allow: true, mirror: 'full', hint: SPEC_MIRROR_FULL_HINT },
+  { methods: '*', path: '/api/comments/*', allow: false, hint: SPEC_UNKNOWN_HINT },
+  { methods: ['GET'], path: '/api/elements/search', allow: true, mirror: 'read', hint: SPEC_MIRROR_HINT },
+  { methods: ['GET'], path: '/api/elements/*', allow: true, mirror: 'read', hint: SPEC_MIRROR_HINT },
+  { methods: ['POST', 'PATCH', 'DELETE'], path: '/api/elements/*', allow: true, mirror: 'full', hint: SPEC_MIRROR_FULL_HINT },
+  { methods: '*', path: '/api/elements/*', allow: false, hint: SPEC_UNKNOWN_HINT },
+];
+// The row protocols 8 and 10 have where protocol 11 has the comment rows.
+const COMMENTS_BEFORE_11 = { methods: '*', path: '/api/comments/*', allow: true };
+// The report row on the answer host (decision A3, ruling B1).
+const T1_ANSWER_ROW = { methods: ['POST'], path: '/answer/api/elements/report', allow: true, mirror: 'full', hint: ANSWER_HINT };
+
+// Every route protocol 11 decides with a new row, with a sample request and
+// the least opt-in that lets it through (as ROUTES_085).
+const ROUTES_T1 = [
+  ['GET', '/api/comments', 'read'], ['GET', '/api/comments?since=3&mount=m1&shared_only=1', 'read'],
+  ['POST', '/api/comments', 'full'], ['PATCH', '/api/comments/c1', 'full'], ['POST', '/api/comments/c1/reply', 'full'],
+  ['DELETE', '/api/comments/c1', 'full'], ['PUT', '/api/comments/c1', 'refused'], ['GET', '/api/comments/c1', 'refused'],
+  ['GET', '/api/elements/search?q=x', 'read'], ['GET', '/api/elements', 'read'], ['GET', '/api/elements/el-1', 'read'],
+  ['GET', '/api/elements/el-1/versions', 'read'], ['POST', '/api/elements', 'full'], ['POST', '/api/elements/el-1/reply', 'full'],
+  ['PATCH', '/api/elements/el-1', 'full'], ['DELETE', '/api/elements/el-1', 'full'], ['PUT', '/api/elements/el-1', 'refused'],
+  ['POST', '/api/writers/lease', 'refused'], ['GET', '/api/writers/lease', 'refused'], ['DELETE', '/api/writers/lease/l1', 'refused'],
+];
+
+// RULES as a portal older than protocol 11 enforces it: less the rows above,
+// with the comment rows folded back into the one row they replaced, in place.
+function before11(rules) {
+  const t1 = new Set(T1_ROWS.map(keyOf));
+  const out = [];
+  for (const r of rules) {
+    if (keyOf(r) === 'GET /api/comments') out.push({ ...COMMENTS_BEFORE_11 });
+    else if (!t1.has(keyOf(r))) out.push(r);
+  }
+  return out;
+}
+
+test('protocol 11: every row the annotation engine adds or changes is in RULES, exactly as written, the comment rows where their one row was', () => {
+  const byKey = new Map(RULES.map((r) => [keyOf(r), r]));
+  for (const want of T1_ROWS) assert.deepStrictEqual(byKey.get(keyOf(want)), want, keyOf(want));
+  // Contiguous, first match wins: the comment rows above the element rows,
+  // each narrower row above the refusal that follows it.
+  const at = (k) => RULES.findIndex((r) => keyOf(r) === k);
+  const block = T1_ROWS.slice(1).map((r) => at(keyOf(r)));
+  assert.deepStrictEqual(block, block.map((_, i) => block[0] + i), 'the comment and element rows sit together, in this order');
+  assert.ok(at('* /api/writers/*') < at('GET|POST /api/store'), 'the writer leases sit with the turn and hook internals');
+  assert.ok(!RULES.some((r) => r.path === '/api/comments/*' && r.allow && !r.mirror), 'no comment row at every level');
+});
+
+test('classify: the comment routes — GET at read, writes at full, anything else refused; below the level, reason mirror', () => {
+  for (const optIn of [undefined, 'off', 'bogus']) {
+    const v = classify('GET', '/api/comments', { mirror: optIn });
+    assert.deepStrictEqual([v.allow, v.reason, v.hint, v.level, v.need], [false, 'mirror', SPEC_MIRROR_HINT, 'basic', 'read'], String(optIn));
+    assert.deepStrictEqual(refusalBody(v), { ok: false, remote: true, hint: SPEC_MIRROR_HINT, mirror: 'basic' });
+  }
+  for (const optIn of ['read', 'full']) assert.equal(classify('GET', '/api/comments?since=4', { mirror: optIn }).allow, true, optIn);
+  for (const [m, u] of [['POST', '/api/comments'], ['PATCH', '/api/comments/c1'], ['POST', '/api/comments/c1/reply'], ['DELETE', '/api/comments/c1']]) {
+    assert.equal(classify(m, u, { mirror: 'full' }).allow, true, `${m} ${u} at full`);
+    for (const optIn of [undefined, 'off', 'read']) {
+      const v = classify(m, u, { mirror: optIn });
+      assert.deepStrictEqual([v.allow, v.reason, v.hint, v.need], [false, 'mirror', SPEC_MIRROR_FULL_HINT, 'full'], `${m} ${u} at ${optIn}`);
+    }
+  }
+  for (const [m, u] of [['PUT', '/api/comments/c1'], ['GET', '/api/comments/c1'], ['OPTIONS', '/api/comments'], ['HEAD', '/api/comments/c1']]) {
+    const v = classify(m, u, { mirror: 'full' });
+    assert.deepStrictEqual([v.allow, v.reason, v.key, v.hint], [false, 'refused', '* /api/comments/*', SPEC_UNKNOWN_HINT], `${m} ${u}`);
+  }
+});
+
+test('classify: the element floor (search and reads at read, writes at full, the rest refused) and the writer leases (host only)', () => {
+  const at = (m, u, o) => classify(m, u, { mirror: o });
+  assert.equal(at('GET', '/api/elements/search?q=x', 'read').key, 'GET /api/elements/search', 'the search row decides the search');
+  for (const [m, u, need] of ROUTES_T1.filter(([, u]) => u.startsWith('/api/elements'))) {
+    for (const optIn of OPT_INS) {
+      const v = at(m, u, optIn);
+      if (need === 'refused') { assert.deepStrictEqual([v.allow, v.reason, v.hint], [false, 'refused', SPEC_UNKNOWN_HINT], `${m} ${u}`); continue; }
+      const ok = atLeast(fromOptIn(optIn), need);
+      assert.equal(v.allow, ok, `${m} ${u} at ${optIn} (needs ${need})`);
+      if (!ok) assert.equal(v.reason, 'mirror', `${m} ${u} at ${optIn}`);
+    }
+  }
+  for (const [m, u] of [['POST', '/api/writers/lease'], ['GET', '/api/writers/lease'], ['DELETE', '/api/writers/lease/l1'], ['POST', '/api/writers']]) {
+    const v = classify(m, u, { mirror: 'full' });
+    assert.deepStrictEqual([v.allow, v.reason, v.hint], [false, 'refused', SPEC_HOST_ONLY], `${m} ${u}`);
+  }
+});
+
+test('classifyAnswer: POST /answer/api/elements/report is allowed at full only (ruling B1)', () => {
+  const byKey = new Map(ANSWER_RULES.map((r) => [keyOf(r), r]));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(byKey.get(keyOf(T1_ANSWER_ROW)))), T1_ANSWER_ROW);
+  assert.equal(classifyAnswer('POST', '/answer/api/elements/report', { mirror: 'full' }).allow, true);
+  for (const optIn of [undefined, 'off', 'read']) {
+    const v = classifyAnswer('POST', '/answer/api/elements/report', { mirror: optIn });
+    assert.deepStrictEqual([v.allow, v.reason, v.need], [false, 'mirror', 'full'], String(optIn));
+  }
+  assert.equal(classifyAnswer('GET', '/answer/api/elements/report', { mirror: 'full' }).reason, 'unknown', 'a POST only');
+  assert.equal(classify('POST', '/api/elements/report', { mirror: 'full' }).allow, true,
+    'the session host decides its own /api/elements/* by the floor; the report is the answer host\'s');
+});
+
+test('protocol 11: the surface\'s other rows are 0.8.5\'s — the queue, capture and store (signal) rows byte for byte', () => {
+  // Pinned on their own (RULES at f3c4a7f, measured 2026-10-17 with digest()),
+  // not against before11(RULES), which holds these very rows unchanged.
+  const rows = RULES.filter((r) => /^\/api\/(queue|capture|captures|store|profile-match)\b/.test(r.path));
+  assert.deepStrictEqual(rows.map(keyOf), [
+    'GET|POST /api/store', 'POST /api/queue/message', 'POST /api/queue/task-stop', '* /api/queue/*',
+    '* /api/capture/*', '* /api/captures/*', '* /api/profile-match',
+  ]);
+  assert.equal(digest(rows), '3f8e0214e337b9b3', 'a queue, capture or store row changed: GT-16 holds them as 0.8.5 has them');
+});
+
+test('rollback: portals on protocol 10 and 8 refuse every new route by the default deny, save the comment routes (and the queue writes on 8), which the daemon checks again', () => {
+  const PIN = 'a row an older portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin';
+  // Protocol 10's table as 0.8.5 ships it, byte for byte (RULES at f3c4a7f,
+  // measured 2026-10-17): protocol 11 added rows and changed only the comment
+  // row, which before11 folds back.
+  const p10 = before11(RULES);
+  assert.equal(p10.length, 100);
+  assert.equal(digest(p10), 'b23087d38123db27', PIN);
+  // Protocol 8's: 0.8.5 added rows (SPEC_ROWS) and changed none.
   // Protocol 8 has two tables in the wild. 0.8.2 added one row, `trust
   // --pack`'s read-only listing, without a protocol bump, so a 0.8.0 portal
   // enforces this table less that row (and refuses the listing by the default
   // deny). A rollback can land on either, so both are checked.
+  const added085 = new Set(SPEC_ROWS.map(keyOf));
+  const older = p10.filter((r) => !added085.has(keyOf(r)));
   assert.equal(older.length, 77);
   assert.equal(digest(older), 'c1e44e5df5393ba7', PIN);
   const PACK_LISTING = 'GET /api/services/pack/:name';
   const v080 = older.filter((r) => keyOf(r) !== PACK_LISTING);
   assert.equal(v080.length, 76, `0.8.2's one added row is ${PACK_LISTING}`);
   assert.equal(digest(v080), 'd5878f2b94237a22', PIN);
-  for (const [release, table] of [['0.8.2', older], ['0.8.0', v080]]) {
+  // ANSWER_RULES as protocol 10 has it: less the report row.
+  const answer10 = ANSWER_RULES.filter((r) => keyOf(r) !== keyOf(T1_ANSWER_ROW));
+  assert.equal(answer10.length, 16);
+  assert.equal(digest(answer10), '60bdf33013a658c1', PIN);
+  assert.equal(classifier(answer10)('POST', '/answer/api/elements/report', { mirror: 'full' }).reason, 'unknown',
+    'a protocol-10 portal refuses the report by its default deny');
+
+  const comments = ROUTES_T1.filter(([, u]) => u.startsWith('/api/comments')).map(([m, u]) => `${m} ${u} → * /api/comments/*`);
+  const queue = ['POST /api/queue/message → * /api/queue/*', 'POST /api/queue/task-stop → * /api/queue/*'];
+  for (const [release, table, routes, through, least] of [
+    ['0.8.5', p10, ROUTES_T1, comments, ROUTES_T1.length],
+    ['0.8.2', older, [...ROUTES_085, ...ROUTES_T1], [...comments, ...queue], 45 + ROUTES_T1.length],
+    ['0.8.0', v080, [...ROUTES_085, ...ROUTES_T1], [...comments, ...queue], 45 + ROUTES_T1.length],
+  ]) {
     const old = classifier(table);
+    const has = new Set(table.map((r) => JSON.stringify(r)));
+    const deciding = new Map(RULES.map((r) => [keyOf(r), r]));
     let checked = 0;
     const letThrough = new Set();
-    for (const [m, u] of ROUTES_085) {
-      if (!added.has(classify(m, u, { mirror: 'full' }).key)) continue; // decided by a row protocol 8 already has
+    for (const [m, u] of routes) {
+      const now = classify(m, u, { mirror: 'full' });
+      if (now.key && has.has(JSON.stringify(deciding.get(now.key)))) continue; // decided by a row the older portal has, unchanged
       checked += 1;
       for (const optIn of [undefined, ...OPT_INS]) {
         const v = old(m, u, { mirror: optIn });
@@ -505,15 +653,13 @@ test('mirror: a portal still on the protocol-8 table refuses every new route by 
         else assert.equal(v.reason, 'unknown', `${release}'s portal, ${m} ${u}: refused by the default deny, with no row of its own`);
       }
     }
-    assert.ok(checked >= 45, `only ${checked} new routes checked`);
-    // The one exception, deliberate: protocol 8's `/api/queue/*` lets the two
-    // queue writes through, and the daemon's own level check (requireMirror
-    // 'full', spec §5.4) refuses them below full — a rolled-back portal over a
-    // 0.8.5 daemon still sends no message for a viewer without the opt-in.
-    assert.deepStrictEqual([...letThrough].sort(), [
-      'POST /api/queue/message → * /api/queue/*',
-      'POST /api/queue/task-stop → * /api/queue/*',
-    ], `${release}'s portal`);
+    assert.ok(checked >= least, `${release}: only ${checked} new routes checked`);
+    // The exceptions, deliberate: the old `* /api/comments/*` (and, on 8,
+    // `/api/queue/*`) lets these through, and the daemon's own level check
+    // (requireMirror in routes/comments.js and routes/queue.js) refuses them
+    // below their level — a rolled-back portal over a protocol-11 daemon still
+    // shows no pin to, and takes none from, a viewer without the opt-in.
+    assert.deepStrictEqual([...letThrough].sort(), [...through].sort(), `${release}'s portal`);
   }
 });
 
@@ -548,6 +694,7 @@ test('ANSWER_RULES: well-formed — frozen, every row an allow at full with ANSW
     'GET /answer/api/control/state',
     'POST /answer/api/control/:action',
     'GET /answer/fonts/:file',
+    'POST /answer/api/elements/report',
   ]);
 });
 
@@ -647,6 +794,75 @@ test('ratchet: every `type: \'mirror:<x>\'` sent under lib/server/ has a FRAME_R
     + 'FRAME_RULES in lib/core/remote-policy.js — its least level, and a typed `basic` schema if a basic viewer gets it');
 });
 
+// ── the frame census ────────────────────────────────────────────────────────
+// Every `type: '<x>'` literal under lib/server/ is a frame type — FRAME_RULES,
+// TEXT_RULES.frames or SURFACE_FRAMES — or one of these, each reviewed as not
+// a frame the sockets get: the mirror's record and item kinds, the
+// supervisor's IPC with a service child, the answer frames' postMessage, two
+// hint keys and a type the scan reads off a ternary.
+const NOT_FRAMES = new Map([
+  ['', 'lib/server/mirror/tasks.js: `entry.type : \'\'`, a ternary the scan reads as a key'],
+  ['<no-type>', 'lib/server/mirror/records.js: a record kind'],
+  ['text', 'lib/server/mirror/normalize.js: a content block'],
+  ['record', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['item', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['opener', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['interrupt', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['compact', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['compact-summary', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['turn-duration', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['permission-decision', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['rewind-evidence', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['start', 'the supervisor\'s IPC to a service child (services.js, service-runner.js)'],
+  ['started', 'the supervisor\'s IPC from a service child'],
+  ['stop', 'the supervisor\'s IPC to a service child'],
+  ['wc-answer:size', 'an answer frame\'s postMessage to the chrome (answer-surface/public/answer.js)'],
+  ['wc-answer:done', 'an answer frame\'s postMessage to the chrome'],
+  ['wc-answer:open-chat', 'an answer frame\'s postMessage to the chrome'],
+  ['add a PNG, JPEG, GIF or WebP image', 'routes/attachments.js: the `type` hint of its HINTS'],
+  ['expected application/json', 'tunnel-setup/index.js: a refusal\'s `type` field'],
+]);
+const ANY_TYPE_RE = /\btype\s*:\s*(['"`])([^'"`]*)\1/g;
+const isFrameKnown = (t) => FRAME_RULES.some((r) => r.type === t) || Object.hasOwn(TEXT_RULES.frames, t) || SURFACE_FRAMES.includes(t);
+
+// The literals in `files` that are neither a known frame nor reviewed as not one.
+function frameCensus(files) {
+  const missing = [];
+  const found = new Set();
+  for (const file of files) {
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(ANY_TYPE_RE)) {
+      found.add(m[2]);
+      if (!isFrameKnown(m[2]) && !NOT_FRAMES.has(m[2])) missing.push(`${m[2]}   (${path.relative(REPO_ROOT, file)})`);
+    }
+  }
+  return { missing, found };
+}
+
+test('ratchet: every `type: \'<x>\'` literal under lib/server/ is a rowed frame, a text-stripped frame, a SURFACE_FRAMES frame, or reviewed as not a frame', (t) => {
+  const { missing, found } = frameCensus(serverFiles());
+  assert.deepStrictEqual(missing, [],
+    'a frame type no table names goes whole to every socket, remote ones included. Add it to FRAME_RULES (a level; '
+    + 'PRIVATE_RULES if it carries private records), TEXT_RULES.frames, or SURFACE_FRAMES in lib/core/remote-policy.js '
+    + '— or, if it is not a frame at all, to NOT_FRAMES here with why');
+  for (const k of NOT_FRAMES.keys()) assert.ok(found.has(k), `NOT_FRAMES names ${JSON.stringify(k)}, which lib/server/ no longer has — drop it`);
+  // Every SURFACE_FRAMES entry is still sent somewhere under lib/.
+  const lib = serverFiles(path.join(REPO_ROOT, 'lib'));
+  const sent = new Set();
+  for (const file of lib) for (const m of fs.readFileSync(file, 'utf8').matchAll(ANY_TYPE_RE)) sent.add(m[2]);
+  for (const f of SURFACE_FRAMES) assert.ok(sent.has(f), `SURFACE_FRAMES names '${f}', which nothing under lib/ sends`);
+  assert.ok(Object.isFrozen(SURFACE_FRAMES));
+  for (const f of SURFACE_FRAMES) {
+    assert.ok(!f.startsWith('mirror:') && !f.startsWith('element:'), `${f}: a mirror or element frame is never sent whole`);
+    assert.ok(!FRAME_RULES.some((r) => r.type === f) && !Object.hasOwn(TEXT_RULES.frames, f), `${f}: in one table only`);
+  }
+  // The scan is live: a planted element frame in a scratch copy is reported.
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'wc-frame-census-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const planted = path.join(dir, 'planted.js');
+  fs.writeFileSync(planted, "bus.emit({ ws: { type: 'element:x', elements: [] } });\nbus.emit({ ws: { type: 'render' } });\n");
+  assert.deepStrictEqual(frameCensus([planted]).missing.map((l) => l.split(' ')[0]), ['element:x']);
+});
+
 test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by name; frozen all the way down', () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(FRAME_RULES)), [
     { type: 'mirror:status', level: 'basic', basic: { rev: 'number', now: 'number', aggregate: { state: 'word' },
@@ -657,6 +873,15 @@ test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by na
     { type: 'mirror:ask', level: 'basic', basic: { op: 'word', ask: { id: 'id', conversation_id: 'id', kind: 'word', tool_kind: 'word', state: 'word' } } },
     { type: 'mirror:update', level: 'read' },
     { type: 'mirror:stream', level: 'read', posture: 'full' },
+    // The surface's frames that carry pins, elements or a pin's text (the
+    // annotation engine's row kind): a level, and on the queue's the item key
+    // TEXT_RULES.items strips below read.
+    { type: 'comments', level: 'read' },
+    { type: 'queue', level: 'basic', item: 'item' },
+    // One per built-in element type (lib/core/element-policy), at its `see`.
+    { type: 'element:box-grab', level: 'read' },
+    { type: 'element:comment', level: 'read' },
+    { type: 'element:highlight', level: 'read' },
   ]);
   const types = FRAME_RULES.map((r) => r.type);
   assert.equal(new Set(types).size, types.length);
@@ -674,15 +899,77 @@ test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by na
   assert.ok(frozenDeep(TEXT_RULES));
 });
 
-test('projectFrame: a non-mirror frame passes at every level, untouched; a mirror type with no row reaches only local', () => {
+test('projectFrame: a surface frame with no row passes at every level, untouched; a mirror or element type with no row reaches only local', () => {
   const lock = { type: 'lock', lock: { message: 'the prompt' } };
+  const render = { type: 'render', id: 'p1', html: '<p>x</p>' };
   for (const level of ['basic', 'read', 'full', 'local', 'nonsense', undefined]) {
     assert.equal(projectFrame(lock, level), lock, `${level}: the frame itself (TEXT_RULES is a separate pass)`);
+    assert.equal(projectFrame(render, level), render, `${level}: a surface frame`);
   }
   assert.equal(projectFrame(null, 'basic'), null);
   const future = { type: 'mirror:future', text: 'anything' };
   assert.equal(projectFrame(future, 'local'), future);
   for (const level of ['basic', 'read', 'full']) assert.equal(projectFrame(future, level, 'full'), null, level);
+  // 1B.2: an element frame no row names goes to local sockets only.
+  const unknown = { type: 'element:unknown', elements: [{ id: 'e1', shared: true, text: 'a note' }] };
+  assert.equal(projectFrame(unknown, 'local'), unknown);
+  for (const level of ['basic', 'read', 'full', 'nonsense']) assert.equal(projectFrame(unknown, level), null, level);
+});
+
+// Deep-frozen fixtures: a projection that mutated its input would throw.
+const frozen = (o) => {
+  if (o && typeof o === 'object') { Object.freeze(o); Object.values(o).forEach(frozen); }
+  return o;
+};
+const SHARED_PIN = { id: 'c1', seq: 1, shared: true, text: 'a shared note', anchor: { mount: 'm1' } };
+const PRIVATE_PIN = { id: 'c2', seq: 2, shared: false, text: 'wc-private-mark', anchor: { mount: 'm1' }, replies: [{ author: 'user', text: 'wc-private-mark too' }] };
+
+test('projectFrame: the comments frame — local whole (the same object), read and full without private pins, basic nothing', () => {
+  const frame = frozen({ type: 'comments', comments: [SHARED_PIN, PRIVATE_PIN] });
+  assert.equal(projectFrame(frame, 'local'), frame, 'a local socket: the frame itself');
+  for (const level of ['read', 'full']) {
+    const out = projectFrame(frame, level);
+    assert.deepStrictEqual(out, { type: 'comments', comments: [SHARED_PIN] }, level);
+    assert.notEqual(out, frame, `${level}: a copy`);
+    assert.equal(out.comments[0], SHARED_PIN, `${level}: what is kept is shared, not copied`);
+  }
+  for (const level of ['basic', 'nonsense', undefined]) assert.equal(projectFrame(frame, level), null, String(level));
+  const allShared = frozen({ type: 'comments', comments: [SHARED_PIN] });
+  assert.equal(projectFrame(allShared, 'read'), allShared, 'nothing private: the frame itself');
+  const empty = frozen({ type: 'comments', comments: [] });
+  assert.equal(projectFrame(empty, 'full'), empty);
+});
+
+const COMMENT_ITEM = { id: 'q1', kind: 'comment', source: 'browser', comment_id: 'c1', why_wake: 'comment pinned for Claude',
+  summary: 'm1 · "a shared note"', origin_mount: 'm1', seq: 1, staged: true };
+const CAPTURE_ITEM = { id: 'q2', kind: 'capture', source: 'extension', capture_id: 'cap1', summary: 'example.test · a page', staged: true };
+
+test('projectFrame: a queue frame — a comment item\'s text is a label below read; every other item, and read and up, the frame itself', () => {
+  const add = frozen({ type: 'queue', op: 'add', item: COMMENT_ITEM, count: 1 });
+  for (const level of ['local', 'read', 'full']) assert.equal(projectFrame(add, level), add, level);
+  const basic = projectFrame(add, 'basic');
+  assert.deepStrictEqual(basic, { type: 'queue', op: 'add', count: 1,
+    item: { ...COMMENT_ITEM, summary: 'm1 · comment', text_hidden: true } });
+  assert.ok(!JSON.stringify(basic).includes('a shared note'));
+  const update = frozen({ type: 'queue', op: 'update', id: 'q1', item: COMMENT_ITEM, staged: true, count: 1 });
+  assert.equal(projectFrame(update, 'basic').item.summary, 'm1 · comment');
+  const capture = frozen({ type: 'queue', op: 'add', item: CAPTURE_ITEM, count: 2 });
+  for (const level of ['local', 'full', 'read', 'basic']) assert.equal(projectFrame(capture, level), capture, `${level}: a capture item`);
+  const remove = frozen({ type: 'queue', op: 'remove', ids: ['q1'], reason: 'removed', count: 0 });
+  assert.equal(projectFrame(remove, 'basic'), remove, 'no item: nothing to strip');
+  assert.equal(projectFrame(add, 'nonsense'), null, 'an unknown level meets nothing');
+});
+
+test('projectFrame: an element frame — its row\'s level, private records only to local', () => {
+  const frame = frozen({ type: 'element:comment', op: 'add',
+    elements: [{ id: 'e1', shared: true, text: 'kept' }, { id: 'e2', shared: false, text: 'wc-private-mark' }] });
+  assert.equal(projectFrame(frame, 'local'), frame);
+  for (const level of ['read', 'full']) {
+    assert.deepStrictEqual(projectFrame(frame, level), { type: 'element:comment', op: 'add', elements: [{ id: 'e1', shared: true, text: 'kept' }] }, level);
+  }
+  assert.equal(projectFrame(frame, 'basic'), null);
+  const plain = frozen({ type: 'element:highlight', op: 'add', elements: [{ id: 'h1', shared: true }] });
+  assert.equal(projectFrame(plain, 'read'), plain, 'nothing private: the frame itself');
 });
 
 test('projectFrame: posture gates the stream (even locally); levels gate the rest; an unknown level meets nothing', () => {
@@ -823,8 +1110,69 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
         'steps[].folded[].prompt', 'steps[].folded[].reply', 'steps[].folded[].summary'],
       'GET /api/health': LOCK_PATHS,
     },
+    // A queue item's own text by kind (the annotation engine, finding 3): a
+    // comment item quotes its pin.
+    items: { comment: ['summary'] },
   });
 });
+
+test('stripItemText: below read a comment item is a text-free label with text_hidden; anything else, or read and up, the item itself', () => {
+  const item = frozen({ ...COMMENT_ITEM });
+  for (const level of ['read', 'full', 'local']) assert.equal(stripItemText(item, level), item, level);
+  for (const level of ['basic', 'nonsense', undefined]) {
+    assert.deepStrictEqual(stripItemText(item, level), { ...COMMENT_ITEM, summary: 'm1 · comment', text_hidden: true }, String(level));
+  }
+  const noMount = frozen({ ...COMMENT_ITEM, origin_mount: null, summary: '"a page-level note"' });
+  assert.deepStrictEqual(stripItemText(noMount, 'basic'), { ...noMount, summary: 'comment', text_hidden: true });
+  const capture = frozen({ ...CAPTURE_ITEM });
+  assert.equal(stripItemText(capture, 'basic'), capture, 'a capture item names a page, not the conversation');
+  for (const v of [null, undefined, 'x', 3, frozen({ summary: 'no kind' })]) assert.equal(stripItemText(v, 'basic'), v);
+  assert.equal(item.summary, COMMENT_ITEM.summary, 'never mutated');
+});
+
+test('PRIVATE_RULES: the one table of where private records ride — frames and routes; frozen; every key a rowed frame or a mounted route', () => {
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(PRIVATE_RULES)), {
+    frames: {
+      comments: ['comments[]'],
+      'element:box-grab': ['elements[]'],
+      'element:comment': ['elements[]'],
+      'element:highlight': ['elements[]'],
+    },
+    routes: {
+      'GET /api/comments': ['comments[]'],
+      'GET /api/graph/node/:id': ['comments[]'],
+      'GET /preview/node/:id': ['comments[]'],
+    },
+  });
+  const frozenDeep = (o) => !o || typeof o !== 'object' || (Object.isFrozen(o) && Object.values(o).every(frozenDeep));
+  assert.ok(frozenDeep(PRIVATE_RULES));
+  const rowed = new Set(FRAME_RULES.map((r) => r.type));
+  for (const t of Object.keys(PRIVATE_RULES.frames)) assert.ok(rowed.has(t), `${t}: a frame PRIVATE_RULES filters has a FRAME_RULES row (projectFrame applies it there)`);
+  const routes = new Set(daemonRoutes().map((r) => `${r.method} ${r.path}`));
+  for (const k of Object.keys(PRIVATE_RULES.routes)) assert.ok(routes.has(k), `${k} is not a route in lib/server/routes/`);
+});
+
+test('dropPrivate: every shared:false element off the listed lists, copy-on-write; nothing to drop, the value itself', () => {
+  const body = frozen({ comments: [SHARED_PIN, PRIVATE_PIN], next_cursor: 2, respond_hint: 'h' });
+  const out = dropPrivate('routes', 'GET /api/comments', body);
+  assert.deepStrictEqual(out, { comments: [SHARED_PIN], next_cursor: 2, respond_hint: 'h' });
+  assert.equal(out.comments[0], SHARED_PIN);
+  const node = frozen({ id: 'n1', mounts: [], comments: [PRIVATE_PIN, { ...SHARED_PIN, shared: undefined }] });
+  assert.deepStrictEqual(dropPrivate('route', 'GET /api/graph/node/:id', node).comments, [{ ...SHARED_PIN, shared: undefined }],
+    'only shared === false is private');
+  const none = frozen({ id: 'n1', mounts: [] });
+  assert.equal(dropPrivate('routes', 'GET /preview/node/:id', none), none, 'no `comments`: the same object');
+  const notList = frozen({ comments: 'x' });
+  assert.equal(dropPrivate('routes', 'GET /api/comments', notList), notList);
+  const shared = frozen({ type: 'comments', comments: [SHARED_PIN] });
+  assert.equal(dropPrivate('frames', 'comments', shared), shared);
+  assert.deepStrictEqual(dropPrivate('frame', 'comments', frozen({ type: 'comments', comments: [PRIVATE_PIN, 7, null] })),
+    { type: 'comments', comments: [7, null] }, 'a non-object element is never private');
+  const other = frozen({ type: 'render', comments: [PRIVATE_PIN] });
+  assert.equal(dropPrivate('frames', 'render', other), other, 'a key with no entry: the value itself');
+  assert.throws(() => dropPrivate('bodies', 'GET /api/comments', body), TypeError);
+});
+
 
 test('stripText: the listed paths off a copy; a missing path is fine; nothing listed, nothing copied', () => {
   const lockRec = { base: 'n4', started_at: 1, message: 'fix the token leak in .env', author: 'user',
