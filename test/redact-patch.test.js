@@ -59,14 +59,19 @@ function numbering(patch) {
 }
 const bodyRows = (patch) => numbering(patch).filter((r) => /dl-(?:ctx|add|del)/.test(r.cls));
 
-// What every patch redaction must keep, whatever it masked.
+// What every patch redaction must keep, whatever it masked. A hunk header is
+// intact, or (its function-context tail inside a key) its `@@ … @@` counts
+// byte for byte followed by a space and the pem mask.
+const HUNK_COUNTS = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
 function assertShape(original, redacted) {
   const a = original.split('\n');
   const b = redacted.split('\n');
   assert.equal(b.length, a.length, 'the line count is kept');
   for (let i = 0; i < a.length; i++) {
     assert.equal(b[i].charAt(0), a[i].charAt(0), `line ${i + 1} keeps its first character`);
-    if (a[i].startsWith('@@')) assert.equal(b[i], a[i], `the @@ header on line ${i + 1} is intact`);
+    if (!a[i].startsWith('@@')) continue;
+    const counts = HUNK_COUNTS.exec(a[i])[0];
+    assert.ok(b[i] === a[i] || b[i] === `${counts} ${PEM_MASK}`, `the @@ header on line ${i + 1} keeps its counts (${b[i]})`);
   }
   assert.deepEqual(numbering(redacted), numbering(original), 'renderDiff numbers every line as on the unredacted patch');
 }
@@ -111,7 +116,7 @@ test('a key added among context and removed lines (pem-pkcs8): numbering equal, 
   assert.ok(lines.includes('-const old = null;') && lines.includes('+];') && lines.includes('-gone'));
 });
 
-test('a BEGIN with no END in the first of two hunks: every body line after it, in both hunks, is prefix + mask; the second @@ intact', () => {
+test("a BEGIN with no END in the first of two hunks: every body line after it, in both hunks, is prefix + mask; the second @@'s counts intact", () => {
   const block = keyBlock('pem-ec');
   const open = block.slice(0, -1); // no END
   const first = [...CTX, ['+', 'const k = `'], ...open.map((s) => ['+', s])];
@@ -132,7 +137,9 @@ test('a BEGIN with no END in the first of two hunks: every body line after it, i
     if (lines[i].startsWith('@@')) continue;
     assert.equal(lines[i].slice(1), PEM_MASK, `body line ${i + 1} after the BEGIN is masked`);
   }
-  assert.ok(lines.includes('@@ -40,3 +47,3 @@ function later() {') && lines.includes('@@ -90 +97 @@'));
+  // The second header lies inside the key (it has no END): its counts stay and
+  // its function-context tail is masked; the third has no tail to mask.
+  assert.ok(lines.includes(`@@ -40,3 +47,3 @@ ${PEM_MASK}`) && lines.includes('@@ -90 +97 @@'));
   assert.equal(lines[lines.length - 1], '', 'the trailing newline is kept');
 });
 
@@ -255,6 +262,61 @@ test('a hunk opening inside a key (an END and no BEGIN): masked from the patch s
   assert.deepEqual(lines.slice(0, 4), patch.split('\n').slice(0, 4));
   assert.equal(lines.filter((l) => l === ` ${PEM_MASK}`).length, tailOnly.length);
   assert.ok(lines.includes('+appended'));
+});
+
+// git's default function context: the last line before a hunk that starts
+// with a letter, `_` or `$` goes into the hunk header's tail. Inside a key that
+// line is key material.
+const funcname = (before) => {
+  const line = [...before].reverse().find((l) => /^[A-Za-z_$]/.test(l));
+  assert.ok(line, 'a line git would take as the function context');
+  return line;
+};
+const GIT_HEAD = 'diff --git a/f.txt b/f.txt\nindex 47b3cc9..113f739 100644\n--- a/f.txt\n+++ b/f.txt\n';
+
+test('a hunk header inside a key (BEGIN in hunk 1, END in hunk 2): its function-context tail, a key line, is masked', () => {
+  const block = keyBlock('pem-rsa'); // file lines 5 (BEGIN) to 12 (END)
+  const body = block.slice(1, -1);
+  const patch = GIT_HEAD
+    + '@@ -3,3 +3,3 @@ a2\n a3\n-a4\n+A4\n' + ` ${block[0]}\n`
+    + `@@ -12,3 +12,3 @@ ${funcname(body)}\n` + ` ${block[block.length - 1]}\n-z1\n+Z1\n z2\n`;
+  const out = redactPatch(patch);
+  assert.deepEqual(findLeaks(out, [fake('pem-rsa')]), []);
+  assertShape(patch, out);
+  const lines = out.split('\n');
+  assert.ok(lines.includes('@@ -3,3 +3,3 @@ a2'), 'a header outside the key keeps its tail');
+  assert.ok(lines.includes(`@@ -12,3 +12,3 @@ ${PEM_MASK}`));
+  assert.ok(lines.includes('-a4') && lines.includes('+Z1') && lines.includes(' z2'), 'the lines outside the key are kept');
+});
+
+test('a hunk header whose tail is the BEGIN line: every line kept and numbered as on the patch, not folded into one mask', () => {
+  const block = keyBlock('pem-rsa');
+  const body = block.slice(1, -1);
+  // `key: <BEGIN>` is file line 5, so git takes it as the hunk's function context.
+  const hunk = [[' ', body[0]], [' ', body[1]], ['-', body[2]], ['+', 'changed'], [' ', body[3]], [' ', body[4]], [' ', body[5]], [' ', block[block.length - 1]]];
+  const patch = GIT_HEAD + `@@ -6,7 +6,7 @@ key: ${block[0]}\n${hunk.map(([t, s]) => t + s).join('\n')}\n`;
+  assert.equal(patch.split('\n').length, 14);
+  const out = redactPatch(patch);
+  assert.equal(out.split('\n').length, 14, 'the line count is kept');
+  assert.deepEqual(numbering(out), numbering(patch));
+  assertShape(patch, out);
+  assert.deepEqual(findLeaks(out, [fake('pem-rsa')]), []);
+  assert.equal(out.split('\n')[4], `@@ -6,7 +6,7 @@ ${PEM_MASK}`);
+  assert.equal(redactPatch(out), out, 'idempotent');
+});
+
+test('an END-only patch whose hunk header tail is a key body line: the tail is masked, one pem note', () => {
+  const block = keyBlock('pem-rsa'); // file lines 5 (BEGIN) to 12 (END)
+  const body = block.slice(1, -1);
+  const patch = GIT_HEAD + `@@ -10,3 +10,3 @@ ${funcname(body.slice(0, 4))}\n`
+    + ` ${body[4]}\n-${body[5]}\n+changed\n ${block[block.length - 1]}\n`;
+  const notes = [];
+  const out = redactPatch(patch, { onMask: (n) => notes.push(n) });
+  assert.deepEqual(findLeaks(out, [fake('pem-rsa')]), []);
+  assertShape(patch, out);
+  assert.deepEqual(out.split('\n').slice(0, 4), patch.split('\n').slice(0, 4), 'the file headers are kept');
+  assert.equal(out.split('\n')[4], `@@ -10,3 +10,3 @@ ${PEM_MASK}`);
+  assert.deepEqual(notes.map((n) => n.id), ['pem']);
 });
 
 test('not a string, or empty: returned as it came', () => {
