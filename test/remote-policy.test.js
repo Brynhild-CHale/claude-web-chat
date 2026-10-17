@@ -593,13 +593,14 @@ test('classifyAnswer: POST /answer/api/elements/report is allowed at full only (
 });
 
 test('protocol 11: the surface\'s other rows are 0.8.5\'s — the queue, capture and store (signal) rows byte for byte', () => {
-  const p10 = before11(RULES);
-  const old = new Map(p10.map((r) => [keyOf(r), r]));
-  for (const r of RULES) {
-    if (!/^\/api\/(queue|capture|captures|store|profile-match)\b/.test(r.path)) continue;
-    assert.deepStrictEqual(r, old.get(keyOf(r)), keyOf(r));
-  }
-  assert.ok(RULES.filter((r) => /^\/api\/(queue|capture|captures|store)\b/.test(r.path)).length >= 6);
+  // Pinned on their own (RULES at f3c4a7f, measured 2026-10-17 with digest()),
+  // not against before11(RULES), which holds these very rows unchanged.
+  const rows = RULES.filter((r) => /^\/api\/(queue|capture|captures|store|profile-match)\b/.test(r.path));
+  assert.deepStrictEqual(rows.map(keyOf), [
+    'GET|POST /api/store', 'POST /api/queue/message', 'POST /api/queue/task-stop', '* /api/queue/*',
+    '* /api/capture/*', '* /api/captures/*', '* /api/profile-match',
+  ]);
+  assert.equal(digest(rows), '3f8e0214e337b9b3', 'a queue, capture or store row changed: GT-16 holds them as 0.8.5 has them');
 });
 
 test('rollback: portals on protocol 10 and 8 refuse every new route by the default deny, save the comment routes (and the queue writes on 8), which the daemon checks again', () => {
