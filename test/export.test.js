@@ -55,10 +55,11 @@ test('assembleExport: injection-safe — </script> in html and store cannot brea
   };
   const html = assembleExport(evil);
   // The data payload is one <script type="application/json"> followed by the
-  // shared runtime <script> and the export-shell <script> (Phase 4). Both are
-  // trusted tag-free static source, so a payload breakout would add a fourth.
+  // shared runtime <script>, the anchor resolver's <script> (annotation engine
+  // 1C.1) and the export-shell <script>. All three are trusted tag-free static
+  // source, so a payload breakout would add a fifth.
   const opens = (html.match(/<script/gi) || []).length;
-  assert.equal(opens, 3, 'exactly three <script> tags — no breakout');
+  assert.equal(opens, 4, 'exactly four <script> tags (the payload, the runtime, the resolver, the shell) — no breakout');
   // The literal breakout sequence must not appear raw in the document.
   assert.ok(!/<\/script><script>window\.__pwned/.test(html), 'breakout neutralized');
   // And the JSON still round-trips: extract the payload and parse it.
