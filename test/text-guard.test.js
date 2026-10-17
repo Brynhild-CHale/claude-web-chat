@@ -131,5 +131,5 @@ test('a value that is not a string: stripControls gives empty text, hasForbidden
 test('the module is pure: it requires nothing', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'core', 'text.js'), 'utf8');
   assert.doesNotMatch(src, /\brequire\s*\(/);
-  assert.deepEqual(Object.keys(text).sort(), ['BIDI_RE', 'CONTROL_RE', 'INVISIBLE_RE', 'hasForbidden', 'stripControls']);
+  assert.deepEqual(Object.keys(text).sort(), ['BIDI_RE', 'CONTROL_RE', 'IGNORABLE_RE', 'INVISIBLE_RE', 'foldShadow', 'hasForbidden', 'stripControls']);
 });

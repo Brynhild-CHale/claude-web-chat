@@ -212,8 +212,8 @@ Constraints from the wire, enforced in `envelope.js`:
 | `seq`      | the wake's ring seq (correlation)                                 |
 | `origin`   | event source (`queue` \| `browser` \| `ext:tab-stream`) — NOT `source` |
 | `mount`    | origin mount id (single-item only)                                |
-| `ids`      | comma list of queue item ids (messages' queue ids included)       |
-| `captures` | comma list of capture ids to fetch                               |
+| `ids`      | comma list of queue item ids (messages' queue ids included): whole ids up to 160 characters, then `+N` for the N left out — every id rides the wake's event, which `get_events` reads from `seq` |
+| `captures` | comma list of capture ids to fetch, cut by the same rule (whole ids up to 160 characters, then `+N`) |
 | `push_origin` | `local` \| `remote` — remote = pushed through the tunnel portal |
 | `device`   | `desktop` \| `mobile` — mobile = the chrome's phone view          |
 
@@ -273,7 +273,8 @@ File attached: lib/core/bus.js (6.1 KB) — read it with the Read tool before ac
 - Every line of the text is quoted with `> ` (an empty line is a lone `>`), so no
   text can end the block. The text passes `sanitizeMessage` (exported): CR to LF,
   `stripControls(text, {keepNewlines: true})` from `lib/core/text.js` (the one
-  control, bidi and invisible guard), then the two defangs below.
+  control, bidi and invisible guard), then the two defangs below, which also
+  catch NFKC look-alikes and invisible splits.
 - **The Skill line** reads the shape the composer's validation stored (ruling
   C2 (d)): `{name, args}` repeats the args, JSON-quoted with line breaks flattened
   to one space (`and args …` left out when they are empty); `{name, args_in_text:
@@ -312,6 +313,14 @@ or closing tag named `channel`, `system-reminder`, `task-notification`,
 `<` turned into `‹` and the first `>` after it on the same line into `›`; a tag
 with no `>` on its line still loses its `<`. Every other `<…>` (`<div>`,
 `Array<string>`, `a < b`) survives byte for byte, so pasted code stays intact.
+Both defangs (this one and the marker's) search the text's folded shadow
+(`lib/core/text.js` `foldShadow`: each code point NFKC-normalised, the
+default-ignorable ones dropped, lower-cased) and edit the text at the mapped
+place, so they also catch NFKC look-alikes (`＜channel＞`, a full-width `［`,
+full-width letters) and invisible splits (a joiner, a word joiner or a soft
+hyphen inside the phrase): the code point under the bracket becomes `‹`, `›` or
+`(`, and a text with no match comes back byte for byte (the shadow is for
+detection only).
 
 **The budget.** `ENVELOPE_MAX` (9,000, exported; its one home, since `lib/channel`
 may not import `lib/server`) bounds `content`: a parked delivery is a

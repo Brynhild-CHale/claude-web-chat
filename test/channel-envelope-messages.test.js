@@ -105,7 +105,7 @@ const BASELINE_60 = [
   '- [signal] short 59',
   '- [signal] short 60',
 ].join('\n');
-const BASELINE_60_META = {"kind":"batch","count":"60","seq":"99","origin":"queue","ids":"q1,q2,q3,q4,q5,q6,q7,q8,q9,q10,q11,q12,q13,q14,q15,q16,q17,q18,q19,q20,q21,q22,q23,q24,q25,q26,q27,q28,q29,q30,q31,q32,q33,q34,q35,q36,q37,q38,q39,q40,q41,q42,…","captures":"cap1,cap4,cap7,cap10,cap13,cap16,cap19,cap22,cap25,cap28,cap31,cap34,cap37,cap40,cap43,cap46,cap49,cap52,cap55,cap58","push_origin":"local","device":"desktop"};
+const BASELINE_60_META = {"kind":"batch","count":"60","seq":"99","origin":"queue","ids":"q1,q2,q3,q4,q5,q6,q7,q8,q9,q10,q11,q12,q13,q14,q15,q16,q17,q18,q19,q20,q21,q22,q23,q24,q25,q26,q27,q28,q29,q30,q31,q32,q33,q34,q35,q36,q37,q38,q39,q40,q41,+19","captures":"cap1,cap4,cap7,cap10,cap13,cap16,cap19,cap22,cap25,cap28,cap31,cap34,cap37,cap40,cap43,cap46,cap49,cap52,cap55,cap58","push_origin":"local","device":"desktop"};
 const baselineBatch = () => Array.from({ length: 60 }, (_, i) => ({
   id: `q${i + 1}`,
   kind: i % 3 === 0 ? 'capture' : 'signal',
