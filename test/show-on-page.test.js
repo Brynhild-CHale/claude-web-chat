@@ -129,6 +129,18 @@ test('revealMarkdown answers false for an id the page lacks, and throws nothing'
   assert.equal(page.revealMarkdown('nope'), false);
   assert.equal(page.revealMarkdown('sop-pane'), false, 'a pane id is not a markdown item');
   assert.equal(page.revealMarkdown(undefined), false);
+  // an element still held but no longer in the document is not on the page
+  const el = mdEl('md-7');
+  const parent = el.parentNode;
+  const next = el.nextSibling;
+  el.remove();
+  try {
+    assert.equal(page.revealMarkdown('md-7'), false, 'a detached element is not revealed');
+    assert.ok(!el.classList.contains('md-flash'), 'and is not flashed');
+  } finally {
+    parent.insertBefore(el, next);
+  }
+  assert.equal(mdEl('md-7'), el, 'put back where it was');
 });
 
 test('a card for an id that is neither a pane nor a drawn markdown item reads "Not on the page now"', async () => {
