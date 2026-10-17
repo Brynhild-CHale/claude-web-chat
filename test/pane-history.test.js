@@ -331,8 +331,9 @@ test('restore: refused on a locked pane, a driver-owned pane, a driver-written v
   const ctx = await withServer(t);
   const { api } = ctx;
   await render(api, 'p', '<p>v1</p>');
-  await render(api, 'svc', '<p>s1</p>', { owner: 'service:watch' });
-  await render(api, 'mine', '<p>m1</p>', { owner: 'service:watch' });
+  const watch = require('../lib/driver').createDriver({ owner: 'watch', port: ctx.port });
+  await watch.render({ id: 'svc', html: '<p>s1</p>' });
+  await watch.render({ id: 'mine', html: '<p>m1</p>' });
   const a = await turn(api);
   await render(api, 'p', '<p>v2</p>');
   await render(api, 'mine', '<p>m2</p>', { force: true }); // Claude takes it over

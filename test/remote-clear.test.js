@@ -34,10 +34,10 @@ test('remote clear: a bulk clear is refused whole, however it is spelled', async
 });
 
 test('remote clear: closing one pane by id still lands — forced (the ×) or not', async (t) => {
-  const { api } = await withServer(t);
+  const { api, port } = await withServer(t);
   await api.post('/api/render', { id: 'a', html: '<p>a</p>' });
   await api.post('/api/render', { id: 'b', html: '<p>b</p>' });
-  await api.post('/api/render', { id: 'svc', html: '<p>driver</p>', owner: 'service:git' });
+  await require('../lib/driver').createDriver({ owner: 'git', port }).render({ id: 'svc', html: '<p>driver</p>' });
 
   const forced = await api.post('/api/clear', { id: 'svc', force: true }, REMOTE);
   assert.equal(forced.status, 200, forced.text);

@@ -97,7 +97,7 @@ test('activity: dom events + undeclared store writes fold into ONE rolling item 
 
 test('activity: a service-owned pane is routed out by default', async (t) => {
   const { api, port } = await withServer(t);
-  await api.post('/api/render', { id: 'dash', html: '<div>x</div>', owner: 'service:git' });
+  await require('../lib/driver').createDriver({ owner: 'git', port }).render({ id: 'dash', html: '<div>x</div>' });
 
   const sock = await wsOpen(port);
   sock.send(JSON.stringify({ type: 'event', payload: { type: 'click', mountId: 'dash', tag: 'BUTTON' } }));
