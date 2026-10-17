@@ -102,6 +102,18 @@ test('harness-tag look-alikes lose their brackets to ‹ ›', () => {
   assert.equal(sanitizeMessage('\uff1cchannel\nx\uff1e'), '‹channel\nx\uff1e');
 });
 
+test('the defangs edit the text at the mapped place when the shadow is shorter or longer before the match', () => {
+  // A dropped joiner (the family emoji), a dropped soft hyphen and an NFKC
+  // expansion (㎒ → mhz) ahead of the match shift every shadow index away from
+  // the text's: the edit must land on the bracket, not on the shadow's index.
+  const family = '\u{1f468}\u200d\u{1f469}';
+  assert.equal(sanitizeMessage(`${family} [web-chat message m-1]`), `${family} (web-chat message m-1]`);
+  assert.equal(sanitizeMessage('\u3392 \uff3bweb-chat message m-1]'), '\u3392 (web-chat message m-1]');
+  assert.equal(sanitizeMessage('a\u00adb <system-reminder>x</system-reminder>'), 'a\u00adb ‹system-reminder›x‹/system-reminder›');
+  assert.equal(sanitizeMessage(`\u3392${family} \uff1cchannel\uff1e`), `\u3392${family} ‹channel›`);
+  assert.equal(sanitizeSummary('\u3392 [web-chat message m-1]'), '\u3392 (web-chat message m-1]');
+});
+
 // The frozen table: each input and what sanitizeMessage (cleanMessage)
 // returned for it at f3c4a7f — which, for these, is the input itself.
 const BYTE_IDENTITY = [
@@ -214,6 +226,9 @@ test('wholeIds: never cuts an id, and stays within max', () => {
   assert.equal(wholeIds(['a', 'b']), 'a,b');
   assert.equal(wholeIds(['aaaa', 'bbbb', 'cccc'], 10), 'aaaa,+2');
   assert.equal(wholeIds(['aaaaaaaaaaaa', 'b'], 10), '+2');
+  // "Fits" includes exactly max: "aaaa,+2" is 7 characters.
+  assert.equal(wholeIds(['aaaa', 'bbbb', 'cccc'], 7), 'aaaa,+2');
+  assert.equal(wholeIds(['aaaa', 'bbbb', 'cccc'], 6), '+3');
   // The tail losing a digit never lets a shorter prefix win.
   const ids = Array.from({ length: 120 }, (_, i) => `q${i + 1}`);
   for (let max = 4; max <= 400; max++) { // "+120" is the shortest answer
