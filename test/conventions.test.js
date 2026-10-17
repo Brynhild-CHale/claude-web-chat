@@ -549,6 +549,49 @@ const PATTERNS = [
     baseline: {},
   },
   {
+    // Appending to a file. A durable log (records that must survive a crash and
+    // are read back to rebuild state) goes through lib/core/applog openLog: one
+    // writer, one write per record on one append-mode fd, a torn tail set aside,
+    // a bad line skipped, the lazy epoch. A private append has none of that: a
+    // crash leaves a partial line the next reader has to guess about, and
+    // nothing says which boot wrote what.
+    //
+    // The nine grandfathered sites are DIAGNOSTIC logs (an audit trail, a hook's
+    // outcome line, a child process's output), not durable records: nothing is
+    // rebuilt from them and a torn last line costs one line of evidence, so
+    // PLAN.md 1A.1 leaves them as they are. A new log that state is rebuilt from
+    // belongs in the engine; a new diagnostic log comes through here with a
+    // comment that says so. The pattern covers the sync and async append helper,
+    // an openSync in mode 'a' or 'a+', and a stream's `flags: 'a'`.
+    name: "appendFileSync( / openSync(…, 'a') (an append-mode write)",
+    home: 'lib/core/applog.js — `openLog`',
+    what: 'appending to a file',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bappendFile(?:Sync)?\(|\bopenSync\([^)\n]*,\s*['"]a\+?['"]|\bflags?\s*:\s*['"]a\+?['"]/g,
+    baseline: {
+      // The engine's one append-mode open.
+      'lib/core/applog.js': 1,
+      // The tunnel portal's access log (a diagnostic log, not a durable record).
+      'lib/portal/access-log.js': 1,
+      // The asks domain's audit trail of answered prompts (a diagnostic log, not a durable record).
+      'lib/server/domain/asks.js': 1,
+      // The mod bridge's log of ops and events (a diagnostic log, not a durable record).
+      'lib/server/domain/bridge.js': 1,
+      // The control domain's audit trail of acting controls (a diagnostic log, not a durable record).
+      'lib/server/control/index.js': 1,
+      // The packs audit trail of installs and removals (a diagnostic log, not a durable record).
+      'lib/packs/store.js': 1,
+      // The turn-begin hook's refusal line in the hook log (a diagnostic log, not a durable record).
+      'lib/hooks/turn-begin.js': 1,
+      // The hook dispatcher's outcome line in the hook log (a diagnostic log, not a durable record).
+      'lib/hooks/index.js': 1,
+      // A detached child's stdout and stderr, the daemon's server.log among them (a diagnostic log, not a durable record).
+      'lib/util/daemon.js': 1,
+      // cloudflared's own output log (a diagnostic log, not a durable record).
+      'lib/tunnel/cloudflared.js': 1,
+    },
+  },
+  {
     // WHICH hook events registration means. templates/settings.hooks.json is the
     // answer, and for a long time it was read in exactly one place (ensureHooks)
     // and exposed nowhere — so doctor, status and uninstall each iterated
