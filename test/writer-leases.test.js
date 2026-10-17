@@ -260,6 +260,41 @@ test('services: a child writes under its IPC token as service:<name>; stopped, t
   assert.equal((await leaseReq(port, 'service:lease-svc')).status, 200, 'and the name is free again');
 });
 
+// A child that ends on its own (a crash, not a requested stop) goes through
+// onChildExit, not stopChild: its token must die there too.
+const EXIT_SERVICE = `
+module.exports = {
+  async start(ctx) {
+    await ctx.driver.setStore({ exit_ready: { mount: ctx.mountId } });
+    setInterval(async () => {
+      try { const s = await ctx.driver.getStore(['exit_now']); if (s && s.exit_now) process.exit(3); } catch {}
+    }, 50);
+  },
+  async stop() {},
+};`;
+
+test('services: a child that exits on its own takes its token with it', async (t) => {
+  const ctx = await withServer(t);
+  const { api, port } = ctx;
+  await api.post('/api/components', { name: 'exit-svc', source: '<p>s</p>', description: 's', service: EXIT_SERVICE });
+  await viewer(t, ctx);
+  await api.post('/api/components/exit-svc/use', { id: 'm1' });
+  await approve(ctx, 'exit-svc');
+  assert.ok(await waitUntil(async () => (await api.get('/api/store')).json.exit_ready), 'the service started');
+
+  const tok = ctx.srv.services._children.get('m1').writerToken;
+  const live = await client.request(port, 'POST', '/api/render', { id: 'exit-out', html: '<p>live</p>' }, withToken(tok));
+  assert.equal(live.status, 200, JSON.stringify(live.body));
+  assert.equal(live.body.owner, 'service:exit-svc');
+
+  await api.post('/api/store', { patch: { exit_now: true } });
+  assert.ok(await waitUntil(() => !ctx.srv.services._children.has('m1')), 'the child exited');
+  const stale = await client.request(port, 'POST', '/api/render', { id: 'exit-out', html: '<p>late</p>' }, withToken(tok));
+  assert.equal(stale.status, 401, 'the exit revoked the token');
+  assert.equal(stale.body.writer, 'stale');
+  assert.equal((await leaseReq(port, 'service:exit-svc')).status, 200, 'and the name is free again');
+});
+
 test('services: a child starting while a lease holds its name revokes the lease', async (t) => {
   const ctx = await withServer(t);
   const { api, port } = ctx;
