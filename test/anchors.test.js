@@ -344,7 +344,8 @@ test('locator: the base record is the literal U202 convertAnchor writes', () => 
 // ── stubs, the factory contract, the browser copies ────────────────────────
 
 test('the later sections are named stubs that throw "not built"', () => {
-  for (const name of ['resolveAll', 'invalidate', 'watch', 'recordRange', 'resolveRange', 'recordSource', 'resolveSource']) {
+  // resolveAll, invalidate and watch are built (U224; test/anchors-chunk.test.js).
+  for (const name of ['recordRange', 'resolveRange', 'recordSource', 'resolveSource']) {
     assert.equal(typeof anchors[name], 'function', name);
     assert.throws(() => anchors[name](), new RegExp(`anchors: ${name} is not built`), name);
   }
