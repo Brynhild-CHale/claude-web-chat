@@ -474,3 +474,33 @@ test('/api/health: `mirror` is the mirror\'s content-free summary with this requ
   assert.equal(unwired.mirror.level, 'basic');
   assert.deepStrictEqual(unwired.lock, STRIPPED);
 });
+
+// ── the private-visibility test (U213, decision A2) ─────────────────────────
+
+test('seesPrivate: a local browser sees private pins (Origin or Sec-Fetch-*, Node fetch included); lib/client, a remote viewer at any opt-in and a network peer do not', (t) => {
+  for (const optIn of [null, 'read', 'full']) {
+    const s = scratch(t);
+    if (optIn) writeTunnel(s.configFile, { [s.root]: optIn });
+    const a = audienceOf(t, s);
+    const at = `opt-in ${optIn || 'none'}`;
+    // Node's fetch sends sec-fetch-mode: cors, as a browser does.
+    assert.equal(a.seesPrivate(req('127.0.0.1', { 'sec-fetch-mode': 'cors' })), true, `${at}: Node fetch from loopback`);
+    assert.equal(a.seesPrivate(req('::1', { origin: 'http://localhost:5173' })), true, `${at}: a browser's Origin`);
+    for (const h of [{ 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-dest': 'iframe' }, { 'sec-fetch-user': '?1' }]) {
+      assert.equal(a.seesPrivate(req('127.0.0.1', h)), true, `${at}: ${JSON.stringify(h)}`);
+    }
+    assert.equal(a.seesPrivate(LOCAL()), false, `${at}: no Origin and no Sec-Fetch-*: lib/client (Claude's tools, a hook, the CLI)`);
+    assert.equal(a.seesPrivate(REMOTE()), false, `${at}: a remote viewer`);
+    assert.equal(a.seesPrivate(req('127.0.0.1', { 'x-wc-remote': '1', 'sec-fetch-mode': 'cors', origin: 'https://wc.example.test' })), false,
+      `${at}: a remote viewer's browser`);
+    assert.equal(a.seesPrivate(NETWORK()), false, `${at}: a network peer`);
+    assert.equal(a.seesPrivate(NETWORK({ origin: 'http://10.0.0.7:5173', 'sec-fetch-mode': 'cors' })), false, `${at}: a network peer's browser`);
+    assert.equal(a.seesPrivate(req(undefined, { 'sec-fetch-mode': 'cors' })), false, `${at}: a socket already gone`);
+    assert.equal(a.seesPrivate(undefined), false, `${at}: no request at all`);
+  }
+  // The no-opt-in audience a route falls back to answers the same way.
+  const bare = createAudience({ configFile: null });
+  assert.equal(bare.seesPrivate(req('127.0.0.1', { 'sec-fetch-mode': 'cors' })), true);
+  assert.equal(bare.seesPrivate(LOCAL()), false);
+  assert.equal(bare.seesPrivate(REMOTE()), false);
+});
