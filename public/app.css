@@ -744,6 +744,9 @@ kbd {
 .pane.pane-flash { animation: pane-flash 1.2s ease-out; }
 @keyframes pane-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--wc-accent); } 100% { box-shadow: 0 0 0 2px transparent; } }
 @media (prefers-reduced-motion: reduce) { .pane.pane-flash { animation: none; outline: 2px solid var(--wc-accent); } }
+/* a markdown item a tool card's Show on page jumped to (page.js revealMarkdown) */
+.md-block.md-flash { animation: pane-flash 1.2s ease-out; }
+@media (prefers-reduced-motion: reduce) { .md-block.md-flash { animation: none; outline: 2px solid var(--wc-accent); } }
 .palette-item.sel, .palette-item:hover { background: color-mix(in srgb, var(--wc-accent) 12%, transparent); color: var(--wc-fg-bright); }
 .palette-empty { padding: 18px; text-align: center; color: var(--wc-muted-dim); font: 13px var(--wc-font); }
 
