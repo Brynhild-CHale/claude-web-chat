@@ -962,6 +962,7 @@ function recordNodes(record) {
     return [note(`No code diff: ${str(record.reason) || 'unavailable'}`, 'dv-note dv-unavailable')];
   }
   if (record.status === 'pending') return [note('The changes are still being recorded.', 'dv-note dv-pending')];
+  if (record.status === 'expired') return [note(str(record.note) || 'This diff is no longer kept.', 'dv-note dv-expired')];
   const files = Array.isArray(record.files) ? record.files.filter(isObj) : [];
   if (!files.length) return [note('No files changed.', 'dv-note dv-nochange')];
   const sections = splitPatch(record.patch, files);
@@ -999,6 +1000,7 @@ function turnsNodes(turns) {
     if (rec.status === 'ready') head.append(el('span', 'dv-turn-totals', totalsText(totalsOf(rec))));
     box.append(head);
     if (rec.status === 'unavailable') box.append(note(`No code diff: ${str(rec.reason) || 'unavailable'}`, 'dv-note dv-unavailable'));
+    if (rec.status === 'expired') box.append(note(str(rec.note) || 'This diff is no longer kept.', 'dv-note dv-expired'));
     const ul = el('ul', 'dv-turn-files');
     for (const f of Array.isArray(rec.files) ? rec.files.filter(isObj) : []) {
       const li = el('li', 'dv-turn-file');
