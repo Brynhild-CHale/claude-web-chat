@@ -151,13 +151,16 @@ test('a wipe drops the pins on the panes it removed and the live captures; the p
   assert.ok(after.some((it) => it.comment_id === onKeep.id), 'the surviving pin stays queued');
 });
 
-test('a wipe keeps a pin with no pane anchor', async (t) => {
+test('a wipe drops the live copy of a pin with no anchor (F7)', async (t) => {
   const { api } = await withServer(t);
   await api.post('/api/render', { id: 'gone', html: '<div>gone</div>' });
   const loose = (await api.post('/api/comments', { text: 'page note', shared: false })).json.pin;
   await addPin(api, 'gone');
+  const nodeId = (await turn(api)).json.node_id;
   await api.post('/api/graph/wipe', {});
-  assert.deepEqual((await comments(api)).map((c) => c.id), [loose.id]);
+  assert.deepEqual((await comments(api)).map((c) => c.id), [], 'the loose pin\'s live copy is gone');
+  const node = (await api.get(`/api/graph/node/${encodeURIComponent(nodeId)}`)).json;
+  assert.ok(node.comments.some((c) => c.id === loose.id), 'its committed copy stays');
 });
 
 // ── a new graph ───────────────────────────────────────────────────────────
@@ -170,7 +173,7 @@ test('a new graph drops every pin and every live capture; the seq counters keep 
   await pinPane(ctx, 'b');
   const p1 = await addPin(api, 'a');
   const p2 = await addPin(api, 'b');
-  // A pin with no pane anchor: a wipe keeps one, a new graph does not.
+  // A pin with no pane anchor: neither a wipe nor a new graph keeps one.
   const loose = (await api.post('/api/comments', { text: 'page note', shared: true })).json.pin;
   await capture(api, 1);
   const c2 = await capture(api, 2);
