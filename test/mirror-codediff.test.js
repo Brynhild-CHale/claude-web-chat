@@ -972,13 +972,14 @@ test('expired: a written record that is gone answers expired with its rule; pend
     ['tPend', { id: 'tPend', session_id: S1, ended_at: at, code: { status: 'pending' } }],
     ['tOff', { id: 'tOff', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'unavailable', reason: 'slow-repo' } }],
     ['tNone', { id: 'tNone', session_id: S1, ended_at: at - 31 * DAY, code: null }],
+    ['tNoEnd', { id: 'tNoEnd', session_id: S1, ended_at: null, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
   ]);
   const engine = {
     root: repo.root, paths, now: () => at, log: () => {}, graph: null,
     redactor: createRedactor(),
     timers: { setTimeout: () => 0, clearTimeout: () => {} },
     model: {
-      turnsOf: () => [], turn: (id) => headers.get(id) || null, resolveTurn: (id) => id,
+      turnsOf: () => [], turn: (id) => headers.get(id) || null, resolveTurn: (id) => (id === 'tAlias' ? 'tNew' : id),
       patchTurn: (id) => headers.get(id), openTurnOf: () => null,
     },
     conversations: { bySession: () => null, list: () => [] },
@@ -996,6 +997,11 @@ test('expired: a written record that is gone answers expired with its rule; pend
   assert.deepEqual(await diff('tOff'), { v: 1, turn_id: 'tOff', status: 'unavailable', reason: 'slow-repo' });
   assert.equal(await diff('tNone'), null, 'no code recorded: unknown, never expired');
   assert.equal(await diff('tNoHeader'), null, 'no header: unknown, never expired');
+  // No ended_at is never 'older than RECORD_MAX_DAYS'; an id the model
+  // resolves to another turn answers under the header's id, as pending and
+  // unavailable do.
+  assert.equal((await diff('tNoEnd')).rule, 'conversations-max');
+  assert.equal((await diff('tAlias')).turn_id, 'tNew');
   // The cutoff is the store's own RECORD_MAX_DAYS (a `limits` override wins).
   const short = createCodediffSource({ enabled: true, limits: { RECORD_MAX_DAYS: 0 } }).attach(engine);
   assert.equal((await short.api.diff({ turn: 'tNew' })).rule, 'record-max-days');
