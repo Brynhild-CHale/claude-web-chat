@@ -1,0 +1,567 @@
+{
+  "_about": "Hand-made fixtures for test/anchors.test.js (lib/core/anchors.js, PLAN.md 1C.1). cases: {name, from, to, target (a selector into from), cfg?, strip_heads?, every_flag?, restamp?, expect, v4? (the answer at {gate:false, tiebreak:false, ordinal:false} merged over cfg, when it differs from expect)}. controls: panes for the positive control for gone. locator: pin-locator@1 records (U202 convertAnchor literal, varied).",
+  "cases": [
+    {
+      "name": "exact: an unchanged pane",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul><p class=\"note\">A short note under the list</p>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul><p class=\"note\">A short note under the list</p>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(2) > span.act",
+        "via_head": false
+      }
+    },
+    {
+      "name": "sibling-lookalike: a twin inside the recorded row -> orphaned row-ambiguous",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "sibling-lookalike",
+        "how": "row-ambiguous"
+      }
+    },
+    {
+      "name": "sibling-lookalike: the recorded row renamed away -> orphaned row-gone",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Omega</b><span class=\"act\">edit</span><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "sibling-lookalike",
+        "how": "row-gone"
+      }
+    },
+    {
+      "name": "row-context: a row inserted above -> B re-resolves (row-search)",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Delta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "re-resolved",
+        "target": "li:nth-child(3) > span.act",
+        "why": "row-context",
+        "how": "row-search"
+      }
+    },
+    {
+      "name": "row-lookalike: the path row ties with a twin, the recorded row lives in another list -> B re-resolves",
+      "from": "<ul class=\"a\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul><ul class=\"b\"><li class=\"row\"><b>One</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Two</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"a\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta 1</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta 2</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul><ul class=\"b\"><li class=\"row\"><b>One</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Two</b><span class=\"act\">edit</span></li></ul>",
+      "target": "ul.a > li:nth-child(2) > span.act",
+      "expect": {
+        "state": "re-resolved",
+        "target": "ul.b > li:nth-child(2) > span.act",
+        "why": "row-lookalike",
+        "how": "row-search"
+      }
+    },
+    {
+      "name": "row-unrecorded: a twin card appears beside the anchor -> B re-resolves",
+      "from": "<div class=\"card\"><p>Hello</p></div>",
+      "to": "<div class=\"card\"><p>Hello</p></div><div class=\"card\"><p>Other</p></div>",
+      "target": "div.card > p",
+      "expect": {
+        "state": "re-resolved",
+        "target": "div.card:nth-child(1) > p",
+        "why": "row-unrecorded",
+        "how": "row-search"
+      }
+    },
+    {
+      "name": "no path hit: step 2 re-resolves (s1 >= 0.8 with margin)",
+      "from": "<h2 id=\"t\">Title</h2><p class=\"x\">Body text here</p>",
+      "to": "<h2 id=\"t\">Title</h2><div>new</div><p class=\"x\">Body text here</p>",
+      "target": "p.x",
+      "expect": {
+        "state": "re-resolved",
+        "target": "p.x",
+        "how": "score"
+      }
+    },
+    {
+      "name": "no path hit: step 2 orphaned under the margin",
+      "from": "<div><p class=\"x\">Body text</p></div>",
+      "to": "<span></span><div><p class=\"x\">Body text</p></div><div><p class=\"x\">Body text</p></div>",
+      "target": "div > p.x",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "how": "score-margin"
+      }
+    },
+    {
+      "name": "no path hit: step 2 orphaned under tol",
+      "from": "<p class=\"x\">Body text here</p>",
+      "to": "<div></div><p class=\"y\">Completely different words</p>",
+      "target": "p.x",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "how": "score-low"
+      }
+    },
+    {
+      "name": "row-gone: the anchored row deleted",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-context",
+        "how": "row-gone"
+      }
+    },
+    {
+      "name": "not-in-recorded-row: the row survives without the element",
+      "from": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li></ul>",
+      "to": "<ul class=\"list\"><li class=\"row\"><b>Alpha</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Gamma</b><span class=\"act\">edit</span></li><li class=\"row\"><b>Beta</b></li></ul>",
+      "target": "li:nth-child(2) > span.act",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-context",
+        "how": "not-in-recorded-row"
+      }
+    },
+    {
+      "name": "key gate: Q-D deleted -> orphaned row-gone, never exact on Q-G (v4: exact on Q-G)",
+      "from": "<ol class=\"form\"><li class=\"q\"><b>Q-A</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-B</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-C</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-D</b><button class=\"pick\">Yes</button><textarea class=\"note\"></textarea></li><li class=\"q\"><b>Q-G</b><button class=\"pick\">Yes</button><textarea class=\"note\"></textarea></li></ol>",
+      "to": "<ol class=\"form\"><li class=\"q\"><b>Q-A</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-B</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-C</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-G</b><button class=\"pick\">Yes</button><textarea class=\"note\"></textarea></li></ol>",
+      "target": "li:nth-child(4) > button.pick",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-context",
+        "how": "row-gone"
+      },
+      "v4": {
+        "state": "exact",
+        "target": "li:nth-child(4) > button.pick",
+        "via_head": false
+      }
+    },
+    {
+      "name": "key gate off ({gate: false}): Q-D deleted -> exact on Q-G (the v4 exact-wrong)",
+      "from": "<ol class=\"form\"><li class=\"q\"><b>Q-A</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-B</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-C</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-D</b><button class=\"pick\">Yes</button><textarea class=\"note\"></textarea></li><li class=\"q\"><b>Q-G</b><button class=\"pick\">Yes</button><textarea class=\"note\"></textarea></li></ol>",
+      "to": "<ol class=\"form\"><li class=\"q\"><b>Q-A</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-B</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-C</b><button class=\"pick\">Yes</button></li><li class=\"q\"><b>Q-G</b><button class=\"pick\">Yes</button><textarea class=\"note\"></textarea></li></ol>",
+      "cfg": {
+        "gate": false
+      },
+      "target": "li:nth-child(4) > button.pick",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(4) > button.pick",
+        "via_head": false
+      }
+    },
+    {
+      "name": "tie: identical keys, distinct heads -> exact via the head",
+      "from": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">green pear</span><button class=\"go\">Go</button></li></ul>",
+      "to": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">green pear</span><button class=\"go\">Go</button></li></ul>",
+      "target": "li:nth-child(2) > button.go",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(2) > button.go",
+        "via_head": true
+      },
+      "v4": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row"
+      }
+    },
+    {
+      "name": "tie: identical keys and heads -> orphaned, never a guess",
+      "from": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li></ul>",
+      "to": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li></ul>",
+      "target": "li:nth-child(1) > button.go",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row"
+      }
+    },
+    {
+      "name": "tie: a record whose rows carry no head -> row-lookalike, never via the head",
+      "from": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">green pear</span><button class=\"go\">Go</button></li></ul>",
+      "to": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">red apple</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">green pear</span><button class=\"go\">Go</button></li></ul>",
+      "strip_heads": true,
+      "target": "li:nth-child(2) > button.go",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row",
+        "via_head": false
+      }
+    },
+    {
+      "name": "RULING H1@head-floor: a deleted row, its tied neighbour wins the head under 0.6 -> orphaned",
+      "from": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">quick brown fox</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">quick red hen</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">slow blue cat</span><button class=\"go\">Go</button></li></ul>",
+      "to": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">quick red hen</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">slow blue cat</span><button class=\"go\">Go</button></li></ul>",
+      "target": "li:nth-child(1) > button.go",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row",
+        "tie": {
+          "winner_under_head_floor": true,
+          "winner": null
+        }
+      },
+      "v4": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row",
+        "tie": {
+          "winner_under_head_floor": false,
+          "winner": null
+        }
+      }
+    },
+    {
+      "name": "RULING H1@head-floor off ({head_floor: false}): the same case answers exact via the head (the G0 cost)",
+      "from": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">quick brown fox</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">quick red hen</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">slow blue cat</span><button class=\"go\">Go</button></li></ul>",
+      "to": "<ul class=\"items\"><li class=\"r\"><b>Item</b><span class=\"d\">quick red hen</span><button class=\"go\">Go</button></li><li class=\"r\"><b>Item</b><span class=\"d\">slow blue cat</span><button class=\"go\">Go</button></li></ul>",
+      "cfg": {
+        "head_floor": false
+      },
+      "target": "li:nth-child(1) > button.go",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(1) > button.go",
+        "via_head": true
+      },
+      "v4": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row"
+      }
+    },
+    {
+      "name": "RULING H1@ordinal-tail: Wave 1 deleted -> orphaned (v4: exact on Wave 2)",
+      "from": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 1 · 8 units</h3><span class=\"u\">U201 U202</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "to": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "target": "li:nth-child(1) > button.open",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-context",
+        "how": "row-gone"
+      },
+      "v4": {
+        "state": "exact",
+        "target": "li:nth-child(1) > button.open",
+        "via_head": false
+      }
+    },
+    {
+      "name": "RULING H1@ordinal-tail off ({ordinal: false}): Wave 1 deleted -> exact on Wave 2 (exact-wrong)",
+      "from": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 1 · 8 units</h3><span class=\"u\">U201 U202</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "to": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "cfg": {
+        "ordinal": false
+      },
+      "target": "li:nth-child(1) > button.open",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(1) > button.open",
+        "via_head": false
+      }
+    },
+    {
+      "name": "RULING H1@ordinal-tail: Tests Node 26 deleted -> orphaned (v4: exact on Node 24)",
+      "from": "<ul class=\"ci\"><li class=\"job\"><b>Tests · Node 26</b><button class=\"log\">Log</button></li><li class=\"job\"><b>Tests · Node 24</b><button class=\"log\">Log</button></li><li class=\"job\"><b>Lint</b><button class=\"log\">Log</button></li></ul>",
+      "to": "<ul class=\"ci\"><li class=\"job\"><b>Tests · Node 24</b><button class=\"log\">Log</button></li><li class=\"job\"><b>Lint</b><button class=\"log\">Log</button></li></ul>",
+      "target": "li:nth-child(1) > button.log",
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-context",
+        "how": "row-gone"
+      },
+      "v4": {
+        "state": "exact",
+        "target": "li:nth-child(1) > button.log",
+        "via_head": false
+      }
+    },
+    {
+      "name": "RULING H1@ordinal-tail off ({ordinal: false}): Tests Node 26 deleted -> exact on Node 24 (exact-wrong)",
+      "from": "<ul class=\"ci\"><li class=\"job\"><b>Tests · Node 26</b><button class=\"log\">Log</button></li><li class=\"job\"><b>Tests · Node 24</b><button class=\"log\">Log</button></li><li class=\"job\"><b>Lint</b><button class=\"log\">Log</button></li></ul>",
+      "to": "<ul class=\"ci\"><li class=\"job\"><b>Tests · Node 24</b><button class=\"log\">Log</button></li><li class=\"job\"><b>Lint</b><button class=\"log\">Log</button></li></ul>",
+      "cfg": {
+        "ordinal": false
+      },
+      "target": "li:nth-child(1) > button.log",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(1) > button.log",
+        "via_head": false
+      }
+    },
+    {
+      "name": "RULING H1@ordinal-tail: Wave 1 edited from 8 to 9 units in place still reads exact",
+      "from": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 1 · 8 units</h3><span class=\"u\">U201 U202</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "to": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 1 · 9 units</h3><span class=\"u\">U201 U202</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "target": "li:nth-child(1) > button.open",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(1) > button.open",
+        "via_head": false
+      },
+      "v4": {
+        "state": "orphaned",
+        "target": null,
+        "why": "row-lookalike",
+        "how": "not-in-recorded-row"
+      }
+    },
+    {
+      "name": "C-8 wave rows: all three present, each anchor exact under every flag combination",
+      "from": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 1 · 8 units</h3><span class=\"u\">U201 U202</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "to": "<ol class=\"waves\"><li class=\"wave\"><h3>Wave 1 · 8 units</h3><span class=\"u\">U201 U202</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 2 · 8 units</h3><span class=\"u\">U211 U212</span><button class=\"open\">Open</button></li><li class=\"wave\"><h3>Wave 3 · 8 units</h3><span class=\"u\">U221 U222</span><em>gate</em><button class=\"open\">Open</button></li></ol>",
+      "every_flag": true,
+      "target": "li:nth-child(2) > button.open",
+      "expect": {
+        "state": "exact",
+        "target": "li:nth-child(2) > button.open",
+        "via_head": false
+      }
+    },
+    {
+      "name": "re-stamp: an exact find whose sibling index moved",
+      "from": "<div><span>a</span><p class=\"t\">Target</p></div>",
+      "to": "<div><p>a</p><p class=\"t\">Target</p></div>",
+      "target": "p.t",
+      "restamp": {
+        "path": [
+          0,
+          1
+        ],
+        "sib": 1
+      },
+      "expect": {
+        "state": "exact",
+        "target": "p.t",
+        "via_head": false
+      }
+    }
+  ],
+  "controls": [
+    {
+      "name": "control: a settings form",
+      "html": "<h2>Settings</h2><form class=\"cfg\"><label for=\"n\">Display name</label><input id=\"n\" name=\"name\"><fieldset class=\"opts\"><legend>Notifications</legend><label class=\"opt\">Email digests every morning</label><label class=\"opt\">Push alerts for mentions</label></fieldset><button type=\"submit\">Save changes</button></form><p class=\"hint\">Changes apply after a reload of the page.</p>"
+    },
+    {
+      "name": "control: a release checklist",
+      "html": "<h1>Release 0.9.0</h1><ul class=\"steps\"><li class=\"step\"><b>Build the tarball</b><code>scripts/build-release.js</code></li><li class=\"step\"><b>Verify checksums</b><em>SHA256SUMS beside it</em></li><li class=\"step\"><b>Tag and push</b><span class=\"who\">maintainer only</span></li></ul><table class=\"t\"><tr><th>Platform</th><th>State</th></tr><tr><td>macOS arm64</td><td>green</td></tr><tr><td>Linux x64</td><td>pending review</td></tr></table>"
+    },
+    {
+      "name": "control: a status card grid",
+      "html": "<div class=\"grid\"><section class=\"card\"><h3>Daemon uptime</h3><p class=\"v\">4 days 7 hours</p></section><section class=\"card\"><h3>Open pins</h3><p class=\"v\">12 threads awaiting</p></section><section class=\"card\"><h3>Queue</h3><p class=\"v\">nothing pending now</p></section></div><footer class=\"f\">Updated by the service at noon</footer>"
+    }
+  ],
+  "locator": [
+    {
+      "name": "pin-locator@1: one candidate, matching text -> re-resolved",
+      "html": "<div class=\"a b\">  T  </div><div class=\"a\">T</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "div.a.b"
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 2
+      },
+      "expect": {
+        "state": "re-resolved",
+        "target": "div.a.b",
+        "guess": null
+      }
+    },
+    {
+      "name": "pin-locator@1: two candidates, the ordinal one matches -> re-resolved on it",
+      "html": "<div class=\"a b\">T</div><div class=\"a b\">T</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "div.a.b"
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 1
+      },
+      "expect": {
+        "state": "re-resolved",
+        "target": "div:nth-child(2)",
+        "guess": null
+      }
+    },
+    {
+      "name": "pin-locator@1: the ordinal text differs, another candidate matches -> re-resolved on the match",
+      "html": "<div class=\"a b\">X</div><div class=\"a b\">T</div><div class=\"a b\">Y</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "div.a.b"
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 2
+      },
+      "expect": {
+        "state": "re-resolved",
+        "target": "div:nth-child(2)",
+        "guess": null
+      }
+    },
+    {
+      "name": "pin-locator@1: no text match -> orphaned, the ordinal candidate as the guess",
+      "html": "<div class=\"a b\">X</div><div class=\"a b\">Y</div><div class=\"a b\">Z</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "div.a.b"
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 2
+      },
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "guess": "div:nth-child(3)"
+      }
+    },
+    {
+      "name": "pin-locator@1: an invalid selector -> orphaned, no guess",
+      "html": "<div class=\"a b\">T</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "div..a["
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 0
+      },
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "guess": null
+      }
+    },
+    {
+      "name": "pin-locator@1: no candidate -> orphaned, no guess",
+      "html": "<div class=\"a b\">T</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "section.q"
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 0
+      },
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "guess": null
+      }
+    },
+    {
+      "name": "pin-locator@1: a candidate inside a chrome subtree is never one",
+      "html": "<div data-wc-chrome=\"x\"><div class=\"a b\">T</div></div><div class=\"a b\">U</div>",
+      "rec": {
+        "v": 1,
+        "kind": "element",
+        "form": "pin-locator@1",
+        "mount": "m",
+        "path": {
+          "selector": "div.a.b"
+        },
+        "fingerprint": {
+          "tag": "div",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "text": "T"
+        },
+        "ordinal": 0
+      },
+      "expect": {
+        "state": "orphaned",
+        "target": null,
+        "guess": "div:nth-child(2)"
+      }
+    }
+  ]
+}
