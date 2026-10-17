@@ -911,3 +911,42 @@ test('the exported limits are the brief\'s', () => {
   assert.equal(LIMITS.keepIndexTimes, true);
   assert.deepEqual(READ_ONLY_KINDS, ['Read', 'Grep', 'Glob', 'Web', 'Search', 'Todo', 'Stop', 'Question', 'Plan']);
 });
+
+// U233a (PLAN 1D.2, M-10): a key added mid-file reaches the record through
+// redactor.patch, masked line by line, so renderDiff numbers every line of the
+// record's patch as the file's own (redactText folded the block into one mask
+// and shifted every line after it).
+test('a turn that adds a fake key mid-file: the record\'s patch renders with the file\'s true line numbers on every line', async (t) => {
+  const { renderDiff } = require('../lib/core/markdown');
+  const { MASK } = require('../lib/core/redact');
+  const before = Array.from({ length: 20 }, (_, i) => `const v${i + 1} = ${i + 1};`);
+  const repo = scratchRepo(t, { files: { 'src/config.js': before.join('\n') + '\n' } });
+  const h = await mirrorOn(t, repo);
+  h.session();
+  const pem = fakeSecrets().find((f) => f.id === 'pem-rsa');
+  const after = [...before.slice(0, 10), 'const key = `', ...pem.text.split('\n'), '`;', ...before.slice(10, 15), 'const extra = 0;', ...before.slice(15)];
+  const code = await h.run('pKey', async () => repo.write('src/config.js', after.join('\n') + '\n'));
+  assert.equal(code.status, 'ready');
+  const raw = fs.readFileSync(projectPaths(h.root).mirrorDiff('pKey'), 'utf8');
+  assert.deepEqual(findLeaks(raw, [pem]), [], 'no key bytes in the record file');
+  const rec = JSON.parse(raw);
+  const mask = MASK('private-key');
+  const re = /<span class="dl (dl-ctx|dl-add|dl-del)" data-old="([^"]*)" data-new="([^"]*)">([\s\S]*?)<\/span>/g;
+  const unescape = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  let rows = 0;
+  let masked = 0;
+  for (let m; (m = re.exec(renderDiff(rec.patch)));) {
+    const text = unescape(m[4]).slice(1);
+    const [file, n] = m[1] === 'dl-del' ? [before, Number(m[2])] : [after, Number(m[3])];
+    assert.ok(n >= 1 && n <= file.length, `a number in range (${m[0]})`);
+    if (text === mask) {
+      masked += 1;
+      assert.ok(file[n - 1].includes('-----') || pem.secrets.includes(file[n - 1]), `masked line ${n} is a key line`);
+    } else {
+      assert.equal(text, file[n - 1], `line ${n} (${m[1]}) is the file's own line ${n}`);
+    }
+    rows += 1;
+  }
+  assert.ok(rows >= 20, `${rows} rows rendered`);
+  assert.equal(masked, pem.secrets.length + 2, 'BEGIN, every body line and END masked, one line each');
+});
