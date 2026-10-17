@@ -95,6 +95,18 @@ test('sourceMap: an escape\'s backslash and a trimmed continuation line are subs
   assert.equal(offs.map((o) => text[o]).join(''), 'a *star* b');
 });
 
+test('subseq: the window is len*2 + 16 characters from the previous run\'s end; past it a run is unmapped and still holds its length', () => {
+  // A list item's continuation line loses its indent: "a\nb" (3 rendered
+  // characters) is a subseq run while its "b" sits inside 0 + 3*2 + 16 = 22.
+  const inside = '- a\n' + ' '.repeat(17) + 'b';
+  assert.deepStrictEqual(sourceMap(inside).runs, [[2, 22, 3, 'subseq', [2, 3, 21]]]);
+  const past = '- a\n' + ' '.repeat(18) + 'b';
+  const m = sourceMap(past);
+  assert.deepStrictEqual(m.runs, [[-1, -1, 3, 'unmapped']]);
+  // The unmapped run still occupies its rendered characters.
+  assert.equal(textNodes(renderMarkdown(past)).join('').length, m.runs[0][2]);
+});
+
 test('golden: the page flavour is untouched — renderMarkdown still reproduces every recorded output', () => {
   assert.equal(GOLDEN.length, 350);
   for (const c of GOLDEN) assert.equal(renderMarkdown(c.input), c.output, JSON.stringify(c.input));
@@ -103,10 +115,10 @@ test('golden: the page flavour is untouched — renderMarkdown still reproduces 
 test('golden: the tagged render with its markers stripped is renderMarkdown byte for byte', () => {
   // The mechanism sourceMap reads its runs off, rebuilt here with markers that
   // no golden input holds: every escaper call wrapped, then the wrapping cut.
-  const OPEN = '', MID = '', CLOSE = '';
+  const OPEN = '\uE100', MID = '\uE101', CLOSE = '\uE102';
   const strip = new RegExp(OPEN + '\\d+' + MID + '|' + CLOSE, 'g');
   for (const c of GOLDEN) {
-    assert.ok(!/[-]/.test(c.input));
+    assert.ok(!/[\uE100-\uE102]/.test(c.input));
     let k = 0;
     const tagged = createMarkdown((s) => OPEN + (k++) + MID + escapeHtml(s) + CLOSE).renderMarkdown(c.input);
     assert.equal(tagged.replace(strip, ''), renderMarkdown(c.input), JSON.stringify(c.input));
@@ -205,8 +217,8 @@ test('headings: the level and slug headings() gives, and the heading line\'s spa
 
 test('markers: a text holding U+E000–U+E002 (or all of the BMP Private Use Area) maps as cleanly as one that does not', () => {
   const plain = '# Head x\n\nsome x **bold x** and `x` \\* x';
-  for (const pua of ['', '', '']) {
-    const text = plain.replace(/x/g, pua + ''.replace(pua, ''));
+  for (const pua of ['\uE000', '\uE001', '\uE002']) {
+    const text = plain.replace(/x/g, pua + '\uE000\uE001\uE002'.replace(pua, ''));
     const m = sourceMap(text);
     assert.ok(m.runs.length > 0);
     assert.ok(aligns(text, m, textNodes(renderMarkdown(text))), JSON.stringify(text));
@@ -225,9 +237,9 @@ test('markers: a text holding U+E000–U+E002 (or all of the BMP Private Use Are
 
 test('markers: the module source holds no raw Private Use Area character', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'core', 'markdown.js'), 'utf8');
-  assert.ok(!/[-]/.test(src), 'a BMP PUA character is written raw');
+  assert.ok(!/[\uE000-\uF8FF]/.test(src), 'a BMP PUA character is written raw');
   assert.ok(!/[\uDB80-\uDBFF]/.test(src), 'a plane 15/16 PUA character is written raw');
-  assert.ok(!/[-\uDB80-\uDBFF]/.test(browserModuleSource()));
+  assert.ok(!/[\uE000-\uF8FF\uDB80-\uDBFF]/.test(browserModuleSource()));
 });
 
 test('host == browser: the module source exports sourceMap once, and it answers the host\'s map', async () => {
