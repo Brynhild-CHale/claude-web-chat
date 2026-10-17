@@ -108,7 +108,7 @@ function wrapRunner(real = runGit, { features, answer, delay } = {}) {
 // A real createMirror over the repository's root with `live`, the codediff
 // source and a probe source that hands the test the engine (for synchronous
 // reads of the model). Envelopes go in through mirror.ingest.
-async function mirrorOn(t, repo, { source = {}, graph = null, root = repo.root, start = true } = {}) {
+async function mirrorOn(t, repo, { source = {}, graph = null, root = repo.root, start = true, conversationsOptions = {} } = {}) {
   withTempHome(t);
   const ch = claudeHome(t, { root, isolate: true });
   const hooks = createHookTap();
@@ -121,7 +121,7 @@ async function mirrorOn(t, repo, { source = {}, graph = null, root = repo.root, 
   const box = { engine: null };
   const probe = { name: 'probe', attach: (engine) => { box.engine = engine; return { start: async () => {}, stop: async () => {} }; } };
   const mirror = createMirror({
-    root, hooks, mainBus, mirrorBus, redactor, graph, log: (...a) => logs.push(a.join(' ')),
+    root, hooks, mainBus, mirrorBus, redactor, graph, conversationsOptions, log: (...a) => logs.push(a.join(' ')),
     sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
     sources: [...LIVE_ONLY, { name: 'codediff', attach: createCodediffSource(source).attach }, probe],
   });
@@ -949,4 +949,127 @@ test('a turn that adds a fake key mid-file: the record\'s patch renders with the
   }
   assert.ok(rows >= 20, `${rows} rows rendered`);
   assert.equal(masked, pem.secrets.length + 2, 'BEGIN, every body line and END masked, one line each');
+});
+
+// U233b (PLAN 1D.2, M-11): a turn whose record was written (its header says
+// ready) and is gone answers `expired` — the anchor-state vocabulary's own
+// status — naming the retention row that removed it, with that row's
+// user_text as its note; a turn with no header still answers null.
+const { isAnchorState } = require('../lib/core/anchor-states');
+const { retention } = require('../lib/server/mirror/retention');
+const DAY = 24 * 60 * 60 * 1000;
+
+test('expired: a written record that is gone answers expired with its rule; pending, unavailable and unknown are unchanged', async (t) => {
+  const repo = scratchRepo(t);
+  const paths = projectPaths(repo.root);
+  fs.mkdirSync(paths.mirrorDiffsDir, { recursive: true });
+  fs.writeFileSync(paths.mirrorDiff('tKept'), JSON.stringify({ v: 1, turn_id: 'tKept', status: 'ready', totals: { files: 1, additions: 1, deletions: 0 } }));
+  const at = Date.now();
+  const headers = new Map([
+    ['tOld', { id: 'tOld', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
+    ['tNew', { id: 'tNew', session_id: S1, ended_at: at - 1000, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
+    ['tKept', { id: 'tKept', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
+    ['tPend', { id: 'tPend', session_id: S1, ended_at: at, code: { status: 'pending' } }],
+    ['tOff', { id: 'tOff', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'unavailable', reason: 'slow-repo' } }],
+    ['tNone', { id: 'tNone', session_id: S1, ended_at: at - 31 * DAY, code: null }],
+    ['tNoEnd', { id: 'tNoEnd', session_id: S1, ended_at: null, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
+  ]);
+  const engine = {
+    root: repo.root, paths, now: () => at, log: () => {}, graph: null,
+    redactor: createRedactor(),
+    timers: { setTimeout: () => 0, clearTimeout: () => {} },
+    model: {
+      turnsOf: () => [], turn: (id) => headers.get(id) || null, resolveTurn: (id) => (id === 'tAlias' ? 'tNew' : id),
+      patchTurn: (id) => headers.get(id), openTurnOf: () => null,
+    },
+    conversations: { bySession: () => null, list: () => [] },
+    live: { noteActivity: () => {} },
+  };
+  const src = createCodediffSource({ enabled: true }).attach(engine);
+  const diff = (turn) => src.api.diff({ turn });
+  const old = await diff('tOld');
+  assert.deepEqual(old, { v: 1, turn_id: 'tOld', status: 'expired', rule: 'record-max-days', note: retention('record-max-days').user_text });
+  assert.equal(old.note, 'A turn\'s code diff is kept for 30 days.');
+  assert.ok(isAnchorState(old.status), 'the status is the anchor-state vocabulary\'s');
+  assert.deepEqual(await diff('tNew'), { v: 1, turn_id: 'tNew', status: 'expired', rule: 'conversations-max', note: retention('conversations-max').user_text });
+  assert.equal((await diff('tKept')).turn_id, 'tKept', 'a record on disk is answered, whatever its age');
+  assert.deepEqual(await diff('tPend'), { v: 1, turn_id: 'tPend', status: 'pending' });
+  assert.deepEqual(await diff('tOff'), { v: 1, turn_id: 'tOff', status: 'unavailable', reason: 'slow-repo' });
+  assert.equal(await diff('tNone'), null, 'no code recorded: unknown, never expired');
+  assert.equal(await diff('tNoHeader'), null, 'no header: unknown, never expired');
+  // No ended_at is never 'older than RECORD_MAX_DAYS'; an id the model
+  // resolves to another turn answers under the header's id, as pending and
+  // unavailable do.
+  assert.equal((await diff('tNoEnd')).rule, 'conversations-max');
+  assert.equal((await diff('tAlias')).turn_id, 'tNew');
+  // The cutoff is the store's own RECORD_MAX_DAYS (a `limits` override wins).
+  const short = createCodediffSource({ enabled: true, limits: { RECORD_MAX_DAYS: 0 } }).attach(engine);
+  assert.equal((await short.api.diff({ turn: 'tNew' })).rule, 'record-max-days');
+  await src.stop();
+  await short.stop();
+  // codediff.js takes the status from the vocabulary: one require, no literal.
+  const code = fs.readFileSync(path.join(__dirname, '..', 'lib', 'server', 'mirror', 'codediff.js'), 'utf8');
+  assert.match(code, /require\('\.\.\/\.\.\/core\/anchor-states'\)/);
+  assert.equal(code.replace(/^\s*\/\/.*$/gm, '').match(/'expired'/g).length, 1, 'one spelling, the vocabulary lookup');
+});
+
+test('expired on a live mirror: a ready turn whose record file is deleted answers expired through the facade', async (t) => {
+  const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
+  const h = await mirrorOn(t, repo);
+  h.session();
+  assert.equal((await h.run('pGone', () => repo.write('a.txt', 'two\n'))).status, 'ready');
+  assert.equal((await h.mirror.diff({ turn: 'pGone' })).status, 'ready');
+  fs.rmSync(projectPaths(h.root).mirrorDiff('pGone'));
+  const out = await h.mirror.diff({ turn: 'pGone' });
+  assert.deepEqual(out, { v: 1, turn_id: 'pGone', status: 'expired', rule: 'conversations-max', note: retention('conversations-max').user_text });
+  assert.equal(await h.mirror.diff({ turn: 'pNever' }), null);
+});
+
+test('a pruned conversation (maxConversations 1): its diff record and index go, and with its header gone the turn answers null', async (t) => {
+  const { createIndexStore } = require('../lib/server/mirror/index-store');
+  const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
+  const h = await mirrorOn(t, repo, { conversationsOptions: { maxConversations: 1 } });
+  const paths = projectPaths(h.root);
+  h.session(S1);
+  assert.equal((await h.run('pPr', () => repo.write('a.txt', 'two\n'))).status, 'ready');
+  // The session's turn index, written through the one store (deletePruned reads turns[].id).
+  const store = createIndexStore({ paths, timers: { setTimeout, clearTimeout }, redactor: createRedactor() });
+  store.schedule(S1, () => ({ session_id: S1, conversation_id: S1, slug: null, file: null, resume: null,
+    turns: [{ id: 'pPr', header: h.turn('pPr'), internal: {} }], state: {} }));
+  await store.flush(S1);
+  await store.stop();
+  assert.ok(fs.existsSync(paths.mirrorIndex(S1)));
+  // While the header lives, a record removed under it answers expired (conversations-max).
+  const recFile = paths.mirrorDiff('pPr');
+  const kept = fs.readFileSync(recFile);
+  fs.rmSync(recFile);
+  assert.equal((await h.mirror.diff({ turn: 'pPr' })).rule, 'conversations-max');
+  fs.writeFileSync(recFile, kept);
+  assert.equal((await h.mirror.diff({ turn: 'pPr' })).status, 'ready');
+  // A second conversation prunes the first: the registry drops its turns from
+  // the model at once, and deletePruned removes its index and diff at the save.
+  h.session(S2);
+  await waitUntil(() => !fs.existsSync(recFile) && !fs.existsSync(paths.mirrorIndex(S1)), { timeout: 10000, what: 'deletePruned' });
+  assert.equal(h.turn('pPr'), null, 'the header is gone');
+  assert.equal(await h.mirror.diff({ turn: 'pPr' }), null, 'no header: unknown, never expired');
+});
+
+test('a node whose only turn expired: settled (the cache is written), turns[0] expired, combined null', async (t) => {
+  const graph = {
+    nodes: new Map([['n7', { id: 'n7', mirror: { v: 1, turns: [{ turn_id: 'pEx' }] } }]]),
+    topology: new Map([['n7', { id: 'n7', parent_id: null, children: [], created_at: 1 }]]),
+    active: 'n7',
+    snapshotLive: () => ({}),
+  };
+  const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
+  const h = await mirrorOn(t, repo, { graph });
+  h.session();
+  await h.run('pEx', () => repo.write('a.txt', 'two\n'));
+  fs.rmSync(projectPaths(h.root).mirrorDiff('pEx'));
+  const out = await h.mirror.diff({ node: 'n7' });
+  assert.equal(out.combined, null);
+  assert.equal(out.turns.length, 1);
+  assert.equal(out.turns[0].status, 'expired');
+  assert.equal(out.turns[0].rule, 'conversations-max');
+  assert.ok(fs.existsSync(projectPaths(h.root).mirrorNodeDiff('n7')), 'settled: the node cache is written');
 });

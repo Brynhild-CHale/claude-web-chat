@@ -787,6 +787,30 @@ test('a turn\'s own diff from ?turn=, and a record with status \'unavailable\' s
   assert.equal(q('.dv-unavailable').textContent, 'No code diff: slow-repo');
 });
 
+// U233b (PLAN 1D.2): a record that expired shows its note — text, never HTML —
+// and never falls through to "No files changed.".
+test('an expired record shows its note as one .dv-expired note, never "No files changed.", alone and in a node\'s turns', async () => {
+  const NOTE = 'A turn\'s code diff is kept for 30 days. <b>not bold</b>';
+  diffs['turn=tE'] = { v: 1, turn_id: 'tE', status: 'expired', rule: 'record-max-days', note: NOTE };
+  await open({ view: 'diff', id: 'tE' });
+  await waitUntil(() => q('.dv-expired'), { what: 'the expired note' });
+  assert.equal(qa('.dv-expired').length, 1);
+  assert.equal(q('.dv-expired').textContent, NOTE);
+  assert.ok(q('.dv-expired').classList.contains('dv-note'));
+  assert.equal(q('.dv-expired b'), null, 'textContent, never HTML');
+  assert.equal(q('.dv-nochange'), null);
+  assert.doesNotMatch(body().textContent, /No files changed\./);
+  await popAll();
+  diffs['node=n4'] = { node: { id: 'n4', label: 'n1.16' }, combined: null, turns: [
+    { v: 1, turn_id: 'tE', status: 'expired', rule: 'conversations-max', note: NOTE },
+  ] };
+  await open({ view: 'diff', node_id: 'n4' });
+  await waitUntil(() => q('.dv-turn .dv-expired'), { what: 'the turn\'s expired note' });
+  assert.equal(qa('.dv-expired').length, 1);
+  assert.equal(q('.dv-turn .dv-expired').textContent, NOTE);
+  assert.doesNotMatch(body().textContent, /No files changed\./);
+});
+
 /* ── every chat:open the stream and the cards emit opens a view ───────────── */
 
 test('every chat:open the stream and the tool cards emit opens a view: task by its id, tool_use_id, agent id or run id; diff by node_id or id', async () => {
