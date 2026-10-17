@@ -1017,6 +1017,24 @@ const PATTERNS = [
     },
   },
   {
+    // Who is writing (PLAN 1B.4): Claude's MCP server proves itself with a
+    // per-boot token in the writer header, and the realm will stamp a pane's
+    // fetch with the pane header (U214c). Both names live in one module; a
+    // second spelling is a second idea of which header carries a credential —
+    // a route reading it past resolveWriter, or a client sending it past
+    // lib/mcp/client.
+    name: 'X-WC-Writer / X-WC-Pane (the writer-identity headers)',
+    home: 'lib/core/writer-token.js — `WRITER_HEADER` / `PANE_HEADER`',
+    what: 'spelling a writer-identity header',
+    roots: ['lib', 'public', 'bin', 'scripts'],
+    exts: ['.js', '.html'],
+    re: /X-WC-(Writer|Pane)/gi,
+    baseline: {
+      // The two constants.
+      'lib/core/writer-token.js': 2,
+    },
+  },
+  {
     // A raw request body. The brand upload is the one route that takes bytes
     // rather than JSON, with its own type list and a size cap one byte over the
     // limit so an oversize body is refused, not truncated. A second raw parser

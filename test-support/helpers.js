@@ -36,6 +36,7 @@ const WebSocket = require('ws');
 const { writePortfileAt: writePortfile } = require('../lib/core/portfiles');
 const { LISTEN_HOST } = require('../lib/core/cors');
 const { subscribeSSE } = require('../lib/client');
+const { WRITER_HEADER, readWriterToken } = require('../lib/core/writer-token');
 
 // Resolved LAZILY, not at require time. shortLockTtl (below) sets
 // WEB_CHAT_LOCK_TTL_MS and evicts lib/server from require.cache so the TTL is
@@ -133,9 +134,29 @@ function withTempHome(tOrFn) {
 // best-effort, so a caller can assert on either .json (null if not JSON) or the
 // raw .text. Per-request headers override the default JSON Content-Type (e.g. the
 // capture token gate passes { 'X-WC-Token': … }).
-function makeApi(baseUrl) {
+//
+// `writerToken` (a string, or a function answering one per request) is sent as
+// Claude's writer header on every request. Node's global fetch sends fetch
+// metadata, so without it the daemon reads this helper as a BROWSER and the
+// writer gate (lib/server/routes/writers.js) refuses its renders — withServer's
+// `api` passes the boot's token, `anonApi` none. A per-request header of the
+// same name overrides it, and a per-request `null` removes it.
+function makeApi(baseUrl, { writerToken } = {}) {
+  const writerKey = WRITER_HEADER.toLowerCase();
+  function withWriter(headers) {
+    const out = {};
+    let explicit = false;
+    for (const [k, v] of Object.entries(headers || {})) {
+      if (k.toLowerCase() === writerKey) { explicit = true; if (v != null) out[WRITER_HEADER] = v; } else out[k] = v;
+    }
+    if (!explicit && writerToken != null) {
+      const t = typeof writerToken === 'function' ? writerToken() : writerToken;
+      if (t != null) out[WRITER_HEADER] = t;
+    }
+    return out;
+  }
   async function req(method, p, body, headers) {
-    const init = { method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(headers || {}) } };
+    const init = { method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...withWriter(headers) } };
     if (body !== undefined) init.body = typeof body === 'string' ? body : JSON.stringify(body);
     const res = await fetch(baseUrl + p, init);
     const text = await res.text();
@@ -407,7 +428,13 @@ async function withServer(t, opts, fn) {
     webChatDir,
     home,
     userWebChat,
-    api: makeApi(baseUrl),
+    // Claude's writes: the boot's writer token, read per request so a test that
+    // restarts the server in the same root follows the new boot's token.
+    api: makeApi(baseUrl, { writerToken: () => readWriterToken(root) }),
+    // The same requests with no writer token: what a page script's fetch
+    // looks like to the daemon (Node's fetch sends fetch metadata).
+    anonApi: makeApi(baseUrl),
+    writerToken: () => readWriterToken(root),
     ws: (pathStr = '/ws', wsOpts) => wsConnect(port, pathStr, wsOpts),
     wsHello: (pathStr = '/ws', wsOpts) => wsHello(port, pathStr, wsOpts),
     sse: (sseOpts) => openSSE(port, sseOpts),

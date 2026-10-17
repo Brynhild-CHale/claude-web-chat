@@ -2058,6 +2058,7 @@ Current homes (baselines move toward these):
 | `document.title =` **in `public/app` only** | `public/app/project.js`, the tab title's one writer | landed with the chat mirror ✅ |
 | `claudeSessionStateFile(` | `lib/core/claude-sessions.js` (the reader) and `lib/server/mirror/claude-state.js` (the live-state follower); `lib/core/paths.js` builds the path | landed with the chat mirror ✅ |
 | `remoteAddress` **in `lib/server` only** | `lib/server/audience.js` — who is asking is decided there, once | landed with the chat mirror ✅ |
+| `X-WC-Writer` / `X-WC-Pane` (the writer-identity headers), in `lib`, `public`, `bin` and `scripts` | `lib/core/writer-token.js` — `WRITER_HEADER` / `PANE_HEADER`; the daemon reads them only through `lib/server/domain/writers` `resolveWriter`, and only `lib/mcp/client` sends the writer token | landed with writer identity (annotation engine, tranche 1) ✅ |
 | `express.raw(` (a raw-bytes request body) | `lib/server/routes/brand.js` (`readImageBody`, the image upload) | landed with the project identity ✅ |
 | `graph.redactText` (on lines that are not comments) | `lib/server/domain/turns.js` reads it (`redactGraphText`), `lib/server/index.js` installs it | landed with the graph link ✅ |
 | `'claude'` as a literal program (in `execFile` / `execFileSync` / `spawn` / `spawnSync`) | `lib/core/claude-cli.js` (`runClaudeAsync` / `runClaude`), which runs the binary `findClaude` resolved — so the count is zero everywhere | landed with Fork from here ✅ |
