@@ -1070,6 +1070,22 @@ const PATTERNS = [
     },
   },
   {
+    // A version of an element is its text: a comment's words, its replies, and
+    // the pane text its anchor record carries. element-log's appendVersion is
+    // the one writer (PLAN 1A.5, C-13): it redacts the payload and the sibling
+    // fields before the bytes land and computes both hashes. A second spelling
+    // of a version record is a second writer of element text, and GT-09's NO-GO.
+    name: "t: 'ver' (a version-record literal)",
+    home: 'lib/core/element-log.js — `appendVersion`',
+    what: 'writing a version of an element (its text)',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bt\s*:\s*['"]ver['"]/g,
+    baseline: {
+      // The one version record, in appendVersion.
+      'lib/core/element-log.js': 1,
+    },
+  },
+  {
     // Running `claude`. The daemon and the CLI run a RESOLVED binary
     // (findClaude) with stdin closed, a scrubbed environment (every
     // CLAUDE_CODE_* and WEB_CHAT_* removed) and a timeout; a literal 'claude'
