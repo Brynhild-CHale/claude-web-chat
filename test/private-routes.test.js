@@ -190,6 +190,60 @@ test('GET /api/graph/node/:id and GET /preview/node/:id: a local browser gets th
   }
 });
 
+// graph.js's privateFor fails closed: an audience with no seesPrivate (a
+// test's fake, a half-wired ctx) or one whose seesPrivate throws hides the
+// private pin even from a request that reads as a local browser. The routes
+// on a bare app over one registered node, read with Node's fetch (browser
+// fetch metadata), so only the audience decides.
+test('the node read and the node preview fail closed: no seesPrivate, or one that throws, sees no private pin', async (t) => {
+  const http = require('http');
+  const express = require('express');
+  const { resolvePaths } = require('../lib/server/paths');
+  const { createState } = require('../lib/server/state');
+  const { createGraph } = require('../lib/server/graph');
+  const { createBus } = require('../lib/core/bus');
+  const { projectPaths } = require('../lib/core/paths');
+  const { createAudience } = require('../lib/server/audience');
+  const { mountGraphRoutes } = require('../lib/server/routes/graph');
+
+  const root = tmpRoot('wc-pr-closed-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = resolvePaths(root);
+  const graph = createGraph({ paths, state: createState(), draftPath: projectPaths(root).draft });
+  const pin = (id, text, shared) => ({ id, seq: Number(id.slice(1)), created_at: 1, shared, text, anchor: { mount: 'a', selector: 'p', text: 'a', ordinal: 0 } });
+  graph.registerNode({
+    id: 'n0', parent_id: null, created_at: 1000, author: 'claude', store: {}, captures: [],
+    mounts: [{ id: 'a', html: '<p>a</p>', target: null, params: {}, component: null, pane_state: {}, form_state: {}, theme: null, owner: null }],
+    comments: [pin('c1', SHARED, true), pin('c2', PRIVATE, false)],
+  });
+  graph.active = 'n0';
+  const ctx = { graph, paths, bus: createBus(), broadcastReset: () => {} };
+  const app = express();
+  app.use(express.json());
+  mountGraphRoutes(app, ctx);
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => { server.closeAllConnections(); server.close(r); }));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const read = async (p) => (await fetch(base + p)).text();
+
+  const cases = [
+    ['the real audience (control)', () => createAudience({ configFile: null }), true],
+    ['no audience yet (the no-opt-in fallback is a real audience)', () => undefined, true],
+    ['a fake with no seesPrivate', () => ({ levelOf: () => 'local', isHost: () => false }), false],
+    ['a seesPrivate that throws', () => ({ levelOf: () => 'local', seesPrivate: () => { throw new Error('boom'); } }), false],
+    ['a seesPrivate that answers a non-boolean', () => ({ levelOf: () => 'local', seesPrivate: () => 'yes' }), false],
+  ];
+  for (const [what, audience, sees] of cases) {
+    ctx.audience = audience();
+    for (const route of ['/api/graph/node/n0', '/preview/node/n0']) {
+      const text = await read(route);
+      assert.ok(text.includes(SHARED), `${what} ${route}: the shared pin stays`);
+      assert.equal(text.includes(PRIVATE), sees, `${what} ${route}: the private pin ${sees ? 'is seen' : 'is not'}`);
+    }
+  }
+});
+
 // ── the queue carrier ───────────────────────────────────────────────────────
 
 async function socket(t, port, headers) {
