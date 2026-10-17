@@ -180,8 +180,10 @@ export function applyRemoteFormState(id, form_state) {
   p._lastFormJson = JSON.stringify(form_state || {});
   p._userDirty = false;   // the DOM now shows the server's copy
   p._applyingForm = true;
-  try { window.__wcMount.applyFormState(p.root, form_state || {}); }
-  finally { p._applyingForm = false; }
+  try {
+    window.__wcMount.applyFormState(p.root, form_state || {});
+    window.__wcMount.settle(p.root, id, 'form');   // the pane shows the new values
+  } finally { p._applyingForm = false; }
 }
 
 // A pane's place on its run's grid (public/page.css): three custom properties,
@@ -758,6 +760,9 @@ function mountPane(m) {
     if (!p || p.pane_state.mode === mode) return;
     p.pane_state.mode = mode;
     applyPaneState(p.wrapper, p.pane_state);
+    // The bootstrap flipped which [data-wc-when] sections show before it asked:
+    // the pane's DOM has changed exactly as on a remote mode change.
+    window.__wcMount.settle(root, id, 'mode');
     emitPaneState(id);   // a no-op while previewing: the toggle stays local there
   });
 
@@ -820,6 +825,10 @@ function mountPane(m) {
   if (params && params.modes) {
     root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: ps.mode } }));
   }
+  // The sync point: the pane's anchorable DOM is final only now — after its
+  // scripts, its restored form values and (a mode pane) the mode re-assert.
+  // Read off the global at the call, never cached: a harness may wrap it.
+  window.__wcMount.settle(root, id, 'mount');
   layoutPage();
 }
 
@@ -1155,6 +1164,7 @@ export function applyRemotePaneState(id, pane_state) {
   applyPaneState(p.wrapper, p.pane_state);
   if (p.pane_state.mode !== prevMode && p.root) {
     p.root.dispatchEvent(new CustomEvent('wc:mode', { detail: { mode: p.pane_state.mode } }));
+    window.__wcMount.settle(p.root, id, 'mode');
   }
   layoutPage();
 }

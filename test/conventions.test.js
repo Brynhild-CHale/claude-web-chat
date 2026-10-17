@@ -1429,6 +1429,21 @@ const PATTERNS = [
       'lib/update/managed-files.js': 2, // managed.json, .claude/settings.json
     },
   },
+  {
+    // A shadow root attached anywhere but the mount runtime (GT-04). Every
+    // shell — the live chrome, a preview, a replay frame, an export — mounts a
+    // pane through attachAndExtract, and that is what lets an anchor's path
+    // mean the same thing in all four (P-12). A second attach site is a second
+    // idea of what a pane is: its roots would hold what the runtime never put
+    // there, and an anchor resolved in one shell would miss in another.
+    name: 'attachShadow( (a shadow root outside the mount runtime)',
+    home: 'public/mount-runtime.js attachAndExtract — THE one mount path (GT-04)',
+    what: 'attaching a shadow root',
+    roots: ['lib', 'public', 'templates'],
+    exts: ['.js', '.html'],
+    re: /attachShadow\s*\(/g,
+    baseline: { 'public/mount-runtime.js': 1 },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

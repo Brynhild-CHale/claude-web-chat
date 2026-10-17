@@ -15,7 +15,10 @@
 //   attachAndExtract(host, html)       - shadow root + inline-script extraction
 //   runScripts(root, scripts, ...)     - a pane's inline-script bodies
 //   runSeed(code, store)               - a component's seed.js
-// The last two are THE ONLY dynamic-eval sites in the codebase.
+// The last two are THE ONLY dynamic-eval sites in the codebase. Beside them:
+//   settle(root, mountId, why)         - the sync point: the pane's DOM is final
+//   onSettle(fn) / generation(root)    - hear it / read a root's count of them
+//   itemEl(doc, id)                    - a page item (pane host or markdown block) by id
 //
 // Authored ES5-ish (var/function, Object.assign/Map/Set) so a baked offline
 // export runs in any browser. Do NOT use ES-2016+ syntax here. Never embed an
@@ -369,7 +372,73 @@
     });
   }
 
-  var api = { createStore: createStore, frozenPaneApi: frozenPaneApi, attachAndExtract: attachAndExtract, runScripts: runScripts, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded };
+  // ── the settle sync point ─────────────────────────────────────────────────
+  // THE moment a pane's anchorable DOM is final: later than runScripts' return
+  // (after applyFormState, and for a mode pane after the wc:mode re-assert), and
+  // again whenever the chrome changes what a mounted pane shows (a remote form,
+  // a mode change from either side). Every shell calls it at those points as
+  // window.__wcMount.settle(root, mountId, why), read off the global at the call.
+  //
+  // settle is synchronous and does nothing but count and tell: it bumps the
+  // root's generation and calls each onSettle listener as
+  // fn(root, mountId, gen, why), each try/caught on its own, then returns the
+  // new generation. It schedules nothing and touches no DOM; a listener that
+  // has work to do (the anchors resolver) schedules it itself, and can drop a
+  // pass whose root's generation(root) has moved on since.
+  var generations = new WeakMap();
+  var settleListeners = [];
+
+  function settle(root, mountId, why) {
+    if (!root || typeof root !== 'object') return 0;
+    var gen = (generations.get(root) || 0) + 1;
+    generations.set(root, gen);
+    var entries = settleListeners.slice();
+    for (var i = 0; i < entries.length; i++) {
+      try { entries[i].fn(root, mountId, gen, why); } catch (e) { console.error('settle listener error', mountId, e); }
+    }
+    return gen;
+  }
+
+  // → an unsubscribe that removes this registration (and only it), once.
+  function onSettle(fn) {
+    if (typeof fn !== 'function') throw new TypeError('onSettle: expects a function');
+    var entry = { fn: fn };
+    settleListeners.push(entry);
+    return function () {
+      var at = settleListeners.indexOf(entry);
+      if (at >= 0) settleListeners.splice(at, 1);
+    };
+  }
+
+  // The root's current generation: 0 until its first settle.
+  function generation(root) {
+    if (!root || typeof root !== 'object') return 0;
+    return generations.get(root) || 0;
+  }
+
+  // An item of the page by its id, in any shell (the live chrome, a preview, a
+  // replay frame, an export): {kind: 'pane', el: <its .mount-host>} or
+  // {kind: 'md', el: <its [data-md-id] block>}, else null. It SCANS, and panes
+  // first: a pane's id is agent-supplied and may name a chrome element
+  // (contents-nav) — the live host then keeps it in data-mount-id only, and a
+  // lookup by document id would find the chrome — and an arbitrary id would
+  // need escaping to go into a selector.
+  function itemEl(doc, id) {
+    if (!doc || id == null) return null;
+    var key = String(id);
+    var hosts = doc.querySelectorAll('.mount-host');
+    for (var i = 0; i < hosts.length; i++) {
+      var h = hosts[i];
+      if (((h.dataset && h.dataset.mountId) || h.id) === key) return { kind: 'pane', el: h };
+    }
+    var blocks = doc.querySelectorAll('[data-md-id]');
+    for (var j = 0; j < blocks.length; j++) {
+      if (blocks[j].getAttribute('data-md-id') === key) return { kind: 'md', el: blocks[j] };
+    }
+    return null;
+  }
+
+  var api = { createStore: createStore, frozenPaneApi: frozenPaneApi, attachAndExtract: attachAndExtract, runScripts: runScripts, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded, settle: settle, onSettle: onSettle, generation: generation, itemEl: itemEl };
   if (glob) glob.__wcMount = api;                                                 // browser global (before client.js)
   if (typeof module !== 'undefined' && module.exports) module.exports = api;      // node require() — createStore is testable
 })(typeof window !== 'undefined' ? window : null);

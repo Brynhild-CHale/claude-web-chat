@@ -2083,6 +2083,7 @@ Current homes (baselines move toward these):
 | `'ModEvent'` (the mod's event name, as a string) | `lib/core/mod-protocol.js` (`MOD_EVENT`) | landed with the mod ✅ |
 | `op: 'abort'` / `op: 'taskStop'` (on lines that are not comments) | `lib/server/control/mod.js` (`installModControl`: the interrupt's mod path and the task-stop row, after the action table's gates) | landed with the mod ✅ |
 | `writeFileSync(…JSON.stringify…)` (a JSON record written by hand, either spelling) | `lib/core/fsjson.js` (`writeJsonAtomic`) — plus the sites that predate the engine, each with its record named in the baseline (the portfile, `.mcp.json`, the settings files, saved themes and others), each lowered as it moves | counted since tranche 6; shrinking ✅ |
+| `attachShadow(` (a shadow root outside the mount runtime) | `public/mount-runtime.js` (`attachAndExtract`, the one mount path: every shell — the live chrome, a preview, a replay frame, an export — mounts a pane through it, so an anchor's path means the same in all four) | landed with the annotation engine's tranche 1 (GT-04) ✅ |
 
 Working with it:
 
