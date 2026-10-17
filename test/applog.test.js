@@ -140,7 +140,10 @@ test('a short write throws ESHORTWRITE, refuses later appends, and the next load
   first.close();
 
   const spy = Object.create(fs);
-  spy.writeSync = (fd, buf, off, len) => fs.writeSync(fd, buf, off, len - 5);
+  // Short by 5 bytes ONCE: a later append would then write whole, so only the
+  // open's own refusal keeps it from being glued onto the partial line.
+  let shorts = 0;
+  spy.writeSync = (fd, buf, off, len) => fs.writeSync(fd, buf, off, shorts++ === 0 ? len - 5 : len);
   const log = openLog(file, { fs: spy, epoch: false });
   log.load();
   assert.throws(() => log.append({ t: 'x', i: 1 }), { code: 'ESHORTWRITE' });
@@ -476,7 +479,10 @@ test('crash: SIGKILL after k acks loses no acked record, sets aside at most one 
   const t0 = Date.now();
   for (const k of ks) {
     const file = path.join(dir, `crash-${k}`, 'log.jsonl');
-    const run = await runChild([file, '2100'], { killAfter: k });
+    // The count is far above any k, so the child is still appending when the
+    // kill lands (the kill is sent once k acks are read; nothing else ends it).
+    const run = await runChild([file, '100000'], { killAfter: k });
+    assert.equal(run.signal, 'SIGKILL', `k=${k}: the child was killed mid-stream, not finished`);
     assert.ok(run.maxAck + 1 >= k, `k=${k}: the child acked at least k records (${run.maxAck + 1})`);
 
     const before = readAll(file);
