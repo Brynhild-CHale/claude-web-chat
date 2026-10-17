@@ -164,6 +164,10 @@ test('a re-read from 0, a resume at a turn boundary and random splits give ident
     assert.ok(whole.some((id) => re.test(id)), `an id like ${re}: ${whole.join(' ')}`);
   }
   assert.equal(whole.filter((id) => /^af_o/.test(id)).length, 2, 'the two uuid-less artifacts');
+  // Through normalize, the record key is the record's byte offset, never its ordinal.
+  const bareLinks = recs.filter((x) => x.obj && x.obj.type === 'frame-link' && !x.obj.uuid);
+  assert.equal(bareLinks.length, 2);
+  for (const x of bareLinks) assert.ok(whole.includes(`af_o${stableHash([S1, x.start]).slice(0, 16)}`), `af_o of byte offset ${x.start}`);
 
   const again = idsOf(normalize(parseLines(jsonl(r.records), 0), initialState(), { session_id: S1 }).changes);
   assert.equal(jaccard(whole, again), 1, 'a re-read from 0');
