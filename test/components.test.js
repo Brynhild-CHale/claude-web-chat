@@ -119,7 +119,7 @@ test('components: use mounts the component (render event carrying component prov
 test('components: use over a pane owned by a driver is soft-rejected (owned envelope)', async (t) => {
   const { api, port } = await withServer(t);
   await api.post('/api/components', { name: 'w-own', source: '<p>W</p>' });
-  await api.post('/api/render', { id: 'svc', html: '<p>driver</p>', owner: 'service:git' });
+  await require('../lib/driver').createDriver({ owner: 'git', port }).render({ id: 'svc', html: '<p>driver</p>' });
   const rejected = (await api.post('/api/components/w-own/use', { id: 'svc' })).json;
   assert.equal(rejected.ok, false);
   assert.equal(rejected.owned, true);

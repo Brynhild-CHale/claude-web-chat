@@ -145,8 +145,12 @@ test('writers: with no .web-chat/ the token stays in memory, one log line, no di
 test('writers: the domain hands out no token accessor', (t) => {
   const { root, writers } = domain(t);
   const tok = readWriterToken(root);
-  assert.deepEqual(Object.keys(writers).sort(), ['resolveWriter', 'stop']);
+  // U214b added the service and lease credentials; none of them hands out the
+  // boot token.
+  assert.deepEqual(Object.keys(writers).sort(), ['lease', 'mintService', 'release', 'resolveWriter', 'revoke', 'stop']);
   assert.ok(!JSON.stringify(writers).includes(tok));
+  assert.notEqual(writers.mintService({ mountId: 'm', name: 'svc' }), tok);
+  assert.notEqual(writers.lease({ owner: 'service:x', pid: process.pid }).token, tok);
 });
 
 // ── boot ────────────────────────────────────────────────────────────────────
@@ -219,18 +223,19 @@ test('gate: render and markdown — token 200, browser 403, lib/client advisory 
   assert.deepEqual(markdown.map((m) => [m.id, m.owner]).sort(), [['markdown-local', 'claude'], ['markdown-tok', 'claude']]);
 });
 
-test('gate: under the token a declared service owner stays (until U214b); any other owner reads claude', async (t) => {
+test('gate: under the token a declared service owner is refused unverified (U214b); any other owner reads claude', async (t) => {
   const { api } = await withServer(t);
-  assert.equal((await api.post('/api/render', { id: 's', html: '<p>s</p>', owner: 'service:x' })).json.owner, 'service:x');
+  const s = await api.post('/api/render', { id: 's', html: '<p>s</p>', owner: 'service:x' });
+  assert.deepEqual([s.status, s.json.writer], [403, 'unverified']);
   assert.equal((await api.post('/api/render', { id: 'c', html: '<p>c</p>', owner: 'claude' })).json.owner, 'claude');
   assert.equal((await api.post('/api/render', { id: 'u', html: '<p>u</p>', owner: 'user' })).json.owner, 'claude');
   const owners = Object.fromEntries((await api.get('/api/mounts')).json.mounts.map((m) => [m.id, m.owner]));
-  assert.deepEqual(owners, { s: 'service:x', c: 'claude', u: 'claude' });
+  assert.deepEqual(owners, { c: 'claude', u: 'claude' });
 });
 
 test('gate: a browser clear naming a service owner closes nothing it could not close before', async (t) => {
   const { api, anonApi, port } = await withServer(t);
-  await client.post('/api/render', { id: 'svc', html: '<p>svc</p>', owner: 'service:x' }, { port });
+  await require('../lib/driver').createDriver({ owner: 'x', port }).render({ id: 'svc', html: '<p>svc</p>' });
   const r = await anonApi.post('/api/clear', { id: 'svc', owner: 'service:x' });
   assert.equal(r.status, 200);
   assert.equal(r.json.ok, false, 'the owner was dropped, so the clobber guard holds');
@@ -249,7 +254,7 @@ test('gate: a browser clear naming a service owner closes nothing it could not c
 test('gate: F9 S-9 pane attempts 2-5 from a page script (browser headers, no token) are refused', async (t) => {
   const { api, port } = await withServer(t);
   await api.post('/api/render', { id: 'claude-pane', html: '<p>Claude</p>' });
-  await client.post('/api/render', { id: 'svc-pane', html: '<p>git</p>', owner: 'service:git-dashboard' }, { port });
+  await require('../lib/driver').createDriver({ owner: 'git-dashboard', port }).render({ id: 'svc-pane', html: '<p>git</p>' });
   const before = (await api.get('/api/mounts')).json;
   const attempts = [
     { id: 'claude-pane', html: '<p>forged</p>', owner: 'service:x' },

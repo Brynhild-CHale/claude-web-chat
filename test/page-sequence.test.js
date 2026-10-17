@@ -98,7 +98,7 @@ test('page: removing a pane or a markdown item drops it from the order', async (
 });
 
 test('page: markdown refusals — shared id space, reserved ids, size cap, owner gate, malformed', async (t) => {
-  const { api } = await withServer(t);
+  const { api, port } = await withServer(t);
   await render(api, 'pane-1');
   const clash = await md(api, { id: 'pane-1', text: 'x' });
   assert.equal(clash.json.ok, false);
@@ -118,8 +118,8 @@ test('page: markdown refusals — shared id space, reserved ids, size cap, owner
   assert.equal(big.json.limit, page.MARKDOWN_MAX_CHARS);
   assert.equal((await md(api, { id: 'big', text: 'x'.repeat(page.MARKDOWN_MAX_CHARS) })).json.ok, true);
 
-  const svc = await md(api, { id: 'svc', text: 'mine', owner: 'service:x' });
-  assert.equal(svc.json.owner, 'service:x');
+  const svc = await require('../lib/driver').createDriver({ owner: 'x', port }).writeMarkdown({ id: 'svc', text: 'mine' });
+  assert.equal(svc.owner, 'service:x');
   const steal = await md(api, { id: 'svc', text: 'claude' });
   assert.equal(steal.json.owned, true);
   assert.equal((await md(api, { id: 'svc', text: 'claude', force: true })).json.ok, true);
@@ -182,9 +182,9 @@ test('page: a page-wide clear takes markdown too; pinned panes survive; a slot c
 });
 
 test('page: a foreign markdown item blocks a bulk clear whole, like a foreign pane', async (t) => {
-  const { api } = await withServer(t);
+  const { api, port } = await withServer(t);
   await render(api, 'mine');
-  await md(api, { id: 'theirs', text: 'x', owner: 'service:y' });
+  await require('../lib/driver').createDriver({ owner: 'y', port }).writeMarkdown({ id: 'theirs', text: 'x' });
   const r = await api.post('/api/clear', {});
   assert.equal(r.json.ok, false);
   assert.equal(r.json.owned, true);

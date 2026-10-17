@@ -242,7 +242,7 @@ test('when pins survive, clients are told exactly which panes went (never a bulk
 test('the ownership guard still wins: a foreign pane rejects the clear before pins matter', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
-  await api.post('/api/render', { id: 'svc', html: '<p>s</p>', owner: 'service:git' });
+  await require('../lib/driver').createDriver({ owner: 'git', port: ctx.port }).render({ id: 'svc', html: '<p>s</p>' });
   await api.post('/api/render', { id: 'keep', html: '<p>k</p>' });
   await pin(ctx, 'keep');
 
@@ -262,8 +262,9 @@ test('the ownership guard still wins: a foreign pane rejects the clear before pi
 test('a pinned foreign pane the clear keeps does not refuse it', async (t) => {
   const ctx = await withServer(t);
   const { api } = ctx;
-  await api.post('/api/markdown', { id: 'svc-head', text: '## Tests', owner: 'service:tests' });
-  await api.post('/api/render', { id: 'drv', html: '<p>d</p>', owner: 'service:tests' });
+  const tests = require('../lib/driver').createDriver({ owner: 'tests', port: ctx.port });
+  await tests.writeMarkdown({ id: 'svc-head', text: '## Tests' });
+  await tests.render({ id: 'drv', html: '<p>d</p>' });
   await api.post('/api/render', { id: 'mine', html: '<p>m</p>' });
   await api.post('/api/render', { id: 'mine-pinned', html: '<p>p</p>' });
   await pin(ctx, 'drv');
