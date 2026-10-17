@@ -121,6 +121,10 @@ export function applyPaneTheme(p, theme, animate) {
   applyTokens(p.wrapper, flat.tokens, { animate });
   if (!p.themeStyle && p.root) {
     p.themeStyle = document.createElement('style');
+    // The chrome's own node in the pane's root, not the pane's: an anchor's
+    // index skips every data-wc-chrome element, so a path means the same in
+    // every shell whether or not this style is there.
+    p.themeStyle.setAttribute('data-wc-chrome', 'theme');
     p.root.appendChild(p.themeStyle);
   }
   if (p.themeStyle) p.themeStyle.textContent = WC_SHADOW_TRANSITION + '\n' + flat.css;
