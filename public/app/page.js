@@ -260,6 +260,24 @@ export function scrollToHeading(mdId, slug) {
   return !!h;
 }
 
+// Jump to a markdown item on the page now drawn — the live page, or the
+// previewed node's (applySnapshot and the preview both lay the page out, so
+// mdEls holds exactly the drawn items): bring it into view and flash it once.
+// The markdown twin of mounts.js revealPane, for the chat tool card's Show on
+// page on a write_markdown call. It writes nothing (markdown has no minimized
+// state), so it is legal on a read-only preview. → false when the drawn page
+// lacks the item.
+export function revealMarkdown(id) {
+  const el = mdEls.get(id);
+  if (!el || !el.isConnected) return false;
+  if (el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  el.classList.remove('md-flash');
+  void el.offsetWidth;           // restart the animation on a repeat jump
+  el.classList.add('md-flash');
+  setTimeout(() => el.classList.remove('md-flash'), 1400);
+  return true;
+}
+
 // ── the user's layout writes ───────────────────────────────────────────────
 async function post(path, body) {
   try {
