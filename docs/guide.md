@@ -58,7 +58,19 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **Background work, on the bar.** When Claude starts work that runs on in the background — a shell (`npm run dev`, a test watcher), a monitor, an agent or a workflow — a chip for it appears at the right of the bar: *2 shells*, *1 agent*, *agents · 1 done*. (What waits on the queue has no chip; it has the queue rail.) Click a chip to open its tray, one row per item with what it is doing now: a shell's last line of output, an agent's last step, a workflow's *step 3 / 5*. **Output** on a shell's row shows the tail of its output in place (*[exited with code 3]* once it has ended) and **Open full output** takes it into the chat; **Open** on an agent's row follows the agent's own transcript there as it grows, and on a workflow's row shows its phases and their agents. These detail views open over the chat's stream, and `Esc` goes back. **Kill** (a shell), **Cancel** (an agent or a workflow) and **Remove** (a monitor) stop one from the page — see below. Below `read`, a remote viewer's chips show counts only.
 
-**What a turn changed in your files.** In a git repository, web-chat records what each of Claude's turns changed in the project's files: the bar reads *Done · 3 files changed*, and the turn's footer in the chat reads *3 files +40 −12* with **View changes**, which opens the turn's diff — or, for the turn that committed a node, the node's. The footer also carries the turn's **node chip** (*n1.14*, or *no surface change · rode into n1.14* for a turn that left the page as it was): click it to preview that node. The snapshots live in a store of web-chat's own under `.web-chat/mirror/git`, which borrows your repository's objects and never writes your `.git` — no commit, no index, no ref. It is capped at 1 GiB, a turn's record is kept for 30 days, and anything that looks like a secret is masked before a diff is written. `WEB_CHAT_MIRROR_DIFFS=0` in the daemon's environment turns it off.
+**What a turn changed in your files.** In a git repository, web-chat records what each of Claude's turns changed in the project's files: the bar reads *Done · 3 files changed*, and the turn's footer in the chat reads *3 files +40 −12* with **View changes**, which opens the turn's diff — or, for the turn that committed a node, the node's. The footer also carries the turn's **node chip** (*n1.14*, or *no surface change · rode into n1.14* for a turn that left the page as it was): click it to preview that node. The snapshots live in a store of web-chat's own under `.web-chat/mirror/git`, which borrows your repository's objects and never writes your `.git` — no commit, no index, no ref. Anything that looks like a secret is masked before a diff is written, and `WEB_CHAT_MIRROR_DIFFS=0` in the daemon's environment turns it off.
+
+**What the chat mirror keeps.** What the chat remembers is bounded, and a turn whose diff has been removed says so (*expired*) instead of showing no changes:
+
+- A turn's code diff is kept for 30 days.
+- The file snapshots behind a diff are kept for 7 days.
+- The snapshot store is capped at 1 GiB, and no more diffs are recorded once it is full.
+- The server follows the snapshots of at most 1000 turns in memory at once.
+- At most 200 conversations are kept, and an older conversation's turns and code diffs are deleted with it.
+- A conversation keeps its newest 100 sessions.
+- A session keeps its newest 5000 turns.
+- A finished background shell or monitor stays listed for 30 minutes.
+- A finished agent stays listed for 30 minutes.
 
 **A node's turns, in the graph.** Select a node in the graph viewer (`G`) and its inspector lists the chat turns that rode into it — **CHAT TURNS · 2**: the turn that committed it (●) and any that changed nothing on the page and folded onto it (◦), each with its prompt, time, duration, tools and files changed. A node whose turns you later rewound in the terminal keeps them, dimmed and tagged *rewound*, under a *↶ 2 of 3 turns rewound in the terminal* line, and wears a ↶ beside its glyph on the canvas; the node itself is never changed.
 
