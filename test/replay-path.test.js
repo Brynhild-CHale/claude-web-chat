@@ -141,7 +141,9 @@ test('one ancestor walk: the replay path reads lineage.ancestry, and refs carrie
   assert.deepEqual(ancestry(g, 'n7'), ['n7', 'n6', 'n5', 'n4', 'n3', 'n2', 'n1', 'n0']);
   assert.deepEqual(ancestry(g, 'n11'), ['n11', 'n10']);
   assert.deepEqual(ancestry(g, 'nope'), []);
-  assert.deepEqual(Object.keys(refs), ['resolveNodeRef'], 'domain/refs resolves refs; the walk lives in domain/lineage');
+  // domain/refs also resolves graph anchors (U207), whose span check reads
+  // lineage.ancestry — still no walk of its own.
+  assert.deepEqual(Object.keys(refs), ['resolveNodeRef', 'resolveGraphAnchor', 'GRAPH_ANCHOR_STATES'], 'domain/refs resolves refs; the walk lives in domain/lineage');
   // A hand-edited cycle ends the walk instead of spinning — in the replay too.
   g.nodes.get('n0').parent_id = 'n1';
   assert.deepEqual(ancestry(g, 'n1'), ['n1', 'n0']);
