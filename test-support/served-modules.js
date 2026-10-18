@@ -15,6 +15,10 @@ const REPO = path.resolve(__dirname, '..');
 const SERVED = new Map([
   [pathToFileURL(path.join(REPO, 'public/app/markdown.js')).href,
     () => require(path.join(REPO, 'lib/core/markdown.js')).browserModuleSource()],
+  // /app/anchors.js, the anchor resolver main.js imports and installs
+  // (lib/server/routes/page.js serves lib/core/anchors' browserModuleSource()).
+  [pathToFileURL(path.join(REPO, 'public/app/anchors.js')).href,
+    () => require(path.join(REPO, 'lib/core/anchors.js')).browserModuleSource()],
 ]);
 
 exports.resolve = function resolve(specifier, context, next) {
@@ -22,6 +26,9 @@ exports.resolve = function resolve(specifier, context, next) {
     const url = new URL(specifier, context.parentURL).href;
     if (SERVED.has(url)) return { url, format: 'module', shortCircuit: true };
   }
+  // The file URL itself: chrome-shell's importApp('anchors.js') hands one in,
+  // and gets the same module instance the chrome's own import resolved to.
+  if (SERVED.has(specifier)) return { url: specifier, format: 'module', shortCircuit: true };
   return next(specifier, context);
 };
 
