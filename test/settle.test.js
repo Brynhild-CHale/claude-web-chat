@@ -185,9 +185,9 @@ test('itemEl: a replay frame (filled as the player fills it) finds every pane an
   };
   const html = assembleReplay({ steps: [step], themes: [{}], opts: normalizeReplayOpts({}) });
   const payload = JSON.parse(new JSDOM(html).window.document.getElementById('wc-replay-data').textContent);
-  const [a, b, c] = payload.frame;
+  const [a, b, c, d] = payload.frame;
   const s = payload.steps[0];
-  const dom = new JSDOM(a + payload.themes[s.theme] + b + s.node + c, { runScripts: 'dangerously' });
+  const dom = new JSDOM(a + payload.themes[s.theme] + b + c + s.node + d, { runScripts: 'dangerously' });
   assertFinds(dom.window.document, { panes: DOC_MOUNTS.map((m) => m.id), md: ['md-1', 'md-2'] }, 'replay frame');
   dom.window.close();
 });

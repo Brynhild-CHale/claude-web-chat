@@ -105,9 +105,9 @@ test('replay frame: the preview template, filled as the player fills it, draws t
   };
   const html = assembleReplay({ steps: [step], themes: [{}], opts: normalizeReplayOpts({}) });
   const payload = JSON.parse(new JSDOM(html).window.document.getElementById('wc-replay-data').textContent);
-  const [a, b, c] = payload.frame;
+  const [a, b, c, d] = payload.frame;
   const s = payload.steps[0];
-  const { dom, doc, calls } = run(a + payload.themes[s.theme] + b + s.node + c);
+  const { dom, doc, calls } = run(a + payload.themes[s.theme] + b + c + s.node + d);
   assertModes(doc, calls, 'replay frame');
   dom.window.close();
 });
