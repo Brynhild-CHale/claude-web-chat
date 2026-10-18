@@ -12,7 +12,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { v3Graph } = require('../test-support/v3-graph');
-const { run } = require('../lib/update/migrations');
+const { run, SCHEMA_VERSION } = require('../lib/update/migrations');
+const { projectPaths } = require('../lib/core/paths');
 
 const BIN = path.join(__dirname, '..', 'bin', 'claude-web-chat.js');
 
@@ -117,3 +118,100 @@ test('migrate refuses an unknown argument', (t) => {
   assert.equal(r.code, 1);
   assert.match(r.err, /unknown argument --apply/);
 });
+
+// A .web-chat/ that holds a graph but no _version.json (a lost version file, a
+// hand-copied state directory): the daemon reads it as v3 and migrates it
+// (lib/update/migrations run(), graphPresent), so the dry run answers what that
+// migration will do — never 'fresh'. Only a project with no graph is fresh.
+
+test('migrate --json reads a graph with no _version.json as v3 and dry-runs it', (t) => {
+  const g = fixture(t, { version: null });
+  assert.equal(fs.existsSync(g.paths.version), false);
+  const before = listing(g.root);
+  const r = cli(g.root, ['--json']);
+  assert.equal(r.code, 0, r.err);
+  const body = JSON.parse(r.out);
+  assert.equal(body.state, 'would-migrate');
+  assert.equal(body.version, 0, 'the recorded version: none');
+  assert.equal(body.assumed, 3, 'the version the daemon reads it as');
+  assert.equal(body.report.copies, 23);
+  assert.equal(body.report.draft.copies, 5);
+  assert.deepEqual(listing(g.root), before, 'nothing written: no version file, no log, no report');
+});
+
+test('migrate in text says the daemon reads a graph with no _version.json as v3, then the report', (t) => {
+  const g = fixture(t, { version: null });
+  const before = listing(g.root);
+  const r = cli(g.root);
+  assert.equal(r.code, 0, r.err);
+  const out = r.out.split('\n');
+  assert.equal(out[0], 'This project has no _version.json but holds a graph: the daemon reads it as v3 and migrates it at its next boot.');
+  assert.match(out[1], /dry run/);
+  assert.match(r.out, /would append \d+ records, \d+ bytes/);
+  assert.doesNotMatch(r.out, /nothing to migrate/);
+  assert.deepEqual(listing(g.root), before);
+});
+
+test('migrate exits 2 for a graph with no _version.json that would refuse', (t) => {
+  const g = fixture(t, { unmappable: 'no-id', version: null });
+  const before = listing(g.root);
+  const r = cli(g.root, ['--json']);
+  assert.equal(r.code, 2);
+  const body = JSON.parse(r.out);
+  assert.equal(body.state, 'would-refuse');
+  assert.equal(body.version, 0);
+  assert.equal(body.assumed, 3);
+  const text = cli(g.root);
+  assert.equal(text.code, 2);
+  assert.match(text.out, /^This project has no _version.json but holds a graph/);
+  assert.match(text.out, /UNMAPPED\s+1 copies/);
+  assert.deepEqual(listing(g.root), before, 'a refusing dry run writes nothing');
+});
+
+test('migrate answers empty, assumed v3, for a graph with no pins and no _version.json', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-migrate-cli-'));
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  const paths = projectPaths(root);
+  fs.mkdirSync(paths.graphDir, { recursive: true });
+  for (const [id, parent] of [['n1', null], ['n2', 'n1']]) {
+    fs.writeFileSync(path.join(paths.graphDir, `${id}.json`), JSON.stringify({
+      id, parent_id: parent, created_at: 1760000000000, mounts: [], store: {}, comments: [],
+    }));
+  }
+  fs.writeFileSync(paths.meta, JSON.stringify({ active: 'n2', lock: null }));
+  const before = listing(root);
+  const r = cli(root, ['--json']);
+  assert.equal(r.code, 0, r.err);
+  const body = JSON.parse(r.out);
+  assert.equal(body.state, 'empty');
+  assert.equal(body.version, 0);
+  assert.equal(body.assumed, 3);
+  const text = cli(root);
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /^This project has no _version.json but holds a graph: the daemon reads it as v3/);
+  assert.match(text.out, /No comment pins in this project/);
+  assert.deepEqual(listing(root), before);
+});
+
+for (const [label, seed] of [
+  ['an empty graph/ (as ensureProjectDirs leaves it)', (paths) => fs.mkdirSync(paths.graphDir, { recursive: true })],
+  ['no graph/ at all', (paths) => fs.mkdirSync(paths.dir, { recursive: true })],
+]) {
+  test(`migrate answers fresh for a project with no _version.json and ${label}`, (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-migrate-cli-'));
+    t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+    const paths = projectPaths(root);
+    seed(paths);
+    const before = listing(root);
+    const r = cli(root, ['--json']);
+    assert.equal(r.code, 0, r.err);
+    const body = JSON.parse(r.out);
+    assert.equal(body.state, 'fresh');
+    assert.equal(body.version, 0);
+    assert.equal(Object.prototype.hasOwnProperty.call(body, 'assumed'), false, 'no assumed key');
+    const text = cli(root);
+    assert.equal(text.code, 0, text.err);
+    assert.equal(text.out, `This project has no _version.json yet: its first daemon boot stamps it at v${SCHEMA_VERSION} with nothing to migrate.\n`);
+    assert.deepEqual(listing(root), before);
+  });
+}
