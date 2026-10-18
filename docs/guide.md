@@ -71,6 +71,10 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 - A session keeps its newest 5000 turns.
 - A finished background shell or monitor stays listed for 30 minutes.
 - A finished agent stays listed for 30 minutes.
+- A permission, question, plan or MCP form prompt stays on record for 10 minutes after it is answered or closed, so a late second answer to it is refused.
+- Across a server restart, a session keeps at most 64 background shell and monitor rows, running ones first and then the most recently finished.
+- Across a server restart, a session keeps at most 64 agent rows, running ones first and then the most recently finished.
+- Across a server restart, a session keeps at most 32 workflow rows, running ones first and then the most recently finished.
 
 **A node's turns, in the graph.** Select a node in the graph viewer (`G`) and its inspector lists the chat turns that rode into it — **CHAT TURNS · 2**: the turn that committed it (●) and any that changed nothing on the page and folded onto it (◦), each with its prompt, time, duration, tools and files changed. A node whose turns you later rewound in the terminal keeps them, dimmed and tagged *rewound*, under a *↶ 2 of 3 turns rewound in the terminal* line, and wears a ↶ beside its glyph on the canvas; the node itself is never changed.
 
