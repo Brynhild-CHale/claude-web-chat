@@ -256,7 +256,7 @@ signal header (`A queued signal…` / `N queued signals…`) and its `- [kind] s
 lines count only the non-message items, so a batch of only messages has no header
 and no `A wake was pushed to Claude (no signals).` line. The respond-to-comment
 hint stays last. Meta: `kind` is `message` when every item is one, `batch` when
-mixed; `ids` keeps every item's queue id; no new key.
+mixed; `ids` keeps every item's queue id that fits (whole ids, then `+N`); no new key.
 
 **The message block** (`messageBlock(item)`, exported):
 
