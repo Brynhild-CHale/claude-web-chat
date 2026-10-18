@@ -190,6 +190,33 @@ test('a deliberate Set active to an older node, then a hard stop, is not rolled 
   assert.deepEqual(health.graph_integrity, { clean: true, states: {}, report: REPORT_NAME });
 });
 
+test('rolled-forward clears the pending_folded the rolled-forward node carries, so the next node does not carry it again', async (t) => {
+  const s1 = await withServer(t);
+  const { api, srv, root } = s1;
+  await turn(api, 'A', () => render(api, 'm1'));
+  await turn(api, 'folds: no surface change');
+  assert.equal(metaOf(root).pending_folded.length, 1, 'the no-change turn waits on the meta');
+  await api.post('/api/turn-begin', { message: 'B' });
+  await render(api, 'm2');
+  const B = `n${srv.graph.nextSeq}`;
+  const g = srv.graph;
+  const origSave = g.saveMeta; const origAppend = g.elements.appendCommit;
+  let armed = false;
+  g.elements.appendCommit = (node) => { const r = origAppend(node); armed = true; return r; };
+  g.saveMeta = () => { if (armed) throw new Error('injected: before meta'); return origSave(); };
+  assert.equal((await api.post('/api/turn-end', { author: 'claude' })).status, 500);
+  await s1.stop();
+  assert.equal(nodeFile(root, B).folded.length, 1, 'B carries the folded turn');
+  assert.equal(metaOf(root).pending_folded.length, 1, 'the meta was never saved after B');
+
+  const s2 = await withServer(t, { root });
+  assert.deepEqual(unclean(bootReport(root)), ['rolled-forward']);
+  assert.deepEqual(metaOf(root).pending_folded, [], 'the roll forward cleared what B carries');
+  const C = (await turn(s2.api, 'C', () => render(s2.api, 'm3'))).json.node_id;
+  assert.equal(nodeFile(root, C).parent_id, B);
+  assert.ok(!(nodeFile(root, C).folded || []).length, 'the folded turn rode onto B only');
+});
+
 // ── the two restart moments (tests/F6/restart.js) ───────────────────────────
 
 async function pinWithReplies(srv) {
@@ -357,6 +384,28 @@ test('dangling-commit-record: a node file edited to drop a copy is reported, not
   assert.equal(commitsIn(root).filter((r) => r.node === A).length, 1, 'no second record: never adopted as the node\'s truth');
   assert.ok(s2.srv.graph.nodes.has(A));
   assert.deepEqual(s2.srv.state.comments.map((p) => p.text), ['one'], 'restored as the file holds it');
+});
+
+test('copy-v-mismatch: a copy whose v is not its record\'s pin, or (on a node already not clean) whose payload is not the pinned version\'s, is named', async (t) => {
+  const s1 = await withServer(t);
+  let one = null;
+  let two = null;
+  const A = (await turn(s1.api, 'A', async () => {
+    await render(s1.api, 'm1');
+    one = addPin(s1.srv, 'one', 'm1');
+    two = addPin(s1.srv, 'two', 'm1');
+  })).json.node_id;
+  await s1.stop();
+  const root = s1.root;
+  const a = nodeFile(root, A);
+  // `one` keeps its v and loses its text; `two` claims a v its record does not pin.
+  a.comments = a.comments.map((c) => (c.id === one.id ? { ...c, text: 'tampered' } : c.id === two.id ? { ...c, v: 2 } : c));
+  fs.writeFileSync(path.join(graphDir(root), `${A}.json`), JSON.stringify(a));
+
+  await withServer(t, { root });
+  const report = bootReport(root);
+  assert.deepEqual(unclean(report), ['copy-v-mismatch', 'dangling-commit-record'], JSON.stringify(report.states));
+  assert.deepEqual(report.states['copy-v-mismatch'].examples.slice().sort(), [`${A}:${one.id}@1`, `${A}:${two.id}@2`].sort());
 });
 
 test('node-pins-missing-version: a pinned version the log lost is re-appended from the copy with the same v; a second boot is clean', async (t) => {
