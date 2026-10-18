@@ -41,17 +41,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   lease first (`POST /api/writers/lease`, then the token as `X-WC-Writer`) or
   is refused `403 {writer: 'unverified'}`; a write that names a `pane:` owner
   is refused, and so is a render or markdown write sent from a browser page, a
-  pane script's `fetch` included (a clear from one loses its owner). Ownership is otherwise advisory
-  until writer identity's validation gate (GT-15) passes: a tokenless local
+  pane script's `fetch` included (a clear from one loses its owner). Ownership
+  is otherwise advisory until writer identity's validation gate (GT-15)
+  passes: a tokenless local
   caller, such as a Claude Code session still running the old MCP server, is
   still taken as Claude. See [`driving-the-surface.md`](docs/driving-the-surface.md).
 - **`file-editor` asks to be trusted again.** Its `service.js` changed (see
   *Security*), and a service's code is part of its approval, so every project
   that uses it asks for `claude-web-chat trust file-editor` once more.
 - **Working on web-chat itself: restart and refresh after an edit to the
-  anchor resolver or the mount runtime.** `lib/core/anchors.js` and
-  `public/mount-runtime.js` reach the chrome, previews, replays and exports
-  from a per-process memo, so an edit to either shows only after
+  anchor resolver or the mount runtime.** `lib/core/anchors.js` reaches the
+  chrome, and it and `public/mount-runtime.js` reach previews, replays and
+  exports, from a per-process memo, so an edit to either shows only after
   `claude-web-chat restart` and a browser refresh.
 
 ### Changed
