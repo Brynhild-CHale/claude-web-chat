@@ -35,7 +35,7 @@ function writeNode(dir, n) {
 }
 
 test('graph: null, {} and truncated node files are skipped and the daemon still boots', async (t) => {
-  const { api } = await withServer(t, {
+  const { api, srv } = await withServer(t, {
     seed: ({ webChatDir }) => {
       const dir = graphDir(webChatDir);
       writeNode(dir, node('n0', null));
@@ -58,6 +58,12 @@ test('graph: null, {} and truncated node files are skipped and the daemon still 
 
   const mounts = await api.get('/api/mounts');
   assert.deepEqual(mounts.json.mounts.map((m) => m.id), ['p'], 'the active node still restores its surface');
+
+  // graph.loadReport names each file the load set aside, and its aside (U203).
+  const report = srv.graph.loadReport;
+  assert.deepEqual(report.nodes_aside.map((a) => a.file).sort(), ['n2.json', 'n3.json', 'n4.json', 'n5.json']);
+  for (const a of report.nodes_aside) assert.match(a.aside, new RegExp(`^${a.file.replace('.', '\\.')}\\.corrupt-`));
+  assert.equal(report.meta_aside, null);
 });
 
 test('graph: a node whose id is not n<digits> is skipped rather than seeding a NaN sequence', async (t) => {
@@ -80,7 +86,7 @@ test('graph: a truncated _meta.json boots on the latest node and does NOT delete
   // torn _meta.json → active read as null (indistinguishable from a deliberate
   // wipe) → clearLiveMounts → loadDraft(…, null) → every draft looks stale →
   // unlink. The draft is the ONLY copy of uncommitted work.
-  const { api, webChatDir } = await withServer(t, {
+  const { api, webChatDir, srv } = await withServer(t, {
     seed: ({ webChatDir }) => {
       const dir = graphDir(webChatDir);
       writeNode(dir, node('n0', null));
@@ -106,6 +112,9 @@ test('graph: a truncated _meta.json boots on the latest node and does NOT delete
   // test/graph-persistence.test.js.)
   const meta = JSON.parse(fs.readFileSync(path.join(webChatDir, 'graph', '_meta.json'), 'utf8'));
   assert.equal(meta.active, 'n1');
+  // graph.loadReport names the torn meta's aside (U203).
+  assert.match(srv.graph.loadReport.meta_aside.aside, /^_meta\.json\.corrupt-/);
+  assert.deepEqual(srv.graph.loadReport.nodes_aside, []);
 });
 
 test('graph: a _meta.json that parses to a non-object takes the same recovery', async (t) => {
