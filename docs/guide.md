@@ -198,6 +198,7 @@ trust [name]        approve (or --deny) a component's host-side service.js;
 version             which version, and which tree it is actually running from
 stop | restart      stop or bounce the background server
 unlock              clear a turn lock orphaned by an interrupted turn
+migrate             show what the comment migration will do (a dry run; the daemon migrates at its next boot)
 export [node]       write a node to a self-contained .html (--replay / --gif / --mp4 / --webm: a replay of its lineage;
                     --script <file.json>: a replay Claude or you scripted; --prompts puts your prompts in its captions)
 docs [name]         print a bundled contract doc; with no name, list them

@@ -18,8 +18,8 @@ function tmpState() {
 const readVersion = (f) => JSON.parse(fs.readFileSync(f, 'utf8')).version;
 const writeVersion = (f, v) => fs.writeFileSync(f, JSON.stringify({ version: v }, null, 2) + '\n');
 
-test('SCHEMA_VERSION is 3 (v2→v3 moved brand images under their theme)', () => {
-  assert.equal(SCHEMA_VERSION, 3);
+test('SCHEMA_VERSION is 4 (v3→v4 moved comment pins into the element log)', () => {
+  assert.equal(SCHEMA_VERSION, 4);
 });
 
 test('first-touch: a stateDir with no _version.json is stamped at SCHEMA_VERSION without migrating', () => {
@@ -160,4 +160,58 @@ test('_version.json is written atomically and keeps its trailing newline', () =>
   assert.equal(fs.readFileSync(versionFile, 'utf8'), `{\n  "version": ${SCHEMA_VERSION}\n}\n`);
   // A first touch also seeds the new-project look (theme-default.json).
   assert.deepEqual(fs.readdirSync(stateDir).sort(), ['_version.json', 'theme-default.json'], 'no temp file left behind');
+});
+
+// ── the runner's contexts, refusals and return values (v3→v4, U204) ──────────
+
+test('a daemon-only step is deferred outside the daemon: nothing stamped, one line, {deferred}', () => {
+  const { stateDir, versionFile } = tmpState();
+  writeVersion(versionFile, 1);
+  let ran = [];
+  const only = Object.assign((d) => { ran.push(2); }, { daemonOnly: true, what: 'test step' });
+  const steps = { 1: () => { ran.push(1); }, 2: only };
+  const warned = captureStderr(() => {
+    const out = run(stateDir, { steps, target: 3, context: 'install' });
+    assert.deepEqual(out, { deferred: 2 });
+  });
+  assert.deepEqual(ran, [1], 'the step before it ran; the daemon-only one did not');
+  assert.equal(readVersion(versionFile), 2, 'stamped up to the deferred step, not past it');
+  assert.match(warned, /v2→v3 test step runs in the daemon at its next boot/);
+  ran = [];
+  captureStderr(() => assert.deepEqual(run(stateDir, { steps, target: 3 }), { ok: true, version: 3 }));
+  assert.deepEqual(ran, [2], 'the default context is the daemon\'s: it runs');
+});
+
+test('a refused step stops the run, leaves the version, and names the report', () => {
+  const { stateDir, versionFile } = tmpState();
+  writeVersion(versionFile, 2);
+  const steps = { 2: () => ({ refused: true, report_file: '/x/migration-report.json' }) };
+  const warned = captureStderr(() => {
+    assert.deepEqual(run(stateDir, { steps, target: 3 }), { refused: { from: 2, report: '/x/migration-report.json' } });
+  });
+  assert.equal(readVersion(versionFile), 2);
+  assert.match(warned, /refused \(see \/x\/migration-report\.json\)/);
+  assert.match(warned, /claude-web-chat migrate/);
+});
+
+test('run() answers what it did: current, first touch, newer, gap', () => {
+  const a = tmpState();
+  captureStderr(() => assert.deepEqual(run(a.stateDir), { ok: true, version: SCHEMA_VERSION }));
+  captureStderr(() => assert.deepEqual(run(a.stateDir), { ok: true, version: SCHEMA_VERSION }));
+  writeVersion(a.versionFile, SCHEMA_VERSION + 1);
+  captureStderr(() => assert.deepEqual(run(a.stateDir), { ok: true, version: SCHEMA_VERSION + 1 }));
+  const b = tmpState();
+  writeVersion(b.versionFile, 1);
+  captureStderr(() => assert.deepEqual(run(b.stateDir, { steps: {}, target: 3 }), { gap: 1 }));
+});
+
+test('the real v3→v4 step is registered, daemon-only, and migrates an empty v3 project to 4 writing nothing', () => {
+  const { stateDir, versionFile } = tmpState();
+  writeVersion(versionFile, 3);
+  assert.equal(require('../lib/update/migrations/v3-to-v4').daemonOnly, true);
+  captureStderr(() => assert.deepEqual(run(stateDir, { context: 'install' }), { deferred: 3 }));
+  assert.equal(readVersion(versionFile), 3);
+  captureStderr(() => assert.deepEqual(run(stateDir), { ok: true, version: 4 }));
+  assert.equal(readVersion(versionFile), 4);
+  assert.deepEqual(fs.readdirSync(stateDir), ['_version.json']);
 });
