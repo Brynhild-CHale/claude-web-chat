@@ -20,6 +20,7 @@ const { JSDOM } = require('jsdom');
 const { withServer } = require('../test-support/helpers');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { previewTemplate, renderPreviewHtml } = require('../lib/server/preview');
+const { scriptElement: anchorsScript } = require('../lib/server/runtime/anchors-src');
 const {
   assembleReplay, normalizeReplayOpts, playerSource, replayOpts,
 } = require('../lib/server/replay/document');
@@ -67,11 +68,14 @@ test('replay doc: nasty prompts, replies, pane html and theme css cannot break o
 
   // The frame a step becomes is the preview document itself — the same bytes
   // /preview/node would serve for that node under that theme.
-  const [a, b, c] = payload.frame;
-  const frame = a + payload.themes[0] + b + payload.steps[0].node + c;
+  const [a, b, c, d] = payload.frame;
+  const frame = a + payload.themes[0] + b + c + payload.steps[0].node + d;
   assert.equal(frame, renderPreviewHtml(steps[0].node, themes[0]));
   const f = parse(frame.replace('<head>', '<head><script id="wc-replay-data" type="application/json">{}</script>'));
-  assert.equal(f.scripts.length, 5, 'the filled frame holds its own four scripts — Escape relay, runtime, anchor resolver, node (+ the probe) — the pane html stayed data');
+  assert.equal(f.scripts.length, 4, 'a frame for a step without element records holds its own three scripts — Escape relay, runtime, node (+ the probe) — the pane html stayed data');
+  const pinned = parse((a + payload.themes[0] + b + anchorsScript() + c + payload.steps[0].node + d)
+    .replace('<head>', '<head><script id="wc-replay-data" type="application/json">{}</script>'));
+  assert.equal(pinned.scripts.length, 5, 'one for a step with element records holds four — Escape relay, runtime, anchor resolver, node (+ the probe)');
   assert.equal(f.doc.querySelectorAll('style').length, 1, 'the theme css did not close the style element');
 });
 
@@ -435,9 +439,9 @@ test('include_prompts: an explicit choice on the request wins over a script\'s; 
 
 // Fill step `i`'s frame the way the player does, and run it.
 function runFrame(payload, i) {
-  const [a, b, c] = payload.frame;
+  const [a, b, c, d] = payload.frame;
   const s = payload.steps[i];
-  const dom = new JSDOM(a + payload.themes[s.theme] + b + s.node + c, { runScripts: 'dangerously' });
+  const dom = new JSDOM(a + payload.themes[s.theme] + b + c + s.node + d, { runScripts: 'dangerously' });
   const main = dom.window.document.getElementById('main');
   // markdown blocks, and the panes of each grid run (.page-run) in turn
   const items = [...main.children].flatMap((el) => (el.classList.contains('md-block')
@@ -476,7 +480,7 @@ test('replay frame = the node preview: the same bytes for a node with markdown',
   s.node = { id, mounts, markdown: [{ id: 'h', text: '# Hi' }], order: ['p', 'h'], store };
   const html = assembleReplay({ steps: [s], themes: [{}], opts: normalizeReplayOpts({}) });
   const { payload } = parse(html);
-  const [a, b, c] = payload.frame;
-  assert.equal(a + payload.themes[0] + b + payload.steps[0].node + c, renderPreviewHtml(s.node, {}));
+  const [a, b, c, d] = payload.frame;
+  assert.equal(a + payload.themes[0] + b + c + payload.steps[0].node + d, renderPreviewHtml(s.node, {}));
   assert.deepEqual(JSON.parse(payload.steps[0].node).page, [{ pane: 'p' }, { md: 'h', html: '<h1 data-slug="hi">Hi</h1>' }]);
 });
