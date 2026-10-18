@@ -322,6 +322,10 @@ test('elementsForNode: one row per element homed in the ancestry; a node holding
   // n0's view: cb@2 is homed at a descendant, listed as newer elsewhere.
   const at0 = elementsForNode(graph, log, 'n0').find((r) => r.id === 'cb');
   assert.deepEqual(at0.newer_elsewhere, [{ v: 2, home: 'n1', label: computeLabels(graph).get('n1') }]);
+  // A home node the graph has not loaded (its file set aside) cannot be shown
+  // "at nX": its version is left out of newer_elsewhere, never labelled by id.
+  const partial = { nodes: new Map([['n0', graph.nodes.get('n0')]]), topology: new Map([['n0', { ...graph.topology.get('n0'), children: [] }]]) };
+  assert.deepEqual(elementsForNode(partial, log, 'n0').find((r) => r.id === 'cb').newer_elsewhere, []);
   // Unknown node, null node, empty id: nothing visible.
   assert.deepEqual(elementsForNode(graph, log, 'nope'), []);
   assert.equal(visibleVersion(graph, log, 'ca', null), null);
