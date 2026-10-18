@@ -271,6 +271,45 @@ test('gate: F9 S-9 pane attempts 2-5 from a page script (browser headers, no tok
   assert.deepEqual(after, before, 'the panes are unchanged');
 });
 
+// U214e: the gate names the pane class. A browser request stamped with a live
+// pane (X-WC-Pane, U214c) is a pane, not the user; the gate refuses it as a
+// browser on render and markdown, so a stamped page script can never fall
+// through to advisory claude, and pane is resolveWriter's default.
+test('gate: a render or markdown from a browser carrying X-WC-Pane (a live pane) is refused 403; a stamped clear drops its owner', async (t) => {
+  const { api, port } = await withServer(t);
+  await api.post('/api/render', { id: 'stamper', html: '<p>s</p>' });
+  await require('../lib/driver').createDriver({ owner: 'x', port }).render({ id: 'svc', html: '<p>svc</p>' });
+  const stamped = { ...BROWSER, [PANE_HEADER]: 'stamper' };
+  for (const [route, body] of ROUTES) {
+    for (const extra of [{}, { owner: 'claude' }, { owner: 'service:x' }, { owner: 'pane:stamper' }]) {
+      const r = await client.request(port, 'POST', route, { ...body('pane-new'), ...extra }, { headers: stamped });
+      assert.equal(r.status, 403, `${route} ${JSON.stringify(extra)} → ${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.writer, 'browser');
+    }
+  }
+  const clr = await client.request(port, 'POST', '/api/clear', { id: 'svc', owner: 'service:x' }, { headers: stamped });
+  assert.equal(clr.status, 200);
+  assert.equal(clr.body.ok, false, 'the stamped clear\'s owner was dropped, so the clobber guard holds');
+  const { mounts, markdown } = (await api.get('/api/mounts')).json;
+  assert.deepEqual(mounts.map((m) => m.id).sort(), ['stamper', 'svc'], 'nothing landed');
+  assert.deepEqual(markdown, []);
+});
+
+test('writers: pane is resolveWriter\'s default — a stamped local browser request naming a live pane reads pane without {pane: true}', (t) => {
+  const root = tmpRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const writers = createWriters({
+    paths: projectPaths(root), state: { mounts: new Map([['live', {}]]) }, audience: createAudience({ root, configFile: null }),
+  });
+  t.after(() => writers.stop());
+  const stamped = reqOf({ ...BROWSER, [PANE_HEADER]: 'live' });
+  assert.deepEqual(writers.resolveWriter(stamped, {}), { class: 'pane', owner: 'pane:live', verified: false });
+  assert.deepEqual(writers.resolveWriter(stamped, {}, { pane: true }), { class: 'pane', owner: 'pane:live', verified: false });
+  assert.deepEqual(writers.resolveWriter(stamped, {}, { pane: false }), { class: 'user', owner: 'user', verified: false });
+  assert.equal(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'gone' }), {}).class, 'user', 'a stamp naming no live pane');
+  assert.equal(writers.resolveWriter(reqOf({ [PANE_HEADER]: 'live' }), {}).class, 'claude', 'a non-browser caller is never a pane');
+});
+
 // ── lib/mcp/client ──────────────────────────────────────────────────────────
 
 // Load a fresh copy of the shim with WEB_CHAT_MCP_SERVER set (or unset), and a

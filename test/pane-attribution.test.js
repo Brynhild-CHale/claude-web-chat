@@ -195,8 +195,10 @@ test('resolveWriter: a local browser request stamped with a live pane is that pa
   assert.deepStrictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: '' }), {}, P).class, 'user', 'an empty stamp claims nothing');
   assert.strictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'evil', 'X-WC-Remote': '1' }), {}, P).class, 'remote', 'remote is never a pane');
   assert.strictEqual(writers.resolveWriter(reqOf({ [PANE_HEADER]: 'evil' }), {}, P).class, 'claude', 'a non-browser caller keeps today\'s rule (advisory claude)');
-  assert.strictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'evil' }), {}).class, 'user',
-    'a caller that does not ask (the render/markdown/clear gate) gets user, which it refuses');
+  assert.deepStrictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'evil' }), {}), { class: 'pane', owner: 'pane:evil', verified: false },
+    'pane is the default (U214e): the render/markdown/clear gate asks too, and refuses a browser pane');
+  assert.strictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'evil' }), {}, { pane: false }).class, 'user',
+    'a caller that opts out ({pane: false}) gets user');
   state.mounts.delete('evil');
   assert.strictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'evil' }), {}, P).class, 'user', 'liveness is read per request');
   assert.deepStrictEqual(writers.resolveWriter(reqOf({ ...BROWSER, [PANE_HEADER]: 'p', [WRITER_HEADER]: 'bogus' }), {}, P), { stale: true },
