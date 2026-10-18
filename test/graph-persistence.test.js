@@ -45,7 +45,7 @@ function asideFor(dir, base) {
 }
 
 test('graph: unreadable nodes and a torn meta are moved aside, and their ids stay claimed', async (t) => {
-  const { api, webChatDir } = await withServer(t, {
+  const { api, webChatDir, srv } = await withServer(t, {
     seed: ({ webChatDir }) => {
       const dir = graphDir(webChatDir);
       writeNode(dir, node('n0', null));
@@ -79,6 +79,11 @@ test('graph: unreadable nodes and a torn meta are moved aside, and their ids sta
   );
   // …and the heal still landed a readable meta in its place.
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, '_meta.json'), 'utf8')).active, 'n1');
+  // graph.loadReport names each file set aside and the name it was kept under (U203).
+  const report = srv.graph.loadReport;
+  assert.deepEqual(report.nodes_aside.map((a) => [a.file, a.aside]).sort(),
+    [['n2.json', asideFor(dir, 'n2.json')[0]], ['n3.json', asideFor(dir, 'n3.json')[0]]]);
+  assert.equal(report.meta_aside.aside, asideFor(dir, '_meta.json')[0]);
 
   // The ids of the skipped nodes are spent. Seeding nextSeq from the nodes that
   // LOADED used to leave it at 2, so these two commits wrote over both files.
