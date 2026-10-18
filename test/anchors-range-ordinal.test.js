@@ -238,6 +238,23 @@ test('ordinal: the count unchanged and a clear context winner elsewhere -> re-re
   assert.equal(ans.range.toString(), 'QQ');
 });
 
+test('ordinal: several tied and the ordinal\'s occurrence outside the tie -> the ordinal is passed over, position among the tied', () => {
+  // Recorded on the third of three occurrences (context BASE + E); the edit
+  // gives the first two that whole context and the third a foreign one, the
+  // count unchanged: the ordinal names an occurrence the context rules out.
+  const E = 'GHIJKLMNOPRSTUVWXYZ#$%!()*+,-./:';
+  const from = pane(`<p>${'0'.repeat(32)}QQ${'1'.repeat(32)}${'2'.repeat(32)}QQ${'3'.repeat(32)}${BASE}QQ${E}</p>`);
+  const n = from.querySelector('p').firstChild;
+  const r = doc.createRange();
+  r.setStart(n, n.data.lastIndexOf('QQ'));
+  r.setEnd(n, n.data.lastIndexOf('QQ') + 2);
+  const rec = wire(anchors.recordRange(from, r));
+  assert.deepStrictEqual([rec.pos.start, rec.ordinal], [164, { index: 2, of: 3 }]);
+  const to = pane(`<p>${BASE}QQ${E}${BASE}QQ${E}${'0'.repeat(32)}QQ${'~'.repeat(32)}</p>`);
+  const ans = anchors.resolveRange(to, rec);
+  assert.deepStrictEqual([ans.state, ans.how, ans.start, ans.occ], ['re-resolved', 'position', 98, 3]);
+});
+
 test('ordinal: the count changed (a row deleted, a twin inserted) -> silent; the margin rule alone answers', () => {
   const row = '<li>A repeated row that reads exactly the same every time.</li>';
   const from = pane(`<ul>${row.repeat(5)}</ul>`);
