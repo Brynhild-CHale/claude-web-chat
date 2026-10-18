@@ -245,6 +245,7 @@ function nodeFile(id, parent, over = {}) {
 // Seed a project: node files whose copies carry no v, and a log whose commit
 // records pin them (written with createElementLog before the daemon boots).
 function seedGraph(webChatDir, { nodes, records, active }) {
+  existingProject({ webChatDir }); // a v4 log seeded by hand: at SCHEMA_VERSION, no migration runs (U246)
   const gdir = path.join(webChatDir, 'graph');
   fs.mkdirSync(gdir, { recursive: true });
   for (const n of nodes) fs.writeFileSync(path.join(gdir, `${n.id}.json`), JSON.stringify(n));
