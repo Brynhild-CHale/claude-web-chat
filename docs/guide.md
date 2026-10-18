@@ -71,7 +71,7 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 - A session keeps its newest 5000 turns.
 - A finished background shell or monitor stays listed for 30 minutes.
 - A finished agent stays listed for 30 minutes.
-- A permission, question or plan prompt stays on record for 10 minutes after it is answered or closed, so a late second answer to it is refused.
+- A permission, question, plan or MCP form prompt stays on record for 10 minutes after it is answered or closed, so a late second answer to it is refused.
 - Across a server restart, a session keeps at most 64 background shell and monitor rows, running ones first and then the most recently finished.
 - Across a server restart, a session keeps at most 64 agent rows, running ones first and then the most recently finished.
 - Across a server restart, a session keeps at most 32 workflow rows, running ones first and then the most recently finished.

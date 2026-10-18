@@ -89,6 +89,8 @@ test('the values are unchanged (no retention value moved with the table)', () =>
   assert.equal(valueOf('tasks-persist-rows'), 64);
   assert.equal(valueOf('agents-persist-rows'), 64);
   assert.equal(valueOf('workflows-persist-rows'), 32);
+  assert.equal(retention('asks-resolved-keep').unit, 'ms');
+  for (const id of ['tasks-persist-rows', 'agents-persist-rows', 'workflows-persist-rows']) assert.equal(retention(id).unit, 'rows per session', `${id}: its unit`);
 });
 
 test('each owning module keeps its named export, equal to its row, and takes the value from ./retention', () => {
