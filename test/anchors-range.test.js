@@ -214,7 +214,12 @@ test('resolveRange: an occurrence within ctx_n characters of the pane start is s
   const rec = wire(anchors.recordRange(root, rangeIn(root, 'dup')));
   assert.deepStrictEqual([rec.pos.start, rec.quote.prefix], [2, 'A ']);
   const ans = anchors.resolveRange(mount(html), rec);
-  assert.deepStrictEqual([ans.state, ans.how, ans.start, ans.occ], ['exact', 'context', 2, 9]);
+  // The short prefix leads by 1 character of the 34 recorded, within
+  // CONFIG.margin (U242): the record's own ordinal decides, re-resolved; the
+  // integer-lead pick ({margin: 0}) is exact on the same occurrence.
+  assert.deepStrictEqual([ans.state, ans.how, ans.start, ans.occ], ['re-resolved', 'ordinal', 2, 9]);
+  const lead = anchors.resolveRange(mount(html), rec, { margin: 0 });
+  assert.deepStrictEqual([lead.state, lead.how, lead.start, lead.occ], ['exact', 'context', 2, 9]);
 });
 
 test('resolveRange: identical rows with identical contexts -> re-resolved/position, never exact', () => {
@@ -223,7 +228,7 @@ test('resolveRange: identical rows with identical contexts -> re-resolved/positi
   const rec = wire(anchors.recordRange(root, rangeIn(root, 'reads exactly', 2)));
   const ans = anchors.resolveRange(root, rec);
   checkAnswer(ans);
-  assert.deepStrictEqual([ans.state, ans.how, ans.occ], ['re-resolved', 'position', 5]);
+  assert.deepStrictEqual([ans.state, ans.how, ans.occ], ['re-resolved', 'ordinal', 5]);
   assert.strictEqual(ans.range.startContainer, root.querySelectorAll('li')[2].firstChild, 'the occurrence nearest the recorded start');
   // A context tie between two rows, the recorded one deleted: still position, re-resolved.
   const less = mount(`<ul>${row.repeat(4)}</ul>`);
