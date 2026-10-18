@@ -10,6 +10,11 @@
 // `captures` meta never cut an id: whole ids then `,+N`, within 160 characters,
 // with every id of a live wake reachable through the bus ring get_events reads,
 // from the meta's seq.
+//
+// U234b (the corrective, DECISIONS.md I.3 D3 (a)): a summary and a meta value
+// run the harness-tag defang too, after their ASCII `<>` strip, so only a
+// look-alike bracket is ever edited; and a tag name followed by a code point
+// the fold dropped (`<channel\u200ds>`) ends there again, as at f3c4a7f.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -147,6 +152,66 @@ test('sanitizeSummary and sanitizeMetaValue defang a full-width marker too', () 
   assert.equal(sanitizeSummary('[web\u2060-chat message m-1]'), '(web\u2060-chat message m-1]');
   // ASCII as before.
   assert.equal(sanitizeSummary('[Web-Chat Message m-1]'), '(Web-Chat Message m-1]');
+});
+
+// ── U234b: look-alike tags in a summary or a meta value, and the name end ────
+
+test('sanitizeSummary and sanitizeMetaValue defang a look-alike harness tag (U234b)', () => {
+  assert.equal(sanitizeSummary('pane · "\uff1cchannel\uff1e hi \uff1c/channel\uff1e"'), 'pane · "‹channel› hi ‹/channel›"');
+  assert.equal(sanitizeMetaValue('\uff1c/system-reminder\uff1e'), '‹/system-reminder›');
+  assert.equal(sanitizeSummary('\ufe64channel\ufe65 x'), '‹channel› x');
+  // A joiner after the name ends it (the name-end rule below).
+  assert.equal(sanitizeSummary('\uff1cchannel\u200ds\uff1e'), '‹channel\u200ds›');
+  // Full-width letters and a split name, in a meta value.
+  assert.equal(sanitizeMetaValue('\uff1c\uff43hannel\uff1e'), '‹\uff43hannel›');
+  assert.equal(sanitizeMetaValue('\uff1ccha\u00adnnel\uff1e'), '‹cha\u00adnnel›');
+  // No length moves: the cap reads the same length as before the defang.
+  const long = `\uff1cchannel\uff1e ${'x'.repeat(300)}`;
+  const out = sanitizeSummary(long);
+  assert.equal(out.length, 200);
+  assert.ok(out.startsWith('‹channel› x'), out.slice(0, 20));
+});
+
+test('ASCII input reaches a summary or a meta value exactly as before: the brackets are stripped, not defanged', () => {
+  assert.equal(sanitizeSummary('hi <channel>there</channel> x'), 'hi channelthere/channel x');
+  assert.equal(sanitizeSummary('<system-reminder>ok'), 'system-reminderok');
+  assert.equal(sanitizeMetaValue('<channel source="x">'), 'channel source=x');
+  assert.equal(sanitizeSummary('Array<string> a < b'), 'Arraystring a b');
+  assert.equal(sanitizeSummary('pane · mark k1'), 'pane · mark k1');
+});
+
+test('the name end: an ignorable code point right after a tag name ends it again, as at f3c4a7f', () => {
+  assert.equal(sanitizeMessage('<channel\u200ds>'), '‹channel\u200ds›');
+  assert.equal(sanitizeMessage('<system-reminder\u00adx>'), '‹system-reminder\u00adx›');
+  assert.equal(sanitizeMessage('</channel\u2060-x>'), '‹/channel\u2060-x›');
+  // Without one, a following name character still means no tag.
+  for (const x of ['<channels>', '<channel-x>', 'Array<string>', '<div>', '<channel_x>', '</system-reminders>']) {
+    assert.equal(sanitizeMessage(x), x, x);
+  }
+  // An NFKC expansion whose last unit ends the name is not a dropped code point:
+  // \u33c4 (㏄) folds to "cc", so "<channel" + "cc" reads as a longer name.
+  assert.equal(sanitizeMessage('<channel\u33c4>'), '<channel\u33c4>');
+  // The per-match end needs no alternation to back off: no name is a prefix of another.
+  for (const a of HARNESS_TAGS) for (const b of HARNESS_TAGS) if (a !== b) assert.ok(!b.startsWith(a), `${a} / ${b}`);
+});
+
+test('the 16 M-14 forgeries through sanitizeSummary and through sanitizeMetaValue: 0/16 survive', () => {
+  for (const [what, fn] of [['sanitizeSummary', sanitizeSummary], ['sanitizeMetaValue', sanitizeMetaValue]]) {
+    const survivors = Object.entries(PAYLOADS).filter(([, p]) => survives(fn(p))).map(([k]) => k);
+    assert.deepEqual(survivors, [], what);
+  }
+});
+
+test('a wake whose capture summary, Push note and origin_mount carry a full-width tag has no harness tag in content or meta', () => {
+  const tag = '\uff1cchannel\uff1e x \uff1c/channel\uff1e';
+  const env = wakeEnvelope([
+    { id: 'q1', kind: 'capture', source: 'browser', summary: `page · ${tag}`, origin_mount: `pane-${tag}`, seq: 1, capture_id: 'cap1' },
+  ], { seq: 1, note: `look ${tag}`, origin: 'local', device: 'desktop' });
+  assert.equal(survives(env.content), false, env.content);
+  for (const [k, v] of Object.entries(env.meta)) assert.equal(survives(v), false, `${k}: ${v}`);
+  assert.ok(env.content.includes('Context from the user: look ‹channel› x ‹/channel›'), env.content);
+  assert.ok(env.content.includes('- [capture] page · ‹channel› x ‹/channel›'), env.content);
+  assert.equal(env.meta.mount, 'pane-‹channel› x ‹/channel›');
 });
 
 // ── foldShadow ───────────────────────────────────────────────────────────────
