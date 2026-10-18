@@ -407,8 +407,9 @@ test('S-11: after two committed turns, each adding a private pin, no remote-basi
 // but a local browser.
 const REVIEWED = new Map([
   ['comments.js POST /api/comments', 'a write: answers the pin it just made, to its maker'],
-  ['comments.js PATCH /api/comments/:id', 'a write (edit): finds the pin by id and answers it (see U213\'s hand-off, open issue: the write answers)'],
-  ['comments.js POST /api/comments/:id/reply', 'a write (reply): finds the pin by id and answers it (see U213\'s hand-off, open issue: the write answers)'],
+  ['comments.js PATCH /api/comments/:id', 'a write (edit): finds the pin by id and answers it — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
+  ['comments.js POST /api/comments/:id/reply', 'a write (reply): finds the pin by id and answers it — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
+  ['comments.js DELETE /api/comments/:id', 'a write (delete): finds the pin by id to gate it and answers only its id — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
   ['graph.js fn:execWipe', 'deletes the pins whose item is gone (deleteComment); never serves'],
   ['graph.js fn:execNewGraph', 'deletes every pin (deleteComment); never serves'],
   ['graph.js GET /api/graph/diff', 'diffNodes compares pages, panes, store and theme (lib/server/diff.js) — never comments'],
@@ -550,6 +551,45 @@ function privateCensus(files) {
 
 const routeFiles = (dir = path.join(REPO_ROOT, 'lib/server/routes')) => fs.readdirSync(dir)
   .filter((f) => f.endsWith('.js')).map((f) => path.join(dir, f));
+
+// ── the write routes (U214c; U213's open issue, DECISIONS A2) ──────────────
+// PATCH, POST /:id/reply and DELETE find a pin by id and answer it (or act on
+// it). On a private pin, a caller that does not see private pins
+// (audience.seesPrivate false: a remote viewer at any level, lib/client) gets
+// the GET's answer — 404 {error:'not found', id}, the claude-reply gate's
+// 404-not-403 rule — and the pin is left exactly as it was.
+test('the write routes: on a private pin, a remote full viewer\'s PATCH {}, PATCH {shared:true}, user reply and DELETE (and lib/client\'s) answer 404; nothing carries the text; the pin is unchanged', async (t) => {
+  const d = await boot(t, ['full']);
+  const { api, call } = d.full;
+  const ids = await twoPins(api);
+  const pinOf = async () => (await ok(api.get('/api/comments'), 'local read')).comments.find((c) => c.id === ids.priv);
+  const before = await pinOf();
+  assert.ok(before && before.text === PRIVATE && before.shared === false, 'the private pin is there');
+  const shape = (c) => ({ id: c.id, text: c.text, shared: c.shared, replies: c.replies || null, seq: c.seq });
+
+  const attempts = [
+    ['PATCH {}', 'PATCH', `/api/comments/${ids.priv}`, {}],
+    ['PATCH {shared:true}', 'PATCH', `/api/comments/${ids.priv}`, { shared: true }],
+    ['user reply', 'POST', `/api/comments/${ids.priv}/reply`, { text: 'a remote reply', author: 'user' }],
+    ['DELETE', 'DELETE', `/api/comments/${ids.priv}`, null],
+  ];
+  for (const [label, method, p, body] of attempts) {
+    for (const [who, headers] of [['remote full', REMOTE], ['lib/client', {}]]) {
+      const r = await call(method, p, body, headers);
+      assert.equal(r.status, 404, `${who} ${label}: ${r.status} ${JSON.stringify(r.body)}`);
+      assert.deepStrictEqual(r.body, { error: 'not found', id: ids.priv }, `${who} ${label}: the GET's answer`);
+      assert.ok(!has(r.body, PRIVATE), `${who} ${label}: no private text`);
+      const now = await pinOf();
+      assert.ok(now, `${who} ${label}: the pin is still there`);
+      assert.deepStrictEqual(shape(now), shape(before), `${who} ${label}: the pin is unchanged`);
+    }
+  }
+  // The shared pin is not gated: a remote full viewer still edits it.
+  const sharedEdit = await call('PATCH', `/api/comments/${ids.shared}`, { text: 'edited remotely' }, REMOTE);
+  assert.equal(sharedEdit.status, 200, JSON.stringify(sharedEdit.body));
+  // The local browser still acts on the private pin.
+  await ok(api.patch(`/api/comments/${ids.priv}`, { text: PRIVATE + '-2' }), 'local edit of the private pin');
+});
 
 test('census: every .comments read and whole-node body in lib/server/routes is keyed in PRIVATE_RULES or reviewed; the scan is live', (t) => {
   const { problems, found } = privateCensus(routeFiles());

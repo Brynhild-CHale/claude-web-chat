@@ -8,6 +8,7 @@
 // shared pins via get_comments.
 import { view, $, hostFor } from './state.js';
 import { esc } from './esc.js';
+import { deviceKind } from './viewport.js';
 
 // The cadences (design spec §10.1: each perpetual chrome poller is ONE
 // setInterval). The WS `comments` frame is the primary path; the fetch is a
@@ -203,7 +204,7 @@ export function initComments() {
       closePop();
       setPinMode(false);
       try {
-        await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, shared, anchor }) });
+        await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, shared, anchor, device: deviceKind() }) });
       } catch (_) {}
       refresh();
     });
@@ -292,7 +293,7 @@ export function initComments() {
       let r = null;
       try {
         const resp = await fetch('/api/comments/' + encodeURIComponent(pin.id) + '/reply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, author: 'user' }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, author: 'user', device: deviceKind() }),
         });
         if (resp.ok) r = await resp.json();
       } catch (_) {}
@@ -328,12 +329,12 @@ export function initComments() {
       setPinMode(false);
     });
     el.querySelector('.pin-share-cb').addEventListener('change', async (ev) => {
-      try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: ev.target.checked }) }); } catch (_) {}
+      try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: ev.target.checked, device: deviceKind() }) }); } catch (_) {}
       refresh();
     });
     el.querySelector('.pin-del').addEventListener('click', async () => {
       closePop();
-      try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'DELETE' }); } catch (_) {}
+      try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: deviceKind() }) }); } catch (_) {}
       refresh();
     });
   }
