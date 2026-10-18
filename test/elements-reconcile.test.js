@@ -350,6 +350,29 @@ test('commit-record-without-node: a torn node file is set aside and reported in 
   assert.deepEqual(later.states['commit-record-without-node'].examples, orphan.examples);
 });
 
+test('commit-record-without-node: a node file gone outright (no aside to claim) is reported, and its id is never minted again', async (t) => {
+  const s1 = await withServer(t);
+  await turn(s1.api, 'A', () => render(s1.api, 'm1'));
+  const B = (await turn(s1.api, 'B', () => render(s1.api, 'm2'))).json.node_id;
+  await s1.stop(); // a hard stop
+  const root = s1.root;
+  fs.unlinkSync(path.join(graphDir(root), `${B}.json`));
+
+  const s2 = await withServer(t, { root });
+  const report = bootReport(root);
+  assert.deepEqual(unclean(report), ['commit-record-without-node'], JSON.stringify(report.states));
+  assert.deepEqual(report.states['commit-record-without-node'].detail, [{ node: B, aside: null, record: true }]);
+  const C = (await turn(s2.api, 'C', () => render(s2.api, 'm3'))).json.node_id;
+  assert.notEqual(C, B, 'the orphan record\'s id is never minted again');
+  await s2.stop();
+
+  await withServer(t, { root });
+  const later = bootReport(root);
+  assert.deepEqual(later.states['commit-record-without-node'] && later.states['commit-record-without-node'].detail,
+    [{ node: B, aside: null, record: true }], 'the orphan is still named');
+  assert.equal(commitsIn(root).filter((r) => r.node === B).length, 1, 'one record for the gone node: not shadowed by a reused id');
+});
+
 test('a node file set aside with no commit record is reported with record: false', async (t) => {
   const s1 = await withServer(t);
   await turn(s1.api, 'A', () => render(s1.api, 'm1'));
