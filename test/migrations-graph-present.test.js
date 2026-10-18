@@ -113,14 +113,31 @@ test('outside the daemon a graph-present project defers at v3 with nothing stamp
   assert.ok(!fs.existsSync(themeDefault));
 });
 
-test('an injected target 3 with a graph present: {ok, version: 3}, stamped, no step run, no seed', () => {
+for (const target of [3, 2]) {
+  test(`an injected target ${target} with a graph present: {ok, version: ${target}}, stamped, no step run, no seed`, () => {
+    const { stateDir, versionFile, graphDir, themeDefault } = tmpState();
+    seedGraph(graphDir, ['n0.json']);
+    const { ran, steps } = recorder();
+    const r = captureStderr(() => run(stateDir, { steps, target }));
+    assert.deepEqual(r.out, { ok: true, version: target });
+    assert.deepEqual(ran, []);
+    assert.equal(readVersion(versionFile), target);
+    assert.ok(!fs.existsSync(themeDefault));
+  });
+}
+
+// An unreadable graph directory counts as present (the safe side is to migrate,
+// as the torn-version branch reasons): never the new-project look.
+test('an unreadable graph/ counts as present: migrated as v3, no new-project look', { skip: process.getuid && process.getuid() === 0 ? 'root reads a 000 directory' : false }, (t) => {
   const { stateDir, versionFile, graphDir, themeDefault } = tmpState();
-  seedGraph(graphDir, ['n0.json']);
+  seedGraph(graphDir, []);
+  fs.chmodSync(graphDir, 0o000);
+  t.after(() => fs.chmodSync(graphDir, 0o755));
   const { ran, steps } = recorder();
-  const r = captureStderr(() => run(stateDir, { steps, target: 3 }));
-  assert.deepEqual(r.out, { ok: true, version: 3 });
-  assert.deepEqual(ran, []);
-  assert.equal(readVersion(versionFile), 3);
+  const r = captureStderr(() => run(stateDir, { steps, target: 4 }));
+  assert.deepEqual(r.out, { ok: true, version: 4 });
+  assert.deepEqual(ran, [3]);
+  assert.equal(readVersion(versionFile), 4);
   assert.ok(!fs.existsSync(themeDefault));
 });
 
