@@ -469,16 +469,20 @@ test('(10) the H1 rulings are built into the resolver: head_floor and ordinal on
   for (const s of GRAPH_ANCHOR_STATES) assert.ok(ANCHOR_STATES.includes(s), `${s} is an anchor state`);
 });
 
-// A FINDING, recorded as a todo rather than pinned (U240 hand-off, open issue
-// 1; U209's own open issue): a pin added and deleted before any commit leaves
-// versions no commit ever pins, and nothing records the delete (C2: no
-// tombstone), so every later boot's reconcile reports them as
+// A FINDING, recorded as a skipped test rather than pinned (U240 hand-off,
+// open issue 1; U209's own open issue): a pin added and deleted before any
+// commit leaves versions no commit ever pins, and nothing records the delete
+// (C2: no tombstone), so every later boot's reconcile reports them as
 // `uncommitted-lost` — a boot report that is never clean again, one stderr
 // line and one integrity event per boot. The fix needs an engine change (a
 // delete reason the census reads, or the state counted as normal), routed to
-// a corrective unit; this test turns green when it lands.
+// a corrective unit, which un-skips this test as its acceptance: run today it
+// fails with {"uncommitted-lost":{"count":1,"examples":["c1@1"]}}. Skipped,
+// not todo: node's reporter lists a failing todo under "failing tests", which
+// the gate's parser reads as a failing file, so the file was flagged flaky on
+// every run (U240 review r1).
 test('a pin added and deleted before any commit leaves the next boot clean', {
-  todo: 'U209 open issue: uncommitted-lost for a pin deleted before its first commit (U240 open issue 1)',
+  skip: 'U209 open issue: uncommitted-lost for a pin deleted before its first commit (U240 open issue 1); un-skip in the corrective unit',
 }, async (t) => {
   const first = await withServer(t);
   const paths = projectPaths(first.root);
