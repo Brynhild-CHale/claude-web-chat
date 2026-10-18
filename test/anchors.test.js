@@ -343,13 +343,12 @@ test('locator: the base record is the literal U202 convertAnchor writes', () => 
 
 // ── stubs, the factory contract, the browser copies ────────────────────────
 
-test('the later sections are named stubs that throw "not built"', () => {
-  // resolveAll, invalidate and watch are built (U224; test/anchors-chunk.test.js).
-  for (const name of ['recordRange', 'resolveRange', 'recordSource', 'resolveSource']) {
-    assert.equal(typeof anchors[name], 'function', name);
-    assert.throws(() => anchors[name](), new RegExp(`anchors: ${name} is not built`), name);
-  }
+test('the later sections are built, each under its one banner', () => {
+  // resolveAll, invalidate and watch are built (U224; test/anchors-chunk.test.js);
+  // recordRange, resolveRange, recordSource and resolveSource too (U222a;
+  // test/anchors-range.test.js). No stub is left.
   const src = fs.readFileSync(ANCHORS_FILE, 'utf8');
+  assert.ok(!src.includes('is not built'), 'no "not built" stub remains');
   for (const banner of ['element', 'resolveAll', 'range', 'source']) {
     assert.equal(src.split(`  // ── ${banner} ──\n`).length - 1, 1, `the ${banner} banner`);
   }
@@ -365,6 +364,7 @@ test('CONFIG and LIMITS: the pinned values, frozen', () => {
   assert.ok(Object.isFrozen(anchors.CONFIG) && Object.isFrozen(anchors.LIMITS));
   assert.deepStrictEqual({ ...anchors.CONFIG }, {
     tol: 0.8, margin: 0.05, row_tol: 0.6, row_margin: 0.05, key_w: 0.7, gate: true, tiebreak: true, head_n: 128, head_floor: true, ordinal: true,
+    ctx_n: 32, quote_max: 2000, fuzzy_tol: 0.75, source_bracket: true,
   });
   assert.deepStrictEqual({ ...anchors.LIMITS }, { fp_head: 64, row_head: 128, key: 32 });
 });
