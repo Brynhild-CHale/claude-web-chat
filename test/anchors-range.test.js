@@ -205,6 +205,18 @@ test('resolveRange: three identical occurrences with distinct contexts -> exact/
   assert.equal(ans.range.toString(), 'the same phrase');
 });
 
+test('resolveRange: an occurrence within ctx_n characters of the pane start is scored on its short prefix', () => {
+  // A periodic tail gives the first two occurrences the same 32-character
+  // suffix, so only the prefix ("A " against " xyz ") tells them apart, and the
+  // recorded one has fewer than 32 characters before it.
+  const html = '<p>A dup' + ' xyz dup'.repeat(8) + '</p>';
+  const root = mount(html);
+  const rec = wire(anchors.recordRange(root, rangeIn(root, 'dup')));
+  assert.deepStrictEqual([rec.pos.start, rec.quote.prefix], [2, 'A ']);
+  const ans = anchors.resolveRange(mount(html), rec);
+  assert.deepStrictEqual([ans.state, ans.how, ans.start, ans.occ], ['exact', 'context', 2, 9]);
+});
+
 test('resolveRange: identical rows with identical contexts -> re-resolved/position, never exact', () => {
   const row = '<li>A repeated row that reads exactly the same every time.</li>';
   const root = mount(`<ul>${row.repeat(5)}</ul>`);
@@ -484,6 +496,19 @@ test('resolveSource: a map that does not align with the block (its DOM edited) -
   assert.equal(anchors.resolveSource(c.el, c.src, sourceMap('Other text.'), rec).how, 'unaligned', 'another text\'s map');
   assert.equal(anchors.resolveSource(c.el, c.src, null, rec).how, 'unaligned');
   assert.deepStrictEqual(anchors.resolveSource(c.el, c.src, c.map, { kind: 'source' }).how, 'invalid-record');
+});
+
+test('source anchors: only the block\'s direct-child newline separators are skipped, never a newline-only text run inside one', () => {
+  // A fence holding only blank lines renders <pre><code>\n</code></pre>: that
+  // '\n' is a text run of the map, not a separator, so the block still aligns.
+  const t = 'para one\n\n```\n\n\n```\n\nafter fence text';
+  const b = block(t);
+  assert.equal(b.el.querySelector('code').textContent, '\n');
+  const rec = anchors.recordSource(b.el, selIn(b.el, 'fence text'), b.map, b.src);
+  assert.ok(rec, 'the block aligns');
+  assert.equal(b.src.slice(rec.pos.start, rec.pos.end), 'fence text');
+  const ans = anchors.resolveSource(b.el, b.src, b.map, wire(rec));
+  assert.deepStrictEqual([ans.state, ans.how, ans.range.toString()], ['exact', 'unique', 'fence text']);
 });
 
 test('source anchors over pageItems(node, {sourceMap: true}): the document path records and resolves', () => {
