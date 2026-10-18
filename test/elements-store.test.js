@@ -344,3 +344,38 @@ test('a commit after a pin added through today\'s route appends one version and 
   assert.equal(srv.state.comments[0].v, Number(v), 'the live pin is stamped');
   assert.equal(liveIsDirty(srv.graph), false, 'and the stamp is not a change');
 });
+
+test('a copy\'s own v is trusted only when the hash checks: a pin edited in place keeps a stale v, and the commit and a restore map it to the version it holds', async (t) => {
+  const { api, srv, root } = await withServer(t);
+  await api.post('/api/turn-begin', { message: 'first' });
+  await api.post('/api/render', { id: 'm1', html: '<p class="lead">Hello</p>' });
+  await api.post('/api/turn-end', { author: 'claude' });
+  const add = await api.post('/api/comments', { text: 'before', anchor: ANCHOR });
+  const id = add.json.pin.id;
+  await api.post('/api/turn-begin', { message: 'second' });
+  const a = await api.post('/api/turn-end', { author: 'claude' });
+  assert.ok(a.json.node_id);
+  const v1 = srv.state.comments[0].v;
+  assert.ok(Number.isInteger(v1), 'the commit stamped the live pin');
+  // Today's edit route spreads the pin: the new text rides with the old v.
+  const ed = await api.patch(`/api/comments/${id}`, { text: 'after' });
+  assert.equal(ed.json.pin.v, v1, 'the stale v is carried');
+  await api.post('/api/turn-begin', { message: 'third' });
+  const b = await api.post('/api/turn-end', { author: 'claude' });
+  assert.ok(b.json.node_id);
+  const rec = srv.elements.commitOf(b.json.node_id);
+  const pinned = Number(rec.pins.find((p) => p.startsWith(`${id}@`)).split('@')[1]);
+  assert.notEqual(pinned, v1, 'the stale v is not trusted');
+  const node = JSON.parse(fs.readFileSync(path.join(root, '.web-chat', 'graph', `${b.json.node_id}.json`), 'utf8'));
+  const copy = node.comments.find((c) => c.id === id);
+  assert.equal(copy.v, v1, 'the node copy keeps the v it was written with');
+  assert.ok(copyMatches(copy, srv.elements.version(id, pinned)), 'the record pins the version the copy holds');
+  assert.equal(srv.state.comments[0].v, pinned, 'the live pin is re-stamped');
+  assert.ok(srv.elements.stats().copy_v_mismatch >= 1, 'the stale v is counted');
+  // A restore of that node: the copy's v fails the hash; the record's holds.
+  const bytes = logBytes(root);
+  srv.graph.restoreLiveToNode(b.json.node_id, srv.bus);
+  assert.equal(srv.state.comments[0].v, pinned);
+  assert.equal(srv.state.comments[0].text, 'after');
+  assert.equal(logBytes(root), bytes, 'nothing appended');
+});
