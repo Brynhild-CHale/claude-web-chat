@@ -1,0 +1,511 @@
+[
+ {
+  "step": "add",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "seq": 1,
+     "shared": true,
+     "text": "is this right?"
+    }
+   ],
+   "next_cursor": 1,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "reply-user",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      }
+     ],
+     "seq": 2,
+     "shared": true,
+     "text": "is this right?"
+    }
+   ],
+   "next_cursor": 2,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "reply_comment",
+  "reply_comment": {
+   "ok": true,
+   "pin": {
+    "anchor": {
+     "mount": "f6-s14",
+     "ordinal": 0,
+     "selector": "#t",
+     "text": "Timeline"
+    },
+    "created_at": "<t>",
+    "id": "c1",
+    "replies": [
+     {
+      "at": "<t>",
+      "author": "user",
+      "text": "one more thing"
+     },
+     {
+      "at": "<t>",
+      "author": "claude",
+      "text": "answered"
+     }
+    ],
+    "seq": 3,
+    "shared": true,
+    "text": "is this right?"
+   }
+  }
+ },
+ {
+  "step": "reply-claude",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 3,
+     "shared": true,
+     "text": "is this right?"
+    }
+   ],
+   "next_cursor": 3,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "toggle-private",
+  "get_comments": {
+   "comments": [],
+   "next_cursor": 4,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "toggle-shared",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 5,
+     "shared": true,
+     "text": "is this right?"
+    }
+   ],
+   "next_cursor": 5,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "edit",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 6,
+     "shared": true,
+     "text": "is this right? (edited)"
+    }
+   ],
+   "next_cursor": 6,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "add-second",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 6,
+     "shared": true,
+     "text": "is this right? (edited)"
+    },
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "selector": "#b",
+      "text": "Body"
+     },
+     "anchor_label": "f6-s14: \"Body\"",
+     "created_at": "<t>",
+     "id": "c7",
+     "seq": 7,
+     "shared": true,
+     "text": "second"
+    }
+   ],
+   "next_cursor": 7,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "delete",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 6,
+     "shared": true,
+     "text": "is this right? (edited)"
+    }
+   ],
+   "next_cursor": 6,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "set-active-older",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 6,
+     "shared": true,
+     "text": "is this right? (edited)"
+    }
+   ],
+   "next_cursor": 6,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "reply-on-older",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      },
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "on the older node"
+      }
+     ],
+     "seq": 8,
+     "shared": true,
+     "text": "is this right? (edited)"
+    }
+   ],
+   "next_cursor": 8,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "set-active-back",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      }
+     ],
+     "seq": 6,
+     "shared": true,
+     "text": "is this right? (edited)"
+    },
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "selector": "#b",
+      "text": "Body"
+     },
+     "anchor_label": "f6-s14: \"Body\"",
+     "created_at": "<t>",
+     "id": "c7",
+     "seq": 7,
+     "shared": true,
+     "text": "second"
+    }
+   ],
+   "next_cursor": 7,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "reply-uncommitted",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      },
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "uncommitted"
+      }
+     ],
+     "seq": 9,
+     "shared": true,
+     "text": "is this right? (edited)"
+    },
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "selector": "#b",
+      "text": "Body"
+     },
+     "anchor_label": "f6-s14: \"Body\"",
+     "created_at": "<t>",
+     "id": "c7",
+     "seq": 7,
+     "shared": true,
+     "text": "second"
+    }
+   ],
+   "next_cursor": 9,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ },
+ {
+  "step": "restart-from-draft",
+  "get_comments": {
+   "comments": [
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "ordinal": 0,
+      "selector": "#t",
+      "text": "Timeline"
+     },
+     "anchor_label": "f6-s14: \"Timeline\"",
+     "created_at": "<t>",
+     "id": "c1",
+     "replies": [
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "one more thing"
+      },
+      {
+       "at": "<t>",
+       "author": "claude",
+       "text": "answered"
+      },
+      {
+       "at": "<t>",
+       "author": "user",
+       "text": "uncommitted"
+      }
+     ],
+     "seq": 9,
+     "shared": true,
+     "text": "is this right? (edited)"
+    },
+    {
+     "anchor": {
+      "mount": "f6-s14",
+      "selector": "#b",
+      "text": "Body"
+     },
+     "anchor_label": "f6-s14: \"Body\"",
+     "created_at": "<t>",
+     "id": "c7",
+     "seq": 7,
+     "shared": true,
+     "text": "second"
+    }
+   ],
+   "next_cursor": 9,
+   "respond_hint": "↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment)."
+  }
+ }
+]
