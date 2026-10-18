@@ -191,6 +191,11 @@ test('the name end: an ignorable code point right after a tag name ends it again
   // An NFKC expansion whose last unit ends the name is not a dropped code point:
   // \u33c4 (㏄) folds to "cc", so "<channel" + "cc" reads as a longer name.
   assert.equal(sanitizeMessage('<channel\u33c4>'), '<channel\u33c4>');
+  // The name's last code point may be two UTF-16 units: a mathematical bold
+  // `l` (U+1D425, folds to "l") then `s` is still a longer name, and an astral
+  // ignorable (U+E0100, a variation selector) after the name still ends it.
+  assert.equal(sanitizeMessage('<channe\u{1d425}s>'), '<channe\u{1d425}s>');
+  assert.equal(sanitizeMessage('<channel\u{e0100}s>'), '\u2039channel\u{e0100}s\u203a');
   // The per-match end needs no alternation to back off: no name is a prefix of another.
   for (const a of HARNESS_TAGS) for (const b of HARNESS_TAGS) if (a !== b) assert.ok(!b.startsWith(a), `${a} / ${b}`);
 });
