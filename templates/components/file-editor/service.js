@@ -15,8 +15,14 @@
 // `../..` AND a symlink that resolves out of the tree. While the approval
 // covers `root` (it was proven inside the project, so the user never saw its
 // value), every path is held inside the project root too, whatever `root`
-// turns into later. params.unfenced:true lifts the fence (for LLM-driven use) —
-// a per-mount setting, off by default.
+// turns into later. The project's own .web-chat/ and .git/ are never opened,
+// listed into or written, whatever the approval covers: Claude's writer token
+// and the capture token live in the first, and a pane must not read them back
+// through the store (GT-15) — nor `save` into .git/hooks, code the user's next
+// git command runs. That fence goes by file identity (device and inode), not by
+// spelling, so a case variant, a `..` detour or a link inside the project that
+// points into either is refused too. params.unfenced:true lifts every fence
+// (for LLM-driven use) — a per-mount setting, off by default.
 //
 // Everything in `editor_ctl` is attacker-shaped input: it is a store key, so
 // every script in the page and every local driver can write it. Paths go
@@ -132,7 +138,46 @@ module.exports = {
       if (unfenced) return path.resolve(root, p || '.');
       const abs = ctx.fence(root, p || '.');
       if (!abs || (projectRoot && !ctx.fence(projectRoot, abs))) throw new Error('path is outside the project root: ' + p);
+      if (inPrivateEntry(abs)) throw new Error("path is inside the project's .web-chat/ or .git/, which file-editor never opens: " + p);
       return abs;
+    }
+    // The project root's .web-chat and .git entries (and ctx.webChatDir when
+    // the daemon spells it otherwise), stat'd at check time: an absent one
+    // fences nothing, and .git may be a FILE (a worktree's), which is itself
+    // refused. Only the project root's — a nested repository's .git is not.
+    function privateEntries() {
+      const names = [path.resolve(cwd, '.web-chat'), path.resolve(cwd, '.git')];
+      if (ctx.webChatDir && !names.includes(path.resolve(ctx.webChatDir))) names.push(path.resolve(ctx.webChatDir));
+      const ids = [];
+      for (const n of names) {
+        try { ids.push(fs.statSync(n, { bigint: true })); } catch {}
+      }
+      return ids;
+    }
+    // Whether `abs` IS one of those entries or lies under one, decided by FILE
+    // IDENTITY: the nearest part of `abs` that exists is realpath'd (the anchor
+    // ctx.fence takes too), and it and each of its ancestors is compared with
+    // the entries by device and inode. Never by text — on a case-insensitive
+    // volume realpath keeps a `.WEB-CHAT` spelling while stat finds .web-chat —
+    // and a file not yet created under either is caught through its directory.
+    function inPrivateEntry(abs) {
+      const ids = privateEntries();
+      if (!ids.length) return false;
+      let near = abs;
+      for (;;) {
+        try { fs.lstatSync(near); break; } catch {}
+        const up = path.dirname(near);
+        if (up === near) return false;
+        near = up;
+      }
+      let real;
+      try { real = fs.realpathSync(near); } catch { return true; } // resolves nowhere: fail closed
+      for (let q = real; ; q = path.dirname(q)) {
+        let s = null;
+        try { s = fs.statSync(q, { bigint: true }); } catch {}
+        if (s && ids.some((e) => e.dev === s.dev && e.ino === s.ino)) return true;
+        if (path.dirname(q) === q) return false;
+      }
     }
     function verDir(abs) {
       return path.join(versionsBase, crypto.createHash('sha1').update(abs).digest('hex'));
