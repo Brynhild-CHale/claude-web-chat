@@ -259,5 +259,9 @@ test('size (reported, not gated): the compacted factory and its share of a refer
   t.diagnostic(`anchors-src: ${len} bytes compacted (${full} uncompacted)`);
   t.diagnostic(`reference export (three panes, no theme): ${bare} bytes, resolver share ${pct(bare)}`);
   t.diagnostic(`reference export (three panes, stock theme + its fonts): ${themed} bytes, resolver share ${pct(themed)}`);
-  assert.ok(len < 32768, `the compacted factory is ${len} bytes — under the 32,768-byte tripwire`);
+  // 32,768 at U225 (the factory then 18 KB, before U224's chunker and U222a's
+  // range and source sections); raised to 36,864 by U222a, whose planned
+  // sections took it to about 33 KB. Still a tripwire against an accidental
+  // large addition; B3's 5% share is the 1C gate's measurement.
+  assert.ok(len < 36864, `the compacted factory is ${len} bytes — under the 36,864-byte tripwire`);
 });
