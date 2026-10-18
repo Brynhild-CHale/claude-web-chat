@@ -169,7 +169,11 @@ test('boot order: the redactor and graph.redactText exist before graph.load, and
   assert.equal(seen.masks, 'x');
   assert.equal(seen.elements, true, 'the store hangs on the graph before load');
   assert.equal(srv.elements, srv.graph.elements, 'createServer exposes the store');
-  assert.deepEqual(srv.elements.integrity(), { clean: true, stub: true, states: {} }, 'the reconcile stub ran and reported');
+  // The boot reconcile (U209; U203's stub asserted {stub: true} here).
+  const report = srv.elements.integrity();
+  assert.equal(report.clean, true, 'the reconcile ran and reported a clean boot');
+  assert.deepEqual(report.states, {});
+  assert.equal(report.stub, undefined);
 });
 
 test('graph.js defines no local isGraphNode; the graph.redactText assignment stays once in index.js', () => {
