@@ -136,7 +136,7 @@ test('budget: 481 records, every chunk within budget + one record, the index alo
   assert.equal(h.resolved, 481, 'each record resolved once');
   assert.equal(h.maxPending, 1, 'one frame pending at a time');
   const { report } = done;
-  assert.deepEqual(Object.keys(report), ['records', 'chunks', 'longest_ms', 'work_ms', 'index_ms', 'wall_ms', 'gen', 'restarts']);
+  assert.deepEqual(Object.keys(report), ['records', 'chunks', 'longest_ms', 'work_ms', 'index_ms', 'wall_ms', 'gen', 'restarts', 'ranges', 'range_ms']);
   assert.equal(report.records, 481);
   assert.equal(done.answers.length, 481);
   assert.ok(report.chunks >= 2);
