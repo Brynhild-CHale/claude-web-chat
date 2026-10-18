@@ -382,6 +382,36 @@ test('one text table per pass: a cached index without a table builds one in a ch
   assert.equal(third.frames[0].records, 0, 'invalidated: the index and table chunk again');
 });
 
+// The table is walked once per index generation, never per range record: a
+// counting `childNodes` on one section of the pane counts every walk of the
+// pane's DOM (index() and textTable() both read it once per walk).
+test('one text table per pass: the pane is walked for the index and its table once, not once per range record', () => {
+  const A = fresh();
+  const h = harness();
+  const html = bigPane();
+  const recs = mixed(html);
+  const root = mount(html);
+  const sec = root.querySelector('section.sec');
+  let desc = null;
+  for (let p = Object.getPrototypeOf(sec); p && !desc; p = Object.getPrototypeOf(p)) desc = Object.getOwnPropertyDescriptor(p, 'childNodes');
+  let walks = 0;
+  Object.defineProperty(sec, 'childNodes', { configurable: true, get() { walks++; return desc.get.call(this); } });
+  const run = () => {
+    let out = null;
+    A.resolveAll(root, recs.map(h.costly), { budget_ms: BUDGET, schedule: h.schedule, now: h.now }, (answers, report) => { out = { answers, report }; });
+    h.drain();
+    return out;
+  };
+  const first = run();
+  assert.equal(first.report.ranges, 200);
+  assert.equal(walks, 2, 'one index walk and one table walk for 200 range records');
+  walks = 0;
+  const second = run();
+  assert.equal(walks, 0, 'a pass on the cached index and its table walks nothing');
+  sameAnswers(second.answers, first.answers, 'the shared table answers as the first pass did');
+  sameAnswers(first.answers, expected(root, recs), 'and as resolveRange / resolve do');
+});
+
 // ── answers frozen at 46e6f24 ──────────────────────────────────────────────
 
 // The frozen page: html(model), and its mutated copy html(apply(model, mutation)).
