@@ -1,0 +1,28 @@
+{
+  "about": "AG-1's shape check (U240): what a 0.8.5 (schema v3) reader needs of a graph node file and of each comment copy in it. Derived once from f3c4a7f: lib/server/graph.js isGraphNode (:46-48, the load's validate), graph.load's seq scan (:412, c.seq), clonePin (:54-59: replies an array of objects, anchor an object), restoreLiveToNode (:499, Array.isArray(node.comments)); lib/server/routes/comments.js's pin literal (:88-95) and reply literal (:152); public/app/comments.js captureAnchor (the four anchor fields the 0.8.5 chrome writes). A field marked required must be present; a present field must have its type. Extra fields (v, writer, provenance, edited) are allowed: the 0.8.5 reader ignores them.",
+  "node": {
+    "id": { "type": "string", "pattern": "^n\\d+$", "required": true },
+    "created_at": { "type": "number", "required": true },
+    "comments": { "type": "array", "required": false }
+  },
+  "comment": {
+    "id": { "type": "string", "pattern": "^c\\d+$", "required": true },
+    "seq": { "type": "integer", "required": true },
+    "created_at": { "type": "number", "required": true },
+    "shared": { "type": "boolean", "required": true },
+    "text": { "type": "string", "required": true },
+    "anchor": { "type": "object|null", "required": true },
+    "replies": { "type": "array-of-objects", "required": false }
+  },
+  "reply": {
+    "author": { "type": "string", "required": true },
+    "text": { "type": "string", "required": true },
+    "at": { "type": "number", "required": true }
+  },
+  "anchor": {
+    "mount": { "type": "string", "required": true },
+    "selector": { "type": "string", "required": true },
+    "text": { "type": "string", "required": true },
+    "ordinal": { "type": "integer", "required": true }
+  }
+}
