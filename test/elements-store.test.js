@@ -373,6 +373,8 @@ test('a copy\'s own v is trusted only when the hash checks: a pin edited in plac
   const rec = srv.elements.commitOf(b.json.node_id);
   const pinned = Number(rec.pins.find((p) => p.startsWith(`${id}@`)).split('@')[1]);
   assert.notEqual(pinned, v1, 'the stale v is not trusted');
+  assert.equal(srv.elements.version(id, pinned).parent_v, v1,
+    'the version appended from the copy descends from the one the parent node\'s commit record pins');
   const node = JSON.parse(fs.readFileSync(path.join(root, '.web-chat', 'graph', `${b.json.node_id}.json`), 'utf8'));
   const copy = node.comments.find((c) => c.id === id);
   assert.equal(copy.v, v1, 'the node copy keeps the v it was written with');
