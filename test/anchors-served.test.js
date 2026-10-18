@@ -332,6 +332,20 @@ test('replay: the factory rides once as payload data; the player splices it only
   resolvesExact(w, 'm2', 'p.note', 'replay frame');
 });
 
+// The served replay asks each step's own graph node (resolveReplay hands its
+// pins as far as assembleReplay's carriesElements) — not only a hand-built step.
+test('replay: /replay over the graph flags the pinned node\'s step and carries the factory once; no step node carries a pin', async (t) => {
+  const { port } = await twoNodes(t);
+  const res = await fetch(`http://localhost:${port}/replay?from=n0&to=n1&chrome=0`);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.equal(count(html, MARK), 1, 'the factory once in the whole replay');
+  const payload = JSON.parse(new JSDOM(html).window.document.getElementById('wc-replay-data').textContent);
+  assert.deepStrictEqual(payload.steps.map((s) => [s.id, s.elements]), [['n0', false], ['n1', true]]);
+  assert.strictEqual(payload.anchors, anchorsSrc.scriptElement(), 'the resolver\'s <script>, as data');
+  for (const s of payload.steps) assert.equal(JSON.parse(s.node).comments, undefined, `${s.id}: the frame node carries no pin`);
+});
+
 // test/export.test.js's three-pane page (its LAID_OUT).
 const LAID_OUT = {
   mounts: [
