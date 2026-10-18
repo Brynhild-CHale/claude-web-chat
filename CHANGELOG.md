@@ -12,6 +12,100 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   pins only at the mirror level their project opted into (reading at
   `--read-only`, writing at full). Run `claude-web-chat tunnel up` once: it
   restarts a portal left running by 0.8.5. Then reload any remote page.
+- **Comment pins move into an element log, once, at the daemon's first boot.**
+  One state migration runs (schema v3 → v4): every version of every comment
+  pin, and which graph node pinned which version, goes into
+  `.web-chat/elements/log.jsonl`, an append-only log the daemon writes through
+  one redacted writer. Only the daemon runs it (`install` leaves it), after a
+  dry run, and it is strict: if any pin cannot be mapped it writes nothing,
+  leaves the project at schema 3 with its comments read-only (adding, editing
+  or replying answers 503 with a hint) and puts its report in
+  `.web-chat/elements/migration-report.json`. `claude-web-chat migrate` shows
+  that dry run's report and writes nothing (`--json` for the report; exit 2
+  when the migration would refuse). Node files are never rewritten. It costs
+  about 150 ms, once, at 3,000 nodes with 14 pins each on the reference Mac
+  (C-1). Every later boot checks the log against the graph, writes
+  `.web-chat/elements/boot-report.json`, and reports the result to local
+  callers of `/api/health` as `graph_integrity`.
+- **If you roll back to 0.8.5:** it reads its comment ids from the node files
+  alone, so while rolled back it can hand out again an id only the log holds.
+  Back on this release, the boot report names any such pin; nothing is
+  repaired by rewriting a node.
+- **A process that writes to the surface now says who it is.** Claude's
+  writes carry a per-boot writer token (`.web-chat/writer-token`, mode 0600,
+  read only by web-chat's MCP server); a service-backed component's child gets
+  a token of its own from the daemon; and a driver made with `lib/driver`
+  `createDriver` leases its `service:<name>` owner on its first render,
+  markdown write or clear, and gives it back with `release()`. A raw HTTP
+  caller that renders, writes markdown or clears as `service:<name>` must
+  lease first (`POST /api/writers/lease`, then the token as `X-WC-Writer`) or
+  is refused `403 {writer: 'unverified'}`; a write that names a `pane:` owner
+  is refused, and so is a render or markdown write sent from a browser page, a
+  pane script's `fetch` included (a clear from one loses its owner). Ownership
+  is otherwise advisory until writer identity's validation gate (GT-15)
+  passes: a tokenless local
+  caller, such as a Claude Code session still running the old MCP server, is
+  still taken as Claude. See [`driving-the-surface.md`](docs/driving-the-surface.md).
+- **`file-editor` asks to be trusted again.** Its `service.js` changed (see
+  *Security*), and a service's code is part of its approval, so every project
+  that uses it asks for `claude-web-chat trust file-editor` once more.
+- **Working on web-chat itself: restart and refresh after an edit to the
+  anchor resolver or the mount runtime.** `lib/core/anchors.js` reaches the
+  chrome, and it and `public/mount-runtime.js` reach previews, replays and
+  exports, from a per-process memo, so an edit to either shows only after
+  `claude-web-chat restart` and a browser refresh.
+
+### Changed
+
+- **A Wipe now also deletes page-level comment pins.** A pin survives a Wipe
+  only while its anchor names a pane or a markdown item still on the page; a
+  page note, and a pin on an item the Wipe removed, are deleted, one delete
+  event each. Committed nodes keep their copies, and New graph is unchanged.
+- **A secret typed into a comment is masked.** A note's text, its replies and
+  the pane text its anchor records pass the redactor before they reach the
+  log, so a token typed into a comment shows masked, to its author too.
+
+### Fixed
+
+- **Show on page finds markdown items.** On a `write_markdown` card it read
+  "Not on the page now" while the item was on the page; it now scrolls to the
+  item and flashes it, live and on a previewed node.
+- **A code diff keeps its line numbers when a private key is masked mid-hunk.**
+  The record masks a key's lines one for one instead of folding the key into
+  one line, so every row's numbers are the file's own.
+- **A chat item is no longer lost when two Claude Code sessions merge into one
+  conversation.** Mirror item ids come from each transcript record's own
+  identity rather than a counter, so a `/clear`-merged conversation keeps
+  every item, and re-reading a transcript gives the same ids.
+- **An expired code diff says it expired.** A turn whose diff record was
+  pruned showed "No files changed."; it now shows the rule that removed it
+  ("A turn's code diff is kept for 30 days.", or the conversation cap), and
+  the guide lists everything the chat mirror keeps and for how long.
+- **Look-alike characters no longer carry a harness tag or the message marker
+  past the channel envelope.** The envelope looks for them on a folded copy
+  (NFKC, invisible and ignorable characters dropped), so a full-width tag or a
+  name split by a zero-width joiner is defanged in a message, its summary, the
+  Push note and every meta value; plain text is unchanged byte for byte. The
+  `ids` meta keeps whole queue ids and ends with `+N` when the rest do not fit.
+- **A capture pane's preview, replay and export draw the mode you toggled.**
+  They drew its default mode.
+- **A node's third and later branches get labels of their own.** Every child
+  after the second was labelled `L.0`, so a node with three branches had two
+  of them under one label and a reference to it opened the first; the third
+  child of `n1.1` is now `n1.1-2.0` (its trunk `n1.1-2.1`). The first two
+  children label as before.
+
+### Security
+
+- **The daemon withholds private comment pins itself.** A private pin reaches
+  only a browser on this machine: the comment list, a node's read and its
+  preview leave it out for Claude's tools, other local programs and every
+  remote viewer, and editing, replying to or deleting one from anywhere else
+  answers not found.
+- **`file-editor` never opens the project's `.web-chat/` or `.git/`.** A path
+  inside either, however it is spelled (a link, `..`, another letter case),
+  is refused, so a pane cannot reach the writer token, the capture token or a
+  git hook through it.
 
 ## [0.8.5] - 2026-10-15
 

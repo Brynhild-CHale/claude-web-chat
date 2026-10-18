@@ -1466,6 +1466,28 @@ const PATTERNS = [
     re: /attachShadow\s*\(/g,
     baseline: { 'public/mount-runtime.js': 1 },
   },
+  {
+    // A compatibility fold (U234a, readiness R5). lib/core/text.js foldShadow
+    // is the one place a text is folded to find a phrase's look-alikes: per
+    // code point NFKC, the default-ignorable, bidi and invisible characters
+    // dropped, lower-cased, with a map back to the original positions, so a
+    // defang edits the text itself and never the folded copy. A second NFKC
+    // (or NFKD) fold is a second idea of which characters look alike: a
+    // detector that folds one way beside an editor that maps another misses
+    // the split names (a joiner inside a tag name, a full-width tag) the
+    // shadow was built to catch. NFC is not a fold (project-identity's name
+    // keeps its letters) and stays free.
+    name: "normalize('NFKC') (a compatibility fold for look-alikes)",
+    home: 'lib/core/text.js — `foldShadow` (the look-alike shadow and its position map)',
+    what: 'folding a text to compare its look-alikes',
+    roots: ['lib', 'bin', 'scripts', 'public'],
+    exts: ['.js', '.html'],
+    re: /\bnormalize\(\s*['"`]NFK[CD]['"`]/g,
+    baseline: {
+      // The one fold, inside foldShadow.
+      'lib/core/text.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
