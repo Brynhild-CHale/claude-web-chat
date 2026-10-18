@@ -647,13 +647,20 @@ export function mount(m) {
 // (`addEventListener(type, fn, {signal: api.signal})`), and `api.onUnmount(fn)`
 // registers a teardown for anything else (an observer, a socket); both are
 // released by releasePane below.
+//
+// Both verbs go out through the runtime's paneFetch(id) (mount-runtime.js), so
+// the request carries the pane header naming this pane, and the daemon refuses
+// a browser spawn or close whose stamp is not the `parent` it names
+// (lib/server/routes/spawn.js). The stamp is re-derived on every call from the
+// bound id, so it survives a chrome reload (a closure capability would not).
 function paneApiFor(id, rec) {
+  const stampedFetch = window.__wcMount.paneFetch(id);
   const call = async (path, body) => {
     if (view.previewing) {
       return { ok: false, previewing: true, hint: 'the surface is showing a preview; panes cannot spawn or close panes here' };
     }
     try {
-      const r = await fetch(path, {
+      const r = await stampedFetch(path, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       return await r.json();

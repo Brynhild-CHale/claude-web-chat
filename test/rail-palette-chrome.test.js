@@ -350,7 +350,8 @@ test('a comment thread heads with the anchor path and sends with Send', async ()
   await tick();
   const sent = calls.find((c) => c.url === '/api/comments/c1/reply');
   assert.ok(sent && sent.method === 'POST', 'Send posts the reply');
-  assert.deepEqual(sent.body, { text: 'ok, go', author: 'user' });
+  // U214c: the chrome's device claim rides every comment write.
+  assert.deepEqual(sent.body, { text: 'ok, go', author: 'user', device: 'desktop' });
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
   await tick();
 });

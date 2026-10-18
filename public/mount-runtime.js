@@ -19,6 +19,7 @@
 //   settle(root, mountId, why)         - the sync point: the pane's DOM is final
 //   onSettle(fn) / generation(root)    - hear it / read a root's count of them
 //   itemEl(doc, id)                    - a page item (pane host or markdown block) by id
+//   paneFetch(mountId)                 - fetch stamped with the pane header (same origin only)
 //
 // Authored ES5-ish (var/function, Object.assign/Map/Set) so a baked offline
 // export runs in any browser. Do NOT use ES-2016+ syntax here. Never embed an
@@ -178,10 +179,87 @@
     ];
   }
 
+  // ── a pane's same-origin fetches carry its mount id (PLAN 1B.4) ──────────
+  // With a `life`, runScripts also shadows `fetch` inside each pane script with
+  // paneFetch(mountId): the global fetch, looked up AT CALL TIME, with the pane
+  // header (lib/core/writer-token PANE_HEADER — this file is spliced into
+  // documents and cannot require it, so it spells the name once, here) set to
+  // the pane's own mount id on every SAME-ORIGIN request. The daemon reads it
+  // through lib/server/domain/writers resolveWriter: a local browser request
+  // stamped with a live pane's id is that pane (class 'pane', owner
+  // 'pane:<id>'), and the comment and spawn routes act on it. A cross-origin
+  // URL goes to the global fetch untouched — a custom header would turn a
+  // simple request into a preflighted one. A Request input is re-wrapped with
+  // the header; a header of the same name the script set itself is replaced.
+  //
+  // COOPERATIVE, NOT A FENCE. Pane scripts run in the chrome's own realm
+  // (lib/server/routes/packs.js records that as accepted; B1/X-4 own it), so a
+  // script that calls `window.fetch` — or forges this header on it — is not
+  // stamped, or is stamped as whichever pane it names. The stamp attributes
+  // the pane scripts that cooperate; it cannot hold one that does not. Nothing
+  // it grants is more than an unstamped browser request already has: a stamp
+  // only NARROWS (a pane edits and deletes only its own pins; spawn and close
+  // must name the stamping pane as the parent).
+  //
+  // The chrome's per-pane facade (public/app/mounts.js paneApiFor) sends its
+  // spawn and close through the same function, so the header has one spelling.
+  var PANE_HEADER = 'X-WC-Pane';
+
+  function globalFetch() {
+    if (glob && typeof glob.fetch === 'function') return glob.fetch;
+    return typeof fetch === 'function' ? fetch : null;
+  }
+
+  function pageLocation() {
+    if (glob && glob.location) return glob.location;
+    return typeof location !== 'undefined' ? location : null;
+  }
+
+  // Same origin as the page: resolved against the page's own URL. With no
+  // location at all (never the live chrome), only a relative URL counts: one
+  // that does not parse on its own and is not scheme-relative.
+  function isSameOrigin(url) {
+    var loc = pageLocation();
+    var s = String(url);
+    try {
+      if (loc && loc.href) return new URL(s, loc.href).origin === new URL(loc.href).origin;
+    } catch (e) { return false; }
+    try { new URL(s); return false; } catch (e2) { return s.slice(0, 2) !== '//'; }
+  }
+
+  // Copy a HeadersInit (a Headers, an array of pairs, or a plain object) into
+  // a plain object, dropping any pane header the caller set.
+  function copyHeaders(from, into) {
+    if (!from) return into;
+    var put = function (v, k) { if (String(k).toLowerCase() !== PANE_HEADER.toLowerCase()) into[k] = v; };
+    if (Array.isArray(from)) from.forEach(function (pair) { if (pair) put(pair[1], pair[0]); });
+    else if (typeof from.forEach === 'function') from.forEach(put);
+    else for (var k in from) { if (Object.prototype.hasOwnProperty.call(from, k)) put(from[k], k); }
+    return into;
+  }
+
+  function paneFetch(mountId) {
+    var id = String(mountId);
+    return function (input, init) {
+      var f = globalFetch();
+      if (!f) return Promise.reject(new TypeError('fetch is not available'));
+      var isRequest = typeof Request === 'function' && input instanceof Request;
+      if (!isSameOrigin(isRequest ? input.url : input)) return f(input, init);
+      var opts = {};
+      if (init) { for (var k in init) { if (Object.prototype.hasOwnProperty.call(init, k)) opts[k] = init[k]; } }
+      var headers = copyHeaders(isRequest ? input.headers : null, {});
+      copyHeaders(init && init.headers, headers);
+      headers[PANE_HEADER] = id;
+      opts.headers = headers;
+      return isRequest ? f(new Request(input, opts)) : f(input, opts);
+    };
+  }
+
   // THE dynamic-eval site for pane scripts: (store, root, params, mountId, api),
-  // plus the six shadowed timer names when `withTimers`.
-  function compileScript(withTimers, body) {
-    return new Function('store, root, params, mountId, api' + (withTimers ? ', ' + TIMER_PARAMS : ''), body);
+  // then `extra` — the parameter names runScripts shadows for a live pane (the
+  // six timer names, and `fetch`), or none.
+  function compileScript(extra, body) {
+    return new Function('store, root, params, mountId, api' + (extra ? ', ' + extra : ''), body);
   }
 
   // The global clear by name, looked up at call time.
@@ -212,21 +290,31 @@
   // requestAnimationFrame of a pane script end with the pane. Without it the
   // compile is exactly what it always was — the frozen export and preview pass
   // none, and their scripts read the globals.
+  //
+  // With a `life`, `fetch` is shadowed too, after the timer names: paneFetch
+  // (above) stamps the pane's same-origin requests with its mount id. Preview
+  // and export (no `life`) keep the global fetch.
   function runScripts(root, scripts, store, params, mountId, onError, api, life) {
     var paneApi = api || frozenPaneApi();
     var timerArgs = life ? paneTimers(life) : null;
+    // Most shadowed first. A script that declares one of the names itself with
+    // let/const/class (`const fetch = …`) cannot be compiled with that name as
+    // a parameter: one that declares `fetch` falls back to the timer names
+    // alone (its timers still end with the pane; its fetches go unstamped),
+    // and one that declares a timer name falls back to neither, as before — it
+    // keeps working on the globals, only its timers go untracked.
+    var shapes = timerArgs
+      ? [[TIMER_PARAMS + ', fetch', timerArgs.concat([paneFetch(mountId)])], [TIMER_PARAMS, timerArgs]]
+      : [];
     for (var i = 0; i < scripts.length; i++) {
       try {
         var fn = null;
-        if (timerArgs) {
-          // A script that declares one of the six names itself with let/const/
-          // class (`const requestAnimationFrame = …`) cannot be compiled with
-          // that name as a parameter. It keeps working, as before, on the
-          // globals: only its timers go untracked.
-          try { fn = compileScript(true, scripts[i]); } catch (e) { if (!(e instanceof SyntaxError)) throw e; }
+        var extraArgs = [];
+        for (var s = 0; s < shapes.length && !fn; s++) {
+          try { fn = compileScript(shapes[s][0], scripts[i]); extraArgs = shapes[s][1]; } catch (e) { if (!(e instanceof SyntaxError)) throw e; }
         }
-        if (fn) fn.apply(undefined, [store, root, params || {}, mountId, paneApi].concat(timerArgs));
-        else compileScript(false, scripts[i])(store, root, params || {}, mountId, paneApi);
+        if (fn) fn.apply(undefined, [store, root, params || {}, mountId, paneApi].concat(extraArgs));
+        else compileScript('', scripts[i])(store, root, params || {}, mountId, paneApi);
       } catch (e) {
         console.error('component script error', mountId, e);
         if (onError) { try { onError(e, i); } catch (e2) {} }
@@ -438,7 +526,7 @@
     return null;
   }
 
-  var api = { createStore: createStore, frozenPaneApi: frozenPaneApi, attachAndExtract: attachAndExtract, runScripts: runScripts, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded, settle: settle, onSettle: onSettle, generation: generation, itemEl: itemEl };
+  var api = { createStore: createStore, frozenPaneApi: frozenPaneApi, attachAndExtract: attachAndExtract, runScripts: runScripts, paneFetch: paneFetch, runSeed: runSeed, captureFormState: captureFormState, applyFormState: applyFormState, isValueExcluded: isValueExcluded, settle: settle, onSettle: onSettle, generation: generation, itemEl: itemEl };
   if (glob) glob.__wcMount = api;                                                 // browser global (before client.js)
   if (typeof module !== 'undefined' && module.exports) module.exports = api;      // node require() — createStore is testable
 })(typeof window !== 'undefined' ? window : null);
