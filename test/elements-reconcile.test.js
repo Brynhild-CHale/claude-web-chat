@@ -190,6 +190,30 @@ test('a deliberate Set active to an older node, then a hard stop, is not rolled 
   assert.deepEqual(health.graph_integrity, { clean: true, states: {}, report: REPORT_NAME });
 });
 
+test('a Set active to the newest node\'s parent under a meta with no last_node (0.8.5\'s) is not rolled forward: roll-forward-unconfirmed, clean', async (t) => {
+  const s1 = await withServer(t);
+  const A = (await turn(s1.api, 'A', () => render(s1.api, 'm1'))).json.node_id;
+  const B = (await turn(s1.api, 'B', () => render(s1.api, 'm2'))).json.node_id;
+  assert.equal(nodeFile(s1.root, B).parent_id, A);
+  const r = await s1.api.post('/api/graph/active', { id: A });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  await s1.stop();
+  // The meta as 0.8.5 writes it: no last_node, so a crash before saveMeta and
+  // this deliberate re-aim look alike.
+  const meta = metaOf(s1.root);
+  delete meta.last_node;
+  fs.writeFileSync(projectPaths(s1.root).meta, JSON.stringify(meta));
+
+  const s2 = await withServer(t, { root: s1.root });
+  assert.equal(s2.srv.graph.active, A, 'still the node the user chose');
+  assert.equal(metaOf(s1.root).active, A);
+  const report = bootReport(s1.root);
+  assert.equal(report.clean, true, JSON.stringify(report.states));
+  assert.deepEqual(Object.keys(report.states), ['roll-forward-unconfirmed']);
+  assert.deepEqual(report.states['roll-forward-unconfirmed'].examples, [B]);
+  assert.equal(integrityEvents(s2.srv).length, 0, 'a normal state announces nothing');
+});
+
 test('rolled-forward clears the pending_folded the rolled-forward node carries, so the next node does not carry it again', async (t) => {
   const s1 = await withServer(t);
   const { api, srv, root } = s1;
@@ -239,6 +263,25 @@ test('a graceful stop with an uncommitted pin and replies reboots clean, its ver
   assert.deepEqual(report.states.superseded, { count: 2, examples: [`${head.id}@1`, `${head.id}@2`] });
   assert.deepEqual(unclean(report), []);
   assert.equal(s2.srv.state.comments.find((p) => p.id === head.id).v, 3, 'the draft restored the pin');
+});
+
+test('a draft whose base_active is not the active node holds nothing: its versions are uncommitted-lost, not draft-pinned', async (t) => {
+  const s1 = await withServer(t);
+  await turn(s1.api, 'A', () => render(s1.api, 'm1'));
+  const head = await pinWithReplies(s1.srv);
+  await s1.graceful();
+  // A draft boot will not restore (loadDraft gates it on base_active).
+  const draftPath = projectPaths(s1.root).draft;
+  const draft = JSON.parse(fs.readFileSync(draftPath, 'utf8'));
+  assert.equal(draft.comments.find((p) => p.id === head.id).v, 3, 'the draft holds the pin');
+  fs.writeFileSync(draftPath, JSON.stringify({ ...draft, base_active: 'n999' }));
+
+  const s2 = await withServer(t, { root: s1.root });
+  const report = bootReport(s1.root);
+  assert.deepEqual(unclean(report), ['uncommitted-lost'], JSON.stringify(report.states));
+  assert.deepEqual(report.states['uncommitted-lost'].examples, [`${head.id}@3`]);
+  assert.equal(report.states['draft-pinned'], undefined);
+  assert.equal((s2.srv.state.comments || []).length, 0, 'the draft was not restored');
 });
 
 test('a hard stop reboots with the unsaved versions uncommitted-lost; one more commit and a clean reboot report nothing new', async (t) => {
