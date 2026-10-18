@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withServer } = require('../test-support/helpers');
+const { withServer, existingProject } = require('../test-support/helpers');
 const { fakeSecrets } = require('../test-support/fake-secrets');
 const { createElementStore } = require('../lib/server/domain/elements');
 const { createElementLog, payloadOf, copyMatches, convertAnchor } = require('../lib/core/element-log');
@@ -185,12 +185,19 @@ test('A2: writer/provenance are v1\'s, edited is the newest text/shared change, 
   assert.deepEqual(e5.pin.provenance, P(1));
   assert.deepEqual(e5.pin.replies.map((r) => r.writer), [W(2), W(4)]);
   assert.deepEqual(e5.pin.replies.map((r) => r.provenance), [P(2), P(4)]);
+  // An edit back to v1's text is still the newest edit (it differs from its
+  // parent), and a reply after it does not take its place.
+  const e6 = store.edit(e5.pin, { text: 'a', shared: true, writer: W(6), provenance: P(6) });
+  assert.equal(e6.unchanged, false);
+  assert.deepEqual(e6.pin.edited.writer, W(6));
+  const p7 = store.reply(e6.pin, { text: 'r3', author: 'user', writer: W(7), provenance: P(7) });
+  assert.deepEqual(p7.edited.writer, W(6));
 
   // A store reopened on the same log projects the same pin.
   store.close();
   const again = createElementStore({ paths: projectPaths(dir), state: createState(), graph: { active: null }, redactor: createRedactor(), bootId: 'test:2' });
   t.after(() => again.close());
-  assert.deepEqual(again.project(e5.pin.id, e5.pin.v), e5.pin);
+  assert.deepEqual(again.project(p7.id, p7.v), p7);
 });
 
 test('A2: the stamps stay outside both hashes', (t) => {
@@ -378,4 +385,67 @@ test('a copy\'s own v is trusted only when the hash checks: a pin edited in plac
   assert.equal(srv.state.comments[0].v, pinned);
   assert.equal(srv.state.comments[0].text, 'after');
   assert.equal(logBytes(root), bytes, 'nothing appended');
+});
+
+test('a log that cannot be appended to does not fail boot: the pin is served without v, attach_failures counts it, and Set active does not throw', async (t) => {
+  const n0 = nodeFile('n0', null);
+  const n1 = nodeFile('n1', 'n0', { comments: [{ ...COPY, text: 'second copy' }] });
+  let elementsDir = null;
+  t.after(() => { if (elementsDir) { try { fs.chmodSync(elementsDir, 0o755); } catch {} } });
+  const { api, srv, root } = await withServer(t, {
+    seed: ({ webChatDir }) => {
+      existingProject({ webChatDir }); // at SCHEMA_VERSION: no migration runs
+      const gdir = path.join(webChatDir, 'graph');
+      fs.mkdirSync(gdir, { recursive: true });
+      for (const n of [n0, n1]) fs.writeFileSync(path.join(gdir, `${n.id}.json`), JSON.stringify(n));
+      fs.writeFileSync(path.join(gdir, '_meta.json'), JSON.stringify({ active: 'n1' }));
+      // An elements folder with no log in it, that nothing may write into.
+      elementsDir = path.dirname(projectPaths(path.dirname(webChatDir)).elementsLog);
+      fs.mkdirSync(elementsDir, { recursive: true });
+      fs.chmodSync(elementsDir, 0o555);
+    },
+  });
+  const pins = (await api.get('/api/comments')).json.comments;
+  assert.equal(pins.length, 1);
+  assert.equal(pins[0].text, 'second copy');
+  assert.equal(pins[0].v, undefined, 'served without v');
+  assert.ok(srv.elements.stats().attach_failures >= 1);
+  assert.equal(srv.elements.readOnly, true, 'comments are read-only this boot');
+  assert.equal(srv.elements.readOnlyReason, 'log-unwritable');
+  assert.throws(() => srv.elements.add({ text: 'x', anchor: ANCHOR }), (e) => e.code === 'READ_ONLY');
+  assert.equal(logBytes(root), 0, 'nothing written');
+  // Set active onto the other node restores (and attaches) again: no throw.
+  const r = await api.post('/api/graph/active', { id: 'n0' });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(srv.graph.active, 'n0');
+  assert.equal(srv.state.comments[0].text, COPY.text);
+  assert.equal(srv.state.comments[0].v, undefined);
+  // A commit on it: the node lands, the commit record is skipped, not failed.
+  await api.post('/api/turn-begin', { message: 'go' });
+  await api.post('/api/render', { id: 'm9', html: '<p>more</p>' });
+  const end = await api.post('/api/turn-end', { author: 'claude' });
+  assert.ok(end.json.node_id);
+  assert.equal(srv.graph.active, end.json.node_id);
+  assert.ok(srv.elements.stats().commits_skipped_read_only >= 1);
+  assert.equal(logBytes(root), 0);
+});
+
+test('a filesystem refusal on a reply answers READ_ONLY and leaves the store read-only; a TypeError does not', (t) => {
+  const dir = tmpDir(t);
+  const { store } = storeIn(t, dir);
+  const pin = store.add({ text: 'first', anchor: ANCHOR });
+  assert.equal(store.readOnly, false);
+  // A pin that cannot be mapped (code UNMAPPED, not the filesystem's) leaves
+  // the log writable.
+  assert.throws(() => store.edit({ id: '', text: 'x' }, { text: 'y' }), (e) => e.code === 'UNMAPPED');
+  assert.equal(store.readOnly, false, 'a bad pin does not make the log read-only');
+  // The filesystem refuses the next write.
+  const orig = fs.writeSync;
+  fs.writeSync = () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); };
+  try {
+    assert.throws(() => store.reply(pin, { text: 'r' }), (e) => e.code === 'READ_ONLY' && e.reason === 'log-unwritable');
+  } finally { fs.writeSync = orig; }
+  assert.equal(store.readOnly, true);
+  assert.equal(store.stats().read_only_reason, 'log-unwritable');
+  assert.throws(() => store.add({ text: 'later' }), (e) => e.code === 'READ_ONLY');
 });
