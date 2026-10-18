@@ -351,6 +351,16 @@ test('register refuses a bad name, a second source of one name and an attach tha
   assert.throws(() => h.mirror.register('z', () => ({ start() {} })), /start, stop/);
 });
 
+test('createMirror refuses a redactor without patch() at construction: codediff\'s buildBody masks a patch through it', (t) => {
+  // The file's usual arguments, with a redactor that holds text and value only.
+  assert.throws(() => setup(t, { redactor: { text: (s) => s, value: (v) => v } }),
+    (err) => err instanceof TypeError && /patch\(\)/.test(err.message));
+  // The same arguments with lib/core/redact's createRedactor() construct.
+  const h = setup(t);
+  assert.equal(typeof h.redactor.patch, 'function');
+  assert.ok(h.mirror);
+});
+
 test('sourceStates hands the index store each source\'s slice through the redactor, and restoreSourceStates hands it back', (t) => {
   const h = setup(t);
   const [fake] = fakeSecrets({ seed: 3 }).filter((f) => f.rule === 'jwt');

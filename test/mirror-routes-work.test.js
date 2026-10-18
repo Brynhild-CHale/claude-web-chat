@@ -261,7 +261,7 @@ test('a key a source adds beside §2.10\'s is dropped: no Claude Code path is ev
     [OUTPUT_URL, ['ended', 'eof', 'exit_code', 'footer', 'from', 'rev', 'size', 'task_id', 'text', 'to']],
     [AGENT_URL, ['agent', 'items', 'next_before', 'rev']],
     [WORKFLOW_URL, ['agents', 'phases', 'rev', 'workflow']],
-    [DIFF_TURN_URL, [...DIFF_KEYS.filter((k) => k !== 'reason'), 'rev'].sort()],
+    [DIFF_TURN_URL, [...DIFF_KEYS.filter((k) => !['reason', 'rule', 'note'].includes(k)), 'rev'].sort()],
     [DIFF_NODE_URL, ['combined', 'node', 'rev', 'turns']],
     [NODE_URL, ['node', 'rev', 'turns']],
     [NODES_URL, ['nodes', 'rev']],
@@ -283,6 +283,19 @@ test('a key a source adds beside §2.10\'s is dropped: no Claude Code path is ev
   const { exit_code: _x, ...running } = OUTPUT_BODY;
   m.answers.taskOutput = { ...running, ended: false };
   assert.ok(!('exit_code' in (await h.get(OUTPUT_URL)).body));
+});
+
+test('GET /api/mirror/diff?turn= for an expired turn carries its rule and note (the retention row that took it)', async (t) => {
+  assert.ok(DIFF_KEYS.includes('rule') && DIFF_KEYS.includes('note'), 'DIFF_KEYS names the expired answer\'s keys');
+  const EXPIRED = {
+    v: 1, turn_id: TURN_ID, status: 'expired', rule: 'record-max-days',
+    note: 'A turn\'s code changes are kept for 30 days, then deleted.',
+  };
+  const m = fakeMirror({ diff: (q) => (q.turn !== undefined ? EXPIRED : NODE_DIFF_BODY) });
+  const h = await host(t, { mirror: m });
+  const r = await h.get(DIFF_TURN_URL);
+  assert.equal(r.status, 200);
+  assert.deepStrictEqual(r.body, { ...EXPIRED, rev: 42 });
 });
 
 test('GET …/tasks/:taskId/output: `to` passed back as `from` pages through every byte once', async (t) => {
