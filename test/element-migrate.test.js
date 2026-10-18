@@ -362,6 +362,29 @@ test('a stale draft (base_active is not the active node) is skipped and reported
   assert.ok(r.report.seq_floor >= 21, 'its seqs still count toward the floor');
 });
 
+test('a stale draft\'s seqs reach the floor even above the corrupt aside: no version carries them, only seq_floor does', (t) => {
+  const g = fixture(t, { staleDraft: true });
+  const draft = JSON.parse(fs.readFileSync(g.paths.draft, 'utf8'));
+  const high = ASIDE_SEQ + 57;
+  draft.comments[draft.comments.length - 1].seq = high;
+  fs.writeFileSync(g.paths.draft, JSON.stringify(draft));
+  const r = migrateComments(g.stateDir);
+  assert.equal(r.migrated, true);
+  assert.equal(r.report.draft.state, 'draft-stale-skipped');
+  assert.equal(r.report.seq_floor, high, 'the stale draft\'s highest seq is the floor');
+  const log = openLog(t, g);
+  assert.ok(log.nextSeq() > high, `nextSeq ${log.nextSeq()} > ${high}`);
+});
+
+test('a torn _meta.json: the active node is recovered as graph.load recovers it (the latest), so the draft on it migrates', (t) => {
+  const g = fixture(t);
+  fs.writeFileSync(g.paths.meta, '{"active":"n6","lo');
+  const r = migrateComments(g.stateDir, { dryRun: true });
+  assert.equal(r.report.active, 'n6', 'the latest node by created_at');
+  assert.equal(r.report.draft.state, 'migrated', 'loadDraft would restore it, so its copies are planned');
+  assert.ok(r.report.unreadable.some((u) => u.file === 'graph/_meta.json'), 'the meta is listed as unreadable');
+});
+
 // ── minting after the migration ─────────────────────────────────────────────
 
 test('minting after migration starts above the corrupt aside and every copy\'s seq; a re-minted id is flagged, not refused', (t) => {
