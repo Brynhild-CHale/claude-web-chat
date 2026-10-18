@@ -1032,6 +1032,12 @@ const PATTERNS = [
     baseline: {
       // The two constants.
       'lib/core/writer-token.js': 2,
+      // The realm stamp (U214c): the runtime is spliced verbatim into
+      // documents and served to the browser, so it cannot require
+      // writer-token; it spells PANE_HEADER once, as its own PANE_HEADER, and
+      // the chrome's spawn/close facade sends through its paneFetch.
+      // test/pane-attribution.test.js holds the two spellings equal.
+      'public/mount-runtime.js': 1,
     },
   },
   {
