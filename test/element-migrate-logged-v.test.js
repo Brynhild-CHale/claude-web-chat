@@ -17,7 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { planMigration } = require('../lib/core/element-migrate');
+const { planMigration, migrateComments } = require('../lib/core/element-migrate');
 const { createElementLog, payloadOf } = require('../lib/core/element-log');
 const { createRedactor } = require('../lib/core/redact');
 const { projectPaths } = require('../lib/core/paths');
@@ -207,6 +207,15 @@ test('a born-v4 project that lost _version.json migrates with no version appende
   assert.ok(before.length >= 3, `the pin was edited twice (${before.length} versions)`);
   assert.equal(logRecords(root).some((r) => r.t === 'migration'), false, 'a born-v4 log holds no migration record');
   fs.rmSync(paths.version);
+
+  // The report counts the logged reuses in `reused` (a dry run: nothing written).
+  const dry = migrateComments(paths.dir, { dryRun: true });
+  assert.equal(dry.dry_run, true);
+  assert.ok(dry.report.counters.reused_logged >= 1, JSON.stringify(dry.report.counters));
+  const c = dry.report.counters;
+  assert.equal(dry.report.reused, c.reused_on_edge + c.reused_by_hash + c.reused_homeless + c.reused_logged);
+  assert.equal(dry.report.versions_to_mint, 0);
+  assert.deepEqual(versionsOfPin(root, pin.id), before, 'the dry run wrote nothing');
 
   const s2 = await withServer(t, { root });
   assert.equal(JSON.parse(fs.readFileSync(paths.version, 'utf8')).version, 4);
