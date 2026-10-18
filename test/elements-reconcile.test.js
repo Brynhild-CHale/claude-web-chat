@@ -365,7 +365,7 @@ test('commit-record-without-node: a torn node file is set aside and reported in 
   const orphan = report.states['commit-record-without-node'];
   assert.equal(orphan.count, 1);
   assert.match(orphan.examples[0], new RegExp(`^${B}\\.json\\.corrupt-`), 'the aside file is named');
-  assert.deepEqual(orphan.detail, [{ node: B, aside: orphan.examples[0], record: true }]);
+  assert.deepEqual(orphan.detail, [{ node: B, aside: orphan.examples[0], record: true, max_seq: 0 }]);
   assert.ok(fs.existsSync(path.join(graphDir(root), orphan.examples[0])));
   assert.equal(s2.srv.graph.active, A);
 
