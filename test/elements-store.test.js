@@ -325,13 +325,18 @@ test('the draft: a graceful stop and reboot restores the live pins with their v 
   assert.equal(second.srv.elements.stats().appended_records, 0);
 });
 
-test('a commit after a pin added through today\'s route appends one version and one commit record; the node copy resolves', async (t) => {
+test('a commit after a v-less live pin (the 0.8.5 route\'s shape) appends one version and one commit record; the node copy resolves', async (t) => {
   const { api, srv, root } = await withServer(t);
   await api.post('/api/turn-begin', { message: 'first' });
   await api.post('/api/render', { id: 'm1', html: '<p class="lead">Hello</p>' });
   await api.post('/api/turn-end', { author: 'claude' });
-  const add = await api.post('/api/comments', { text: 'a pin', anchor: ANCHOR });
-  assert.equal(add.json.pin.v, undefined, 'the 0.8.5-shaped route mints no v');
+  // The comment routes write through the store since U208, so the pin a 0.8.5
+  // route made (no v, no version in the log) is put live by hand here.
+  const seq = srv.elements.nextSeq();
+  srv.elements.reserveSeq(seq);
+  const add = { json: { pin: { id: `c${seq}`, seq, created_at: Date.now(), shared: true, text: 'a pin', anchor: ANCHOR } } };
+  srv.state.comments = srv.state.comments.concat([add.json.pin]);
+  assert.equal(add.json.pin.v, undefined, 'the 0.8.5-shaped pin carries no v');
   const before = verRecords(root);
   await api.post('/api/turn-begin', { message: 'second' });
   const end = await api.post('/api/turn-end', { author: 'claude' });
@@ -364,9 +369,13 @@ test('a copy\'s own v is trusted only when the hash checks: a pin edited in plac
   assert.ok(a.json.node_id);
   const v1 = srv.state.comments[0].v;
   assert.ok(Number.isInteger(v1), 'the commit stamped the live pin');
-  // Today's edit route spreads the pin: the new text rides with the old v.
-  const ed = await api.patch(`/api/comments/${id}`, { text: 'after' });
-  assert.equal(ed.json.pin.v, v1, 'the stale v is carried');
+  // The 0.8.5 edit route spread the pin: the new text rode with the old v.
+  // The routes write through the store since U208, so that edit is made by
+  // hand here (a new seq, the stale v kept).
+  const seq = srv.elements.nextSeq();
+  srv.elements.reserveSeq(seq);
+  srv.state.comments = srv.state.comments.map((p) => (p.id === id ? { ...p, text: 'after', seq } : p));
+  assert.equal(srv.state.comments[0].v, v1, 'the stale v is carried');
   await api.post('/api/turn-begin', { message: 'third' });
   const b = await api.post('/api/turn-end', { author: 'claude' });
   assert.ok(b.json.node_id);

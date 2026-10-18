@@ -159,7 +159,12 @@ test('a wipe drops a pin whose anchor names an id that is neither a pane nor a m
   await pinPane(ctx, 'keep');
   const onKeep = await addPin(api, 'k', { mount: 'keep', selector: 'div', text: 'keep', ordinal: 0 });
   const ghost = await addPin(api, 'ghost', { mount: 'never-on-the-page', selector: 'div', text: 'x', ordinal: 0 });
-  const empty = await addPin(api, 'empty', { selector: 'div', text: 'x' });
+  // An anchor with no mount: the add route refuses one since U208 (the element
+  // log cannot convert it), but a pin a 0.8.5 daemon took can still come back
+  // live from a node copy, so it is put live by hand here.
+  assert.equal((await api.post('/api/comments', { text: 'empty', shared: true, anchor: { selector: 'div', text: 'x' } })).status, 400);
+  const empty = { id: 'c900', seq: 900, created_at: Date.now(), shared: true, text: 'empty', anchor: { selector: 'div', text: 'x' } };
+  ctx.srv.state.comments = ctx.srv.state.comments.concat([empty]);
   const before = (await events(api)).length;
   await ok(api.post('/api/graph/wipe', {}), 'wipe');
   assert.deepEqual(await liveIds(api), [onKeep.id]);
