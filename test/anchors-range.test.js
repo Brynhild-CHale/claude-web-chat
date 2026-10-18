@@ -455,7 +455,7 @@ test('resolveSource: a word changed inside the span -> re-resolved/fuzzy', () =>
   assert.equal(ans.range.toString(), 'quick brawn fox jumps over the lazy dog');
 });
 
-test('resolveSource: words rewritten, prefix and suffix kept -> re-resolved/bracket with source_bracket, orphaned without; prefix gone -> orphaned', () => {
+test('resolveSource: words rewritten, prefix and suffix kept -> re-resolved/bracket with source_bracket; without it, or with the prefix gone, the surviving \'## Plan\' section -> re-resolved/section, orphaned under source_section: false', () => {
   const before = '## Plan\n\nWe agreed on the following point: ship the release on Friday morning. Then we celebrate together.\n';
   const a = block(before);
   const rec = wire(anchors.recordSource(a.el, selIn(a.el, 'ship the release on Friday morning'), a.map, a.src));
@@ -467,18 +467,27 @@ test('resolveSource: words rewritten, prefix and suffix kept -> re-resolved/brac
   assert.equal(b.src.slice(ans.start, ans.end), 'hold everything until QA signs off');
   assert.equal(ans.range.toString(), 'hold everything until QA signs off');
   assert.equal(anchors.CONFIG.source_bracket, true, 'on by default');
-  const off = anchors.resolveSource(b.el, b.src, b.map, rec, { source_bracket: false });
-  assert.deepStrictEqual([off.state, off.how, off.range], ['orphaned', 'none', null]);
-  // The prefix gone (the lead-in rewritten as well): no bracket, orphaned.
+  const noSection = { source_section: false };
+  // Each case: the '## Plan' section survives, so the section fallback answers it; without it, orphaned.
+  const sectionCase = (name, x, cfg) => {
+    const got = anchors.resolveSource(x.el, x.src, x.map, rec, cfg);
+    checkAnswer(got);
+    assert.deepStrictEqual([got.state, got.how], ['re-resolved', 'section'], name);
+    assert.equal(got.start, x.map.headings[0].start, name);
+    assert.equal(got.end, x.src.length, name);
+    const none = anchors.resolveSource(x.el, x.src, x.map, rec, { ...cfg, ...noSection });
+    assert.deepStrictEqual([none.state, none.how, none.range], ['orphaned', 'none', null], name + ' without the section');
+  };
+  sectionCase('off', b, { source_bracket: false });
+  // The prefix gone (the lead-in rewritten as well): no bracket.
   const c = block('## Plan\n\nA different opening now: hold everything until QA signs off. Then we celebrate together.\n');
-  const gone = anchors.resolveSource(c.el, c.src, c.map, rec);
-  assert.deepStrictEqual([gone.state, gone.how], ['orphaned', 'none']);
+  sectionCase('gone', c);
   // The suffix beyond exact.length * 2 + 64 characters: no bracket.
   const far = block('## Plan\n\nWe agreed on the following point: ' + 'pad '.repeat(40) + '. Then we celebrate together.\n');
-  assert.equal(anchors.resolveSource(far.el, far.src, far.map, rec).state, 'orphaned');
+  sectionCase('far', far);
   // A prefix tail found twice in the source is not unique: no bracket.
   const dup = block('We agreed on the following point: one.\n\n' + after);
-  assert.equal(anchors.resolveSource(dup.el, dup.src, dup.map, rec).state, 'orphaned');
+  sectionCase('dup', dup);
 });
 
 test('resolveSource: a map that does not align with the block (its DOM edited) -> orphaned/unaligned', () => {
