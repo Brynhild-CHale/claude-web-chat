@@ -3243,3 +3243,44 @@ body.pin-mode .bb-create { border-color: var(--wc-accent); background: var(--wc-
    would claim a finger stroke as a scroll and cancel it. */
 #main { touch-action: manipulation; }
 html.finger-strokes #main { touch-action: pinch-zoom; }
+
+/* ── U306 · orphans visible and the re-anchor card (public/app/orphans.js;
+   annotation engine 2A.6) ── STAND-INS until the design studio's mock-up
+   (H-2 (b): U338 draws the toolbar; nothing here is a toolbar or tray look).
+   The list (⌘K → Orphaned elements) and the card are body-level panels on the
+   panel rung, closed through the one dismiss layer (registerPopover); the
+   inspector section sits above the node's actions. Tokens only. */
+.wc-orphans-pop, .wc-reanchor-card {
+  position: fixed; z-index: var(--z-panel); box-sizing: border-box;
+  background: var(--wc-panel-bg); color: var(--wc-fg); border: 1px solid var(--wc-border);
+  border-radius: var(--wc-radius); box-shadow: var(--wc-shadow); padding: 10px 12px;
+  font: 12px var(--wc-font);
+}
+.wc-orphans-pop { top: 60px; left: 50%; transform: translateX(-50%); width: min(420px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; }
+.wc-reanchor-card { width: min(320px, calc(100vw - 32px)); }
+.wc-reanchor-card.wc-reanchor-docked { top: 60px; right: 16px; }
+.wc-orphans-head, .wc-reanchor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.wc-orphans-title, .wc-reanchor-title { font-weight: 600; color: var(--wc-fg-bright); }
+.wc-standin { font: 9px var(--wc-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--wc-muted); border: 1px dashed var(--wc-border); border-radius: var(--wc-radius-sm); padding: 0 4px; }
+.wc-orphan-rows { list-style: none; margin: 0; padding: 0; }
+.wc-orphan-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--wc-border-soft); }
+.wc-orphan-row:first-child { border-top: 0; }
+.wc-orphan-type { font: 600 10px var(--wc-mono); text-transform: uppercase; color: var(--wc-accent-text); }
+.wc-orphan-place { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wc-muted); }
+.wc-orphan-guess { font: 10px var(--wc-mono); color: var(--wc-gold-fg); background: var(--wc-gold-bg); border-radius: var(--wc-radius-sm); padding: 0 4px; }
+.wc-orphan-more, .wc-orphans-empty { color: var(--wc-muted-dim); padding: 5px 0; margin: 0; }
+.wc-orphan-act, .wc-reanchor-acts button {
+  flex: none; padding: 3px 8px; font: 12px var(--wc-font); cursor: pointer;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: var(--wc-panel-bg); color: var(--wc-fg);
+}
+.wc-orphan-act:hover, .wc-reanchor-acts button:hover { border-color: var(--wc-accent); }
+.wc-orphan-act:focus-visible, .wc-reanchor-acts button:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
+.wc-reanchor-acts { display: flex; gap: 8px; margin-top: 8px; }
+.wc-reanchor-acts .wc-reanchor-here { background: var(--wc-accent); border-color: var(--wc-accent); color: var(--wc-accent-fg); }
+.wc-reanchor-text { margin: 0; color: var(--wc-fg); }
+.wc-reanchor-note { margin: 6px 0 0; color: var(--wc-muted); }
+.wc-reanchor-note:empty { display: none; }
+.wc-reanchor-note.wc-refused { color: var(--wc-rust); }
+.wc-reanchor-done .wc-reanchor-note { color: var(--wc-green); }
+.wc-orphans-insp { margin: 10px 0; }
+.wc-orphans-insp .wc-orphans-title { font: 600 10px var(--wc-mono); letter-spacing: .06em; color: var(--wc-muted); }
