@@ -70,13 +70,17 @@ test('portal proxy: a write from the session\'s own page goes through', async (t
 
 test('portal proxy: pack install is refused with the remote hint, and nothing reaches the audit log', async (t) => {
   const r = await rig(t);
+  // The boot's own line (the built-in element pack, U323) is there already;
+  // the refused request adds nothing to it.
+  const auditOf = () => { try { return fs.readFileSync(projectPaths(r.srv.root).packsAudit, 'utf8'); } catch { return null; } };
+  const auditBefore = auditOf();
   const res = await r.req('/api/packs/install', {
     method: 'POST', body: { source: 'https://github.com/x/y' }, headers: { origin: r.origin },
   });
   assert.equal(res.status, 403);
   assert.equal(res.json.remote, true);
   assert.match(res.json.hint, /run on the host/);
-  assert.equal(fs.existsSync(projectPaths(r.srv.root).packsAudit), false, 'project audit log untouched');
+  assert.equal(auditOf(), auditBefore, 'project audit log untouched');
   assert.equal(fs.existsSync(userPaths().packsAudit), false, 'user audit log untouched');
 });
 

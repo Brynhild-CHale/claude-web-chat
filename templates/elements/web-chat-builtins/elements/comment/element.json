@@ -1,0 +1,23 @@
+{
+  "type": "comment",
+  "family": "page",
+  "remote": { "see": "read", "send": "full" },
+  "private": true,
+  "schema": "comment@1",
+  "reads": ["comment@1"],
+  "anchors": ["element", "range", "source"],
+  "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
+  "settings": {
+    "small": {
+      "type": "object",
+      "properties": {
+        "shared": { "type": "boolean", "title": "Visible to Claude", "default": true }
+      }
+    }
+  },
+  "hotkeys": [{ "action": "arm", "label": "Pin comment", "default": "C" }],
+  "profiles": false,
+  "input": "taps",
+  "wake": true,
+  "summary_key": "text"
+}

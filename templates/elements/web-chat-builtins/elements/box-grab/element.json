@@ -1,0 +1,22 @@
+{
+  "type": "box-grab",
+  "family": "page",
+  "remote": { "see": "read", "send": "full" },
+  "private": true,
+  "schema": "box-grab@1",
+  "reads": ["box-grab@1"],
+  "anchors": ["page"],
+  "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
+  "settings": {
+    "small": {
+      "type": "object",
+      "properties": {
+        "snap": { "type": "string", "title": "Snap to", "enum": ["block", "free"], "default": "block" }
+      }
+    }
+  },
+  "hotkeys": [],
+  "profiles": false,
+  "input": "strokes",
+  "wake": true
+}

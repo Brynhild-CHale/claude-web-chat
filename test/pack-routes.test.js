@@ -19,6 +19,11 @@ const { withServer, withTempHome } = require('../test-support/helpers');
 const { packFixture, tmpDir, write, fakeForge, repoWithArchive, repoWithRelease } = require('../test-support/packs');
 const { projectPaths, claudePaths, userPaths } = require('../lib/core/paths');
 const { readAudit, listPacks } = require('../lib/packs/store');
+const { BUILTIN_ELEMENT_PACK } = require('../lib/core/names');
+
+// Every daemon boots with the built-in element pack installed (U323): a
+// fresh server lists it, and a test about another pack reads past it.
+const ours = (list) => list.filter((p) => p.name !== BUILTIN_ELEMENT_PACK);
 
 const SHA = 'a'.repeat(40);
 const forgeFor = (t, dir, sha = SHA) => fakeForge(t, { repos: { 'acme/ops': repoWithArchive(dir, { sha }) } });
@@ -27,7 +32,7 @@ test('GET /api/packs reports installed + quarantined, with drift', async (t) => 
   await withServer(t, async ({ api, root }) => {
     let r = await api.get('/api/packs');
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json.packs, []);
+    assert.deepEqual(r.json.packs.map((p) => p.name), [BUILTIN_ELEMENT_PACK]);
     assert.deepEqual(r.json.quarantined, []);
 
     const forge = await forgeFor(t, packFixture({ components: [{ name: 'deploy-board' }] }));
@@ -35,13 +40,13 @@ test('GET /api/packs reports installed + quarantined, with drift', async (t) => 
     assert.equal(r.json.ok, true);
 
     r = await api.get('/api/packs');
-    assert.equal(r.json.packs.length, 1);
-    assert.equal(r.json.packs[0].name, 'acme-ops');
-    assert.equal(r.json.packs[0].drift, false);
+    assert.equal(ours(r.json.packs).length, 1);
+    assert.equal(ours(r.json.packs)[0].name, 'acme-ops');
+    assert.equal(ours(r.json.packs)[0].drift, false);
 
     fs.appendFileSync(path.join(projectPaths(root).components, 'deploy-board', 'component.html'), '<!-- mine -->');
     r = await api.get('/api/packs');
-    assert.equal(r.json.packs[0].drift, true);
+    assert.equal(ours(r.json.packs)[0].drift, true);
   });
 });
 
@@ -96,7 +101,7 @@ test('a BUILTIN name is refused for the HTTP actor too — 200 ok:false, no over
     assert.equal(r.json.ok, false);
     assert.equal(r.json.rejected, true);
     assert.match(r.json.hint, /built-in name/);
-    assert.deepEqual(listPacks(root), []);
+    assert.deepEqual(ours(listPacks(root)), []);
   });
 });
 
@@ -178,7 +183,7 @@ test('DELETE /api/packs/:name removes a clean pack', async (t) => {
     const r = await api.del('/api/packs/acme-ops');
     assert.equal(r.json.ok, true);
     assert.equal(fs.existsSync(path.join(projectPaths(root).components, 'deploy-board')), false);
-    assert.deepEqual((await api.get('/api/packs')).json.packs, []);
+    assert.deepEqual((await api.get('/api/packs')).json.packs.map((p) => p.name), [BUILTIN_ELEMENT_PACK]);
   });
 });
 
