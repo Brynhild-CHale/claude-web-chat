@@ -20,9 +20,9 @@
 //   - pin creation posts {type: 'comment', anchor: <the engine record>,
 //     locator: <the 0.8.5 locator>, payload: {text, shared}, device} through
 //     http.js; replayed against a real daemon, get_comments (the real handler,
-//     a stubbed client) serves the golden's anchor_label and the locator in the
-//     golden anchor's shape (the `anchor` field's own shape is a todo: U325's
-//     projection serves the engine record there — see the hand-off);
+//     a stubbed client) serves the golden's anchor_label, the 0.8.5 locator as
+//     `anchor` in the golden's shape and the engine record as `record` (S-14,
+//     K.2-78: routes/elements.js commentRecord);
 //   - the input-mode policy at the overlay's dispatch (D1 b, K.2-9): a pen and
 //     a mouse drop pins (a pen on a pane's button too, the button unheard); a
 //     finger tap on static content drops one, a finger tap on a pane's button
@@ -522,19 +522,17 @@ test('get_comments (the real handler) on the chrome\'s pin: the golden\'s anchor
   assert.equal(c.anchor_label, goldenAdd.anchor_label, 'anchor_label keeps its value');
   assert.equal(c.text, goldenAdd.text);
   assert.equal(c.shared, goldenAdd.shared);
-  // The 0.8.5 locator rides as `locator` beside the engine record today, and
-  // as `anchor` once the projection serves it there (the hand-off's patch).
-  const loc = c.locator || c.anchor;
-  assert.deepEqual(Object.keys(loc).sort(), Object.keys(goldenAdd.anchor).sort(), 'the locator has the golden anchor\'s fields');
-  assert.equal(loc.mount, goldenAdd.anchor.mount);
-  assert.equal(loc.text, goldenAdd.anchor.text);
+  assert.deepEqual(Object.keys(c.anchor).sort(), Object.keys(goldenAdd.anchor).sort(), 'the anchor has the golden anchor\'s fields');
+  assert.equal(c.anchor.mount, goldenAdd.anchor.mount);
+  assert.equal(c.anchor.text, goldenAdd.anchor.text);
   captured.comment = c;
 });
 
-test('get_comments\' `anchor` keeps the golden\'s shape', {
-  todo: 'U325\'s projection (routes/elements.js commentRecord) serves the engine record as `anchor` and the locator as `locator`; a ready patch is in U327b\'s hand-off',
-}, () => {
+test('get_comments\' `anchor` is the 0.8.5 locator the chrome posted, `record` the engine record, and no `locator` key rides beside them', () => {
   const c = captured.comment;
   assert.ok(c, 'precondition: the replay above');
-  assert.deepEqual(Object.keys(c.anchor).sort(), Object.keys(goldenAdd.anchor).sort());
+  assert.deepEqual(c.anchor, captured.body.locator, 'the served anchor is the posted locator (S-14)');
+  assert.deepEqual(c.record, captured.body.anchor, 'the engine record is served as `record`');
+  assert.equal(Object.prototype.hasOwnProperty.call(c, 'locator'), false, 'the locator is served once, as `anchor`');
+  assert.equal(Object.prototype.hasOwnProperty.call(c.anchor, 'form'), false, 'not a converted record');
 });
