@@ -510,6 +510,20 @@ test('a card whose render throws falls back to the generic row', async () => {
   } finally { off(); console.error = err; }
 });
 
+test('a card\'s unregister redraws the rail: the item goes back to its generic row', async () => {
+  await waitUntil(() => railRow('q-el-1'), { timeout: 2000, what: 'the element item in the rail' });
+  const off = shellMod.registerQueueCard('test-card', {
+    render(item, slot) { const b = W.document.createElement('b'); b.className = 'test-card-body'; b.textContent = item.id; slot.appendChild(b); },
+  });
+  let offed = false;
+  try {
+    await waitUntil(() => railRow('q-el-1') && railRow('q-el-1').querySelector('.test-card-body'), { timeout: 2000, what: 'the card drawn' });
+    off(); offed = true;
+    await waitUntil(() => railRow('q-el-1') && !railRow('q-el-1').querySelector('.qi-card'), { timeout: 2000, what: 'the generic row back' });
+    assert.equal(railRow('q-el-1').querySelector('.qi-summary').textContent, 'a grab of the chart', 'the generic summary is drawn again');
+  } finally { if (!offed) off(); }
+});
+
 test('queue.js reaches the registry only through what shell.js hands in: it never imports shell.js', () => {
   const src = fs.readFileSync(path.join(REPO, 'public/app/queue.js'), 'utf8');
   assert.doesNotMatch(src, /from\s+['"]\.\/shell\.js['"]/, 'no import back (shell.js imports queue.js: a cycle)');
