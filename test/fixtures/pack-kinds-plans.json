@@ -1,0 +1,1905 @@
+{
+  "validate:components-only": {
+    "ok": true,
+    "errors": [],
+    "warnings": [
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-comp",
+    "version": "1.2.0",
+    "description": "Acme service operations on the web-chat surface.",
+    "components": [
+      {
+        "name": "deploy-board",
+        "description": "deploy-board — a pack component.",
+        "params_schema": {},
+        "meta_name": "deploy-board",
+        "has_seed": false,
+        "has_service": true
+      },
+      {
+        "name": "status-tile",
+        "description": "status-tile — a pack component.",
+        "params_schema": {},
+        "meta_name": "status-tile",
+        "has_seed": true,
+        "has_service": false
+      }
+    ],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "plan:components-only:local": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "component",
+        "name": "deploy-board",
+        "dir": "<proj:plans>/.web-chat/components/deploy-board",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:components-only>/components/deploy-board/component.html",
+            "sha256": "f489acbf3a87082780a65bf67c854d3b2a34062e5ce5dcbaeed6fc9f64214e6c",
+            "bytes": 173
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:components-only>/components/deploy-board/meta.json",
+            "sha256": "d2ff1fee3a7e6cb6a49ddfaa1be74c1f8b7d249e94dffb44451dffaa4a4d19eb",
+            "bytes": 107
+          },
+          {
+            "path": "service.js",
+            "src": "<stage:components-only>/components/deploy-board/service.js",
+            "sha256": "34c99892822727fc920fe70b6437e52eaf0b06cf50053070923425b8d18d317f",
+            "bytes": 54
+          }
+        ],
+        "has_service": true,
+        "has_seed": false,
+        "description": "deploy-board — a pack component.",
+        "meta_name": "deploy-board"
+      },
+      {
+        "kind": "component",
+        "name": "status-tile",
+        "dir": "<proj:plans>/.web-chat/components/status-tile",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:components-only>/components/status-tile/component.html",
+            "sha256": "6fc80d40f4f73fea5adb86d493c0ab053343d07a85fd0739b7aa3885e0efbbd8",
+            "bytes": 171
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:components-only>/components/status-tile/meta.json",
+            "sha256": "30802c0ba7c7f33da53e2ecd5fef664761c9b61505c8cd78e28cfab51610607f",
+            "bytes": 105
+          },
+          {
+            "path": "seed.js",
+            "src": "<stage:components-only>/components/status-tile/seed.js",
+            "sha256": "77c7005cb9b1e1838641ffd7bc2f2be010384b796db3629525437ec4a7d14190",
+            "bytes": 43
+          }
+        ],
+        "has_service": false,
+        "has_seed": true,
+        "description": "status-tile — a pack component.",
+        "meta_name": "status-tile"
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "component",
+        "name": "status-tile",
+        "severity": "replace",
+        "owner": "you",
+        "detail": "you already have a component called \"status-tile\" that no pack installed"
+      }
+    ],
+    "services": [
+      "deploy-board"
+    ],
+    "errors": [
+      "component \"status-tile\" already exists and was not installed by a pack — re-run in a terminal with --replace to overwrite it"
+    ],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "plan:components-only:local:replace": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "component",
+        "name": "deploy-board",
+        "dir": "<proj:plans>/.web-chat/components/deploy-board",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:components-only>/components/deploy-board/component.html",
+            "sha256": "f489acbf3a87082780a65bf67c854d3b2a34062e5ce5dcbaeed6fc9f64214e6c",
+            "bytes": 173
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:components-only>/components/deploy-board/meta.json",
+            "sha256": "d2ff1fee3a7e6cb6a49ddfaa1be74c1f8b7d249e94dffb44451dffaa4a4d19eb",
+            "bytes": 107
+          },
+          {
+            "path": "service.js",
+            "src": "<stage:components-only>/components/deploy-board/service.js",
+            "sha256": "34c99892822727fc920fe70b6437e52eaf0b06cf50053070923425b8d18d317f",
+            "bytes": 54
+          }
+        ],
+        "has_service": true,
+        "has_seed": false,
+        "description": "deploy-board — a pack component.",
+        "meta_name": "deploy-board"
+      },
+      {
+        "kind": "component",
+        "name": "status-tile",
+        "dir": "<proj:plans>/.web-chat/components/status-tile",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:components-only>/components/status-tile/component.html",
+            "sha256": "6fc80d40f4f73fea5adb86d493c0ab053343d07a85fd0739b7aa3885e0efbbd8",
+            "bytes": 171
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:components-only>/components/status-tile/meta.json",
+            "sha256": "30802c0ba7c7f33da53e2ecd5fef664761c9b61505c8cd78e28cfab51610607f",
+            "bytes": 105
+          },
+          {
+            "path": "seed.js",
+            "src": "<stage:components-only>/components/status-tile/seed.js",
+            "sha256": "77c7005cb9b1e1838641ffd7bc2f2be010384b796db3629525437ec4a7d14190",
+            "bytes": 43
+          }
+        ],
+        "has_service": false,
+        "has_seed": true,
+        "description": "status-tile — a pack component.",
+        "meta_name": "status-tile"
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "component",
+        "name": "status-tile",
+        "severity": "replace",
+        "owner": "you",
+        "detail": "you already have a component called \"status-tile\" that no pack installed"
+      }
+    ],
+    "services": [
+      "deploy-board"
+    ],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "plan:components-only:system": {
+    "tier": "system",
+    "units": [
+      {
+        "kind": "component",
+        "name": "deploy-board",
+        "dir": "<home>/.web-chat/components/deploy-board",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:components-only>/components/deploy-board/component.html",
+            "sha256": "f489acbf3a87082780a65bf67c854d3b2a34062e5ce5dcbaeed6fc9f64214e6c",
+            "bytes": 173
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:components-only>/components/deploy-board/meta.json",
+            "sha256": "d2ff1fee3a7e6cb6a49ddfaa1be74c1f8b7d249e94dffb44451dffaa4a4d19eb",
+            "bytes": 107
+          },
+          {
+            "path": "service.js",
+            "src": "<stage:components-only>/components/deploy-board/service.js",
+            "sha256": "34c99892822727fc920fe70b6437e52eaf0b06cf50053070923425b8d18d317f",
+            "bytes": 54
+          }
+        ],
+        "has_service": true,
+        "has_seed": false,
+        "description": "deploy-board — a pack component.",
+        "meta_name": "deploy-board"
+      },
+      {
+        "kind": "component",
+        "name": "status-tile",
+        "dir": "<home>/.web-chat/components/status-tile",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:components-only>/components/status-tile/component.html",
+            "sha256": "6fc80d40f4f73fea5adb86d493c0ab053343d07a85fd0739b7aa3885e0efbbd8",
+            "bytes": 171
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:components-only>/components/status-tile/meta.json",
+            "sha256": "30802c0ba7c7f33da53e2ecd5fef664761c9b61505c8cd78e28cfab51610607f",
+            "bytes": 105
+          },
+          {
+            "path": "seed.js",
+            "src": "<stage:components-only>/components/status-tile/seed.js",
+            "sha256": "77c7005cb9b1e1838641ffd7bc2f2be010384b796db3629525437ec4a7d14190",
+            "bytes": 43
+          }
+        ],
+        "has_service": false,
+        "has_seed": true,
+        "description": "status-tile — a pack component.",
+        "meta_name": "status-tile"
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "component",
+        "name": "status-tile",
+        "severity": "shadowed",
+        "owner": "this project",
+        "detail": "installing \"status-tile\" for all projects, but this project already has its own \"status-tile\" — the project copy keeps winning here"
+      }
+    ],
+    "services": [
+      "deploy-board"
+    ],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "validate:themes-only": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "name": "kinds-theme",
+    "version": "0.1.0",
+    "description": "A theme.",
+    "components": [],
+    "themes": [
+      {
+        "name": "harbor"
+      }
+    ],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "plan:themes-only:local": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<proj:plans>/.web-chat/themes",
+        "files": [
+          {
+            "path": "harbor.json",
+            "src": "<stage:themes-only>/themes/harbor.json",
+            "sha256": "51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#c0ffee"
+            }
+          }
+        }
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "severity": "update",
+        "owner": "kinds-theme",
+        "detail": "replacing this pack's own earlier copy"
+      }
+    ],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "plan:themes-only:local:replace": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<proj:plans>/.web-chat/themes",
+        "files": [
+          {
+            "path": "harbor.json",
+            "src": "<stage:themes-only>/themes/harbor.json",
+            "sha256": "51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#c0ffee"
+            }
+          }
+        }
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "severity": "update",
+        "owner": "kinds-theme",
+        "detail": "replacing this pack's own earlier copy"
+      }
+    ],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "plan:themes-only:system": {
+    "tier": "system",
+    "units": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<home>/.web-chat/themes",
+        "files": [
+          {
+            "path": "harbor.json",
+            "src": "<stage:themes-only>/themes/harbor.json",
+            "sha256": "51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#c0ffee"
+            }
+          }
+        }
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "validate:skill-only": {
+    "ok": true,
+    "errors": [],
+    "warnings": [
+      "web-chat-pack.json: lists no components — only the skill would be installed"
+    ],
+    "name": "kinds-skill",
+    "version": "1.2.0",
+    "description": "Acme service operations on the web-chat surface.",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": true,
+      "name": "kinds-skill",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "body": "\n# kinds-skill\n\n\n",
+      "raw": "---\nname: kinds-skill\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-skill\n\n\n"
+    },
+    "requires": null
+  },
+  "plan:skill-only:local": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "skill",
+        "name": "kinds-skill",
+        "dir": "<proj:plans>/.claude/skills/kinds-skill",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:skill-only>/SKILL.md",
+            "sha256": "5c23ba73b7bd6b207a2de0459e2525029a90309f665d365803605fedb12e50a9",
+            "bytes": 173
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-skill",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-skill/SKILL.md",
+      "bytes": 173
+    },
+    "root": "<proj:plans>"
+  },
+  "plan:skill-only:local:replace": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "skill",
+        "name": "kinds-skill",
+        "dir": "<proj:plans>/.claude/skills/kinds-skill",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:skill-only>/SKILL.md",
+            "sha256": "5c23ba73b7bd6b207a2de0459e2525029a90309f665d365803605fedb12e50a9",
+            "bytes": 173
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-skill",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-skill/SKILL.md",
+      "bytes": 173
+    },
+    "root": "<proj:plans>"
+  },
+  "plan:skill-only:system": {
+    "tier": "system",
+    "units": [
+      {
+        "kind": "skill",
+        "name": "kinds-skill",
+        "dir": "<home>/.claude/skills/kinds-skill",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:skill-only>/SKILL.md",
+            "sha256": "5c23ba73b7bd6b207a2de0459e2525029a90309f665d365803605fedb12e50a9",
+            "bytes": 173
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-skill",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-skill/SKILL.md",
+      "bytes": 173
+    },
+    "root": "<proj:plans>"
+  },
+  "validate:all-three": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "name": "kinds-all",
+    "version": "1.2.0",
+    "description": "Acme service operations on the web-chat surface.",
+    "components": [
+      {
+        "name": "ops-board",
+        "description": "ops-board — a pack component.",
+        "params_schema": {},
+        "meta_name": "ops-board",
+        "has_seed": false,
+        "has_service": false
+      }
+    ],
+    "themes": [
+      {
+        "name": "lagoon"
+      }
+    ],
+    "skill": {
+      "present": true,
+      "name": "kinds-all",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "body": "\n# kinds-all\n\n## ops-board\n\n`use_component({ name: 'ops-board', id: 'ops-board' })`\n\n",
+      "raw": "---\nname: kinds-all\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-all\n\n## ops-board\n\n`use_component({ name: 'ops-board', id: 'ops-board' })`\n\n"
+    },
+    "requires": null
+  },
+  "plan:all-three:local": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "component",
+        "name": "ops-board",
+        "dir": "<proj:plans>/.web-chat/components/ops-board",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:all-three>/components/ops-board/component.html",
+            "sha256": "9f510f3d5b7db972bb407874efdd5557000279609b0d475eece6538204082033",
+            "bytes": 167
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:all-three>/components/ops-board/meta.json",
+            "sha256": "5007081ecb448cbe7a012c1930956941be53f6bb9d0b28d6b03113af9bf3cde0",
+            "bytes": 101
+          }
+        ],
+        "has_service": false,
+        "has_seed": false,
+        "description": "ops-board — a pack component.",
+        "meta_name": "ops-board"
+      },
+      {
+        "kind": "theme",
+        "name": "lagoon",
+        "dir": "<proj:plans>/.web-chat/themes",
+        "files": [
+          {
+            "path": "lagoon.json",
+            "src": "<stage:all-three>/themes/lagoon.json",
+            "sha256": "4b38f9b89aa3faa625dcef3a83094f58c2dd66c33bbca3c9f0d193b808acd7fb",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#00aaee"
+            }
+          }
+        }
+      },
+      {
+        "kind": "skill",
+        "name": "kinds-all",
+        "dir": "<proj:plans>/.claude/skills/kinds-all",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:all-three>/SKILL.md",
+            "sha256": "e7ed143581757a9ef904c68fabd663e0a8a2875ed6a7faee91c459a3cadf1e54",
+            "bytes": 239
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-all",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-all/SKILL.md",
+      "bytes": 239
+    },
+    "root": "<proj:plans>"
+  },
+  "plan:all-three:local:replace": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "component",
+        "name": "ops-board",
+        "dir": "<proj:plans>/.web-chat/components/ops-board",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:all-three>/components/ops-board/component.html",
+            "sha256": "9f510f3d5b7db972bb407874efdd5557000279609b0d475eece6538204082033",
+            "bytes": 167
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:all-three>/components/ops-board/meta.json",
+            "sha256": "5007081ecb448cbe7a012c1930956941be53f6bb9d0b28d6b03113af9bf3cde0",
+            "bytes": 101
+          }
+        ],
+        "has_service": false,
+        "has_seed": false,
+        "description": "ops-board — a pack component.",
+        "meta_name": "ops-board"
+      },
+      {
+        "kind": "theme",
+        "name": "lagoon",
+        "dir": "<proj:plans>/.web-chat/themes",
+        "files": [
+          {
+            "path": "lagoon.json",
+            "src": "<stage:all-three>/themes/lagoon.json",
+            "sha256": "4b38f9b89aa3faa625dcef3a83094f58c2dd66c33bbca3c9f0d193b808acd7fb",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#00aaee"
+            }
+          }
+        }
+      },
+      {
+        "kind": "skill",
+        "name": "kinds-all",
+        "dir": "<proj:plans>/.claude/skills/kinds-all",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:all-three>/SKILL.md",
+            "sha256": "e7ed143581757a9ef904c68fabd663e0a8a2875ed6a7faee91c459a3cadf1e54",
+            "bytes": 239
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-all",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-all/SKILL.md",
+      "bytes": 239
+    },
+    "root": "<proj:plans>"
+  },
+  "plan:all-three:system": {
+    "tier": "system",
+    "units": [
+      {
+        "kind": "component",
+        "name": "ops-board",
+        "dir": "<home>/.web-chat/components/ops-board",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:all-three>/components/ops-board/component.html",
+            "sha256": "9f510f3d5b7db972bb407874efdd5557000279609b0d475eece6538204082033",
+            "bytes": 167
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:all-three>/components/ops-board/meta.json",
+            "sha256": "5007081ecb448cbe7a012c1930956941be53f6bb9d0b28d6b03113af9bf3cde0",
+            "bytes": 101
+          }
+        ],
+        "has_service": false,
+        "has_seed": false,
+        "description": "ops-board — a pack component.",
+        "meta_name": "ops-board"
+      },
+      {
+        "kind": "theme",
+        "name": "lagoon",
+        "dir": "<home>/.web-chat/themes",
+        "files": [
+          {
+            "path": "lagoon.json",
+            "src": "<stage:all-three>/themes/lagoon.json",
+            "sha256": "4b38f9b89aa3faa625dcef3a83094f58c2dd66c33bbca3c9f0d193b808acd7fb",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#00aaee"
+            }
+          }
+        }
+      },
+      {
+        "kind": "skill",
+        "name": "kinds-all",
+        "dir": "<home>/.claude/skills/kinds-all",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:all-three>/SKILL.md",
+            "sha256": "e7ed143581757a9ef904c68fabd663e0a8a2875ed6a7faee91c459a3cadf1e54",
+            "bytes": 239
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-all",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-all/SKILL.md",
+      "bytes": 239
+    },
+    "root": "<proj:plans>"
+  },
+  "validate:builtin-component": {
+    "ok": false,
+    "errors": [
+      "component \"git-dashboard\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override."
+    ],
+    "warnings": [],
+    "name": "kinds-builtin",
+    "version": "1.2.0",
+    "description": "Acme service operations on the web-chat surface.",
+    "components": [
+      {
+        "name": "fine-tile",
+        "description": "fine-tile — a pack component.",
+        "params_schema": {},
+        "meta_name": "fine-tile",
+        "has_seed": false,
+        "has_service": false
+      }
+    ],
+    "themes": [],
+    "skill": {
+      "present": true,
+      "name": "kinds-builtin",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "body": "\n# kinds-builtin\n\n## git-dashboard\n\n`use_component({ name: 'git-dashboard', id: 'git-dashboard' })`\n\n## fine-tile\n\n`use_component({ name: 'fine-tile', id: 'fine-tile' })`\n\n",
+      "raw": "---\nname: kinds-builtin\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-builtin\n\n## git-dashboard\n\n`use_component({ name: 'git-dashboard', id: 'git-dashboard' })`\n\n## fine-tile\n\n`use_component({ name: 'fine-tile', id: 'fine-tile' })`\n\n"
+    },
+    "requires": null
+  },
+  "plan:builtin-component:local": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "component",
+        "name": "fine-tile",
+        "dir": "<proj:plans>/.web-chat/components/fine-tile",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:builtin-component>/components/fine-tile/component.html",
+            "sha256": "a8a6b9adf128939e58dd11db84a26220af07e99a4ceb53a18cbe4fe89cf6c1a6",
+            "bytes": 167
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:builtin-component>/components/fine-tile/meta.json",
+            "sha256": "f22e8639cea0f592228791662750b184fda57867bf61b28aa5d801b88fcdab72",
+            "bytes": 101
+          }
+        ],
+        "has_service": false,
+        "has_seed": false,
+        "description": "fine-tile — a pack component.",
+        "meta_name": "fine-tile"
+      },
+      {
+        "kind": "skill",
+        "name": "kinds-builtin",
+        "dir": "<proj:plans>/.claude/skills/kinds-builtin",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:builtin-component>/SKILL.md",
+            "sha256": "c53af42e5991a39951c10f02c2c39f9f7507be2f577f495868a0c1fb12f42526",
+            "bytes": 330
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-builtin",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-builtin/SKILL.md",
+      "bytes": 330
+    },
+    "root": "<proj:plans>"
+  },
+  "plan:builtin-component:local:replace": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "component",
+        "name": "fine-tile",
+        "dir": "<proj:plans>/.web-chat/components/fine-tile",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:builtin-component>/components/fine-tile/component.html",
+            "sha256": "a8a6b9adf128939e58dd11db84a26220af07e99a4ceb53a18cbe4fe89cf6c1a6",
+            "bytes": 167
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:builtin-component>/components/fine-tile/meta.json",
+            "sha256": "f22e8639cea0f592228791662750b184fda57867bf61b28aa5d801b88fcdab72",
+            "bytes": 101
+          }
+        ],
+        "has_service": false,
+        "has_seed": false,
+        "description": "fine-tile — a pack component.",
+        "meta_name": "fine-tile"
+      },
+      {
+        "kind": "skill",
+        "name": "kinds-builtin",
+        "dir": "<proj:plans>/.claude/skills/kinds-builtin",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:builtin-component>/SKILL.md",
+            "sha256": "c53af42e5991a39951c10f02c2c39f9f7507be2f577f495868a0c1fb12f42526",
+            "bytes": 330
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-builtin",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-builtin/SKILL.md",
+      "bytes": 330
+    },
+    "root": "<proj:plans>"
+  },
+  "plan:builtin-component:system": {
+    "tier": "system",
+    "units": [
+      {
+        "kind": "component",
+        "name": "fine-tile",
+        "dir": "<home>/.web-chat/components/fine-tile",
+        "files": [
+          {
+            "path": "component.html",
+            "src": "<stage:builtin-component>/components/fine-tile/component.html",
+            "sha256": "a8a6b9adf128939e58dd11db84a26220af07e99a4ceb53a18cbe4fe89cf6c1a6",
+            "bytes": 167
+          },
+          {
+            "path": "meta.json",
+            "src": "<stage:builtin-component>/components/fine-tile/meta.json",
+            "sha256": "f22e8639cea0f592228791662750b184fda57867bf61b28aa5d801b88fcdab72",
+            "bytes": 101
+          }
+        ],
+        "has_service": false,
+        "has_seed": false,
+        "description": "fine-tile — a pack component.",
+        "meta_name": "fine-tile"
+      },
+      {
+        "kind": "skill",
+        "name": "kinds-builtin",
+        "dir": "<home>/.claude/skills/kinds-builtin",
+        "files": [
+          {
+            "path": "SKILL.md",
+            "src": "<stage:builtin-component>/SKILL.md",
+            "sha256": "c53af42e5991a39951c10f02c2c39f9f7507be2f577f495868a0c1fb12f42526",
+            "bytes": 330
+          }
+        ]
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": {
+      "name": "kinds-builtin",
+      "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+      "dest": ".claude/skills/kinds-builtin/SKILL.md",
+      "bytes": 330
+    },
+    "root": "<proj:plans>"
+  },
+  "validate:theme-owned-elsewhere": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "name": "kinds-theme-b",
+    "version": "0.2.0",
+    "description": "",
+    "components": [],
+    "themes": [
+      {
+        "name": "harbor"
+      }
+    ],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "plan:theme-owned-elsewhere:local": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<proj:plans>/.web-chat/themes",
+        "files": [
+          {
+            "path": "harbor.json",
+            "src": "<stage:theme-owned-elsewhere>/themes/harbor.json",
+            "sha256": "16db610bd4337bc0a6940fce656885653ca0e4daededa054dc9bc4fb67053935",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#bada55"
+            }
+          }
+        }
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "severity": "replace",
+        "owner": "kinds-theme",
+        "detail": "a theme called \"harbor\" already exists here"
+      }
+    ],
+    "services": [],
+    "errors": [
+      "theme \"harbor\" already exists — re-run in a terminal with --replace to overwrite it"
+    ],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "plan:theme-owned-elsewhere:local:replace": {
+    "tier": "local",
+    "units": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<proj:plans>/.web-chat/themes",
+        "files": [
+          {
+            "path": "harbor.json",
+            "src": "<stage:theme-owned-elsewhere>/themes/harbor.json",
+            "sha256": "16db610bd4337bc0a6940fce656885653ca0e4daededa054dc9bc4fb67053935",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#bada55"
+            }
+          }
+        }
+      }
+    ],
+    "collisions": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "severity": "replace",
+        "owner": "kinds-theme",
+        "detail": "a theme called \"harbor\" already exists here"
+      }
+    ],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "plan:theme-owned-elsewhere:system": {
+    "tier": "system",
+    "units": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<home>/.web-chat/themes",
+        "files": [
+          {
+            "path": "harbor.json",
+            "src": "<stage:theme-owned-elsewhere>/themes/harbor.json",
+            "sha256": "16db610bd4337bc0a6940fce656885653ca0e4daededa054dc9bc4fb67053935",
+            "bytes": 103
+          }
+        ],
+        "summary": {
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#bada55"
+            }
+          }
+        }
+      }
+    ],
+    "collisions": [],
+    "services": [],
+    "errors": [],
+    "warnings": [],
+    "skill": null,
+    "root": "<proj:plans>"
+  },
+  "validate:empty": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"name\" is required",
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "validate:empty:no-stage": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"name\" is required",
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "validate:themes-only-no-tree": {
+    "ok": false,
+    "errors": [
+      "theme \"harbor\": themes/harbor/theme.json is missing"
+    ],
+    "warnings": [
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-t",
+    "version": "1.0.0",
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "validate:themes-only-no-tree:no-stage": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "name": "kinds-t",
+    "version": "1.0.0",
+    "description": "",
+    "components": [],
+    "themes": [
+      {
+        "name": "harbor"
+      }
+    ],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "validate:components-not-array": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-x",
+    "version": "1.0.0",
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "validate:components-not-array:no-stage": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-x",
+    "version": "1.0.0",
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "validate:components-null-themes-empty": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-y",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "validate:components-null-themes-empty:no-stage": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-y",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "validate:themes-not-array": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"themes\" must be an array of theme names"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-z",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "validate:themes-not-array:no-stage": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"themes\" must be an array of theme names"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-z",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "validate:components-object-themes-listed": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)",
+      "theme \"harbor\": themes/harbor/theme.json is missing"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "kinds-w",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false,
+      "name": null,
+      "description": null,
+      "body": null,
+      "raw": null
+    },
+    "requires": null
+  },
+  "validate:components-object-themes-listed:no-stage": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show"
+    ],
+    "name": "kinds-w",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [
+      {
+        "name": "harbor"
+      }
+    ],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "validate:undefined": {
+    "ok": false,
+    "errors": [
+      "web-chat-pack.json: \"name\" is required",
+      "web-chat-pack.json: \"components\" must be an array of directory names (a pack that ships only themes lists \"themes\" instead)"
+    ],
+    "warnings": [
+      "web-chat-pack.json: no \"version\" — `pack list` will have nothing to show",
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ],
+    "name": "",
+    "version": null,
+    "description": "",
+    "components": [],
+    "themes": [],
+    "skill": {
+      "present": false
+    },
+    "requires": null
+  },
+  "install:components-only:results": {
+    "results": [
+      {
+        "dest": "component deploy-board",
+        "action": "created",
+        "kind": "component",
+        "name": "deploy-board",
+        "dir": "<proj:cli>/.web-chat/components/deploy-board"
+      },
+      {
+        "dest": "component status-tile",
+        "action": "created",
+        "kind": "component",
+        "name": "status-tile",
+        "dir": "<proj:cli>/.web-chat/components/status-tile"
+      }
+    ],
+    "pack": {
+      "name": "kinds-comp",
+      "version": "1.2.0",
+      "description": "Acme service operations on the web-chat surface.",
+      "source": {
+        "via": "tarball",
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "url": "https://github.com/acme/kinds"
+      },
+      "actor": "cli",
+      "installed_at": "<ts>",
+      "web_chat_version": "0.8.5",
+      "skill": null,
+      "services": [
+        "deploy-board"
+      ],
+      "themes": [],
+      "units": [
+        {
+          "kind": "component",
+          "name": "deploy-board",
+          "files": [
+            {
+              "path": "component.html",
+              "sha256": "f489acbf3a87082780a65bf67c854d3b2a34062e5ce5dcbaeed6fc9f64214e6c"
+            },
+            {
+              "path": "meta.json",
+              "sha256": "d2ff1fee3a7e6cb6a49ddfaa1be74c1f8b7d249e94dffb44451dffaa4a4d19eb"
+            },
+            {
+              "path": "service.js",
+              "sha256": "34c99892822727fc920fe70b6437e52eaf0b06cf50053070923425b8d18d317f"
+            }
+          ]
+        },
+        {
+          "kind": "component",
+          "name": "status-tile",
+          "files": [
+            {
+              "path": "component.html",
+              "sha256": "6fc80d40f4f73fea5adb86d493c0ab053343d07a85fd0739b7aa3885e0efbbd8"
+            },
+            {
+              "path": "meta.json",
+              "sha256": "30802c0ba7c7f33da53e2ecd5fef664761c9b61505c8cd78e28cfab51610607f"
+            },
+            {
+              "path": "seed.js",
+              "sha256": "77c7005cb9b1e1838641ffd7bc2f2be010384b796db3629525437ec4a7d14190"
+            }
+          ]
+        }
+      ]
+    },
+    "warnings": [
+      "no SKILL.md — the components install, but Claude only learns they exist by calling list_components. A pack without a skill is a directory of components."
+    ]
+  },
+  "install:themes-only:results": {
+    "results": [
+      {
+        "dest": "theme harbor",
+        "action": "created",
+        "kind": "theme",
+        "name": "harbor",
+        "dir": "<proj:cli>/.web-chat/themes"
+      }
+    ],
+    "pack": {
+      "name": "kinds-theme",
+      "version": "0.1.0",
+      "description": "A theme.",
+      "source": {
+        "via": "tarball",
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "url": "https://github.com/acme/kinds"
+      },
+      "actor": "cli",
+      "installed_at": "<ts>",
+      "web_chat_version": "0.8.5",
+      "skill": null,
+      "services": [],
+      "themes": [
+        "harbor"
+      ],
+      "units": [
+        {
+          "kind": "theme",
+          "name": "harbor",
+          "files": [
+            {
+              "path": "harbor.json",
+              "sha256": "51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1"
+            }
+          ]
+        }
+      ]
+    },
+    "warnings": []
+  },
+  "install:skill-only:results": {
+    "results": [
+      {
+        "dest": "skill kinds-skill",
+        "action": "created",
+        "kind": "skill",
+        "name": "kinds-skill",
+        "dir": "<proj:cli>/.claude/skills/kinds-skill"
+      }
+    ],
+    "pack": {
+      "name": "kinds-skill",
+      "version": "1.2.0",
+      "description": "Acme service operations on the web-chat surface.",
+      "source": {
+        "via": "tarball",
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "url": "https://github.com/acme/kinds"
+      },
+      "actor": "cli",
+      "installed_at": "<ts>",
+      "web_chat_version": "0.8.5",
+      "skill": {
+        "name": "kinds-skill",
+        "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+        "dest": ".claude/skills/kinds-skill/SKILL.md",
+        "bytes": 173
+      },
+      "services": [],
+      "themes": [],
+      "units": [
+        {
+          "kind": "skill",
+          "name": "kinds-skill",
+          "files": [
+            {
+              "path": "SKILL.md",
+              "sha256": "5c23ba73b7bd6b207a2de0459e2525029a90309f665d365803605fedb12e50a9"
+            }
+          ]
+        }
+      ]
+    },
+    "warnings": [
+      "web-chat-pack.json: lists no components — only the skill would be installed"
+    ]
+  },
+  "install:all-three:system": [
+    {
+      "dest": "component ops-board",
+      "action": "created",
+      "kind": "component",
+      "name": "ops-board",
+      "dir": "<home>/.web-chat/components/ops-board"
+    },
+    {
+      "dest": "theme lagoon",
+      "action": "created",
+      "kind": "theme",
+      "name": "lagoon",
+      "dir": "<home>/.web-chat/themes"
+    },
+    {
+      "dest": "skill kinds-all",
+      "action": "created",
+      "kind": "skill",
+      "name": "kinds-all",
+      "dir": "<home>/.claude/skills/kinds-all"
+    }
+  ],
+  "install:all-three:system:again": [
+    {
+      "dest": "component ops-board",
+      "action": "overwritten",
+      "kind": "component",
+      "name": "ops-board",
+      "dir": "<home>/.web-chat/components/ops-board"
+    },
+    {
+      "dest": "theme lagoon",
+      "action": "overwritten",
+      "kind": "theme",
+      "name": "lagoon",
+      "dir": "<home>/.web-chat/themes"
+    },
+    {
+      "dest": "skill kinds-all",
+      "action": "overwritten",
+      "kind": "skill",
+      "name": "kinds-all",
+      "dir": "<home>/.claude/skills/kinds-all"
+    }
+  ],
+  "install:builtin-component:refused": {
+    "message": "this pack cannot be installed:\n  - component \"git-dashboard\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override.",
+    "errors": [
+      "component \"git-dashboard\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override."
+    ],
+    "warnings": []
+  },
+  "install:theme-owned-elsewhere:refused": {
+    "message": "this pack cannot be installed:\n  - theme \"harbor\" already exists — re-run in a terminal with --replace to overwrite it",
+    "errors": [
+      "theme \"harbor\" already exists — re-run in a terminal with --replace to overwrite it"
+    ],
+    "collisions": [
+      {
+        "kind": "theme",
+        "name": "harbor",
+        "severity": "replace",
+        "owner": "kinds-theme",
+        "detail": "a theme called \"harbor\" already exists here"
+      }
+    ],
+    "warnings": []
+  },
+  "quarantine:records": {
+    "kinds-all": {
+      "name": "kinds-all",
+      "root": "<proj:cli>",
+      "tier": "local",
+      "dir": "<quarantine:kinds-all>",
+      "pack_dir": "<quarantine-pack:kinds-all>",
+      "staged_at": "<ts>",
+      "source": {
+        "url": "<forge>/acme/all",
+        "ref": "HEAD",
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "via": "archive",
+        "sums_verified": false,
+        "asset": null,
+        "transport": "https"
+      },
+      "tree_sha256": "f5119af7ecd781df092280baa7121de89ac22c954fc539245bc875d42a82e114",
+      "files": [
+        "README.md",
+        "SKILL.md",
+        "components/ops-board/component.html",
+        "components/ops-board/meta.json",
+        "themes/lagoon.json",
+        "web-chat-pack.json"
+      ],
+      "version": "1.2.0",
+      "description": "Acme service operations on the web-chat surface.",
+      "components": [
+        {
+          "name": "ops-board",
+          "description": "ops-board — a pack component.",
+          "has_service": false,
+          "has_seed": false
+        }
+      ],
+      "themes": [
+        {
+          "name": "lagoon",
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#00aaee"
+            }
+          },
+          "files": [
+            "lagoon.json"
+          ]
+        }
+      ],
+      "services": [],
+      "skill": {
+        "name": "kinds-all",
+        "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+        "dest": ".claude/skills/kinds-all/SKILL.md",
+        "bytes": 239
+      },
+      "collisions": [],
+      "errors": [],
+      "warnings": []
+    },
+    "kinds-theme-b": {
+      "name": "kinds-theme-b",
+      "root": "<proj:cli>",
+      "tier": "local",
+      "dir": "<quarantine:kinds-theme-b>",
+      "pack_dir": "<quarantine-pack:kinds-theme-b>",
+      "staged_at": "<ts>",
+      "source": {
+        "url": "<forge>/acme/theme",
+        "ref": "HEAD",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "via": "archive",
+        "sums_verified": false,
+        "asset": null,
+        "transport": "https"
+      },
+      "tree_sha256": "8a5e5309855ad15e9bb8979a2252179b1e2907c2e0b867a44e85c73f151bf8ab",
+      "files": [
+        "README.md",
+        "themes/harbor.json",
+        "web-chat-pack.json"
+      ],
+      "version": "0.2.0",
+      "description": "",
+      "components": [],
+      "themes": [
+        {
+          "name": "harbor",
+          "tokens": 3,
+          "modes": [],
+          "logos": [],
+          "fonts": [],
+          "css": false,
+          "palette": {
+            "default": {
+              "bg": "#101010",
+              "fg": "#f0f0f0",
+              "accent": "#bada55"
+            }
+          },
+          "files": [
+            "harbor.json"
+          ]
+        }
+      ],
+      "services": [],
+      "skill": null,
+      "collisions": [
+        {
+          "kind": "theme",
+          "name": "harbor",
+          "severity": "replace",
+          "owner": "kinds-theme",
+          "detail": "a theme called \"harbor\" already exists here"
+        }
+      ],
+      "errors": [
+        "theme \"harbor\" already exists — re-run in a terminal with --replace to overwrite it"
+      ],
+      "warnings": []
+    },
+    "kinds-builtin": {
+      "name": "kinds-builtin",
+      "root": "<proj:cli>",
+      "tier": "local",
+      "dir": "<quarantine:kinds-builtin>",
+      "pack_dir": "<quarantine-pack:kinds-builtin>",
+      "staged_at": "<ts>",
+      "source": {
+        "url": "<forge>/acme/builtin",
+        "ref": "HEAD",
+        "sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "via": "archive",
+        "sums_verified": false,
+        "asset": null,
+        "transport": "https"
+      },
+      "tree_sha256": "df62be3409b4d621c2acf7f25188de516cdcdd09e760c8916a53bdbafcc9d9c9",
+      "files": [
+        "README.md",
+        "SKILL.md",
+        "components/fine-tile/component.html",
+        "components/fine-tile/meta.json",
+        "components/git-dashboard/component.html",
+        "components/git-dashboard/meta.json",
+        "web-chat-pack.json"
+      ],
+      "version": "1.2.0",
+      "description": "Acme service operations on the web-chat surface.",
+      "components": [
+        {
+          "name": "fine-tile",
+          "description": "fine-tile — a pack component.",
+          "has_service": false,
+          "has_seed": false
+        }
+      ],
+      "themes": [],
+      "services": [],
+      "skill": {
+        "name": "kinds-builtin",
+        "description": "Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.",
+        "dest": ".claude/skills/kinds-builtin/SKILL.md",
+        "bytes": 330
+      },
+      "collisions": [],
+      "errors": [
+        "component \"git-dashboard\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override."
+      ],
+      "warnings": []
+    }
+  },
+  "cli:list": "\n  kinds-comp 1.2.0   this project\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: deploy-board, status-tile   (no skill)\n    services:   deploy-board  (approve with `claude-web-chat trust --pack kinds-comp`, or each with `trust <name>`)\n  kinds-theme 0.1.0   this project\n    A theme.\n    tarball @ aaaaaaa\n    themes:     harbor\n  kinds-skill 1.2.0   this project\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: —   skill: .claude/skills/kinds-skill/SKILL.md\n  kinds-all 1.2.0   all projects\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: ops-board   skill: .claude/skills/kinds-all/SKILL.md\n    themes:     lagoon\n\n  awaiting review (downloaded, not installed):\n    kinds-all 1.2.0   tarball @ bbbbbbb\n      claude-web-chat pack review kinds-all\n    kinds-theme-b 0.2.0   tarball @ ccccccc   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-theme-b\n    kinds-builtin 1.2.0   tarball @ ddddddd   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-builtin\n",
+  "cli:list:verify": "\n  kinds-comp 1.2.0   this project  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: deploy-board, status-tile   (no skill)\n    services:   deploy-board  (approve with `claude-web-chat trust --pack kinds-comp`, or each with `trust <name>`)\n  kinds-theme 0.1.0   this project  · unmodified\n    A theme.\n    tarball @ aaaaaaa\n    themes:     harbor\n  kinds-skill 1.2.0   this project  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: —   skill: .claude/skills/kinds-skill/SKILL.md\n  kinds-all 1.2.0   all projects  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: ops-board   skill: .claude/skills/kinds-all/SKILL.md\n    themes:     lagoon\n\n  awaiting review (downloaded, not installed):\n    kinds-all 1.2.0   tarball @ bbbbbbb\n      claude-web-chat pack review kinds-all\n    kinds-theme-b 0.2.0   tarball @ ccccccc   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-theme-b\n    kinds-builtin 1.2.0   tarball @ ddddddd   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-builtin\n",
+  "cli:info:kinds-comp": "\n  kinds-comp 1.2.0   this project\n  Acme service operations on the web-chat surface.\n  tarball @ aaaaaaa\n  source https://github.com/acme/kinds\n  installed <ts>\n\n    component deploy-board             intact\n    component status-tile              intact\n",
+  "cli:info:kinds-theme": "\n  kinds-theme 0.1.0   this project\n  A theme.\n  tarball @ aaaaaaa\n  source https://github.com/acme/kinds\n  installed <ts>\n\n    theme     harbor                   intact\n",
+  "cli:info:kinds-skill": "\n  kinds-skill 1.2.0   this project\n  Acme service operations on the web-chat surface.\n  tarball @ aaaaaaa\n  source https://github.com/acme/kinds\n  installed <ts>\n\n    skill     kinds-skill              intact\n",
+  "cli:info:kinds-all": "\n  kinds-all 1.2.0   all projects\n  Acme service operations on the web-chat surface.\n  tarball @ aaaaaaa\n  source https://github.com/acme/kinds\n  installed <ts>\n\n    component ops-board                intact\n    theme     lagoon                   intact\n    skill     kinds-all                intact\n",
+  "cli:review:kinds-all": "\n  kinds-all 1.2.0\n  Acme service operations on the web-chat surface.\n  tarball @ bbbbbbb · <forge>/acme/all\n  staged <ts>\n\n  components\n    ops-board\n      ops-board — a pack component.\n  themes\n    lagoon\n\n  what this tells Claude (SKILL.md frontmatter)\n    name:        kinds-all\n    description: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n    read it in full:  claude-web-chat pack review kinds-all --file SKILL.md\n\n  6 files:\n         12  README.md\n        239  SKILL.md\n        167  components/ops-board/component.html\n        101  components/ops-board/meta.json\n        103  themes/lagoon.json\n        188  web-chat-pack.json\n\n    claude-web-chat pack review kinds-all --file <path>   # read any of them\n    claude-web-chat pack approve kinds-all\n    claude-web-chat pack discard kinds-all\n",
+  "cli:review:kinds-theme-b": "\n  kinds-theme-b 0.2.0\n  tarball @ ccccccc · <forge>/acme/theme\n  staged <ts>\n\n  ✗ theme \"harbor\" already exists — re-run in a terminal with --replace to overwrite it\n  ! a theme called \"harbor\" already exists here\n\n  themes\n    harbor\n\n  no SKILL.md — none needed: a theme is found through list_themes and Settings → Theme.\n\n  3 files:\n         16  README.md\n        103  themes/harbor.json\n         84  web-chat-pack.json\n\n    claude-web-chat pack review kinds-theme-b --file <path>   # read any of them\n    claude-web-chat pack approve kinds-theme-b\n    claude-web-chat pack discard kinds-theme-b\n",
+  "cli:review:kinds-builtin": "\n  kinds-builtin 1.2.0\n  Acme service operations on the web-chat surface.\n  tarball @ ddddddd · <forge>/acme/builtin\n  staged <ts>\n\n  ✗ component \"git-dashboard\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override.\n\n  components\n    fine-tile\n      fine-tile — a pack component.\n\n  what this tells Claude (SKILL.md frontmatter)\n    name:        kinds-builtin\n    description: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n    read it in full:  claude-web-chat pack review kinds-builtin --file SKILL.md\n\n  7 files:\n         16  README.md\n        330  SKILL.md\n        167  components/fine-tile/component.html\n        101  components/fine-tile/meta.json\n        175  components/git-dashboard/component.html\n        109  components/git-dashboard/meta.json\n        181  web-chat-pack.json\n\n    claude-web-chat pack review kinds-builtin --file <path>   # read any of them\n    claude-web-chat pack approve kinds-builtin\n    claude-web-chat pack discard kinds-builtin\n",
+  "cli:approve:kinds-all": "\n  component ops-board   created\n  theme lagoon          created\n  skill kinds-all       created\n\n  skill  .claude/skills/kinds-all/SKILL.md — Claude picks this up within a few seconds; no restart needed.\n  theme  lagoon — pick it in Settings → Theme, or ask Claude to apply_theme it.\n\n  installed for this project — tarball @ bbbbbbb\n",
+  "cli:list:after-approve": "\n  kinds-comp 1.2.0   this project  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: deploy-board, status-tile   (no skill)\n    services:   deploy-board  (approve with `claude-web-chat trust --pack kinds-comp`, or each with `trust <name>`)\n  kinds-theme 0.1.0   this project  · unmodified\n    A theme.\n    tarball @ aaaaaaa\n    themes:     harbor\n  kinds-skill 1.2.0   this project  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: —   skill: .claude/skills/kinds-skill/SKILL.md\n  kinds-all 1.2.0   this project  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ bbbbbbb\n    components: ops-board   skill: .claude/skills/kinds-all/SKILL.md\n    themes:     lagoon\n  kinds-all 1.2.0   all projects  · unmodified\n    Acme service operations on the web-chat surface.\n    tarball @ aaaaaaa\n    components: ops-board   skill: .claude/skills/kinds-all/SKILL.md\n    themes:     lagoon\n\n  awaiting review (downloaded, not installed):\n    kinds-theme-b 0.2.0   tarball @ ccccccc   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-theme-b\n    kinds-builtin 1.2.0   tarball @ ddddddd   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-builtin\n",
+  "records:after-install": {
+    "proj/.web-chat/components/deploy-board/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">deploy-board</div>\n<script>root.querySelector('#body').textContent = params.label || 'deploy-board';</script>\n",
+    "proj/.web-chat/components/deploy-board/meta.json": "{\n  \"name\": \"deploy-board\",\n  \"description\": \"deploy-board — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/components/deploy-board/service.js": "module.exports = { start(ctx) { return () => {}; } };\n",
+    "proj/.web-chat/components/ops-board/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">ops-board</div>\n<script>root.querySelector('#body').textContent = params.label || 'ops-board';</script>\n",
+    "proj/.web-chat/components/ops-board/meta.json": "{\n  \"name\": \"ops-board\",\n  \"description\": \"ops-board — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/components/status-tile/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">status-tile</div>\n<script>root.querySelector('#body').textContent = params.label || 'status-tile';</script>\n",
+    "proj/.web-chat/components/status-tile/meta.json": "{\n  \"name\": \"status-tile\",\n  \"description\": \"status-tile — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/components/status-tile/seed.js": "module.exports = () => ({ seeded: true });\n",
+    "proj/.web-chat/packs/audit.log": "{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-comp\",\"tier\":\"local\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:deploy-board\",\"component:status-tile\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-theme\",\"tier\":\"local\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"theme:harbor\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-skill\",\"tier\":\"local\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"skill:kinds-skill\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"quarantine\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"local\",\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"url\":\"<forge>/acme/all\",\"via\":\"archive\",\"sums_verified\":false}\n{\"ts\":\"<ts>\",\"op\":\"quarantine\",\"actor\":\"cli\",\"pack\":\"kinds-theme-b\",\"tier\":\"local\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"url\":\"<forge>/acme/theme\",\"via\":\"archive\",\"sums_verified\":false}\n{\"ts\":\"<ts>\",\"op\":\"quarantine\",\"actor\":\"cli\",\"pack\":\"kinds-builtin\",\"tier\":\"local\",\"sha\":\"dddddddddddddddddddddddddddddddddddddddd\",\"url\":\"<forge>/acme/builtin\",\"via\":\"archive\",\"sums_verified\":false}\n{\"ts\":\"<ts>\",\"op\":\"approve\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"local\",\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"url\":\"<forge>/acme/all\",\"via\":\"archive\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/README.md": "# kinds-builtin\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/SKILL.md": "---\nname: kinds-builtin\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-builtin\n\n## git-dashboard\n\n`use_component({ name: 'git-dashboard', id: 'git-dashboard' })`\n\n## fine-tile\n\n`use_component({ name: 'fine-tile', id: 'fine-tile' })`\n\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/fine-tile/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">fine-tile</div>\n<script>root.querySelector('#body').textContent = params.label || 'fine-tile';</script>\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/fine-tile/meta.json": "{\n  \"name\": \"fine-tile\",\n  \"description\": \"fine-tile — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/git-dashboard/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">git-dashboard</div>\n<script>root.querySelector('#body').textContent = params.label || 'git-dashboard';</script>\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/git-dashboard/meta.json": "{\n  \"name\": \"git-dashboard\",\n  \"description\": \"git-dashboard — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/web-chat-pack.json": "{\n  \"name\": \"kinds-builtin\",\n  \"version\": \"1.2.0\",\n  \"description\": \"Acme service operations on the web-chat surface.\",\n  \"components\": [\n    \"git-dashboard\",\n    \"fine-tile\"\n  ]\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/plan.json": "{\n  \"name\": \"kinds-builtin\",\n  \"root\": \"<proj:cli>\",\n  \"tier\": \"local\",\n  \"dir\": \"<quarantine:kinds-builtin>\",\n  \"pack_dir\": \"<quarantine-pack:kinds-builtin>\",\n  \"staged_at\": \"<ts>\",\n  \"source\": {\n    \"url\": \"<forge>/acme/builtin\",\n    \"ref\": \"HEAD\",\n    \"sha\": \"dddddddddddddddddddddddddddddddddddddddd\",\n    \"via\": \"archive\",\n    \"sums_verified\": false,\n    \"asset\": null,\n    \"transport\": \"https\"\n  },\n  \"tree_sha256\": \"df62be3409b4d621c2acf7f25188de516cdcdd09e760c8916a53bdbafcc9d9c9\",\n  \"files\": [\n    \"README.md\",\n    \"SKILL.md\",\n    \"components/fine-tile/component.html\",\n    \"components/fine-tile/meta.json\",\n    \"components/git-dashboard/component.html\",\n    \"components/git-dashboard/meta.json\",\n    \"web-chat-pack.json\"\n  ],\n  \"version\": \"1.2.0\",\n  \"description\": \"Acme service operations on the web-chat surface.\",\n  \"components\": [\n    {\n      \"name\": \"fine-tile\",\n      \"description\": \"fine-tile — a pack component.\",\n      \"has_service\": false,\n      \"has_seed\": false\n    }\n  ],\n  \"themes\": [],\n  \"services\": [],\n  \"skill\": {\n    \"name\": \"kinds-builtin\",\n    \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n    \"dest\": \".claude/skills/kinds-builtin/SKILL.md\",\n    \"bytes\": 330\n  },\n  \"collisions\": [],\n  \"errors\": [\n    \"component \\\"git-dashboard\\\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override.\"\n  ],\n  \"warnings\": [],\n  \"units\": [\n    {\n      \"kind\": \"component\",\n      \"name\": \"fine-tile\",\n      \"dir\": \"<proj:cli>/.web-chat/components/fine-tile\",\n      \"files\": [\n        {\n          \"path\": \"component.html\",\n          \"sha256\": \"a8a6b9adf128939e58dd11db84a26220af07e99a4ceb53a18cbe4fe89cf6c1a6\",\n          \"bytes\": 167\n        },\n        {\n          \"path\": \"meta.json\",\n          \"sha256\": \"f22e8639cea0f592228791662750b184fda57867bf61b28aa5d801b88fcdab72\",\n          \"bytes\": 101\n        }\n      ]\n    },\n    {\n      \"kind\": \"skill\",\n      \"name\": \"kinds-builtin\",\n      \"dir\": \"<proj:cli>/.claude/skills/kinds-builtin\",\n      \"files\": [\n        {\n          \"path\": \"SKILL.md\",\n          \"sha256\": \"c53af42e5991a39951c10f02c2c39f9f7507be2f577f495868a0c1fb12f42526\",\n          \"bytes\": 330\n        }\n      ]\n    }\n  ]\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/pack/README.md": "# kinds-theme-b\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/pack/themes/harbor.json": "{\n  \"tokens\": {\n    \"--wc-accent\": \"#bada55\",\n    \"--wc-bg\": \"#101010\",\n    \"--wc-fg\": \"#f0f0f0\"\n  }\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/pack/web-chat-pack.json": "{\n  \"name\": \"kinds-theme-b\",\n  \"version\": \"0.2.0\",\n  \"themes\": [\n    \"harbor\"\n  ]\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/plan.json": "{\n  \"name\": \"kinds-theme-b\",\n  \"root\": \"<proj:cli>\",\n  \"tier\": \"local\",\n  \"dir\": \"<quarantine:kinds-theme-b>\",\n  \"pack_dir\": \"<quarantine-pack:kinds-theme-b>\",\n  \"staged_at\": \"<ts>\",\n  \"source\": {\n    \"url\": \"<forge>/acme/theme\",\n    \"ref\": \"HEAD\",\n    \"sha\": \"cccccccccccccccccccccccccccccccccccccccc\",\n    \"via\": \"archive\",\n    \"sums_verified\": false,\n    \"asset\": null,\n    \"transport\": \"https\"\n  },\n  \"tree_sha256\": \"8a5e5309855ad15e9bb8979a2252179b1e2907c2e0b867a44e85c73f151bf8ab\",\n  \"files\": [\n    \"README.md\",\n    \"themes/harbor.json\",\n    \"web-chat-pack.json\"\n  ],\n  \"version\": \"0.2.0\",\n  \"description\": \"\",\n  \"components\": [],\n  \"themes\": [\n    {\n      \"name\": \"harbor\",\n      \"tokens\": 3,\n      \"modes\": [],\n      \"logos\": [],\n      \"fonts\": [],\n      \"css\": false,\n      \"palette\": {\n        \"default\": {\n          \"bg\": \"#101010\",\n          \"fg\": \"#f0f0f0\",\n          \"accent\": \"#bada55\"\n        }\n      },\n      \"files\": [\n        \"harbor.json\"\n      ]\n    }\n  ],\n  \"services\": [],\n  \"skill\": null,\n  \"collisions\": [\n    {\n      \"kind\": \"theme\",\n      \"name\": \"harbor\",\n      \"severity\": \"replace\",\n      \"owner\": \"kinds-theme\",\n      \"detail\": \"a theme called \\\"harbor\\\" already exists here\"\n    }\n  ],\n  \"errors\": [\n    \"theme \\\"harbor\\\" already exists — re-run in a terminal with --replace to overwrite it\"\n  ],\n  \"warnings\": [],\n  \"units\": [\n    {\n      \"kind\": \"theme\",\n      \"name\": \"harbor\",\n      \"dir\": \"<proj:cli>/.web-chat/themes\",\n      \"files\": [\n        {\n          \"path\": \"harbor.json\",\n          \"sha256\": \"16db610bd4337bc0a6940fce656885653ca0e4daededa054dc9bc4fb67053935\",\n          \"bytes\": 103\n        }\n      ]\n    }\n  ]\n}\n",
+    "proj/.web-chat/packs.json": "{\n  \"version\": 1,\n  \"packs\": [\n    {\n      \"name\": \"kinds-comp\",\n      \"version\": \"1.2.0\",\n      \"description\": \"Acme service operations on the web-chat surface.\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"web_chat_version\": \"0.8.5\",\n      \"skill\": null,\n      \"services\": [\n        \"deploy-board\"\n      ],\n      \"themes\": [],\n      \"units\": [\n        {\n          \"kind\": \"component\",\n          \"name\": \"deploy-board\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"f489acbf3a87082780a65bf67c854d3b2a34062e5ce5dcbaeed6fc9f64214e6c\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"d2ff1fee3a7e6cb6a49ddfaa1be74c1f8b7d249e94dffb44451dffaa4a4d19eb\"\n            },\n            {\n              \"path\": \"service.js\",\n              \"sha256\": \"34c99892822727fc920fe70b6437e52eaf0b06cf50053070923425b8d18d317f\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"component\",\n          \"name\": \"status-tile\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"6fc80d40f4f73fea5adb86d493c0ab053343d07a85fd0739b7aa3885e0efbbd8\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"30802c0ba7c7f33da53e2ecd5fef664761c9b61505c8cd78e28cfab51610607f\"\n            },\n            {\n              \"path\": \"seed.js\",\n              \"sha256\": \"77c7005cb9b1e1838641ffd7bc2f2be010384b796db3629525437ec4a7d14190\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"name\": \"kinds-theme\",\n      \"version\": \"0.1.0\",\n      \"description\": \"A theme.\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"web_chat_version\": \"0.8.5\",\n      \"skill\": null,\n      \"services\": [],\n      \"themes\": [\n        \"harbor\"\n      ],\n      \"units\": [\n        {\n          \"kind\": \"theme\",\n          \"name\": \"harbor\",\n          \"files\": [\n            {\n              \"path\": \"harbor.json\",\n              \"sha256\": \"51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"name\": \"kinds-skill\",\n      \"version\": \"1.2.0\",\n      \"description\": \"Acme service operations on the web-chat surface.\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"web_chat_version\": \"0.8.5\",\n      \"skill\": {\n        \"name\": \"kinds-skill\",\n        \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n        \"dest\": \".claude/skills/kinds-skill/SKILL.md\",\n        \"bytes\": 173\n      },\n      \"services\": [],\n      \"themes\": [],\n      \"units\": [\n        {\n          \"kind\": \"skill\",\n          \"name\": \"kinds-skill\",\n          \"files\": [\n            {\n              \"path\": \"SKILL.md\",\n              \"sha256\": \"5c23ba73b7bd6b207a2de0459e2525029a90309f665d365803605fedb12e50a9\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"name\": \"kinds-all\",\n      \"version\": \"1.2.0\",\n      \"description\": \"Acme service operations on the web-chat surface.\",\n      \"source\": {\n        \"url\": \"<forge>/acme/all\",\n        \"ref\": \"HEAD\",\n        \"sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n        \"via\": \"archive\",\n        \"sums_verified\": false,\n        \"asset\": null,\n        \"transport\": \"https\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"web_chat_version\": \"0.8.5\",\n      \"skill\": {\n        \"name\": \"kinds-all\",\n        \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n        \"dest\": \".claude/skills/kinds-all/SKILL.md\",\n        \"bytes\": 239\n      },\n      \"services\": [],\n      \"themes\": [\n        \"lagoon\"\n      ],\n      \"units\": [\n        {\n          \"kind\": \"component\",\n          \"name\": \"ops-board\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"9f510f3d5b7db972bb407874efdd5557000279609b0d475eece6538204082033\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"5007081ecb448cbe7a012c1930956941be53f6bb9d0b28d6b03113af9bf3cde0\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"theme\",\n          \"name\": \"lagoon\",\n          \"files\": [\n            {\n              \"path\": \"lagoon.json\",\n              \"sha256\": \"4b38f9b89aa3faa625dcef3a83094f58c2dd66c33bbca3c9f0d193b808acd7fb\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"skill\",\n          \"name\": \"kinds-all\",\n          \"files\": [\n            {\n              \"path\": \"SKILL.md\",\n              \"sha256\": \"e7ed143581757a9ef904c68fabd663e0a8a2875ed6a7faee91c459a3cadf1e54\"\n            }\n          ]\n        }\n      ]\n    }\n  ],\n  \"quarantine\": []\n}\n",
+    "proj/.web-chat/themes/harbor.json": "{\n  \"tokens\": {\n    \"--wc-accent\": \"#c0ffee\",\n    \"--wc-bg\": \"#101010\",\n    \"--wc-fg\": \"#f0f0f0\"\n  }\n}\n",
+    "proj/.web-chat/themes/lagoon.json": "{\n  \"tokens\": {\n    \"--wc-accent\": \"#00aaee\",\n    \"--wc-bg\": \"#101010\",\n    \"--wc-fg\": \"#f0f0f0\"\n  }\n}\n",
+    "proj/.claude/skills/kinds-all/SKILL.md": "---\nname: kinds-all\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-all\n\n## ops-board\n\n`use_component({ name: 'ops-board', id: 'ops-board' })`\n\n",
+    "proj/.claude/skills/kinds-skill/SKILL.md": "---\nname: kinds-skill\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-skill\n\n\n",
+    "home/.web-chat/components/ops-board/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">ops-board</div>\n<script>root.querySelector('#body').textContent = params.label || 'ops-board';</script>\n",
+    "home/.web-chat/components/ops-board/meta.json": "{\n  \"name\": \"ops-board\",\n  \"description\": \"ops-board — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "home/.web-chat/packs/audit.log": "{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n",
+    "home/.web-chat/packs/ledger.json": "{\n  \"version\": 1,\n  \"installs\": [\n    {\n      \"root\": \"<proj:plans>\",\n      \"name\": \"kinds-theme\",\n      \"version\": \"0.1.0\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"units\": [\n        {\n          \"kind\": \"theme\",\n          \"name\": \"harbor\",\n          \"files\": [\n            {\n              \"path\": \"harbor.json\",\n              \"sha256\": \"51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"root\": \"<proj:cli>\",\n      \"name\": \"kinds-comp\",\n      \"version\": \"1.2.0\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"units\": [\n        {\n          \"kind\": \"component\",\n          \"name\": \"deploy-board\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"f489acbf3a87082780a65bf67c854d3b2a34062e5ce5dcbaeed6fc9f64214e6c\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"d2ff1fee3a7e6cb6a49ddfaa1be74c1f8b7d249e94dffb44451dffaa4a4d19eb\"\n            },\n            {\n              \"path\": \"service.js\",\n              \"sha256\": \"34c99892822727fc920fe70b6437e52eaf0b06cf50053070923425b8d18d317f\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"component\",\n          \"name\": \"status-tile\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"6fc80d40f4f73fea5adb86d493c0ab053343d07a85fd0739b7aa3885e0efbbd8\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"30802c0ba7c7f33da53e2ecd5fef664761c9b61505c8cd78e28cfab51610607f\"\n            },\n            {\n              \"path\": \"seed.js\",\n              \"sha256\": \"77c7005cb9b1e1838641ffd7bc2f2be010384b796db3629525437ec4a7d14190\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"root\": \"<proj:cli>\",\n      \"name\": \"kinds-theme\",\n      \"version\": \"0.1.0\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"units\": [\n        {\n          \"kind\": \"theme\",\n          \"name\": \"harbor\",\n          \"files\": [\n            {\n              \"path\": \"harbor.json\",\n              \"sha256\": \"51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"root\": \"<proj:cli>\",\n      \"name\": \"kinds-skill\",\n      \"version\": \"1.2.0\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"units\": [\n        {\n          \"kind\": \"skill\",\n          \"name\": \"kinds-skill\",\n          \"files\": [\n            {\n              \"path\": \"SKILL.md\",\n              \"sha256\": \"5c23ba73b7bd6b207a2de0459e2525029a90309f665d365803605fedb12e50a9\"\n            }\n          ]\n        }\n      ]\n    },\n    {\n      \"root\": \"<proj:cli>\",\n      \"name\": \"kinds-all\",\n      \"version\": \"1.2.0\",\n      \"source\": {\n        \"url\": \"<forge>/acme/all\",\n        \"ref\": \"HEAD\",\n        \"sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\n        \"via\": \"archive\",\n        \"sums_verified\": false,\n        \"asset\": null,\n        \"transport\": \"https\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"units\": [\n        {\n          \"kind\": \"component\",\n          \"name\": \"ops-board\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"9f510f3d5b7db972bb407874efdd5557000279609b0d475eece6538204082033\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"5007081ecb448cbe7a012c1930956941be53f6bb9d0b28d6b03113af9bf3cde0\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"theme\",\n          \"name\": \"lagoon\",\n          \"files\": [\n            {\n              \"path\": \"lagoon.json\",\n              \"sha256\": \"4b38f9b89aa3faa625dcef3a83094f58c2dd66c33bbca3c9f0d193b808acd7fb\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"skill\",\n          \"name\": \"kinds-all\",\n          \"files\": [\n            {\n              \"path\": \"SKILL.md\",\n              \"sha256\": \"e7ed143581757a9ef904c68fabd663e0a8a2875ed6a7faee91c459a3cadf1e54\"\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n",
+    "home/.web-chat/packs.json": "{\n  \"version\": 1,\n  \"packs\": [\n    {\n      \"name\": \"kinds-all\",\n      \"version\": \"1.2.0\",\n      \"description\": \"Acme service operations on the web-chat surface.\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"web_chat_version\": \"0.8.5\",\n      \"skill\": {\n        \"name\": \"kinds-all\",\n        \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n        \"dest\": \".claude/skills/kinds-all/SKILL.md\",\n        \"bytes\": 239\n      },\n      \"services\": [],\n      \"themes\": [\n        \"lagoon\"\n      ],\n      \"units\": [\n        {\n          \"kind\": \"component\",\n          \"name\": \"ops-board\",\n          \"files\": [\n            {\n              \"path\": \"component.html\",\n              \"sha256\": \"9f510f3d5b7db972bb407874efdd5557000279609b0d475eece6538204082033\"\n            },\n            {\n              \"path\": \"meta.json\",\n              \"sha256\": \"5007081ecb448cbe7a012c1930956941be53f6bb9d0b28d6b03113af9bf3cde0\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"theme\",\n          \"name\": \"lagoon\",\n          \"files\": [\n            {\n              \"path\": \"lagoon.json\",\n              \"sha256\": \"4b38f9b89aa3faa625dcef3a83094f58c2dd66c33bbca3c9f0d193b808acd7fb\"\n            }\n          ]\n        },\n        {\n          \"kind\": \"skill\",\n          \"name\": \"kinds-all\",\n          \"files\": [\n            {\n              \"path\": \"SKILL.md\",\n              \"sha256\": \"e7ed143581757a9ef904c68fabd663e0a8a2875ed6a7faee91c459a3cadf1e54\"\n            }\n          ]\n        }\n      ]\n    }\n  ],\n  \"quarantine\": [\n    {\n      \"name\": \"kinds-theme-b\",\n      \"root\": \"<proj:cli>\",\n      \"tier\": \"local\",\n      \"dir\": \"<quarantine:kinds-theme-b>\",\n      \"pack_dir\": \"<quarantine-pack:kinds-theme-b>\",\n      \"staged_at\": \"<ts>\",\n      \"source\": {\n        \"url\": \"<forge>/acme/theme\",\n        \"ref\": \"HEAD\",\n        \"sha\": \"cccccccccccccccccccccccccccccccccccccccc\",\n        \"via\": \"archive\",\n        \"sums_verified\": false,\n        \"asset\": null,\n        \"transport\": \"https\"\n      },\n      \"tree_sha256\": \"8a5e5309855ad15e9bb8979a2252179b1e2907c2e0b867a44e85c73f151bf8ab\",\n      \"files\": [\n        \"README.md\",\n        \"themes/harbor.json\",\n        \"web-chat-pack.json\"\n      ],\n      \"version\": \"0.2.0\",\n      \"description\": \"\",\n      \"components\": [],\n      \"themes\": [\n        {\n          \"name\": \"harbor\",\n          \"tokens\": 3,\n          \"modes\": [],\n          \"logos\": [],\n          \"fonts\": [],\n          \"css\": false,\n          \"palette\": {\n            \"default\": {\n              \"bg\": \"#101010\",\n              \"fg\": \"#f0f0f0\",\n              \"accent\": \"#bada55\"\n            }\n          },\n          \"files\": [\n            \"harbor.json\"\n          ]\n        }\n      ],\n      \"services\": [],\n      \"skill\": null,\n      \"collisions\": [\n        {\n          \"kind\": \"theme\",\n          \"name\": \"harbor\",\n          \"severity\": \"replace\",\n          \"owner\": \"kinds-theme\",\n          \"detail\": \"a theme called \\\"harbor\\\" already exists here\"\n        }\n      ],\n      \"errors\": [\n        \"theme \\\"harbor\\\" already exists — re-run in a terminal with --replace to overwrite it\"\n      ],\n      \"warnings\": []\n    },\n    {\n      \"name\": \"kinds-builtin\",\n      \"root\": \"<proj:cli>\",\n      \"tier\": \"local\",\n      \"dir\": \"<quarantine:kinds-builtin>\",\n      \"pack_dir\": \"<quarantine-pack:kinds-builtin>\",\n      \"staged_at\": \"<ts>\",\n      \"source\": {\n        \"url\": \"<forge>/acme/builtin\",\n        \"ref\": \"HEAD\",\n        \"sha\": \"dddddddddddddddddddddddddddddddddddddddd\",\n        \"via\": \"archive\",\n        \"sums_verified\": false,\n        \"asset\": null,\n        \"transport\": \"https\"\n      },\n      \"tree_sha256\": \"df62be3409b4d621c2acf7f25188de516cdcdd09e760c8916a53bdbafcc9d9c9\",\n      \"files\": [\n        \"README.md\",\n        \"SKILL.md\",\n        \"components/fine-tile/component.html\",\n        \"components/fine-tile/meta.json\",\n        \"components/git-dashboard/component.html\",\n        \"components/git-dashboard/meta.json\",\n        \"web-chat-pack.json\"\n      ],\n      \"version\": \"1.2.0\",\n      \"description\": \"Acme service operations on the web-chat surface.\",\n      \"components\": [\n        {\n          \"name\": \"fine-tile\",\n          \"description\": \"fine-tile — a pack component.\",\n          \"has_service\": false,\n          \"has_seed\": false\n        }\n      ],\n      \"themes\": [],\n      \"services\": [],\n      \"skill\": {\n        \"name\": \"kinds-builtin\",\n        \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n        \"dest\": \".claude/skills/kinds-builtin/SKILL.md\",\n        \"bytes\": 330\n      },\n      \"collisions\": [],\n      \"errors\": [\n        \"component \\\"git-dashboard\\\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override.\"\n      ],\n      \"warnings\": []\n    }\n  ]\n}\n",
+    "home/.web-chat/themes/lagoon.json": "{\n  \"tokens\": {\n    \"--wc-accent\": \"#00aaee\",\n    \"--wc-bg\": \"#101010\",\n    \"--wc-fg\": \"#f0f0f0\"\n  }\n}\n"
+  },
+  "cli:remove:kinds-comp": "\n  component deploy-board   kept (locally edited)\n  component status-tile    removed\n\n  Kept the units you had edited — they are yours now, and complete (a unit is\n  kept whole, never stripped down to the files you did not touch).\n  `claude-web-chat pack remove kinds-comp --force` removes them too.\n",
+  "cli:info:kinds-comp:kept": "\n  kinds-comp 1.2.0   this project\n  Acme service operations on the web-chat surface.\n  tarball @ aaaaaaa\n  source https://github.com/acme/kinds\n  installed <ts>\n\n    component deploy-board             edited\n\n  locally edited — `pack remove kinds-comp` will keep the edited units unless you pass --force\n",
+  "cli:remove:kinds-comp:force": "\n  component deploy-board   removed\n",
+  "cli:remove:kinds-theme:dry": "\n  theme harbor   removed\n\n  (dry run — nothing was removed)\n",
+  "cli:remove:kinds-theme": "\n  theme harbor   removed\n",
+  "cli:remove:kinds-all": "\n  component ops-board   removed\n  theme lagoon          removed\n  skill kinds-all       removed\n",
+  "cli:remove:kinds-all:global": "\n  component ops-board   removed\n  theme lagoon          removed\n  skill kinds-all       removed\n",
+  "cli:remove:kinds-skill": "\n  skill kinds-skill   removed\n",
+  "cli:list:after-remove": "\n  no packs installed here\n\n  awaiting review (downloaded, not installed):\n    kinds-theme-b 0.2.0   tarball @ ccccccc   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-theme-b\n    kinds-builtin 1.2.0   tarball @ ddddddd   ✗ 1 problem(s)\n      claude-web-chat pack review kinds-builtin\n",
+  "records:after-remove": {
+    "proj/.web-chat/packs/audit.log": "{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-comp\",\"tier\":\"local\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:deploy-board\",\"component:status-tile\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-theme\",\"tier\":\"local\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"theme:harbor\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-skill\",\"tier\":\"local\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"skill:kinds-skill\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"quarantine\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"local\",\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"url\":\"<forge>/acme/all\",\"via\":\"archive\",\"sums_verified\":false}\n{\"ts\":\"<ts>\",\"op\":\"quarantine\",\"actor\":\"cli\",\"pack\":\"kinds-theme-b\",\"tier\":\"local\",\"sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"url\":\"<forge>/acme/theme\",\"via\":\"archive\",\"sums_verified\":false}\n{\"ts\":\"<ts>\",\"op\":\"quarantine\",\"actor\":\"cli\",\"pack\":\"kinds-builtin\",\"tier\":\"local\",\"sha\":\"dddddddddddddddddddddddddddddddddddddddd\",\"url\":\"<forge>/acme/builtin\",\"via\":\"archive\",\"sums_verified\":false}\n{\"ts\":\"<ts>\",\"op\":\"approve\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"local\",\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"url\":\"<forge>/acme/all\",\"via\":\"archive\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-comp\",\"tier\":\"local\",\"force\":false,\"removed_all\":false}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-comp\",\"tier\":\"local\",\"force\":true,\"removed_all\":true}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-theme\",\"tier\":\"local\",\"force\":false,\"removed_all\":true}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"local\",\"force\":false,\"removed_all\":true}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"force\":false,\"removed_all\":true}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-skill\",\"tier\":\"local\",\"force\":false,\"removed_all\":true}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/README.md": "# kinds-builtin\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/SKILL.md": "---\nname: kinds-builtin\ndescription: Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\n---\n\n# kinds-builtin\n\n## git-dashboard\n\n`use_component({ name: 'git-dashboard', id: 'git-dashboard' })`\n\n## fine-tile\n\n`use_component({ name: 'fine-tile', id: 'fine-tile' })`\n\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/fine-tile/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">fine-tile</div>\n<script>root.querySelector('#body').textContent = params.label || 'fine-tile';</script>\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/fine-tile/meta.json": "{\n  \"name\": \"fine-tile\",\n  \"description\": \"fine-tile — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/git-dashboard/component.html": "<style>.x{color:var(--wc-fg)}</style>\n<div class=\"x\" id=\"body\">git-dashboard</div>\n<script>root.querySelector('#body').textContent = params.label || 'git-dashboard';</script>\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/components/git-dashboard/meta.json": "{\n  \"name\": \"git-dashboard\",\n  \"description\": \"git-dashboard — a pack component.\",\n  \"params_schema\": {}\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/pack/web-chat-pack.json": "{\n  \"name\": \"kinds-builtin\",\n  \"version\": \"1.2.0\",\n  \"description\": \"Acme service operations on the web-chat surface.\",\n  \"components\": [\n    \"git-dashboard\",\n    \"fine-tile\"\n  ]\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-builtin/plan.json": "{\n  \"name\": \"kinds-builtin\",\n  \"root\": \"<proj:cli>\",\n  \"tier\": \"local\",\n  \"dir\": \"<quarantine:kinds-builtin>\",\n  \"pack_dir\": \"<quarantine-pack:kinds-builtin>\",\n  \"staged_at\": \"<ts>\",\n  \"source\": {\n    \"url\": \"<forge>/acme/builtin\",\n    \"ref\": \"HEAD\",\n    \"sha\": \"dddddddddddddddddddddddddddddddddddddddd\",\n    \"via\": \"archive\",\n    \"sums_verified\": false,\n    \"asset\": null,\n    \"transport\": \"https\"\n  },\n  \"tree_sha256\": \"df62be3409b4d621c2acf7f25188de516cdcdd09e760c8916a53bdbafcc9d9c9\",\n  \"files\": [\n    \"README.md\",\n    \"SKILL.md\",\n    \"components/fine-tile/component.html\",\n    \"components/fine-tile/meta.json\",\n    \"components/git-dashboard/component.html\",\n    \"components/git-dashboard/meta.json\",\n    \"web-chat-pack.json\"\n  ],\n  \"version\": \"1.2.0\",\n  \"description\": \"Acme service operations on the web-chat surface.\",\n  \"components\": [\n    {\n      \"name\": \"fine-tile\",\n      \"description\": \"fine-tile — a pack component.\",\n      \"has_service\": false,\n      \"has_seed\": false\n    }\n  ],\n  \"themes\": [],\n  \"services\": [],\n  \"skill\": {\n    \"name\": \"kinds-builtin\",\n    \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n    \"dest\": \".claude/skills/kinds-builtin/SKILL.md\",\n    \"bytes\": 330\n  },\n  \"collisions\": [],\n  \"errors\": [\n    \"component \\\"git-dashboard\\\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override.\"\n  ],\n  \"warnings\": [],\n  \"units\": [\n    {\n      \"kind\": \"component\",\n      \"name\": \"fine-tile\",\n      \"dir\": \"<proj:cli>/.web-chat/components/fine-tile\",\n      \"files\": [\n        {\n          \"path\": \"component.html\",\n          \"sha256\": \"a8a6b9adf128939e58dd11db84a26220af07e99a4ceb53a18cbe4fe89cf6c1a6\",\n          \"bytes\": 167\n        },\n        {\n          \"path\": \"meta.json\",\n          \"sha256\": \"f22e8639cea0f592228791662750b184fda57867bf61b28aa5d801b88fcdab72\",\n          \"bytes\": 101\n        }\n      ]\n    },\n    {\n      \"kind\": \"skill\",\n      \"name\": \"kinds-builtin\",\n      \"dir\": \"<proj:cli>/.claude/skills/kinds-builtin\",\n      \"files\": [\n        {\n          \"path\": \"SKILL.md\",\n          \"sha256\": \"c53af42e5991a39951c10f02c2c39f9f7507be2f577f495868a0c1fb12f42526\",\n          \"bytes\": 330\n        }\n      ]\n    }\n  ]\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/pack/README.md": "# kinds-theme-b\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/pack/themes/harbor.json": "{\n  \"tokens\": {\n    \"--wc-accent\": \"#bada55\",\n    \"--wc-bg\": \"#101010\",\n    \"--wc-fg\": \"#f0f0f0\"\n  }\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/pack/web-chat-pack.json": "{\n  \"name\": \"kinds-theme-b\",\n  \"version\": \"0.2.0\",\n  \"themes\": [\n    \"harbor\"\n  ]\n}\n",
+    "proj/.web-chat/packs/quarantine/kinds-theme-b/plan.json": "{\n  \"name\": \"kinds-theme-b\",\n  \"root\": \"<proj:cli>\",\n  \"tier\": \"local\",\n  \"dir\": \"<quarantine:kinds-theme-b>\",\n  \"pack_dir\": \"<quarantine-pack:kinds-theme-b>\",\n  \"staged_at\": \"<ts>\",\n  \"source\": {\n    \"url\": \"<forge>/acme/theme\",\n    \"ref\": \"HEAD\",\n    \"sha\": \"cccccccccccccccccccccccccccccccccccccccc\",\n    \"via\": \"archive\",\n    \"sums_verified\": false,\n    \"asset\": null,\n    \"transport\": \"https\"\n  },\n  \"tree_sha256\": \"8a5e5309855ad15e9bb8979a2252179b1e2907c2e0b867a44e85c73f151bf8ab\",\n  \"files\": [\n    \"README.md\",\n    \"themes/harbor.json\",\n    \"web-chat-pack.json\"\n  ],\n  \"version\": \"0.2.0\",\n  \"description\": \"\",\n  \"components\": [],\n  \"themes\": [\n    {\n      \"name\": \"harbor\",\n      \"tokens\": 3,\n      \"modes\": [],\n      \"logos\": [],\n      \"fonts\": [],\n      \"css\": false,\n      \"palette\": {\n        \"default\": {\n          \"bg\": \"#101010\",\n          \"fg\": \"#f0f0f0\",\n          \"accent\": \"#bada55\"\n        }\n      },\n      \"files\": [\n        \"harbor.json\"\n      ]\n    }\n  ],\n  \"services\": [],\n  \"skill\": null,\n  \"collisions\": [\n    {\n      \"kind\": \"theme\",\n      \"name\": \"harbor\",\n      \"severity\": \"replace\",\n      \"owner\": \"kinds-theme\",\n      \"detail\": \"a theme called \\\"harbor\\\" already exists here\"\n    }\n  ],\n  \"errors\": [\n    \"theme \\\"harbor\\\" already exists — re-run in a terminal with --replace to overwrite it\"\n  ],\n  \"warnings\": [],\n  \"units\": [\n    {\n      \"kind\": \"theme\",\n      \"name\": \"harbor\",\n      \"dir\": \"<proj:cli>/.web-chat/themes\",\n      \"files\": [\n        {\n          \"path\": \"harbor.json\",\n          \"sha256\": \"16db610bd4337bc0a6940fce656885653ca0e4daededa054dc9bc4fb67053935\",\n          \"bytes\": 103\n        }\n      ]\n    }\n  ]\n}\n",
+    "proj/.web-chat/packs.json": "{\n  \"version\": 1,\n  \"packs\": [],\n  \"quarantine\": []\n}\n",
+    "home/.web-chat/packs/audit.log": "{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"install\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://github.com/acme/kinds\",\"via\":\"tarball\",\"sums_verified\":false,\"units\":[\"component:ops-board\",\"theme:lagoon\",\"skill:kinds-all\"]}\n{\"ts\":\"<ts>\",\"op\":\"remove\",\"actor\":\"cli\",\"pack\":\"kinds-all\",\"tier\":\"system\",\"force\":false,\"removed_all\":true}\n",
+    "home/.web-chat/packs/ledger.json": "{\n  \"version\": 1,\n  \"installs\": [\n    {\n      \"root\": \"<proj:plans>\",\n      \"name\": \"kinds-theme\",\n      \"version\": \"0.1.0\",\n      \"source\": {\n        \"via\": \"tarball\",\n        \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n        \"url\": \"https://github.com/acme/kinds\"\n      },\n      \"actor\": \"cli\",\n      \"installed_at\": \"<ts>\",\n      \"units\": [\n        {\n          \"kind\": \"theme\",\n          \"name\": \"harbor\",\n          \"files\": [\n            {\n              \"path\": \"harbor.json\",\n              \"sha256\": \"51071a274e119288461a05c6cf254bff7c366097465d71babd172cc8803e7cc1\"\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}\n",
+    "home/.web-chat/packs.json": "{\n  \"version\": 1,\n  \"packs\": [],\n  \"quarantine\": [\n    {\n      \"name\": \"kinds-theme-b\",\n      \"root\": \"<proj:cli>\",\n      \"tier\": \"local\",\n      \"dir\": \"<quarantine:kinds-theme-b>\",\n      \"pack_dir\": \"<quarantine-pack:kinds-theme-b>\",\n      \"staged_at\": \"<ts>\",\n      \"source\": {\n        \"url\": \"<forge>/acme/theme\",\n        \"ref\": \"HEAD\",\n        \"sha\": \"cccccccccccccccccccccccccccccccccccccccc\",\n        \"via\": \"archive\",\n        \"sums_verified\": false,\n        \"asset\": null,\n        \"transport\": \"https\"\n      },\n      \"tree_sha256\": \"8a5e5309855ad15e9bb8979a2252179b1e2907c2e0b867a44e85c73f151bf8ab\",\n      \"files\": [\n        \"README.md\",\n        \"themes/harbor.json\",\n        \"web-chat-pack.json\"\n      ],\n      \"version\": \"0.2.0\",\n      \"description\": \"\",\n      \"components\": [],\n      \"themes\": [\n        {\n          \"name\": \"harbor\",\n          \"tokens\": 3,\n          \"modes\": [],\n          \"logos\": [],\n          \"fonts\": [],\n          \"css\": false,\n          \"palette\": {\n            \"default\": {\n              \"bg\": \"#101010\",\n              \"fg\": \"#f0f0f0\",\n              \"accent\": \"#bada55\"\n            }\n          },\n          \"files\": [\n            \"harbor.json\"\n          ]\n        }\n      ],\n      \"services\": [],\n      \"skill\": null,\n      \"collisions\": [\n        {\n          \"kind\": \"theme\",\n          \"name\": \"harbor\",\n          \"severity\": \"replace\",\n          \"owner\": \"kinds-theme\",\n          \"detail\": \"a theme called \\\"harbor\\\" already exists here\"\n        }\n      ],\n      \"errors\": [\n        \"theme \\\"harbor\\\" already exists — re-run in a terminal with --replace to overwrite it\"\n      ],\n      \"warnings\": []\n    },\n    {\n      \"name\": \"kinds-builtin\",\n      \"root\": \"<proj:cli>\",\n      \"tier\": \"local\",\n      \"dir\": \"<quarantine:kinds-builtin>\",\n      \"pack_dir\": \"<quarantine-pack:kinds-builtin>\",\n      \"staged_at\": \"<ts>\",\n      \"source\": {\n        \"url\": \"<forge>/acme/builtin\",\n        \"ref\": \"HEAD\",\n        \"sha\": \"dddddddddddddddddddddddddddddddddddddddd\",\n        \"via\": \"archive\",\n        \"sums_verified\": false,\n        \"asset\": null,\n        \"transport\": \"https\"\n      },\n      \"tree_sha256\": \"df62be3409b4d621c2acf7f25188de516cdcdd09e760c8916a53bdbafcc9d9c9\",\n      \"files\": [\n        \"README.md\",\n        \"SKILL.md\",\n        \"components/fine-tile/component.html\",\n        \"components/fine-tile/meta.json\",\n        \"components/git-dashboard/component.html\",\n        \"components/git-dashboard/meta.json\",\n        \"web-chat-pack.json\"\n      ],\n      \"version\": \"1.2.0\",\n      \"description\": \"Acme service operations on the web-chat surface.\",\n      \"components\": [\n        {\n          \"name\": \"fine-tile\",\n          \"description\": \"fine-tile — a pack component.\",\n          \"has_service\": false,\n          \"has_seed\": false\n        }\n      ],\n      \"themes\": [],\n      \"services\": [],\n      \"skill\": {\n        \"name\": \"kinds-builtin\",\n        \"description\": \"Acme service operations on the web-chat surface. Use when the user asks about deploys, incidents, or service health.\",\n        \"dest\": \".claude/skills/kinds-builtin/SKILL.md\",\n        \"bytes\": 330\n      },\n      \"collisions\": [],\n      \"errors\": [\n        \"component \\\"git-dashboard\\\" is a built-in name. Installing it would shadow the built-in permanently — web-chat only repairs a component whose meta.json says builtin, and a pack's does not. Refused; there is no override.\"\n      ],\n      \"warnings\": []\n    }\n  ]\n}\n"
+  }
+}
