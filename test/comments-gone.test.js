@@ -25,7 +25,7 @@ const os = require('os');
 const path = require('path');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
-const { withServer, commentBody } = require('../test-support/helpers');
+const { withServer, commentBody, waitUntil } = require('../test-support/helpers');
 const { COMMENTS_GONE } = require('../lib/server/routes/comments');
 const client = require('../lib/client');
 
@@ -203,14 +203,12 @@ test.describe('chrome: a pin added through the composer posts to the element API
   test.after(() => shell && shell.restore());
 
   test('POST /api/elements with the comment body, then a GET whose elements draw the marker', async () => {
-    const markers = () => [...W.document.getElementById('pin-layer').querySelectorAll('.pin-marker')];
+    const markers = () => [...W.document.getElementById('el-layer').querySelectorAll('.pin-marker')];
     assert.equal(markers().length, 0, 'precondition: no marker');
     shell.key('c');
     const host = [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === 'drop');
-    const target = host.shadowRoot.querySelector('p');
-    for (const type of ['pointerdown', 'click']) {
-      target.dispatchEvent(new W.MouseEvent(type, { bubbles: true, composed: true, clientX: 40, clientY: 40 }));
-    }
+    // A whole press (U327b: the comment tool at the overlay's pointer dispatch).
+    shell.press(host.shadowRoot.querySelector('p'));
     await shell.tick();
     const pop = W.document.querySelector('.pin-pop');
     assert.ok(pop, 'the composer opened');
@@ -226,6 +224,7 @@ test.describe('chrome: a pin added through the composer posts to the element API
     assert.ok(!('text' in post.body), 'the text rides the payload, not the top level');
     assert.ok(shell.calls.some((c) => c.method === 'GET' && c.url === '/api/elements?type=comment'), 'the refresh read the element API');
     assert.equal(shell.calls.filter((c) => /^\/api\/comments/.test(c.url)).length, 0, 'nothing reaches /api/comments');
+    await waitUntil(() => markers().length === 1, { what: 'the marker' });
     assert.equal(markers().length, 1, 'the pin drew a marker');
   });
 });

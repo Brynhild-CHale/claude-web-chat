@@ -34,6 +34,8 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
+const { DEFAULT_ROUTES } = require('../test-support/chrome-shell');
+const { convertAnchor } = require('../lib/core/element-log');
 
 const REPO = path.resolve(__dirname, '..');
 
@@ -68,6 +70,9 @@ async function boot() {
     if (url === '/api/queue/pending') return json({ pending: null });
     if (url === '/api/queue/policy') return json({ channel_connected: false, immediate_signals: [], queue_signals: [], activation_hint: {}, parked_delivery: 'held' });
     if (String(url).startsWith('/api/theme')) return json({ name: 'web-chat' });
+    // The comment tool is armed through tools.js over the toolbar's tools[],
+    // and its pins drawn behind the type listing (U327b): the daemon's answers.
+    if (url === '/api/toolbar' || url === '/api/elements/types') return json(JSON.parse(JSON.stringify(DEFAULT_ROUTES[url])));
     return json({ ok: true });
   };
 
@@ -85,6 +90,12 @@ async function boot() {
   global.setInterval = () => 0; // no pollers keeping the process alive
   global.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
   global.cancelAnimationFrame = (id) => clearTimeout(id);
+  // The window's frame pair too: the anchor resolver schedules on the window's
+  // (lib/core/anchors), and jsdom's own runs on the stubbed setInterval, so a
+  // comment pin (drawn by the overlay from the resolver's answers, U327b)
+  // would never be answered.
+  window.requestAnimationFrame = global.requestAnimationFrame;
+  window.cancelAnimationFrame = global.cancelAnimationFrame;
   window.__wcMount = require(path.join(REPO, 'public/mount-runtime.js'));
 
   await import(pathToFileURL(path.join(REPO, 'public/app/main.js')).href);
@@ -240,16 +251,18 @@ test('a mount whose id names chrome does not hijack the shell\'s live lookups', 
   await tick();
   assert.equal(drawerEl.classList.contains('hidden'), true, 'and still closes it');
 
-  // The mirror image: a comment pin stores the MOUNT id (captureAnchor writes
-  // host.dataset.mountId), so resolving it back with document.getElementById
-  // would hand comments.js the chrome element — no shadow root, no marker, the
-  // pin silently dropped from the layer even though the server still holds it.
+  // The mirror image: a comment pin stores the MOUNT id (an anchor names its
+  // pane by host.dataset.mountId), so resolving it back with
+  // document.getElementById would hand the resolver the chrome element — no
+  // shadow root, no marker, the pin silently dropped from the layer even though
+  // the server still holds it. (The anchor in the resolver's form: the chrome
+  // converts no 0.8.5 locator, U327b; the overlay draws the pin.)
   frame({
     type: 'element:comment',
-    elements: [{ id: 'c1', shared: true, text: 'x', anchor: { mount: 'drawer', selector: 'p', ordinal: 0, text: 'shadow the drawer' } }],
+    elements: [{ id: 'c1', shared: true, text: 'x', anchor: convertAnchor({ mount: 'drawer', selector: 'p', ordinal: 0, text: 'shadow the drawer' }) }],
   });
-  await tick();
-  assert.equal($('pin-layer').querySelectorAll('.pin-marker').length, 1,
+  for (let i = 0; i < 20 && !$('el-layer').querySelector('.pin-marker'); i++) await tick();
+  assert.equal($('el-layer').querySelectorAll('.pin-marker').length, 1,
     'the pin on the chrome-named pane resolved to its host and drew a marker');
   frame({ type: 'element:comment', elements: [] });
   await tick();

@@ -209,9 +209,12 @@ test('hotkeys: a manifest default the chrome already holds (C) is listed by conf
   const was = pin();
   await press('c');
   assert.equal(pin(), !was, 'C ran the chrome row');
-  assert.equal(armedType(), null, 'and armed no tool');
+  // Pin mode IS the comment tool in the one armed state (U327b, K.2-3): the
+  // chrome row's C arms comment, and body.pin-mode follows it.
+  assert.equal(armedType(), pin() ? 'comment' : null, 'and armed the comment tool, the one armed state');
   await press('c');
   assert.equal(pin(), was);
+  assert.equal(armedType(), was ? 'comment' : null);
   // The slot defaults are the 'tools' source's, at the default tier.
   const view = hotkeys.bindingsView().filter((b) => /^[1-9]$/.test(b.chord));
   assert.deepEqual(view.map((b) => [b.chord, b.tier, b.target.kind, b.target.n]),

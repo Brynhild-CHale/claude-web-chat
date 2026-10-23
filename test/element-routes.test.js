@@ -183,7 +183,7 @@ test('a comment through the element API: today\'s pin plus type, schema, anchor_
   assert.deepEqual(eng.pin.anchor, ELEMENT('m1'), 'the pin\'s anchor is the engine record');
   assert.deepEqual(eng.pin.locator, LOCATOR, 'the legacy locator rides beside it');
   assert.deepEqual(eng.element.record, ELEMENT('m1'));
-  assert.equal(eng.element.anchor_label, 'm1: "Hello world"', 'describeAnchor reads fp.head');
+  assert.equal(eng.element.anchor_label, 'm1: "Hello"', 'anchor_label reads the served anchor, the 0.8.5 locator (S-14)');
   const adoptedBefore = srv.elements.stats().adopted_versions;
   const n = (await turn(api, 'pins')).node_id;
   assert.equal(srv.elements.stats().adopted_versions, adoptedBefore, 'the commit mapped every copy to its version');

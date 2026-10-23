@@ -3376,3 +3376,21 @@ img.bg-look-img, img.bg-card-img { border: 1px solid var(--wc-border); border-ra
 @media (max-width: 759px) {
   .popover.ts-small { width: calc(100vw - 32px); }
 }
+
+/* ── U327b · the comment pin on the overlay (annotation engine 2C.4) ──────────
+   comments.js draws today's 26px map pin into the overlay's marker (#el-layer
+   .el-marker, sized and clipped from the glyph box), so the pin's look moves
+   inside that box: the overlay clips exactly the border box, and a marker class
+   paints nothing past it (U302) — the drop shadow rides the glyph, whose path
+   sits inside the box, and the count sits on the box's edge. The colours stay
+   .pin-marker's (coral, .replied green, .private muted); a carried guess and a
+   section guess keep the overlay's own looks. The queue card (K.2-11) and the
+   read-only thread's hint: tokens only — the look is expected to change (U338). */
+#el-layer .el-marker.pin-marker { filter: none; }
+#el-layer .el-marker.pin-marker svg { filter: drop-shadow(0 1px 1px rgba(0,0,0,.45)); }
+#el-layer .el-marker.pin-marker .pin-count { right: 0; }
+.pin-pop .pin-ro-hint { color: var(--wc-muted); }
+.cm-card { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cm-card .cm-card-where { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-card .cm-card-replies { flex: none; font: 11px var(--wc-font); color: var(--wc-muted); }
+.cm-card .cm-card-show { flex: none; font-size: 11px; }

@@ -1522,7 +1522,7 @@ const PATTERNS = [
     // attribution only, C-15-3, never a header). A raw fetch( beside it is a
     // second reading of a refusal and a second spelling of the claim. The
     // counts below are the callers that predate it, each lowered as a later
-    // unit moves it onto http.js (comments.js's five writes with U327b); a new
+    // unit moves it onto http.js (comments.js's five went with U327b); a new
     // chrome request goes through http.js, not through a new baseline entry.
     // Word-bounded, comments included: chat-detail.js's `refetch(` is not one.
     name: 'fetch( (a raw request in the chrome)',
@@ -1539,7 +1539,6 @@ const PATTERNS = [
       'public/app/chat-detail.js': 1,
       'public/app/chat-state.js': 1,
       'public/app/chat-tools.js': 1,
-      'public/app/comments.js': 5,
       'public/app/components.js': 1,
       'public/app/composer-mod.js': 1,
       'public/app/drawer.js': 10,

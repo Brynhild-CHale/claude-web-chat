@@ -138,6 +138,33 @@ function builtinToolbar() {
   };
 }
 
+// GET /api/elements/types as a fresh project's daemon answers it: the built-in
+// pack's three types listed (their rows GENERATED from the element.json files
+// on disk, as builtinToolbar's are) and the built-in names `reserved` — so a
+// built-in type's draw runs behind the reads gate (public/app/element-types.js)
+// in every chrome test, as on a real daemon (U327b: the comment pins drawn by
+// the overlay).
+function builtinTypes() {
+  const { readElementJson, validateElement, elementSrcDir } = require('../lib/packs/elements');
+  const { parseManifest } = require('../lib/packs/manifest');
+  const { ELEMENTS_TEMPLATE_DIR } = require('../lib/server/builtins');
+  const { ROW_KEYS } = require('../lib/server/element-types');
+  const { BUILTIN_ELEMENT_TYPE_NAMES } = require('../lib/core/names');
+  const manifest = parseManifest(ELEMENTS_TEMPLATE_DIR);
+  const types = manifest.elements.map((type) => {
+    const read = readElementJson(elementSrcDir(ELEMENTS_TEMPLATE_DIR, type));
+    const checked = read.ok ? validateElement(read.raw, { stageDir: null, name: type, builtin: true }) : null;
+    if (!checked || !checked.ok) throw new Error(`chrome-shell: the built-in element type '${type}' does not validate`);
+    const row = { type };
+    const toolbar = {};
+    for (const k of Object.keys(checked.descriptor)) {
+      if (ROW_KEYS.includes(k)) { if (k !== 'type') row[k] = checked.descriptor[k]; } else toolbar[k] = checked.descriptor[k];
+    }
+    return { ...row, builtin: true, tier: 'project', pack: manifest.name, toolbar };
+  });
+  return { ok: true, types, reserved: BUILTIN_ELEMENT_TYPE_NAMES.slice() };
+}
+
 // What the chrome reads while it boots and connects, answered quietly. One
 // active node, nothing queued, no components, packs, themes, comments, pending
 // services or update, a local (not remote) page; the built-in tools listed.
@@ -154,6 +181,7 @@ const DEFAULT_ROUTES = Object.freeze({
   '/api/queue/policy': { channel_connected: false, immediate_signals: [], queue_signals: [], activation_hint: {},
     parked_delivery: 'held' },
   '/api/elements': { elements: [], next_cursor: 0 },
+  '/api/elements/types': builtinTypes(),
   '/api/toolbar': builtinToolbar(),
   '/api/brand': { slots: {}, fill: {}, theme: null },
   '/api/version': { ok: true, current: '0.0.0-test', updateAvailable: false },

@@ -10,10 +10,12 @@
 //   - one settle per pane mount, after its restored form state; and the
 //     resolver's ONE settle listener (anchors.js install → onSettle) turns a
 //     settle into a coalesced pass for a watched pane — and only then;
-//   - a migrated node's comment pins draw as today: the served copies keep
-//     `anchor` = the original locator, a preview of the node draws no marker
-//     (pins belong to the live surface), and once the node is live again its
-//     pins resolve to their elements in public/app/comments.js.
+//   - a migrated node's comment pins draw: the served copies keep `anchor` =
+//     the original locator, and the overlay draws each pin at its converted
+//     pin-locator@1 anchor (the read's `record`, the node's lean_elements);
+//     a preview of the node draws that node's own pins, read-only (U327b,
+//     F-DOCS a: pins draw on the live page and on previewed nodes), and once
+//     the node is live again its pins resolve to their elements.
 //
 // The daemon half runs in before(), against a real createServer on a v3
 // project (test-support/v3-graph.js), BEFORE the shell replaces fetch; the
@@ -23,7 +25,7 @@ const { before, after } = test;
 const assert = require('node:assert');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { v3Graph } = require('../test-support/v3-graph');
-const { withServer } = require('../test-support/helpers');
+const { withServer, waitUntil } = require('../test-support/helpers');
 const { browserModuleSource } = require('../lib/core/anchors');
 
 // What the daemon served, by name.
@@ -98,18 +100,18 @@ before(async () => {
 
 after(async () => { if (shell) await shell.restore(); });
 
-const markers = () => [...W.document.getElementById('pin-layer').querySelectorAll('.pin-marker')];
-const markerPass = async () => {
-  const iv = shell.intervals().find((i) => i.fn && i.fn.name === 'markerPass');
-  assert.ok(iv, 'the comments marker pass is registered');
-  iv.fn(...iv.args);
-  await shell.tick();
-};
+// The comment pins the page well's overlay drew (U327b: no pin layer of
+// comments.js's own, no marker pass; the overlay places them on its frames).
+const markers = () => [...W.document.getElementById('el-layer').querySelectorAll('.pin-marker')];
 // The pins today's resolver can place: anchored on a pane the page holds (a
 // ghost — c4 on m-b, which only n1 had — draws no marker, as in 0.8.5).
 const anchoredIds = (pins, mounts) => pins.filter((p) => p.anchor && mounts.some((m) => m.id === p.anchor.mount))
   .map((p) => p.id).sort();
-const markedIds = () => markers().flatMap((m) => m._pins.map((p) => p.id)).sort();
+const markedIds = () => markers().flatMap((m) => (m.dataset.elIds || '').split(' ').filter(Boolean)).sort();
+const markedUntil = async (want, what) => {
+  await waitUntil(() => JSON.stringify(markedIds()) === JSON.stringify(want), { timeout: 4000, what });
+  return markedIds();
+};
 
 test('the live chrome installs the resolver on the mount runtime, beside settle', () => {
   assert.equal(typeof M.settle, 'function', 'window.__wcMount.settle');
@@ -164,10 +166,15 @@ test('the resolver\'s settle listener: a settle on a watched pane runs one coale
   } finally { unwatch(); W.requestAnimationFrame = ownRaf; }
 });
 
-test('a migrated node\'s pins draw as today: anchors are the original locator, a preview draws none, live again they resolve', async () => {
-  // Live on n6: the draft's anchored pins resolve to m-a's lead paragraph.
-  await markerPass();
-  assert.deepEqual(markedIds(), anchoredIds(served.liveN6, served.n6.mounts), 'the live pins are marked');
+test('a migrated node\'s pins draw at their converted anchors; a preview draws its own pins, read-only; live again they resolve', async () => {
+  // Live on n6: the draft's anchored pins resolve to m-a's lead paragraph, at
+  // the converted pin-locator@1 anchor the read serves as `record`.
+  for (const c of served.liveN6) {
+    if (!c.anchor) continue;
+    assert.equal(c.record && c.record.form, 'pin-locator@1', `${c.id}: the read serves the converted anchor as record`);
+  }
+  assert.deepEqual(await markedUntil(anchoredIds(served.liveN6, served.n6.mounts), 'the live pins'),
+    anchoredIds(served.liveN6, served.n6.mounts), 'the live pins are marked');
   // The previewed node's copies, as the daemon serves them.
   assert.ok(served.n4.comments.length > 0);
   for (const c of served.n4.comments) {
@@ -178,20 +185,21 @@ test('a migrated node\'s pins draw as today: anchors are the original locator, a
   await topbar.previewNode('n4');
   await shell.tick();
   assert.ok(W.document.getElementById('main').classList.contains('preview-readonly'), 'previewing n4');
-  await markerPass();
-  assert.equal(markers().length, 0, 'a preview draws no marker (pins belong to the live surface)');
+  const previewed = anchoredIds(served.n4.comments, served.n4.mounts);
+  assert.ok(previewed.length >= 1, 'n4 holds pins on its own panes');
+  assert.deepEqual(await markedUntil(previewed, 'the preview\'s pins'), previewed,
+    'a preview draws the previewed node\'s own pins (read-only), from its lean_elements');
   topbar.returnToActive();
   await shell.tick();
-  await markerPass();
-  assert.deepEqual(markedIds(), anchoredIds(served.liveN6, served.n6.mounts), 'back on the live page, the markers return');
+  assert.deepEqual(await markedUntil(anchoredIds(served.liveN6, served.n6.mounts), 'the live pins again'),
+    anchoredIds(served.liveN6, served.n6.mounts), 'back on the live page, the markers return');
   // Set active on n4 (the daemon's answer, above): its restored pins resolve.
   await shell.frame({ type: 'reset', active: 'n4', store: {}, lock: null, theme: null, activeTheme: null,
     mounts: asLive(served.n4.mounts) });
   await shell.frame({ type: 'element:comment', elements: served.liveN4 });
   assert.deepEqual(served.liveN4.map((c) => c.id).sort(), served.n4.comments.map((c) => c.id).sort());
   for (const c of served.liveN4) assert.ok(Number.isInteger(c.v), `${c.id} live with its v`);
-  await markerPass();
   const want = anchoredIds(served.liveN4, served.n4.mounts);
   assert.ok(want.length >= 3, 'the node holds anchored pins on its own pane');
-  assert.deepEqual(markedIds(), want, 'the migrated node\'s pins resolve to their elements');
+  assert.deepEqual(await markedUntil(want, 'the migrated node\'s pins'), want, 'the migrated node\'s pins resolve to their elements');
 });

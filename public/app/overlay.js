@@ -940,7 +940,8 @@ export function registerType(type, spec) {
     }
     glyph = Object.freeze({ dx: g.dx, dy: g.dy, w: g.w, h: g.h });
   }
-  const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph };
+  const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph,
+    targets: spec.targets === 'panes' ? 'panes' : 'items' };
   types.set(type, entry);
   lastSig = null;
   requestDraw();
@@ -1097,11 +1098,21 @@ function onPointer(e) {
   if (!armedState) return;
   const t = types.get(armedState.type);
   const kind = (t && t.input) || 'taps';
+  // The policy's 'tool', narrowed by the type's targets (element-types.js
+  // TARGETS, K.2-78): a 'panes' tool (the comment) leaves a press outside
+  // every pane's content (.mount-host) to the page — a markdown link
+  // follows, the chrome inside #main works — with the tool still armed.
+  const decide = (ev) => {
+    const d = askPolicy(ev);
+    if (d !== 'tool' || !t || t.targets !== 'panes') return d;
+    const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
+    return path.some((n) => n && n.classList && n.classList.contains('mount-host')) ? d : 'page';
+  };
   let decision;
   let g = null;
   if (e.type === 'pointerdown') {
     for (const [id, old] of gestures) if (old.up || id === e.pointerId) gestures.delete(id);
-    decision = askPolicy(e);
+    decision = decide(e);
     g = { decision, pointerType: e.pointerType || '', mode: decision === 'tool' ? dispatchMode(e, kind) : null, up: false };
     gestures.set(e.pointerId, g);
     lastDown = e.pointerId;
@@ -1112,7 +1123,7 @@ function onPointer(e) {
       g = own[1];
       decision = g.decision === 'tool' && !clickStillTool(e, g) ? 'ignore' : g.decision;
     } else {
-      decision = askPolicy(e);   // a lone click
+      decision = decide(e);   // a lone click
     }
   } else {
     g = gestures.get(e.pointerId);
@@ -1251,4 +1262,13 @@ export function initOverlay(opts = {}) {
   if (M && typeof M.onSettle === 'function') M.onSettle(() => requestDraw());
   window.addEventListener('scroll', requestDraw, { capture: true, passive: true });
   window.addEventListener('resize', requestDraw, { passive: true });
+  // A layout change of the well moves a pane with no settle, scroll or resize
+  // (mounts.js layoutPage: a drag, a resize handle's drop, a run cut by a
+  // markdown item, a remote pane:state): one observer asks for a draw while
+  // any marker is built.
+  const well = $('main');
+  if (well && typeof MutationObserver === 'function') {
+    new MutationObserver(() => { if (groups.length) requestDraw(); })
+      .observe(well, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+  }
 }

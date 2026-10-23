@@ -60,6 +60,13 @@ async function ok(p, what) {
 }
 
 // Four panes, five pins each (the engine records taken from a chrome's DOM).
+// The recorder only records engine anchors for the seed: it reports through
+// a transport of its own (a remote page's), never on its socket, so none of
+// its answers is held. The pins' element:comment frames reach every chrome's
+// overlay (U327b's relay), so a recorder reporting on its socket would hold
+// answers of its own beside the chromes a test measures.
+const RECORDER = { routes: { '/api/health': { ok: true, remote: true } }, transport: true, name: 'recorder' };
+
 async function seedSurface(d, recorder) {
   for (const id of PANES) await ok(d.api.post('/api/render', { id, html: paneHtml(id, 0) }), `render ${id}`);
   await recorder.call('mark');
@@ -113,7 +120,7 @@ async function assertConverged(d, chromes, pins, what) {
 
 test('two chromes, 50 seeded changes (C-9\'s shape): at most one report per change per viewer, < 1 % flapping, held = each viewer\'s last at quiescence', { timeout: 240000 }, async (t) => {
   const d = await withServer(t);
-  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  const recorder = await spawnChrome(t, { port: d.port, ...RECORDER });
   const pins = await seedSurface(d, recorder);
   await recorder.call('exit');
   const chromes = await chromePair(t, { port: d.port });
@@ -202,7 +209,7 @@ test('two chromes, 50 seeded changes (C-9\'s shape): at most one report per chan
 
 test('the ordered counter across a restore, two chromes: Set active mid-run → every held answer carries the new surface; a report sent before the reset is refused stale-surface', { timeout: 120000 }, async (t) => {
   const d = await withServer(t);
-  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  const recorder = await spawnChrome(t, { port: d.port, ...RECORDER });
   const pins = await seedSurface(d, recorder);
   await recorder.call('exit');
   const chromes = await chromePair(t, { port: d.port });
@@ -256,7 +263,7 @@ test('a store write that moves one anchored row of a store-driven pane: every he
   await ok(d.api.post('/api/render', { id: 'sd', html }), 'render sd');
   // The pins (engine records from a recorder chrome), then the viewer: its
   // hello carries them.
-  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  const recorder = await spawnChrome(t, { port: d.port, ...RECORDER });
   await recorder.call('settle', { frames: false, min: 300 });
   const pins = [];
   for (const i of ANCHORED) {
@@ -299,7 +306,7 @@ test('a store write that moves one anchored row of a store-driven pane: every he
 
 test('a remote page with no transport registered sends no report on its socket; with one, the transport takes every batch', { timeout: 120000 }, async (t) => {
   const d = await withServer(t);
-  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  const recorder = await spawnChrome(t, { port: d.port, ...RECORDER });
   const pins = await seedSurface(d, recorder);
   await recorder.call('exit');
   const remote = { '/api/health': { ok: true, remote: true } };
@@ -322,7 +329,7 @@ test('a remote page with no transport registered sends no report on its socket; 
 
 test('the viewer across a reconnect (K.2-56): with no reset, the tab\'s re-report at an equal key replaces, and a later confirm re-stamps every held answer of the mount', { timeout: 120000 }, async (t) => {
   const d = await withServer(t);
-  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  const recorder = await spawnChrome(t, { port: d.port, ...RECORDER });
   const pins = await seedSurface(d, recorder);
   await recorder.call('exit');
   const c = await spawnChrome(t, { port: d.port, name: 'tab' });

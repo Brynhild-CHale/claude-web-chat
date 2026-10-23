@@ -12,7 +12,10 @@
 //     at 2000): a palette source is capped through row-caps.js, and the rail is
 //     bounded by the daemon's MAX_QUEUE, held at most the cap here;
 //   * the per-type queue card registration (K.2-11, K.2-18): the type supplies
-//     the card the rail draws an element item through, the engine owns the item.
+//     the card the rail draws an element item through, the engine owns the item;
+//     a comment item ({kind: 'comment'}, no `type`) is the comment type's, so
+//     the card registered for 'comment' draws it, and a card's unmount runs by
+//     the draw that empties the rail (K.2-29, U327b).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -35,13 +38,15 @@ const NODES = [
 ];
 const SUMMARIES = { n2: { turns: 2, superseded: 1, rewound_at: T }, n3: { turns: 0, superseded: 0 } };
 // The queue at boot: one element item of a type that will register a card, and
-// one of a type that never does.
+// one of a type that never does; and a comment item, the comment policy's
+// shape (lib/channel/policy.js commentItem: no `type`).
 const QUEUE = {
   items: [
     { id: 'q-el-1', kind: 'element', type: 'test-card', element_id: 'g1', v: 1, summary: 'a grab of the chart', source: 'browser', staged: true },
     { id: 'q-el-2', kind: 'element', type: 'no-card', element_id: 'h2', v: 1, summary: 'a highlight', source: 'browser', staged: true },
+    { id: 'q-cm-1', kind: 'comment', comment_id: 'c7', summary: 'p1 · "is this right?"', why_wake: 'comment pinned for Claude', source: 'browser', staged: true },
   ],
-  count: 2,
+  count: 3,
 };
 
 let shell, W, $, gv, gt, S, shellMod, rowCaps;
@@ -522,6 +527,60 @@ test('a card\'s unregister redraws the rail: the item goes back to its generic r
     await waitUntil(() => railRow('q-el-1') && !railRow('q-el-1').querySelector('.qi-card'), { timeout: 2000, what: 'the generic row back' });
     assert.equal(railRow('q-el-1').querySelector('.qi-summary').textContent, 'a grab of the chart', 'the generic summary is drawn again');
   } finally { if (!offed) off(); }
+});
+
+// K.2-29: a comment item carries no `type`, and the rail's consult once reached
+// only {kind: 'element', type} — so the card the comment type registers was
+// never asked. The card registered for 'comment' draws it now; with no card
+// for 'comment' it keeps the generic row.
+test('a comment item {kind: \'comment\'} draws through the card registered for \'comment\'; with none it keeps the generic row', async () => {
+  const queue = await shell.importApp('queue.js');
+  await waitUntil(() => railRow('q-cm-1'), { timeout: 2000, what: 'the comment item in the rail' });
+  const seen = [];
+  const off = shellMod.registerQueueCard('comment', {
+    render(item, slot) {
+      seen.push(item);
+      const b = W.document.createElement('b');
+      b.className = 'test-comment-card';
+      b.textContent = `comment ${item.comment_id}`;
+      slot.appendChild(b);
+    },
+  });
+  try {
+    await waitUntil(() => railRow('q-cm-1') && railRow('q-cm-1').querySelector('.test-comment-card'), { timeout: 2000, what: 'the comment card' });
+    const row = railRow('q-cm-1');
+    const slot = row.querySelector('.qi-card');
+    assert.equal(slot.dataset.type, 'comment', 'the slot names the comment type');
+    assert.equal(slot.textContent, 'comment c7');
+    assert.equal(row.querySelector('.qi-summary'), null, 'the card draws in place of the generic summary');
+    assert.ok(row.querySelector('.qi-stage') && row.querySelector('.qi-revert'), 'the rail keeps its own controls');
+    assert.equal(seen.at(-1).kind, 'comment');
+  } finally { off(); }
+  // No card for 'comment' (a lookup that answers none): the generic row.
+  queue.setQueueCards((type) => (type === 'comment' ? null : shellMod.queueCardOf(type)))();
+  try {
+    await waitUntil(() => railRow('q-cm-1') && !railRow('q-cm-1').querySelector('.qi-card'), { timeout: 2000, what: 'the generic row' });
+    assert.equal(railRow('q-cm-1').querySelector('.qi-summary').textContent, 'p1 · "is this right?"', 'the generic summary');
+  } finally { queue.setQueueCards(shellMod.queueCardOf)(); }
+});
+
+test('the draw that empties the rail unmounts the last card at once, not at a later draw with items', async () => {
+  const queue = await shell.importApp('queue.js');
+  await waitUntil(() => railRow('q-el-1'), { timeout: 2000, what: 'the element item in the rail' });
+  const unmounted = [];
+  let drawn = null;
+  const off = shellMod.registerQueueCard('test-card', {
+    render(item, slot) { drawn = slot; const b = W.document.createElement('b'); b.className = 'test-card-body'; slot.appendChild(b); },
+    unmount(slot) { unmounted.push(slot); },
+  });
+  try {
+    await waitUntil(() => railRow('q-el-1') && railRow('q-el-1').querySelector('.test-card-body'), { timeout: 2000, what: 'the card drawn' });
+    const slot = drawn;
+    unmounted.length = 0;
+    queue.foldQueueFrame({ op: 'remove', ids: queue.queueSnapshot().items.map((it) => it.id) });
+    assert.ok(W.document.querySelector('#queue-rail .rail-empty'), 'the rail drew its empty state');
+    assert.ok(unmounted.includes(slot), 'the departed card was unmounted by that draw');
+  } finally { off(); }
 });
 
 test('queue.js reaches the registry only through what shell.js hands in: it never imports shell.js', () => {

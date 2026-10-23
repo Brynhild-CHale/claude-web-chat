@@ -43,6 +43,15 @@
 //
 // Tranche 2 draws in the live chrome only (F-DOCS a); no pack's draw module
 // is loaded here (third-party draw code waits for 4A/4B, B1).
+//
+// TARGETS (K.2-78). A registration may name what its tool's presses land on:
+// `targets: 'items'` (the default) — a pane's content and a markdown item —
+// or `targets: 'panes'` — a pane's content only, so a press outside every
+// pane (a markdown link, the chrome inside #main) passes through to the page
+// with the tool still armed, as 0.8.5's pin mode did. It is stored on the
+// type (targetsOf) and handed to the overlay, whose pointer dispatch reads it
+// after the input-mode policy's decision. The comment registers 'panes';
+// the highlight and the box grab keep the default.
 import * as overlayModule from './overlay.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
@@ -52,6 +61,7 @@ export const TYPES_PATH = '/api/elements/types';
 export const DRAW_STATES = Object.freeze(['parked', 'draw-failed', 'unknown-type']);
 const [PARKED, DRAW_FAILED, UNKNOWN_TYPE] = DRAW_STATES;
 export const STANDIN_CLASS = 'el-standin';
+export const TARGETS = Object.freeze(['items', 'panes']);
 
 let ov = overlayModule;
 let inited = false;
@@ -211,17 +221,20 @@ function standIn(group, type) {
 }
 
 // ── registration ───────────────────────────────────────────────────────────
-// registerElementType(type, {draw, create?, input?, glyph?, move?}) →
-// unregister. The spec is the overlay's (registerType); its draw and move run
-// behind the gate. A later registration of the same type replaces the
-// earlier one.
+// registerElementType(type, {draw, create?, input?, glyph?, move?, targets?})
+// → unregister. The spec is the overlay's (registerType); its draw and move
+// run behind the gate. `targets` is 'items' (the default) or 'panes' (TARGETS
+// above). A later registration of the same type replaces the earlier one.
 export function registerElementType(type, spec) {
   if (typeof type !== 'string' || !type) throw new TypeError('registerElementType: a type name is required');
   if (!spec || typeof spec.draw !== 'function') throw new TypeError('registerElementType: {draw(group, ctx)} is required');
+  if (spec.targets != null && !TARGETS.includes(spec.targets)) {
+    throw new TypeError(`registerElementType: targets must be one of ${TARGETS.join(', ')}`);
+  }
   if (!inited) initElementTypes();
   const prev = registrations.get(type);
   if (prev) { try { prev.unregister(); } catch {} }
-  const entry = { spec, unregister: () => {} };
+  const entry = { spec: { ...spec, targets: spec.targets || TARGETS[0] }, unregister: () => {} };
   registrations.set(type, entry);
   try {
     reregister(type);
@@ -234,6 +247,12 @@ export function registerElementType(type, spec) {
     registrations.delete(type);
     try { entry.unregister(); } catch {}
   };
+}
+
+// The registered type's targets ('items' or 'panes'), or null when none is.
+export function targetsOf(type) {
+  const entry = registrations.get(type);
+  return entry ? entry.spec.targets : null;
 }
 
 function reregister(type) {
