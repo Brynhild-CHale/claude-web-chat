@@ -400,16 +400,29 @@ test('mcp client: no token file → the call goes out tokenless and lands as adv
   assert.deepEqual(stderr, []);
 });
 
-test('mcp client: still stale after the re-read → one tokenless retry and one stderr line, never a loop', async (t) => {
+test('mcp client: still stale after the re-read → the daemon\'s 401 and its hint, no tokenless retry, the next call re-reads', async (t) => {
+  // GT-15 C-15-2 (U355): the tokenless fallback is gone — the MCP server never
+  // sends a tokenless call after a refused token.
   const ctx = await withServer(t);
+  const real = ctx.writerToken();
   writeWriterToken(ctx.root, mintToken()); // a token the daemon never minted
   const { shim, sent, stderr } = mcpShim(t);
-  const r = await shim.post('/api/render', { id: 'f', html: '<p>f</p>' }, { port: ctx.port, root: ctx.root, noSpawn: true });
-  assert.equal(r.owner, 'claude', 'advisory claude');
-  assert.equal(sent.length, 2, 'the bad token once (the re-read finds the same), then once without');
-  assert.equal(sent[1].writer, null);
-  assert.equal(stderr.length, 1);
-  assert.match(stderr[0], /stale/);
+  const opts = { port: ctx.port, root: ctx.root, noSpawn: true };
+  await assert.rejects(shim.post('/api/render', { id: 'f', html: '<p>f</p>' }, opts), (e) => {
+    assert.equal(e.status, 401);
+    assert.equal(e.body.writer, 'stale');
+    assert.match(e.body.hint, /\.web-chat\/writer-token/);
+    return true;
+  });
+  assert.equal(sent.length, 1, 'the bad token once; the re-read finds the same, so nothing is retried');
+  assert.ok(sent.every((s) => s.writer !== null), 'no tokenless request');
+  assert.deepEqual(stderr, [], 'no advisory line');
+  // The cached token was cleared: the next call reads the file again.
+  writeWriterToken(ctx.root, real);
+  sent.length = 0;
+  const r = await shim.post('/api/render', { id: 'g', html: '<p>g</p>' }, opts);
+  assert.equal(r.owner, 'claude');
+  assert.deepEqual(sent.map((x) => x.writer), [real]);
 });
 
 test('mcp client: outside the MCP server (CLI, hooks) no writer header is sent', async (t) => {
