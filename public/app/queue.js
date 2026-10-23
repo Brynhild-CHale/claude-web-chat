@@ -800,9 +800,11 @@ function revertTitle(kind) {
   return 'revert — remove from queue and undo this interaction (the pane stays)';
 }
 
-/* ---------- an element item's card (K.2-11, K.2-18) ----------
+/* ---------- an element item's card (K.2-11, K.2-18, K.2-29) ----------
    An element item ({kind: 'element', type, id, …}, the queue domain's one
-   element kind) of a type that registered a card through shell.js
+   element kind) — or a comment item ({kind: 'comment', comment_id, …}, which
+   stays on the comment policy (K.2-22) and is the comment type's — of a type
+   that registered a card through shell.js
    registerQueueCard is drawn through that card: the rail owns the row — its
    dot, its kind line, stage/hold and ⟲ — and hands the card a slot inside it.
    The card draws; the engine owns the item, so the card is handed a frozen copy
@@ -810,14 +812,22 @@ function revertTitle(kind) {
    card whose render throws, gets the generic row. shell.js imports this module,
    so the registry's lookup is handed in (setQueueCards), never imported; the
    function it answers redraws the rail when a registration changes. A slot
-   whose row left the rail is unmounted (the card's unmount) at the next draw. */
+   whose row left the rail is unmounted (the card's unmount) by the draw that
+   took the row away. */
 let cardOf = () => null;
 const cardSlots = new Map();   // slot element → the card drawn into it
 export function setQueueCards(lookup) {
   cardOf = typeof lookup === 'function' ? lookup : () => null;
-  return () => { if (items.some(isElementItem)) drawRail(); };
+  return () => { if (items.some((it) => typeOfItem(it) != null)) drawRail(); };
 }
-const isElementItem = (it) => !!it && it.kind === 'element' && typeof it.type === 'string' && !!it.type;
+// The element type an item is drawn as: an element item's own `type` (a
+// non-empty string), 'comment' for a comment item, else null (no card).
+function typeOfItem(it) {
+  if (!it) return null;
+  if (it.kind === 'element') return typeof it.type === 'string' && it.type ? it.type : null;
+  if (it.kind === 'comment') return 'comment';
+  return null;
+}
 function releaseCards() {
   for (const [slot, card] of [...cardSlots]) {
     if (slot.isConnected) continue;
@@ -829,20 +839,21 @@ function releaseCards() {
 // Draw `it` through its type's card into a slot appended to `body`; false (and
 // nothing appended) when there is no card or it failed.
 function cardBody(it, body, { parked, staged }) {
-  if (!isElementItem(it)) return false;
+  const type = typeOfItem(it);
+  if (type == null) return false;
   let card = null;
-  try { card = cardOf(it.type); } catch { card = null; }
+  try { card = cardOf(type); } catch { card = null; }
   if (!card || typeof card.render !== 'function') return false;
   const slot = document.createElement('div');
   slot.className = 'qi-card';
-  slot.dataset.type = it.type;
+  slot.dataset.type = type;
   const ctx = Object.freeze({
     parked, staged,
     remove: parked ? null : () => removeItem(it.id),
     setStaged: parked ? null : (next) => setStaged(it.id, !!next),
   });
   try { card.render(Object.freeze({ ...it }), slot, ctx); } catch (e) {
-    console.error(`[web-chat] the queue card for '${it.type}' failed`, e);
+    console.error(`[web-chat] the queue card for '${type}' failed`, e);
     try { if (typeof card.unmount === 'function') card.unmount(slot); } catch { /* the card's own */ }
     return false;
   }
@@ -1198,6 +1209,9 @@ function drawRail() {
     }
     restoreFocus(list, focus);
   }
+  // A card whose row left with this draw is unmounted now, not at the next
+  // draw that has items: a rail that went empty draws no row (K.2-29).
+  releaseCards();
 
   updatePushLabel();
 }
