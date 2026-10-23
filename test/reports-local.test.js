@@ -392,6 +392,12 @@ test('a report racing a store write is counted for the gate (stamped_after_store
   say();
   await until(() => stats(d).accepted === 2, 'second');
   assert.equal(stats(d).stamped_after_store_change, 1);
+  // A viewer's first report after a write may have resolved before it: counted.
+  await ok(d.api.post('/api/store', { patch: { r: 2 } }), 'store write 2');
+  const fresh = await socket(t, d.port);
+  fresh.report(sur, [{ mount: 'p1', gen: 0, items: [{ id: pin.id, v: pin.v, state: 'exact' }] }]);
+  await until(() => stats(d).accepted === 3, 'the fresh viewer');
+  assert.equal(stats(d).stamped_after_store_change, 2);
 });
 
 test('monotone across a restart: the next daemon of the same root stamps a larger surface', async (t) => {
