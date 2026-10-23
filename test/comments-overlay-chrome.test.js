@@ -522,9 +522,12 @@ test('get_comments (the real handler) on the chrome\'s pin: the golden\'s anchor
   assert.equal(c.anchor_label, goldenAdd.anchor_label, 'anchor_label keeps its value');
   assert.equal(c.text, goldenAdd.text);
   assert.equal(c.shared, goldenAdd.shared);
-  assert.deepEqual(Object.keys(c.locator).sort(), Object.keys(goldenAdd.anchor).sort(), 'the locator has the golden anchor\'s fields');
-  assert.equal(c.locator.mount, goldenAdd.anchor.mount);
-  assert.equal(c.locator.text, goldenAdd.anchor.text);
+  // The 0.8.5 locator rides as `locator` beside the engine record today, and
+  // as `anchor` once the projection serves it there (the hand-off's patch).
+  const loc = c.locator || c.anchor;
+  assert.deepEqual(Object.keys(loc).sort(), Object.keys(goldenAdd.anchor).sort(), 'the locator has the golden anchor\'s fields');
+  assert.equal(loc.mount, goldenAdd.anchor.mount);
+  assert.equal(loc.text, goldenAdd.anchor.text);
   captured.comment = c;
 });
 
