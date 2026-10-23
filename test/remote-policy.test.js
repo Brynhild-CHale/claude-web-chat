@@ -43,7 +43,10 @@
 //      (T2_ROWS), each as written; RULES less those rows is protocol 11's
 //      table byte for byte; a portal on protocol 11 refuses every new route by
 //      its default deny, save the re-send, which its `/api/queue/*` row lets
-//      through (the daemon's route refuses it itself).
+//      through (the daemon's route refuses it itself). On the answer host, the
+//      report frame's document and module (T2_ANSWER_ROWS, U312): ANSWER_RULES
+//      less them is protocol 11's answer table byte for byte, and a protocol-11
+//      portal refuses both by its default deny.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -637,8 +640,9 @@ test('rollback: portals on protocol 10 and 8 refuse every new route by the defau
   const v080 = older.filter((r) => keyOf(r) !== PACK_LISTING);
   assert.equal(v080.length, 76, `0.8.2's one added row is ${PACK_LISTING}`);
   assert.equal(digest(v080), 'd5878f2b94237a22', PIN);
-  // ANSWER_RULES as protocol 10 has it: less the report row.
-  const answer10 = ANSWER_RULES.filter((r) => keyOf(r) !== keyOf(T1_ANSWER_ROW));
+  // ANSWER_RULES as protocol 10 has it: protocol 12's answer rows (before12)
+  // and the report row gone.
+  const answer10 = before12(ANSWER_RULES).filter((r) => keyOf(r) !== keyOf(T1_ANSWER_ROW));
   assert.equal(answer10.length, 16);
   assert.equal(digest(answer10), '60bdf33013a658c1', PIN);
   assert.equal(classifier(answer10)('POST', '/answer/api/elements/report', { mirror: 'full' }).reason, 'unknown',
@@ -712,9 +716,23 @@ const ROUTES_T2 = [
 const RESEND = ['POST', '/api/queue/items/q-1/resend'];
 const isResend = (m, u) => m === RESEND[0] && u === RESEND[1];
 
-// RULES as a portal on protocol 11 enforces it: less the rows above.
+// The answer-host rows protocol 12 adds (U312, decision A3): the report
+// frame's document and its module, each an answerRow at full.
+const T2_ANSWER_ROWS = [
+  { methods: ['GET'], path: '/answer/elements-report.js', allow: true, mirror: 'full', hint: ANSWER_HINT },
+  { methods: ['GET'], path: '/answer/elements/:layout', allow: true, mirror: 'full', hint: ANSWER_HINT },
+];
+// What they decide, at full only.
+const ROUTES_T2_ANSWER = [
+  ['GET', '/answer/elements/report?layout=report&mode=light&device=mobile&viewer=0123456789abcdef'],
+  ['HEAD', '/answer/elements/report?layout=report'],
+  ['GET', '/answer/elements-report.js'],
+];
+
+// RULES (or ANSWER_RULES) as a portal on protocol 11 enforces it: less the
+// rows above.
 function before12(rules) {
-  const t2 = new Set(T2_ROWS.map(keyOf));
+  const t2 = new Set([...T2_ROWS, ...T2_ANSWER_ROWS].map(keyOf));
   return rules.filter((r) => !t2.has(keyOf(r)));
 }
 
@@ -797,6 +815,34 @@ test('rollback: a portal on protocol 11 refuses every route tranche 2 adds by it
   for (const want of ['GET /api/toolbar', 'PATCH /api/toolbar', 'PATCH /api/toolbar/user']) assert.ok(decided.includes(want), want);
 });
 
+test('protocol 12: the answer host — the report frame\'s document and module are in ANSWER_RULES as written; ANSWER_RULES less them is protocol 11\'s byte for byte', () => {
+  const byKey = new Map(ANSWER_RULES.map((r) => [keyOf(r), r]));
+  for (const want of T2_ANSWER_ROWS) assert.deepStrictEqual(JSON.parse(JSON.stringify(byKey.get(keyOf(want)))), want, keyOf(want));
+  // Measured at ae/int 2b47c66 on 2026-10-23, before these rows, with digest()
+  // over ANSWER_RULES.
+  const p11 = before12(ANSWER_RULES);
+  assert.equal(p11.length, 17);
+  assert.equal(digest(p11), 'ff5f082c9e802049',
+    'an answer row a protocol-11 portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin');
+});
+
+test('classifyAnswer: the report frame\'s document and module at full only; a protocol-11 portal refuses both by its default deny (and so no remote page holds a report nonce)', () => {
+  const p11 = classifier(before12(ANSWER_RULES));
+  for (const [m, u] of ROUTES_T2_ANSWER) {
+    assert.equal(classifyAnswer(m, u, { mirror: 'full' }).allow, true, `${m} ${u} at full`);
+    for (const optIn of [undefined, 'off', 'read', 'bogus']) {
+      const v = classifyAnswer(m, u, { mirror: optIn });
+      assert.deepStrictEqual([v.allow, v.reason, v.hint, v.need], [false, 'mirror', ANSWER_HINT, 'full'], `${m} ${u} at ${optIn}`);
+    }
+    for (const optIn of [undefined, ...OPT_INS]) {
+      assert.deepStrictEqual([p11(m, u, { mirror: optIn }).allow, p11(m, u, { mirror: optIn }).reason], [false, 'unknown'], `protocol 11, ${m} ${u} at ${optIn}`);
+    }
+  }
+  assert.equal(classifyAnswer('POST', '/answer/elements/report', { mirror: 'full' }).reason, 'unknown', 'the document is a GET');
+  assert.equal(classifyAnswer('GET', '/answer/elements', { mirror: 'full' }).reason, 'unknown', 'no kind root document');
+  assert.equal(classifyAnswer('GET', '/answer/elements/report/x', { mirror: 'full' }).reason, 'unknown', 'one segment');
+});
+
 test('frames: the toolbar frame is a SURFACE_FRAMES frame, sent whole at every level', () => {
   assert.ok(SURFACE_FRAMES.includes('toolbar'));
   const frame = { type: 'toolbar', v: 1, project: { pinned: ['comment'] }, user: {}, merged: { bindings: {}, settings: {} } };
@@ -835,6 +881,7 @@ test('ANSWER_RULES: well-formed — frozen, every row an allow at full with ANSW
     'POST /answer/api/control/:action',
     'GET /answer/fonts/:file',
     'POST /answer/api/elements/report',
+    'GET /answer/elements/:layout',
   ]);
 });
 
@@ -866,6 +913,9 @@ test('classifyAnswer: first match wins, default deny; every row refused below fu
     ['HEAD', '/answer/answer.js'],
     ['GET', '/answer/elicitation-form.js'],
     ['GET', '/answer/palette.css'],
+    ['GET', '/answer/elements/report?layout=report'],
+    ['GET', '/answer/elements-report.js'],
+    ['POST', '/answer/api/elements/report'],
   ];
   for (const [m, u] of allowed) {
     assert.equal(classifyAnswer(m, u, { mirror: 'full' }).allow, true, `${m} ${u} at full`);
