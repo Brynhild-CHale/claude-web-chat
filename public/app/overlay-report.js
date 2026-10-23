@@ -89,7 +89,7 @@
 // claude, service or driver. C-15-3: nothing here stamps a source; the
 // daemon's source stamp is attribution, not authorization.
 import * as overlayApi from './overlay.js';
-import { send as wsSend, onFrame, onHello } from './ws.js';
+import { send as wsSend, onFrame, onHello, setClientField } from './ws.js';
 import { view } from './state.js';
 import { bus } from './bus.js';
 import { onWrite } from './store.js';
@@ -97,6 +97,7 @@ import { contentReadOnly, mountState } from './mounts.js';
 import { MOUNT_GRACE_MS } from './overlay-hidden.js';
 import { isRemote, remoteNow, remoteKnown } from './remote.js';
 import anchors from './anchors.js';
+import { initRemoteReports, tabViewerId } from './overlay-report-remote.js';
 
 // The daemon's caps (lib/server/domain/reports.js MAX_MOUNTS, MAX_ITEMS,
 // MAX_BYTES, MAX_CODE, MAX_RECORD); a message stays under each.
@@ -200,6 +201,12 @@ export function initOverlayReport({ overlay = overlayApi, send = wsSend, now = D
   if (active) active.stop();
   const T = { ...defaultTimers(), ...(timers || {}) };
   const offs = [];
+  // This tab's viewer id (K.2-56; overlay-report-remote.js): the daemon keys
+  // the held answers by it, so a reconnect's socket is the same viewer; and a
+  // remote page's carrier, the elements answer frame (U312).
+  const tabViewer = tabViewerId();
+  setClientField('viewer', tabViewer);
+  offs.push(initRemoteReports({ setTransport: setReportTransport, viewer: tabViewer }));
 
   let surface = typeof overlay.surfaceOf === 'function' ? (overlay.surfaceOf('live') ?? null) : null;
   // No hello since the socket last went down (or since init with no surface).
@@ -243,9 +250,10 @@ export function initOverlayReport({ overlay = overlayApi, send = wsSend, now = D
     resetGens(msg);
     awaitingHello = false;
     if (msg && msg.surface != null && msg.surface !== surface) newSurface(msg.surface);
-    // A hello is a change: the kept panes' answers are re-reported once (a
-    // reconnect's socket is a new viewer to the daemon, and whatever was
-    // gathered while the socket was down goes now).
+    // A hello is a change: the kept panes' answers are re-reported once (the
+    // daemon may have restarted or reset its table; a reconnect's socket is
+    // the same viewer by the tab's id, K.2-56, so the re-report replaces at an
+    // equal key; and whatever was gathered while the socket was down goes now).
     for (const m of cur.keys()) { forced.add(m); touched.add(m); }
     arm();
   }
