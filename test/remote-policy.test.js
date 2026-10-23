@@ -1017,6 +1017,8 @@ test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by na
     // annotation engine's row kind): a level, and on the queue's the item key
     // TEXT_RULES.items strips below read.
     { type: 'queue', level: 'basic', item: 'item' },
+    // The transient marks (U313; ruling E3 a): from read up, like the comments.
+    { type: 'marks', level: 'read' },
     // One per built-in element type (lib/core/element-policy), at its `see`:
     // the comment's pins ride element:comment (U327a).
     { type: 'element:box-grab', level: 'read' },
@@ -1037,6 +1039,23 @@ test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by na
   const frozenDeep = (o) => !o || typeof o !== 'object' || (Object.isFrozen(o) && Object.values(o).every(frozenDeep));
   assert.ok(frozenDeep(FRAME_RULES));
   assert.ok(frozenDeep(TEXT_RULES));
+});
+
+// The transient marks (U313; ruling U313@marks-remote-level = a): the frame
+// from `read` up, whole; hello and reset carry the sets only from `read` up.
+test('marks: the frame reaches local, read and full whole and basic not at all; hello and reset lose `marks` below read', () => {
+  const { projectSnapshot } = require('../lib/core/remote-policy');
+  const marks = [{ mount: 'p1', kind: 'failing', label: 'row 3 fails', anchor: { selector: 'tr', text: 'row 3' } }];
+  const frame = Object.freeze({ type: 'marks', owner: 'service:t', marks });
+  assert.equal(projectFrame(frame, 'local'), frame);
+  for (const level of ['read', 'full']) assert.deepStrictEqual(projectFrame(frame, level), frame, level);
+  for (const level of ['basic', 'nonsense']) assert.equal(projectFrame(frame, level), null, level);
+  for (const type of ['hello', 'reset']) {
+    const snap = { type, lock: null, elements: [], surface: 1, marks: [{ owner: 'service:t', marks }] };
+    assert.equal(projectSnapshot(snap, 'local'), snap, `${type}: local`);
+    assert.ok(!('marks' in projectSnapshot(snap, 'basic')), `${type}: no marks below read`);
+    for (const level of ['read', 'full']) assert.deepStrictEqual(projectSnapshot(snap, level).marks, snap.marks, `${type}: ${level}`);
+  }
 });
 
 test('projectFrame: a surface frame with no row passes at every level, untouched; a mirror or element type with no row reaches only local', () => {
@@ -1233,8 +1252,9 @@ const NODE_PATHS = ['trigger.message', 'trigger.summary', 'trigger.reply', 'trig
 
 test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(TEXT_RULES)), {
-    // hello and reset: their lean element rows too (U304), whole below read.
-    frames: { hello: [...LOCK_PATHS, 'elements'], reset: [...LOCK_PATHS, 'elements'], lock: LOCK_PATHS, 'node-added': ['node.trigger_summary'] },
+    // hello and reset: their lean element rows too (U304), and the transient
+    // marks (U313), whole below read.
+    frames: { hello: [...LOCK_PATHS, 'elements', 'marks'], reset: [...LOCK_PATHS, 'elements', 'marks'], lock: LOCK_PATHS, 'node-added': ['node.trigger_summary'] },
     routes: {
       'GET /api/graph': ['nodes[].trigger_summary', 'nodes[].absorbed[].trigger_summary', ...LOCK_PATHS],
       // Spec §5.3's, plus `folded[].error`: §3.2 gives folded turns the error

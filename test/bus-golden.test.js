@@ -57,6 +57,9 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    carries the pane's `gen` (0 for a fresh id; a report echoes it), and the
 //    hello's `surface` is the daemon's wall-clock-seeded counter, scrubbed as
 //    '<v>' through VOLATILE_KEYS.
+//  - 2026-10-23 U313 (the transient marks, C6): the full-surface frames carry
+//    `marks` — [{owner, marks}], the off-store sets (lib/server/domain/marks),
+//    [] in the golden session, which sets none; a reset always carries [].
 const GOLDEN = {
   frames: [
     {
@@ -74,6 +77,7 @@ const GOLDEN = {
       activeTheme: null,
       elements: [],
       surface: '<v>',
+      marks: [],
     },
     { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude', gen: 0 },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
@@ -217,7 +221,7 @@ test('bus: a tab capture is a triple-effect (store mutation + store:patch WS + o
   assert.equal(caps[0].capture_id, 'cap1');
 });
 
-test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,store,active,lock,theme,activeTheme,elements,surface}', async (t) => {
+test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,store,active,lock,theme,activeTheme,elements,surface,marks}', async (t) => {
   const { api, port } = await withServer(t);
   const WebSocket = require('ws');
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
@@ -234,7 +238,7 @@ test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,
   assert.ok(reset, 'reset frame present');
   assert.deepEqual(
     Object.keys(reset).sort(),
-    ['active', 'activeTheme', 'claude_order', 'elements', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'surface', 'theme', 'type'].sort(),
+    ['active', 'activeTheme', 'claude_order', 'elements', 'lock', 'markdown', 'marks', 'mounts', 'order', 'runs', 'store', 'surface', 'theme', 'type'].sort(),
   );
 });
 

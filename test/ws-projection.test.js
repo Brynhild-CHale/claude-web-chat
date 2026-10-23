@@ -273,7 +273,9 @@ test('TEXT_RULES: below read, hello, reset, lock and node-added carry no prompt 
     assert.deepStrictEqual(hello.lock, bare, `${c.server._wc.peer}: the hello's lock without its text`);
     // Below read the hello carries no element list (U304: an anchor carries pane text).
     assert.equal(hello.elements, undefined, `${c.server._wc.peer}: no element list below read`);
-    assert.deepStrictEqual(Object.keys(hello).sort(), Object.keys(local.of('hello')[0]).filter((k) => k !== 'elements').sort(), 'the rest of the hello is the same');
+    // Nor the transient marks (U313; ruling E3 a: from read up).
+    assert.equal(hello.marks, undefined, `${c.server._wc.peer}: no marks below read`);
+    assert.deepStrictEqual(Object.keys(hello).sort(), Object.keys(local.of('hello')[0]).filter((k) => k !== 'elements' && k !== 'marks').sort(), 'the rest of the hello is the same');
   }
 
   host.api.broadcastReset();

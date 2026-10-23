@@ -60,6 +60,8 @@ call. `owner` is a short lowercase name (letters, digits and dashes, e.g.
 | `writeMarkdown({text, id?, after?, force?})` | `POST /api/markdown` | Puts a markdown item on the page: a heading or short prose between and around panes. Auto-tags `owner`. Reuse `id` to rewrite one in place; left out, the server assigns `md-<n>` and returns it as `id`. `after` places it as it places a pane. Check `.ok`: an item another writer owns, an id a pane holds (`conflict`), a reserved id and text over the cap (`too_large`) all soft-reject. |
 | `removeMarkdown({id, force?})` | `POST /api/markdown` with `remove: true` | Takes one markdown item off the page, and never a pane of that id. Returns `{ok, removed, id}`; `removed` is `false` when no such item was there. An item another writer owns soft-rejects without `force`. |
 | `setStore(patch)` | `POST /api/store` | Merge a patch; use a signal key with a bumping `seq`. |
+| `setMarks(marks)` | `POST /api/marks` | Replace this driver's transient marks (`[{mount, kind, anchor?, element?, label?}]`, at most 200 in 64 KB): highlights of the moment, held off the store — never committed into a node, never on the event log, never waking Claude — and cleared by every reset (a restore, Wipe or New graph). Keyed by this driver's owner, under its lease. Returns `{ok, owner, count, writer}`. |
+| `clearMarks()` | `POST /api/marks` with `marks: []` | Clears this driver's marks. |
 | `getStore(keys?)` | `GET /api/store` | Full store, or a filtered subset. |
 | `clear({id?, target?})` | `POST /api/clear` | Auto-tags `owner`. By id it takes a pane or a markdown item. |
 | `release()` | `DELETE /api/writers/lease` | Gives this driver's lease on its owner back (below), so another driver can take the owner. Returns `{ok, released}`; a later write by this driver leases again. |
@@ -249,6 +251,7 @@ ignored); a 401 `{writer:'stale'}` means the daemon restarted — lease again.
 | `POST /api/render` | `{html, id?, target?, params?, theme?, owner?, force?, after?, place?}` | Mount/replace. A `service:` `owner` needs the lease's `X-WC-Writer` (403 `unverified` without it); with it, the lease's owner is used. Soft-rejects (HTTP 200) on locked or cross-owner; check the body. `theme` normalized (below). `after` positions the pane in the page sequence; `place: {col, span, rows}` sizes it on the 12-column grid (clamped; the applied value comes back as `place`). |
 | `POST /api/markdown` | `{text, id?, after?, owner?, force?}` / `{id, remove:true, owner?, force?}` | Put or replace a markdown item (escaped; a page's headings build its Contents), or take one off. Soft-rejects (HTTP 200) on cross-owner, an id a pane holds, a reserved id, or text over the cap; check the body. |
 | `POST /api/clear` | `{id?}` / `{target?}` / `{}` | Remove a pane or markdown item by id / a slot / everything. |
+| `POST /api/marks` | `{marks, owner?}` | Replace the caller's transient marks (an empty list clears them); host only. A ws-only `marks` frame, no event, no node. `GET /api/marks` lists every set with its writer. |
 | `GET /api/events?since=<seq>` | — | `{events, latest, oldest, gap, dropped}`. |
 | `POST /api/wait` | `{predicate, timeout_ms}` | Long-poll (**driver-only**; Claude uses the channel/queue). `{ok:false, timeout:true}` (HTTP 200) on miss. Counts against the 5s shutdown drain. |
 
