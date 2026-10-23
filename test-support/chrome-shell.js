@@ -111,9 +111,36 @@ function respond(body, { status = 200, headers = {} } = {}) {
   };
 }
 
+// GET /api/toolbar as a fresh project's daemon answers it: empty records, the
+// default `pinned`, and tools[] GENERATED from the built-in pack's element.json
+// files on disk (lib/packs/elements reads and validates them, the toolbar
+// route's own toolEntry shapes them) — never a hand copy, so every chrome test
+// boots with the built-ins listed as the daemon lists them.
+function builtinToolbar() {
+  const { readElementJson, validateElement, elementSrcDir } = require('../lib/packs/elements');
+  const { parseManifest } = require('../lib/packs/manifest');
+  const { ELEMENTS_TEMPLATE_DIR } = require('../lib/server/builtins');
+  const { ROW_KEYS } = require('../lib/server/element-types');
+  const { toolEntry } = require('../lib/server/routes/toolbar');
+  const { emptyProject, emptyUser } = require('../lib/core/toolbar-record');
+  const manifest = parseManifest(ELEMENTS_TEMPLATE_DIR);
+  const tools = manifest.elements.map((type) => {
+    const read = readElementJson(elementSrcDir(ELEMENTS_TEMPLATE_DIR, type));
+    const checked = read.ok ? validateElement(read.raw, { stageDir: null, name: type, builtin: true }) : null;
+    if (!checked || !checked.ok) throw new Error(`chrome-shell: the built-in element type '${type}' does not validate`);
+    const toolbar = {};
+    for (const k of Object.keys(checked.descriptor)) if (!ROW_KEYS.includes(k)) toolbar[k] = checked.descriptor[k];
+    return toolEntry({ type, pack: manifest.name, builtin: true, toolbar }, manifest.version);
+  });
+  return {
+    ok: true, v: 1, project: { ...emptyProject(), pinned: tools.map((t) => t.type) }, user: emptyUser(),
+    merged: { bindings: {}, settings: {} }, canWrite: true, canWriteUser: true, tools,
+  };
+}
+
 // What the chrome reads while it boots and connects, answered quietly. One
 // active node, nothing queued, no components, packs, themes, comments, pending
-// services or update, a local (not remote) page.
+// services or update, a local (not remote) page; the built-in tools listed.
 const DEFAULT_ROUTES = Object.freeze({
   '/api/graph': { nodes: [{ id: 'n1', label: 'n1', parent_id: null, created_at: 1 }], active: 'n1' },
   '/api/graph/node/*': (url) => ({ id: decodeURIComponent(url.split('?')[0].split('/').pop()), mounts: [], store: {} }),
@@ -127,6 +154,7 @@ const DEFAULT_ROUTES = Object.freeze({
   '/api/queue/policy': { channel_connected: false, immediate_signals: [], queue_signals: [], activation_hint: {},
     parked_delivery: 'held' },
   '/api/elements': { elements: [], next_cursor: 0 },
+  '/api/toolbar': builtinToolbar(),
   '/api/brand': { slots: {}, fill: {}, theme: null },
   '/api/version': { ok: true, current: '0.0.0-test', updateAvailable: false },
   '/api/health': { ok: true, remote: false },
