@@ -174,4 +174,5 @@ test('the chrome\'s channel names and viewer grammar are the frame\'s', async ()
   for (const k of ['REPORT_CHANNEL', 'READY_CHANNEL', 'EXPIRED_CHANNEL']) assert.equal(R[k], F[k], k);
   const { VIEWER_RE } = require('../lib/server/domain/reports-remote');
   assert.equal(String(R.VIEWER_RE), String(VIEWER_RE));
+  assert.equal(String(F.VIEWER_RE), String(VIEWER_RE), 'the frame module keys a tab by the daemon\'s grammar');
 });
