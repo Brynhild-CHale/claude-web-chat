@@ -27,6 +27,8 @@ import { renderMarkdown, headings } from './markdown.js';
 import { panes, layoutLocked, unminimize, blockType, syncOwnerChips } from './mounts.js';
 import { isPhone } from './viewport.js';
 import { labelFor, nodeById, nodeTime } from './labels.js';
+import { keyFor } from './hotkeys.js';
+import { esc } from './esc.js';
 
 export const COLS = 12;
 export const ROW_PX = 40;
@@ -485,19 +487,21 @@ function renderRunMin(el, seg) {
 // panel in this app has a considered empty state, and the one surface every new
 // user sees first had none. Static markup only — nothing here is data.
 function zeroElement() {
-  if (zeroEl) return zeroEl;
-  zeroEl = document.createElement('div');
-  zeroEl.className = 'zero-state';
-  zeroEl.innerHTML =
-    '<h2>Nothing on the page yet</h2>' +
-    '<p>Ask Claude for something visual in your terminal and it lands here as blocks — ' +
-    'a figure, a table, a form, a diagram — and every turn becomes a node you can walk back to. Try:</p>' +
-    '<p class="zs-try"><span class="zs-quote">Sketch this project\'s architecture on the page.</span></p>' +
-    '<ul class="zs-keys">' +
-      '<li><kbd>G</kbd> open the graph</li>' +
-      '<li><kbd>N</kbd> add a block from the library</li>' +
-      '<li><kbd>?</kbd> all shortcuts</li>' +
-    '</ul>';
+  if (!zeroEl) {
+    zeroEl = document.createElement('div');
+    zeroEl.className = 'zero-state';
+    zeroEl.innerHTML =
+      '<h2>Nothing on the page yet</h2>' +
+      '<p>Ask Claude for something visual in your terminal and it lands here as blocks — ' +
+      'a figure, a table, a form, a diagram — and every turn becomes a node you can walk back to. Try:</p>' +
+      '<p class="zs-try"><span class="zs-quote">Sketch this project\'s architecture on the page.</span></p>' +
+      '<ul class="zs-keys"></ul>';
+  }
+  // Each key as the hotkey registry binds it now, on every layout, so a rebind
+  // shows (K.2-67); an unbound one is left out.
+  zeroEl.querySelector('.zs-keys').innerHTML =
+    [['chrome.graph', 'open the graph'], ['chrome.add', 'add a block from the library'], ['chrome.legend', 'all shortcuts']]
+      .map(([id, what]) => (keyFor(id) ? `<li><kbd>${esc(keyFor(id))}</kbd> ${what}</li>` : '')).join('');
   return zeroEl;
 }
 
@@ -654,8 +658,10 @@ export function renderContents() {
     if (!tip) {
       tip = document.createElement('div');
       tip.className = 'cn-tip';
-      tip.innerHTML = 'Ask Claude for a new section, or press <kbd>N</kbd> to add a block.';
     }
+    // The key as bound now, on every layout (K.2-67).
+    const tipHtml = keyFor('chrome.add') ? `Ask Claude for a new section, or press <kbd>${esc(keyFor('chrome.add'))}</kbd> to add a block.` : 'Ask Claude for a new section.';
+    if (tip.innerHTML !== tipHtml) tip.innerHTML = tipHtml;
     want.push(tip);
   }
   // Moved only when out of place, the way layoutPage places the page.

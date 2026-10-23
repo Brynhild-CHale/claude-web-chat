@@ -648,7 +648,8 @@ test('the source: no id outside RESERVED_IDS (with chat-session-list), no fetch,
     assert.doesNotMatch(code, /from '\.\/ws\.js'/, `${rel}: no line to the socket`);
     assert.ok(!src.includes(`${'‹'}redacted`), `${rel}: the mask is redact.js's alone`);
     for (const m of code.matchAll(/from '\.\/([\w-]+)\.js'/g)) {
-      assert.ok(['bus', 'chat-state', 'chat-present', 'chat-slots', 'chat-dock', 'chat-awaiting', 'markdown'].includes(m[1]),
+      // hotkeys: the composer note's key read from the registry (U338, K.2-67).
+      assert.ok(['bus', 'chat-state', 'chat-present', 'chat-slots', 'chat-dock', 'chat-awaiting', 'markdown', 'hotkeys'].includes(m[1]),
         `${rel}: imports ${m[1]}.js`);
     }
   }

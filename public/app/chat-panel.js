@@ -59,13 +59,14 @@ import { uiState } from './chat-present.js';
 import { approvals, composer, closeChatViews, posture } from './chat-slots.js';
 import { addEscapeStep } from './chat-dock.js';
 import { renderAwaiting, focusAwaiting } from './chat-awaiting.js';
+import { keyFor } from './hotkeys.js';
 
 const TICK_MS = 1000;
 const RECENT_MS = 60 * 60 * 1000;    // an ended conversation stays switchable for an hour
 const STUCK_PX = 48;                 // the stream's "stuck to the bottom" (§7.10)
 const TITLE = 'CHAT ↔ CLAUDE';
 const UNTITLED = 'Untitled session';
-const COMPOSER_NOTE = 'Reply in the terminal, or add a note in the queue rail (Q) and Push.';
+const COMPOSER_NOTE = () => `Reply in the terminal, or add a note in the queue rail${keyFor('chrome.rail') ? ` (${keyFor('chrome.rail')})` : ''} and Push.`;
 const REMOTE_NOTE = 'This surface is viewed remotely. The conversation stays on the host unless this project allows it.';
 const REMOTE_COMMAND = 'claude-web-chat tunnel mirror on';
 const OFFLINE_NOTE = 'Offline — showing the last known state.';
@@ -515,7 +516,7 @@ function renderComposer() {
       P.slot.replaceChildren();
     }
   }
-  P.slot.append(el('p', 'cp-composer-note', COMPOSER_NOTE));
+  P.slot.append(el('p', 'cp-composer-note', COMPOSER_NOTE()));
 }
 
 // ── details ──────────────────────────────────────────────────────────────────
