@@ -246,14 +246,14 @@ export function notePen() {
 // the window (it sees every pointer before the overlay's capture on the well,
 // and never prevents a default): the pen pointers down, the device's first pen
 // (on contact or hover: Safari reports the Apple Pencil so), and the primary
-// touch gesture's travel. A tap tool's click is held to TAP_SLOP by one click
-// guard: when the policy gave a touch's pointerdown to the tool and the finger
-// then travelled past the slop, the click that may still follow is a pan's, so
-// neither the tool nor the page takes it.
+// touch gesture's travel. A tap tool's click is held to TAP_SLOP by the
+// overlay: it asks this policy again at the click of a gesture it gave to the
+// tool, as that gesture's pointer, and a finger that travelled past the slop
+// answers 'page' there, so neither the tool nor the page takes that click
+// (overlay.js onPointer; it replaced this module's window click guard).
 const POINTER_TYPES = ['pointerdown', 'pointerover', 'pointermove', 'pointerup', 'pointercancel'];
 const penIds = new Set();
 let touch = null;     // {id, x0, y0, dx, dy, done}: the last primary touch gesture
-let decided = null;   // {pointerType, answer}: the policy's answer for this gesture
 let uninstall = null;
 
 function stateFor(a) {
@@ -267,9 +267,7 @@ function stateFor(a) {
   };
 }
 function policy(e, ctx) {
-  const answer = route(e, stateFor(ctx && ctx.armed !== undefined ? ctx.armed : armed()));
-  decided = { pointerType: pointerTypeOf(e), answer };
-  return answer;
+  return route(e, stateFor(ctx && ctx.armed !== undefined ? ctx.armed : armed()));
 }
 function syncStrokes() {
   const a = armed();
@@ -281,7 +279,6 @@ function onAnyPointer(e) {
   if (pen) notePen();
   switch (e.type) {
     case 'pointerdown':
-      decided = null;
       if (pen) penIds.add(e.pointerId);
       if (e.pointerType === 'touch') {
         if (e.isPrimary || !touch || touch.done) {
@@ -307,18 +304,6 @@ function onAnyPointer(e) {
       break;
   }
 }
-function onClick(e) {
-  const d = decided;
-  decided = null;
-  if (!d || d.answer !== 'tool' || d.pointerType !== 'touch' || !touch || isTap(touch.dx, touch.dy)) return;
-  const a = armed();
-  if (!a) return;
-  const ev = { pointerType: 'touch', composedPath: () => (typeof e.composedPath === 'function' ? e.composedPath() : []), target: e.target };
-  if (route(ev, stateFor(a)) === 'tool') return;
-  e.stopPropagation();
-  if (e.cancelable) e.preventDefault();
-}
-
 // installInputMode() registers the table at the overlay's one pointer dispatch
 // and starts the pen watch. Idempotent; returns its uninstall.
 export function installInputMode() {
@@ -327,7 +312,6 @@ export function installInputMode() {
   const offPolicy = setPointerPolicy(policy);
   const opts = { capture: true, passive: true };
   for (const t of POINTER_TYPES) window.addEventListener(t, onAnyPointer, opts);
-  window.addEventListener('click', onClick, true);
   const offArmed = onArmedChange(syncStrokes);
   const offFd = onFingerDrawsChange(syncStrokes);
   syncStrokes();
@@ -336,12 +320,10 @@ export function installInputMode() {
     uninstall = null;
     offPolicy();
     for (const t of POINTER_TYPES) window.removeEventListener(t, onAnyPointer, opts);
-    window.removeEventListener('click', onClick, true);
     offArmed();
     offFd();
     penIds.clear();
     touch = null;
-    decided = null;
     document.documentElement.classList.remove('finger-strokes');
   };
   uninstall = mine;

@@ -59,6 +59,11 @@ import { onFrame, onHello } from './ws.js';
 import { sourceMap } from './markdown.js';
 import anchors from './anchors.js';
 import { hiddenProbe, installRetriggers } from './overlay-hidden.js';
+// How a tool takes the pointer routed to it (capture, cancel its default) is
+// the input-mode policy's answer, never a rule of this file's. input-mode.js
+// imports this module too: the cycle is safe because neither reads the other's
+// bindings while it evaluates (dispatchMode is read only inside onPointer).
+import { dispatchMode } from './input-mode.js';
 
 // ── the vocabulary ──────────────────────────────────────────────────────────
 // The states come from the one vocabulary (lib/core/anchor-states, carried by
@@ -178,7 +183,8 @@ let probe = null;
 let policy = null;
 let armedState = null;            // {type, profile} or null
 let pickState = null;
-let gesture = null;               // {decision} for the pointer gesture in flight
+const gestures = new Map();       // pointerId → {decision, pointerType, mode, up}: each pointer's gesture
+let lastDown = null;              // the pointerId of the newest pointerdown
 let listeningOn = null;           // the well the capture listeners are on, or null
 let layer = null;
 let inited = false;
@@ -930,7 +936,7 @@ export function setArmed(type, profile) {
   const cur = armedState;
   if ((next === null && cur === null) || (next && cur && next.type === cur.type && next.profile === cur.profile)) return;
   armedState = next;
-  gesture = null;
+  dropGestures();
   syncListening();
   const snap = armed();
   for (const fn of [...armedSubs]) {
@@ -946,10 +952,15 @@ export function onArmedChange(fn) {
 }
 
 // THE one pointer dispatch (fn(event, {armed}) → 'tool' | 'page' | 'ignore'),
-// consulted at a gesture's pointerdown (or a lone click) while a tool is armed.
-// 'tool' hands the gesture to the armed type's create; 'page' lets every event
-// of it reach the page untouched with the tool still armed (K.2-9); 'ignore'
-// swallows it (neither the tool nor the page gets it). The last set wins.
+// consulted while a tool is armed at each pointer's pointerdown, at a lone
+// click (no live gesture of its own: a keyboard's or a script's click), and
+// once more at the click of a gesture it gave to the tool — with a stand-in
+// carrying that gesture's pointerType — because only where the gesture ended
+// can it tell a tap from a pan (a finger that travelled past the slop): an
+// answer other than 'tool' there makes that click nobody's. 'tool' hands the
+// gesture to the armed type's create; 'page' lets every event of it reach the
+// page untouched with the tool still armed (K.2-9); 'ignore' swallows it
+// (neither the tool nor the page gets it). The last set wins.
 export function setPointerPolicy(fn) {
   if (fn != null && typeof fn !== 'function') throw new TypeError('setPointerPolicy: expects a function or null');
   const mine = fn || null;
@@ -970,8 +981,12 @@ function syncListening() {
   } else if (!want && listeningOn) {
     for (const t of POINTER_EVENTS) listeningOn.removeEventListener(t, onPointer, true);
     listeningOn = null;
-    gesture = null;
+    dropGestures();
   }
+}
+function dropGestures() {
+  gestures.clear();
+  lastDown = null;
 }
 function innerTarget(e) {
   const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
@@ -1003,37 +1018,89 @@ function markdownText(md) {
   const m = page.markdown && md != null ? page.markdown.get(String(md)) : null;
   return m ? String(m.text == null ? '' : m.text) : null;
 }
+// Each pointer's gesture is its own (a palm landing during a pen stroke never
+// re-decides the pen's): decided at its pointerdown, read by its pointermove,
+// pointerup and pointercancel, dropped at its pointercancel, at its click, at
+// the next pointerdown of its id, and — once it is up — at any later
+// pointerdown (a click follows its pointerup in the same task, or never). A
+// click takes its own pointerId's gesture, else the newest pointerdown's while
+// it is live: that pointer still down, or up with its click unspent when the
+// click names no pointer and a pointer pressed it (detail >= 1). With neither
+// it is a lone click (a keyboard's Enter, a script's el.click(), or the click
+// a pan's gesture never got), and the policy is asked about it afresh.
+function askPolicy(e) {
+  let decision = 'tool';
+  if (policy) {
+    try { decision = policy(e, { armed: armed() }); } catch (err) {
+      console.error('[web-chat] overlay: the pointer policy failed', err);
+      decision = 'page';
+    }
+  }
+  return POINTER_ANSWERS.includes(decision) ? decision : 'page';
+}
+function gestureOfClick(e) {
+  if (typeof e.pointerId === 'number' && gestures.has(e.pointerId)) return [e.pointerId, gestures.get(e.pointerId)];
+  const g = lastDown == null ? null : gestures.get(lastDown);
+  if (!g) return null;
+  if (!g.up) return [lastDown, g];
+  // Up: live still for its own click alone, when the click names no pointer (a
+  // browser whose click is a MouseEvent) and a pointer pressed it (detail >= 1;
+  // any later pointerdown would have dropped this gesture).
+  return typeof e.pointerId !== 'number' && e.detail >= 1 ? [lastDown, g] : null;
+}
+// The click of a gesture the tool took, judged again where it ended: the
+// stand-in names the gesture's pointer (a click event may carry none) and not
+// the click's type, so the policy reads it as that pointer at its release.
+function clickStillTool(e, g) {
+  const stand = {
+    pointerId: e.pointerId, pointerType: g.pointerType, target: e.target,
+    composedPath: () => (typeof e.composedPath === 'function' ? e.composedPath() : []),
+    clientX: e.clientX, clientY: e.clientY,
+  };
+  return askPolicy(stand) === 'tool';
+}
 function onPointer(e) {
   if (view.previewing) return;   // D2: a preview creates and picks nothing
   if (pickState) { onPick(e); return; }
   if (!armedState) return;
-  let decision;
-  if (e.type === 'pointerdown' || (e.type === 'click' && !gesture)) {
-    decision = 'tool';
-    if (policy) {
-      try { decision = policy(e, { armed: armed() }); } catch (err) {
-        console.error('[web-chat] overlay: the pointer policy failed', err);
-        decision = 'page';
-      }
-    }
-    if (!POINTER_ANSWERS.includes(decision)) decision = 'page';
-    gesture = { decision };
-  } else if (gesture) {
-    decision = gesture.decision;
-  } else {
-    return;   // a hover, or the tail of a gesture that began before the arming
-  }
-  if (e.type === 'click' || e.type === 'pointercancel') gesture = null;
-  if (decision === 'page') return;
   const t = types.get(armedState.type);
   const kind = (t && t.input) || 'taps';
+  let decision;
+  let g = null;
+  if (e.type === 'pointerdown') {
+    for (const [id, old] of gestures) if (old.up || id === e.pointerId) gestures.delete(id);
+    decision = askPolicy(e);
+    g = { decision, pointerType: e.pointerType || '', mode: decision === 'tool' ? dispatchMode(e, kind) : null, up: false };
+    gestures.set(e.pointerId, g);
+    lastDown = e.pointerId;
+  } else if (e.type === 'click') {
+    const own = gestureOfClick(e);
+    if (own) {
+      gestures.delete(own[0]);   // its click is spent
+      g = own[1];
+      decision = g.decision === 'tool' && !clickStillTool(e, g) ? 'ignore' : g.decision;
+    } else {
+      decision = askPolicy(e);   // a lone click
+    }
+  } else {
+    g = gestures.get(e.pointerId);
+    if (!g) return;   // a hover, or the tail of a gesture that began before the arming
+    decision = g.decision;
+    if (e.type === 'pointerup') g.up = true;
+    else if (e.type === 'pointercancel') gestures.delete(e.pointerId);
+  }
+  if (decision === 'page') return;
   if (decision === 'ignore') { swallow(e, e.type !== 'pointermove'); return; }
-  // 'tool'. A selection tool lets the browser form the selection (no default
-  // prevented before the click); every tool stops the page from hearing it.
-  swallow(e, kind !== 'selection' || e.type === 'click');
+  // 'tool': the page never hears it. The tool takes the click (its default —
+  // a link's, a button's — never runs); a pointer event's default is cancelled
+  // and the pointer captured as the policy's dispatchMode answers for this
+  // pointer (a drawing pointer's default only: a pen's, a mouse's as the pen's).
+  const mode = (g && g.mode) || dispatchMode(e, kind);
+  swallow(e, e.type === 'click' || mode.cancelDefault);
+  const target = innerTarget(e);
+  if (e.type === 'pointerdown' && mode.capture) capture(target, e.pointerId);
   if (!t || !t.create) return;
   if (kind === 'taps' && e.type !== 'click') return;
-  const target = innerTarget(e);
   const where = whereOf(target);
   const input = { event: e, phase: e.type, kind, target, root: where.root, mount: where.mount, md: where.md,
     clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType || 'mouse',
@@ -1041,6 +1108,11 @@ function onPointer(e) {
   try { t.create(input, toolCtx()); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
+}
+function capture(el, pointerId) {
+  const at = el && typeof el.setPointerCapture === 'function' ? el : listeningOn;
+  if (!at || typeof at.setPointerCapture !== 'function') return;
+  try { at.setPointerCapture(pointerId); } catch { /* the pointer is gone (no active pointer with that id) */ }
 }
 
 // pick({kind}) → {promise, cancel}: the next qualifying press records an anchor
