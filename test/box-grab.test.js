@@ -250,6 +250,20 @@ test('with a stub captureClip: the PNG lands as captures/cap<n>.png, the image b
   assert.equal(j.image.state, 'ready');
 });
 
+test('a grab deleted while its picture is drawing raises no item when the picture settles', async (t) => {
+  const { api, srv } = await withServer(t);
+  const held = heldCapture();
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: held });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => held.held() === 1, { timeout: 5000, what: 'the render to start' });
+  await ok(api.del(`/api/elements/${g.id}`));
+  held.releaseAll();
+  assert.equal((await settled(srv, g.grab.capture)).state, 'ready', 'the capture keeps its picture');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(elementItems(srv), [], 'no item for a grab that is gone');
+});
+
 test('the render: the live surface as the export draws it, at the viewer\'s viewport and mode, the item and the item-relative clip', async (t) => {
   const { api, srv } = await withServer(t);
   const calls = [];
@@ -329,13 +343,21 @@ test('a daemon stop with a render in flight tears its browser down (liveBrowsers
 // ── the picture's route ─────────────────────────────────────────────────────
 
 test('/grab: a private element answers 404 to lib/client; the route sits under the floor row, reachable at read', async (t) => {
-  const { srv, port } = await withServer(t);
-  const rec = srv.elements.addElement({
+  const { srv, port, root } = await withServer(t);
+  // Both grabs hold a picture on disk, so only the private gate can answer 404.
+  const png = encodePng(solid(2, 2, [9, 9, 9]), 2, 2, { alpha: false });
+  fs.writeFileSync(path.join(root, '.web-chat', 'captures', 'cap900.png'), png);
+  const grabOf = (shared) => srv.elements.addElement({
     type: 'box-grab', schema: BOX_GRAB,
-    payload: { anchor: null, shared: false, rect: RECT('m1'), meta: {}, grab: null },
+    payload: { anchor: null, shared, rect: RECT('m1'), meta: {}, grab: { capture: 'cap900' } },
   });
+  const rec = grabOf(false);
+  const twin = grabOf(true);
   const r = await client.request(port, 'GET', `/api/elements/${rec.id}/grab`, undefined, { timeout: 10000 });
   assert.equal(r.status, 404);
+  assert.equal(r.body && r.body.image, undefined, 'the private gate answers, not the missing picture');
+  const shown = await client.request(port, 'GET', `/api/elements/${twin.id}/grab?as=json`, undefined, { timeout: 10000 });
+  assert.equal(shown.status, 200, 'the shared twin, same picture, is served');
   const v = remoteClassify('GET', `/api/elements/${rec.id}/grab`, { mirror: 'read' });
   assert.equal(v.allow, true);
   assert.equal(v.key, 'GET /api/elements/*');

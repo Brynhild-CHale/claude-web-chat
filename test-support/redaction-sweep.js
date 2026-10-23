@@ -337,6 +337,8 @@ const FILL = {
   '/brand/:slot': () => ['/brand/lockup', '/brand/seal'],
   '/api/captures/:id/raw': () => ['/api/captures/sweep-none/raw'],
   '/api/captures/:id/simplified': () => ['/api/captures/sweep-none/simplified'],
+  // A box grab's picture (U328b): PNG bytes, no text of its own; the scenario draws none.
+  '/api/elements/:id/grab': () => ['/api/elements/g-sweep-none/grab'],
   '/api/components/:name/seed': () => ['/api/components/file-editor/seed', '/api/components/git-dashboard/seed'],
   '/api/components/:name': () => ['/api/components/file-editor', '/api/components/git-dashboard'],
   '/api/services/pack/:name': () => ['/api/services/pack/sweep-pack'],
