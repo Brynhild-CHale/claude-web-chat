@@ -30,7 +30,7 @@
 //     after a touch pan (its click nobody's, or never sent) is the button's;
 //     the input-mode policy's dispatchMode decides preventDefault and pointer
 //     capture per pointer (a finger's default never cancelled; a pen's and a
-//     mouse's cancelled and captured for a strokes tool);
+//     mouse's cancelled for every kind, and captured for a strokes tool);
 //     a click that names a pointer takes that pointer's gesture alone, so a
 //     keyboard click (pointerId -1, detail 0) after a mouse released outside
 //     the well, or while a pen is down, is the button's and drops no pin;
@@ -545,7 +545,7 @@ test('the policy\'s dispatchMode decides preventDefault and pointer capture, per
     IM.setFingerDraws('off');
     ov.setArmed('tt');
     assert.deepEqual(down('touch', 31), { prevented: false, captured: [] }, 'a finger tap the taps tool takes: its default is the finger\'s (touch-action), never cancelled');
-    assert.deepEqual(down('pen', 32), { prevented: false, captured: [] }, 'a taps tool acts on the click and captures nothing');
+    assert.deepEqual(down('pen', 32), { prevented: true, captured: [] }, 'a taps tool acts on the click and captures nothing; the pen\'s default is cancelled (K.2-43)');
     const c = pe(lead('p1'), 'click', 'pen', 32);
     assert.equal(c.defaultPrevented, true, 'the click the tool took is the tool\'s');
     ov.setArmed('ts');

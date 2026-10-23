@@ -8,6 +8,10 @@
 //     uninstall), and arming through overlay.js's setArmed is what the policy
 //     reads (K.2-3: no second state);
 //   - a pen over a pane is the armed tool's, on the pane's <button> too;
+//   - a taps or selection type armed: a pen's or a mouse's pointerdown on the
+//     pane's <button> has its default cancelled (no compatibility mousedown,
+//     focus or selection starts in the pane, K.2-43); a finger's keeps its
+//     default, on the button and on static content (D1);
 //   - finger-draws off, a taps type armed: a finger tap on static content
 //     reaches the tool; a finger tap on the pane's <button> fires the button
 //     with the tool still armed (K.2-9, D1 (b)); a finger that travels past
@@ -130,6 +134,29 @@ test('a pen over a pane is the armed tool\'s, on the pane\'s button too', () => 
     reset();
     gesture(goBtn(), 'mouse');
     assert.deepEqual(created, [['im-taps', 'click', 'mouse']], 'the mouse as the pen');
+  } finally { ov.setArmed(null); }
+});
+
+test('a taps or selection tool armed: a pen\'s or a mouse\'s pointerdown on the pane\'s button is cancelled, a finger\'s is not', () => {
+  IM.setFingerDraws('off');
+  const down = (el, pointerType, pointerId) => {
+    const ev = new W.PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, composed: true, pointerType, pointerId, isPrimary: true, clientX: 100, clientY: 100,
+    });
+    el.dispatchEvent(ev);
+    pe(el, 'pointerup', pointerType, { pointerId });
+    return ev.defaultPrevented;
+  };
+  try {
+    for (const type of ['im-taps', 'im-selection']) {
+      ov.setArmed(type);
+      reset();
+      assert.equal(down(goBtn(), 'pen', 51), true, `${type}: a pen on the button is wholly the tool's (K.2-43)`);
+      assert.equal(down(goBtn(), 'mouse', 52), true, `${type}: the mouse as the pen`);
+      assert.equal(down(goBtn(), 'touch', 53), false, `${type}: a finger on the button keeps its default (D1)`);
+      assert.equal(down(lead(), 'touch', 54), false, `${type}: a finger on static content keeps its default`);
+      assert.deepEqual(W.__log.filter((l) => l !== 'down:touch'), [], 'the page heard only the finger on the button');
+    }
   } finally { ov.setArmed(null); }
 });
 

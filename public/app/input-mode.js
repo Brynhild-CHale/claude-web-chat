@@ -165,15 +165,17 @@ export function route(ev, s = {}) {
 }
 
 // dispatchMode(ev, input) → {capture, cancelDefault}: how a tool routed the
-// pointer takes it. A strokes tool captures the pointer and cancels only a
-// drawing pointer's default (a pen's, and a mouse's as the pen's — a finger's
-// gestures are touch-action's to keep or give up, never a handler's); a taps
-// tool acts on the tap's click and captures nothing; a selection tool lets the
-// browser form the selection it then takes.
+// pointer takes it. Every input kind cancels a pen's default, and a mouse's as
+// the pen's (K.2-9, K.2-43: the pen is wholly the tool's on a pane's controls,
+// so no compatibility mousedown, focus or selection starts in the pane), and
+// never a finger's (its gestures are touch-action's to keep or give up, never a
+// handler's; a finger tap on a pane's button still acts, D1). A strokes tool
+// also captures the pointer; a taps tool acts on the tap's click and captures
+// nothing; a selection tool captures nothing either.
 export function dispatchMode(ev, input) {
   const type = pointerTypeOf(ev);
   if (input === 'strokes') return { capture: true, cancelDefault: type !== 'touch' };
-  return { capture: false, cancelDefault: false };
+  return { capture: false, cancelDefault: type !== 'touch' };
 }
 
 // ── finger-draws (D2 (c), K.2-8, K.2-15) ─────────────────────────────────────
