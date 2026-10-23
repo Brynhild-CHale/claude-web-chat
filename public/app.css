@@ -3189,7 +3189,8 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 /* ── the page well's element overlay (public/app/overlay.js; annotation engine 2A.1) ──
    ONE body-level layer at the pins' rung. A marker's left/top is its anchor
    point; its size, transform and clip-path are written inline from the type's
-   glyph by the overlay, so the clip it computes is exactly what paints. The
+   glyph by the overlay, so the clip it computes is exactly what paints: no
+   marker class paints past its border box (no outline, no outer shadow). The
    generic marker (an element whose type registered no draw) names its type;
    the carried guess and the section guess are never drawn as a hit. Colours
    through --wc-* tokens only: the look is expected to change (U338). */
@@ -3201,7 +3202,7 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
   color: var(--wc-accent); font: 600 8px var(--wc-mono); text-transform: uppercase;
 }
 .el-marker .el-generic-name { overflow: hidden; text-overflow: clip; white-space: nowrap; }
-.el-marker.el-guess { color: var(--wc-gold); opacity: .8; outline: 1.5px dashed var(--wc-gold); outline-offset: 1px; }
+.el-marker.el-guess { color: var(--wc-gold); opacity: .8; border: 1.5px dashed var(--wc-gold); }
 .el-marker.el-section { color: var(--wc-muted); border-style: dotted; opacity: .85; }
 @media (max-width: 759px) {
   /* as #pin-layer: the open queue screen covers the page, so its markers go */

@@ -18,9 +18,13 @@
 //     rail or over the minbar; every anchor inside it IS drawn;
 //   - a source record whose quote and bracket are gone answers re-resolved how
 //     'section' and is drawn as a section guess, never with the hit class;
+//   - a source hit on a markdown item whose block re-renders with the quote
+//     kept is drawn over the NEW Range (connected, reading the quote), never
+//     the old one its replaced text node collapsed;
 //   - a converted pin whose text no longer matches under its selector is drawn
 //     at its guess with the guess class, and a click on it emits
 //     'overlay:guess'; a locator-none orphan is not drawn and orphans() lists it;
+//     the guess's mark paints inside its border box (no outline, no shadow);
 //   - an element of a type nobody registered draws the generic marker naming the
 //     type; a type's draw that throws leaves the layer and the other markers;
 //   - with 600 anchors no draw frame's box work exceeds the budget, the draw is
@@ -31,6 +35,9 @@ const assert = require('node:assert');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
 const { convertAnchor } = require('../lib/core/element-log');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createCascade } = require('../test-support/css-cascade');
 
 let shell, W, M, ov, anchors, md;
 
@@ -57,11 +64,13 @@ const ROWS = 100;
 const ROW_H = 30;
 const geo = { well: 0, pane: 0 };
 const rectFns = new Map();
+let rangeRect = null;          // a test's geometry for a Range nobody registered
 const DEFAULT_BOX = { left: 300, top: 300, width: 40, height: 16 };
 function rect(r) { return { ...r, x: r.left, y: r.top, right: r.left + r.width, bottom: r.top + r.height }; }
 function rectOf(x) {
   clock += READ_MS;
   const f = rectFns.get(x);
+  if (!f && rangeRect && x && typeof x.cloneContents === 'function') return rect(rangeRect(x));
   return rect(f ? f() : DEFAULT_BOX);
 }
 const mainBox = () => ({ left: 40, top: WELL.top - geo.well, width: 920, height: MAIN_H });
@@ -225,6 +234,56 @@ test('a source record whose quote and bracket are gone is drawn as a section gue
   flush();
 });
 
+test('a source hit whose block re-renders with the quote kept is drawn over the new Range, not the old one', async () => {
+  const QUOTE = 'gamma delta';
+  // A Range's box from its own position, as a browser's would be: a collapsed
+  // (or detached) one has none.
+  rangeRect = (r) => (r.collapsed || !r.startContainer.isConnected
+    ? { left: 0, top: 0, width: 0, height: 0 }
+    : { left: 100 + r.startOffset * 5, top: 120, width: 40, height: 16 });
+  try {
+    const before0 = '## Plan\n\nAlpha beta gamma delta epsilon zeta.\n';
+    await shell.frame({ type: 'markdown', id: 'md-p', text: before0, owner: 'claude' });
+    const block = M.itemEl(W.document, 'md-p').el;
+    const tn = block.querySelector('p').firstChild;
+    const at = tn.data.indexOf(QUOTE);
+    const range = W.document.createRange();
+    range.setStart(tn, at);
+    range.setEnd(tn, at + QUOTE.length);
+    const rec = anchors.recordSource(block, range, md.sourceMap(before0), before0);
+    await draw([{ id: 'h1', v: 1, type: 'highlight', anchor: rec, shared: true, replies: 0 }], 1);
+    let [m] = markersFor('h1');
+    assert.ok(m && shown(m), 'drawn while its quote is there');
+    const r1 = m._group.range;
+    assert.equal(r1.toString(), QUOTE);
+
+    const after0 = '## Plan\n\nPrefix words. Alpha beta gamma delta epsilon zeta.\n';
+    const answers = [];
+    const off = ov.onAnswers((msg) => { if (msg.mount === 'md-p') answers.push(...msg.items); });
+    try {
+      await shell.frame({ type: 'markdown', id: 'md-p', text: after0, owner: 'claude' });
+      flush();
+    } finally { off(); }
+    assert.equal(answers.length, 1);
+    assert.equal(answers[0].state, 'exact', 'the quote is still there, unique');
+    [m] = markersFor('h1');
+    assert.ok(m && shown(m), 'still drawn after the re-render');
+    const r2 = m._group.range;
+    assert.notEqual(r2, r1, 'the group holds the new pass\'s Range');
+    assert.ok(r2.startContainer.isConnected, 'a connected Range');
+    assert.equal(r2.toString(), QUOTE, 'reading the quote');
+    assert.ok(m.classList.contains('el-hit'));
+    const want = rangeRect(r2);
+    assert.equal(parseFloat(m.style.left), want.left, 'drawn at the new Range\'s rect');
+    assert.equal(parseFloat(m.style.top), want.top);
+  } finally {
+    rangeRect = null;
+    await shell.frame({ type: 'markdown:remove', id: 'md-p' });
+    ov.setElements('live', []);
+    flush();
+  }
+});
+
 test('a converted pin whose text is gone is drawn at its guess; a click on it emits overlay:guess; a locator-none orphan is only listed', async () => {
   const root = rootOf('guess-pane');
   const notes = root.querySelectorAll('p.note');
@@ -242,6 +301,13 @@ test('a converted pin whose text is gone is drawn at its guess; a click on it em
   assert.ok(g && shown(g), 'the carried guess is drawn');
   assert.ok(g.classList.contains('el-guess') && !g.classList.contains('el-hit'));
   assert.equal(g._group.el, notes[1], 'at the guess (the ordinal\'s candidate)');
+  // The clip is computed from the glyph's border box, so the guess's mark is
+  // drawn inside it: nothing of it paints past that box, clipped or not.
+  const css = createCascade(fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8'), { win: () => W });
+  for (const prop of ['outline', 'outline-width', 'outline-style', 'outline-offset', 'box-shadow']) {
+    const v = css.value(g, prop);
+    assert.ok(v == null || /^(none|0(px)?)$/.test(String(v).trim()), `the guess marker's ${prop} paints nothing outside its box (${v})`);
+  }
   assert.equal(markersFor('c-none').length, 0, 'a guess-less orphan is never drawn');
   assert.deepEqual(ov.orphans(), [
     { id: 'c-guess', v: 3, type: 'comment', mount: 'guess-pane', scope: 'live', how: 'locator-guess', guess: true },

@@ -584,7 +584,11 @@ function buildGroups() {
     }
     if (!el && !range) continue;
     const type = e.row.type || 'element';
-    const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|r${e.row.id}`;
+    // Keyed by the DOM object itself (an element, or the Range a pass handed
+    // back), so a pass that answers a NEW Range for the same row — a re-render
+    // that kept the quote — changes the drawn set's signature and the group is
+    // rebuilt over the new Range, never placed at the old, collapsed one.
+    const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|r${tokenOf(range)}`;
     let g = byKey.get(key);
     if (!g) {
       g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, items: [],
