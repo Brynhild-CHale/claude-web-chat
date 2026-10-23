@@ -242,6 +242,22 @@ test('(c) ten removals in one frame give one settle; added nodes alone give none
   assert.equal(settlesSince(s0, 'pb', 'pane-dom').length, 1, 'ten removals, one settle');
   assert.equal(settlesSince(s0, 'pb').length, 1);
   assert.deepEqual(['pb:2', 'pb:6'].map(stateOf), ['exact', 'exact']);
+
+  // Ten removals in one frame, each its own observer delivery (a microtask
+  // apart, so the MutationObserver cannot batch them): the coalescing on the
+  // frame is what leaves one settle.
+  W.__pd.pb.add(10);
+  await frames();
+  s0 = settles.length;
+  for (let k = 0; k < 10; k++) {
+    W.__pd.pb.removeMany(1);
+    await Promise.resolve();
+  }
+  assert.equal(settlesSince(s0, 'pb').length, 0, 'nothing settled inside the frame');
+  await frames();
+  assert.equal(settlesSince(s0, 'pb', 'pane-dom').length, 1, 'ten observer deliveries in one frame, one settle');
+  assert.equal(settlesSince(s0, 'pb').length, 1);
+  assert.deepEqual(['pb:2', 'pb:6'].map(stateOf), ['exact', 'exact']);
 });
 
 // ── (d) observer lifetime ───────────────────────────────────────────────────
@@ -364,6 +380,28 @@ test('(e) the service-start grace: with no store write, the grace\'s end reads t
     for (const id of ids) {
       assert.equal(itemsSince(from).filter((i) => i.id === id && i.state === 'orphaned').length, 1, `${id} delivered orphaned once`);
     }
+  } finally {
+    ov.removeElements('live', ids);
+    shell.setRoutes({});
+    await shell.frame({ type: 'store:patch', patch: { sv_rows: svRows() } });
+    await shell.frame({ type: 'clear', id: 'sv' });
+  }
+});
+
+test('(e) the service-start grace: a store write the pane hears ends it early — a write that draws nothing reads orphaned at its settle, not at the grace\'s end', async () => {
+  const rows = await serviceUp();
+  const ids = rows.map((r) => r.id);
+  try {
+    const from = delivered.length;
+    const clearedAt = await approvedNothingDrawn(rows);
+    await clearAnswered(from, ids, clearedAt);
+    assert.ok(ids.every((id) => stateOf(id) === 'hidden' && reasons.get(id) === 'service-pending'), 'hidden at the clear\'s settle');
+    // The service's first write, inside the grace, draws no row.
+    const at = delivered.length;
+    await shell.frame({ type: 'store:patch', patch: { sv_rows: [] } });
+    await waitUntil(() => ids.every((id) => delivered.slice(at).some((m) => m.items.some((i) => i.id === id))), { timeout: 4000, what: 'the write\'s settle to answer' });
+    const first = ids.map((id) => itemsSince(at).find((i) => i.id === id));
+    assert.deepEqual(first.map((i) => i.state), ids.map(() => 'orphaned'), 'the write ended the grace: its own settle reads the undrawn rows orphaned');
   } finally {
     ov.removeElements('live', ids);
     shell.setRoutes({});
