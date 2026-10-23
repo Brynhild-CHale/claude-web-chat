@@ -512,6 +512,12 @@ test('re-send, the route (K.2-17): POST /api/queue/items/:id/resend raises a del
     ['element', g.id, 1, 'box-grab', first.image], 'the same element, version, type and picture');
   assert.deepEqual(elementItems(srv).map((it) => it.id), [again.item.id], 'pending in the queue');
   assert.equal((await resend('q99999')).status, 404, 'unknown');
+  // Host-only (K.2-63): a browser-shaped request from this machine (Origin,
+  // Sec-Fetch-*) is not the host, and is refused before the item is looked up.
+  const fromBrowser = await fetch(`http://127.0.0.1:${port}/api/queue/items/q99999/resend`, {
+    method: 'POST', headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}`, 'sec-fetch-site': 'same-origin' }, body: '{}',
+  });
+  assert.equal(fromBrowser.status, 403, 'a browser request is not the host');
   await ok(api.post('/api/queue/push', {}));
   await ok(api.del(`/api/elements/${g.id}`));
   assert.equal((await resend(again.item.id)).status, 404, 'the element is gone');
@@ -599,6 +605,27 @@ test('a settle after a Set active lands on the live capture record, not the copy
   assert.equal((await settled(srv, g.grab.capture)).state, 'ready', 'the live record settles');
   await waitUntil(() => elementItems(srv).length === 1, { timeout: 5000, what: 'the item' });
   assert.equal(elementItems(srv)[0].image.state, 'ready');
+});
+
+test('a re-aim that restores a pending copy with no render behind it reads failed (the sweep hears the restore)', async (t) => {
+  const { api, srv } = await withServer(t);
+  // A render held open, then failed: the live record settles failed with no
+  // PNG on disk, while the node committed before it holds a pending copy.
+  const waiters = [];
+  const failing = () => new Promise((_, reject) => waiters.push(() => reject(new Error('boom'))));
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: failing });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => waiters.length === 1, { timeout: 5000, what: 'the render to start' });
+  const n1 = (await turn(api, 'first')).node_id;
+  assert.ok(n1, 'n1 committed with the image pending');
+  for (const w of waiters.splice(0)) w();
+  assert.equal((await settled(srv, g.grab.capture)).state, 'failed');
+  await render(api, 'm2');
+  assert.ok((await turn(api, 'second')).node_id, 'n2 committed');
+  await ok(api.post('/api/graph/active', { id: n1 }), 'set active n1');
+  assert.deepEqual(captureOf(srv, g.grab.capture).image, { state: 'failed', error: 'the daemon stopped before the grab was drawn' },
+    'the restored pending copy is swept, not left pending forever');
 });
 
 test('a picture settling after a commit does not dirty the surface: the next chat-only turn folds, and the node keeps the state it had at commit', async (t) => {
