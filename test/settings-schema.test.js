@@ -90,6 +90,10 @@ test('the rest of the grammar: root shape, keys, lengths, bounds, enum size, def
   bad(one('string'), ['properties.a']);
   bad({ type: 'object', properties: { a: { type: 'string' } }, required: ['b'] }, ['required.0']);
   bad({ type: 'object', properties: { a: { type: 'string' } }, required: ['a', 'a'] }, ['required']);
+  // The caps are inclusive: 32 properties and an enum of 32 values pass.
+  assert.equal(validateSchema({ type: 'object', properties: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`k${i}`, { type: 'string' }])) }).ok, true);
+  assert.equal(validateSchema(one({ type: 'string', enum: Array.from({ length: 32 }, (_, i) => `v${i}`) })).ok, true);
+  assert.equal(validateSchema(one({ type: 'string', maxLength: 4096 })).ok, true);
   bad({ type: 'object', properties: {}, required: 'a' }, ['required']);
   // Lengths are code points: 80 emoji is a legal title.
   assert.equal(validateSchema(one({ type: 'string', title: '🖍'.repeat(80) })).ok, true);

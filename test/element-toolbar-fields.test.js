@@ -107,6 +107,9 @@ test('a sound element.json with every toolbar field passes, kept as written, for
   // Every field is optional: none at all passes, and so does a type without icons.
   assert.deepStrictEqual(validateStage(stage({ json: {}, files: {} })).errors, []);
   assert.deepStrictEqual(toolbarFields({}, null), { ok: true, errors: [] });
+  // Eight hotkeys is the cap, inclusive.
+  const eight = Array.from({ length: 8 }, (_, i) => ({ action: `a${i}`, label: `A${i}` }));
+  assert.deepStrictEqual(toolbarFields({ hotkeys: eight }, null), { ok: true, errors: [] });
   // Icons under assets/ are fine too.
   const assets = stage({ json: { icons: { light: 'assets/a.svg', dark: 'assets/dark/a.svg' } }, files: { 'assets/a.svg': svg(), 'assets/dark/a.svg': svg(32, 32) } });
   assert.deepStrictEqual(validateStage(assets).errors, []);
@@ -284,6 +287,16 @@ test('the built-ins carry exactly the ruled table (K.2-1, F2 a, K.2-6, K.2-7, K.
     const defaults = Object.fromEntries(Object.entries(schema.properties).map(([k, p]) => [k, p.default]));
     assert.deepStrictEqual(checkValue(schema, defaults), { ok: true, errors: [] }, type);
   }
+});
+
+// K.2-6: one input-kind grammar. The chrome cannot require lib/, so the
+// overlay's registerType keeps its own list (public/app/overlay.js INPUT_KINDS);
+// this holds the two equal.
+test('the overlay\'s INPUT_KINDS is the manifest\'s (K.2-6)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app', 'overlay.js'), 'utf8');
+  const m = /export const INPUT_KINDS = Object\.freeze\(\[([^\]]*)\]\)/.exec(src);
+  assert.ok(m, 'overlay.js exports INPUT_KINDS');
+  assert.deepStrictEqual(JSON.parse(`[${m[1].replace(/'/g, '"')}]`), [...INPUT_KINDS]);
 });
 
 test('icon: TOOL_ICON_SIDE is exported and is 48 (a 24 px glyph at 2×)', () => {
