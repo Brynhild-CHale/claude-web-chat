@@ -113,6 +113,38 @@ test('an up entry whose click never came: its hover move passes through to the p
   }
 });
 
+// A mouse's lone click is the tool's as its gesture's would be, so the case
+// above cannot tell a kept entry from a dropped one. A touch tap's can: its up
+// entry judges its click again as that touch (clickStillTool), and a touch's
+// click on a pane's control is 'page' to the policy, so the entry's click is
+// 'ignore' (neither the tool's nor the page's) while a lone click, with the
+// entry dropped by the hover, would reach the page.
+test('the up entry a hover passed by still judges its own click as its pointer: a touch tap\'s click on a control is ignored, not the page\'s', () => {
+  IM.setFingerDraws('off');
+  const created = [];
+  const off = ov.registerType('opt', { draw() {}, input: 'taps', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}`) });
+  const log = pageLog('p1');
+  try {
+    ov.setArmed('opt');
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'touch', 9);
+    pe(lead('p1'), 'pointerup', 'touch', 9);
+    log.length = 0;
+    const mv = pe(goBtn('p1'), 'pointermove', 'touch', 9, { buttons: 0 });
+    assert.equal(mv.defaultPrevented, false, 'the move passes through');
+    assert.deepEqual(log, ['pointermove:touch:9'], 'the pane heard it');
+    goBtn('p1').dispatchEvent(new W.PointerEvent('click', {
+      bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: 9, isPrimary: true, detail: 1, clientX: 100, clientY: 100,
+    }));
+    assert.deepEqual(created, [], 'not the tool\'s');
+    assert.deepEqual(W.__goClicks, [], 'nor the page\'s: the kept entry judged it');
+  } finally {
+    log.off();
+    ov.setArmed(null);
+    off();
+  }
+});
+
 // ── K.2-52 ──────────────────────────────────────────────────────────────────
 const queue = [];
 const fakeRaf = (fn) => { queue.push(fn); return queue.length; };
