@@ -6,6 +6,7 @@
   "schema": "box-grab@1",
   "reads": ["box-grab@1"],
   "anchors": ["page"],
+  "label": "Box grab",
   "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
   "settings": {
     "small": {
