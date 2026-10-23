@@ -329,6 +329,9 @@ export function startPick(orphan) {
   handle.promise.then((got) => {
     if (card !== mine) return;
     mine.handle = null;
+    // A pick ended by something else (a preview opening) leaves the card as
+    // that left it: only a pick still pending closes it on a null answer.
+    if (mine.mode !== 'pick') return;
     if (!got || !got.record) { closeCard(); return; }
     const cancel = cardEl && cardEl.querySelector('.wc-reanchor-cancel');
     if (cancel) cancel.remove();
@@ -397,6 +400,7 @@ function onView() {
   if (view.previewing && card && card.handle) {
     const h = card.handle;
     card.handle = null;
+    card.mode = 'refused';
     h.cancel();
     setNote(READONLY_HINT, { refused: true });
   }

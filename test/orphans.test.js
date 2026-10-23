@@ -25,7 +25,9 @@
 //   - a section fallback (a source record whose quote and bracket are gone,
 //     drawn over its section; never an orphan): a click on its marker opens the
 //     card with the section wording, and 'Re-anchor here' sends the guess
-//     case's PATCH shape with a source anchor over the section (K.2-74).
+//     case's PATCH shape with a source anchor over the section (K.2-74);
+//   - a preview opened while a pick is pending leaves the card up with
+//     READONLY_HINT and sends nothing (K.2-74).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -389,3 +391,28 @@ test('while previewing: the list and the guess still show; every write path answ
   assert.equal(ov.drawnScopeOf(), 'live');
 });
 
+test('a preview opened while a pick is pending: the card stays up with READONLY_HINT, and nothing is sent', async () => {
+  const node = { id: 'n2', mounts: [P1, P2], store: {}, created_at: 2, lean_elements: [] };
+  shell.setRoutes({ '/api/graph/node/n2': node });
+  const n0 = patches().length;
+  try {
+    const row = liveRow('c11');
+    orph.startPick({ id: 'c11', v: row.v, type: 'comment', mount: 'p1', scope: 'live' });
+    await shell.tick();
+    assert.ok(card(), 'the pick card is up');
+    assert.match(card().textContent, /click the element in a pane/);
+    await topbar.previewNode('n2');
+    await shell.tick(20);
+    assert.ok(card(), 'the card is still up');
+    assert.equal(noteText(), topbar.READONLY_HINT);
+    shell.press(rootOf('p1').querySelector('p.other'));
+    await shell.tick(20);
+    assert.equal(patches().length, n0, 'nothing sent');
+  } finally {
+    shell.key('Escape');
+    await shell.tick();
+    topbar.returnToActive();
+    await shell.tick();
+  }
+  assert.equal(ov.drawnScopeOf(), 'live');
+});
