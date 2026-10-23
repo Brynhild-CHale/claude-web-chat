@@ -19,7 +19,8 @@
 //   - the current value is the project tier's own record, never the merged
 //     view: a user-tier default is not copied into the project's record;
 //   - a key no level declares is dropped; a field the open level declares and
-//     the frame leaves empty stays out (the user cleared it);
+//     the frame leaves empty stays out (the user cleared it), even when the
+//     other level declares it too;
 //   - a profile Save is unchanged: the profile list, the named profile's
 //     settings replaced by the frame's values.
 const test = require('node:test');
@@ -41,9 +42,14 @@ const row = (type, settings, extra = {}) => ({
   type, label: type, pack: { name: 'fun', version: '1.0.0' }, builtin: false, icons: null,
   hotkeys: [], settings, profiles: false, input: 'taps', installed: true, ...extra,
 });
+// `both` declares c at both levels (the daemon checks a key against every
+// level that declares it): the open frame owns it, so it is never carried.
+const SMALL_C = { type: 'object', properties: { a: { type: 'integer', title: 'A' }, c: { type: 'integer', title: 'C' } } };
+const LARGE_C = { type: 'object', properties: { b: { type: 'integer', title: 'B' }, c: { type: 'integer', title: 'C' } } };
 const TOOLS = [
   row('fixture', { small: SMALL, large: LARGE }, { profiles: true }),
   row('lone', { small: SMALL }),
+  row('both', { small: SMALL_C, large: LARGE_C }),
 ];
 const PROJECT = ({ settings = {}, profiles = {} } = {}) => ({ v: 1, pinned: [], hidden: [], settings, profiles, bindings: {} });
 const USER = ({ settings = {} } = {}) => ({ v: 1, bindings: {}, fingerDraws: false, settings });
@@ -147,6 +153,19 @@ test('a key no level declares is dropped; a field the open level declares and th
   await useView(PROJECT({ settings: { fixture: { a: 1, b: 2, z: 7 } } }));
   assert.deepEqual(await saveLevel({ level: 'small', value: { a: 1, b: 2 }, input: 3 }), { settings: { fixture: { a: 3, b: 2 } } });
   assert.deepEqual(await saveLevel({ level: 'small', value: { a: 1, b: 2 }, input: '' }), { settings: { fixture: { b: 2 } } });
+});
+
+test('a field both levels declare belongs to the open frame: cleared there, it is not carried back', async () => {
+  await useView(PROJECT({ settings: { both: { a: 1, b: 2, c: 5 } } }));
+  const r = TS.openToolSettings({ type: 'both', level: 'small', schema: SMALL_C, value: { a: 1, c: 5 }, profile: null, label: 'both' });
+  assert.equal((await r.ready).ok, true);
+  const root = frameOf('small').querySelector('.ts-host').shadowRoot;
+  root.querySelector('#f_a').value = '3';
+  root.querySelector('#f_c').value = '';
+  const n = patches().length;
+  root.querySelector('#submit').click();
+  await waitUntil(() => patches().length > n, { timeout: 2000, what: 'the PATCH' });
+  assert.deepEqual(patches().at(-1).body, { settings: { both: { a: 3, b: 2 } } });
 });
 
 test('the current value is read at Save time: a write landed while the frame was open is kept', async () => {
