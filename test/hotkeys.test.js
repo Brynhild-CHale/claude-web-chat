@@ -7,6 +7,8 @@
 // test/hotkeys-shell.test.js's.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { validChord } = require('../lib/core/toolbar-record');
@@ -226,4 +228,33 @@ test('the chrome\'s registry is one module-wide table: its exports are bound to 
   assert.equal(typeof hk.registerAction, 'function');
   assert.equal(typeof hk.lookup, 'function');
   assert.deepEqual(hk.CONTEXTS, ['page', 'overlay', 'replay', 'drawer', 'sheet']);
+});
+
+// The conventions ratchet's single-key row (test/conventions.test.js, the last
+// PATTERNS row), read from that file so there is no second copy of its regex:
+// shell.js holds none now, graph-view.js's overlay switch its baseline, and a
+// `case 'x':` or an `e.key === 'x'` planted in a scratch copy of a public/app
+// file is counted, which the ratchet reports against a baseline of 0.
+test('the single-key ratchet row: shell.js 0, graph-view.js its baseline, a planted comparison reported', (t) => {
+  const src = fs.readFileSync(path.join(REPO, 'test/conventions.test.js'), 'utf8');
+  const at = src.indexOf('name: "e.key === \'x\' / case \'x\':');
+  assert.notEqual(at, -1, 'the row is in PATTERNS');
+  const m = /\n\s*re: \/(.+)\/([a-z]*),\n/.exec(src.slice(at));
+  assert.ok(m, 'the row has a regex literal');
+  const re = new RegExp(m[1], m[2]);
+  const count = (text) => (text.match(re) || []).length;
+  const appDir = path.join(REPO, 'public/app');
+  const counts = {};
+  for (const f of fs.readdirSync(appDir, { recursive: true })) {
+    if (!String(f).endsWith('.js')) continue;
+    const n = count(fs.readFileSync(path.join(appDir, f), 'utf8'));
+    if (n) counts[`public/app/${String(f).split(path.sep).join('/')}`] = n;
+  }
+  assert.deepEqual(counts, { 'public/app/graph-view.js': 8 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hotkeys-ratchet-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const copy = path.join(dir, 'shell.js');
+  fs.writeFileSync(copy, fs.readFileSync(path.join(appDir, 'shell.js'), 'utf8')
+    + "\nfunction planted(e) { switch (e.key) { case 'x': break; } return e.key === 'y'; }\n");
+  assert.equal(count(fs.readFileSync(copy, 'utf8')), 2, 'both planted comparisons are counted');
 });

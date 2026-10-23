@@ -886,11 +886,15 @@ test('a user-tier rebinding: R → Shift+R, G → H and [ → Shift+[ move the k
 
 test('a project-tier unbind of G: no key opens the graph here, and nothing names one', async () => {
   await reset();
-  await toolbarFrame({}, { bindings: { G: null } });
+  await toolbarFrame({}, { bindings: { G: null, B: null } });
   shell.key('g');
   await shell.tick();
   assert.ok($('overlay').classList.contains('hidden'), 'G does nothing in this project');
   assert.equal($('btn-graph').getAttribute('title'), 'View graph');
+  // An unbound key leaves the title and the aria-label with no key in them,
+  // and no stray space where the ' · B' and the ' (B)' were.
+  assert.equal($('btn-bookmark').getAttribute('title'), 'Bookmark node');
+  assert.equal($('btn-bookmark').getAttribute('aria-label'), 'Bookmark node');
   assert.equal($('btn-graph').querySelector('kbd').hidden, true);
   assert.ok(![...$('key-legend').querySelectorAll('.legend-row span:first-child')].some((s) => s.textContent === 'Open graph'),
     'the legend has no row for a key that is not bound');
