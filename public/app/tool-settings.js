@@ -36,8 +36,9 @@
 // DETACHED store (createStore with a publish hook). The hook catches the
 // form's one store.set({[submit_key]: values}) and writes the values to this
 // project's toolbar record, through toolbar-state.js's patchToolbar:
-// {settings: {[type]: values}}, or {profiles: {[type]: list}} with the named
-// profile's settings replaced. The values never reach the live store (it
+// {settings: {[type]: payload}} — the type's whole payload, the other level's
+// fields carried from the project tier (K.2-87) — or {profiles: {[type]:
+// list}} with the named profile's settings replaced. The values never reach the live store (it
 // folds into graph nodes) or browser storage. The user tier's per-tool
 // defaults are written only through patchUserToolbar, which this host does
 // not call.
@@ -216,10 +217,44 @@ function showHint(ctx, text) {
   ctx.frame.hint.textContent = text ? String(text) : '';
 }
 
-// The PATCH body Save sends: the plain settings, or the profile list with the
-// named profile's settings replaced (added when it is new), the others kept.
-function patchBody(type, profile, values) {
-  if (typeof profile !== 'string') return { settings: { [type]: values } };
+// The fields a level's schema declares, from the type's registry row
+// (toolbarState().tools, GET /api/toolbar's tools[]): row.settings[level]
+// .properties' keys. An unknown row or an undeclared level declares none.
+function declared(type, level) {
+  const row = toolbarState().tools.find((t) => t.type === type);
+  const schema = row && isObject(row.settings) ? row.settings[level] : null;
+  return new Set(isObject(schema) && isObject(schema.properties) ? Object.keys(schema.properties) : []);
+}
+
+// The type's WHOLE plain payload for the project tier (K.2-87). The record
+// merges settings per TYPE (lib/core/toolbar-record: a type's payload
+// replaces), so a frame that sent only its own level's fields would drop the
+// other level's values at this tier. This frame is the writer that knows both
+// levels: it starts from the project tier's current settings[type], read at
+// Save time (the profile branch reads its list the same way, so a write
+// landed since the frame opened is kept, not clobbered), carries each field
+// the OTHER level declares and this one does not, untouched, and overlays the
+// frame's values. A key no level declares is dropped (the daemon would refuse
+// it). The current value is the tier's own record, never the merged view, so
+// a user-tier default is not copied into the project's record.
+function wholePayload(type, level, values) {
+  const other = declared(type, level === 'small' ? 'large' : 'small');
+  if (!other.size) return values;
+  const own = declared(type, level);
+  const have = toolbarState().project.settings[type];
+  const out = {};
+  if (isObject(have)) {
+    for (const k of Object.keys(have)) if (other.has(k) && !own.has(k)) out[k] = have[k];
+  }
+  return { ...out, ...values };
+}
+
+// The PATCH body Save sends: the type's whole plain payload (wholePayload), or
+// the profile list with the named profile's settings replaced (added when it
+// is new), the others kept. A profile is one payload, so it is sent as the
+// frame gives it.
+function patchBody(type, level, profile, values) {
+  if (typeof profile !== 'string') return { settings: { [type]: wholePayload(type, level, values) } };
   const have = toolbarState().project.profiles[type];
   const list = (Array.isArray(have) ? have : []).filter((p) => isObject(p) && typeof p.name === 'string');
   let found = false;
@@ -237,7 +272,7 @@ async function save(ctx, values) {
   if (!isObject(values)) return;
   ctx.saving = true;
   showHint(ctx, '');
-  const r = await patchToolbar(patchBody(ctx.type, ctx.profile, values));
+  const r = await patchToolbar(patchBody(ctx.type, ctx.level, ctx.profile, values));
   ctx.saving = false;
   if (current !== ctx) return;
   if (r && r.ok) { closeToolSettings(); return; }
