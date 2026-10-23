@@ -801,7 +801,59 @@ function revertTitle(kind) {
   return 'revert — remove from queue and undo this interaction (the pane stays)';
 }
 
+/* ---------- an element item's card (K.2-11, K.2-18) ----------
+   An element item ({kind: 'element', type, id, …}, the queue domain's one
+   element kind) of a type that registered a card through shell.js
+   registerQueueCard is drawn through that card: the rail owns the row — its
+   dot, its kind line, stage/hold and ⟲ — and hands the card a slot inside it.
+   The card draws; the engine owns the item, so the card is handed a frozen copy
+   and the engine's own operations, never the queue. A type with no card, or a
+   card whose render throws, gets the generic row. shell.js imports this module,
+   so the registry's lookup is handed in (setQueueCards), never imported; the
+   function it answers redraws the rail when a registration changes. A slot
+   whose row left the rail is unmounted (the card's unmount) at the next draw. */
+let cardOf = () => null;
+const cardSlots = new Map();   // slot element → the card drawn into it
+export function setQueueCards(lookup) {
+  cardOf = typeof lookup === 'function' ? lookup : () => null;
+  return () => { if (items.some(isElementItem)) drawRail(); };
+}
+const isElementItem = (it) => !!it && it.kind === 'element' && typeof it.type === 'string' && !!it.type;
+function releaseCards() {
+  for (const [slot, card] of [...cardSlots]) {
+    if (slot.isConnected) continue;
+    cardSlots.delete(slot);
+    if (typeof card.unmount !== 'function') continue;
+    try { card.unmount(slot); } catch (e) { console.error('[web-chat] a queue card\'s unmount failed', e); }
+  }
+}
+// Draw `it` through its type's card into a slot appended to `body`; false (and
+// nothing appended) when there is no card or it failed.
+function cardBody(it, body, { parked, staged }) {
+  if (!isElementItem(it)) return false;
+  let card = null;
+  try { card = cardOf(it.type); } catch { card = null; }
+  if (!card || typeof card.render !== 'function') return false;
+  const slot = document.createElement('div');
+  slot.className = 'qi-card';
+  slot.dataset.type = it.type;
+  const ctx = Object.freeze({
+    parked, staged,
+    remove: parked ? null : () => removeItem(it.id),
+    setStaged: parked ? null : (next) => setStaged(it.id, !!next),
+  });
+  try { card.render(Object.freeze({ ...it }), slot, ctx); } catch (e) {
+    console.error(`[web-chat] the queue card for '${it.type}' failed`, e);
+    try { if (typeof card.unmount === 'function') card.unmount(slot); } catch { /* the card's own */ }
+    return false;
+  }
+  cardSlots.set(slot, card);
+  body.append(slot);
+  return true;
+}
+
 function itemRow(it, { parked = false, acts = null } = {}) {
+  releaseCards();
   // A typed message's row is kept across draws (its note and body hold what the
   // row actions wrote); every other row is built afresh.
   const kept = !parked && acts && isTypedMessage(it) ? msgParts.get(it.id) : null;
@@ -826,7 +878,8 @@ function itemRow(it, { parked = false, acts = null } = {}) {
   top.append(kindEl, srcEl);
   const why = document.createElement('div'); why.className = 'qi-why'; why.textContent = it.why_wake || '';
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
-  body.append(top, why, sum);
+  body.append(top);
+  if (!cardBody(it, body, { parked, staged })) body.append(why, sum);
   if (!parked && isMessage(it)) messageBody(row, it, sum, body);
   if (!parked && acts && isTypedMessage(it)) messageActions(row, it, body, acts);
   if (parked) { row.append(dot, body); return row; }
