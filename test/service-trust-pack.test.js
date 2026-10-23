@@ -506,7 +506,8 @@ test('the ledger follows the record: written by a project install, trimmed and d
   assert.equal(entry.actor, 'cli');
   assert.deepEqual(entry.units.map((u) => u.name).sort(), ['acme-ops', 'deploy-board', 'incident-log', 'readme-view']);
   installAcme(ctx.root, { tier: 'system', components: [{ name: 'other-board', service: SERVICE }] });
-  assert.deepEqual(readLedger().map((e) => e.name), ['acme-ops'], 'an install for all projects needs none: its record is user-tier');
+  // The daemon's boot recorded the built-in element pack (U323) beside it.
+  assert.deepEqual(readLedger().map((e) => e.name).filter((n) => n !== 'web-chat-builtins'), ['acme-ops'], 'an install for all projects needs none: its record is user-tier');
 
   // An edited unit is kept by remove; the ledger keeps it with the digests
   // this machine installed, so it still reads as edited.

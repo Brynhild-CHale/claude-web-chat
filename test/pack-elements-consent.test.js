@@ -132,7 +132,8 @@ test('POST /api/packs/install refuses an element pack with the reviewed-path hin
     const q = await api.post('/api/packs/install?via=builtin', { url });
     assert.equal(q.json.ok, false);
     assert.deepStrictEqual(written(root), before, '0 files written');
-    assert.deepStrictEqual(listPacks(root), []);
+    // The daemon's boot installed the built-in pack (U323); nothing else.
+    assert.deepStrictEqual(listPacks(root).map((p) => p.name), [BUILTIN_ELEMENT_PACK]);
   });
 });
 
@@ -238,7 +239,7 @@ test('the review and approve routes carry the element types too', async (t) => {
     assert.equal(r.json.ok, true, JSON.stringify(r.json));
     assert.ok(fs.existsSync(path.join(projectPaths(root).elementTypesDir, 'sticky', 'draw.js')));
     r = await api.get('/api/packs');
-    assert.deepStrictEqual(r.json.packs[0].elements, ['sticky']);
+    assert.deepStrictEqual(r.json.packs.find((p) => p.name === 'mark-pack').elements, ['sticky']);
   });
 });
 
