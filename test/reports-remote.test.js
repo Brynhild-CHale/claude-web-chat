@@ -345,11 +345,10 @@ async function rig(t, level) {
 test('through a real portal at full: the document and elements-report.js load at the answer host, and a report lands with source remote', async (t) => {
   const { d, A, aorigin } = await rig(t, 'full');
   const { pin, batch } = await seeded(d);
-  // Loaded as a same-origin navigation: the frame's real load from the
-  // session's page is same-site, which the portal's CSRF rule lets through
-  // only for an ask's or a control's document today (lib/portal/answer.js
-  // DOCUMENT_PATH) — the todo test below, and U312's open issue.
-  const doc = await A(`/answer/elements/report?layout=report&mode=light&device=mobile&viewer=${VIEWER}`, { headers: { ...NAV, 'sec-fetch-site': 'same-origin' } });
+  // Loaded as the frame's real load from the session's page: a same-site
+  // navigation, which the portal's CSRF rule lets through for the elements
+  // kind's document (lib/portal/answer.js DOCUMENT_PATH; K.2-73).
+  const doc = await A(`/answer/elements/report?layout=report&mode=light&device=mobile&viewer=${VIEWER}`, { headers: NAV });
   assert.equal(doc.status, 200, doc.text.slice(0, 300));
   assert.match(doc.text, /data-kind="elements"/);
   const nonce = /name="wc-answer-nonce" content="([^"]*)"/.exec(doc.text)[1];
@@ -370,9 +369,7 @@ test('through a real portal at full: the document and elements-report.js load at
   assert.deepEqual(a.source, { peer: 'remote', device: 'mobile' });
 });
 
-test('through a real portal at full: the frame\'s real load (a same-site navigation from the session\'s page) reaches the document', {
-  todo: 'needs lib/portal/answer.js DOCUMENT_PATH to name the elements kind — outside U312\'s grant (its hand-off\'s open issue, ready patch beside it)',
-}, async (t) => {
+test('through a real portal at full: the frame\'s real load (a same-site navigation from the session\'s page) reaches the document', async (t) => {
   const { A } = await rig(t, 'full');
   const doc = await A('/answer/elements/report?layout=report&mode=light&device=desktop', { headers: NAV });
   assert.equal(doc.status, 200, doc.text.slice(0, 300));
