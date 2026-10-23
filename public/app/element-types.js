@@ -41,8 +41,8 @@
 // rows today: the lean projection carries no schema yet — see U324's
 // hand-off).
 //
-// Tranche 2 draws in the live chrome only (F-DOCS a); no draw.js is loaded
-// here (third-party draw code waits for 4A/4B, B1).
+// Tranche 2 draws in the live chrome only (F-DOCS a); no pack's draw module
+// is loaded here (third-party draw code waits for 4A/4B, B1).
 import * as overlayModule from './overlay.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
