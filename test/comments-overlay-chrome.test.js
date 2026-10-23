@@ -31,7 +31,8 @@
 //   - the comment's targets are 'panes' (K.2-78): a comment-armed click on a
 //     markdown link passes through to the page, no pin; highlight-armed, the
 //     same click is the tool's;
-//   - ✎ and C arm and disarm the comment tool in the overlay's one armed state:
+//   - the toolbar's comment slot (✎ retired onto it, U338) and C arm and
+//     disarm the comment tool in the overlay's one armed state:
 //     body.pin-mode follows armed(), whoever armed it, and comments.js keeps no
 //     second state;
 //   - markers are fresh after Set active and Branch (a reset's lean rows), with
@@ -260,18 +261,21 @@ test('a pin survives a pane drag, a resize, a run change and a pane-history rest
 });
 
 // ── the tool ───────────────────────────────────────────────────────────────
-test('✎ and C arm and disarm the comment tool in the overlay\'s one armed state; body.pin-mode follows it, whoever arms it', async () => {
+test('the comment slot and C arm and disarm the comment tool in the overlay\'s one armed state; body.pin-mode follows it, whoever arms it', async () => {
   const src = fs.readFileSync(path.join(REPO, 'public/app/comments.js'), 'utf8');
   assert.doesNotMatch(src, /let pinMode\b/, 'no second state');
-  const btn = W.document.getElementById('btn-pin-mode');
+  // ✎ (#btn-pin-mode) is retired onto the toolbar's comment slot (U338).
+  assert.equal(W.document.getElementById('btn-pin-mode'), null, 'no ✎ button');
+  const btn = W.document.querySelector('#tb-slots .tb-slot[data-type="comment"]');
+  assert.ok(btn, 'the toolbar draws a comment slot');
   const on = () => W.document.body.classList.contains('pin-mode');
   ov.setArmed(null);
   btn.click();
-  assert.equal(armedType(), 'comment', '✎ arms comment');
-  assert.ok(on() && btn.classList.contains('active'));
-  btn.click();
-  assert.equal(armedType(), null, '✎ again puts it down');
-  assert.ok(!on() && !btn.classList.contains('active'));
+  assert.equal(armedType(), 'comment', 'the slot arms comment');
+  assert.ok(on() && btn.classList.contains('armed'));
+  shell.key('c');
+  assert.equal(armedType(), null, 'C puts it down (the armed slot pressed again opens its settings instead)');
+  assert.ok(!on() && !btn.classList.contains('armed'));
   shell.key('c');
   assert.equal(armedType(), 'comment', 'C arms comment');
   assert.ok(on());

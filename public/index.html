@@ -33,8 +33,8 @@
     <div class="depth depth-fog"></div>
 
     <!-- topbar — the order is the design's (Layout Engine header / Theme §4a):
-         co-brand lockup (cobrand.js) · node label · page title · ⌘K · ＋ ⚑ ✎ ·
-         ↑/↓ · ↩ active · status pill · ◑ · Graph · ⋯ -->
+         co-brand lockup (cobrand.js) · node label · page title · ⌘K · ＋ ⚑ ·
+         the annotation toolbar · ↑/↓ · ↩ active · status pill · ◑ · Graph · ⋯ -->
     <header id="topbar">
       <div class="cobrand" id="cobrand"><span class="cobrand-proj" id="cobrand-proj"><span class="cobrand-name" id="cobrand-name"></span></span></div>
       <span class="tb-div" aria-hidden="true"></span>
@@ -57,8 +57,11 @@
                 aria-label="Blocks — add from the library, manage packs (N)"
                 aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">＋</button>
         <button class="dock-btn" id="btn-bookmark" title="Bookmark node · B" aria-label="Bookmark node (B)" aria-haspopup="dialog" aria-expanded="false" aria-controls="bookmark-pop">⚑</button>
-        <button class="dock-btn" id="btn-pin-mode" title="Pin comment · C" aria-label="Pin comment (C)">✎</button>
       </div>
+      <!-- The annotation toolbar (annotation engine 2D.8, U338; public/app/toolbar.js
+           draws it): the pointer tool, the pinned slots, the reveal of the tray.
+           The comment tool is a slot like every type (the ✎ button retired). -->
+      <div id="toolbar" class="toolbar" role="toolbar" aria-label="Annotation tools"></div>
 
       <span class="tb-div" aria-hidden="true"></span>
       <div class="stepper">
@@ -131,7 +134,7 @@
             <div class="rail-items"><div class="rail-empty">No queued signals. Captures, pane signals, and pane activity collect here.</div></div>
             <label class="sr-only" for="rail-add">Comment to send with the push</label>
             <input class="rail-add" id="rail-add" placeholder="Add comment…">
-            <button class="btn primary rail-push" disabled>Push 0 → Claude <kbd>P</kbd></button>
+            <button class="btn primary rail-push" disabled>Push 0 → Claude</button>
           </div>
         </aside>
       </div>
@@ -197,11 +200,9 @@
       <button class="btn bb-return" id="bb-return" title="Return to the active node" style="display:none">↩ active</button>
       <!-- The bottom bar's tool slot (annotation engine 2A.4, ruling H-3: the phone's
            toolbar sits between the up/down arrows and Graph). It grows in the spacer's
-           place; U338's phone toolbar fills it. #bb-create is a STAND-IN create entry:
-           it arms today's comment pin mode (shell.js initBottomBar). -->
-      <div id="bb-tools" class="bb-tools" role="toolbar" aria-label="Annotation tools">
-        <button id="bb-create" class="bb-create" title="Pin comment" aria-label="Pin comment">✎</button>
-      </div>
+           place; the toolbar's phone half fills it (public/app/toolbar.js, U338): the
+           armed tool or the pointer, the slots that fit, the reveal of the tray. -->
+      <div id="bb-tools" class="bb-tools" role="toolbar" aria-label="Annotation tools"></div>
       <button class="btn-graph bb-graph" id="bb-graph" title="View graph">Graph</button>
       <button class="bb-queue" id="bb-queue" aria-controls="queue-rail" aria-expanded="false"
               aria-label="Queue to Claude"><span class="bb-queue-label">Queue</span><span class="bb-parked" aria-hidden="true" title="A push is parked — it delivers with your next message">⇢</span><span class="bb-count" id="bb-queue-count">0</span></button>

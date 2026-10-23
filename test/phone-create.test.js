@@ -13,13 +13,15 @@
 //
 // Pinned here:
 //   - #bb-tools, the bottom bar's tool slot, sits between the up/down arrows
-//     (and ↩ active) and Graph in the spacer's place, outside #dock; its one
-//     stand-in entry #bb-create is shown by the cascade at the phone layout,
-//     a 44px target, while #btn-pin-mode is not; the slot grows; above 760px
-//     the bar and its slot are hidden;
-//   - a tap on #bb-create arms the comment pin mode (body.pin-mode), a second
-//     disarms it, Escape leaves it; while previewing it stays off (setPinMode's
-//     refusal); the pressed look is read off body.pin-mode;
+//     (and ↩ active) and Graph in the spacer's place, outside #dock; the create
+//     entry is the toolbar's phone half (U338 retired the stand-in #bb-create
+//     onto it): comment's slot there is shown by the cascade at the phone
+//     layout, a 44px target, and there is no #btn-pin-mode; the slot grows;
+//     above 760px the bar and its slot are hidden;
+//   - a tap on comment's slot arms the comment pin mode (body.pin-mode), a tap
+//     on the armed tool's button puts it down, Escape leaves it; while
+//     previewing it stays off (tools.js's refusal); the pressed look is the
+//     slot's `armed` class, from the one armed state;
 //   - tools are content: at the phone layout (layoutLocked() true) a tap on a
 //     static pane element in pin mode opens the pin composer. A tap on a
 //     pane's CONTROL is U334's interactive-content row (DECISIONS.md K.2-9),
@@ -34,7 +36,7 @@
 //     stacking context takes in the root context, read off app.css; in the
 //     half and full states markers do lie under the sheet (the check is not
 //     vacuous);
-//   - RESERVED_IDS has 'bb-tools' and 'bb-create'.
+//   - RESERVED_IDS has 'bb-tools', 'bb-tools-reveal' and the retired 'bb-create'.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -236,7 +238,9 @@ before(async () => {
 
 after(async () => { if (shell) await shell.restore(); });
 
-const bbCreate = () => $('bb-create');
+// The create entry: comment's slot in the toolbar's phone half (U338).
+const bbCreate = () => $('bb-tools').querySelector('.tb-slot[data-type="comment"]');
+const bbArmed = () => $('bb-tools').querySelector('.bb-armed');
 const pinOn = () => doc.body.classList.contains('pin-mode');
 
 /* ── the place ─────────────────────────────────────────────────────────────── */
@@ -246,13 +250,13 @@ test('the tool slot sits in the bottom bar between the arrows and Graph, outside
   const bar = $('bottombar');
   const slot = $('bb-tools');
   const entry = bbCreate();
-  assert.ok(slot && entry, 'the slot and its stand-in entry exist');
+  assert.ok(slot && entry, 'the slot and its create entry (comment\'s slot) exist');
   assert.equal(slot.getAttribute('role'), 'toolbar');
   assert.equal(slot.getAttribute('aria-label'), 'Annotation tools');
-  assert.equal(entry.parentElement, slot, 'the entry is the slot\'s');
+  assert.ok(slot.contains(entry), 'the entry is the slot\'s');
   assert.ok(bar.contains(entry), 'inside #bottombar');
   assert.ok(!$('dock').contains(entry), 'outside #dock');
-  assert.equal(entry.getAttribute('aria-label'), 'Pin comment');
+  assert.equal(entry.getAttribute('aria-label'), 'Comment (C)');
   const follows = (a, b) => !!(a.compareDocumentPosition(b) & W.Node.DOCUMENT_POSITION_FOLLOWING);
   assert.ok(follows(bar.querySelector('.bb-stepper'), slot), 'after the up/down arrows');
   assert.ok(follows($('bb-return'), slot), 'after ↩ active');
@@ -261,7 +265,8 @@ test('the tool slot sits in the bottom bar between the arrows and Graph, outside
 
   assert.equal(valueOf(bar, 'display'), 'flex', 'the bar shows under 760px');
   assert.ok(shown(entry), 'the entry is shown by the cascade at the phone layout');
-  assert.ok(!shown($('btn-pin-mode')), '#btn-pin-mode is not (.phone #dock)');
+  assert.equal($('btn-pin-mode'), null, '#btn-pin-mode is retired (U338)');
+  assert.ok(!shown($('toolbar')), 'the desktop toolbar is not shown here');
   assert.equal(valueOf(slot, 'flex'), '1 1 0', 'the slot grows as the spacer did');
   assert.equal(valueOf(slot, 'justify-content'), 'center', 'and centres what it holds');
   assert.equal(valueOf(entry, 'width'), '44px', 'a thumb\'s target');
@@ -275,7 +280,7 @@ test('above 760px the bottom bar and its slot are hidden', async () => {
     assert.ok(!doc.documentElement.classList.contains('phone'));
     assert.equal(valueOf($('bottombar'), 'display'), 'none');
     assert.ok(!shown($('bb-tools')) && !shown(bbCreate()), 'the slot goes with the bar');
-    assert.ok(shown($('btn-pin-mode')), 'the desktop keeps its pin button in #dock');
+    assert.ok(shown($('toolbar')), 'the desktop has its toolbar in #topbar');
   } finally {
     shell.setViewport(PHONE);
     await shell.tick();
@@ -286,19 +291,20 @@ test('above 760px the bottom bar and its slot are hidden', async () => {
 
 test('RESERVED_IDS holds the slot and its entry', () => {
   assert.ok(RESERVED_IDS.has('bb-tools'));
-  assert.ok(RESERVED_IDS.has('bb-create'));
+  assert.ok(RESERVED_IDS.has('bb-tools-reveal'));
+  assert.ok(RESERVED_IDS.has('bb-create'), 'the retired stand-in\'s id stays reserved');
 });
 
 /* ── the entry ─────────────────────────────────────────────────────────────── */
 
-test('a tap on the entry arms comment pin mode, a second disarms it, Escape leaves it', () => {
+test('a tap on the entry arms comment pin mode, the armed tool\'s button puts it down, Escape leaves it', () => {
   comments.setPinMode(false);
   assert.equal(css.value(bbCreate(), 'background'), 'var(--wc-panel-bg)', 'unpressed');
   shell.press(bbCreate());
   assert.ok(pinOn(), 'the first tap arms pin mode');
-  assert.equal(css.value(bbCreate(), 'background'), 'var(--wc-accent)', 'the pressed look is read off body.pin-mode');
-  shell.press(bbCreate());
-  assert.ok(!pinOn(), 'the second tap disarms it');
+  assert.equal(css.value(bbCreate(), 'background'), 'var(--wc-accent)', 'the pressed look is the armed slot\'s');
+  shell.press(bbArmed());
+  assert.ok(!pinOn(), 'the armed tool\'s button puts it down');
   shell.press(bbCreate());
   assert.ok(pinOn());
   shell.key('Escape');

@@ -26,6 +26,7 @@ import { openReplay } from './replay.js';
 import { isPhone } from './viewport.js';
 import { bus } from './bus.js';
 import { effectiveMode } from './theme.js';
+import { keyFor } from './hotkeys.js';
 
 const overlayEl = $('overlay');
 const svgEl = $('graph-svg');
@@ -602,6 +603,8 @@ async function renderInspector(id) {
   // text on hover. Older nodes and manual commits have none; no line then.
   const reply = node.trigger?.reply || '';
 
+  // The overlay's keys as the hotkey registry lists them (K.2-67).
+  const hk = (id) => (keyFor(id) ? ` (${esc(keyFor(id))})` : '');
   box.innerHTML =
     `<div class="gv-insp-head"><span class="gv-insp-label">${esc(node.label || id)}</span>${badges}` +
       `<button class="gv-insp-close" data-act="close" title="Close (Esc)" aria-label="Close the inspector">✕</button></div>` +
@@ -613,14 +616,14 @@ async function renderInspector(id) {
       `<span class="k">WHEN</span><span class="v">${esc(when)}</span>` +
       `<span class="k">CHANGED</span><span class="v" id="gv-changed">…</span></div>` +
     `<div class="gv-actions">` +
-      `<button class="gv-act primary" id="gv-set-active" data-act="active" title="Make this the node the next turn commits onto (A)">A · Set active here</button>` +
+      `<button class="gv-act primary" id="gv-set-active" data-act="active" title="Make this the node the next turn commits onto${hk('graph.active')}">${keyFor('graph.active') ? `${esc(keyFor('graph.active'))} · ` : ''}Set active here</button>` +
       `<button class="gv-act" id="gv-branch" data-act="branch" title="Set active here so the next commit forks from this node">⑃ Branch</button>` +
-      `<button class="gv-act" data-act="glance" title="Glance (Space)">Glance</button>` +
+      `<button class="gv-act" data-act="glance" title="Glance${hk('graph.glance')}">Glance</button>` +
       (marked
         ? `<button class="gv-act" data-act="unmark" title="Remove the bookmark">⚑ Unmark</button>`
-        : `<button class="gv-act" data-act="bookmark" title="Bookmark (B)">⚑ Bookmark</button>`) +
-      `<button class="gv-act" data-act="export" title="Export (E)">↧ Export</button>` +
-      `<button class="gv-act" data-act="replay" title="Replay up to this node (R)">▶ Replay</button>` +
+        : `<button class="gv-act" data-act="bookmark" title="Bookmark${hk('graph.bookmark')}">⚑ Bookmark</button>`) +
+      `<button class="gv-act" data-act="export" title="Export${hk('graph.export')}">↧ Export</button>` +
+      `<button class="gv-act" data-act="replay" title="Replay up to this node${hk('graph.replay')}">▶ Replay</button>` +
       actionButtons(node) +
     `</div>`;
 

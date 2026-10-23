@@ -1127,9 +1127,24 @@ function updatePushLabel() {
   const hasNote = !!((add && add.value) || '').trim();
   // Enabled with a STAGED item OR a non-empty comment.
   push.disabled = staged === 0 && !hasNote;
-  push.innerHTML = staged > 0
-    ? `Push ${staged} → Claude <kbd>P</kbd>`
-    : (hasNote ? `Send comment → Claude <kbd>P</kbd>` : `Push 0 → Claude <kbd>P</kbd>`);
+  push.textContent = staged > 0 ? `Push ${staged} → Claude` : (hasNote ? 'Send comment → Claude' : 'Push 0 → Claude');
+  const key = pushKey();   // the bound key, never a literal (K.2-67)
+  if (key) { const k = document.createElement('kbd'); k.textContent = key; push.append(' ', k); }
+}
+// Push's key from the hotkey registry (public/app/hotkeys.js), loaded lazily at
+// the first draw, as comments.js loads its heavy modules: no-DOM module tests
+// import queue.js, and hotkeys.js reaches the daemon-served /app/tier-merge.js.
+// A rebind redraws the label at once (onHotkeysChange).
+let hotkeys = null;
+let hotkeysLoading = false;
+function pushKey() {
+  if (hotkeys) return hotkeys.keyFor('chrome.push');
+  if (!hotkeysLoading) {
+    hotkeysLoading = true;
+    import('./hotkeys.js').then((m) => { hotkeys = m; m.onHotkeysChange(updatePushLabel); updatePushLabel(); },
+      (e) => console.error('[web-chat] queue: the hotkey registry could not load', e));
+  }
+  return '';
 }
 
 function sectionHeader(label, n, cls) {

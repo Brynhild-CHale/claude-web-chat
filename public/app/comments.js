@@ -75,7 +75,7 @@
 // The heavy modules (the overlay and what it pulls in: ws.js → store.js reads
 // `window` at evaluation) are imported lazily: queue.js imports this module
 // for isCommentAnswered, and no-DOM module tests import queue.js.
-import { view, $ } from './state.js';
+import { view } from './state.js';
 import { esc } from './esc.js';
 import { request } from './http.js';
 
@@ -111,7 +111,6 @@ function note(text) {
 }
 
 // ── pin mode: the comment tool in the one armed state ───────────────────────
-let btn = null;
 let inited = false;
 
 // Arm (on) or put down (off) the comment tool. Arming goes through tools.js,
@@ -130,12 +129,12 @@ export function togglePinMode() {
   mods.tools.toggle(TYPE);
 }
 
-// body.pin-mode and the ✎ button's pressed look follow the one armed state.
+// body.pin-mode follows the one armed state (the toolbar's slot draws its own
+// armed look, U338).
 function syncArmed() {
   const a = mods && mods.overlay.armed();
   const on = !!(a && a.type === TYPE);
   document.body.classList.toggle('pin-mode', on);
-  if (btn) btn.classList.toggle('active', on);
 }
 
 // ── the records ─────────────────────────────────────────────────────────────
@@ -599,13 +598,12 @@ function refreshCards() {
 }
 
 // ── init ────────────────────────────────────────────────────────────────────
-// initComments() wires ✎, then (the modules loaded) the type, its card and the
-// record inputs. Idempotent; no timer of any kind.
+// initComments() wires (the modules loaded) the type, its card and the record
+// inputs; the comment tool is armed from the toolbar's slot, C and the palette
+// (U338). Idempotent; no timer of any kind.
 export function initComments() {
   if (inited) return;
   inited = true;
-  btn = $('btn-pin-mode');
-  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); togglePinMode(); });
   document.addEventListener('visibilitychange', onVisibility);
   load().then((m) => {
     m.types.registerElementType(TYPE, { draw, create, input: 'taps', targets: 'panes' });
