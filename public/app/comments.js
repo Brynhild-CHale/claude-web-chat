@@ -26,8 +26,9 @@
 // 0.8.5 locator (overlay.js's rule): a frame that brings a legacy-anchored pin
 // the overlay has no row for asks for one read, which serves its `record`.
 //
-// THE DRAW. registerElementType('comment', {draw, create, input: 'taps'})
-// (element-types.js: the reads gate runs the draw; never registerType). The
+// THE DRAW. registerElementType('comment', {draw, create, input: 'taps',
+// targets: 'panes'}) (element-types.js: the reads gate runs the draw; never
+// registerType). The
 // overlay resolves every anchor kind and places, clips and groups the markers
 // — pins on one element share one marker with a count — under its DRAW_RULES:
 // an exact or re-resolved answer is drawn as the pin, a section answer as a
@@ -51,8 +52,10 @@
 // with the tool still armed (D1 b). create() records the tapped element with
 // the engine's recorder (anchors.record) and the legacy locator {mount,
 // selector, text, ordinal} beside it, then opens the composer; Pin posts
-// {type: 'comment', anchor, locator, payload: {text, shared}, device}. A tap
-// outside every pane (a markdown item, the page's own chrome) drops nothing.
+// {type: 'comment', anchor, locator, payload: {text, shared}, device}. The
+// type's targets are 'panes' (K.2-78): a tap outside every pane (a markdown
+// item, the page's own chrome) is never the tool's — it passes through to the
+// page (a link follows) with the tool still armed, as 0.8.5's pin mode did.
 //
 // PREVIEWS ARE READ-ONLY (D2). A previewed older node draws its own pins (the
 // overlay's preview set, from the node's lean_elements; their threads from one
@@ -605,7 +608,7 @@ export function initComments() {
   if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); togglePinMode(); });
   document.addEventListener('visibilitychange', onVisibility);
   load().then((m) => {
-    m.types.registerElementType(TYPE, { draw, create, input: 'taps' });
+    m.types.registerElementType(TYPE, { draw, create, input: 'taps', targets: 'panes' });
     m.shell.registerQueueCard(TYPE, { render: renderCard, unmount: (slot) => { cardSlots.delete(slot); slot._commentItem = null; } });
     m.overlay.onArmedChange(syncArmed);
     syncArmed();

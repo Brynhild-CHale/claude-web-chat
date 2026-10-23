@@ -28,6 +28,9 @@
 //     finger tap on static content drops one, a finger tap on a pane's button
 //     runs the button with comment still armed; a finger drag drops none and
 //     keeps its default (the page scrolls);
+//   - the comment's targets are 'panes' (K.2-78): a comment-armed click on a
+//     markdown link passes through to the page, no pin; highlight-armed, the
+//     same click is the tool's;
 //   - ✎ and C arm and disarm the comment tool in the overlay's one armed state:
 //     body.pin-mode follows armed(), whoever armed it, and comments.js keeps no
 //     second state;
@@ -211,7 +214,7 @@ test('comments.js holds no resolver, no pin layer, no fetch( and no timer; the t
   assert.doesNotMatch(src, /pin-layer|getBoundingClientRect/, 'no layer and no box reads of its own');
   assert.doesNotMatch(src, /\bset(Interval|Timeout)\(|requestAnimationFrame/, 'no timer of any kind');
   assert.doesNotMatch(src, /\bregisterType\(/, 'never the overlay\'s registerType directly');
-  assert.match(src, /registerElementType\(TYPE, \{ draw, create, input: 'taps' \}\)/);
+  assert.match(src, /registerElementType\(TYPE, \{ draw, create, input: 'taps', targets: 'panes' \}\)/);
   assert.match(src, /registerQueueCard\(TYPE,/);
   assert.equal(W.document.getElementById('pin-layer'), null, 'no #pin-layer in the page');
   assert.equal(ov.inputKindOf('comment'), 'taps', 'the overlay holds the comment type, a taps tool');
@@ -321,6 +324,42 @@ test('a finger tap on static content drops a pin; on a pane\'s button it runs th
     assert.equal(down.defaultPrevented, false, 'its pointerdown keeps the browser\'s default (the page pans)');
     assert.equal(moved.defaultPrevented, false, 'and so does its move');
   } finally { ov.setArmed(null); W.localStorage.removeItem('wc:finger-draws'); }
+});
+
+// K.2-78: the comment's targets are 'panes' — a press outside every pane is
+// the page's with the tool armed (0.8.5's pin mode); the highlight's default
+// targets ('items') keep a markdown item the tool's.
+test('a comment-armed click on a markdown link passes through to the page and drops no pin; with highlight armed the same click is the tool\'s', async () => {
+  await shell.frame({ type: 'markdown', id: 'md-link', text: 'See [the docs](https://example.com/docs).', owner: 'claude', gen: 1,
+    order: ['p1', 'p2', 'f6-s14', 'md-link'], claude_order: ['p1', 'p2', 'f6-s14', 'md-link'] });
+  const link = W.document.querySelector('[data-md-id="md-link"] a');
+  assert.ok(link, 'precondition: the markdown item drew its link');
+  const ET = await shell.importApp('element-types.js');
+  assert.deepEqual(['comment', 'highlight', 'box-grab'].map((x) => ET.targetsOf(x)), ['panes', 'items', 'items'], 'the registrations\' targets');
+  assert.throws(() => ET.registerElementType('t-bad', { draw() {}, targets: 'everything' }), /targets must be one of items, panes/);
+  const heard = [];
+  // The page's own listener: it hears what the overlay let through (and keeps
+  // jsdom from navigating).
+  const onClick = (e) => { if (e.target === link) { heard.push(e.type); if (e.type === 'click') e.preventDefault(); } };
+  W.document.addEventListener('click', onClick);
+  W.document.addEventListener('pointerdown', onClick);
+  try {
+    ov.setArmed('comment');
+    const { down } = gesture(link, 'mouse', { pointerId: 31 });
+    assert.deepEqual(heard, ['pointerdown', 'click'], 'the page heard the press and the click');
+    assert.equal(down.defaultPrevented, false, 'its default was left alone');
+    assert.equal(pinPop(), null, 'no pin dropped');
+    assert.equal(armedType(), 'comment', 'the tool stays armed');
+    heard.length = 0;
+    ov.setArmed('highlight');
+    gesture(link, 'mouse', { pointerId: 32 });
+    assert.deepEqual(heard, [], 'the highlight\'s default targets take the markdown item: the page heard nothing');
+  } finally {
+    ov.setArmed(null);
+    W.document.removeEventListener('click', onClick);
+    W.document.removeEventListener('pointerdown', onClick);
+    await shell.frame({ type: 'markdown:remove', id: 'md-link', order: ['p1', 'p2', 'f6-s14'], claude_order: ['p1', 'p2', 'f6-s14'] });
+  }
 });
 
 test('pin creation posts {type, anchor: the engine record, locator, payload, device} through http.js', async () => {
