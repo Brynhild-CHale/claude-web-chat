@@ -283,6 +283,10 @@ test('pack install, approve, list, info, review and remove print, record and aud
 
   check('cli:list', await runPack(['list'], proj));
   check('cli:list:verify', await runPack(['list', '--verify'], proj));
+  // listInstalled itself — the JSON GET /api/packs hands the drawer — key order
+  // included: its per-kind lists are spread from the table's rows.
+  check('listInstalled', packs.listInstalled({ root: proj }));
+  check('listInstalled:verify', packs.listInstalled({ root: proj, verify: true }));
   for (const name of ['kinds-comp', 'kinds-theme', 'kinds-skill', 'kinds-all']) check(`cli:info:${name}`, await runPack(['info', name], proj));
   for (const name of ['kinds-all', 'kinds-theme-b', 'kinds-builtin']) check(`cli:review:${name}`, await runPack(['review', name], proj));
   check('cli:approve:kinds-all', await runPack(['approve', 'kinds-all'], proj));
@@ -300,6 +304,7 @@ test('pack install, approve, list, info, review and remove print, record and aud
   check('cli:remove:kinds-all:global', await runPack(['remove', 'kinds-all', '--global'], proj));
   check('cli:remove:kinds-skill', await runPack(['remove', 'kinds-skill'], proj));
   check('cli:list:after-remove', await runPack(['list'], proj));
+  check('listInstalled:after-remove', packs.listInstalled({ root: proj, verify: true }));
   check('records:after-remove', snapshot(proj));
 });
 
