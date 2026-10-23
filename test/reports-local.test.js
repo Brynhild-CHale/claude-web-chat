@@ -438,6 +438,26 @@ test('S-15 by construction: 200 accepted reports add no ring entry, flip no dirt
   for (const word of ['surface', 'report', 'qual', 'live_only']) assert.ok(!raw.includes(`"${word}"`), `the draft has no "${word}" key`);
 });
 
+test('a dom event naming no live pane reaches the ring with mountId null; a click in a live pane keeps its origin', async (t) => {
+  const d = await withServer(t);
+  await ok(d.api.post('/api/render', { id: 'p1', html: '<p><button>go</button></p>' }), 'render');
+  const s = await socket(t, d.port);
+  const since = d.srv.bus.read({}).latest;
+  s.send({ type: 'event', payload: { type: 'click', mountId: 'el-x', tag: 'BUTTON' } });
+  let ev;
+  await until(() => (ev = d.srv.bus.read({ since, kinds: ['dom'] }).events[0]), 'the dom event');
+  assert.equal(ev.mountId, null, 'the dangling id is dropped');
+  const q = (await d.api.get('/api/queue')).json.items;
+  assert.ok(!JSON.stringify(q).includes('el-x'), 'the queue names no el-x');
+
+  s.send({ type: 'event', payload: { type: 'click', mountId: 'p1', tag: 'BUTTON' } });
+  let item;
+  await until(async () => (item = (await d.api.get('/api/queue')).json.items.find((x) => x.origin_mount === 'p1')), 'p1 activity');
+  assert.equal(item.kind, 'activity');
+  const evs = d.srv.bus.read({ since, kinds: ['dom'] }).events;
+  assert.equal(evs.at(-1).mountId, 'p1');
+});
+
 test('no main-port route carries a report', () => {
   const paths = [...routePaths()];
   assert.ok(!paths.some((p) => /report/i.test(p)), `no report route: ${paths.filter((p) => /report/i.test(p))}`);
