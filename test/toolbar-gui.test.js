@@ -397,11 +397,21 @@ test('remote read: the tray is view only but for this device\'s finger-draws swi
 });
 
 test('web-chat\'s dark mode: the slots\' icons carry ?mode=dark', async () => {
-  doc.documentElement.dataset.theme = 'dark';
+  // Through theme.js's own toggle, as ◑ / T flip it: web-chat's dark mode is
+  // <html> WITHOUT data-theme (setModeAttr deletes it), never data-theme="dark".
+  const theme = await shell.importApp('theme.js');
+  assert.equal(theme.effectiveMode(), 'light');
+  theme.toggleMode();
   await shell.tick();
-  for (const s of slots()) assert.equal(s.querySelector('img').getAttribute('src'), `/api/toolbar/icon/${s.dataset.type}?mode=dark`);
-  doc.documentElement.dataset.theme = 'light';
-  await shell.tick();
+  try {
+    assert.equal(theme.effectiveMode(), 'dark');
+    assert.equal(doc.documentElement.getAttribute('data-theme'), null, 'dark: no data-theme attribute');
+    for (const s of slots()) assert.equal(s.querySelector('img').getAttribute('src'), `/api/toolbar/icon/${s.dataset.type}?mode=dark`);
+  } finally {
+    theme.toggleMode();
+    await shell.tick();
+  }
+  assert.equal(theme.effectiveMode(), 'light');
   for (const s of slots()) assert.equal(s.querySelector('img').getAttribute('src'), `/api/toolbar/icon/${s.dataset.type}`);
 });
 
