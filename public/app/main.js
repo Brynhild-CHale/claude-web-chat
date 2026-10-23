@@ -51,6 +51,9 @@ import { initOverlay } from './overlay.js';
 import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
 import { initToolbarState, onToolbarChange } from './toolbar-state.js';
 import { initHotkeys } from './hotkeys.js';
+// The box grab, chrome side (annotation engine 2C.4, U328c): its gesture, the
+// look at its picture, and its card in the queue rail.
+import { initBoxGrab } from './box-grab.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -75,6 +78,7 @@ initShell();
 initToolbarState({ onFrame, onHello });
 initHotkeys();
 onToolbarChange((v) => setFingerDrawsDefault(v.user ? v.user.fingerDraws : undefined));
+initBoxGrab();     // the box grab (U328c): its element type, its look and its rail card
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every
