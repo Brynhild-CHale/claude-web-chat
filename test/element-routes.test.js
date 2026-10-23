@@ -493,3 +493,21 @@ test('Wipe reads every anchor family: a highlight on the markdown kept above a p
   assert.deepEqual(srv.state.elements.slice().sort(), [`${hlKept.id}@1`, `${grabKept.id}@1`].sort());
   assert.ok(![hlGone.id, grabGone.id].some((id) => srv.state.elements.some((r) => r.startsWith(`${id}@`))));
 });
+
+// K.2-59 (U327a): a comment re-anchored with a legacy locator stores the
+// converted record (pin-locator@1) as its anchor; describeAnchor reads its
+// fingerprint.text and path.selector, so get_comments' anchor_label keeps the
+// text instead of falling to '(whole pane)'.
+test('anchor_label: a comment re-anchored with a legacy locator keeps its text label (describeAnchor reads the converted record)', async (t) => {
+  const { api } = await withServer(t);
+  await render(api, 'm1');
+  const eng = await ok(api.post('/api/elements', {
+    type: 'comment', anchor: ELEMENT('m1'), payload: { text: 'engine', shared: true },
+  }), 'POST engine comment');
+  await ok(api.patch(`/api/elements/${eng.pin.id}`, { anchor: LOCATOR }), 're-anchor with a legacy locator');
+  const got = (await ok(api.get('/api/elements?type=comment'), 'GET')).elements.find((e) => e.id === eng.pin.id);
+  assert.equal(got.anchor.form, 'pin-locator@1', 'the converted record is the pin\'s anchor');
+  assert.equal(got.anchor_label, 'm1: "Hello"');
+  const noText = { ...got.anchor, fingerprint: { ...got.anchor.fingerprint, text: '' } };
+  assert.equal(describeAnchor(noText), 'm1 @ p.lead', 'no text: the converted path.selector');
+});
