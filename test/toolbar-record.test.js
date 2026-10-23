@@ -110,6 +110,11 @@ test('settings payloads: plain JSON, depth ≤ 4, ≤ 16 KB; profiles ≤ 16 a t
   assert.equal(refusal(() => normalizeProject({ settings: { highlight: [] } })).field, 'settings.highlight');
   assert.equal(refusal(() => normalizeProject({ settings: { highlight: { s: 'a​b' } } })).field, 'settings.highlight.s');
   assert.equal(refusal(() => normalizeUser({ settings: { highlight: { n: Infinity } } })).field, 'settings.highlight.n');
+  // A key is a string too: a bidi override or an invisible character in one is
+  // refused, at any depth, never cleaned.
+  assert.equal(refusal(() => normalizeProject({ settings: { highlight: { 'col\u202Eour': 'gold' } } })).field, 'settings.highlight');
+  assert.equal(refusal(() => normalizeUser({ settings: { highlight: { a: { 'b\u200Bc': 1 } } } })).field, 'settings.highlight.a');
+  assert.equal(applyPatch(emptyProject(), { settings: { highlight: { 'x\u202E': 1 } } }, 'project').ok, false);
 
   const prof = (n) => Array.from({ length: n }, (_, i) => ({ name: `p${i}`, settings: { colour: 'gold' } }));
   assert.equal(normalizeProject({ profiles: { highlight: prof(16) } }).record.profiles.highlight.length, 16);

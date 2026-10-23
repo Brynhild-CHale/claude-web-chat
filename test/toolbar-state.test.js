@@ -107,6 +107,32 @@ test('settingsOf merges the user default under the project value, and a named pr
   shell.setRoutes({});
 });
 
+test('ordering: a GET that went out before a frame, or before a later GET landed, never overwrites the newer view', async () => {
+  shell.setRoutes({ '/api/toolbar': VIEW });
+  await ts.refreshToolbar();
+  // A GET held in flight while a frame lands: its (older) answer is dropped.
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const stale = { ...VIEW, project: { ...PROJECT, pinned: ['stale'] } };
+  shell.setRoutes({ '/api/toolbar': () => held.then(() => stale) });
+  const slow = ts.refreshToolbar();
+  await shell.frame({ type: 'toolbar', v: 1, project: { ...PROJECT, pinned: ['framed'] }, user: USER, merged: { bindings: {}, settings: {} } });
+  release();
+  await slow;
+  assert.deepEqual(ts.toolbarState().project.pinned, ['framed'], 'the frame is newer news than a GET sent before it');
+  // Two GETs: the second lands first; the first's later answer is dropped.
+  let releaseFirst;
+  const first = new Promise((r) => { releaseFirst = r; });
+  shell.setRoutes({ '/api/toolbar': () => first.then(() => ({ ...VIEW, project: { ...PROJECT, pinned: ['older'] } })) });
+  const one = ts.refreshToolbar();
+  shell.setRoutes({ '/api/toolbar': { ...VIEW, project: { ...PROJECT, pinned: ['newer'] } } });
+  await ts.refreshToolbar();
+  releaseFirst();
+  await one;
+  assert.deepEqual(ts.toolbarState().project.pinned, ['newer'], 'a later read\'s answer stands');
+  shell.setRoutes({});
+});
+
 test('a bare {ok: true} answer reads as empty records and a writable tray', async () => {
   shell.setRoutes({ '/api/toolbar': { ok: true } });
   await ts.refreshToolbar();
