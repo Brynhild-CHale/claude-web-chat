@@ -155,6 +155,19 @@ test('Save → exactly one PATCH /api/toolbar {settings: {fixture: …}}; the li
   assert.equal(TS.isToolSettingsOpen(), false, 'an accepted Save closes the frame');
 });
 
+test('a second Save pressed while the first is in flight sends nothing more', async () => {
+  const before = patches().length;
+  await openFixture();
+  const root = rootOf(small());
+  root.querySelector('#f_color').value = 'green';
+  root.querySelector('#submit').click();
+  root.querySelector('#submit').click();
+  await waitUntil(() => patches().length > before, { timeout: 2000, what: 'the PATCH' });
+  await shell.tick();
+  await shell.tick();
+  assert.equal(patches().length - before, 1, 'one PATCH for a double press');
+});
+
 test('a named profile: Save replaces that profile\'s settings and nothing else', async () => {
   view = VIEW(PROJECT({ fixture: [{ name: 'cool', settings: { color: 'gold' } }, { name: 'warm', settings: { color: 'gold' } }] }));
   await ts.refreshToolbar();
