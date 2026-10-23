@@ -369,7 +369,7 @@ test('a converted pin whose text is gone is drawn at its guess; a click on it em
   const seen = [];
   const off2 = bus.on('overlay:guess', (d) => seen.push(d));
   try { shell.click(g); } finally { off2(); off1(); }
-  assert.deepEqual(seen, [{ id: 'c-guess', v: 3, type: 'comment', mount: 'guess-pane', scope: 'live' }]);
+  assert.deepEqual(seen, [{ id: 'c-guess', v: 3, type: 'comment', mount: 'guess-pane', scope: 'live', how: 'guess' }]);
   ov.setElements('live', []);
   flush();
 });

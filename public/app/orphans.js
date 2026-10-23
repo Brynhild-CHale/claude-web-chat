@@ -18,6 +18,12 @@
 //     'overlay:guess') opens the re-anchor card, a STAND-IN popover — 'Re-anchor
 //     here' records an anchor of the element's OWN anchor kind on the guess
 //     element through the resolver and writes it; 'Leave it' writes nothing.
+//   * A SECTION FALLBACK (a source record whose quote and bracket are gone,
+//     re-resolved how 'section' and drawn over its hinted section; never an
+//     orphan, never listed): a click on its marker (bus 'overlay:guess' with
+//     how 'section', K.2-74) opens the same card, saying the element is
+//     anchored to its section; 'Re-anchor here' records a source anchor over
+//     the section the resolver answers at the press and writes it the same way.
 //   * A guess-less orphan's 'Re-anchor…' starts overlay.pick({kind: the
 //     element's own anchor kind}); the card stays up while the pick waits and
 //     is registered with the one dismiss layer, so Escape (or a press outside
@@ -44,6 +50,8 @@ import { onInspectorRender, closeOverlay, isOverlayOpen } from './graph-view.js'
 import { capRows, moreLabel } from './row-caps.js';
 import { request } from './http.js';
 import { READONLY_HINT } from './topbar.js';
+import { page } from './page.js';
+import { sourceMap } from './markdown.js';
 
 export const PALETTE_SOURCE = 'orphans';
 export const PICK_HINTS = Object.freeze({
@@ -54,6 +62,8 @@ export const PICK_HINTS = Object.freeze({
 export const LEAVE_HINT = 'Left as it is — nothing written.';
 export const NO_GUESS_HINT = 'The guess is gone from the page — pick a new place instead.';
 export const UNCHANGED_HINT = 'Nothing written — the element is already anchored there.';
+export const sectionText = (place, v) =>
+  `Anchored in ${place}, v${v == null ? '?' : v} · its text no longer matches; anchored to its section, drawn over the section`;
 export const reanchoredText = (v) => `Re-anchored · anchor v${v == null ? '?' : v} written, the node untouched`;
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -146,7 +156,8 @@ export function openOrphanList() {
 }
 
 // ── the re-anchor card (a registered popover) ──────────────────────────────
-// {id, o, mode: 'guess' | 'pick' | 'note', handle (a pending pick), busy}
+// {id, o, mode: 'guess' | 'section' | 'pick' | 'refused' | 'note' | 'done',
+//  handle (a pending pick), busy}
 let card = null;
 let cardEl = null;
 function closeCard() {
@@ -208,10 +219,11 @@ function button(cls, text, fn) {
 export function openGuessCard(orphan) {
   const o = describe(orphan);
   const c = newCard(o);
-  card.mode = 'guess';
+  const section = o.how === 'section';
+  card.mode = section ? 'section' : 'guess';
   cardHead(c, o);
-  c.appendChild(el('p', 'wc-reanchor-text',
-    `Anchored in ${o.place}, v${o.v == null ? '?' : o.v} · its anchor no longer matches; drawn at the resolver's guess`));
+  c.appendChild(el('p', 'wc-reanchor-text', section ? sectionText(o.place, o.v)
+    : `Anchored in ${o.place}, v${o.v == null ? '?' : o.v} · its anchor no longer matches; drawn at the resolver's guess`));
   const acts = el('div', 'wc-reanchor-acts');
   acts.appendChild(button('wc-reanchor-here', 'Re-anchor here', () => reanchorHere(o)));
   acts.appendChild(button('wc-reanchor-leave', 'Leave it', () => leaveIt()));
@@ -251,11 +263,38 @@ function recordOn(kind, g) {
   return null;
 }
 
+// A section fallback's section, found again for the button press by the
+// resolver (resolveSource over the markdown item's current text), and a source
+// anchor — the element's own kind — recorded over it; null when the answer is
+// no longer a section or the section is too long to quote.
+function recordOnSection(o) {
+  if (o.kind !== 'source' || !o.row || !isObj(o.row.anchor)) return null;
+  const M = window.__wcMount;
+  const md = o.mount != null ? o.mount : o.row.anchor.md;
+  const it = md != null && M && typeof M.itemEl === 'function' ? M.itemEl(document, md) : null;
+  const item = md != null && page.markdown ? page.markdown.get(String(md)) : null;
+  if (!it || it.kind !== 'md' || !it.el || !item) return null;
+  const text = String(item.text == null ? '' : item.text);
+  try {
+    const map = sourceMap(text);
+    const ans = anchors.resolveSource(it.el, text, map, o.row.anchor);
+    if (!ans || ans.how !== 'section' || !ans.range) return null;
+    return anchors.recordSource(it.el, ans.range, map, text, { md: String(md) });
+  } catch (e) {
+    console.error('[web-chat] orphans: the resolver failed', e);
+    return null;
+  }
+}
+
 async function reanchorHere(o) {
   if (!card || card.id !== o.id || card.busy) return;
   if (view.previewing) { setNote(READONLY_HINT, { refused: true }); return; }
-  const g = guessOf(o);
-  const rec = g ? recordOn(o.kind, g) : null;
+  let rec = null;
+  if (o.how === 'section') rec = recordOnSection(o);
+  else {
+    const g = guessOf(o);
+    rec = g ? recordOn(o.kind, g) : null;
+  }
   if (!rec) {
     setNote(NO_GUESS_HINT, { refused: true });
     const acts = cardEl && cardEl.querySelector('.wc-reanchor-acts');
@@ -391,6 +430,11 @@ export function initOrphans() {
     bus.on('overlay:orphans', onOrphans),
     bus.on('overlay:guess', (d) => {
       if (!d || d.id == null) return;
+      // A section fallback is no orphan: its row is on the drawn surface.
+      if (d.how === 'section') {
+        if (rowOf(d.id, d.scope)) openGuessCard({ id: d.id, v: d.v, type: d.type, mount: d.mount, scope: d.scope, how: 'section' });
+        return;
+      }
       const o = orphans().find((x) => x.id === d.id && x.guess);
       if (o) openGuessCard(o);
     }),

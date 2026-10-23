@@ -21,7 +21,11 @@
 //     request; a click on an element writes one PATCH with that element's
 //     record;
 //   - while previewing every write path shows READONLY_HINT and sends nothing,
-//     while the list and the guess still show.
+//     while the list and the guess still show;
+//   - a section fallback (a source record whose quote and bracket are gone,
+//     drawn over its section; never an orphan): a click on its marker opens the
+//     card with the section wording, and 'Re-anchor here' sends the guess
+//     case's PATCH shape with a source anchor over the section (K.2-74).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -29,7 +33,7 @@ const { bootShell, helloFrame, respond } = require('../test-support/chrome-shell
 const { waitUntil } = require('../test-support/helpers');
 const { convertAnchor } = require('../lib/core/element-log');
 
-let shell, W, M, ov, oh, sp, anchors, bus, topbar, orph, gv, sh;
+let shell, W, M, ov, oh, sp, anchors, bus, topbar, orph, gv, sh, md;
 const states = new Map();   // id → the newest answer's state
 
 // The pane whose lead line was edited after the pin was dropped: the pin's
@@ -96,6 +100,7 @@ before(async () => {
   orph = await shell.importApp('orphans.js');
   gv = await shell.importApp('graph-view.js');
   sh = await shell.importApp('shell.js');
+  md = await shell.importApp('markdown.js');
   ov.initOverlay({ rectOf });
   ov.onAnswers((m) => { for (const i of m.items) states.set(i.id, i.state); });
   await waitUntil(() => sp.pendingServices().has('svc-x'), { timeout: 4000, what: 'the pending list to name svc-x' });
@@ -272,6 +277,74 @@ test('a guess-less orphan: Re-anchor… arms a pick, Escape cancels it with no r
   } finally { patchAnswer = null; }
 });
 
+test('a section fallback: its marker opens the card with the section wording; Re-anchor here sends the guess case\'s PATCH shape with a source anchor over the section', async () => {
+  const before0 = '## Plan\n\nAlpha beta gamma delta epsilon zeta.\n\n## Other\n\nUnrelated words.\n';
+  const after0 = '## Plan\n\nEverything here was rewritten from scratch.\n\n## Other\n\nUnrelated words.\n';
+  await shell.frame({ type: 'markdown', id: 'md-sec', text: before0, owner: 'claude' });
+  const block = () => M.itemEl(W.document, 'md-sec').el;
+  const tn = block().querySelector('p').firstChild;
+  const at = tn.data.indexOf('gamma delta');
+  const range = W.document.createRange();
+  range.setStart(tn, at);
+  range.setEnd(tn, at + 'gamma delta'.length);
+  const rec = anchors.recordSource(block(), range, md.sourceMap(before0), before0);
+  assert.ok(rec && rec.kind === 'source' && rec.slug === 'plan');
+  // A range's box inside the window, so the generic marker's glyph shows.
+  const SEC_BOX = { left: 200, top: 400, width: 80, height: 16, right: 280, bottom: 416, x: 200, y: 400 };
+  ov.initOverlay({ rectOf: (x) => (x && typeof x.cloneContents === 'function' ? SEC_BOX : rectOf(x)) });
+  const S = { id: 'c30', v: 1, type: 'comment', shared: true, replies: 0, anchor: rec };
+  ov.upsertElements('live', [S]);
+  const seen = [];
+  const off = bus.on('overlay:guess', (d) => seen.push(d));
+  patchAnswer = (url, init) => {
+    const b = JSON.parse(init.body);
+    return { ok: true, element: { id: 'c30', v: 2, type: 'comment', record: b.anchor } };
+  };
+  const n0 = patches().length;
+  try {
+    await waitUntil(() => states.get('c30') === 'exact', { timeout: 3000, what: 'c30 a hit' });
+    await shell.frame({ type: 'markdown', id: 'md-sec', text: after0, owner: 'claude' });
+    await waitUntil(() => markersFor('c30').some((m) => m.classList.contains('el-section') && m.style.display !== 'none'),
+      { timeout: 3000, what: 'the section fallback drawn' });
+    assert.ok(!orphanIds().includes('c30'), 'a section fallback is never an orphan');
+    shell.click(markersFor('c30')[0]);
+    await shell.tick();
+    assert.deepEqual(seen, [{ id: 'c30', v: 1, type: 'comment', mount: 'md-sec', scope: 'live', how: 'section' }]);
+    assert.ok(card(), 'the card is open');
+    assert.equal(card().dataset.elId, 'c30');
+    assert.equal(card().querySelector('.wc-reanchor-text').textContent, orph.sectionText('markdown md-sec', 1));
+    assert.match(card().textContent, /anchored to its section/);
+    assert.ok(btn('wc-reanchor-here') && btn('wc-reanchor-leave'));
+    // What the resolver answers at the press, recorded as a source anchor.
+    const map = md.sourceMap(after0);
+    const ans = anchors.resolveSource(block(), after0, map, rec);
+    assert.equal(ans.how, 'section');
+    const want = anchors.recordSource(block(), ans.range, map, after0, { md: 'md-sec' });
+    assert.ok(want && want.kind === 'source' && want.slug === 'plan', 'a source anchor over the Plan section');
+    shell.click(btn('wc-reanchor-here'));
+    await waitUntil(() => /Re-anchored/.test(noteText()), { timeout: 3000, what: 'the re-anchored line' });
+    const sent = patches().slice(n0);
+    assert.equal(sent.length, 1, 'exactly one PATCH');
+    assert.equal(sent[0].url, '/api/elements/c30');
+    assert.deepEqual(Object.keys(sent[0].body).sort(), ['anchor', 'base_v', 'device'], 'the guess case\'s anchor-only body');
+    assert.deepEqual(sent[0].body.anchor, want);
+    assert.equal(sent[0].body.base_v, 1);
+    assert.equal(sent[0].body.device, 'desktop');
+    assert.equal(noteText(), 'Re-anchored · anchor v2 written, the node untouched');
+    assert.equal(liveRow('c30').v, 2);
+    assert.deepEqual(liveRow('c30').anchor, want);
+    shell.key('Escape');
+    await shell.tick();
+  } finally {
+    off();
+    patchAnswer = null;
+    ov.initOverlay({ rectOf });
+    ov.removeElements('live', ['c30']);
+    await shell.frame({ type: 'markdown:remove', id: 'md-sec' });
+    await shell.tick();
+  }
+});
+
 test('while previewing: the list and the guess still show; every write path answers READONLY_HINT and sends nothing', async () => {
   const node = {
     id: 'n2', mounts: [P1, P2], store: {}, created_at: 2,
@@ -315,3 +388,4 @@ test('while previewing: the list and the guess still show; every write path answ
   }
   assert.equal(ov.drawnScopeOf(), 'live');
 });
+
