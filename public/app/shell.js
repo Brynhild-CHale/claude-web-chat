@@ -28,6 +28,7 @@ import { isRemote } from './remote.js';
 import { bus } from './bus.js';
 import { escapeChatViews } from './chat-slots.js';
 import { closeChat, resetChatWindow } from './chat-dock.js';
+import { registerAction, registerKeyedElement, lookup, chordOf, keyFor, CONTEXTS } from './hotkeys.js';
 
 const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 
@@ -548,18 +549,18 @@ async function buildPalette(q) {
   const ql = q.toLowerCase();
   const remote = await isRemote();
   const cmds = [
-    { kind: 'command', label: 'Add a block…', key: 'N', run: () => openDrawer() },
+    { kind: 'command', label: 'Add a block…', key: keyFor('chrome.add'), run: () => openDrawer() },
     { kind: 'command', label: 'Component packs…', run: openDrawerManage },
-    { kind: 'command', label: 'Open graph', key: 'G', run: openOverlay },
+    { kind: 'command', label: 'Open graph', key: keyFor('chrome.graph'), run: openOverlay },
     { kind: 'command', label: 'New graph', run: openNewGraph },
     { kind: 'command', label: 'Wipe surface', run: openWipe },
     { kind: 'command', label: 'Export node', run: doExport },
-    ...(replayTargetLabel() ? [{ kind: 'command', label: `Replay to ${replayTargetLabel()}`, key: 'R', run: () => openReplay() }] : []),
-    { kind: 'command', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', key: 'T', run: toggleMode },
-    { kind: 'command', label: 'Pin comment', key: 'C', run: togglePinMode },
+    ...(replayTargetLabel() ? [{ kind: 'command', label: `Replay to ${replayTargetLabel()}`, key: keyFor('chrome.replay'), run: () => openReplay() }] : []),
+    { kind: 'command', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', key: keyFor('chrome.mode'), run: toggleMode },
+    { kind: 'command', label: 'Pin comment', key: keyFor('chrome.comment'), run: togglePinMode },
     { kind: 'command', label: 'Settings', run: openSettings },
-    { kind: 'command', label: 'Sessions…', key: 'S', run: openSessions },
-    { kind: 'command', label: 'Chat with Claude', key: 'M', run: openChatComposer },
+    { kind: 'command', label: 'Sessions…', key: keyFor('chrome.sessions'), run: openSessions },
+    { kind: 'command', label: 'Chat with Claude', key: keyFor('chrome.chat'), run: openChatComposer },
     // The keyboard way out of a window dragged somewhere unusable: the handles
     // are pointer-only.
     { kind: 'command', label: 'Reset the chat window', run: resetChatWindow },
@@ -972,17 +973,6 @@ function initKeyboard() {
   }, true);
   document.addEventListener('keydown', (e) => {
     const meta = e.metaKey || e.ctrlKey;
-    // ⌘K opens the palette from anywhere (even inside a field) — except under a
-    // modal layer. The palette paints BELOW the graph overlay, the glance and the
-    // replay player, so opening it there hid a focused #cmd-input under them: it
-    // stole the graph's keys, and ↵ ran a row nobody could see. The graph has its
-    // own jump box, so ⌘K there does nothing (and the browser's own ⌘K is still
-    // suppressed).
-    if (meta && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault();
-      if (!(isOverlayOpen() || hasFloatPreview() || isReplayOpen())) openPalette();
-      return;
-    }
     // Focus ownership: panes are shadow-rooted mounts, so a keystroke whose real
     // target lives in a shadow root belongs to that pane — but only stand down when
     // that target is EDITABLE (B5: a focused pane BUTTON must not swallow single-key
@@ -1002,42 +992,100 @@ function initKeyboard() {
       if (hasFloatPreview() || isOverlayOpen() || isReplayOpen() || !editable) handleEscape();
       return;
     }
-    if (editable || meta) return;
+    // Every other key is ONE lookup in the hotkey registry (public/app/hotkeys.js),
+    // over the defaults registered below (registerKeyDefaults) ⊕ the user's
+    // bindings ⊕ this project's. A single key never fires from an editable field
+    // (only ⌘K, whenField, does); a ⌘/Ctrl chord other than ⌘K is the browser's.
     // The overlay owns every other single key while it is open (arrows, Space, ↵,
-    // A, E, B — graph-view.js) — but `?` is the one key its own status line
-    // advertises, so the shortcut sheet opens over it instead of doing nothing.
-    if (isOverlayOpen()) {
-      if (e.key === '?' || (e.key === '/' && e.shiftKey)) { e.preventDefault(); toggleLegend(); }
-      return;
-    }
-    switch (e.key) {
-      case 'q': case 'Q': e.preventDefault(); toggleRail(); break;
-      case 'p': case 'P': e.preventDefault(); pushQueue(); break;
-      case 'g': case 'G': e.preventDefault(); openOverlay(); break;
-      case 'n': case 'N': e.preventDefault(); openDrawer(); break;   // still SPAWN — Library is the default tab
-      case 't': case 'T': e.preventDefault(); toggleMode(); break;
-      case 's': case 'S': e.preventDefault(); toggleSessions(); break;
-      case 'r': case 'R': e.preventDefault(); openReplay(); break;   // to the node on screen
-      case 'c': case 'C': e.preventDefault(); togglePinMode(); break;
-      // M, "Message Claude" (the bar's step advertises aria-keyshortcuts="M").
-      // Inert under a float preview and the replay player, as ⌘K is; the
-      // overlay and an editable field already returned above.
-      case 'm': case 'M':
-        if (hasFloatPreview() || isReplayOpen()) break;
-        e.preventDefault(); openChatComposer(); break;
-      case 'b': case 'B': e.preventDefault(); togglePopover('bookmark-pop', true); { const bm = $('bookmark-name'); if (bm) setTimeout(() => bm.focus(), 0); } break;
-      case '[': e.preventDefault(); stepNode('up'); break;
-      case ']': e.preventDefault(); stepNode('down'); break;
-      case '?': e.preventDefault(); toggleLegend(); break;
-      case '/': if (e.shiftKey) { e.preventDefault(); toggleLegend(); } break;
-      default: break;
-    }
+    // A, E, B — graph-view.js), so it is its own context: only the actions that
+    // answer there (`?`, whose sheet opens over it; ⌘K, which it swallows) do.
+    const a = lookup(chordOf(e), isOverlayOpen() ? 'overlay' : 'page', { inField: editable });
+    if (a) { e.preventDefault(); a.run(); }
   });
 }
 async function stepNode(dir) {
   await ensureGraph();
   const btn = $(dir === 'up' ? 'btn-up' : 'btn-down');
   if (btn && !btn.disabled) btn.click();
+}
+
+/* ---------- the chrome's keys, registered in the hotkey registry ----------
+   Every key the page binds, as the table the registry looks up, the legend and
+   the palette's key column are drawn from, and a binding record names
+   (`{kind: 'chrome', action: <id>}`, the user record only). The ids are stable:
+   records name them. The rows with no `run` are descriptive — the graph
+   overlay's and the replay player's keys (their own handlers in graph-view.js
+   and replay.js keep them while open) and Escape (one owner, handleEscape) —
+   listed for the legend, never looked up and never rebindable. */
+function registerKeyDefaults() {
+  const K = 'Keyboard';
+  const G = 'In the graph';
+  // ⌘K opens the palette from anywhere (even inside a field) — except under a
+  // modal layer. The palette paints BELOW the graph overlay, the glance and the
+  // replay player, so opening it there hid a focused #cmd-input under them: it
+  // stole the graph's keys, and ↵ ran a row nobody could see. The graph has its
+  // own jump box, so ⌘K there does nothing (and the browser's own ⌘K is still
+  // suppressed). Fixed: no record may bind a Mod+ chord, or rebind this row.
+  registerAction({ id: 'chrome.palette', label: 'Command palette', defaultChord: 'Mod+K', context: ['page', 'overlay'],
+    whenField: true, rebindable: false, legend: { section: K, order: 10 },
+    run: () => { if (!(isOverlayOpen() || hasFloatPreview() || isReplayOpen())) openPalette(); } });
+  registerAction({ id: 'chrome.graph', label: 'Open graph', defaultChord: 'G', legend: { section: K, order: 20 },
+    run: () => openOverlay() });
+  // Still SPAWN — Library is the drawer's default tab.
+  registerAction({ id: 'chrome.add', label: 'Add a block…', defaultChord: 'N',
+    legend: { section: K, order: 30, label: 'Blocks · packs' }, run: () => openDrawer() });
+  registerAction({ id: 'chrome.bookmark', label: 'Bookmark node', defaultChord: 'B', legend: { section: K, order: 40 },
+    run: () => { togglePopover('bookmark-pop', true); const bm = $('bookmark-name'); if (bm) setTimeout(() => bm.focus(), 0); } });
+  // To the node on screen.
+  registerAction({ id: 'chrome.replay', label: 'Replay to node', defaultChord: 'R', legend: { section: K, order: 50 },
+    run: () => openReplay() });
+  // Comment's C, today's pin mode, until the toolbar re-sources it from
+  // comment's element.json (U338).
+  registerAction({ id: 'chrome.comment', label: 'Pin comment', defaultChord: 'C', legend: { section: K, order: 60 },
+    run: () => togglePinMode() });
+  registerAction({ id: 'chrome.prev', label: 'Previous node', defaultChord: '[',
+    legend: { section: K, order: 70, row: 'step', label: 'Previous / next node' }, run: () => stepNode('up') });
+  registerAction({ id: 'chrome.next', label: 'Next node', defaultChord: ']',
+    legend: { section: K, order: 70, row: 'step' }, run: () => stepNode('down') });
+  registerAction({ id: 'chrome.rail', label: 'Toggle queue rail', defaultChord: 'Q', legend: { section: K, order: 80 },
+    run: () => toggleRail() });
+  registerAction({ id: 'chrome.push', label: 'Push queue → Claude', defaultChord: 'P', legend: { section: K, order: 90 },
+    run: () => pushQueue() });
+  // M, "Message Claude" (the bar's step advertises aria-keyshortcuts="M").
+  // Inert under a float preview and the replay player, as ⌘K is; the overlay
+  // and an editable field already keep it out.
+  registerAction({ id: 'chrome.chat', label: 'Chat with Claude', defaultChord: 'M', legend: { section: K, order: 100 },
+    enabled: () => !(hasFloatPreview() || isReplayOpen()), run: () => openChatComposer() });
+  registerAction({ id: 'chrome.sessions', label: 'Sessions on this computer', defaultChord: 'S',
+    legend: { section: K, order: 110 }, run: () => toggleSessions() });
+  registerAction({ id: 'chrome.mode', label: 'Light / dark', defaultChord: 'T', legend: { section: K, order: 120 },
+    run: () => toggleMode() });
+  registerAction({ id: 'replay.play', label: 'Replay: play · step', defaultChord: ['Space', 'ArrowLeft', 'ArrowRight'],
+    context: 'replay', legend: { section: K, order: 130 }, run: null });
+  // `?` is the one key the overlay's own status line advertises, so the
+  // shortcut sheet opens over it too.
+  registerAction({ id: 'chrome.legend', label: 'Shortcuts', defaultChord: ['?', 'Shift+/'], context: ['page', 'overlay'],
+    legend: { section: K, order: 140, row: 'legend', label: 'Shortcuts · close' }, run: () => toggleLegend() });
+  registerAction({ id: 'chrome.escape', label: 'Close one layer', defaultChord: 'Escape', context: CONTEXTS,
+    legend: { section: K, order: 140, row: 'legend' }, run: null });
+  const graphRow = (id, label, chords, order) => registerAction({ id, label, defaultChord: chords, context: 'overlay',
+    legend: { section: G, order }, run: null });
+  graphRow('graph.select', 'Select node', ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'], 200);
+  graphRow('graph.glance', 'Glance preview', 'Space', 210);
+  graphRow('graph.open', 'Open node', 'Enter', 220);
+  graphRow('graph.active', 'Set active', 'A', 230);
+  graphRow('graph.export', 'Export node', 'E', 240);
+  graphRow('graph.bookmark', 'Bookmark node', 'B', 250);
+  graphRow('graph.replay', 'Replay to node', 'R', 260);
+  graphRow('graph.escape', 'Deselect · close graph', 'Escape', 270);
+  // The topbar's buttons that name a key in their title, aria-label or <kbd>
+  // (drawer.js and theme.js rewrite two of those titles; the registry puts the
+  // bound key back each time).
+  for (const [el, id] of [['cmd-trigger', 'chrome.palette'], ['btn-add', 'chrome.add'], ['btn-bookmark', 'chrome.bookmark'],
+    ['btn-pin-mode', 'chrome.comment'], ['btn-up', 'chrome.prev'], ['btn-down', 'chrome.next'],
+    ['btn-theme-toggle', 'chrome.mode'], ['btn-graph', 'chrome.graph'],
+    // …and the status bar's step, whose aria-keyshortcuts chat-bar.js sets.
+    ['cs-step', 'chrome.chat']]) registerKeyedElement(el, id);
 }
 
 export function initShell() {
@@ -1059,6 +1107,7 @@ export function initShell() {
     forwardEscapeFrom,
     mode: effectiveMode,
   });
+  registerKeyDefaults();
   initKeyboard();
   initDismissLayer();
   initModality();

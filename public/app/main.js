@@ -48,7 +48,9 @@ import { install as installAnchors } from './anchors.js';
 import { initOverlay } from './overlay.js';
 // The input-mode policy (annotation engine 2D.4): pen, mouse and finger routed
 // to the armed tool or the page, at the overlay's one pointer dispatch.
-import { installInputMode } from './input-mode.js';
+import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
+import { initToolbarState, onToolbarChange } from './toolbar-state.js';
+import { initHotkeys } from './hotkeys.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -66,6 +68,13 @@ initGraphLog();   // the phone's graph screen: a log with a computed fork gutter
 initDrawer();
 initComments();
 initShell();
+// The toolbar's records (GET /api/toolbar, the toolbar frame), then the hotkey
+// registry over them: the legend and the keyed titles drawn from the table
+// initShell registered, re-merged on every record change. The user record's
+// finger-draws default goes beneath each device's own setting (input-mode.js).
+initToolbarState({ onFrame, onHello });
+initHotkeys();
+onToolbarChange((v) => setFingerDrawsDefault(v.user ? v.user.fingerDraws : undefined));
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every

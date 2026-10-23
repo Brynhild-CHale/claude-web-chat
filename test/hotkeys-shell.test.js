@@ -682,3 +682,228 @@ if (RECORD) {
     fs.writeFileSync(RECORD, JSON.stringify({ cases, baseline, matrix: recorded }, null, 2) + '\n');
   });
 }
+
+// ── what is drawn from the table ─────────────────────────────────────────────
+
+// The legend's rows exactly as index.html carried them by hand at the branch
+// base (public/index.html :428-451 at f7d4b03): the oracle the generated legend
+// equals byte for byte under the default bindings.
+const LEGEND_ROWS = [
+  '<h3>Keyboard</h3>',
+  '<div class="legend-row"><span>Command palette</span><span class="keys"><kbd>⌘K</kbd></span></div>',
+  '<div class="legend-row"><span>Open graph</span><span class="keys"><kbd>G</kbd></span></div>',
+  '<div class="legend-row"><span>Blocks · packs</span><span class="keys"><kbd>N</kbd></span></div>',
+  '<div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>',
+  '<div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>',
+  '<div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>',
+  '<div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>',
+  '<div class="legend-row"><span>Toggle queue rail</span><span class="keys"><kbd>Q</kbd></span></div>',
+  '<div class="legend-row"><span>Push queue → Claude</span><span class="keys"><kbd>P</kbd></span></div>',
+  '<div class="legend-row"><span>Chat with Claude</span><span class="keys"><kbd>M</kbd></span></div>',
+  '<div class="legend-row"><span>Sessions on this computer</span><span class="keys"><kbd>S</kbd></span></div>',
+  '<div class="legend-row"><span>Light / dark</span><span class="keys"><kbd>T</kbd></span></div>',
+  '<div class="legend-row"><span>Replay: play · step</span><span class="keys"><kbd>Space</kbd><kbd>←</kbd><kbd>→</kbd></span></div>',
+  '<div class="legend-row"><span>Shortcuts · close</span><span class="keys"><kbd>?</kbd><kbd>Esc</kbd></span></div>',
+  '<h3 class="legend-sub">In the graph</h3>',
+  '<div class="legend-row"><span>Select node</span><span class="keys"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></span></div>',
+  '<div class="legend-row"><span>Glance preview</span><span class="keys"><kbd>Space</kbd></span></div>',
+  '<div class="legend-row"><span>Open node</span><span class="keys"><kbd>↵</kbd></span></div>',
+  '<div class="legend-row"><span>Set active</span><span class="keys"><kbd>A</kbd></span></div>',
+  '<div class="legend-row"><span>Export node</span><span class="keys"><kbd>E</kbd></span></div>',
+  '<div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>',
+  '<div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>',
+  '<div class="legend-row"><span>Deselect · close graph</span><span class="keys"><kbd>Esc</kbd></span></div>',
+];
+const LEGEND_HTML = '\n      <div class="legend-card" role="dialog" aria-label="Keyboard shortcuts">'
+  + LEGEND_ROWS.map((r) => `\n        ${r}`).join('') + '\n      </div>\n    ';
+
+// The palette's command rows and their key column at the branch base.
+const PALETTE = [
+  { label: 'Add a block…', key: 'N' },
+  { label: 'Component packs…', key: '' },
+  { label: 'Open graph', key: 'G' },
+  { label: 'New graph', key: '' },
+  { label: 'Wipe surface', key: '' },
+  { label: 'Export node', key: '' },
+  { label: 'Replay to n2', key: 'R' },
+  { label: 'Toggle light / dark', key: 'T' },
+  { label: 'Pin comment', key: 'C' },
+  { label: 'Settings', key: '' },
+  { label: 'Sessions…', key: 'S' },
+  { label: 'Chat with Claude', key: 'M' },
+  { label: 'Reset the chat window', key: '' },
+  { label: 'Set up remote access…', key: '' },
+];
+
+// Every keyed title, aria-label, aria-keyshortcuts and <kbd> at the branch base,
+// as the booted chrome shows them.
+const TITLES = {
+  'cmd-trigger': { title: 'Command palette (⌘K)', aria: 'Search commands, nodes, blocks (Cmd K)', kbd: '⌘K' },
+  // drawer.js's copy of index.html's, with the library's count.
+  'btn-add': { title: 'Blocks — add from the library, manage packs · N · 0 in the library',
+    aria: 'Blocks — add from the library, manage packs (N), 0 in the library' },
+  'btn-bookmark': { title: 'Bookmark node · B', aria: 'Bookmark node (B)' },
+  'btn-pin-mode': { title: 'Pin comment · C', aria: 'Pin comment (C)' },
+  'btn-up': { title: 'Previous node · [', aria: 'Previous node ([)' },
+  'btn-down': { title: 'Next node · ]', aria: 'Next node (])' },
+  'btn-theme-toggle': { title: 'Light / dark · T', aria: 'Toggle light / dark (T)' },
+  'btn-graph': { title: 'View graph · G', aria: null, kbd: 'G' },
+  'cs-step': { ks: 'M' },
+};
+function titles() {
+  const out = {};
+  for (const id of Object.keys(TITLES)) {
+    const el = $(id);
+    if (id === 'cs-step') { out[id] = { ks: el.getAttribute('aria-keyshortcuts') }; continue; }
+    const kbd = el.querySelector(':scope > kbd');
+    out[id] = { title: el.getAttribute('title'), aria: el.getAttribute('aria-label'), ...(kbd ? { kbd: kbd.textContent } : {}) };
+  }
+  return out;
+}
+
+async function paletteRows() {
+  shell.key('k', { metaKey: true });
+  await shell.tick();
+  const rows = [...$('cmd-list').querySelectorAll('.palette-item')].filter((r) => r.dataset.kind === 'command')
+    .map((r) => { const k = r.querySelector('kbd.hint'); return { label: r.querySelector('.label').textContent, key: k ? k.textContent : '' }; });
+  shellMod.handleEscape();
+  await shell.tick();
+  return rows;
+}
+
+async function toolbarFrame(user = {}, project = {}) {
+  await shell.frame({ type: 'toolbar', v: 1, project: { v: 1, pinned: [], hidden: [], settings: {}, profiles: {}, ...project },
+    user: { v: 1, bindings: {}, fingerDraws: false, settings: {}, ...user }, merged: { bindings: {}, settings: {} } });
+}
+
+test('the legend is drawn from the table: byte for byte the head\'s rows under the default bindings', async () => {
+  await reset();
+  assert.equal($('key-legend').innerHTML, LEGEND_HTML);
+  assert.equal($('key-legend').querySelectorAll('[id]').length, 0, 'no ids');
+});
+
+test('the palette\'s key column comes from the table: the head\'s letters under the default bindings', async () => {
+  await reset();
+  assert.deepEqual(await paletteRows(), PALETTE);
+});
+
+test('the keyed titles, aria-labels and <kbd>s are the head\'s under the default bindings', async () => {
+  // Opening the drawer once gives ＋ drawer.js's title (with the library's count).
+  drawer.openDrawer();
+  await shell.tick();
+  await reset();
+  assert.deepEqual(titles(), TITLES);
+});
+
+test('a single key never fires in a text field: C typed into a pane <textarea> is the textarea\'s', async (t) => {
+  await reset();
+  const ta = W.document.createElement('textarea');
+  pane.host.shadowRoot.appendChild(ta);
+  t.after(() => ta.remove());
+  ta.focus();
+  const e = shell.key('c', { target: ta });
+  await shell.tick();
+  assert.equal(e.defaultPrevented, false, 'the character goes into the field');
+  assert.equal(W.document.body.classList.contains('pin-mode'), false, 'pin mode stays off');
+});
+
+test('⌘K from a chrome field still opens the palette', async (t) => {
+  await reset();
+  const inp = W.document.createElement('input');
+  $('topbar').appendChild(inp);
+  t.after(() => inp.remove());
+  inp.focus();
+  const e = shell.key('k', { target: inp, metaKey: true });
+  await shell.tick();
+  assert.ok(e.defaultPrevented);
+  assert.ok(!$('cmd-palette').classList.contains('hidden'), 'the palette opened');
+  await reset();
+});
+
+test('a user-tier rebinding: R → Shift+R, G → H and [ → Shift+[ move the keys, the legend, the palette and the titles', async () => {
+  await reset();
+  await toolbarFrame({ bindings: {
+    R: null, 'Shift+R': { kind: 'chrome', action: 'chrome.replay' },
+    G: null, H: { kind: 'chrome', action: 'chrome.graph' },
+    '[': null, 'Shift+[': { kind: 'chrome', action: 'chrome.prev' },
+    N: null, J: { kind: 'chrome', action: 'chrome.add' },
+    M: null, 'Shift+M': { kind: 'chrome', action: 'chrome.chat' },
+  } });
+  const rowKeys = (section, label) => {
+    let sec = null;
+    for (const n of $('key-legend').querySelector('.legend-card').children) {
+      if (n.tagName === 'H3') { sec = n.textContent; continue; }
+      if (sec === section && n.querySelector('span').textContent === label) return [...n.querySelectorAll('kbd')].map((k) => k.textContent);
+    }
+    return null;
+  };
+  assert.deepEqual(rowKeys('Keyboard', 'Replay to node'), ['⇧R']);
+  assert.deepEqual(rowKeys('Keyboard', 'Open graph'), ['H']);
+  assert.deepEqual(rowKeys('Keyboard', 'Previous / next node'), ['⇧[', ']']);
+  assert.deepEqual(rowKeys('In the graph', 'Replay to node'), ['R'], 'the overlay\'s own R is its own');
+  const want = { ...TITLES,
+    'btn-graph': { title: 'View graph · H', aria: null, kbd: 'H' },
+    'btn-up': { title: 'Previous node · ⇧[', aria: 'Previous node (⇧[)' },
+    'btn-add': { title: 'Blocks — add from the library, manage packs · J · 0 in the library',
+      aria: 'Blocks — add from the library, manage packs (J), 0 in the library' },
+    'cs-step': { ks: 'Shift+M' } };
+  assert.deepEqual(titles(), want);
+  // An owner that rewrites its title with the shipped key (drawer.js on a new
+  // library count) is put back on the bound one.
+  $('btn-add').title = 'Blocks — add from the library, manage packs · N · 4 in the library';
+  await shell.tick();
+  assert.equal($('btn-add').title, 'Blocks — add from the library, manage packs · J · 4 in the library');
+  $('btn-add').title = want['btn-add'].title;
+  await shell.tick();
+  const pal = await paletteRows();
+  assert.equal(pal.find((r) => r.label === 'Replay to n2').key, '⇧R');
+  assert.equal(pal.find((r) => r.label === 'Open graph').key, 'H');
+
+  // …and the keys themselves.
+  let e = shell.key('r');
+  await shell.tick();
+  assert.equal(e.defaultPrevented, false, 'R is no longer bound');
+  assert.ok($('replay-pop').classList.contains('hidden'));
+  e = shell.key('R', { shiftKey: true });
+  await shell.tick();
+  assert.ok(e.defaultPrevented);
+  assert.ok(!$('replay-pop').classList.contains('hidden'), 'Shift+R opens the replay');
+  await reset();
+  e = shell.key('g');
+  await shell.tick();
+  assert.ok($('overlay').classList.contains('hidden'), 'G is unbound');
+  shell.key('h');
+  await shell.tick();
+  assert.ok(!$('overlay').classList.contains('hidden'), 'H opens the graph');
+  await reset();
+
+  // Back to the defaults: everything as the head drew it.
+  await toolbarFrame();
+  assert.equal($('key-legend').innerHTML, LEGEND_HTML);
+  assert.deepEqual(titles(), TITLES);
+  assert.deepEqual(await paletteRows(), PALETTE);
+});
+
+test('a project-tier unbind of G: no key opens the graph here, and nothing names one', async () => {
+  await reset();
+  await toolbarFrame({}, { bindings: { G: null } });
+  shell.key('g');
+  await shell.tick();
+  assert.ok($('overlay').classList.contains('hidden'), 'G does nothing in this project');
+  assert.equal($('btn-graph').getAttribute('title'), 'View graph');
+  assert.equal($('btn-graph').querySelector('kbd').hidden, true);
+  assert.ok(![...$('key-legend').querySelectorAll('.legend-row span:first-child')].some((s) => s.textContent === 'Open graph'),
+    'the legend has no row for a key that is not bound');
+  await toolbarFrame();
+  assert.deepEqual(titles(), TITLES);
+  assert.equal($('btn-graph').querySelector('kbd').hidden, false);
+  assert.equal($('key-legend').innerHTML, LEGEND_HTML);
+});
+
+test('the user record\'s finger-draws default reaches the input-mode policy (main.js)', async () => {
+  const im = await shell.importApp('input-mode.js');
+  await toolbarFrame({ fingerDraws: true });
+  assert.equal(im.fingerDrawsMode().recordDefault, true);
+  await toolbarFrame({ fingerDraws: false });
+  assert.equal(im.fingerDrawsMode().recordDefault, false);
+});
