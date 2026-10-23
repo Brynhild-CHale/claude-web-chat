@@ -37,11 +37,13 @@
 // generation and so drops the resolver's cached index). Besides a mount, a
 // re-render and a mode change, a pane is settled here:
 //   - a store write: a pane's own facade write (opts.mount, public/app/
-//     mounts.js) settles that pane; any other write (a daemon 'store:patch'
-//     frame, a reconcile, a write through window.store) settles every watched
-//     pane that is visible, i.e. drawn into the document (a minimized pane
-//     keeps its DOM and the sheet unmounts nothing, so both count) — why
-//     'store';
+//     mounts.js) settles that pane and every other watched, visible pane
+//     whose script subscribed to a key it wrote (mounts.js subscribedKeys: a
+//     pane that redraws on another pane's write may drop an anchored element
+//     — K.2-35); any other write (a daemon 'store:patch' frame, a reconcile,
+//     a write through window.store) settles every watched pane that is
+//     visible, i.e. drawn into the document (a minimized pane keeps its DOM
+//     and the sheet unmounts nothing, so both count) — why 'store';
 //   - a hidden state changing: a pane minimized or restored, the phone sheet
 //     reaching or leaving its full stop (or the screen turning narrow), a
 //     pane's service entering or leaving the pending list, a pane's mount
@@ -51,17 +53,17 @@
 // off the surface has no root left to settle: the overlay is asked for one
 // pass over that mount instead (resolveMount), which answers it gone.
 //
-// The store's own API hands a subscriber the patch alone, never its opts, so
-// the write is heard by wrapping the chrome store's `set` once (transparent:
-// the original runs first, its answer returned) — see installRetriggers.
+// The store's own subscribe hands a subscriber the patch alone, never its
+// opts, so the write is heard through store.js's onWrite (its publish hook,
+// after the store's subscribers ran), which carries both.
 //
 // This module sends nothing and reports nothing (U314's, through the
 // overlay's onAnswers); it changes no resolver answer, only names which
 // unresolved or undrawn answers are hidden.
 import { view, $ } from './state.js';
 import { bus } from './bus.js';
-import { store } from './store.js';
-import { panes, mountState } from './mounts.js';
+import { onWrite } from './store.js';
+import { panes, mountState, subscribedKeys } from './mounts.js';
 import { isNarrow } from './viewport.js';
 import { sheetState } from './chat-sheet.js';
 import { pendingServices, onPendingChange, initServicePending } from './service-pending.js';
@@ -181,27 +183,27 @@ function flush() {
   }
 }
 
-// A write to the chrome's store: its pane's alone when the pane's facade made
-// it, else every watched pane that is visible — drawn into the document (flush
-// skips one with no root or a host gone from it). A minimized pane keeps its
-// DOM and the phone sheet covers the panes without unmounting them, so both
-// count: a store write that removes an anchored element from either must read
-// orphaned at once (rule 3 resolves before it hides), not when it is next shown.
-function storeWritten(opts) {
+// A write to the chrome's store: when a pane's facade made it, that pane and
+// every other watched pane subscribed (through its own facade) to a key the
+// write carried, or to every write; else every watched pane. Only a visible
+// one is settled — drawn into the document (flush skips one with no root or a
+// host gone from it). A minimized pane keeps its DOM and the phone sheet
+// covers the panes without unmounting them, so both count: a store write that
+// removes an anchored element from either must read orphaned at once (rule 3
+// resolves before it hides), not when it is next shown.
+function storeWritten(patch, opts) {
   const mount = opts && opts.mount != null ? String(opts.mount) : null;
-  if (mount != null) { queue(mount, RESETTLE_WHY.STORE); return; }
-  for (const id of rt.watched()) queue(id, RESETTLE_WHY.STORE);
+  if (mount == null) { for (const id of rt.watched()) queue(id, RESETTLE_WHY.STORE); return; }
+  queue(mount, RESETTLE_WHY.STORE);
+  const written = patch && typeof patch === 'object' ? Object.keys(patch) : [];
+  for (const id of rt.watched()) {
+    if (id === mount) continue;
+    const sub = subscribedKeys(id);
+    if (sub && (sub.all || written.some((k) => sub.keys.has(k)))) queue(id, RESETTLE_WHY.STORE);
+  }
 }
-function wrapStore() {
-  if (store.set && store.set.__wcHiddenState) return;
-  const raw = store.set;
-  const set = function set(patch, opts) {
-    const out = raw.call(this, patch, opts);
-    try { storeWritten(opts); } catch (e) { console.error('[web-chat] overlay-hidden: the store trigger failed', e); }
-    return out;
-  };
-  set.__wcHiddenState = true;
-  store.set = set;
+function heardWrite(patch, opts) {
+  try { storeWritten(patch, opts); } catch (e) { console.error('[web-chat] overlay-hidden: the store trigger failed', e); }
 }
 
 function allWatched(why) {
@@ -285,7 +287,7 @@ export function installRetriggers({ watched, raf, resolveMount } = {}) {
   if (rt.installed) return;
   rt.installed = true;
   initServicePending();
-  wrapStore();
+  onWrite(heardWrite);
   watchWell();
   rt.covered = sheetCovers();
   bus.on('sheet', coveredMaybeChanged);
