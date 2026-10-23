@@ -339,6 +339,8 @@ const FILL = {
   '/api/captures/:id/simplified': () => ['/api/captures/sweep-none/simplified'],
   // A box grab's picture (U328b): PNG bytes, no text of its own; the scenario draws none.
   '/api/elements/:id/grab': () => ['/api/elements/g-sweep-none/grab'],
+  // A listed tool's icon (U337): the built-in comment's SVG files, no text of their own.
+  '/api/toolbar/icon/:type': () => ['/api/toolbar/icon/comment', '/api/toolbar/icon/comment?mode=dark'],
   '/api/components/:name/seed': () => ['/api/components/file-editor/seed', '/api/components/git-dashboard/seed'],
   '/api/components/:name': () => ['/api/components/file-editor', '/api/components/git-dashboard'],
   '/api/services/pack/:name': () => ['/api/services/pack/sweep-pack'],
