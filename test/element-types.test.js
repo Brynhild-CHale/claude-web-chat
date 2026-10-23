@@ -196,8 +196,14 @@ test('c7: quarantine → review lists nothing; approve lists it on the next read
     assert.equal(r.json.ok, true);
     assert.equal(et.listed('sticky'), false, 'reviewed');
     const computes = et.stats().computes;
+    // The approve is a person's (U322a, K.4): the route refuses an element
+    // pack, and the card's control (the 'pack-approve' row) installs it.
     r = await api.post('/api/packs/quarantine/mark-pack/approve', {});
-    assert.equal(r.json.ok, true, r.text);
+    assert.equal(r.status, 409, r.text);
+    assert.equal(et.listed('sticky'), false, 'refused by the route');
+    await srv.controlStarted;
+    const a = await srv.control.invoke('pack-approve', { name: 'mark-pack', tier: 'local' }, { remote: false });
+    assert.equal(a.ok, true, JSON.stringify(a));
     assert.equal(et.listed('sticky'), true, 'approved: listed on the next read, with no invalidate() and no restart');
     assert.equal(et.stats().computes, computes + 1, 'the packs event invalidated the listing once');
     const row = et.descriptor('sticky');
