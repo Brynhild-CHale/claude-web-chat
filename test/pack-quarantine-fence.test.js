@@ -24,7 +24,7 @@ const packs = require('../lib/packs/install');
 const { listQuarantine } = require('../lib/packs/store');
 const { projectPaths } = require('../lib/core/paths');
 const { packFixture, tmpDir, fakeForge, repoWithArchive } = require('../test-support/packs');
-const { withTempHome } = require('../test-support/helpers');
+const { withServer, withTempHome } = require('../test-support/helpers');
 
 const SHA = 'a'.repeat(40);
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>\n';
@@ -93,4 +93,37 @@ test('a name that resolves outside the quarantine directory is still refused und
   const forge = await fakeForge(t, { repos: { 'acme/marks': repoWithArchive(elementPack('mark-pack', 'sticky'), { sha: SHA }) } });
   await assert.rejects(packs.quarantinePack({ url: forge.url('acme', 'marks'), root }), /resolves outside the quarantine directory/);
   assert.deepStrictEqual(fs.readdirSync(path.join(elsewhere, 'mark-pack')), [], 'nothing written through the link');
+});
+
+test('POST /api/packs/install answers an element pack\'s refusal with code "element-review"; a component pack\'s refusal carries no code', async (t) => {
+  await withServer(t, async ({ api }) => {
+    const forge = await fakeForge(t, {
+      repos: {
+        'acme/marks': repoWithArchive(elementPack('mark-pack', 'sticky'), { sha: SHA }),
+        'acme/bad': repoWithArchive(packFixture({ name: 'acme-bad', components: [{ name: 'Bad_Board' }] }), { sha: SHA }),
+        'acme/badname': repoWithArchive(packFixture({ name: 'Bad_Name', components: [{ name: 'deploy-board' }] }), { sha: SHA }),
+      },
+    });
+
+    const r = await api.post('/api/packs/install', { url: forge.url('acme', 'marks') });
+    assert.equal(r.status, 200, 'a refusal is not a transport failure');
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.rejected, true);
+    assert.equal(r.json.code, 'element-review');
+    assert.match(r.json.hint, /installs only after a review/);
+
+    // A component with a bad name: the manifest's refusal, which has no code.
+    const b = await api.post('/api/packs/install', { url: forge.url('acme', 'bad') });
+    assert.equal(b.status, 200, b.text);
+    assert.equal(b.json.ok, false);
+    assert.equal(b.json.rejected, true);
+    assert.match(b.json.hint, /Bad_Board/);
+    assert.equal('code' in b.json, false, `no code on a refusal that has none: ${b.text}`);
+
+    // A pack with a bad name: lib/core/names' refusal carries a code of its
+    // own, and the route passes that one on — never element-review.
+    const n = await api.post('/api/packs/install', { url: forge.url('acme', 'badname') });
+    assert.equal(n.json.ok, false, n.text);
+    assert.equal(n.json.code, 'name-invalid');
+  });
 });

@@ -206,6 +206,37 @@ test('Install now on a pack that ships an element type lands as its card: downlo
   }
 });
 
+test('Install now lands the card on the refusal\'s code alone, whatever its words (K.2-86)', async () => {
+  packsBody = { ok: true, packs: [], quarantined: [COMPONENT_Q], pending: [] };
+  const url = 'https://example.test/acme/marks';
+  const hint = 'mark-pack needs a review before it installs';
+  shell.setRoutes({
+    '/api/packs/install': { ok: false, rejected: true, code: 'element-review', hint, errors: [hint] },
+    '/api/packs/quarantine': () => {
+      packsBody = { ok: true, packs: [], quarantined: [ELEMENT_Q, COMPONENT_Q], pending: [] };
+      return { ok: true, record: { name: 'mark-pack' } };
+    },
+  });
+  try {
+    await openManage();
+    const ELEMENT_REVIEW = /ships element types? \([^)]*\)\. An element type's draw\.js runs in the surface page's own realm, so a pack that ships one installs only after a review/;
+    assert.doesNotMatch(hint, ELEMENT_REVIEW, 'the words alone would not land it');
+    const before = shell.calls.filter((c) => c.url === '/api/packs/quarantine' && c.method === 'POST').length;
+    $('pk-url').value = url;
+    const now = doc.querySelector('#drawer-manage .pk-now');
+    now.click();          // armed: a URL never reviewed takes two clicks
+    now.click();
+    await waitUntil(() => cardOf('mark-pack'), { timeout: 3000, what: 'the landed card' });
+    const q = shell.calls.filter((c) => c.url === '/api/packs/quarantine' && c.method === 'POST');
+    assert.equal(q.length, before + 1);
+    assert.deepEqual(q[q.length - 1].body, { url, global: false });
+    await waitUntil(() => /read its card below and approve it there/.test(doc.querySelector('#drawer-manage .pk-status').textContent), { timeout: 3000, what: 'the status line' });
+    assert.equal($('pk-url').value, '');
+  } finally {
+    shell.setRoutes();
+  }
+});
+
 test('the daemon\'s own answers: its card carries the frame, a pane\'s fetch of the approve route gets 409, and the control\'s approve lists the type on the toolbar', async () => {
   assert.equal(served.approve.ok, true, JSON.stringify(served.approve));
   packsBody = served.packsBefore;

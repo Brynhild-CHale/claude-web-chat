@@ -749,7 +749,7 @@ async function doInstall(btn) {
   status('Downloading and installing…');
   try {
     const body = await postJson('/api/packs/install', { url, global: wantsGlobal() });
-    if (!body.ok && ELEMENT_REVIEW.test(body.hint || '')) { await landForReview(url); return; }
+    if (!body.ok && isElementReview(body)) { await landForReview(url); return; }
     if (!body.ok) { status(body.hint || 'could not install that pack', 'err'); return; }
     $('pk-url').value = '';
     postInstall = body;
@@ -763,9 +763,11 @@ async function doInstall(btn) {
 
 // The daemon's refusal of a direct install of a pack that ships an element
 // type (lib/packs/install refuseDirectElements, DECISIONS.md B1). The install
-// route answers its message as the hint and carries no code, so this reads the
-// message's own words; test/pack-approve-control.test.js holds the two equal.
+// route carries its code, 'element-review' (K.2-86); a daemon from before that
+// answers only the message as the hint, so the message's own words are the
+// fallback — test/pack-approve-control.test.js holds the two equal.
 const ELEMENT_REVIEW = /ships element types? \([^)]*\)\. An element type's draw\.js runs in the surface page's own realm, so a pack that ships one installs only after a review/;
+const isElementReview = (body) => body.code === 'element-review' || ELEMENT_REVIEW.test(body.hint || '');
 
 // "Install now" on a URL whose pack turns out to ship an element type lands as
 // that pack's quarantine card, where the person reads it and approves it with
