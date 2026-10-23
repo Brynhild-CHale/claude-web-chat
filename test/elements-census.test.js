@@ -295,6 +295,32 @@ test('a hard stop with an uncommitted pin: uncommitted-lost once (one stderr lin
   assert.deepEqual(r3.ack, { appended: 0, keys: 0 });
 });
 
+test('a complete close appended BEFORE a version covers nothing: an earlier graceful stop, then a hard stop, still reports the loss', async (t) => {
+  // The census reads only the closes after the version's record index: an
+  // earlier boot's close (which could not hold a version not yet written) must
+  // never turn a later crash's loss into `discarded`.
+  const s1 = await withServer(t);
+  await turn(s1.api, 'A', () => render(s1.api, 'm1'));
+  await s1.graceful();
+  const closes = ofType(s1.root, 'close');
+  assert.equal(closes.length, 1, 's1 appended (its commit record), so it closed');
+  assert.equal(closes[0].complete, true);
+
+  const s2 = await withServer(t, { root: s1.root });
+  const pin = await addPin(s2, 'lost to a crash after an earlier graceful stop');
+  await s2.stop(); // a hard stop: no close
+  assert.equal(ofType(s1.root, 'close').length, 1, 'no close after the version');
+  const key = `${pin.id}@${pin.v}`;
+
+  const s3 = await boot(t, { root: s1.root });
+  const r3 = bootReport(s1.root);
+  assert.deepEqual(unclean(r3), ['uncommitted-lost'], JSON.stringify(r3.states));
+  assert.deepEqual(r3.states['uncommitted-lost'], { count: 1, examples: [key] });
+  assert.equal(r3.states.discarded, undefined, 'the earlier close does not cover it');
+  assert.equal(s3.lines().length, 1);
+  assert.deepEqual(ofType(s1.root, 'ack').map((r) => r.keys), [[`uncommitted-lost ${key}`]]);
+});
+
 test('a draft that does not restore (base_active moved): uncommitted-lost as today, then acknowledged', async (t) => {
   const s1 = await withServer(t);
   const pin = await addPin(s1, 'in a draft that will not restore');
