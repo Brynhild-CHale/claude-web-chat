@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const { packFixture, fakeForge, repoWithArchive } = require('../test-support/packs');
+const { packFixture, fakeForge, repoWithArchive, tmpDir } = require('../test-support/packs');
 const { withServer, waitUntil } = require('../test-support/helpers');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { readAudit, findPack } = require('../lib/packs/store');
@@ -139,6 +139,47 @@ test('the confirm frame shows the review, its nonce installs the pack, the packs
     // Quarantine is emptied: a second approve has nothing to approve.
     r = await api.get('/api/packs');
     assert.deepEqual(r.json.quarantined, []);
+  });
+});
+
+// The frame's nonce binds what was staged, not only the name: a pane may
+// re-stage the same name from another URL after the person's frame was drawn
+// (POST /api/packs/quarantine answers any pane's fetch), and the person's click
+// must not then install a tree they never read (DECISIONS.md K.4 H3 a).
+test('a re-stage of the name after the frame was drawn fails the click\'s nonce: neither tree installs, the new one stays quarantined', async (t) => {
+  // A realpath'd root: a second staging under a root reached through a symlink
+  // trips lib/packs/tree stageQuarantine's fence (U322a hand-off).
+  await withServer(t, { root: fs.realpathSync(tmpDir('wc-pa-restage-')) }, async ({ srv, api, anonApi, root }) => {
+    const forge = await fakeForge(t, { repos: {
+      'acme/marks': repoWithArchive(elementPack(), { sha: SHA }),
+      'evil/marks': repoWithArchive(elementPack({ types: ['evil'] }), { sha: 'b'.repeat(40) }),
+    } });
+    assert.equal((await api.post('/api/packs/quarantine', { url: forge.url('acme', 'marks') })).json.ok, true);
+
+    // The person's frame: the document for A, its nonce and review.
+    await srv.controlStarted;
+    const { origin, port } = await srv.answerSurface.ensure();
+    const qs = 'name=mark-pack&tier=local&layout=confirm&mode=light';
+    const doc = await request(port, 'GET', `/answer/control/pack-approve?${qs}`);
+    assert.equal(doc.status, 200);
+    assert.ok(descOf(doc.body).lines.some((l) => l.startsWith('Element type sticky — ')), 'the person read A');
+
+    // A pane re-stages the same name from another URL.
+    const r = await anonApi.post('/api/packs/quarantine', { url: forge.url('evil', 'marks') });
+    assert.equal(r.json.ok, true, r.text);
+
+    // The person's click, with A's nonce.
+    const res = await request(port, 'POST', '/answer/api/control/pack-approve?device=desktop',
+      CONFIRM.bodyOf(Object.fromEntries(new URLSearchParams(qs))),
+      { headers: { origin, 'sec-fetch-site': 'same-origin', 'x-wc-answer': nonceOf(doc.body) } });
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.deepEqual(res.body, { ok: false, refused: 'nonce' }, 'the nonce was minted for the tree the person read');
+    const typesDir = projectPaths(root).elementTypesDir;
+    assert.equal(fs.existsSync(path.join(typesDir, 'evil')), false, 'B is not installed');
+    assert.equal(fs.existsSync(path.join(typesDir, 'sticky')), false, 'nor A');
+    assert.equal(findPack(root, 'mark-pack', 'local'), null);
+    const waiting = (await api.get('/api/packs')).json.quarantined;
+    assert.deepEqual(waiting.map((q) => [q.name, (q.elements || []).map((e) => e.name)]), [['mark-pack', ['evil']]], 'B still in quarantine');
   });
 });
 

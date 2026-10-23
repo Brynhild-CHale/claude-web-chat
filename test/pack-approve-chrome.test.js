@@ -172,7 +172,7 @@ test('with mayAct() false the element card shows the terminal command instead of
   assert.equal(el.querySelector('iframe'), null);
   const cmd = [...el.querySelectorAll('.rn-cmd')].map((c) => c.textContent);
   assert.deepEqual(cmd, ['claude-web-chat pack approve mark-pack']);
-  assert.match(el.textContent, /It ships element type \(sticky\) whose draw\.js runs in this page/);
+  assert.match(el.textContent, /It ships element type \(sticky\) whose drawing code runs in this page/);
   assert.ok(!buttonsOf(el).includes('Install it'));
   await setAccess({ level: 'local', remote: false });
 });

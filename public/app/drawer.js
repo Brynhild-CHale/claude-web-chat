@@ -1021,7 +1021,7 @@ function elementTypesOf(q) {
 // terminal command, returned for the card to show.
 function elementApprove(q, types, actions) {
   const cmd = `claude-web-chat pack approve ${q.name}`;
-  const what = `It ships element type${types.length === 1 ? '' : 's'} (${types.join(', ')}) whose draw.js runs in this page, so it installs only when a person approves it.`;
+  const what = `It ships element type${types.length === 1 ? '' : 's'} (${types.join(', ')}) whose drawing code runs in this page, so it installs only when a person approves it.`;
   const tier = q.tier === 'system' ? 'system' : 'local';
   if (tier === 'system' && remoteNow()) {
     return notice('Approve it on the host', `${what} Installing for all projects is the host’s to do — run this in a terminal there.`, cmd);
