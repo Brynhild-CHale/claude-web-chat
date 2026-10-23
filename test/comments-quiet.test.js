@@ -5,7 +5,7 @@
 // was doing: a GET /api/comments every 3 s (every pin and every reply) and a
 // marker pass every 500 ms that resolved each pin's anchor inside the pane
 // shadow roots and read its rect — a forced layout twice a second — both
-// running in a hidden tab. The WS `comments` frame is the primary path, so:
+// running in a hidden tab. The WS `element:comment` frame (U327a; `comments` before) is the primary path, so:
 //
 //   * the fetch runs on init, on every hello (a reconnect may have missed a
 //     frame) and on every reset (the surface moved; U304 removed the 30 s
@@ -13,7 +13,7 @@
 //     for then is sent when the tab is visible again;
 //   * the 500 ms pass returns at once on a hidden page, or with no pins and no
 //     marker to take down; a visibilitychange to visible runs one pass;
-//   * a `comments` frame still redraws the markers at once.
+//   * an `element:comment` frame still redraws the markers at once.
 //
 // Both pollers stay single setIntervals (spec §10.1): the shell stubs them, and
 // a test runs one by calling its function.
@@ -29,7 +29,7 @@ const PANE = { id: 'notes', html: '<ul><li>one</li><li>two</li></ul>', target: '
 const PIN = { id: 'c1', text: 'this one', shared: true, replies: [],
   anchor: { mount: 'notes', selector: 'li', text: 'two', ordinal: 1 } };
 
-const commentGets = () => shell.calls.filter((c) => c.url === '/api/comments' && c.method === 'GET').length;
+const commentGets = () => shell.calls.filter((c) => c.url === '/api/elements?type=comment' && c.method === 'GET').length;
 const interval = (name, ms) => {
   const found = shell.intervals().filter((i) => i.fn && i.fn.name === name);
   assert.equal(found.length, 1, `one ${name} interval`);
@@ -77,12 +77,12 @@ test('the comments pollers are one 500 ms pass and no timed fetch — no 30 s or
   assert.ok(commentGets() >= 1, 'init still reads the pins once');
 });
 
-test('a reset frame sends one GET /api/comments while visible, none while hidden, and one on the return to visible', async () => {
+test('a reset frame sends one GET /api/elements?type=comment while visible, none while hidden, and one on the return to visible', async () => {
   const reset = () => shell.frame({ ...helloFrame({ mounts: [PANE] }), type: 'reset' });
   let n = commentGets();
   await reset();
   await shell.tick();
-  assert.equal(commentGets(), n + 1, 'visible: a reset is one GET /api/comments');
+  assert.equal(commentGets(), n + 1, 'visible: a reset is one GET /api/elements?type=comment');
 
   setVisibility('hidden');
   n = commentGets();
@@ -99,7 +99,7 @@ test('a reset frame sends one GET /api/comments while visible, none while hidden
   assert.equal(commentGets(), n + 2);
 });
 
-test('a hello frame triggers one /api/comments refresh — and none while hidden', async () => {
+test('a hello frame triggers one /api/elements?type=comment refresh — and none while hidden', async () => {
   let n = commentGets();
   await shell.frame(helloFrame({ mounts: [PANE] }));
   assert.equal(commentGets(), n + 1, 'a (re)connect re-reads the pins once');
@@ -132,9 +132,9 @@ test('with no pins the 500 ms pass does no layout work', async () => {
   } finally { spy.restore(); }
 });
 
-test('a comments frame draws its marker at once, and the pass repositions it as before', async () => {
-  shell.setRoutes({ '/api/comments': { comments: [PIN] } });
-  await shell.frame({ type: 'comments', comments: [PIN] });
+test('an element:comment frame draws its marker at once, and the pass repositions it as before', async () => {
+  shell.setRoutes({ '/api/elements?type=comment': { elements: [PIN] } });
+  await shell.frame({ type: 'element:comment', elements: [PIN] });
   assert.equal(markers().length, 1, 'the frame redrew the markers with no interval run');
 
   const li = host().shadowRoot.querySelectorAll('li')[1];
@@ -174,8 +174,8 @@ test('on a hidden page the pass does nothing even with pins; visible again runs 
 });
 
 test('the last pin going takes its marker down on the next pass', async () => {
-  shell.setRoutes({ '/api/comments': { comments: [] } });
-  await shell.frame({ type: 'comments', comments: [] });
+  shell.setRoutes({ '/api/elements?type=comment': { elements: [] } });
+  await shell.frame({ type: 'element:comment', elements: [] });
   assert.equal(markers().length, 0, 'the frame took the marker down at once');
   const spy = spyLayout();
   try {

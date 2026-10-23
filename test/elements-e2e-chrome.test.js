@@ -48,12 +48,12 @@ async function fromDaemon() {
     served.graph = await get('/api/graph');
     served.n6 = await get('/api/graph/node/n6');
     served.n4 = await get('/api/graph/node/n4');
-    served.liveN6 = (await get('/api/comments')).comments;
+    served.liveN6 = (await get('/api/elements?type=comment')).elements;
     const r = await fetch(baseUrl + '/api/graph/active', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'n4' }),
     });
     assert.equal(r.status, 200, await r.text());
-    served.liveN4 = (await get('/api/comments')).comments;
+    served.liveN4 = (await get('/api/elements?type=comment')).elements;
   } finally {
     for (const fn of cleanups.reverse()) await fn();
   }
@@ -79,7 +79,7 @@ before(async () => {
       '/api/graph': served.graph,
       '/api/graph/node/n4': served.n4,
       '/api/graph/node/n6': served.n6,
-      '/api/comments': { comments: served.liveN6, next_cursor: 0 },
+      '/api/elements?type=comment': { elements: served.liveN6, next_cursor: 0 },
     },
   });
   W = shell.window;
@@ -93,7 +93,7 @@ before(async () => {
     active: 'n6',
     mounts: [...asLive(served.n6.mounts), FORM_PANE],
   }));
-  await shell.frame({ type: 'comments', comments: served.liveN6 });
+  await shell.frame({ type: 'element:comment', elements: served.liveN6 });
 });
 
 after(async () => { if (shell) await shell.restore(); });
@@ -187,7 +187,7 @@ test('a migrated node\'s pins draw as today: anchors are the original locator, a
   // Set active on n4 (the daemon's answer, above): its restored pins resolve.
   await shell.frame({ type: 'reset', active: 'n4', store: {}, lock: null, theme: null, activeTheme: null,
     mounts: asLive(served.n4.mounts) });
-  await shell.frame({ type: 'comments', comments: served.liveN4 });
+  await shell.frame({ type: 'element:comment', elements: served.liveN4 });
   assert.deepEqual(served.liveN4.map((c) => c.id).sort(), served.n4.comments.map((c) => c.id).sort());
   for (const c of served.liveN4) assert.ok(Number.isInteger(c.v), `${c.id} live with its v`);
   await markerPass();

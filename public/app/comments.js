@@ -96,8 +96,8 @@ export function initComments() {
     if (isHidden()) { stale = true; return; }
     stale = false;
     try {
-      const r = await fetch('/api/comments').then((x) => x.json());
-      liveComments = Array.isArray(r.comments) ? r.comments : [];
+      const r = await fetch('/api/elements?type=comment').then((x) => x.json());
+      liveComments = Array.isArray(r.elements) ? r.elements : [];
     } catch (_) {}
     renderMarkers();
   }
@@ -206,7 +206,7 @@ export function initComments() {
       closePop();
       setPinMode(false);
       try {
-        await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, shared, anchor, device: deviceKind() }) });
+        await fetch('/api/elements', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'comment', anchor, payload: { text, shared }, device: deviceKind() }) });
       } catch (_) {}
       refresh();
     });
@@ -294,7 +294,7 @@ export function initComments() {
       if (stale) stale.remove();
       let r = null;
       try {
-        const resp = await fetch('/api/comments/' + encodeURIComponent(pin.id) + '/reply', {
+        const resp = await fetch('/api/elements/' + encodeURIComponent(pin.id) + '/reply', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, author: 'user', device: deviceKind() }),
         });
         if (resp.ok) r = await resp.json();
@@ -302,14 +302,14 @@ export function initComments() {
       // F10: only a confirmed ok response with a pin clears the draft (via the
       // re-render below). A 404 / {error} / network failure keeps the typed reply
       // and shows an inline hint instead of silently re-rendering from stale cache.
-      if (!r || !r.pin) {
+      if (!r || !r.element) {
         const err = document.createElement('div');
         err.className = 'pin-reply-err';
         err.textContent = 'Reply failed — draft kept. Try again.';
         el.querySelector('.pin-reply').appendChild(err);
         return;
       }
-      upsertPin(r.pin);
+      upsertPin(r.element);
       renderMarkers();
       openThread(pin.id, x, y); // re-render the thread in place with the new message
     };
@@ -331,12 +331,12 @@ export function initComments() {
       setPinMode(false);
     });
     el.querySelector('.pin-share-cb').addEventListener('change', async (ev) => {
-      try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: ev.target.checked, device: deviceKind() }) }); } catch (_) {}
+      try { await fetch('/api/elements/' + encodeURIComponent(pin.id), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: ev.target.checked, device: deviceKind() }) }); } catch (_) {}
       refresh();
     });
     el.querySelector('.pin-del').addEventListener('click', async () => {
       closePop();
-      try { await fetch('/api/comments/' + encodeURIComponent(pin.id), { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: deviceKind() }) }); } catch (_) {}
+      try { await fetch('/api/elements/' + encodeURIComponent(pin.id), { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: deviceKind() }) }); } catch (_) {}
       refresh();
     });
   }

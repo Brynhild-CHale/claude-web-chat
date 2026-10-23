@@ -6,14 +6,14 @@
 //
 // Every test drives a real daemon (withServer) through real sockets, as the
 // chrome speaks to it: a report is a `report` frame on /ws, a pin is POST
-// /api/comments without the writer token (the chrome's own request). Reports
+// /api/elements {type: comment} without the writer token (the chrome's own request). Reports
 // are not acknowledged on the wire, so a test waits on ctx.reports' stats.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, waitUntil, wsConnect, tmpRoot } = require('../test-support/helpers');
+const { withServer, waitUntil, wsConnect, tmpRoot, commentBody } = require('../test-support/helpers');
 const { routePaths } = require('../test-support/doc-truth');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths, projectPaths } = require('../lib/core/paths');
@@ -56,7 +56,7 @@ async function commit(api, msg) {
 
 // A pin on a pane, as the chrome sends it (no writer token).
 async function pinOn(d, mount, text = 'a note') {
-  const r = await ok(d.anonApi.post('/api/comments', { text, shared: true, anchor: { mount, selector: 'p', text: 'x' } }), `pin on ${mount}`);
+  const r = await ok(d.anonApi.post('/api/elements', commentBody({ text, shared: true, anchor: { mount, selector: 'p', text: 'x' } })), `pin on ${mount}`);
   assert.ok(Number.isSafeInteger(r.pin.v) && r.pin.v > 0, 'the pin names its log version');
   return { id: r.pin.id, v: r.pin.v };
 }

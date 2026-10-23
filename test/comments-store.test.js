@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const { withServer, existingProject, waitUntil } = require('../test-support/helpers');
+const { withServer, existingProject, waitUntil, commentBody } = require('../test-support/helpers');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 const { v3Graph } = require('../test-support/v3-graph');
 const { copyMatches } = require('../lib/core/element-log');
@@ -38,8 +38,8 @@ async function turn(api, message = 'turn') {
   await ok(api.post('/api/turn-begin', { message }), 'turn-begin');
   return ok(api.post('/api/turn-end', { summary: message }), 'turn-end');
 }
-const cursor = async (api) => (await ok(api.get('/api/comments'), 'GET')).next_cursor;
-const addPin = async (api, text, extra = {}) => (await ok(api.post('/api/comments', { text, anchor: ANCHOR, ...extra }), `add ${text}`)).pin;
+const cursor = async (api) => (await ok(api.get('/api/elements?type=comment'), 'GET')).next_cursor;
+const addPin = async (api, text, extra = {}) => (await ok(api.post('/api/elements', commentBody({ text, anchor: ANCHOR, ...extra })), `add ${text}`)).pin;
 
 // ── the S-14 golden replay ──────────────────────────────────────────────────
 
@@ -115,24 +115,24 @@ test('S-14: the golden replays through the real get_comments and reply_comment w
   // s14.js :54-78, step for step.
   await ok(s.api.post('/api/render', { id: 'f6-s14', html: '<h3 id="t">Timeline</h3><p id="b">Body</p>' }), 'render');
   await turn(s.api, 'base');
-  const add = (await ok(s.api.post('/api/comments', { text: 'is this right?', anchor: { mount: 'f6-s14', selector: '#t', text: 'Timeline', ordinal: 0 } }), 'add')).pin;
+  const add = (await ok(s.api.post('/api/elements', commentBody({ text: 'is this right?', anchor: { mount: 'f6-s14', selector: '#t', text: 'Timeline', ordinal: 0 } })), 'add')).pin;
   await record('add');
-  await ok(s.api.post(`/api/comments/${add.id}/reply`, { text: 'one more thing', author: 'user' }), 'reply'); await record('reply-user');
+  await ok(s.api.post(`/api/elements/${add.id}/reply`, { text: 'one more thing', author: 'user' }), 'reply'); await record('reply-user');
   const rc = await replyComment.handler({ id: add.id, text: 'answered' });
   steps.push({ step: 'reply_comment', reply_comment: norm(rc) }); await record('reply-claude');
-  await ok(s.api.patch(`/api/comments/${add.id}`, { shared: false }), 'private'); await record('toggle-private');
-  await ok(s.api.patch(`/api/comments/${add.id}`, { shared: true }), 'shared'); await record('toggle-shared');
-  await ok(s.api.patch(`/api/comments/${add.id}`, { text: 'is this right? (edited)' }), 'edit'); await record('edit');
+  await ok(s.api.patch(`/api/elements/${add.id}`, { shared: false }), 'private'); await record('toggle-private');
+  await ok(s.api.patch(`/api/elements/${add.id}`, { shared: true }), 'shared'); await record('toggle-shared');
+  await ok(s.api.patch(`/api/elements/${add.id}`, { text: 'is this right? (edited)' }), 'edit'); await record('edit');
   const A = (await turn(s.api, 'A')).node_id;
-  const c2 = (await ok(s.api.post('/api/comments', { text: 'second', anchor: { mount: 'f6-s14', selector: '#b', text: 'Body' } }), 'add 2')).pin;
+  const c2 = (await ok(s.api.post('/api/elements', commentBody({ text: 'second', anchor: { mount: 'f6-s14', selector: '#b', text: 'Body' } })), 'add 2')).pin;
   await record('add-second');
   await ok(s.api.post('/api/render', { id: 'f6-s14b', html: '<p>more</p>' }), 'render b');
   const B = (await turn(s.api, 'B')).node_id;
-  await ok(s.api.del(`/api/comments/${c2.id}`), 'delete'); await record('delete');
+  await ok(s.api.del(`/api/elements/${c2.id}`), 'delete'); await record('delete');
   await ok(s.api.post('/api/graph/active', { id: A }), 'set active A'); await record('set-active-older');
-  await ok(s.api.post(`/api/comments/${add.id}/reply`, { text: 'on the older node', author: 'user' }), 'reply older'); await record('reply-on-older');
+  await ok(s.api.post(`/api/elements/${add.id}/reply`, { text: 'on the older node', author: 'user' }), 'reply older'); await record('reply-on-older');
   await ok(s.api.post('/api/graph/active', { id: B }), 'set active B'); await record('set-active-back');
-  await ok(s.api.post(`/api/comments/${add.id}/reply`, { text: 'uncommitted', author: 'user' }), 'reply uncommitted'); await record('reply-uncommitted');
+  await ok(s.api.post(`/api/elements/${add.id}/reply`, { text: 'uncommitted', author: 'user' }), 'reply uncommitted'); await record('reply-uncommitted');
   await s.graceful(); await s.stop();
   s = await withServer(t, { root: s.root });
   API = s.api;
@@ -165,7 +165,7 @@ test('the cursor is the log\'s max seq: delete, Set active, Wipe, New graph and 
   for (const text of ['a', 'b', 'c']) pins.push(await addPin(s.api, text));
   assert.equal(await cursor(s.api), 3, 'three adds give 3');
   const n1 = (await turn(s.api, 'pins')).node_id;
-  await ok(s.api.del(`/api/comments/${pins[2].id}`), 'delete');
+  await ok(s.api.del(`/api/elements/${pins[2].id}`), 'delete');
   assert.equal(await cursor(s.api), 3, 'deleting the newest keeps 3');
   await ok(s.api.post('/api/graph/active', { id: base }), 'set active base');
   assert.equal(await cursor(s.api), 3, 'Set active to an older node keeps it');
@@ -185,18 +185,36 @@ test('the cursor is the log\'s max seq: delete, Set active, Wipe, New graph and 
   const p = await addPin(s.api, 'd');
   assert.equal(await cursor(s.api), 4);
   assert.equal(p.seq, 4);
-  const ed = await ok(s.api.patch(`/api/comments/${p.id}`, { text: 'd2' }), 'edit');
+  const ed = await ok(s.api.patch(`/api/elements/${p.id}`, { text: 'd2' }), 'edit');
   assert.equal(ed.pin.seq, 5);
   assert.equal(await cursor(s.api), 5, 'an edit raises it by one');
-  await ok(s.api.patch(`/api/comments/${p.id}`, { text: 'd2' }), 'no-op edit');
+  await ok(s.api.patch(`/api/elements/${p.id}`, { text: 'd2' }), 'no-op edit');
   assert.equal(await cursor(s.api), 5, 'a no-op edit does not');
-  const rp = await ok(s.api.post(`/api/comments/${p.id}/reply`, { text: 'r', author: 'user' }), 'reply');
+  const rp = await ok(s.api.post(`/api/elements/${p.id}/reply`, { text: 'r', author: 'user' }), 'reply');
   assert.equal(rp.pin.seq, 6);
   assert.equal(await cursor(s.api), 6, 'a reply raises it by one');
   // since=N stays exclusive over the live pins.
-  const since = (await ok(s.api.get('/api/comments?since=5'), 'since')).comments.map((c) => c.id);
+  const since = (await ok(s.api.get('/api/elements?type=comment&since=5'), 'since')).elements.map((c) => c.id);
   assert.deepEqual(since, [p.id]);
-  assert.deepEqual((await ok(s.api.get('/api/comments?since=6'), 'since 6')).comments, []);
+  assert.deepEqual((await ok(s.api.get('/api/elements?type=comment&since=6'), 'since 6')).elements, []);
+});
+
+test('one counter: a highlight write raises get_comments\' cursor too, and a highlight\'s delete never lowers it (U327a, the element API\'s 1A.8 rule)', async (t) => {
+  const { api } = await withServer(t);
+  await ok(api.post('/api/render', { id: 'm1', html: '<p class="lead">Hello</p>' }), 'render');
+  const p = await addPin(api, 'a');
+  assert.equal(await cursor(api), p.seq);
+  const RANGE = { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } };
+  const h = (await ok(api.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { color: 'gold' } }), 'highlight')).element;
+  assert.equal(h.seq, p.seq + 1, 'the highlight takes the next seq of the one counter');
+  assert.equal(await cursor(api), h.seq, 'and raises the comment read\'s cursor');
+  await ok(api.patch(`/api/elements/${h.id}`, { color: 'accent' }), 'highlight edit');
+  assert.equal(await cursor(api), h.seq + 1, 'its edit raises it by one');
+  await ok(api.del(`/api/elements/${h.id}`), 'highlight delete');
+  assert.equal(await cursor(api), h.seq + 1, 'its delete never lowers it');
+  const q = await addPin(api, 'b');
+  assert.equal(q.seq, h.seq + 2, 'the next comment continues the one counter');
+  assert.deepEqual((await ok(api.get(`/api/elements?type=comment&since=${p.seq}`), 'since')).elements.map((c) => c.id), [q.id]);
 });
 
 // ── ids never re-minted (tests/F6/ids.js's three cases) ─────────────────────
@@ -209,7 +227,7 @@ test('ids: a pin held only in a torn node, only in a set-aside draft, or lost to
   const a1 = await addPin(s.api, 'one');
   const a2 = await addPin(s.api, 'two');
   const n = (await turn(s.api, 'holds both')).node_id;
-  await ok(s.api.del(`/api/comments/${a2.id}`), 'delete');
+  await ok(s.api.del(`/api/elements/${a2.id}`), 'delete');
   await s.stop();
   const nodePath = path.join(projectPaths(s.root).graphDir, `${n}.json`);
   fs.writeFileSync(nodePath, fs.readFileSync(nodePath, 'utf8').slice(0, 40));
@@ -227,7 +245,7 @@ test('ids: a pin held only in a torn node, only in a set-aside draft, or lost to
   assert.ok(fs.existsSync(draft), 'the graceful stop wrote the draft');
   fs.writeFileSync(draft, '{"torn');
   s = await withServer(t, { root: s.root });
-  assert.deepEqual((await ok(s.api.get('/api/comments'), 'GET')).comments, [], 'the draft was set aside');
+  assert.deepEqual((await ok(s.api.get('/api/elements?type=comment'), 'GET')).elements, [], 'the draft was set aside');
   const bNext = await addPin(s.api, 'after the aside');
   assert.ok(idNum(bNext.id) > idNum(b1.id), `${bNext.id} is above ${b1.id}`);
 
@@ -236,7 +254,7 @@ test('ids: a pin held only in a torn node, only in a set-aside draft, or lost to
   const c1 = await addPin(s.api, 'lost');
   await s.stop();
   s = await withServer(t, { root: s.root });
-  assert.deepEqual((await ok(s.api.get('/api/comments'), 'GET')).comments, [], 'the pin was lost');
+  assert.deepEqual((await ok(s.api.get('/api/elements?type=comment'), 'GET')).elements, [], 'the pin was lost');
   const cNext = await addPin(s.api, 'after the hard stop');
   assert.ok(idNum(cNext.id) > idNum(c1.id), `${cNext.id} is above ${c1.id}`);
 });
@@ -275,13 +293,13 @@ test('the one writer: a fake secret posted as text, as an edit and as a reply co
   const add = await addPin(api, `see ${SECRET.text}`);
   assert.deepEqual(findLeaks(JSON.stringify(add), [SECRET]), [], 'the add answers it masked');
   const other = await addPin(api, 'plain');
-  const ed = await ok(api.patch(`/api/comments/${other.id}`, { text: `edited ${SECRET.text}` }), 'edit');
+  const ed = await ok(api.patch(`/api/elements/${other.id}`, { text: `edited ${SECRET.text}` }), 'edit');
   assert.deepEqual(findLeaks(JSON.stringify(ed), [SECRET]), [], 'the edit answers it masked');
   assert.notEqual(ed.pin.text, `edited ${SECRET.text}`);
-  const rp = await ok(api.post(`/api/comments/${other.id}/reply`, { text: `reply ${SECRET.text}`, author: 'user' }), 'reply');
+  const rp = await ok(api.post(`/api/elements/${other.id}/reply`, { text: `reply ${SECRET.text}`, author: 'user' }), 'reply');
   assert.deepEqual(findLeaks(JSON.stringify(rp), [SECRET]), [], 'the reply answers it masked');
-  const all = await ok(api.get('/api/comments'), 'GET');
-  assert.equal(all.comments.length, 2);
+  const all = await ok(api.get('/api/elements?type=comment'), 'GET');
+  assert.equal(all.elements.length, 2);
   assert.deepEqual(findLeaks(JSON.stringify(all), [SECRET]), [], 'GET serves it masked');
   const n = (await turn(api, 'commit')).node_id;
   const copies = nodeOf(root, n).comments;
@@ -295,18 +313,18 @@ test('learned later: a value the redactor learns after the write (the capture to
   const { api, root } = await withServer(t);
   const value = `wclearned${crypto.randomBytes(16).toString('hex')}`;
   const p = await addPin(api, `the token is ${value}`);
-  const r = await ok(api.post(`/api/comments/${p.id}/reply`, { text: `again ${value}`, author: 'user' }), 'reply');
+  const r = await ok(api.post(`/api/elements/${p.id}/reply`, { text: `again ${value}`, author: 'user' }), 'reply');
   assert.ok(r.pin.replies[0].text.includes(value), 'not known at the write: stored as typed');
   const before = logBytes(root);
   assert.ok(before.includes(value), 'the log holds it as written');
   fs.writeFileSync(projectPaths(root).captureToken, value + '\n');
   const masked = await waitUntil(async () => {
-    const body = (await api.get('/api/comments')).json;
+    const body = (await api.get('/api/elements?type=comment')).json;
     return JSON.stringify(body).includes(value) ? null : body;
-  }, { timeout: 6000, what: 'GET /api/comments masks the learned value' });
-  assert.equal(masked.comments.length, 1);
-  assert.ok(!masked.comments[0].text.includes(value));
-  assert.ok(!masked.comments[0].replies[0].text.includes(value));
+  }, { timeout: 6000, what: 'GET /api/elements masks the learned value' });
+  assert.equal(masked.elements.length, 1);
+  assert.ok(!masked.elements[0].text.includes(value));
+  assert.ok(!masked.elements[0].replies[0].text.includes(value));
   assert.equal(logBytes(root), before, 'the log bytes are unchanged');
 });
 
@@ -319,9 +337,9 @@ test('every live pin and every committed copy carries a v whose log version pass
   const a = await addPin(api, 'a');
   const b = await addPin(api, 'b', { shared: false });
   const n1 = (await turn(api, 'one')).node_id;
-  await ok(api.patch(`/api/comments/${a.id}`, { text: 'a2' }), 'edit');
-  await ok(api.post(`/api/comments/${b.id}/reply`, { text: 'mine', author: 'user' }), 'reply');
-  await ok(api.patch(`/api/comments/${b.id}`, { shared: true }), 'share');
+  await ok(api.patch(`/api/elements/${a.id}`, { text: 'a2' }), 'edit');
+  await ok(api.post(`/api/elements/${b.id}/reply`, { text: 'mine', author: 'user' }), 'reply');
+  await ok(api.patch(`/api/elements/${b.id}`, { shared: true }), 'share');
   const n2 = (await turn(api, 'two')).node_id;
   await addPin(api, 'uncommitted');
   const checkPin = (c, where) => {
@@ -331,7 +349,7 @@ test('every live pin and every committed copy carries a v whose log version pass
   for (const c of srv.state.comments) checkPin(c, 'live');
   assert.equal(srv.state.comments.length, 3);
   for (const id of [n1, n2]) for (const c of nodeOf(root, id).comments) checkPin(c, id);
-  for (const c of (await ok(api.get('/api/comments'), 'GET')).comments) checkPin(c, 'GET');
+  for (const c of (await ok(api.get('/api/elements?type=comment'), 'GET')).elements) checkPin(c, 'GET');
 });
 
 // ── unchanged gates ─────────────────────────────────────────────────────────
@@ -339,16 +357,16 @@ test('every live pin and every committed copy carries a v whose log version pass
 test('unchanged: Claude\'s reply into a private pin 404s, an empty reply 400s, a private pin\'s event copy carries no text', async (t) => {
   const { api } = await withServer(t);
   const priv = await addPin(api, 'PRIVATE-NOTE-TEXT', { shared: false });
-  const before = (await ok(api.get('/api/comments'), 'GET')).next_cursor;
-  const claude = await api.post(`/api/comments/${priv.id}/reply`, { text: 'hi', author: 'claude' });
+  const before = (await ok(api.get('/api/elements?type=comment'), 'GET')).next_cursor;
+  const claude = await api.post(`/api/elements/${priv.id}/reply`, { text: 'hi', author: 'claude' });
   assert.equal(claude.status, 404);
   assert.deepEqual(claude.json, { error: 'not found', id: priv.id });
-  assert.equal((await api.post(`/api/comments/${priv.id}/reply`, { text: '   ' })).status, 400);
-  assert.equal((await api.post('/api/comments/nope/reply', { text: 'x' })).status, 404);
-  assert.equal((await api.patch('/api/comments/nope', { text: 'x' })).status, 404);
-  assert.equal((await ok(api.get('/api/comments'), 'GET')).next_cursor, before, 'a refused write mints nothing');
-  await ok(api.post(`/api/comments/${priv.id}/reply`, { text: 'PRIVATE-REPLY-TEXT', author: 'user' }), 'user reply');
-  await ok(api.patch(`/api/comments/${priv.id}`, { text: 'PRIVATE-EDIT-TEXT' }), 'edit');
+  assert.equal((await api.post(`/api/elements/${priv.id}/reply`, { text: '   ' })).status, 400);
+  assert.equal((await api.post('/api/elements/nope/reply', { text: 'x' })).status, 404);
+  assert.equal((await api.patch('/api/elements/nope', { text: 'x' })).status, 404);
+  assert.equal((await ok(api.get('/api/elements?type=comment'), 'GET')).next_cursor, before, 'a refused write mints nothing');
+  await ok(api.post(`/api/elements/${priv.id}/reply`, { text: 'PRIVATE-REPLY-TEXT', author: 'user' }), 'user reply');
+  await ok(api.patch(`/api/elements/${priv.id}`, { text: 'PRIVATE-EDIT-TEXT' }), 'edit');
   const evs = (await ok(api.get('/api/events'), 'events')).events.filter((e) => e.kind === 'comment');
   assert.deepEqual(evs.map((e) => e.op), ['add', 'reply', 'edit']);
   assert.ok(!JSON.stringify(evs).includes('PRIVATE-'), 'no private text in the ring');
@@ -361,19 +379,19 @@ test('the stamps ride the store\'s pin: writer and provenance on the pin, `edite
   assert.deepEqual(add.writer, { class: 'claude', owner: 'claude', verified: true });
   assert.equal(add.provenance.origin, 'local');
   assert.equal(add.edited, undefined);
-  const ed = await ok(anonApi.patch(`/api/comments/${add.id}`, { text: 'by the user', device: 'mobile' }), 'edit');
+  const ed = await ok(anonApi.patch(`/api/elements/${add.id}`, { text: 'by the user', device: 'mobile' }), 'edit');
   assert.deepEqual(ed.pin.writer, add.writer, 'the creator stays');
   assert.equal(ed.pin.edited.writer.class, 'user');
   assert.equal(ed.pin.edited.provenance.device, 'mobile');
   assert.ok(Number.isFinite(ed.pin.edited.at));
-  const r1 = await ok(api.post(`/api/comments/${add.id}/reply`, { text: 'claude here', author: 'claude' }), 'claude reply');
-  const r2 = await ok(anonApi.post(`/api/comments/${add.id}/reply`, { text: 'user here', device: 'desktop' }), 'user reply');
+  const r1 = await ok(api.post(`/api/elements/${add.id}/reply`, { text: 'claude here', author: 'claude' }), 'claude reply');
+  const r2 = await ok(anonApi.post(`/api/elements/${add.id}/reply`, { text: 'user here', device: 'desktop' }), 'user reply');
   assert.equal(r1.pin.replies[0].writer.class, 'claude');
   assert.equal(r2.pin.replies[0].writer.class, 'claude', 'an earlier reply keeps its own writer');
   assert.equal(r2.pin.replies[1].writer.class, 'user');
   assert.equal(r2.pin.replies[1].provenance.device, 'desktop');
   assert.equal(r2.pin.edited.writer.class, 'user', 'a reply never becomes the editor');
-  const got = (await ok(api.get('/api/comments'), 'GET')).comments[0];
+  const got = (await ok(api.get('/api/elements?type=comment'), 'GET')).elements[0];
   assert.deepEqual(got.writer, add.writer);
   assert.deepEqual(got.edited, r2.pin.edited);
   assert.deepEqual(got.replies.map((r) => r.writer.class), ['claude', 'user']);
@@ -382,31 +400,31 @@ test('the stamps ride the store\'s pin: writer and provenance on the pin, `edite
 test('read-only: on a project whose comment migration was refused, add, edit and reply answer 503 with the hint; GET and DELETE answer', async (t) => {
   const { api, srv } = await withServer(t, { seed: ({ root }) => { v3Graph(root, { unmappable: true }); } });
   assert.equal(srv.elements.readOnly, true);
-  const got = await api.get('/api/comments');
+  const got = await api.get('/api/elements?type=comment');
   assert.equal(got.status, 200);
-  const pins = got.json.comments;
+  const pins = got.json.elements;
   assert.ok(pins.length >= 1, 'the restored node\'s pins are served');
   const before = got.json.next_cursor;
-  const want = { error: 'comments are read-only until the comment migration runs', hint: 'run claude-web-chat migrate for the report' };
-  const post = await api.post('/api/comments', { text: 'x', anchor: ANCHOR });
+  const want = { error: 'elements are read-only until the comment migration runs', hint: 'run claude-web-chat migrate for the report' };
+  const post = await api.post('/api/elements', commentBody({ text: 'x', anchor: ANCHOR }));
   assert.equal(post.status, 503); assert.deepEqual(post.json, want);
-  const patch = await api.patch(`/api/comments/${pins[0].id}`, { text: 'changed' });
+  const patch = await api.patch(`/api/elements/${pins[0].id}`, { text: 'changed' });
   assert.equal(patch.status, 503); assert.deepEqual(patch.json, want);
-  const reply = await api.post(`/api/comments/${pins[0].id}/reply`, { text: 'hello', author: 'user' });
+  const reply = await api.post(`/api/elements/${pins[0].id}/reply`, { text: 'hello', author: 'user' });
   assert.equal(reply.status, 503); assert.deepEqual(reply.json, want);
-  const after = (await ok(api.get('/api/comments'), 'GET again'));
-  assert.deepEqual(after.comments.map((c) => [c.id, c.seq, c.text]), pins.map((c) => [c.id, c.seq, c.text]), 'nothing changed');
+  const after = (await ok(api.get('/api/elements?type=comment'), 'GET again'));
+  assert.deepEqual(after.elements.map((c) => [c.id, c.seq, c.text]), pins.map((c) => [c.id, c.seq, c.text]), 'nothing changed');
   assert.equal(after.next_cursor, before);
-  const del = await api.del(`/api/comments/${pins[pins.length - 1].id}`);
+  const del = await api.del(`/api/elements/${pins[pins.length - 1].id}`);
   assert.equal(del.status, 200, `DELETE still works: ${del.text}`);
 });
 
 test('an anchor with no mount is refused (400): the element log cannot convert one', async (t) => {
   const { api } = await withServer(t);
-  const r = await api.post('/api/comments', { text: 'x', anchor: { selector: 'div', text: 'x' } });
+  const r = await api.post('/api/elements', commentBody({ text: 'x', anchor: { selector: 'div', text: 'x' } }));
   assert.equal(r.status, 400);
   assert.equal(r.json.error, 'anchor without a mount');
-  assert.deepEqual((await ok(api.get('/api/comments'), 'GET')).comments, []);
+  assert.deepEqual((await ok(api.get('/api/elements?type=comment'), 'GET')).elements, []);
   assert.equal((await addPin(api, 'page note', { anchor: null })).anchor, null, 'a page note (null anchor) is fine');
 });
 

@@ -18,7 +18,7 @@ const assert = require('node:assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { withServer, waitUntil } = require('../test-support/helpers');
+const { withServer, waitUntil, commentBody } = require('../test-support/helpers');
 
 // pane_state is only settable over the WS (the browser owns pane chrome).
 async function pinPane(ctx, id) {
@@ -33,7 +33,7 @@ async function pinPane(ctx, id) {
   } finally { sock.close(); }
 }
 
-const comments = async (api) => (await api.get('/api/comments')).json.comments;
+const comments = async (api) => (await api.get('/api/elements?type=comment')).json.elements;
 const events = async (api) => (await api.get('/api/events')).json.events;
 const queueItems = async (api) => (await api.get('/api/queue')).json.items;
 const liveIds = async (api) => (await comments(api)).map((c) => c.id).sort();
@@ -46,7 +46,7 @@ async function ok(p, what) {
 }
 
 async function addPin(api, text, anchor) {
-  const r = await ok(api.post('/api/comments', { text, shared: true, anchor }), `pin ${text}`);
+  const r = await ok(api.post('/api/elements', commentBody({ text, shared: true, anchor })), `pin ${text}`);
   return r.pin;
 }
 
@@ -162,7 +162,7 @@ test('a wipe drops a pin whose anchor names an id that is neither a pane nor a m
   // An anchor with no mount: the add route refuses one since U208 (the element
   // log cannot convert it), but a pin a 0.8.5 daemon took can still come back
   // live from a node copy, so it is put live by hand here.
-  assert.equal((await api.post('/api/comments', { text: 'empty', shared: true, anchor: { selector: 'div', text: 'x' } })).status, 400);
+  assert.equal((await api.post('/api/elements', commentBody({ text: 'empty', shared: true, anchor: { selector: 'div', text: 'x' } }))).status, 400);
   const empty = { id: 'c900', seq: 900, created_at: Date.now(), shared: true, text: 'empty', anchor: { selector: 'div', text: 'x' } };
   ctx.srv.state.comments = ctx.srv.state.comments.concat([empty]);
   const before = (await events(api)).length;

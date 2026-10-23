@@ -27,7 +27,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { withServer, tmpRoot, waitUntil } = require('../test-support/helpers');
+const { withServer, tmpRoot, waitUntil, commentBody } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths } = require('../lib/core/paths');
 const { PRIVATE_RULES } = require('../lib/core/remote-policy');
@@ -94,8 +94,8 @@ async function ok(p, what) {
 // One shared and one private pin on pane `m1`, made as the chrome makes them.
 async function twoPins(api, { shared = SHARED, priv = PRIVATE, mount = 'm1' } = {}) {
   await ok(api.post('/api/render', { id: mount, html: `<p class="x">${mount}</p>` }), `render ${mount}`);
-  const a = await ok(api.post('/api/comments', { text: shared, shared: true, anchor: { mount, selector: 'p.x', text: mount, ordinal: 0 } }), 'shared pin');
-  const b = await ok(api.post('/api/comments', { text: priv, shared: false, anchor: { mount, selector: 'p.x', text: mount, ordinal: 0 } }), 'private pin');
+  const a = await ok(api.post('/api/elements', commentBody({ text: shared, shared: true, anchor: { mount, selector: 'p.x', text: mount, ordinal: 0 } })), 'shared pin');
+  const b = await ok(api.post('/api/elements', commentBody({ text: priv, shared: false, anchor: { mount, selector: 'p.x', text: mount, ordinal: 0 } })), 'private pin');
   return { shared: a.pin.id, priv: b.pin.id };
 }
 
@@ -106,32 +106,32 @@ async function commit(api, message) {
   return e.node_id;
 }
 
-const texts = (body) => body.comments.map((c) => c.text);
+const texts = (body) => body.elements.map((c) => c.text);
 const has = (body, mark) => (typeof body === 'string' ? body : JSON.stringify(body)).includes(mark);
 
-// ── GET /api/comments ───────────────────────────────────────────────────────
+// ── GET /api/elements?type=comment (U327a: /api/comments replaced) ──────────
 
-test('GET /api/comments: a local browser gets the private pin; lib/client, a remote viewer at read and full, and shared_only do not; basic is 403; next_cursor is the same for all', async (t) => {
+test('GET /api/elements?type=comment: a local browser gets the private pin; lib/client, a remote viewer at read and full, and shared_only do not; basic is 403; next_cursor is the same for all', async (t) => {
   const d = await boot(t);
   for (const level of ['basic', 'read', 'full']) await twoPins(d[level].api);
 
   const cursors = [];
   for (const level of ['basic', 'read', 'full']) {
     const { api, port, call } = d[level];
-    const browser = await ok(api.get('/api/comments'), `${level}: browser`);
+    const browser = await ok(api.get('/api/elements?type=comment'), `${level}: browser`);
     assert.deepStrictEqual(texts(browser), [SHARED, PRIVATE], `${level}: a local browser (Node fetch) sees both`);
     cursors.push(browser.next_cursor);
 
-    const tool = await client.get('/api/comments', { port, noSpawn: true });
+    const tool = await client.get('/api/elements?type=comment', { port, noSpawn: true });
     assert.deepStrictEqual(texts(tool), [SHARED], `${level}: lib/client (no fetch metadata) sees the shared pin only`);
     assert.ok(!has(tool, PRIVATE));
     cursors.push(tool.next_cursor);
 
-    const sharedOnly = await ok(api.get('/api/comments?shared_only=1'), `${level}: shared_only`);
+    const sharedOnly = await ok(api.get('/api/elements?type=comment&shared_only=1'), `${level}: shared_only`);
     assert.deepStrictEqual(texts(sharedOnly), [SHARED], `${level}: shared_only from the browser`);
     cursors.push(sharedOnly.next_cursor);
 
-    const remote = await call('GET', '/api/comments', null, REMOTE);
+    const remote = await call('GET', '/api/elements?type=comment', null, REMOTE);
     if (level === 'basic') {
       assert.equal(remote.status, 403, 'remote basic: U211\'s requireMirror');
       assert.ok(!has(remote.body, PRIVATE) && !has(remote.body, SHARED));
@@ -140,11 +140,11 @@ test('GET /api/comments: a local browser gets the private pin; lib/client, a rem
       assert.deepStrictEqual(texts(remote.body), [SHARED], `remote ${level}: the shared pin only`);
       cursors.push(remote.body.next_cursor);
       // A remote viewer's browser sends fetch metadata too: still not local.
-      const remoteBrowser = await call('GET', '/api/comments', null, { ...REMOTE, 'Sec-Fetch-Mode': 'cors', Origin: 'https://wc.example.test' });
+      const remoteBrowser = await call('GET', '/api/elements?type=comment', null, { ...REMOTE, 'Sec-Fetch-Mode': 'cors', Origin: 'https://wc.example.test' });
       assert.deepStrictEqual(texts(remoteBrowser.body), [SHARED], `remote ${level} browser: the shared pin only`);
     }
 
-    const peer = await call('GET', '/api/comments', null, { ...PEER, 'Sec-Fetch-Mode': 'cors' });
+    const peer = await call('GET', '/api/elements?type=comment', null, { ...PEER, 'Sec-Fetch-Mode': 'cors' });
     assert.equal(peer.status, 403, `${level}: a network peer`);
     assert.ok(!has(peer.body, PRIVATE));
   }
@@ -275,7 +275,7 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
     const remoteWs = await socket(t, port, REMOTE);
 
     await ok(api.post('/api/render', { id: 'm1', html: '<p class="x">m1</p>' }), 'render');
-    await ok(api.post('/api/comments', { text: QUOTE, shared: true, anchor: { mount: 'm1', selector: 'p.x', text: 'm1', ordinal: 0 } }), 'pin');
+    await ok(api.post('/api/elements', commentBody({ text: QUOTE, shared: true, anchor: { mount: 'm1', selector: 'p.x', text: 'm1', ordinal: 0 } })), 'pin');
     await ok(api.post('/api/capture', { url: 'https://example.com/page', title: 'Ex', html: '<html><body><p>captured</p></body></html>' }), 'capture');
     const m = await ok(api.post('/api/queue/message', { text: MSG, send: 'hold' }), 'message');
     assert.equal(m.ok, true, JSON.stringify(m));
@@ -346,7 +346,7 @@ test('S-11: after two committed turns, each adding a private pin, no remote-basi
   const ids = [];
   for (const n of [1, 2]) {
     const pins = await twoPins(api, { shared: `wc-u213-s11-shared-${n}`, priv: `${MARK}-${n}`, mount: `s11-${n}` });
-    await ok(api.post(`/api/comments/${pins.priv}/reply`, { text: `${MARK}-reply-${n}` }), 'a reply on the private pin');
+    await ok(api.post(`/api/elements/${pins.priv}/reply`, { text: `${MARK}-reply-${n}` }), 'a reply on the private pin');
     ids.push(await commit(api, `s11 turn ${n}`));
   }
   await settle(api, [local, remoteWs, peerWs]);
@@ -357,7 +357,7 @@ test('S-11: after two committed turns, each adding a private pin, no remote-basi
   check('network peer socket', peerWs.raw.join('\n'));
 
   const reads = [
-    '/api/comments', '/api/comments?shared_only=1', '/api/graph', '/api/mounts', '/api/store', '/api/events',
+    '/api/elements?type=comment', '/api/elements?type=comment&shared_only=1', '/api/graph', '/api/mounts', '/api/store', '/api/events',
     '/api/queue', '/api/queue/pending', `/api/graph/diff?a=${ids[0]}&b=${ids[1]}`, '/api/export?node=active',
     ...ids.flatMap((id) => [`/api/graph/node/${id}`, `/preview/node/${id}`]),
   ];
@@ -386,12 +386,12 @@ test('S-11: after two committed turns, each adding a private pin, no remote-basi
   assert.deepStrictEqual(leaks, [], 'the private text reached these');
 
   // The local browser does see it: live, in each node, and on its socket.
-  assert.ok(has((await api.get('/api/comments')).json, `${MARK}-2`));
+  assert.ok(has((await api.get('/api/elements?type=comment')).json, `${MARK}-2`));
   for (const [i, id] of ids.entries()) {
     assert.ok(has((await api.get(`/api/graph/node/${id}`)).json, `${MARK}-${i + 1}`), `node ${id}: the local browser`);
     assert.ok((await api.get(`/preview/node/${id}`)).text.includes(`${MARK}-${i + 1}`), `preview ${id}: the local browser`);
   }
-  assert.ok(local.raw.some((f) => f.includes(`${MARK}-1`)), 'the local socket got the comments frame whole');
+  assert.ok(local.raw.some((f) => f.includes(`${MARK}-1`)), 'the local socket got the element:comment frame whole');
 });
 
 // ── the census ratchet ──────────────────────────────────────────────────────
@@ -406,11 +406,8 @@ test('S-11: after two committed turns, each adding a private pin, no remote-basi
 // Reviewed: 'file carrier' → why it does not serve a private pin to anyone
 // but a local browser.
 const REVIEWED = new Map([
-  ['comments.js POST /api/comments', 'a write: answers the pin it just made, to its maker'],
-  ['comments.js PATCH /api/comments/:id', 'a write (edit): finds the pin by id and answers it — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
-  ['comments.js POST /api/comments/:id/reply', 'a write (reply): finds the pin by id and answers it — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
-  ['comments.js DELETE /api/comments/:id', 'a write (delete): finds the pin by id to gate it and answers only its id — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
-  // The element API (U325, routes/elements.js): the same four writes, every type.
+  // The element API (U325, routes/elements.js): the comment's writes (moved
+  // from routes/comments.js, which answers only its 410 since U327a), every type.
   ['elements.js fn:find', 'finds the element a write names (a pin or a reference) for the write routes to gate; never serves'],
   ['elements.js POST /api/elements', 'a write: answers the element it just made, to its maker'],
   ['elements.js PATCH /api/elements/:id', 'a write (edit, re-anchor): answers the element it found by id — gated: a private element answers 404 to anyone but a local browser (C-16-2)'],
@@ -567,16 +564,16 @@ test('the write routes: on a private pin, a remote full viewer\'s PATCH {}, PATC
   const d = await boot(t, ['full']);
   const { api, call } = d.full;
   const ids = await twoPins(api);
-  const pinOf = async () => (await ok(api.get('/api/comments'), 'local read')).comments.find((c) => c.id === ids.priv);
+  const pinOf = async () => (await ok(api.get('/api/elements?type=comment'), 'local read')).elements.find((c) => c.id === ids.priv);
   const before = await pinOf();
   assert.ok(before && before.text === PRIVATE && before.shared === false, 'the private pin is there');
   const shape = (c) => ({ id: c.id, text: c.text, shared: c.shared, replies: c.replies || null, seq: c.seq });
 
   const attempts = [
-    ['PATCH {}', 'PATCH', `/api/comments/${ids.priv}`, {}],
-    ['PATCH {shared:true}', 'PATCH', `/api/comments/${ids.priv}`, { shared: true }],
-    ['user reply', 'POST', `/api/comments/${ids.priv}/reply`, { text: 'a remote reply', author: 'user' }],
-    ['DELETE', 'DELETE', `/api/comments/${ids.priv}`, null],
+    ['PATCH {}', 'PATCH', `/api/elements/${ids.priv}`, {}],
+    ['PATCH {shared:true}', 'PATCH', `/api/elements/${ids.priv}`, { shared: true }],
+    ['user reply', 'POST', `/api/elements/${ids.priv}/reply`, { text: 'a remote reply', author: 'user' }],
+    ['DELETE', 'DELETE', `/api/elements/${ids.priv}`, null],
   ];
   for (const [label, method, p, body] of attempts) {
     for (const [who, headers] of [['remote full', REMOTE], ['lib/client', {}]]) {
@@ -590,10 +587,10 @@ test('the write routes: on a private pin, a remote full viewer\'s PATCH {}, PATC
     }
   }
   // The shared pin is not gated: a remote full viewer still edits it.
-  const sharedEdit = await call('PATCH', `/api/comments/${ids.shared}`, { text: 'edited remotely' }, REMOTE);
+  const sharedEdit = await call('PATCH', `/api/elements/${ids.shared}`, { text: 'edited remotely' }, REMOTE);
   assert.equal(sharedEdit.status, 200, JSON.stringify(sharedEdit.body));
   // The local browser still acts on the private pin.
-  await ok(api.patch(`/api/comments/${ids.priv}`, { text: PRIVATE + '-2' }), 'local edit of the private pin');
+  await ok(api.patch(`/api/elements/${ids.priv}`, { text: PRIVATE + '-2' }), 'local edit of the private pin');
 });
 
 test('census: every .comments read and whole-node body in lib/server/routes is keyed in PRIVATE_RULES or reviewed; the scan is live', (t) => {
@@ -604,8 +601,11 @@ test('census: every .comments read and whole-node body in lib/server/routes is k
     + 'or, if it does not serve pins, review it in REVIEWED here with why');
   const keys = new Set(found.map((f) => f.key));
   for (const k of REVIEWED.keys()) assert.ok(keys.has(k), `REVIEWED names ${JSON.stringify(k)}, which the scan no longer finds — drop it`);
-  // Today's carriers are found: each PRIVATE_RULES.routes key and the comments frame.
-  for (const k of ['comments.js GET /api/comments', 'graph.js GET /api/graph/node/:id', 'graph.js GET /preview/node/:id', 'comments.js frame:comments']) {
+  // Today's carriers are found: each PRIVATE_RULES.routes key. (The comment
+  // frame left lib/server/routes with U327a: domain/comments emitComments sends
+  // it as element:comment, projected through element-policy's private paths —
+  // test/ws-projection.test.js.)
+  for (const k of ['elements.js GET /api/elements', 'graph.js GET /api/graph/node/:id', 'graph.js GET /preview/node/:id']) {
     assert.ok(keys.has(k), `the scan found no ${k}`);
   }
   for (const route of Object.keys(PRIVATE_RULES.routes)) {
@@ -627,17 +627,19 @@ test('census: every .comments read and whole-node body in lib/server/routes is k
   assert.ok(p.some((l) => /a whole node served in GET \/api\/planted\/:id,/.test(l)), p.join('\n'));
   assert.ok(p.some((l) => /a \.comments read in GET \/api\/planted-pins,/.test(l)), p.join('\n'));
   // And a keyed route whose handler stops applying dropPrivate is reported.
-  const unwired = path.join(dir, 'comments.js');
-  const comments = fs.readFileSync(path.join(REPO_ROOT, 'lib/server/routes/comments.js'), 'utf8');
-  fs.writeFileSync(unwired, comments.replace(/dropPrivate\('routes', 'GET \/api\/comments', body\)/, 'body'));
-  assert.match(privateCensus([unwired]).problems.join('\n'), /GET \/api\/comments is keyed in PRIVATE_RULES\.routes but its handler applies no dropPrivate/);
+  const unwired = path.join(dir, 'elements.js');
+  const elements = fs.readFileSync(path.join(REPO_ROOT, 'lib/server/routes/elements.js'), 'utf8');
+  const cut = elements.replace(/dropPrivate\('routes', 'GET \/api\/elements', body\)/, 'body');
+  assert.notEqual(cut, elements, 'the planted copy lost its dropPrivate');
+  fs.writeFileSync(unwired, cut);
+  assert.match(privateCensus([unwired]).problems.join('\n'), /GET \/api\/elements is keyed in PRIVATE_RULES\.routes but its handler applies no dropPrivate/);
 });
 
 // ── the chrome: a 403 read (a remote basic shell) ───────────────────────────
 // Last in the file: the shell replaces the globals (fetch among them) from its
 // before() to its after(), and the server tests above use Node's own fetch.
 
-describe('chrome: GET /api/comments answering 403', () => {
+describe('chrome: GET /api/elements?type=comment answering 403', () => {
   let shell;
   let W;
   const PANE = { id: 'notes', html: '<ul><li>one</li><li>two</li></ul>', target: 'main', params: {} };
@@ -655,16 +657,16 @@ describe('chrome: GET /api/comments answering 403', () => {
   test('refresh() throws nothing and leaves no markers when the read is refused', async () => {
     const { respond } = require('../test-support/chrome-shell');
     // A pin is drawn first (the frame path), so the 403's effect is visible.
-    shell.setRoutes({ '/api/comments': { comments: [PIN] } });
-    await shell.frame({ type: 'comments', comments: [PIN] });
+    shell.setRoutes({ '/api/elements?type=comment': { elements: [PIN] } });
+    await shell.frame({ type: 'element:comment', elements: [PIN] });
     assert.equal(markers().length, 1, 'precondition: one marker');
 
-    shell.setRoutes({ '/api/comments': respond({ ok: false, mirror: 'basic', remote: true, hint: 'tunnel mirror on' }, { status: 403 }) });
+    shell.setRoutes({ '/api/elements?type=comment': respond({ ok: false, mirror: 'basic', remote: true, hint: 'tunnel mirror on' }, { status: 403 }) });
     // A reset frame is one refresh (U304: the 30 s fallback poll is gone).
     const { helloFrame } = require('../test-support/chrome-shell');
     await shell.frame({ ...helloFrame({ mounts: [PANE] }), type: 'reset' });
     await shell.tick();
-    assert.ok(shell.calls.some((c) => c.url === '/api/comments' && c.method === 'GET'));
+    assert.ok(shell.calls.some((c) => c.url === '/api/elements?type=comment' && c.method === 'GET'));
     assert.equal(markers().length, 0, 'a refused read renders no markers');
   });
 });

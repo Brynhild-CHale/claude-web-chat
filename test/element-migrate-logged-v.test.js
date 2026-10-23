@@ -21,7 +21,7 @@ const { planMigration, migrateComments } = require('../lib/core/element-migrate'
 const { createElementLog, payloadOf } = require('../lib/core/element-log');
 const { createRedactor } = require('../lib/core/redact');
 const { projectPaths } = require('../lib/core/paths');
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 
 const T0 = 1760000000000;
 const ANCHOR = { mount: 'm1', selector: 'p.lead', text: 'Hello', ordinal: 0 };
@@ -200,9 +200,9 @@ test('a born-v4 project that lost _version.json migrates with no version appende
   assert.equal(JSON.parse(fs.readFileSync(paths.version, 'utf8')).version, 4);
   await ok(s1.api.post('/api/render', { id: 'm1', html: '<p class="lead">Hello</p>' }), 'render');
   await turn(s1.api, 'page');
-  const pin = (await ok(s1.api.post('/api/comments', { text: 'one', anchor: ANCHOR }), 'add')).pin;
-  await ok(s1.api.patch(`/api/comments/${pin.id}`, { text: 'two' }), 'edit 1');
-  await ok(s1.api.patch(`/api/comments/${pin.id}`, { text: 'three' }), 'edit 2');
+  const pin = (await ok(s1.api.post('/api/elements', commentBody({ text: 'one', anchor: ANCHOR })), 'add')).pin;
+  await ok(s1.api.patch(`/api/elements/${pin.id}`, { text: 'two' }), 'edit 1');
+  await ok(s1.api.patch(`/api/elements/${pin.id}`, { text: 'three' }), 'edit 2');
   await turn(s1.api, 'pins');
   await s1.stop();
 

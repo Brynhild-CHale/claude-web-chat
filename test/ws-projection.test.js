@@ -26,7 +26,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { withServer, waitUntil, wsConnect, tmpRoot } = require('../test-support/helpers');
+const { withServer, waitUntil, wsConnect, tmpRoot, commentBody } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths } = require('../lib/core/paths');
 const { createBus } = require('../lib/core/bus');
@@ -465,14 +465,14 @@ const PIN_PRIVATE = Object.freeze({ id: 'c2', seq: 2, shared: false, text: 'wc-p
 const COMMENT_ITEM = Object.freeze({ id: 'q1', kind: 'comment', source: 'browser', comment_id: 'c1', why_wake: 'comment pinned for Claude',
   summary: 'm1 · "wc-shared-mark"', origin_mount: 'm1', seq: 1, staged: true });
 
-test('frame rows: comments, queue and element frames per socket — local whole, read without private records, basic without a pin or its text', async (t) => {
+test('frame rows: element:comment, queue and element frames per socket — local whole, read without private records, basic without a pin or its text', async (t) => {
   const host = await wsHost(t, { optIn: 'read' });
   const local = await connect(t, host);
   const reader = await connect(t, host, { 'X-WC-Remote': '1' });
   const basic = await connect(t, host, { 'x-test-peer': '10.0.0.7' });
   assert.deepStrictEqual([local, reader, basic].map((c) => c.server._wc.level), ['local', 'read', 'basic']);
 
-  const comments = { type: 'comments', comments: [PIN_SHARED, PIN_PRIVATE] };
+  const comments = { type: 'element:comment', elements: [PIN_SHARED, PIN_PRIVATE] };
   const queueAdd = { type: 'queue', op: 'add', item: COMMENT_ITEM, count: 1 };
   const capture = { type: 'queue', op: 'add', item: { id: 'q2', kind: 'capture', summary: 'example.test · a page' }, count: 2 };
   const element = { type: 'element:comment', op: 'add', elements: [{ id: 'e1', shared: true, text: 'kept' }, { id: 'e2', shared: false, text: 'wc-private-mark' }] };
@@ -484,13 +484,12 @@ test('frame rows: comments, queue and element frames per socket — local whole,
 
   assert.deepStrictEqual(local.raw.slice(before, before + sent.length), sent.map((f) => JSON.stringify(f)),
     'a local socket: every frame, byte for byte, private pins and the unknown element type included');
-  assert.deepStrictEqual(reader.of('comments'), [{ type: 'comments', comments: [PIN_SHARED] }]);
+  assert.deepStrictEqual(reader.of('element:comment').slice(0, 1), [{ type: 'element:comment', elements: [PIN_SHARED] }]);
   assert.deepStrictEqual(reader.of('queue'), [queueAdd, capture], 'read: the queue whole, the pin text included');
-  assert.deepStrictEqual(reader.of('element:comment'), [{ ...element, elements: [element.elements[0]] }]);
-  assert.deepStrictEqual(basic.of('comments'), [], 'below read: no comments frame');
+  assert.deepStrictEqual(reader.of('element:comment').slice(1), [{ ...element, elements: [element.elements[0]] }]);
+  assert.deepStrictEqual(basic.of('element:comment'), [], 'below read: no element:comment frame');
   assert.deepStrictEqual(basic.of('queue'), [
     { ...queueAdd, item: { ...COMMENT_ITEM, summary: 'm1 · comment', text_hidden: true } }, capture]);
-  assert.deepStrictEqual(basic.of('element:comment'), []);
   for (const c of [reader, basic]) {
     assert.deepStrictEqual(c.of('element:unknown'), [], `${c.server._wc.level}: an element frame no row names`);
     assert.ok(!c.raw.some((r) => r.includes('wc-private-mark') || r.includes('wc-unknown-mark')), `${c.server._wc.level}: no private text`);
@@ -513,8 +512,8 @@ test('frame rows: a rowed frame is projected, never the broadcast fast path — 
     try { host.api.broadcast(frame); } finally { JSON.stringify = real; }
     return n;
   };
-  assert.equal(count({ type: 'comments', comments: [PIN_SHARED, PIN_PRIVATE] }), 2, 'whole (local) and without the private pin (read); basic nothing');
-  assert.equal(count({ type: 'comments', comments: [PIN_SHARED] }), 1, 'nothing private: one string for local and read');
+  assert.equal(count({ type: 'element:comment', elements: [PIN_SHARED, PIN_PRIVATE] }), 2, 'whole (local) and without the private pin (read); basic nothing');
+  assert.equal(count({ type: 'element:comment', elements: [PIN_SHARED] }), 1, 'nothing private: one string for local and read');
   assert.equal(count({ type: 'queue', op: 'add', item: COMMENT_ITEM, count: 1 }), 2, 'whole, and with the label below read');
   assert.equal(count({ type: 'queue', op: 'remove', ids: ['q1'], reason: 'removed', count: 0 }), 1);
   assert.equal(count({ type: 'element:unknown', elements: [] }), 1, 'local only');
@@ -544,7 +543,7 @@ async function daemonSettle(api, sockets) {
     { timeout: 15000, interval: 5, what: `settle ${n} on every socket` });
 }
 
-test('the daemon: a remote viewer below read gets no comments frame and no pin text on the queue; at read, no private pin; locally, the frame\'s own bytes', async (t) => {
+test('the daemon: a remote viewer below read gets no element:comment frame and no pin text on the queue; at read, no private pin; locally, the frame\'s own bytes', async (t) => {
   const readRoot = tmpRoot('wc-wsproj-read-');
   const seed = () => writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(readRoot)]: 'read' } } });
   const basicD = await withServer(t, { seed });
@@ -554,8 +553,8 @@ test('the daemon: a remote viewer below read gets no comments frame and no pin t
     d.remote = await daemonSocket(t, d.port, { 'X-WC-Remote': '1' });
     const r = await d.api.post('/api/render', { id: 'm1', html: '<p>plan</p>' });
     assert.equal(r.status, 200, r.text);
-    const a = await d.api.post('/api/comments', { text: 'wc-shared-mark', shared: true, anchor: { mount: 'm1', text: 'plan' } });
-    const b = await d.api.post('/api/comments', { text: 'wc-private-mark', shared: false, anchor: { mount: 'm1', text: 'plan' } });
+    const a = await d.api.post('/api/elements', commentBody({ text: 'wc-shared-mark', shared: true, anchor: { mount: 'm1', text: 'plan' } }));
+    const b = await d.api.post('/api/elements', commentBody({ text: 'wc-private-mark', shared: false, anchor: { mount: 'm1', text: 'plan' } }));
     assert.equal(a.status, 200, a.text);
     assert.equal(b.status, 200, b.text);
     d.pins = [a.json.pin, b.json.pin];
@@ -565,22 +564,22 @@ test('the daemon: a remote viewer below read gets no comments frame and no pin t
     'the shared pin put a comment item on the queue');
 
   for (const d of [basicD, readD]) {
-    const frames = d.local.raw.filter((r) => r.startsWith('{"type":"comments"'));
-    assert.equal(frames.length, 2, 'one comments frame a write');
-    assert.equal(frames[1], JSON.stringify({ type: 'comments', comments: d.pins }), 'local: the emitted frame, byte for byte');
+    const frames = d.local.raw.filter((r) => r.startsWith('{"type":"element:comment"'));
+    assert.equal(frames.length, 2, 'one element:comment frame a write');
+    assert.equal(frames[1], JSON.stringify({ type: 'element:comment', elements: d.pins }), 'local: the emitted frame, byte for byte');
     assert.ok(d.local.of('queue').some((f) => f.item && f.item.summary.includes('wc-shared-mark')), 'local: the queue item quotes the pin');
   }
   // Below read (no opt-in).
-  assert.deepStrictEqual(basicD.remote.of('comments'), [], 'basic: no comments frame');
+  assert.deepStrictEqual(basicD.remote.of('element:comment'), [], 'basic: no element:comment frame');
   const basicItem = basicD.remote.of('queue').find((f) => f.item && f.item.kind === 'comment');
   assert.ok(basicItem, 'basic: the queue frame itself still comes');
   assert.equal(basicItem.item.summary, 'm1 · comment');
   assert.equal(basicItem.item.text_hidden, true);
   assert.ok(!basicD.remote.raw.some((r) => r.includes('wc-shared-mark') || r.includes('wc-private-mark')), 'basic: no pin text in any frame');
   // At read.
-  const readFrames = readD.remote.of('comments');
+  const readFrames = readD.remote.of('element:comment');
   assert.equal(readFrames.length, 2);
-  assert.deepStrictEqual(readFrames[1].comments, [readD.pins[0]], 'read: the shared pin only');
+  assert.deepStrictEqual(readFrames[1].elements, [readD.pins[0]], 'read: the shared pin only');
   assert.ok(!readD.remote.raw.some((r) => r.includes('wc-private-mark')), 'read: no private pin text in any frame');
   assert.ok(readD.remote.of('queue').some((f) => f.item && f.item.summary.includes('wc-shared-mark')), 'read: the queue item whole');
 });

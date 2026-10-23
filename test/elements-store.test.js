@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withServer, existingProject } = require('../test-support/helpers');
+const { withServer, existingProject, commentBody } = require('../test-support/helpers');
 const { fakeSecrets } = require('../test-support/fake-secrets');
 const { createElementStore } = require('../lib/server/domain/elements');
 const { createElementLog, payloadOf, copyMatches, convertAnchor } = require('../lib/core/element-log');
@@ -264,7 +264,7 @@ test('the dirty check ignores v: a restored pre-upgrade node is clean, a no-chan
     seed: ({ webChatDir }) => seedGraph(webChatDir, { nodes: [n0], records: [n0], active: 'n0' }),
   });
   const before = logBytes(root);
-  const pins = (await api.get('/api/comments')).json.comments;
+  const pins = (await api.get('/api/elements?type=comment')).json.elements;
   assert.equal(pins.length, 1);
   assert.equal(pins[0].v, 1, 'restore stamped v from the commit record');
   assert.equal(srv.elements.stats().appended_records, 0, 'stamped with 0 appends');
@@ -319,7 +319,7 @@ test('the draft: a graceful stop and reboot restores the live pins with their v 
   const vers = verRecords(first.root).filter((x) => x.t === 'ver').length;
 
   const second = await withServer(t, { root: first.root });
-  const pins = (await second.api.get('/api/comments')).json.comments;
+  const pins = (await second.api.get('/api/elements?type=comment')).json.elements;
   assert.equal(pins[0].v, 1);
   assert.ok((await second.api.get('/api/mounts')).json.mounts.some((m) => m.id === 'm2'), 'the draft was restored');
   assert.equal(verRecords(first.root).filter((x) => x.t === 'ver').length, vers, '0 version records appended');
@@ -363,7 +363,7 @@ test('a copy\'s own v is trusted only when the hash checks: a pin edited in plac
   await api.post('/api/turn-begin', { message: 'first' });
   await api.post('/api/render', { id: 'm1', html: '<p class="lead">Hello</p>' });
   await api.post('/api/turn-end', { author: 'claude' });
-  const add = await api.post('/api/comments', { text: 'before', anchor: ANCHOR });
+  const add = await api.post('/api/elements', commentBody({ text: 'before', anchor: ANCHOR }));
   const id = add.json.pin.id;
   await api.post('/api/turn-begin', { message: 'second' });
   const a = await api.post('/api/turn-end', { author: 'claude' });
@@ -417,7 +417,7 @@ test('a log that cannot be appended to does not fail boot: the pin is served wit
       fs.chmodSync(elementsDir, 0o555);
     },
   });
-  const pins = (await api.get('/api/comments')).json.comments;
+  const pins = (await api.get('/api/elements?type=comment')).json.elements;
   assert.equal(pins.length, 1);
   assert.equal(pins[0].text, 'second copy');
   assert.equal(pins[0].v, undefined, 'served without v');

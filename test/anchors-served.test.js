@@ -38,7 +38,7 @@ const { ANCHOR_STATES } = require('../lib/core/anchor-states');
 const { renderMarkdown, sourceMap } = require('../lib/core/markdown');
 const { getBuiltin } = require('../lib/server/theme');
 const { inlineFontCss } = require('../lib/server/fonts');
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 
 const FIX = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'anchors', 'element-cases.json'), 'utf8'));
 const FROZEN = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'anchors', 'step2-answers.json'), 'utf8'));
@@ -596,7 +596,7 @@ async function twoNodes(t) {
   const { api } = srv;
   for (const m of TWO) await api.post('/api/render', { id: m.id, html: m.html });
   assert.equal((await api.post('/api/commit', { message: 'seed' })).status, 200);
-  const add = await api.post('/api/comments', { text: 'a note', shared: true, anchor: PIN.anchor });
+  const add = await api.post('/api/elements', commentBody({ text: 'a note', shared: true, anchor: PIN.anchor }));
   assert.equal(add.status, 200, add.text);
   assert.equal((await api.post('/api/commit', { message: 'pinned' })).status, 200);
   return srv;
