@@ -1,0 +1,24 @@
+{
+  "type": "highlight",
+  "family": "page",
+  "remote": { "see": "read", "send": "full" },
+  "private": true,
+  "schema": "highlight@1",
+  "reads": ["highlight@1"],
+  "anchors": ["range", "source"],
+  "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
+  "settings": {
+    "small": {
+      "type": "object",
+      "properties": {
+        "color": { "type": "string", "title": "Colour", "enum": ["gold", "accent", "green", "rust"], "default": "gold" },
+        "snap": { "type": "string", "title": "Snap to", "enum": ["words", "blocks"], "default": "words" }
+      }
+    }
+  },
+  "hotkeys": [],
+  "profiles": true,
+  "input": "selection",
+  "wake": true,
+  "summary_key": "note"
+}
