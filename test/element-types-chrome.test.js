@@ -27,6 +27,8 @@ const { before, after } = test;
 const assert = require('node:assert');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
+const path = require('path');
+const { pathToFileURL } = require('url');
 
 let shell, W, ET, bus, realOv, anchors;
 let listing = { ok: true, types: [], reserved: ['comment', 'highlight', 'box-grab'] };
@@ -56,7 +58,11 @@ before(async () => {
     routes: { '/api/elements/types': () => listing },
   });
   W = shell.window;
-  ET = await shell.importApp('element-types.js');
+  // A fresh instance of the module: main.js's box grab (U328c, initBoxGrab)
+  // registers its type at boot, which starts the boot instance and its first
+  // listing, so "before the first listing" is read on an instance nothing has
+  // started yet (it shares the boot's overlay, socket and HTTP reader).
+  ET = await import(`${pathToFileURL(path.join(__dirname, '..', 'public/app/element-types.js')).href}?fresh=1`);
   bus = (await shell.importApp('bus.js')).bus;
   realOv = await shell.importApp('overlay.js');
   anchors = (await shell.importApp('anchors.js')).default;
