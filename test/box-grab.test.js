@@ -26,7 +26,7 @@ const { encodePng, solid } = require('../test-support/png-encode');
 const { projectPaths } = require('../lib/core/paths');
 const { pngSize } = require('../lib/core/png');
 const { SCHEMAS } = require('../lib/core/element-log');
-const { classify: remoteClassify } = require('../lib/core/remote-policy');
+const { classify: remoteClassify, stripItemText } = require('../lib/core/remote-policy');
 const { classify, elementItem } = require('../lib/channel/policy');
 const queueDomain = require('../lib/server/domain/queue');
 const { CHROME_HINT } = require('../lib/replay/find');
@@ -175,19 +175,9 @@ test('a box grab is always shared: a private POST and PATCH {shared: false} answ
   assert.equal(other.status, 400, 'a box grab takes only a page anchor');
 });
 
-test('a page anchor never re-resolves: no resolver kind for it, the version stays as created across a re-render, and no anchors-runtime call is handed a page record', async (t) => {
-  const anchors = require('../lib/core/anchors');
-  const handed = [];
-  const restore = [];
-  for (const [k, fn] of Object.entries(anchors)) {
-    if (typeof fn !== 'function') continue;
-    anchors[k] = function spy(...args) {
-      if (args.some((a) => a && typeof a === 'object' && a.kind === 'page')) handed.push(k);
-      return fn.apply(this, args);
-    };
-    restore.push(() => { anchors[k] = fn; });
-  }
-  t.after(() => { for (const r of restore) r(); });
+// The chrome's half (the overlay's resolver is never handed a page record) is
+// the describe at the end of this file: it boots the real chrome.
+test('a page anchor never re-resolves: no resolver kind for it, and the version stays as created across a re-render', async (t) => {
   const d = await withServer(t);
   const { api, srv } = d;
   // The render builds the live surface's export, which carries the grab's reference.
@@ -206,7 +196,6 @@ test('a page anchor never re-resolves: no resolver kind for it, the version stay
   assert.deepEqual(after.anchor, g.anchor);
   assert.equal(after.v, 1);
   assert.equal(srv.elements.versionsOf(g.id).length, 1);
-  assert.deepEqual(handed, [], 'no page record routed to the anchors runtime');
 });
 
 // ── the render and the one item ─────────────────────────────────────────────
@@ -445,6 +434,26 @@ test('a highlight (U323\'s wake: true) raises one item through the API, its note
   assert.deepEqual(elementItems(srv), []);
 });
 
+test('a shared highlight\'s note never reaches a basic viewer: its element item is a text-free label with text_hidden (TEXT_RULES.items.element)', async (t) => {
+  const { api, srv } = await withServer(t);
+  await render(api, 'm1');
+  const RANGE = { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } };
+  const h = (await ok(api.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { color: 'gold', note: 'see this' } }))).element;
+  await waitUntil(() => elementItems(srv).length === 1, { timeout: 5000, what: 'the highlight item' });
+  const [item] = elementItems(srv);
+  assert.match(item.summary, /see this/, 'the item itself quotes the note');
+  const shown = [stripItemText(queueDomain.publicItem(item), 'basic'), ...queueDomain.list(srv.state, { level: 'basic' })];
+  for (const it of shown) {
+    assert.doesNotMatch(JSON.stringify(it), /see this/, 'no note text below read');
+    assert.equal(it.text_hidden, true);
+    assert.equal(it.summary, 'm1 · element');
+    assert.deepEqual([it.kind, it.type, it.element_id, it.v], ['element', 'highlight', h.id, 1], 'the item is still named');
+  }
+  const [atRead] = queueDomain.list(srv.state, { level: 'read' });
+  assert.match(atRead.summary, /see this/, 'read and up see the note');
+  assert.equal(atRead.text_hidden, undefined);
+});
+
 test('re-send (K.2-17, the queue domain): a delivered element item is raised again as a new pending item with the same element, version, type and image; a queued or unknown one is refused', async (t) => {
   const { api, srv } = await withServer(t);
   setSeams(srv.state, { findChrome: () => null });
@@ -562,4 +571,61 @@ test('a real Chrome draws a grab of a fixture page whose PNG is the rect\'s size
   const png = fs.readFileSync(path.join(root, '.web-chat', 'captures', `${g.grab.capture}.png`));
   assert.deepEqual(pngSize(png), { width: 120, height: 60 });
   assert.equal(liveBrowsers(), 0);
+});
+
+// ── the chrome: the overlay never hands a page anchor to the resolver ──────
+//
+// The overlay's resolver is the browser module /app/anchors.js, imported by
+// public/app/overlay.js, so the spy sits on THAT module's api in the real
+// chrome (test-support/chrome-shell, booted once, in this describe's before()
+// so the daemon tests above never run under its globals). A hello and a reset
+// carry a box grab's row {anchor: {kind: 'page'}} beside a mounted pane, and an
+// element row on the same pane proves the spy sees the overlay's calls.
+test.describe('the chrome: a box grab\'s page anchor', () => {
+  const { bootShell, helloFrame } = require('../test-support/chrome-shell');
+  const PAGE = { v: 1, kind: 'page', item: 'm1', mount: 'm1', rect: { x: 4, y: 6, w: 80, h: 40 }, viewport: { w: 1280, h: 800 } };
+  const GRAB = { id: 'g1', v: 1, type: 'box-grab', anchor: PAGE, shared: true, replies: 0 };
+  const MOUNTS = [{ id: 'm1', target: 'main', params: {}, gen: 0, html: '<p class="lead">Hello world</p><p>more</p>' }];
+  const seen = [];          // every record the overlay handed the resolver: [fn, kind]
+  let shell;
+  let anchors;
+  let control = null;
+
+  test.before(async () => {
+    shell = await bootShell({
+      init: async (sh) => {
+        anchors = (await sh.importApp('anchors.js')).default;
+        const { resolveAll, watch } = anchors;
+        anchors.resolveAll = function spyResolveAll(root, records, ...rest) {
+          for (const r of Array.isArray(records) ? records : [records]) seen.push(['resolveAll', r && r.kind]);
+          return resolveAll.call(this, root, records, ...rest);
+        };
+        anchors.watch = function spyWatch(mount, opts, ...rest) {
+          const records = opts && opts.records;
+          const look = (list) => { for (const r of Array.isArray(list) ? list : []) seen.push(['watch', r && r.kind]); return list; };
+          const wrapped = typeof records === 'function' ? { ...opts, records: (...a) => look(records(...a)) } : opts;
+          if (typeof records === 'function') look(records());
+          return watch.call(this, mount, wrapped, ...rest);
+        };
+        assert.equal(anchors.resolveAll.name, 'spyResolveAll', 'the overlay\'s anchors api takes the spy');
+      },
+    });
+    await shell.frame(helloFrame({ mounts: MOUNTS, elements: [GRAB], surface: 1 }));
+    const it = shell.window.__wcMount.itemEl(shell.window.document, 'm1');
+    const root = it && it.el ? it.el.shadowRoot : null;
+    assert.ok(root, 'the pane mounted');
+    control = { id: 'c1', v: 1, type: 'comment', anchor: anchors.record(root, root.querySelector('.lead'), { mount: 'm1' }), shared: true, replies: 0 };
+    assert.equal(control.anchor.kind, 'element');
+  });
+
+  test.after(async () => { if (shell) await shell.restore(); });
+
+  test('over the hello and a reset (a re-render of its pane), no resolver call is handed a page record', async () => {
+    await shell.frame({ type: 'reset', mounts: [{ ...MOUNTS[0], gen: 1, html: '<p class="lead">Hello again</p>' }],
+      store: {}, active: 'n1', lock: null, elements: [GRAB, control], surface: 2 });
+    await waitUntil(() => seen.some(([fn, kind]) => fn === 'resolveAll' && kind === 'element'),
+      { timeout: 5000, what: 'the overlay to resolve the element row (the spy is live)' });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(seen.filter(([, kind]) => kind === 'page'), [], 'a page anchor never reaches the resolver');
+  });
 });
