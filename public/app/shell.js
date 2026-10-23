@@ -776,6 +776,7 @@ function initBottomBar() {
   on('bb-up', () => stepNode('up'));
   on('bb-down', () => stepNode('down'));
   on('bb-return', () => returnToActive());
+  on('bb-create', () => togglePinMode());   // the tool slot's stand-in create entry (2A.4)
   on('bb-graph', () => openOverlay());
   on('bb-queue', () => toggleRail());
 }

@@ -195,7 +195,13 @@
         <button id="bb-down" title="Next node" aria-label="Next node">↓</button>
       </div>
       <button class="btn bb-return" id="bb-return" title="Return to the active node" style="display:none">↩ active</button>
-      <span class="tb-spacer" aria-hidden="true"></span>
+      <!-- The bottom bar's tool slot (annotation engine 2A.4, ruling H-3: the phone's
+           toolbar sits between the up/down arrows and Graph). It grows in the spacer's
+           place; U338's phone toolbar fills it. #bb-create is a STAND-IN create entry:
+           it arms today's comment pin mode (shell.js initBottomBar). -->
+      <div id="bb-tools" class="bb-tools" role="toolbar" aria-label="Annotation tools">
+        <button id="bb-create" class="bb-create" title="Pin comment" aria-label="Pin comment">✎</button>
+      </div>
       <button class="btn-graph bb-graph" id="bb-graph" title="View graph">Graph</button>
       <button class="bb-queue" id="bb-queue" aria-controls="queue-rail" aria-expanded="false"
               aria-label="Queue to Claude"><span class="bb-queue-label">Queue</span><span class="bb-parked" aria-hidden="true" title="A push is parked — it delivers with your next message">⇢</span><span class="bb-count" id="bb-queue-count">0</span></button>

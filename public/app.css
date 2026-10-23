@@ -3208,3 +3208,26 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
   /* as #pin-layer: the open queue screen covers the page, so its markers go */
   body:has(.rail.open) #el-layer { display: none; }
 }
+
+/* ── U308 · the bottom bar's tool slot (annotation engine 2A.4; ruling H-3) ──
+   #bb-tools sits in the bottom bar between the stepper / ↩ active and Graph, in
+   the spacer's place: it grows, pushing Graph and Queue right as the spacer did,
+   and centres what it holds; it never shrinks under what it holds (no
+   min-width: 0), so a crowded bar never draws the entry over Graph. U338's
+   phone toolbar fills the slot; #bb-create is a STAND-IN create entry that
+   arms today's comment pin mode, its pressed look read off body.pin-mode (no
+   state of its own). Annotation tools are content, so
+   nothing here hides it on a phone; the slot is hidden with the bar from 760px
+   (.bottombar display none). A thumb's 44px target on a phone. Tokens only —
+   the look is expected to change (U338). */
+.bb-tools { flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.bb-create {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 40px; height: 36px; padding: 0; font-size: 16px; line-height: 1;
+  border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
+  background: var(--wc-panel-bg); color: var(--wc-text-2);
+}
+.bb-create:hover { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
+.bb-create:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 2px; }
+body.pin-mode .bb-create { border-color: var(--wc-accent); background: var(--wc-accent); color: var(--wc-accent-fg); }
+.phone .bb-create { width: 44px; height: 44px; font-size: 18px; }
