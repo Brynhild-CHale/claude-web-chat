@@ -51,6 +51,9 @@ import { initOverlay } from './overlay.js';
 import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
 import { initToolbarState, onToolbarChange } from './toolbar-state.js';
 import { initHotkeys } from './hotkeys.js';
+// The settings-pane host (annotation engine 2D.6): a tool's settings in a small
+// or large frame, both popovers under the shell's one dismiss layer.
+import { initToolSettings } from './tool-settings.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -75,6 +78,7 @@ initShell();
 initToolbarState({ onFrame, onHello });
 initHotkeys();
 onToolbarChange((v) => setFingerDrawsDefault(v.user ? v.user.fingerDraws : undefined));
+initToolSettings();   // the tool settings frames, registered with the shell's popovers (U338 opens them)
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every
