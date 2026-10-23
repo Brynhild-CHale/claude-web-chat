@@ -468,3 +468,22 @@ test('no main-port route carries a report', () => {
   const paths = [...routePaths()];
   assert.ok(!paths.some((p) => /report/i.test(p)), `no report route: ${paths.filter((p) => /report/i.test(p))}`);
 });
+
+test('a source anchor (a highlight on prose) is anchored on its markdown item: reported for md-1 it is held, not dropped other-mount', async (t) => {
+  const d = await withServer(t);
+  await ok(d.api.post('/api/markdown', { id: 'md-1', text: '## Kept prose' }), 'md-1');
+  await ok(d.api.post('/api/markdown', { id: 'md-2', text: 'other' }), 'md-2');
+  const anchor = { v: 1, kind: 'source', md: 'md-1', slug: 'kept-prose', quote: { exact: 'Kept', prefix: '', suffix: '' } };
+  const hl = (await ok(d.api.post('/api/elements', { type: 'highlight', anchor, payload: { note: 'n' } }), 'highlight')).element;
+  const s = await socket(t, d.port);
+  const sur = s.hello().surface;
+  const gen = s.hello().markdown.find((m) => m.id === 'md-1').gen ?? 0;
+  const item = { id: hl.id, v: hl.v, state: 'exact', how: 'unique' };
+  s.report(sur, [{ mount: 'md-2', gen: 0, items: [item] }]);
+  await until(() => (stats(d).dropped_items['other-mount'] || 0) === 1, 'reported for another markdown item: other-mount');
+  s.report(sur, [{ mount: 'md-1', gen, items: [item] }]);
+  await until(() => stats(d).accepted === 1, 'reported for its own md item: accepted');
+  const [a] = d.srv.reports.answers({ mount: 'md-1' });
+  assert.deepStrictEqual([a.id, a.v, a.state], [hl.id, hl.v, 'exact']);
+  assert.equal(stats(d).dropped_items['other-mount'], 1, 'only the md-2 report was dropped');
+});
