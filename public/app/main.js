@@ -51,6 +51,7 @@ import { initOverlay } from './overlay.js';
 import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
 import { initToolbarState, onToolbarChange } from './toolbar-state.js';
 import { initHotkeys } from './hotkeys.js';
+import { initOrphans } from './orphans.js';   // 2A.6: the orphans' stand-in list and the re-anchor card
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -75,6 +76,7 @@ initShell();
 initToolbarState({ onFrame, onHello });
 initHotkeys();
 onToolbarChange((v) => setFingerDrawsDefault(v.user ? v.user.fingerDraws : undefined));
+initOrphans();    // after initShell and initGraph, whose registries it plugs into
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every
