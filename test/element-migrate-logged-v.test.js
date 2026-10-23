@@ -45,6 +45,9 @@ function seedLog(t, { commit = true, n1 } = {}) {
   const file = path.join(dir, 'log.jsonl');
   const w = createElementLog({ file, redactor: createRedactor(), bootId: 'seed:1', now: () => T0 });
   w.load();
+  // n0 (pinless) committed first, as a born-v4 daemon records it: an empty
+  // commit record (U351: the migration writes one for every node it lacks).
+  w.appendCommit({ node: n0, pins: [] });
   w.ensureElement({ id: 'c1', kind: 'comment', created_at: T0 + 1 });
   w.appendVersion({ id: 'c1', payload: payloadOf(copyOf('one')), seq: 1, original: ANCHOR, at: T0 + 2 });
   w.appendVersion({ id: 'c1', payload: payloadOf(copyOf('two')), parent_v: 1, seq: 1, original: ANCHOR, at: T0 + 3 });
@@ -70,7 +73,7 @@ test('a copy naming v 3 with c1@3\'s payload maps to c1@3: no ver, no commit, re
   assert.deepEqual(ops(p, 'ver'), [], 'no version minted (was c1@4, parent_v null)');
   assert.deepEqual(ops(p, 'commit'), [], 'n1\'s commit record is already the plan\'s');
   assert.equal(p.counters.reused_logged, 1);
-  assert.equal(p.counters.commits_present, 1);
+  assert.equal(p.counters.commits_present, 2, 'n0\'s empty record and n1\'s');
   assert.equal(versionsToMint(p), 0);
   assert.deepEqual(p.detail.pins.get('n1'), ['c1@3']);
   assert.deepEqual(ops(p, 'migration').length, 1, 'only the migration record is appended');
@@ -83,7 +86,7 @@ test('the same copy without its v: n1\'s commit record names c1@3, so it maps th
   assert.equal(p.counters.reused_logged, 1);
   assert.deepEqual(ops(p, 'ver'), []);
   assert.deepEqual(ops(p, 'commit'), []);
-  assert.equal(p.counters.commits_present, 1);
+  assert.equal(p.counters.commits_present, 2, 'n0\'s empty record and n1\'s');
 });
 
 test('a copy naming v 3 whose text differs, or a v the log lacks: today\'s rules (each mints), reused_logged 0', (t) => {

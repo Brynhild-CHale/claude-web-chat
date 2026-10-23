@@ -39,6 +39,11 @@
 //                       tenth node), each carrying up to `copies` pins that are
 //                       edited, replied to and ghosted at random
 //   version: 3          the `_version.json` stamped (null: none written)
+//   pinless: <n>        (fixed graph only; default 0) n more nodes after n6,
+//                       children of n4 (branch A, never the active one), ids n7,
+//                       n8, n10, … (n9 is the aside's), the first with
+//                       `comments: []` and the rest with no `comments` key: A-1's
+//                       pinless nodes, each owed an empty commit record
 //
 // Test support only; it writes with plain fs on purpose (a fixture is not a
 // durable record).
@@ -171,6 +176,15 @@ function scaledGraph({ nodes: count = 100, copies: k = 14, seed = 1 } = {}) {
 function v3Graph(root, opts = {}) {
   const paths = projectPaths(root);
   const g = opts.scale ? scaledGraph(opts.scale) : fixedGraph(opts);
+  if (opts.pinless) {
+    if (opts.scale) throw new Error('v3Graph: pinless is for the fixed graph');
+    for (let k = 0, i = 7; k < opts.pinless; k++, i++) {
+      if (i === 9) i++;
+      const n = node(`n${i}`, 'n4', i, ['m-a'], []);
+      if (k > 0) delete n.comments;
+      g.nodes.push(n);
+    }
+  }
   if (opts.staleDraft && opts.scale) g.draftBase = g.nodes[0].id;
   fs.mkdirSync(paths.graphDir, { recursive: true });
   for (const n of g.nodes) writeJson(path.join(paths.graphDir, `${n.id}.json`), n);
