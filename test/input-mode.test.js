@@ -22,7 +22,16 @@
 //     POINTER (the pointer tool) is frozen and arms nothing;
 //   - finger-draws: auto is on until a pen is seen (pointerover or
 //     pointerdown), then the record's default; storage remembers the pen for a
-//     fresh module; an explicit on or off binds; storage that throws reads auto.
+//     fresh module; an explicit on or off binds; storage that throws reads auto;
+//   - the two-finger pan (U334a; DECISIONS.md K.4 I1 = b): every finger down
+//     in the well is tracked by its pointerId and released at its pointerup or
+//     pointercancel (a lifted pan finger's click owed, then spent), a finger
+//     outside the well and a pen are never tracked, a primary touch clears what
+//     an earlier gesture left; a second finger makes a pan only with a strokes
+//     tool armed and finger-draws on, and cancels the first finger's stroke
+//     through the overlay's cancelGesture;
+//   - the well's touch-action per state: manipulation, and none only while a
+//     strokes tool is armed with finger-draws on (pinch-zoom off).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -30,6 +39,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { bootShell } = require('../test-support/chrome-shell');
+const { createCascade } = require('../test-support/css-cascade');
 
 const REPO = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(REPO, 'public/app/input-mode.js'), 'utf8');
@@ -307,4 +317,96 @@ test('finger-draws: a pen pointerdown turns auto off; storage that throws reads 
   } finally {
     Object.defineProperty(globalThis, 'localStorage', desc);
   }
+});
+
+// ── the two-finger pan (U334a; K.4 I1 = b) ───────────────────────────────────
+function touchAt(el, type, pointerId, extra = {}) {
+  el.dispatchEvent(new W.PointerEvent(type, {
+    bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId, isPrimary: false,
+    clientX: 100, clientY: 100, buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, ...extra,
+  }));
+}
+
+test('the two-finger pan: each finger tracked by pointerId and released at pointerup or pointercancel; no stale entry after the gesture', () => {
+  const el = fixtures().static[0];
+  const created = [];
+  const off = ov.registerType('imp-strokes', { draw() {}, input: 'strokes', create: (inp) => created.push([inp.phase, inp.event.pointerId]) });
+  const empty = { touches: [], pan: null, clicks: [] };
+  IM.installInputMode();
+  IM.setFingerDraws('on');
+  ov.setArmed('imp-strokes');
+  try {
+    assert.deepEqual(IM.touchesForTests(), empty);
+    touchAt(el, 'pointerdown', 41, { isPrimary: true });
+    assert.deepEqual(IM.touchesForTests(), { touches: [41], pan: null, clicks: [] }, 'one finger: tracked, no pan');
+    assert.deepEqual(created, [['pointerdown', 41]], 'and it draws');
+    touchAt(el, 'pointerdown', 42);
+    assert.deepEqual(IM.touchesForTests(), { touches: [41, 42], pan: [41, 42], clicks: [] }, 'a second finger: a pan');
+    assert.deepEqual(created, [['pointerdown', 41], ['pointercancel', 41]], 'the stroke cancelled toward the tool; the second finger never reached it');
+    touchAt(el, 'pointerup', 41);
+    assert.deepEqual(IM.touchesForTests(), { touches: [42], pan: [42], clicks: [41] }, 'released at its pointerup; its click is owed');
+    touchAt(el, 'pointercancel', 42);
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [41] }, 'released at its pointercancel (no click follows one)');
+    el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: 41, detail: 1 }));
+    assert.deepEqual(IM.touchesForTests(), empty, 'the click spent: nothing left of the gesture');
+    assert.deepEqual(created, [['pointerdown', 41], ['pointercancel', 41]], 'the pan created nothing');
+    // A finger outside the well and a pen are never tracked.
+    touchAt(W.document.body, 'pointerdown', 43, { isPrimary: true });
+    el.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'pen', pointerId: 44, isPrimary: true, buttons: 1 }));
+    assert.deepEqual(IM.touchesForTests(), empty);
+    el.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, composed: true, pointerType: 'pen', pointerId: 44, isPrimary: true }));
+    touchAt(W.document.body, 'pointerup', 43);
+    // A primary touch is a new touch: what a lost gesture left is cleared.
+    touchAt(el, 'pointerdown', 45, { isPrimary: true });
+    touchAt(el, 'pointerdown', 46, { isPrimary: true });
+    assert.deepEqual(IM.touchesForTests(), { touches: [46], pan: null, clicks: [] });
+    touchAt(el, 'pointerup', 46);
+    assert.deepEqual(IM.touchesForTests(), empty);
+    // Finger-draws off: two fingers are tracked, and never a pan.
+    IM.setFingerDraws('off');
+    touchAt(el, 'pointerdown', 47, { isPrimary: true });
+    touchAt(el, 'pointerdown', 48);
+    assert.deepEqual(IM.touchesForTests(), { touches: [47, 48], pan: null, clicks: [] });
+    touchAt(el, 'pointercancel', 47);
+    touchAt(el, 'pointercancel', 48);
+    assert.deepEqual(IM.touchesForTests(), empty);
+  } finally {
+    ov.setArmed(null);
+    off();
+    IM.setFingerDraws('auto');
+    W.localStorage.removeItem(IM.FINGER_DRAWS_KEY);
+  }
+});
+
+test('the well\'s touch-action per state: none only while a strokes tool is armed with finger-draws on (pinch-zoom off), else manipulation', () => {
+  const css = createCascade(fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8'), { win: () => W });
+  const main = W.document.getElementById('main');
+  const offs = ['taps', 'strokes', 'selection'].map((input) => ov.registerType(`ita-${input}`, { draw() {}, input, create() {} }));
+  IM.installInputMode();
+  const rows = [];
+  try {
+    for (const fd of ['off', 'on']) {
+      IM.setFingerDraws(fd);
+      for (const type of [null, 'ita-taps', 'ita-strokes', 'ita-selection']) {
+        ov.setArmed(type);
+        rows.push(`${fd} ${type || 'nothing'} ${css.value(main, 'touch-action')} ${IM.fingerStrokes()}`);
+      }
+    }
+  } finally {
+    ov.setArmed(null);
+    for (const off of offs) off();
+    IM.setFingerDraws('auto');
+    W.localStorage.removeItem(IM.FINGER_DRAWS_KEY);
+  }
+  assert.deepEqual(rows, [
+    'off nothing manipulation false',
+    'off ita-taps manipulation false',
+    'off ita-strokes manipulation false',
+    'off ita-selection manipulation false',
+    'on nothing manipulation false',
+    'on ita-taps manipulation false',
+    'on ita-strokes none true',
+    'on ita-selection manipulation false',
+  ]);
+  assert.equal(W.document.documentElement.classList.contains('finger-strokes'), false);
 });

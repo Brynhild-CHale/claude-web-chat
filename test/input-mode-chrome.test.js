@@ -28,9 +28,19 @@
 //   - the two older pointerType reads stay: a touch pointerenter on
 //     #queue-rail does not open it (a mouse one does), and sheet-drag's mouse
 //     button filter is the line it was;
-//   - the stylesheet: the well's touch-action is manipulation (pinch-zoom under
-//     html.finger-strokes), and every touch-action rule the chrome had before
-//     is unchanged.
+//   - the stylesheet: the well's touch-action is manipulation (none under
+//     html.finger-strokes: pinch-zoom off while a drawing tool is armed and
+//     fingers draw, K.4 I1 = b), and every touch-action rule the chrome had
+//     before is unchanged;
+//   - the two-finger pan (U334a; DECISIONS.md K.4 H1 = a, I1 = b), with the
+//     box grab armed (the drawing tool) and finger-draws on: one finger
+//     draws a grab; two fingers moving together scroll the well (.well-wrap)
+//     by the midpoint's travel and create nothing; a second finger landing
+//     mid-stroke cancels the stroke (the band dropped, no POST) and scrolls;
+//     the pan's fingers are never heard by the pane under them, their clicks
+//     included; with finger-draws off the two-finger case is the browser's (no
+//     scrollBy, touch-action manipulation); a pen stroke with resting fingers
+//     (a palm) still draws.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -38,8 +48,22 @@ const fs = require('fs');
 const path = require('path');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { createCascade } = require('../test-support/css-cascade');
+const { waitUntil } = require('../test-support/helpers');
 
 const REPO = path.join(__dirname, '..');
+// The box grab's type listing (the drawing tool the pan is pinned against).
+const TYPES = {
+  ok: true,
+  types: [{ type: 'box-grab', schema: 'box-grab@1', reads: ['box-grab@1'], anchors: ['page'],
+    toolbar: { input: 'strokes', settings: { small: { properties: { snap: { enum: ['block', 'free'], default: 'block' } } } } } }],
+  reserved: ['comment', 'highlight', 'box-grab'],
+};
+let nextGrab = 1;
+function elementsRoute(url, init) {
+  const method = String((init && init.method) || 'GET').toUpperCase();
+  if (method === 'POST') return { ok: true, element: { id: `g${nextGrab++}`, v: 1, type: 'box-grab', shared: true } };
+  return { elements: [], next_cursor: 0 };
+}
 const CSS = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
 
 let shell, W, M, ov, IM, TAP_SLOP;
@@ -56,7 +80,9 @@ const PANE = {
 };
 
 before(async () => {
-  shell = await bootShell({});
+  shell = await bootShell({
+    routes: { '/api/elements/types': TYPES, '/api/elements': elementsRoute, '/api/elements/*': { ok: true } },
+  });
   W = shell.window;
   M = W.__wcMount;
   W.__log = [];
@@ -65,6 +91,7 @@ before(async () => {
   ({ TAP_SLOP } = await shell.importApp('sheet-model.js'));
   await shell.frame(helloFrame({ active: 'n1', mounts: [PANE] }));
   await shell.tick();
+  await waitUntil(() => ov.inputKindOf('box-grab') === 'strokes', { what: 'the box grab registered' });
   for (const input of ['taps', 'strokes', 'selection']) {
     offTypes.push(ov.registerType(`im-${input}`, { draw() {}, input, create: (inp) => created.push([`im-${input}`, inp.phase, inp.pointerType]) }));
   }
@@ -315,7 +342,7 @@ test('the stylesheet: the well keeps the finger\'s gestures (manipulation), and 
   assert.equal(css.value(main, 'touch-action'), 'manipulation');
   html.classList.add('finger-strokes');
   try {
-    assert.equal(css.value(main, 'touch-action'), 'pinch-zoom');
+    assert.equal(css.value(main, 'touch-action'), 'none', 'pinch-zoom off while a drawing tool is armed and fingers draw (K.4 I1 = b)');
   } finally { html.classList.remove('finger-strokes'); }
   // Every touch-action rule, by selector: the chrome's handles as they were
   // (graph canvas, pane grips, the dock's grips, the sheet's scrim and tab, the
@@ -336,6 +363,211 @@ test('the stylesheet: the well keeps the finger\'s gestures (manipulation), and 
     '.chat-scrim.on => none',
     '.chat-tab => none',
     '#main => manipulation',
-    'html.finger-strokes #main => pinch-zoom',
+    'html.finger-strokes #main => none',
   ]);
+});
+
+// ── the two-finger pan (U334a; K.4 H1 = a, I1 = b) ───────────────────────────
+// The box grab armed, as the toolbar arms it; the pane laid out at the
+// viewport's top-left (jsdom has no layout) so a drawn box lands in its
+// content box; the well's scroller is .well-wrap, its scrollBy recorded.
+const grabPosts = () => shell.calls.filter((c) => c.method === 'POST' && c.url === '/api/elements');
+const band = () => W.document.querySelector('#el-layer .bg-band');
+const scroller = () => shell.$('main').closest('.well-wrap');
+let scrollCalls = [];
+function layOut() {
+  const wrap = W.document.querySelector('.pane[data-pane-id="im1"]');
+  shell.scrollMetrics(wrap, { rect: { left: 0, top: 0, width: 600, height: 400 } });
+  shell.scrollMetrics(wrap.querySelector('.mount-host'), { rect: { left: 0, top: 0, width: 600, height: 400 } });
+  const sc = scroller();
+  shell.scrollMetrics(sc, { scrollTop: 0, scrollLeft: 0, scrollHeight: 4000, clientHeight: 800, scrollWidth: 600, clientWidth: 600 });
+  scrollCalls = [];
+  const own = W.Element.prototype.scrollBy;
+  sc.scrollBy = function scrollBy(...a) { scrollCalls.push(a); return own.apply(this, a); };
+}
+function finger(el, type, pointerId, x, y, extra = {}) {
+  const ev = new W.PointerEvent(type, {
+    bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId, isPrimary: false,
+    clientX: x, clientY: y, buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, ...extra,
+  });
+  el.dispatchEvent(ev);
+  return ev;
+}
+function tapClick(el, pointerId) {
+  el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'touch', pointerId }));
+}
+async function grabArmed(fd) {
+  ov.setArmed(null);
+  IM.setFingerDraws(fd);
+  ov.setArmed('box-grab');
+  layOut();
+  shell.calls.length = 0;
+  reset();
+  await shell.tick();
+}
+async function settle() {
+  ov.setArmed(null);
+  IM.setFingerDraws('off');
+  scroller().scrollTop = 0;
+  delete scroller().scrollBy;
+  await shell.tick();
+}
+
+test('the pan: one finger draws a grab; two fingers moving together scroll the well by their travel and create nothing', async () => {
+  await grabArmed('on');
+  try {
+    assert.equal(W.document.documentElement.classList.contains('finger-strokes'), true);
+    // One finger from (10,10) to (80,60): the box grab's stroke, to its end.
+    finger(lead(), 'pointerdown', 21, 10, 10, { isPrimary: true });
+    finger(lead(), 'pointermove', 21, 45, 35);
+    finger(lead(), 'pointermove', 21, 80, 60);
+    assert.ok(band(), 'the rubber band is drawn');
+    finger(lead(), 'pointerup', 21, 80, 60);
+    tapClick(lead(), 21);
+    await shell.tick();
+    assert.equal(grabPosts().length, 1, 'a lone finger draws: the grab is created');
+    assert.equal(grabPosts()[0].body.type, 'box-grab');
+    assert.deepEqual(scrollCalls, [], 'and nothing scrolled');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+    // Two fingers landing together, then moving up 40 px together.
+    shell.calls.length = 0;
+    reset();
+    finger(lead(), 'pointerdown', 22, 100, 200, { isPrimary: true });
+    finger(lead(), 'pointerdown', 23, 200, 200);
+    assert.equal(band(), null, 'the first finger\'s band is dropped the moment the second lands');
+    for (const y of [190, 180, 170, 160]) {
+      finger(lead(), 'pointermove', 22, 100, y);
+      finger(lead(), 'pointermove', 23, 200, y);
+    }
+    assert.equal(scroller().scrollTop, 40, 'the well scrolled by the fingers\' 40 px');
+    assert.equal(scroller().scrollLeft, 0, 'no sideways travel, no sideways scroll');
+    finger(lead(), 'pointerup', 22, 100, 160);
+    finger(lead(), 'pointerup', 23, 200, 160);
+    tapClick(goBtn(), 22);
+    tapClick(goBtn(), 23);
+    await shell.tick();
+    assert.equal(grabPosts().length, 0, 'the pan created nothing');
+    assert.equal(band(), null);
+    assert.deepEqual(W.__log, [], 'the pane under the fingers heard nothing: no pointer event, no click');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] }, 'no stale entry after the gesture');
+    assert.deepEqual(ov.armed(), { type: 'box-grab', profile: null }, 'no disarm step: the tool stays armed (H1 = a)');
+  } finally { await settle(); }
+});
+
+test('the pan: a second finger landing mid-stroke cancels the stroke (no element, no POST) and scrolls, both axes', async () => {
+  await grabArmed('on');
+  try {
+    finger(lead(), 'pointerdown', 31, 10, 10, { isPrimary: true });
+    finger(lead(), 'pointermove', 31, 80, 60);
+    assert.ok(band(), 'the stroke is under way');
+    const second = finger(lead(), 'pointerdown', 32, 120, 60);
+    assert.equal(band(), null, 'cancelled toward the tool: the band is gone');
+    assert.equal(second.defaultPrevented, true, 'the pan\'s finger: its default cancelled');
+    // The midpoint (100,60) travels to (70,30): the well moves 30 down and 30 right.
+    finger(lead(), 'pointermove', 31, 50, 30);
+    finger(lead(), 'pointermove', 32, 90, 30);
+    assert.equal(scroller().scrollTop, 30);
+    assert.equal(scroller().scrollLeft, 30, 'horizontal too, where the well scrolls');
+    // A third finger joins the pan: the pan's, never the tool's (no new band)
+    // nor the pane's; its landing and lifting move nothing.
+    const third = finger(lead(), 'pointerdown', 39, 300, 300);
+    assert.equal(third.defaultPrevented, true, 'a joining finger is the pan\'s');
+    assert.equal(band(), null, 'a joining finger draws no band');
+    finger(lead(), 'pointerup', 39, 300, 300);
+    assert.equal(scroller().scrollTop, 30);
+    assert.equal(scroller().scrollLeft, 30);
+    // One finger lifts: the other still pans, from where it is (no jump).
+    finger(lead(), 'pointerup', 31, 50, 30);
+    finger(lead(), 'pointermove', 32, 90, 10);
+    assert.equal(scroller().scrollTop, 50, 'the remaining finger pans on');
+    assert.equal(scroller().scrollLeft, 30, 'from where it is: the midpoint rebased at the lift, no sideways jump');
+    finger(lead(), 'pointerup', 32, 90, 10);
+    tapClick(lead(), 31);
+    tapClick(lead(), 32);
+    tapClick(lead(), 39);
+    await shell.tick();
+    assert.equal(grabPosts().length, 0, 'no element, no POST');
+    assert.deepEqual(W.__log, []);
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+    // The next lone finger draws again.
+    finger(lead(), 'pointerdown', 33, 10, 10, { isPrimary: true });
+    finger(lead(), 'pointermove', 33, 80, 60);
+    finger(lead(), 'pointerup', 33, 80, 60);
+    await shell.tick();
+    assert.equal(grabPosts().length, 1, 'one finger draws after the pan');
+  } finally { await settle(); }
+});
+
+test('the pan: a second finger landing on the pane\'s button is the pan\'s; the button never acts', async () => {
+  await grabArmed('on');
+  try {
+    finger(lead(), 'pointerdown', 34, 10, 10, { isPrimary: true });
+    finger(goBtn(), 'pointerdown', 35, 50, 50);
+    finger(goBtn(), 'pointermove', 35, 50, 20);
+    finger(goBtn(), 'pointerup', 35, 50, 20);
+    tapClick(goBtn(), 35);
+    finger(lead(), 'pointerup', 34, 10, 10);
+    tapClick(goBtn(), 34);
+    await shell.tick();
+    assert.deepEqual(W.__log, [], 'no pointerdown, no click:go');
+    assert.equal(grabPosts().length, 0);
+    assert.ok(scroller().scrollTop > 0, 'it scrolled');
+  } finally { await settle(); }
+});
+
+test('finger-draws off: two fingers are the browser\'s (no scrollBy, touch-action manipulation) and create nothing', async () => {
+  await grabArmed('off');
+  try {
+    const css = createCascade(CSS, { win: () => W });
+    assert.equal(W.document.documentElement.classList.contains('finger-strokes'), false);
+    assert.equal(css.value(shell.$('main'), 'touch-action'), 'manipulation', 'the browser pans and pinches');
+    const d1 = finger(lead(), 'pointerdown', 41, 100, 200, { isPrimary: true });
+    const d2 = finger(lead(), 'pointerdown', 42, 200, 200);
+    assert.equal(d1.defaultPrevented || d2.defaultPrevented, false, 'no default cancelled');
+    for (const y of [180, 160]) {
+      finger(lead(), 'pointermove', 41, 100, y);
+      finger(lead(), 'pointermove', 42, 200, y);
+    }
+    finger(lead(), 'pointercancel', 41, 100, 160);
+    finger(lead(), 'pointercancel', 42, 200, 160);
+    await shell.tick();
+    assert.deepEqual(scrollCalls, [], 'no scrollBy: the scroll is the browser\'s');
+    assert.equal(scroller().scrollTop, 0);
+    assert.equal(grabPosts().length, 0);
+    assert.ok(W.__log.includes('down:touch'), 'the page had the fingers');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+  } finally { await settle(); }
+});
+
+test('a pen stroke with resting fingers (a palm) still draws; no pan starts while a pen is down', async () => {
+  await grabArmed('on');
+  try {
+    W.localStorage.setItem('wc:finger-draws', 'on');   // a pen seen keeps 'on' bound
+    const pen = (type, x, y) => lead().dispatchEvent(new W.PointerEvent(type, {
+      bubbles: true, cancelable: true, composed: true, pointerType: 'pen', pointerId: 51, isPrimary: true,
+      clientX: x, clientY: y, buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0,
+    }));
+    pen('pointerdown', 10, 10);
+    finger(lead(), 'pointerdown', 52, 300, 300, { isPrimary: true });
+    finger(lead(), 'pointerdown', 53, 320, 310);
+    finger(lead(), 'pointermove', 52, 300, 250);
+    finger(lead(), 'pointermove', 53, 320, 260);
+    pen('pointermove', 45, 35);
+    pen('pointermove', 80, 60);
+    assert.ok(band(), 'the pen\'s band stands');
+    pen('pointerup', 80, 60);
+    finger(lead(), 'pointerup', 52, 300, 250);
+    finger(lead(), 'pointerup', 53, 320, 260);
+    await shell.tick();
+    assert.equal(grabPosts().length, 1, 'the pen drew its grab');
+    assert.deepEqual(scrollCalls, [], 'the palm panned nothing');
+    assert.deepEqual(W.__log, [], 'and the pane heard no palm (U334\'s ignore)');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+  } finally { await settle(); }
+});
+
+test('the pan cancels a stroke through the overlay\'s cancelGesture and dispatches no synthetic event', () => {
+  const src = fs.readFileSync(path.join(REPO, 'public/app/input-mode.js'), 'utf8');
+  assert.match(src, /import \{[^}]*\bcancelGesture\b[^}]*\} from '\.\/overlay\.js'/);
+  assert.doesNotMatch(src, /dispatchEvent\(|new (Pointer|Mouse|Touch)?Event\(/, 'no synthetic event a pane could see');
 });

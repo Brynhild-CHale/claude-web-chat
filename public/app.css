@@ -3239,10 +3239,12 @@ body.pin-mode .bb-create { border-color: var(--wc-accent); background: var(--wc-
    touch-action: none handles inside it (pane grips) are chrome gestures and
    keep winning, since a touch takes the intersection of its ancestors' values.
    While finger-draws is on and a strokes tool is armed the finger IS the drawing
-   pointer: the well gives up the pan (a pinch still zooms), or the browser
-   would claim a finger stroke as a scroll and cancel it. */
+   pointer: the well gives up every finger gesture, or the browser would claim
+   a finger stroke as a scroll and cancel it; pinch-zoom is off while it is
+   armed, and the page scrolls by two fingers, panned by input-mode.js
+   (U334a; DECISIONS.md K.4 I1 = b). */
 #main { touch-action: manipulation; }
-html.finger-strokes #main { touch-action: pinch-zoom; }
+html.finger-strokes #main { touch-action: none; }
 
 /* ── U306 · orphans visible and the re-anchor card (public/app/orphans.js;
    annotation engine 2A.6) ── STAND-INS until the design studio's mock-up

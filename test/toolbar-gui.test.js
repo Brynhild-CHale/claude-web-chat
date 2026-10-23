@@ -442,7 +442,8 @@ test('the finger-draws switch: this device\'s auto / on / off (auto by default, 
   const radios = () => [...$('tb-tray').querySelectorAll('input[name="tb-finger-draws"]')];
   assert.deepEqual(radios().map((r) => [r.value, r.checked]), [['auto', true], ['on', false], ['off', false]]);
   const note = () => $('tb-tray').querySelector('.tb-fd-note').textContent;
-  assert.equal(note(), `auto: finger-draws on until a pen is seen on this device · ${IM.fingerDrawsMode().penSeen ? 'a pen has been seen here' : 'no pen seen here yet'}`);
+  // While finger-draws is on, the note names the gesture that scrolls (U334a, K.4 I1 = b).
+  assert.equal(note(), `auto: finger-draws on until a pen is seen on this device · ${IM.fingerDrawsMode().penSeen ? 'a pen has been seen here' : 'no pen seen here yet'}${IM.fingerDraws() ? ' · one finger draws, two fingers scroll' : ''}`);
   const mk = $('tb-tray').querySelector('.tb-fd-default');
   assert.ok(mk && mk.disabled, 'the host may make it the default, once a device value is chosen');
   const userPatches = patches('/api/toolbar/user').length;
@@ -453,6 +454,7 @@ test('the finger-draws switch: this device\'s auto / on / off (auto by default, 
   assert.equal(W.localStorage.getItem(IM.FINGER_DRAWS_KEY), 'on', 'written through U334 to this device\'s storage');
   assert.equal(IM.fingerDrawsMode().mode, 'on');
   assert.deepEqual(radios().map((r) => [r.value, r.checked]), [['auto', false], ['on', true], ['off', false]]);
+  assert.equal(note(), 'on on this device · one finger draws, two fingers scroll', 'the switch names the gesture that scrolls (U334a)');
   assert.equal(patches('/api/toolbar/user').length, userPatches, 'no PATCH /api/toolbar/user');
   // The host's "make this my default": the user record, through U332's user route (K.2-15).
   const mk2 = $('tb-tray').querySelector('.tb-fd-default');
