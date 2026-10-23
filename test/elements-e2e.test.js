@@ -19,8 +19,9 @@
 //       sent): the reply is author claude, verified;
 //   (4) a turn through the turn routes the hooks call commits a node whose
 //       comment copies carry `v` and whose commit record pins id@v;
-//   (5) a graceful stop and a reboot: the log grows by at most one record, an
-//       epoch; the boot report is still clean; the live state is not dirty;
+//   (5) a graceful stop and a reboot: the log grows by the ending boot's one
+//       `close` record (U352) and at most the reboot's epoch; the boot report
+//       is still clean; the live state is not dirty;
 //   (6) a Wipe with a pinned pane under its heading: the pin on that kept
 //       heading survives, every other live pin goes, committed node files are
 //       byte-identical (U206; PLAN §7 obligation 10);
@@ -348,15 +349,20 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     await cursor('after turn');
   });
 
-  await t.test('(5) a graceful stop and a reboot append at most one record, an epoch; the boot stays clean', async () => {
+  await t.test('(5) a graceful stop and a reboot append the ending boot\'s close and at most an epoch; the boot stays clean', async () => {
     const before = logRecords(paths);
     await ctx.graceful();
     ctx = await withServer(t, { root });
     await ok(ctx.api.get('/api/comments'), 'GET after reboot');
     const after = logRecords(paths);
     const added = after.slice(before.length);
-    assert.ok(added.length <= 1, `at most one record: ${JSON.stringify(added)}`);
-    for (const r of added) assert.equal(r.t, 'epoch', `only an epoch: ${JSON.stringify(r)}`);
+    // The ending boot appended (steps 3 and 4), so its graceful stop writes one
+    // close record (U352: ids only) before the reboot's epoch, if any.
+    assert.ok(added.length <= 2, `at most a close and an epoch: ${JSON.stringify(added)}`);
+    assert.equal(added[0] && added[0].t, 'close', `the ending boot's close first: ${JSON.stringify(added)}`);
+    assert.equal(added[0].complete, true);
+    for (const p of added[0].held) assert.match(p, /^[A-Za-z][A-Za-z0-9_-]*@[1-9][0-9]*$/, 'ids only, never text');
+    for (const r of added.slice(1)) assert.equal(r.t, 'epoch', `then only an epoch: ${JSON.stringify(r)}`);
     assert.deepEqual(after.slice(0, before.length), before, 'nothing before it changed');
     const report = readJsonFile(paths.elementsBootReport);
     assert.equal(report.clean, true, JSON.stringify(report.states));
@@ -469,27 +475,26 @@ test('(10) the H1 rulings are built into the resolver: head_floor and ordinal on
   for (const s of GRAPH_ANCHOR_STATES) assert.ok(ANCHOR_STATES.includes(s), `${s} is an anchor state`);
 });
 
-// A FINDING, recorded as a skipped test rather than pinned (U240 hand-off,
-// open issue 1; U209's own open issue): a pin added and deleted before any
-// commit leaves versions no commit ever pins, and nothing records the delete
-// (C2: no tombstone), so every later boot's reconcile reports them as
-// `uncommitted-lost` — a boot report that is never clean again, one stderr
-// line and one integrity event per boot. The fix needs an engine change (a
-// delete reason the census reads, or the state counted as normal), routed to
-// a corrective unit, which un-skips this test as its acceptance: run today it
-// fails with {"uncommitted-lost":{"count":1,"examples":["c1@1"]}}. Skipped,
-// not todo: node's reporter lists a failing todo under "failing tests", which
-// the gate's parser reads as a failing file, so the file was flagged flaky on
-// every run (U240 review r1).
-test('a pin added and deleted before any commit leaves the next boot clean', {
-  skip: 'U209 open issue: uncommitted-lost for a pin deleted before its first commit (U240 open issue 1); un-skip in the corrective unit',
-}, async (t) => {
+// U240 open issue 1 (U209's own; alpha.1 finding K-2), fixed by U352: a pin
+// added and deleted before any commit leaves versions no commit ever pins, and
+// the delete appends nothing (C2: no tombstone). The graceful stop's close
+// record (DECISIONS F-DEL c) names what the stop still held; it does not hold
+// the deleted pin, so the next boot counts its version `discarded` (normal):
+// the report is clean, with no stderr line and no integrity event.
+test('a pin added and deleted before any commit leaves the next boot clean', async (t) => {
   const first = await withServer(t);
   const paths = projectPaths(first.root);
   const pin = (await ok(first.anonApi.post('/api/comments', { text: 'gone before commit', shared: true, anchor: null }), 'add')).pin;
   assert.equal((await first.anonApi.del(`/api/comments/${pin.id}`)).status, 200);
   await first.graceful();
-  await withServer(t, { root: first.root });
+  const errors = [];
+  const origError = console.error;
+  console.error = (...a) => { errors.push(a.join(' ')); };
+  let second;
+  try { second = await withServer(t, { root: first.root }); } finally { console.error = origError; }
   const report = readJsonFile(paths.elementsBootReport);
   assert.equal(report.clean, true, JSON.stringify(report.states));
+  assert.deepEqual(report.states.discarded, { count: 1, examples: [`${pin.id}@${pin.v}`] });
+  assert.deepEqual(errors.filter((l) => l.includes('disagreed at boot')), [], 'no stderr line');
+  assert.equal(second.srv.bus.read({ since: 0, kinds: ['integrity'] }).events.length, 0, 'no integrity event');
 });

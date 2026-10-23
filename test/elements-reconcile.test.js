@@ -166,7 +166,16 @@ for (const [crash, [expected, written, rolled]] of Object.entries(CRASHES)) {
     const s3 = await withServer(t, { root });
     const again = bootReport(root);
     assertNamedAndHonest(root, again);
-    assert.deepEqual(unclean(again), crash === 'before-any' ? ['uncommitted-lost'] : [], JSON.stringify(again.states));
+    // The lost versions s2 reported, s2 acknowledged (U352): no new state, the
+    // earlier one acknowledged, clean, nothing announced.
+    assert.deepEqual(unclean(again), [], JSON.stringify(again.states));
+    assert.equal(again.clean, true);
+    assert.equal(integrityEvents(s3.srv).length, 0, 'a clean boot announces nothing');
+    if (crash === 'before-any') {
+      assert.deepEqual(again.states.acknowledged, { count: 1, examples: [`uncommitted-lost ${pinB.id}@${pinB.v}`] });
+    } else {
+      assert.equal(again.states.acknowledged, undefined, 'nothing recurring was reported');
+    }
     assert.equal(s3.srv.graph.active, C);
   });
 }
@@ -307,10 +316,15 @@ test('a hard stop reboots with the unsaved versions uncommitted-lost; one more c
   });
   await s2.graceful();
 
-  await withServer(t, { root: s1.root });
+  const s3 = await withServer(t, { root: s1.root });
   const after = bootReport(s1.root);
-  assert.deepEqual(unclean(after), ['uncommitted-lost'], 'nothing but the lost versions');
-  assert.deepEqual(after.states['uncommitted-lost'], report.states['uncommitted-lost'], '0 false positives');
+  // s2 acknowledged what it reported (U352): 0 false positives, nothing new,
+  // the lost version acknowledged, clean and unannounced.
+  assert.deepEqual(unclean(after), [], 'nothing new');
+  assert.equal(after.clean, true);
+  assert.deepEqual(after.states.acknowledged, { count: 1, examples: [`uncommitted-lost ${head.id}@3`] }, '0 false positives');
+  assert.equal(after.states['uncommitted-lost'], undefined);
+  assert.equal(integrityEvents(s3.srv).length, 0);
   assert.equal(after.states.superseded.count, 3);
 });
 
@@ -387,10 +401,14 @@ test('commit-record-without-node: a torn node file is set aside and reported in 
   assert.equal(commitsIn(root).filter((r) => r.node === B).length, 1, 'the orphan record is not adopted by anyone');
   await s2.stop();
 
-  // A later boot names the aside an earlier boot made.
+  // s2 acknowledged the orphan (U352: keyed by the record's node id), so a
+  // later boot counts it acknowledged; the aside an earlier boot made is still
+  // on disk.
   await withServer(t, { root });
   const later = bootReport(root);
-  assert.deepEqual(later.states['commit-record-without-node'].examples, orphan.examples);
+  assert.equal(later.clean, true, JSON.stringify(later.states));
+  assert.deepEqual(later.states.acknowledged, { count: 1, examples: [`commit-record-without-node ${B}`] });
+  assert.ok(fs.existsSync(path.join(graphDir(root), orphan.examples[0])));
 });
 
 test('commit-record-without-node: a node file gone outright (no aside to claim) is reported, and its id is never minted again', async (t) => {
@@ -411,8 +429,9 @@ test('commit-record-without-node: a node file gone outright (no aside to claim) 
 
   await withServer(t, { root });
   const later = bootReport(root);
-  assert.deepEqual(later.states['commit-record-without-node'] && later.states['commit-record-without-node'].detail,
-    [{ node: B, aside: null, record: true }], 'the orphan is still named');
+  // s2 acknowledged the orphan (U352): still named, as acknowledged.
+  assert.deepEqual(later.states.acknowledged, { count: 1, examples: [`commit-record-without-node ${B}`] }, 'the orphan is still named');
+  assert.equal(later.clean, true, JSON.stringify(later.states));
   assert.equal(commitsIn(root).filter((r) => r.node === B).length, 1, 'one record for the gone node: not shadowed by a reused id');
 });
 
