@@ -199,18 +199,19 @@ test('hotkeys: the digits arm the pinned slots in order; a user-tier tool bindin
   await serve(answer());
 });
 
-test('hotkeys: a manifest default the chrome already holds (C) is listed by conflicts() and left unbound; C still runs the chrome row', async () => {
+test('hotkeys: a second manifest default on C (the fixture\'s) is listed by conflicts() and left unbound; C is comment\'s own', async () => {
   await serve(answer({ tools: [...BASE.tools, STICKER] }));
   const mine = hotkeys.conflicts().filter((c) => c.source === 'tools' && c.chord === 'C');
-  assert.deepEqual(mine.map((c) => c.target.type).sort(), ['comment', 'sticker'],
-    'comment\'s own C (until U338 moves the chrome row) and the fixture\'s');
-  assert.ok(mine.every((c) => c.winner.source === 'chrome' && c.winner.target.action === 'chrome.comment'));
+  // U338 retired the chrome's C row: comment's element.json default holds C
+  // (first by target within the source), and the fixture's claim is the conflict.
+  assert.deepEqual(mine.map((c) => c.target.type), ['sticker'], 'the fixture\'s C, left unbound');
+  assert.ok(mine.every((c) => c.winner.source === 'tools' && c.winner.target.kind === 'tool' && c.winner.target.type === 'comment'));
   const pin = () => W.document.body.classList.contains('pin-mode');
   const was = pin();
   await press('c');
-  assert.equal(pin(), !was, 'C ran the chrome row');
-  // Pin mode IS the comment tool in the one armed state (U327b, K.2-3): the
-  // chrome row's C arms comment, and body.pin-mode follows it.
+  assert.equal(pin(), !was, 'C ran comment\'s tool binding');
+  // Pin mode IS the comment tool in the one armed state (U327b, K.2-3): C arms
+  // comment, and body.pin-mode follows it.
   assert.equal(armedType(), pin() ? 'comment' : null, 'and armed the comment tool, the one armed state');
   await press('c');
   assert.equal(pin(), was);

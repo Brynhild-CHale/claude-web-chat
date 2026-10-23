@@ -743,7 +743,8 @@ const TITLES = {
   'btn-add': { title: 'Blocks — add from the library, manage packs · N · 0 in the library',
     aria: 'Blocks — add from the library, manage packs (N), 0 in the library' },
   'btn-bookmark': { title: 'Bookmark node · B', aria: 'Bookmark node (B)' },
-  'btn-pin-mode': { title: 'Pin comment · C', aria: 'Pin comment (C)' },
+  // (#btn-pin-mode, ✎, retired onto the toolbar's comment slot in U338: the
+  // slot's title and aria-label carry the bound key — test/toolbar-gui.test.js.)
   'btn-up': { title: 'Previous node · [', aria: 'Previous node ([)' },
   'btn-down': { title: 'Next node · ]', aria: 'Next node (])' },
   'btn-theme-toggle': { title: 'Light / dark · T', aria: 'Toggle light / dark (T)' },

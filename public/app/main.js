@@ -64,6 +64,9 @@ import { initToolSettings } from './tool-settings.js';
 // Slot and tool bindings resolved onto the overlay's one armed-tool state
 // (annotation engine 2D.7): the hotkeys' 'slot' and 'tool' kinds and defaults.
 import { initTools } from './tools.js';
+// The annotation toolbar (annotation engine 2D.8, U338): the pinned slots, the
+// tray behind the reveal, the armed slot's small settings, the phone half.
+import { initToolbar } from './toolbar.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -95,6 +98,7 @@ initHighlights();
 initBoxGrab();     // the box grab (U328c): its element type, its look and its rail card
 initToolSettings();   // the tool settings frames, registered with the shell's popovers (U338 opens them)
 initTools();      // after the hotkeys: slots 1–9 and each tool's manifest key
+initToolbar();    // after the tools and their settings host: #toolbar, #bb-tools and #tb-tray
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every

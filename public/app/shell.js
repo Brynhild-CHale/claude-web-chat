@@ -13,7 +13,9 @@ import { openOverlay, closeOverlay, isOverlayOpen, escapeInOverlay, hasFloatPrev
 import { initReplay, openReplay, closeReplay, isReplayOpen, replayTargetLabel } from './replay.js';
 import { openDrawer, openDrawerManage, closeDrawer, spawnComponent } from './drawer.js';
 import { components as componentList } from './components.js';
-import { togglePinMode, setPinMode, closePinPop } from './comments.js';
+import { closePinPop } from './comments.js';
+import { toggle as toggleTool, disarm } from './tools.js';
+import { armed } from './overlay.js';
 import { checkForUpdatesNow } from './version.js';
 import { labelFor, nodeTime } from './labels.js';
 import { panes, revealPane } from './mounts.js';
@@ -557,7 +559,9 @@ async function buildPalette(q) {
     { kind: 'command', label: 'Export node', run: doExport },
     ...(replayTargetLabel() ? [{ kind: 'command', label: `Replay to ${replayTargetLabel()}`, key: keyFor('chrome.replay'), run: () => openReplay() }] : []),
     { kind: 'command', label: modeToggleable() ? 'Toggle light / dark' : 'Toggle light / dark — this theme has one mode', key: keyFor('chrome.mode'), run: toggleMode },
-    { kind: 'command', label: 'Pin comment', key: keyFor('chrome.comment'), run: togglePinMode },
+    // Comment is a tool on the registry (U338): its C is comment's element.json
+    // default, and its key the toolbar's legend row for it (tool.comment).
+    { kind: 'command', label: 'Pin comment', key: keyFor('tool.comment'), run: () => toggleTool({ kind: 'tool', type: 'comment' }) },
     { kind: 'command', label: 'Settings', run: openSettings },
     { kind: 'command', label: 'Sessions…', key: keyFor('chrome.sessions'), run: openSessions },
     { kind: 'command', label: 'Chat with Claude', key: keyFor('chrome.chat'), run: openChatComposer },
@@ -777,7 +781,6 @@ function initBottomBar() {
   on('bb-up', () => stepNode('up'));
   on('bb-down', () => stepNode('down'));
   on('bb-return', () => returnToActive());
-  on('bb-create', () => togglePinMode());   // the tool slot's stand-in create entry (2A.4)
   on('bb-graph', () => openOverlay());
   on('bb-queue', () => toggleRail());
 }
@@ -792,7 +795,7 @@ function initBottomBar() {
      1. the glance / float preview      ┐ raised from INSIDE the overlay, so they
      2. the graph rename panel          ┘ must never outlive it   (escapeInOverlay)
      3. the graph overlay itself        ┘
-     4. every chrome panel + pin mode + the pinned queue rail
+     4. every chrome panel + the armed tool + the pinned queue rail
      5. the chat (chat-slots escapeChatViews) — only when 4 had nothing open,
         so ONE layer goes per press: a tray or the bar's note, then a detail
         view the dock pops, then the drawer (or a window holding focus)
@@ -808,9 +811,9 @@ export function handleEscape() {
   if (isOverlayOpen() && isLegendOpen()) { toggleLegend(false); return; }
   if (escapeInOverlay()) return;      // glance ▸ rename panel ▸ the overlay
   // Read BEFORE anything closes: whether this press had a chrome layer to take.
-  const hadLayer = openPanels().length > 0 || railPinned || document.body.classList.contains('pin-mode');
+  const hadLayer = openPanels().length > 0 || railPinned || !!armed();
   closeAllPopovers();                 // the palette, the legend and a comment thread are panels too
-  setPinMode(false);                  // …and Escape leaves pin mode, armed or not
+  if (armed()) disarm();              // …and Escape puts the armed tool down (pin mode is comment armed)
   if (railPinned) { railPinned = false; setRail(false); }
   if (!hadLayer) escapeChatViews();   // the chat is the last layer, one per press
 }
@@ -1039,10 +1042,8 @@ function registerKeyDefaults() {
   // To the node on screen.
   registerAction({ id: 'chrome.replay', label: 'Replay to node', defaultChord: 'R', legend: { section: K, order: 50 },
     run: () => openReplay() });
-  // Comment's C, today's pin mode, until the toolbar re-sources it from
-  // comment's element.json (U338).
-  registerAction({ id: 'chrome.comment', label: 'Pin comment', defaultChord: 'C', legend: { section: K, order: 60 },
-    run: () => togglePinMode() });
+  // (Comment's C is no chrome row: it is comment's element.json default,
+  // through tools.js's default source, and the toolbar draws its legend row.)
   registerAction({ id: 'chrome.prev', label: 'Previous node', defaultChord: '[',
     legend: { section: K, order: 70, row: 'step', label: 'Previous / next node' }, run: () => stepNode('up') });
   registerAction({ id: 'chrome.next', label: 'Next node', defaultChord: ']',
@@ -1082,7 +1083,7 @@ function registerKeyDefaults() {
   // (drawer.js and theme.js rewrite two of those titles; the registry puts the
   // bound key back each time).
   for (const [el, id] of [['cmd-trigger', 'chrome.palette'], ['btn-add', 'chrome.add'], ['btn-bookmark', 'chrome.bookmark'],
-    ['btn-pin-mode', 'chrome.comment'], ['btn-up', 'chrome.prev'], ['btn-down', 'chrome.next'],
+    ['btn-up', 'chrome.prev'], ['btn-down', 'chrome.next'],
     ['btn-theme-toggle', 'chrome.mode'], ['btn-graph', 'chrome.graph'],
     // …and the status bar's step, whose aria-keyshortcuts chat-bar.js sets.
     ['cs-step', 'chrome.chat']]) registerKeyedElement(el, id);
