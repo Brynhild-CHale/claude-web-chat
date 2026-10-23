@@ -1251,4 +1251,13 @@ export function initOverlay(opts = {}) {
   if (M && typeof M.onSettle === 'function') M.onSettle(() => requestDraw());
   window.addEventListener('scroll', requestDraw, { capture: true, passive: true });
   window.addEventListener('resize', requestDraw, { passive: true });
+  // A layout change of the well moves a pane with no settle, scroll or resize
+  // (mounts.js layoutPage: a drag, a resize handle's drop, a run cut by a
+  // markdown item, a remote pane:state): one observer asks for a draw while
+  // any marker is built.
+  const well = $('main');
+  if (well && typeof MutationObserver === 'function') {
+    new MutationObserver(() => { if (groups.length) requestDraw(); })
+      .observe(well, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+  }
 }

@@ -37,8 +37,7 @@
 // marker: today's 26px map pin, coloured by its state — coral awaiting a reply,
 // green once Claude answered, muted when every pin on it is private. Markers
 // re-place on the overlay's own redraws (a pane's settle, a scroll, a resize,
-// a preview transition) and on a layout change of the well (watchLayout,
-// below); nothing here polls.
+// a preview transition, a layout change of the well); nothing here polls.
 //
 // THE TOOL. Pin mode IS the comment tool armed in the chrome's ONE armed-tool
 // state (overlay.js setArmed / armed / onArmedChange, K.2-3), armed through
@@ -311,21 +310,6 @@ function retitle() {
     if (!c.isConnected) { marks.delete(c); continue; }
     if (c._commentIds) c.title = titleOf(c._commentIds);
   }
-}
-
-// The well's layout moved a pane without a settle, a scroll or a resize — a
-// drag, a resize handle's drop, a run cut by a markdown item, a remote
-// pane:state (mounts.js layoutPage) — so the overlay is asked for a draw. One
-// MutationObserver (no timer); the overlay coalesces the asks into one frame.
-let layoutObs = null;
-function watchLayout() {
-  const main = $('main');
-  if (!main || layoutObs || typeof MutationObserver !== 'function') return;
-  layoutObs = new MutationObserver(() => {
-    if (!marks.size || !mods) return;
-    mods.overlay.requestDraw();
-  });
-  layoutObs.observe(main, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
 }
 
 // ── create: the tool's tap ──────────────────────────────────────────────────
@@ -629,7 +613,6 @@ export function initComments() {
     m.ws.onFrame('reset', () => { refresh(); });
     m.bus.on('preview:node', (d) => { onPreview(d).catch((e) => console.error('[web-chat] comments: the preview read failed', e)); });
     m.bus.on('view', onView);
-    watchLayout();
     relayLive();
     refresh();
   }).catch((e) => console.error('[web-chat] comments: the comment type could not start', e));

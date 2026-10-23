@@ -656,3 +656,36 @@ test('get_comments({type: \'highlight\'}) reads the one element read with shared
   assert.ok(/highlight/.test(tool.description), 'its description names highlights');
   assert.equal(tool.inputSchema.properties.type.type, 'string');
 });
+
+// K.2-78 (U327b): a pane drag re-lays the well with no settle, scroll or
+// resize (mounts.js layoutPage); the overlay's own layout watch re-places
+// every type's markers, a highlight's as a comment's.
+test('a highlight marker re-placed after a pane drag — the overlay\'s layout watch, no interval armed', async () => {
+  removeApi();
+  ov.setArmed(null);
+  const intervals = shell.intervals().length;
+  RECTS = [{ left: 300, top: 120, width: 60, height: 16 }];
+  W.Range.prototype.getClientRects = function getClientRects() {
+    return (RECTS || []).map((r) => ({ ...r, right: r.left + r.width, bottom: r.top + r.height, x: r.left, y: r.top }));
+  };
+  try {
+    const rec = recOn('p1', lead('p1').firstChild, 0, 4, { color: 'gold' });
+    await pushLive(rec);
+    await drawnUntil(() => markersFor(rec.id).length === 1 && markersFor(rec.id)[0].querySelector('.hl-rect'), 'the marker drawn');
+    const marker = markersFor(rec.id)[0];
+    const before = marker.style.left;
+    // The pane dragged by its header: its text moved 140px right.
+    RECTS = [{ left: 440, top: 120, width: 60, height: 16 }];
+    const header = M.itemEl(W.document, 'p1').el.closest('.pane').querySelector('.pane-header');
+    pe(header, 'pointerdown', 'mouse', 9);
+    pe(header, 'pointermove', 'mouse', 9, { clientX: 140 });
+    pe(header, 'pointerup', 'mouse', 9, { clientX: 140, buttons: 0 });
+    await drawnUntil(() => markersFor(rec.id)[0] && markersFor(rec.id)[0].style.left === `${parseFloat(before) + 140}px`, 'the marker re-placed after the drag');
+    assert.equal(markersFor(rec.id)[0], marker, 'moved, not rebuilt');
+    assert.equal(shell.intervals().length, intervals, 'no interval armed');
+  } finally {
+    delete W.Range.prototype.getClientRects;
+    RECTS = null;
+    await clearLive();
+  }
+});
