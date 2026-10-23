@@ -47,7 +47,27 @@
 //   - a hidden state changing: a pane minimized or restored, the phone sheet
 //     reaching or leaving its full stop (or the screen turning narrow), a
 //     pane's service entering or leaving the pending list, a pane's mount
-//     grace running out — why 'hidden-state', so the probe reads again.
+//     grace running out — why 'hidden-state', so the probe reads again;
+//   - a pane's own DOM losing a node (K.2-91): every watched pane's shadow
+//     root (its record's root) is observed, childList and subtree — a script
+//     that deletes a row on a timer writes nothing, so no other trigger hears
+//     it. A record that removed an element, or any node inside an anchored
+//     element's subtree, settles that pane — why 'pane-dom'. Added nodes
+//     alone settle nothing (a late draw is the mount grace's), nor does the
+//     chrome's own node in a pane (data-wc-chrome, which the index skips).
+//     One observer per watched pane with a root: attached when the pane
+//     enters the watched set or its record gains a root (a re-mount
+//     re-attaches once), disconnected when it leaves the set or its record is
+//     dropped — checked on every settle, every answer the chrome's probe
+//     reads and every change in the well (paneObservers() counts them);
+//   - a service approved (K.2-93): the pending list dropping a watched pane's
+//     component starts its service-start grace, MOUNT_GRACE_MS from the clear,
+//     through which rule 4 reads the pane's unresolved anchors 'service-pending'
+//     (LIVE_INPUTS.serviceGrace) — the service has yet to write its first
+//     store. A store write the pane hears (its own facade's, or a key it
+//     subscribed to) ends the grace early, with the store trigger's settle;
+//     else the grace's end settles the pane once more — why 'hidden-state' —
+//     so a drawn element resolves and a missing one reads orphaned.
 // Each is coalesced: at most one settle per mount per frame, on the frame after
 // the change. Only a mount the overlay watches is ever settled. A pane taken
 // off the surface has no root left to settle: the overlay is asked for one
@@ -82,7 +102,7 @@ export const HIDDEN_REASONS = Object.freeze({
 });
 
 // The settle reasons this module passes (mount-runtime's `why`).
-export const RESETTLE_WHY = Object.freeze({ STORE: 'store', HIDDEN: 'hidden-state' });
+export const RESETTLE_WHY = Object.freeze({ STORE: 'store', HIDDEN: 'hidden-state', PANE_DOM: 'pane-dom' });
 
 // The resolver's own vocabulary (lib/core/anchor-states, carried by anchors.js).
 function stateOf(name) {
@@ -110,6 +130,10 @@ const LIVE_INPUTS = Object.freeze({
   pane: (id) => panes.get(id),
   mountState: (id) => mountState(id),
   pending: () => pendingServices(),
+  // Whether a pane is inside its service-start grace (K.2-93): its component's
+  // approval cleared less than MOUNT_GRACE_MS ago, and no store write it hears
+  // since.
+  serviceGrace: (id) => inServiceGrace(id),
   covered: () => sheetCovers(),
   now: () => Date.now(),
   onMounting: null,
@@ -131,7 +155,9 @@ export function hiddenReason(q, d = LIVE_INPUTS) {
   }
   if (minimized && emptyHost(rec)) return HIDDEN_REASONS.MINIMIZED;
   const component = rec.spec && rec.spec.component;
-  if (component && d.pending().has(component)) return HIDDEN_REASONS.SERVICE_PENDING;
+  if (component && (d.pending().has(component) || (typeof d.serviceGrace === 'function' && d.serviceGrace(String(mount))))) {
+    return HIDDEN_REASONS.SERVICE_PENDING;
+  }
   const ms = d.mountState(String(mount));
   if (!ms || !ms.complete) return HIDDEN_REASONS.MOUNTING;
   if (d.now() - ms.at < MOUNT_GRACE_MS) {
@@ -157,6 +183,12 @@ const rt = {
   scheduled: false,
   covered: false,
   graceTimers: new Map(),     // mount → {at, handle}
+  serviceGraces: new Map(),   // mount → {at, handle}: the service-start grace (K.2-93)
+  observers: new Map(),       // mount → {root, mo}: the pane's own DOM, observed (K.2-91)
+  anchored: new Map(),        // mount → Map(row id → the element its newest answer found)
+  syncQueued: false,
+  attached: 0,
+  detached: 0,
 };
 
 function isWatched(id) {
@@ -191,15 +223,29 @@ function flush() {
 // covers the panes without unmounting them, so both count: a store write that
 // removes an anchored element from either must read orphaned at once (rule 3
 // resolves before it hides), not when it is next shown.
+//
+// A pane inside its service-start grace that hears the write (its own facade
+// made it, or it subscribed to a key the write carried, or to every write)
+// leaves the grace: the store trigger's settle reads it without one.
+function hearsWrite(id, written) {
+  const sub = subscribedKeys(id);
+  return !!sub && (sub.all || written.some((k) => sub.keys.has(k)));
+}
 function storeWritten(patch, opts) {
   const mount = opts && opts.mount != null ? String(opts.mount) : null;
-  if (mount == null) { for (const id of rt.watched()) queue(id, RESETTLE_WHY.STORE); return; }
-  queue(mount, RESETTLE_WHY.STORE);
   const written = patch && typeof patch === 'object' ? Object.keys(patch) : [];
+  if (mount == null) {
+    for (const id of rt.watched()) {
+      queue(id, RESETTLE_WHY.STORE);
+      if (rt.serviceGraces.has(id) && hearsWrite(id, written)) endServiceGrace(id);
+    }
+    return;
+  }
+  queue(mount, RESETTLE_WHY.STORE);
+  endServiceGrace(mount);
   for (const id of rt.watched()) {
     if (id === mount) continue;
-    const sub = subscribedKeys(id);
-    if (sub && (sub.all || written.some((k) => sub.keys.has(k)))) queue(id, RESETTLE_WHY.STORE);
+    if (hearsWrite(id, written)) { queue(id, RESETTLE_WHY.STORE); endServiceGrace(id); }
   }
 }
 function heardWrite(patch, opts) {
@@ -231,6 +277,7 @@ function watchWell() {
   const main = $('main');
   if (!main || typeof MutationObserver !== 'function') return;
   const mo = new MutationObserver((records) => {
+    scheduleSync();   // a record dropped or replaced: its pane observer follows
     const gone = new Set();
     for (const r of records) {
       if (r.type === 'attributes') {
@@ -273,8 +320,114 @@ function graceEnds(mount, at) {
   rt.graceTimers.set(mount, { at, handle });
 }
 
-// The chrome's probe: LIVE_INPUTS, with the grace's re-settle.
-export const hiddenProbe = createHiddenProbe({ onMounting: graceEnds });
+// ── a pane's own DOM (K.2-91) ──────────────────────────────────────────────
+// The chrome's node in a pane's root (theme.js's style): the anchors' index
+// skips it, so its removal or its text changing moves no answer.
+const CHROME_ATTR = 'data-wc-chrome';
+function inChrome(node) {
+  for (let n = node; n && n.nodeType === 1; n = n.parentNode) {
+    if (n.hasAttribute(CHROME_ATTR)) return true;
+  }
+  return false;
+}
+function insideAnchored(node, els) {
+  if (!els || !node) return false;
+  for (const el of els.values()) {
+    if (el === node || (typeof el.contains === 'function' && el.contains(node))) return true;
+  }
+  return false;
+}
+function paneDomChanged(id, records) {
+  if (!isWatched(id)) { scheduleSync(); return; }
+  const els = rt.anchored.get(id);
+  for (const r of records) {
+    if (!r.removedNodes || !r.removedNodes.length || inChrome(r.target)) continue;
+    for (const n of r.removedNodes) {
+      const counts = n.nodeType === 1 ? !n.hasAttribute(CHROME_ATTR) : insideAnchored(r.target, els);
+      if (counts) { queue(id, RESETTLE_WHY.PANE_DOM); return; }
+    }
+  }
+}
+
+// One observer per watched pane that has a root; none for anything else.
+function syncObservers() {
+  if (typeof MutationObserver !== 'function') return;
+  let want;
+  try { want = new Set(rt.watched()); } catch { want = new Set(); }
+  for (const [id, o] of [...rt.observers]) {
+    const rec = want.has(id) ? panes.get(id) : null;
+    if (rec && rec.root === o.root) continue;
+    o.mo.disconnect();
+    rt.observers.delete(id);
+    rt.detached += 1;
+  }
+  for (const id of [...rt.anchored.keys()]) if (!want.has(id)) rt.anchored.delete(id);
+  for (const id of want) {
+    if (rt.observers.has(id)) continue;
+    const rec = panes.get(id);
+    if (!rec || !rec.root) continue;
+    const mo = new MutationObserver((records) => paneDomChanged(id, records));
+    mo.observe(rec.root, { childList: true, subtree: true });
+    rt.observers.set(id, { root: rec.root, mo });
+    rt.attached += 1;
+  }
+}
+function scheduleSync() {
+  if (rt.syncQueued) return;
+  rt.syncQueued = true;
+  Promise.resolve().then(() => {
+    rt.syncQueued = false;
+    try { syncObservers(); } catch (e) { console.error('[web-chat] overlay-hidden: the pane observers failed', e); }
+  });
+}
+
+// The panes whose own DOM is observed, and how many observers were ever
+// attached and disconnected (a test's and the gate's count).
+export function paneObservers() {
+  return { mounts: [...rt.observers.keys()], attached: rt.attached, detached: rt.detached };
+}
+
+// Every answer the chrome's probe reads: the element it found (the subtree a
+// removed text node is weighed against), and the watched set checked again —
+// a mount entering it is answered before anything else is asked of it.
+function noteAnswer(q) {
+  if (!q || q.mount == null || !q.row || isSource(q.row)) return;
+  const m = String(q.mount);
+  const el = q.answer && q.answer.el;
+  let map = rt.anchored.get(m);
+  if (el && el.nodeType === 1) {
+    if (!map) { map = new Map(); rt.anchored.set(m, map); }
+    map.set(q.row.id, el);
+  } else if (map) map.delete(q.row.id);
+  scheduleSync();
+}
+
+// ── the service-start grace (K.2-93) ────────────────────────────────────────
+function inServiceGrace(mount) { return rt.serviceGraces.has(String(mount)); }
+function endServiceGrace(mount) {
+  const g = rt.serviceGraces.get(mount);
+  if (!g) return;
+  clearTimeout(g.handle);
+  rt.serviceGraces.delete(mount);
+}
+function startServiceGrace(mount) {
+  endServiceGrace(mount);
+  const g = { at: Date.now(), handle: null };
+  g.handle = setTimeout(() => {
+    if (rt.serviceGraces.get(mount) !== g) return;
+    rt.serviceGraces.delete(mount);
+    queue(mount, RESETTLE_WHY.HIDDEN);
+  }, MOUNT_GRACE_MS + 1);
+  rt.serviceGraces.set(mount, g);
+}
+
+// The chrome's probe: LIVE_INPUTS, with the grace's re-settle; each answer it
+// reads is noted for the pane observers.
+const chromeProbe = createHiddenProbe({ onMounting: graceEnds });
+export function hiddenProbe(q) {
+  noteAnswer(q);
+  return chromeProbe(q);
+}
 
 // Called once from initOverlay. `watched()` names the mounts the overlay
 // watches (only those are ever settled); `raf` is the frame the coalesced
@@ -289,15 +442,22 @@ export function installRetriggers({ watched, raf, resolveMount } = {}) {
   initServicePending();
   onWrite(heardWrite);
   watchWell();
+  const M = window.__wcMount;
+  if (M && typeof M.onSettle === 'function') M.onSettle(() => scheduleSync());
+  scheduleSync();
   rt.covered = sheetCovers();
   bus.on('sheet', coveredMaybeChanged);
   bus.on('viewport:narrow', coveredMaybeChanged);
   onPendingChange(({ added, removed }) => {
     const moved = new Set([...added, ...removed]);
+    const cleared = new Set(removed);
     for (const id of rt.watched()) {
       const rec = panes.get(id);
       const c = rec && rec.spec && rec.spec.component;
-      if (c && moved.has(c)) queue(id, RESETTLE_WHY.HIDDEN);
+      if (!c || !moved.has(c)) continue;
+      if (cleared.has(c)) startServiceGrace(id);
+      else endServiceGrace(id);
+      queue(id, RESETTLE_WHY.HIDDEN);
     }
   });
 }

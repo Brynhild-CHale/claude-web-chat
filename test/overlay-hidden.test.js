@@ -386,9 +386,13 @@ test('GONE, a re-render without an anchored row: hidden (mounting) inside the gr
 });
 
 test('GONE, minimized: a pane whose script deleted a row reads orphaned for that row, hidden (minimized) for the rest', async () => {
-  const deleter = FIX('fx-c', { script: 'var gone = root.querySelectorAll(\'.it\')[10]; gone.parentNode.removeChild(gone);' });
+  // The real case (F4 c8-del, K.2-91): the script deletes the row on a timer,
+  // 150 ms AFTER the pane's mount settle, writing nothing — only the pane's own
+  // DOM changing tells the overlay.
+  const deleter = FIX('fx-c', { script: 'setTimeout(function () { var gone = root.querySelectorAll(\'.it\')[10]; gone.parentNode.removeChild(gone); }, 150);' });
   await shell.frame({ type: 'render', ...deleter, pane_state: { minimized: true } });
-  assert.ok(rootOf('fx-c').querySelectorAll('.it').length === N - 1, 'the script took the row; the minimized pane keeps its DOM');
+  assert.equal(rootOf('fx-c').querySelectorAll('.it').length, N, 'nothing deleted at the mount settle');
+  await waitUntil(() => rootOf('fx-c').querySelectorAll('.it').length === N - 1, { timeout: 4000, what: 'the script to take the row after the settle' });
   await waitUntil(() => stateOf('fx-c:10') === 'orphaned', { timeout: 5000, what: 'the deleted row orphaned after the grace' });
   assert.deepEqual(statesOf(['fx-c:0', 'fx-c:20', 'fx-c:30']), ['hidden', 'hidden', 'hidden']);
   assert.ok(['fx-c:0', 'fx-c:20', 'fx-c:30'].every((id) => reasons.get(id) === 'minimized'));
