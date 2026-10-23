@@ -119,10 +119,13 @@ async function populate(d) {
   // The references: highlights and box grabs live in the log alone (E-STORE a);
   // their own units write them, so the log is written here directly.
   const log = srv.elements.log;
+  // The el record after the version: the writer refuses a version whose
+  // schema is not its el record's kind (U325's guard, K.2-28), and the `odd`
+  // reference stands for a kind no gate names, which a log may still hold.
   const mint = (type, kind, payload) => {
     const id = log.mintId(type);
-    log.ensureElement({ id, kind });
     const rec = log.appendVersion({ id, payload, schema: schemaOf(type) });
+    log.ensureElement({ id, kind });
     return `${id}@${rec.v}`;
   };
   const hl = mint('highlight', 'highlight', { anchor: ENGINE, shared: true, color: 'gold', note: T.note });

@@ -331,3 +331,30 @@ test('nodeDigest covers comment copies only: an elements field leaves it unchang
   assert.equal(nodeDigest({ ...withRefs, elements: [] }), nodeDigest(node));
   assert.notEqual(nodeDigest({ ...node, comments: [{ id: 'c1', v: 3 }, { id: 'c3', v: 1 }] }), nodeDigest(node));
 });
+
+// ── the schema matches the id (K.2-28; U325) ────────────────────────────────
+
+test('appendVersion refuses a version whose schema is not its id\'s type (the id\'s letter) or its el record\'s kind, with its own reason; nothing is written', (t) => {
+  const dir = tmpDir(t);
+  const log = openIn(t, dir);
+  const c = log.mintId('comment');
+  log.ensureElement({ id: c, kind: 'comment', created_at: 1 });
+  log.appendVersion({ id: c, payload: payloadOf({ text: 'a pin', anchor: null }), at: 1 });
+  const bytes = () => fs.readFileSync(projectPaths(dir).elementsLog, 'utf8');
+  const before = bytes();
+  const refused = (e) => e instanceof TypeError && e.reason === 'schema-type-mismatch';
+  // A highlight@1 version on a comment's id.
+  assert.throws(() => log.appendVersion({ id: c, schema: HIGHLIGHT, payload: highlightPayload(), parent_v: 1, at: 2 }), refused);
+  // A comment@1 version on a box grab's id, by its letter alone (no el record).
+  assert.throws(() => log.appendVersion({ id: 'g9', payload: payloadOf({ text: 'x', anchor: null }), at: 2 }), refused);
+  // An el record's kind decides for an id the letter table does not name.
+  log.ensureElement({ id: 'note-1', kind: 'highlight', created_at: 1 });
+  assert.throws(() => log.appendVersion({ id: 'note-1', schema: BOX_GRAB, payload: boxGrabPayload(), at: 2 }), refused);
+  assert.equal(log.appendVersion({ id: 'note-1', schema: HIGHLIGHT, payload: highlightPayload(), at: 2 }).v, 1);
+  assert.equal(log.version(c, 2), null, 'nothing appended on the comment');
+  assert.ok(bytes().startsWith(before));
+  assert.equal(el.typeOfId('h12'), 'highlight');
+  assert.equal(el.typeOfId('c3'), 'comment');
+  assert.equal(el.typeOfId('x3'), null);
+  assert.equal(el.typeOfId('h1x'), null);
+});

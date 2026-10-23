@@ -206,7 +206,10 @@ test('a draft.json whose elements hold h5@1 (its version in the log) reads it dr
   const s1 = await withServer(t);
   const log = s1.srv.elements.log;
   log.ensureElement({ id: 'h5', kind: 'highlight' });
-  log.appendVersion({ id: 'h5', payload: { text: 'a highlight', shared: true, replies: [], anchor: null } });
+  // A highlight@1 version: the writer refuses a version whose schema is not
+  // its id's type (U325's guard, K.2-28).
+  const highlight = Object.keys(elementLog.SCHEMAS).find((k) => elementLog.SCHEMAS[k].type === 'highlight');
+  log.appendVersion({ id: 'h5', schema: highlight, payload: { anchor: null, shared: true, color: 'gold', note: 'a highlight' } });
   // The close reads elements through the same helper (U326e fills state.elements).
   const close = s1.srv.elements.noteGracefulClose({ live: { comments: [], elements: ['h5@1', 'h6@x'] }, draftWritten: true });
   assert.deepEqual(close.held, ['h5@1']);
