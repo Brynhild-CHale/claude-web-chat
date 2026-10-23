@@ -52,6 +52,9 @@ import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
 import { initToolbarState, onToolbarChange } from './toolbar-state.js';
 import { initHotkeys } from './hotkeys.js';
 import { initOrphans } from './orphans.js';   // 2A.6: the orphans' stand-in list and the re-anchor card
+// The highlight type (annotation engine 2C.4, U328a): range and source anchors
+// from a selection, painted by Custom Highlight or overlay rectangles.
+import { initHighlights } from './highlight.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -77,6 +80,9 @@ initToolbarState({ onFrame, onHello });
 initHotkeys();
 onToolbarChange((v) => setFingerDrawsDefault(v.user ? v.user.fingerDraws : undefined));
 initOrphans();    // after initShell and initGraph, whose registries it plugs into
+// The highlight type (U328a): its draw behind the reads gate, its selection
+// tool (armed by the toolbar, reading its settings above) and its rail card.
+initHighlights();
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every

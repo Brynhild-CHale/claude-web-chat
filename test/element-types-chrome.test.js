@@ -29,7 +29,10 @@ const { bootShell, helloFrame } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
 
 let shell, W, ET, bus, realOv, anchors;
-let listing = { ok: true, types: [], reserved: ['comment', 'highlight', 'box-grab'] };
+// Refused until the first test serves one: the highlight type (U328a) registers
+// at boot, which starts this module and its reads, so the boot's own listing
+// read must not land for "before the first listing" to be observable.
+let listing = { ok: false, hint: 'no listing yet' };
 
 const row = (type, schema, reads) => ({
   type, schema, reads, anchors: ['element'], family: 'page', remote: { see: 'read', send: 'full' },
@@ -76,6 +79,8 @@ test('before the first listing a registered type draws nothing; the listing is r
   regs.get('early').draw(g, {});
   assert.equal(calls, 0);
   assert.deepStrictEqual(ET.drawStates(), []);
+  listing = { ok: true, types: [], reserved: ['comment', 'highlight', 'box-grab'] };
+  await shell.frame({ type: 'components' });
   await waitUntil(() => ET.typesLoaded(), { what: 'the first listing' });
   const n0 = typeCalls();
   assert.ok(n0 >= 1);
