@@ -46,6 +46,9 @@ import { install as installAnchors } from './anchors.js';
 // drawn from the resolver's watch() answers, with the seams the element types,
 // the probe, the reports, the input policy and the tools plug into.
 import { initOverlay } from './overlay.js';
+// The input-mode policy (annotation engine 2D.4): pen, mouse and finger routed
+// to the armed tool or the page, at the overlay's one pointer dispatch.
+import { installInputMode } from './input-mode.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -55,6 +58,7 @@ initMode();       // Earthy light (default) / dark before first paint
 // settle. It costs nothing until something watches a pane (tranche 2).
 installAnchors(window.__wcMount);
 initOverlay();    // the element overlay: after the resolver it watches through
+installInputMode();   // the pointer-type policy, at the overlay's setPointerPolicy
 initViewport();   // <html class="phone"> before anything mounts (panes read it)
 initTopbar();
 initGraph();

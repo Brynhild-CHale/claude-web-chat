@@ -3208,3 +3208,15 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
   /* as #pin-layer: the open queue screen covers the page, so its markers go */
   body:has(.rail.open) #el-layer { display: none; }
 }
+
+/* input mode (U334) — the input-mode policy's surface (public/app/input-mode.js;
+   DECISIONS.md I.6 addendum 3). touch-action cannot be set per pointer type, so
+   the page well keeps the browser's finger gestures (pan, pinch) and the policy
+   cancels only a drawing pointer's default in its handler; the chrome's own
+   touch-action: none handles inside it (pane grips) are chrome gestures and
+   keep winning, since a touch takes the intersection of its ancestors' values.
+   While finger-draws is on and a strokes tool is armed the finger IS the drawing
+   pointer: the well gives up the pan (a pinch still zooms), or the browser
+   would claim a finger stroke as a scroll and cancel it. */
+#main { touch-action: manipulation; }
+html.finger-strokes #main { touch-action: pinch-zoom; }
