@@ -1635,6 +1635,29 @@ const PATTERNS = [
       'lib/portal/access-jwt.js': 1,
     },
   },
+  {
+    // A single-key comparison in the chrome (U333, plan 2D.3). Every key the
+    // page binds is a row of the hotkey registry, public/app/hotkeys.js
+    // (registerAction), and a keystroke becomes an action through its ONE
+    // lookup over default ⊕ user ⊕ project bindings — which is what lets a
+    // binding record move a key, the legend and the palette show the key the
+    // user actually has, and a key never fire from a field. An `e.key === 'x'`
+    // or `case 'x':` elsewhere is a key no record can rebind and no legend
+    // lists. Register an action instead (or a target kind, for a slot or tool).
+    // Counted as written, comments included; named keys (Escape, Enter, the
+    // arrows, ' ') are not single characters and are not counted.
+    name: "e.key === 'x' / case 'x': (a single-key comparison in public/app)",
+    home: 'public/app/hotkeys.js — `registerAction` / `lookup` (the one table of bindable actions and its one lookup)',
+    what: 'matching a single key by hand in the chrome',
+    roots: ['public/app'],
+    re: /(\.key\s*===\s*'[A-Za-z?\/\[\]]'|case '[A-Za-z?\/\[\]]':)/g,
+    baseline: {
+      // The graph overlay's own switch (A, E, B, R, each spelled twice): a
+      // modal context that owns every key while the overlay is open. Its rows
+      // are descriptive in the registry until it moves onto it (U305's file).
+      'public/app/graph-view.js': 8,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

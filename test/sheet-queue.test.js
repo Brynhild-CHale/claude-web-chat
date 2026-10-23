@@ -625,7 +625,8 @@ test('U70\'s section carries §8.7\'s rules; shell.js routes Queue, Q and the op
   assert.match(SHELL_SRC, /function toggleRail\(\) \{\s*if \(viaRoute\('toggle'\)\) return;/);
   assert.match(SHELL_SRC, /setRailOpener\(\(\) => \{ if \(viaRoute\('open'\)\) return;/);
   assert.match(SHELL_SRC, /on\('bb-queue', \(\) => toggleRail\(\)\)/);
-  assert.match(SHELL_SRC, /case 'q': case 'Q': e\.preventDefault\(\); toggleRail\(\); break;/);
+  // Q is the hotkey registry's chrome.rail row (U333), whose run is toggleRail.
+  assert.match(SHELL_SRC, /id: 'chrome\.rail', [^;]*defaultChord: 'Q',[^;]*run: \(\) => toggleRail\(\)/);
 });
 
 test('U70b\'s section: the rail\'s message actions are 44px in the sheet and on the narrow rail; tokens only', () => {
