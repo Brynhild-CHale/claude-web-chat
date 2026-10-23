@@ -371,6 +371,16 @@ test('the fallback: a range whose first rect is above the clip and whose second 
     const T = 0 - oy;
     assert.ok(T >= g.h, 'the handle lies wholly above the clip polygon');
     assert.match(m.style.clipPath, new RegExp(`^polygon\\(${-ox}px ${T}px`));
+    // The start-point rule stays for a glyph group: a comment pin on the same
+    // range (no move seam) whose start is above the clip is not placed,
+    // although its second rect is inside.
+    ov.upsertElements('live', [{ id: 'c-clip', v: 1, type: 'comment', shared: true, replies: 0, anchor: rec.anchor }]);
+    try {
+      await drawnUntil(() => markersFor('c-clip').length === 1, 'the pin\'s marker built');
+      assert.equal(markersFor('c-clip')[0].style.display, 'none', 'a pin whose start is clipped stays hidden');
+    } finally {
+      ov.removeElements('live', ['c-clip']);
+    }
     // Every rect outside the clip: not placed at all.
     RECTS = [{ left: 300, top: -40, width: 60, height: 16 }, { left: 280, top: 900, width: 20, height: 16 }];
     W.dispatchEvent(new W.Event('resize'));
