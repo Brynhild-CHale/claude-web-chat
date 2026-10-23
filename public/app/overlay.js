@@ -1160,6 +1160,30 @@ function onPointer(e) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
 }
+// cancelGesture(pointerId) → boolean: end that pointer's gesture as its
+// pointercancel would — a gesture the tool took has the armed type's create
+// hear phase 'pointercancel' (a strokes tool drops what it drew and creates
+// nothing), and the gesture is dropped, so the rest of that pointer's events
+// are no gesture's — with no event dispatched, so no pane hears it. The one
+// caller is input-mode.js's two-finger pan (U334a, K.4 I1 = b). True when the
+// pointer had a gesture.
+export function cancelGesture(pointerId) {
+  const g = gestures.get(pointerId);
+  if (!g) return false;
+  gestures.delete(pointerId);
+  if (g.decision !== 'tool' || !armedState) return true;
+  const t = types.get(armedState.type);
+  const kind = (t && t.input) || 'taps';
+  if (!t || !t.create || kind === 'taps') return true;   // a taps tool acts only at the click
+  const pointerType = g.pointerType || 'mouse';
+  const input = { event: { type: 'pointercancel', pointerId, pointerType }, phase: 'pointercancel', kind,
+    target: null, root: document, mount: null, md: null, clientX: null, clientY: null, pointerType,
+    profile: armedState.profile };
+  try { t.create(input, toolCtx()); } catch (err) {
+    console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
+  }
+  return true;
+}
 function capture(el, pointerId) {
   const at = el && typeof el.setPointerCapture === 'function' ? el : listeningOn;
   if (!at || typeof at.setPointerCapture !== 'function') return;
