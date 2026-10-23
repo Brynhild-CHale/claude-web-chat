@@ -200,6 +200,14 @@ test('a finger drag creates nothing unless finger-draws is on', async () => {
   ov.setArmed('box-grab');
   const card = rootOf().querySelector('.card');
   IM.setFingerDraws('off');
+  // The page keeps the finger: the well's touch-action pans it (no
+  // finger-strokes class) and the press's default is left alone.
+  assert.equal(W.document.documentElement.classList.contains('finger-strokes'), false, 'the well pans for a finger');
+  const down = new W.PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true, pointerType: 'touch',
+    pointerId: 1, isPrimary: true, clientX: 130, clientY: 160, buttons: 1 });
+  card.dispatchEvent(down);
+  assert.equal(down.defaultPrevented, false, 'a finger press keeps its default (the scroll)');
+  card.dispatchEvent(new W.PointerEvent('pointercancel', { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: 1 }));
   drag(card, 'touch', [130, 160], [300, 300], { midCheck: () => assert.equal(band(), null, 'no band') });
   await shell.tick();
   assert.equal(posts().length, 0, 'the page\'s (a scroll)');
@@ -376,4 +384,32 @@ test('nothing is drawn on the page for a sent grab, across a re-render', async (
   assert.equal(st.anchors, 0, 'never resolved: the overlay places a page anchor nowhere');
   assert.equal(st.drawn, 0);
   assert.equal(st.orphans, 0, 'and never listed as an orphan');
+});
+
+test('a box over a markdown item grabs that item: its id, no mount, a path inside the block', async () => {
+  await shell.frame({ type: 'markdown', id: 'md-bg', text: '## Notes\n\nA short line.', owner: 'claude', gen: 1,
+    order: ['bg1', 'md-bg'], claude_order: ['bg1', 'md-bg'] });
+  await shell.tick();
+  try {
+    const block = W.document.querySelector('[data-md-id="md-bg"]');
+    assert.ok(block, 'the markdown block is on the page');
+    const para = block.querySelector('p');
+    shell.scrollMetrics(block, { rect: { left: 100, top: 520, width: 600, height: 80 } });
+    shell.scrollMetrics(block.querySelector('h2'), { rect: { left: 100, top: 520, width: 600, height: 30 } });
+    shell.scrollMetrics(para, { rect: { left: 100, top: 560, width: 600, height: 24 } });
+    ov.setArmed('box-grab');
+    drag(para, 'mouse', [110, 565], [300, 580]);
+    await shell.tick();
+    const [p] = posts();
+    assert.ok(p, 'a markdown item is page, not chrome');
+    assert.equal(p.body.anchor.item, 'md-bg');
+    assert.equal(p.body.anchor.mount, null, 'markdown has no mount');
+    assert.deepEqual(p.body.anchor.rect, { x: 0, y: 40, w: 600, h: 24 }, 'block: the paragraph, from the block\'s box');
+    assert.match(p.body.payload.meta.item_path, /div\[data-md-id="md-bg"\]$/);
+    assert.equal(p.body.payload.meta.element_path, 'p');
+    assert.equal(p.body.payload.meta.html, '<p>A short line.</p>');
+  } finally {
+    await shell.frame({ type: 'markdown:remove', id: 'md-bg', order: ['bg1'], claude_order: ['bg1'] });
+    await shell.tick();
+  }
 });
