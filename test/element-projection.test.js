@@ -5,7 +5,7 @@
 // (lib/core/remote-policy projectSnapshot), and GET /api/graph/node/:id's
 // `lean_elements` (a previewed node's rows, anchors converted by the daemon).
 //
-// A row is {id, v, type, anchor, shared, replies, answered}: never a text
+// A row is {id, v, type, schema, anchor, shared, replies, answered}: never a text
 // body, a reply's text, or a writer or provenance sibling. The anchors are the
 // log's (the version's payload.anchor), so GT-20's "hello byte-equal under the
 // ledger projection" is read off the element log here, row for row.
@@ -44,7 +44,7 @@ const T = Object.freeze({
   claudeReply: 'wc-u304-claude-reply-text',
   note: 'wc-u304-highlight-note-text',
 });
-const ROW_KEYS = ['anchor', 'answered', 'id', 'replies', 'shared', 'type', 'v'];
+const ROW_KEYS = ['anchor', 'answered', 'id', 'replies', 'schema', 'shared', 'type', 'v'];
 // The anchors' text: a marker no pane's HTML holds, so a frame that carries an
 // anchor is told from one that carries the page.
 const LEAD = 'wc-u304-anchor-head';
@@ -158,7 +158,7 @@ test('leanElements over live pins: one row each, the log version\'s anchor, the 
     const live = srv.state.comments.find((c) => c.id === id);
     assert.ok(Number.isInteger(live.v), `${id}: the live pin carries v`);
     assert.deepStrictEqual(m[id], {
-      id, v: live.v, type: 'comment', anchor: srv.elements.version(id, live.v).payload.anchor, shared, replies, answered,
+      id, v: live.v, type: 'comment', schema: 'comment@1', anchor: srv.elements.version(id, live.v).payload.anchor, shared, replies, answered,
     }, id);
   }
   assert.deepStrictEqual(m[ids.legacy].anchor, convertAnchor(LEGACY), 'a legacy locator is drawn converted (pin-locator@1)');
@@ -180,7 +180,7 @@ test('state.elements\' id@v references project with the log\'s type, anchor and 
   const ids = await populate(d);
   const m = byId(leanElements(d.srv.state, d.srv.elements));
   const [hl, hv] = ids.hl.split('@');
-  assert.deepStrictEqual(m[hl], { id: hl, v: Number(hv), type: 'highlight', anchor: ENGINE, shared: true, replies: 0, answered: false });
+  assert.deepStrictEqual(m[hl], { id: hl, v: Number(hv), type: 'highlight', schema: 'highlight@1', anchor: ENGINE, shared: true, replies: 0, answered: false });
   assert.equal(m[ids.hlPriv.split('@')[0]].shared, false);
   assert.equal(m[ids.odd.split('@')[0]].type, 'sticker', 'the type is the log\'s element kind');
   // A reference naming a pin is the pin's row; one the log does not hold is
@@ -190,14 +190,14 @@ test('state.elements\' id@v references project with the log\'s type, anchor and 
   const again = leanElements(d.srv.state, d.srv.elements);
   assert.equal(again.filter((r) => r.id === ids.legacy).length, 1);
   assert.equal(byId(again)[ids.legacy].type, 'comment');
-  assert.deepStrictEqual(byId(again).h9999, { id: 'h9999', v: 1, type: null, anchor: null, shared: false, replies: 0, answered: false });
+  assert.deepStrictEqual(byId(again).h9999, { id: 'h9999', v: 1, type: null, schema: null, anchor: null, shared: false, replies: 0, answered: false });
   assert.equal(byId(again).h9998, undefined, 'a malformed reference (v 0) is skipped');
 });
 
 test('a pin the log cannot map carries the converted form of its own copy\'s anchor', async (t) => {
   // No store at all, and a store that holds no such version.
   const pin = { id: 'c50', v: 3, text: T.legacy, shared: true, anchor: { ...LEGACY }, replies: [{ author: 'claude', at: 1, text: T.claudeReply }] };
-  const want = { id: 'c50', v: 3, type: 'comment', anchor: convertAnchor(LEGACY), shared: true, replies: 1, answered: true };
+  const want = { id: 'c50', v: 3, type: 'comment', schema: 'comment@1', anchor: convertAnchor(LEGACY), shared: true, replies: 1, answered: true };
   assert.deepStrictEqual(leanElements({ comments: [pin] }, null), [want]);
   assert.deepStrictEqual(leanElements({ comments: [pin] }, { version: () => null }), [want]);
   assert.deepStrictEqual(leanElements({ comments: [{ ...pin, v: undefined }] }, null), [{ ...want, v: null }]);
@@ -232,13 +232,13 @@ test('ledger projection (GT-20): the hello\'s `elements` equals, row for row, th
   const want = [];
   for (const c of d.srv.state.comments) {
     const rec = log.version(c.id, c.v);
-    want.push({ id: c.id, v: c.v, type: 'comment', anchor: rec.payload.anchor, shared: rec.payload.shared !== false,
+    want.push({ id: c.id, v: c.v, type: 'comment', schema: rec.schema, anchor: rec.payload.anchor, shared: rec.payload.shared !== false,
       replies: rec.payload.replies.length, answered: rec.payload.replies.some((r) => r.author === 'claude') });
   }
   for (const ref of [ids.hl, ids.hlPriv, ids.odd]) {
     const [id, v] = ref.split('@');
     const rec = log.version(id, Number(v));
-    want.push({ id, v: Number(v), type: log.log.element(id).kind, anchor: rec.payload.anchor, shared: rec.payload.shared !== false, replies: 0, answered: false });
+    want.push({ id, v: Number(v), type: log.log.element(id).kind, schema: rec.schema, anchor: rec.payload.anchor, shared: rec.payload.shared !== false, replies: 0, answered: false });
   }
   want.sort((a, b) => (a.id < b.id ? -1 : 1));
   assert.deepStrictEqual(hello.elements, want);

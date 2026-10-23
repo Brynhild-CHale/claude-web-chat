@@ -212,6 +212,7 @@ function normRow(r) {
     id: String(r.id),
     v: r.v == null ? null : r.v,
     type: r.type == null ? null : String(r.type),
+    schema: typeof r.schema === 'string' ? r.schema : null,
     anchor: r.anchor && typeof r.anchor === 'object' ? r.anchor : null,
     shared: r.shared === undefined ? null : !!r.shared,
     replies: Number.isFinite(r.replies) ? r.replies : 0,
