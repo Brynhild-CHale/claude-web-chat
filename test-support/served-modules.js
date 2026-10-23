@@ -19,6 +19,10 @@ const SERVED = new Map([
   // (lib/server/routes/page.js serves lib/core/anchors' browserModuleSource()).
   [pathToFileURL(path.join(REPO, 'public/app/anchors.js')).href,
     () => require(path.join(REPO, 'lib/core/anchors.js')).browserModuleSource()],
+  // /app/tier-merge.js, the per-key tier merge the toolbar's records go through
+  // (lib/server/routes/page.js serves lib/core/tier-merge's browserModuleSource()).
+  [pathToFileURL(path.join(REPO, 'public/app/tier-merge.js')).href,
+    () => require(path.join(REPO, 'lib/core/tier-merge.js')).browserModuleSource()],
 ]);
 
 exports.resolve = function resolve(specifier, context, next) {
