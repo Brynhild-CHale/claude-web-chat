@@ -7,9 +7,13 @@
 //   initToolbarState({ onFrame, onHello })   wire it (idempotent): a GET now
 //                    and after every hello, and the daemon's `toolbar` frame
 //   toolbarState()   → { project, user, merged, canWrite, canWriteUser,
-//                    corrupt, ignored } — the last view, and what this viewer
-//                    may write as the last GET said (the frame never carries
-//                    those two: they are the requester's own)
+//                    corrupt, ignored, tools } — the last view, and what this
+//                    viewer may write as the last GET said (the frame never
+//                    carries those two: they are the requester's own). `tools`
+//                    is GET's tools[] (the listed element types' toolbar
+//                    fields, U337), kept until an answer carries it again — the
+//                    frame does not; a `components` frame (a pack installed,
+//                    approved or removed) reads it again.
 //   onToolbarChange(fn) → unsubscribe; fn(state) on each new view
 //   refreshToolbar() → the GET, by hand
 //   patchToolbar(patch) / patchUserToolbar(patch) → http.js's
@@ -52,9 +56,11 @@ function cleanUser(u) {
   return { v: 1, bindings: objectOr(r.bindings), fingerDraws: r.fingerDraws === true, settings: objectOr(r.settings) };
 }
 
+const cleanTools = (t) => Object.freeze(Array.isArray(t) ? t.filter((x) => isObject(x) && typeof x.type === 'string') : []);
+
 let view = {
   project: cleanProject(null), user: cleanUser(null), merged: { bindings: {}, settings: {} },
-  canWrite: true, canWriteUser: true, corrupt: [], ignored: [],
+  canWrite: true, canWriteUser: true, corrupt: [], ignored: [], tools: cleanTools(null),
 };
 const listeners = new Set();
 let reads = 0;
@@ -73,6 +79,7 @@ function land(body, { access }) {
     canWriteUser: access ? b.canWriteUser !== false : view.canWriteUser,
     corrupt: access ? listOr(b.corrupt) : view.corrupt,
     ignored: access ? listOr(b.ignored) : view.ignored,
+    tools: Array.isArray(b.tools) ? cleanTools(b.tools) : view.tools,
   });
   for (const fn of [...listeners]) {
     try { fn(view); } catch (e) { console.error('[toolbar-state] a listener failed', e); }
@@ -146,5 +153,6 @@ export function initToolbarState({ onFrame, onHello } = {}) {
   wired = true;
   if (typeof onFrame === 'function') onFrame('toolbar', (msg) => { applyToolbarFrame(msg); });
   if (typeof onHello === 'function') onHello(() => { refreshToolbar(); });
+  if (typeof onFrame === 'function') onFrame('components', () => { refreshToolbar(); });
   refreshToolbar();
 }
