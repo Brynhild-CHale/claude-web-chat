@@ -821,7 +821,8 @@ test('gracefulShutdown() leaves no open handle: a mod attached, its op long-poll
 // Re-pinned by U304 (PLAN 2A.3): the GOLDEN hello gains `elements` and
 // `surface`, and the reset key-set test names them; nothing else changed.
 // Re-pinned by U311 (PLAN 2B.1): render frames gain `gen`, the hello's `surface` is scrubbed.
-const BUS_GOLDEN_SHA256 = 'd4ff71c3769ab5133cfd370c9ef0c8041045c132ed29a70286abc1ff1e97b47b';
+// Re-pinned by U313 (PLAN 2B.2): the GOLDEN hello and the reset key-set gain `marks`.
+const BUS_GOLDEN_SHA256 = '9719ee75fd57f4206407e5dc561370d999d8fa74bb19b2161e31b1aed9450f11';
 
 test('test/bus-golden.test.js is byte-identical', () => {
   const src = fs.readFileSync(path.join(REPO, 'test', 'bus-golden.test.js'), 'utf8').replace(/\r\n/g, '\n');
