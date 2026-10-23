@@ -15,9 +15,11 @@
 //   - a finger drag scrolls (the page's) and creates nothing unless
 //     finger-draws is on;
 //   - a box over the chrome around the page is refused with its hint;
+//   - a cancelled gesture drops the band and posts nothing;
 //   - a previewed node creates nothing;
 //   - when the grab's queue item arrives with its picture, the look shows an
-//     <img> of /api/elements/<id>/grab (the URL the rail card uses);
+//     <img> of /api/elements/<id>/grab (the URL the rail card uses); an
+//     item whose picture is still pending opens no look;
 //     Discard deletes the element and its queue item; chrome-not-found shows
 //     the hint and no picture;
 //   - the rail draws the grab's item through its card (picture, Open, Re-send,
@@ -217,6 +219,18 @@ test('a box over the chrome around the page is refused with the hint', async () 
   assert.ok(noteEl && noteEl.textContent.includes(BG.CHROME_HINT), 'the hint is shown');
 });
 
+test('a cancelled gesture drops the band and posts nothing', async () => {
+  ov.setArmed('box-grab');
+  const lead = rootOf().querySelector('p.lead b');
+  pe(lead, 'pointerdown', 'mouse', 185, 170);
+  pe(lead, 'pointermove', 'mouse', 215, 180);
+  assert.ok(band(), 'the band is up while the box is dragged');
+  pe(lead, 'pointercancel', 'mouse', 215, 180);
+  assert.equal(band(), null, 'a cancel takes the band down');
+  await shell.tick();
+  assert.equal(posts().length, 0, 'and nothing is posted');
+});
+
 test('a previewed node creates nothing', async () => {
   ov.setArmed('box-grab');
   state.previewing = true;
@@ -256,6 +270,20 @@ test('when the picture settles the look shows it — the same URL as the rail ca
   assert.equal(look(), null);
   assert.equal(callsOf('DELETE', `/api/elements/${id}`).length, 1, 'the element is deleted');
   assert.equal(callsOf('DELETE', '/api/queue/q-1').length, 1, 'its queue item through the queue\'s removal');
+});
+
+test('an item whose picture is still pending opens no look; the grab keeps waiting', async () => {
+  ov.setArmed('box-grab');
+  drag(rootOf().querySelector('p.lead b'), 'mouse', [185, 170], [215, 180]);
+  await shell.tick();
+  const id = `g${nextId - 1}`;
+  const item = { id: 'q-p', kind: 'element', type: 'box-grab', element_id: id, v: 1, source: 'browser',
+    why_wake: 'Box grab sent to Claude', summary: `Box grab · ${id}@1`, origin_mount: 'bg1', image: { state: 'pending' }, staged: true };
+  await shell.frame({ type: 'queue', op: 'add', item });
+  await shell.frame({ type: 'element:box-grab', elements: [] });
+  await shell.tick();
+  assert.equal(look(), null, 'no look before the picture settles');
+  assert.deepEqual(BG._awaiting(), [id], 'still waiting for its picture');
 });
 
 test('Keep in queue closes the look and keeps both', async () => {
