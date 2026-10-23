@@ -287,7 +287,27 @@ let uninstall = null;
 // pan's (a resting palm under a pen stays the policy's 'ignore', and no pan
 // starts while a pen is down); with finger-draws off, or no strokes tool
 // armed, nothing here acts (the well is `manipulation`: the browser pans).
-const touches = new Map();     // pointerId → {x, y}: the fingers down in the well
+// Two rules bound a pan under way (K.2-98, K.2-99):
+//   - it moves nothing while a pen is down: two resting contacts that came
+//     down before the pen (a palm) keep their pan — their events still
+//     stopped, their clicks still owed — but no scrollBy runs under the pen's
+//     stroke, so the box grab captures the region drawn; the midpoint is
+//     rebased on every move, so once the pen lifts the next move scrolls by
+//     that move's delta only (no jump). A pen's pointerdown never ends the pan
+//     (its fingers would then reach the overlay and the page);
+//   - a pan finger whose press a pane HEARD delivers its own lift: at each
+//     finger's pointerdown the policy's reading of it is kept beside its
+//     point (routeAtDown: route() as the overlay asks it there); a finger the
+//     policy gave the page ('page': a pane's control) whose pointerdown went
+//     through — it was down before the pan began, never one that landed
+//     during it, whose press the pan stopped — has its pointermoves taken by
+//     the pan and its click still owed, but its own pointerup or
+//     pointercancel, the event the browser sends, is not stopped: it reaches
+//     the pane as sent, so a pane holding press or drag state (a slider that
+//     took capture, an :active handler) releases it as after a native pan's
+//     pointercancel. Nothing synthetic is dispatched; a finger the tool had
+//     (cancelGesture ended its stroke) has its lift stopped as before.
+const touches = new Map();     // pointerId → {x, y, route, heard}: the fingers down in the well
 let pan = null;                // {ids: Set, mx, my}: the pan under way, its last midpoint
 const panClicks = new Set();   // pointerIds of the pan's lifted fingers, whose click is stopped
 
@@ -296,9 +316,15 @@ export function fingerStrokes() {
   return !!a && inputKindOf(a.type) === 'strokes' && fingerDraws();
 }
 // A snapshot of what the pan tracks, for the tests: no stale entry may stay
-// after a gesture ends.
-export function touchesForTests() {
-  return { touches: [...touches.keys()], pan: pan ? [...pan.ids] : null, clicks: [...panClicks] };
+// after a gesture ends. With {routes: true} it adds each finger's policy
+// reading at its pointerdown (routes: {pointerId: route}) and the fingers whose
+// press a pane heard (heard: [pointerId]).
+export function touchesForTests({ routes = false } = {}) {
+  const snap = { touches: [...touches.keys()], pan: pan ? [...pan.ids] : null, clicks: [...panClicks] };
+  if (!routes) return snap;
+  snap.routes = Object.fromEntries([...touches].map(([id, p]) => [id, p.route]));
+  snap.heard = [...touches].filter(([, p]) => p.heard).map(([id]) => id);
+  return snap;
 }
 function wellOf() { return document.getElementById('main'); }
 // The element that scrolls the page: the well's .well-wrap (mounts.js's
@@ -334,6 +360,13 @@ function stop(e) {
   e.stopPropagation();
   if (e.cancelable) e.preventDefault();
 }
+// The policy's reading of a finger at its pointerdown, as the overlay asks it
+// there (askPolicy → policy → route): the gesture absent, a tap so far.
+// 'page' is a press the page under it hears (a pane's control, or static
+// content while no drawing tool takes fingers).
+function routeAtDown(e) {
+  return route(e, { ...stateFor(armed()), gesture: null });
+}
 // The pan's part of the window capture: true when it took the event.
 function onPan(e) {
   if (e.type === 'click') {
@@ -360,9 +393,13 @@ function onPan(e) {
       // down, whatever an earlier gesture left behind.
       if (e.isPrimary) { touches.clear(); pan = null; }
       if (!pan && !inWell(e)) return false;
-      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0 });
+      const r = routeAtDown(e);
+      // heard: the press goes on to the page; a finger landing during a pan
+      // is stopped below, so no pane hears its press (and none hears its lift).
+      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0, route: r, heard: !pan && r === 'page' });
       if (pan) { pan.ids.add(id); rebase(); stop(e); return true; }
       if (touches.size < 2 || penIds.size > 0 || !fingerStrokes()) return false;
+      touches.get(id).heard = false;   // the finger that starts the pan: its press is stopped
       // The second finger: the stroke under way is the tool's no more.
       for (const other of touches.keys()) if (other !== id) cancelGesture(other);
       pan = { ids: new Set(touches.keys()), mx: 0, my: 0 };
@@ -379,21 +416,23 @@ function onPan(e) {
       const m = midpoint(pan.ids);
       const dx = m.x - pan.mx;
       const dy = m.y - pan.my;
-      pan.mx = m.x;
+      pan.mx = m.x;   // rebased on every move, a pen down or not (K.2-98)
       pan.my = m.y;
       const el = scrollerOf();
-      if ((dx || dy) && el && typeof el.scrollBy === 'function') el.scrollBy({ left: -dx, top: -dy });
+      if (!penIds.size && (dx || dy) && el && typeof el.scrollBy === 'function') el.scrollBy({ left: -dx, top: -dy });
       stop(e);
       return true;
     }
     case 'pointerup':
     case 'pointercancel': {
+      const p = touches.get(id);
       touches.delete(id);
       if (!pan || !pan.ids.has(id)) return false;
       pan.ids.delete(id);
       if (e.type === 'pointerup') panClicks.add(id);
       if (pan.ids.size) rebase(); else pan = null;
-      stop(e);
+      // A press a pane heard: its own lift reaches the pane as sent (K.2-99).
+      if (!(p && p.heard)) stop(e);
       return true;
     }
     case 'pointerover':

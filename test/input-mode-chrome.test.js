@@ -40,7 +40,15 @@
 //     the pan's fingers are never heard by the pane under them, their clicks
 //     included; with finger-draws off the two-finger case is the browser's (no
 //     scrollBy, touch-action manipulation); a pen stroke with resting fingers
-//     (a palm) still draws.
+//     (a palm) still draws;
+//   - a pan under way (U334b; K.2-98, K.2-99): it moves nothing while a pen is
+//     down (a palm down before the pen keeps its pan, scrolls nothing, and the
+//     pen's grab is created), and the next move after the pen lifts scrolls by
+//     its own delta only; a pan finger whose press a pane heard (it landed on
+//     the pane's button before the pan) delivers its own pointerup or
+//     pointercancel to the pane, its moves and its click stopped, nothing
+//     created; a tool-routed finger's lift, and that of a finger landing on
+//     the button during the pan, stay the pan's.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -564,6 +572,136 @@ test('a pen stroke with resting fingers (a palm) still draws; no pan starts whil
     assert.deepEqual(W.__log, [], 'and the pane heard no palm (U334\'s ignore)');
     assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
   } finally { await settle(); }
+});
+
+// ── a pan under way: the pen rule and the heard-press rule (U334b; K.2-98, K.2-99) ──
+const penAt = (el, type, pointerId, x, y) => el.dispatchEvent(new W.PointerEvent(type, {
+  bubbles: true, cancelable: true, composed: true, pointerType: 'pen', pointerId, isPrimary: true,
+  clientX: x, clientY: y, buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0,
+}));
+// What the pane hears, by listeners on its button and its shadow root: the
+// pointer events (type and pointerId) and the clicks.
+function paneEars() {
+  const heard = [];
+  const offs = [];
+  const on = (el, type, tag) => {
+    const fn = (e) => heard.push(`${tag}:${e.type}:${e.pointerId}`);
+    el.addEventListener(type, fn);
+    offs.push(() => el.removeEventListener(type, fn));
+  };
+  for (const t of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'click']) on(goBtn(), t, 'btn');
+  for (const t of ['pointerup', 'pointercancel']) on(rootOf(), t, 'root');
+  return { heard, off: () => { for (const f of offs) f(); } };
+}
+
+test('the pan moves nothing while a pen is down; after the pen lifts the next move scrolls by its own delta only', async () => {
+  await grabArmed('on');
+  try {
+    W.localStorage.setItem('wc:finger-draws', 'on');   // a pen seen keeps 'on' bound
+    // Two resting contacts (a palm) start a pan before the pen comes down.
+    finger(lead(), 'pointerdown', 61, 300, 300, { isPrimary: true });
+    finger(lead(), 'pointerdown', 62, 340, 300);
+    assert.deepEqual(IM.touchesForTests().pan, [61, 62], 'a pan under way');
+    penAt(lead(), 'pointerdown', 63, 10, 10);
+    assert.deepEqual(IM.touchesForTests().pan, [61, 62], 'the pen\'s pointerdown does not end the pan');
+    // The palm moves 50 px while the pen draws.
+    for (const y of [275, 250]) {
+      finger(lead(), 'pointermove', 61, 300, y);
+      finger(lead(), 'pointermove', 62, 340, y);
+    }
+    penAt(lead(), 'pointermove', 63, 45, 35);
+    penAt(lead(), 'pointermove', 63, 80, 60);
+    assert.ok(band(), 'the pen\'s band stands');
+    assert.deepEqual(scrollCalls, [], 'nothing scrolled under the pen');
+    penAt(lead(), 'pointerup', 63, 80, 60);
+    await shell.tick();
+    assert.equal(grabPosts().length, 1, 'the pen\'s grab is created');
+    assert.deepEqual(scrollCalls, [], 'still nothing scrolled');
+    assert.deepEqual(W.__log, [], 'the pane heard no palm');
+    // The pen lifted: the next move scrolls by that move's 20 px, no jump.
+    finger(lead(), 'pointermove', 61, 300, 230);
+    finger(lead(), 'pointermove', 62, 340, 230);
+    assert.equal(scrollCalls.length, 2, 'one scrollBy per finger\'s move');
+    assert.equal(scroller().scrollTop, 20, 'the well scrolled by the 20 px moved after the lift, not the 50 before it');
+    assert.equal(scroller().scrollLeft, 0);
+    finger(lead(), 'pointerup', 61, 300, 230);
+    finger(lead(), 'pointerup', 62, 340, 230);
+    tapClick(lead(), 61);
+    tapClick(lead(), 62);
+    await shell.tick();
+    assert.equal(grabPosts().length, 1, 'the pan created nothing');
+    assert.deepEqual(W.__log, []);
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+  } finally {
+    penAt(lead(), 'pointercancel', 63, 80, 60);   // a failed run leaves no pen down for the next case
+    await settle();
+  }
+});
+
+for (const lift of ['pointerup', 'pointercancel']) {
+  test(`a pan finger whose press a pane heard delivers its own lift (${lift}); its moves and its click are the pan's`, async () => {
+    await grabArmed('on');
+    const ears = paneEars();
+    try {
+      // Finger 1 on the pane's button: the page's (K.2-9), the pane hears it.
+      finger(goBtn(), 'pointerdown', 71, 50, 50, { isPrimary: true });
+      assert.deepEqual(ears.heard, ['btn:pointerdown:71'], 'the pane heard the press, once');
+      // Finger 2 in the well: the pan.
+      finger(lead(), 'pointerdown', 72, 150, 50);
+      assert.deepEqual(IM.touchesForTests().pan, [71, 72]);
+      for (const y of [40, 30]) {
+        finger(goBtn(), 'pointermove', 71, 50, y);
+        finger(lead(), 'pointermove', 72, 150, y);
+      }
+      assert.equal(scroller().scrollTop, 20, 'the well scrolled');
+      assert.ok(!ears.heard.some((h) => h.includes('pointermove')), 'the pane hears none of the pan\'s moves');
+      const up = finger(goBtn(), lift, 71, 50, 30);
+      assert.equal(up.defaultPrevented, false, 'the lift is sent on as it came');
+      assert.deepEqual(ears.heard, ['btn:pointerdown:71', `btn:${lift}:71`, `root:${lift}:71`], 'the pane hears that finger\'s own lift, once');
+      if (lift === 'pointerup') {
+        assert.deepEqual(IM.touchesForTests().clicks, [71], 'its click is owed');
+        tapClick(goBtn(), 71);
+      }
+      finger(lead(), 'pointerup', 72, 150, 30);
+      tapClick(lead(), 72);
+      await shell.tick();
+      assert.ok(!ears.heard.some((h) => h.startsWith('btn:click')), 'no click reaches the pane');
+      assert.ok(!W.__log.includes('click:go'), 'the button never acts');
+      assert.ok(!ears.heard.some((h) => h.endsWith(':72')), 'the pan\'s own finger is never the pane\'s');
+      assert.equal(grabPosts().length, 0, 'no element, no POST');
+      assert.equal(shell.calls.filter((c) => c.method === 'POST').length, 0);
+      assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+    } finally { ears.off(); await settle(); }
+  });
+}
+
+test('the heard-press rule is the press\'s: a tool-routed finger\'s lift, and that of a finger landing on the button during the pan, stay the pan\'s', async () => {
+  await grabArmed('on');
+  const ears = paneEars();
+  try {
+    // Finger 1 on static content: the tool's (strokes armed, fingers draw).
+    finger(lead(), 'pointerdown', 81, 10, 10, { isPrimary: true });
+    finger(lead(), 'pointermove', 81, 40, 40);
+    finger(lead(), 'pointerdown', 82, 120, 40);
+    // Finger 3 lands on the button during the pan: its press is stopped.
+    finger(goBtn(), 'pointerdown', 83, 60, 60);
+    finger(lead(), 'pointermove', 81, 40, 20);
+    finger(lead(), 'pointermove', 82, 120, 20);
+    finger(goBtn(), 'pointermove', 83, 60, 40);
+    const up1 = finger(lead(), 'pointerup', 81, 40, 20);
+    const up3 = finger(goBtn(), 'pointerup', 83, 60, 40);
+    const up2 = finger(lead(), 'pointerup', 82, 120, 20);
+    assert.equal(up1.defaultPrevented && up2.defaultPrevented && up3.defaultPrevented, true, 'each lift is the pan\'s');
+    tapClick(lead(), 81);
+    tapClick(goBtn(), 83);
+    tapClick(lead(), 82);
+    await shell.tick();
+    assert.deepEqual(ears.heard, [], 'the pane heard nothing: no press, no lift, no click');
+    assert.deepEqual(W.__log, []);
+    assert.equal(grabPosts().length, 0);
+    assert.ok(scroller().scrollTop > 0, 'it scrolled');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+  } finally { ears.off(); await settle(); }
 });
 
 test('the pan cancels a stroke through the overlay\'s cancelGesture and dispatches no synthetic event', () => {

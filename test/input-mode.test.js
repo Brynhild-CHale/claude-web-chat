@@ -29,7 +29,9 @@
 //     outside the well and a pen are never tracked, a primary touch clears what
 //     an earlier gesture left; a second finger makes a pan only with a strokes
 //     tool armed and finger-draws on, and cancels the first finger's stroke
-//     through the overlay's cancelGesture;
+//     through the overlay's cancelGesture; each finger's policy reading at
+//     its pointerdown is kept beside its point (U334b, K.2-99), heard only
+//     for a press that went on to the page, and released with the finger;
 //   - the well's touch-action per state: manipulation, and none only while a
 //     strokes tool is armed with finger-draws on (pinch-zoom off).
 const test = require('node:test');
@@ -375,6 +377,62 @@ test('the two-finger pan: each finger tracked by pointerId and released at point
     off();
     IM.setFingerDraws('auto');
     W.localStorage.removeItem(IM.FINGER_DRAWS_KEY);
+  }
+});
+
+test('the per-finger route: each finger\'s policy reading at its pointerdown is kept beside its point, heard only for a press that went on to the page, and released with the finger', () => {
+  const fx = fixtures();
+  const el = fx.static[0];
+  const btn = fx.interactive.button;
+  const off = ov.registerType('imp-strokes-r', { draw() {}, input: 'strokes', create() {} });
+  const empty = { touches: [], pan: null, clicks: [], routes: {}, heard: [] };
+  IM.installInputMode();
+  IM.setFingerDraws('on');
+  ov.setArmed('imp-strokes-r');
+  try {
+    assert.deepEqual(IM.touchesForTests({ routes: true }), empty);
+    touchAt(btn, 'pointerdown', 91, { isPrimary: true });
+    assert.deepEqual(IM.touchesForTests({ routes: true }),
+      { touches: [91], pan: null, clicks: [], routes: { 91: 'page' }, heard: [91] }, 'a control: the page\'s, its press heard');
+    touchAt(el, 'pointerdown', 92);
+    assert.deepEqual(IM.touchesForTests({ routes: true }),
+      { touches: [91, 92], pan: [91, 92], clicks: [], routes: { 91: 'page', 92: 'tool' }, heard: [91] },
+      'the finger that starts the pan: its press stopped, never heard');
+    touchAt(btn, 'pointerdown', 93);
+    assert.deepEqual(IM.touchesForTests({ routes: true }).heard, [91], 'a finger landing on a control during the pan: its press stopped, not heard');
+    assert.equal(IM.touchesForTests({ routes: true }).routes[93], 'page');
+    touchAt(btn, 'pointerup', 91);
+    assert.deepEqual(IM.touchesForTests({ routes: true }),
+      { touches: [92, 93], pan: [92, 93], clicks: [91], routes: { 92: 'tool', 93: 'page' }, heard: [] }, 'released with the finger');
+    touchAt(el, 'pointercancel', 92);
+    touchAt(btn, 'pointercancel', 93);
+    btn.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: 91, detail: 1 }));
+    assert.deepEqual(IM.touchesForTests({ routes: true }), empty, 'nothing left of the gesture');
+    // The finger that starts the pan on a control: its press is stopped, so
+    // its lift is the pan's too.
+    touchAt(el, 'pointerdown', 96, { isPrimary: true });
+    touchAt(btn, 'pointerdown', 97);
+    assert.deepEqual(IM.touchesForTests({ routes: true }),
+      { touches: [96, 97], pan: [96, 97], clicks: [], routes: { 96: 'tool', 97: 'page' }, heard: [] },
+      'the pan\'s second finger, on a control: never heard');
+    touchAt(btn, 'pointercancel', 97);
+    touchAt(el, 'pointercancel', 96);
+    assert.deepEqual(IM.touchesForTests({ routes: true }), empty);
+    // A finger while a pen is down reads 'ignore': no pane hears it.
+    el.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'pen', pointerId: 94, isPrimary: true, buttons: 1 }));
+    touchAt(btn, 'pointerdown', 95, { isPrimary: true });
+    assert.deepEqual(IM.touchesForTests({ routes: true }),
+      { touches: [95], pan: null, clicks: [], routes: { 95: 'ignore' }, heard: [] });
+    touchAt(btn, 'pointerup', 95);
+    el.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, composed: true, pointerType: 'pen', pointerId: 94, isPrimary: true }));
+    assert.deepEqual(IM.touchesForTests({ routes: true }), empty);
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] }, 'the plain snapshot keeps its shape');
+  } finally {
+    ov.setArmed(null);
+    off();
+    IM.setFingerDraws('auto');
+    W.localStorage.removeItem(IM.FINGER_DRAWS_KEY);
+    W.localStorage.removeItem(IM.PEN_SEEN_KEY);
   }
 });
 
