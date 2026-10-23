@@ -17,7 +17,10 @@
 //   - opt-in (WEB_CHAT_E2E_CHROME=1, skipped otherwise): a real Chrome draws
 //     the grab of a rows-capped pane scrolled 200 px, and the clip lands on the
 //     element the chrome measured — a band of solid colour, compared by its
-//     pixels, the bands either side of it where the measure put them.
+//     pixels, the bands either side of it where the measure put them; and
+//     (U328f, K.2-85) scrolled into the last header-height of the live range,
+//     which lands only because the export's content box is pinned at the live
+//     box's height as well as its width.
 // The chrome's half is pinned in test/box-grab-chrome.test.js (scroll beside
 // box), the seam's in test/box-grab.test.js (captureImpl handed it,
 // captureClip's page script setting it before the clip); K.2-79's highlight
@@ -124,5 +127,44 @@ test('a real Chrome: a rows-capped pane scrolled 200 px — the clip lands on th
   assert.equal(rows(0, 10, BANDS[1], 'above'), null, 'the 10 rows above are band 1, as the chrome saw them');
   assert.equal(rows(10, 10 + BAND_PX, BANDS[2], 'the element'), null, 'band 2, where the chrome measured it — not band 0 (unscrolled)');
   assert.equal(rows(10 + BAND_PX, rect.h, BANDS[3], 'below'), null, 'the 10 rows below are band 3');
+  assert.equal(liveBrowsers(), 0);
+});
+
+// K.2-85 (U328f): the export's content box is pinned at the live box's HEIGHT
+// too. Unpinned, the export's rows-capped `.mount-host` is about a header
+// taller than the live one (the export shell lays no header inside the rows
+// height), so its scroll range is that much shorter and a scroll in the last
+// stretch of the live range clamps — the clip lands up to a header too high.
+// Scrolled to (content height − live box h) − 5 px, band 8 sits at 73..173 in
+// the live box's frame; the clip takes it with 10 px of bands 7 and 9 around.
+test('a real Chrome: a rows-capped pane scrolled into the last header-height of its range — the clip lands on the measured band, and nothing clamped', { skip: e2e.skip }, async (t) => {
+  const { api, srv, root } = await withServer(t);
+  setSeams(srv.state, { findChrome: () => e2e.chrome });
+  await ok(api.post('/api/render', { id: 'm1', html: PANE_HTML, place: { rows: ROWS } }), 'render');
+  const box = { w: 600, h: 280 };                       // the live content box under a 6-row cap
+  const contentH = BANDS.length * BAND_PX + 2 * PAD;    // 1024: the bands and the box's padding
+  const scroll = { top: contentH - box.h - 5, left: 0 };  // 739: inside the live range, past the unpinned export's
+  const band = 8;
+  const top = PAD + band * BAND_PX - scroll.top;        // 73
+  const rect = { x: PAD, y: top - 10, w: 100, h: BAND_PX + 20 };
+  const g = (await ok(api.post('/api/elements', grabBody({ item: 'm1', mount: 'm1', rect, box, scroll })), 'POST')).element;
+  const image = await settled(srv, g.grab.capture);
+  assert.equal(image.state, 'ready', JSON.stringify(image));
+  assert.equal(image.scroll_clamped, undefined, `the browser applied the measured scroll: ${JSON.stringify(image.scroll_clamped)}`);
+  const png = decodePng(fs.readFileSync(path.join(root, '.web-chat', 'captures', `${g.grab.capture}.png`)));
+  assert.deepEqual([png.width, png.height], [rect.w, rect.h], 'the clip is the rect\'s size');
+  const near = (x, y, [r, gg, b]) => {
+    const i = (y * png.width + x) * 4;
+    return Math.abs(png.data[i] - r) < 20 && Math.abs(png.data[i + 1] - gg) < 20 && Math.abs(png.data[i + 2] - b) < 20;
+  };
+  const rows = (y0, y1, want, what) => {
+    for (let y = y0; y < y1; y++) for (let x = 0; x < rect.w; x++) {
+      if (!near(x, y, want)) return `${what}: (${x}, ${y}) is not rgb(${want.join(', ')})`;
+    }
+    return null;
+  };
+  assert.equal(rows(0, 10, BANDS[band - 1], 'above'), null, 'the 10 rows above are band 7, as the chrome saw them');
+  assert.equal(rows(10, 10 + BAND_PX, BANDS[band], 'the element'), null, 'band 8, where the chrome measured it — not shifted by a clamp');
+  assert.equal(rows(10 + BAND_PX, rect.h, BANDS[band + 1], 'below'), null, 'the 10 rows below are band 9');
   assert.equal(liveBrowsers(), 0);
 });
