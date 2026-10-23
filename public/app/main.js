@@ -42,6 +42,10 @@ import { initSessionOps } from './session-ops.js';
 // The anchor resolver (lib/core/anchors, served by the daemon as
 // /app/anchors.js — browserModuleSource(); annotation engine 1C.1–1C.4).
 import { install as installAnchors } from './anchors.js';
+// The page well's ONE element overlay (annotation engine 2A.1): #el-layer,
+// drawn from the resolver's watch() answers, with the seams the element types,
+// the probe, the reports, the input policy and the tools plug into.
+import { initOverlay } from './overlay.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -50,6 +54,7 @@ initMode();       // Earthy light (default) / dark before first paint
 // (anchors.js install → onSettle), registered before any pane can mount and
 // settle. It costs nothing until something watches a pane (tranche 2).
 installAnchors(window.__wcMount);
+initOverlay();    // the element overlay: after the resolver it watches through
 initViewport();   // <html class="phone"> before anything mounts (panes read it)
 initTopbar();
 initGraph();
