@@ -492,12 +492,15 @@ async function boot({ routes = {}, onSocket, init, open = true, url = 'http://lo
     },
     tick,
     click(el) { el.dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true, composed: true })); },
-    // A real click is pointerdown THEN click: the shell's dismiss layer runs on
-    // the first and the target's own toggle on the second, and a test that only
-    // fires `click` cannot see the ordering bugs that live between them.
+    // A real click is pointerdown, pointerup THEN click: the shell's dismiss
+    // layer runs on the first and the target's own toggle on the last, and a
+    // test that only fires `click` cannot see the ordering bugs that live
+    // between them. The click a pointer made carries detail 1 (a click count),
+    // as browsers send it; shell.click's detail 0 is a click no pointer made.
     press(el) {
-      el.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true }));
-      shell.click(el);
+      el.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true, buttons: 1 }));
+      el.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, cancelable: true, composed: true }));
+      el.dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1 }));
     },
     key(k, { target, ...init } = {}) {
       const e = new W.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, composed: true, ...init });

@@ -1021,11 +1021,12 @@ function markdownText(md) {
 // Each pointer's gesture is its own (a palm landing during a pen stroke never
 // re-decides the pen's): decided at its pointerdown, read by its pointermove,
 // pointerup and pointercancel, dropped at its pointercancel, at its click, at
-// the next pointerdown of its id, and — once it is up — at any later
-// pointerdown (a click follows its pointerup in the same task, or never). A
-// click that names a pointer takes that pointer's gesture alone; one that names
-// none takes the newest pointerdown's while it is live: that pointer still
-// down, or up with its click unspent and a pointer pressed it (detail >= 1).
+// the next pointerdown of its id, at a move of its pointer with no button down
+// while the well has not heard it up (it was released outside #main), and —
+// once it is up — at any later pointerdown (a click follows its pointerup in
+// the same task, or never). A click that names a pointer takes that pointer's
+// gesture alone; one that names none takes the newest pointerdown's only once
+// that pointer is up, its click unspent and a pointer pressed it (detail >= 1).
 // With neither it is a lone click (a keyboard's Enter, pointerId -1; a script's
 // el.click(); or the click a pan's gesture never got), and the policy is asked
 // about it afresh.
@@ -1046,13 +1047,12 @@ function gestureOfClick(e) {
   // keyboard's click names -1, a lone one by any reading.
   if (typeof e.pointerId === 'number') return gestures.has(e.pointerId) ? [e.pointerId, gestures.get(e.pointerId)] : null;
   // A click that names no pointer (a browser whose click is a MouseEvent): the
-  // newest pointerdown's while it is still down, or up with its own click
-  // unspent when a pointer pressed it (detail >= 1; any later pointerdown would
-  // have dropped this gesture).
+  // newest pointerdown's only once the well heard it up, with its own click
+  // unspent, and only when a pointer pressed the click (detail >= 1; any later
+  // pointerdown would have dropped this gesture). A press still not up is no
+  // click's: its pointer was released where the well could not hear it (U302b).
   const g = lastDown == null ? null : gestures.get(lastDown);
-  if (!g) return null;
-  if (!g.up) return [lastDown, g];
-  return e.detail >= 1 ? [lastDown, g] : null;
+  return g && g.up && e.detail >= 1 ? [lastDown, g] : null;
 }
 // The click of a gesture the tool took, judged again where it ended: the
 // stand-in names the gesture's pointer (a click event may carry none) and not
@@ -1091,6 +1091,10 @@ function onPointer(e) {
   } else {
     g = gestures.get(e.pointerId);
     if (!g) return;   // a hover, or the tail of a gesture that began before the arming
+    // A move with no button down on a press the well never heard end (released
+    // outside #main): the press is over, so its gesture goes and this move, a
+    // hover, is the page's (U302b).
+    if (e.type === 'pointermove' && e.buttons === 0 && !g.up) { gestures.delete(e.pointerId); return; }
     decision = g.decision;
     if (e.type === 'pointerup') g.up = true;
     else if (e.type === 'pointercancel') gestures.delete(e.pointerId);

@@ -8,10 +8,13 @@
 //     uninstall), and arming through overlay.js's setArmed is what the policy
 //     reads (K.2-3: no second state);
 //   - a pen over a pane is the armed tool's, on the pane's <button> too;
-//   - a taps or selection type armed: a pen's or a mouse's pointerdown on the
-//     pane's <button> has its default cancelled (no compatibility mousedown,
-//     focus or selection starts in the pane, K.2-43); a finger's keeps its
-//     default, on the button and on static content (D1);
+//   - a taps type armed: a pen's or a mouse's pointerdown on the pane's
+//     <button> has its default cancelled (no compatibility mousedown or focus
+//     starts in the pane, K.2-43); a selection type armed: no pointer's is
+//     (K.2-48: the browser forms the selection the tool takes), so a mouse
+//     pointerdown on the pane's text keeps its default where a taps tool's is
+//     cancelled; a finger's keeps its default, on the button and on static
+//     content (D1);
 //   - finger-draws off, a taps type armed: a finger tap on static content
 //     reaches the tool; a finger tap on the pane's <button> fires the button
 //     with the tool still armed (K.2-9, D1 (b)); a finger that travels past
@@ -80,9 +83,12 @@ const lead = () => rootOf().querySelector('p.lead');
 const goBtn = () => rootOf().querySelector('button.go');
 const reset = () => { created.length = 0; W.__log.length = 0; };
 
+// A pressed pointer reports a button down (buttons 1) on its pointerdown and
+// moves, as browsers send it: a move with buttons 0 is a hover (U302b).
 function pe(el, type, pointerType, extra = {}) {
   el.dispatchEvent(new W.PointerEvent(type, {
-    bubbles: true, cancelable: true, composed: true, pointerType, pointerId: 1, isPrimary: true, clientX: 100, clientY: 100, ...extra,
+    bubbles: true, cancelable: true, composed: true, pointerType, pointerId: 1, isPrimary: true, clientX: 100, clientY: 100,
+    buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, ...extra,
   }));
 }
 // As Chrome sends it: the click is a PointerEvent carrying the pointer's type.
@@ -137,7 +143,7 @@ test('a pen over a pane is the armed tool\'s, on the pane\'s button too', () => 
   } finally { ov.setArmed(null); }
 });
 
-test('a taps or selection tool armed: a pen\'s or a mouse\'s pointerdown on the pane\'s button is cancelled, a finger\'s is not', () => {
+test('a taps tool armed: a pen\'s or a mouse\'s pointerdown on the pane\'s button is cancelled, a finger\'s is not; a selection tool cancels none', () => {
   IM.setFingerDraws('off');
   const down = (el, pointerType, pointerId) => {
     const ev = new W.PointerEvent('pointerdown', {
@@ -149,14 +155,34 @@ test('a taps or selection tool armed: a pen\'s or a mouse\'s pointerdown on the 
   };
   try {
     for (const type of ['im-taps', 'im-selection']) {
+      // K.2-43's taps half; K.2-48: the selection row keeps every default.
+      const drawing = type === 'im-taps';
       ov.setArmed(type);
       reset();
-      assert.equal(down(goBtn(), 'pen', 51), true, `${type}: a pen on the button is wholly the tool's (K.2-43)`);
-      assert.equal(down(goBtn(), 'mouse', 52), true, `${type}: the mouse as the pen`);
+      assert.equal(down(goBtn(), 'pen', 51), drawing, `${type}: a pen on the button (K.2-43, K.2-48)`);
+      assert.equal(down(goBtn(), 'mouse', 52), drawing, `${type}: the mouse as the pen`);
       assert.equal(down(goBtn(), 'touch', 53), false, `${type}: a finger on the button keeps its default (D1)`);
       assert.equal(down(lead(), 'touch', 54), false, `${type}: a finger on static content keeps its default`);
       assert.deepEqual(W.__log.filter((l) => l !== 'down:touch'), [], 'the page heard only the finger on the button');
     }
+  } finally { ov.setArmed(null); }
+});
+
+test('a mouse pointerdown on the pane\'s text: a selection tool leaves its default (the browser forms the selection), a taps tool cancels it', () => {
+  IM.setFingerDraws('off');
+  const down = (pointerId) => {
+    const ev = new W.PointerEvent('pointerdown', {
+      bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId, isPrimary: true, clientX: 100, clientY: 100, buttons: 1,
+    });
+    lead().dispatchEvent(ev);
+    pe(lead(), 'pointerup', 'mouse', { pointerId });
+    return ev.defaultPrevented;
+  };
+  try {
+    ov.setArmed('im-selection');
+    assert.equal(down(61), false, 'selection: not defaultPrevented, so the mousedown that starts a text selection runs (K.2-48, K.2-6)');
+    ov.setArmed('im-taps');
+    assert.equal(down(62), true, 'taps: defaultPrevented (K.2-43)');
   } finally { ov.setArmed(null); }
 });
 

@@ -356,9 +356,12 @@ function withInputMode() {
   un();
   return IM.installInputMode();
 }
+// A pressed pointer reports a button down (buttons 1) on its pointerdown and
+// moves, as browsers send it: a move with buttons 0 is a hover (U302b).
 function pe(el, type, pointerType, pointerId, extra = {}) {
   const ev = new W.PointerEvent(type, {
-    bubbles: true, cancelable: true, composed: true, pointerType, pointerId, isPrimary: true, clientX: 100, clientY: 100, detail: type === 'click' ? 1 : 0, ...extra,
+    bubbles: true, cancelable: true, composed: true, pointerType, pointerId, isPrimary: true, clientX: 100, clientY: 100, detail: type === 'click' ? 1 : 0,
+    buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, ...extra,
   });
   el.dispatchEvent(ev);
   return ev;
@@ -554,7 +557,7 @@ test('the policy\'s dispatchMode decides preventDefault and pointer capture, per
     assert.deepEqual(down('mouse', 35), { prevented: true, captured: [[true, 35]] }, 'the mouse as the pen');
     IM.setFingerDraws('on');
     assert.deepEqual(down('touch', 36), { prevented: false, captured: [[true, 36]] }, 'finger-draws on: the finger draws, captured, its default left to touch-action');
-    const mv = pe(lead('p1'), 'pointermove', 'pen', 37);
+    const mv = pe(lead('p1'), 'pointermove', 'pen', 37, { buttons: 0 });
     assert.equal(mv.defaultPrevented, false, 'a pointer with no gesture of its own (a hover) is untouched');
   } finally {
     ov.setArmed(null);
