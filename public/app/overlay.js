@@ -58,6 +58,7 @@ import { page } from './page.js';
 import { onFrame, onHello } from './ws.js';
 import { sourceMap } from './markdown.js';
 import anchors from './anchors.js';
+import { hiddenProbe, installRetriggers } from './overlay-hidden.js';
 
 // ── the vocabulary ──────────────────────────────────────────────────────────
 // The states come from the one vocabulary (lib/core/anchor-states, carried by
@@ -1128,6 +1129,10 @@ export function initOverlay(opts = {}) {
   onFrame('markdown:remove', scheduleSources);
   bus.on('preview:node', takePreview);
   bus.on('view', syncScope);
+  // Hidden versus gone, and the store / hidden-state re-resolve (U303,
+  // overlay-hidden.js): settles only the mounts watched here.
+  setHiddenProbe(hiddenProbe);
+  installRetriggers({ watched: () => [...watches.keys()], raf: (fn) => cfg.raf(fn), resolveMount: queueInitial });
   const M = window.__wcMount;
   if (M && typeof M.onSettle === 'function') M.onSettle(() => requestDraw());
   window.addEventListener('scroll', requestDraw, { capture: true, passive: true });

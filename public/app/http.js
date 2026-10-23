@@ -11,9 +11,10 @@
 // JSON body does not say ok:false, so a GET of plain data is ok. A refusal is
 // one of four shapes:
 //
-//   (a) the fetch rejected (the daemon is gone, the socket dropped) →
-//       status 0, refused 'network' — or 'aborted' when the caller's `signal`
-//       aborted it;
+//   (a) the fetch rejected (the daemon is gone, the socket dropped), or the
+//       body read failed with anything but a parse error →
+//       status 0 (the answer's own once its headers had arrived), refused
+//       'network' — or 'aborted' when the caller's `signal` aborted it;
 //   (b) a non-2xx whose body is not JSON → refused 'network', with its status;
 //   (c) a JSON refusal naming a string `refused` → that reason;
 //   (d) a JSON non-ok naming none → 'forbidden' for a 403 (a remote viewer
@@ -107,7 +108,18 @@ export async function request(method, path, opts) {
   const success = status >= 200 && status < 300;
   let parsed;
   let isJson = false;
-  try { parsed = await res.json(); isJson = true; } catch { parsed = null; }
+  try { parsed = await res.json(); isJson = true; } catch (err) {
+    // A body read that throws is not always a body that is not JSON. The
+    // caller's signal aborting mid-body is the caller's own cancel, and a
+    // stream that dropped (a TypeError in a browser) is an answer that never
+    // arrived: neither may read as an ok with no body. Only a parse failure
+    // (a SyntaxError: a 204, an HTML page) is "not JSON".
+    if ((signal && signal.aborted) || (err && err.name === 'AbortError')) {
+      return refusal(status || 0, null, 'aborted', ABORTED_HINT);
+    }
+    if (!err || err.name !== 'SyntaxError') return refusal(status || 0, null, 'network', NETWORK_HINT);
+    parsed = null;
+  }
   const out = isJson ? parsed : null;
 
   if (!isJson) {

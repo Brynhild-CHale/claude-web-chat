@@ -681,6 +681,7 @@ function mountPane(m) {
   const slot = slotFor(target);
   const existing = panes.get(id);
   if (existing) {
+    existing.mounted = null;   // the mount-complete mark goes with the instance it marked
     releasePane(existing);
     if (existing.wrapper.parentElement) existing.wrapper.parentElement.removeChild(existing.wrapper);
     panes.delete(id);
@@ -836,7 +837,21 @@ function mountPane(m) {
   // scripts, its restored form values and (a mode pane) the mode re-assert.
   // Read off the global at the call, never cached: a harness may wrap it.
   window.__wcMount.settle(root, id, 'mount');
+  // The mount-complete mark (2A.2): this instance's DOM is final as of the
+  // settle just made, with that settle's generation. Absent until then, and
+  // gone with the record (a re-mount, removePane): mountState() reads it.
+  rec.mounted = { at: Date.now(), gen: window.__wcMount.generation(root) };
   layoutPage();
+}
+
+// Whether a pane has finished mounting, and when: {complete, at, gen} — at
+// (Date.now()) and gen (the runtime generation of its 'mount' settle) are null
+// until the mark is set. The overlay's hidden-state probe reads it
+// (public/app/overlay-hidden.js): a pane still mounting is hidden, not gone.
+export function mountState(id) {
+  const p = panes.get(id);
+  const m = p && p.mounted;
+  return m ? { complete: true, at: m.at, gen: m.gen } : { complete: false, at: null, gen: null };
 }
 
 // ── a pane's store subscriptions end with the pane ─────────────────────────
@@ -913,7 +928,7 @@ function releasePane(rec) {
 // Remove a single pane by id (WS 'clear' with an explicit id).
 export function removePane(id) {
   const p = panes.get(id);
-  if (p) { releasePane(p); if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
+  if (p) { p.mounted = null; releasePane(p); if (p.wrapper.parentElement) p.wrapper.remove(); panes.delete(id); }
   else dropOrphanDom(id); // a legacy bare host, or a failed mount's leftovers
   layoutPage();
 }

@@ -129,6 +129,36 @@ test('a 204 (no body) is ok with body null', async () => {
   assert.deepEqual(await http.request('DELETE', '/t/204'), { ok: true, status: 204, body: null, refused: null, hint: null });
 });
 
+test('a 2xx whose body read rejects after the caller aborted answers refused aborted, not ok (K.2-24)', async () => {
+  // The headers arrived (a 200), then the caller's signal aborted while the
+  // body was still being read: the body read rejects. Before U303 this read
+  // as "not JSON" and answered {ok:true, body:null}.
+  const ctl = new AbortController();
+  let bodyRead;
+  route('/t/abort-body', () => ({
+    ...respond({ ok: true, pending: [] }),
+    json: () => new Promise((resolve, rej) => {
+      bodyRead = true;
+      ctl.signal.addEventListener('abort', () => rej(new DOMException('The operation was aborted.', 'AbortError')));
+    }),
+  }));
+  const pending = http.request('GET', '/t/abort-body', { signal: ctl.signal });
+  await shell.tick(5);
+  assert.equal(bodyRead, true, 'the body read was in flight when the caller aborted');
+  ctl.abort();
+  const r = await pending;
+  assert.deepEqual(r, { ok: false, status: 200, body: null, refused: 'aborted', hint: http.ABORTED_HINT });
+
+  // A body stream that dropped (a TypeError in a browser) is an answer that never arrived.
+  route('/t/drop-body', () => ({ ...respond({ ok: true }), json: async () => { throw new TypeError('network error'); } }));
+  const d = await http.request('GET', '/t/drop-body');
+  assert.deepEqual(d, { ok: false, status: 200, body: null, refused: 'network', hint: http.NETWORK_HINT });
+
+  // A body that is simply not JSON (a parse failure) stays what it was: a 2xx is ok with body null.
+  route('/t/text-body', respond('plain words', { status: 200 }));
+  assert.deepEqual(await http.request('GET', '/t/text-body'), { ok: true, status: 200, body: null, refused: null, hint: null });
+});
+
 test('request never throws or rejects, whatever it is handed', async () => {
   route('/t/never', reject);
   const cyclic = {}; cyclic.self = cyclic;

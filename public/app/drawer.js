@@ -41,6 +41,7 @@ import { panes, unminimize, revealPane, refuseLayoutGesture } from './mounts.js'
 import { showReaimNote, returnToActive } from './topbar.js';
 import { isPhone } from './viewport.js';
 import { isRemote, remoteNow } from './remote.js';
+import { refreshPending, pendingServices } from './service-pending.js';
 
 const LIBRARY = 'library';
 const MANAGE = 'manage';
@@ -132,12 +133,12 @@ async function loadPacks() {
   }
 }
 
+// The one service-pending signal (service-pending.js) reads the list; the
+// drawer asks it for a fresh read each time it fills, as it always did, and an
+// unanswered read shows no badge.
 async function loadPendingTrust() {
-  try {
-    const r = await fetch('/api/services/pending');
-    const body = await r.json();
-    pendingTrust = new Set((body.pending || []).map((p) => p.name || p.component).filter(Boolean));
-  } catch { pendingTrust = new Set(); }
+  const fresh = await refreshPending();
+  pendingTrust = fresh ? pendingServices() : new Set();
 }
 
 async function refresh() {
