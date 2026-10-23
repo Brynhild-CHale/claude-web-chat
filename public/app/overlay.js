@@ -1096,6 +1096,10 @@ function onPointer(e) {
     // outside #main): the press is over, so its gesture goes and this move, a
     // hover, is the page's (U302b).
     if (e.type === 'pointermove' && e.buttons === 0 && !g.up) { gestures.delete(e.pointerId); return; }
+    // A move after this entry's own pointerup is a hover: it passes through and
+    // the entry stays for its click (a browser that sends no click when the
+    // down and up targets differ would otherwise swallow it; K.2-51).
+    if (e.type === 'pointermove' && g.up) return;
     decision = g.decision;
     if (e.type === 'pointerup') g.up = true;
     else if (e.type === 'pointercancel') gestures.delete(e.pointerId);
