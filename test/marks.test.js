@@ -88,6 +88,14 @@ test('the holder: replace-all per owner, an empty set clears it, malformed sets 
   assert.equal(m.set('o0', [mark(9)]).ok, true, 'an owner already holding a set may replace it');
   m.clear();
   assert.deepStrictEqual(m.sets(), []);
+  // A label or an anchor may carry text: the daemon's redactor masks it before it is held or sent.
+  const { createRedactor } = require('../lib/core/redact');
+  const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
+  const fake = fakeSecrets().find((f) => f.id === 'sk-anthropic-api');
+  const out = [];
+  const r = createMarks({ bus: { emit: (x) => out.push(x) }, redactor: createRedactor() });
+  assert.equal(r.set('service:a', [{ mount: 'p1', kind: 'x', label: `key ${fake.secrets[0]}`, anchor: { text: fake.secrets[0] } }]).ok, true);
+  assert.deepEqual(findLeaks(JSON.stringify([r.sets(), r.list(), out]), [fake]).map((l) => l.id), [], 'masked in the held set and on the frame');
 });
 
 // ── X-9 / GT-20: never the store, the ring or a node ────────────────────────

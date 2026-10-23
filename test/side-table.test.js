@@ -392,6 +392,60 @@ test('boot: a log holding answers records reloads them (answersOf and recordOf e
   assert.equal(report2.clean, true, JSON.stringify(report2.states));
 });
 
+// ── the changed rule's edges (E2 a) ────────────────────────────────────────
+
+test('changed only, store half: an ancestor\'s answer stops carrying down once the node\'s store differs from its qualifier', async (t) => {
+  const d = await withServer(t);
+  await ok(d.api.post('/api/render', { id: 'p1', html: '<p>one</p>' }), 'render p1');
+  const pin = await pinOn(d, 'p1');
+  const s = await socket(t, d.port);
+  await report(d, s, 'p1', [{ id: pin.id, v: pin.v, state: 'exact' }]);
+  const n1 = await commit(d.api, 'first');
+  assert.equal(side(d).answerOf(n1, pin.id, pin.v).state, 'exact');
+  // A store write, never confirmed: n2's p1 is the same content, its store is not.
+  await ok(d.api.post('/api/store', { patch: { k: 1 } }), 'store write');
+  const n2 = await commit(d.api, 'store moved');
+  assert.equal(d.srv.graph.nodes.get(n2).parent_id, n1);
+  assert.equal(answersRecs(d.root).length, 1, 'nothing recorded for n2: the held answer carries the old store');
+  assert.equal(side(d).answerOf(n2, pin.id, pin.v), null, 'n1\'s answer does not carry into a node whose store differs');
+  assert.equal(side(d).answersFor(n2).size, 0);
+});
+
+test('changed only, state half: a new state on the same content and store is recorded', async (t) => {
+  const d = await withServer(t);
+  await ok(d.api.post('/api/render', { id: 'p1', html: '<p>one</p>' }), 'render p1');
+  const pin = await pinOn(d, 'p1');
+  const s = await socket(t, d.port);
+  await report(d, s, 'p1', [{ id: pin.id, v: pin.v, state: 'exact' }]);
+  await commit(d.api, 'first');
+  // The same viewer, the same surface, gen and store: its newer answer replaces the held one.
+  await report(d, s, 'p1', [{ id: pin.id, v: pin.v, state: 'orphaned' }]);
+  await ok(d.api.post('/api/render', { id: 'p2', html: '<p>two</p>' }), 'render p2');
+  const n2 = await commit(d.api, 'second');
+  const recs = answersRecs(d.root);
+  assert.equal(recs.length, 2, 'the state changed: a record set for n2');
+  assert.equal(recs[1].node, n2);
+  assert.deepStrictEqual(recs[1].items.map((i) => i.state), ['orphaned']);
+  assert.equal(side(d).answerOf(n2, pin.id, pin.v).state, 'orphaned');
+});
+
+test('a record set never names an id@v the node does not carry: a pin removed after its report is not recorded', async (t) => {
+  const d = await withServer(t);
+  await ok(d.api.post('/api/render', { id: 'p1', html: '<p>one</p>' }), 'render p1');
+  const pin = await pinOn(d, 'p1');
+  const kept = await pinOn(d, 'p1', 'another note');
+  const s = await socket(t, d.port);
+  await report(d, s, 'p1', [{ id: pin.id, v: pin.v, state: 'exact' }, { id: kept.id, v: kept.v, state: 'exact' }]);
+  await ok(d.anonApi.del(`/api/elements/${pin.id}`), 'remove the pin');
+  assert.equal(stats(d).held, 2, 'precondition: both answers are still held');
+  await ok(d.api.post('/api/render', { id: 'p2', html: '<p>two</p>' }), 'render p2');
+  const n1 = await commit(d.api, 'after the removal');
+  const recs = answersRecs(d.root);
+  assert.equal(recs.length, 1);
+  assert.deepStrictEqual(recs[0].items.map((i) => i.id), [kept.id], 'only the pin n1 carries');
+  assert.equal(side(d).answerOf(n1, pin.id, pin.v), null);
+});
+
 // ── S-15: the dirty check never sees reports or marks ───────────────────────
 
 test('S-15: 100 reports and 50 mark writes flip the dirty check 0 times; snapshotView is unchanged', async (t) => {
