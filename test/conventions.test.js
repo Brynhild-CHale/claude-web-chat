@@ -636,6 +636,9 @@ const PATTERNS = [
       // The unit-kind table: each row's plan() is planInstall's ladder for its
       // kind, moved out of plan.js and held to plan.js's purity (U321).
       'lib/packs/kinds.js',
+      // The element type reader (U322, R7 §4): element.json, draw.js and
+      // assets/** are read here and written only by applyPlan.
+      'lib/packs/elements.js',
     ],
     // Every way a second apply path could be spelled, not just the three the
     // first one happened to use: a copy written with `cpSync`, or with

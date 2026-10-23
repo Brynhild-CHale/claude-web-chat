@@ -97,10 +97,10 @@ function newProject(name) {
 const SOURCE = { via: 'tarball', sha: 'a'.repeat(40), url: 'https://github.com/acme/kinds' };
 
 // ── the table itself ────────────────────────────────────────────────────────
-test('UNIT_KINDS lists component, theme and skill, in the order planInstall emits units', () => {
+test('UNIT_KINDS lists component, theme, skill and element, in the order planInstall emits units', () => {
   if (RECORD) return;
   const { UNIT_KINDS, kindOf, unitsOf, namesOf } = require('../lib/packs/kinds');
-  assert.deepEqual(UNIT_KINDS.map((r) => r.kind), ['component', 'theme', 'skill']);
+  assert.deepEqual(UNIT_KINDS.map((r) => r.kind), ['component', 'theme', 'skill', 'element']);
   assert.ok(Object.isFrozen(UNIT_KINDS));
   for (const r of UNIT_KINDS) {
     assert.ok(Object.isFrozen(r), `${r.kind}'s row is frozen`);
@@ -108,10 +108,12 @@ test('UNIT_KINDS lists component, theme and skill, in the order planInstall emit
       assert.ok(k in r, `${r.kind}'s row has ${k}`);
     }
   }
-  assert.deepEqual(UNIT_KINDS.map((r) => r.listKey), ['components', 'themes', null]);
-  assert.deepEqual(UNIT_KINDS.map((r) => r.checksName), [true, false, true]);
+  assert.deepEqual(UNIT_KINDS.map((r) => r.listKey), ['components', 'themes', null, 'elements']);
+  assert.deepEqual(UNIT_KINDS.map((r) => r.checksName), [true, false, true, true]);
   assert.equal(kindOf('theme'), UNIT_KINDS[1]);
-  for (const k of ['element', '__proto__', 'constructor', '', null, undefined]) assert.equal(kindOf(k), null, String(k));
+  // U322 appended the element row; it is found, and every non-kind still misses.
+  assert.equal(kindOf('element'), UNIT_KINDS[3]);
+  for (const k of ['elements', '__proto__', 'constructor', '', null, undefined]) assert.equal(kindOf(k), null, String(k));
   const units = [{ kind: 'theme', name: 'a' }, null, { kind: 'component', name: 'b' }, { kind: 'theme', name: 'c' }];
   assert.deepEqual(unitsOf(units, 'theme'), [units[0], units[3]]);
   assert.deepEqual(namesOf(units, 'theme'), ['a', 'c']);
