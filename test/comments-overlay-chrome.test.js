@@ -350,6 +350,13 @@ test('a comment-armed click on a markdown link passes through to the page and dr
     assert.equal(down.defaultPrevented, false, 'its default was left alone');
     assert.equal(pinPop(), null, 'no pin dropped');
     assert.equal(armedType(), 'comment', 'the tool stays armed');
+    // A lone click (a mouse's, whose press the well never heard) takes the
+    // same targets check.
+    heard.length = 0;
+    const lone = new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 77, clientX: 100, clientY: 100 });
+    link.dispatchEvent(lone);
+    assert.deepEqual(heard, ['click'], 'the page heard the lone click');
+    assert.equal(pinPop(), null, 'no pin dropped by the lone click');
     heard.length = 0;
     ov.setArmed('highlight');
     gesture(link, 'mouse', { pointerId: 32 });
