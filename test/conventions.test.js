@@ -1488,6 +1488,58 @@ const PATTERNS = [
       'lib/core/text.js': 1,
     },
   },
+  {
+    // A raw fetch( in the chrome (annotation engine 2A.5, U301). public/app/
+    // http.js `request` is the chrome's one HTTP reader: it answers every
+    // request as {ok, status, body, refused, hint} and never throws, so the
+    // daemon's refusal grammar (ok:false, a reason, a hint) reaches the user the
+    // same way from every route, and it is the ONE place the chrome adds the
+    // device claim (`device: true` → `device: deviceKind()` in the JSON body;
+    // attribution only, C-15-3, never a header). A raw fetch( beside it is a
+    // second reading of a refusal and a second spelling of the claim. The
+    // counts below are the callers that predate it, each lowered as a later
+    // unit moves it onto http.js (comments.js's five writes with U327b); a new
+    // chrome request goes through http.js, not through a new baseline entry.
+    // Word-bounded, comments included: chat-detail.js's `refetch(` is not one.
+    name: 'fetch( (a raw request in the chrome)',
+    home: 'public/app/http.js — `request(method, path, {body, headers, signal, device})`',
+    what: 'calling the daemon from the chrome without the one request/refusal reader',
+    roots: ['public/app'],
+    re: /\bfetch\(/g,
+    baseline: {
+      'public/app/http.js': 1, // the one fetch, inside request
+      'public/app/asks.js': 1,
+      'public/app/brand.js': 3,
+      'public/app/chat-actions.js': 2,
+      'public/app/chat-composer.js': 1,
+      'public/app/chat-detail.js': 1,
+      'public/app/chat-state.js': 1,
+      'public/app/chat-tools.js': 1,
+      'public/app/comments.js': 5,
+      'public/app/components.js': 1,
+      'public/app/composer-mod.js': 1,
+      'public/app/drawer.js': 11,
+      'public/app/graph-log.js': 1,
+      'public/app/graph-turns.js': 1,
+      'public/app/graph-view.js': 5,
+      'public/app/mounts.js': 1,
+      'public/app/page.js': 1,
+      'public/app/pane-history.js': 2,
+      'public/app/project.js': 2,
+      // The message routes went onto http.js through queue.js's adapter (its
+      // private request, 10 → 9); the rail's own reads and writes remain.
+      'public/app/queue.js': 9,
+      'public/app/remote.js': 1,
+      'public/app/replay.js': 3,
+      'public/app/session-ops.js': 1,
+      'public/app/sessions.js': 1,
+      'public/app/shell.js': 4,
+      'public/app/topbar.js': 4,
+      'public/app/turn-actions.js': 1,
+      'public/app/version.js': 2,
+      'public/app/wake-panel.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
