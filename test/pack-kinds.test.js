@@ -302,3 +302,58 @@ test('pack install, approve, list, info, review and remove print, record and aud
   check('cli:list:after-remove', await runPack(['list'], proj));
   check('records:after-remove', snapshot(proj));
 });
+
+// ── the ratchet row ─────────────────────────────────────────────────────────
+// Read out of test/conventions.test.js rather than copied, so this checks the
+// row that runs.
+const CONV = fs.readFileSync(path.join(__dirname, 'conventions.test.js'), 'utf8');
+function kindRow() {
+  const at = CONV.indexOf("name: 'a unit-kind arm (<unit>.kind === / !== a pack unit kind)'");
+  assert.ok(at > 0, 'the unit-kind arm row is in test/conventions.test.js');
+  const tail = CONV.slice(at, CONV.indexOf('\n  },', at));
+  const re = tail.match(/re: (\/.*\/g),/)[1];
+  const baseline = tail.match(/baseline: (\{[\s\S]*?\n {4}\}|\{[^}]*\}),/)[1];
+  // eslint-disable-next-line no-new-func
+  return { re: new Function(`return ${re};`)(), baseline: new Function(`return ${baseline};`)() };
+}
+
+function kindCensus(re, extra = {}) {
+  const root = path.resolve(__dirname, '..');
+  const map = {};
+  const go = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === 'node_modules') continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) go(abs);
+      else if (e.name.endsWith('.js')) {
+        const m = fs.readFileSync(abs, 'utf8').match(re);
+        if (m) map[path.relative(root, abs).split(path.sep).join('/')] = m.length;
+      }
+    }
+  };
+  for (const r of ['lib', 'public', 'bin', 'scripts']) if (fs.existsSync(path.join(root, r))) go(path.join(root, r));
+  for (const [file, text] of Object.entries(extra)) {
+    const m = text.match(re);
+    if (m) map[file] = (map[file] || 0) + m.length;
+  }
+  return map;
+}
+
+test('the unit-kind arm ratchet: its baseline is the head, and a planted arm under lib/ breaks it', () => {
+  if (RECORD) return;
+  const { re, baseline } = kindRow();
+  assert.deepEqual(kindCensus(re), baseline, 'the baseline is exactly what the head holds');
+  // A scratch file under lib/ — scanned in memory, never written into the tree
+  // a parallel conventions run reads.
+  const planted = kindCensus(re, { 'lib/packs/scratch.js': "if (u.kind === 'theme') return;\n" });
+  const over = Object.entries(planted).filter(([f, n]) => n > (baseline[f] || 0)).map(([f]) => f);
+  assert.deepEqual(over, ['lib/packs/scratch.js']);
+  // The receivers it leaves alone: an anchor record, an element log line, a
+  // brand entry, the composer's completions.
+  for (const s of ["rec.kind !== 'element'", "kind === 'element'", "e.kind !== 'theme'", "L.kind === 'skill'", "trig.kind === 'skill'"]) {
+    assert.equal((s.match(re) || []).length, 0, s);
+  }
+  for (const s of ["unit.kind !== 'component'", 'r.kind === "theme"', "u.kind === 'element'", "unit.kind=== 'skill'"]) {
+    assert.equal((s.match(re) || []).length, 1, s);
+  }
+});
