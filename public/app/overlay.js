@@ -749,10 +749,28 @@ function clipFrom(start, fr, read) {
 function hide(g) {
   if (g.container) g.container.style.display = 'none';
 }
+// Whether any client rect of a range meets the clip (one read, counted).
+function anyRectIn(range, clip, fr) {
+  if (!range || typeof range.getClientRects !== 'function') return false;
+  fr.reads++;
+  let rs;
+  try { rs = range.getClientRects(); } catch { return false; }
+  for (const r of rs || []) {
+    const right = r.right != null ? r.right : r.left + r.width;
+    const bottom = r.bottom != null ? r.bottom : r.top + r.height;
+    if (right > clip.left && r.left < clip.right && bottom > clip.top && r.top < clip.bottom) return true;
+  }
+  return false;
+}
 // Measure one group — READS ONLY: its anchor's box and its clip, and the
 // glyph's inset against that clip. Returns {res: 'drawn' | 'clipped' |
 // 'unplaced', x, y, clip, inset}; nothing is written until the frame's whole
 // slice is measured (applyGroup), so reads and writes never interleave.
+// THE PLACEMENT RULE: a glyph group (a pin) is placed while its anchor point
+// is inside the clip and some of its glyph shows; a RANGE group whose type has
+// a move seam is placed while ANY of its client rects meets the clip (K.2-74),
+// so a multi-line range whose start scrolled out keeps its visible rectangles
+// (the glyph, then wholly outside, is inset away entirely).
 function measureGroup(g, fr, read) {
   if (!g.container) return { res: 'unplaced' };
   let startEl;
@@ -774,7 +792,10 @@ function measureGroup(g, fr, read) {
   const x = r.left;
   const y = r.top;
   const clip = clipFrom(startEl, fr, read);
-  if (!(x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom)) return { res: 'clipped' };
+  const t = g.range ? types.get(g.type) : null;
+  const spans = !!(t && t.move);
+  const startIn = x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom;
+  if (!startIn && !(spans && anyRectIn(g.range, clip, fr))) return { res: 'clipped' };
   const gl = g.glyph;
   const gx = x + gl.dx;
   const gy = y + gl.dy;
@@ -782,7 +803,10 @@ function measureGroup(g, fr, read) {
   const left = Math.max(0, clip.left - gx);
   const right = Math.max(0, gx + gl.w - clip.right);
   const bottom = Math.max(0, gy + gl.h - clip.bottom);
-  if (top + bottom >= gl.h || left + right >= gl.w) return { res: 'clipped' };
+  if (top + bottom >= gl.h || left + right >= gl.w) {
+    if (!spans) return { res: 'clipped' };
+    return { res: 'drawn', x, y, clip, inset: [gl.h, 0, 0, 0] };
+  }
   return { res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
 }
 // Write one measured group: left/top and the glyph's clip-path, or hidden;
