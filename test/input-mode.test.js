@@ -15,9 +15,9 @@
 //   - isInteractive: the HTML spec's interactive content, through a pane's
 //     shadow boundary, stopping at the page well (#stage's tabindex never
 //     counts);
-//   - dispatchMode: every kind cancels only a drawing pointer's default (a
-//     pen's, a mouse's; never a finger's, K.2-43); strokes captures, taps and
-//     selection capture nothing;
+//   - dispatchMode: strokes and taps cancel only a drawing pointer's default
+//     (a pen's, a mouse's; never a finger's, K.2-43), selection no pointer's
+//     (K.2-48); strokes captures, taps and selection capture nothing;
 //   - no second state: the module exports no armed state of its own, and
 //     POINTER (the pointer tool) is frozen and arms nothing;
 //   - finger-draws: auto is on until a pen is seen (pointerover or
@@ -197,15 +197,16 @@ test('isInteractive: the spec\'s interactive content through a pane\'s shadow bo
   assert.ok(Object.isFrozen(IM.INTERACTIVE_ROLES) && IM.INTERACTIVE_ROLES.includes('checkbox'));
 });
 
-test('dispatchMode: every kind cancels a drawing pointer\'s default only; strokes captures, taps and selection capture nothing', () => {
+test('dispatchMode: strokes and taps cancel a drawing pointer\'s default only, selection none; strokes captures, taps and selection capture nothing', () => {
   const ev = (t) => ({ pointerType: t });
   assert.deepEqual(IM.dispatchMode(ev('pen'), 'strokes'), { capture: true, cancelDefault: true });
   assert.deepEqual(IM.dispatchMode(ev('touch'), 'strokes'), { capture: true, cancelDefault: false });
   assert.deepEqual(IM.dispatchMode(ev('mouse'), 'strokes'), { capture: true, cancelDefault: true });
-  // K.2-43: the pen, and the mouse as the pen, are wholly the tool's; a finger keeps its default (D1).
+  // K.2-43: the pen, and the mouse as the pen, are wholly a taps tool's; a finger keeps its default (D1).
+  // K.2-48: a selection tool keeps every pointer's default (the browser forms the selection).
   for (const t of ['pen', 'touch', 'mouse']) {
     assert.deepEqual(IM.dispatchMode(ev(t), 'taps'), { capture: false, cancelDefault: t !== 'touch' });
-    assert.deepEqual(IM.dispatchMode(ev(t), 'selection'), { capture: false, cancelDefault: t !== 'touch' });
+    assert.deepEqual(IM.dispatchMode(ev(t), 'selection'), { capture: false, cancelDefault: false });
   }
 });
 
