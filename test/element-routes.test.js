@@ -411,3 +411,85 @@ test('route census: every element route sits under a FLOOR_RULES row (read to se
     assert.equal(classify(method, url, { mirror: method === 'GET' ? 'off' : 'read' }).allow, false, `${method} ${url}: below its level`);
   }
 });
+
+// ── review additions (U325 round 1): the narrowing rules the brief keeps ────
+
+test('ruling B4 on the element API: a pane-stamped writer edits and deletes only the elements it added (a comment and a highlight); the user and its own pane still may', async (t) => {
+  const { PANE_HEADER } = require('../lib/core/writer-token');
+  const d = await withServer(t);
+  const { api, anonApi, baseUrl } = d;
+  for (const id of ['pa', 'pb']) await render(api, id);
+  const as = (pane) => ({ Origin: baseUrl, 'Sec-Fetch-Site': 'same-origin', ...(pane ? { [PANE_HEADER]: pane } : {}) });
+  const userPin = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'the user\'s' } }, as(null)))).element;
+  const userHl = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE('pa'), payload: { note: 'the user\'s' } }, as(null)))).element;
+  const panePin = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'pa\'s' } }, as('pa')))).element;
+  const paneHl = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE('pa'), payload: { note: 'pa\'s' } }, as('pa')))).element;
+  assert.equal(paneHl.writer.owner, 'pane:pa');
+  const before = logBytes(d.root);
+  for (const id of [userPin.id, userHl.id, panePin.id, paneHl.id]) {
+    const who = id === panePin.id || id === paneHl.id ? 'pb' : 'pa';
+    const edit = await anonApi.patch(`/api/elements/${id}`, { text: 'x', note: 'x' }, as(who));
+    assert.equal(edit.status, 403, `${who} edits ${id}: ${edit.text}`);
+    assert.equal(edit.json.writer, 'pane');
+    const del = await anonApi.del(`/api/elements/${id}`, as(who));
+    assert.equal(del.status, 403, `${who} deletes ${id}: ${del.text}`);
+  }
+  assert.equal(logBytes(d.root), before, 'the refusals appended nothing');
+  assert.equal((await anonApi.patch(`/api/elements/${paneHl.id}`, { note: 'edited by its pane' }, as('pa'))).status, 200);
+  assert.equal((await anonApi.del(`/api/elements/${panePin.id}`, as('pa'))).status, 200);
+  assert.equal((await anonApi.patch(`/api/elements/${userHl.id}`, { note: 'edited by the user' }, as(null))).status, 200);
+});
+
+test('a type\'s gate only tightens the floor: a listed type gated see:full / send:local refuses a read viewer\'s read and a full viewer\'s write, with or without ?type=', async (t) => {
+  const d = await withServer(t);
+  const { rank } = d.srv.audience;
+  // A stub audience: the level is the request's own x-test-level header.
+  const levelOf = (req) => req.headers['x-test-level'] || 'local';
+  const audience = {
+    ...d.srv.audience,
+    levelOf,
+    seesPrivate: () => false,
+    requireMirror: (need) => (req, res, next) => (rank(levelOf(req)) >= rank(need) ? next() : res.status(403).json({ ok: false, mirror: levelOf(req) })),
+  };
+  const ctx = {
+    state: d.srv.state, bus: d.srv.bus, audience, writers: d.srv.writers, graph: d.srv.graph,
+    elementTypes: {
+      listed: (type) => type === 'sticker',
+      gate: () => ({ see: 'full', send: 'local' }),
+      descriptor: (type) => (type === 'sticker' ? { type, schema: 'sticker@1' } : null),
+      list: () => [{ type: 'sticker' }],
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  mountElementRoutes(app, ctx);
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const at = (level, method, p, body) => client.request(server.address().port, method, p, body, { headers: { 'x-test-level': level }, timeout: 10000 });
+  assert.equal((await at('read', 'GET', '/api/elements?type=sticker')).status, 403, 'a read viewer, ?type=sticker');
+  assert.equal((await at('full', 'GET', '/api/elements?type=sticker')).status, 200, 'a full viewer, ?type=sticker');
+  assert.equal((await at('read', 'GET', '/api/elements')).status, 200, 'a read viewer, every type it may see');
+  assert.equal((await at('full', 'POST', '/api/elements', { type: 'sticker', payload: {} })).status, 403, 'a full viewer cannot write a send:local type');
+  assert.equal((await at('local', 'POST', '/api/elements', { type: 'sticker', payload: {} })).status, 400, 'the host passes the gate, and the log has no schema for it');
+});
+
+test('Wipe reads every anchor family: a highlight on the markdown kept above a pinned pane (a source record\'s md) and a box grab whose rect names the pinned pane stay; their twins on a removed item go', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  await ok(api.post('/api/markdown', { id: 'md-gone', text: '## Gone' }), 'md-gone');
+  await render(api, 'w1');
+  await ok(api.post('/api/markdown', { id: 'md-kept', text: '## Kept' }), 'md-kept');
+  await render(api, 'w2');
+  await pinPane(d, 'w2');
+  const SOURCE = (md) => ({ v: 1, kind: 'source', md, slug: 'x', quote: { exact: 'Kept', prefix: '', suffix: '' } });
+  const post = async (body) => (await ok(api.post('/api/elements', body), 'POST')).element;
+  const hlKept = await post({ type: 'highlight', anchor: SOURCE('md-kept'), payload: { note: 'kept' } });
+  const hlGone = await post({ type: 'highlight', anchor: SOURCE('md-gone'), payload: { note: 'gone' } });
+  const grabKept = await post({ type: 'box-grab', anchor: null, payload: { rect: RECT('w2'), meta: {} } });
+  const grabGone = await post({ type: 'box-grab', anchor: null, payload: { rect: RECT('w1'), meta: {} } });
+  await ok(api.post('/api/graph/wipe', {}), 'wipe');
+  const md = (await ok(api.get('/api/mounts'))).markdown.map((m) => m.id);
+  assert.deepEqual(md, ['md-kept'], 'the markdown directly above the pinned pane survives');
+  assert.deepEqual(srv.state.elements.slice().sort(), [`${hlKept.id}@1`, `${grabKept.id}@1`].sort());
+  assert.ok(![hlGone.id, grabGone.id].some((id) => srv.state.elements.some((r) => r.startsWith(`${id}@`))));
+});
