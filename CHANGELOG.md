@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Upgrading from 0.8.5
 
-- **The tunnel portal's protocol is now 11.** Remote viewers reach the comment
+- **The tunnel portal's protocol is now 12.** Remote viewers reach the comment
   pins only at the mirror level their project opted into (reading at
-  `--read-only`, writing at full). Run `claude-web-chat tunnel up` once: it
-  restarts a portal left running by 0.8.5. Then reload any remote page.
+  `--read-only`, writing at full), and a remote viewer at full may change this
+  project's toolbar, while hotkeys and settings for every project are set on
+  the host. Run `claude-web-chat tunnel up` once: it restarts a portal left
+  running by 0.8.5 or by an earlier alpha. Then reload any remote page.
 - **Comment pins move into an element log, once, at the daemon's first boot.**
   One state migration runs (schema v3 → v4): every version of every comment
   pin, and which graph node pinned which version, goes into
