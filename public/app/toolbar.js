@@ -60,7 +60,7 @@ import { registerAction, bindingsView, onHotkeysChange } from './hotkeys.js';
 import { openToolSettings, closeToolSettings, isToolSettingsOpen } from './tool-settings.js';
 import { registerPopover, handleEscape } from './shell.js';
 import { isNarrow } from './viewport.js';
-import { FINGER_DRAWS_MODES, fingerDrawsMode, setFingerDraws, onFingerDrawsChange } from './input-mode.js';
+import { FINGER_DRAWS_MODES, fingerDraws, fingerDrawsMode, setFingerDraws, onFingerDrawsChange } from './input-mode.js';
 
 export const GUTTER = 16;          // px kept clear at every viewport edge (the tray)
 export const GAP = 6;              // px between the reveal (or the bottom bar) and the tray
@@ -85,6 +85,7 @@ export const STRINGS = Object.freeze({
   noPinned: 'No pinned tools',
   fingerDraws: 'Finger draws · this device',
   fingerAuto: 'auto: finger-draws on until a pen is seen on this device',
+  fingerPan: 'one finger draws, two fingers scroll',
   penSeen: 'a pen has been seen here',
   penNotSeen: 'no pen seen here yet',
   makeDefault: 'Make this my default on every device',
@@ -526,9 +527,10 @@ function fingerDrawsBlock() {
     lab.append(input, document.createTextNode(` ${m}`));
     choices.appendChild(lab);
   }
-  const note = el('p', 'tb-fd-note', fd.mode === 'auto'
+  // While finger-draws is on, the note names the gesture that scrolls (K.4 I1 = b).
+  const note = el('p', 'tb-fd-note', (fd.mode === 'auto'
     ? `${STRINGS.fingerAuto} · ${fd.penSeen ? STRINGS.penSeen : STRINGS.penNotSeen}`
-    : `${fd.mode} on this device`);
+    : `${fd.mode} on this device`) + (fingerDraws() ? ` · ${STRINGS.fingerPan}` : ''));
   box.append(title, choices, note);
   // On the host only (the user record is host-only, H-6): the device's choice
   // as the user record's default, for every device left on auto.

@@ -11,7 +11,9 @@
 //   POINTER                                               the pointer tool (chrome-owned; arms nothing)
 //   fingerDraws() · fingerDrawsMode() · setFingerDraws(mode) · setFingerDrawsDefault(v)
 //   onFingerDrawsChange(fn)                               the finger-draws switch (K.2-8, K.2-15)
-//   installInputMode()                                    the policy at setPointerPolicy, the pen watch
+//   installInputMode()                                    the policy at setPointerPolicy, the pen watch,
+//                                                         the two-finger pan
+//   fingerStrokes() · touchesForTests()                   is the finger drawing; the touches tracked
 //
 // The table (s = {armed, input, fingerDraws, penDown, gesture?}):
 //   nothing armed (the pointer tool too) → 'page' for every pointer: the
@@ -46,8 +48,11 @@
 // (`#main { touch-action: manipulation }`, app.css's input-mode block) and only
 // a pen's default is cancelled in a handler — except while finger-draws is on
 // and a strokes tool is armed, when the finger IS the drawing pointer and the
-// well takes `touch-action: pinch-zoom` (html.finger-strokes) so a finger
-// stroke is not claimed as a pan; the chrome's own `touch-action: none` handles
+// well takes `touch-action: none` (html.finger-strokes) so a finger stroke is
+// not claimed as a pan, pinch-zoom off while it is armed (K.4 I1 = b), and the
+// page scrolls by TWO fingers, panned here (the two-finger pan, below: one
+// finger draws, a second finger turns the gesture into a scroll of the well,
+// with no disarm step, H1 = a); the chrome's own `touch-action: none` handles
 // (graph canvas, pane grips, the sheet's grip tab) are chrome gestures and
 // stay; the Pencil's double-tap and squeeze never reach a page, so switching is
 // the toolbar's, the hotkeys' and the pointer tool's. The two older pointerType
@@ -55,7 +60,7 @@
 // tab's mouse-button filter) are theirs and stay as they are.
 //
 // No DOM is touched at import.
-import { armed, inputKindOf, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
+import { armed, cancelGesture, inputKindOf, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
 import { isTap } from './sheet-model.js';
 import { getLocal, setLocal } from './storage.js';
 
@@ -248,19 +253,162 @@ export function notePen() {
 }
 
 // ── install ──────────────────────────────────────────────────────────────────
-// The live state the policy reads, tracked by ONE passive capture listener on
-// the window (it sees every pointer before the overlay's capture on the well,
-// and never prevents a default): the pen pointers down, the device's first pen
-// (on contact or hover: Safari reports the Apple Pencil so), and the primary
-// touch gesture's travel. A tap tool's click is held to TAP_SLOP by the
+// The live state the policy reads, tracked by ONE capture listener on the
+// window (it sees every pointer before the overlay's capture on the well):
+// the pen pointers down, the device's first pen (on contact or hover: Safari
+// reports the Apple Pencil so), the primary touch gesture's travel, and the
+// fingers down in the well, by pointerId, for the two-finger pan. It cancels
+// no default and stops nothing except the pan's own fingers (below). A tap
+// tool's click is held to TAP_SLOP by the
 // overlay: it asks this policy again at the click of a gesture it gave to the
 // tool, as that gesture's pointer, and a finger that travelled past the slop
 // answers 'page' there, so neither the tool nor the page takes that click
 // (overlay.js onPointer; it replaced this module's window click guard).
-const POINTER_TYPES = ['pointerdown', 'pointerover', 'pointermove', 'pointerup', 'pointercancel'];
+const POINTER_TYPES = ['pointerdown', 'pointerover', 'pointermove', 'pointerup', 'pointercancel', 'click'];
 const penIds = new Set();
 let touch = null;     // {id, x0, y0, dx, dy, done}: the last primary touch gesture
 let uninstall = null;
+
+// ── the two-finger pan (K.4: H1 = a, I1 = b) ─────────────────────────────────
+// While finger-draws is on and a strokes tool is armed (fingerStrokes(): the
+// well's touch-action is none, so the browser pans nothing), one finger draws
+// and two fingers scroll. Every finger down in the well is tracked by its
+// pointerId; a finger landing while another is down (two landing together
+// are the same, one pointerdown after the other) turns the gesture into a
+// PAN: the stroke under way is cancelled toward the tool through the
+// overlay's cancelGesture (as its pointercancel would: the box grab drops its
+// rubber band and creates nothing; no event is dispatched), and from then
+// until the last finger lifts the well's scroller moves by the fingers'
+// midpoint's delta (scrollBy, both axes; the browser clamps an axis that does
+// not scroll). The pan's fingers are the pan's alone: their pointer events
+// are stopped here, at the window's capture (their default cancelled where
+// cancelable), so neither the overlay nor a pane under them hears them, and
+// their clicks are stopped too. A lone finger still draws; a pen is never a
+// pan's (a resting palm under a pen stays the policy's 'ignore', and no pan
+// starts while a pen is down); with finger-draws off, or no strokes tool
+// armed, nothing here acts (the well is `manipulation`: the browser pans).
+const touches = new Map();     // pointerId → {x, y}: the fingers down in the well
+let pan = null;                // {ids: Set, mx, my}: the pan under way, its last midpoint
+const panClicks = new Set();   // pointerIds of the pan's lifted fingers, whose click is stopped
+
+export function fingerStrokes() {
+  const a = armed();
+  return !!a && inputKindOf(a.type) === 'strokes' && fingerDraws();
+}
+// A snapshot of what the pan tracks, for the tests: no stale entry may stay
+// after a gesture ends.
+export function touchesForTests() {
+  return { touches: [...touches.keys()], pan: pan ? [...pan.ids] : null, clicks: [...panClicks] };
+}
+function wellOf() { return document.getElementById('main'); }
+// The element that scrolls the page: the well's .well-wrap (mounts.js's
+// edge-scroll reads the same), else the document's scroller.
+function scrollerOf() {
+  const well = wellOf();
+  return (well && well.closest('.well-wrap')) || document.scrollingElement || null;
+}
+function inWell(e) {
+  const well = wellOf();
+  if (!well) return false;
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  if (path.length) return path.includes(well);
+  const t = e.target;
+  return !!(t && t.nodeType === 1 && well.contains(t));
+}
+function midpoint(ids) {
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const id of ids) {
+    const p = touches.get(id);
+    if (!p) continue;
+    x += p.x; y += p.y; n += 1;
+  }
+  return n ? { x: x / n, y: y / n } : null;
+}
+function rebase() {
+  const m = pan && midpoint(pan.ids);
+  if (m) { pan.mx = m.x; pan.my = m.y; }
+}
+function stop(e) {
+  e.stopPropagation();
+  if (e.cancelable) e.preventDefault();
+}
+// The pan's part of the window capture: true when it took the event.
+function onPan(e) {
+  if (e.type === 'click') {
+    // A click that names a pointer is the pan's only when it names one of the
+    // pan's fingers (a keyboard's -1 never does); one that names none, only
+    // when a pointer pressed it (detail is the count of presses, 0 for a
+    // keyboard's) and a pan finger's click is still owed.
+    if (typeof e.pointerId === 'number') {
+      if (!panClicks.delete(e.pointerId)) return false;
+    } else if (!panClicks.size || !e.detail) {
+      return false;
+    } else {
+      panClicks.clear();
+    }
+    stop(e);
+    return true;
+  }
+  if (e.type === 'pointerdown' && !pan) panClicks.clear();   // an earlier pan's click never came
+  if (e.pointerType !== 'touch') return false;
+  const id = e.pointerId;
+  switch (e.type) {
+    case 'pointerdown': {
+      // A primary touch is the first finger of a new touch: no other finger is
+      // down, whatever an earlier gesture left behind.
+      if (e.isPrimary) { touches.clear(); pan = null; }
+      if (!pan && !inWell(e)) return false;
+      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0 });
+      if (pan) { pan.ids.add(id); rebase(); stop(e); return true; }
+      if (touches.size < 2 || penIds.size > 0 || !fingerStrokes()) return false;
+      // The second finger: the stroke under way is the tool's no more.
+      for (const other of touches.keys()) if (other !== id) cancelGesture(other);
+      pan = { ids: new Set(touches.keys()), mx: 0, my: 0 };
+      rebase();
+      stop(e);
+      return true;
+    }
+    case 'pointermove': {
+      const p = touches.get(id);
+      if (!p) return false;
+      p.x = e.clientX || 0;
+      p.y = e.clientY || 0;
+      if (!pan || !pan.ids.has(id)) return false;
+      const m = midpoint(pan.ids);
+      const dx = m.x - pan.mx;
+      const dy = m.y - pan.my;
+      pan.mx = m.x;
+      pan.my = m.y;
+      const el = scrollerOf();
+      if ((dx || dy) && el && typeof el.scrollBy === 'function') el.scrollBy({ left: -dx, top: -dy });
+      stop(e);
+      return true;
+    }
+    case 'pointerup':
+    case 'pointercancel': {
+      touches.delete(id);
+      if (!pan || !pan.ids.has(id)) return false;
+      pan.ids.delete(id);
+      if (e.type === 'pointerup') panClicks.add(id);
+      if (pan.ids.size) rebase(); else pan = null;
+      stop(e);
+      return true;
+    }
+    case 'pointerover':
+      if (!pan || !pan.ids.has(id)) return false;
+      stop(e);
+      return true;
+    default:
+      return false;
+  }
+}
+function dropPan() {
+  touches.clear();
+  pan = null;
+  panClicks.clear();
+}
 
 function stateFor(a) {
   const type = a && a.type;
@@ -276,16 +424,14 @@ function policy(e, ctx) {
   return route(e, stateFor(ctx && ctx.armed !== undefined ? ctx.armed : armed()));
 }
 function syncStrokes() {
-  const a = armed();
-  const on = !!a && inputKindOf(a.type) === 'strokes' && fingerDraws();
-  document.documentElement.classList.toggle('finger-strokes', on);
+  document.documentElement.classList.toggle('finger-strokes', fingerStrokes());
 }
 function onAnyPointer(e) {
-  const pen = e.pointerType === 'pen';
-  if (pen) notePen();
+  if (e.type !== 'click' && e.pointerType === 'pen') notePenDown(e);
+  if (onPan(e)) return;
+  if (e.type === 'click') return;
   switch (e.type) {
     case 'pointerdown':
-      if (pen) penIds.add(e.pointerId);
       if (e.pointerType === 'touch') {
         if (e.isPrimary || !touch || touch.done) {
           touch = { id: e.pointerId, x0: e.clientX || 0, y0: e.clientY || 0, dx: 0, dy: 0, done: false };
@@ -303,20 +449,28 @@ function onAnyPointer(e) {
       break;
     case 'pointerup':
     case 'pointercancel':
-      if (pen) penIds.delete(e.pointerId);
       if (touch && e.pointerId === touch.id) touch.done = true;   // its travel stays for the click
       break;
     default:
       break;
   }
 }
+// The pens: seen (on contact or hover) and down, ahead of the pan, which
+// starts no pan while one is down.
+function notePenDown(e) {
+  notePen();
+  if (e.type === 'pointerdown') penIds.add(e.pointerId);
+  else if (e.type === 'pointerup' || e.type === 'pointercancel') penIds.delete(e.pointerId);
+}
 // installInputMode() registers the table at the overlay's one pointer dispatch
-// and starts the pen watch. Idempotent; returns its uninstall.
+// and starts the pen watch and the two-finger pan. Idempotent; returns its
+// uninstall.
 export function installInputMode() {
   if (uninstall) return uninstall;
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
   const offPolicy = setPointerPolicy(policy);
-  const opts = { capture: true, passive: true };
+  // Not passive: the pan cancels its own fingers' defaults.
+  const opts = { capture: true, passive: false };
   for (const t of POINTER_TYPES) window.addEventListener(t, onAnyPointer, opts);
   const offArmed = onArmedChange(syncStrokes);
   const offFd = onFingerDrawsChange(syncStrokes);
@@ -330,6 +484,7 @@ export function installInputMode() {
     offFd();
     penIds.clear();
     touch = null;
+    dropPan();
     document.documentElement.classList.remove('finger-strokes');
   };
   uninstall = mine;
