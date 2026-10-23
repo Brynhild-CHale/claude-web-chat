@@ -381,6 +381,11 @@ test('the fallback: a range whose first rect is above the clip and whose second 
     await pushLive({ ...rec, v: 2 });
     await drawnUntil(() => rangeTexts('wc-hl-green').length === 1, 'painted by the Custom Highlight API');
     assert.equal(layer().querySelectorAll('.hl-rect').length, 0, 'no rectangle on the Custom Highlight path');
+    // Its handle, wholly outside the clip, stays out of sight: the marker's own
+    // inset hides the whole glyph (nothing overrides it on this path).
+    const m2 = markersFor(rec.id)[0];
+    assert.ok(m2.style.display === 'none' || m2.style.clipPath === `inset(${g.h}px 0px 0px 0px)`,
+      `the clipped handle is hidden (clip-path ${m2.style.clipPath})`);
   } finally {
     delete W.Range.prototype.getClientRects;
     RECTS = null;
