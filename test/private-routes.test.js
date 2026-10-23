@@ -410,6 +410,11 @@ const REVIEWED = new Map([
   ['comments.js PATCH /api/comments/:id', 'a write (edit): finds the pin by id and answers it — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
   ['comments.js POST /api/comments/:id/reply', 'a write (reply): finds the pin by id and answers it — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
   ['comments.js DELETE /api/comments/:id', 'a write (delete): finds the pin by id to gate it and answers only its id — gated: a private pin answers 404 to anyone but a local browser (U214c)'],
+  // The element API (U325, routes/elements.js): the same four writes, every type.
+  ['elements.js fn:find', 'finds the element a write names (a pin or a reference) for the write routes to gate; never serves'],
+  ['elements.js POST /api/elements', 'a write: answers the element it just made, to its maker'],
+  ['elements.js PATCH /api/elements/:id', 'a write (edit, re-anchor): answers the element it found by id — gated: a private element answers 404 to anyone but a local browser (C-16-2)'],
+  ['elements.js POST /api/elements/:id/reply', 'a write (reply): answers the pin it found by id — gated: a private pin answers 404 to anyone but a local browser (C-16-2)'],
   ['graph.js fn:execWipe', 'deletes the pins whose item is gone (deleteComment); never serves'],
   ['graph.js fn:execNewGraph', 'deletes every pin (deleteComment); never serves'],
   ['graph.js GET /api/graph/diff', 'diffNodes compares pages, panes, store and theme (lib/server/diff.js) — never comments'],

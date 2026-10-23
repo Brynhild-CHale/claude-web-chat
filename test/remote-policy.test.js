@@ -1144,6 +1144,7 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
     },
     routes: {
       'GET /api/comments': ['comments[]'],
+      'GET /api/elements': ['elements[]'],
       'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
       'GET /preview/node/:id': ['comments[]'],
     },
