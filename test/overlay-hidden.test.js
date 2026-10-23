@@ -499,3 +499,32 @@ test('the drawer reads the one signal: drawer.js has no read of its own', () => 
   assert.equal(src.includes('/api/services/pending'), false, 'drawer.js no longer names the route');
   assert.match(src, /from '\.\/service-pending\.js'/);
 });
+
+test('service-pending: of two overlapping reads, the one started later wins, whichever answers last', async () => {
+  // The first read is held until the second has answered; its older answer
+  // must not overwrite the newer list (a burst of trust frames on a reconnect).
+  let releaseFirst;
+  const held = new Promise((r) => { releaseFirst = r; });
+  let n = 0;
+  shell.setRoutes({
+    '/api/services/pending': async () => {
+      n += 1;
+      if (n === 1) { await held; return { ok: true, pending: [{ name: 'older' }] }; }
+      return { ok: true, pending: [{ name: 'newer' }] };
+    },
+  });
+  try {
+    const first = sp.refreshPending();
+    const second = sp.refreshPending();
+    await second;
+    assert.deepEqual([...sp.pendingServices()], ['newer']);
+    releaseFirst();
+    await first;
+    assert.deepEqual([...sp.pendingServices()], ['newer'], 'the older read, answering last, does not overwrite the newer list');
+  } finally {
+    releaseFirst();
+    shell.setRoutes({ '/api/services/pending': { ok: true, pending: [] } });
+    await sp.refreshPending();
+    shell.setRoutes({});
+  }
+});
