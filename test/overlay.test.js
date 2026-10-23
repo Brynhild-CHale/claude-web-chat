@@ -11,6 +11,9 @@
 //     a mount hidden turns its orphans into 'hidden', never 'orphaned'), and the
 //     draw frame is not the resolver's delivering frame (no box read inside the
 //     delivery; the reads wait for the overlay's own frame);
+//   - a settle of one pane that changed no DOM leaves another pane's marker
+//     (and the range's own) the same DOM node: a range group is keyed by its
+//     boundary points, never by the fresh Range a pass hands back (F11);
 //   - hello and reset carrying `elements` and `surface` fill the live set and
 //     onAnswers' surface; frames without them leave it empty without error;
 //   - a preview draws the previewed node's `lean_elements` (its id@v refs held
@@ -158,6 +161,34 @@ test('the draw frame is not the resolver\'s delivering frame: no box read inside
   flush();
   assert.ok(reads > r0, 'the boxes are read in the overlay\'s own frame');
   assert.equal(markersFor('c4').length, 1);
+  ov.setElements('live', []);
+  flush();
+});
+
+test('a settle that moved nothing keeps every marker: a range row\'s fresh Range is not a new group (F11)', async () => {
+  // A range on p1 (the resolver builds a fresh Range on every pass) and an
+  // element row on p2. A pass over p1 that changed no DOM must leave the
+  // drawn set's signature alone, so p2's marker stays the same DOM node.
+  const text = lead('p1').firstChild;
+  const range = W.document.createRange();
+  range.setStart(text, 0);
+  range.setEnd(text, 'lead'.length);
+  const hl = { id: 'h1', v: 1, type: 'highlight', anchor: anchors.recordRange(rootOf('p1'), range, { mount: 'p1' }), shared: true, replies: 0 };
+  ov.setElements('live', [hl, rowOn('c10', 'p2', lead('p2'))]);
+  await waitUntil(() => ov.stats().anchors === 2, { what: 'both answers' });
+  await settleAll();
+  flush();
+  const [m1] = markersFor('h1');
+  const [m2] = markersFor('c10');
+  assert.ok(m1 && m2, 'both rows are drawn');
+  const n0 = countFor('p1');
+  M.settle(rootOf('p1'), 'p1', 'test');
+  await waitUntil(() => countFor('p1') > n0, { what: 'p1\'s settle pass' });
+  await settleAll();
+  flush();
+  assert.equal(delivered.filter((m) => m.mount === 'p1').pop().items[0].state, 'exact');
+  assert.strictEqual(markersFor('c10')[0], m2, 'the other pane\'s marker is the same DOM node');
+  assert.strictEqual(markersFor('h1')[0], m1, 'and so is the range\'s own');
   ov.setElements('live', []);
   flush();
 });

@@ -559,6 +559,23 @@ function tokenOf(el) {
   if (!t) { t = nextToken++; elTokens.set(el, t); }
   return t;
 }
+function rangeKey(range) {
+  return `r${tokenOf(range.startContainer)}:${range.startOffset}-${tokenOf(range.endContainer)}:${range.endOffset}`;
+}
+// The signature unchanged, the built groups (and their markers) stay; each
+// takes the fresh pass's DOM objects and items, so a placement and a type's
+// move read the current Range and answers, never a stale pass's.
+function refreshKept(gs) {
+  for (let i = 0; i < gs.length; i++) {
+    const g = groups[i];
+    const f = gs[i];
+    if (!g || g.key !== f.key) continue;
+    g.el = f.el;
+    g.range = f.range;
+    g.items = f.items;
+    g.mount = f.mount;
+  }
+}
 function glyphOf(type) {
   const t = types.get(type);
   const g = t && t.glyph;
@@ -584,11 +601,14 @@ function buildGroups() {
     }
     if (!el && !range) continue;
     const type = e.row.type || 'element';
-    // Keyed by the DOM object itself (an element, or the Range a pass handed
-    // back), so a pass that answers a NEW Range for the same row — a re-render
-    // that kept the quote — changes the drawn set's signature and the group is
-    // rebuilt over the new Range, never placed at the old, collapsed one.
-    const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|r${tokenOf(range)}`;
+    // Keyed by the DOM position it answers: an element by its identity, a
+    // range by its boundary points (each container's identity and offset),
+    // never by the Range object — the resolver builds a fresh Range every
+    // pass, and a key on it would rebuild every marker in the layer on a pass
+    // that moved nothing (F11). A re-render that replaced the text keeps no
+    // container, so its key changes and the group is rebuilt over the new
+    // Range; a kept group takes the pass's current Range (refreshKept).
+    const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|${rangeKey(range)}`;
     let g = byKey.get(key);
     if (!g) {
       g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, items: [],
@@ -777,7 +797,7 @@ function drawFrame() {
       lastSig = sig;
       groups = gs;
       rebuild(gs);
-    }
+    } else refreshKept(gs);
     pass = { i: 0, drawn: 0, clipped: 0, guesses: 0, sections: 0 };
   }
   const fr = { reads: 0, clipCache: new Map(), startCache: new Map(), well: $('main') };
