@@ -168,7 +168,7 @@ test('migrate exits 2 for a graph with no _version.json that would refuse', (t) 
   assert.deepEqual(listing(g.root), before, 'a refusing dry run writes nothing');
 });
 
-test('migrate answers empty, assumed v3, for a graph with no pins and no _version.json', (t) => {
+test('migrate answers would-migrate, assumed v3, for a graph with no pins and no _version.json: a commit record per node (A-1)', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-migrate-cli-'));
   t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   const paths = projectPaths(root);
@@ -183,13 +183,15 @@ test('migrate answers empty, assumed v3, for a graph with no pins and no _versio
   const r = cli(root, ['--json']);
   assert.equal(r.code, 0, r.err);
   const body = JSON.parse(r.out);
-  assert.equal(body.state, 'empty');
+  assert.equal(body.state, 'would-migrate');
   assert.equal(body.version, 0);
   assert.equal(body.assumed, 3);
+  assert.equal(body.report.pinless_nodes, 2);
+  assert.equal(body.report.would_append.records, 4, 'the epoch, two commit records and the migration record');
   const text = cli(root);
   assert.equal(text.code, 0, text.err);
   assert.match(text.out, /^This project has no _version.json but holds a graph: the daemon reads it as v3/);
-  assert.match(text.out, /No comment pins in this project/);
+  assert.match(text.out, /nodes\s+2 in the graph, 0 carrying pins, 2 pinless, a commit record each/);
   assert.deepEqual(listing(root), before);
 });
 
