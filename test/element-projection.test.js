@@ -161,6 +161,15 @@ test('leanElements over live pins: one row each, the log version\'s anchor, the 
   assert.deepStrictEqual(m[ids.legacy].anchor, convertAnchor(LEGACY), 'a legacy locator is drawn converted (pin-locator@1)');
   assert.deepStrictEqual(m[ids.engine].anchor, ENGINE, 'an engine record is drawn as stored');
   noText(JSON.stringify(rows), 'the rows');
+  // The LOG's anchor, not the copy's: a live copy whose anchor no longer
+  // matches its version still draws the version's (the ledger is the source).
+  const pinCopy = srv.state.comments.find((c) => c.id === ids.legacy);
+  const held = pinCopy.anchor;
+  pinCopy.anchor = { mount: 'm-other', selector: 'p.elsewhere', text: 'elsewhere', ordinal: 3 };
+  try {
+    assert.deepStrictEqual(byId(leanElements(srv.state, srv.elements))[ids.legacy].anchor,
+      srv.elements.version(ids.legacy, pinCopy.v).payload.anchor, 'the version\'s anchor, whatever the copy holds');
+  } finally { pinCopy.anchor = held; }
 });
 
 test('state.elements\' id@v references project with the log\'s type, anchor and shared', async (t) => {
