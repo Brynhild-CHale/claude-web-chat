@@ -28,7 +28,7 @@ graphMod.createGraph = function spyCreateGraph(opts) {
   return g;
 };
 
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 const { projectPaths } = require('../lib/core/paths');
 
 function metaOf(root) {
@@ -63,7 +63,7 @@ test('node first, log after: a turn-end commit calls writeNode, then appendCommi
   const { api, srv, root } = await withServer(t);
   await api.post('/api/turn-begin', { message: 'work' });
   await render(api, 'm1');
-  await api.post('/api/comments', { text: 'pin', anchor: { mount: 'm1', selector: 'p', text: 'm1', ordinal: 0 } });
+  await api.post('/api/elements', commentBody({ text: 'pin', anchor: { mount: 'm1', selector: 'p', text: 'm1', ordinal: 0 } }));
   const calls = [];
   wrap(srv.graph, 'writeNode', calls);
   wrap(srv.graph.elements, 'appendCommit', calls);

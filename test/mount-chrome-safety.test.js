@@ -245,13 +245,13 @@ test('a mount whose id names chrome does not hijack the shell\'s live lookups', 
   // would hand comments.js the chrome element — no shadow root, no marker, the
   // pin silently dropped from the layer even though the server still holds it.
   frame({
-    type: 'comments',
-    comments: [{ id: 'c1', shared: true, text: 'x', anchor: { mount: 'drawer', selector: 'p', ordinal: 0, text: 'shadow the drawer' } }],
+    type: 'element:comment',
+    elements: [{ id: 'c1', shared: true, text: 'x', anchor: { mount: 'drawer', selector: 'p', ordinal: 0, text: 'shadow the drawer' } }],
   });
   await tick();
   assert.equal($('pin-layer').querySelectorAll('.pin-marker').length, 1,
     'the pin on the chrome-named pane resolved to its host and drew a marker');
-  frame({ type: 'comments', comments: [] });
+  frame({ type: 'element:comment', elements: [] });
   await tick();
 });
 

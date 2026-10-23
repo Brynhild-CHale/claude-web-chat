@@ -17,7 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 const { v3Graph } = require('../test-support/v3-graph');
 const { projectPaths } = require('../lib/core/paths');
 const elementLog = require('../lib/core/element-log');
@@ -52,12 +52,12 @@ async function boot(t, opts) {
 }
 
 async function addPin(ctx, text) {
-  const r = await ctx.anonApi.post('/api/comments', { text, shared: true, anchor: null });
+  const r = await ctx.anonApi.post('/api/elements', commentBody({ text, shared: true, anchor: null }));
   assert.equal(r.status, 200, r.text);
   return r.json.pin;
 }
 async function delPin(ctx, id) {
-  assert.equal((await ctx.anonApi.del(`/api/comments/${id}`)).status, 200);
+  assert.equal((await ctx.anonApi.del(`/api/elements/${id}`)).status, 200);
 }
 const render = (api, id) => api.post('/api/render', { id, html: `<p>${id}</p>` });
 async function turn(api, message, work) {

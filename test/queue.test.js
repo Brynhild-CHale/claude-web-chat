@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, waitUntil, openSSE } = require('../test-support/helpers');
+const { withServer, waitUntil, openSSE, commentBody } = require('../test-support/helpers');
 const { createBus } = require('../lib/core/bus');
 const queue = require('../lib/server/domain/queue');
 const { LAUNCH_COMMAND } = require('../lib/core/channels');
@@ -318,7 +318,7 @@ test('queue: the ADD event stays immutable after a later hold (F7 — no ring re
 test('queue: DELETE ?revert=1 reports the domain OUTCOME, not the request flag (B1)', async (t) => {
   const { api } = await withServer(t);
   // A shared pin enqueues a comment item whose Revert deletes the pin → reverted true.
-  await api.post('/api/comments', { text: 'look', shared: true, anchor: { mount: 'p1', text: 'x' } });
+  await api.post('/api/elements', commentBody({ text: 'look', shared: true, anchor: { mount: 'p1', text: 'x' } }));
   const q1 = (await api.get('/api/queue')).json.items.find((it) => it.kind === 'comment');
   assert.ok(q1, 'the shared pin enqueued a comment item');
   const del1 = await api.del('/api/queue/' + q1.id + '?revert=1');
@@ -349,14 +349,14 @@ test('queue: editing a queued shared pin refreshes its summary + emits update, n
   const { api } = await withServer(t);
   await api.post('/api/render', { id: 'm1', html: '<p>plan</p>' });
   // A shared pin enqueues a comment item quoting the original text.
-  const p = (await api.post('/api/comments', { text: 'totals look off', shared: true, anchor: { mount: 'm1', text: 'plan' } })).json.pin;
+  const p = (await api.post('/api/elements', commentBody({ text: 'totals look off', shared: true, anchor: { mount: 'm1', text: 'plan' } }))).json.pin;
   const before = (await api.get('/api/queue')).json.items.find((it) => it.comment_id === p.id);
   assert.ok(before, 'the shared pin enqueued a comment item');
   assert.match(before.summary, /totals look off/);
 
   // Edit the pin's text — it stays shared (no privacy flip). The queued summary must
   // refresh so the wake line never quotes the pre-edit (retracted) text.
-  await api.patch('/api/comments/' + p.id, { text: 'actually the header is wrong' });
+  await api.patch('/api/elements/' + p.id, { text: 'actually the header is wrong' });
 
   const q = (await api.get('/api/queue')).json;
   assert.equal(q.count, 1, 'refresh does not enqueue a second item');

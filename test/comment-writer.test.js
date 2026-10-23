@@ -15,7 +15,7 @@ const test = require('node:test');
 const { describe, before, after } = test;
 const assert = require('node:assert');
 const path = require('path');
-const { withServer, tmpRoot, waitUntil } = require('../test-support/helpers');
+const { withServer, tmpRoot, waitUntil, commentBody } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths } = require('../lib/core/paths');
 const { WRITER_HEADER } = require('../lib/core/writer-token');
@@ -56,7 +56,7 @@ test('S-10: a pin\'s provenance is queue.provenance of its request (E1 0/12) and
       for (const claim of CLAIMS) {
         const headers = { 'User-Agent': UA[ua], ...(remote ? REMOTE : {}) };
         const claimed = claim ? { device: claim } : {};
-        const r = await d.anonApi.post('/api/comments', { text: `cell ${++n}`, shared: true, anchor: ANCHOR, ...claimed }, headers);
+        const r = await d.anonApi.post('/api/elements', commentBody({ text: `cell ${++n}`, shared: true, anchor: ANCHOR, ...claimed }), headers);
         assert.equal(r.status, 200, `cell ${n}: ${r.text}`);
         const pin = r.json.pin;
         const E1 = provenance({ remote, device: claim || undefined, userAgent: UA[ua] });
@@ -85,17 +85,17 @@ test('S-10: a pin\'s provenance is queue.provenance of its request (E1 0/12) and
 
 test('stamps: Claude\'s token writes as claude verified; a plain browser as user; each reply carries its own pair', async (t) => {
   const { api, anonApi } = await withServer(t);
-  const add = await api.post('/api/comments', { text: 'by claude', shared: true, anchor: ANCHOR });
+  const add = await api.post('/api/elements', commentBody({ text: 'by claude', shared: true, anchor: ANCHOR }));
   assert.deepStrictEqual(add.json.pin.writer, { class: 'claude', owner: 'claude', verified: true });
   assert.deepStrictEqual(add.json.pin.provenance, { origin: 'local', device: 'desktop' });
 
-  const user = await anonApi.post('/api/comments', { text: 'by the user', shared: true, anchor: ANCHOR, device: 'mobile' });
+  const user = await anonApi.post('/api/elements', commentBody({ text: 'by the user', shared: true, anchor: ANCHOR, device: 'mobile' }));
   assert.deepStrictEqual(user.json.pin.writer, { class: 'user', owner: 'user', verified: false });
   assert.deepStrictEqual(user.json.pin.provenance, { origin: 'local', device: 'mobile' });
 
-  const r1 = await api.post(`/api/comments/${user.json.pin.id}/reply`, { text: 'Claude answers', author: 'claude' });
+  const r1 = await api.post(`/api/elements/${user.json.pin.id}/reply`, { text: 'Claude answers', author: 'claude' });
   assert.equal(r1.status, 200, r1.text);
-  const r2 = await anonApi.post(`/api/comments/${user.json.pin.id}/reply`, { text: 'the user answers', author: 'user', device: 'mobile' });
+  const r2 = await anonApi.post(`/api/elements/${user.json.pin.id}/reply`, { text: 'the user answers', author: 'user', device: 'mobile' });
   const replies = r2.json.pin.replies;
   assert.deepStrictEqual(replies.map((r) => [r.author, r.writer.class, r.writer.verified, r.provenance.device]),
     [['claude', 'claude', true, 'desktop'], ['user', 'user', false, 'mobile']]);
@@ -103,20 +103,22 @@ test('stamps: Claude\'s token writes as claude verified; a plain browser as user
 
   // An author-less reply from Claude's token is still 'user' by author (the
   // default), stamped claude: the author is the claim, the stamp the proof.
-  const r3 = await api.post(`/api/comments/${user.json.pin.id}/reply`, { text: 'no author' });
+  const r3 = await api.post(`/api/elements/${user.json.pin.id}/reply`, { text: 'no author' });
   assert.strictEqual(r3.json.pin.replies.slice(-1)[0].author, 'user');
 });
 
-test('a reply as author claude needs the claude class: a browser is refused 403 unverified; Claude\'s MCP tool run tokenless is accepted, advisory', async (t) => {
+test('a reply as author claude needs the verified claude class: a browser is refused 403 unverified, and so is Claude\'s MCP tool run tokenless (C-15-2)', async (t) => {
   const { api, anonApi, port } = await withServer(t);
-  const pin = (await api.post('/api/comments', { text: 'a note', shared: true, anchor: ANCHOR })).json.pin;
-  const forged = await anonApi.post(`/api/comments/${pin.id}/reply`, { text: 'I am Claude', author: 'claude' });
+  const pin = (await api.post('/api/elements', commentBody({ text: 'a note', shared: true, anchor: ANCHOR }))).json.pin;
+  const forged = await anonApi.post(`/api/elements/${pin.id}/reply`, { text: 'I am Claude', author: 'claude' });
   assert.equal(forged.status, 403, forged.text);
   assert.strictEqual(forged.json.ok, false);
   assert.strictEqual(forged.json.writer, 'unverified');
 
   // reply_comment's own handler, through lib/mcp/client with no token (the
-  // MCP tool tests' shape: WEB_CHAT_MCP_SERVER unset) — advisory claude.
+  // MCP tool tests' shape: WEB_CHAT_MCP_SERVER unset): on the element API a
+  // claude reply needs the verified credential (C-15-2, U355), so a tokenless
+  // one is refused like the browser's, and nothing is appended.
   const saved = { port: process.env.WEB_CHAT_PORT, mcp: process.env.WEB_CHAT_MCP_SERVER };
   t.after(() => {
     for (const [k, v] of [['WEB_CHAT_PORT', saved.port], ['WEB_CHAT_MCP_SERVER', saved.mcp]]) {
@@ -126,26 +128,25 @@ test('a reply as author claude needs the claude class: a browser is refused 403 
   process.env.WEB_CHAT_PORT = String(port);
   delete process.env.WEB_CHAT_MCP_SERVER;
   const tool = require('../lib/mcp/tools/reply_comment');
-  const out = await tool.handler({ id: pin.id, text: 'from the tool' });
-  const last = out.pin.replies.slice(-1)[0];
-  assert.strictEqual(last.author, 'claude');
-  assert.deepStrictEqual(last.writer, { class: 'claude', owner: 'claude', verified: false });
+  await assert.rejects(tool.handler({ id: pin.id, text: 'from the tool' }), (e) => e.status === 403 && e.body.writer === 'unverified');
+  const live = (await api.get('/api/elements?type=comment')).json.elements.find((c) => c.id === pin.id);
+  assert.deepStrictEqual(live.replies || [], [], 'the refused reply appended nothing');
 
   // A stale token is a 401 the MCP client knows, not a pin.
-  const stale = await api.post(`/api/comments/${pin.id}/reply`, { text: 'x', author: 'claude' }, { [WRITER_HEADER]: 'f'.repeat(64) });
+  const stale = await api.post(`/api/elements/${pin.id}/reply`, { text: 'x', author: 'claude' }, { [WRITER_HEADER]: 'f'.repeat(64) });
   assert.equal(stale.status, 401, stale.text);
   assert.strictEqual(stale.json.writer, 'stale');
 });
 
 test('an edit keeps the creator\'s writer and records `edited`; a no-op PATCH records nothing; a delete answers as before', async (t) => {
   const { api, anonApi } = await withServer(t);
-  const pin = (await anonApi.post('/api/comments', { text: 'mine', shared: true, anchor: ANCHOR, device: 'mobile' })).json.pin;
-  const noop = await api.patch(`/api/comments/${pin.id}`, {});
+  const pin = (await anonApi.post('/api/elements', commentBody({ text: 'mine', shared: true, anchor: ANCHOR, device: 'mobile' }))).json.pin;
+  const noop = await api.patch(`/api/elements/${pin.id}`, {});
   assert.strictEqual(noop.json.unchanged, true);
   assert.strictEqual(noop.json.pin.edited, undefined);
 
   const before = Date.now();
-  const ed = await api.patch(`/api/comments/${pin.id}`, { text: 'edited by Claude' });
+  const ed = await api.patch(`/api/elements/${pin.id}`, { text: 'edited by Claude' });
   assert.equal(ed.status, 200, ed.text);
   assert.deepStrictEqual(ed.json.pin.writer, { class: 'user', owner: 'user', verified: false }, 'the creator stays');
   assert.deepStrictEqual(ed.json.pin.provenance, { origin: 'local', device: 'mobile' }, 'and the creation\'s provenance');
@@ -154,15 +155,15 @@ test('an edit keeps the creator\'s writer and records `edited`; a no-op PATCH re
   assert.deepStrictEqual(edited.provenance, { origin: 'local', device: 'desktop' });
   assert.ok(edited.at >= before);
 
-  const del = await anonApi.del(`/api/comments/${pin.id}`);
+  const del = await anonApi.del(`/api/elements/${pin.id}`);
   assert.deepStrictEqual(del.json, { ok: true, removed: pin.id });
 });
 
 test('a private pin\'s ring events carry no text and keep the stamps', async (t) => {
   const { api, anonApi } = await withServer(t);
   const MARK = 'wc-u214c-private-mark';
-  const pin = (await anonApi.post('/api/comments', { text: MARK, shared: false, anchor: ANCHOR, device: 'mobile' })).json.pin;
-  await anonApi.post(`/api/comments/${pin.id}/reply`, { text: MARK + '-reply', device: 'mobile' });
+  const pin = (await anonApi.post('/api/elements', commentBody({ text: MARK, shared: false, anchor: ANCHOR, device: 'mobile' }))).json.pin;
+  await anonApi.post(`/api/elements/${pin.id}/reply`, { text: MARK + '-reply', device: 'mobile' });
   let events = [];
   await waitUntil(async () => {
     events = ((await api.get('/api/events?since=0')).json.events || []).filter((e) => e.kind === 'comment');
@@ -211,13 +212,14 @@ describe('chrome: every comment write carries `device`', () => {
     pinPop().querySelector('.pin-text').value = 'a note';
     shell.click(pinPop().querySelector('.pin-save'));
     await shell.tick();
-    const add = sent('POST', /^\/api\/comments$/);
+    const add = sent('POST', /^\/api\/elements$/);
     assert.ok(add, 'the add was sent');
     assert.strictEqual(add.body.device, want);
-    assert.strictEqual(add.body.text, 'a note');
+    assert.strictEqual(add.body.type, 'comment');
+    assert.strictEqual(add.body.payload.text, 'a note');
 
     // The thread of a pin the server holds.
-    await shell.frame({ type: 'comments', comments: [{ id: 'c9', text: 'look', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }] });
+    await shell.frame({ type: 'element:comment', elements: [{ id: 'c9', text: 'look', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }] });
     shell.key('c');
     const marker = shell.$('pin-layer').querySelector('.pin-marker');
     assert.ok(marker, 'the pin drew a marker');
@@ -229,7 +231,7 @@ describe('chrome: every comment write carries `device`', () => {
     thread.querySelector('.pin-reply-text').value = 'a reply';
     shell.click(thread.querySelector('.pin-reply-send'));
     await shell.tick();
-    const reply = sent('POST', /^\/api\/comments\/c9\/reply$/);
+    const reply = sent('POST', /^\/api\/elements\/c9\/reply$/);
     assert.ok(reply, 'the reply was sent');
     assert.deepStrictEqual({ author: reply.body.author, device: reply.body.device }, { author: 'user', device: want });
 
@@ -242,13 +244,13 @@ describe('chrome: every comment write carries `device`', () => {
     cb.checked = false;
     cb.dispatchEvent(new W.Event('change', { bubbles: true }));
     await shell.tick();
-    const toggle = sent('PATCH', /^\/api\/comments\/c9$/);
+    const toggle = sent('PATCH', /^\/api\/elements\/c9$/);
     assert.ok(toggle, 'the toggle was sent');
     assert.deepStrictEqual(toggle.body, { shared: false, device: want });
 
     shell.click(pinPop().querySelector('.pin-del'));
     await shell.tick();
-    const del = sent('DELETE', /^\/api\/comments\/c9$/);
+    const del = sent('DELETE', /^\/api\/elements\/c9$/);
     assert.ok(del, 'the delete was sent');
     assert.deepStrictEqual(del.body, { device: want }, 'a JSON body on the delete');
   });

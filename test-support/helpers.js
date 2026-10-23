@@ -659,9 +659,23 @@ function e2eGate(needs, { env = process.env, find } = {}) {
   return out;
 }
 
+// The body POST /api/elements takes for a comment (U327a: /api/comments was
+// replaced outright by the element API), from the shape the 0.8.5 route
+// took: {text, shared, anchor} become {type: 'comment', anchor, payload:
+// {text, shared}}; every other key (device, locator, a pane's stamp) rides
+// at the top level as before. `text` and `shared` left out stay out (the
+// route's defaults: '' and shared).
+function commentBody(body = {}) {
+  const { text, shared, anchor, ...rest } = body;
+  const payload = {};
+  if (text !== undefined) payload.text = text;
+  if (shared !== undefined) payload.shared = shared;
+  return { type: 'comment', ...(anchor !== undefined ? { anchor } : {}), ...rest, payload };
+}
+
 module.exports = {
   freePort, fakeCloudflared, fakeBin, e2eGate,
   withServer, withHub, withPortal, tmpRoot, withTempHome, makeApi, existingProject,
   waitUntil, openSSE, wsConnect, wsHello, deafWs, safeStop,
-  shortLockTtl, shortTtlServer,
+  shortLockTtl, shortTtlServer, commentBody,
 };

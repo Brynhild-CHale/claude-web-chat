@@ -34,7 +34,7 @@
 //      comment routes at read and full, the element floor, the writer leases
 //      and the answer host's report row; a portal on protocol 10 or 8 lets
 //      through only the comment routes (and, on 8, the two queue writes); the
-//      frame row kind (comments, queue, element:<type>), PRIVATE_RULES and the
+//      frame row kind (queue, element:<type>), PRIVATE_RULES and the
 //      queue's comment-item text; and a census of every frame type sent under
 //      lib/server/.
 
@@ -876,9 +876,9 @@ test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by na
     // The surface's frames that carry pins, elements or a pin's text (the
     // annotation engine's row kind): a level, and on the queue's the item key
     // TEXT_RULES.items strips below read.
-    { type: 'comments', level: 'read' },
     { type: 'queue', level: 'basic', item: 'item' },
-    // One per built-in element type (lib/core/element-policy), at its `see`.
+    // One per built-in element type (lib/core/element-policy), at its `see`:
+    // the comment's pins ride element:comment (U327a).
     { type: 'element:box-grab', level: 'read' },
     { type: 'element:comment', level: 'read' },
     { type: 'element:highlight', level: 'read' },
@@ -924,19 +924,19 @@ const frozen = (o) => {
 const SHARED_PIN = { id: 'c1', seq: 1, shared: true, text: 'a shared note', anchor: { mount: 'm1' } };
 const PRIVATE_PIN = { id: 'c2', seq: 2, shared: false, text: 'wc-private-mark', anchor: { mount: 'm1' }, replies: [{ author: 'user', text: 'wc-private-mark too' }] };
 
-test('projectFrame: the comments frame — local whole (the same object), read and full without private pins, basic nothing', () => {
-  const frame = frozen({ type: 'comments', comments: [SHARED_PIN, PRIVATE_PIN] });
+test('projectFrame: the comment frame (element:comment, U327a) — local whole (the same object), read and full without private pins, basic nothing', () => {
+  const frame = frozen({ type: 'element:comment', elements: [SHARED_PIN, PRIVATE_PIN] });
   assert.equal(projectFrame(frame, 'local'), frame, 'a local socket: the frame itself');
   for (const level of ['read', 'full']) {
     const out = projectFrame(frame, level);
-    assert.deepStrictEqual(out, { type: 'comments', comments: [SHARED_PIN] }, level);
+    assert.deepStrictEqual(out, { type: 'element:comment', elements: [SHARED_PIN] }, level);
     assert.notEqual(out, frame, `${level}: a copy`);
-    assert.equal(out.comments[0], SHARED_PIN, `${level}: what is kept is shared, not copied`);
+    assert.equal(out.elements[0], SHARED_PIN, `${level}: what is kept is shared, not copied`);
   }
   for (const level of ['basic', 'nonsense', undefined]) assert.equal(projectFrame(frame, level), null, String(level));
-  const allShared = frozen({ type: 'comments', comments: [SHARED_PIN] });
+  const allShared = frozen({ type: 'element:comment', elements: [SHARED_PIN] });
   assert.equal(projectFrame(allShared, 'read'), allShared, 'nothing private: the frame itself');
-  const empty = frozen({ type: 'comments', comments: [] });
+  const empty = frozen({ type: 'element:comment', elements: [] });
   assert.equal(projectFrame(empty, 'full'), empty);
 });
 
@@ -1134,7 +1134,6 @@ test('stripItemText: below read a comment item is a text-free label with text_hi
 test('PRIVATE_RULES: the one table of where private records ride — frames and routes; frozen; every key a rowed frame or a mounted route', () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(PRIVATE_RULES)), {
     frames: {
-      comments: ['comments[]'],
       'element:box-grab': ['elements[]'],
       'element:comment': ['elements[]'],
       'element:highlight': ['elements[]'],
@@ -1143,7 +1142,6 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
       reset: ['elements[]'],
     },
     routes: {
-      'GET /api/comments': ['comments[]'],
       'GET /api/elements': ['elements[]'],
       'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
       'GET /preview/node/:id': ['comments[]'],
@@ -1162,24 +1160,24 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
 });
 
 test('dropPrivate: every shared:false element off the listed lists, copy-on-write; nothing to drop, the value itself', () => {
-  const body = frozen({ comments: [SHARED_PIN, PRIVATE_PIN], next_cursor: 2, respond_hint: 'h' });
-  const out = dropPrivate('routes', 'GET /api/comments', body);
-  assert.deepStrictEqual(out, { comments: [SHARED_PIN], next_cursor: 2, respond_hint: 'h' });
-  assert.equal(out.comments[0], SHARED_PIN);
+  const body = frozen({ elements: [SHARED_PIN, PRIVATE_PIN], next_cursor: 2, respond_hint: 'h' });
+  const out = dropPrivate('routes', 'GET /api/elements', body);
+  assert.deepStrictEqual(out, { elements: [SHARED_PIN], next_cursor: 2, respond_hint: 'h' });
+  assert.equal(out.elements[0], SHARED_PIN);
   const node = frozen({ id: 'n1', mounts: [], comments: [PRIVATE_PIN, { ...SHARED_PIN, shared: undefined }] });
   assert.deepStrictEqual(dropPrivate('route', 'GET /api/graph/node/:id', node).comments, [{ ...SHARED_PIN, shared: undefined }],
     'only shared === false is private');
   const none = frozen({ id: 'n1', mounts: [] });
   assert.equal(dropPrivate('routes', 'GET /preview/node/:id', none), none, 'no `comments`: the same object');
-  const notList = frozen({ comments: 'x' });
-  assert.equal(dropPrivate('routes', 'GET /api/comments', notList), notList);
-  const shared = frozen({ type: 'comments', comments: [SHARED_PIN] });
-  assert.equal(dropPrivate('frames', 'comments', shared), shared);
-  assert.deepStrictEqual(dropPrivate('frame', 'comments', frozen({ type: 'comments', comments: [PRIVATE_PIN, 7, null] })),
-    { type: 'comments', comments: [7, null] }, 'a non-object element is never private');
+  const notList = frozen({ elements: 'x' });
+  assert.equal(dropPrivate('routes', 'GET /api/elements', notList), notList);
+  const shared = frozen({ type: 'element:comment', elements: [SHARED_PIN] });
+  assert.equal(dropPrivate('frames', 'element:comment', shared), shared);
+  assert.deepStrictEqual(dropPrivate('frame', 'element:comment', frozen({ type: 'element:comment', elements: [PRIVATE_PIN, 7, null] })),
+    { type: 'element:comment', elements: [7, null] }, 'a non-object element is never private');
   const other = frozen({ type: 'render', comments: [PRIVATE_PIN] });
   assert.equal(dropPrivate('frames', 'render', other), other, 'a key with no entry: the value itself');
-  assert.throws(() => dropPrivate('bodies', 'GET /api/comments', body), TypeError);
+  assert.throws(() => dropPrivate('bodies', 'GET /api/elements', body), TypeError);
 });
 
 

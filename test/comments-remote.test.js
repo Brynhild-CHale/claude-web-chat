@@ -1,7 +1,8 @@
 // The comment routes check the mirror level in the daemon (PLAN.md 1B.1, R6
 // today-bug 1): reading the pins needs `read`, writing one needs `full`, as
 // lib/core/remote-policy's RULES rows say — and the daemon checks again
-// (audience.requireMirror in lib/server/routes/comments.js), because a network
+// (audience.requireMirror in lib/server/routes/elements.js, the element API
+// the comment's routes moved to in U327a), because a network
 // peer on a WEB_CHAT_HOST bind never reaches the portal's table, and a portal
 // older than protocol 11 lets every comment route through.
 //
@@ -15,7 +16,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
-const { withServer, tmpRoot } = require('../test-support/helpers');
+const { withServer, tmpRoot, commentBody } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths } = require('../lib/core/paths');
 const client = require('../lib/client');
@@ -55,7 +56,7 @@ async function boot(t) {
   out.full = await withServer(t, { root: roots.full });
   for (const d of Object.values(out)) {
     t.after(stubPeers(d.server));
-    const r = await d.api.post('/api/comments', { text: 'a local note', shared: true, anchor: { mount: 'm1' } });
+    const r = await d.api.post('/api/elements', commentBody({ text: 'a local note', shared: true, anchor: { mount: 'm1' } }));
     assert.equal(r.status, 200, r.text);
     d.call = (method, p, body, headers) => client.request(d.port, method, p, body, { headers, timeout: 10000 });
   }
@@ -63,16 +64,16 @@ async function boot(t) {
 }
 
 const WRITES = [
-  ['POST', '/api/comments', { text: 'from afar', shared: true, anchor: { mount: 'm1' } }],
-  ['PATCH', '/api/comments/c1', { text: 'edited from afar' }],
-  ['POST', '/api/comments/c1/reply', { text: 'a reply from afar' }],
-  ['DELETE', '/api/comments/c1', undefined],
+  ['POST', '/api/elements', commentBody({ text: 'from afar', shared: true, anchor: { mount: 'm1' } })],
+  ['PATCH', '/api/elements/c1', { text: 'edited from afar' }],
+  ['POST', '/api/elements/c1/reply', { text: 'a reply from afar' }],
+  ['DELETE', '/api/elements/c1', undefined],
 ];
 
 test('a remote viewer: GET needs read (basic 403 with mirror basic), every write needs full', async (t) => {
   const d = await boot(t);
 
-  const basicGet = await d.basic.call('GET', '/api/comments', null, REMOTE);
+  const basicGet = await d.basic.call('GET', '/api/elements?type=comment', null, REMOTE);
   assert.equal(basicGet.status, 403);
   assert.equal(basicGet.body.mirror, 'basic');
   assert.equal(basicGet.body.remote, true);
@@ -80,9 +81,9 @@ test('a remote viewer: GET needs read (basic 403 with mirror basic), every write
   assert.ok(!JSON.stringify(basicGet.body).includes('a local note'));
 
   for (const level of ['read', 'full']) {
-    const r = await d[level].call('GET', '/api/comments', null, REMOTE);
+    const r = await d[level].call('GET', '/api/elements?type=comment', null, REMOTE);
     assert.equal(r.status, 200, `${level}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.comments.length, 1);
+    assert.equal(r.body.elements.length, 1);
   }
 
   for (const level of ['basic', 'read']) {
@@ -92,42 +93,42 @@ test('a remote viewer: GET needs read (basic 403 with mirror basic), every write
       assert.equal(r.body.mirror, level, `${level}: ${m} ${p}`);
       assert.match(r.body.hint, /without --read-only/, 'the hint names the full opt-in');
     }
-    const after = await d[level].api.get('/api/comments');
-    assert.deepStrictEqual(after.json.comments.map((c) => [c.id, c.text, (c.replies || []).length]), [['c1', 'a local note', 0]],
+    const after = await d[level].api.get('/api/elements?type=comment');
+    assert.deepStrictEqual(after.json.elements.map((c) => [c.id, c.text, (c.replies || []).length]), [['c1', 'a local note', 0]],
       `${level}: no remote write landed`);
   }
 
   // full: each write lands.
-  const add = await d.full.call('POST', '/api/comments', WRITES[0][2], REMOTE);
+  const add = await d.full.call('POST', '/api/elements', WRITES[0][2], REMOTE);
   assert.equal(add.status, 200, JSON.stringify(add.body));
   for (const [m, p, body] of WRITES.slice(1)) {
     const r = await d.full.call(m, p, body, REMOTE);
     assert.equal(r.status, 200, `full: ${m} ${p} → ${JSON.stringify(r.body)}`);
   }
-  const left = await d.full.api.get('/api/comments');
-  assert.deepStrictEqual(left.json.comments.map((c) => c.text), ['from afar']);
+  const left = await d.full.api.get('/api/elements?type=comment');
+  assert.deepStrictEqual(left.json.elements.map((c) => c.text), ['from afar']);
 });
 
 test('a network peer is refused every comment route, whatever the project opted into', async (t) => {
   const d = await boot(t);
   for (const level of ['basic', 'read', 'full']) {
-    for (const [m, p, body] of [['GET', '/api/comments', null], ...WRITES]) {
+    for (const [m, p, body] of [['GET', '/api/elements?type=comment', null], ...WRITES]) {
       const r = await d[level].call(m, p, body, { 'x-test-peer': PEER });
       assert.equal(r.status, 403, `${level}: ${m} ${p} → ${JSON.stringify(r.body)}`);
       assert.equal(r.body.mirror, 'basic', 'a network peer is basic');
       assert.equal(r.body.remote, false);
     }
-    const after = await d[level].api.get('/api/comments');
-    assert.equal(after.json.comments.length, 1, `${level}: nothing changed`);
+    const after = await d[level].api.get('/api/elements?type=comment');
+    assert.equal(after.json.elements.length, 1, `${level}: nothing changed`);
   }
 });
 
 test('a local request is unchanged: read, add, edit, reply and delete', async (t) => {
   const { api } = await withServer(t);
-  const add = await api.post('/api/comments', { text: 'here', shared: false });
+  const add = await api.post('/api/elements', commentBody({ text: 'here', shared: false }));
   assert.equal(add.status, 200);
-  assert.equal((await api.get('/api/comments')).json.comments.length, 1, 'locally, a private pin is read too');
-  assert.equal((await api.patch('/api/comments/c1', { text: 'there' })).status, 200);
-  assert.equal((await api.post('/api/comments/c1/reply', { text: 'and back' })).status, 200);
-  assert.equal((await api.del('/api/comments/c1')).status, 200);
+  assert.equal((await api.get('/api/elements?type=comment')).json.elements.length, 1, 'locally, a private pin is read too');
+  assert.equal((await api.patch('/api/elements/c1', { text: 'there' })).status, 200);
+  assert.equal((await api.post('/api/elements/c1/reply', { text: 'and back' })).status, 200);
+  assert.equal((await api.del('/api/elements/c1')).status, 200);
 });

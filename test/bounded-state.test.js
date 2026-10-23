@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { withServer, waitUntil } = require('../test-support/helpers');
+const { withServer, waitUntil, commentBody } = require('../test-support/helpers');
 const { CAPTURES_LIVE_MAX, retain, clearLive } = require('../lib/server/domain/captures');
 
 const PAGE = (n) => `<html><head><title>Page ${n}</title></head><body><p>page ${n} body</p></body></html>`;
@@ -43,9 +43,9 @@ async function pinPane(ctx, id) {
 }
 
 async function addPin(api, mount, text = 'look') {
-  const r = await api.post('/api/comments', {
+  const r = await api.post('/api/elements', commentBody({
     text, shared: true, anchor: { mount, selector: 'div', text: mount, ordinal: 0 },
-  });
+  }));
   assert.equal(r.json.ok, true);
   return r.json.pin;
 }
@@ -61,7 +61,7 @@ async function frameLog(ctx) {
 }
 
 const liveCaptures = async (api) => (await api.get('/api/captures')).json.captures;
-const comments = async (api) => (await api.get('/api/comments')).json.comments;
+const comments = async (api) => (await api.get('/api/elements?type=comment')).json.elements;
 const events = async (api) => (await api.get('/api/events')).json.events;
 
 // ── the domain module ─────────────────────────────────────────────────────
@@ -137,9 +137,9 @@ test('a wipe drops the pins on the panes it removed and the live captures; the p
   await waitUntil(() => log.frames.some((f) => f.type === 'reset'), { timeout: 5000, what: 'reset frame' });
 
   assert.deepEqual((await comments(api)).map((c) => c.id), [onKeep.id], 'only the pin on the pinned pane stays');
-  const commentFrames = log.frames.filter((f) => f.type === 'comments');
-  assert.equal(commentFrames.length, 1, 'one comments frame');
-  assert.deepEqual(commentFrames[0].comments.map((c) => c.id), [onKeep.id]);
+  const commentFrames = log.frames.filter((f) => f.type === 'element:comment');
+  assert.equal(commentFrames.length, 1, 'one element:comment frame');
+  assert.deepEqual(commentFrames[0].elements.map((c) => c.id), [onKeep.id]);
   const deletes = (await events(api)).slice(before).filter((e) => e.kind === 'comment' && e.op === 'delete');
   assert.deepEqual(deletes.map((e) => e.id), [onGone.id], 'one comment delete event, for the removed pane\'s pin');
 
@@ -154,7 +154,7 @@ test('a wipe drops the pins on the panes it removed and the live captures; the p
 test('a wipe drops the live copy of a pin with no anchor (F7)', async (t) => {
   const { api } = await withServer(t);
   await api.post('/api/render', { id: 'gone', html: '<div>gone</div>' });
-  const loose = (await api.post('/api/comments', { text: 'page note', shared: false })).json.pin;
+  const loose = (await api.post('/api/elements', commentBody({ text: 'page note', shared: false }))).json.pin;
   await addPin(api, 'gone');
   const nodeId = (await turn(api)).json.node_id;
   await api.post('/api/graph/wipe', {});
@@ -174,7 +174,7 @@ test('a new graph drops every pin and every live capture; the seq counters keep 
   const p1 = await addPin(api, 'a');
   const p2 = await addPin(api, 'b');
   // A pin with no pane anchor: neither a wipe nor a new graph keeps one.
-  const loose = (await api.post('/api/comments', { text: 'page note', shared: true })).json.pin;
+  const loose = (await api.post('/api/elements', commentBody({ text: 'page note', shared: true }))).json.pin;
   await capture(api, 1);
   const c2 = await capture(api, 2);
 
@@ -267,7 +267,7 @@ test('a new graph takes every queued capture out of the queue', async (t) => {
   const { api } = await withServer(t);
   const a = await capture(api, 1);
   const b = await capture(api, 2);
-  await api.post('/api/comments', { text: 'page note', shared: true });
+  await api.post('/api/elements', commentBody({ text: 'page note', shared: true }));
   const items = await queueItems(api);
   assert.ok(captureItemFor(items, a) && captureItemFor(items, b), 'both captures are queued');
 

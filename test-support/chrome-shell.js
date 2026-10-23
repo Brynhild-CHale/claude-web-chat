@@ -126,7 +126,7 @@ const DEFAULT_ROUTES = Object.freeze({
   '/api/queue/pending': { pending: null },
   '/api/queue/policy': { channel_connected: false, immediate_signals: [], queue_signals: [], activation_hint: {},
     parked_delivery: 'held' },
-  '/api/comments': { comments: [] },
+  '/api/elements': { elements: [], next_cursor: 0 },
   '/api/brand': { slots: {}, fill: {}, theme: null },
   '/api/version': { ok: true, current: '0.0.0-test', updateAvailable: false },
   '/api/health': { ok: true, remote: false },

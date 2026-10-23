@@ -29,7 +29,7 @@ const path = require('path');
 // Node's own fetch, held before the chrome shell replaces the global.
 const realFetch = globalThis.fetch;
 
-const { withServer, tmpRoot } = require('../test-support/helpers');
+const { withServer, tmpRoot, commentBody } = require('../test-support/helpers');
 const { bootShell, helloFrame, respond } = require('../test-support/chrome-shell');
 const { PANE_HEADER, WRITER_HEADER } = require('../lib/core/writer-token');
 const { PUBLIC_DIR, projectPaths } = require('../lib/core/paths');
@@ -276,25 +276,25 @@ test('S-9: the nine pane forgeries, each a pane-stamped browser request from a l
   assert.equal((await api.post('/api/render', { id: 'evil', html: '<p>e</p>' })).status, 200);
   assert.equal((await api.post('/api/render', { id: 'p', html: '<p>p</p>' })).status, 200);
   assert.equal((await api.post('/api/pane/spawn', { parent: 'p', id: 'p-kid', html: '<i>k</i>' })).json.ok, true);
-  const userPin = (await anonApi.post('/api/comments', SHARED_PIN, plain)).json.pin;
+  const userPin = (await anonApi.post('/api/elements', commentBody(SHARED_PIN), plain)).json.pin;
   assert.equal(userPin.writer.class, 'user');
   const mounts = async () => (await client.get('/api/mounts', { port, noSpawn: true })).mounts || [];
 
   const outcomes = [];
   const refused = (label, r) => outcomes.push({ label, forged: r.status < 400, detail: `${r.status} ${r.text}` });
 
-  refused('reply as author claude', await anonApi.post(`/api/comments/${userPin.id}/reply`, { text: 'I am Claude', author: 'claude' }, evil));
+  refused('reply as author claude', await anonApi.post(`/api/elements/${userPin.id}/reply`, { text: 'I am Claude', author: 'claude' }, evil));
   refused('render over a Claude pane as service:x', await anonApi.post('/api/render', { id: 'cl', html: '<p>x</p>', owner: 'service:x' }, evil));
   refused('render over a Claude pane as service:x with force', await anonApi.post('/api/render', { id: 'cl', html: '<p>x</p>', owner: 'service:x', force: true }, evil));
   refused('render with no owner', await anonApi.post('/api/render', { id: 'evil-new', html: '<p>x</p>' }, evil));
   refused('render as service:git-dashboard', await anonApi.post('/api/render', { id: 'gd', html: '<p>x</p>', owner: 'service:git-dashboard' }, evil));
   refused('close another pane\'s child naming that pane as parent', await anonApi.post('/api/pane/close', { parent: 'p', id: 'p-kid' }, evil));
-  refused('delete a user\'s pin', await anonApi.del(`/api/comments/${userPin.id}`, evil));
+  refused('delete a user\'s pin', await anonApi.del(`/api/elements/${userPin.id}`, evil));
 
-  const reply = await anonApi.post(`/api/comments/${userPin.id}/reply`, { text: 'a pane says hi' }, evil);
+  const reply = await anonApi.post(`/api/elements/${userPin.id}/reply`, { text: 'a pane says hi' }, evil);
   const last = reply.json && reply.json.pin && reply.json.pin.replies.slice(-1)[0];
   outcomes.push({ label: 'author-less reply', forged: !(reply.status === 200 && last.author === 'user' && last.writer.class === 'pane' && last.writer.owner === 'pane:evil'), detail: reply.text });
-  const add = await anonApi.post('/api/comments', { ...SHARED_PIN, text: 'a pane pin' }, evil);
+  const add = await anonApi.post('/api/elements', commentBody({ ...SHARED_PIN, text: 'a pane pin' }), evil);
   outcomes.push({ label: 'add a pin', forged: !(add.status === 200 && add.json.pin.writer.class === 'pane' && add.json.pin.writer.owner === 'pane:evil'), detail: add.text });
 
   const forged = outcomes.filter((o) => o.forged);
@@ -306,14 +306,14 @@ test('S-9: the nine pane forgeries, each a pane-stamped browser request from a l
   assert.strictEqual(ms.find((m) => m.id === 'cl').owner || 'claude', 'claude');
   assert.ok(!ms.some((m) => m.id === 'evil-new' || m.id === 'gd'));
   assert.ok(ms.some((m) => m.id === 'p-kid'), 'the child is still up');
-  const pins = (await api.get('/api/comments')).json.comments;
+  const pins = (await api.get('/api/elements?type=comment')).json.elements;
   assert.ok(pins.some((c) => c.id === userPin.id), 'the user\'s pin is still there');
   assert.ok(!pins.find((c) => c.id === userPin.id).replies.some((r) => r.author === 'claude'));
 
   // The pane's own pin is its to edit and delete.
   const own = add.json.pin;
-  assert.equal((await anonApi.patch(`/api/comments/${own.id}`, { text: 'edited by its pane' }, evil)).status, 200);
-  assert.equal((await anonApi.del(`/api/comments/${own.id}`, evil)).status, 200);
+  assert.equal((await anonApi.patch(`/api/elements/${own.id}`, { text: 'edited by its pane' }, evil)).status, 200);
+  assert.equal((await anonApi.del(`/api/elements/${own.id}`, evil)).status, 200);
 });
 
 // ── spawn and close ─────────────────────────────────────────────────────────

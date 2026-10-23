@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('node:crypto');
 
-const { withServer, tmpRoot } = require('../test-support/helpers');
+const { withServer, tmpRoot, commentBody } = require('../test-support/helpers');
 const { v3Graph } = require('../test-support/v3-graph');
 const { refsOf, setRefs } = require('../lib/server/domain/element-refs');
 const turns = require('../lib/server/domain/turns');
@@ -110,7 +110,7 @@ test('a fresh graph\'s nodes keep their 39b52f8 nodeViewKey, and the live snapsh
   await turn(api, 'two', async () => {
     await api.post('/api/render', { id: 'p2', html: '<p>p2</p>', place: { span: 6 } });
     await api.post('/api/store', { patch: { k: 1 } });
-    await api.post('/api/comments', { text: 'pin', anchor: { mount: 'p1', selector: 'p', text: 'p1', ordinal: 0 } });
+    await api.post('/api/elements', commentBody({ text: 'pin', anchor: { mount: 'p1', selector: 'p', text: 'p1', ordinal: 0 } }));
   });
   assert.ok(srv.graph.nodes.size >= 2);
   for (const [id, n] of srv.graph.nodes) {

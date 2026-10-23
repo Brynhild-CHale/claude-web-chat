@@ -47,7 +47,7 @@ test('srv.audience is the instance the routes use: an opt-in moves remoteLevel()
   const call = (p) => client.request(d.port, 'GET', p, null, { headers: REMOTE, timeout: 10000 });
 
   assert.equal(d.srv.audience.remoteLevel(), 'off');
-  const before = await call('/api/comments');
+  const before = await call('/api/elements?type=comment');
   assert.equal(before.status, 403, JSON.stringify(before.body));
   assert.equal(before.body.mirror, 'basic');
 
@@ -55,7 +55,7 @@ test('srv.audience is the instance the routes use: an opt-in moves remoteLevel()
   writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(d.root)]: 'read' } } });
   await waitUntil(() => d.srv.audience.remoteLevel() === 'read', { timeout: 10000, what: 'the opt-in at srv.audience' });
   assert.equal(d.srv.audience.levelOf(fakeReq('127.0.0.1', { 'x-wc-remote': '1' })), 'read');
-  const after = await call('/api/comments');
+  const after = await call('/api/elements?type=comment');
   assert.equal(after.status, 200, `the route's requireMirror follows the same audience: ${JSON.stringify(after.body)}`);
 });
 

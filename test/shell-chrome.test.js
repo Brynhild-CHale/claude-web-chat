@@ -617,8 +617,8 @@ test('a reply draft survives the first Escape and closes on the second (F12)', a
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));   // arm pin mode: a marker click reaches the thread with the crosshair up
   assert.ok(W.document.body.classList.contains('pin-mode'), 'precondition: pin mode armed');
   WS.onmessage({ data: JSON.stringify({
-    type: 'comments',
-    comments: [{ id: 'c1', text: 'look here', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }],
+    type: 'element:comment',
+    elements: [{ id: 'c1', text: 'look here', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }],
   }) });
   await tick();
   const marker = $('pin-layer').querySelector('.pin-marker');

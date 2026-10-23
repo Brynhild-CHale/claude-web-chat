@@ -346,10 +346,12 @@ const HANDLERS = {
   // Delivery confirmation for a live Push — resolves the rail's "Sending…" state
   // into "Delivered ✓" (the timeout otherwise rejects it). See queue.onWakeAck.
   'wake-ack'(msg) { onWakeAck(msg.seq); },
-  // Comment pins: every comment-route notify() and revertArtifact
-  // pushes the whole comments array here so the marker layer re-renders immediately;
-  // renderMarkers itself is the preview guard, so this can fold regardless too.
-  comments(msg) { applyCommentsFrame(msg.comments || []); renderQueue(); },
+  // Comment pins: the comment type's element frame (every comment write of
+  // the element API and revertArtifact; domain/comments emitComments) pushes
+  // the whole live pin array under `elements` so the marker layer re-renders
+  // immediately; renderMarkers itself is the preview guard, so this can fold
+  // regardless too.
+  'element:comment'(msg) { applyCommentsFrame(msg.elements || []); renderQueue(); },
   // The component set moved: a save_component, or a pack installed / approved /
   // removed anywhere (this browser, another one, or the CLI's announce). Drop
   // the ONE component cache; the drawer and the ⌘K palette both read it, and

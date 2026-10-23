@@ -23,7 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 const { mulberry32 } = require('../test-support/fake-secrets');
 const { createElementLog } = require('../lib/core/element-log');
 const { createRedactor } = require('../lib/core/redact');
@@ -344,7 +344,7 @@ async function turn(api, message, work) {
   return e.json.node_id;
 }
 const reply = async (api, text) => {
-  const r = await api.post(`/api/comments/${EL}/reply`, { text, author: 'user' });
+  const r = await api.post(`/api/elements/${EL}/reply`, { text, author: 'user' });
   assert.equal(r.status, 200, JSON.stringify(r.json));
 };
 
@@ -355,7 +355,7 @@ test('server fork (G-8): pin A, reply r1 B, Set active A, reply r2 C — each no
   const logFile = projectPaths(root).elementsLog;
   const A = await turn(api, 'A', async () => {
     await api.post('/api/render', { id: 'scope-pane', html: '<div><p id="a">Alpha</p><p id="b">Beta</p></div>' });
-    const c = await api.post('/api/comments', { text: 'root note', anchor: ANCHOR });
+    const c = await api.post('/api/elements', commentBody({ text: 'root note', anchor: ANCHOR }));
     assert.equal(c.status, 200, JSON.stringify(c.json));
     assert.equal(c.json.pin.id, EL);
   });
@@ -392,7 +392,7 @@ test('server fork (G-8): pin A, reply r1 B, Set active A, reply r2 C — each no
 
   // A node holding no copy: Set active C (clean), remove the pin, commit E.
   await api.post('/api/graph/active', { id: C });
-  const del = await api.del(`/api/comments/${EL}`);
+  const del = await api.del(`/api/elements/${EL}`);
   assert.equal(del.status, 200, JSON.stringify(del.json));
   const E = await turn(api, 'E', () => api.post('/api/render', { id: 'scope-pane-2', html: '<p>e</p>' }));
   assert.equal(graph.nodes.get(E).parent_id, C);

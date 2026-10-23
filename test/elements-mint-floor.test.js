@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { withServer, existingProject } = require('../test-support/helpers');
+const { withServer, existingProject, commentBody } = require('../test-support/helpers');
 const { projectPaths } = require('../lib/core/paths');
 const { createElementLog, maxElementSeqIn } = require('../lib/core/element-log');
 const { createRedactor } = require('../lib/core/redact');
@@ -39,7 +39,7 @@ async function turn(api, message = 'turn') {
   await ok(api.post('/api/turn-begin', { message }), 'turn-begin');
   return ok(api.post('/api/turn-end', { summary: message }), 'turn-end');
 }
-const addPin = async (api, text) => (await ok(api.post('/api/comments', { text, anchor: ANCHOR }), `add ${text}`)).pin;
+const addPin = async (api, text) => (await ok(api.post('/api/elements', commentBody({ text, anchor: ANCHOR })), `add ${text}`)).pin;
 
 const pin = (n) => ({
   id: `c${n}`, seq: n, created_at: T0 + n, shared: true, text: `pin ${n}`, anchor: ANCHOR, replies: [],

@@ -20,7 +20,7 @@
 // comment pin the daemon's hello carries.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { withServer, waitUntil } = require('../test-support/helpers');
+const { withServer, waitUntil, commentBody } = require('../test-support/helpers');
 const { spawnChrome, chromePair, DESKTOP } = require('../test-support/chrome-pair');
 const { paneSpec, storeDigest } = require('../lib/server/domain/reports');
 
@@ -70,7 +70,7 @@ async function seedSurface(d, recorder) {
       const anchor = ENGINE.has(i)
         ? await recorder.call('record', { mount: id, selector: '.it', index: i })
         : { mount: id, selector: 'div.it', ordinal: i, text: rowText(id, i) };
-      const r = await ok(d.anonApi.post('/api/comments', { text: `note ${id}:${i}`, shared: true, anchor }), `pin ${id}:${i}`);
+      const r = await ok(d.anonApi.post('/api/elements', commentBody({ text: `note ${id}:${i}`, shared: true, anchor })), `pin ${id}:${i}`);
       pins.push({ id: r.pin.id, v: r.pin.v, mount: id, row: i, engine: ENGINE.has(i) });
     }
   }
@@ -261,7 +261,7 @@ test('a store write that moves one anchored row of a store-driven pane: every he
   const pins = [];
   for (const i of ANCHORED) {
     const anchor = await recorder.call('record', { mount: 'sd', selector: '.row', index: i });
-    const r = await ok(d.anonApi.post('/api/comments', { text: `note sd:${i}`, shared: true, anchor }), `pin sd:${i}`);
+    const r = await ok(d.anonApi.post('/api/elements', commentBody({ text: `note sd:${i}`, shared: true, anchor })), `pin sd:${i}`);
     pins.push({ id: r.pin.id, v: r.pin.v, row: i });
   }
   await recorder.call('exit');

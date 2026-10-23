@@ -8,7 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer, waitUntil } = require('../test-support/helpers');
+const { withServer, waitUntil, commentBody } = require('../test-support/helpers');
 const { activityItem } = require('../lib/channel/policy');
 const queue = require('../lib/server/domain/queue');
 
@@ -134,8 +134,8 @@ test('enqueue: a comment pinned on a cleared pane has no origin; one on a live m
   assert.equal(ctx.srv.state.mounts.has('gone'), false);
   await ctx.api.post('/api/markdown', { id: 'md-a', text: '## Notes' });
 
-  const a = await ctx.api.post('/api/comments', { text: 'on a cleared pane', shared: true, anchor: { mount: 'gone' } });
-  const b = await ctx.api.post('/api/comments', { text: 'on prose', shared: true, anchor: { mount: 'md-a' } });
+  const a = await ctx.api.post('/api/elements', commentBody({ text: 'on a cleared pane', shared: true, anchor: { mount: 'gone' } }));
+  const b = await ctx.api.post('/api/elements', commentBody({ text: 'on prose', shared: true, anchor: { mount: 'md-a' } }));
   const q = await items(ctx);
   const qa = q.find((it) => it.comment_id === a.json.pin.id);
   const qb = q.find((it) => it.comment_id === b.json.pin.id);

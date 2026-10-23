@@ -16,7 +16,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
-const { withServer, tmpRoot, waitUntil, wsConnect } = require('../test-support/helpers');
+const { withServer, tmpRoot, waitUntil, wsConnect, commentBody } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths } = require('../lib/core/paths');
 const { convertAnchor, SCHEMAS } = require('../lib/core/element-log');
@@ -109,13 +109,13 @@ const resets = async (socks, n) => waitUntil(() => socks.every((s) => s.of('rese
 async function populate(d) {
   const { api, anonApi, srv } = d;
   await ok(api.post('/api/render', { id: 'm-a', html: `<section><p class="lead">Lead of m-a</p></section>` }), 'render');
-  const pin = async (text, shared, anchor) => (await ok(anonApi.post('/api/comments', { text, shared, anchor }), `pin ${text}`)).pin;
+  const pin = async (text, shared, anchor) => (await ok(anonApi.post('/api/elements', commentBody({ text, shared, anchor })), `pin ${text}`)).pin;
   const legacy = await pin(T.legacy, true, LEGACY);
   const engine = await pin(T.engine, true, ENGINE);
   const priv = await pin(T.priv, false, LEGACY);
   const answered = await pin(T.answered, true, LEGACY);
-  await ok(anonApi.post(`/api/comments/${legacy.id}/reply`, { text: T.userReply }), 'user reply');
-  await ok(api.post(`/api/comments/${answered.id}/reply`, { text: T.claudeReply, author: 'claude' }), 'claude reply');
+  await ok(anonApi.post(`/api/elements/${legacy.id}/reply`, { text: T.userReply }), 'user reply');
+  await ok(api.post(`/api/elements/${answered.id}/reply`, { text: T.claudeReply, author: 'claude' }), 'claude reply');
   // The references: highlights and box grabs live in the log alone (E-STORE a);
   // their own units write them, so the log is written here directly.
   const log = srv.elements.log;
@@ -256,9 +256,9 @@ test('hello and the reset after a Wipe, a Set active and a Branch carry `element
     return (await ok(api.post('/api/turn-end', { author: 'claude', summary: msg }), 'turn-end')).node_id;
   };
   await ok(api.post('/api/render', { id: 'm-a', html: `<section><p class="lead">Lead of m-a</p></section>` }), 'render');
-  const a = (await ok(anonApi.post('/api/comments', { text: T.legacy, shared: true, anchor: LEGACY }), 'pin a')).pin;
+  const a = (await ok(anonApi.post('/api/elements', commentBody({ text: T.legacy, shared: true, anchor: LEGACY })), 'pin a')).pin;
   const n0 = await commit('first');
-  const b = (await ok(anonApi.post('/api/comments', { text: T.engine, shared: true, anchor: ENGINE }), 'pin b')).pin;
+  const b = (await ok(anonApi.post('/api/elements', commentBody({ text: T.engine, shared: true, anchor: ENGINE })), 'pin b')).pin;
   const n1 = await commit('second');
   const local = await socket(t, d.port);
   assert.deepStrictEqual(local.of('hello')[0].elements.map((r) => r.id).sort(), [a.id, b.id].sort());
@@ -396,9 +396,9 @@ test('GET /api/graph/node/:id: `lean_elements` is leanElements over the node; a 
     await ok(api.post('/api/render', { id: 'm-x', html: '<p>x</p>' }), 'render x');
     const empty = (await ok(api.post('/api/turn-end', { author: 'claude', summary: 'empty' }), 'turn-end')).node_id;
     await ok(api.post('/api/render', { id: 'm-a', html: `<section><p class="lead">Lead of m-a</p></section>` }), 'render');
-    const shared = (await ok(anonApi.post('/api/comments', { text: T.legacy, shared: true, anchor: LEGACY }), 'shared')).pin;
-    const priv = (await ok(anonApi.post('/api/comments', { text: T.priv, shared: false, anchor: LEGACY }), 'private')).pin;
-    await ok(api.post(`/api/comments/${shared.id}/reply`, { text: T.claudeReply, author: 'claude' }), 'claude reply');
+    const shared = (await ok(anonApi.post('/api/elements', commentBody({ text: T.legacy, shared: true, anchor: LEGACY })), 'shared')).pin;
+    const priv = (await ok(anonApi.post('/api/elements', commentBody({ text: T.priv, shared: false, anchor: LEGACY })), 'private')).pin;
+    await ok(api.post(`/api/elements/${shared.id}/reply`, { text: T.claudeReply, author: 'claude' }), 'claude reply');
     await ok(api.post('/api/turn-begin', { message: 'pins' }), 'turn-begin');
     const id = (await ok(api.post('/api/turn-end', { author: 'claude', summary: 'pins' }), 'turn-end')).node_id;
 
@@ -464,12 +464,12 @@ test('size: on a populated fixture graph, the median reset grows by at most 10 %
     if (r() < 0.5) {
       const mount = PANES[Math.floor(r() * PANES.length)];
       if (srv.state.mounts.has(mount)) {
-        const pin = (await ok(anonApi.post('/api/comments', {
+        const pin = (await ok(anonApi.post('/api/elements', commentBody({
           text: `note ${i}`, shared: r() < 0.8, anchor: { mount, selector: 'h3.lead', text: `Pane ${mount}`, ordinal: 0 },
-        }), 'pin')).pin;
+        })), 'pin')).pin;
         live.push(pin.id);
-        if (r() < 0.4) await ok(api.post(`/api/comments/${pin.id}/reply`, { text: `answer ${i}`, author: 'claude' }), 'reply');
-        if (live.length > 5) await ok(anonApi.del(`/api/comments/${live.shift()}`), 'delete');
+        if (r() < 0.4) await ok(api.post(`/api/elements/${pin.id}/reply`, { text: `answer ${i}`, author: 'claude' }), 'reply');
+        if (live.length > 5) await ok(anonApi.del(`/api/elements/${live.shift()}`), 'delete');
       }
     }
     const end = await ok(api.post('/api/turn-end', { author: 'claude', summary: `turn ${i}` }), 'turn-end');

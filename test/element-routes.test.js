@@ -181,8 +181,9 @@ test('a comment through the element API: today\'s pin plus type, schema, anchor_
   // An edit keeps the engine anchor and the locator.
   const ed = await ok(api.patch(`/api/elements/${eng.pin.id}`, { text: 'engine 2' }), 'edit');
   assert.deepEqual([ed.pin.anchor, ed.pin.locator], [ELEMENT('m1'), LOCATOR]);
-  // describeAnchor: one copy, re-exported by routes/comments.js.
-  assert.equal(comments.describeAnchor, describeAnchor);
+  // describeAnchor: one copy, the element API's (routes/comments.js is the
+  // 410 refusal since U327a and exports none).
+  assert.equal(comments.describeAnchor, undefined);
   assert.equal(describeAnchor({ v: 1, kind: 'source', md: 'md-1', slug: 's', quote: { exact: 'Intro' }, pos: { start: 0, end: 5 } }), 'md-1: "Intro"');
   assert.equal(describeAnchor(RANGE('m1', 'quoted')), 'm1: "quoted"');
 });
@@ -272,7 +273,7 @@ test('DELETE is the one removal: the live copy or reference goes, the log gains 
   assert.deepEqual(srv.state.elements, []);
   assert.deepEqual(srv.state.comments, []);
   await waitUntil(() => seen.some((f) => f.type === 'element:highlight' && f.elements.length === 0), { timeout: 5000, what: 'the empty highlight frame' });
-  await waitUntil(() => seen.some((f) => f.type === 'comments' && f.comments.length === 0), { timeout: 5000, what: 'the comments frame' });
+  await waitUntil(() => seen.some((f) => f.type === 'element:comment' && f.elements.length === 0), { timeout: 5000, what: 'the element:comment frame' });
   const del = (await events(api)).filter((e) => e.op === 'delete');
   assert.deepEqual(del.map((e) => [e.kind, e.id]), [['element', h.id], ['comment', p.id]]);
   assert.deepEqual(nodeOf(root, n).elements, [`${h.id}@1`], 'the node keeps its reference');

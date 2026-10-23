@@ -28,14 +28,14 @@
 //   (7) Set active on a migrated older node: 200, its pins restored with their
 //       v, and the next no-op turn commits 0 nodes;
 //   (8) a remote socket at basic (X-WC-Remote) receives no comment text in any
-//       frame, and GET /api/comments refuses it;
+//       frame, and GET /api/elements?type=comment refuses it;
 //   (9) AG-1's shape: every node file still parses as a node and every comment
 //       copy keeps every v3 field (test/fixtures/v3-node-shape.json, derived
 //       once from f3c4a7f's reader);
 //  (10) the H1 rulings are built in: createAnchors' CONFIG has head_floor and
 //       ordinal true.
 //
-// Through every step the comment cursor (GET /api/comments next_cursor) never
+// Through every step the comment cursor (GET /api/elements?type=comment next_cursor) never
 // decreases. Every server is closed by withServer's t.after.
 
 const test = require('node:test');
@@ -46,7 +46,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
-const { withServer, waitUntil, wsConnect } = require('../test-support/helpers');
+const { withServer, waitUntil, wsConnect, commentBody } = require('../test-support/helpers');
 const { v3Graph } = require('../test-support/v3-graph');
 const client = require('../lib/client');
 const { projectPaths } = require('../lib/core/paths');
@@ -219,7 +219,7 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
   let ctx = null;
   const cursors = [];
   async function cursor(what) {
-    const r = await ok(ctx.api.get('/api/comments'), `cursor ${what}`);
+    const r = await ok(ctx.api.get('/api/elements?type=comment'), `cursor ${what}`);
     assert.ok(Number.isInteger(r.next_cursor), `${what}: next_cursor is an integer`);
     cursors.push([what, r.next_cursor]);
     return r.next_cursor;
@@ -259,7 +259,7 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     assert.equal(health.graph_integrity.clean, true, JSON.stringify(health.graph_integrity));
     assert.equal(ctx.srv.elements.readOnly, false);
     // The live pins are the draft's, each with the log version it pins.
-    const live = (await ok(ctx.api.get('/api/comments'), 'GET')).comments;
+    const live = (await ok(ctx.api.get('/api/elements?type=comment'), 'GET')).elements;
     assert.deepEqual(live.map((c) => c.id).sort(), [...g.cases.draft.ids].sort());
     for (const c of live) assert.ok(Number.isInteger(c.v) && c.v >= 1, `${c.id} carries v`);
     remote = await socket(t, ctx.port, { 'X-WC-Remote': '1' });
@@ -270,10 +270,10 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
   await t.test('(3) the chrome adds, replies, edits and deletes; the MCP tools read and reply as claude, verified', async () => {
     const browser = ctx.anonApi; // Node's fetch: a browser's request, no writer token
     const c0 = await cursor('before writes');
-    const add = await ok(browser.post('/api/comments', {
+    const add = await ok(browser.post('/api/elements', commentBody({
       text: remember('e2e-note-alpha'), shared: true, device: 'desktop',
       anchor: { mount: 'm-a', selector: 'p.lead', text: 'Pane m-a', ordinal: 0 },
-    }), 'add');
+    })), 'add');
     const pin = add.pin;
     assert.match(pin.id, /^c\d+$/);
     assert.equal(pin.v, 1);
@@ -281,10 +281,10 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     assert.equal(pin.provenance.device, 'desktop');
     const c1 = await cursor('after add');
     assert.ok(c1 > c0, 'an add raises the cursor');
-    const rep = await ok(browser.post(`/api/comments/${pin.id}/reply`, { text: remember('e2e-reply-beta'), device: 'desktop' }), 'reply');
+    const rep = await ok(browser.post(`/api/elements/${pin.id}/reply`, { text: remember('e2e-reply-beta'), device: 'desktop' }), 'reply');
     assert.equal(rep.pin.v, 2);
     assert.equal(rep.pin.replies.at(-1).author, 'user');
-    const edit = await ok(browser.patch(`/api/comments/${pin.id}`, { text: remember('e2e-note-alpha-edited'), device: 'desktop' }), 'edit');
+    const edit = await ok(browser.patch(`/api/elements/${pin.id}`, { text: remember('e2e-note-alpha-edited'), device: 'desktop' }), 'edit');
     assert.equal(edit.pin.v, 3);
     assert.equal(edit.pin.text, 'e2e-note-alpha-edited');
     assert.ok(edit.pin.edited && edit.pin.edited.writer.class === 'user', 'the edit stamp');
@@ -294,12 +294,12 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     const doomed = ctx.srv.state.comments.find((c) => c.id === g.cases.c1Refused.id);
     assert.ok(doomed, 'precondition: the draft\'s c5 is live');
     const logBefore = logRecords(paths).length;
-    const del = await browser.del(`/api/comments/${doomed.id}`);
+    const del = await browser.del(`/api/elements/${doomed.id}`);
     assert.equal(del.status, 200, del.text);
     assert.equal(logRecords(paths).length, logBefore, 'a delete appends nothing (no tombstone)');
     const c2 = await cursor('after delete');
     assert.ok(c2 >= edit.pin.seq, 'a delete never lowers the cursor');
-    assert.equal((await ok(ctx.api.get('/api/comments'), 'GET')).comments.some((c) => c.id === doomed.id), false);
+    assert.equal((await ok(ctx.api.get('/api/elements?type=comment'), 'GET')).elements.some((c) => c.id === doomed.id), false);
 
     // The MCP tools, in a process of their own.
     const replyText = remember('e2e-claude-delta');
@@ -353,7 +353,7 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     const before = logRecords(paths);
     await ctx.graceful();
     ctx = await withServer(t, { root });
-    await ok(ctx.api.get('/api/comments'), 'GET after reboot');
+    await ok(ctx.api.get('/api/elements?type=comment'), 'GET after reboot');
     const after = logRecords(paths);
     const added = after.slice(before.length);
     // The ending boot appended (steps 3 and 4), so its graceful stop writes one
@@ -380,18 +380,18 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     await ok(ctx.api.post('/api/markdown', { id: 'md-e2e-head', text: '## Kept section' }), 'heading');
     await ok(ctx.api.post('/api/render', { id: 'e2e-kept', html: '<p id="k">Kept pane</p>' }), 'kept pane');
     await pinPane(ctx, 'e2e-kept');
-    const onHead = (await ok(browser.post('/api/comments', {
+    const onHead = (await ok(browser.post('/api/elements', commentBody({
       text: remember('e2e-on-heading'), shared: true, device: 'desktop',
       anchor: { mount: 'md-e2e-head', selector: 'h2', text: 'Kept section', ordinal: 0 },
-    }), 'pin on the heading')).pin;
+    })), 'pin on the heading')).pin;
     const commit = await turn(ctx, 'e2e turn before the wipe');
     assert.ok(commit.node_id, 'the page above committed');
     const digests = nodeDigests(paths);
-    const liveBefore = (await ok(ctx.api.get('/api/comments'), 'GET')).comments.map((c) => c.id);
+    const liveBefore = (await ok(ctx.api.get('/api/elements?type=comment'), 'GET')).elements.map((c) => c.id);
     assert.ok(liveBefore.length > 1);
     const w = await ok(ctx.api.post('/api/graph/wipe', {}), 'wipe');
     assert.deepEqual(w.kept, ['e2e-kept']);
-    const live = (await ok(ctx.api.get('/api/comments'), 'GET')).comments.map((c) => c.id);
+    const live = (await ok(ctx.api.get('/api/elements?type=comment'), 'GET')).elements.map((c) => c.id);
     assert.deepEqual(live, [onHead.id], 'only the pin on the kept heading survives');
     const now = nodeDigests(paths);
     for (const [f, h] of Object.entries(digests)) assert.equal(now[f], h, `${f} is byte-identical`);
@@ -419,21 +419,21 @@ test('a v3 project migrates on its first boot and keeps working (steps 1–9)', 
     await cursor('after set active');
   });
 
-  await t.test('(8) a remote socket at basic receives no comment text in any frame; GET /api/comments refuses it', async () => {
+  await t.test('(8) a remote socket at basic receives no comment text in any frame; GET /api/elements?type=comment refuses it', async () => {
     const browser = ctx.anonApi;
     // One more write while both sockets listen.
     const live = ctx.srv.state.comments.find((c) => c.shared);
     const text = remember('e2e-late-epsilon');
-    await ok(browser.post(`/api/comments/${live.id}/reply`, { text, device: 'desktop' }), 'late reply');
+    await ok(browser.post(`/api/elements/${live.id}/reply`, { text, device: 'desktop' }), 'late reply');
     await waitUntil(() => local.frames.some((f) => f.includes(text)), { ...WAIT, what: 'the local frame' });
-    const remoteGet = await ctx.anonApi.get('/api/comments', { 'X-WC-Remote': '1' });
+    const remoteGet = await ctx.anonApi.get('/api/elements?type=comment', { 'X-WC-Remote': '1' });
     assert.equal(remoteGet.status, 403, remoteGet.text);
     for (const s of TEXTS) assert.ok(!remoteGet.text.includes(s), `the refusal carries no ${s}`);
     assert.ok(remote.frames.length >= 1, 'the remote socket was connected');
     const carried = [];
     for (const f of remote.frames) {
       const msg = JSON.parse(f);
-      if (msg.type === 'comments') carried.push('a comments frame');
+      if (msg.type === 'element:comment') carried.push('an element:comment frame');
       for (const s of TEXTS) if (f.includes(s)) carried.push(s);
       for (const c of ctx.srv.state.comments) if (c.text && f.includes(`"${c.text}"`)) carried.push(c.text);
     }
@@ -484,8 +484,8 @@ test('(10) the H1 rulings are built into the resolver: head_floor and ordinal on
 test('a pin added and deleted before any commit leaves the next boot clean', async (t) => {
   const first = await withServer(t);
   const paths = projectPaths(first.root);
-  const pin = (await ok(first.anonApi.post('/api/comments', { text: 'gone before commit', shared: true, anchor: null }), 'add')).pin;
-  assert.equal((await first.anonApi.del(`/api/comments/${pin.id}`)).status, 200);
+  const pin = (await ok(first.anonApi.post('/api/elements', commentBody({ text: 'gone before commit', shared: true, anchor: null })), 'add')).pin;
+  assert.equal((await first.anonApi.del(`/api/elements/${pin.id}`)).status, 200);
   await first.graceful();
   const errors = [];
   const origError = console.error;

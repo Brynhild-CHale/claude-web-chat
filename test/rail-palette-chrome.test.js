@@ -75,7 +75,7 @@ async function boot() {
       for (const k of decodeURIComponent(u.slice('/api/store?keys='.length)).split(',')) if (k in routes.store) out[k] = routes.store[k];
       return json(out);
     }
-    if (u === '/api/comments') return json({ comments: routes.comments });
+    if (u === '/api/elements?type=comment') return json({ elements: routes.comments });
     if (/^\/api\/comments\/[^/]+\/reply$/.test(u)) {
       const pin = { ...routes.comments[0], replies: [{ author: 'user', text: JSON.parse(opts.body).text }] };
       return json({ ok: true, pin });
@@ -138,7 +138,7 @@ beforeEach(async () => {
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' })); // every panel shut, rail unpinned
   frame({ type: 'queue', op: 'clear' });
   routes.comments = [];
-  frame({ type: 'comments', comments: [] });
+  frame({ type: 'element:comment', elements: [] });
   frame(JSON.parse(JSON.stringify(HELLO)));  // the two panes, `notes` minimized
   await tick();
   assert.equal($('main').querySelectorAll('.pane').length, 2, 'precondition: two panes mounted');
@@ -330,7 +330,7 @@ test('a comment thread heads with the anchor path and sends with Send', async ()
     id: 'c1', text: 'repeat 450 first?', shared: true, replies: [{ author: 'claude', text: 'added it' }],
     anchor: { mount: 'notes', selector: 'li', text: 'item 2', ordinal: 1 },
   }];
-  frame({ type: 'comments', comments: routes.comments });
+  frame({ type: 'element:comment', elements: routes.comments });
   await tick();
   const marker = $('pin-layer').querySelector('.pin-marker');
   assert.ok(marker, 'precondition: the pin has a marker');
@@ -348,7 +348,7 @@ test('a comment thread heads with the anchor path and sends with Send', async ()
   pop.querySelector('.pin-reply-text').value = 'ok, go';
   click(pop.querySelector('.pin-reply-send'));
   await tick();
-  const sent = calls.find((c) => c.url === '/api/comments/c1/reply');
+  const sent = calls.find((c) => c.url === '/api/elements/c1/reply');
   assert.ok(sent && sent.method === 'POST', 'Send posts the reply');
   // U214c: the chrome's device claim rides every comment write.
   assert.deepEqual(sent.body, { text: 'ok, go', author: 'user', device: 'desktop' });
@@ -361,7 +361,7 @@ test('an anchor with no text names its element instead', async () => {
     id: 'c2', text: 'x', shared: true, replies: [],
     anchor: { mount: 'fig', selector: 'p', text: '', ordinal: 0 },
   }];
-  frame({ type: 'comments', comments: routes.comments });
+  frame({ type: 'element:comment', elements: routes.comments });
   await tick();
   $('pin-layer').querySelector('.pin-marker').dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
   await tick();

@@ -6,7 +6,7 @@ const os = require('os');
 
 const { run, SCHEMA_VERSION } = require('../lib/update/migrations');
 const { projectPaths } = require('../lib/core/paths');
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 
 // A graph present at first touch is a v3 project (U246, ruling H2 (a)): a
 // .web-chat/ with no _version.json whose graph directory holds any non-dot entry
@@ -164,7 +164,7 @@ async function bootAndMint(t, seed) {
   process.stderr.write = function (chunk, ...rest) { stderr += chunk; return orig.call(this, chunk, ...rest); };
   let s;
   try { s = await withServer(t, { seed }); } finally { process.stderr.write = orig; }
-  const r = await s.api.post('/api/comments', { text: 'new' });
+  const r = await s.api.post('/api/elements', commentBody({ text: 'new' }));
   assert.equal(r.status, 200, JSON.stringify(r.json));
   return { s, id: r.json.pin.id, stderr };
 }

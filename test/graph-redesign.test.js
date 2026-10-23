@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { withServer } = require('../test-support/helpers');
+const { withServer, commentBody } = require('../test-support/helpers');
 
 async function render(api, id) {
   return api.post('/api/render', { id, html: `<div>${id}</div>` });
@@ -137,10 +137,10 @@ test('navigation: restoring a node without a queued pin dequeues the stranded it
   const n10 = g.nodes.find(n => n.label === 'n1.0');
 
   // A shared pin on the live surface (active n1.1) enqueues a comment item.
-  const pin = (await api.post('/api/comments', {
+  const pin = (await api.post('/api/elements', commentBody({
     text: 'look here', shared: true,
     anchor: { mount: 'p2', selector: 'div', text: 'p2', ordinal: 0 },
-  })).json.pin;
+  }))).json.pin;
   const item = (await api.get('/api/queue')).json.items.find(it => it.comment_id === pin.id);
   assert.ok(item, 'the shared pin enqueued a comment item');
 
