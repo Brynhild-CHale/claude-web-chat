@@ -239,7 +239,9 @@ test('ledger projection (GT-20): the hello\'s `elements` equals, row for row, th
   }
   want.sort((a, b) => (a.id < b.id ? -1 : 1));
   assert.deepStrictEqual(hello.elements, want);
-  assert.equal(hello.surface, 0);
+  // U311: the counter the daemon seeds from the clock (domain/reports).
+  assert.equal(hello.surface, d.srv.state.surface);
+  assert.ok(hello.surface > 0);
   noText(local.rawOf('hello')[0], 'the serialized hello');
 });
 
@@ -257,7 +259,9 @@ test('hello and the reset after a Wipe, a Set active and a Branch carry `element
   const n1 = await commit('second');
   const local = await socket(t, d.port);
   assert.deepStrictEqual(local.of('hello')[0].elements.map((r) => r.id).sort(), [a.id, b.id].sort());
-  assert.equal(local.of('hello')[0].surface, 0);
+  // U311: the counter is seeded from the clock and bumped by every reset.
+  const s0 = srv.state.surface;
+  assert.equal(local.of('hello')[0].surface, s0);
 
   // Set active n0: the reset is frame 1 of n0's surface.
   await ok(api.post('/api/graph/active', { id: n0 }), 'set active');
@@ -267,18 +271,17 @@ test('hello and the reset after a Wipe, a Set active and a Branch carry `element
   assert.deepStrictEqual(r1.elements, leanElements(srv.state, srv.elements), 'the live surface\'s rows, on that frame');
   const copy = srv.graph.nodes.get(n0).comments.find((c) => c.id === a.id);
   assert.deepStrictEqual(r1.elements[0].anchor, convertAnchor(copy.anchor), 'the node copy\'s anchor, converted');
-  assert.equal(r1.surface, 0);
+  assert.equal(r1.surface, s0 + 1);
 
   // A turn on n0 forks it; ⑃ Branch back onto n1's tip (a Set active there).
   await ok(api.post('/api/render', { id: 'm-b', html: '<p>fork</p>' }), 'render fork');
   await commit('fork');
-  srv.state.surface = 3; // U311 bumps it on a restore; these frames stamp what it holds
   await ok(api.post('/api/graph/active', { id: n1 }), 'branch');
   await waitUntil(() => local.of('reset').some((f) => f.elements.length === 2), { timeout: 10000, interval: 5, what: 'the branch reset' });
   const r2 = local.of('reset').at(-1);
   assert.deepStrictEqual(r2.elements.map((r) => r.id).sort(), [a.id, b.id].sort());
   assert.deepStrictEqual(r2.elements, leanElements(srv.state, srv.elements));
-  assert.equal(r2.surface, 3);
+  assert.equal(r2.surface, s0 + 2);
 
   const before = local.of('reset').length;
   await ok(api.post('/api/graph/wipe', {}), 'wipe');
@@ -286,7 +289,7 @@ test('hello and the reset after a Wipe, a Set active and a Branch carry `element
   const r3 = local.of('reset').at(-1);
   assert.ok(Array.isArray(r3.elements), 'the wipe\'s reset carries `elements`');
   assert.deepStrictEqual(r3.elements, leanElements(srv.state, srv.elements));
-  assert.equal(r3.surface, 3);
+  assert.equal(r3.surface, s0 + 3);
   for (const f of [...local.of('hello'), ...local.of('reset')]) noText(JSON.stringify(f), f.type);
 });
 
@@ -314,7 +317,7 @@ test('projection: a local socket gets every row; a remote one at full and at rea
     const hid = (ref) => ref.split('@')[0];
     await ok(d.api.post('/api/render', { id: 'm-z', html: '<p>later</p>' }), 'render later');
     await commit(d, 'later');
-    d.srv.state.surface = 2;
+    const s0 = d.srv.state.surface; // U311 bumps it on the reset below
     await ok(d.api.post('/api/graph/active', { id: home }), 'set active');
     await resets([local, remote, peer], 1);
     const all = [id.legacy, id.engine, id.priv, id.answered, hid(id.hl), hid(id.hlPriv), hid(id.odd)].sort();
@@ -327,7 +330,7 @@ test('projection: a local socket gets every row; a remote one at full and at rea
         assert.equal(peer.of(kind)[0].elements, undefined, `${name} ${kind}: a network peer, no element list`);
         assert.ok(!remote.rawOf(kind)[0].includes(LEAD), `${name} ${kind}: no anchor text`);
         assert.ok(!peer.rawOf(kind)[0].includes(LEAD), `${name} ${kind}: no anchor text`);
-        assert.equal(rf.surface, kind === 'hello' ? 0 : 2, 'the counter is not text: it stays');
+        assert.equal(rf.surface, kind === 'hello' ? s0 : s0 + 1, 'the counter is not text: it stays');
       } else {
         const got = rf.elements.map((r) => r.id);
         for (const gone of [id.priv, hid(id.hlPriv), hid(id.odd)]) assert.ok(!got.includes(gone), `${name} ${kind}: no ${gone}`);

@@ -549,7 +549,8 @@ test('gracefulShutdown() leaves no open handle: the turn guard, the sources, the
 // for the whole release (test/t1-e2e.test.js pins the same bytes).
 // Re-pinned by U304 (PLAN 2A.3): the GOLDEN hello gains `elements` and
 // `surface`, and the reset key-set test names them; nothing else changed.
-const BUS_GOLDEN_SHA256 = '656c0e4cf812a9575ce154d52b485dbc86d85b9801a020eef44c2259bf125751';
+// Re-pinned by U311 (PLAN 2B.1): render frames gain `gen`, the hello's `surface` is scrubbed.
+const BUS_GOLDEN_SHA256 = 'd4ff71c3769ab5133cfd370c9ef0c8041045c132ed29a70286abc1ff1e97b47b';
 
 test('test/bus-golden.test.js is byte-identical', () => {
   const src = fs.readFileSync(path.join(REPO, 'test', 'bus-golden.test.js'), 'utf8').replace(/\r\n/g, '\n');

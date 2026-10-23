@@ -53,6 +53,10 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //    subscriber phase: the `brand` frame precedes the `theme` frame, its event
 //    takes seq 4, and every later ring seq moves up one. The golden's set_theme
 //    carries no name, so the theme is the unnamed one.
+//  - 2026-10-23 U311 (the report path, B6 = b): every per-pane render frame
+//    carries the pane's `gen` (0 for a fresh id; a report echoes it), and the
+//    hello's `surface` is the daemon's wall-clock-seeded counter, scrubbed as
+//    '<v>' through VOLATILE_KEYS.
 const GOLDEN = {
   frames: [
     {
@@ -69,9 +73,9 @@ const GOLDEN = {
       theme: { tokens: {} },
       activeTheme: null,
       elements: [],
-      surface: 0,
+      surface: '<v>',
     },
-    { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude' },
+    { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude', gen: 0 },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
     {
       type: 'brand',
@@ -123,6 +127,7 @@ const GOLDEN = {
       params: { title: 'Capture · tables — Example', mode: 'reduced' },
       pane_state: { mode: 'reduced' },
       owner: 'service:tab-stream',
+      gen: 0,
     },
     {
       type: 'node-added',

@@ -13,7 +13,7 @@ const { waitUntil } = require('./helpers');
 // Values that are wall-clock / environment dependent and therefore differ every
 // run. Normalized to a sentinel (rather than deleted) so the snapshot still
 // asserts the field is PRESENT and only its volatile value is ignored.
-const VOLATILE_KEYS = new Set(['ts', 'started_at', 'created_at', 'saved_at', 'project', 'enqueued_at']);
+const VOLATILE_KEYS = new Set(['ts', 'started_at', 'created_at', 'saved_at', 'project', 'enqueued_at', 'surface']);
 
 function scrubGolden(x) {
   if (Array.isArray(x)) return x.map(scrubGolden);
