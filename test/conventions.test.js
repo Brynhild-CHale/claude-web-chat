@@ -633,6 +633,9 @@ const PATTERNS = [
     files: [
       'lib/packs/install.js',
       'lib/packs/plan.js',
+      // The unit-kind table: each row's plan() is planInstall's ladder for its
+      // kind, moved out of plan.js and held to plan.js's purity (U321).
+      'lib/packs/kinds.js',
     ],
     // Every way a second apply path could be spelled, not just the three the
     // first one happened to use: a copy written with `cpSync`, or with
@@ -1538,6 +1541,31 @@ const PATTERNS = [
       'public/app/turn-actions.js': 1,
       'public/app/version.js': 2,
       'public/app/wake-panel.js': 1,
+    },
+  },
+  {
+    // A pack unit-kind arm (annotation engine tranche 2, U321). A pack unit is
+    // a component, a theme or the skill, and what differs between the kinds —
+    // where its files land, whether its name builds a directory, how a plan
+    // ladders it, how a result line names it, which list a record keeps it in —
+    // is one row of lib/packs/kinds.js UNIT_KINDS. An `if (unit.kind ===
+    // 'theme')` anywhere else is a sixteenth place a new kind (the element kind)
+    // has to be remembered in. Read the row (`kindOf`) or ask for the units of a
+    // kind (`unitsOf` / `namesOf`) instead.
+    //
+    // Scoped to unit-like receivers (`unit.`, `u.`, `r.`), so an anchor record,
+    // an element-log line or a brand entry (`rec.kind`, `kind`, `e.kind`) and
+    // the composer's completions (`L.kind`, `trig.kind`), which are not pack
+    // units, are not counted.
+    name: 'a unit-kind arm (<unit>.kind === / !== a pack unit kind)',
+    home: 'lib/packs/kinds.js — `UNIT_KINDS`, `kindOf`, `unitsOf`, `namesOf`',
+    what: 'branching on a pack unit\'s kind',
+    roots: ['lib', 'public', 'bin', 'scripts'],
+    re: /\b(?:unit|u|r)\.kind\s*[!=]==\s*['"](?:component|theme|skill|element)['"]/g,
+    baseline: {
+      // The drawer's review card and installed list (the chrome cannot
+      // require lib/packs); R7 row 9 lets the display arms trail.
+      'public/app/drawer.js': 2,
     },
   },
 ];
