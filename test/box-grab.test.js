@@ -32,7 +32,7 @@ const queueDomain = require('../lib/server/domain/queue');
 const { CHROME_HINT } = require('../lib/replay/find');
 const { captureClip, launchChrome, liveBrowsers } = require('../lib/replay/chrome');
 const { kindsOf } = require('../lib/server/runtime/anchors-src');
-const { setSeams, boxGrabFor, RENDER_QUEUE_MAX, PRIVATE_HINT, BUSY_HINT } = require('../lib/server/box-grab');
+const { setSeams, boxGrabFor, RENDER_QUEUE_MAX, SCRIPT_ERRORS_MAX, PRIVATE_HINT, BUSY_HINT } = require('../lib/server/box-grab');
 const client = require('../lib/client');
 
 // No test here launches the machine's own Chrome: the finder is pinned to
@@ -151,6 +151,20 @@ test('a POSTed box grab: one box-grab@1 version {page anchor, shared, rect, meta
   leaks('GET /api/captures/:id/raw', raw.text);
   assert.ok(raw.json.raw.includes('class="lead"'), 'the raw is the clipped outerHTML');
   leaks('the queue', JSON.stringify(srv.state.queue));
+});
+
+test('the meta keeps the pane\'s LAST SCRIPT_ERRORS_MAX script errors from the ring, newest last', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: stubCapture() });
+  await render(api, 'm1');
+  for (let i = 0; i < SCRIPT_ERRORS_MAX + 2; i++) {
+    srv.bus.emit({ event: { kind: 'script-error', id: 'm1', script_index: 0, message: `e${i}`, source: 'browser' } });
+  }
+  const g = await postGrab(api, 'm1', {});
+  assert.deepEqual(g.meta.script_errors.map((e) => e.message),
+    Array.from({ length: SCRIPT_ERRORS_MAX }, (_, k) => `e${k + 2}`), 'the newest five, oldest first');
+  await settled(srv, g.grab.capture);
 });
 
 test('a box grab is always shared: a private POST and PATCH {shared: false} answer 400 with the hint; any other edit is refused; {shared: true} changes nothing', async (t) => {
