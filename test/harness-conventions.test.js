@@ -198,7 +198,13 @@ const PATTERNS = [
     what: 'deciding by itself that a real host program runs',
     roots: ROOTS,
     re: /process\.env(?:\.WEB_CHAT_E2E_|\[\s*['"`]WEB_CHAT_E2E_)/g,
-    baseline: {},
+    // The one exception (U328b, K.2-69): the sandbox pins WEB_CHAT_CHROME to
+    // a missing path for the whole process unless WEB_CHAT_E2E_CHROME=1, so
+    // a test that starts a box grab, a replay or an export never launches the
+    // machine's own Chrome. It narrows (it can only take a Chrome away), runs
+    // before helpers.js can be required, and the opted-in run still decides
+    // through e2eGate.
+    baseline: { 'test-support/sandbox.js': 1 },
   },
   {
     // A number the code already derives. `assert.equal(tools.length, 23)` stood

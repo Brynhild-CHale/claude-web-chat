@@ -25,6 +25,11 @@ const comments = require('../lib/server/routes/comments');
 const client = require('../lib/client');
 const { classify } = require('../lib/core/remote-policy');
 
+// A box grab POSTed here is drawn off the request by the export path's
+// headless Chrome (U328b): pin the finder to no browser, so these tests never
+// launch the machine's own Chrome (test/box-grab.test.js drives the render).
+process.env.WEB_CHAT_CHROME = '/nonexistent/web-chat-test/chrome';
+
 const schemaOf = (type) => Object.keys(SCHEMAS).find((s) => SCHEMAS[s].type === type);
 const HIGHLIGHT = schemaOf('highlight');
 const BOX_GRAB = schemaOf('box-grab');
@@ -135,7 +140,12 @@ test('POST a box grab: box-grab@1 under the g mint; GET serves both types, their
   const g = gr.element;
   assert.match(g.id, /^g\d+$/);
   assert.equal(g.schema, BOX_GRAB);
-  assert.deepEqual([g.rect, g.meta, g.grab], [RECT('m1'), { tag: 'p' }, null]);
+  // U328b: the meta's closed shape (a chrome key the grab does not record is
+  // dropped), completed on the daemon (theme, script_errors), and the capture
+  // that holds the picture, reserved before the one version.
+  assert.deepEqual([g.rect, g.grab], [RECT('m1'), { capture: g.grab.capture }]);
+  assert.match(g.grab.capture, /^cap\d+$/);
+  assert.deepEqual(g.meta, { item_path: null, element_path: null, html: '', theme: g.meta.theme, mode: null, viewport: { w: 1200, h: 800 }, script_errors: [] });
   assert.deepEqual(srv.state.elements, [`${h.id}@1`, `${g.id}@1`]);
   assert.deepEqual([c.id, h.id, g.id].map((x) => parsePin(`${x}@1`).id[0]), ['c', 'h', 'g']);
 
@@ -402,7 +412,8 @@ test('route census: every element route sits under a FLOOR_RULES row (read to se
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib/server/routes/elements.js'), 'utf8');
   const routes = [...src.matchAll(/\bapp\.(get|post|patch|delete)\(\s*'([^']+)'/g)].map((m) => [m[1].toUpperCase(), m[2]]);
   assert.deepEqual(routes.map((r) => r.join(' ')), [
-    'GET /api/elements', 'POST /api/elements', 'PATCH /api/elements/:id', 'POST /api/elements/:id/reply', 'DELETE /api/elements/:id',
+    'GET /api/elements', 'POST /api/elements', 'PATCH /api/elements/:id', 'POST /api/elements/:id/reply',
+    'GET /api/elements/:id/grab', 'DELETE /api/elements/:id',
   ]);
   for (const [method, p] of routes) {
     const url = p.replace(':id', 'h7');

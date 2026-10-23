@@ -1273,7 +1273,7 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
     },
     // A queue item's own text by kind (the annotation engine, finding 3): a
     // comment item quotes its pin.
-    items: { comment: ['summary'] },
+    items: { comment: ['summary'], element: ['summary'] },
   });
 });
 

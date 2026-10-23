@@ -226,6 +226,7 @@ function normRow(r) {
 function placeOf(row) {
   if (row.pending || !row.anchor) return null;
   const a = row.anchor;
+  if (a.kind === 'page') return null;
   if (a.kind === 'source') return { kind: 'md', key: a.md == null ? null : String(a.md) };
   return { kind: 'pane', key: a.mount == null || a.mount === '' ? null : String(a.mount) };
 }
