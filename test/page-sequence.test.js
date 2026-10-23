@@ -429,7 +429,7 @@ test('page: hello carries markdown + order; markdown frames carry the order; ren
   await md(api, { id: 'h', text: '# hi', after: 'start' });
   const hello = await ctx.wsHello();
   assert.deepEqual(hello.order, ['h', 'a']);
-  assert.deepEqual(hello.markdown, [{ id: 'h', text: '# hi', owner: 'claude' }]);
+  assert.deepEqual(hello.markdown, [{ id: 'h', text: '# hi', owner: 'claude', gen: 0 }]); // gen: U311
 
   const sock = ctx.ws();
   const frames = [];
@@ -450,7 +450,7 @@ test('page: hello carries markdown + order; markdown frames carry the order; ren
   assert.deepEqual(rc.claude_order, ['h', 'c', 'a', 'b'], "Claude's baseline order rides beside it (the chrome's ↺ reads it)");
   const mf = frames.find((f) => f.type === 'markdown');
   assert.deepEqual(mf, {
-    type: 'markdown', id: 'h2', text: 'x', owner: 'claude',
+    type: 'markdown', id: 'h2', text: 'x', owner: 'claude', gen: 0, // gen: U311
     order: ['h', 'c', 'a', 'h2', 'b'], claude_order: ['h', 'c', 'a', 'h2', 'b'],
   });
   assert.deepEqual(frames.find((f) => f.type === 'markdown:remove'), { type: 'markdown:remove', id: 'h' });
