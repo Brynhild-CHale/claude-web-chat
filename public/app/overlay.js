@@ -31,7 +31,10 @@
 // draw frame is asked for, so the overlay's box reads never share the
 // resolver's delivering frame (condition C-05-3). A draw frame reads boxes for
 // at most the budget (10 ms, the resolver's) and carries the rest to the next
-// frame; markers are rebuilt only when the drawn set's signature changes and
+// frame — its look-ahead is THIS frame's own cost per group (the costliest
+// after its first, which pays any layout flush), never a figure kept across
+// frames, so one slow read never throttles the frames after it; a frame reads
+// every box of its slice before it writes any marker style; markers are rebuilt only when the drawn set's signature changes and
 // otherwise moved (comments.js's F11 rule). Each frame is reported on bus
 // 'overlay:frame' and summed in stats().
 //
@@ -184,7 +187,6 @@ let pass = null;                  // a position pass carried across frames
 let drawPending = false;
 let drawAgain = false;
 let lastOrphanSig = '';
-let maxGroupMs = 0;               // the costliest group placement seen (the budget's look-ahead)
 const scrollRoots = new WeakSet();
 const elTokens = new WeakMap();
 let nextToken = 1;
@@ -738,18 +740,19 @@ function clipFrom(start, fr, read) {
 function hide(g) {
   if (g.container) g.container.style.display = 'none';
 }
-// Place one group: read its anchor's box, clip, write left/top and the
-// glyph's clip-path. Returns 'drawn' | 'clipped' | 'unplaced'.
-function placeGroup(g, fr, read) {
-  const c = g.container;
-  if (!c) return 'unplaced';
+// Measure one group — READS ONLY: its anchor's box and its clip, and the
+// glyph's inset against that clip. Returns {res: 'drawn' | 'clipped' |
+// 'unplaced', x, y, clip, inset}; nothing is written until the frame's whole
+// slice is measured (applyGroup), so reads and writes never interleave.
+function measureGroup(g, fr, read) {
+  if (!g.container) return { res: 'unplaced' };
   let startEl;
   if (g.range) {
     const sc = g.range.startContainer;
-    if (!sc || !sc.isConnected) { hide(g); return 'unplaced'; }
+    if (!sc || !sc.isConnected) return { res: 'unplaced' };
     startEl = sc.nodeType === 1 ? sc : sc.parentNode;
   } else {
-    if (!g.el || !g.el.isConnected) { hide(g); return 'unplaced'; }
+    if (!g.el || !g.el.isConnected) return { res: 'unplaced' };
     startEl = g.el.parentNode;
   }
   const rootNode = startEl && startEl.getRootNode ? startEl.getRootNode() : null;
@@ -758,11 +761,11 @@ function placeGroup(g, fr, read) {
     rootNode.addEventListener('scroll', requestDraw, { capture: true, passive: true });
   }
   const r = read(g.range || g.el);
-  if (!r || (r.width === 0 && r.height === 0 && r.left === 0 && r.top === 0)) { hide(g); return 'unplaced'; }
+  if (!r || (r.width === 0 && r.height === 0 && r.left === 0 && r.top === 0)) return { res: 'unplaced' };
   const x = r.left;
   const y = r.top;
   const clip = clipFrom(startEl, fr, read);
-  if (!(x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom)) { hide(g); return 'clipped'; }
+  if (!(x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom)) return { res: 'clipped' };
   const gl = g.glyph;
   const gx = x + gl.dx;
   const gy = y + gl.dy;
@@ -770,18 +773,26 @@ function placeGroup(g, fr, read) {
   const left = Math.max(0, clip.left - gx);
   const right = Math.max(0, gx + gl.w - clip.right);
   const bottom = Math.max(0, gy + gl.h - clip.bottom);
-  if (top + bottom >= gl.h || left + right >= gl.w) { hide(g); return 'clipped'; }
-  c.style.left = x + 'px';
-  c.style.top = y + 'px';
+  if (top + bottom >= gl.h || left + right >= gl.w) return { res: 'clipped' };
+  return { res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
+}
+// Write one measured group: left/top and the glyph's clip-path, or hidden;
+// then the type's move, if any. Runs only after the slice's reads.
+function applyGroup(g, m) {
+  const c = g.container;
+  if (!c) return;
+  if (m.res !== 'drawn') { hide(g); return; }
+  const [top, right, bottom, left] = m.inset;
+  c.style.left = m.x + 'px';
+  c.style.top = m.y + 'px';
   c.style.clipPath = top || right || bottom || left ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : '';
   c.style.display = '';
   const t = types.get(g.type);
   if (t && t.move) {
-    try { t.move(g, { ...drawCtx(g), x, y, clip }); } catch (err) {
+    try { t.move(g, { ...drawCtx(g), x: m.x, y: m.y, clip: m.clip }); } catch (err) {
       console.error(`[web-chat] overlay: the '${g.type}' move failed`, err);
     }
   }
-  return 'drawn';
 }
 
 function drawFrame() {
@@ -803,22 +814,36 @@ function drawFrame() {
   const fr = { reads: 0, clipCache: new Map(), startCache: new Map(), well: $('main') };
   const read = reader(fr);
   const budget = cfg.budget_ms;
-  let placed = 0;
+  // The read phase: measure groups while this frame's own look-ahead fits the
+  // budget. The look-ahead is the costliest group of THIS frame after its first
+  // (the first pays the clip reads and any layout flush; alone, it is its own
+  // estimate) — nothing carries across frames, so one slow read throttles only
+  // the frame it lands in.
+  const slice = [];
+  let firstMs = 0;
+  let restMax = 0;
   while (pass.i < groups.length) {
+    const n = slice.length;
+    if (n > 0 && now() - t0 + (n === 1 ? firstMs : restMax) > budget) break;
     const g = groups[pass.i];
-    if (placed > 0 && now() - t0 + maxGroupMs > budget) break;
     const s = now();
-    const res = g.failed ? 'unplaced' : placeGroup(g, fr, read);
+    const m = g.failed ? { res: 'unplaced' } : measureGroup(g, fr, read);
     const d = now() - s;
-    if (d > maxGroupMs) maxGroupMs = d;
-    if (res === 'drawn') {
+    if (n === 0) firstMs = d;
+    else if (d > restMax) restMax = d;
+    slice.push([g, m]);
+    pass.i++;
+  }
+  // The write phase: every marker style of the slice, after all its reads.
+  for (const [g, m] of slice) {
+    if (!g.failed) applyGroup(g, m);
+    if (m.res === 'drawn') {
       pass.drawn++;
       if (g.kind === 'guess') pass.guesses++;
       if (g.kind === 'section') pass.sections++;
-    } else if (res === 'clipped') pass.clipped++;
-    pass.i++;
-    placed++;
+    } else if (m.res === 'clipped') pass.clipped++;
   }
+  const placed = slice.length;
   const ms = now() - t0;
   const done = pass.i >= groups.length;
   totals.frames++;

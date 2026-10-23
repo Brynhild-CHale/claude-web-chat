@@ -28,7 +28,12 @@
 //   - an element of a type nobody registered draws the generic marker naming the
 //     type; a type's draw that throws leaves the layer and the other markers;
 //   - with 600 anchors no draw frame's box work exceeds the budget, the draw is
-//     spread over several frames, and stats() reports them.
+//     spread over several frames, and stats() reports them;
+//   - one slow read (over the budget) throttles only its own frame: the next
+//     redraw of the 600 anchors takes as many frames as an unperturbed one
+//     (fewer than 10), none over the budget — the look-ahead is the frame's
+//     own cost, never a lifetime max; and each frame reads every box of its
+//     slice before any type's move (the write phase) runs.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -67,8 +72,13 @@ const rectFns = new Map();
 let rangeRect = null;          // a test's geometry for a Range nobody registered
 const DEFAULT_BOX = { left: 300, top: 300, width: 40, height: 16 };
 function rect(r) { return { ...r, x: r.left, y: r.top, right: r.left + r.width, bottom: r.top + r.height }; }
+let slowNext = 0;               // a test's one slow read (ms), then back to READ_MS
+const readLog = [];             // when set by a test: 'read' per box read
+let logging = false;
 function rectOf(x) {
   clock += READ_MS;
+  if (slowNext) { clock += slowNext; slowNext = 0; }
+  if (logging) readLog.push('read');
   const f = rectFns.get(x);
   if (!f && rangeRect && x && typeof x.cloneContents === 'function') return rect(rangeRect(x));
   return rect(f ? f() : DEFAULT_BOX);
@@ -377,6 +387,54 @@ test('600 anchors: no draw frame\'s box work passes the budget, the rest carried
   for (const k of ['frames', 'longest_frame_ms', 'box_reads', 'box_ms', 'drawn', 'clipped', 'guesses', 'sections', 'orphans', 'anchors']) {
     assert.equal(typeof s[k], 'number', `stats().${k}`);
   }
+  ov.setElements('live', []);
+  flush();
+});
+
+test('one slow read throttles only its own frame: the next redraw of 600 anchors takes as few frames as before, none over the budget', async () => {
+  const root = rootOf('many-pane');
+  const cells = [...root.querySelectorAll('.cell')];
+  const offType = ov.registerType('mv', { draw() {}, move: () => { if (logging) readLog.push('write'); } });
+  const rows = cells.map((el, i) => ({ id: `s${i}`, v: 1, type: 'mv', anchor: anchors.record(root, el, { mount: 'many-pane' }), shared: true, replies: 0 }));
+  const bus = (await shell.importApp('bus.js')).bus;
+  const framesOf = (fn) => {
+    const frames = [];
+    const off = bus.on('overlay:frame', (d) => { frames.push(d); if (logging) readLog.push('frame'); });
+    try { fn(); flush(); } finally { off(); }
+    return frames;
+  };
+  try {
+    ov.setElements('live', rows);
+    await waitUntil(() => ov.stats().anchors >= MANY, { timeout: 10000, what: `${MANY} answers` });
+    flush();
+    assert.equal(ov.stats().drawn, MANY);
+    // The unperturbed redraw.
+    const base = framesOf(() => ov.requestDraw());
+    assert.ok(base.length < 10 && base[base.length - 1].done, `an unperturbed redraw takes ${base.length} frames`);
+    // A redraw with one read over the budget: its own frame runs long.
+    const slow = framesOf(() => { slowNext = ov.DEFAULT_BUDGET_MS * 1.5; ov.requestDraw(); });
+    assert.equal(slowNext, 0, 'the slow read happened');
+    assert.ok(slow.some((f) => f.ms > ov.DEFAULT_BUDGET_MS), 'the slow read\'s frame ran over');
+    // The next redraw is not throttled by it.
+    logging = true;
+    readLog.length = 0;
+    const after = framesOf(() => ov.requestDraw());
+    logging = false;
+    assert.ok(after.length < 10, `the redraw after a slow read takes ${after.length} frames`);
+    assert.ok(after.length <= base.length + 1, `about as many as unperturbed (${after.length} vs ${base.length})`);
+    for (const f of after) assert.ok(f.ms <= ov.DEFAULT_BUDGET_MS, `frame ${f.frame}: ${f.ms} ms`);
+    assert.ok(after[after.length - 1].done);
+    // Reads before writes, per frame: no read follows a write before the frame ends.
+    let wrote = false;
+    let interleaved = 0;
+    for (const e of readLog) {
+      if (e === 'frame') wrote = false;
+      else if (e === 'write') wrote = true;
+      else if (wrote) interleaved++;
+    }
+    assert.ok(readLog.includes('write'), 'the type\'s move ran');
+    assert.equal(interleaved, 0, 'every box of a frame\'s slice is read before any write');
+  } finally { logging = false; offType(); }
   ov.setElements('live', []);
   flush();
 });
