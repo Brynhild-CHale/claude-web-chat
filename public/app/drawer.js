@@ -42,6 +42,8 @@ import { showReaimNote, returnToActive } from './topbar.js';
 import { isPhone } from './viewport.js';
 import { isRemote, remoteNow } from './remote.js';
 import { refreshPending, pendingServices } from './service-pending.js';
+import { mountControlFrame } from './session-control.js';
+import { PORT_EVENT } from './asks.js';
 
 const LIBRARY = 'library';
 const MANAGE = 'manage';
@@ -55,6 +57,12 @@ let armedInstall = null;      // the URL a second "Install now" click would inst
 // than appended to the DOM, because refresh() rebuilds the Manage panel and would
 // wipe anything appended after it.
 let postInstall = null;
+// The element packs' Approve frames on the quarantine cards (lib/server/control/
+// pack-approve.js): unmounted before every rebuild of the Manage panel. And
+// whether a card fell back to the terminal command for want of the answer
+// origin's port, so the port's arrival (asks.js PORT_EVENT) redraws it.
+let approveFrames = [];
+let approveWantsPort = false;
 
 const isOpen = () => !$('drawer').classList.contains('hidden');
 
@@ -538,6 +546,8 @@ function isParamsComplete(params, schema) {
 
 function renderManage() {
   const body = $('drawer-manage');
+  for (const h of approveFrames.splice(0)) { try { h.unmount(); } catch { /* gone */ } }
+  approveWantsPort = false;
   body.replaceChildren();
 
   if (!packsWired) {
@@ -648,6 +658,7 @@ function installForm() {
     'Any service.js is a process on your machine — inert until you run claude-web-chat trust.',
     'Its SKILL.md becomes part of Claude’s instructions in this project.',
     'A theme it ships is colours, fonts and logos — no code, and raw CSS is refused.',
+    'An element type it ships (an annotation tool) draws in this page: such a pack installs only once you approve it on its card below, or with claude-web-chat pack approve.',
   ]) ul.appendChild(el('li', null, line));
   warn.appendChild(ul);
   warn.appendChild(el('div', 'pk-warn-foot', 'If you did not write it, download it for review first.'));
@@ -738,6 +749,7 @@ async function doInstall(btn) {
   status('Downloading and installing…');
   try {
     const body = await postJson('/api/packs/install', { url, global: wantsGlobal() });
+    if (!body.ok && ELEMENT_REVIEW.test(body.hint || '')) { await landForReview(url); return; }
     if (!body.ok) { status(body.hint || 'could not install that pack', 'err'); return; }
     $('pk-url').value = '';
     postInstall = body;
@@ -747,6 +759,25 @@ async function doInstall(btn) {
   } catch (e) {
     status(`could not reach the daemon: ${e.message}`, 'err');
   } finally { busy(false); }
+}
+
+// The daemon's refusal of a direct install of a pack that ships an element
+// type (lib/packs/install refuseDirectElements, DECISIONS.md B1). The install
+// route answers its message as the hint and carries no code, so this reads the
+// message's own words; test/pack-approve-control.test.js holds the two equal.
+const ELEMENT_REVIEW = /ships element types? \([^)]*\)\. An element type's draw\.js runs in the surface page's own realm, so a pack that ships one installs only after a review/;
+
+// "Install now" on a URL whose pack turns out to ship an element type lands as
+// that pack's quarantine card, where the person reads it and approves it with
+// the card's own control (K.4, reading (iii)): the same URL is downloaded for
+// review, and the panel redraws with the card in it. Nothing is installed.
+async function landForReview(url) {
+  status('This pack ships element types, so it installs only once you approve it — downloading it for review…', 'warn');
+  const body = await postJson('/api/packs/quarantine', { url, global: wantsGlobal() });
+  if (!body.ok) { status(body.hint || 'could not download that pack for review', 'err'); return; }
+  $('pk-url').value = '';
+  await refresh();
+  status(`${body.record.name} ships element types: read its card below and approve it there. Nothing is installed yet.`, 'warn');
 }
 
 function installedSummary(body) {
@@ -901,7 +932,15 @@ function quarantineCard(q) {
 
   const refused = (q.errors || []).length > 0;
   const actions = el('div', 'pk-actions');
-  if (!refused) {
+  const types = elementTypesOf(q);
+  if (!refused && types.length) {
+    // A pack that ships an element type is approved by a person, never by this
+    // page's realm: its Approve is a confirm frame on the answer origin
+    // (lib/server/control/pack-approve.js), whose click no pane can make. When
+    // the frame cannot be shown, the card names the terminal command.
+    const fallback = elementApprove(q, types, actions);
+    if (fallback) card.appendChild(fallback);
+  } else if (!refused) {
     const approve = el('button', 'btn primary', 'Install it');
     approve.type = 'button';
     approve.addEventListener('click', () => approvePack(q.name, approve));
@@ -968,6 +1007,43 @@ function themeReview(q, th) {
   const fonts = (th.fonts || []).map((f) => f.family).filter(Boolean);
   if (fonts.length) box.appendChild(el('div', 'pk-unit-list', `fonts: ${fonts.join(' · ')}`));
   return box;
+}
+
+// The element types a quarantined pack would install (its record's card).
+function elementTypesOf(q) {
+  return (Array.isArray(q.elements) ? q.elements : []).map((e) => e && e.name).filter(Boolean);
+}
+
+// The Approve control of an element pack's card: the 'pack-approve' confirm
+// frame mounted in the card's actions row, or — when it cannot be (no answer
+// port yet, or a viewer that may not act: mayAct()), or for a remote viewer
+// approving for all projects (the host's to do, K.1 C4) — a notice with the
+// terminal command, returned for the card to show.
+function elementApprove(q, types, actions) {
+  const cmd = `claude-web-chat pack approve ${q.name}`;
+  const what = `It ships element type${types.length === 1 ? '' : 's'} (${types.join(', ')}) whose drawing code runs in this page, so it installs only when a person approves it.`;
+  const tier = q.tier === 'system' ? 'system' : 'local';
+  if (tier === 'system' && remoteNow()) {
+    return notice('Approve it on the host', `${what} Installing for all projects is the host’s to do — run this in a terminal there.`, cmd);
+  }
+  const h = mountControlFrame(actions, {
+    action: 'pack-approve',
+    params: { name: q.name, tier },
+    layout: 'confirm',
+    onDone: (outcome) => { if (outcome === 'done') afterElementApprove(q.name); },
+  });
+  if (h) { approveFrames.push(h); return null; }
+  approveWantsPort = true;
+  return notice('Approve it in a terminal', `${what} The Approve control cannot be shown here right now; this does the same after you read the review (claude-web-chat pack review ${q.name}).`, cmd);
+}
+
+// The frame said 'done': the pack is installed. The packs:changed and
+// components frames the daemon sent redraw the panel too; this one makes the
+// line under the install form say so.
+async function afterElementApprove(name) {
+  invalidate();
+  await refresh();
+  status(`installed ${name}`, 'ok');
 }
 
 function componentsOf(q) {
@@ -1228,4 +1304,6 @@ export function initDrawer() {
   // including another browser or the CLI). One cache, one repaint.
   bus.on('components:changed', render);
   bus.on('packs:changed', render);
+  // The answer origin's port arrived after a card fell back to the command.
+  bus.on(PORT_EVENT, () => { if (approveWantsPort) render(); });
 }

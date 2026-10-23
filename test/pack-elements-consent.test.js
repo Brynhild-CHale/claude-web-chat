@@ -225,8 +225,8 @@ test('a draw.js changed after the review is refused by the staged tree\'s hash, 
   assert.deepStrictEqual(listPacks(root), []);
 });
 
-test('the review and approve routes carry the element types too', async (t) => {
-  await withServer(t, async ({ api, root }) => {
+test('the review route carries the element types too; the approve route refuses them (K.4) and the card\'s control installs them', async (t) => {
+  await withServer(t, async ({ srv, api, root }) => {
     const forge = await fakeForge(t, { repos: { 'acme/marks': repoWithArchive(elementPack(), { sha: SHA }) } });
     let r = await api.post('/api/packs/quarantine', { url: forge.url('acme', 'marks') });
     assert.equal(r.json.ok, true);
@@ -235,8 +235,15 @@ test('the review and approve routes carry the element types too', async (t) => {
     assert.deepStrictEqual(r.json.record.elements.map((e) => [e.name, e.draw]), [['sticky', 'draw.js']]);
     r = await api.get('/api/packs');
     assert.deepStrictEqual(r.json.quarantined[0].elements.map((e) => e.name), ['sticky']);
+    // U322a (K.4): any pane can reach this route, so an element pack is a
+    // person's to approve — through the card's confirm frame (the control row).
     r = await api.post('/api/packs/quarantine/mark-pack/approve', {});
-    assert.equal(r.json.ok, true, JSON.stringify(r.json));
+    assert.equal(r.status, 409);
+    assert.equal(r.json.code, 'element-approve', JSON.stringify(r.json));
+    assert.equal(fs.existsSync(path.join(projectPaths(root).elementTypesDir, 'sticky')), false, 'nothing installed by the route');
+    await srv.controlStarted;
+    const a = await srv.control.invoke('pack-approve', { name: 'mark-pack', tier: 'local' }, { remote: false });
+    assert.equal(a.ok, true, JSON.stringify(a));
     assert.ok(fs.existsSync(path.join(projectPaths(root).elementTypesDir, 'sticky', 'draw.js')));
     r = await api.get('/api/packs');
     assert.deepStrictEqual(r.json.packs.find((p) => p.name === 'mark-pack').elements, ['sticky']);
