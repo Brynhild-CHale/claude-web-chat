@@ -468,13 +468,23 @@ test('the pan: a second finger landing mid-stroke cancels the stroke (no element
     finger(lead(), 'pointermove', 32, 90, 30);
     assert.equal(scroller().scrollTop, 30);
     assert.equal(scroller().scrollLeft, 30, 'horizontal too, where the well scrolls');
+    // A third finger joins the pan: the pan's, never the tool's (no new band)
+    // nor the pane's; its landing and lifting move nothing.
+    const third = finger(lead(), 'pointerdown', 39, 300, 300);
+    assert.equal(third.defaultPrevented, true, 'a joining finger is the pan\'s');
+    assert.equal(band(), null, 'a joining finger draws no band');
+    finger(lead(), 'pointerup', 39, 300, 300);
+    assert.equal(scroller().scrollTop, 30);
+    assert.equal(scroller().scrollLeft, 30);
     // One finger lifts: the other still pans, from where it is (no jump).
     finger(lead(), 'pointerup', 31, 50, 30);
     finger(lead(), 'pointermove', 32, 90, 10);
     assert.equal(scroller().scrollTop, 50, 'the remaining finger pans on');
+    assert.equal(scroller().scrollLeft, 30, 'from where it is: the midpoint rebased at the lift, no sideways jump');
     finger(lead(), 'pointerup', 32, 90, 10);
     tapClick(lead(), 31);
     tapClick(lead(), 32);
+    tapClick(lead(), 39);
     await shell.tick();
     assert.equal(grabPosts().length, 0, 'no element, no POST');
     assert.deepEqual(W.__log, []);
