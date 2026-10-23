@@ -8,8 +8,10 @@
 //     element-types.js with input 'strokes';
 //   - a mouse or pen drag with box-grab armed draws the rubber band in
 //     #el-layer and POSTs {type, anchor {v, kind: 'page', item, mount, rect,
-//     viewport}, payload {shared: true, rect, meta}} through http.js, every
-//     metadata field present, html clipped at 8 KB;
+//     box, viewport}, payload {shared: true, rect, box, meta}} through
+//     http.js, every metadata field present, html clipped at 8 KB; the rect
+//     is measured from the item's content box (a pane's .mount-host, never
+//     its wrapper's header) and box is that content box's size (K.2-72);
 //   - block snap (the default) rounds the box to the smallest element holding
 //     it; free keeps the drawn box;
 //   - a finger drag scrolls (the page's) and creates nothing unless
@@ -24,6 +26,9 @@
 //     the hint and no picture;
 //   - the rail draws the grab's item through its card (picture, Open, Re-send,
 //     Remove, Show on page) and an item of an unregistered type as before;
+//     a PARKED grab (the daemon's own GET /api/queue/pending projection)
+//     draws through its card with Re-send enabled, which posts the resend
+//     (K.2-71);
 //   - nothing is drawn on the page for a sent grab, across a re-render.
 const test = require('node:test');
 const { before, after, beforeEach } = test;
@@ -48,6 +53,24 @@ const TYPES = {
 
 let shell, W, M, ov, IM, BG, Q, TS, state;
 let nextId = 7;
+// GET /api/queue/pending's body, as the daemon's own route projects a park
+// (parkedProjection): null until a test parks something.
+let pendingBody = { pending: null };
+
+// The daemon's GET /api/queue/pending answer for a park holding `items`, made
+// by the route itself (lib/server/routes/queue.js, mounted alone on a recording
+// app, judged as a local request) — never a hand-written copy of its shape, so
+// the rail draws exactly the fields the daemon projects (K.2-71).
+function parkedProjection(items) {
+  const { mountQueueRoutes } = require('../lib/server/routes/queue');
+  const handlers = {};
+  const app = new Proxy({}, { get: (_, m) => (p, ...h) => { handlers[`${String(m).toUpperCase()} ${p}`] = h.at(-1); } });
+  const state = { queue: [], pendingWake: { id: 'pw-1', created_at: 1, envelope: { meta: {} }, note: '', batch: items } };
+  mountQueueRoutes(app, { state, bus: null, graph: null });
+  let body = null;
+  handlers['GET /api/queue/pending']({ query: {}, headers: {}, socket: { remoteAddress: '127.0.0.1' } }, { json: (b) => { body = b; } });
+  return body;
+}
 
 const posts = () => shell.calls.filter((c) => c.method === 'POST' && c.url === '/api/elements');
 const callsOf = (method, url) => shell.calls.filter((c) => c.method === method && c.url === url);
@@ -95,6 +118,7 @@ before(async () => {
       '/api/elements': elementsRoute,
       '/api/elements/*': { ok: true, removed: 'x' },
       '/api/queue/items/*': { ok: true, item: { id: 'q-r' } },
+      '/api/queue/pending': () => pendingBody,
       '/api/queue/*': { ok: true, removed: 'x', count: 0 },
     },
   });
@@ -152,9 +176,13 @@ test('a mouse drag draws the rubber band and posts the grab, block-snapped, with
   assert.equal(body.type, 'box-grab');
   assert.equal(body.device, 'desktop', 'through http.js with the device claim');
   // Block: the smallest element holding the box is the <b> (180,165 40×20),
-  // measured from the pane's wrapper (100,100).
-  const rect = { x: 80, y: 65, w: 40, h: 20 };
-  assert.deepEqual(body.anchor, { v: 1, kind: 'page', item: 'bg1', mount: 'bg1', rect, viewport: body.anchor.viewport });
+  // measured from the pane's CONTENT BOX, its .mount-host (100,130 600×370) —
+  // not the wrapper (100,100), whose 30 px header the export has no copy of
+  // (K.2-72: y 35, not 65).
+  const rect = { x: 80, y: 35, w: 40, h: 20 };
+  const box = { w: 600, h: 370 };
+  assert.deepEqual(body.anchor, { v: 1, kind: 'page', item: 'bg1', mount: 'bg1', rect, box, viewport: body.anchor.viewport });
+  assert.deepEqual(body.payload.box, box, 'the payload carries the content box\'s size too');
   assert.deepEqual(Object.keys(body.anchor.viewport).sort(), ['dpr', 'h', 'w']);
   assert.equal(body.anchor.viewport.w, W.innerWidth);
   assert.equal(body.payload.shared, true);
@@ -179,7 +207,7 @@ test('a pen drag posts; html is clipped at 8 KB; free snap keeps the drawn box',
   await shell.tick();
   const [p] = posts();
   assert.ok(p, 'the pen draws');
-  assert.deepEqual(p.body.anchor.rect, { x: 360, y: 100, w: 100, h: 60 }, 'free: as drawn');
+  assert.deepEqual(p.body.anchor.rect, { x: 360, y: 70, w: 100, h: 60 }, 'free: as drawn, from the content box');
   const html = p.body.payload.meta.html;
   assert.ok(html.startsWith('<div class="big">'));
   assert.ok(Buffer.byteLength(html, 'utf8') <= 8192, 'at most 8 KB');
@@ -192,7 +220,7 @@ test('block snap rounds a box spanning two children to the smallest element hold
   drag(rootOf().querySelector('.card'), 'mouse', [125, 155], [300, 330]);
   await shell.tick();
   const [p] = posts();
-  assert.deepEqual(p.body.anchor.rect, { x: 20, y: 50, w: 300, h: 200 }, 'the card\'s box');
+  assert.deepEqual(p.body.anchor.rect, { x: 20, y: 20, w: 300, h: 200 }, 'the card\'s box, from the content box');
   assert.equal(p.body.payload.meta.element_path, 'div.card:nth-of-type(1)');
 });
 
@@ -350,6 +378,41 @@ test('the grab\'s card: Open, Re-send, Remove, Show on page', async () => {
   assert.equal(W.document.querySelector('#queue-rail .qi-card[data-type="box-grab"]'), null);
 });
 
+test('a parked grab (the daemon\'s pending projection) draws through its card with Re-send enabled, and Re-send posts the resend (K.2-71)', async () => {
+  const { elementItem } = require('../lib/channel/policy');
+  const item = { id: 'q-70', ...elementItem({ type: 'box-grab', id: 'g70', v: 1, mount: 'bg1',
+    image: { state: 'ready', capture: 'cap7', path: 'captures/cap7.png', width: 40, height: 20 } }, { label: 'Box grab' }) };
+  pendingBody = parkedProjection([item]);
+  try {
+    await Q.refreshPending();
+    await shell.tick();
+    const row = W.document.querySelector('#queue-rail .rail-item.parked[data-id="q-70"]');
+    assert.ok(row, 'the parked row is drawn');
+    const card = row.querySelector('.qi-card[data-type="box-grab"]');
+    assert.ok(card, 'through the grab\'s card, not the generic row');
+    assert.equal(card.querySelector('img').getAttribute('src'), '/api/elements/g70/grab', 'its picture');
+    const resend = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Re-send');
+    assert.equal(resend.disabled, false, 'Re-send is enabled on a parked row');
+    resend.click();
+    await shell.tick();
+    assert.equal(callsOf('POST', '/api/queue/items/q-70/resend').length, 1, 'the click posts the resend');
+  } finally {
+    pendingBody = { pending: null };
+    await Q.refreshPending();
+    await shell.tick();
+  }
+});
+
+test('a box over a pane\'s header alone is chrome: refused with the hint, nothing posted', async () => {
+  TS.applyToolbarFrame({ user: { settings: { 'box-grab': { snap: 'free' } } }, project: { settings: {} } });
+  ov.setArmed('box-grab');
+  drag(wrapper().querySelector('.pane-header'), 'mouse', [150, 104], [300, 126]);
+  await shell.tick();
+  assert.equal(posts().length, 0, 'the header is not the pane\'s content');
+  const noteEl = W.document.getElementById('reaim-note');
+  assert.ok(noteEl && noteEl.textContent.includes(BG.CHROME_HINT), 'the hint is shown');
+});
+
 test('an item of an unregistered type is drawn as before', async () => {
   const other = { id: 'q-60', kind: 'element', type: 'sticker', element_id: 's1', v: 1, source: 'browser',
     why_wake: 'Sticker sent to Claude', summary: 'Sticker · s1@1', staged: true };
@@ -405,6 +468,8 @@ test('a box over a markdown item grabs that item: its id, no mount, a path insid
     assert.equal(p.body.anchor.item, 'md-bg');
     assert.equal(p.body.anchor.mount, null, 'markdown has no mount');
     assert.deepEqual(p.body.anchor.rect, { x: 0, y: 40, w: 600, h: 24 }, 'block: the paragraph, from the block\'s box');
+    assert.deepEqual(p.body.anchor.box, { w: 600, h: 80 }, 'a markdown item\'s content box is its block');
+    assert.deepEqual(p.body.payload.box, { w: 600, h: 80 });
     assert.match(p.body.payload.meta.item_path, /div\[data-md-id="md-bg"\]$/);
     assert.equal(p.body.payload.meta.element_path, 'p');
     assert.equal(p.body.payload.meta.html, '<p>A short line.</p>');

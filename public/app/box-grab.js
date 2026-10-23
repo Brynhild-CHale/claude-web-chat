@@ -16,11 +16,17 @@
 // overlaps most (a pane's `.pane[data-pane-id]` wrapper or a markdown block's
 // `[data-md-id]`, the attributes the export shell carries too, so the daemon's
 // render finds the same item); a box over no item — the chrome around the
-// page — is refused with CHROME_HINT. The box is clipped to that item, then
-// snapped as the armed settings say (toolbar-state.js settingsOf('box-grab'),
-// the manifest's default 'block' beneath, F2 (a)): 'block' takes the box of the
-// smallest element containing it (the pane's content host, or the markdown
-// block, when no element inside does); 'free' keeps it as drawn. The element
+// page — is refused with CHROME_HINT. ONE FRAME OF REFERENCE (K.2-72): the rect
+// is measured from the item's CONTENT BOX — a pane's `.mount-host` (never the
+// wrapper, whose header the export has no copy of), a markdown item's block —
+// and the anchor and payload carry that box's size, `box: {w, h}` beside
+// `rect`; the daemon clips from the export's content box of the same item,
+// laid out at that width, so nothing reflows under the clip. A box over the
+// pane's header alone is chrome too (CHROME_HINT). The box is clipped to the
+// content box, then snapped as the armed settings say (toolbar-state.js
+// settingsOf('box-grab'), the manifest's default 'block' beneath, F2 (a)):
+// 'block' takes the box of the smallest element containing it (the content
+// box itself when no element inside does); 'free' keeps it as drawn. The element
 // recorded is the deepest one containing the grabbed box, inside the pane's
 // shadow root (or the markdown block): its selector path and its outerHTML,
 // clipped to HTML_MAX_BYTES. The chrome sends these raw values once, to the
@@ -219,7 +225,8 @@ function viewportNow() {
 
 // measureGrab(box, {snap}) → {ok: true, body} | {ok: false, hint}. `box` is in
 // viewport px {left, top, right, bottom}. The body is the POST /api/elements
-// body (http.js adds the device claim).
+// body (http.js adds the device claim): rect relative to the item's content
+// box, box that content box's {w, h}.
 export function measureGrab(drawn, { snap = DEFAULT_SNAP } = {}) {
   const box = {
     left: Math.min(drawn.left, drawn.right), top: Math.min(drawn.top, drawn.bottom),
@@ -230,21 +237,25 @@ export function measureGrab(drawn, { snap = DEFAULT_SNAP } = {}) {
   const probe = small ? { left: box.left, top: box.top, right: box.left, bottom: box.top } : box;
   const item = itemUnder(probe);
   if (!item) return { ok: false, hint: CHROME_HINT };
-  const clipped = small ? probe : meet(box, item.box);
   const { root, base } = contentOf(item);
+  const own = boxOf(base);
+  const frame = sized(own) ? own : item.box;
+  if (small ? !holds(frame, probe) : !sized(meet(box, frame))) return { ok: false, hint: CHROME_HINT };
+  const clipped = small ? probe : meet(box, frame);
   const deepest = deepestHolding(root, clipped);
   let grabbed = clipped;
   if (snap === 'block') {
-    const b = deepest ? deepest.box : boxOf(base);
-    grabbed = sized(b) ? meet(b, item.box) : item.box;
+    const b = deepest ? deepest.box : frame;
+    grabbed = sized(b) ? meet(b, frame) : frame;
   }
   if (!sized(grabbed)) return { ok: false, hint: SMALL_HINT };
   const el = deepest ? deepest.el : null;
   const vp = viewportNow();
   const rel = {
-    x: num(grabbed.left - item.box.left), y: num(grabbed.top - item.box.top),
+    x: num(grabbed.left - frame.left), y: num(grabbed.top - frame.top),
     w: num(grabbed.right - grabbed.left), h: num(grabbed.bottom - grabbed.top),
   };
+  const size = { w: num(frame.right - frame.left), h: num(frame.bottom - frame.top) };
   const client = { x: num(grabbed.left), y: num(grabbed.top), w: rel.w, h: rel.h };
   const mount = item.kind === 'pane' ? item.id : null;
   const theme = getGlobalTheme();
@@ -260,8 +271,8 @@ export function measureGrab(drawn, { snap = DEFAULT_SNAP } = {}) {
     ok: true,
     body: {
       type: TYPE,
-      anchor: { v: 1, kind: 'page', item: item.id, mount, rect: { ...rel }, viewport: vp },
-      payload: { shared: true, rect: { ...rel, item: item.id, viewport: vp, client }, meta },
+      anchor: { v: 1, kind: 'page', item: item.id, mount, rect: { ...rel }, box: { ...size }, viewport: vp },
+      payload: { shared: true, rect: { ...rel, item: item.id, viewport: vp, client }, box: { ...size }, meta },
     },
     item: item.id,
   };
