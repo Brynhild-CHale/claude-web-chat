@@ -55,6 +55,9 @@ import { initOrphans } from './orphans.js';   // 2A.6: the orphans' stand-in lis
 // The highlight type (annotation engine 2C.4, U328a): range and source anchors
 // from a selection, painted by Custom Highlight or overlay rectangles.
 import { initHighlights } from './highlight.js';
+// The box grab, chrome side (annotation engine 2C.4, U328c): its gesture, the
+// look at its picture, and its card in the queue rail.
+import { initBoxGrab } from './box-grab.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -83,6 +86,7 @@ initOrphans();    // after initShell and initGraph, whose registries it plugs in
 // The highlight type (U328a): its draw behind the reads gate, its selection
 // tool (armed by the toolbar, reading its settings above) and its rail card.
 initHighlights();
+initBoxGrab();     // the box grab (U328c): its element type, its look and its rail card
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every

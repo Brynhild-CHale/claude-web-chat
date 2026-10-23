@@ -3318,3 +3318,35 @@ html.finger-strokes #main { touch-action: pinch-zoom; }
 .hl-card { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .hl-card .hl-card-note { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hl-card .hl-card-show { flex: none; font-size: 11px; }
+
+/* ── U328c · the box grab, chrome side (public/app/box-grab.js; annotation
+   engine 2C.4, F-GRAB (a), F6 (a), K.2-11) ──
+   STAND-IN looks the design studio may replace, tokens only: the rubber band
+   drawn in #el-layer while the box is dragged (viewport px), the look at the
+   picture (a body-level .popover, centred), and the grab's card in the queue
+   rail. The picture is the daemon's one PNG in an <img>, scaled down by CSS
+   only (max-width / max-height, never up), never re-encoded. */
+#el-layer .bg-band {
+  position: absolute; box-sizing: border-box; pointer-events: none;
+  border: 1.5px dashed var(--wc-accent); border-radius: var(--wc-radius-sm);
+  background: color-mix(in srgb, var(--wc-accent) 10%, transparent);
+}
+.popover.bg-look {
+  position: fixed; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%);
+  max-width: min(90vw, 960px); max-height: 90vh; display: flex; flex-direction: column; gap: 10px;
+}
+.bg-look-frame { overflow: auto; min-height: 0; }
+.bg-look-img { display: block; max-width: 100%; max-height: 70vh; width: auto; height: auto; }
+img.bg-look-img, img.bg-card-img { border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm); background: var(--wc-content-bg); }
+.bg-nopic { margin: 0; font: 12px var(--wc-font); color: var(--wc-muted); }
+.bg-look-acts, .bg-card-acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.bg-look-acts button, .bg-card-acts button {
+  padding: 3px 8px; font: 11px var(--wc-font); color: var(--wc-fg);
+  background: var(--wc-panel-bg); border: 1px solid var(--wc-border); border-radius: var(--wc-radius-sm);
+}
+.bg-look-acts button:hover:not(:disabled), .bg-card-acts button:hover:not(:disabled) { border-color: var(--wc-accent); }
+.bg-look-acts button:disabled, .bg-card-acts button:disabled { opacity: .5; }
+.bg-look-acts .bg-discard { color: var(--wc-rust); }
+.qi-card.bg-card { display: flex; flex-direction: column; gap: 4px; }
+.bg-card-img { display: block; max-width: 100%; max-height: 120px; width: auto; height: auto; }
+.phone .bg-look-acts button, .phone .bg-card-acts button { min-height: 44px; padding: 0 12px; }
