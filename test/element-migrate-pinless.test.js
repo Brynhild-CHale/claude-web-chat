@@ -199,3 +199,41 @@ test('the first boot of a v3 project with pinless nodes reads clean', async (t) 
   assert.equal(health.graph_integrity.clean, true, JSON.stringify(health.graph_integrity));
   assert.equal(ctx.srv.bus.read({ since: 0, kinds: ['integrity'] }).events.length, 0, 'no integrity event');
 });
+
+test('crash after every pinless record: the rerun appends only the migration record, then answers already', (t) => {
+  const g = pinlessProject(t, 4);
+  // The first run, cut short after its last commit record and before the
+  // migration record: no action is left but the migration record itself.
+  const real = createElementLog({ file: g.paths.elementsLog, redactor: createRedactor(), bootId: 'crash', now: CLOCK });
+  real.load();
+  for (const id of nodeIds(g.paths)) real.appendCommit({ node: { id }, pins: [] });
+  real.close();
+
+  const r = migrateComments(g.stateDir, { now: CLOCK, bootId: 'b2' });
+  assert.equal(r.migrated, true, 'not `empty`: the migration record is still owed');
+  assert.equal(r.report.counters.commits_new, 0);
+  assert.equal(r.report.counters.commits_present, 4);
+  assert.equal(r.report.pinless_nodes, 0);
+  assert.equal(records(g.paths).filter((x) => x.t === 'commit').length, 4, 'none written twice');
+  assert.equal(records(g.paths).filter((x) => x.t === 'migration').length, 1);
+  const before = size(g.paths.elementsLog);
+  assert.equal(migrateComments(g.stateDir, { now: CLOCK, bootId: 'b3' }).already, true);
+  assert.equal(size(g.paths.elementsLog), before);
+});
+
+test('a pinless node whose logged record names pins gets an empty record: only the same pins count as present', (t) => {
+  const g = pinlessProject(t, 2);
+  const real = createElementLog({ file: g.paths.elementsLog, redactor: createRedactor(), bootId: 'seed', now: CLOCK });
+  real.load();
+  real.appendCommit({ node: { id: 'n1' }, pins: ['c9@1'] });
+  real.appendCommit({ node: { id: 'n2' }, pins: [] });
+  real.close();
+  const dry = createElementLog({ file: g.paths.elementsLog, redactor: createRedactor(), dryRun: true });
+  t.after(() => dry.close());
+  dry.load();
+  const project = readProject(g.stateDir);
+  const p = planMigration({ nodes: project.nodes, meta: project.meta, draft: project.draft, log: dry, asides: project.asides });
+  assert.deepEqual(p.actions.filter((a) => a.op === 'commit').map((a) => [a.node.id, a.pins]), [['n1', []]]);
+  assert.equal(p.counters.commits_new, 1);
+  assert.equal(p.counters.commits_present, 1, 'n2\'s empty record');
+});
