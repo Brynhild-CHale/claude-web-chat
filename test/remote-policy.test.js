@@ -39,9 +39,10 @@
 //      lib/server/.
 //
 //   5. TRANCHE 2 (protocol 12, PLAN.md 2D.2, ruling PROTO@bump a): the
-//      toolbar's rows, the transient marks' row and the queue's re-send row
-//      (T2_ROWS), each as written; RULES less those rows is protocol 11's
-//      table byte for byte; a portal on protocol 11 refuses every new route by
+//      toolbar's rows, the transient marks' row, the queue's re-send row and
+//      the one refusal protocol 11's three comment rows fold into (U332a;
+//      DECISIONS.md K.4, H2 b) (T2_ROWS), each as written; RULES less those
+//      rows, the refusal unfolded, is protocol 11's table byte for byte; a portal on protocol 11 refuses every new route by
 //      its default deny, save the re-send, which its `/api/queue/*` row lets
 //      through (the daemon's route refuses it itself). On the answer host, the
 //      report frame's document and module (T2_ANSWER_ROWS, U312): ANSWER_RULES
@@ -501,6 +502,8 @@ const SPEC_UNKNOWN_HINT = 'this route is not available remotely — use it on th
 // the comment routes at the conversation's levels (in place of protocol 8's
 // and 10's single `* /api/comments/*` allow), the element floor
 // (lib/core/element-policy floorRules, worded here), and the writer leases.
+// Protocol 12 folds the three comment rows into one refusal (COMMENTS_FOLD_ROW,
+// in T2_ROWS; before12 unfolds it), so these are before12(RULES)'s rows.
 const T1_ROWS = [
   { methods: '*', path: '/api/writers/*', allow: false, hint: SPEC_HOST_ONLY },
   { methods: ['GET'], path: '/api/comments', allow: true, mirror: 'read', hint: SPEC_MIRROR_HINT },
@@ -517,7 +520,9 @@ const COMMENTS_BEFORE_11 = { methods: '*', path: '/api/comments/*', allow: true 
 const T1_ANSWER_ROW = { methods: ['POST'], path: '/answer/api/elements/report', allow: true, mirror: 'full', hint: ANSWER_HINT };
 
 // Every route protocol 11 decides with a new row, with a sample request and
-// the least opt-in that lets it through (as ROUTES_085).
+// the least opt-in that lets it through (as ROUTES_085). The comment samples'
+// levels are protocol 11's: protocol 12 refuses every one of them (the
+// comment classify test).
 const ROUTES_T1 = [
   ['GET', '/api/comments', 'read'], ['GET', '/api/comments?since=3&mount=m1&shared_only=1', 'read'],
   ['POST', '/api/comments', 'full'], ['PATCH', '/api/comments/c1', 'full'], ['POST', '/api/comments/c1/reply', 'full'],
@@ -540,34 +545,55 @@ function before11(rules) {
   return out;
 }
 
-test('protocol 11: every row the annotation engine adds or changes is in RULES, exactly as written, the comment rows where their one row was', () => {
-  const byKey = new Map(RULES.map((r) => [keyOf(r), r]));
+test('protocol 11: every row the annotation engine adds or changes is in its table, exactly as written, the comment rows where their one row was', () => {
+  // Protocol 11's table is before12(RULES): protocol 12 folded the three
+  // comment rows into one refusal, which before12 unfolds in place.
+  const p11 = before12(RULES);
+  const byKey = new Map(p11.map((r) => [keyOf(r), r]));
   for (const want of T1_ROWS) assert.deepStrictEqual(byKey.get(keyOf(want)), want, keyOf(want));
   // Contiguous, first match wins: the comment rows above the element rows,
   // each narrower row above the refusal that follows it.
-  const at = (k) => RULES.findIndex((r) => keyOf(r) === k);
-  const block = T1_ROWS.slice(1).map((r) => at(keyOf(r)));
+  const at11 = (k) => p11.findIndex((r) => keyOf(r) === k);
+  const block = T1_ROWS.slice(1).map((r) => at11(keyOf(r)));
   assert.deepStrictEqual(block, block.map((_, i) => block[0] + i), 'the comment and element rows sit together, in this order');
+  // In RULES (protocol 12) the one refusal holds the comment rows' place:
+  // directly above the element rows, and the only row under /api/comments.
+  const at = (k) => RULES.findIndex((r) => keyOf(r) === k);
+  const elements = T1_ROWS.slice(4).map((r) => at(keyOf(r)));
+  assert.deepStrictEqual(elements, elements.map((_, i) => at(keyOf(COMMENTS_FOLD_ROW)) + 1 + i), 'the comment refusal sits directly above the element rows, in this order');
   assert.ok(at('* /api/writers/*') < at('GET|POST /api/store'), 'the writer leases sit with the turn and hook internals');
   assert.ok(!RULES.some((r) => r.path === '/api/comments/*' && r.allow && !r.mirror), 'no comment row at every level');
 });
 
-test('classify: the comment routes — GET at read, writes at full, anything else refused; below the level, reason mirror', () => {
+test('classify: the comment routes — protocol 12 refuses every one at every level with the element-API hint; protocol 11 had GET at read, writes at full, the rest refused', () => {
+  // Protocol 12 (U332a; DECISIONS.md K.4, H2 b): one refusal, whatever the
+  // method, the path under /api/comments and the level.
+  for (const u of ['/api/comments', '/api/comments?since=4', '/api/comments/c1', '/api/comments/c1/reply']) {
+    for (const m of ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'PUT', 'OPTIONS']) {
+      for (const optIn of [undefined, 'bogus', ...OPT_INS]) {
+        const v = classify(m, u, { mirror: optIn });
+        assert.deepStrictEqual([v.allow, v.reason, v.key, v.hint], [false, 'refused', '* /api/comments/*', SPEC_COMMENTS_FOLD_HINT], `${m} ${u} at ${optIn}`);
+        assert.deepStrictEqual(refusalBody(v), { ok: false, remote: true, hint: SPEC_COMMENTS_FOLD_HINT }, `${m} ${u} at ${optIn}`);
+      }
+    }
+  }
+  // Protocol 11's decisions, as its portal (before12(RULES)) still makes them.
+  const p11 = classifier(before12(RULES));
   for (const optIn of [undefined, 'off', 'bogus']) {
-    const v = classify('GET', '/api/comments', { mirror: optIn });
+    const v = p11('GET', '/api/comments', { mirror: optIn });
     assert.deepStrictEqual([v.allow, v.reason, v.hint, v.level, v.need], [false, 'mirror', SPEC_MIRROR_HINT, 'basic', 'read'], String(optIn));
     assert.deepStrictEqual(refusalBody(v), { ok: false, remote: true, hint: SPEC_MIRROR_HINT, mirror: 'basic' });
   }
-  for (const optIn of ['read', 'full']) assert.equal(classify('GET', '/api/comments?since=4', { mirror: optIn }).allow, true, optIn);
+  for (const optIn of ['read', 'full']) assert.equal(p11('GET', '/api/comments?since=4', { mirror: optIn }).allow, true, optIn);
   for (const [m, u] of [['POST', '/api/comments'], ['PATCH', '/api/comments/c1'], ['POST', '/api/comments/c1/reply'], ['DELETE', '/api/comments/c1']]) {
-    assert.equal(classify(m, u, { mirror: 'full' }).allow, true, `${m} ${u} at full`);
+    assert.equal(p11(m, u, { mirror: 'full' }).allow, true, `${m} ${u} at full`);
     for (const optIn of [undefined, 'off', 'read']) {
-      const v = classify(m, u, { mirror: optIn });
+      const v = p11(m, u, { mirror: optIn });
       assert.deepStrictEqual([v.allow, v.reason, v.hint, v.need], [false, 'mirror', SPEC_MIRROR_FULL_HINT, 'full'], `${m} ${u} at ${optIn}`);
     }
   }
   for (const [m, u] of [['PUT', '/api/comments/c1'], ['GET', '/api/comments/c1'], ['OPTIONS', '/api/comments'], ['HEAD', '/api/comments/c1']]) {
-    const v = classify(m, u, { mirror: 'full' });
+    const v = p11(m, u, { mirror: 'full' });
     assert.deepStrictEqual([v.allow, v.reason, v.key, v.hint], [false, 'refused', '* /api/comments/*', SPEC_UNKNOWN_HINT], `${m} ${u}`);
   }
 });
@@ -672,10 +698,12 @@ test('rollback: portals on protocol 10 and 8 refuse every new route by the defau
     }
     assert.ok(checked >= least, `${release}: only ${checked} new routes checked`);
     // The exceptions, deliberate: the old `* /api/comments/*` (and, on 8,
-    // `/api/queue/*`) lets these through, and the daemon's own level check
-    // (requireMirror in routes/comments.js and routes/queue.js) refuses them
-    // below their level — a rolled-back portal over a protocol-11 daemon still
-    // shows no pin to, and takes none from, a viewer without the opt-in.
+    // `/api/queue/*`) lets these through. The daemon answers every comment
+    // route with its 410 refusal (routes/comments.js, U327a: the comment's
+    // routes are the element API's), and its own level check (requireMirror
+    // in routes/queue.js) refuses the queue writes below their level — a
+    // rolled-back portal over this daemon shows no pin to, and takes none
+    // from, a viewer without the opt-in.
     assert.deepStrictEqual([...letThrough].sort(), [...through].sort(), `${release}'s portal`);
   }
 });
@@ -686,12 +714,19 @@ const SPEC_TOOLBAR_USER_HINT = 'hotkeys and settings for every project are set o
 
 // Every row protocol 12 adds, as U332's brief writes them (and U313's for the
 // marks and U328b's for the queue's re-send, DECISIONS.md K.2-17, declared
-// here so neither needs a second bump). Protocol 12 changes no row an older
-// portal has.
+// here so neither needs a second bump). Protocol 12 changes one row an older
+// portal has, the comment refusal (COMMENTS_FOLD_ROW, below).
 const RESEND_ROW = { methods: '*', path: '/api/queue/items/:id/resend', allow: false, hint: SPEC_HOST_ONLY };
+// The one row protocol 12 CHANGES (U332a; DECISIONS.md K.4, I2-confirm c under
+// H2 b): protocol 11's three /api/comments rows (T1_ROWS) fold into one
+// refusal for the dead route, its hint naming the element API. `*` covers the
+// bare /api/comments too. before12 unfolds it back in place.
+const SPEC_COMMENTS_FOLD_HINT = 'comments moved to the element API (/api/elements) — this page predates the upgrade: reload it';
+const COMMENTS_FOLD_ROW = { methods: '*', path: '/api/comments/*', allow: false, hint: SPEC_COMMENTS_FOLD_HINT };
 const T2_ROWS = [
   { methods: '*', path: '/api/marks', allow: false, hint: SPEC_HOST_ONLY },
   RESEND_ROW,
+  COMMENTS_FOLD_ROW,
   { methods: ['GET'], path: '/api/toolbar', allow: true },
   { methods: ['GET'], path: '/api/toolbar/icon/:type', allow: true },
   { methods: ['PATCH'], path: '/api/toolbar', allow: true, mirror: 'full', hint: SPEC_MIRROR_FULL_HINT },
@@ -730,10 +765,16 @@ const ROUTES_T2_ANSWER = [
 ];
 
 // RULES (or ANSWER_RULES) as a portal on protocol 11 enforces it: less the
-// rows above.
+// rows above, with the comment refusal unfolded back into protocol 11's three
+// comment rows, in place (as before11 folds those into protocol 10's one).
 function before12(rules) {
   const t2 = new Set([...T2_ROWS, ...T2_ANSWER_ROWS].map(keyOf));
-  return rules.filter((r) => !t2.has(keyOf(r)));
+  const out = [];
+  for (const r of rules) {
+    if (JSON.stringify(r) === JSON.stringify(COMMENTS_FOLD_ROW)) out.push(...T1_ROWS.slice(1, 4).map((row) => ({ ...row })));
+    else if (!t2.has(keyOf(r))) out.push(r);
+  }
+  return out;
 }
 
 test('protocol 12: PORTAL_PROTOCOL_VERSION is 12, and every row tranche 2 adds is in RULES exactly as written, where it belongs', () => {
@@ -806,6 +847,12 @@ test('rollback: a portal on protocol 11 refuses every route tranche 2 adds by it
     const v = classify(m, sample(r.path), { mirror: 'full' });
     if (!v.key || !t2.has(v.key)) continue;
     decided.push(`${r.method} ${r.path}`);
+    if (v.key === keyOf(COMMENTS_FOLD_ROW)) {
+      // The changed row, not a new one: protocol 11's comment rows decide it
+      // (U327a's 410 answers behind them, whatever they let through).
+      assert.ok(p11(m, sample(r.path), { mirror: 'full' }).key.includes('/api/comments'), `protocol 11, ${m} ${r.path}`);
+      continue;
+    }
     if (v.key === keyOf(RESEND_ROW)) {
       assert.equal(p11(m, sample(r.path), { mirror: 'full' }).key, '* /api/queue/*', `protocol 11, ${m} ${r.path}`);
       continue;
