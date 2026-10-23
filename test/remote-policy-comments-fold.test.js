@@ -14,7 +14,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -31,27 +30,20 @@ const P11_COMMENT_ROWS = [
   { methods: ['POST', 'PATCH', 'DELETE'], path: '/api/comments/*', allow: true, mirror: 'full', hint: MIRROR_FULL_HINT },
   { methods: '*', path: '/api/comments/*', allow: false, hint: UNKNOWN_HINT },
 ];
-// The rows protocol 12 only adds (U332's, U313's, U328b's), by key.
-const P12_ADDED = new Set([
-  '* /api/marks', '* /api/queue/items/:id/resend',
-  'GET /api/toolbar', 'GET /api/toolbar/icon/:type', 'PATCH /api/toolbar', '* /api/toolbar/*',
-]);
 
 const underComments = (r) => r.path === '/api/comments' || r.path.startsWith('/api/comments/');
 const foldRow = () => RULES.find(underComments);
 
-function digest(v) {
-  return crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex').slice(0, 16);
-}
-
-// RULES as a protocol-11 portal enforces it: less the rows protocol 12 adds,
-// the refusal unfolded back into the three rows, in place.
+// RULES with the refusal unfolded back into protocol 11's three rows, in
+// place. The rows protocol 12 only adds stay: they decide no comment route.
+// The byte-for-byte protocol-11 pin is test/remote-policy.test.js's (before12
+// over T2_ROWS, the one list of tranche 2's rows), not a second copy here.
 function unfold(rules) {
   const fold = rules.find(underComments);
   const out = [];
   for (const r of rules) {
     if (r === fold) out.push(...P11_COMMENT_ROWS.map((row) => ({ ...row })));
-    else if (!P12_ADDED.has(keyOf(r))) out.push(r);
+    else out.push(r);
   }
   return out;
 }
@@ -86,15 +78,13 @@ test('a remote request to /api/comments or below is refused at basic, read and f
   assert.equal(classify('GET', '/api/elements?type=comment', { mirror: 'read' }).allow, true);
 });
 
-test('unfolded, the refusal is protocol 11\'s three comment rows, in place, and protocol 11\'s table byte for byte', () => {
+test('unfolded, the refusal is protocol 11\'s three comment rows, in place', () => {
   const p11 = unfold(RULES);
   const at = p11.findIndex(underComments);
   assert.deepStrictEqual(p11.slice(at, at + 3), P11_COMMENT_ROWS);
   assert.equal(p11.filter(underComments).length, 3);
-  // The protocol-11 pin test/remote-policy.test.js holds (measured at ae/int
-  // 39b52f8, tranche 1's exit): the fold moved no other row.
-  assert.equal(p11.length, 107);
-  assert.equal(digest(p11), '63e5b38de47f48c8');
+  assert.equal(p11.length, RULES.length + 2, 'the fold replaced one row by three, no other');
+  assert.equal(keyOf(p11[at + 3]), 'GET /api/elements/search', 'still directly above the element floor');
   // And that portal decides the comment routes as protocol 11 did.
   const old = classifier(p11);
   assert.deepStrictEqual([old('GET', '/api/comments', { mirror: 'read' }).allow, old('GET', '/api/comments', {}).reason], [true, 'mirror']);
