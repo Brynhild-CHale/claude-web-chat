@@ -1355,6 +1355,7 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
       'GET /api/elements': ['elements[]'],
       'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
       'GET /preview/node/:id': ['comments[]'],
+      'GET /api/graph/diff': ['elements.added[]', 'elements.removed[]', 'elements.changed[]', 'elements.orphaned[]'],
     },
   });
   const frozenDeep = (o) => !o || typeof o !== 'object' || (Object.isFrozen(o) && Object.values(o).every(frozenDeep));
