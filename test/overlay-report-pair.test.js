@@ -319,3 +319,36 @@ test('a remote page with no transport registered sends no report on its socket; 
   assert.equal(new Set(itemsOf(batches).map((i) => i.id)).size, pins.length, `every pin answered through the transport: ${JSON.stringify(batches.map((m) => m.mounts.map((x) => [x.mount, x.items.length])))} ${JSON.stringify(await carried.call('stats'))}`);
   assert.equal(d.srv.reports.stats().accepted, 0, 'nothing reached the daemon\'s socket path');
 });
+
+test('the viewer across a reconnect (K.2-56): with no reset, the tab\'s re-report at an equal key replaces, and a later confirm re-stamps every held answer of the mount', { timeout: 120000 }, async (t) => {
+  const d = await withServer(t);
+  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  const pins = await seedSurface(d, recorder);
+  await recorder.call('exit');
+  const c = await spawnChrome(t, { port: d.port, name: 'tab' });
+  await c.call('settle', { frames: false, min: 900 });
+  await waitUntil(() => d.srv.reports.answers().length === pins.length, { timeout: 10000, what: 'every pin answered' });
+  const before = d.srv.reports.stats();
+  const surface = d.srv.reports.surface();
+
+  // The socket drops and comes back; no reset, so the surface, the gens and the
+  // store epoch are as they were: the hello's re-report is at an equal key.
+  const [back] = await change([c], () => c.call('reconnect'), { min: 900 });
+  assert.equal(d.srv.reports.surface(), surface, 'no reset');
+  const again = itemsOf(back.reports);
+  assert.equal(again.length, pins.length, 'the hello re-reported every answer once');
+  const mid = d.srv.reports.stats();
+  assert.equal(mid.dropped_items.outranked || 0, before.dropped_items.outranked || 0, 'the same tab is never outranked by itself');
+  assert.equal(mid.accepted - before.accepted, pins.length, 'each re-reported answer replaced the held one');
+
+  // A store write the pane does not read: the next pass moves nothing, and its
+  // confirm re-stamps every held answer, the old socket's included.
+  const [run] = await change([c], () => ok(d.api.post('/api/store', { patch: { unrelated: 'k56' } }), 'store patch'));
+  assert.ok(run.reports.length >= 1, 'a confirm went');
+  const digest = storeDigest(d.srv.state.store);
+  for (const m of PANES) {
+    const held = d.srv.reports.answers({ mount: m });
+    assert.equal(held.length, pins.filter((p) => p.mount === m).length, `${m}: one held answer per pin`);
+    for (const a of held) assert.equal(a.qual.store, digest, `${m}: ${a.id} re-stamped with the store now`);
+  }
+});
