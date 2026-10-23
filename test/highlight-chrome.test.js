@@ -344,6 +344,66 @@ test('the fallback (no CSS.highlights): rectangles from getClientRects in the ov
   }
 });
 
+// K.2-74 (U302d): a range whose START scrolled above the clip keeps the
+// rectangles still in view in the fallback — a range group with a move seam
+// is placed when ANY of its rects meets the clip; the glyph (its handle) is
+// then inset away. The Custom Highlight path paints the range as before.
+test('the fallback: a range whose first rect is above the clip and whose second is inside draws exactly that one .hl-rect; the Custom Highlight path is unchanged', async () => {
+  removeApi();
+  assert.equal(HL.paintMode(), 'geometry');
+  RECTS = [{ left: 300, top: -40, width: 60, height: 16 }, { left: 280, top: 138, width: 20, height: 16 }];
+  W.Range.prototype.getClientRects = function getClientRects() {
+    return (RECTS || []).map((r) => ({ ...r, right: r.left + r.width, bottom: r.top + r.height, x: r.left, y: r.top }));
+  };
+  try {
+    const rec = recOn('p1', lead('p1').firstChild, 0, 7, { color: 'green' });
+    await pushLive(rec);
+    await drawnUntil(() => markersFor(rec.id).length === 1 && markersFor(rec.id)[0].querySelectorAll('.hl-rect').length === 1, 'one rectangle');
+    const m = markersFor(rec.id)[0];
+    assert.notEqual(m.style.display, 'none', 'the marker is placed although its start is clipped');
+    const g = HL.HANDLE_GLYPH;
+    const ox = 300 + g.dx;
+    const oy = -40 + g.dy;
+    const [r] = [...m.querySelectorAll('.hl-rect')];
+    assert.deepEqual([r.style.left, r.style.top, r.style.width, r.style.height],
+      [`${280 - ox}px`, `${138 - oy}px`, '20px', '16px'], 'the second rectangle, the one inside the clip');
+    // The clip (the viewport) cuts the handle, which sits above its top.
+    const T = 0 - oy;
+    assert.ok(T >= g.h, 'the handle lies wholly above the clip polygon');
+    assert.match(m.style.clipPath, new RegExp(`^polygon\\(${-ox}px ${T}px`));
+    // The start-point rule stays for a glyph group: a comment pin on the same
+    // range (no move seam) whose start is above the clip is not placed,
+    // although its second rect is inside.
+    ov.upsertElements('live', [{ id: 'c-clip', v: 1, type: 'comment', shared: true, replies: 0, anchor: rec.anchor }]);
+    try {
+      await drawnUntil(() => markersFor('c-clip').length === 1, 'the pin\'s marker built');
+      assert.equal(markersFor('c-clip')[0].style.display, 'none', 'a pin whose start is clipped stays hidden');
+    } finally {
+      ov.removeElements('live', ['c-clip']);
+    }
+    // Every rect outside the clip: not placed at all.
+    RECTS = [{ left: 300, top: -40, width: 60, height: 16 }, { left: 280, top: 900, width: 20, height: 16 }];
+    W.dispatchEvent(new W.Event('resize'));
+    await drawnUntil(() => markersFor(rec.id)[0] && markersFor(rec.id)[0].style.display === 'none', 'hidden with no rect in view');
+    // The Custom Highlight path: painted through CSS.highlights as before, no rectangle.
+    installApi();
+    RECTS = [{ left: 300, top: -40, width: 60, height: 16 }, { left: 280, top: 138, width: 20, height: 16 }];
+    await pushLive({ ...rec, v: 2 });
+    await drawnUntil(() => rangeTexts('wc-hl-green').length === 1, 'painted by the Custom Highlight API');
+    assert.equal(layer().querySelectorAll('.hl-rect').length, 0, 'no rectangle on the Custom Highlight path');
+    // Its handle, wholly outside the clip, stays out of sight: the marker's own
+    // inset hides the whole glyph (nothing overrides it on this path).
+    const m2 = markersFor(rec.id)[0];
+    assert.ok(m2.style.display === 'none' || m2.style.clipPath === `inset(${g.h}px 0px 0px 0px)`,
+      `the clipped handle is hidden (clip-path ${m2.style.clipPath})`);
+  } finally {
+    delete W.Range.prototype.getClientRects;
+    RECTS = null;
+    await clearLive();
+    removeApi();
+  }
+});
+
 // ── re-resolution ──────────────────────────────────────────────────────────
 test('a re-resolved range paints as the guess stand-in; an orphan is never painted and is listed by orphans()', async () => {
   installApi();
