@@ -11,7 +11,9 @@
 //   - finger-draws off, a taps type armed: a finger tap on static content
 //     reaches the tool; a finger tap on the pane's <button> fires the button
 //     with the tool still armed (K.2-9, D1 (b)); a finger that travels past
-//     TAP_SLOP never drops the tap;
+//     TAP_SLOP never drops the tap; a click no pointer made (Enter or Space
+//     on a focused control, a field's implicit submit: detail 0) is the
+//     control's, the tool still armed;
 //   - a strokes type armed: a finger drag goes to the page (drawing tools need
 //     a pen or finger-draws), and with finger-draws on to the tool, the well
 //     giving up its pan (html.finger-strokes);
@@ -154,6 +156,23 @@ test('finger-draws off, a taps type armed: a static tap is the tool\'s, a tap on
     reset();
     gesture(lead(), 'touch', { move: TAP_SLOP });
     assert.equal(created.length, 1, 'within the slop it is a tap');
+  } finally { ov.setArmed(null); }
+});
+
+test('a click no pointer made (a keyboard\'s Enter or Space, a field\'s implicit submit) is the control\'s, the tool still armed', () => {
+  IM.setFingerDraws('off');
+  ov.setArmed('im-taps');
+  try {
+    reset();
+    // As browsers send a keyboard activation: a lone click, pointerType '', detail 0.
+    goBtn().dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: '', detail: 0 }));
+    assert.ok(W.__log.includes('click:go'), 'the button acted');
+    assert.deepEqual(created, [], 'no pin on the button');
+    assert.deepEqual(ov.armed(), { type: 'im-taps', profile: null }, 'and the tool stays armed');
+    // the next finger tap on static content reaches the tool (K.2-9)
+    reset();
+    gesture(lead(), 'touch');
+    assert.deepEqual(created, [['im-taps', 'click', 'touch']]);
   } finally { ov.setArmed(null); }
 });
 

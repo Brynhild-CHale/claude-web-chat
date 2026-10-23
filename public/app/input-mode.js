@@ -16,6 +16,10 @@
 // The table (s = {armed, input, fingerDraws, penDown, gesture?}):
 //   nothing armed (the pointer tool too) → 'page' for every pointer: the
 //     pointer tool turns the pen into a finger, and a finger stays a finger;
+//   a click no pointer made (detail 0: Enter or Space on a focused control, a
+//     field's implicit submit from Enter or Go, a script's el.click()) → 'page',
+//     before the pointerType rows: a focused field takes its taps and keys with
+//     the tool armed (K.2-9), so its submit is the page's;
 //   pen   → 'tool', always, on a pane's controls too (clicking a control with
 //           a pen is the pointer tool's or a finger's job, K.2-9);
 //   mouse → 'tool' (a desktop has no stylus distinction); an unknown or empty
@@ -144,6 +148,11 @@ export function pointerTypeOf(ev) {
 // the pointerdown, a tap so far).
 export function route(ev, s = {}) {
   if (!s || !s.armed) return 'page';
+  // A keyboard's or a script's click: no pointer behind it, so no row of the
+  // table is its. The overlay asks about a click only when no pointer gesture
+  // of its own is under way (a lone click); a real pointer's click counts its
+  // presses (a detail of one or more), and '' stays the mouse's for those.
+  if (ev && ev.type === 'click' && ev.detail === 0) return 'page';
   const g = s.gesture || {};
   const c = {
     input: INPUT_KINDS.includes(s.input) ? s.input : 'taps',

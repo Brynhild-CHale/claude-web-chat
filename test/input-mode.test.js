@@ -5,7 +5,8 @@
 // the dispatch end to end is test/input-mode-chrome.test.js's.
 //
 // Pinned here:
-//   - route() over the whole table — {pen, mouse, touch, ''} × armed {nothing,
+//   - route() over the whole table — {pen, mouse, touch, '', a keyboard's
+//     click (detail 0)} × armed {nothing,
 //     taps, strokes, selection} × finger-draws × a pen down × target {static,
 //     six kinds of interactive content} × gesture {a tap within TAP_SLOP, a
 //     pan} — against the literal EXPECTED table below;
@@ -86,8 +87,12 @@ function fixtures() {
   };
   return FX;
 }
-// The event route() reads: its pointerType and its composed target.
-const evAt = (pointerType, el) => ({ pointerType, target: el, composedPath: () => [el] });
+// The event route() reads: its pointerType and its composed target. 'kbd' is
+// a click no pointer made — Enter or Space on a focused control, a field's
+// implicit submit — as browsers send it: type click, pointerType '', detail 0.
+const evAt = (pointerType, el) => (pointerType === 'kbd'
+  ? { type: 'click', detail: 0, pointerType: '', target: el, composedPath: () => [el] }
+  : { pointerType, target: el, composedPath: () => [el] });
 
 // ── the literal table ────────────────────────────────────────────────────────
 // Each string is 16 answers (T tool, P page, I ignore), grouped by finger-draws
@@ -112,6 +117,10 @@ const EXPECTED = {
   'touch taps': 'TPPP IIII TPPP IIII',
   'touch strokes': 'PPPP IIII TTPP IIII',
   'touch selection': 'TPPP IIII TTPP IIII',
+  'kbd nothing': 'PPPP PPPP PPPP PPPP',
+  'kbd taps': 'PPPP PPPP PPPP PPPP',
+  'kbd strokes': 'PPPP PPPP PPPP PPPP',
+  'kbd selection': 'PPPP PPPP PPPP PPPP',
 };
 const LETTER = { tool: 'T', page: 'P', ignore: 'I' };
 
@@ -120,7 +129,7 @@ test('route(): the whole table matches the literal EXPECTED, for every static an
   const tap = { dx: TAP_SLOP, dy: TAP_SLOP };
   const pan = { dx: TAP_SLOP + 10, dy: 2 };
   let cases = 0;
-  for (const pointer of ['pen', 'mouse', 'touch', '']) {
+  for (const pointer of ['pen', 'mouse', 'touch', '', 'kbd']) {
     for (const kind of ['nothing', 'taps', 'strokes', 'selection']) {
       const key = `${pointer === '' ? "''" : pointer} ${kind}`;
       const want = EXPECTED[key].replace(/ /g, '');
@@ -146,12 +155,17 @@ test('route(): the whole table matches the literal EXPECTED, for every static an
       }
     }
   }
-  assert.equal(cases, 4 * 4 * 2 * 2 * 2 * (fx.static.length + Object.keys(fx.interactive).length));
+  assert.equal(cases, 5 * 4 * 2 * 2 * 2 * (fx.static.length + Object.keys(fx.interactive).length));
   // The pointer tool arms nothing: armed null is every pointer to the page.
   assert.equal(IM.route(evAt('pen', fx.static[0]), { armed: null, input: 'strokes' }), 'page');
   // An unknown pointerType reads as mouse; an unregistered input as taps.
   assert.equal(IM.pointerTypeOf({ pointerType: 'eye-gaze' }), 'mouse');
   assert.equal(IM.pointerTypeOf({}), 'mouse');
+  // A real pointer's click (detail >= 1) with an empty pointerType is still the mouse's row.
+  const st = fx.static[0];
+  const armedTaps = { armed: { type: 't-taps' }, input: 'taps', fingerDraws: false, penDown: false };
+  assert.equal(IM.route({ type: 'click', detail: 1, pointerType: '', target: st, composedPath: () => [st] }, armedTaps), 'tool', "'' with detail 1: the mouse");
+  assert.equal(IM.route({ type: 'click', detail: 0, target: st, composedPath: () => [st] }, armedTaps), 'page', 'no pointerType at all, detail 0: a keyboard click');
   assert.equal(IM.route(evAt('touch', fx.static[0]), { armed: { type: 'x' }, input: null, gesture: pan }), 'page', 'no input kind: as taps, a pan is the page\'s');
   assert.equal(IM.route(evAt('touch', fx.static[0]), { armed: { type: 'x' }, input: null }), 'tool', 'no gesture yet: a tap so far');
 });
