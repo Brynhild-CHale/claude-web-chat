@@ -37,6 +37,11 @@
 //      frame row kind (queue, element:<type>), PRIVATE_RULES and the
 //      queue's comment-item text; and a census of every frame type sent under
 //      lib/server/.
+//
+//   5. TRANCHE 2 (protocol 12, PLAN.md 2D.2, ruling PROTO@bump a): the
+//      toolbar's rows and the transient marks' row (T2_ROWS), each as written;
+//      RULES less those rows is protocol 11's table byte for byte; a portal on
+//      protocol 11 refuses every new route by its default deny.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -53,6 +58,7 @@ const {
   ANSWER_RULES, ANSWER_HINT, classifyAnswer,
 } = require('../lib/core/remote-policy');
 const { withServer } = require('../test-support/helpers');
+const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -607,8 +613,8 @@ test('rollback: portals on protocol 10 and 8 refuse every new route by the defau
   const PIN = 'a row an older portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin';
   // Protocol 10's table as 0.8.5 ships it, byte for byte (RULES at f3c4a7f,
   // measured 2026-10-17): protocol 11 added rows and changed only the comment
-  // row, which before11 folds back.
-  const p10 = before11(RULES);
+  // row, which before11 folds back; protocol 12's rows (before12) go first.
+  const p10 = before11(before12(RULES));
   assert.equal(p10.length, 100);
   assert.equal(digest(p10), 'b23087d38123db27', PIN);
   // Protocol 8's: 0.8.5 added rows (SPEC_ROWS) and changed none.
@@ -661,6 +667,106 @@ test('rollback: portals on protocol 10 and 8 refuse every new route by the defau
     // shows no pin to, and takes none from, a viewer without the opt-in.
     assert.deepStrictEqual([...letThrough].sort(), [...through].sort(), `${release}'s portal`);
   }
+});
+
+// ── tranche 2's rows (protocol 12; PLAN.md 2D.2, PROTO@bump a) ────────────
+
+const SPEC_TOOLBAR_USER_HINT = 'hotkeys and settings for every project are set on the host';
+
+// Every row protocol 12 adds, as U332's brief writes them (and U313's for the
+// marks, declared here so it needs no second bump). Protocol 12 changes no
+// row an older portal has.
+const T2_ROWS = [
+  { methods: '*', path: '/api/marks', allow: false, hint: SPEC_HOST_ONLY },
+  { methods: ['GET'], path: '/api/toolbar', allow: true },
+  { methods: ['GET'], path: '/api/toolbar/icon/:type', allow: true },
+  { methods: ['PATCH'], path: '/api/toolbar', allow: true, mirror: 'full', hint: SPEC_MIRROR_FULL_HINT },
+  { methods: '*', path: '/api/toolbar/*', allow: false, hint: SPEC_TOOLBAR_USER_HINT },
+];
+
+// Every route protocol 12 decides with a new row, with a sample request and
+// the least opt-in that lets it through ('basic': every level).
+const ROUTES_T2 = [
+  ['GET', '/api/toolbar', 'basic'], ['HEAD', '/api/toolbar', 'basic'],
+  ['GET', '/api/toolbar/icon/comment', 'basic'], ['GET', '/api/toolbar/icon/box-grab?mode=dark', 'basic'],
+  ['PATCH', '/api/toolbar', 'full'],
+  ['PATCH', '/api/toolbar/user', 'refused'], ['GET', '/api/toolbar/user', 'refused'], ['DELETE', '/api/toolbar/user', 'refused'],
+  ['POST', '/api/toolbar', 'refused'], ['PUT', '/api/toolbar', 'refused'], ['DELETE', '/api/toolbar', 'refused'],
+  ['POST', '/api/toolbar/icon/comment', 'refused'],
+  ['POST', '/api/marks', 'refused'], ['GET', '/api/marks', 'refused'],
+];
+
+// RULES as a portal on protocol 11 enforces it: less the rows above.
+function before12(rules) {
+  const t2 = new Set(T2_ROWS.map(keyOf));
+  return rules.filter((r) => !t2.has(keyOf(r)));
+}
+
+test('protocol 12: PORTAL_PROTOCOL_VERSION is 12, and every row tranche 2 adds is in RULES exactly as written, where it belongs', () => {
+  assert.equal(PORTAL_PROTOCOL_VERSION, 12);
+  const byKey = new Map(RULES.map((r) => [keyOf(r), r]));
+  for (const want of T2_ROWS) assert.deepStrictEqual(byKey.get(keyOf(want)), want, keyOf(want));
+  const at = (k) => RULES.findIndex((r) => keyOf(r) === k);
+  // The toolbar's four, in first-match order, directly after the theme block.
+  const toolbar = T2_ROWS.slice(1).map((r) => at(keyOf(r)));
+  assert.deepStrictEqual(toolbar, toolbar.map((_, i) => at('POST /api/theme') + 1 + i), 'the toolbar rows follow the theme rows, in this order');
+  // The marks row with the host-only internals, after the writer leases.
+  assert.equal(at('* /api/marks'), at('* /api/writers/*') + 1);
+});
+
+test('protocol 12: RULES less T2_ROWS is protocol 11\'s table byte for byte', () => {
+  // Measured at ae/int 39b52f8 (tranche 1's exit) on 2026-10-23, before this
+  // bump, with digest() over RULES; ae/int 33859ea's RULES measured the same.
+  const p11 = before12(RULES);
+  assert.equal(p11.length, 107);
+  assert.equal(digest(p11), '63e5b38de47f48c8',
+    'a row a protocol-11 portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin');
+});
+
+test('classify: the toolbar — GET and the icon route at every level, PATCH at full only (reason mirror below), the user record and the rest refused with the host hint; the marks host only', () => {
+  for (const [m, u, need] of ROUTES_T2) {
+    for (const optIn of [undefined, 'bogus', ...OPT_INS]) {
+      const v = classify(m, u, { mirror: optIn });
+      if (need === 'refused') {
+        const hint = u.startsWith('/api/marks') ? SPEC_HOST_ONLY : SPEC_TOOLBAR_USER_HINT;
+        assert.deepStrictEqual([v.allow, v.reason, v.hint], [false, 'refused', hint], `${m} ${u} at ${optIn}`);
+        assert.equal(refusalBody(v).remote, true);
+        continue;
+      }
+      const ok = atLeast(fromOptIn(optIn), need);
+      assert.equal(v.allow, ok, `${m} ${u} at ${optIn} (needs ${need})`);
+      if (!ok) assert.deepStrictEqual([v.reason, v.hint, v.need], ['mirror', SPEC_MIRROR_FULL_HINT, 'full'], `${m} ${u} at ${optIn}`);
+    }
+  }
+  assert.equal(classify('PATCH', '/api/toolbar/user', { mirror: 'full' }).key, '* /api/toolbar/*');
+});
+
+test('rollback: a portal on protocol 11 refuses every route tranche 2 adds by its default deny', () => {
+  const p11 = classifier(before12(RULES));
+  for (const [m, u] of ROUTES_T2) {
+    for (const optIn of [undefined, ...OPT_INS]) {
+      const v = p11(m, u, { mirror: optIn });
+      assert.deepStrictEqual([v.allow, v.reason], [false, 'unknown'], `protocol 11, ${m} ${u} at ${optIn}`);
+    }
+  }
+  // And every daemon route a T2 row decides (later units' included) is refused
+  // by that portal the same way.
+  const t2 = new Set(T2_ROWS.map(keyOf));
+  const decided = [];
+  for (const r of daemonRoutes()) {
+    const m = r.method === '*' ? 'GET' : r.method;
+    const v = classify(m, sample(r.path), { mirror: 'full' });
+    if (!v.key || !t2.has(v.key)) continue;
+    decided.push(`${r.method} ${r.path}`);
+    assert.equal(p11(m, sample(r.path), { mirror: 'full' }).reason, 'unknown', `protocol 11, ${m} ${r.path}`);
+  }
+  for (const want of ['GET /api/toolbar', 'PATCH /api/toolbar', 'PATCH /api/toolbar/user']) assert.ok(decided.includes(want), want);
+});
+
+test('frames: the toolbar frame is a SURFACE_FRAMES frame, sent whole at every level', () => {
+  assert.ok(SURFACE_FRAMES.includes('toolbar'));
+  const frame = { type: 'toolbar', v: 1, project: { pinned: ['comment'] }, user: {}, merged: { bindings: {}, settings: {} } };
+  for (const level of MIRROR_LEVELS) assert.equal(projectFrame(frame, level), frame, level);
 });
 
 // ── the answer host: ANSWER_RULES (U74; spec §4.6, §15.5) ──────────────────
