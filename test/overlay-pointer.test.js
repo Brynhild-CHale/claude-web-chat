@@ -11,8 +11,11 @@
 //     pane's button acts and no pin drops;
 //   - a pointermove reporting no button down (buttons 0) on that not-up entry
 //     is a hover: it is not default-prevented, the pane hears it, and the stale
-//     gesture is gone (a later hover is the pane's too); a pressed move of a
-//     live stroke (buttons 1) is still the tool's;
+//     gesture is gone (a later hover, or a pressed move of that pointer, is
+//     the pane's too); a pressed move of a live stroke (buttons 1) is still
+//     the tool's;
+//   - the kept fallback for a click that names no pointer: an up gesture
+//     takes a click of detail 1 and never one of detail 0 (a script's click);
 //   - shell.press is a faithful press (pointerdown, pointerup, a click of
 //     detail 1): its click takes its own gesture through the no-pointerId
 //     fallback, so the armed taps tool gets it and the page does not.
@@ -113,7 +116,12 @@ test('a hover move (buttons 0) on a not-up entry is the page\'s: not prevented, 
     const mv2 = pe(lead('p1'), 'pointermove', 'mouse', 1, { buttons: 0, clientX: 120 });
     assert.equal(mv2.defaultPrevented, false, 'nor the next one');
     assert.deepEqual(log, ['pointermove:mouse:1', 'pointermove:mouse:1']);
-    // The gesture is gone: a later click with no pointer behind it is the button's.
+    // The gesture is gone: a pressed move of that pointer (a press begun
+    // outside the well, dragged in) is no gesture's either.
+    const dragged = pe(lead('p1'), 'pointermove', 'mouse', 1, { buttons: 1, clientX: 125 });
+    assert.equal(dragged.defaultPrevented, false, 'the stale gesture no longer takes its pointer');
+    assert.deepEqual(log, ['pointermove:mouse:1', 'pointermove:mouse:1', 'pointermove:mouse:1']);
+    // And a later click with no pointer behind it is the button's.
     W.__goClicks = [];
     goBtn('p1').dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 0 }));
     assert.deepEqual(W.__goClicks, ['p1']);
@@ -132,6 +140,29 @@ test('a hover move (buttons 0) on a not-up entry is the page\'s: not prevented, 
     ov.setArmed(null);
     offTaps();
     offStrokes();
+  }
+});
+
+test('an up gesture whose own click never came: a click no pointer made (detail 0) is a lone click, one a pointer made (detail 1) is the gesture\'s', () => {
+  IM.setFingerDraws('off');
+  const created = [];
+  const off = ov.registerType('opt', { draw() {}, input: 'taps', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}`) });
+  try {
+    ov.setArmed('opt');
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'mouse', 3);
+    pe(lead('p1'), 'pointerup', 'mouse', 3);
+    goBtn('p1').dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 0 }));
+    assert.deepEqual(W.__goClicks, ['p1'], 'detail 0 (a script\'s click) takes no gesture: the button acted');
+    assert.deepEqual(created, [], 'and no pin dropped');
+    pe(lead('p1'), 'pointerdown', 'mouse', 4);
+    pe(lead('p1'), 'pointerup', 'mouse', 4);
+    lead('p1').dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1 }));
+    assert.deepEqual(created, ['click:mouse'], 'detail 1 takes the up gesture: the tool has it, as the mouse');
+    assert.deepEqual(W.__goClicks, ['p1']);
+  } finally {
+    ov.setArmed(null);
+    off();
   }
 });
 

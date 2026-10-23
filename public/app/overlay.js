@@ -1021,11 +1021,12 @@ function markdownText(md) {
 // Each pointer's gesture is its own (a palm landing during a pen stroke never
 // re-decides the pen's): decided at its pointerdown, read by its pointermove,
 // pointerup and pointercancel, dropped at its pointercancel, at its click, at
-// the next pointerdown of its id, and — once it is up — at any later
-// pointerdown (a click follows its pointerup in the same task, or never). A
-// click that names a pointer takes that pointer's gesture alone; one that names
-// none takes the newest pointerdown's while it is live: that pointer still
-// down, or up with its click unspent and a pointer pressed it (detail >= 1).
+// the next pointerdown of its id, at a move of its pointer with no button down
+// while the well has not heard it up (it was released outside #main), and —
+// once it is up — at any later pointerdown (a click follows its pointerup in
+// the same task, or never). A click that names a pointer takes that pointer's
+// gesture alone; one that names none takes the newest pointerdown's only once
+// that pointer is up, its click unspent and a pointer pressed it (detail >= 1).
 // With neither it is a lone click (a keyboard's Enter, pointerId -1; a script's
 // el.click(); or the click a pan's gesture never got), and the policy is asked
 // about it afresh.
