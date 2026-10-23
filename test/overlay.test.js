@@ -462,6 +462,30 @@ test('a lone keyboard click after a touch pan is the button\'s: the pan\'s click
   }
 });
 
+// The browser takes a finger that travels for its own pan and cancels the
+// pointer (pointercancel, no pointerup, no click): the gesture is dropped there,
+// so the next keyboard click is a lone one the policy gives the button.
+test('a touch pan the browser cancels (pointercancel) leaves nothing behind: the next keyboard click is the button\'s', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offType = ov.registerType('tt', { draw() {}, input: 'taps', create: (inp) => created.push(inp.phase) });
+  ov.setArmed('tt');
+  try {
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'touch', 41);
+    pe(lead('p1'), 'pointermove', 'touch', 41, { clientX: 100 + TAP_SLOP + 5 });
+    pe(lead('p1'), 'pointercancel', 'touch', 41, { clientX: 100 + TAP_SLOP + 5 });
+    goBtn('p1').dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: '', detail: 0 }));
+    assert.deepEqual(W.__goClicks, ['p1'], 'the button acted');
+    assert.deepEqual(created, [], 'no pin on the button');
+  } finally {
+    ov.setArmed(null);
+    offType();
+    offIM();
+  }
+});
+
 test('the policy\'s dispatchMode decides preventDefault and pointer capture, per pointer', () => {
   const offIM = withInputMode();
   const captured = [];
