@@ -74,6 +74,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// No real Chrome unless asked for (K.2-69): a box grab, a replay or an export
+// a test starts reaches lib/replay/find findChrome, which would launch the
+// machine's own Chrome. WEB_CHAT_CHROME is pinned to a path that does not
+// exist, so every test runs as on a machine with no Chrome, unless the
+// real-Chrome e2e opt-in (WEB_CHAT_E2E_CHROME=1, CLAUDE.md) is set; a test
+// that wants a (fake) Chrome still sets WEB_CHAT_CHROME itself. Once, where
+// the sandbox is made, like the scrub: an inheriting process keeps what a
+// test set.
+if (!process.env.WEB_CHAT_TEST_SANDBOX && process.env.WEB_CHAT_E2E_CHROME !== '1') {
+  process.env.WEB_CHAT_CHROME = path.join(path.sep, 'nonexistent', 'web-chat-test', 'chrome');
+}
+
 // Idempotent — --import and the helpers require both land in the same process,
 // and a second home would just orphan the first.
 if (!process.env.WEB_CHAT_TEST_SANDBOX) {
