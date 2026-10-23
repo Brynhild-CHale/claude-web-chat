@@ -29,7 +29,9 @@
 //     a PARKED grab (the daemon's own GET /api/queue/pending projection)
 //     draws through its card with Re-send enabled, which posts the resend
 //     (K.2-71);
-//   - nothing is drawn on the page for a sent grab, across a re-render.
+//   - nothing is drawn on the page for a sent grab, across a re-render;
+//   - a grab in a scrolled content box (a rows-capped pane's .mount-host)
+//     posts that box's scroll {top, left} beside box (K.2-80; U328e).
 const test = require('node:test');
 const { before, after, beforeEach } = test;
 const assert = require('node:assert');
@@ -181,8 +183,11 @@ test('a mouse drag draws the rubber band and posts the grab, block-snapped, with
   // (K.2-72: y 35, not 65).
   const rect = { x: 80, y: 35, w: 40, h: 20 };
   const box = { w: 600, h: 370 };
-  assert.deepEqual(body.anchor, { v: 1, kind: 'page', item: 'bg1', mount: 'bg1', rect, box, viewport: body.anchor.viewport });
+  // An unscrolled content box sends scroll 0/0: the shape is the same (K.2-80).
+  const scroll = { top: 0, left: 0 };
+  assert.deepEqual(body.anchor, { v: 1, kind: 'page', item: 'bg1', mount: 'bg1', rect, box, scroll, viewport: body.anchor.viewport });
   assert.deepEqual(body.payload.box, box, 'the payload carries the content box\'s size too');
+  assert.deepEqual(body.payload.scroll, scroll, 'and its scroll');
   assert.deepEqual(Object.keys(body.anchor.viewport).sort(), ['dpr', 'h', 'w']);
   assert.equal(body.anchor.viewport.w, W.innerWidth);
   assert.equal(body.payload.shared, true);
@@ -476,5 +481,29 @@ test('a box over a markdown item grabs that item: its id, no mount, a path insid
   } finally {
     await shell.frame({ type: 'markdown:remove', id: 'md-bg', order: ['bg1'], claude_order: ['bg1'] });
     await shell.tick();
+  }
+});
+
+// K.2-80 (U328e): the rect is measured over what the content box has scrolled
+// into view, so the box's own scroll offset rides beside box, in the anchor
+// and the payload alike, for the daemon to scroll the export's box the same.
+test('a grab in a scrolled .mount-host posts its scroll {top, left} beside box', async () => {
+  rects();
+  const host = wrapper().querySelector('.mount-host');
+  shell.scrollMetrics(host, { scrollTop: 200, scrollLeft: 0 });
+  try {
+    assert.equal(host.scrollTop, 200);
+    ov.setArmed('box-grab');
+    drag(rootOf().querySelector('p.lead b'), 'mouse', [185, 170], [215, 180]);
+    await shell.tick();
+    const [p] = posts();
+    assert.ok(p, 'one POST');
+    assert.deepEqual(p.body.anchor.rect, { x: 80, y: 35, w: 40, h: 20 }, 'the rect as the viewer saw it, from the content box');
+    assert.deepEqual(p.body.anchor.scroll, { top: 200, left: 0 });
+    assert.deepEqual(p.body.payload.scroll, { top: 200, left: 0 });
+    assert.deepEqual(p.body.anchor.box, { w: 600, h: 370 });
+  } finally {
+    host.scrollTop = 0;
+    host.scrollLeft = 0;
   }
 });
