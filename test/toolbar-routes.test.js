@@ -53,15 +53,21 @@ async function ok(p, what = 'request') {
 const readFile = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const exists = (f) => { try { fs.lstatSync(f); return true; } catch { return false; } };
 const plain = (v) => JSON.parse(JSON.stringify(v));
+// The default `pinned` of a project record that names none (U337).
+const BUILTIN_PINNED = ['comment', 'highlight', 'box-grab'];
 
 test('GET with no records answers the defaults, a local caller may write both tiers', async (t) => {
   const d = await withServer(t);
   for (const api of [d.anonApi, d.api]) {
     const body = await ok(api.get('/api/toolbar'), 'GET');
-    assert.deepEqual(plain(body), {
-      ok: true, v: 1, project: emptyProject(), user: emptyUser(), merged: { bindings: {}, settings: {} },
+    // U337: the default `pinned` (the built-in pack's listed types) and the
+    // tools[] listing (test/toolbar-tools-route.test.js pins its rows).
+    const { tools, ...rest } = plain(body);
+    assert.deepEqual(rest, {
+      ok: true, v: 1, project: { ...emptyProject(), pinned: BUILTIN_PINNED }, user: emptyUser(), merged: { bindings: {}, settings: {} },
       canWrite: true, canWriteUser: true,
     });
+    assert.deepEqual(tools.map((x) => x.type), BUILTIN_PINNED);
   }
   const viaClient = await client.request(d.port, 'GET', '/api/toolbar', null, { timeout: 10000 });
   assert.deepEqual([viaClient.status, viaClient.body.canWrite, viaClient.body.canWriteUser], [200, true, true]);
@@ -74,13 +80,13 @@ test('PATCH /api/toolbar: pin, hide, order, settings, a profile and a binding ro
   const file = projectPaths(d.root).toolbar;
   await ok(d.anonApi.patch('/api/toolbar', { pinned: ['comment', 'highlight'], hidden: ['box-grab'] }), 'pin + hide');
   await ok(d.anonApi.patch('/api/toolbar', { pinned: ['highlight', 'comment'] }), 'order');
-  await ok(d.anonApi.patch('/api/toolbar', { settings: { highlight: { colour: 'rust', snap: 'words' } } }), 'settings');
-  await ok(d.anonApi.patch('/api/toolbar', { profiles: { highlight: [{ name: 'Gold', settings: { colour: 'gold' } }] } }), 'profile');
+  await ok(d.anonApi.patch('/api/toolbar', { settings: { highlight: { color: 'rust', snap: 'words' } } }), 'settings');
+  await ok(d.anonApi.patch('/api/toolbar', { profiles: { highlight: [{ name: 'Gold', settings: { color: 'gold' } }] } }), 'profile');
   const last = await ok(d.anonApi.patch('/api/toolbar', { bindings: { h: { kind: 'tool', type: 'highlight', profile: 'Gold' }, 1: { kind: 'slot', n: 1 }, P: null } }), 'bindings');
   const want = {
     v: 1, pinned: ['highlight', 'comment'], hidden: ['box-grab'],
-    settings: { highlight: { colour: 'rust', snap: 'words' } },
-    profiles: { highlight: [{ name: 'Gold', settings: { colour: 'gold' } }] },
+    settings: { highlight: { color: 'rust', snap: 'words' } },
+    profiles: { highlight: [{ name: 'Gold', settings: { color: 'gold' } }] },
     bindings: { 1: { kind: 'slot', n: 1 }, H: { kind: 'tool', type: 'highlight', profile: 'Gold' }, P: null },
   };
   assert.deepEqual(last.project, want, 'the PATCH answers the new view');
@@ -104,17 +110,17 @@ test('PATCH /api/toolbar/user writes ~/.web-chat/toolbar.json under the sandbox 
   const user = userPaths().toolbar;
   assert.ok(user.startsWith(d.home), 'the sandbox HOME, never the developer\'s');
   const body = await ok(d.anonApi.patch('/api/toolbar/user', {
-    bindings: { P: { kind: 'chrome', action: 'chrome.push' } }, fingerDraws: true, settings: { highlight: { colour: 'gold' } },
+    bindings: { P: { kind: 'chrome', action: 'chrome.push' } }, fingerDraws: true, settings: { highlight: { color: 'gold' } },
   }), 'user PATCH');
-  const want = { v: 1, bindings: { P: { kind: 'chrome', action: 'chrome.push' } }, fingerDraws: true, settings: { highlight: { colour: 'gold' } } };
+  const want = { v: 1, bindings: { P: { kind: 'chrome', action: 'chrome.push' } }, fingerDraws: true, settings: { highlight: { color: 'gold' } } };
   assert.deepEqual(body.user, want);
   assert.deepEqual(readFile(user), want);
   assert.ok(!exists(projectPaths(d.root).toolbar), 'the project record was never written');
   // The project tier overrides it key by key: a project null unbinds P.
-  await ok(d.anonApi.patch('/api/toolbar', { bindings: { P: null }, settings: { highlight: { colour: 'rust' } } }), 'project');
+  await ok(d.anonApi.patch('/api/toolbar', { bindings: { P: null }, settings: { highlight: { color: 'rust' } } }), 'project');
   const merged = (await ok(d.anonApi.get('/api/toolbar'))).merged;
   assert.deepEqual(merged.bindings.P, { value: null, tier: 'project', shadows: [{ tier: 'user', value: { kind: 'chrome', action: 'chrome.push' } }] });
-  assert.deepEqual(merged.settings.highlight.colour, { value: 'rust', tier: 'project', shadows: [{ tier: 'user', value: 'gold' }] });
+  assert.deepEqual(merged.settings.highlight.color, { value: 'rust', tier: 'project', shadows: [{ tier: 'user', value: 'gold' }] });
   // lib/client (a local process) may write it too; a pack source is the user tier's.
   const r = await client.request(d.port, 'PATCH', '/api/toolbar/user',
     { bindings: { G: { kind: 'tool', type: 'box-grab', pack: { name: 'grabs', source: 'https://example.test/g.git' } } } }, { timeout: 10000 });
@@ -127,7 +133,7 @@ test('a corrupt project record reads as the defaults AND corrupt:[project]; the 
   const file = projectPaths(d.root).toolbar;
   fs.writeFileSync(file, '{"pinned": ["comment"');
   let body = await ok(d.anonApi.get('/api/toolbar'), 'GET torn');
-  assert.deepEqual([body.project, body.corrupt], [emptyProject(), ['project']]);
+  assert.deepEqual([body.project, body.corrupt], [{ ...emptyProject(), pinned: BUILTIN_PINNED }, ['project']]);
   // A record that parses but fails the validator is named the same way.
   fs.writeFileSync(file, JSON.stringify({ pinned: ['a'], hidden: ['a'] }));
   body = await ok(d.anonApi.get('/api/toolbar'), 'GET invalid');

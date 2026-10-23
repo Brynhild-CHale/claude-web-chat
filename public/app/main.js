@@ -61,6 +61,9 @@ import { initBoxGrab } from './box-grab.js';
 // The settings-pane host (annotation engine 2D.6): a tool's settings in a small
 // or large frame, both popovers under the shell's one dismiss layer.
 import { initToolSettings } from './tool-settings.js';
+// Slot and tool bindings resolved onto the overlay's one armed-tool state
+// (annotation engine 2D.7): the hotkeys' 'slot' and 'tool' kinds and defaults.
+import { initTools } from './tools.js';
 import { connect, onFrame, onHello } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
@@ -91,6 +94,7 @@ initOrphans();    // after initShell and initGraph, whose registries it plugs in
 initHighlights();
 initBoxGrab();     // the box grab (U328c): its element type, its look and its rail card
 initToolSettings();   // the tool settings frames, registered with the shell's popovers (U338 opens them)
+initTools();      // after the hotkeys: slots 1–9 and each tool's manifest key
 initVersion();    // update-available banner; re-checked on every WS (re)connect
 initBrand();      // Settings → Brand drop targets; the slots the lockup draws
 // The project's identity: its `project` frame, and a re-read after every
