@@ -29,6 +29,7 @@ const { SCHEMAS } = require('../lib/core/element-log');
 const { classify: remoteClassify, stripItemText } = require('../lib/core/remote-policy');
 const { classify, elementItem } = require('../lib/channel/policy');
 const queueDomain = require('../lib/server/domain/queue');
+const { liveIsDirty } = require('../lib/server/domain/turns');
 const { CHROME_HINT } = require('../lib/replay/find');
 const { captureClip, launchChrome, liveBrowsers } = require('../lib/replay/chrome');
 const { kindsOf } = require('../lib/server/runtime/anchors-src');
@@ -485,6 +486,159 @@ test('re-send (K.2-17, the queue domain): a delivered element item is raised aga
   assert.equal(again.item.resent_from, first.id);
   assert.equal(queueDomain.resendElement(srv.state, srv.bus, 'q99999').status, 404);
   assert.equal(queueDomain.resendElement(srv.state, srv.bus, again.item.id).status, 409);
+});
+
+// ── the relaunch (K.2-63, K.2-64) ───────────────────────────────────────────
+
+test('re-send, the route (K.2-17): POST /api/queue/items/:id/resend raises a delivered item again (200), refuses a queued one (409) and an unknown one (404), and is refused remotely', async (t) => {
+  const { api, srv, port } = await withServer(t);
+  // The host's own (requireHost): through lib/client, as a host process asks.
+  const resend = (qid) => client.request(port, 'POST', `/api/queue/items/${qid}/resend`, {}, { timeout: 10000 });
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: stubCapture() });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => elementItems(srv).length === 1, { timeout: 5000, what: 'the item' });
+  const first = elementItems(srv)[0];
+  assert.equal(first.image.state, 'ready');
+  const queued = await resend(first.id);
+  assert.equal(queued.status, 409, `still queued: ${JSON.stringify(queued.body)}`);
+  await ok(api.post('/api/queue/push', {}));
+  assert.deepEqual(elementItems(srv), []);
+  const r = await resend(first.id);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const again = r.body;
+  assert.notEqual(again.item.id, first.id, 'a new item');
+  assert.deepEqual([again.item.kind, again.item.element_id, again.item.v, again.item.type, again.item.image],
+    ['element', g.id, 1, 'box-grab', first.image], 'the same element, version, type and picture');
+  assert.deepEqual(elementItems(srv).map((it) => it.id), [again.item.id], 'pending in the queue');
+  assert.equal((await resend('q99999')).status, 404, 'unknown');
+  await ok(api.post('/api/queue/push', {}));
+  await ok(api.del(`/api/elements/${g.id}`));
+  assert.equal((await resend(again.item.id)).status, 404, 'the element is gone');
+  for (const level of ['basic', 'read', 'full']) {
+    assert.equal(remoteClassify('POST', `/api/queue/items/${first.id}/resend`, { mirror: level }).allow, false, `refused remotely at ${level}`);
+  }
+});
+
+test('a private highlight PATCHed to shared raises exactly one item (was_shared); a shared one edited again refreshes it and raises none', async (t) => {
+  const { api, srv } = await withServer(t);
+  await render(api, 'm1');
+  const RANGE = { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } };
+  const h = (await ok(api.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'mine', shared: false } }))).element;
+  assert.deepEqual(elementItems(srv), [], 'a private highlight raises none');
+  const evs = [];
+  const off = srv.bus.subscribe((e) => { if (e.kind === 'element' && e.id === h.id) evs.push(e); });
+  t.after(off);
+  await ok(api.patch(`/api/elements/${h.id}`, { shared: true }));
+  assert.equal(evs.at(-1).was_shared, false, 'the edit event says it was private');
+  assert.deepEqual(elementItems(srv).map((it) => [it.element_id, it.v]), [[h.id, 2]], 'one item');
+  const qid = elementItems(srv)[0].id;
+  await ok(api.patch(`/api/elements/${h.id}`, { note: 'now shared' }));
+  assert.equal(evs.at(-1).was_shared, true);
+  assert.deepEqual(elementItems(srv).map((it) => [it.id, it.v]), [[qid, 3]], 'refreshed in place, none raised');
+  assert.match(elementItems(srv)[0].summary, /"now shared"/);
+  await ok(api.post('/api/queue/push', {}));
+  await ok(api.patch(`/api/elements/${h.id}`, { note: 'again' }));
+  assert.deepEqual(elementItems(srv), [], 'an edit of a shared, delivered one raises none');
+});
+
+test('a box grab pending in the draft reads failed after the boot (the sweep); one whose picture is on disk reads ready', async (t) => {
+  const pending = (id, seq, el) => ({
+    id, seq, ts: 1, url: `element:${el}`, title: '', profile: 'box-grab', distilled: { kind: 'box-grab', element: el, v: 1 },
+    raw_ref: path.join('captures', `${id}.html`), bytes_raw: 0, source: 'element:box-grab', kind: 'box-grab', image: { state: 'pending' },
+  });
+  const png = encodePng(solid(3, 2, [5, 6, 7]), 3, 2, { alpha: false });
+  const { srv, api } = await withServer(t, {
+    seed: ({ webChatDir }) => {
+      fs.mkdirSync(path.join(webChatDir, 'captures'), { recursive: true });
+      fs.writeFileSync(path.join(webChatDir, 'captures', 'cap8.png'), png);
+      fs.writeFileSync(path.join(webChatDir, 'draft.json'), JSON.stringify({
+        base_active: null, mounts: [], markdown: [], order: [], store: {}, comments: [], queue: [],
+        captures: [pending('cap7', 7, 'g1'), pending('cap8', 8, 'g2')],
+      }));
+    },
+  });
+  assert.deepEqual(captureOf(srv, 'cap7').image, { state: 'failed', error: 'the daemon stopped before the grab was drawn' });
+  assert.deepEqual(captureOf(srv, 'cap8').image, { state: 'ready', width: 3, height: 2, bytes: png.length, sha256: sha(png) });
+  // A grab made after the boot is not swept while it draws.
+  const held = heldCapture();
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: held });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => held.held() === 1, { timeout: 5000, what: 'the render to start' });
+  boxGrabFor({ state: srv.state }).sweep();
+  assert.equal(captureOf(srv, g.grab.capture).image.state, 'pending', 'in flight: not swept');
+  held.releaseAll();
+  assert.equal((await settled(srv, g.grab.capture)).state, 'ready');
+});
+
+// A turn, as the hooks run one: turn-begin takes the lock, turn-end commits
+// (node_id) or folds (skipped).
+async function turn(api, msg) {
+  await ok(api.post('/api/turn-begin', { message: msg }), 'turn-begin');
+  return ok(api.post('/api/turn-end', { author: 'claude', summary: msg }), 'turn-end');
+}
+
+test('a settle after a Set active lands on the live capture record, not the copy the restore replaced', async (t) => {
+  const { api, srv } = await withServer(t);
+  const held = heldCapture();
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: held });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => held.held() === 1, { timeout: 5000, what: 'the render to start' });
+  const n1 = (await turn(api, 'first')).node_id;
+  assert.ok(n1, 'n1 committed');
+  await render(api, 'm2');
+  assert.ok((await turn(api, 'second')).node_id, 'n2 committed');
+  const before = captureOf(srv, g.grab.capture);
+  await ok(api.post('/api/graph/active', { id: n1 }), 'set active n1');
+  const after = captureOf(srv, g.grab.capture);
+  assert.notStrictEqual(after, before, 'the restore replaced the record');
+  assert.equal(after.image.state, 'pending', 'still drawing: not swept');
+  held.releaseAll();
+  assert.equal((await settled(srv, g.grab.capture)).state, 'ready', 'the live record settles');
+  await waitUntil(() => elementItems(srv).length === 1, { timeout: 5000, what: 'the item' });
+  assert.equal(elementItems(srv)[0].image.state, 'ready');
+});
+
+test('a picture settling after a commit does not dirty the surface: the next chat-only turn folds, and the node keeps the state it had at commit', async (t) => {
+  const { api, srv, root } = await withServer(t);
+  const held = heldCapture();
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: held });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => held.held() === 1, { timeout: 5000, what: 'the render to start' });
+  const n1 = (await turn(api, 'grab')).node_id;
+  assert.ok(n1, 'n1 committed');
+  held.releaseAll();
+  assert.equal((await settled(srv, g.grab.capture)).state, 'ready');
+  assert.equal(liveIsDirty(srv.graph), false, 'a settled picture is not a change');
+  const r = await turn(api, 'chat only');
+  assert.equal(r.node_id, undefined, JSON.stringify(r));
+  assert.equal(r.skipped, 'no-change');
+  const node = JSON.parse(fs.readFileSync(path.join(projectPaths(root).graphDir, `${n1}.json`), 'utf8'));
+  assert.deepEqual(node.captures.find((c) => c.id === g.grab.capture).image, { state: 'pending' }, 'the node copy as committed');
+  assert.equal(captureOf(srv, g.grab.capture).image.state, 'ready', 'the live record keeps its image');
+});
+
+test('inspect_capture attaches a picture only to the grab\'s own capture: an extension capture whose url names a real grab gets none', async (t) => {
+  const { api, srv, port } = await withServer(t);
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: stubCapture() });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await settled(srv, g.grab.capture);
+  const forged = await ok(api.post('/api/capture', { url: `element:${g.id}`, title: 'not a grab', html: '<html><body><p>other page</p></body></html>', render: false }));
+  assert.notEqual(forged.capture_id, g.grab.capture);
+  const mcp = await launchMcp(t, { WEB_CHAT_PORT: String(port) });
+  const res = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: forged.capture_id } });
+  assert.ok(!res.isError, JSON.stringify(res));
+  assert.deepEqual(res.content.map((c) => c.type), ['text'], 'no image block');
+  const body = JSON.parse(res.content[0].text);
+  assert.equal(body.id, forged.capture_id);
+  assert.equal(body.element, undefined);
+  assert.equal(body.image, undefined);
+  const own = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: g.grab.capture } });
+  assert.deepEqual(own.content.map((c) => c.type), ['text', 'image'], 'the grab\'s own capture still carries it');
 });
 
 // ── lib/replay/chrome captureClip, against the fake browser process ─────────
