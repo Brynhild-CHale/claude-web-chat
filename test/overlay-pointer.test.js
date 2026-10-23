@@ -97,6 +97,44 @@ test('after a mouse released outside #main, a click no pointer made (a MouseEven
   }
 });
 
+test('a hover move (buttons 0) on a not-up entry is the page\'s: not prevented, the pane hears it, and the stale gesture is gone', () => {
+  IM.setFingerDraws('off');
+  const created = [];
+  const offTaps = ov.registerType('opt', { draw() {}, input: 'taps', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}`) });
+  const offStrokes = ov.registerType('ops', { draw() {}, input: 'strokes', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}:${inp.event.pointerId}`) });
+  const log = pageLog('p1');
+  try {
+    ov.setArmed('opt');
+    pressReleasedOutside(1);
+    log.length = 0;
+    const mv = pe(goBtn('p1'), 'pointermove', 'mouse', 1, { buttons: 0 });
+    assert.equal(mv.defaultPrevented, false, 'the hover is not swallowed');
+    assert.deepEqual(log, ['pointermove:mouse:1'], 'the pane heard it');
+    const mv2 = pe(lead('p1'), 'pointermove', 'mouse', 1, { buttons: 0, clientX: 120 });
+    assert.equal(mv2.defaultPrevented, false, 'nor the next one');
+    assert.deepEqual(log, ['pointermove:mouse:1', 'pointermove:mouse:1']);
+    // The gesture is gone: a later click with no pointer behind it is the button's.
+    W.__goClicks = [];
+    goBtn('p1').dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 0 }));
+    assert.deepEqual(W.__goClicks, ['p1']);
+    assert.deepEqual(created, [], 'no pin');
+    // A live stroke's pressed moves (buttons 1) stay the tool's.
+    ov.setArmed('ops');
+    log.length = 0;
+    pe(lead('p1'), 'pointerdown', 'mouse', 2);
+    const pressed = pe(lead('p1'), 'pointermove', 'mouse', 2, { clientX: 130 });
+    pe(lead('p1'), 'pointerup', 'mouse', 2, { clientX: 130 });
+    assert.equal(pressed.defaultPrevented, true, 'a pressed move of the stroke is the tool\'s');
+    assert.deepEqual(created, ['pointerdown:mouse:2', 'pointermove:mouse:2', 'pointerup:mouse:2'], 'the stroke whole');
+    assert.deepEqual(log, [], 'the page heard none of the stroke');
+  } finally {
+    log.off();
+    ov.setArmed(null);
+    offTaps();
+    offStrokes();
+  }
+});
+
 test('shell.press is a faithful press: pointerdown, pointerup, a click of detail 1, and the armed taps tool takes its click', () => {
   IM.setFingerDraws('off');
   const created = [];

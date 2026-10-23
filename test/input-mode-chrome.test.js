@@ -80,9 +80,12 @@ const lead = () => rootOf().querySelector('p.lead');
 const goBtn = () => rootOf().querySelector('button.go');
 const reset = () => { created.length = 0; W.__log.length = 0; };
 
+// A pressed pointer reports a button down (buttons 1) on its pointerdown and
+// moves, as browsers send it: a move with buttons 0 is a hover (U302b).
 function pe(el, type, pointerType, extra = {}) {
   el.dispatchEvent(new W.PointerEvent(type, {
-    bubbles: true, cancelable: true, composed: true, pointerType, pointerId: 1, isPrimary: true, clientX: 100, clientY: 100, ...extra,
+    bubbles: true, cancelable: true, composed: true, pointerType, pointerId: 1, isPrimary: true, clientX: 100, clientY: 100,
+    buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, ...extra,
   }));
 }
 // As Chrome sends it: the click is a PointerEvent carrying the pointer's type.

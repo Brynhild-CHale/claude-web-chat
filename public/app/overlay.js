@@ -1090,6 +1090,10 @@ function onPointer(e) {
   } else {
     g = gestures.get(e.pointerId);
     if (!g) return;   // a hover, or the tail of a gesture that began before the arming
+    // A move with no button down on a press the well never heard end (released
+    // outside #main): the press is over, so its gesture goes and this move, a
+    // hover, is the page's (U302b).
+    if (e.type === 'pointermove' && e.buttons === 0 && !g.up) { gestures.delete(e.pointerId); return; }
     decision = g.decision;
     if (e.type === 'pointerup') g.up = true;
     else if (e.type === 'pointercancel') gestures.delete(e.pointerId);
