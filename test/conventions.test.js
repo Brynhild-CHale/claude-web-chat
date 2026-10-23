@@ -1521,7 +1521,7 @@ const PATTERNS = [
       'public/app/comments.js': 5,
       'public/app/components.js': 1,
       'public/app/composer-mod.js': 1,
-      'public/app/drawer.js': 11,
+      'public/app/drawer.js': 10,
       'public/app/graph-log.js': 1,
       'public/app/graph-turns.js': 1,
       'public/app/graph-view.js': 5,
