@@ -536,6 +536,27 @@ test('store trigger: a facade write by pane A to a key pane B subscribes to sett
   }
 });
 
+test('store trigger: a pane subscribed to every write (subscribe(fn)) is settled by another pane\'s facade write, whatever key it wrote', async () => {
+  const rows = [];
+  try {
+    await shell.frame({ type: 'render', ...FIX('sw-a') });
+    await shell.frame({ type: 'render', ...FIX('sw-c', { script: 'store.subscribe(function () {});' }) });
+    for (const id of ['sw-a', 'sw-c']) rows.push({ id: `${id}:0`, v: 1, type: 'comment', anchor: anchors.record(rootOf(id), rootOf(id).querySelector('.it'), { mount: id }), shared: true, replies: 0 });
+    ov.upsertElements('live', rows);
+    await waitUntil(() => rows.every((r) => stateOf(r.id) === 'exact'), { timeout: 4000, what: 'the wildcard rows exact' });
+    await shell.tick(50);
+    assert.deepEqual(mounts.subscribedKeys('sw-c'), { keys: new Set(), all: true });
+    const from = settles.length;
+    W.__w['sw-a']({ sw_any_key: 1 });
+    await shell.tick(50);
+    assert.deepEqual(tally(storeSettles(from)), { 'sw-a': 1, 'sw-c': 1 }, 'A\'s own settle, and the every-write subscriber\'s');
+  } finally {
+    ov.removeElements('live', rows.map((r) => r.id));
+    await shell.frame({ type: 'clear', id: 'sw-a' });
+    await shell.frame({ type: 'clear', id: 'sw-c' });
+  }
+});
+
 // ── service-pending.js ──────────────────────────────────────────────────────
 
 test('service-pending: one GET at boot through http.js, one more per hello and per trust frame; onPendingChange only on a change', async () => {
