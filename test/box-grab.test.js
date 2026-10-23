@@ -20,10 +20,11 @@ const crypto = require('crypto');
 const express = require('express');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
-const { withServer, waitUntil, fakeBin, e2eGate } = require('../test-support/helpers');
+const { withServer, waitUntil, fakeBin, e2eGate, tmpRoot } = require('../test-support/helpers');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 const { encodePng, solid } = require('../test-support/png-encode');
-const { projectPaths } = require('../lib/core/paths');
+const { projectPaths, userPaths } = require('../lib/core/paths');
+const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { pngSize } = require('../lib/core/png');
 const { SCHEMAS } = require('../lib/core/element-log');
 const { classify: remoteClassify, stripItemText } = require('../lib/core/remote-policy');
@@ -33,7 +34,7 @@ const { liveIsDirty } = require('../lib/server/domain/turns');
 const { CHROME_HINT } = require('../lib/replay/find');
 const { captureClip, launchChrome, liveBrowsers } = require('../lib/replay/chrome');
 const { kindsOf } = require('../lib/server/runtime/anchors-src');
-const { setSeams, boxGrabFor, RENDER_QUEUE_MAX, SCRIPT_ERRORS_MAX, PRIVATE_HINT, BUSY_HINT } = require('../lib/server/box-grab');
+const { setSeams, boxGrabFor, contentSelector, RENDER_QUEUE_MAX, SCRIPT_ERRORS_MAX, PRIVATE_HINT, BUSY_HINT } = require('../lib/server/box-grab');
 const client = require('../lib/client');
 
 // No test here launches the machine's own Chrome: the finder is pinned to
@@ -512,17 +513,114 @@ test('re-send, the route (K.2-17): POST /api/queue/items/:id/resend raises a del
     ['element', g.id, 1, 'box-grab', first.image], 'the same element, version, type and picture');
   assert.deepEqual(elementItems(srv).map((it) => it.id), [again.item.id], 'pending in the queue');
   assert.equal((await resend('q99999')).status, 404, 'unknown');
-  // Host-only (K.2-63): a browser-shaped request from this machine (Origin,
-  // Sec-Fetch-*) is not the host, and is refused before the item is looked up.
-  const fromBrowser = await fetch(`http://127.0.0.1:${port}/api/queue/items/q99999/resend`, {
-    method: 'POST', headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}`, 'sec-fetch-site': 'same-origin' }, body: '{}',
-  });
-  assert.equal(fromBrowser.status, 403, 'a browser request is not the host');
+  // Local, not host-only (K.2-71, K.2-17): a browser-shaped request from this
+  // machine's own page (Origin and Sec-Fetch-Site from the local origin) is
+  // the local chrome — the grab card's Re-send — and is taken; a
+  // remote-shaped one (the portal's X-WC-Remote label: audience levelOf reads
+  // it as a remote peer, basic with no opt-in) is refused before the item is
+  // looked up.
   await ok(api.post('/api/queue/push', {}));
+  const browserPost = (qid, extra = {}) => fetch(`http://127.0.0.1:${port}/api/queue/items/${qid}/resend`, {
+    method: 'POST', body: '{}',
+    headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}`, 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', ...extra },
+  });
+  const fromBrowser = await browserPost(again.item.id);
+  assert.equal(fromBrowser.status, 200, 'the local chrome re-sends');
+  const third = (await fromBrowser.json()).item;
+  assert.deepEqual([third.kind, third.element_id, third.v, third.type], ['element', g.id, 1, 'box-grab']);
+  assert.deepEqual(elementItems(srv).map((it) => it.id), [third.id]);
+  await ok(api.post('/api/queue/push', {}));
+  for (const [what, headers] of [['a remote browser', { 'x-wc-remote': '1' }]]) {
+    const r403 = await browserPost(third.id, headers);
+    assert.equal(r403.status, 403, `${what} is refused`);
+  }
+  const remoteHost = await client.request(port, 'POST', `/api/queue/items/${third.id}/resend`, {}, { timeout: 10000, headers: { 'X-WC-Remote': '1' } });
+  assert.equal(remoteHost.status, 403, 'a remote-shaped request without browser headers is refused too');
+  assert.deepEqual(elementItems(srv), [], 'nothing re-sent by a refused request');
   await ok(api.del(`/api/elements/${g.id}`));
-  assert.equal((await resend(again.item.id)).status, 404, 'the element is gone');
+  assert.equal((await resend(third.id)).status, 404, 'the element is gone');
   for (const level of ['basic', 'read', 'full']) {
     assert.equal(remoteClassify('POST', `/api/queue/items/${first.id}/resend`, { mirror: level }).allow, false, `refused remotely at ${level}`);
+  }
+});
+
+// ── the reconcile (K.2-71, K.2-72; U328d) ──────────────────────────────────
+
+test('one frame of reference (K.2-72): captureClip is handed the item\'s content-box selector, the document laid out at the sent box width, and a viewport at least that wide', async (t) => {
+  const { api, srv } = await withServer(t);
+  const calls = [];
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: stubCapture(calls) });
+  await render(api, 'm1');
+  // A pane, its content box wider than the viewer's viewport.
+  const wide = { w: 1500.5, h: 370 };
+  const g = (await ok(api.post('/api/elements', { ...grabBody('m1'), anchor: { ...PAGE('m1'), box: wide } }), 'POST')).element;
+  assert.deepEqual(g.anchor.box, wide, 'the anchor keeps the content box\'s size beside its rect');
+  await settled(srv, g.grab.capture);
+  const c = calls.at(-1);
+  assert.equal(c.selector, '[data-pane-id="m1"] > .mount-host', 'the pane\'s content box, never its wrapper');
+  assert.equal(c.selector, contentSelector('m1', true));
+  assert.deepEqual(c.clip, { x: 4, y: 6, w: 32, h: 20 }, 'the rect as sent, relative to that box');
+  assert.ok(c.width >= wide.w, `the viewport holds the box: ${c.width}`);
+  const head = c.html.slice(0, c.html.indexOf('</head>'));
+  assert.ok(head.includes('<style data-wc-grab>'), 'the width style is in the head, before any pane script runs');
+  assert.ok(head.includes('[data-pane-id="m1"] > .mount-host { width: 1500.5px !important;'), 'the content box fixed at the sent width');
+  // The same box, narrower than the viewport: the viewer's viewport stands.
+  const narrow = (await ok(api.post('/api/elements', { ...grabBody('m1'), anchor: { ...PAGE('m1'), box: { w: 600, h: 370 } } }), 'POST')).element;
+  await settled(srv, narrow.grab.capture);
+  assert.equal(calls.at(-1).width, 1024, 'the viewer\'s width');
+  assert.ok(calls.at(-1).html.includes('{ width: 600px !important;'));
+  // A markdown item: its block is its content box.
+  await ok(api.post('/api/markdown', { id: 'md-g', text: '## Notes\n\nA short line.' }), 'markdown');
+  const md = (await ok(api.post('/api/elements', {
+    type: 'box-grab', device: 'desktop',
+    anchor: { v: 1, kind: 'page', item: 'md-g', mount: null, rect: { x: 0, y: 40, w: 600, h: 24 }, box: { w: 600, h: 80 }, viewport: { w: 1024, h: 700 } },
+    payload: { rect: { x: 0, y: 40, w: 600, h: 24, item: 'md-g', viewport: { w: 1024, h: 700 } }, box: { w: 600, h: 80 }, meta: { mode: 'light' } },
+  }), 'POST markdown grab')).element;
+  await settled(srv, md.grab.capture);
+  assert.equal(calls.at(-1).selector, '[data-md-id="md-g"]');
+  assert.ok(calls.at(-1).html.includes('[data-md-id="md-g"] { width: 600px !important;'));
+  // No box sent (an older chrome): the content box still, at no fixed width.
+  const bare = await postGrab(api, 'm1');
+  await settled(srv, bare.grab.capture);
+  assert.equal(calls.at(-1).selector, '[data-pane-id="m1"] > .mount-host');
+  assert.ok(!calls.at(-1).html.includes('data-wc-grab'), 'no width to fix');
+  assert.equal(calls.at(-1).width, 1024);
+  // An item id cannot break out of the selector or the style.
+  assert.equal(contentSelector('a"</style>', true), '[data-pane-id="a\\22 \\3c \\2f style\\3e "] > .mount-host');
+});
+
+test('a parked grab\'s GET /api/queue/pending row carries type, element_id, v and image (K.2-71); a remote viewer gets them through stripItemText at its level', async (t) => {
+  const roots = { read: tmpRoot('wc-bg-read-') };
+  const TUNNEL = { hostname: 'wc.example.test', style: 'flat', access: { team: 'testteam', aud: 'test-aud-0123456789' }, allow: { emails: ['me@example.com'], domains: [] } };
+  const seed = () => writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(roots.read)]: 'read' } } });
+  const ds = { basic: await withServer(t, { seed }), read: await withServer(t, { root: roots.read }) };
+  for (const [level, d] of Object.entries(ds)) {
+    const { api, srv, port } = d;
+    setSeams(srv.state, { findChrome: () => null });
+    await render(api, 'm1');
+    const g = await postGrab(api, 'm1');
+    await waitUntil(() => elementItems(srv).length === 1, { timeout: 5000, what: `${level}: the item` });
+    const item = elementItems(srv)[0];
+    const pushed = await ok(api.post('/api/queue/push', {}));
+    assert.equal(pushed.mode, 'parked', `${level}: no channel, so the push parks`);
+    const row = (body) => body.pending.items.find((it) => it.id === item.id);
+    const local = row(await ok(api.get('/api/queue/pending')));
+    assert.deepEqual([local.kind, local.type, local.element_id, local.v, local.image], ['element', 'box-grab', g.id, 1, item.image], `${level}: the card's fields, locally`);
+    assert.equal(local.summary, item.summary);
+    assert.equal(local.image.state, 'chrome-not-found', 'the image block, never the picture\'s bytes');
+    const remote = await client.request(port, 'GET', '/api/queue/pending', null, { timeout: 10000, headers: { 'X-WC-Remote': '1' } });
+    assert.equal(remote.status, 200);
+    const r = row(remote.body);
+    const want = stripItemText(item, level);
+    assert.deepEqual([r.type, r.element_id, r.v, r.image], [want.type, want.element_id, want.v, want.image], `${level}: the card's fields remotely`);
+    assert.equal(r.summary, want.summary, `${level}: the summary as stripItemText leaves it`);
+    if (level === 'basic') {
+      assert.equal(r.text_hidden, true);
+      assert.notEqual(r.summary, item.summary, 'basic: text-free');
+    } else {
+      assert.equal(r.summary, item.summary, 'read: whole');
+      assert.ok(!('text_hidden' in r));
+    }
   }
 });
 
