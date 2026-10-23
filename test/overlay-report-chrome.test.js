@@ -403,8 +403,35 @@ test('the minted record: a converted pin-locator@1 found by its locator, and an 
   await quiet();
 });
 
-test('the splitter keeps a message under the caps (200 mounts, 500 items)', async () => {
+test('the splitter keeps a message under the caps: one mount\'s 1201 items in three messages of at most 500, 201 mounts in two of at most 200', async () => {
   assert.equal(rep.MAX_MOUNTS, 200);
   assert.equal(rep.MAX_ITEMS, 500);
   assert.deepEqual(rep.REPORTED_STATES, ['exact', 're-resolved', 'orphaned']);
+  // A second instance (a second init stops the first) over a stand-in overlay,
+  // so a test can deliver more answers than a jsdom page holds anchors; its
+  // sends are captured. The mounts it may report are named by a hello.
+  const sent = [];
+  let deliver = null;
+  const fake = { onAnswers: (fn) => { deliver = fn; return () => { deliver = null; }; }, surfaceOf: () => SURFACE, elementsOf: () => [] };
+  const big = rep.initOverlayReport({ overlay: fake, send: (m) => sent.push(m) });
+  const idle = () => waitUntil(() => { const s = big.stats(); return !s.armed && s.pending === 0; }, { timeout: 6000, what: 'the splitter instance to go quiet' });
+  try {
+    const ids = Array.from({ length: 201 }, (_, i) => `sp${i}`);
+    SURFACE += 1;
+    await shell.frame(helloFrame({ mounts: ids.map((id) => ({ id, target: 'main', params: {}, gen: 0, html: '<p>x</p>' })), store: {}, surface: SURFACE, elements: [] }));
+    await idle();
+    sent.length = 0;
+    const item = (id) => ({ id, v: 1, type: 'comment', state: 'exact', how: null, tie: null, why: null, el: null });
+    deliver({ mount: 'sp0', scope: 'live', surface: SURFACE, gen: null, report: null,
+      items: Array.from({ length: 1201 }, (_, i) => item(`one-${i}`)) });
+    await idle();
+    assert.deepEqual(sent.map((m) => [m.type, m.surface, m.mounts.length]), [['report', SURFACE, 1], ['report', SURFACE, 1], ['report', SURFACE, 1]], 'three messages');
+    assert.deepEqual(sent.map((m) => m.mounts[0].items.length), [500, 500, 201], 'at most 500 items each');
+    assert.equal(new Set(itemsOf(sent).map((i) => i.id)).size, 1201, 'every item once');
+    sent.length = 0;
+    for (const id of ids) deliver({ mount: id, scope: 'live', surface: SURFACE, gen: null, report: null, items: [item(`many-${id}`)] });
+    await idle();
+    assert.deepEqual(sent.map((m) => m.mounts.length), [200, 1], 'at most 200 mounts each');
+    assert.deepEqual(itemsOf(sent).map((i) => i.mount).sort(), [...ids].sort(), 'every mount once');
+  } finally { big.stop(); }
 });
