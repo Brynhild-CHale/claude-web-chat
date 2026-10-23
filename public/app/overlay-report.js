@@ -38,10 +38,12 @@
 //
 // THE QUALIFIER IS THE DAEMON'S (RULED U311@qualifier-mechanism = a): the chrome
 // computes no hash. The daemon stamps each answer on acceptance; after a store
-// write, a watched mount whose next pass answers what this viewer last sent is
-// sent as a CONFIRM (`items: []`) — at most one per store change per viewer,
-// folded into the same message — so its held answers are re-stamped with the
-// store now.
+// write, each watched mount's next pass sends a CONFIRM (`items: []`) — at
+// most one per store change per viewer, folded into the same message — so its
+// held answers are re-stamped with the store now. When that pass also changed
+// answers, the confirm is the entry right ahead of the mount's items, in the
+// same message: the unchanged answers are re-stamped, then the changed ones
+// replaced (a store write that moves one row of a store-driven pane).
 //
 // BATCHING. A delivery is only gathered (per mount, the newest answer per
 // id@v); a flush runs after a quiet window of QUIET_FRAMES animation frames
@@ -55,7 +57,8 @@
 // grace's own re-settle answers it (or the grace runs out): a removed element
 // reads hidden 'mounting' first and orphaned after, and the two go as ONE
 // report. A message carries at most MAX_MOUNTS mounts, MAX_ITEMS items and
-// about MAX_BYTES; a larger batch is split. Timers are setTimeout and
+// MAX_BYTES of JSON; a larger batch is split, one mount's chunk included (the
+// daemon refuses an over-cap message whole). Timers are setTimeout and
 // requestAnimationFrame only, each armed for one quiet window and never
 // re-armed while nothing is pending: no setInterval, no perpetual poller.
 //
@@ -102,6 +105,9 @@ export const MAX_ITEMS = 500;
 export const MAX_BYTES = 200 * 1024;
 export const MAX_CODE = 32;
 export const MAX_RECORD = 4 * 1024;
+// The message's own JSON around its entries ({"type":"report","surface":…,"mounts":[]}),
+// a surface of up to 16 digits included.
+const ENVELOPE_BYTES = 64;
 export const QUIET_FRAMES = 2;
 export const FRAME_FALLBACK_MS = 100;
 // How long past a mount's grace a held mount waits for the grace's re-settle
@@ -502,7 +508,12 @@ export function initOverlayReport({ overlay = overlayApi, send = wsSend, now = D
         items.push(itemFor(a, record));
         keys.push([k, sig]);
       }
-      const confirm = !items.length && confirmDue.has(mount) && !!had && had.size > 0;
+      // A confirm whenever a store change preceded this pass, beside the items
+      // too: the daemon re-stamps this viewer's held answers for the mount only
+      // on an `items: []` entry, so the answers that did not move (sent ahead
+      // of the items entry, in the same message) are stamped with the store
+      // now and the changed ones then replace theirs (K.2-53).
+      const confirm = confirmDue.has(mount) && !!had && had.size > 0;
       out.push({ mount, gen: g.gen, items, keys, mints, confirm });
     }
     return out;
@@ -519,33 +530,52 @@ export function initOverlayReport({ overlay = overlayApi, send = wsSend, now = D
     touched.delete(mount);
   }
 
-  // Split into messages under the caps.
+  // Split into messages under the caps: MAX_MOUNTS entries, MAX_ITEMS items
+  // and MAX_BYTES of JSON each (the envelope and every separator counted). A
+  // confirm that goes beside items is the entry right ahead of the mount's
+  // first items chunk, in the same message, never split from it. A chunk too
+  // large for an empty message is halved until it fits; a single item that
+  // alone is over the cap goes alone.
   function messages(entries) {
     const msgs = [];
     let curMsg = null;
     let nItems = 0;
     let nBytes = 0;
-    const open = () => { curMsg = []; nItems = 0; nBytes = 64; msgs.push(curMsg); };
+    const open = () => { curMsg = []; nItems = 0; nBytes = ENVELOPE_BYTES; msgs.push(curMsg); };
+    // Each entry costs its JSON plus the comma before it.
+    const costOf = (bodies) => bodies.reduce((n, b) => n + bytesOf(b) + 1, 0);
     open();
     for (const e of entries) {
-      const chunks = [];
-      if (!e.items.length) chunks.push([]);
-      for (let i = 0; i < e.items.length; i += MAX_ITEMS) chunks.push(e.items.slice(i, i + MAX_ITEMS));
-      for (const items of chunks) {
-        let part = items;
-        while (true) {
-          const room = MAX_ITEMS - nItems;
-          if (curMsg.length >= MAX_MOUNTS || (part.length && room <= 0)) { open(); continue; }
-          const take = part.length ? part.slice(0, room) : part;
-          const body = { mount: e.mount, gen: e.gen, items: take };
-          const b = bytesOf(body);
-          if (curMsg.length && nBytes + b > MAX_BYTES) { open(); continue; }
-          curMsg.push(body);
-          nItems += take.length;
-          nBytes += b;
-          part = part.slice(take.length);
-          if (!part.length) break;
+      if (!e.items.length) {
+        const body = { mount: e.mount, gen: e.gen, items: [] };
+        const b = costOf([body]);
+        if (curMsg.length && (curMsg.length >= MAX_MOUNTS || nBytes + b > MAX_BYTES)) open();
+        curMsg.push(body);
+        nBytes += b;
+        continue;
+      }
+      let lead = e.confirm ? { mount: e.mount, gen: e.gen, items: [] } : null;
+      let part = e.items;
+      while (part.length) {
+        const slots = lead ? 2 : 1;
+        if (curMsg.length && (curMsg.length + slots > MAX_MOUNTS || nItems >= MAX_ITEMS)) { open(); continue; }
+        let take = Math.min(part.length, MAX_ITEMS - nItems);
+        const group = (n) => (lead ? [lead] : []).concat([{ mount: e.mount, gen: e.gen, items: part.slice(0, n) }]);
+        let bodies = group(take);
+        let b = costOf(bodies);
+        if (nBytes + b > MAX_BYTES) {
+          if (curMsg.length) { open(); continue; }
+          while (take > 1 && nBytes + b > MAX_BYTES) {
+            take = Math.floor(take / 2);
+            bodies = group(take);
+            b = costOf(bodies);
+          }
         }
+        for (const body of bodies) curMsg.push(body);
+        nItems += take;
+        nBytes += b;
+        lead = null;
+        part = part.slice(take);
       }
     }
     return msgs.filter((m) => m.length);
@@ -575,7 +605,7 @@ export function initOverlayReport({ overlay = overlayApi, send = wsSend, now = D
       settled();
       return;
     }
-    for (const body of messages(entries.map((e) => ({ mount: e.mount, gen: e.gen, items: e.items })))) {
+    for (const body of messages(entries.map((e) => ({ mount: e.mount, gen: e.gen, items: e.items, confirm: e.confirm })))) {
       const msg = { type: 'report', surface, mounts: body };
       if (carrier) {
         try { carrier(msg); } catch (err) { console.error('[web-chat] overlay-report: the report transport failed', err); }

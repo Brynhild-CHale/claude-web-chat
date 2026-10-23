@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { withServer, waitUntil } = require('../test-support/helpers');
 const { spawnChrome, chromePair, DESKTOP } = require('../test-support/chrome-pair');
+const { paneSpec, storeDigest } = require('../lib/server/domain/reports');
 
 const SEED = 9009;
 const PANES = ['p0', 'p1', 'p2', 'p3'];
@@ -236,6 +237,64 @@ test('the ordered counter across a restore, two chromes: Set active mid-run → 
   assert.equal(answers.length, pins.length);
   assert.ok(answers.every((x) => x.surface === s1), 'every held answer on the new surface');
   await assertConverged(d, chromes, pins, 'after the restore');
+});
+
+test('a store write that moves one anchored row of a store-driven pane: every held answer of the mount is re-stamped with the store now and recordable for the live content', { timeout: 120000 }, async (t) => {
+  const d = await withServer(t);
+  // A Claude pane that draws its rows from the store (a git, todo or service
+  // board's shape); its answers are recordable (a service's are live-only).
+  const rows = (drop = -1) => Array.from({ length: ROWS_N }, (_, i) => rowText('sd', i)).filter((_, i) => i !== drop);
+  await ok(d.api.post('/api/store', { patch: { sd_rows: rows() } }), 'seed the rows');
+  const html = `<div class="rows"></div><script>
+    function draw(list) {
+      var box = root.querySelector('.rows'); box.textContent = '';
+      (list || []).forEach(function (r) { var el = document.createElement('div'); el.className = 'row'; el.textContent = r; box.appendChild(el); });
+    }
+    draw(store.get('sd_rows'));
+    store.subscribe('sd_rows', draw);
+  </script>`;
+  await ok(d.api.post('/api/render', { id: 'sd', html }), 'render sd');
+  // The pins (engine records from a recorder chrome), then the viewer: its
+  // hello carries them.
+  const recorder = await spawnChrome(t, { port: d.port, name: 'recorder' });
+  await recorder.call('settle', { frames: false, min: 300 });
+  const pins = [];
+  for (const i of ANCHORED) {
+    const anchor = await recorder.call('record', { mount: 'sd', selector: '.row', index: i });
+    const r = await ok(d.anonApi.post('/api/comments', { text: `note sd:${i}`, shared: true, anchor }), `pin sd:${i}`);
+    pins.push({ id: r.pin.id, v: r.pin.v, row: i });
+  }
+  await recorder.call('exit');
+  const c = await spawnChrome(t, { port: d.port, name: 'viewer' });
+  await c.call('settle', { frames: false, min: 900 });
+  await waitUntil(() => d.srv.reports.answers({ mount: 'sd' }).length === pins.length, { timeout: 10000, what: 'every pin answered' })
+    .catch(async (e) => {
+      throw new Error(`${e.message}: ${JSON.stringify({ daemon: d.srv.reports.stats(), chrome: await c.call('stats'), overlay: await c.call('overlay') })}`);
+    });
+  const before = d.srv.reports.answers({ mount: 'sd' });
+  assert.ok(before.every((a) => a.state === 'exact'), JSON.stringify(before.map((a) => a.state)));
+
+  // The last anchored row goes: its answer moves to orphaned, the rest stand.
+  const gone = pins.find((p) => p.row === ANCHORED[ANCHORED.length - 1]);
+  const [run] = await change([c], () => ok(d.api.post('/api/store', { patch: { sd_rows: rows(gone.row) } }), 'drop a row'), { min: 300 });
+  assert.equal(run.reports.length, 1, `one report for the store change (${run.reports.length})`);
+  const entries = run.reports[0].mounts.filter((m) => m.mount === 'sd');
+  assert.deepEqual(entries.map((m) => m.items.map((i) => `${i.id}:${i.state}`)), [[], [`${gone.id}:orphaned`]],
+    'one confirm, right ahead of the changed item');
+
+  const held = d.srv.reports.answers({ mount: 'sd' });
+  assert.equal(held.length, pins.length);
+  const digest = storeDigest(d.srv.state.store);
+  const orphan = held.find((a) => a.id === gone.id);
+  assert.equal(orphan.state, 'orphaned');
+  for (const a of held) {
+    assert.equal(a.qual.store, digest, `${a.id} stamped with the store now`);
+    assert.equal(a.storeEpoch, orphan.storeEpoch, `${a.id} under the current store epoch`);
+  }
+  const rec = d.srv.reports.recordable({ specOf: (m) => (d.srv.state.mounts.get(m) ? paneSpec(d.srv.state.mounts.get(m)) : null), storeDigest: digest });
+  assert.deepEqual(rec.filter((a) => a.mount === 'sd').map((a) => a.id).sort(), pins.map((p) => p.id).sort(),
+    'every held answer of the mount is recordable for the live content and store');
+  assert.equal(d.srv.reports.stats().confirms, 1, 'one confirm for the one store change');
 });
 
 test('a remote page with no transport registered sends no report on its socket; with one, the transport takes every batch', { timeout: 120000 }, async (t) => {

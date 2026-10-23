@@ -320,6 +320,28 @@ test('a confirm: a store write whose pass moved nothing → one items: [] per re
   assert.deepEqual(again, [], 'no second confirm until the next store change');
 });
 
+test('a store write that moves one anchored row of a store-driven pane: the confirm goes right ahead of the changed items, in the same message; still one per store change', async () => {
+  const shape = (f) => f.mounts.map((m) => [m.mount, m.items.map((i) => `${i.id}:${i.state}`)]);
+  const checkPair = (f, state) => {
+    const at = f.mounts.findIndex((m) => m.mount === 'svc');
+    assert.ok(at >= 0, `svc reported: ${JSON.stringify(shape(f))}`);
+    assert.deepEqual(f.mounts[at].items, [], `the confirm first: ${JSON.stringify(shape(f))}`);
+    assert.deepEqual(shape({ mounts: [f.mounts[at + 1]] }), [['svc', [`svc:10:${state}`]]], 'then the changed row, right behind it');
+    assert.equal(f.mounts.filter((m) => m.mount === 'svc' && !m.items.length).length, 1, 'one confirm for the mount');
+    for (const id of ['pa', 'pb']) {
+      assert.deepEqual(f.mounts.filter((m) => m.mount === id).map((m) => m.items), [[]], `${id}: a lone confirm`);
+    }
+  };
+  const gone = await during(() => shell.frame({ type: 'store:patch', patch: { svc_rows: svcRows(10) } }));
+  assert.equal(gone.length, 1, `one message (${gone.length})`);
+  checkPair(gone[0], 'orphaned');
+  const back = await during(() => shell.frame({ type: 'store:patch', patch: { svc_rows: svcRows() } }));
+  assert.equal(back.length, 1, `one message (${back.length})`);
+  checkPair(back[0], 'exact');
+  const again = await during(async () => { M.settle(rootOf('svc'), 'svc', 'test'); await shell.tick(); });
+  assert.deepEqual(again, [], 'no second confirm until the next store change');
+});
+
 test('a payload carrying the previous surface is dropped, never sent with the current counter', async () => {
   const before = inst.stats().dropped_surface;
   const sent = await during(() => {
@@ -440,4 +462,76 @@ test('the splitter keeps a message under the caps: one mount\'s 1201 items in th
     assert.deepEqual(sent.map((m) => m.mounts.length), [200, 1], 'at most 200 mounts each');
     assert.deepEqual(itemsOf(sent).map((i) => i.mount).sort(), [...ids].sort(), 'every mount once');
   } finally { big.stop(); }
+});
+
+// A stand-in overlay's instance (a second init stops the first), its sends
+// captured: a test can deliver answers a jsdom page does not hold.
+function standIn(rows = []) {
+  const sent = [];
+  const box = { deliver: null };
+  const fake = { onAnswers: (fn) => { box.deliver = fn; return () => { box.deliver = null; }; }, surfaceOf: () => SURFACE, elementsOf: () => rows };
+  const inst2 = rep.initOverlayReport({ overlay: fake, send: (m) => sent.push(m) });
+  const idle = () => waitUntil(() => { const s = inst2.stats(); return !s.armed && s.pending === 0; }, { timeout: 6000, what: 'the stand-in instance to go quiet' });
+  return { sent, inst: inst2, deliver: (p) => box.deliver(p), idle };
+}
+const jsonBytes = (m) => Buffer.byteLength(JSON.stringify(m), 'utf8');
+
+test('the splitter keeps every message under MAX_BYTES: one mount\'s chunk of minted ~3 KB records is halved until it fits, its confirm ahead of the first part', async () => {
+  // One element whose engine record is about 3 KB (its class list), found by
+  // the locators of many converted pins: each answer mints a record.
+  const cls = Array.from({ length: 30 }, (_, i) => `k${i}-${'x'.repeat(80)}`).join(' ');
+  const rows = [];
+  const s = standIn(rows);
+  try {
+    SURFACE += 1;
+    await shell.frame(helloFrame({ mounts: [{ id: 'big', target: 'main', params: {}, gen: 0, html: `<div class="${cls}">big record</div>` }], store: {}, surface: SURFACE, elements: [] }));
+    await waitUntil(() => rootOf('big') && rootOf('big').querySelector('div'), { timeout: 4000, what: 'the pane mounted' });
+    const el = rootOf('big').querySelector('div');
+    const size = jsonBytes(anchors.record(rootOf('big'), el, { mount: 'big' }));
+    assert.ok(size > 2048 && size <= rep.MAX_RECORD, `a record of 2–4 KB (${size})`);
+    const loc = { v: 1, kind: 'element', form: 'pin-locator@1', mount: 'big', path: { selector: 'div' }, fingerprint: { tag: 'div', classes: [], text: 'big record' }, ordinal: 0 };
+    const n = Math.ceil((1.5 * rep.MAX_BYTES) / size);
+    for (let i = 0; i < n + 1; i++) rows.push({ id: `bg-${i}`, v: 1, anchor: loc });
+    const item = (i) => ({ id: `bg-${i}`, v: 1, type: 'comment', state: 're-resolved', how: 'locator', tie: null, why: null, el });
+    await s.idle();
+    // The first answer (one record), then a store change and the chunk.
+    s.deliver({ mount: 'big', scope: 'live', surface: SURFACE, gen: null, report: null, items: [item(0)] });
+    await s.idle();
+    assert.equal(s.sent.length, 1);
+    s.sent.length = 0;
+    await shell.frame({ type: 'store:patch', patch: { unrelated: 'bytes' } });
+    s.deliver({ mount: 'big', scope: 'live', surface: SURFACE, gen: null, report: null, items: Array.from({ length: n + 1 }, (_, i) => item(i)) });
+    await s.idle();
+    assert.ok(s.sent.length >= 2, `split by bytes (${s.sent.length} messages)`);
+    for (const m of s.sent) assert.ok(jsonBytes(m) <= rep.MAX_BYTES, `a message of ${jsonBytes(m)} bytes, over ${rep.MAX_BYTES}`);
+    const items = itemsOf(s.sent);
+    assert.deepEqual(items.map((i) => i.id).sort(), Array.from({ length: n }, (_, i) => `bg-${i + 1}`).sort(), 'every new answer once (bg-0 unchanged)');
+    assert.ok(items.every((i) => i.record && i.record.mount === 'big'), 'each with its minted record');
+    assert.deepEqual(s.sent[0].mounts[0], { mount: 'big', gen: 0, items: [] }, 'the confirm ahead of the first part, in its message');
+    assert.ok(s.sent[0].mounts[1] && s.sent[0].mounts[1].items.length > 0, 'the first part right behind it');
+    assert.equal(s.sent.flatMap((m) => m.mounts).filter((m) => !m.items.length).length, 1, 'one confirm');
+  } finally { s.inst.stop(); }
+});
+
+test('the stale guard: an answer whose element is not in the pane\'s current root is dropped; one whose element is inside it is sent', async () => {
+  const s = standIn();
+  try {
+    SURFACE += 1;
+    await shell.frame(helloFrame({ mounts: [{ id: 'st', target: 'main', params: {}, gen: 0, html: '<p class="here">inside</p>' }], store: {}, surface: SURFACE, elements: [] }));
+    await waitUntil(() => rootOf('st') && rootOf('st').querySelector('p.here'), { timeout: 4000, what: 'the pane mounted' });
+    await s.idle();
+    s.sent.length = 0;
+    const item = (id, el) => ({ id, v: 1, type: 'comment', state: 'exact', how: 'path', tie: null, why: null, el });
+    const before = s.inst.stats().dropped_stale;
+    const detached = W.document.createElement('p');
+    s.deliver({ mount: 'st', scope: 'live', surface: SURFACE, gen: null, report: null, items: [item('st-old', detached)] });
+    await sleep(300);
+    await s.idle();
+    assert.deepEqual(s.sent, [], 'nothing sent for a pass on an old DOM');
+    assert.equal(s.inst.stats().dropped_stale, before + 1);
+    s.deliver({ mount: 'st', scope: 'live', surface: SURFACE, gen: null, report: null, items: [item('st-new', rootOf('st').querySelector('p.here'))] });
+    await s.idle();
+    assert.deepEqual(itemsOf(s.sent).map((i) => [i.mount, i.id, i.state]), [['st', 'st-new', 'exact']], 'the answer on the current root is sent');
+    assert.equal(s.inst.stats().dropped_stale, before + 1);
+  } finally { s.inst.stop(); }
 });
