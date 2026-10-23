@@ -1023,11 +1023,12 @@ function markdownText(md) {
 // pointerup and pointercancel, dropped at its pointercancel, at its click, at
 // the next pointerdown of its id, and — once it is up — at any later
 // pointerdown (a click follows its pointerup in the same task, or never). A
-// click takes its own pointerId's gesture, else the newest pointerdown's while
-// it is live: that pointer still down, or up with its click unspent when the
-// click names no pointer and a pointer pressed it (detail >= 1). With neither
-// it is a lone click (a keyboard's Enter, a script's el.click(), or the click
-// a pan's gesture never got), and the policy is asked about it afresh.
+// click that names a pointer takes that pointer's gesture alone; one that names
+// none takes the newest pointerdown's while it is live: that pointer still
+// down, or up with its click unspent and a pointer pressed it (detail >= 1).
+// With neither it is a lone click (a keyboard's Enter, pointerId -1; a script's
+// el.click(); or the click a pan's gesture never got), and the policy is asked
+// about it afresh.
 function askPolicy(e) {
   let decision = 'tool';
   if (policy) {
@@ -1039,14 +1040,19 @@ function askPolicy(e) {
   return POINTER_ANSWERS.includes(decision) ? decision : 'page';
 }
 function gestureOfClick(e) {
-  if (typeof e.pointerId === 'number' && gestures.has(e.pointerId)) return [e.pointerId, gestures.get(e.pointerId)];
+  // A click that names a pointer takes that pointer's gesture or none: never the
+  // newest pointerdown's, which may be another pointer's (a mouse released
+  // outside the well leaves its entry not up; a pen may still be down). A
+  // keyboard's click names -1, a lone one by any reading.
+  if (typeof e.pointerId === 'number') return gestures.has(e.pointerId) ? [e.pointerId, gestures.get(e.pointerId)] : null;
+  // A click that names no pointer (a browser whose click is a MouseEvent): the
+  // newest pointerdown's while it is still down, or up with its own click
+  // unspent when a pointer pressed it (detail >= 1; any later pointerdown would
+  // have dropped this gesture).
   const g = lastDown == null ? null : gestures.get(lastDown);
   if (!g) return null;
   if (!g.up) return [lastDown, g];
-  // Up: live still for its own click alone, when the click names no pointer (a
-  // browser whose click is a MouseEvent) and a pointer pressed it (detail >= 1;
-  // any later pointerdown would have dropped this gesture).
-  return typeof e.pointerId !== 'number' && e.detail >= 1 ? [lastDown, g] : null;
+  return e.detail >= 1 ? [lastDown, g] : null;
 }
 // The click of a gesture the tool took, judged again where it ended: the
 // stand-in names the gesture's pointer (a click event may carry none) and not

@@ -31,6 +31,9 @@
 //     the input-mode policy's dispatchMode decides preventDefault and pointer
 //     capture per pointer (a finger's default never cancelled; a pen's and a
 //     mouse's cancelled and captured for a strokes tool);
+//     a click that names a pointer takes that pointer's gesture alone, so a
+//     keyboard click (pointerId -1, detail 0) after a mouse released outside
+//     the well, or while a pen is down, is the button's and drops no pin;
 //   - the one armed state (K.2-3, K.2-14): each subscriber told once, an equal
 //     value tells nobody, an unsubscribe stops it; the profile rides it;
 //     inputKindOf answers the registered kind;
@@ -482,6 +485,44 @@ test('a touch pan the browser cancels (pointercancel) leaves nothing behind: the
   } finally {
     ov.setArmed(null);
     offType();
+    offIM();
+  }
+});
+
+// A mouse pressed in a pane with a taps tool armed (which captures nothing),
+// dragged out of the well and released over the chrome: the well never hears
+// its pointerup, so its gesture stays not up. A keyboard click names pointer -1
+// and takes no other pointer's gesture.
+test('a keyboard click never takes another pointer\'s gesture: after a mouse released outside the well, or while a pen is down, the button acts and no pin drops', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offTaps = ov.registerType('tt', { draw() {}, input: 'taps', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}`) });
+  const offStrokes = ov.registerType('ts', { draw() {}, input: 'strokes', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}:${inp.event.pointerId}`) });
+  const keyClick = () => goBtn('p1').dispatchEvent(new W.PointerEvent('click', {
+    bubbles: true, cancelable: true, composed: true, pointerType: '', pointerId: -1, detail: 0,
+  }));
+  try {
+    ov.setArmed('tt');
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'mouse', 1);
+    pe(W.document.body, 'pointerup', 'mouse', 1);   // released outside #main: the well never hears it
+    keyClick();
+    assert.deepEqual(W.__goClicks, ['p1'], 'the button acted');
+    assert.deepEqual(created, [], 'no pin on the button');
+    // A pen still down on a strokes tool: the keyboard click leaves its stroke whole.
+    ov.setArmed('ts');
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'pen', 2);
+    keyClick();
+    assert.deepEqual(W.__goClicks, ['p1'], 'the button acted with the pen down');
+    pe(lead('p1'), 'pointermove', 'pen', 2, { clientX: 130 });
+    pe(lead('p1'), 'pointerup', 'pen', 2, { clientX: 130 });
+    assert.deepEqual(created, ['pointerdown:pen:2', 'pointermove:pen:2', 'pointerup:pen:2'], 'the pen\'s stroke is the tool\'s, whole');
+  } finally {
+    ov.setArmed(null);
+    offTaps();
+    offStrokes();
     offIM();
   }
 });
