@@ -642,8 +642,10 @@ describe('chrome: GET /api/elements?type=comment answering 403', () => {
   let shell;
   let W;
   const PANE = { id: 'notes', html: '<ul><li>one</li><li>two</li></ul>', target: 'main', params: {} };
-  const PIN = { id: 'c1', text: 'a pin', shared: true, replies: [], anchor: { mount: 'notes', selector: 'li', text: 'two', ordinal: 1 } };
-  const markers = () => [...W.document.getElementById('pin-layer').querySelectorAll('.pin-marker')];
+  // The anchor in the resolver's form; the overlay draws the pin (U327b).
+  const PIN = { id: 'c1', text: 'a pin', shared: true, replies: [],
+    anchor: require('../lib/core/element-log').convertAnchor({ mount: 'notes', selector: 'li', text: 'two', ordinal: 1 }) };
+  const markers = () => [...W.document.getElementById('el-layer').querySelectorAll('.pin-marker')];
 
   before(async () => {
     const { bootShell, helloFrame } = require('../test-support/chrome-shell');
@@ -658,7 +660,7 @@ describe('chrome: GET /api/elements?type=comment answering 403', () => {
     // A pin is drawn first (the frame path), so the 403's effect is visible.
     shell.setRoutes({ '/api/elements?type=comment': { elements: [PIN] } });
     await shell.frame({ type: 'element:comment', elements: [PIN] });
-    assert.equal(markers().length, 1, 'precondition: one marker');
+    await waitUntil(() => markers().length === 1, { what: 'precondition: one marker' });
 
     shell.setRoutes({ '/api/elements?type=comment': respond({ ok: false, mirror: 'basic', remote: true, hint: 'tunnel mirror on' }, { status: 403 }) });
     // A reset frame is one refresh (U304: the 30 s fallback poll is gone).
@@ -666,6 +668,6 @@ describe('chrome: GET /api/elements?type=comment answering 403', () => {
     await shell.frame({ ...helloFrame({ mounts: [PANE] }), type: 'reset' });
     await shell.tick();
     assert.ok(shell.calls.some((c) => c.url === '/api/elements?type=comment' && c.method === 'GET'));
-    assert.equal(markers().length, 0, 'a refused read renders no markers');
+    await waitUntil(() => markers().length === 0, { what: 'a refused read renders no markers' });
   });
 });

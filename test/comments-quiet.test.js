@@ -1,48 +1,54 @@
 'use strict';
-// The comments client goes quiet (U103; ruled U103@comments-poll, A-defaults).
+// The comments client goes quiet (U103; ruled U103@comments-poll, A-defaults;
+// U327b).
 //
 // public/app/comments.js used to run two perpetual pollers whatever the page
 // was doing: a GET /api/comments every 3 s (every pin and every reply) and a
 // marker pass every 500 ms that resolved each pin's anchor inside the pane
 // shadow roots and read its rect — a forced layout twice a second — both
-// running in a hidden tab. The WS `element:comment` frame (U327a; `comments` before) is the primary path, so:
+// running in a hidden tab. U304 removed the timed fetch; U327b retired the
+// marker pass onto the page well's overlay (overlay.js), which places the pins
+// from the resolver's answers on its own redraws. The WS `element:comment`
+// frame (U327a; `comments` before) is the primary path, so:
 //
 //   * the fetch runs on init, on every hello (a reconnect may have missed a
 //     frame) and on every reset (the surface moved; U304 removed the 30 s
 //     fallback interval), and never while the tab is hidden — a refresh asked
 //     for then is sent when the tab is visible again;
-//   * the 500 ms pass returns at once on a hidden page, or with no pins and no
-//     marker to take down; a visibilitychange to visible runs one pass;
-//   * an `element:comment` frame still redraws the markers at once.
+//   * comments.js arms no interval of any kind: no marker pass, no timed fetch;
+//   * an `element:comment` frame draws the marker at once (the overlay's), a
+//     reflow the overlay hears re-places it without rebuilding it, and the last
+//     pin going takes it down.
 //
-// Both pollers stay single setIntervals (spec §10.1): the shell stubs them, and
-// a test runs one by calling its function.
+// A perpetual chrome poller is one setInterval (spec §10.1): the shell stubs
+// them and lists the live ones, so a test can see that none is comments.js's.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert/strict');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
+const { waitUntil } = require('../test-support/helpers');
+const { convertAnchor } = require('../lib/core/element-log');
 
 let shell, W;
 let visibility = 'visible';
 
 const PANE = { id: 'notes', html: '<ul><li>one</li><li>two</li></ul>', target: 'main', params: {} };
+// The anchor in the resolver's form (a 0.8.5 locator converted, as the
+// daemon's element log holds it): the chrome converts none itself (U327b).
 const PIN = { id: 'c1', text: 'this one', shared: true, replies: [],
-  anchor: { mount: 'notes', selector: 'li', text: 'two', ordinal: 1 } };
+  anchor: convertAnchor({ mount: 'notes', selector: 'li', text: 'two', ordinal: 1 }) };
 
 const commentGets = () => shell.calls.filter((c) => c.url === '/api/elements?type=comment' && c.method === 'GET').length;
-const interval = (name, ms) => {
-  const found = shell.intervals().filter((i) => i.fn && i.fn.name === name);
-  assert.equal(found.length, 1, `one ${name} interval`);
-  assert.equal(found[0].ms, ms, `${name} runs every ${ms} ms`);
-  return found[0];
-};
-const run = async (iv) => { iv.fn(...iv.args); await shell.tick(); };
+// The names comments.js's pollers ran under (markerPass, refresh), and the
+// cadences they ran at: none is armed any more.
+const commentIntervals = () => shell.intervals().filter((i) => (i.fn && ['markerPass', 'refresh'].includes(i.fn.name))
+  || i.ms === 500 || i.ms === 3000 || i.ms === 30000);
 const setVisibility = (v, { fire = true } = {}) => {
   visibility = v;
   if (fire) W.document.dispatchEvent(new W.Event('visibilitychange'));
 };
 const host = () => [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === 'notes');
-const markers = () => [...W.document.getElementById('pin-layer').querySelectorAll('.pin-marker')];
+const markers = () => [...W.document.getElementById('el-layer').querySelectorAll('.pin-marker')];
 
 // Count the anchor work a marker pass does: a query of the pane's shadow root,
 // and a rect read of any element.
@@ -67,13 +73,15 @@ before(async () => {
   W = shell.window;
   await shell.frame(helloFrame({ mounts: [PANE] }));
   assert.ok(host() && host().shadowRoot, 'precondition: the pane mounted with a shadow root');
+  // The well's box (jsdom lays nothing out): the overlay clips every marker to it.
+  shell.scrollMetrics(W.document.getElementById('main'), { rect: { left: 0, top: 0, width: 1280, height: 800 } });
 });
 after(() => shell.restore());
 
-test('the comments pollers are one 500 ms pass and no timed fetch — no 30 s or 3 s poll (U304)', () => {
-  interval('markerPass', 500);
-  assert.deepStrictEqual(shell.intervals().filter((i) => i.fn && i.fn.name === 'refresh'), [], 'no refresh interval at all');
-  assert.equal(shell.intervals().filter((i) => i.ms === 30000).length, 0, 'no 30 s interval');
+test('comments.js arms no interval: no marker pass (U327b) and no timed fetch — no 30 s or 3 s poll (U304)', () => {
+  assert.deepStrictEqual(commentIntervals(), [], 'no markerPass, no refresh, nothing at 500 ms, 3 s or 30 s');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'app', 'comments.js'), 'utf8');
+  assert.doesNotMatch(src, /\bset(Interval|Timeout)\(/, 'and no timer at all in the module');
   assert.ok(commentGets() >= 1, 'init still reads the pins once');
 });
 
@@ -120,66 +128,58 @@ test('a hello frame triggers one /api/elements?type=comment refresh — and none
   assert.equal(commentGets(), n + 1, 'a hide/show with nothing put off sends nothing');
 });
 
-test('with no pins the 500 ms pass does no layout work', async () => {
-  const pass = interval('markerPass', 500);
+test('with no pins comments.js reads no layout: a reset and a resize leave the well unread for pins', async () => {
   assert.equal(markers().length, 0, 'precondition: no pins, no markers');
   const spy = spyLayout();
   try {
-    await run(pass);
-    await run(pass);
+    await shell.frame({ ...helloFrame({ mounts: [PANE] }), type: 'reset' });
+    W.dispatchEvent(new W.Event('resize'));
+    await shell.tick();
     assert.equal(spy.queries, 0, 'no shadow-root query');
-    assert.equal(spy.rects, 0, 'no getBoundingClientRect');
+    assert.equal(markers().length, 0, 'and no marker');
   } finally { spy.restore(); }
+  assert.deepStrictEqual(commentIntervals(), [], 'nothing to run on a timer either');
 });
 
-test('an element:comment frame draws its marker at once, and the pass repositions it as before', async () => {
+test('an element:comment frame draws its marker at once; a reflow the overlay hears re-places it without a rebuild', async () => {
   shell.setRoutes({ '/api/elements?type=comment': { elements: [PIN] } });
-  await shell.frame({ type: 'element:comment', elements: [PIN] });
-  assert.equal(markers().length, 1, 'the frame redrew the markers with no interval run');
-
   const li = host().shadowRoot.querySelectorAll('li')[1];
   const m = shell.scrollMetrics(li, { rect: { left: 12, top: 34, width: 50, height: 10 } });
-  const spy = spyLayout();
-  try {
-    await run(interval('markerPass', 500));
-    assert.ok(spy.queries > 0, 'with a pin the pass resolves its anchor');
-  } finally { spy.restore(); }
+  await shell.frame({ type: 'element:comment', elements: [PIN] });
+  await waitUntil(() => markers().length === 1 && markers()[0].style.display === '', { what: 'the marker drawn' });
   const marker = markers()[0];
   assert.equal(marker.style.left, '12px');
   assert.equal(marker.style.top, '34px');
-  assert.equal(marker.style.display, '');
+  assert.deepStrictEqual(commentIntervals(), [], 'with no interval run');
 
   m.rect = { left: 70, top: 90, width: 50, height: 10 };
-  await run(interval('markerPass', 500));
-  assert.equal(marker.style.left, '70px', 'a reflow is followed on the next pass');
+  W.dispatchEvent(new W.Event('resize'));
+  await waitUntil(() => markers()[0] && markers()[0].style.left === '70px', { what: 'the reflow followed' });
   assert.equal(markers()[0], marker, 'repositioned, not rebuilt');
 });
 
-test('on a hidden page the pass does nothing even with pins; visible again runs one pass', async () => {
+test('on a hidden page a frame that needs a read puts it off; visible again sends it once', async () => {
   assert.equal(markers().length, 1, 'precondition: the pin from the last test');
-  const li = host().shadowRoot.querySelectorAll('li')[1];
-  shell.scrollMetrics(li, { rect: { left: 5, top: 6, width: 50, height: 10 } });
+  // A pin whose anchor is a 0.8.5 locator the overlay holds no row for: the
+  // chrome converts none, so it asks for the read that serves its `record`.
+  const legacy = { id: 'c2', text: 'legacy', shared: true, replies: [], anchor: { mount: 'notes', selector: 'li', text: 'one', ordinal: 0 } };
+  shell.setRoutes({ '/api/elements?type=comment': { elements: [PIN, { ...legacy, record: convertAnchor(legacy.anchor) }] } });
   setVisibility('hidden');
-  const spy = spyLayout();
-  try {
-    await run(interval('markerPass', 500));
-    assert.equal(spy.queries, 0, 'hidden: no shadow-root query');
-    assert.equal(spy.rects, 0, 'hidden: no rect read');
-  } finally { spy.restore(); }
-  assert.equal(markers()[0].style.left, '70px', 'hidden: the marker stays where it was');
-
-  setVisibility('visible');
+  const n = commentGets();
+  await shell.frame({ type: 'element:comment', elements: [PIN, legacy] });
   await shell.tick();
-  assert.equal(markers()[0].style.left, '5px', 'the return to visible ran one pass');
+  assert.equal(commentGets(), n, 'hidden: no read');
+  setVisibility('visible');
+  await waitUntil(() => commentGets() === n + 1, { what: 'the put-off read' });
+  await waitUntil(() => markers().length === 2, { what: 'the legacy pin drawn at its served record' });
+  shell.setRoutes({ '/api/elements?type=comment': { elements: [PIN] } });
+  await shell.frame({ type: 'element:comment', elements: [PIN] });
+  await waitUntil(() => markers().length === 1, { what: 'back to one pin' });
 });
 
-test('the last pin going takes its marker down on the next pass', async () => {
+test('the last pin going takes its marker down', async () => {
   shell.setRoutes({ '/api/elements?type=comment': { elements: [] } });
   await shell.frame({ type: 'element:comment', elements: [] });
-  assert.equal(markers().length, 0, 'the frame took the marker down at once');
-  const spy = spyLayout();
-  try {
-    await run(interval('markerPass', 500));
-    assert.equal(spy.queries + spy.rects, 0, 'and the idle page is quiet again');
-  } finally { spy.restore(); }
+  await waitUntil(() => markers().length === 0, { what: 'the marker taken down' });
+  assert.deepStrictEqual(commentIntervals(), [], 'and the idle page has nothing to run');
 });

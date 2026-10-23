@@ -21,6 +21,7 @@ const { userPaths } = require('../lib/core/paths');
 const { WRITER_HEADER } = require('../lib/core/writer-token');
 const { provenance } = require('../lib/server/domain/queue');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
+const { convertAnchor } = require('../lib/core/element-log');
 
 const UA = {
   desktop: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
@@ -192,12 +193,11 @@ describe('chrome: every comment write carries `device`', () => {
   after(() => shell && shell.restore());
 
   const pinPop = () => W.document.querySelector('.pin-pop');
+  // A whole mouse press (U327b: pin mode is the comment tool at the overlay's
+  // pointer dispatch, which takes a gesture, never a lone click).
   const pressInPane = (mountId, sel) => {
     const host = [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === mountId);
-    const target = host.shadowRoot.querySelector(sel);
-    for (const type of ['pointerdown', 'click']) {
-      target.dispatchEvent(new W.MouseEvent(type, { bubbles: true, composed: true, clientX: 40, clientY: 40 }));
-    }
+    shell.press(host.shadowRoot.querySelector(sel));
   };
   const sent = (method, re) => shell.calls.filter((c) => c.method === method && re.test(c.url)).pop();
 
@@ -219,9 +219,11 @@ describe('chrome: every comment write carries `device`', () => {
     assert.strictEqual(add.body.payload.text, 'a note');
 
     // The thread of a pin the server holds.
-    await shell.frame({ type: 'element:comment', elements: [{ id: 'c9', text: 'look', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }] });
+    // The anchor in the resolver's form (the chrome converts no 0.8.5 locator, U327b).
+    await shell.frame({ type: 'element:comment', elements: [{ id: 'c9', text: 'look', shared: true, replies: [], anchor: convertAnchor({ mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 }) }] });
     shell.key('c');
-    const marker = shell.$('pin-layer').querySelector('.pin-marker');
+    await waitUntil(() => shell.$('el-layer').querySelector('.pin-marker'), { what: 'the marker' });
+    const marker = shell.$('el-layer').querySelector('.pin-marker');
     assert.ok(marker, 'the pin drew a marker');
     marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
     await shell.tick();

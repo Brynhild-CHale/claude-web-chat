@@ -25,6 +25,8 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
+const { DEFAULT_ROUTES } = require('../test-support/chrome-shell');
+const { convertAnchor } = require('../lib/core/element-log');
 
 const REPO = path.resolve(__dirname, '..');
 const CSS = fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8');
@@ -413,6 +415,9 @@ async function boot() {
     if (url === '/api/queue/pending') return json({ pending: routes.pending });
     if (url === '/api/queue/policy') return json({ channel_connected: false, immediate_signals: [], queue_signals: [], activation_hint: {}, parked_delivery: 'held' });
     if (String(url).startsWith('/api/theme')) return json({ name: 'web-chat' });
+    // The comment tool is armed through tools.js over the toolbar's tools[],
+    // and its pins drawn behind the type listing (U327b): the daemon's answers.
+    if (url === '/api/toolbar' || url === '/api/elements/types') return json(JSON.parse(JSON.stringify(DEFAULT_ROUTES[url])));
     return json({ ok: true });
   };
 
@@ -430,6 +435,12 @@ async function boot() {
   global.setInterval = () => 0; // no pollers keeping the process alive
   global.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
   global.cancelAnimationFrame = (id) => clearTimeout(id);
+  // The window's frame pair too: the anchor resolver schedules on the window's
+  // (lib/core/anchors), and jsdom's own runs on the stubbed setInterval, so a
+  // comment pin (drawn by the overlay from the resolver's answers, U327b)
+  // would never be answered.
+  window.requestAnimationFrame = global.requestAnimationFrame;
+  window.cancelAnimationFrame = global.cancelAnimationFrame;
   window.__wcMount = require(path.join(REPO, 'public/mount-runtime.js'));
 
   await import(pathToFileURL(path.join(REPO, 'public/app/main.js')).href);
@@ -555,14 +566,18 @@ test('opening one panel closes the others — one at a time', () => {
    a thread, focus moving away did not dismiss it, and "one panel at a time" was
    false for it. Nothing tested it in either direction. */
 
-// Click an element INSIDE a pane's shadow root, the way a real press does:
-// composed, so composedPath() reaches document and comments.js can see the host.
+// Click an element INSIDE a pane's shadow root, the way a real mouse press
+// does: composed, so composedPath() reaches the well's capture listener, and a
+// whole press — pointerdown, pointerup, then the click a pointer made (detail
+// 1) — since pin mode is the comment tool at the overlay's pointer dispatch
+// (U327b), which takes a gesture, never a lone click no pointer made.
 const pressInPane = (mountId, sel) => {
   const host = [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === mountId);
   const target = host.shadowRoot.querySelector(sel);
-  for (const type of ['pointerdown', 'click']) {
-    target.dispatchEvent(new W.MouseEvent(type, { bubbles: true, composed: true, clientX: 40, clientY: 40 }));
-  }
+  const at = { bubbles: true, cancelable: true, composed: true, clientX: 40, clientY: 40, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+  target.dispatchEvent(new W.PointerEvent('pointerdown', { ...at, buttons: 1 }));
+  target.dispatchEvent(new W.PointerEvent('pointerup', at));
+  target.dispatchEvent(new W.PointerEvent('click', { ...at, detail: 1 }));
 };
 const pinPop = () => W.document.querySelector('.pin-pop');
 
@@ -618,10 +633,12 @@ test('a reply draft survives the first Escape and closes on the second (F12)', a
   assert.ok(W.document.body.classList.contains('pin-mode'), 'precondition: pin mode armed');
   WS.onmessage({ data: JSON.stringify({
     type: 'element:comment',
-    elements: [{ id: 'c1', text: 'look here', shared: true, replies: [], anchor: { mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 } }],
+    // The anchor in the resolver's form (the chrome converts no 0.8.5 locator, U327b).
+    elements: [{ id: 'c1', text: 'look here', shared: true, replies: [], anchor: convertAnchor({ mount: 'drop', selector: 'p', text: 'plain', ordinal: 0 }) }],
   }) });
   await tick();
-  const marker = $('pin-layer').querySelector('.pin-marker');
+  await tick();
+  const marker = $('el-layer').querySelector('.pin-marker');
   assert.ok(marker, 'the pin rendered a marker');
   marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
   await tick();
@@ -644,7 +661,7 @@ test('a reply draft survives the first Escape and closes on the second (F12)', a
 test('Escape on an EMPTY reply draft closes the thread and leaves pin mode too', async () => {
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'c' }));
   assert.ok(W.document.body.classList.contains('pin-mode'), 'armed');
-  const marker = $('pin-layer').querySelector('.pin-marker');
+  const marker = $('el-layer').querySelector('.pin-marker');
   marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
   await tick();
   const ta = pinPop().querySelector('.pin-reply-text');

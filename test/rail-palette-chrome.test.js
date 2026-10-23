@@ -25,6 +25,8 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const { pathToFileURL } = require('url');
+const { DEFAULT_ROUTES } = require('../test-support/chrome-shell');
+const { convertAnchor } = require('../lib/core/element-log');
 
 const REPO = path.resolve(__dirname, '..');
 
@@ -81,6 +83,9 @@ async function boot() {
       return json({ ok: true, pin });
     }
     if (u.startsWith('/api/theme')) return json({ name: 'earthy' });
+    // The comment tool is armed through tools.js over the toolbar's tools[],
+    // and its pins drawn behind the type listing (U327b): the daemon's answers.
+    if (u === '/api/toolbar' || u === '/api/elements/types') return json(JSON.parse(JSON.stringify(DEFAULT_ROUTES[u])));
     return json({ ok: true });
   };
 
@@ -97,6 +102,12 @@ async function boot() {
   global.setInterval = () => 0; // no pollers keeping the process alive
   global.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
   global.cancelAnimationFrame = (id) => clearTimeout(id);
+  // The window's frame pair too: the anchor resolver schedules on the window's
+  // (lib/core/anchors), and jsdom's own runs on the stubbed setInterval, so a
+  // comment pin (drawn by the overlay from the resolver's answers, U327b)
+  // would never be answered.
+  window.requestAnimationFrame = global.requestAnimationFrame;
+  window.cancelAnimationFrame = global.cancelAnimationFrame;
   window.__wcMount = require(path.join(REPO, 'public/mount-runtime.js'));
 
   await import(pathToFileURL(path.join(REPO, 'public/app/main.js')).href);
@@ -325,14 +336,28 @@ test('the drawer is headed BLOCKS, and ＋ names what its count counts', async (
 
 /* --------------------------- the comment thread --------------------------- */
 
+// A migrated pin as the daemon serves it: the frame carries its 0.8.5 locator
+// as `anchor`; the read serves the converted anchor beside it as `record`,
+// which the overlay draws from (U327b: the chrome converts no locator, so a
+// frame bringing one the overlay has no row for asks for that read).
+const withRecord = (pin) => ({ ...pin, record: convertAnchor(pin.anchor) });
+const asFramed = (pins) => pins.map(({ record, ...pin }) => pin);
+const markerUntil = async () => {
+  for (let i = 0; i < 40 && !$('el-layer').querySelector('.pin-marker'); i++) await tick();
+  return $('el-layer').querySelector('.pin-marker');
+};
+
 test('a comment thread heads with the anchor path and sends with Send', async () => {
-  routes.comments = [{
+  routes.comments = [withRecord({
     id: 'c1', text: 'repeat 450 first?', shared: true, replies: [{ author: 'claude', text: 'added it' }],
     anchor: { mount: 'notes', selector: 'li', text: 'item 2', ordinal: 1 },
-  }];
-  frame({ type: 'element:comment', elements: routes.comments });
+  })];
+  // A minimized pane's pins are hidden, never drawn (U303's probe): the pin's
+  // pane is shown first.
+  frame({ type: 'pane:state', id: 'notes', pane_state: { minimized: false } });
+  frame({ type: 'element:comment', elements: asFramed(routes.comments) });
   await tick();
-  const marker = $('pin-layer').querySelector('.pin-marker');
+  const marker = await markerUntil();
   assert.ok(marker, 'precondition: the pin has a marker');
   marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
   await tick();
@@ -357,13 +382,20 @@ test('a comment thread heads with the anchor path and sends with Send', async ()
 });
 
 test('an anchor with no text names its element instead', async () => {
+  // A pin the chrome dropped on an element with no text: its anchor is the
+  // engine's record of the element and its 0.8.5 locator rides beside it (a
+  // locator with no text alone would resolve only as a carried guess, whose
+  // click is the re-anchor seam's, not the thread's).
+  const host = [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === 'fig');
+  const anchor = W.__wcMount.anchor.record(host.shadowRoot, host.shadowRoot.querySelector('p'), { mount: 'fig' });
   routes.comments = [{
-    id: 'c2', text: 'x', shared: true, replies: [],
-    anchor: { mount: 'fig', selector: 'p', text: '', ordinal: 0 },
+    id: 'c2', text: 'x', shared: true, replies: [], anchor,
+    locator: { mount: 'fig', selector: 'p', text: '', ordinal: 0 },
   }];
   frame({ type: 'element:comment', elements: routes.comments });
   await tick();
-  $('pin-layer').querySelector('.pin-marker').dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
+  for (let i = 0; i < 40 && !W.document.querySelector('#el-layer .pin-marker[data-el-ids="c2"]'); i++) await tick();
+  W.document.querySelector('#el-layer .pin-marker[data-el-ids="c2"]').dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
   await tick();
   assert.equal(W.document.querySelector('.pin-thread .pin-anchor').textContent, 'fig › p');
   W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape' }));
