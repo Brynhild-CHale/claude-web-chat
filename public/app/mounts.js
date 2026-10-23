@@ -881,8 +881,22 @@ function subscribeFor(rec, keyOrFn, maybeFn) {
     rec.subs.delete(unsubscribe);
     off();
   };
+  unsubscribe.key = typeof keyOrFn === 'function' ? null : keyOrFn;   // null: every write (subscribe(fn))
   rec.subs.add(unsubscribe);
   return unsubscribe;
+}
+
+// What a live pane's script is subscribed to through its facade, read off the
+// set above: {keys: Set of store keys, all: true when it subscribed to every
+// write}, or null when no pane has that id. The overlay's store re-resolve
+// (overlay-hidden.js) settles a pane subscribed to a key another pane wrote.
+export function subscribedKeys(id) {
+  const p = panes.get(id);
+  if (!p) return null;
+  const keys = new Set();
+  let all = false;
+  for (const u of p.subs) { if (u.key === null) all = true; else keys.add(u.key); }
+  return { keys, all };
 }
 
 // The rest of what a pane script set up ends here too (U98): `api.signal`

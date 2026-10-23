@@ -24,6 +24,16 @@
 //     listener; a policy answering 'page' lets the click reach the pane with the
 //     tool still armed (K.2-9); pick({kind:'element'}) resolves with record() of
 //     the clicked element;
+//   - each pointer's gesture is its own (U302a): a palm landing during a pen
+//     stroke, in either order, never swallows or pollutes the stroke; a lone
+//     click with no live gesture asks the policy again, so a keyboard click
+//     after a touch pan (its click nobody's, or never sent) is the button's;
+//     the input-mode policy's dispatchMode decides preventDefault and pointer
+//     capture per pointer (a finger's default never cancelled; a pen's and a
+//     mouse's cancelled for every kind, and captured for a strokes tool);
+//     a click that names a pointer takes that pointer's gesture alone, so a
+//     keyboard click (pointerId -1, detail 0) after a mouse released outside
+//     the well, or while a pen is down, is the button's and drops no pin;
 //   - the one armed state (K.2-3, K.2-14): each subscriber told once, an equal
 //     value tells nobody, an unsubscribe stops it; the profile rides it;
 //     inputKindOf answers the registered kind;
@@ -37,7 +47,7 @@ const { waitUntil } = require('../test-support/helpers');
 const { convertAnchor } = require('../lib/core/element-log');
 const { RESERVED_IDS } = require('../lib/server/domain/mounts');
 
-let shell, W, M, ov, anchors, bus, topbar;
+let shell, W, M, ov, anchors, bus, topbar, IM, TAP_SLOP;
 
 const queue = [];
 const fakeRaf = (fn) => { queue.push(fn); return queue.length; };
@@ -82,6 +92,8 @@ before(async () => {
   anchors = (await shell.importApp('anchors.js')).default;
   bus = (await shell.importApp('bus.js')).bus;
   topbar = await shell.importApp('topbar.js');
+  IM = await shell.importApp('input-mode.js');
+  ({ TAP_SLOP } = await shell.importApp('sheet-model.js'));
   await shell.frame(helloFrame({ active: 'n1', mounts: [P1, P2] }));
   ov.initOverlay({ rectOf, raf: fakeRaf });
   ov.onAnswers((m) => delivered.push(m));
@@ -333,6 +345,226 @@ test('pointer dispatch: no listener unarmed; the armed tool gets the click, not 
     ov.setArmed(null);
     main.addEventListener = ownAdd;
     main.removeEventListener = ownRemove;
+  }
+});
+
+// ── each pointer's gesture (U302a) ─────────────────────────────────────────
+// The input-mode policy the chrome installs (main.js), put back at the
+// overlay's one dispatch: the test above replaced it and took its own away.
+function withInputMode() {
+  const un = IM.installInputMode();
+  un();
+  return IM.installInputMode();
+}
+function pe(el, type, pointerType, pointerId, extra = {}) {
+  const ev = new W.PointerEvent(type, {
+    bubbles: true, cancelable: true, composed: true, pointerType, pointerId, isPrimary: true, clientX: 100, clientY: 100, detail: type === 'click' ? 1 : 0, ...extra,
+  });
+  el.dispatchEvent(ev);
+  return ev;
+}
+// What the page heard inside a pane: the shadow root's own listeners, which an
+// event the overlay swallows on the well never reaches.
+function pageLog(id) {
+  const log = [];
+  const root = rootOf(id);
+  const fns = ['pointerdown', 'pointermove', 'pointerup', 'click'].map((t) => {
+    const fn = (e) => log.push(`${t}:${e.pointerType || ''}:${e.pointerId}`);
+    root.addEventListener(t, fn);
+    return [t, fn];
+  });
+  Object.defineProperty(log, 'off', { value: () => { for (const [t, fn] of fns) root.removeEventListener(t, fn); } });
+  return log;
+}
+
+test('a palm landing during a pen stroke never swallows the rest of the stroke: pen 11 down, palm 12 down (ignore), pen 11 moves reach create, palm 12 reaches nothing', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offType = ov.registerType('ts', { draw() {}, input: 'strokes', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}:${inp.event.pointerId}`) });
+  const log = pageLog('p1');
+  ov.setArmed('ts');
+  try {
+    pe(lead('p1'), 'pointerdown', 'pen', 11);
+    pe(lead('p1'), 'pointerdown', 'touch', 12);
+    pe(lead('p1'), 'pointermove', 'pen', 11, { clientX: 120 });
+    pe(lead('p1'), 'pointermove', 'touch', 12, { clientX: 130 });
+    pe(lead('p1'), 'pointermove', 'pen', 11, { clientX: 140 });
+    pe(lead('p1'), 'pointerup', 'touch', 12);
+    pe(lead('p1'), 'pointerup', 'pen', 11, { clientX: 140 });
+    assert.deepEqual(created, ['pointerdown:pen:11', 'pointermove:pen:11', 'pointermove:pen:11', 'pointerup:pen:11'], 'the whole pen stroke, and nothing of the palm');
+    assert.deepEqual(log, [], 'the page heard neither the stroke nor the palm');
+  } finally {
+    ov.setArmed(null);
+    offType();
+    log.off();
+    offIM();
+  }
+});
+
+test('a palm down first (the page\'s) then a pen (the tool\'s): the palm\'s moves never reach the stroke, the pen\'s do', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offType = ov.registerType('ts', { draw() {}, input: 'strokes', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}:${inp.event.pointerId}`) });
+  const log = pageLog('p1');
+  ov.setArmed('ts');
+  try {
+    pe(lead('p1'), 'pointerdown', 'touch', 12);   // finger-draws off: a finger on a strokes tool is the page's
+    pe(lead('p1'), 'pointerdown', 'pen', 11);
+    pe(lead('p1'), 'pointermove', 'touch', 12, { clientX: 130 });
+    pe(lead('p1'), 'pointermove', 'pen', 11, { clientX: 120 });
+    pe(lead('p1'), 'pointermove', 'touch', 12, { clientX: 150 });
+    pe(lead('p1'), 'pointerup', 'pen', 11, { clientX: 120 });
+    pe(lead('p1'), 'pointerup', 'touch', 12, { clientX: 150 });
+    assert.deepEqual(created, ['pointerdown:pen:11', 'pointermove:pen:11', 'pointerup:pen:11'], 'the stroke holds the pen alone');
+    // The palm's own gesture was decided the page's at its pointerdown, and stays so.
+    assert.deepEqual(log, ['pointerdown:touch:12', 'pointermove:touch:12', 'pointermove:touch:12', 'pointerup:touch:12']);
+  } finally {
+    ov.setArmed(null);
+    offType();
+    log.off();
+    offIM();
+  }
+});
+
+test('a lone keyboard click after a touch pan is the button\'s: the pan\'s click is nobody\'s, and a pan whose click never came leaves nothing behind', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offType = ov.registerType('tt', { draw() {}, input: 'taps', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}`) });
+  const log = pageLog('p1');
+  ov.setArmed('tt');
+  const keyClick = () => goBtn('p1').dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: '', detail: 0 }));
+  try {
+    for (const sendsClick of [true, false]) {
+      // A finger pan on static text: down (a tap so far: the tool's), past the slop, up.
+      W.__goClicks = [];
+      created.length = 0;
+      log.length = 0;
+      pe(lead('p1'), 'pointerdown', 'touch', 21);
+      pe(lead('p1'), 'pointermove', 'touch', 21, { clientX: 100 + TAP_SLOP + 5 });
+      pe(lead('p1'), 'pointerup', 'touch', 21, { clientX: 100 + TAP_SLOP + 5 });
+      if (sendsClick) {
+        const c = pe(lead('p1'), 'click', 'touch', 21, { clientX: 100 + TAP_SLOP + 5 });
+        assert.equal(c.defaultPrevented, true, 'the pan\'s click is nobody\'s');
+      }
+      assert.deepEqual(created, [], `a pan drops no pin (click ${sendsClick ? 'sent' : 'never sent'})`);
+      assert.deepEqual(log.filter((l) => l.startsWith('click')), [], 'and the page heard no click of it');
+      // Then Enter on the pane's button: a lone click, pointerType '', detail 0.
+      keyClick();
+      assert.deepEqual(W.__goClicks, ['p1'], `the button acted (pan's click ${sendsClick ? 'sent' : 'never sent'})`);
+      assert.deepEqual(created, [], 'no pin on the button');
+    }
+    assert.deepEqual(ov.armed(), { type: 'tt', profile: null }, 'the tool stays armed');
+  } finally {
+    ov.setArmed(null);
+    offType();
+    log.off();
+    offIM();
+  }
+});
+
+// The browser takes a finger that travels for its own pan and cancels the
+// pointer (pointercancel, no pointerup, no click): the gesture is dropped there,
+// so the next keyboard click is a lone one the policy gives the button.
+test('a touch pan the browser cancels (pointercancel) leaves nothing behind: the next keyboard click is the button\'s', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offType = ov.registerType('tt', { draw() {}, input: 'taps', create: (inp) => created.push(inp.phase) });
+  ov.setArmed('tt');
+  try {
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'touch', 41);
+    pe(lead('p1'), 'pointermove', 'touch', 41, { clientX: 100 + TAP_SLOP + 5 });
+    pe(lead('p1'), 'pointercancel', 'touch', 41, { clientX: 100 + TAP_SLOP + 5 });
+    goBtn('p1').dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: '', detail: 0 }));
+    assert.deepEqual(W.__goClicks, ['p1'], 'the button acted');
+    assert.deepEqual(created, [], 'no pin on the button');
+  } finally {
+    ov.setArmed(null);
+    offType();
+    offIM();
+  }
+});
+
+// A mouse pressed in a pane with a taps tool armed (which captures nothing),
+// dragged out of the well and released over the chrome: the well never hears
+// its pointerup, so its gesture stays not up. A keyboard click names pointer -1
+// and takes no other pointer's gesture.
+test('a keyboard click never takes another pointer\'s gesture: after a mouse released outside the well, or while a pen is down, the button acts and no pin drops', () => {
+  const offIM = withInputMode();
+  IM.setFingerDraws('off');
+  const created = [];
+  const offTaps = ov.registerType('tt', { draw() {}, input: 'taps', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}`) });
+  const offStrokes = ov.registerType('ts', { draw() {}, input: 'strokes', create: (inp) => created.push(`${inp.phase}:${inp.pointerType}:${inp.event.pointerId}`) });
+  const keyClick = () => goBtn('p1').dispatchEvent(new W.PointerEvent('click', {
+    bubbles: true, cancelable: true, composed: true, pointerType: '', pointerId: -1, detail: 0,
+  }));
+  try {
+    ov.setArmed('tt');
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'mouse', 1);
+    pe(W.document.body, 'pointerup', 'mouse', 1);   // released outside #main: the well never hears it
+    keyClick();
+    assert.deepEqual(W.__goClicks, ['p1'], 'the button acted');
+    assert.deepEqual(created, [], 'no pin on the button');
+    // A pen still down on a strokes tool: the keyboard click leaves its stroke whole.
+    ov.setArmed('ts');
+    W.__goClicks = [];
+    pe(lead('p1'), 'pointerdown', 'pen', 2);
+    keyClick();
+    assert.deepEqual(W.__goClicks, ['p1'], 'the button acted with the pen down');
+    pe(lead('p1'), 'pointermove', 'pen', 2, { clientX: 130 });
+    pe(lead('p1'), 'pointerup', 'pen', 2, { clientX: 130 });
+    assert.deepEqual(created, ['pointerdown:pen:2', 'pointermove:pen:2', 'pointerup:pen:2'], 'the pen\'s stroke is the tool\'s, whole');
+  } finally {
+    ov.setArmed(null);
+    offTaps();
+    offStrokes();
+    offIM();
+  }
+});
+
+test('the policy\'s dispatchMode decides preventDefault and pointer capture, per pointer', () => {
+  const offIM = withInputMode();
+  const captured = [];
+  const had = Object.getOwnPropertyDescriptor(W.Element.prototype, 'setPointerCapture');
+  W.Element.prototype.setPointerCapture = function setPointerCapture(id) { captured.push([this, id]); };
+  const created = [];
+  const offTaps = ov.registerType('tt', { draw() {}, input: 'taps', create: (inp) => created.push(inp.phase) });
+  const offStrokes = ov.registerType('ts', { draw() {}, input: 'strokes', create: (inp) => created.push(inp.phase) });
+  const down = (pointerType, id) => {
+    captured.length = 0;
+    const ev = pe(lead('p1'), 'pointerdown', pointerType, id);
+    pe(lead('p1'), 'pointerup', pointerType, id);
+    return { prevented: ev.defaultPrevented, captured: captured.map(([el, pid]) => [el === lead('p1'), pid]) };
+  };
+  try {
+    IM.setFingerDraws('off');
+    ov.setArmed('tt');
+    assert.deepEqual(down('touch', 31), { prevented: false, captured: [] }, 'a finger tap the taps tool takes: its default is the finger\'s (touch-action), never cancelled');
+    assert.deepEqual(down('pen', 32), { prevented: true, captured: [] }, 'a taps tool acts on the click and captures nothing; the pen\'s default is cancelled (K.2-43)');
+    const c = pe(lead('p1'), 'click', 'pen', 32);
+    assert.equal(c.defaultPrevented, true, 'the click the tool took is the tool\'s');
+    ov.setArmed('ts');
+    assert.deepEqual(down('touch', 33), { prevented: false, captured: [] }, 'finger-draws off: a finger on a strokes tool is the page\'s');
+    assert.deepEqual(down('pen', 34), { prevented: true, captured: [[true, 34]] }, 'a pen on a strokes tool: cancelled and captured on the element it went down on');
+    assert.deepEqual(down('mouse', 35), { prevented: true, captured: [[true, 35]] }, 'the mouse as the pen');
+    IM.setFingerDraws('on');
+    assert.deepEqual(down('touch', 36), { prevented: false, captured: [[true, 36]] }, 'finger-draws on: the finger draws, captured, its default left to touch-action');
+    const mv = pe(lead('p1'), 'pointermove', 'pen', 37);
+    assert.equal(mv.defaultPrevented, false, 'a pointer with no gesture of its own (a hover) is untouched');
+  } finally {
+    ov.setArmed(null);
+    IM.setFingerDraws('off');
+    offTaps();
+    offStrokes();
+    if (had) Object.defineProperty(W.Element.prototype, 'setPointerCapture', had);
+    else delete W.Element.prototype.setPointerCapture;
+    W.localStorage.removeItem('wc:finger-draws');
+    offIM();
   }
 });
 

@@ -10,8 +10,11 @@
 //                            read that changed the set
 //   refreshPending()       → Promise<Set | null>: one read now; null when the
 //                            daemon did not answer (the set is left as it was)
-//   initServicePending()   → idempotent: the first read, and one more on each
-//                            'service:trust' / 'service:trust:clear' frame
+//   initServicePending()   → idempotent: the first read, one more on each
+//                            'service:trust' / 'service:trust:clear' frame, and
+//                            one on every hello (a request cleared while the
+//                            socket was down sends no clear frame after the
+//                            reconnect: the hello's read is what drops it)
 //
 // Read through the chrome's one HTTP reader (http.js) — never a raw fetch —
 // from GET /api/services/pending (lib/server/routes/components.js), whose
@@ -22,7 +25,7 @@
 // Reads can overlap (a burst of trust frames on a reconnect): a read started
 // earlier never overwrites the answer of one started later.
 import { request } from './http.js';
-import { onFrame } from './ws.js';
+import { onFrame, onHello } from './ws.js';
 
 export const PENDING_PATH = '/api/services/pending';
 
@@ -77,5 +80,6 @@ export function initServicePending() {
   inited = true;
   onFrame('service:trust', () => { refreshPending(); });
   onFrame('service:trust:clear', () => { refreshPending(); });
+  onHello(() => { refreshPending(); });
   refreshPending();
 }
