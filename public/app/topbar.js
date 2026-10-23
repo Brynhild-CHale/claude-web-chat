@@ -141,6 +141,7 @@ export async function previewNode(id) {
   // this node aside as the live surface instead of rendering it. Entering a
   // preview is the act of putting a non-live node ON the DOM.
   fullReset({ mounts: node.mounts || [], store: node.store || {}, page: pageFromFrame(node), updatedAt: node.created_at || null });
+  bus.emit('preview:node', { id, node }); // the element overlay draws the node's elements (overlay.js)
   syncReadonly();
   applyNodeTheme(node.theme || null, true);
   updateChip();

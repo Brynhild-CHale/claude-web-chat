@@ -423,6 +423,12 @@ async function boot({ routes = {}, onSocket, init, open = true, url = 'http://lo
     requestAnimationFrame: (fn) => setTimeoutTracked(() => fn(W.performance.now()), 0),
     cancelAnimationFrame: (h) => clearTimeoutTracked(h),
   };
+  // The window's own frame pair is the shell's too: jsdom's requestAnimationFrame
+  // (pretendToBeVisual) runs its frames on the global setInterval, which the
+  // shell stubs, so it never fires (U240 hand-off :18), and the resolver's
+  // default scheduler reads the ROOT's window, as a browser does.
+  W.requestAnimationFrame = SUPPLIED.requestAnimationFrame;
+  W.cancelAnimationFrame = SUPPLIED.cancelAnimationFrame;
   const saved = new Map();   // key → its own property descriptor before the boot (undefined: it had none)
   const put = (k, v) => {
     if (!saved.has(k)) saved.set(k, Object.getOwnPropertyDescriptor(globalThis, k));
