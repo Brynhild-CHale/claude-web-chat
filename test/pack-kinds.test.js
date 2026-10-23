@@ -24,9 +24,10 @@ const os = require('os');
 const path = require('path');
 
 const { packFixture, tmpDir, write, fakeForge, repoWithArchive } = require('../test-support/packs');
-const { projectPaths, userPaths, homeDir } = require('../lib/core/paths');
+const { projectPaths, userPaths, claudePaths, userClaudePaths, homeDir } = require('../lib/core/paths');
 const { validateManifest, parseManifest } = require('../lib/packs/manifest');
 const { planInstall } = require('../lib/packs/plan');
+const { unitDir } = require('../lib/packs/store');
 const packs = require('../lib/packs/install');
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'pack-kinds-plans.json');
@@ -94,6 +95,75 @@ function newProject(name) {
 }
 
 const SOURCE = { via: 'tarball', sha: 'a'.repeat(40), url: 'https://github.com/acme/kinds' };
+
+// ── the table itself ────────────────────────────────────────────────────────
+test('UNIT_KINDS lists component, theme and skill, in the order planInstall emits units', () => {
+  if (RECORD) return;
+  const { UNIT_KINDS, kindOf, unitsOf, namesOf } = require('../lib/packs/kinds');
+  assert.deepEqual(UNIT_KINDS.map((r) => r.kind), ['component', 'theme', 'skill']);
+  assert.ok(Object.isFrozen(UNIT_KINDS));
+  for (const r of UNIT_KINDS) {
+    assert.ok(Object.isFrozen(r), `${r.kind}'s row is frozen`);
+    for (const k of ['kind', 'manifestKey', 'dest', 'checksName', 'reserved', 'plan', 'label', 'listKey']) {
+      assert.ok(k in r, `${r.kind}'s row has ${k}`);
+    }
+  }
+  assert.deepEqual(UNIT_KINDS.map((r) => r.listKey), ['components', 'themes', null]);
+  assert.deepEqual(UNIT_KINDS.map((r) => r.checksName), [true, false, true]);
+  assert.equal(kindOf('theme'), UNIT_KINDS[1]);
+  for (const k of ['element', '__proto__', 'constructor', '', null, undefined]) assert.equal(kindOf(k), null, String(k));
+  const units = [{ kind: 'theme', name: 'a' }, null, { kind: 'component', name: 'b' }, { kind: 'theme', name: 'c' }];
+  assert.deepEqual(unitsOf(units, 'theme'), [units[0], units[3]]);
+  assert.deepEqual(namesOf(units, 'theme'), ['a', 'c']);
+  assert.deepEqual(namesOf(undefined, 'theme'), []);
+  assert.equal(UNIT_KINDS[0].label({ kind: 'component', name: 'x' }), 'component x');
+  assert.equal(UNIT_KINDS[1].label({ kind: 'theme', name: 'y' }), 'theme y');
+  assert.equal(UNIT_KINDS[2].label({ kind: 'skill', name: 'z' }), 'skill z');
+  assert.equal(UNIT_KINDS[0].reserved('git-dashboard'), true);
+  assert.equal(UNIT_KINDS[0].reserved('deploy-board'), false);
+  assert.equal(UNIT_KINDS[1].reserved('paper'), true);
+  assert.equal(UNIT_KINDS[1].reserved('harbor'), false);
+  // Read, not re-typed: the reserved skill names are derived from the managed files.
+  const { reservedSkillNames } = require('../lib/packs/manifest');
+  assert.ok(reservedSkillNames().length);
+  for (const n of reservedSkillNames()) assert.equal(UNIT_KINDS[2].reserved(n), true, n);
+  assert.equal(UNIT_KINDS[2].reserved('acme-ops'), false);
+});
+
+// The paths unitDir answered at 39b52f8, written out.
+test('each row\'s dest is what unitDir answered before the table, in both tiers', () => {
+  if (RECORD) return;
+  const { kindOf } = require('../lib/packs/kinds');
+  const root = path.join(os.tmpdir(), 'kinds-dest-root');
+  const home = homeDir();
+  const want = {
+    local: {
+      component: path.join(root, '.web-chat', 'components', 'deploy-board'),
+      theme: path.join(root, '.web-chat', 'themes'),
+      skill: path.join(root, '.claude', 'skills', 'deploy-board'),
+    },
+    system: {
+      component: path.join(home, '.web-chat', 'components', 'deploy-board'),
+      theme: path.join(home, '.web-chat', 'themes'),
+      skill: path.join(home, '.claude', 'skills', 'deploy-board'),
+    },
+  };
+  for (const tier of ['local', 'system']) {
+    for (const kind of ['component', 'theme', 'skill']) {
+      const unit = { kind, name: 'deploy-board' };
+      assert.equal(kindOf(kind).dest(unit, tier, root), want[tier][kind], `${kind} in ${tier}`);
+      assert.equal(unitDir(unit, tier, root), want[tier][kind], `unitDir delegates: ${kind} in ${tier}`);
+    }
+  }
+  // The same answers through the path authority, so the written-out paths
+  // above cannot drift from it unnoticed.
+  assert.equal(want.local.theme, projectPaths(root).themesDir);
+  assert.equal(want.system.theme, userPaths().themesDir);
+  assert.equal(want.local.skill, claudePaths(root).skillDir('deploy-board'));
+  assert.equal(want.system.skill, userClaudePaths().skillDir('deploy-board'));
+  assert.throws(() => unitDir({ kind: 'not-a-kind', name: 'x' }, 'local', root), /^Error: unknown pack unit kind: not-a-kind$/);
+  assert.throws(() => unitDir({ kind: '__proto__', name: 'x' }, 'local', root), /unknown pack unit kind: __proto__/);
+});
 
 // ── planInstall and validateManifest, byte for byte ─────────────────────────
 test('planInstall and validateManifest answer exactly what they answered before the table', () => {
