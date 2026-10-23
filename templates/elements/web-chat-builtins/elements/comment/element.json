@@ -6,6 +6,7 @@
   "schema": "comment@1",
   "reads": ["comment@1"],
   "anchors": ["element", "range", "source"],
+  "label": "Comment",
   "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
   "settings": {
     "small": {

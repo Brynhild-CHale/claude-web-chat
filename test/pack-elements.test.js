@@ -189,21 +189,34 @@ test('validateElement: a sound element.json, reads defaulting to [schema]', () =
   assert.equal(r.descriptor.private, true);
 });
 
-test('validateElement: the toolbar\'s fields (and any unknown key) are kept and warned, never refused', () => {
-  const extra = {
+// U335 (PLAN.md 2D.5) validates the toolbar's fields: a sound set is kept as
+// written with no warning, an unsound one is refused naming its field
+// (test/element-toolbar-fields.test.js has every case); any OTHER key is still
+// kept and warned, never refused.
+test('validateElement: sound toolbar fields are kept as written; an unknown key is kept and warned, never refused', () => {
+  const toolbar = {
+    label: 'Sticky',
     icons: { light: 'assets/icon.svg', dark: 'assets/icon-dark.svg' },
-    settings: { small: [{ key: 'colour', type: 'token' }] },
-    hotkeys: [{ action: 'arm', label: 'Arm', default: 'k' }],
+    settings: { small: { type: 'object', properties: { colour: { type: 'string', enum: ['gold', 'green'] } } } },
+    hotkeys: [{ action: 'arm', label: 'Arm', default: 'K' }],
     profiles: true,
-    input: { pen: true },
-    needs: ['overlay'],
+    input: 'strokes',
+    wake: false,
+    summary_key: 'note',
+    needs: { network: 'api.example.com' },
   };
-  const v = validateElement({ type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1', anchors: ['element'], ...extra }, { name: 'sticky' });
+  const extra = { later: { anything: [1] } };
+  const v = validateElement({ type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1', anchors: ['element'], ...toolbar, ...extra }, { name: 'sticky' });
   assert.equal(v.ok, true, v.errors.join('; '));
-  for (const k of Object.keys(extra)) assert.deepStrictEqual(v.descriptor[k], extra[k], `${k} kept as written`);
+  for (const k of Object.keys({ ...toolbar, ...extra })) assert.deepStrictEqual(v.descriptor[k], { ...toolbar, ...extra }[k], `${k} kept as written`);
   assert.equal(v.warnings.length, 1);
-  assert.match(v.warnings[0], /^element "sticky": element\.json carries icons, settings, hotkeys, profiles, input, needs, which this build does not check — kept as written$/);
+  assert.match(v.warnings[0], /^element "sticky": element\.json carries later, which this build does not check — kept as written$/);
   assert.deepStrictEqual([...KNOWN_KEYS].sort(), ['anchors', 'family', 'private', 'reads', 'remote', 'schema', 'type']);
+  // The shapes this test once kept as written are refused now, each by its field.
+  const r = validateElement({ type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1', anchors: ['element'],
+    settings: { small: [{ key: 'colour', type: 'token' }] }, input: { pen: true }, needs: ['overlay'] }, { name: 'sticky' });
+  assert.equal(r.ok, false);
+  assert.deepStrictEqual(r.errors.map((e) => e.match(/^element "sticky": "([^"]+)"/)[1]), ['settings.small', 'input', 'needs']);
 });
 
 test('validateElement: a loosening remote gate is refused in validateDescriptor\'s own words', () => {

@@ -104,9 +104,11 @@ test('no draw.js in the built-in pack: the chrome draws the built-ins', () => {
   }
 });
 
-// The toolbar fields, exactly as K.2-1 (U335's grammar) and F2 (a) give them.
+// The toolbar fields, exactly as K.2-1 (U335's grammar) and F2 (a) give them,
+// with the display label K.2-46 adds.
 const TOOLBAR = {
   comment: {
+    label: 'Comment',
     icons: { light: 'icon-light.svg', dark: 'icon-dark.svg' },
     settings: { small: { type: 'object', properties: { shared: { type: 'boolean', title: 'Visible to Claude', default: true } } } },
     hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }],
@@ -116,6 +118,7 @@ const TOOLBAR = {
     summary_key: 'text',
   },
   highlight: {
+    label: 'Highlight',
     icons: { light: 'icon-light.svg', dark: 'icon-dark.svg' },
     settings: {
       small: {
@@ -133,6 +136,7 @@ const TOOLBAR = {
     summary_key: 'note',
   },
   'box-grab': {
+    label: 'Box grab',
     icons: { light: 'icon-light.svg', dark: 'icon-dark.svg' },
     settings: { small: { type: 'object', properties: { snap: { type: 'string', title: 'Snap to', enum: ['block', 'free'], default: 'block' } } } },
     hotkeys: [],
@@ -142,7 +146,7 @@ const TOOLBAR = {
   },
 };
 
-test('the toolbar fields are exactly the table (icons, settings.small, hotkeys, profiles, input, wake, summary_key; no needs)', () => {
+test('the toolbar fields are exactly the table (label, icons, settings.small, hotkeys, profiles, input, wake, summary_key; no needs)', () => {
   assert.deepStrictEqual(Object.keys(TOOLBAR), [...BUILTIN_ELEMENT_TYPE_NAMES]);
   for (const [type, want] of Object.entries(TOOLBAR)) {
     const json = elementJson(type);

@@ -6,6 +6,7 @@
   "schema": "highlight@1",
   "reads": ["highlight@1"],
   "anchors": ["range", "source"],
+  "label": "Highlight",
   "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
   "settings": {
     "small": {
