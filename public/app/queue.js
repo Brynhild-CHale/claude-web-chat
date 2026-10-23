@@ -59,6 +59,7 @@
 import { $ } from './state.js';
 import { isCommentAnswered } from './comments.js';
 import { deviceKind } from './viewport.js';
+import { request as httpRequest, NETWORK_HINT } from './http.js';
 import { bus } from './bus.js';
 import { mirror } from './chat-state.js';
 
@@ -721,23 +722,21 @@ function pendingMessages() {
 /* ---------- the one send path (§6.3) ---------- */
 // Every request answers the parsed body and never throws. An answer that is
 // not ok and names no `refused` (a 403 below `full`, a 415) gets one, so a
-// caller reads `refused` and `hint` alike.
-const NETWORK_HINT = 'The daemon did not answer — check that web-chat is running, then try again.';
+// caller reads `refused` and `hint` alike. The request itself goes through
+// public/app/http.js, the chrome's one HTTP reader; this adapter keeps the
+// answers this module has always given (the spread body, `status` only where
+// it was added) — a 2xx JSON body that does not say ok:true is still a refusal
+// here, where http.js would call it ok.
 async function request(method, url, body) {
-  let res;
-  try {
-    res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch {
-    return { ok: false, refused: 'network', hint: NETWORK_HINT };
-  }
-  let out = null;
-  try { out = await res.json(); } catch { out = null; }
+  const r = await httpRequest(method, url, { body, headers: { 'Content-Type': 'application/json' } });
+  if (r.status === 0) return { ok: false, refused: 'network', hint: NETWORK_HINT };
+  const out = r.body;
   if (!out || typeof out !== 'object') {
-    return res.ok ? { ok: true } : { ok: false, refused: 'network', hint: NETWORK_HINT, status: res.status };
+    return r.status >= 200 && r.status < 300 ? { ok: true } : { ok: false, refused: 'network', hint: NETWORK_HINT, status: r.status };
   }
   if (out.ok !== true && typeof out.refused !== 'string') {
-    return { ...out, ok: false, refused: res.status === 403 ? 'forbidden' : (out.code || 'error'),
-      hint: out.hint || out.error || NETWORK_HINT, status: res.status };
+    return { ...out, ok: false, refused: r.status === 403 ? 'forbidden' : (out.code || 'error'),
+      hint: out.hint || out.error || NETWORK_HINT, status: r.status };
   }
   return out;
 }
