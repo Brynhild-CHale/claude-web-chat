@@ -1098,6 +1098,24 @@ const PATTERNS = [
     },
   },
   {
+    // The side table's record set (2B.2, U313; F-SIDE a): a committed node's
+    // changed resolver answers, whose minted anchor record carries pane text.
+    // element-log's appendAnswers is the one writer: it checks every item and
+    // passes the record through the injected redactor before the bytes land,
+    // as appendVersion does a payload. A second spelling of an answers record
+    // is a second writer of element text, and one record per report instead
+    // of one set per commit.
+    name: "t: 'answers' (an answers-record literal)",
+    home: 'lib/core/element-log.js — `appendAnswers`',
+    what: 'writing the side table\'s answers (a node\'s recorded resolver answers)',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\bt\s*:\s*['"]answers['"]/g,
+    baseline: {
+      // The one answers record, in appendAnswers.
+      'lib/core/element-log.js': 1,
+    },
+  },
+  {
     // Running `claude`. The daemon and the CLI run a RESOLVED binary
     // (findClaude) with stdin closed, a scrubbed environment (every
     // CLAUDE_CODE_* and WEB_CHAT_* removed) and a timeout; a literal 'claude'
