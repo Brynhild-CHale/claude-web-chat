@@ -483,6 +483,22 @@ test('an idle boot (no element touched, no draft holding a version) appends noth
   assert.equal(records(fresh.root).length, 0);
 });
 
+test('an idle boot over a committed pin with no draft on disk (after a hard stop) appends nothing at its graceful stop', async (t) => {
+  // The active node's committed pins are restored into the live state whether
+  // or not a draft was: only a draft that restored makes a version "held by a
+  // restored draft" (ruling U352@close-ack-scope (a)).
+  const s1 = await withServer(t);
+  await turn(s1.api, 'A', () => addPin(s1, 'committed'));
+  await s1.stop(); // a hard stop: no draft.json
+  assert.equal(fs.existsSync(projectPaths(s1.root).draft), false, 'no draft on disk');
+  const bytes = fs.readFileSync(projectPaths(s1.root).elementsLog);
+
+  const s2 = await withServer(t, { root: s1.root });
+  assert.equal(bootReport(s1.root).clean, true, JSON.stringify(bootReport(s1.root).states));
+  await s2.graceful();
+  assert.deepEqual(fs.readFileSync(projectPaths(s1.root).elementsLog), bytes, 'nothing appended: no epoch, no close');
+});
+
 test('a read-only store (migration refused) appends neither record and keeps reporting', async (t) => {
   const s1 = await withServer(t, { seed: ({ root }) => { v3Graph(root, { unmappable: true }); } });
   assert.equal(s1.srv.elements.readOnly, true);
