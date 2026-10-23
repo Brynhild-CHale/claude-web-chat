@@ -419,3 +419,22 @@ test('a built-in name lists only from the built-in pack; a system-tier pack list
   assert.equal(et.descriptor('highlight').pack, BUILTIN_ELEMENT_PACK);
   assert.ok(et.stats().refused.some((x) => x.name === 'highlight' && x.tier === 'system' && x.why === 'reserved'));
 });
+
+// The route's see filter (U302c, from U324's review): a listed type whose
+// gate.see is above the viewer's level is left out of that viewer's listing.
+test('a listed type with remote.see full is absent from a remote read viewer\'s types[], present locally', async (t) => {
+  const root = tmpDir('wc-et-see-');
+  const seed = () => writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(root)]: 'read' } } });
+  const d = await withServer(t, { root, seed });
+  approveInProcess(d.root, { json: { remote: { see: 'full', send: 'full' } } });
+  d.srv.elementTypes.invalidate();
+  assert.equal(d.srv.elementTypes.listed('sticky'), true, 'listed: see full does not loosen the floor');
+  assert.equal(d.srv.elementTypes.gate('sticky').see, 'full');
+  const local = await client.request(d.port, 'GET', '/api/elements/types', undefined, { timeout: 10000 });
+  assert.equal(local.status, 200);
+  assert.ok(local.body.types.some((x) => x.type === 'sticky'), 'a local viewer lists it');
+  const remote = await client.request(d.port, 'GET', '/api/elements/types', undefined, { headers: REMOTE, timeout: 10000 });
+  assert.equal(remote.status, 200, JSON.stringify(remote.body));
+  assert.ok(!remote.body.types.some((x) => x.type === 'sticky'), 'a remote read viewer does not');
+  assert.deepStrictEqual(remote.body.types.map((x) => x.type), [...BUILTIN_ELEMENT_TYPE_NAMES].sort(), 'the built-ins still listed');
+});

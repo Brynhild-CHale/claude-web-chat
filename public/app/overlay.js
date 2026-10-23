@@ -212,6 +212,7 @@ function normRow(r) {
     id: String(r.id),
     v: r.v == null ? null : r.v,
     type: r.type == null ? null : String(r.type),
+    schema: typeof r.schema === 'string' ? r.schema : null,
     anchor: r.anchor && typeof r.anchor === 'object' ? r.anchor : null,
     shared: r.shared === undefined ? null : !!r.shared,
     replies: Number.isFinite(r.replies) ? r.replies : 0,
@@ -1095,6 +1096,10 @@ function onPointer(e) {
     // outside #main): the press is over, so its gesture goes and this move, a
     // hover, is the page's (U302b).
     if (e.type === 'pointermove' && e.buttons === 0 && !g.up) { gestures.delete(e.pointerId); return; }
+    // A move after this entry's own pointerup is a hover: it passes through and
+    // the entry stays for its click (a browser that sends no click when the
+    // down and up targets differ would otherwise swallow it; K.2-51).
+    if (e.type === 'pointermove' && g.up) return;
     decision = g.decision;
     if (e.type === 'pointerup') g.up = true;
     else if (e.type === 'pointercancel') gestures.delete(e.pointerId);
