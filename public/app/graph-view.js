@@ -467,9 +467,15 @@ let inspected = null;   // { id, node } | null
                                     current() is false once a newer selection won.
      registerInspectorAction(a)     {id, label, title, applies(node), run(id, node)}:
                                     a button after ▶ Replay where applies(node).
-     setNodeMarker(m)               {mark(id) → null | {text, title}, refresh() →
+     setNodeMarker(m, {producer}?)  {mark(id) → null | {text, title}, refresh() →
                                     Promise<boolean>}: a glyph to the LEFT of a
                                     node (the folded count sits to its right).
+                                    Many producers mark one node (X-15): each
+                                    holds its own slot (the one-argument form is
+                                    producer 'default'), replaces and removes
+                                    only its own, and a node's mark composes
+                                    every producer's in registration order —
+                                    texts joined by a thin space, titles by ' · '.
 
    Each returns its unregister. A hook that throws is reported and skipped; it
    never breaks the panel or the canvas. */
@@ -530,29 +536,45 @@ function runInspectorAction(actId, id) {
   } catch (e) { console.error(`[web-chat] inspector action '${actId}' failed`, e); }
 }
 
-let nodeMarker = null;
-export function setNodeMarker(marker) {
+// producer → marker, in registration order (a producer's replacement goes last,
+// as a re-registered inspector action does).
+const nodeMarkers = new Map();
+export function setNodeMarker(marker, { producer } = {}) {
   const m = marker && typeof marker.mark === 'function' ? marker : null;
-  nodeMarker = m;
-  return () => { if (nodeMarker === m) nodeMarker = null; };
+  const key = typeof producer === 'string' && producer ? producer : 'default';
+  nodeMarkers.delete(key);
+  if (m) nodeMarkers.set(key, m);
+  return () => { if (nodeMarkers.get(key) === m) nodeMarkers.delete(key); };
 }
-// One node's mark, or null: what the marker answers, checked.
-function markOf(id) {
-  if (!nodeMarker) return null;
+// One producer's mark for a node, or null: what its marker answers, checked.
+function markFrom(m, id) {
   let mk = null;
-  try { mk = nodeMarker.mark(id); } catch (e) { console.error('[web-chat] the node marker failed', e); return null; }
+  try { mk = m.mark(id); } catch (e) { console.error('[web-chat] the node marker failed', e); return null; }
   if (!mk || typeof mk.text !== 'string' || !mk.text) return null;
   return { text: mk.text, title: typeof mk.title === 'string' ? mk.title : '' };
 }
-// Ask the marker to refresh, never awaited; a change redraws the open canvas.
+// One node's mark, or null: every producer's, composed in registration order.
+function markOf(id) {
+  if (!nodeMarkers.size) return null;
+  const marks = [];
+  for (const m of nodeMarkers.values()) { const mk = markFrom(m, id); if (mk) marks.push(mk); }
+  if (!marks.length) return null;
+  if (marks.length === 1) return marks[0];
+  return {
+    text: marks.map((mk) => mk.text).join('\u2009'),
+    title: marks.map((mk) => mk.title).filter(Boolean).join(' · '),
+  };
+}
+// Ask every marker to refresh, never awaited; a change redraws the open canvas.
 function refreshMarker() {
-  const m = nodeMarker;
-  if (!m || typeof m.refresh !== 'function') return;
-  let p;
-  try { p = m.refresh(); } catch (e) { console.error('[web-chat] the node marker\'s refresh failed', e); return; }
-  Promise.resolve(p).then((changed) => {
-    if (changed === true && nodeMarker === m && isOverlayOpen()) layoutAndRender();
-  }, (e) => console.error('[web-chat] the node marker\'s refresh failed', e));
+  for (const m of [...nodeMarkers.values()]) {
+    if (typeof m.refresh !== 'function') continue;
+    let p;
+    try { p = m.refresh(); } catch (e) { console.error('[web-chat] the node marker\'s refresh failed', e); continue; }
+    Promise.resolve(p).then((changed) => {
+      if (changed === true && [...nodeMarkers.values()].includes(m) && isOverlayOpen()) layoutAndRender();
+    }, (e) => console.error('[web-chat] the node marker\'s refresh failed', e));
+  }
 }
 
 async function renderInspector(id) {

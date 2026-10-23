@@ -18,7 +18,8 @@ import { checkForUpdatesNow } from './version.js';
 import { labelFor, nodeTime } from './labels.js';
 import { panes, revealPane } from './mounts.js';
 import { paletteSections, blockHint } from './page.js';
-import { initQueue, pushQueue, setRailOpener } from './queue.js';
+import { initQueue, pushQueue, setRailOpener, setQueueCards } from './queue.js';
+import { ELEMENT_ROW_CAP, capRows, moreLabel } from './row-caps.js';
 import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
 import { openSessions, toggleSessions } from './sessions.js';
@@ -51,24 +52,103 @@ const isEditable = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXT
    exactly what ＋ was missing: it declared no aria-controls, so it was dismissed
    out from under its own toggle and could never close the drawer. */
 const OPEN_PANELS = '.popover:not(.hidden), .palette:not(.hidden), .legend:not(.hidden), .drawer:not(.hidden)';
-const openPanels = () => [...document.querySelectorAll(OPEN_PANELS)];
+
+/* ---------- the popover registry (PLAN.md 2A.4; verdict S-18) ----------
+   OPEN_PANELS is a light-DOM selector, so a `.popover` inside a shadow root —
+   an annotation tool's panel drawn in its own realm — was invisible to this
+   layer: it survived Escape and an outside press. And every panel that closes
+   by more than `.hidden` (the pin popover, the drawer, the palette, the replay
+   player, pane history) grew closePanel by one more special case.
+
+   A panel that needs either registers here instead:
+
+     registerPopover({el, close, contains?, isOpen?}) → unregister
+       el        the panel: an Element, or () => Element | null for one built
+                 per open (the comment popover is).
+       close()   how it closes — called with no argument by every path below:
+                 an outside press, focus leaving it, Escape, a window blur,
+                 another panel opening (closeAllPopovers).
+       contains(target, path)   optional: whether a press or focus at `target`
+                 (composedPath()[0]) with the event's composed `path` is inside
+                 the panel. Default: the path holds the panel, or the panel
+                 contains the target — so a press inside a shadow-rooted
+                 popover is inside it, and one outside closes it.
+       isOpen()  optional: default, the element is connected and not .hidden.
+
+   openPanels() is the OPEN_PANELS set plus every open entry; closePanel closes
+   a registered panel through its own close (the last registration of one
+   element wins) and any other by `.hidden`. Still ONE layer: an entry adds no
+   listener, and nothing here may grow a second outside-press or Escape path. */
+const popovers = [];   // registry entries, in registration order
+const panelOf = (entry) => {
+  let el = null;
+  try { el = typeof entry.el === 'function' ? entry.el() : entry.el; } catch (e) { console.error('[web-chat] a popover\'s el() failed', e); }
+  return el && el.nodeType === 1 ? el : null;
+};
+function entryIsOpen(entry) {
+  const el = panelOf(entry);
+  if (!el) return false;
+  if (entry.isOpen) {
+    try { return !!entry.isOpen(); } catch (e) { console.error('[web-chat] a popover\'s isOpen() failed', e); return false; }
+  }
+  return el.isConnected && !el.classList.contains('hidden');
+}
+export function registerPopover(spec) {
+  const s = spec || {};
+  const elOk = typeof s.el === 'function' || (s.el && s.el.nodeType === 1);
+  if (!elOk || typeof s.close !== 'function') {
+    throw new TypeError('registerPopover takes {el: Element | () => Element|null, close(), contains?(target, path), isOpen?()}');
+  }
+  const entry = {
+    el: s.el, close: s.close,
+    contains: typeof s.contains === 'function' ? s.contains : null,
+    isOpen: typeof s.isOpen === 'function' ? s.isOpen : null,
+  };
+  popovers.push(entry);
+  return () => { const i = popovers.indexOf(entry); if (i >= 0) popovers.splice(i, 1); };
+}
+// The entry a panel element belongs to: the last registration of it wins.
+function entryOf(el) {
+  for (let i = popovers.length - 1; i >= 0; i--) if (panelOf(popovers[i]) === el) return popovers[i];
+  return null;
+}
+function openPanels() {
+  const out = [...document.querySelectorAll(OPEN_PANELS)];
+  for (const entry of popovers) {
+    if (!entryIsOpen(entry)) continue;
+    const el = panelOf(entry);
+    if (!out.includes(el)) out.push(el);
+  }
+  return out;
+}
 
 function closePanel(el) {
   if (!el) return;
-  // Same story: the comment composer / chooser / thread is built per open and
-  // body-appended, so it is removed, not hidden — and comments.js owns the
-  // reference, hence the hook rather than el.remove() here.
-  if (el.classList.contains('pin-pop')) { closePinPop(); return; }
-  // ONE closeDrawer: it also restores focus to ＋ and disarms a primed install.
-  if (el.id === 'drawer') { closeDrawer(); return; }
-  if (el.id === 'cmd-palette') { closePalette(); return; }  // also drops input focus
-  if (el.id === 'replay-pop') { closeReplay(); return; }    // also unloads the player
-  if (el.id === 'pane-history') { closePaneHistory(); return; }   // also unloads the version preview
+  const entry = entryOf(el);
+  if (entry) {
+    try { entry.close(); } catch (e) { console.error('[web-chat] a popover\'s close() failed', e); }
+    return;
+  }
   el.classList.add('hidden');
   // keep any aria-expanded trigger honest — togglePopover does this on the
   // normal path, but this bulk close bypasses it.
   document.querySelectorAll(`[aria-controls="${el.id}"]`).forEach((c) => c.setAttribute('aria-expanded', 'false'));
 }
+
+// The five panels closePanel used to special-case, each closing exactly as it
+// did. closePalette is hoisted (it is declared with the palette, below).
+//   * the comment composer / chooser / thread is built per open and
+//     body-appended, so it is removed, not hidden — and comments.js owns the
+//     reference, hence its hook rather than el.remove() here;
+//   * ONE closeDrawer: it also restores focus to ＋ and disarms a primed install;
+//   * the palette's close also drops the input's focus;
+//   * the replay player's also unloads the player;
+//   * pane history's also unloads the version preview.
+registerPopover({ el: () => document.querySelector('.pin-pop'), close: () => closePinPop() });
+registerPopover({ el: () => $('drawer'), close: () => closeDrawer() });
+registerPopover({ el: () => $('cmd-palette'), close: () => closePalette() });
+registerPopover({ el: () => $('replay-pop'), close: () => closeReplay() });
+registerPopover({ el: () => $('pane-history'), close: () => closePaneHistory() });
 
 // Close every open chrome panel except `keep` — the one a trigger is about to
 // toggle, or the one that is being opened. Called with no argument it closes
@@ -78,11 +158,17 @@ function closeAllPopovers(keep) {
 }
 
 // The panel a pressed element owns, if any — `[aria-controls]` is the trigger
-// contract, so a trigger is never dismissed out from under its own toggle.
+// contract, so a trigger is never dismissed out from under its own toggle. The
+// id is looked up in the trigger's own root first (a registered popover in a
+// shadow root, toggled from beside it), then the document, then the registry.
 function ownedPanel(el) {
   const trig = el && el.closest && el.closest('[aria-controls]');
   if (!trig) return null;
-  return document.getElementById(trig.getAttribute('aria-controls'));
+  const id = trig.getAttribute('aria-controls');
+  const root = trig.getRootNode && trig.getRootNode();
+  const inRoot = root && root !== document && typeof root.getElementById === 'function' ? root.getElementById(id) : null;
+  return inRoot || document.getElementById(id)
+    || popovers.map(panelOf).find((p) => p && p.id === id) || null;
 }
 
 // Resolve an event to its real target — composedPath()[0] pierces a pane's
@@ -92,11 +178,21 @@ function eventTarget(e) {
   return src && src.nodeType === 1 ? src : (src && src.parentElement) || null;
 }
 
-function dismissFrom(el) {
+// Is a press or focus at `el` (with the event's composed path) inside panel p?
+function insidePanel(p, el, path) {
+  const entry = entryOf(p);
+  if (entry && entry.contains) {
+    try { return !!entry.contains(el, path || []); } catch (e) { console.error('[web-chat] a popover\'s contains() failed', e); return false; }
+  }
+  if (path && path.includes(p)) return true;
+  return !!el && p.contains(el);
+}
+
+function dismissFrom(el, path) {
   const keep = ownedPanel(el);
   for (const p of openPanels()) {
     if (p === keep) continue;
-    if (el && p.contains(el)) continue; // a click/focus INSIDE a panel keeps it
+    if (insidePanel(p, el, path)) continue; // a click/focus INSIDE a panel keeps it
     closePanel(p);
   }
 }
@@ -145,7 +241,7 @@ function initDismissLayer() {
   // and only this path does: focus and blur below never reach a dock.
   document.addEventListener('pointerdown', (e) => {
     const el = eventTarget(e);
-    dismissFrom(el);
+    dismissFrom(el, e.composedPath ? e.composedPath() : null);
     dismissDocks(el);
   }, true);
   // focus leaving a panel dismisses it too (tabbing past it, or a pane taking focus)
@@ -155,7 +251,7 @@ function initDismissLayer() {
     // deliberate .blur() leaves behind — the comment thread's first-Escape draft
     // guard does exactly that — and it must not be read as an outside click.
     if (!el || el === document.body || el === document.documentElement) return;
-    dismissFrom(el);
+    dismissFrom(el, e.composedPath ? e.composedPath() : null);
   });
   // and the whole window losing focus closes them all, like a native menu —
   // except (a) while a native file chooser (Settings → Brand) holds focus: that
@@ -168,7 +264,8 @@ function initDismissLayer() {
     if (isPickingFile()) return;
     setTimeout(() => {
       const a = document.activeElement;
-      const keep = a && a.tagName === 'IFRAME' ? a.closest(OPEN_PANELS) : null;
+      // (A registered panel that holds the frame counts too.)
+      const keep = a && a.tagName === 'IFRAME' ? (a.closest(OPEN_PANELS) || openPanels().find((p) => p.contains(a))) : null;
       closeAllPopovers(keep || undefined);
     }, 0);
   });
@@ -351,6 +448,96 @@ function closePalette() {
   const p = $('cmd-palette'); if (p) p.classList.add('hidden');
   const inp = $('cmd-input'); if (inp) inp.blur(); // else focus lingers and swallows single-key shortcuts
 }
+/* ---------- palette sources (PLAN.md 2A.4; verdict S-19) ----------
+   Rows a feature adds to ⌘K — the annotation engine's elements first — come in
+   through one registration, never an edit to buildPalette:
+
+     registerPaletteSource(name, {rows(q) → [{kind, label, hint, run}], cap?})
+       → unregister
+
+   rows(q) is called on every build with the typed query and may answer every
+   row it has: the palette narrows them by its own one match (kind, label and
+   hint, like every other row) and then caps them (row-caps.js capRows, cap
+   default ELEMENT_ROW_CAP), the rest standing as ONE '+N more — type to narrow'
+   row that narrows nothing and closes nothing. A source's rows come after the
+   palette's own, sources in registration order (a re-registration of a name
+   replaces it and goes last); a source that throws is reported and skipped. */
+const paletteSources = new Map();   // name → {name, rows, cap}
+export function registerPaletteSource(name, source) {
+  const n = typeof name === 'string' ? name.trim() : '';
+  const src = source || {};
+  if (!n || typeof src.rows !== 'function') {
+    throw new TypeError('registerPaletteSource takes (name, {rows(q) → [{kind, label, hint, run}], cap?})');
+  }
+  const entry = { name: n, rows: src.rows, cap: Number.isInteger(src.cap) && src.cap > 0 ? src.cap : ELEMENT_ROW_CAP };
+  paletteSources.delete(n);
+  paletteSources.set(n, entry);
+  return () => { if (paletteSources.get(n) === entry) paletteSources.delete(n); };
+}
+// Every source's rows for query q, narrowed by `match` and capped per source.
+function sourceRows(q, match) {
+  const out = [];
+  for (const s of [...paletteSources.values()]) {
+    let got;
+    try { got = s.rows(q); } catch (e) { console.error(`[web-chat] the palette source '${s.name}' failed`, e); continue; }
+    if (!Array.isArray(got)) continue;
+    const rows = [];
+    for (const r of got) {
+      if (!r || typeof r.label !== 'string' || !r.label) continue;
+      const row = {
+        kind: typeof r.kind === 'string' && r.kind ? r.kind : s.name,
+        label: r.label, hint: r.hint == null ? '' : String(r.hint),
+        run: typeof r.run === 'function' ? r.run : null,
+      };
+      if (match(row)) rows.push(row);
+    }
+    const capped = capRows(rows, s.cap);
+    out.push(...capped.rows);
+    if (capped.more) out.push({ kind: s.name, label: moreLabel(capped.more), more: true });
+  }
+  return out;
+}
+
+/* ---------- queue cards per element type (K.2-11, K.2-18) ----------
+   An element's queue item is type-managed: the type supplies the CARD the rail
+   draws for it, the engine owns the ITEM — its id, its type, stage and hold,
+   remove and re-send — so a card never writes the queue itself.
+
+     registerQueueCard(type, {render(item, slotEl, ctx), unmount?(slotEl)})
+       → unregister
+     queueCardOf(type) → the card, or null
+
+   The last registration of a type wins, and its unregister restores the one
+   before. The rail (queue.js itemRow) draws an element item of a registered
+   type through its card, into a slot inside a row the rail owns, else its
+   generic row. queue.js cannot import this file (this file imports it: the
+   cycle), so the lookup is handed in, the way chat-actions hands in the
+   message rows' actions; a registration redraws the rail. */
+const queueCards = new Map();   // type → [{card}], the last one current
+const redrawCards = setQueueCards(queueCardOf);
+export function registerQueueCard(type, card) {
+  const t = typeof type === 'string' ? type.trim() : '';
+  if (!t || !card || typeof card.render !== 'function') {
+    throw new TypeError('registerQueueCard takes (type, {render(item, slotEl, ctx), unmount?(slotEl)})');
+  }
+  const entry = { card };
+  if (!queueCards.has(t)) queueCards.set(t, []);
+  queueCards.get(t).push(entry);
+  redrawCards();
+  return () => {
+    const stack = queueCards.get(t);
+    const i = stack ? stack.indexOf(entry) : -1;
+    if (i < 0) return;
+    stack.splice(i, 1);
+    if (!stack.length) queueCards.delete(t);
+    redrawCards();
+  };
+}
+export function queueCardOf(type) {
+  const stack = typeof type === 'string' ? queueCards.get(type) : null;
+  return stack && stack.length ? stack[stack.length - 1].card : null;
+}
+
 // Typed rows, as the design draws them (Theme §4c): a KIND column (node /
 // section / block / command), the label, and a hint on the right — a node's time
 // (labels.js nodeTime), a section's block count, a block's section number and
@@ -411,7 +598,9 @@ async function buildPalette(q) {
   // The kind and hint are searchable too: "block" lists the page's blocks, a
   // time finds a node, a type finds its blocks.
   const hay = (i) => `${i.kind} ${i.label} ${i.hint || ''} ${i.key || ''}`.toLowerCase();
-  paletteItems = ql ? all.filter(i => hay(i).includes(ql)) : all;
+  const match = (i) => !ql || hay(i).includes(ql);
+  // …then the registered sources' rows, each capped (palette sources, above).
+  paletteItems = [...all.filter(match), ...sourceRows(q, match)];
   paletteSel = 0;
   renderPalette();
 }
@@ -457,7 +646,11 @@ function renderPalette() {
   });
   if (inp) inp.setAttribute('aria-activedescendant', `cmd-opt-${paletteSel}`);
 }
-function runPalette(it) { closePalette(); it && it.run && it.run(); }
+function runPalette(it) {
+  // A source's '+N more' row stands for rows not drawn: it keeps the palette up.
+  if (it && it.more) { const inp = $('cmd-input'); if (inp) inp.focus(); return; }
+  closePalette(); it && it.run && it.run();
+}
 function initPalette() {
   const inp = $('cmd-input');
   const trigger = $('cmd-trigger');
