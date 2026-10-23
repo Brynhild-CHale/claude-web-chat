@@ -13,7 +13,8 @@
 //     full stop) is never sent; a removed element is sent orphaned, in ONE
 //     report with the re-render's gen (C-8's two halves);
 //   - previewing an older node sends nothing, and leaving it sends nothing for
-//     unchanged answers;
+//     unchanged answers but the confirm a live store:patch during the preview
+//     owes (items: [] for each reported mount, in one message);
 //   - the gen echo follows the frames (a render frame's gen; a markdown
 //     frame's gen for a source anchor);
 //   - a confirm (items: []) after a store write whose pass moved nothing, once
@@ -283,7 +284,7 @@ test('the gen echo follows a markdown frame: a source anchor\'s report carries t
   await quiet();
 });
 
-test('previewing an older node sends nothing; leaving it sends nothing for unchanged answers', async () => {
+test('previewing an older node sends nothing; leaving it sends no item for unchanged answers, only the confirm a store:patch during the preview owes', async () => {
   shell.setRoutes({ '/api/graph/node/n0': { id: 'n0', mounts: [FIX('pa', { skip: 10 })], store: {}, created_at: 0, lean_elements: [] } });
   const sent = await during(async () => {
     await topbar.previewNode('n0');
@@ -300,8 +301,13 @@ test('previewing an older node sends nothing; leaving it sends nothing for uncha
   }, 700);
   shell.setRoutes({});
   assert.equal(view.previewing, false);
-  assert.ok(itemsOf(sent).every((i) => i.state === 'exact'), 'nothing but confirms of what was sent');
   assert.ok(itemsOf(sent).length === 0, `no item re-sent for unchanged answers: ${JSON.stringify(itemsOf(sent))}`);
+  // The store:patch during the preview moved the daemon's store digest: the
+  // first passes after it send one confirm per mount already reported.
+  assert.equal(sent.length, 1, `one message: ${JSON.stringify(sent)}`);
+  assert.deepEqual(sent[0].mounts.map((m) => m.mount).sort(), ['pa', 'pb', 'svc']);
+  assert.ok(sent[0].mounts.every((m) => m.items.length === 0), 'each a confirm (items: [])');
+  assert.equal(sent[0].surface, SURFACE, 'under the current surface');
 });
 
 test('a confirm: a store write whose pass moved nothing → one items: [] per reported mount, in one message; none again without a store change', async () => {

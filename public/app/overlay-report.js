@@ -291,11 +291,17 @@ export function initOverlayReport({ overlay = overlayApi, send = wsSend, now = D
   offs.push(onFrame('markdown', onMarkdown));
   offs.push(onFrame('clear', onClear));
   offs.push(onFrame('markdown:remove', onMarkdownRemove));
-  // Every store write (a store:patch frame, a pane's own write, a reconcile):
-  // the next pass of each mount this viewer reported is confirm-worthy.
+  // A store change makes the next pass of each mount this viewer reported
+  // confirm-worthy. A store:patch frame is the live store's change, and it
+  // counts whether or not a preview is up: the daemon moved its store digest,
+  // so the first pass after the preview ends sends the confirm (nothing goes
+  // while contentReadOnly()). A pane's own write, outside a preview, reaches
+  // the module through store.js's onWrite.
+  const markStore = () => { for (const m of sent.keys()) storeSeen.add(m); };
+  offs.push(onFrame('store:patch', markStore));
   offs.push(onWrite(() => {
     if (view.previewing) return;
-    for (const m of sent.keys()) storeSeen.add(m);
+    markStore();
   }));
   const onConn = (d) => {
     if (!d || d.state !== 'live') awaitingHello = true;
