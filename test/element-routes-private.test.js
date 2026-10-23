@@ -181,7 +181,7 @@ test('the event ring holds no private text after add, edit, reply and delete (co
     ['comment:add', 'comment:edit', 'comment:reply', 'element:add', 'element:edit', 'element:delete', 'comment:delete']);
   assert.ok(!has(ring, PRIVATE), 'no private text anywhere in the ring');
   for (const e of mine.filter((x) => x.kind === 'element')) {
-    assert.deepStrictEqual(Object.keys(e).filter((k) => !['id', 'kind', 'type', 'op', 'v', 'shared', 'mount'].includes(k) && !/^(seq|ts|at|t)$/.test(k)), [],
+    assert.deepStrictEqual(Object.keys(e).filter((k) => !['id', 'kind', 'type', 'op', 'v', 'shared', 'mount', 'was_shared'].includes(k) && !/^(seq|ts|at|t)$/.test(k)), [],
       `an element event carries ids, numbers and flags only: ${JSON.stringify(e)}`);
     assert.equal(e.shared, false);
   }
