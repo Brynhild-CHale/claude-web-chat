@@ -99,7 +99,7 @@ function routes() {
 const DESKTOP = { width: 1280, height: 800, coarse: false, visualHeight: 800, visualTop: 0 };
 const PHONE = { width: 390, height: 844, coarse: true, visualHeight: 844, visualTop: 0 };
 
-let shell, W, doc, $, css, ts, ov, TS, TB, IM, Q;
+let shell, W, doc, $, css, ts, ov, TS, TB, IM;
 
 before(async () => {
   shell = await bootShell({ routes: routes() });
@@ -112,7 +112,6 @@ before(async () => {
   TS = await shell.importApp('tool-settings.js');
   TB = await shell.importApp('toolbar.js');
   IM = await shell.importApp('input-mode.js');
-  Q = await shell.importApp('queue.js');
   await shell.frame(helloFrame());
 });
 
@@ -561,9 +560,8 @@ test('after a rebind of P, Q, G and N the rail\'s Push and the empty page\'s tip
     H: chrome('chrome.graph'), L: chrome('chrome.add') };
   try {
     await shell.frame({ type: 'toolbar', v: 1, project: PROJECT(), user: { ...USER(), bindings }, merged: { bindings: {}, settings: {} } });
-    Q.renderQueue();
     const push = doc.querySelector('.rail-push');
-    assert.equal(push.querySelector('kbd').textContent, 'J', 'the Push button\'s key');
+    assert.equal(push.querySelector('kbd').textContent, 'J', 'the Push button\'s key, redrawn at the rebind');
     assert.ok(!/\bP\b/.test(push.querySelector('kbd').textContent));
     await shell.frame(helloFrame());
     const zs = $('main').querySelector('.zero-state');
@@ -571,7 +569,6 @@ test('after a rebind of P, Q, G and N the rail\'s Push and the empty page\'s tip
     assert.deepEqual([...zs.querySelectorAll('.zs-keys kbd')].map((k) => k.textContent), ['H', 'L', '?']);
   } finally {
     await shell.frame({ type: 'toolbar', v: 1, project: PROJECT(), user: USER(), merged: { bindings: {}, settings: {} } });
-    Q.renderQueue();
   }
   assert.equal(doc.querySelector('.rail-push kbd').textContent, 'P', 'the default key back');
   // The owners spell no key of their own.

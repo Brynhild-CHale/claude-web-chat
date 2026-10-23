@@ -1134,13 +1134,14 @@ function updatePushLabel() {
 // Push's key from the hotkey registry (public/app/hotkeys.js), loaded lazily at
 // the first draw, as comments.js loads its heavy modules: no-DOM module tests
 // import queue.js, and hotkeys.js reaches the daemon-served /app/tier-merge.js.
+// A rebind redraws the label at once (onHotkeysChange).
 let hotkeys = null;
 let hotkeysLoading = false;
 function pushKey() {
   if (hotkeys) return hotkeys.keyFor('chrome.push');
   if (!hotkeysLoading) {
     hotkeysLoading = true;
-    import('./hotkeys.js').then((m) => { hotkeys = m; updatePushLabel(); },
+    import('./hotkeys.js').then((m) => { hotkeys = m; m.onHotkeysChange(updatePushLabel); updatePushLabel(); },
       (e) => console.error('[web-chat] queue: the hotkey registry could not load', e));
   }
   return '';
