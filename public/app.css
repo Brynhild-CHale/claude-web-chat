@@ -3350,3 +3350,29 @@ img.bg-look-img, img.bg-card-img { border: 1px solid var(--wc-border); border-ra
 .qi-card.bg-card { display: flex; flex-direction: column; gap: 4px; }
 .bg-card-img { display: block; max-width: 100%; max-height: 120px; width: auto; height: auto; }
 .phone .bg-look-acts button, .phone .bg-card-acts button { min-height: 44px; padding: 0 12px; }
+
+/* tool settings (U336) — the settings-pane host (public/app/tool-settings.js;
+   annotation engine 2D.6, W-9). Two body-level .popovers on the panel rung,
+   closed by the shell's one dismiss layer: the SMALL frame is placed by the
+   host (left/top inline, inside a 16px gutter, above the bottom bar under
+   760px); the LARGE frame is centred here. The content is the form-renderer
+   component in the frame's shadow host: custom properties cross into it, raw
+   CSS does not (the host puts a token-only style inside). Tokens only — the look
+   is expected to change with the toolbar's final mock-up (U338). */
+.popover.tool-settings {
+  position: fixed; z-index: var(--z-panel); top: auto; right: auto; min-width: 0;
+  width: 280px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  color: var(--wc-fg); font: 12px var(--wc-font);
+}
+.popover.ts-large { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100vw - 32px)); max-height: 80vh; max-height: 80dvh; }
+.ts-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ts-title { font: 600 12px var(--wc-font); color: var(--wc-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-sub { font: 11px var(--wc-font); color: var(--wc-muted); }
+.ts-sub:empty { display: none; }
+.ts-host { min-height: 0; }
+.ts-hint { margin: 0; font: 11.5px var(--wc-font); color: var(--wc-rust); overflow-wrap: anywhere; }
+.ts-hint:empty { display: none; }
+@media (max-width: 759px) {
+  .popover.ts-small { width: calc(100vw - 32px); }
+}
