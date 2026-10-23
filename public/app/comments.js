@@ -11,12 +11,14 @@ import { esc } from './esc.js';
 import { deviceKind } from './viewport.js';
 
 // The cadences (design spec §10.1: each perpetual chrome poller is ONE
-// setInterval). The WS `comments` frame is the primary path; the fetch is a
-// fallback that re-reads what a reconnect may have missed (every hello) and,
-// at most every 30 s, anything else — never while the tab is hidden. The
-// marker pass follows reflow and the preview transition, and does its layout
-// work only with pins on a visible page (ruled U103@comments-poll, A-defaults).
-const REFRESH_MS = 30000;
+// setInterval). The WS `comments` frame is the primary path; the fetch re-reads
+// what a reconnect may have missed (every hello) and what a full surface
+// replacement moved (every reset: a Wipe, a Set active, a Branch, a New graph,
+// whose frame carries the lean rows but no pin text) — never while the tab is
+// hidden, where it is put off to the return to visible. There is no timed
+// fetch (PLAN 2A.3: the 30 s poll is gone). The marker pass follows reflow and
+// the preview transition, and does its layout work only with pins on a visible
+// page (ruled U103@comments-poll, A-defaults); it stays until U327b.
 const MARKER_MS = 500;
 const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
@@ -462,11 +464,14 @@ export function initComments() {
   window.addEventListener('resize', positionMarkers);
   document.addEventListener('visibilitychange', onVisibility);
   setInterval(markerPass, MARKER_MS); // reflow / preview-transition fallback; rebuilds only on a pin-set change (F11)
-  setInterval(refresh, REFRESH_MS);   // fallback sync — the WS `comments` frame is the primary path (F13)
-  // A (re)connect may have missed a `comments` frame. ws.js is loaded lazily:
+  // A (re)connect may have missed a `comments` frame, and a reset replaced the
+  // surface the pins sit on. ws.js is loaded lazily:
   // a top-level import would pull ws.js -> store.js (which reads `window` at
   // module evaluation) into the graph of every module that imports this one,
   // and queue.js and chat-composer.js are imported by no-DOM module tests.
-  import('./ws.js').then(({ onHello }) => onHello(() => { refresh(); }));
+  import('./ws.js').then(({ onHello, onFrame }) => {
+    onHello(() => { refresh(); });
+    onFrame('reset', () => { refresh(); });
+  });
   refresh();
 }

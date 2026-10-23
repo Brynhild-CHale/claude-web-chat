@@ -655,9 +655,9 @@ describe('chrome: GET /api/comments answering 403', () => {
     assert.equal(markers().length, 1, 'precondition: one marker');
 
     shell.setRoutes({ '/api/comments': respond({ ok: false, mirror: 'basic', remote: true, hint: 'tunnel mirror on' }, { status: 403 }) });
-    const refresh = shell.intervals().find((i) => i.fn && i.fn.name === 'refresh');
-    assert.ok(refresh, 'the comments fallback poll');
-    await refresh.fn(...(refresh.args || []));
+    // A reset frame is one refresh (U304: the 30 s fallback poll is gone).
+    const { helloFrame } = require('../test-support/chrome-shell');
+    await shell.frame({ ...helloFrame({ mounts: [PANE] }), type: 'reset' });
     await shell.tick();
     assert.ok(shell.calls.some((c) => c.url === '/api/comments' && c.method === 'GET'));
     assert.equal(markers().length, 0, 'a refused read renders no markers');
