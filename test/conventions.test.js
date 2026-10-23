@@ -1488,6 +1488,30 @@ const PATTERNS = [
       'lib/core/text.js': 1,
     },
   },
+  {
+    // An element schema's name spelled as a literal (U326, PLAN 2C.4). The
+    // schema table in lib/core/element-log.js (SCHEMAS) names every schema and
+    // the only keys its payload may own; appendVersion validates a version
+    // against it and both hashes cover exactly its keys. A schema name written
+    // elsewhere is a second idea of which schemas exist: a writer that picks
+    // its own name refuses at the one writer, and a reader that matches a
+    // name by hand drifts when a schema gains a version. Read the name from
+    // the table (SCHEMA, SCHEMAS). lib/packs/elements.js (the element type
+    // manifests' reader, a later unit) is the other planned home: its entry
+    // lands with it, since a baseline for a file that does not exist reads
+    // as stale. An element.json under templates/ is a template, not lib, and
+    // is not scanned.
+    name: "'comment@1' / 'highlight@1' / 'box-grab@1' (an element schema name as a literal)",
+    home: 'lib/core/element-log.js — `SCHEMAS` (the schema table the one writer validates against)',
+    what: 'naming an element schema',
+    roots: ['lib', 'public'],
+    exts: ['.js', '.html'],
+    re: /['"](?:comment|highlight|box-grab)@\d+['"]/g,
+    baseline: {
+      // The table's three rows.
+      'lib/core/element-log.js': 3,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
