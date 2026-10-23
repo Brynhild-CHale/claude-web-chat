@@ -565,3 +565,178 @@ test('a foreground `start` whose .web-chat/ is deleted exits 0 within 12 s and w
   assert.equal(fs.existsSync(draft), false, 'no draft.json');
   assert.deepEqual(entriesFor(root), [], 'its registry entry is released');
 });
+
+// ── the writer token follows the live daemon (U355; DECISIONS I.3 D2) ──────
+//
+// The guard's `syncToken`, wired the way lib/cli/commands/start.js wires it
+// (the server's writers.publishToken), is called whenever a pass leaves the
+// portfile naming this daemon — rule (b), or (c)'s re-write — after the
+// .web-chat/ identity check; never for an orphan (d) or a removed state
+// directory (a).
+
+const { createWriters } = require('../lib/server/domain/writers');
+const { createAudience } = require('../lib/server/audience');
+const { WRITER_HEADER, readWriterToken, writeWriterToken, mintToken } = require('../lib/core/writer-token');
+
+// Daemon A's writers on `root`, holding its token back for the claim (as
+// createServer({tokenAtClaim: true}) does), and a counting syncToken.
+function tokenDaemon(t, root) {
+  const writers = createWriters({
+    paths: projectPaths(root), state: { mounts: new Map() }, audience: createAudience({ root, configFile: null }),
+    writeAtConstruction: false,
+  });
+  t.after(() => writers.stop());
+  const calls = [];
+  const syncToken = () => { const r = writers.publishToken(); calls.push(r); return r; };
+  // A's token, learned the only way there is: publish once, read the file.
+  const isMine = (tok) => {
+    const w = writers.resolveWriter({ headers: { [WRITER_HEADER.toLowerCase()]: tok }, socket: { remoteAddress: '127.0.0.1' } }, {});
+    return w.class === 'claude' && w.verified === true;
+  };
+  return { writers, syncToken, calls, isMine };
+}
+
+test('syncToken: a vanished portfile (rule (c)) → the guard re-writes the portfile AND puts A\'s token back', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const a = tokenDaemon(t, root);
+  a.writers.publishToken(); // A's claim
+  writePortfile('server', { root, pid: process.pid, port: 45001 });
+  // B (the loser of the race) wrote its token last, and the portfile vanished.
+  writeWriterToken(root, mintToken());
+  fs.rmSync(projectPaths(root).serverJson);
+  const { guard, lines } = guardFor(t, root, { syncToken: a.syncToken });
+  guard.start();
+
+  assert.equal(await guard.check(), 'rewrote');
+  assert.equal(readPf(root).pid, process.pid);
+  assert.ok(a.isMine(readWriterToken(root)), 'the token file names the live daemon\'s token');
+  assert.deepEqual(a.calls, [{ written: true, reason: 'differs' }]);
+  assert.ok(lines.some((l) => /re-wrote the writer token \(differs\)/.test(l)), lines.join('\n'));
+  assert.equal(fs.statSync(projectPaths(root).writerToken).mode & 0o777, 0o600);
+});
+
+test('syncToken: the portfile names A (rule (b)) and the token file differs, or is gone → re-written; equal → untouched', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const a = tokenDaemon(t, root);
+  writePortfile('server', { root, pid: process.pid, port: 45001 });
+  writeWriterToken(root, mintToken()); // B's token over A's claim
+  const { guard } = guardFor(t, root, { syncToken: a.syncToken });
+  guard.start();
+
+  assert.ok(['ok', 're-registered'].includes(await guard.check()));
+  assert.ok(a.isMine(readWriterToken(root)));
+  assert.deepEqual(a.calls.at(-1), { written: true, reason: 'differs' });
+
+  const file = projectPaths(root).writerToken;
+  const before = fs.statSync(file);
+  assert.equal(await guard.check(), 'ok');
+  assert.deepEqual(a.calls.at(-1), { written: false, reason: 'current' });
+  assert.equal(fs.statSync(file).ino, before.ino, 'an equal file is left alone');
+  assert.equal(fs.statSync(file).mtimeMs, before.mtimeMs);
+
+  fs.rmSync(file);
+  assert.equal(await guard.check(), 'ok');
+  assert.deepEqual(a.calls.at(-1), { written: true, reason: 'absent' });
+  assert.ok(a.isMine(readWriterToken(root)));
+});
+
+test('syncToken: an orphan (rule (d)) never calls it, and the live daemon\'s token stays', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const a = tokenDaemon(t, root);
+  const other = otherLivePid(t);
+  writePortfile('server', { root, pid: other, port: 45002 });
+  const theirs = mintToken();
+  writeWriterToken(root, theirs);
+  const { guard, exits } = guardFor(t, root, {
+    syncToken: a.syncToken,
+    probeHealth: async (port) => (port === 45002 ? { ok: true, role: 'instance', pid: other, instance: registry.instanceId(root) } : null),
+  });
+  guard.start();
+
+  assert.equal(await guard.check(), 'orphan');
+  assert.equal(exits.length, 1);
+  assert.deepEqual(a.calls, [], 'never called');
+  assert.equal(readWriterToken(root), theirs);
+});
+
+test('syncToken: an unconfirmed owner (another live pid, no answer) never calls it either', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const a = tokenDaemon(t, root);
+  const other = otherLivePid(t);
+  writePortfile('server', { root, pid: other, port: 45003 });
+  const { guard } = guardFor(t, root, { syncToken: a.syncToken });
+  guard.start();
+  assert.equal(await guard.check(), 'unconfirmed');
+  assert.deepEqual(a.calls, []);
+});
+
+test('syncToken: a removed .web-chat/ never calls it — before the pass, or between the read and the portfile write', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const a = tokenDaemon(t, root);
+  const { dir } = projectPaths(root);
+  const { guard, exits } = guardFor(t, root, { syncToken: a.syncToken });
+  guard.start();
+  interceptReads(t, (n) => { if (n === 2) fs.rmSync(dir, { recursive: true, force: true }); });
+  assert.equal(await guard.check(), 'state-removed');
+  assert.deepEqual(a.calls, []);
+  assert.equal(fs.existsSync(dir), false);
+
+  const root2 = projectRoot(t);
+  const b = tokenDaemon(t, root2);
+  writePortfile('server', { root: root2, pid: process.pid, port: 45001 });
+  const g2 = guardFor(t, root2, { syncToken: b.syncToken });
+  g2.guard.start();
+  fs.rmSync(projectPaths(root2).dir, { recursive: true, force: true });
+  assert.equal(await g2.guard.check(), 'state-removed');
+  assert.deepEqual(b.calls, []);
+  assert.equal(fs.existsSync(projectPaths(root2).dir), false);
+  assert.equal(exits.length, 1);
+});
+
+test('syncToken: a throw is caught and logged, and the pass still answers', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  writePortfile('server', { root, pid: process.pid, port: 45001 });
+  const { guard, lines } = guardFor(t, root, { syncToken: () => { throw new Error('boom'); } });
+  guard.start();
+  assert.ok(['ok', 're-registered'].includes(await guard.check()));
+  assert.ok(lines.some((l) => /could not sync the writer token \(boom\)/.test(l)), lines.join('\n'));
+});
+
+test('foreground start: the server is created with tokenAtClaim, and the guard\'s syncToken reaches the server\'s writers.publishToken', async (t) => {
+  withTempHome(t);
+  const root = projectRoot(t);
+  const before = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
+  t.after(() => {
+    for (const sig of ['SIGTERM', 'SIGINT']) {
+      for (const l of process.listeners(sig)) if (!before[sig].includes(l)) process.off(sig, l);
+    }
+  });
+  const serverOpts = [];
+  const made = [];
+  let published = 0;
+  await start([], {
+    root,
+    daemonFor: async () => null,
+    errlog: () => {},
+    exit: () => {},
+    createServer: (opts) => {
+      serverOpts.push(opts);
+      return {
+        start: async () => ({ port: 45021 }),
+        installSignalHandlers: () => {},
+        writers: { publishToken: () => { published++; return { written: true, reason: 'absent' }; } },
+      };
+    },
+    createInstanceGuard: (opts) => { made.push(opts); return { start() {}, stop() {} }; },
+  });
+  assert.deepEqual(serverOpts, [{ root, tokenAtClaim: true }]);
+  assert.equal(typeof made[0].syncToken, 'function');
+  assert.deepEqual(made[0].syncToken(), { written: true, reason: 'absent' });
+  assert.equal(published, 1);
+});
