@@ -1595,6 +1595,28 @@ const PATTERNS = [
       'lib/core/element-log.js': 3,
     },
   },
+  {
+    // An id@v split by hand (U353, plan 2E.3). A pin string ('c3@2', 'h7@1',
+    // 'g9@4') is read by ONE parser: lib/core/element-log.js `parsePin` (→
+    // {id, v} or null; split at the last '@', a v that is not a positive safe
+    // integer refused) and `pinMapOf` (a list → Map(id → v)); `isPinKey`, the
+    // close grammar, is parsePin plus the no-text id check. Before it the split
+    // was written five times in lib/ with three different rules for a
+    // malformed v (skipped, NaN, 0). Counted as the literal call, comments
+    // included; the `${id}@${v}` templates that WRITE a pin are not reads.
+    name: "lastIndexOf('@') (an id@v split by hand)",
+    home: 'lib/core/element-log.js — `parsePin` / `pinMapOf` (the one id@v parser; `isPinKey` is built on it)',
+    what: 'splitting a pin string at its last @',
+    roots: ['lib'],
+    re: /lastIndexOf\(\s*['"`]@['"`]\s*\)/g,
+    baseline: {
+      // parsePin's own split.
+      'lib/core/element-log.js': 1,
+      // Not a pin: the access token's e-mail split into local part and domain
+      // (emailAllowed), which has nothing to do with element ids.
+      'lib/portal/access-jwt.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
