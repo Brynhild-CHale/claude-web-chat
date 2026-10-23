@@ -274,7 +274,7 @@ test('GET /api/graph/node/:id below read: the node\'s page and its turn\'s outco
   const local = await getAt(h, 'local', '/api/graph/node/n2');
   // Byte-identical to the node as it is stored, with its label: 0.8.0's body.
   const stored = h.graph.nodes.get('n2');
-  assert.equal(local.text, JSON.stringify({ ...stored, label: local.json.label }), 'the local body is the stored node and its label');
+  assert.equal(local.text, JSON.stringify({ ...stored, label: local.json.label, lean_elements: [] }), 'the local body is the stored node and its label');
   const basic = (await getAt(h, 'network', '/api/graph/node/n2')).json;
   assert.deepStrictEqual(basic.mounts, stored.mounts, 'the page stays');
   assert.deepStrictEqual(basic.trigger, { kind: 'turn', ended: 'failed' }, 'the trigger keeps its kind and outcome');

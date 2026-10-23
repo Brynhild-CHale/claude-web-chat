@@ -8,8 +8,9 @@
 // running in a hidden tab. The WS `comments` frame is the primary path, so:
 //
 //   * the fetch runs on init, on every hello (a reconnect may have missed a
-//     frame) and on a 30 s fallback interval, and never while the tab is
-//     hidden — a refresh asked for then is sent when the tab is visible again;
+//     frame) and on every reset (the surface moved; U304 removed the 30 s
+//     fallback interval), and never while the tab is hidden — a refresh asked
+//     for then is sent when the tab is visible again;
 //   * the 500 ms pass returns at once on a hidden page, or with no pins and no
 //     marker to take down; a visibilitychange to visible runs one pass;
 //   * a `comments` frame still redraws the markers at once.
@@ -69,29 +70,32 @@ before(async () => {
 });
 after(() => shell.restore());
 
-test('the comments pollers are one 500 ms pass and one 30 s fetch — no 3 s poll', () => {
+test('the comments pollers are one 500 ms pass and no timed fetch — no 30 s or 3 s poll (U304)', () => {
   interval('markerPass', 500);
-  interval('refresh', 30000);
-  assert.equal(shell.intervals().filter((i) => i.fn && i.fn.name === 'refresh' && i.ms === 3000).length, 0);
+  assert.deepStrictEqual(shell.intervals().filter((i) => i.fn && i.fn.name === 'refresh'), [], 'no refresh interval at all');
+  assert.equal(shell.intervals().filter((i) => i.ms === 30000).length, 0, 'no 30 s interval');
   assert.ok(commentGets() >= 1, 'init still reads the pins once');
 });
 
-test('the 30 s fallback fetches while visible and makes no request while hidden', async () => {
-  const refresh = interval('refresh', 30000);
+test('a reset frame sends one GET /api/comments while visible, none while hidden, and one on the return to visible', async () => {
+  const reset = () => shell.frame({ ...helloFrame({ mounts: [PANE] }), type: 'reset' });
   let n = commentGets();
-  await run(refresh);
-  assert.equal(commentGets(), n + 1, 'visible: one GET /api/comments');
+  await reset();
+  await shell.tick();
+  assert.equal(commentGets(), n + 1, 'visible: a reset is one GET /api/comments');
 
   setVisibility('hidden');
   n = commentGets();
-  await run(refresh);
-  await run(refresh);
-  assert.equal(commentGets(), n, 'hidden: the fallback poll sends nothing');
+  await reset();
+  await reset();
+  await shell.tick();
+  assert.equal(commentGets(), n, 'hidden: a reset sends nothing');
 
   setVisibility('visible');
   await shell.tick();
   assert.equal(commentGets(), n + 1, 'the put-off refresh goes out once the tab is visible again');
-  await run(refresh);
+  await reset();
+  await shell.tick();
   assert.equal(commentGets(), n + 2);
 });
 
