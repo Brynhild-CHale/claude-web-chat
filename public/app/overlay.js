@@ -1046,13 +1046,12 @@ function gestureOfClick(e) {
   // keyboard's click names -1, a lone one by any reading.
   if (typeof e.pointerId === 'number') return gestures.has(e.pointerId) ? [e.pointerId, gestures.get(e.pointerId)] : null;
   // A click that names no pointer (a browser whose click is a MouseEvent): the
-  // newest pointerdown's while it is still down, or up with its own click
-  // unspent when a pointer pressed it (detail >= 1; any later pointerdown would
-  // have dropped this gesture).
+  // newest pointerdown's only once the well heard it up, with its own click
+  // unspent, and only when a pointer pressed the click (detail >= 1; any later
+  // pointerdown would have dropped this gesture). A press still not up is no
+  // click's: its pointer was released where the well could not hear it (U302b).
   const g = lastDown == null ? null : gestures.get(lastDown);
-  if (!g) return null;
-  if (!g.up) return [lastDown, g];
-  return e.detail >= 1 ? [lastDown, g] : null;
+  return g && g.up && e.detail >= 1 ? [lastDown, g] : null;
 }
 // The click of a gesture the tool took, judged again where it ended: the
 // stand-in names the gesture's pointer (a click event may carry none) and not
