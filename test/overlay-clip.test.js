@@ -16,6 +16,9 @@
 //     ∩ well box ∩ viewport, computed here, independently) and 0 glyph boxes —
 //     the marker's transform offset included — painting outside it, over the
 //     rail or over the minbar; every anchor inside it IS drawn;
+//   - at the capped scroll box's right side (the S-1 walk is vertical): a point
+//     just inside is drawn with its glyph's right part inset away, a point
+//     just past it is not drawn;
 //   - a source record whose quote and bracket are gone answers re-resolved how
 //     'section' and is drawn as a section guess, never with the hit class;
 //   - a source hit on a markdown item whose block re-renders with the quote
@@ -205,6 +208,45 @@ test('S-1: through both scroll ranges in 40 px steps, nothing drawn or painted o
   assert.ok(ov.stats().clipped > 0 || drawnTotal < steps * ROWS / 10, 'some anchors were clipped along the way');
   geo.well = 0;
   geo.pane = 0;
+});
+
+test('S-1, the right edge: a glyph straddling the pane\'s right side is clipped there, never painting toward the rail', async () => {
+  // The S-1 walk scrolls vertically, so its anchors never reach a clip's right
+  // side; these two rows sit at it: one point just inside the capped scroll
+  // box's right edge (drawn, its glyph's right part inset away), one just past
+  // it (not drawn).
+  const root = rootOf('clip-pane');
+  const rowEls = [...root.querySelectorAll('.row')];
+  const [inEl, outEl] = [rowEls[5], rowEls[6]];
+  const savedIn = rectFns.get(inEl);
+  const savedOut = rectFns.get(outEl);
+  const right = () => hostBox().left + hostBox().width;
+  rectFns.set(inEl, () => ({ left: right() - 5, top: hostBox().top + 100, width: 4, height: 24 }));
+  rectFns.set(outEl, () => ({ left: right() + 2, top: hostBox().top + 140, width: 4, height: 24 }));
+  try {
+    await draw([
+      { id: 'edge-in', v: 1, type: 'comment', anchor: anchors.record(root, inEl, { mount: 'clip-pane' }), shared: true, replies: 0 },
+      { id: 'edge-out', v: 1, type: 'comment', anchor: anchors.record(root, outEl, { mount: 'clip-pane' }), shared: true, replies: 0 },
+    ], 2);
+    ov.requestDraw();
+    flush();
+    const [mIn] = markersFor('edge-in');
+    const [mOut] = markersFor('edge-out');
+    assert.ok(mIn && shown(mIn), 'the point inside the right edge is drawn');
+    assert.ok(mOut && !shown(mOut), 'the point past the right edge is not drawn');
+    const t = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(mIn.style.transform);
+    const ins = /inset\(([\d.]+)px ([\d.]+)px ([\d.]+)px ([\d.]+)px\)/.exec(mIn.style.clipPath || '');
+    assert.ok(t && ins, 'the marker carries its glyph offset and a clip-path inline');
+    const gx = parseFloat(mIn.style.left) + Number(t[1]);
+    const paintedRight = gx + parseFloat(mIn.style.width) - Number(ins[2]);
+    assert.ok(Number(ins[2]) > 0, 'the glyph\'s right part is inset away');
+    assert.ok(paintedRight <= right() + 1e-9, `the glyph paints to ${paintedRight}, the clip ends at ${right()}`);
+  } finally {
+    if (savedIn) rectFns.set(inEl, savedIn); else rectFns.delete(inEl);
+    if (savedOut) rectFns.set(outEl, savedOut); else rectFns.delete(outEl);
+    ov.setElements('live', []);
+    flush();
+  }
 });
 
 test('a source record whose quote and bracket are gone is drawn as a section guess, never as a hit', async () => {
