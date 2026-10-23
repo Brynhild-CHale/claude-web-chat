@@ -20,8 +20,10 @@
 // is measured from the item's CONTENT BOX — a pane's `.mount-host` (never the
 // wrapper, whose header the export has no copy of), a markdown item's block —
 // and the anchor and payload carry that box's size, `box: {w, h}` beside
-// `rect`; the daemon clips from the export's content box of the same item,
-// laid out at that width, so nothing reflows under the clip. A box over the
+// `rect`, and its own scroll, `scroll: {top, left}` (K.2-80: a rows-capped
+// pane's box scrolls; 0/0 when it is not); the daemon clips from the export's
+// content box of the same item, laid out at that width and scrolled the same,
+// so nothing reflows or shifts under the clip. A box over the
 // pane's header alone is chrome too (CHROME_HINT). The box is clipped to the
 // content box, then snapped as the armed settings say (toolbar-state.js
 // settingsOf('box-grab'), the manifest's default 'block' beneath, F2 (a)):
@@ -226,7 +228,7 @@ function viewportNow() {
 // measureGrab(box, {snap}) → {ok: true, body} | {ok: false, hint}. `box` is in
 // viewport px {left, top, right, bottom}. The body is the POST /api/elements
 // body (http.js adds the device claim): rect relative to the item's content
-// box, box that content box's {w, h}.
+// box, box that content box's {w, h}, scroll its {top, left} scroll offset.
 export function measureGrab(drawn, { snap = DEFAULT_SNAP } = {}) {
   const box = {
     left: Math.min(drawn.left, drawn.right), top: Math.min(drawn.top, drawn.bottom),
@@ -256,6 +258,10 @@ export function measureGrab(drawn, { snap = DEFAULT_SNAP } = {}) {
     w: num(grabbed.right - grabbed.left), h: num(grabbed.bottom - grabbed.top),
   };
   const size = { w: num(frame.right - frame.left), h: num(frame.bottom - frame.top) };
+  // The content box's own scroll (a rows-capped pane's .mount-host scrolls):
+  // the rect is relative to what is scrolled into view, so the daemon scrolls
+  // the export's box the same before the clip (K.2-80); 0/0 when unscrolled.
+  const scroll = { top: num(Number(base.scrollTop) || 0), left: num(Number(base.scrollLeft) || 0) };
   const client = { x: num(grabbed.left), y: num(grabbed.top), w: rel.w, h: rel.h };
   const mount = item.kind === 'pane' ? item.id : null;
   const theme = getGlobalTheme();
@@ -271,8 +277,8 @@ export function measureGrab(drawn, { snap = DEFAULT_SNAP } = {}) {
     ok: true,
     body: {
       type: TYPE,
-      anchor: { v: 1, kind: 'page', item: item.id, mount, rect: { ...rel }, box: { ...size }, viewport: vp },
-      payload: { shared: true, rect: { ...rel, item: item.id, viewport: vp, client }, box: { ...size }, meta },
+      anchor: { v: 1, kind: 'page', item: item.id, mount, rect: { ...rel }, box: { ...size }, scroll: { ...scroll }, viewport: vp },
+      payload: { shared: true, rect: { ...rel, item: item.id, viewport: vp, client }, box: { ...size }, scroll: { ...scroll }, meta },
     },
     item: item.id,
   };

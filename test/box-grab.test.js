@@ -589,6 +589,61 @@ test('one frame of reference (K.2-72): captureClip is handed the item\'s content
   assert.equal(contentSelector('a"</style>', true), '[data-pane-id="a\\22 \\3c \\2f style\\3e "] > .mount-host');
 });
 
+// K.2-80 (U328e): a rows-capped pane's content box scrolls, and the chrome
+// measured the rect over what was scrolled into view: the anchor keeps the
+// box's scroll, the captureImpl seam is handed it, and captureClip sets it as
+// the element's own scrollTop / scrollLeft in the page before the clip —
+// never folded into the clip.
+test('a scrolled content box (K.2-80): the anchor keeps scroll, the captureImpl seam is handed it, and captureClip sets it on the element before the clip', async (t) => {
+  const { api, srv } = await withServer(t);
+  const calls = [];
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: stubCapture(calls) });
+  await render(api, 'm1');
+  const scroll = { top: 200, left: 0 };
+  const box = { w: 600, h: 370 };
+  const g = (await ok(api.post('/api/elements', { ...grabBody('m1'), anchor: { ...PAGE('m1'), box, scroll } }), 'POST')).element;
+  assert.deepEqual(g.anchor.scroll, scroll, 'the anchor keeps the content box\'s scroll beside box');
+  await settled(srv, g.grab.capture);
+  const c = calls.at(-1);
+  assert.deepEqual(c.scroll, scroll, 'the seam is handed the scroll');
+  assert.deepEqual(c.clip, { x: 4, y: 6, w: 32, h: 20 }, 'the clip as sent: the scroll is never added to it');
+  assert.equal(c.selector, '[data-pane-id="m1"] > .mount-host');
+  // Sent in the payload only (the chrome sends both): the same.
+  const p = (await ok(api.post('/api/elements', { ...grabBody('m1'), payload: { ...grabBody('m1').payload, box, scroll: { top: 12.345, left: 7 } } }), 'POST')).element;
+  assert.deepEqual(p.anchor.scroll, { top: 12.35, left: 7 });
+  await settled(srv, p.grab.capture);
+  assert.deepEqual(calls.at(-1).scroll, { top: 12.35, left: 7 });
+  // None sent (an older chrome): none stored, and the box drawn unscrolled.
+  const bare = await postGrab(api, 'm1');
+  assert.equal('scroll' in bare.anchor, false);
+  await settled(srv, bare.grab.capture);
+  assert.deepEqual(calls.at(-1).scroll, { top: 0, left: 0 });
+
+  // captureClip itself: the page script sets the element's own scroll, then
+  // scrolls it into view and measures it; the clip it is handed is unchanged.
+  let logFile;
+  const fake = fakeBin(t, { name: 'chrome', script: FAKE_CHROME, env: (dir) => ({ FAKE_CHROME_LOG: (logFile = path.join(dir, 'log.jsonl')) }) });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-grab-tmp-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const grace = { closeMs: 500, termMs: 300, killMs: 500 };
+  const run = (extra) => assert.rejects(captureClip({
+    chromePath: fake.bin, html: '<!doctype html><div data-pane-id="m1"><div class="mount-host">x</div></div>', width: 640, height: 480,
+    selector: '[data-pane-id="m1"] > .mount-host', clip: { x: 1, y: 2, w: 3, h: 4 }, tmpDir, timeoutMs: 10000, grace, ...extra,
+  }), (e) => e.code === 'page-error');
+  const expressions = () => fs.readFileSync(logFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    .filter((l) => l.method === 'Runtime.evaluate').map((l) => String(l.params.expression));
+  await run({ scroll: { top: 200, left: 0 } });
+  const ex = expressions().at(-1);
+  assert.ok(ex.includes('const inner = {"top":200,"left":0};'), 'the scroll reaches the page script');
+  const set = ex.indexOf('el.scrollTop = inner.top; el.scrollLeft = inner.left;');
+  assert.ok(set > 0, 'assigned as the element\'s own scrollTop / scrollLeft');
+  assert.ok(set < ex.indexOf('el.scrollIntoView('), 'before the element is scrolled into view');
+  assert.ok(set < ex.indexOf('getBoundingClientRect()'), 'and before it is measured for the clip');
+  await run({});
+  assert.ok(expressions().at(-1).includes('const inner = null;'), 'no scroll given: nothing is set');
+  assert.equal(liveBrowsers(), 0);
+});
+
 test('a parked grab\'s GET /api/queue/pending row carries type, element_id, v and image (K.2-71); a remote viewer gets them through stripItemText at its level', async (t) => {
   const roots = { read: tmpRoot('wc-bg-read-') };
   const TUNNEL = { hostname: 'wc.example.test', style: 'flat', access: { team: 'testteam', aud: 'test-aud-0123456789' }, allow: { emails: ['me@example.com'], domains: [] } };

@@ -61,6 +61,10 @@ export const PICK_HINTS = Object.freeze({
 });
 export const LEAVE_HINT = 'Left as it is — nothing written.';
 export const NO_GUESS_HINT = 'The guess is gone from the page — pick a new place instead.';
+export const NO_SECTION_HINT = 'The section is gone from the page, or too long to anchor to — pick a new place instead.';
+// A section fallback whose marker names it in data-el-notes (a type whose
+// marker opens a note, e.g. a highlight): its note waits for the re-anchor.
+export const SECTION_NOTE_LINE = 'Its note opens once it is re-anchored.';
 export const UNCHANGED_HINT = 'Nothing written — the element is already anchored there.';
 export const sectionText = (place, v) =>
   `Anchored in ${place}, v${v == null ? '?' : v} · its text no longer matches; anchored to its section, drawn over the section`;
@@ -224,6 +228,8 @@ export function openGuessCard(orphan) {
   cardHead(c, o);
   c.appendChild(el('p', 'wc-reanchor-text', section ? sectionText(o.place, o.v)
     : `Anchored in ${o.place}, v${o.v == null ? '?' : o.v} · its anchor no longer matches; drawn at the resolver's guess`));
+  const m = section ? markerOf(o.id) : null;
+  if (m && (m.dataset.elNotes || '').split(' ').includes(String(o.id))) c.appendChild(el('p', 'wc-reanchor-noteline', SECTION_NOTE_LINE));
   const acts = el('div', 'wc-reanchor-acts');
   acts.appendChild(button('wc-reanchor-here', 'Re-anchor here', () => reanchorHere(o)));
   acts.appendChild(button('wc-reanchor-leave', 'Leave it', () => leaveIt()));
@@ -296,7 +302,7 @@ async function reanchorHere(o) {
     rec = g ? recordOn(o.kind, g) : null;
   }
   if (!rec) {
-    setNote(NO_GUESS_HINT, { refused: true });
+    setNote(o.how === 'section' ? NO_SECTION_HINT : NO_GUESS_HINT, { refused: true });
     const acts = cardEl && cardEl.querySelector('.wc-reanchor-acts');
     if (acts && !acts.querySelector('.wc-reanchor-pick')) acts.prepend(button('wc-reanchor-pick', 'Re-anchor…', () => startPick(o)));
     return;

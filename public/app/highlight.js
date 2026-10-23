@@ -28,7 +28,9 @@
 //
 // THE MARKER. Each highlight group the overlay builds keeps its marker: a small
 // handle at the range's first line (a stand-in look, tokens only — U338's
-// toolbar work may restyle it). Clicking it opens the note popover (below).
+// toolbar work may restyle it). Clicking it opens the note popover (below) —
+// except a section fallback's, whose click reaches the overlay's delegated one
+// and so the re-anchor card (K.2-79).
 //
 // RE-RESOLUTION follows the overlay's draw rules: an exact answer is painted;
 // a re-resolved one (a range found again by its context, its position or a
@@ -397,11 +399,22 @@ function draw(group) {
   c.classList.toggle('hl-guess', items.some((it) => isGuess(group, it)));
   c.title = items.length > 1 ? `${items.length} highlights` : 'Highlight';
   c.setAttribute('role', 'button');
-  c.setAttribute('aria-label', 'Open this highlight\'s note');
-  c.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    openNote(c);
-  });
+  if (group.kind === 'section') {
+    // A section fallback (K.2-79): no note listener — the click reaches the
+    // overlay's delegated one ('overlay:guess' how 'section'), and the
+    // re-anchor card is the affordance; the note opens once it is re-anchored.
+    // The ids that carry a note, for the card's one line saying so.
+    c.setAttribute('aria-label', 'Re-anchor this highlight');
+    const noted = items.filter((it) => { const r = recordOf(it.id); return !!(r && r.note); }).map((it) => String(it.id));
+    if (noted.length) c.dataset.elNotes = noted.join(' ');
+    else delete c.dataset.elNotes;
+  } else {
+    c.setAttribute('aria-label', 'Open this highlight\'s note');
+    c.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openNote(c);
+    });
+  }
   marks.add(c);
 }
 function move(group, ctx) {
