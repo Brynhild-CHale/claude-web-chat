@@ -147,7 +147,7 @@ test('writers: the domain hands out no token accessor', (t) => {
   const tok = readWriterToken(root);
   // U214b added the service and lease credentials; none of them hands out the
   // boot token.
-  assert.deepEqual(Object.keys(writers).sort(), ['lease', 'mintService', 'release', 'resolveWriter', 'revoke', 'stop']);
+  assert.deepEqual(Object.keys(writers).sort(), ['lease', 'mintService', 'publishToken', 'release', 'resolveWriter', 'revoke', 'stop']);
   assert.ok(!JSON.stringify(writers).includes(tok));
   assert.notEqual(writers.mintService({ mountId: 'm', name: 'svc' }), tok);
   assert.notEqual(writers.lease({ owner: 'service:x', pid: process.pid }).token, tok);
