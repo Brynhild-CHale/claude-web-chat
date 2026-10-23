@@ -26,6 +26,9 @@
 //     drawn over its section; never an orphan): a click on its marker opens the
 //     card with the section wording, and 'Re-anchor here' sends the guess
 //     case's PATCH shape with a source anchor over the section (K.2-74);
+//   - the section card's own refusal: when 'Re-anchor here' finds the section
+//     gone or longer than CONFIG.quote_max, the card shows NO_SECTION_HINT
+//     (never the guess's NO_GUESS_HINT) and sends nothing (K.2-79; U328e);
 //   - a preview opened while a pick is pending leaves the card up with
 //     READONLY_HINT and sends nothing (K.2-74).
 const test = require('node:test');
@@ -343,6 +346,65 @@ test('a section fallback: its marker opens the card with the section wording; Re
     ov.initOverlay({ rectOf });
     ov.removeElements('live', ['c30']);
     await shell.frame({ type: 'markdown:remove', id: 'md-sec' });
+    await shell.tick();
+  }
+});
+
+// K.2-79 (U328e): the section card offers no guess, so its refusal names the
+// section: gone from the page, or too long to anchor to.
+test('a section fallback whose section is too long or gone: Re-anchor here shows NO_SECTION_HINT and sends nothing', async () => {
+  const before0 = '## Plan\n\nAlpha beta gamma delta epsilon zeta.\n\n## Other\n\nUnrelated words.\n';
+  const after0 = '## Plan\n\nEverything here was rewritten from scratch.\n\n## Other\n\nUnrelated words.\n';
+  const long0 = `## Plan\n\n${'Rewritten and grown well past any quote. '.repeat(80)}\n\n## Other\n\nUnrelated words.\n`;
+  const gone0 = '## Other\n\nUnrelated words.\n';
+  await shell.frame({ type: 'markdown', id: 'md-sec2', text: before0, owner: 'claude' });
+  const block = () => M.itemEl(W.document, 'md-sec2').el;
+  const tn = block().querySelector('p').firstChild;
+  const at = tn.data.indexOf('gamma delta');
+  const range = W.document.createRange();
+  range.setStart(tn, at);
+  range.setEnd(tn, at + 'gamma delta'.length);
+  const rec = anchors.recordSource(block(), range, md.sourceMap(before0), before0);
+  assert.ok(rec && rec.kind === 'source' && rec.slug === 'plan');
+  const SEC_BOX = { left: 200, top: 400, width: 80, height: 16, right: 280, bottom: 416, x: 200, y: 400 };
+  ov.initOverlay({ rectOf: (x) => (x && typeof x.cloneContents === 'function' ? SEC_BOX : rectOf(x)) });
+  ov.upsertElements('live', [{ id: 'c31', v: 1, type: 'comment', shared: true, replies: 0, anchor: rec }]);
+  patchAnswer = { ok: true, element: { id: 'c31', v: 2, type: 'comment' } };
+  const n0 = patches().length;
+  try {
+    await waitUntil(() => states.get('c31') === 'exact', { timeout: 3000, what: 'c31 a hit' });
+    await shell.frame({ type: 'markdown', id: 'md-sec2', text: after0, owner: 'claude' });
+    await waitUntil(() => markersFor('c31').some((m) => m.classList.contains('el-section') && m.style.display !== 'none'),
+      { timeout: 3000, what: 'the section fallback drawn' });
+    shell.click(markersFor('c31')[0]);
+    await shell.tick();
+    assert.ok(card() && card().dataset.elId === 'c31', 'the section card is open');
+    assert.equal(card().querySelector('.wc-reanchor-noteline'), null, 'a comment marker names no note: no note line');
+    // Too long: the Plan section grown past CONFIG.quote_max before the press.
+    assert.ok(long0.length > 2000);
+    await shell.frame({ type: 'markdown', id: 'md-sec2', text: long0, owner: 'claude' });
+    await shell.tick();
+    shell.click(btn('wc-reanchor-here'));
+    await shell.tick();
+    assert.equal(noteText(), orph.NO_SECTION_HINT, 'the refusal names the section');
+    assert.notEqual(noteText(), orph.NO_GUESS_HINT);
+    assert.ok(card().querySelector('.wc-reanchor-note').classList.contains('wc-refused'));
+    // Gone: the Plan heading itself removed.
+    await shell.frame({ type: 'markdown', id: 'md-sec2', text: gone0, owner: 'claude' });
+    await shell.tick();
+    assert.ok(card() && card().dataset.elId === 'c31', 'the card stays up across the re-render');
+    card().querySelector('.wc-reanchor-note').textContent = '';
+    shell.click(btn('wc-reanchor-here'));
+    await shell.tick();
+    assert.equal(noteText(), orph.NO_SECTION_HINT, 'gone: the same hint');
+    assert.equal(patches().length, n0, 'nothing sent');
+    shell.key('Escape');
+    await shell.tick();
+  } finally {
+    patchAnswer = null;
+    ov.initOverlay({ rectOf });
+    ov.removeElements('live', ['c31']);
+    await shell.frame({ type: 'markdown:remove', id: 'md-sec2' });
     await shell.tick();
   }
 });

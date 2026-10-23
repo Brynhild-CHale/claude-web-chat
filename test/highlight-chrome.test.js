@@ -30,7 +30,11 @@
 //     {type: 'highlight'} (K.2-11): swatch, note, Show on page;
 //   - get_comments({type: 'highlight'}) (the real handler over a stubbed
 //     client) requests the one read with shared_only=1, and get_comments()
-//     sends exactly the comment request (the S-14 golden's).
+//     sends exactly the comment request (the S-14 golden's);
+//   - a section fallback's marker (a source highlight whose text was rewritten,
+//     how 'section') adds no note listener: its click reaches the overlay's
+//     delegated one — exactly one 'overlay:guess' how 'section' — and opens the
+//     re-anchor card, never the note popover (K.2-79; U328e).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -461,6 +465,53 @@ test('a selection in a markdown item records a source anchor; the document adopt
     await clearLive();
   }
   await drawnUntil(() => !W.document.adoptedStyleSheets.includes(HL.highlightSheet()), 'the document dropped the sheet');
+});
+
+// K.2-79 (U328e): highlight.js draw() adds no note listener for a section
+// fallback, so the overlay's delegated click hears it and the re-anchor card
+// (orphans.js) is the affordance; the card says the note waits for it.
+test('a section-fallback highlight\'s marker click emits one \'overlay:guess\' how:\'section\' and opens no note', async () => {
+  installApi();
+  const { bus } = await shell.importApp('bus.js');
+  const orph = await shell.importApp('orphans.js');
+  const md = await shell.importApp('markdown.js');
+  const before0 = '## Plan\n\nAlpha beta gamma delta epsilon zeta.\n\n## Other\n\nUnrelated words.\n';
+  await shell.frame({ type: 'markdown', id: 'md-sf', text: before0, owner: 'claude' });
+  const block = () => M.itemEl(W.document, 'md-sf').el;
+  const tn = block().querySelector('p').firstChild;
+  const at = tn.data.indexOf('gamma delta');
+  const r = W.document.createRange();
+  r.setStart(tn, at);
+  r.setEnd(tn, at + 'gamma delta'.length);
+  const anchor = anchors.recordSource(block(), r, md.sourceMap(before0), before0, { md: 'md-sf' });
+  assert.ok(anchor && anchor.kind === 'source' && anchor.slug === 'plan');
+  const rec = { id: `h${nextId++}`, type: 'highlight', v: 1, schema: SCHEMA, anchor, shared: true, color: 'gold', note: 'check this' };
+  const seen = [];
+  const off = bus.on('overlay:guess', (d) => seen.push(d));
+  try {
+    await pushLive(rec);
+    await drawnUntil(() => rangeTexts(HL.highlightName('gold')).includes('gamma delta'), 'painted exact');
+    // The text rewritten until the source re-resolves how 'section'.
+    await shell.frame({ type: 'markdown', id: 'md-sf', text: '## Plan\n\nEverything here was rewritten.\n\n## Other\n\nUnrelated words.\n', owner: 'claude' });
+    await drawnUntil(() => markersFor(rec.id).some((m) => m.classList.contains('el-section')), 'the section fallback marker');
+    const marker = markersFor(rec.id).find((m) => m.classList.contains('el-section'));
+    marker.dispatchEvent(new W.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await shell.tick();
+    assert.deepEqual(seen.map((d) => [d.id, d.how]), [[rec.id, 'section']], 'exactly one overlay:guess, how section');
+    assert.equal(W.document.querySelector('.hl-pop'), null, 'the note popover does not open');
+    const card = W.document.querySelector('.wc-reanchor-card');
+    assert.ok(card && card.dataset.elId === rec.id, 'the re-anchor card is the affordance');
+    const line = card.querySelector('.wc-reanchor-noteline');
+    assert.ok(line && line.textContent === orph.SECTION_NOTE_LINE, 'one line: the note opens once re-anchored');
+    shell.key('Escape');
+    await shell.tick();
+  } finally {
+    off();
+    const c = W.document.querySelector('.wc-reanchor-card');
+    if (c) { shell.key('Escape'); await shell.tick(); }
+    await shell.frame({ type: 'markdown:remove', id: 'md-sf' });
+    await clearLive();
+  }
 });
 
 // ── previews, resets ───────────────────────────────────────────────────────
