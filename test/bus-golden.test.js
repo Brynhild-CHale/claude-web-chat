@@ -68,6 +68,8 @@ const GOLDEN = {
       project: '<v>',
       theme: { tokens: {} },
       activeTheme: null,
+      elements: [],
+      surface: 0,
     },
     { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude' },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
@@ -210,7 +212,7 @@ test('bus: a tab capture is a triple-effect (store mutation + store:patch WS + o
   assert.equal(caps[0].capture_id, 'cap1');
 });
 
-test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,store,active,lock,theme,activeTheme}', async (t) => {
+test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,store,active,lock,theme,activeTheme,elements,surface}', async (t) => {
   const { api, port } = await withServer(t);
   const WebSocket = require('ws');
   const ws = new WebSocket(`ws://localhost:${port}/ws`);
@@ -227,7 +229,7 @@ test('bus: reset frame carries exactly {mounts,markdown,order,claude_order,runs,
   assert.ok(reset, 'reset frame present');
   assert.deepEqual(
     Object.keys(reset).sort(),
-    ['active', 'activeTheme', 'claude_order', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'theme', 'type'].sort(),
+    ['active', 'activeTheme', 'claude_order', 'elements', 'lock', 'markdown', 'mounts', 'order', 'runs', 'store', 'surface', 'theme', 'type'].sort(),
   );
 });
 

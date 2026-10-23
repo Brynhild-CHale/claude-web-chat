@@ -1093,7 +1093,8 @@ const NODE_PATHS = ['trigger.message', 'trigger.summary', 'trigger.reply', 'trig
 
 test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () => {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(TEXT_RULES)), {
-    frames: { hello: LOCK_PATHS, reset: LOCK_PATHS, lock: LOCK_PATHS, 'node-added': ['node.trigger_summary'] },
+    // hello and reset: their lean element rows too (U304), whole below read.
+    frames: { hello: [...LOCK_PATHS, 'elements'], reset: [...LOCK_PATHS, 'elements'], lock: LOCK_PATHS, 'node-added': ['node.trigger_summary'] },
     routes: {
       'GET /api/graph': ['nodes[].trigger_summary', 'nodes[].absorbed[].trigger_summary', ...LOCK_PATHS],
       // Spec §5.3's, plus `folded[].error`: §3.2 gives folded turns the error
@@ -1137,17 +1138,24 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
       'element:box-grab': ['elements[]'],
       'element:comment': ['elements[]'],
       'element:highlight': ['elements[]'],
+      // The full-surface frames' lean rows (U304), applied by projectSnapshot.
+      hello: ['elements[]'],
+      reset: ['elements[]'],
     },
     routes: {
       'GET /api/comments': ['comments[]'],
-      'GET /api/graph/node/:id': ['comments[]'],
+      'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
       'GET /preview/node/:id': ['comments[]'],
     },
   });
   const frozenDeep = (o) => !o || typeof o !== 'object' || (Object.isFrozen(o) && Object.values(o).every(frozenDeep));
   assert.ok(frozenDeep(PRIVATE_RULES));
   const rowed = new Set(FRAME_RULES.map((r) => r.type));
-  for (const t of Object.keys(PRIVATE_RULES.frames)) assert.ok(rowed.has(t), `${t}: a frame PRIVATE_RULES filters has a FRAME_RULES row (projectFrame applies it there)`);
+  const { SNAPSHOT_FRAMES } = require('../lib/core/remote-policy');
+  for (const t of Object.keys(PRIVATE_RULES.frames)) {
+    assert.ok(rowed.has(t) || SNAPSHOT_FRAMES.includes(t),
+      `${t}: a frame PRIVATE_RULES filters has a FRAME_RULES row (projectFrame applies it there) or is a full-surface frame (projectSnapshot applies it)`);
+  }
   const routes = new Set(daemonRoutes().map((r) => `${r.method} ${r.path}`));
   for (const k of Object.keys(PRIVATE_RULES.routes)) assert.ok(routes.has(k), `${k} is not a route in lib/server/routes/`);
 });

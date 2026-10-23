@@ -715,7 +715,9 @@ test('gracefulShutdown() does not wait for ever on a chat mirror whose stop neve
 // for the whole release. The golden test runs the wired daemon (withServer);
 // this holds the file to the bytes tranche 1 started from, so it cannot be
 // edited to fit a changed wire.
-const BUS_GOLDEN_SHA256 = '235cabffa00d1a76c0e29f77c4380f30e3361248f8221d2ebffc8c585e23216a';
+// Re-pinned by U304 (PLAN 2A.3): the GOLDEN hello gains `elements` and
+// `surface`, and the reset key-set test names them; nothing else changed.
+const BUS_GOLDEN_SHA256 = '656c0e4cf812a9575ce154d52b485dbc86d85b9801a020eef44c2259bf125751';
 
 test('test/bus-golden.test.js is byte-identical', () => {
   const src = fs.readFileSync(path.join(REPO, 'test', 'bus-golden.test.js'), 'utf8').replace(/\r\n/g, '\n');
