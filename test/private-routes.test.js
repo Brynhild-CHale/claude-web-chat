@@ -414,7 +414,6 @@ const REVIEWED = new Map([
   ['elements.js POST /api/elements/:id/reply', 'a write (reply): answers the pin it found by id — gated: a private pin answers 404 to anyone but a local browser (C-16-2)'],
   ['graph.js fn:execWipe', 'deletes the pins whose item is gone (deleteComment); never serves'],
   ['graph.js fn:execNewGraph', 'deletes every pin (deleteComment); never serves'],
-  ['graph.js GET /api/graph/diff', 'diffNodes compares pages, panes, store and theme (lib/server/diff.js) — never comments'],
 ]);
 
 // Source with comments and string/template contents blanked to spaces
@@ -605,7 +604,7 @@ test('census: every .comments read and whole-node body in lib/server/routes is k
   // frame left lib/server/routes with U327a: domain/comments emitComments sends
   // it as element:comment, projected through element-policy's private paths —
   // test/ws-projection.test.js.)
-  for (const k of ['elements.js GET /api/elements', 'graph.js GET /api/graph/node/:id', 'graph.js GET /preview/node/:id']) {
+  for (const k of ['elements.js GET /api/elements', 'graph.js GET /api/graph/node/:id', 'graph.js GET /preview/node/:id', 'graph.js GET /api/graph/diff']) {
     assert.ok(keys.has(k), `the scan found no ${k}`);
   }
   for (const route of Object.keys(PRIVATE_RULES.routes)) {
