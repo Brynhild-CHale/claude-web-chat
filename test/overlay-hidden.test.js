@@ -21,10 +21,16 @@
 //     generation, cleared on a re-mount and a removal; within MOUNT_GRACE_MS a
 //     missing row is hidden (mounting), after it orphaned.
 //   - service-pending.js: one GET at boot through http.js, one more per
-//     service:trust and service:trust:clear frame, onPendingChange on a change.
+//     service:trust and service:trust:clear frame and per hello (a request
+//     cleared while the socket was down is dropped by the reconnect's hello),
+//     onPendingChange on a change.
 //   - the store trigger: a facade write from pane A settles A only; a
 //     store:patch frame settles every watched, visible pane once; ten writes in
-//     one frame give one settle per pane.
+//     one frame give one settle per pane; the write is heard through store.js
+//     onWrite, so a caller holding the store's own `set` from before the
+//     overlay was installed still triggers it; a facade write by pane A also
+//     settles pane B when B subscribed to a key A wrote (B redrawing without an
+//     anchored row reads it orphaned).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert/strict');
@@ -38,6 +44,9 @@ const DESKTOP = { width: 1280, height: 800 };
 const PHONE = { width: 390, height: 844 };
 
 let shell, W, M, ov, oh, sp, anchors, mounts, sheet, topbar, view;
+// The chrome store's own `set`, taken as store.js created the store — before
+// main.js ran initOverlay (the runtime's createStore wrapped for the boot only).
+let earlySet = null;
 
 const N = 40;          // rows per fixture pane
 const SVC_N = 30;      // rows the service draws
@@ -114,11 +123,20 @@ const since = (from) => delivered.slice(from).flatMap((m) => m.items.map((i) => 
 const orphanedIn = (items) => items.filter((i) => i.state === 'orphaned');
 
 before(async () => {
-  shell = await bootShell({
-    routes: {
-      '/api/graph': { nodes: [{ id: 'n0', label: 'n0', parent_id: null, created_at: 0 }, { id: 'n1', label: 'n1', parent_id: 'n0', created_at: 1 }], active: 'n1' },
-    },
-  });
+  const RT = require('../public/mount-runtime.js');
+  const ownCreate = RT.createStore;
+  RT.createStore = function createStore(seed, publish) {
+    const st = ownCreate(seed, publish);
+    if (!earlySet && typeof publish === 'function') earlySet = st.set;
+    return st;
+  };
+  try {
+    shell = await bootShell({
+      routes: {
+        '/api/graph': { nodes: [{ id: 'n0', label: 'n0', parent_id: null, created_at: 0 }, { id: 'n1', label: 'n1', parent_id: 'n0', created_at: 1 }], active: 'n1' },
+      },
+    });
+  } finally { RT.createStore = ownCreate; }
   W = shell.window;
   M = W.__wcMount;
   ov = await shell.importApp('overlay.js');
@@ -449,16 +467,85 @@ test('store trigger: a store:patch frame settles every watched visible pane once
   await shell.frame({ type: 'clear', id: 'fx-free' });
 });
 
+test('store trigger: heard through store.js onWrite — a caller holding the store\'s own set from before initOverlay still settles every watched pane', async () => {
+  assert.equal(typeof earlySet, 'function', 'the store\'s set, taken as store.js created it');
+  await shell.tick(50);
+  const from = settles.length;
+  for (let i = 0; i < 10; i++) earlySet.call(W.store, { early_key: i });
+  await shell.tick(50);
+  assert.deepEqual(tally(storeSettles(from)), { 'fx-a': 1, 'fx-b': 1, 'fx-c': 1, svc: 1 }, 'an unattributed write: every watched pane, once a frame');
+  assert.equal(W.store.set, earlySet, 'nothing replaced the store\'s set');
+  const src = fs.readFileSync(path.join(REPO, 'public/app/overlay-hidden.js'), 'utf8');
+  assert.equal(/wrapStore|__wcHiddenState/.test(src), false, 'no wrap of the store left');
+  assert.match(src, /onWrite\(/);
+});
+
+// Pane B draws its rows from a key pane A's facade writes: A's write redraws
+// B, so B is settled too (K.2-35), coalesced as every store settle is.
+const SHARED_N = 12;
+const sharedRows = (drop = -1) => Array.from({ length: SHARED_N }, (_, i) => rowText('skb', i)).filter((_, i) => i !== drop);
+const SK_B = {
+  id: 'sk-b', target: 'main', params: {},
+  html: `<div class="rows"></div><script>
+    function draw(rows) {
+      var box = root.querySelector('.rows'); box.textContent = '';
+      (rows || []).forEach(function (r) { var d = document.createElement('div'); d.className = 'row'; d.textContent = r; box.appendChild(d); });
+    }
+    draw(store.get('shared_rows'));
+    store.subscribe('shared_rows', draw);
+  </script>`,
+};
+
+test('store trigger: a facade write by pane A to a key pane B subscribes to settles B too — B dropping an anchored row reads it orphaned; ten writes, one settle each', async () => {
+  const skRows = [];
+  try {
+    await shell.frame({ type: 'store:patch', patch: { shared_rows: sharedRows() } });
+    await shell.frame({ type: 'render', ...FIX('sk-a') });
+    await shell.frame({ type: 'render', ...SK_B });
+    // Past both panes' mount grace, so a missing row reads gone, not mounting.
+    await new Promise((r) => setTimeout(r, oh.MOUNT_GRACE_MS + 50));
+    const bEls = [...rootOf('sk-b').querySelectorAll('.row')];
+    assert.equal(bEls.length, SHARED_N);
+    for (const i of [2, 5]) skRows.push({ id: `skb:${i}`, v: 1, type: 'comment', anchor: anchors.record(rootOf('sk-b'), bEls[i], { mount: 'sk-b' }), shared: true, replies: 0 });
+    const aEl = rootOf('sk-a').querySelector('.it');
+    skRows.push({ id: 'ska:0', v: 1, type: 'comment', anchor: anchors.record(rootOf('sk-a'), aEl, { mount: 'sk-a' }), shared: true, replies: 0 });
+    ov.upsertElements('live', skRows);
+    await waitUntil(() => skRows.every((r) => stateOf(r.id) === 'exact'), { timeout: 4000, what: 'the shared-key rows exact' });
+    await shell.tick(50);
+    const from = settles.length;
+    // Ten facade writes by A in one frame, the last without B's row 5.
+    for (let i = 0; i < 9; i++) W.__w['sk-a']({ shared_rows: sharedRows() });
+    W.__w['sk-a']({ shared_rows: sharedRows(5) });
+    assert.equal(rootOf('sk-b').querySelectorAll('.row').length, SHARED_N - 1, 'B redrew without the row');
+    await waitUntil(() => stateOf('skb:5') === 'orphaned', { timeout: 4000, what: 'B\'s dropped row to read orphaned' });
+    assert.equal(stateOf('skb:2'), 'exact', 'B\'s other row still exact');
+    assert.equal(stateOf('ska:0'), 'exact');
+    await shell.tick(50);
+    assert.deepEqual(tally(storeSettles(from)), { 'sk-a': 1, 'sk-b': 1 }, 'A\'s own settle, and B\'s, once each for ten writes; no other pane');
+    // A write to a key B does not subscribe to settles A alone.
+    const from2 = settles.length;
+    W.__w['sk-a']({ other_key: 1 });
+    await shell.tick(50);
+    assert.deepEqual(tally(storeSettles(from2)), { 'sk-a': 1 });
+    assert.deepEqual(mounts.subscribedKeys('sk-b'), { keys: new Set(['shared_rows']), all: false }, 'B\'s subscription, read off its facade');
+    assert.equal(mounts.subscribedKeys('nobody'), null);
+  } finally {
+    ov.removeElements('live', skRows.map((r) => r.id));
+    await shell.frame({ type: 'clear', id: 'sk-a' });
+    await shell.frame({ type: 'clear', id: 'sk-b' });
+  }
+});
+
 // ── service-pending.js ──────────────────────────────────────────────────────
 
-test('service-pending: one GET at boot through http.js, one more per trust frame; onPendingChange only on a change', async () => {
+test('service-pending: one GET at boot through http.js, one more per hello and per trust frame; onPendingChange only on a change', async () => {
   const gets = () => shell.calls.filter((c) => c.url === '/api/services/pending');
   // The boot read the list once (the C-8 run's frames since read it again, one each).
   const src = fs.readFileSync(path.join(REPO, 'public/app/service-pending.js'), 'utf8');
   assert.equal(/\bfetch\(/.test(src), false, 'never a raw fetch');
   assert.match(src, /import \{ request \} from '\.\/http\.js'/);
-  const trustFrames = 4;   // the service case's two service:trust and one service:trust:clear, + boot
-  assert.equal(gets().length, trustFrames, 'one at boot and one per trust frame so far');
+  const reads = 5;   // boot, before()'s hello (a hello re-reads), the service case's two service:trust and one service:trust:clear
+  assert.equal(gets().length, reads, 'one at boot, one per hello and one per trust frame so far');
 
   const changes = [];
   const off = sp.onPendingChange((m) => changes.push({ pending: [...m.pending].sort(), added: m.added, removed: m.removed }));
@@ -523,6 +610,24 @@ test('service-pending: of two overlapping reads, the one started later wins, whi
     assert.deepEqual([...sp.pendingServices()], ['newer'], 'the older read, answering last, does not overwrite the newer list');
   } finally {
     releaseFirst();
+    shell.setRoutes({ '/api/services/pending': { ok: true, pending: [] } });
+    await sp.refreshPending();
+    shell.setRoutes({});
+  }
+});
+
+test('service-pending: a request cleared while the socket was down (no clear frame) is dropped by the reconnect\'s hello', async () => {
+  shell.setRoutes({ '/api/services/pending': { ok: true, pending: [{ name: 'svc-board' }] } });
+  try {
+    await sp.refreshPending();
+    assert.deepEqual([...sp.pendingServices()], ['svc-board']);
+    // Approved while the socket was down: the list empties, and no frame says so.
+    shell.setRoutes({ '/api/services/pending': { ok: true, pending: [] } });
+    await shell.tick(20);
+    assert.deepEqual([...sp.pendingServices()], ['svc-board'], 'nothing re-read it yet');
+    await shell.frame(helloFrame({ mounts: FIXTURES.map((id) => FIX(id)).concat([SVC]), store: { svc_rows: svcRows() } }));
+    await waitUntil(() => sp.pendingServices().size === 0, { timeout: 4000, what: 'the hello\'s read to empty the list' });
+  } finally {
     shell.setRoutes({ '/api/services/pending': { ok: true, pending: [] } });
     await sp.refreshPending();
     shell.setRoutes({});
