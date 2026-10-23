@@ -493,6 +493,7 @@ were the only places they lived.
 | open an SSE stream in a test | `test-support/helpers` `openSSE(port, {kinds, since, onEvent, awaitChannel})` | `subscribeSSE` with only `onOpen` (it can never reject) |
 | pin a socket open with a client that never answers the close frame | `test-support/helpers` `deafWs(t, port)` | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` (`ws` always answers the close, so it cannot stand in) |
 | assert what the code contains — the tool set, the doc set, the routes, the CLI commands | `test-support/doc-truth` `mcpTools()` / `docFiles()` / `routePaths()` / `cliCommands()` | a literal count, or a hand-written list of files to check |
+| merge two or more tiers of a record key by key (project over user over a default), keeping which tier won and what it shadowed | `core/tier-merge` `mergeByKey` / `effective` / `tiersOf` (served to the chrome as `/app/tier-merge.js`) | `Object.assign` over tiers, a theme-style whole-file override, or a private per-key loop |
 
 ## The engines in detail
 
