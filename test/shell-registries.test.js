@@ -146,6 +146,31 @@ test('registerPopover: an outside press closes both; a press inside the shadow-r
   } finally { p.cleanup(); }
 });
 
+test('registerPopover: a press inside a shadow root NESTED in the popover is inside it — the composed path decides, not contains()', () => {
+  // The popover hosts a custom-element-like child with its own shadow root: the
+  // press's composedPath()[0] sits in that inner root, where pop.contains() is
+  // false, so only the composed path can say the press is inside the popover.
+  const pop = W.document.createElement('div');
+  pop.className = 'popover';
+  const inner = W.document.createElement('div');
+  pop.appendChild(inner);
+  const deep = W.document.createElement('button');
+  deep.textContent = 'deep';
+  inner.attachShadow({ mode: 'open' }).appendChild(deep);
+  W.document.body.appendChild(pop);
+  let closes = 0;
+  const off = shellMod.registerPopover({ el: pop, close: () => { closes++; pop.classList.add('hidden'); } });
+  try {
+    assert.equal(pop.contains(deep), false, 'precondition: contains() cannot see into the nested root');
+    pointerdown(deep);
+    assert.ok(isOpen(pop), 'a press in the nested shadow root kept the popover open');
+    assert.equal(closes, 0);
+    pointerdown(W.document.body);
+    assert.ok(!isOpen(pop), 'an outside press still closes it');
+    assert.equal(closes, 1, 'through its own close');
+  } finally { off(); pop.remove(); }
+});
+
 test('registerPopover: the trigger\'s own toggle still opens and closes it (the aria-controls skip, in its own root)', () => {
   const p = s18Pair();
   try {
