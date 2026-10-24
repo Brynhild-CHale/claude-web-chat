@@ -25,8 +25,8 @@
 //
 // THE DEVICE CLAIM. `device: true` puts `device: deviceKind()` into an object
 // body that has none — the one place the chrome adds it. The daemon reads the
-// claim from the JSON body (lib/server/routes/comments.js, lib/server/domain/
-// queue.js provenance), never from a header, and it is attribution only
+// claim from the JSON body (lib/server/routes/elements.js, the element API;
+// lib/server/domain/queue.js provenance), never from a header, and it is attribution only
 // (C-15-3): nothing grants or refuses on it, so it is never sent as a header
 // and never on a GET. An explicit body.device is kept.
 //
