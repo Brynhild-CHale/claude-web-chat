@@ -607,7 +607,7 @@ async function renderInspector(id) {
   const hk = (id) => (keyFor(id) ? ` (${esc(keyFor(id))})` : '');
   box.innerHTML =
     `<div class="gv-insp-head"><span class="gv-insp-label">${esc(node.label || id)}</span>${badges}` +
-      `<button class="gv-insp-close" data-act="close" title="Close (Esc)" aria-label="Close the inspector">✕</button></div>` +
+      `<button class="gv-insp-close" data-act="close" title="Close${hk('graph.escape')}" aria-label="Close the inspector">✕</button></div>` +
     bm +
     `<div class="gv-preview" id="gv-preview"></div>` +
     `<div class="gv-trigger">${esc(trigger)}</div>` +
@@ -831,7 +831,9 @@ function openFloatPreview(id) {
         '<div class="glance-titlebar"><span class="glance-title"></span><span class="glance-trigger"></span>' +
           '<button class="glance-btn" data-act="open" title="Open on the surface (↵)">⤢ Open</button>' +
           '<button class="glance-btn primary" data-act="active" title="Set this node active">Set active here</button>' +
-          '<button class="glance-btn icon" data-act="close" title="Close (Space)" aria-label="Close the glance">✕</button>' +
+          // The glance's close key as the hotkey registry lists it (K.2-67).
+          '<button class="glance-btn icon" data-act="close" title="Close' +
+            (keyFor('graph.glance') ? ` (${esc(keyFor('graph.glance'))})` : '') + '" aria-label="Close the glance">✕</button>' +
         '</div>' +
         '<iframe class="glance-frame" title="node preview" sandbox="' + PREVIEW_SANDBOX + '"></iframe>' +
       '</div>';
