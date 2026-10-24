@@ -1,0 +1,12 @@
+{
+  "about": "What alpha.1's element-log reader (39b52f8 lib/core/element-log.js, createElementLog's index(), the switch at :380-424) does with each record type, derived once by reading that switch: `git show 39b52f8:lib/core/element-log.js | sed -n 380,424p`. A record whose `t` is listed under `indexed` is indexed only when it carries the fields listed (else alpha.1 counts it `skipped`); any other `t` falls to the default arm, which counts it `unknown` and ignores it. test/elements-e2e-t2.test.js step (10) holds every record of a tranche-2 project to this table, so a tranche-2 log rolled back to alpha.1 reads without a skipped record.",
+  "source": "39b52f8:lib/core/element-log.js index()",
+  "indexed": {
+    "epoch": {},
+    "el": { "id": "non-empty-string" },
+    "ver": { "id": "non-empty-string", "v": "positive-integer", "seq": "positive-integer" },
+    "commit": { "node": "non-empty-string", "pins": "array" },
+    "migration": {}
+  },
+  "default": "unknown"
+}
