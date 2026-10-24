@@ -18,7 +18,6 @@
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert/strict');
-const fs = require('fs');
 
 const { bootShell, helloFrame, respond } = require('../test-support/chrome-shell');
 const { withServer, waitUntil } = require('../test-support/helpers');
@@ -76,9 +75,7 @@ async function fromDaemon() {
   const cleanups = [];
   const owner = { after: (fn) => { cleanups.push(fn); } };
   try {
-    // A realpath'd root: a second staging under a root reached through a
-    // symlink trips lib/packs/tree stageQuarantine's fence (U322a hand-off).
-    const ctx = await withServer(owner, { root: fs.realpathSync(tmpDir('wc-pa-chrome-')) });
+    const ctx = await withServer(owner, { root: tmpDir('wc-pa-chrome-') });
     const { srv, api, baseUrl } = ctx;
     const forge = await fakeForge(owner, { repos: { 'acme/marks': repoWithArchive(elementPack(), { sha: SHA }) } });
     const q = await api.post('/api/packs/quarantine', { url: forge.url('acme', 'marks') });

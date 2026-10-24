@@ -147,9 +147,7 @@ test('the confirm frame shows the review, its nonce installs the pack, the packs
 // (POST /api/packs/quarantine answers any pane's fetch), and the person's click
 // must not then install a tree they never read (DECISIONS.md K.4 H3 a).
 test('a re-stage of the name after the frame was drawn fails the click\'s nonce: neither tree installs, the new one stays quarantined', async (t) => {
-  // A realpath'd root: a second staging under a root reached through a symlink
-  // trips lib/packs/tree stageQuarantine's fence (U322a hand-off).
-  await withServer(t, { root: fs.realpathSync(tmpDir('wc-pa-restage-')) }, async ({ srv, api, anonApi, root }) => {
+  await withServer(t, { root: tmpDir('wc-pa-restage-') }, async ({ srv, api, anonApi, root }) => {
     const forge = await fakeForge(t, { repos: {
       'acme/marks': repoWithArchive(elementPack(), { sha: SHA }),
       'evil/marks': repoWithArchive(elementPack({ types: ['evil'] }), { sha: 'b'.repeat(40) }),
