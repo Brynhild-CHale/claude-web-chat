@@ -175,7 +175,10 @@ test('GET /api/graph/node/:id and GET /preview/node/:id: a local browser gets th
       const remote = await call('GET', route, null, REMOTE);
       assert.equal(remote.status, 200);
       assert.ok(!has(remote.body, PRIVATE), `remote ${level} ${route}: no private pin`);
-      assert.ok(has(remote.body, SHARED), `remote ${level} ${route}: the shared pin stays`);
+      // Below read the node's element rows go whole, the shared pin's too
+      // (K.2-117: every anchor carries pane text; test/remote-policy-text-routes).
+      assert.equal(has(remote.body, SHARED), level !== 'basic',
+        `remote ${level} ${route}: the shared pin ${level === 'basic' ? 'goes with the element rows (TEXT_RULES)' : 'stays at read'}`);
       assert.equal(has(remote.body, PROMPT), level !== 'basic',
         `remote ${level} ${route}: the conversation text ${level === 'basic' ? 'is stripped (TEXT_RULES) as well' : 'stays at read'}`);
 
@@ -185,7 +188,8 @@ test('GET /api/graph/node/:id and GET /preview/node/:id: a local browser gets th
     }
     // The node read's JSON: the pin list itself, not just the absence of a string.
     const remote = (await call('GET', `/api/graph/node/${id}`, null, REMOTE)).body;
-    assert.deepStrictEqual(remote.comments.map((c) => c.text), [SHARED]);
+    if (level === 'basic') assert.equal('comments' in remote, false, 'basic: no pin list at all (K.2-117)');
+    else assert.deepStrictEqual(remote.comments.map((c) => c.text), [SHARED]);
     assert.deepStrictEqual((await api.get(`/api/graph/node/${id}`)).json.comments.map((c) => c.text), [SHARED, PRIVATE]);
   }
 });
