@@ -243,7 +243,7 @@ html.wc-theming, html.wc-theming * {
   --z-content: 1;  /* .body — the surface well + queue rail */
   --z-glass: 2;    /* .glass-scanline front glass (pointer-events:none) */
   --z-drag: 3;     /* pane drag ghost + drop indicator */
-  --z-pins: 4;     /* #pin-layer comment markers */
+  --z-pins: 4;     /* #el-layer element markers (the overlay) */
   --z-topbar: 5;   /* #topbar and the update banner stacked above it */
   --z-chat: 6;     /* the chat dock and the phone pull — above pins and glass, below every panel */
   --z-panel: 7;    /* popovers, palette, legend, drawer, pin composer */
@@ -388,7 +388,7 @@ kbd {
   transition: transform .12s cubic-bezier(.2,.8,.2,1), background-color .15s, color .15s;
 }
 .dock-btn:hover { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
-/* toggle state — e.g. #btn-pin-mode while pin mode is armed (comments.js sets .active) */
+/* toggle state — the toolbar's armed slot and its pointer tool (toolbar.js sets .active) */
 .dock-btn.active { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 14%, transparent); }
 .dock-btn.active:hover { color: var(--wc-accent); background: color-mix(in srgb, var(--wc-accent) 22%, transparent); }
 /* ◑ under a single-mode theme pack: present, inert, and its title says why */
@@ -1250,8 +1250,7 @@ kbd {
 .pk-file-size { flex: none; color: var(--wc-muted-dim); }
 
 /* ===================== pins / comments ===================== */
-/* map-pin markers positioned in viewport coords; #pin-layer covers the stage */
-#pin-layer { position: absolute; inset: 0; z-index: var(--z-pins); pointer-events: none; }
+/* map-pin markers, drawn by the overlay into #el-layer (U302's block below) */
 /* 26px pin; tip (bottom-centre of the 26px box) points at the anchor. Coral by
    default (a comment awaiting reply), green once Claude has answered, muted when
    the element's comments are all private. */
@@ -1553,9 +1552,6 @@ body.pin-mode #main { cursor: crosshair; }
   .rail { position: absolute; inset: 0; width: auto; display: none; border-left: 0; box-shadow: none; transition: none; }
   .rail.open { display: block; width: auto; }
   .rail::before, .rail-collapsed, .rail-close { display: none; }
-  /* the page's comment markers ride #pin-layer, which paints above the whole
-     body — over the queue screen they floated on the queue items */
-  body:has(.rail.open) #pin-layer { display: none; }
   .rail-expanded { width: auto; right: 0; padding: 16px 16px 12px; }
   /* 44px targets: a thumb, not a cursor */
   .rail-item { padding: 12px 10px; }
@@ -1708,7 +1704,7 @@ body.pin-mode #main { cursor: crosshair; }
 :root { --cs-bar-h: 28px; }
 @media (max-width: 759px) { :root { --cs-bar-h: 0px; } }
 /* .body's wrapper, the chat dock's positioning context: the dock is .body's
-   sibling because .body is a stacking context at --z-content, under #pin-layer.
+   sibling because .body is a stacking context at --z-content, under #el-layer.
    No z-index, so the wrapper is NOT a stacking context (and goes inert with
    .body under a modal). A flex column, like #stage, so .body is stretched across
    its width exactly as it was across #stage's; in a flex row, .body's minimum
@@ -1876,7 +1872,7 @@ body.pin-mode #main { cursor: crosshair; }
 /* The dock (design spec §7.7): ONE element, two modes, so a detach never
    re-parents the chat panel in #cd-body. .body's sibling inside .body-wrap
    (positioned against it, never inside .body's stacking context, which sits
-   under #pin-layer), on the chat rung: above the pins and the front glass,
+   under #el-layer), on the chat rung: above the pins and the front glass,
    below every panel. Openness is .hidden; the mode is data-mode.
 
    The drawer: full height, right of the page well and left of the queue rail —
@@ -3205,7 +3201,8 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 .el-marker.el-guess { color: var(--wc-gold); opacity: .8; border: 1.5px dashed var(--wc-gold); }
 .el-marker.el-section { color: var(--wc-muted); border-style: dotted; opacity: .85; }
 @media (max-width: 759px) {
-  /* as #pin-layer: the open queue screen covers the page, so its markers go */
+  /* the open queue screen covers the page, so its markers go (they floated on
+     the queue items) */
   body:has(.rail.open) #el-layer { display: none; }
 }
 
@@ -3214,23 +3211,12 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
    the spacer's place: it grows, pushing Graph and Queue right as the spacer did,
    and centres what it holds; it never shrinks under what it holds (no
    min-width: 0), so a crowded bar never draws the entry over Graph. U338's
-   phone toolbar fills the slot; #bb-create is a STAND-IN create entry that
-   arms today's comment pin mode, its pressed look read off body.pin-mode (no
-   state of its own). Annotation tools are content, so
-   nothing here hides it on a phone; the slot is hidden with the bar from 760px
-   (.bottombar display none). A thumb's 44px target on a phone. Tokens only —
-   the look is expected to change (U338). */
+   phone toolbar fills the slot (its own block, `toolbar (U338)`; the stand-in
+   #bb-create it retired keeps only its reserved id). Annotation tools are
+   content, so nothing here hides it on a phone; the slot is hidden with the bar
+   from 760px (.bottombar display none). Tokens only — the look is expected to
+   change. */
 .bb-tools { flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.bb-create {
-  display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 40px; height: 36px; padding: 0; font-size: 16px; line-height: 1;
-  border: 1px solid var(--wc-border); border-radius: var(--wc-radius);
-  background: var(--wc-panel-bg); color: var(--wc-text-2);
-}
-.bb-create:hover { background: var(--wc-hover-bg); color: var(--wc-fg-bright); }
-.bb-create:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 2px; }
-body.pin-mode .bb-create { border-color: var(--wc-accent); background: var(--wc-accent); color: var(--wc-accent-fg); }
-.phone .bb-create { width: 44px; height: 44px; font-size: 18px; }
 
 /* input mode (U334) — the input-mode policy's surface (public/app/input-mode.js;
    DECISIONS.md I.6 addendum 3). touch-action cannot be set per pointer type, so

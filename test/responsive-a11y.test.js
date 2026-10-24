@@ -135,15 +135,15 @@ test('the three breakpoints: narrow bottom bar + queue screen, medium rail, wide
     assert.equal(winningValue('.bottombar', 'display', width), 'none', `no bottom bar at ${width}px`);
     assert.equal(winningValue('.rail.open', 'width', width), '272px', `the design's open rail at ${width}px`);
   }
-  // The narrow queue screen covers the page, so the page's comment markers (on
-  // #pin-layer, which paints above the whole body) must go with it — they
-  // floated over the queue items (int3 visual QA). A wide rail is a column
-  // beside the panes, where the markers follow their panes and stay.
+  // The narrow queue screen covers the page, so the page's element markers (on
+  // #el-layer, the overlay's, which paints above the whole body) must go with
+  // it — they floated over the queue items (int3 visual QA). A wide rail is a
+  // column beside the panes, where the markers follow their panes and stay.
   for (const width of [390, 759]) {
-    assert.equal(winningValue('body:has(.rail.open) #pin-layer', 'display', width), 'none',
+    assert.equal(winningValue('body:has(.rail.open) #el-layer', 'display', width), 'none',
       `no comment markers over the queue screen at ${width}px`);
   }
-  assert.equal(winningValue('body:has(.rail.open) #pin-layer', 'display', 1000), null,
+  assert.equal(winningValue('body:has(.rail.open) #el-layer', 'display', 1000), null,
     'the markers stay beside a side-column rail');
   // WIDE (≥1100) only: the contents column slot — and even there, only when filled.
   assert.equal(winningValue('.contents-nav', 'display', 1000), 'none', 'no contents column below 1100px');

@@ -348,9 +348,9 @@ const HANDLERS = {
   'wake-ack'(msg) { onWakeAck(msg.seq); },
   // Comment pins: the comment type's element frame (every comment write of
   // the element API and revertArtifact; domain/comments emitComments) pushes
-  // the whole live pin array under `elements` so the marker layer re-renders
-  // immediately; renderMarkers itself is the preview guard, so this can fold
-  // regardless too.
+  // the whole live pin array under `elements`, which comments.js hands the
+  // overlay's live set at once (applyCommentsFrame); the overlay draws the live
+  // set only off a preview, so this can fold regardless too.
   'element:comment'(msg) { applyCommentsFrame(msg.elements || []); renderQueue(); },
   // The component set moved: a save_component, or a pack installed / approved /
   // removed anywhere (this browser, another one, or the CLI's announce). Drop
