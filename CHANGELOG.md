@@ -72,7 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   pane script's `fetch` included (a clear from one loses its owner). The owner
   gate on render, markdown and clear stays advisory: a tokenless local caller
   is still taken as Claude there. A rule that enforces takes only a checked
-  credential: a reply or other element write that names Claude without its
+  credential: a comment reply that names Claude as its author without its
   token is refused with a hint, and the MCP client no longer retries a
   refused token without one. See
   [`driving-the-surface.md`](docs/driving-the-surface.md).
