@@ -1680,6 +1680,52 @@ const PATTERNS = [
       'public/app/element-types.js': 1,
     },
   },
+  {
+    // The Custom Highlight paint outside the highlight engine (U328a, plan
+    // 2C; DECISIONS.md K.2-137 b). public/app/highlight.js is the one engine
+    // that paints a highlight: through CSS.highlights (one Highlight per colour
+    // token, wc-hl-<token>) with one constructable sheet adopted by each shadow
+    // root that holds a painted range, and through the geometry fallback where
+    // the browser has no Custom Highlight API. A second CSS.highlights.set or
+    // a second adopted sheet is a paint the engine never clears, re-measures or
+    // drops with its last range. Counted as written, comments included,
+    // word-bounded.
+    name: 'CSS.highlights / adoptedStyleSheets (a highlight painted past the highlight engine)',
+    home: 'public/app/highlight.js — `paintApi` / `paintMode` / `highlightSheet` (the one Custom Highlight paint, its one adopted sheet and its geometry fallback)',
+    what: 'painting a highlight, or adopting a sheet into a root, by hand in the chrome',
+    roots: ['public', 'lib'],
+    exts: ['.js', '.html'],
+    re: /\bCSS\.highlights\b|\badoptedStyleSheets\b/g,
+    baseline: {
+      // The engine itself: its header comment (2), the feature test (2), and
+      // adopting / dropping its one sheet on a root (6).
+      'public/app/highlight.js': 10,
+      // Not a highlight: mounts.js adoptReadonlySheet appends the read-only
+      // preview's constructable sheet (faint form controls under
+      // data-wc-readonly) to a pane's shadow root, one statement spelling the
+      // property twice. It predates the engine and has nothing to paint.
+      'public/app/mounts.js': 2,
+    },
+  },
+  {
+    // A capture pushed past the captures domain (U328b, plan 2C; DECISIONS.md
+    // K.2-137 b). lib/server/domain/captures.js `createCapture` is the one
+    // writer of a live capture record (the page capture and the box grab
+    // alike): it allocates the id, writes the raw sidecar, appends the record
+    // and runs `retain`, which bounds the list at CAPTURES_LIVE_MAX and takes
+    // a dropped capture's queue item with it; `clearLive` is the one reset. A
+    // second state.captures.push( is a capture with no sidecar that the bound
+    // never trims.
+    name: 'state.captures.push( (a capture written past the captures domain)',
+    home: 'lib/server/domain/captures.js — `createCapture` / `retain` / `clearLive` (the one capture writer, its bound and its reset)',
+    what: 'appending to the live captures by hand',
+    roots: ['lib'],
+    re: /\bstate\.captures\.push\(/g,
+    baseline: {
+      // createCapture's own append.
+      'lib/server/domain/captures.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
