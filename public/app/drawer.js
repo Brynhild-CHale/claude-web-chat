@@ -875,6 +875,9 @@ async function postJson(path, payload) {
 
 function provenance(source) {
   if (!source) return 'unknown source';
+  // The built-in element pack: installed from web-chat's own tree at boot,
+  // fetched from nowhere (K.2-47).
+  if (source.via === 'builtin') return 'built in with web-chat';
   const sha = String(source.sha || '').slice(0, 7);
   const base = source.via === 'release'
     ? `release ${source.ref} · ${source.sums_verified ? 'sha256 verified' : 'UNVERIFIED'} · ${sha}`
@@ -1232,10 +1235,14 @@ function installedCard(p) {
   }
 
   const actions = el('div', 'pk-actions');
-  const rm = el('button', 'btn', 'Remove');
-  rm.type = 'button';
-  rm.addEventListener('click', () => removePack(p.name, rm));
-  actions.appendChild(hostOnly(rm));
+  // The built-in pack cannot be removed (the daemon refuses 'builtin-pack'),
+  // so it offers no Remove (K.2-47).
+  if (!(p.source && p.source.via === 'builtin')) {
+    const rm = el('button', 'btn', 'Remove');
+    rm.type = 'button';
+    rm.addEventListener('click', () => removePack(p.name, rm));
+    actions.appendChild(hostOnly(rm));
+  }
   card.appendChild(actions);
   card.appendChild(el('div', 'pk-card-status'));
   return card;
@@ -1252,7 +1259,8 @@ async function removePack(name, btn) {
       // A drifted pack refuses here and hands back the terminal command. Show it
       // rather than pretending a button could do it.
       cardStatus(card, '');
-      card.appendChild(notice('Kept — you have edited this', body.hint || '', body.command));
+      const title = body.code === 'builtin-pack' ? 'Built in with web-chat' : 'Kept — you have edited this';
+      card.appendChild(notice(title, body.hint || '', body.command));
       btn.disabled = false;
       return;
     }
