@@ -467,7 +467,8 @@ describe('tranche 5 on a phone: the real main.js in jsdom', () => {
     assert.deepEqual(sent.map((f) => f.mirror), ['full', 'status']);
     for (const f of shell.sockets.flatMap((s) => s.sent)) {
       assert.equal(f.type, 'client', 'the phone sent only client frames in this file');
-      for (const k of Object.keys(f)) assert.ok(['type', 'device', 'mirror'].includes(k), `client.${k} is an existing field`);
+      // `viewer`: the report path's per-tab id (U312), sent once main.js starts the report batching (U340).
+      for (const k of Object.keys(f)) assert.ok(['type', 'device', 'mirror', 'viewer'].includes(k), `client.${k} is an existing field`);
     }
     await closed();
   });

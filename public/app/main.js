@@ -49,6 +49,10 @@ import { initOverlay } from './overlay.js';
 // The input-mode policy (annotation engine 2D.4): pen, mouse and finger routed
 // to the armed tool or the page, at the overlay's one pointer dispatch.
 import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
+// The report path's chrome half (annotation engine 2B.1, U314; U312's remote
+// carrier inside it): what the resolver answered, batched to the daemon. It
+// learns each mount's gen from the frames, so it starts before connect().
+import { initOverlayReport } from './overlay-report.js';
 import { initToolbarState, onToolbarChange } from './toolbar-state.js';
 import { initHotkeys } from './hotkeys.js';
 import { initOrphans } from './orphans.js';   // 2A.6: the orphans' stand-in list and the re-anchor card
@@ -77,6 +81,7 @@ initMode();       // Earthy light (default) / dark before first paint
 installAnchors(window.__wcMount);
 initOverlay();    // the element overlay: after the resolver it watches through
 installInputMode();   // the pointer-type policy, at the overlay's setPointerPolicy
+initOverlayReport();  // the resolver's answers to the daemon: before the first hello (U314)
 initViewport();   // <html class="phone"> before anything mounts (panes read it)
 initTopbar();
 initGraph();
