@@ -184,10 +184,10 @@ test('(d) a basic reader — a remote viewer with no opt-in, a network peer — 
       assert.equal(peer.status, 200, `${level} peer ${route}`);
       // A network peer is basic at every opt-in.
       assert.deepStrictEqual([EXCERPT, FINGERPRINT].filter((m) => has(peer.body, m)), [], `${level} ${route}: a network peer`);
-      // The ring's queue entries still quote a shared pin's note in their
-      // item summary (lib/channel/policy commentItem): not an anchor's text,
-      // and not this unit's (its hand-off names it), so the ring is held to
-      // the anchor alone; the two graph routes to the pin's text as well.
+      // The ring is held to the anchor alone here, the two graph routes to the
+      // pin's text as well. Its queue entries no longer quote a shared pin's
+      // note below read (K.2-126, U332c), so the ring may now be held to MARKS
+      // as well; U332c's own case in this file and its test prove that.
       const held = route.startsWith('/api/events') ? [EXCERPT, FINGERPRINT] : MARKS;
       assert.deepStrictEqual(held.filter((m) => has(peer.body, m)), [], `${level} ${route}: a network peer, the pin's text included`);
       if (level === 'basic') {
