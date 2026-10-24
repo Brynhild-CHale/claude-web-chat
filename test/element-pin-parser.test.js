@@ -204,3 +204,31 @@ test('a commit record hand-edited to pin c4@x, @2, c2@0, c9@0 and c8@1.5 beside 
   const tail = readLog(root).slice(-2).map((r) => ({ t: r.t, id: r.id, v: r.v, parent_v: r.parent_v }));
   assert.deepEqual(tail, [{ t: 'epoch', id: undefined, v: undefined, parent_v: undefined }, { t: 'ver', id: 'c1', v: 2, parent_v: 1 }]);
 });
+
+// U353's deliberate difference (DECISIONS.md K.2-38): a malformed pin AFTER a
+// well-formed pin of the same id in one commit record (A pins 'c1@1' … 'c1@0').
+// At 39b52f8 the later 0 overwrote the good v and the reconcile reported
+// copy-v-mismatch n0:c1@1; pinMapOf skips the unparseable entry, so the good
+// pin stands and the boot reports nothing — a clean report is the expected value.
+test('a later malformed duplicate pin of an id (A pins c1@1 … c1@0) is skipped: the boot reports nothing', async (t) => {
+  const s1 = await withServer(t);
+  let one = null;
+  const A = (await turn(s1.api, 'A', async () => {
+    await render(s1.api, 'm1');
+    one = addPin(s1.srv, 'one', 'm1');
+  })).json.node_id;
+  await s1.stop();
+  const root = s1.root;
+  assert.deepEqual([A, one.id], ['n0', 'c1']);
+
+  const out = readLog(root).map((r) => (r.t === 'commit' && r.node === A ? { ...r, pins: [...r.pins, 'c1@0'] } : r));
+  fs.writeFileSync(projectPaths(root).elementsLog, out.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  assert.deepEqual(out.filter((r) => r.t === 'commit').map((r) => r.pins), [['c1@1', 'c1@0']]);
+
+  const s2 = await withServer(t, { root });
+  const report = JSON.parse(fs.readFileSync(projectPaths(root).elementsBootReport, 'utf8'));
+  assert.equal(report.clean, true, JSON.stringify(report.states));
+  assert.deepEqual(report.states, {});
+  assert.deepEqual(report.ack, { appended: 0, keys: 0 });
+  assert.deepEqual(s2.srv.state.comments.map((p) => ({ id: p.id, v: p.v })), [{ id: 'c1', v: 1 }]);
+});

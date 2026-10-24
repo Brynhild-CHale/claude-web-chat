@@ -137,12 +137,14 @@ test('every class app.css styles is a class something can actually set', () => {
 });
 
 test('the topbar sits above every surface artifact — including comment pins', () => {
-  // The bug, stated as the assertion: #pin-layer is a full-stage layer on <body>
-  // whose markers take pointer events, so anything it paints over is unclickable.
-  assert.ok(zOf('#pin-layer') < zOf('#topbar'),
-    `#pin-layer (${zOf('#pin-layer')}) must paint BELOW #topbar (${zOf('#topbar')})`);
+  // The bug, stated as the assertion: the element layer (#el-layer, the
+  // overlay's, which took over from the retired #pin-layer) is a full-stage
+  // layer on <body> whose markers take pointer events, so anything it paints
+  // over is unclickable.
+  assert.ok(zOf('#el-layer') < zOf('#topbar'),
+    `#el-layer (${zOf('#el-layer')}) must paint BELOW #topbar (${zOf('#topbar')})`);
   // ...and above the surface content it annotates, or the pins are invisible.
-  assert.ok(zOf('.body') < zOf('#pin-layer'), 'pins paint above the surface well');
+  assert.ok(zOf('.body') < zOf('#el-layer'), 'pins paint above the surface well');
   assert.ok(zOf('.depth') < zOf('.body'), 'the depth backdrop stays behind content');
 });
 
@@ -337,7 +339,7 @@ test('.body\'s wrapper positions the chat dock without becoming a stacking conte
   const rule = CSS_RULES.find((r) => r.selector === '.body-wrap');
   assert.ok(rule, 'app.css styles .body-wrap');
   assert.match(rule.body, /position:\s*relative/, 'the dock is positioned against it');
-  // .body is a stacking context at --z-content, under #pin-layer; the dock is
+  // .body is a stacking context at --z-content, under #el-layer; the dock is
   // its sibling precisely so it can paint above the pins. A z-index here (or
   // any other stacking-context property) would put the dock back under them.
   assert.doesNotMatch(rule.body, /z-index|isolation|transform|filter|opacity|contain\s*:|will-change/,

@@ -607,6 +607,16 @@ and `remove`.
 pipe, a hook — nothing is installed. `pack get` followed by `pack approve`
 never prompts at all, which is the better shape for a script.
 
+A pack that ships **element types** (annotation tools: an `element.json`, and a
+`draw.js` that runs in the surface page's own realm) is never installed
+straight from a URL. `pack install` downloads it for review exactly as
+`pack get` does, prints the review — its element types, each `draw.js` marked
+as running in the surface page — and asks; `--yes` answers only for a person at
+a terminal, so a script, a hook or a non-interactive run leaves it in
+quarantine with the commands to approve or discard it. The surface's install
+route refuses one (code `element-review`, its hint naming the review path), and
+the ＋ → Manage drawer then downloads it for review instead.
+
 The surface's `＋` drawer has the same thing under **Manage**: a URL field, an
 all-projects checkbox, and the same two options — *Download for review* is the
 primary button there, and *Install now* takes a second, deliberate click for a
@@ -742,6 +752,13 @@ claude-web-chat pack review acme-ops                       # manifest, plan, fil
 claude-web-chat pack review acme-ops --file components/deploy-board/component.html
 claude-web-chat pack approve acme-ops                      # or: pack discard acme-ops
 ```
+
+An element pack's approve is a person's: `pack approve <name>` at the
+terminal, or the Approve control on its card under ＋ → Manage (a confirm frame
+on web-chat's answer origin, which no pane can script). Any pane can reach
+POST /api/packs/quarantine/:name/approve, so for an element pack that route
+answers 409 with code `element-approve` and the hint; a component or theme pack
+is approved there as before.
 
 `approve` re-hashes the staged tree and refuses unless it still matches the
 record **this machine** wrote when it downloaded it. That record lives in

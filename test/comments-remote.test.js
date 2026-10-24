@@ -1,6 +1,7 @@
 // The comment routes check the mirror level in the daemon (PLAN.md 1B.1, R6
 // today-bug 1): reading the pins needs `read`, writing one needs `full`, as
-// lib/core/remote-policy's RULES rows say — and the daemon checks again
+// the element floor's rows say (protocol 12 refuses /api/comments in one row)
+// — and the daemon checks again
 // (audience.requireMirror in lib/server/routes/elements.js, the element API
 // the comment's routes moved to in U327a), because a network
 // peer on a WEB_CHAT_HOST bind never reaches the portal's table, and a portal

@@ -1657,6 +1657,29 @@ const PATTERNS = [
       'public/app/graph-view.js': 8,
     },
   },
+  {
+    // The overlay's registerType outside the element-type registry (U324,
+    // plan 2C.3; readiness R7.md:60, DECISIONS.md K.2-57). public/app/element-
+    // types.js `registerElementType` is the one way an element type's draw
+    // reaches the overlay: it wraps the draw in the registry's reads gate (a
+    // record whose schema the listed type does not read is parked, never
+    // handed to the draw), records each record's draw state, stands in for a
+    // type the listing lacks, carries the type's `targets`, and re-registers
+    // every type when the listing changes. A direct overlay.registerType is a
+    // second registry with none of that. Counted as written, comments
+    // included, word-bounded (registerElementType is not counted).
+    name: 'registerType( (an element type registered past the registry)',
+    home: 'public/app/element-types.js — `registerElementType` (the one registration; overlay.js `registerType` is its seam)',
+    what: 'handing an element type\'s draw to the overlay directly',
+    roots: ['public', 'lib'],
+    re: /\bregisterType\(/g,
+    baseline: {
+      // The seam's definition and the comment above it that names its shape.
+      'public/app/overlay.js': 2,
+      // The registry's one call into the seam.
+      'public/app/element-types.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

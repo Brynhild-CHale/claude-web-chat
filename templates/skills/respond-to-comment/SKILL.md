@@ -16,7 +16,9 @@ answer **in the thread**, not in chat.
    `{ id, text, anchor_label, replies:[{author,text,at}], ... }`. `text` is the user's
    opening note; `anchor_label` says what it's pinned to (e.g. `plan: "Timeline"`);
    `replies` is the conversation so far. Pass `since` (the prior `next_cursor`) to fetch
-   only new/updated threads. `respond_hint` on each item points back here.
+   only new/updated threads. `respond_hint` (one top-level field, not per pin) points
+   back here. Both tools go through web-chat's element API, where a comment pin is one
+   element type among others.
 
 2. **Do what the comment asks.** A pin usually asks for a **change** to what's on screen
    ("this is too aggressive", "wrong colour") or a **question** about it. Make the change
@@ -42,3 +44,6 @@ answer **in the thread**, not in chat.
 - **Don't over-render.** If the change is visual, re-render the affected mount and point at
   it; don't spin up a new explainer pane.
 - Private pins never reach you (only shared ones do) — everything you see is fair to answer.
+- If `get_comments` or `reply_comment` answers that web-chat's comment API moved, this
+  Claude Code session loaded the tools before an upgrade: tell the user to `/exit` and
+  reopen Claude Code, and answer the comment once it is back.

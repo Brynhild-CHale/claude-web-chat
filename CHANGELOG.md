@@ -8,12 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Upgrading from 0.8.5
 
-- **The tunnel portal's protocol is now 12.** Remote viewers reach the comment
-  pins only at the mirror level their project opted into (reading at
-  `--read-only`, writing at full), and a remote viewer at full may change this
-  project's toolbar, while hotkeys and settings for every project are set on
-  the host. Run `claude-web-chat tunnel up` once: it restarts a portal left
-  running by 0.8.5 or by an earlier alpha. Then reload any remote page.
+- **The tunnel portal's protocol is now 12.** Remote viewers reach comment
+  pins, highlights and box grabs only through the element API, at the mirror
+  level their project opted into (reading at `--read-only`, writing at full);
+  the portal refuses the old comment routes in one row, its hint naming the
+  element API. A remote viewer at full may change this project's toolbar,
+  while hotkeys and settings for every project are set on the host, and a
+  remote page at full sends what its anchors resolved to through the answer
+  host. Run `claude-web-chat tunnel up` once: it restarts a portal left
+  running by 0.8.5 or by an earlier alpha. A portal that already reports
+  protocol 12 (a build from the development branch) is not restarted by
+  `tunnel up`: run `claude-web-chat tunnel down`, then `tunnel up`. Then
+  reload any remote page.
+- **Restart Claude Code once: the comment tools now call the element API.**
+  The comment routes of 0.8.5 (`/api/comments`) were replaced outright by
+  the element API (`/api/elements`), which serves comment pins, highlights
+  and box grabs alike. There is no alias, and nothing is left to remove in a
+  later release. A Claude Code session started before the upgrade still runs
+  the old web-chat MCP server, so its `get_comments` and `reply_comment`
+  answer 410 with a hint that says to `/exit` and reopen Claude Code — do
+  that once. The new server also brings `get_comments`' `type` parameter,
+  `diff_nodes`' element section, `inspect_capture`'s picture of a box grab and
+  the token rule below.
 - **Comment pins move into an element log, once, at the daemon's first boot.**
   One state migration runs (schema v3 → v4): every version of every comment
   pin, and which graph node pinned which version, goes into
@@ -24,41 +40,116 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   or replying answers 503 with a hint) and puts its report in
   `.web-chat/elements/migration-report.json`. `claude-web-chat migrate` shows
   that dry run's report and writes nothing (`--json` for the report; exit 2
-  when the migration would refuse). Node files are never rewritten. It costs
-  about 150 ms, once, at 3,000 nodes with 14 pins each on the reference Mac
-  (C-1). Every later boot checks the log against the graph, writes
-  `.web-chat/elements/boot-report.json`, and reports the result to local
-  callers of `/api/health` as `graph_integrity`.
+  when the migration would refuse). It writes a commit record for every graph
+  node, pins or none, so the first boot after it reads clean; a project an
+  earlier alpha migrated keeps the records it has. Node files are never
+  rewritten. It costs about 150 ms, once, at 3,000 nodes with 14 pins each on
+  the reference Mac (C-1). Every later boot checks the log against the graph,
+  writes `.web-chat/elements/boot-report.json`, and reports the result to
+  local callers of `/api/health` as `graph_integrity`. A pin deleted before
+  its first commit is normal there after a graceful stop; after a crash its
+  loss is reported once and then acknowledged, so a report does not repeat a
+  state it has already named.
 - **If you roll back to 0.8.5:** it reads its comment ids from the node files
   alone, so while rolled back it can hand out again an id only the log holds.
   Back on this release, the boot report names any such pin; nothing is
-  repaired by rewriting a node.
+  repaired by rewriting a node. Rolled back to an earlier alpha of this
+  release, highlights and box grabs are invisible (its reader skips their
+  versions and the new close, ack and answers records), a pin deleted before
+  its first commit reads as lost again, a state already acknowledged is
+  reported again, and the toolbar record is not read.
 - **A process that writes to the surface now says who it is.** Claude's
   writes carry a per-boot writer token (`.web-chat/writer-token`, mode 0600,
-  read only by web-chat's MCP server); a service-backed component's child gets
-  a token of its own from the daemon; and a driver made with `lib/driver`
-  `createDriver` leases its `service:<name>` owner on its first render,
-  markdown write or clear, and gives it back with `release()`. A raw HTTP
-  caller that renders, writes markdown or clears as `service:<name>` must
+  read only by web-chat's MCP server, written once the daemon has claimed its
+  portfile and kept following the live daemon); a service-backed component's
+  child gets a token of its own from the daemon; and a driver made with
+  `lib/driver` `createDriver` leases its `service:<name>` owner on its first
+  render, markdown write or clear, and gives it back with `release()`. A raw
+  HTTP caller that renders, writes markdown or clears as `service:<name>` must
   lease first (`POST /api/writers/lease`, then the token as `X-WC-Writer`) or
   is refused `403 {writer: 'unverified'}`; a write that names a `pane:` owner
   is refused, and so is a render or markdown write sent from a browser page, a
-  pane script's `fetch` included (a clear from one loses its owner). Ownership
-  is otherwise advisory until writer identity's validation gate (GT-15)
-  passes: a tokenless local
-  caller, such as a Claude Code session still running the old MCP server, is
-  still taken as Claude. See [`driving-the-surface.md`](docs/driving-the-surface.md).
+  pane script's `fetch` included (a clear from one loses its owner). The owner
+  gate on render, markdown and clear stays advisory: a tokenless local caller
+  is still taken as Claude there. A rule that enforces takes only a checked
+  credential: a comment reply that names Claude as its author without its
+  token is refused with a hint, and the MCP client no longer retries a
+  refused token without one. See
+  [`driving-the-surface.md`](docs/driving-the-surface.md).
+- **Annotations bring two directories and two records.** Installed element
+  types live in `.web-chat/element-types/` (this project) and
+  `~/.web-chat/element-types/` (every project), the toolbar's records in
+  `.web-chat/toolbar.json` and `~/.web-chat/toolbar.json`. The three built-in
+  types — comment, highlight and box grab — are a pack, `web-chat-builtins`,
+  installed at every boot from web-chat's own tree: `pack list` shows it as
+  built in, and `pack remove web-chat-builtins` is refused.
+- **The element API refuses two shapes the comment routes let through.** An
+  element whose anchor names no pane or markdown item answers 400 with a hint
+  (a page note's anchor is null), and a write to a live pin the element log
+  cannot map answers 409, pointing at `claude-web-chat migrate` for the report.
 - **`file-editor` asks to be trusted again.** Its `service.js` changed (see
   *Security*), and a service's code is part of its approval, so every project
   that uses it asks for `claude-web-chat trust file-editor` once more.
 - **Working on web-chat itself: restart and refresh after an edit to the
-  anchor resolver or the mount runtime.** `lib/core/anchors.js` reaches the
-  chrome, and it and `public/mount-runtime.js` reach previews, replays and
-  exports, from a per-process memo, so an edit to either shows only after
+  anchor resolver, the tier merge or the mount runtime.** `lib/core/anchors.js`
+  and `lib/core/tier-merge.js` reach the chrome, and the resolver and
+  `public/mount-runtime.js` reach previews, replays and exports, from a
+  per-process memo, so an edit to any of them shows only after
   `claude-web-chat restart` and a browser refresh.
+
+### Added
+
+- **An annotation toolbar.** Arm one tool at a time — the pointer, a comment
+  pin, a highlight, a box grab — pin the tools you use, keep the rest behind
+  the reveal, and change a tool's few settings in its small menu. Its keys
+  (`C` for the comment; `1`–`9` for the pinned slots) come from the hotkey
+  registry and can be rebound in your user record. On a phone the tools sit
+  in the bottom bar, between Graph and the up/down arrows; while a drawing
+  tool is armed one finger draws and two fingers scroll (pinch-zoom is off
+  until the tool is put down), and finger-drawing is on until a pen is seen
+  on that device.
+- **Highlights.** Mark text on a pane or in prose — gold, accent, green or
+  rust, snapped to words or blocks — with an optional note. A shared highlight
+  raises a *Highlight sent to Claude* item in the queue rail, and Claude reads
+  it with `get_comments({type: 'highlight'})`.
+- **Box grabs.** Draw a rectangle over the page: the daemon renders that
+  region through the export's headless Chrome and shows you the picture on the
+  grab's card before you Push, so Claude sees what you saw. A grab is always
+  shared; it lives as a card in the rail (open, re-send, remove, Show on page),
+  and `inspect_capture` hands Claude its clipped HTML with the picture attached
+  in one call. With no Chrome on the machine a grab carries its metadata only,
+  with the same hint the replay exports give.
+- **Element packs.** A pack can ship new annotation tools as element types
+  (an `element.json`, and a `draw.js` that runs in the page). Because that
+  code runs in the page, one installs only when a person approves it: the
+  Approve control on its card in ＋ → Manage, or at a terminal `pack install`
+  (which prints its review and asks) or `pack approve`. A pane cannot.
+- **Orphaned elements show, and can be re-anchored.** An element whose anchor
+  no longer matches is drawn at the resolver's guess when it has one, and
+  listed under ⌘K *Orphaned elements* and in the graph inspector; a card
+  re-anchors it at the guess or at a spot you pick.
 
 ### Changed
 
+- **Claude reads every annotation through one generic path.** A type's
+  `element.json` says whether its elements wake the queue; a shared highlight
+  or a box grab raises a type-tagged queue item drawn by its type's own card,
+  delivered on Push; `get_comments` reads any type through its `type`
+  parameter; `inspect_capture` returns a grab's picture; and any web-chat tool
+  that returns an image passes it to Claude as one. The 24 tools are
+  unchanged.
+- **One overlay draws every element on the page.** Comment pins no longer
+  poll their position twice a second from a layer of their own: the overlay
+  re-finds each anchor when its pane settles, so a pin follows a drag, a
+  resize, a run change and pane history, and a previewed node draws its pins
+  read-only. A reset brings the pins with it, so the 30-second refresh is
+  gone.
+- **`diff_nodes` names the elements two nodes differ by.** Its new `elements`
+  section lists what was added, removed, changed (replied, edited, shared or
+  re-anchored) and orphaned, by id and version, with no text.
+- **Every key the page binds comes from one registry.** The keys are the
+  same; the legend, the palette and each button's title show the key you
+  actually have, a rebind included.
 - **A Wipe now also deletes page-level comment pins.** A pin survives a Wipe
   only while its anchor names a pane or a markdown item still on the page; a
   page note, and a pin on an item the Wipe removed, are deleted, one delete
@@ -69,6 +160,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **The first boot after the migration reads clean.** The migration wrote a
+  commit record only for nodes that held a pin, so that boot adopted every
+  other node and reported it; it now records every node.
+- **A pin deleted before its first commit no longer reads as lost.** A
+  graceful stop now records what it still held, so the next boot counts the
+  delete as discarded, and a state an earlier boot reported is acknowledged
+  once instead of on every boot.
 - **Show on page finds markdown items.** On a `write_markdown` card it read
   "Not on the page now" while the item was on the page; it now scrolls to the
   item and flashes it, live and on a previewed node.
@@ -99,11 +197,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- **The daemon withholds private comment pins itself.** A private pin reaches
-  only a browser on this machine: the comment list, a node's read and its
-  preview leave it out for Claude's tools, other local programs and every
-  remote viewer, and editing, replying to or deleting one from anywhere else
-  answers not found.
+- **The daemon withholds private elements itself.** A private comment pin or
+  highlight reaches only a browser on this machine: the element list, a node's
+  read and its preview leave it out for Claude's tools, other local programs
+  and every remote viewer, and editing, replying to or deleting one from
+  anywhere else answers not found. Inside that browser the page is not a
+  boundary: any script running in it (a pane's script, an element type's
+  drawing code, a node's preview) can read a private element and copy it into
+  the store Claude reads.
+- **The MCP client no longer falls back to a tokenless call.** When the
+  daemon refuses its writer token as stale, it re-reads the token file once
+  and otherwise fails with the daemon's hint, instead of retrying with no
+  token at all.
+- **Service and lease tokens are masked.** A service child's token and a
+  driver's lease token are registered with the redactor, so they show masked
+  in the chat mirror, the event log and every redacted text, and leave the
+  redactor's set when they are revoked.
+- **A remote viewer below `read` sees no annotation text in the graph and
+  event routes.** A node's read, its preview and the event log (its stream and
+  long-poll included) leave out comment pins, the elements' anchors and the
+  notes a queue item quotes for a viewer whose project opted into less than
+  `read`, as `/api/queue` already did.
+- **Only this machine's own event stream drains a parked Push.** A stream
+  opened from a browser page or through the tunnel no longer counts as the
+  channel's wake consumer, so it cannot take a delivery meant for your next
+  message.
 - **`file-editor` never opens the project's `.web-chat/` or `.git/`.** A path
   inside either, however it is spelled (a link, `..`, another letter case),
   is refused, so a pane cannot reach the writer token, the capture token or a
