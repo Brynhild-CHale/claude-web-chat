@@ -1356,17 +1356,22 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       'GET /api/graph': ['nodes[].trigger_summary', 'nodes[].absorbed[].trigger_summary', ...LOCK_PATHS],
       // Spec §5.3's, plus `folded[].error`: §3.2 gives folded turns the error
       // text the spec already strips from the trigger.
-      'GET /api/graph/node/:id': NODE_PATHS,
+      // And the node's element rows, whole (K.2-117): every anchor carries
+      // pane text, as hello's and reset's `elements` do.
+      'GET /api/graph/node/:id': [...NODE_PATHS, 'comments', 'lean_elements'],
       // The routes the spec's list missed, each a carrier the U05 review found
       // (ruling Q2: no conversation text below `read`): the preview document
       // embeds the whole node, a pane's history names each version's prompt,
       // the replay path captions every step, and /api/health reports the raw
       // lock.
-      'GET /preview/node/:id': NODE_PATHS,
+      'GET /preview/node/:id': [...NODE_PATHS, 'comments'],
       'GET /api/mounts/:id/history': ['versions[].trigger_summary'],
       'GET /api/replay/path': ['steps[].prompt', 'steps[].reply', 'steps[].summary',
         'steps[].folded[].prompt', 'steps[].folded[].reply', 'steps[].folded[].summary'],
       'GET /api/health': LOCK_PATHS,
+      // The ring (K.2-117): a comment entry's whole pin, for the network peer
+      // a WEB_CHAT_HOST bind lets reach the daemon at basic.
+      'GET /api/events': ['events[].pin'],
     },
     // A queue item's own text by kind (the annotation engine, finding 3): a
     // comment item quotes its pin.
@@ -1486,6 +1491,16 @@ test('stripText: the listed paths off a copy; a missing path is fine; nothing li
   // the node with the same paths gone.
   assert.deepStrictEqual(stripText('routes', 'GET /preview/node/:id', node), bareNode);
   assert.equal(node.trigger.message, 'm', 'the original is untouched');
+  // The node's element rows (K.2-117): the node read's comments and lean
+  // rows, the preview's comments, whole (test/remote-policy-text-routes).
+  const pinned = { ...node, comments: [{ id: 'c1', text: 't', anchor: { v: 1 } }], lean_elements: [{ id: 'c1', anchor: { v: 1 } }] };
+  assert.deepStrictEqual(stripText('route', 'GET /api/graph/node/:id', pinned), bareNode);
+  assert.deepStrictEqual(stripText('routes', 'GET /preview/node/:id', pinned), { ...bareNode, lean_elements: pinned.lean_elements },
+    'the preview route builds no lean rows: it names none');
+  // The ring: a comment entry's pin; nothing else of any entry.
+  const ring = { events: [{ seq: 1, kind: 'comment', op: 'add', pin: { id: 'c1', text: 't' } }, { seq: 2, kind: 'element', id: 'h1', v: 1 }], gap: false };
+  assert.deepStrictEqual(stripText('routes', 'GET /api/events', ring),
+    { events: [{ seq: 1, kind: 'comment', op: 'add' }, ring.events[1]], gap: false });
 
   const history = { ok: true, id: 'p1', from: 'n7', versions: [
     { node_id: 'live', label: 'live', trigger_summary: 'the live surface (not yet committed)', spec_hash: 'h0', current: true },
