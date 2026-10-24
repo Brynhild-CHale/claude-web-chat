@@ -255,6 +255,13 @@ const TEXT_ROUTE_URLS = Object.freeze({
   'GET /api/health': () => '/api/health',
 });
 
+// A TEXT_RULES route whose carrier is not the turn's text, and where it is
+// proved instead: the ring holds no prompt or reply, only a comment entry's
+// pin below `read` (K.2-117).
+const NOT_TURN_TEXT = Object.freeze(new Map([
+  ['GET /api/events', 'a comment entry\'s pin: test/remote-policy-text-routes.test.js'],
+]));
+
 const carriesText = (s) => s.includes(PROMPT_MARK) || s.includes(REPLY_MARK);
 const bodyText = (r) => (typeof r.body === 'string' ? r.body : JSON.stringify(r.body));
 
@@ -283,7 +290,8 @@ function textRoutes(d) {
       }
     },
     check() {
-      const keys = Object.keys(TEXT_RULES.routes).sort();
+      for (const key of NOT_TURN_TEXT.keys()) assert.ok(Object.hasOwn(TEXT_RULES.routes, key), `${key}: no TEXT_RULES entry any more — drop it from NOT_TURN_TEXT`);
+      const keys = Object.keys(TEXT_RULES.routes).filter((k) => !NOT_TURN_TEXT.has(k)).sort();
       assert.deepEqual(Object.keys(TEXT_ROUTE_URLS).sort(), keys, 'this test reaches every route TEXT_RULES names');
       assert.deepEqual([...carried].sort(), keys, 'and read each one while the host\'s copy carried the turn\'s text');
       for (const key of keys) {
