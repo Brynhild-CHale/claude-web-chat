@@ -525,6 +525,9 @@ test('a v3 project with pinless nodes meets tranche 2 end to end (steps 1–10)'
     assert.equal(added[0].t, 'close', JSON.stringify(added));
     assert.equal(added[0].complete, true);
     for (const p of added[0].held) assert.ok(parsePin(p), `ids only: ${p}`);
+    // heldCopies reads value.elements beside value.comments (U352, K.2-4): a
+    // graceful close holds the live highlights as it holds the comments.
+    assert.ok(added[0].held.some((p) => /^h\d+@\d+$/.test(p)), `the close holds a highlight: ${JSON.stringify(added[0].held)}`);
     for (const r of added.slice(1)) assert.equal(r.t, 'epoch');
     assert.deepEqual(after.slice(0, before.length), before, 'nothing before it changed');
     const report = bootReport(paths);
