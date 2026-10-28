@@ -362,7 +362,7 @@ test('sources hear `unloaded` before the turns leave: the hook reads every turn,
   await store.stop();
 });
 
-test('with no api.pinned on the transcripts source nothing is unloaded at any count; the real transcripts source has none at this head', async (t) => {
+test('with no api.pinned on the transcripts source nothing is unloaded at any count; the real transcripts source has one (U453) and unloads what it does not pin', async (t) => {
   const h = boot(t, { parsedMax: 1, api: {} });
   for (const cid of ['c1', 'c2', 'c3', 'c4']) { h.turns(cid, [`${cid}-t`]); h.orphan(); }
   assert.deepEqual(h.unloadedHeard(), []);
@@ -374,7 +374,9 @@ test('with no api.pinned on the transcripts source nothing is unloaded at any co
   const mirror = createMirror({ root, mainBus: createBus(), redactor: createRedactor(), log: () => {}, sources: [], parsedMax: 1 });
   t.after(() => mirror.stop());
   const api = mirror.register('transcripts', createTranscriptsSource({ createStore: createIndexStore }).attach);
-  assert.equal(Object.hasOwn(api, 'pinned'), false, 'transcripts.js has no api.pinned yet (U453 adds it)');
+  // U453 (the lazy open) gave transcripts.js its api.pinned: registered and never
+  // started, nothing is eager, so every conversation but the touched one may go.
+  assert.equal(typeof api.pinned, 'function', 'transcripts.js has api.pinned (U453)');
   const heard = [];
   let engine = null;
   mirror.register('recorder', (e) => {
@@ -388,8 +390,8 @@ test('with no api.pinned on the transcripts source nothing is unloaded at any co
       { type: 'turn-duration', duration_ms: 1, uuid: `d-${cid}` }], { conversation_id: cid });
     engine.model.orphanPending();
   }
-  assert.deepEqual(heard.filter((c) => c === 'unloaded'), [], 'the real source is never sent `unloaded`');
-  for (const cid of ['r1', 'r2', 'r3']) assert.equal(engine.model.turnsOf(cid).length, 1);
+  assert.deepEqual(heard.filter((c) => c === 'unloaded'), ['unloaded', 'unloaded'], 'r1 and r2 unloaded, each once');
+  assert.deepEqual(['r1', 'r2', 'r3'].map((cid) => engine.model.turnsOf(cid).length), [0, 0, 1], 'the touched one (r3) stays');
 });
 
 test('engine.ensureConversation and engine.indexing route to the transcripts source\'s api, and answer {ok: true} / false without one', async (t) => {

@@ -47,7 +47,7 @@ const { buildReplay, resolveReplay } = require('../lib/server/replay/document');
 const { createModel } = require('../lib/server/mirror/model');
 const { createTurnMachine } = require('../lib/server/mirror/turn-machine');
 const { createMirror, SOURCES } = require('../lib/server/mirror');
-const { createGraphLinkSource, SOURCE_NAME } = require('../lib/server/mirror/graph-link');
+const { createGraphLinkSource, bootCutoff, SOURCE_NAME } = require('../lib/server/mirror/graph-link');
 
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
@@ -75,7 +75,7 @@ function graphFor(root) {
 // The engine a source is handed, less what this source does not read. The
 // model's members and the turn machine's graph-link operations, under the names
 // the facade gives them (lib/server/mirror/index.js sourceModel).
-function rig(t, { start = true } = {}) {
+function rig(t, { start = true, extra = {} } = {}) {
   const root = tmpRoot('wc-glink-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { paths, state, graph } = graphFor(root);
@@ -93,6 +93,7 @@ function rig(t, { start = true } = {}) {
   const engine = {
     name: SOURCE_NAME, root, now: () => clock, log: (m) => logs.push(m), model: sourceModel, graph,
     mainBus: { subscribe: (fn) => bus.subscribe(fn), read: (q) => bus.read(q) },
+    ...extra,
   };
   const source = createGraphLinkSource().attach(engine);
   graph.mirror = { attachToNode: (...a) => source.api.attachToNode(...a) };
@@ -584,6 +585,161 @@ test('summaries: per-node turn counts; a supersede through the turn machine show
   assert.equal(r.nodeFile(first).mirror.turns.length, 2, 'a committed node is never rewritten');
 });
 
+// ── the lazy open: the marks and the turn list of a listed conversation ─────
+//
+// The registry and the transcripts source as the facade hands them (PLAN.md
+// 3E.2, MARKS@parse): `listed` the conversations the registry lists, `parsed`
+// those whose turns are in the model; ensureConversation restores the turns a
+// conversation exported before it was unloaded (the index, in the real source).
+
+function lazyRig(t) {
+  const box = { listed: new Set(), parsed: new Set(), exported: new Map(), calls: [], r: null, unavailable: false };
+  const extra = {
+    conversations: { get: (cid) => (box.listed.has(cid) ? { id: cid } : null) },
+    indexing: (cid) => box.listed.has(cid) && !box.parsed.has(cid),
+    ensureConversation: async (cid) => {
+      box.calls.push(cid);
+      if (box.unavailable) return { ok: false, unavailable: true }; // the mirror switched off mid-parse
+      box.r.tm.restoreTurns(cid, box.exported.get(cid) || []);
+      box.parsed.add(cid);
+      return { ok: true };
+    },
+  };
+  // The conversation's turns leave the model (the budget's unload, or never
+  // parsed this daemon life): `hear` sends the source the facade's `unloaded` first.
+  box.unload = (cid, { hear = true } = {}) => {
+    box.exported.set(cid, box.r.tm.exportTurns(cid));
+    if (hear) box.r.source.onConversation({ change: 'unloaded', conversation: { id: cid } });
+    assert.equal(box.r.tm.unloadConversation(cid), true);
+    box.parsed.delete(cid);
+  };
+  return rig(t, { extra }).then((r) => { box.r = r; return box; });
+}
+const flushKicks = () => new Promise((res) => setImmediate(res));
+
+test('summaries: a ref whose conversation is listed unparsed kicks one background parse; after it the superseded turn counts; after an unload the count stays and nothing is kicked again', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  r.turn(S1, 'pB');
+  const node = r.commit({ session_id: S1, prompt_id: 'pB' });
+  const at = r.tick(10);
+  r.tm.supersede(S1, 'pB', { reason: 'branch', at, through: 'pB' });
+  // A new daemon life: the conversation is listed, never parsed.
+  box.unload(S1, { hear: false });
+  assert.deepEqual(r.api.summaries().nodes[node], { turns: 2, superseded: 0 }, 'not parsed: nothing to count yet');
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1], 'one background parse, never awaited');
+  const parsed = r.api.summaries().nodes[node];
+  assert.equal(parsed.turns, 2);
+  assert.equal(parsed.superseded, 1, 'the superseded turn counts after the parse');
+
+  box.unload(S1);
+  assert.equal(r.model.turn('pB'), null, 'unloaded');
+  assert.deepEqual(r.api.summaries().nodes[node], parsed, 'the marks stay');
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1], 'no second parse');
+});
+
+test('summaries: a background parse the budget unloads before the next summaries still leaves the marks (remembered at `unloaded`)', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  r.turn(S1, 'pB');
+  const node = r.commit({ session_id: S1, prompt_id: 'pB' });
+  const at = r.tick(10);
+  r.tm.supersede(S1, 'pB', { reason: 'branch', at, through: 'pB' });
+  box.unload(S1, { hear: false });
+  assert.deepEqual(r.api.summaries().nodes[node], { turns: 2, superseded: 0 }, 'not parsed yet');
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1]);
+  // The kicked parses run in a row and the budget unloads this one before the
+  // chrome reads the marks again: only the `unloaded` hook saw its turns.
+  box.unload(S1);
+  const m = r.api.summaries().nodes[node];
+  assert.equal(m.superseded, 1, 'the superseded turn counts');
+  assert.equal(m.rewound_at, at);
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1], 'no second parse');
+});
+
+test('nodeTurns: a ref of a listed conversation reads {indexing: true} and kicks the parse, then the header; a conversation the registry dropped stays unavailable', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  r.turn(S2, 'qA');
+  const node = r.commit({ session_id: S1, prompt_id: 'pA' });
+  box.unload(S1, { hear: false });
+  r.tm.removeConversation(S2); // S2 is not listed: the registry dropped it
+  const before = r.api.nodeTurns(node).turns;
+  assert.deepEqual(before[0], { id: 'pA', conversation_id: S1, session_id: S1, seq: 1, role: 'commit', indexing: true });
+  assert.deepEqual(before[1], { id: 'qA', conversation_id: S2, session_id: S2, seq: 1, role: 'folded', unavailable: true });
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1], 'the listed one parsed, the dropped one never');
+  const after = r.api.nodeTurns(node).turns;
+  assert.deepEqual(after[0], { ...r.model.serializeTurn('pA'), role: 'commit' }, 'the header after the parse');
+  assert.equal(after[1].unavailable, true);
+});
+
+test('nodeTurns: a conversation the budget unloads after its parse reads {indexing: true} again and starts the parse again, then the header', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  const node = r.commit({ session_id: S1, prompt_id: 'pA' });
+  box.unload(S1, { hear: false });
+  assert.equal(r.api.nodeTurns(node).turns[0].indexing, true);
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1]);
+  const header = { ...r.model.serializeTurn('pA'), role: 'commit' };
+  assert.deepEqual(r.api.nodeTurns(node).turns[0], header);
+
+  box.unload(S1);
+  assert.equal(r.api.nodeTurns(node).turns[0].indexing, true, 'unloaded: indexing again');
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1, S1], 'the inspector\'s read starts the parse again');
+  assert.deepEqual(r.api.nodeTurns(node).turns[0], header, 'the header is back');
+});
+
+test('summaries: a background parse that comes back unavailable (the mirror switched off mid-parse) is kicked again by a later read', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  const node = r.commit({ session_id: S1, prompt_id: 'pA' });
+  box.unload(S1, { hear: false });
+  box.unavailable = true;
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1]);
+  box.unavailable = false;
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1, S1], 'kicked again');
+  assert.equal(r.api.summaries().nodes[node].turns, 1);
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1, S1], 'a parse that came back ok is not kicked again');
+});
+
+test('bootCutoff: the newest node\'s created_at, null with no node or no graph', async (t) => {
+  const r = await rig(t);
+  assert.equal(bootCutoff(r.graph), null);
+  assert.equal(bootCutoff(null), null);
+  const a = r.commit({ op: 'commit' });
+  const b = r.commit({ op: 'commit' });
+  assert.equal(bootCutoff(r.graph), Math.max(r.graph.nodes.get(a).created_at, r.graph.nodes.get(b).created_at));
+});
+
 // ── rig 2: a real facade under the graph routes ──────────────────────────────
 
 const LIVE_ONLY = SOURCES.filter((s) => s.name === 'live');
@@ -619,7 +775,11 @@ async function routesRig(t, { redactor = createRedactor() } = {}) {
   t.after(() => new Promise((res) => { server.closeAllConnections(); server.close(res); }));
   const port = server.address().port;
 
-  let ts = Date.now();
+  // Half a millisecond off the clock: the turn routes stamp their own tap
+  // envelopes with an integer Date.now(), and the facade drops an envelope whose
+  // (session, event, ts) it has seen, so a counter from Date.now() could land on
+  // a route's Stop and lose this rig's (an intermittent failure, seen in U453).
+  let ts = Date.now() + 0.5;
   const session = (sid, pid) => ({ session_id: sid, transcript_path: ch.transcript(sid), cwd: ch.cwd, prompt_id: pid });
   const env = (event, sid, extra = {}) => ({
     v: 1, event, ts: ++ts, session_id: sid, transcript_path: ch.transcript(sid), cwd: ch.cwd,
