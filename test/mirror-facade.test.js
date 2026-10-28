@@ -284,8 +284,8 @@ test('the engine a source is handed: the contract\'s members, the turn machine\'
   h.mirror.register('probe', probe.source);
   const e = probe.engine;
   assert.deepEqual(Object.keys(e).sort(), [
-    'applyChanges', 'beginIndex', 'conversations', 'files', 'graph', 'live', 'log', 'mainBus', 'model', 'name', 'now',
-    'paths', 'processGone', 'procs', 'redactor', 'reset', 'restoreSourceStates', 'root', 'sourceStates', 'statusClosed',
+    'applyChanges', 'beginIndex', 'conversations', 'files', 'graph', 'indexing', 'live', 'log', 'mainBus', 'model', 'name', 'now',
+    'paths', 'processGone', 'procs', 'read', 'redactor', 'reset', 'restoreSourceStates', 'root', 'sourceStates', 'statusClosed',
     'timers', 'transition', 'watchFile',
   ]);
   assert.ok(Object.isFrozen(e));
@@ -342,8 +342,8 @@ test('a source\'s catch-up runs in index mode: no stream frame until it ends, th
 
 test('register refuses a bad name, a second source of one name and an attach that returns no source', (t) => {
   const h = setup(t);
-  assert.deepEqual(SOURCES.map((s) => s.name), ['live', 'transcripts', 'rewinds', 'tasks', 'agents', 'workflows', 'codediff', 'graph-link', 'mod-live'],
-    'tranche 1 registers live; tranche 2 transcripts, then rewinds; tranche 3 tasks, agents, workflows, codediff, then graph-link; tranche 6 mod-live');
+  assert.deepEqual(SOURCES.map((s) => s.name), ['live', 'transcripts', 'rewinds', 'tasks', 'agents', 'workflows', 'codediff', 'graph-link', 'chat-anchors', 'mod-live'],
+    'tranche 1 registers live; tranche 2 transcripts, then rewinds; tranche 3 tasks, agents, workflows, codediff, then graph-link; the annotation engine\'s chat-anchors; tranche 6 mod-live');
   assert.throws(() => h.mirror.register('live', apiSource({})), /already registered/);
   for (const bad of ['', 'Transcripts', '1x', 'a b', null, 'x'.repeat(33)]) assert.throws(() => h.mirror.register(bad, apiSource({})), /lowercase word/);
   assert.throws(() => h.mirror.register('x', {}), /attach/);
@@ -406,6 +406,7 @@ test('every dispatched result passes the read boundary: a planted secret and the
     turns: [S1, {}], turn: ['t1'], itemField: ['i1', { field: 'text' }], attachment: ['i1', 0], skillFold: [S1],
     forkAnchor: ['t1'], taskOutput: ['k1', {}], markStopRequested: ['k1'], agent: ['a1', {}], workflow: ['w1'],
     diff: [{ turn: 't1' }], nodeTurns: ['n1.1'], nodeSummaries: [], attachToNode: ['n1', { commit: null }],
+    resolveAnchors: [[{ id: 'k1', v: 1, anchor: { kind: 'turn', turn_id: 't1' } }]], recordAnchor: [{ kind: 'turn', turn_id: 't1' }],
   };
   assert.deepEqual(Object.keys(args).sort(), Object.keys(DISPATCH).sort(), 'every row is exercised');
   const exempt = [];
