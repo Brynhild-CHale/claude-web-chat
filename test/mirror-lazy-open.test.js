@@ -57,6 +57,7 @@ const { createMirror, SOURCES } = require('../lib/server/mirror');
 const { createTranscriptsSource } = require('../lib/server/mirror/transcripts');
 const { createIndexStore } = require('../lib/server/mirror/index-store');
 const { bootCutoff } = require('../lib/server/mirror/graph-link');
+const portfiles = require('../lib/core/portfiles');
 
 const DAY = 24 * 60 * 60 * 1000;
 const LIVE_PID = 4242;
@@ -166,7 +167,7 @@ function countingStore() {
 
 // A real facade over the world: the real SOURCES, the transcripts source over
 // the counting store, and a recorder source (its engine, the turns it saw open).
-function boot(t, w, { store = countingStore(), parsedMax, conversationsOptions } = {}) {
+function boot(t, w, { store = countingStore(), parsedMax, conversationsOptions, sampleProcs } = {}) {
   const hooks = createHookTap();
   const mirrorBus = createBus({ maxEvents: 5000 });
   const frames = [];
@@ -186,7 +187,7 @@ function boot(t, w, { store = countingStore(), parsedMax, conversationsOptions }
   ];
   const mirror = createMirror({
     root: w.root, graph: w.graph, hooks, mainBus: w.bus, mirrorBus, redactor: createRedactor(), log: () => {},
-    sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }])),
+    sampleProcs: sampleProcs || (async (pids) => new Map(pids.map((p) => [p, { alive: true, startedAt: null, cpuMs: 0, state: 'S' }]))),
     isPidAlive: () => true,
     sources,
     ...(parsedMax ? { parsedMax } : {}),
@@ -339,6 +340,53 @@ test('a resumed old session: the rewind its index persisted is in the model befo
   assert.deepEqual(h.store.loads, [s], 'the index was loaded first');
   const p = await h.mirror.turns(s, { limit: 100 });
   assert.deepEqual(p.turns.map((x) => x.id), [...fx.turns, 'resumed-1']);
+});
+
+test('a process linked through its sessions file alone (no hook): the registry\'s `linked` makes the listed conversation eager, its index restored before the new turn opens', async (t) => {
+  const w = world(t, { nodes: 0 });
+  const s = sid(2, 4);
+  const at = Date.now() - 3 * DAY;
+  const fx = branch({ sessionId: s, cwd: w.ch.cwd, start: at, hooks: false });
+  w.ch.writeTranscript(s, fx.records);
+  writeRegistry(w, [stored(w, { id: s, lastActivity: at })]);
+  const first = boot(t, w);
+  await first.mirror.start();
+  await waitUntil(async () => {
+    const p = await first.mirror.turns(s, { limit: 100 });
+    return p && fx.expect.superseded.every((id) => (p.turns.find((x) => x.id === id) || {}).superseded === true);
+  }, { timeout: 15000, what: 'the rewind in the first daemon' });
+  await first.stop();
+  w.commit();
+
+  // This test process stands in for the Claude Code that resumes the session:
+  // its sessions file names the session, no hook ever fires.
+  const pid = process.pid;
+  const sample = await waitUntil(async () => {
+    const got = (await portfiles.sampleProcs([pid])).get(pid);
+    return got && got.alive === true && Number.isFinite(got.startedAt) ? got : null;
+  }, { timeout: 20000, interval: 200, what: 'a verdict-bearing sample of this process' });
+  const h = boot(t, w, { conversationsOptions: { discoveryMs: 40 }, sampleProcs: (pids) => portfiles.sampleProcs(pids) });
+  const seen = [];
+  h.rec.onOpen = (turn) => {
+    if (turn.id !== 'linked-1') return;
+    const m = h.rec.engine.model;
+    seen.push(fx.expect.superseded.map((id) => (m.turn(id) || {}).superseded === true));
+  };
+  const changes = [];
+  h.mirror.register('linked-recorder', () => ({ start: async () => {}, stop: async () => {}, onConversation: (ev) => changes.push(ev.change) }));
+  await h.mirror.start();
+  await settle();
+  assert.deepEqual(h.store.loads, [], 'listed, not parsed');
+  w.ch.writeSession({ pid, procStart: portfiles.formatProcStart(sample.startedAt), sessionId: s, status: 'busy' });
+  await waitUntil(() => changes.includes('linked'), { timeout: 15000, what: 'the registry to link the process' });
+  await waitUntil(() => h.store.loads.includes(s), { timeout: 15000, what: 'the linked conversation opened' });
+  const before = fx.records.length;
+  closedTurn(fx.r, 'linked-1');
+  w.ch.appendTranscript(s, fx.r.records.slice(before));
+  await waitUntil(() => seen.length > 0, { timeout: 15000, what: 'the new turn to open' });
+  assert.deepEqual(seen[0], fx.expect.superseded.map(() => true), 'superseded before the new turn opened');
+  assert.deepEqual(h.store.loads, [s], 'the index was loaded once, first');
+  assert.equal(h.rec.engine.indexing(s), false, 'eager now');
 });
 
 // ── forks (R4) ───────────────────────────────────────────────────────────────

@@ -643,6 +643,30 @@ test('summaries: a ref whose conversation is listed unparsed kicks one backgroun
   assert.deepEqual(box.calls, [S1], 'no second parse');
 });
 
+test('summaries: a background parse the budget unloads before the next summaries still leaves the marks (remembered at `unloaded`)', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  r.turn(S1, 'pB');
+  const node = r.commit({ session_id: S1, prompt_id: 'pB' });
+  const at = r.tick(10);
+  r.tm.supersede(S1, 'pB', { reason: 'branch', at, through: 'pB' });
+  box.unload(S1, { hear: false });
+  assert.deepEqual(r.api.summaries().nodes[node], { turns: 2, superseded: 0 }, 'not parsed yet');
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1]);
+  // The kicked parses run in a row and the budget unloads this one before the
+  // chrome reads the marks again: only the `unloaded` hook saw its turns.
+  box.unload(S1);
+  const m = r.api.summaries().nodes[node];
+  assert.equal(m.superseded, 1, 'the superseded turn counts');
+  assert.equal(m.rewound_at, at);
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1], 'no second parse');
+});
+
 test('nodeTurns: a ref of a listed conversation reads {indexing: true} and kicks the parse, then the header; a conversation the registry dropped stays unavailable', async (t) => {
   const box = await lazyRig(t);
   const { r } = box;
