@@ -24,6 +24,8 @@
 //   * attachments: the five types sent with the four security headers; any
 //     other type, an SVG, HTML, 21 MiB or a body that is not bytes is 404;
 //   * no path to a Claude Code file is ever returned;
+//   * INDEXING (U454): `indexing` and its `explain` line pass on a turns page
+//     and a turn while the source still reads the conversation, and only then;
 //   * the route module requires neither fs nor lib/core/claude-files: only
 //     routes/mirror.js and the shared query parsers, routes/mirror-query.js.
 
@@ -555,6 +557,27 @@ test('no path to a Claude Code file is ever returned: a body is cut to §2.10\'s
   assert.equal(a.status, 200);
   for (const [k, v] of a.headers) assert.ok(!v.includes('.claude') && !v.includes('/Users/'), `${k}: ${v}`);
   assert.equal(a.headers.get('content-disposition'), null);
+});
+
+test('INDEXING (U454): a turns page or a turn the source answers while it still reads the conversation passes `indexing` and its `explain` line; nothing else rides along', async (t) => {
+  const LINE = 'This conversation is being read; the pin places when that is done.';
+  const m = fakeMirror({
+    turns: { conversation_id: CID, turns: [], next_before: null, total: null, indexing: true, explain: LINE, file: '/Users/me/.claude/x.jsonl' },
+    turn: { indexing: true, explain: LINE, transcript_path: '/Users/me/.claude/x.jsonl' },
+  });
+  const h = await host(t, { mirror: m, audience: fakeAudience({ optIn: 'read' }) });
+  for (const remote of [false, true]) {
+    const r = await h.get(TURNS_URL, { remote });
+    assert.equal(r.status, 200);
+    assert.deepStrictEqual(r.body, { conversation_id: CID, turns: [], next_before: null, total: null, indexing: true, explain: LINE, rev: 42 });
+    const one = await h.get(TURN_URL, { remote });
+    assert.equal(one.status, 200);
+    assert.deepStrictEqual(one.body, { indexing: true, explain: LINE, rev: 42 });
+  }
+  // A page the source answers whole carries neither.
+  m.answers.turns = TURNS_BODY;
+  const r = await h.get(TURNS_URL);
+  assert.ok(!('indexing' in r.body) && !('explain' in r.body));
 });
 
 test('the route module is thin: it requires neither fs nor lib/core/claude-files, only routes/mirror.js and routes/mirror-query.js', () => {
