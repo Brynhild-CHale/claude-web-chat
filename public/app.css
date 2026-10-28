@@ -246,9 +246,11 @@ html.wc-theming, html.wc-theming * {
   --z-pins: 4;     /* #el-layer element markers (the overlay) */
   --z-topbar: 5;   /* #topbar and the update banner stacked above it */
   --z-chat: 6;     /* the chat dock and the phone pull — above pins and glass, below every panel */
+  --z-chat-pins: 6; /* #el-layer-chat (overlay.js registerHost): the chat's markers, over the dock by tree order */
   --z-panel: 7;    /* popovers, palette, legend, drawer, pin composer */
   --z-notice: 8;   /* service-trust / re-aim notices — above all ordinary chrome */
   --z-overlay: 9;  /* the graph viewer — covers the whole stage, notices included */
+  --z-turns-pins: 9; /* #el-layer-turns (overlay.js registerHost): the turn list's markers, over the viewer by tree order */
   --z-glance: 10;  /* raised from INSIDE the overlay: the glance preview + the rename panel */
   --z-legend: 11;  /* the `?` shortcut sheet — summonable over the overlay itself */
 }
@@ -3462,3 +3464,12 @@ img.bg-look-img, img.bg-card-img { border: 1px solid var(--wc-border); border-ra
   .tb-notice { top: auto; left: 16px; bottom: calc(var(--bb-h) + 8px); }
   .tb-act { min-width: 36px; height: 36px; }
 }
+
+/* ===================== overlay host layers (U431, 3C.1) =====================
+   public/app/overlay.js registerHost: each host past the page well draws into
+   a body-level layer of its own, #el-layer-<name>, whose z-index the overlay
+   writes inline from the host's rung (--z-chat-pins, --z-turns-pins). The
+   layers are appended to <body> after #stage (no stacking context), so each
+   paints over its host by tree order and under every panel, notice, glance
+   and the legend. Its markers take #el-layer's marker rules by their classes. */
+.el-host-layer { position: fixed; inset: 0; pointer-events: none; }
