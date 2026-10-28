@@ -198,6 +198,14 @@ before(async () => {
   comments = await shell.importApp('comments.js');
   HL = await shell.importApp('highlight.js');
   BG = await shell.importApp('box-grab.js');
+  // The boot census counts the chrome's standing intervals once they have all
+  // armed. The queue rail's refreshPending poll arms only after initQueue's
+  // own awaits (hydrateQueue, refreshPending) settle, which may be after the
+  // shell's boot resolves (Node 22.23.3 saw 4 against 3): wait for it by its
+  // function, then count, so the later "no interval armed since boot" checks
+  // measure what the exercised paths armed, never when the poll did.
+  const { refreshPending } = await shell.importApp('queue.js');
+  await eventually(() => shell.intervals().some((i) => i.fn === refreshPending), 'the queue rail\'s refreshPending interval armed');
   intervalsAtBoot = shell.intervals().length;
 
   dws = wsConnect(d.port, '/ws');
