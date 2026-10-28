@@ -62,11 +62,6 @@ import { deviceKind } from './viewport.js';
 import { request as httpRequest, NETWORK_HINT } from './http.js';
 import { bus } from './bus.js';
 import { mirror } from './chat-state.js';
-// The listed element types' toolbar fields (label, icons) and the icon route's
-// one spelling. toolbar-state.js imports nothing that reaches back here (never
-// element-types.js, toolbar.js or shell.js: each comes back through ws.js or
-// shell.js, a cycle).
-import { toolbarState, onToolbarChange, iconSrc } from './toolbar-state.js';
 
 let items = [];
 const isStaged = (it) => it.staged !== false; // default staged; held is explicit
@@ -214,9 +209,9 @@ export async function initQueue() {
     // box to its text.
     add.addEventListener('input', () => { fitNote(add); updatePushLabel(); });
   }
-  // A listed type's label or icons changed, or web-chat's mode flipped (the
-  // icon's ?mode=dark): the element rows redraw.
-  onToolbarChange(() => { if (items.some((it) => typeOfItem(it) != null)) drawRail(); });
+  // Web-chat's mode flipped (the icon's ?mode=dark): the element rows redraw.
+  // A listed type's label or icons changing redraws them too (onToolbarChange,
+  // attached when toolbar-state.js lands: toolbarTools).
   if (typeof MutationObserver === 'function') {
     new MutationObserver(() => { if (items.some((it) => typeOfItem(it) != null)) drawRail(); })
       .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -865,11 +860,36 @@ function typeOfItem(it) {
 function typeLook(it) {
   const type = typeOfItem(it);
   if (type == null) return null;
-  const tools = toolbarState().tools;
+  const tools = toolbarTools();
   const tool = Array.isArray(tools) ? tools.find((t) => t && t.type === type) || null : null;
   const label = tool && typeof tool.label === 'string' && tool.label ? tool.label : type;
   const count = it.kind === 'element' && Number.isSafeInteger(it.count) && it.count > 1 ? it.count : 1;
-  return { type, label, icon: tool && tool.icons ? iconSrc(type) : null, count };
+  return { type, label, icon: tool && tool.icons ? toolbar.iconSrc(type) : null, count };
+}
+// The listed types' toolbar fields and the icon route's one spelling
+// (public/app/toolbar-state.js: toolbarState().tools, iconSrc), loaded lazily
+// at the first draw with an element or comment item, as pushKey loads
+// hotkeys.js: no-DOM module tests import queue.js (composer-mod.js →
+// chat-composer.js → here), and toolbar-state.js reaches the daemon-served
+// /app/tier-merge.js. Until it lands a typed row reads its type's name and no
+// icon (typeLook's fallback); when it lands, and on each later toolbar change,
+// the rail redraws if a typed item is queued. toolbar-state.js imports nothing
+// that reaches back here (never element-types.js, toolbar.js or shell.js: each
+// comes back through ws.js or shell.js, a cycle).
+let toolbar = null;
+let toolbarLoading = false;
+const hasTypedItem = () => items.some((it) => typeOfItem(it) != null);
+function toolbarTools() {
+  if (toolbar) return toolbar.toolbarState().tools;
+  if (!toolbarLoading) {
+    toolbarLoading = true;
+    import('./toolbar-state.js').then((m) => {
+      toolbar = m;
+      m.onToolbarChange(() => { if (hasTypedItem()) drawRail(); });
+      if (hasTypedItem()) drawRail();
+    }, (e) => console.error('[web-chat] queue: the toolbar state could not load', e));
+  }
+  return null;
 }
 // A type that declares respond (a thread Claude answers): the group's own
 // `respond` (U423 stamps it from the manifest's wake); a legacy comment item is

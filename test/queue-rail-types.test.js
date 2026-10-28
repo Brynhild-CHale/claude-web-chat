@@ -69,6 +69,9 @@ before(async () => {
   await shell.frame(helloFrame());
   await waitUntil(() => row('q-g-cm') && row('q-msg'), { ...WAIT, what: 'the queue rail' });
   await waitUntil(() => C.isCommentAnswered('c1'), { ...WAIT, what: 'the comment pins' });
+  // queue.js loads toolbar-state.js lazily at the first draw with a typed item;
+  // until it lands a row reads its type's name ('highlight'), then the label.
+  await waitUntil(() => kindOf('q-g-hl') === 'Highlight', { ...WAIT, what: 'the toolbar\'s labels' });
   Q.renderQueue();
 });
 

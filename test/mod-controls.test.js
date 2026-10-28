@@ -329,9 +329,7 @@ test('the source: no fetch, no Escape or outside-click listener, no innerHTML; q
   assert.doesNotMatch(code, /innerHTML|insertAdjacentHTML/);
   const importsOf = (f) => [...fs.readFileSync(f, 'utf8').matchAll(/^\s*import\s[^;]*?from\s+'(\.\/[^']+)'/gm)].map((m) => path.join(APP, m[1]));
   const seen = new Set();
-  // A module the daemon serves (/app/tier-merge.js, through toolbar-state.js
-  // since U424) is not on the disk and imports nothing of public/app.
-  const walk = (f) => { for (const g of importsOf(f)) if (!seen.has(g)) { seen.add(g); if (fs.existsSync(g)) walk(g); } };
+  const walk = (f) => { for (const g of importsOf(f)) if (!seen.has(g)) { seen.add(g); walk(g); } };
   walk(path.join(APP, 'queue.js'));
   assert.equal(seen.has(path.join(APP, 'mod-controls.js')), false);
   assert.equal(seen.has(path.join(APP, 'chat-actions.js')), false);
