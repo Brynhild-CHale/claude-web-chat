@@ -1218,7 +1218,10 @@ function drawRail() {
       }
       if (parkedList.length) {
         list.appendChild(sectionHeader('Held for next prompt', parkedCount(parked), 'parked'));
+        // The Push note is the user's own text (J1, K1): below `read` the park
+        // says `note_hidden` and carries none, and its row is text-free.
         if (parked.note) parkedList.unshift({ kind: 'note', summary: parked.note });
+        else if (parked.note_hidden === true) parkedList.unshift({ kind: 'note', summary: 'Push note (hidden)', text_hidden: true });
         for (const it of parkedList) list.appendChild(itemRow(it, { parked: true }));
       }
     }

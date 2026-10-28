@@ -202,6 +202,27 @@ test('an envelope with no items degrades to a count, not an empty section', asyn
   await tick();
 });
 
+test('a Push note hidden from this viewer draws one text-free row; a note it may read draws as before (J1, K1)', async () => {
+  // Below `read` GET /api/queue/pending serves the park's note as null and says
+  // note_hidden: the rail says a note waits, never its words.
+  state.pending = { ...PARK, note: null, note_hidden: true, envelope: { meta: PARK.envelope.meta } };
+  const { refreshPending } = await import(pathToFileURL(path.join(REPO, 'public/app/queue.js')).href);
+  await refreshPending();
+  await tick();
+  const rows = rowsUnder('Held for next prompt');
+  const shown = rows.map((r) => [r.querySelector('.qi-kind').textContent, r.querySelector('.qi-summary').textContent]);
+  assert.deepEqual(shown, [['note', 'Push note (hidden)'], ['capture', 'Pricing table'], ['signal', 'form_submit']],
+    'one text-free note row, through the same row and classes');
+  assert.equal(rows[0].className, 'rail-item parked', 'the parked row\'s own classes');
+  assert.ok(!rail().textContent.includes(PARK.note), 'no note text in the rail');
+  // A park the viewer may read: its note, as today.
+  state.pending = PARK;
+  await refreshPending();
+  await tick();
+  assert.deepEqual(rowsUnder('Held for next prompt').map((r) => r.querySelector('.qi-summary').textContent),
+    ['ship the second one', 'Pricing table', 'form_submit'], 'the note drawn as before');
+});
+
 test('cancelling the delivery takes the held batch off the rail', async () => {
   const cancel = rail().querySelector('.rp-cancel');
   cancel.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
