@@ -15,6 +15,11 @@
 //   * a learned value inside a recorded passage (M-7's one-value, ending-inside
 //     and wholly-inside cases) answers masked with its span, never exact; an
 //     unaffected passage placed; a passage masked at create placed;
+//   * U414a: past the first served page (FIELD_MAX) no fingerprint fast path —
+//     a later-page passage over a value learned after the pin answers masked,
+//     and its memory stands on its own page's fingerprint; a first-page
+//     passage keeps the fast path with one read; a passage that starts on the
+//     first page and ends past it never takes it;
 //   * record refuses rh_, rm_, a hook-sourced card and a provisional turn with
 //     EXPLAIN.refused, and writes nothing;
 //   * U413's re-key followed, and after a restart (the replaces alias);
@@ -42,7 +47,7 @@ const { ANCHOR_STATES, VISIBLE, EXPLAIN, isAnchorState } = require('../lib/core/
 const { createHookTap } = require('../lib/server/hook-tap');
 const { MOD_EVENT } = require('../lib/core/mod-protocol');
 const { createMirror, SOURCES, DISPATCH } = require('../lib/server/mirror');
-const { createTranscriptsSource } = require('../lib/server/mirror/transcripts');
+const { createTranscriptsSource, FIELD_MAX } = require('../lib/server/mirror/transcripts');
 const { createIndexStore } = require('../lib/server/mirror/index-store');
 const { createModLiveSource } = require('../lib/server/mirror/mod-live');
 const { createChatAnchorsSource, MEMORY_MAX, FP_HEX, BUILTIN_KINDS } = require('../lib/server/mirror/chat-anchors');
@@ -487,6 +492,175 @@ test('a passage in the served tail past a learned value shorter than its mask re
   // Past the served text is still refused.
   const past = await record(served.length - 2, served.length + 1);
   assert.equal(past.invalid, true);
+});
+
+// ── past the first served page (U414a) ───────────────────────────────────────
+
+test('a passage past the first served page that crosses a value learned after the pin answers masked, never placed; a first-page passage keeps the fast path', async (t) => {
+  withTempHome(t);
+  const spy = { calls: {}, indexing: () => false };
+  const h = boot(t, { spy });
+  await h.begin();
+  const OPEN = 'Opening words that start page one.';
+  const FILL = ' The long reply goes on in plain words.';
+  const head = OPEN + FILL.repeat(Math.ceil((FIELD_MAX + 4096) / FILL.length));
+  const LATER = `Contact ${E} for access`;
+  const r = h.records(43);
+  r.prompt('write a long reply', { promptId: 'lp-1' });
+  r.assistant([`${head} Later on: ${LATER} on page two. The end.`]);
+  r.turnDuration({ durationMs: 40 });
+  h.append(r.records);
+  await settled(h, 1);
+  const reply = (await h.items('lp-1')).find((it) => it.kind === 'reply');
+  assert.ok(reply, 'a reply');
+  const firstPage = () => h.mirror.itemField(reply.id, { field: 'text' });
+  const first0 = await firstPage();
+  assert.equal(first0.eof, false, 'the reply is longer than one served page');
+  assert.ok(first0.total > FIELD_MAX && first0.text.length === FIELD_MAX);
+  assert.equal(marksIn(first0.text).length, 0, 'the first page holds no mark');
+
+  const at = first0.total - ` on page two. The end.`.length - LATER.length;
+  const later = (await h.mirror.recordAnchor({ kind: 'item-range', item_id: reply.id, pos: { start: at, end: at + LATER.length } })).anchor;
+  const opening = (await h.mirror.recordAnchor({ kind: 'item-range', item_id: reply.id, pos: { start: 0, end: OPEN.length } })).anchor;
+  assert.ok(later && opening, 'both passages record');
+  assert.equal(later.quote.exact, LATER);
+  assert.ok(later.pos.start >= FIELD_MAX, 'the later passage lies past the first served page');
+  assert.equal(later.marks, 0);
+  assert.deepEqual(later.fp, opening.fp, 'the record keeps the first page\'s fingerprint (shape unchanged)');
+
+  const reads = () => spy.calls.itemField || 0;
+  const hits = () => h.diag().memory_hits;
+  // A first-page passage: the fast path, one read (page 0), no second matching.
+  let n = reads();
+  const o1 = await resolveOne(h, opening, 'opening');
+  assert.deepEqual([o1.state, o1.how], ['exact', 'fingerprint'], 'the first-page passage takes the fast path');
+  assert.deepEqual(o1.at, { item_id: reply.id, field: 'text', start: 0, end: OPEN.length });
+  assert.equal(reads() - n, 1, 'one served read: the first page, and no window page');
+  // A later-page passage: never the fast path; matched over its window page.
+  n = reads();
+  const l1 = await resolveOne(h, later, 'later');
+  assertAnswer(l1, 'later');
+  assert.equal(l1.state, 'exact');
+  assert.notEqual(l1.how, 'fingerprint', 'past the first page the fingerprint fast path is never taken');
+  assert.deepEqual(l1.at, { item_id: reply.id, field: 'text', ...later.pos });
+  assert.equal(reads() - n, 2, 'the first page, then the window page that holds the passage');
+  // Its memory: a second resolve of the unchanged page is a hit.
+  let h0 = hits();
+  assert.deepEqual(await resolveOne(h, later, 'later'), l1);
+  assert.equal(hits(), h0 + 1, 'a memory hit while its page is unchanged');
+
+  // The value is learned after the pin; the first page does not move.
+  h.redactor.addKnown(E, 'email');
+  const first1 = await firstPage();
+  assert.equal(first1.text, first0.text, 'the first page is byte-identical');
+  assert.equal(first1.total, first0.total, 'and its total unchanged');
+  h0 = hits();
+  const l2 = await resolveOne(h, later, 'later');
+  assertAnswer(l2, 'later');
+  assert.equal(l2.state, 'masked', 'a later-page passage over a learned value answers masked, never placed');
+  assert.equal(l2.visible, 'masked');
+  assert.equal(hits(), h0, 'no memory hit: the stamp is the window page\'s fingerprint, which moved');
+  const win = await h.mirror.itemField(reply.id, { field: 'text', from: l2.at.start - 64 });
+  const span = win.text.slice(64, 64 + (l2.at.end - l2.at.start));
+  assert.ok(span.startsWith('Contact ') && span.endsWith(' for access') && marksIn(span).length === 1, 'its span runs through the mark');
+  // The first-page passage keeps its fast path and its memory.
+  h0 = hits();
+  assert.deepEqual(await resolveOne(h, opening, 'opening'), o1);
+  assert.equal(hits(), h0 + 1, 'the first-page stamp is unchanged: a hit');
+});
+
+test('a passage that starts on the first served page and ends past it never takes the fast path: a value learned past the page boundary answers masked', async (t) => {
+  withTempHome(t);
+  const h = boot(t);
+  await h.begin();
+  const FILL = 'Plain words fill the first page of the reply. ';
+  const lead = FILL.repeat(Math.ceil(FIELD_MAX / FILL.length)).slice(0, FIELD_MAX - 4);
+  const LATER = `Contact ${E} for access`;
+  const r = h.records(44);
+  r.prompt('write a reply that crosses a page', { promptId: 'lp-2' });
+  r.assistant([`${lead} ${LATER} after the boundary. ${FILL.repeat(8)}The end.`]);
+  r.turnDuration({ durationMs: 40 });
+  h.append(r.records);
+  await settled(h, 1);
+  const reply = (await h.items('lp-2')).find((it) => it.kind === 'reply');
+  assert.ok(reply, 'a reply');
+  const first0 = await h.mirror.itemField(reply.id, { field: 'text' });
+  assert.equal(first0.eof, false, 'the reply is longer than one served page');
+  const near = await h.mirror.itemField(reply.id, { field: 'text', from: FIELD_MAX - 64 });
+  const at = near.from + near.text.indexOf('Contact ');
+  assert.ok(at >= near.from && at < FIELD_MAX && at + LATER.length > FIELD_MAX, 'the passage starts on the first page and ends past it');
+  assert.ok(at + 'Contact '.length >= FIELD_MAX, 'the value itself lies past the first page');
+  const rec = (await h.mirror.recordAnchor({ kind: 'item-range', item_id: reply.id, pos: { start: at, end: at + LATER.length } })).anchor;
+  assert.ok(rec, 'the straddling passage records');
+  assert.equal(rec.quote.exact, LATER);
+  assert.equal(rec.marks, 0);
+  const a1 = await resolveOne(h, rec, 'straddle');
+  assertAnswer(a1, 'straddle');
+  assert.equal(a1.state, 'exact');
+  assert.notEqual(a1.how, 'fingerprint', 'a passage that ends past the first page never takes the fast path');
+
+  h.redactor.addKnown(E, 'email');
+  const first1 = await h.mirror.itemField(reply.id, { field: 'text' });
+  assert.equal(first1.text, first0.text, 'the first page is byte-identical: its fingerprint cannot see the value');
+  const a2 = await resolveOne(h, rec, 'straddle');
+  assertAnswer(a2, 'straddle');
+  assert.equal(a2.state, 'masked', 'over a value learned past the page boundary: masked, never placed');
+  assert.equal(a2.visible, 'masked');
+});
+
+test('the item-range memory stamp: the first page\'s fingerprint inside it, the window page\'s past it', async () => {
+  // A stub engine: one reply of three served pages; `current` swaps its text.
+  const PAGE = FIELD_MAX;
+  const total = 3 * PAGE;
+  const WORDS = 'a passage on a later page';
+  const start = PAGE + PAGE / 2;
+  const base = 'a'.repeat(PAGE) + 'b'.repeat(PAGE / 2) + WORDS + 'b'.repeat(PAGE / 2 - WORDS.length) + 'c'.repeat(PAGE);
+  assert.equal(base.length, total);
+  let current = base;
+  const reads = [];
+  const read = {
+    itemField: async (id, q) => {
+      const from = q.from || 0;
+      reads.push(from);
+      const text = current.slice(from, from + PAGE);
+      return { id, field: 'text', text, from, to: from + text.length, total, eof: from + text.length >= total };
+    },
+  };
+  const turn = { id: 't1', conversation_id: 'c1', session_id: 's1' };
+  const item = { id: 'i1', kind: 'reply', turn_id: 't1', source: 'transcript' };
+  const model = { resolveTurn: (id) => (id === 't1' ? 't1' : null), turn: (id) => (id === 't1' ? turn : null), item: (id) => (id === 'i1' ? item : null), turnsOf: () => [turn] };
+  const inst = createChatAnchorsSource().attach({ model, read, indexing: () => false, log: () => {} });
+  const laterRec = (await inst.api.record({ kind: 'item-range', item_id: 'i1', pos: { start, end: start + WORDS.length } })).anchor;
+  const firstRec = (await inst.api.record({ kind: 'item-range', item_id: 'i1', pos: { start: 10, end: 20 } })).anchor;
+  assert.ok(laterRec && firstRec);
+  const hits = () => inst.diagnostics().chat_anchors.memory_hits;
+  const go = async (id, anchor) => { reads.length = 0; return (await inst.api.resolve([{ id, v: 1, anchor }]))[0]; };
+
+  const f1 = await go('first', firstRec);
+  assert.deepEqual([f1.state, f1.how], ['exact', 'fingerprint']);
+  assert.deepEqual(reads, [0], 'the first-page passage reads the first page alone');
+  const l1 = await go('later', laterRec);
+  assert.equal(l1.state, 'exact');
+  assert.notEqual(l1.how, 'fingerprint');
+  assert.deepEqual(reads, [0, PAGE], 'the later passage reads its window page');
+  let h0 = hits();
+  await go('later', laterRec);
+  assert.equal(hits(), h0 + 1, 'a hit while its window page is unchanged');
+
+  // The window page changes and the first page does not: the later passage's
+  // stamp moves (a miss and a fresh match), the first-page passage's holds.
+  current = base.slice(0, PAGE) + 'X' + base.slice(PAGE + 1, start) + 'one ' + WORDS + base.slice(start + WORDS.length + 4);
+  assert.equal(current.length, total);
+  assert.equal(current.slice(0, PAGE), base.slice(0, PAGE));
+  h0 = hits();
+  const l2 = await go('later', laterRec);
+  assert.equal(hits(), h0, 'the window page\'s fingerprint moved: no hit');
+  assert.equal(l2.visible, 'placed', 'matched again over the changed page');
+  assert.deepEqual(l2.at, { item_id: 'i1', field: 'text', start: start + 4, end: start + 4 + WORDS.length });
+  h0 = hits();
+  assert.deepEqual(await go('first', firstRec), f1);
+  assert.equal(hits(), h0 + 1, 'the first page is unchanged: its stamp holds');
+  await inst.stop();
 });
 
 // ── refused ──────────────────────────────────────────────────────────────────
