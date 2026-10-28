@@ -324,6 +324,42 @@ test('a duplicated row: of two rows holding the fingerprint, the one nearest the
   assert.deepEqual([a.state, a.how, a.at.line], ['re-resolved', 'position', tail.line + 5], 'the nearest copy: the original, moved down five');
 });
 
+test('a row\'s fingerprint and quote stop at its hunk: a change in the hunk before leaves the first row of the next exact', async (t) => {
+  const lines = Array.from({ length: 30 }, (_, i) => `const v${i + 1} = ${i + 1};`);
+  const repo = treesnapRepo(t, { files: { 'two.js': lines.join('\n') + '\n' } });
+  const h = await boot(t, repo);
+  const after = lines.slice();
+  after[2] = 'const v3 = 33;';
+  after[24] = 'const v25 = 2525;';
+  assert.equal((await h.run('pTwo', async () => repo.write('two.js', after.join('\n') + '\n'))).status, 'ready');
+  const served = await h.mirror.diff({ turn: 'pTwo' });
+  assert.equal(served.patch.split('\n').filter((l) => l.startsWith('@@')).length, 2, 'two hunks');
+  // The second hunk's first row: no row of the first hunk is its context.
+  const made = await h.record({ turn_id: 'pTwo', file: 'two.js', side: 'new', line: 22 });
+  assertShape(made.anchor);
+  assert.equal(made.anchor.quote.exact, ' const v22 = 22;');
+  assert.equal(made.anchor.quote.prefix, '', 'no row before it inside its hunk');
+  // The first hunk's last row rewritten: the anchored row's own hunk is unchanged.
+  h.rewrite('pTwo', (p) => p.replace('\n const v6 = 6;\n', '\n const v6 = 66;\n'));
+  const [a] = await h.resolve([made.anchor]);
+  assertVisible(a);
+  assert.deepEqual([a.state, a.how, a.at.line], ['exact', 'line', 22]);
+});
+
+test('the text-alone match needs a unique row: a quote whose text now appears twice answers line-not-found', async (t) => {
+  const h = await pemWorld(t);
+  const v100 = h.rows.find((r) => r.text === '+const v10 = 100;');
+  const made = (await h.record({ turn_id: 'pKey', file: FILE, side: v100.side, line: v100.line })).anchor;
+  // A copy of the row and one more row after `+const key = \``: the anchored
+  // row's fingerprint breaks (its context changed) and its text is no longer unique.
+  h.rewrite('pKey', (p) => p
+    .replace(/^(@@ -\d+,\d+ \+\d+,)(\d+)( @@)/m, (_, a, n, b) => `${a}${Number(n) + 2}${b}`)
+    .replace('+const key = `\n', '+const key = `\n+const v10 = 100;\n+// moved\n'));
+  const [a] = await h.resolve([made]);
+  assertVisible(a);
+  assert.deepEqual([a.state, a.how], ['unavailable', 'line-not-found'], JSON.stringify(a));
+});
+
 test('a value learned after create inside the anchored row answers masked, never exact', async (t) => {
   const repo = treesnapRepo(t, { files: { 'notes.md': 'one\ntwo\nthree\n' } });
   const h = await boot(t, repo);
