@@ -787,28 +787,39 @@ test('a turn\'s own diff from ?turn=, and a record with status \'unavailable\' s
   assert.equal(q('.dv-unavailable').textContent, 'No code diff: slow-repo');
 });
 
-// U233b (PLAN 1D.2): a record that expired shows its note — text, never HTML —
-// and never falls through to "No files changed.".
-test('an expired record shows its note as one .dv-expired note, never "No files changed.", alone and in a node\'s turns', async () => {
-  const NOTE = 'A turn\'s code diff is kept for 30 days. <b>not bold</b>';
-  diffs['turn=tE'] = { v: 1, turn_id: 'tE', status: 'expired', rule: 'record-max-days', note: NOTE };
+// U451 (C-13-2 as re-worded): an unavailable record that carries a note (a
+// removed record names its rule's sentence) shows the note — text, never HTML —
+// in the turn view and in a node's turn box, and never falls through to "No
+// files changed."; one without a note keeps "No code diff: <reason>"; an older
+// daemon's expired record still draws its note.
+test('an unavailable record with a note shows the note as one .dv-unavailable note, never "No files changed.", alone and in a node\'s turns', async () => {
+  const NOTE = 'When Claude Code\'s own cleanup deletes a session\'s transcript, web-chat deletes that session\'s turn index and the code diffs no graph node links. <b>not bold</b>';
+  diffs['turn=tE'] = { v: 1, turn_id: 'tE', status: 'unavailable', reason: 'removed', rule: 'claude-code-cleanup', note: NOTE };
   await open({ view: 'diff', id: 'tE' });
-  await waitUntil(() => q('.dv-expired'), { what: 'the expired note' });
-  assert.equal(qa('.dv-expired').length, 1);
-  assert.equal(q('.dv-expired').textContent, NOTE);
-  assert.ok(q('.dv-expired').classList.contains('dv-note'));
-  assert.equal(q('.dv-expired b'), null, 'textContent, never HTML');
+  await waitUntil(() => q('.dv-unavailable'), { what: 'the unavailable note' });
+  assert.equal(qa('.dv-unavailable').length, 1);
+  assert.equal(q('.dv-unavailable').textContent, NOTE);
+  assert.ok(q('.dv-unavailable').classList.contains('dv-note'));
+  assert.equal(q('.dv-unavailable b'), null, 'textContent, never HTML');
   assert.equal(q('.dv-nochange'), null);
-  assert.doesNotMatch(body().textContent, /No files changed\./);
+  assert.doesNotMatch(body().textContent, /No files changed\.|No code diff:/);
   await popAll();
   diffs['node=n4'] = { node: { id: 'n4', label: 'n1.16' }, combined: null, turns: [
-    { v: 1, turn_id: 'tE', status: 'expired', rule: 'conversations-max', note: NOTE },
+    { v: 1, turn_id: 'tE', status: 'unavailable', reason: 'removed', rule: null, note: 'This turn\'s code diff is no longer on disk.' },
+    { v: 1, turn_id: 'tS', status: 'unavailable', reason: 'slow-repo' },
   ] };
   await open({ view: 'diff', node_id: 'n4' });
-  await waitUntil(() => q('.dv-turn .dv-expired'), { what: 'the turn\'s expired note' });
-  assert.equal(qa('.dv-expired').length, 1);
-  assert.equal(q('.dv-turn .dv-expired').textContent, NOTE);
+  await waitUntil(() => qa('.dv-turn .dv-unavailable').length === 2, { what: 'the turns\' notes' });
+  assert.deepEqual(qa('.dv-turn .dv-unavailable').map((n) => n.textContent),
+    ['This turn\'s code diff is no longer on disk.', 'No code diff: slow-repo']);
   assert.doesNotMatch(body().textContent, /No files changed\./);
+  await popAll();
+  // An older daemon's expired record still draws its note, as unavailable.
+  diffs['turn=tX2'] = { v: 1, turn_id: 'tX2', status: 'expired', rule: 'record-max-days', note: 'A turn\'s code diff is kept for 30 days.' };
+  await open({ view: 'diff', id: 'tX2' });
+  await waitUntil(() => q('.dv-expired'), { what: 'the expired note' });
+  assert.equal(q('.dv-expired').textContent, 'A turn\'s code diff is kept for 30 days.');
+  assert.ok(q('.dv-expired').classList.contains('dv-unavailable'));
 });
 
 /* ── every chat:open the stream and the cards emit opens a view ───────────── */
