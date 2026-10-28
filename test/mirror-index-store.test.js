@@ -10,7 +10,10 @@
 //   * a corrupt file is renamed aside and answers {ok:false, reason:'corrupt'};
 //     a field of the wrong type answers 'invalid' (renamed aside too);
 //   * the boot verification: a replaced transcript (new inode), a rewritten head
-//     and a truncated file each answer 'stale'; an appended one still loads;
+//     and a truncated file each answer 'stale'; an appended one still loads; a
+//     transcript Claude Code's cleanup removed (lib/core/claude-files
+//     transcriptGone) answers 'gone' with the validated index (U454), and one
+//     whose slug directory went too is 'stale';
 //   * the debounce: many schedules make one write per 2 s (fake timers); flush
 //     and stop() write what is pending, and a stopped store writes nothing;
 //   * no known value on disk: one registered with addKnown and slipped into the
@@ -278,8 +281,50 @@ test('boot verification: a replaced transcript, a rewritten head and a truncated
   fs.truncateSync(file, 10);
   assert.deepEqual(await store.load(S1, { file }), { ok: false, reason: 'stale' }, 'shorter than the resume offset');
 
+  // A transcript missing outside Claude Code's projects tree is not the gone
+  // rule's (no slug directory to vouch for a cleanup): stale, as before.
   fs.rmSync(file);
-  assert.deepEqual(await store.load(S1, { file }), { ok: false, reason: 'stale' }, 'gone');
+  assert.deepEqual(await store.load(S1, { file }), { ok: false, reason: 'stale' }, 'missing outside the projects tree');
+});
+
+test('boot verification, GONE (U454): a transcript Claude Code\'s cleanup removed answers gone with the validated index; its slug directory removed is stale; no index is absent', async (t) => {
+  const root = project(t);
+  const ch = claudeHome(t, { root, isolate: true });
+  const { store, paths } = storeFor(t, { root });
+  ch.writeTranscript(S1, LINES);
+  const file = ch.transcript(S1);
+  store.schedule(S1, () => snapshotOf(S1, file));
+  await store.flush();
+  const ok = await store.load(S1, { file });
+  assert.equal(ok.ok, true, 'the transcript there: loads');
+
+  fs.rmSync(file);
+  assert.equal(claudeFiles.transcriptGone(file), true, 'the one gone rule says gone');
+  const gone = await store.load(S1, { file });
+  assert.equal(gone.ok, false);
+  assert.equal(gone.reason, 'gone');
+  assert.deepEqual(gone.index, ok.index, 'the parsed, validated index handed back');
+  assert.ok(fs.existsSync(paths.mirrorIndex(S1)), 'never deleted or set aside here');
+
+  // The slug directory removed (a moved project, a moved tier): not a cleanup.
+  const slugDir = path.dirname(file);
+  fs.rmSync(slugDir, { recursive: true, force: true });
+  assert.equal(claudeFiles.transcriptGone(file), false);
+  assert.deepEqual(await store.load(S1, { file }), { ok: false, reason: 'stale' }, 'stale, not gone');
+  assert.ok(fs.existsSync(paths.mirrorIndex(S1)), 'nothing deleted');
+
+  // A read-from-0 index (no file point) of a gone transcript is gone too: the
+  // rule is asked before the verification, which has nothing to check there.
+  fs.mkdirSync(slugDir);
+  store.schedule(S1, () => ({ ...ok.index, file: null, resume: null }));
+  await store.flush();
+  const zero = await store.load(S1, { file });
+  assert.equal(zero.reason, 'gone');
+  assert.equal(zero.index.resume, null);
+
+  // No index: absent, whatever the transcript (absent is unchanged).
+  assert.deepEqual(await store.load(S2, { file: ch.transcript(S2) }), { ok: false, reason: 'absent' });
+  assert.ok(fs.existsSync(paths.mirrorIndex(S1)), 'nothing deleted');
 });
 
 test('the head hash survives a multi-byte character cut at head_len', async (t) => {

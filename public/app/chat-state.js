@@ -55,6 +55,9 @@ export const STREAM_PAGE = 30;
 export const TASK_KEEP_MS = 15 * 60 * 1000;
 const MAX_ITEMS_PER_TURN = 2000;
 const MAX_BUFFER = 500;
+// The longest state line a page's `explain` is kept to (the daemon's are one
+// sentence; the cap is only the wire's bound).
+const EXPLAIN_MAX = 300;
 const RETRY_MS = 5000;
 const FOLLOW_KEY = 'wc:chat-follow';
 
@@ -492,7 +495,11 @@ export function normalizeItem(raw, { caps = 'summary', turn_id } = {}) {
 }
 
 // GET /api/mirror/conversations/:cid/turns → a page: turns with their items,
-// ascending, plus the cursor and the rev the page was read at.
+// ascending, plus the cursor and the rev the page was read at. `indexing`: the
+// daemon is still reading the conversation (it answered past its bound, U454;
+// its scoped mirror:reset says when to read again), with `explain` its one
+// line as served (lib/core/anchor-states EXPLAIN, never a copy here); false
+// and null on every other page.
 export function normalizeTurnPage(body) {
   if (!isPlain(body)) return null;
   const turns = [];
@@ -512,6 +519,8 @@ export function normalizeTurnPage(body) {
     next_before: F.num(body.next_before) ?? null,
     total: F.count(body.total) ?? null,
     rev: F.num(body.rev) ?? -1,
+    indexing: body.indexing === true,
+    explain: body.indexing === true ? F.text(EXPLAIN_MAX)(body.explain) ?? null : null,
   };
 }
 
@@ -654,7 +663,11 @@ export function normalizeFrame(msg, { level = 'local' } = {}) {
 
 // ── the store ────────────────────────────────────────────────────────────────
 
-const blankStream = () => ({ conversationId: null, turns: Object.freeze([]), hasOlder: false, loading: false });
+// `indexing` / `indexingNote`: the followed conversation's last page said the
+// daemon is still reading it, and the line it served (U454); the next page
+// without `indexing` clears both.
+const blankStream = () => ({ conversationId: null, turns: Object.freeze([]), hasOlder: false, loading: false,
+  indexing: false, indexingNote: null });
 
 // Read it; never write it. Beside §7.3's fields: `aggregate` (the daemon's
 // aggregate state), `rev` (the newest rev applied) and `seen` (the finished
@@ -1117,6 +1130,8 @@ async function loadStream() {
     sItemTurn.clear();
     for (const { turn, items } of page.turns) setTurn(turn.id, turn, new Map(items.map((it) => [it.id, it])));
     mirror.stream.hasOlder = page.next_before !== null || (page.total !== null && page.total > page.turns.length);
+    mirror.stream.indexing = page.indexing;
+    mirror.stream.indexingNote = page.explain;
     streamFresh = true;
     const waiting = streamBuffer;
     streamBuffer = [];

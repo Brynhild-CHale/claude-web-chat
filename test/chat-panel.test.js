@@ -11,7 +11,9 @@
 //     ink from data-cs-state — a failed turn included; the meta line names the
 //     session, the model, the mode and tokens or cost; two or more sessions make
 //     the title a switcher.
-//   * Notices: below read, disabled, offline over the kept stream.
+//   * Notices: below read, disabled, offline over the kept stream; indexing
+//     (U454) while the followed conversation's page says the daemon is still
+//     reading it, worded by the line that page served.
 //   * The awaiting card: an answer frame owns its body when one may answer,
 //     else the read-only card; it hides when the ask resolves.
 //   * The composer slot, detail views over the stream (Escape pops one, then
@@ -34,6 +36,7 @@ const path = require('path');
 const { bootShell, helloFrame, respond } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
 const { isReservedId, RESERVED_IDS } = require('../lib/server/domain/mounts');
+const { EXPLAIN } = require('../lib/core/anchor-states');
 
 const REPO = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8');
@@ -375,6 +378,43 @@ test('notices: below read the remote line with its command; disabled the hint; a
   } finally {
     stream.replaceChildren();
   }
+});
+
+test('notices: an indexing page shows #chat-notice[data-notice=indexing] with the line it served, in the existing .cp-notice-line; the reset\'s page without it hides it', async (t) => {
+  const notice = () => $('chat-notice');
+  t.after(() => { page = null; });
+  // What the daemon serves while the conversation is read (lib/server/mirror/transcripts.js):
+  // its `explain` is lib/core/anchor-states EXPLAIN's indexing line.
+  page = { conversation_id: 'c1', turns: [], next_before: null, total: null, indexing: true, explain: EXPLAIN.indexing, rev: rev + 100 };
+  await openChat();
+  await show();
+  await waitUntil(() => S.mirror.stream.indexing === true && !S.mirror.stream.loading, { what: 'the indexing page' });
+  await redraw();
+  assert.equal(notice().hidden, false);
+  assert.equal(notice().getAttribute('data-notice'), 'indexing');
+  const lines = [...notice().children];
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].tagName, 'P');
+  assert.equal(lines[0].className, 'cp-notice-line', 'the existing line, no new class');
+  assert.equal(lines[0].textContent, EXPLAIN.indexing);
+  assert.equal(notice().className, 'cp-notice');
+
+  // The parse lands: its scoped reset reads the snapshot again, then the page.
+  page = { conversation_id: 'c1', turns: [], next_before: null, total: 0, rev: rev + 200 };
+  await shell.frame({ type: 'mirror:reset', reason: 'catch-up', conversation_id: 'c1' });
+  await waitUntil(() => S.mirror.stream.indexing === false && !S.mirror.stream.loading, { what: 'the page without indexing' });
+  await redraw();
+  assert.equal(notice().hidden, true, 'cleared');
+  assert.equal(notice().getAttribute('data-notice'), null);
+
+  // The notices before it keep their order: a disabled mirror is said first.
+  page = { conversation_id: 'c1', turns: [], next_before: null, total: null, indexing: true, explain: EXPLAIN.indexing, rev: rev + 300 };
+  await show();
+  await waitUntil(() => S.mirror.stream.indexing === true && !S.mirror.stream.loading, { what: 'indexing again' });
+  await hydrate({ enabled: false });
+  assert.equal(notice().getAttribute('data-notice'), 'disabled', 'disabled is said before indexing');
+  page = null;
+  await show();
 });
 
 /* ── the awaiting card ─────────────────────────────────────────────────────── */
