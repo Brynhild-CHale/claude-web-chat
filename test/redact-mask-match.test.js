@@ -203,6 +203,74 @@ test('a quote that aligns nowhere: null', () => {
   assert.equal(matchMasked(served, { exact: 'nothing like this sentence', prefix: 'a', suffix: 'b' }), null);
   // Wholly inside a mask, context too: no literal character locates it.
   assert.equal(matchMasked(MASK('email'), { exact: E.slice(3, 9), prefix: E.slice(0, 3), suffix: E.slice(9) }), null);
+  // Wholly inside a mask at both edges of the text (its context empty): the
+  // edges hold, and still no literal character locates it.
+  assert.equal(matchMasked(MASK('email'), { exact: E, prefix: '', suffix: '' }), null);
+  // Two literal characters between two marks, with a full context on both
+  // sides (no edge is named): a mark followed by a matching space is no place.
+  const between = `alpha ${MASK('email')} o${MASK('org')} omega`;
+  assert.equal(matchMasked(between, { exact: `${'q'.repeat(20)} o`, prefix: 'P'.repeat(CTX_N), suffix: 'R'.repeat(CTX_N) }), null);
+});
+
+test('a short window anchored at its text\'s edges that crosses a learned value: masked at its true span', () => {
+  // The quote is the whole item (its context is empty: it reached both
+  // edges), and fewer than MATCH_LITERAL_MIN (8) of its characters stay
+  // literal once the values are learned. The edges place it.
+  const cases = [
+    ['a lead word and the value', `To ${E}`],
+    ['the value twice between short words', `a ${E} b ${E} c`],
+    ['two values with one space between', `${E} ${O}`],
+  ];
+  for (const [name, text] of cases) {
+    const r = createRedactor();
+    const before = r.text(text);
+    assert.equal(before, text, `${name}: served whole before learning`);
+    r.addKnown(E, 'email');
+    r.addKnown(O, 'org');
+    const served = r.text(text);
+    assert.ok(!served.includes(E) && !served.includes(O), `${name}: masked after learning`);
+    const got = matchMasked(served, { exact: before, prefix: '', suffix: '' }, { pos: { start: 0, end: before.length } });
+    assert.deepEqual(got, { start: 0, end: served.length, masked: true, how: 'mask', occ: 1 }, name);
+  }
+  // One edge is enough when the context names one: a short prefix (the item's
+  // start) with a full suffix; a full prefix with a short suffix (its end).
+  const tail = ' and then a sentence long enough to fill the suffix.';
+  const head = 'An opening sentence long enough to fill the prefix. ';
+  const r = createRedactor();
+  r.addKnown(E, 'email');
+  r.addKnown(O, 'org');
+  const startServed = r.text(`To ${E}${tail}`);
+  const atStart = matchMasked(startServed, { exact: `To ${E}`, prefix: '', suffix: tail.slice(0, CTX_N) }, { pos: { start: 0, end: 3 + E.length } });
+  assert.deepEqual(atStart, { start: 0, end: 3 + MASK('email').length, masked: true, how: 'mask', occ: 1 }, 'a short prefix: the start edge');
+  const endServed = r.text(`${head}${E} ${O}`);
+  const atEnd = matchMasked(endServed, { exact: `${E} ${O}`, prefix: head.slice(-CTX_N), suffix: '' });
+  assert.deepEqual(atEnd, { start: head.length, end: endServed.length, masked: true, how: 'mask', occ: 1 }, 'a short suffix: the end edge');
+});
+
+test('the edge exception is held to the edges its context names, and to the context length anchors.js records', () => {
+  const { CONFIG } = require('../lib/core/anchors');
+  assert.equal(CONFIG.ctx_n, CTX_N, 'the matcher reads a context shorter than anchors.js records as an edge');
+  const M = MASK('email');
+  // The quote reached the item's start and end; the text now reads with more
+  // on either side of the only place it aligns: the edges do not hold, and
+  // its two literal characters are no evidence of a place.
+  const quote = { exact: `${E} x`, prefix: '', suffix: '' };
+  assert.equal(matchMasked(`lead ${M} x`, quote), null, 'the start edge does not hold');
+  assert.equal(matchMasked(`${M} x tail`, quote), null, 'the end edge does not hold');
+  // One character off an edge is off it: an edge is exactly 0 and exactly
+  // served.length, never near them.
+  assert.equal(matchMasked(` ${M} x`, quote), null, 'one character past the start edge');
+  assert.equal(matchMasked(`${M} x `, quote), null, 'one character short of the end edge');
+  assert.deepEqual(matchMasked(`${M} x`, quote), { start: 0, end: M.length + 2, masked: true, how: 'mask', occ: 1 }, 'both hold');
+  // A full suffix names no edge; a prefix one short of the context length
+  // names the start, a full one does not (and exact alone keeps three literal
+  // characters of 34: no answer either).
+  const served = `${M} x ${MASK('org')}`;
+  const exact = `${E} x ${O.slice(0, 4)}`;
+  const suffix = O.slice(4);
+  assert.equal(suffix.length, CTX_N, 'the fixture: a full suffix');
+  assert.deepEqual(matchMasked(served, { exact, prefix: 'z'.repeat(CTX_N - 1), suffix }), { start: 0, end: served.length, masked: true, how: 'mask', occ: 1 }, 'a prefix one short of the context length: the start edge');
+  assert.equal(matchMasked(served, { exact, prefix: 'z'.repeat(CTX_N), suffix }), null, 'a full prefix and a full suffix: the floor holds');
 });
 
 test('the window is retried with exact alone when its context changed', () => {
