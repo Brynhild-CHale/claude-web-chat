@@ -41,7 +41,7 @@ const path = require('path');
 const { withTempHome, waitUntil } = require('../test-support/helpers');
 const { treesnapRepo } = require('../test-support/treesnap-fixture');
 const { createRedactor } = require('../lib/core/redact');
-const { projectPaths } = require('../lib/core/paths');
+const { projectPaths, userClaudePaths } = require('../lib/core/paths');
 const { runGit } = require('../lib/server/git-run');
 const { retention } = require('../lib/server/mirror/retention');
 const { createRestore } = require('../lib/server/control/restore');
@@ -476,18 +476,26 @@ test('the budget is checked again every BUDGET_CHECK_MS, reading the record each
   assert.ok(h.cleared.includes(armed[0].id), 'stop() clears the armed check');
 });
 
-test('turnDiff: a ready turn whose record is gone names disk-budget-bytes only while a budget is set', async (t) => {
+test('turnDiff: a ready turn whose record is gone names disk-budget-bytes only while a budget is set and its transcript is present', async (t) => {
   const { root, paths } = project(t);
   const ready = { status: 'ready', files: 1, additions: 1, deletions: 0 };
-  const headers = new Map([['tR', { id: 'tR', session_id: S(1), code: ready }]]);
+  const headers = new Map([['tR', { id: 'tR', session_id: S(1), code: ready }], ['tG', { id: 'tG', session_id: S(2), code: ready }]]);
+  // S(2)'s transcript is gone (its project directory stays, the file does not).
+  const slugDir = path.join(userClaudePaths().projectsDir, 'wc-u455-slug');
+  fs.mkdirSync(slugDir, { recursive: true });
+  const transcriptPath = (sid) => (sid === S(2) ? path.join(slugDir, `${S(2)}.jsonl`) : null);
   const store = fakeStore(paths);
-  const h = sourceOn(t, { root, paths, store, headers });
+  const h = sourceOn(t, { root, paths, store, headers, transcriptPath });
   assert.deepEqual(await h.src.api.diff({ turn: 'tR' }), { v: 1, turn_id: 'tR', status: 'unavailable', reason: 'removed', rule: null, note: REMOVED_NOTE });
   writeMirrorSettings(paths, { disk_budget_bytes: GiB });
   assert.deepEqual(await h.src.api.diff({ turn: 'tR' }), {
     v: 1, turn_id: 'tR', status: 'unavailable', reason: 'removed', rule: 'disk-budget-bytes',
     note: 'The mirror\'s own files are kept without a size limit unless you set one with claude-web-chat mirror budget, and then the files it can rebuild go first and a diff linked to a graph node goes last.',
   });
+  // A transcript Claude Code's cleanup deleted names that cleanup, budget or no budget.
+  const gone = await h.src.api.diff({ turn: 'tG' });
+  assert.equal(gone.status, 'unavailable');
+  assert.equal(gone.rule, 'claude-code-cleanup', 'the cleanup, not the budget, removed it');
 });
 
 // ── a real shadow store: the stepped prune ──────────────────────────────────
