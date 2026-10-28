@@ -1107,3 +1107,23 @@ test('a node whose ref session the registry no longer lists answers that turn un
   assert.ok(out.combined, 'the ready turn still combines');
   assert.ok(fs.existsSync(projectPaths(h.root).mirrorNodeDiff('n8')), 'settled: the node cache is written');
 });
+
+test('a registry that lists nothing yet is no removal: the unlisted ref is not answered as the cleanup, and the node cache is not written', async (t) => {
+  const graph = {
+    nodes: new Map([['n9', { id: 'n9', mirror: { v: 1, turns: [{ turn_id: 'pAway', session_id: S2 }] } }]]),
+    topology: new Map([['n9', { id: 'n9', parent_id: null, children: [], created_at: 1 }]]),
+    active: 'n9',
+    snapshotLive: () => ({}),
+  };
+  const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
+  const h = await mirrorOn(t, repo, { graph });
+  assert.deepEqual(h.box.engine.conversations.list(), [], 'the registry lists nothing');
+  const before = await h.mirror.diff({ node: 'n9' });
+  assert.deepEqual(before.turns, [], 'not claimed as Claude Code\'s cleanup');
+  assert.equal(fs.existsSync(projectPaths(h.root).mirrorNodeDiff('n9')), false, 'unsettled: no cache');
+  // Once the registry lists a conversation, the ref it does not list is the cleanup's.
+  h.session(S1);
+  await waitUntil(() => h.box.engine.conversations.list().length > 0, { what: 'a listed conversation' });
+  const after = await h.mirror.diff({ node: 'n9' });
+  assert.deepEqual(after.turns, [CLEANUP('pAway')]);
+});

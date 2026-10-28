@@ -305,3 +305,15 @@ test('GONE_SWEEP_MS is exported; the sweep runs at start after the first discove
   assert.equal(reg.sweepGone(), 0);
   assert.deepEqual(w.has(S4, ['t-4']), { index: true, diffs: [true] });
 });
+
+test('an orphan index whose file names another session is not judged by its slug', async (t) => {
+  const w = world(t, { conversations: () => [] });
+  const gone = w.transcript(S1);
+  w.index(S1, ['t-a']);
+  const idx = JSON.parse(fs.readFileSync(w.p.mirrorIndex(S1), 'utf8'));
+  writeJsonAtomic(w.p.mirrorIndex(S1), { ...idx, session_id: S2 }); // not this file's own record
+  fs.unlinkSync(gone);
+  await w.make().start();
+  assert.deepEqual(w.has(S1, ['t-a']), { index: true, diffs: [true] });
+  assert.equal(w.cleanups().length, 0);
+});
