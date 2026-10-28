@@ -435,6 +435,7 @@ const REVIEWED = new Map([
   ['elements.js fn:find', 'finds the element a write names (a pin or a reference) for the write routes to gate; never serves'],
   ['elements.js fn:memberOn', 'the chain label (F.6, U406): reads a node copy\'s shared flag for a chain member, never serves the pin; a member private now reads "a private element" to anyone who does not see private records'],
   ['elements.js POST /api/elements', 'a write: answers the element it just made, to its maker'],
+  ['elements.js fn:editOf', 'the one edit PATCH and POST /api/elements/:id/send call (F.5, U405): writes the pin it found by id back into state.comments; it answers that pin only to those two routes, each gated first — a private element answers 404 to anyone but a local browser (C-16-2)'],
   ['elements.js PATCH /api/elements/:id', 'a write (edit, re-anchor): answers the element it found by id — gated: a private element answers 404 to anyone but a local browser (C-16-2)'],
   ['elements.js POST /api/elements/:id/reply', 'a write (reply): answers the pin it found by id — gated: a private pin answers 404 to anyone but a local browser (C-16-2)'],
   ['graph.js fn:execWipe', 'deletes the pins whose item is gone (deleteComment); never serves'],

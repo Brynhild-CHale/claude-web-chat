@@ -6,7 +6,8 @@
 // THE GESTURE. The type registers through element-types.js registerElementType
 // with input 'strokes' (the input-mode policy's: a pen or a mouse draws; a
 // finger only with finger-draws on, K.2-8 / D1 (b); a previewed node creates
-// nothing, the overlay's own D2 rule). create() takes every event of the
+// nothing, D2: element-types.js's tray action guard refuses the gesture with
+// READONLY_HINT, TRAY@guard). create() takes every event of the
 // gesture the overlay's one pointer dispatch hands it: the press starts a
 // rubber band drawn in the overlay's layer (#el-layer, viewport coordinates),
 // the moves stretch it, the release measures the grab and posts it, a cancel
@@ -56,13 +57,20 @@
 // or page.js revealMarkdown on the item the grab came from). A STAND-IN look.
 // The card adds no write path of its own.
 //
+// SEND TO CLAUDE (F.5, M2 (a)). The look after the picture settled (the
+// card's Open) carries Send to Claude beside Show on page, at canWrite only
+// (element-types.js maySend): a grab is always shared, so one tap queues it
+// again when no item of its is queued (element-types.js sendToClaude), with
+// the picture its item carried; Push still decides when. Discard and Send
+// run through the tray action guard (TRAY@guard).
+//
 // NOTHING ON THE PAGE (F6 (a)). A sent grab's anchor is a page record the
 // engine never resolves (overlay.js placeOf), so the type's draw is never
 // called for it; it is a no-op all the same.
 //
 // C-15-1..3: nothing here is a security boundary; the device claim is
 // attribution (http.js `device: true`).
-import { registerElementType, typeOf } from './element-types.js';
+import { registerElementType, typeOf, trayAction, maySend, sendToClaude, SEND_LABEL } from './element-types.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
 import { view, $ } from './state.js';
@@ -70,7 +78,7 @@ import { onFrame } from './ws.js';
 import { settingsOf } from './toolbar-state.js';
 import { registerPopover, registerQueueCard } from './shell.js';
 import { queueSnapshot, removeItem } from './queue.js';
-import { revealPane, contentReadOnly } from './mounts.js';
+import { revealPane } from './mounts.js';
 import { revealMarkdown } from './page.js';
 import { effectiveMode, getGlobalTheme } from './theme.js';
 import { deviceKind } from './viewport.js';
@@ -89,7 +97,6 @@ const resendUrl = (itemId) => `/api/queue/items/${encodeURIComponent(String(item
 
 export const CHROME_HINT = 'A box grab is drawn over the page — a pane or its text. That box covered only the chrome around it: draw it again over the page.';
 export const SMALL_HINT = 'Draw a box: press, drag across what Claude should see, then release.';
-export const PREVIEW_HINT = 'This is a previewed node, read-only: set it active to grab from it.';
 export const METADATA_ONLY = 'No picture — Claude gets the metadata only.';
 export const QUEUED_RESEND = 'Still queued: the next Push sends it.';
 export const GONE_HINT = 'That block is no longer on the page.';
@@ -314,7 +321,8 @@ function note(text) {
 // create(input): every event of a gesture the overlay gave the tool.
 function create(input) {
   if (!input) return;
-  if (contentReadOnly()) { dropBand(); note(PREVIEW_HINT); return; }
+  // A previewed node creates nothing (D2): the tray action guard's rule and hint.
+  if (trayAction(() => true, { note }) !== true) { dropBand(); return; }
   const { phase, clientX: x, clientY: y } = input;
   const id = input.event && typeof input.event.pointerId === 'number' ? input.event.pointerId : 1;
   if (phase === 'pointerdown') {
@@ -426,13 +434,17 @@ export function openLook({ elementId, image, queueId = null, before = false } = 
   if (before) {
     acts.append(
       button('Keep in queue', 'bg-keep', () => closeLook()),
-      button('Discard', 'bg-discard', () => { closeLook(); discard(elementId, queueId); }),
+      button('Discard', 'bg-discard', () => trayAction(() => { closeLook(); return discard(elementId, queueId); }, { note })),
     );
   } else {
-    acts.append(
-      button('Show on page', 'bg-show', () => { closeLook(); showOnPage(elementId); }),
-      button('Close', 'bg-close', () => closeLook()),
-    );
+    acts.append(button('Show on page', 'bg-show', () => { closeLook(); showOnPage(elementId); }));
+    if (maySend()) {
+      acts.append(button(SEND_LABEL, 'bg-send', () => trayAction(async () => {
+        const r = await sendToClaude(elementId);
+        note(r.ok ? r.note : r.hint);
+      }, { note })));
+    }
+    acts.append(button('Close', 'bg-close', () => closeLook()));
   }
   el.append(h, frame, acts);
   document.body.appendChild(el);

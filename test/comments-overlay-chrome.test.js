@@ -490,6 +490,7 @@ test('a previewed older node draws its pins read-only: no create with the tool a
     assert.ok(thread.classList.contains('pin-readonly'));
     assert.equal(thread.querySelector('.pin-body').textContent, 'an older note');
     assert.equal(thread.querySelector('.pin-reply-text, .pin-del, .pin-share-cb, .pin-reply-send'), null, 'no reply, share or delete');
+    assert.equal(thread.querySelector('.pin-send'), null, 'no Send to Claude in a preview (F.5, D2)');
     assert.equal(thread.querySelector('.pin-ro-hint').textContent, topbar.READONLY_HINT);
     comments.closePinPop();
   } finally {
@@ -834,6 +835,107 @@ test('the chain: a tap inside a highlight inside a box grab\'s rect records [hig
     closeComposer();
     ov.removeElements('live', ['h7', 'g3']);
     await setLive([]);
+  }
+});
+
+// ── Send to Claude and the tray action guard (F.5, U405; TRAY@guard) ───────
+// The thread's .pin-actions carry Send to Claude beside Delete at canWrite
+// only: one tap is one POST /api/elements/<id>/send with the device claim; a
+// private pin's "Shared with Claude" box reads shared after the answer; an
+// 'already' answer says so. Once a preview has started, the reply, the share,
+// Delete and Send each reach the tray action guard: READONLY_HINT, no request.
+const sendsOf = (id) => shell.calls.filter((c) => c.method === 'POST' && c.url === `/api/elements/${id}/send`);
+const reaimText = () => { const n = W.document.querySelector('#reaim-note .reaim-note-text'); return n ? n.textContent : ''; };
+// The boot's surface again (the tests above leave other panes up).
+async function bootSurface() {
+  await shell.frame(helloFrame({ active: 'n1', mounts: [P1, P2, S14] }));
+  await shell.tick();
+  flush();
+}
+async function openThreadOf(id) {
+  await drawnUntil(() => markersFor(id).length === 1, `the pin ${id} drawn`);
+  markersFor(id)[0].dispatchEvent(new W.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 40 }));
+  const thread = pinPop();
+  assert.ok(thread && thread.classList.contains('pin-thread'), 'the thread opened');
+  return thread;
+}
+
+test('Send to Claude in the thread: beside Delete at canWrite; one tap is one POST; a private pin reads shared after the answer; "already" says so', async () => {
+  const ET = await shell.importApp('element-types.js');
+  const { deviceKind } = await shell.importApp('viewport.js');
+  await bootSurface();
+  const kept = [...live.values()];
+  POS['lead-p2'] = box(220, 260);
+  const pin = pinOn('c60', 'p2', lead('p2'), { text: 'my own note', shared: false });
+  shell.setRoutes({ '/api/elements/c60/send': () => {
+    const next = { ...live.get('c60'), shared: true, v: 2 };
+    live.set('c60', next);
+    return { ok: true, element: next, item: { id: 'q9' } };
+  } });
+  try {
+    await setLive([...kept, pin]);
+    const thread = await openThreadOf('c60');
+    const btn = thread.querySelector('.pin-actions .pin-send');
+    assert.ok(btn, 'drawn');
+    assert.equal(btn.textContent, ET.SEND_LABEL);
+    assert.equal(btn.previousElementSibling, thread.querySelector('.pin-del'), 'beside Delete');
+    assert.equal(thread.querySelector('.pin-share-cb').checked, false, 'private before');
+    shell.click(btn);
+    await waitUntil(() => sendsOf('c60').length === 1 && reaimText() === ET.SENT_NOTE, { what: 'the send and its note' });
+    await settle();
+    assert.equal(sendsOf('c60').length, 1, 'exactly one request');
+    assert.equal(sendsOf('c60')[0].body.device, deviceKind(), 'the device claim');
+    assert.equal(thread.querySelector('.pin-share-cb').checked, true, '"Shared with Claude" reads shared');
+    shell.setRoutes({ '/api/elements/c60/send': { ok: true, already: true, element: live.get('c60'), item: { id: 'q9' } } });
+    shell.click(thread.querySelector('.pin-send'));
+    await waitUntil(() => sendsOf('c60').length === 2 && reaimText() === ET.ALREADY_NOTE, { what: 'the already note' });
+    comments.closePinPop();
+  } finally {
+    shell.setRoutes({});
+    await setLive(kept);
+  }
+});
+
+test('the thread\'s writes reach the tray action guard: once a preview has started, reply, share, Delete and Send to Claude each show READONLY_HINT and send nothing; Send is absent below full', async () => {
+  const ET = await shell.importApp('element-types.js');
+  const st = await shell.importApp('state.js');
+  const toolbar = await shell.importApp('toolbar-state.js');
+  await bootSurface();
+  const kept = [...live.values()];
+  POS['lead-p2'] = box(220, 260);
+  const pin = pinOn('c61', 'p2', lead('p2'), { text: 'guarded' });
+  try {
+    await setLive([...kept, pin]);
+    const thread = await openThreadOf('c61');
+    assert.ok(thread.querySelector('.pin-send'));
+    st.view.previewing = true;
+    try {
+      const n0 = shell.calls.length;
+      thread.querySelector('.pin-reply-text').value = 'a reply';
+      shell.click(thread.querySelector('.pin-reply-send'));
+      const cb = thread.querySelector('.pin-share-cb');
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new W.Event('change', { bubbles: true }));
+      shell.click(thread.querySelector('.pin-send'));
+      shell.click(thread.querySelector('.pin-del'));
+      await settle();
+      assert.equal(shell.calls.length, n0, 'nothing sent');
+      assert.equal(cb.checked, true, 'the share box put back');
+      assert.equal(reaimText(), topbar.READONLY_HINT, 'the guard\'s one hint');
+      assert.equal(ET.trayReadOnly(), true);
+    } finally { st.view.previewing = false; }
+    comments.closePinPop();
+
+    shell.setRoutes({ '/api/toolbar': { ...(await (await W.fetch('/api/toolbar')).json()), canWrite: false } });
+    await toolbar.refreshToolbar();
+    const ro = await openThreadOf('c61');
+    assert.equal(ro.querySelector('.pin-send'), null, 'absent below full');
+    assert.ok(ro.querySelector('.pin-del'), 'the rest of the thread as before');
+    comments.closePinPop();
+  } finally {
+    shell.setRoutes({});
+    await (await shell.importApp('toolbar-state.js')).refreshToolbar();
+    await setLive(kept);
   }
 });
 

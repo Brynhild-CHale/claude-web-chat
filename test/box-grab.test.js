@@ -489,6 +489,40 @@ test('re-send (K.2-17, the queue domain): a delivered element item is raised aga
   assert.equal(queueDomain.resendElement(srv.state, srv.bus, again.item.id).status, 409);
 });
 
+test('Send to Claude (F.5, U405): a delivered grab sent again raises one item with its picture\'s block; a second send while it is queued answers already; a grab still drawing raises nothing (409)', async (t) => {
+  const { api, srv } = await withServer(t);
+  const held = heldCapture();
+  setSeams(srv.state, { findChrome: () => '/fake/chrome', captureImpl: held });
+  await render(api, 'm1');
+  const g = await postGrab(api, 'm1');
+  await waitUntil(() => held.held() === 1, { timeout: 5000, what: 'the render in flight' });
+  const early = await api.post(`/api/elements/${g.id}/send`, { device: 'desktop' });
+  assert.equal(early.status, 409, `still drawing: ${early.text}`);
+  assert.equal(early.json.error, 'not raised');
+  assert.deepEqual(elementItems(srv), [], 'the picture first (B2\'s note): no item while it is drawn');
+  held.releaseAll();
+  await waitUntil(() => elementItems(srv).length === 1, { timeout: 5000, what: 'the settled grab\'s item' });
+  const first = elementItems(srv)[0];
+  assert.equal(first.image.state, 'ready');
+  const again = await ok(api.post(`/api/elements/${g.id}/send`, { device: 'desktop' }), 'send while queued');
+  assert.deepEqual([again.already, again.item.id], [true, first.id]);
+  await ok(api.post('/api/queue/push', {}));
+  assert.deepEqual(elementItems(srv), []);
+  const sent = await ok(api.post(`/api/elements/${g.id}/send`, { device: 'desktop' }), 'send after the push');
+  assert.equal(sent.already, undefined);
+  const items = elementItems(srv);
+  assert.equal(items.length, 1, 'one item');
+  assert.equal(items[0].id, sent.item.id);
+  assert.notEqual(items[0].id, first.id, 'a fresh item');
+  assert.deepEqual([items[0].element_id, items[0].v, items[0].type, items[0].image], [g.id, 1, 'box-grab', first.image], 'the same element, version, type and picture');
+  assert.equal(items[0].resent_from, undefined, 'a send, not a re-send');
+  // The kept picture when the capture is no longer live (trimmed past the cap).
+  await ok(api.post('/api/queue/push', {}));
+  srv.state.captures = srv.state.captures.filter((c) => c.id !== g.grab.capture);
+  const kept = await ok(api.post(`/api/elements/${g.id}/send`, { device: 'desktop' }), 'send with the capture gone');
+  assert.deepEqual(elementItems(srv).find((it) => it.id === kept.item.id).image, first.image, 'the picture its last raise carried');
+});
+
 // ── the relaunch (K.2-63, K.2-64) ───────────────────────────────────────────
 
 test('re-send, the route (K.2-17): POST /api/queue/items/:id/resend raises a delivered item again (200), refuses a queued one (409) and an unknown one (404), and is refused remotely', async (t) => {

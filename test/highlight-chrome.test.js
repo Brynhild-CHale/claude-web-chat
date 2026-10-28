@@ -541,6 +541,7 @@ test('a previewed older node paints its highlights and refuses create and edit; 
     assert.ok(pop, 'the note opened');
     assert.equal(pop.querySelector('textarea'), null, 'nothing to edit');
     assert.equal(pop.querySelector('.hl-save, .hl-delete'), null, 'no save, no delete');
+    assert.equal(pop.querySelector('.hl-send'), null, 'no Send to Claude in a preview (F.5, D2)');
     assert.equal(pop.querySelector('.hl-pop-hint').textContent, topbar.READONLY_HINT);
     W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   } finally {
@@ -737,6 +738,98 @@ test('a highlight marker re-placed after a pane drag — the overlay\'s layout w
   } finally {
     delete W.Range.prototype.getClientRects;
     RECTS = null;
+    await clearLive();
+  }
+});
+
+// ── Send to Claude (F.5, U405; RULED M2 (a), J2 (a); TRAY@guard) ───────────
+// The popover's Send to Claude, beside Delete: drawn at canWrite only, one tap
+// one POST /api/elements/<id>/send with the device claim; a private
+// highlight's "Visible to Claude" box reads shared after the answer; an
+// 'already' answer says so; a send asked once a preview started is refused by
+// the tray action guard with READONLY_HINT and sends nothing.
+const sends = (id) => shell.calls.filter((c) => c.method === 'POST' && c.url === `/api/elements/${id}/send`);
+const noteText = () => { const n = W.document.querySelector('#reaim-note .reaim-note-text'); return n ? n.textContent : ''; };
+async function openPopOn(rec) {
+  await pushLive(rec);
+  await drawnUntil(() => markersFor(rec.id).length === 1, 'the marker');
+  markersFor(rec.id)[0].dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  const pop = W.document.querySelector('.hl-pop');
+  assert.ok(pop, 'the note opened');
+  return pop;
+}
+const closePop = () => W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+test('Send to Claude: beside Delete at canWrite; one tap is one POST to /api/elements/<id>/send; a private highlight reads shared after the answer; "already" says so', async () => {
+  const ET = await shell.importApp('element-types.js');
+  const rec = recOn('p1', lead('p1').firstChild, 0, 4, { shared: false, note: 'mine' });
+  shell.setRoutes({ [`/api/elements/${rec.id}/send`]: () => {
+    const next = { ...live.get(rec.id), shared: true, v: 2 };
+    live.set(rec.id, next);
+    return { ok: true, element: next, item: { id: 'q7' } };
+  } });
+  try {
+    const pop = await openPopOn(rec);
+    const btn = pop.querySelector('.hl-pop-acts .hl-send');
+    assert.ok(btn, 'drawn');
+    assert.equal(btn.textContent, ET.SEND_LABEL);
+    assert.equal(btn.previousElementSibling, pop.querySelector('.hl-delete'), 'beside Delete');
+    assert.equal(pop.querySelector('.hl-share input').checked, false, 'private before');
+    btn.click();
+    await waitUntil(() => sends(rec.id).length === 1 && noteText() === ET.SENT_NOTE, { what: 'the send and its note' });
+    await shell.tick(5);
+    assert.equal(sends(rec.id).length, 1, 'exactly one request');
+    assert.equal(sends(rec.id)[0].body.device, 'desktop', 'the device claim');
+    assert.equal(pop.querySelector('.hl-share input').checked, true, '"Visible to Claude" reads shared');
+    // Save now carries the answered version (no stale base_v).
+    pop.querySelector('textarea.hl-note').value = 'mine, edited';
+    pop.querySelector('.hl-save').click();
+    await waitUntil(() => shell.calls.some((c) => c.method === 'PATCH' && c.url === `/api/elements/${rec.id}`), { what: 'the PATCH' });
+    assert.deepEqual(shell.calls.filter((c) => c.method === 'PATCH').at(-1).body, { payload: { note: 'mine, edited' }, base_v: 2 });
+
+    shell.setRoutes({ [`/api/elements/${rec.id}/send`]: { ok: true, already: true, element: live.get(rec.id), item: { id: 'q7' } } });
+    const again = await openPopOn(live.get(rec.id));
+    again.querySelector('.hl-send').click();
+    await waitUntil(() => sends(rec.id).length === 2 && noteText() === ET.ALREADY_NOTE, { what: 'the already note' });
+    closePop();
+  } finally {
+    shell.setRoutes({});
+    await clearLive();
+  }
+});
+
+test('Send to Claude is absent below full (canWrite false); a send asked once a preview has started is refused with READONLY_HINT and sends nothing', async () => {
+  const ET = await shell.importApp('element-types.js');
+  const st = await shell.importApp('state.js');
+  const rec = recOn('p1', lead('p1').firstChild, 0, 4);
+  try {
+    shell.setRoutes({ '/api/toolbar': { ...(await (await W.fetch('/api/toolbar')).json()), canWrite: false } });
+    await toolbar.refreshToolbar();
+    assert.equal(toolbar.toolbarState().canWrite, false);
+    let pop = await openPopOn(rec);
+    assert.equal(pop.querySelector('.hl-send'), null, 'absent below full');
+    closePop();
+    shell.setRoutes({});
+    await toolbar.refreshToolbar();
+    assert.equal(toolbar.toolbarState().canWrite, true);
+    pop = await openPopOn(rec);
+    const btn = pop.querySelector('.hl-send');
+    assert.ok(btn);
+    st.view.previewing = true;
+    try {
+      const n0 = shell.calls.length;
+      btn.click();
+      pop.querySelector('.hl-delete').click();
+      pop.querySelector('.hl-save').click();
+      await shell.tick(5);
+      assert.equal(shell.calls.length, n0, 'nothing sent');
+      assert.equal(noteText(), topbar.READONLY_HINT, 'the guard\'s one hint');
+      assert.equal(ET.trayReadOnly(), true);
+    } finally { st.view.previewing = false; }
+    closePop();
+  } finally {
+    shell.setRoutes({});
+    await toolbar.refreshToolbar();
     await clearLive();
   }
 });

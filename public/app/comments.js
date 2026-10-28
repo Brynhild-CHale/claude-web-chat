@@ -87,6 +87,15 @@
 // overlay's preview set, from the node's lean_elements; their threads from one
 // GET ?type=comment&node=<id>), and a thread opened there shows its messages
 // and READONLY_HINT, with no reply, share or delete; nothing is created there.
+// The rule is element-types.js's tray action guard (TRAY@guard): the tool's
+// create, the composer's Pin, and the thread's reply, share, Delete and Send
+// to Claude each run through trayAction, and the thread draws its read-only
+// branch by trayReadOnly() — one rule, one hint, no check of this module's.
+//
+// SEND TO CLAUDE (F.5, M2 (a)). The thread's .pin-actions carry Send to
+// Claude beside Delete, at canWrite only (element-types.js maySend): one tap
+// shares a private pin and queues it, or queues a shared one that is not
+// queued (element-types.js sendToClaude); Push still decides when.
 // Documents (a preview document, an export, a replay) draw no pin (F-DOCS a).
 //
 // THE CARD (K.2-11). A shared pin's queue item ({kind: 'comment', comment_id})
@@ -142,7 +151,6 @@ function load() {
   }
   return loading;
 }
-const readOnly = () => (mods ? mods.mounts.contentReadOnly() : !!view.previewing);
 function note(text) {
   if (mods && text) mods.topbar.showReaimNote(text);
 }
@@ -413,7 +421,9 @@ function locatorOf(target, root, mount) {
 
 // The overlay calls this with the click of a gesture the policy gave the tool.
 function create(input, ctx) {
-  if (readOnly()) { note(mods && mods.topbar.READONLY_HINT); return; }
+  mods.types.trayAction(() => createLive(input, ctx), { note });
+}
+function createLive(input, ctx) {
   if (!input || input.phase !== 'click') return;
   if (input.md != null) { createOnMarkdown(input, ctx); return; }
   const { mount, root, target } = input;
@@ -574,8 +584,7 @@ function openComposer(spot, x, y) {
     const share = el.querySelector('.pin-share-cb').checked;
     closePop();
     setPinMode(false);
-    if (readOnly()) { note(mods.topbar.READONLY_HINT); return; }
-    postPin(spot, text, share).catch((e) => console.error('[web-chat] comments: the pin was not sent', e));
+    mods.types.trayAction(() => postPin(spot, text, share).catch((e) => console.error('[web-chat] comments: the pin was not sent', e)), { note });
   });
 }
 
@@ -618,7 +627,7 @@ function openThreadChooser(pins, x, y) {
 function openThread(id, x, y) {
   const pin = recordOf(id);
   if (!pin) { closePop(); return; }
-  const ro = readOnly();
+  const ro = !mods || mods.types.trayReadOnly();
   const el = document.createElement('div');
   el.className = 'popover pin-pop pin-thread' + (ro ? ' pin-readonly' : '');
   el.dataset.id = pin.id;
@@ -636,20 +645,21 @@ function openThread(id, x, y) {
         + '<input type="checkbox" class="pin-share-cb" ' + (pin.shared !== false ? 'checked' : '') + '> Shared with Claude</label>'
         + '<span class="pin-spacer"></span>'
         + '<button class="pin-del" title="Delete this comment">Delete</button>'
+        + (mods.types.maySend() ? '<button class="pin-send" title="Share it with Claude and queue it: Push sends it">' + esc(mods.types.SEND_LABEL) + '</button>' : '')
         + '<button class="pin-reply-send" title="Send reply (↵)">Send</button></div></div>');
   openPop(el, x, y, 300, 260);
   if (ro) return;
-  // A write asked for once a preview has started is refused with the hint.
-  const refused = () => {
-    if (!readOnly()) return false;
-    note(mods.topbar.READONLY_HINT);
-    return true;
-  };
+  // Every write runs through the tray action guard: one asked for once a
+  // preview has started is refused with READONLY_HINT and sends nothing.
+  const guard = (run) => mods.types.trayAction(run, { note });
   const ta = el.querySelector('.pin-reply-text');
   ta.focus();
-  const send = async () => {
+  const send = () => {
     const text = ta.value.trim();
-    if (!text || refused()) return;
+    if (!text) return undefined;
+    return guard(() => sendReply(text));
+  };
+  const sendReply = async (text) => {
     const old = el.querySelector('.pin-reply-err');
     if (old) old.remove();
     const r = await request('POST', `${ELEMENTS_PATH}/${encodeURIComponent(pin.id)}/reply`,
@@ -680,21 +690,36 @@ function openThread(id, x, y) {
     closePop();
     setPinMode(false);
   });
-  el.querySelector('.pin-share-cb').addEventListener('change', async (ev) => {
-    if (refused()) { ev.target.checked = !ev.target.checked; return; }
-    const r = await request('PATCH', `${ELEMENTS_PATH}/${encodeURIComponent(pin.id)}`,
-      { body: { shared: ev.target.checked }, device: true });
-    const next = r.ok && r.body ? (r.body.element || r.body.pin) : null;
-    if (validPin(next)) applyOne(next);
-    else if (!r.ok) note(r.hint);
-    else refresh();
+  const shareCb = el.querySelector('.pin-share-cb');
+  shareCb.addEventListener('change', (ev) => {
+    const box = ev.target;
+    const done = guard(async () => {
+      const r = await request('PATCH', `${ELEMENTS_PATH}/${encodeURIComponent(pin.id)}`,
+        { body: { shared: box.checked }, device: true });
+      const next = r.ok && r.body ? (r.body.element || r.body.pin) : null;
+      if (validPin(next)) applyOne(next);
+      else if (!r.ok) note(r.hint);
+      else refresh();
+    });
+    if (done === mods.types.TRAY_REFUSAL) box.checked = !box.checked;
   });
-  el.querySelector('.pin-del').addEventListener('click', async () => {
-    if (refused()) return;
+  el.querySelector('.pin-del').addEventListener('click', () => guard(async () => {
     closePop();
     const r = await request('DELETE', `${ELEMENTS_PATH}/${encodeURIComponent(pin.id)}`, { body: {}, device: true });
     if (r.ok) dropOne(pin.id); else note(r.hint);
-  });
+  }));
+  const toClaude = el.querySelector('.pin-send');
+  if (toClaude) {
+    toClaude.addEventListener('click', () => guard(async () => {
+      const r = await mods.types.sendToClaude(pin.id);
+      if (!r.ok) { note(r.hint); return; }
+      if (validPin(r.element)) {
+        applyOne(r.element);
+        shareCb.checked = r.element.shared !== false;   // "Shared with Claude" reads shared
+      }
+      note(r.note);
+    }));
+  }
 }
 
 // ── the rail's card (K.2-11) ────────────────────────────────────────────────

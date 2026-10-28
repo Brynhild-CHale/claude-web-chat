@@ -1727,6 +1727,35 @@ const PATTERNS = [
       'lib/server/domain/captures.js': 1,
     },
   },
+  {
+    // A tray write checking the preview by hand (TRAY@guard, U405; PLAN-T3
+    // §2.4 note 8; DECISIONS.md L.5). public/app/element-types.js
+    // `trayAction` is the one tray action guard: every element tray's write
+    // (a pin's reply, share and delete, the highlight popover's, the box
+    // grab's, Send to Claude, a plug-in type's tray in tranche 4) runs
+    // through it, and while a committed node is previewed it refuses with
+    // READONLY_HINT and sends nothing — one rule, one hint; `trayReadOnly`
+    // draws a tray's read-only branch by the same rule. A per-type
+    // contentReadOnly() check beside it is a second rule with its own hint
+    // (box-grab.js's PREVIEW_HINT was one). Counted as written, comments
+    // included, word-bounded.
+    name: 'contentReadOnly( (a preview check outside the tray action guard)',
+    home: 'public/app/element-types.js — `trayAction` / `trayReadOnly` (the one tray action guard, over mounts.js `contentReadOnly`)',
+    what: 'checking the preview by hand in a tray, or anywhere past the guard and the predicate\'s own homes',
+    roots: ['public', 'lib'],
+    re: /\bcontentReadOnly\(/g,
+    baseline: {
+      // The predicate's home: the pane content guards and layoutLocked.
+      'public/app/mounts.js': 8,
+      // tools.js refusal(): arming a tool is not a tray write (its own notice).
+      'public/app/tools.js': 1,
+      // The guard itself: trayReadOnly, trayAction, maySend and its header (2).
+      'public/app/element-types.js': 5,
+      // The report path's flush: a pane's write is not reported while a
+      // preview is up (P-17), a comment naming it and its two passes.
+      'public/app/overlay-report.js': 3,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).

@@ -353,3 +353,66 @@ test('targetsOf(\'comment\') is \'items\'; a pack type registering \'panes\' is 
     await shell.frame({ type: 'markdown:remove', id: 'md-t', order: ['p1'], claude_order: ['p1'] });
   }
 });
+
+// ── the tray action guard and Send to Claude (TRAY@guard; F.5, U405) ────────
+// One guard for every tray's write: live, it runs the action; while a
+// committed node is previewed it shows READONLY_HINT and runs nothing (the
+// trays' own tests drive each write through it). sendToClaude(id) is one
+// POST /api/elements/<id>/send with the device claim, for every registered
+// type; a refusal answers its hint for the caller's note.
+test('the tray action guard: a write runs live; while previewing it is refused with READONLY_HINT and sends no request', async () => {
+  const { respond } = require('../test-support/chrome-shell');
+  const st = await shell.importApp('state.js');
+  const topbar = await shell.importApp('topbar.js');
+  let ran = 0;
+  assert.equal(ET.trayReadOnly(), false);
+  assert.equal(ET.trayAction(() => { ran++; return 'done'; }), 'done', 'live: the action runs and answers');
+  assert.equal(ran, 1);
+  shell.setRoutes({ '/api/elements/h5/send': respond({ ok: true }) });
+  const noted = [];
+  st.view.previewing = true;
+  try {
+    assert.equal(ET.trayReadOnly(), true);
+    const n0 = shell.calls.length;
+    const r = ET.trayAction(() => { ran++; return 'done'; }, { note: (t) => noted.push(t) });
+    assert.equal(r, ET.TRAY_REFUSAL);
+    assert.deepEqual([r.ok, r.refused, r.hint], [false, 'read-only', topbar.READONLY_HINT]);
+    assert.equal(ran, 1, 'the action never ran');
+    assert.deepEqual(noted, [topbar.READONLY_HINT], 'the caller\'s note shows the one hint');
+    ET.trayAction(() => { ran++; });
+    assert.equal(W.document.querySelector('#reaim-note .reaim-note-text').textContent, topbar.READONLY_HINT, 'no note given: the topbar\'s');
+    const s = await ET.sendToClaude('h5');
+    assert.deepEqual([s.ok, s.hint], [false, topbar.READONLY_HINT], 'sendToClaude goes through the guard');
+    assert.equal(ET.maySend(), false, 'no Send to Claude is drawn in a preview');
+    assert.equal(shell.calls.length, n0, 'no request');
+  } finally {
+    st.view.previewing = false;
+    shell.setRoutes({});
+  }
+});
+
+test('sendToClaude(id): one POST to /api/elements/<id>/send with the device claim; the answer\'s element and note; a 4xx answers its hint', async () => {
+  const { respond } = require('../test-support/chrome-shell');
+  const { deviceKind } = await shell.importApp('viewport.js');
+  const sent = () => shell.calls.filter((c) => c.method === 'POST' && c.url.startsWith('/api/elements/') && c.url.endsWith('/send'));
+  const n0 = sent().length;
+  shell.setRoutes({
+    '/api/elements/h5/send': respond({ ok: true, element: { id: 'h5', type: 'highlight', shared: true, v: 2 }, item: { id: 'q3' } }),
+    '/api/elements/c9/send': respond({ ok: true, already: true, element: { id: 'c9', type: 'comment', shared: true }, item: { id: 'q4' } }),
+    '/api/elements/x1/send': respond({ error: 'not a type that wakes Claude', hint: 'this element type sends nothing to Claude' }, { status: 400 }),
+  });
+  try {
+    assert.equal(ET.maySend(), true, 'live, full access: drawn');
+    const a = await ET.sendToClaude('h5');
+    assert.equal(sent().length, n0 + 1, 'exactly one request');
+    const call = sent().at(-1);
+    assert.equal(call.url, '/api/elements/h5/send');
+    assert.deepEqual(call.body, { device: deviceKind() }, 'the device claim, nothing else');
+    assert.deepEqual([a.ok, a.already, a.element.shared, a.item.id, a.note], [true, false, true, 'q3', ET.SENT_NOTE]);
+    const b = await ET.sendToClaude('c9');
+    assert.deepEqual([b.ok, b.already, b.note], [true, true, ET.ALREADY_NOTE]);
+    const c = await ET.sendToClaude('x1');
+    assert.deepEqual([c.ok, c.status, c.hint], [false, 400, 'this element type sends nothing to Claude'], 'the refusal\'s hint');
+    assert.equal(sent().length, n0 + 3);
+  } finally { shell.setRoutes({}); }
+});
