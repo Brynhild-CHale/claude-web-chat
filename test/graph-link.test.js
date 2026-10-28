@@ -593,12 +593,13 @@ test('summaries: per-node turn counts; a supersede through the turn machine show
 // conversation exported before it was unloaded (the index, in the real source).
 
 function lazyRig(t) {
-  const box = { listed: new Set(), parsed: new Set(), exported: new Map(), calls: [], r: null };
+  const box = { listed: new Set(), parsed: new Set(), exported: new Map(), calls: [], r: null, unavailable: false };
   const extra = {
     conversations: { get: (cid) => (box.listed.has(cid) ? { id: cid } : null) },
     indexing: (cid) => box.listed.has(cid) && !box.parsed.has(cid),
     ensureConversation: async (cid) => {
       box.calls.push(cid);
+      if (box.unavailable) return { ok: false, unavailable: true }; // the mirror switched off mid-parse
       box.r.tm.restoreTurns(cid, box.exported.get(cid) || []);
       box.parsed.add(cid);
       return { ok: true };
@@ -685,6 +686,49 @@ test('nodeTurns: a ref of a listed conversation reads {indexing: true} and kicks
   const after = r.api.nodeTurns(node).turns;
   assert.deepEqual(after[0], { ...r.model.serializeTurn('pA'), role: 'commit' }, 'the header after the parse');
   assert.equal(after[1].unavailable, true);
+});
+
+test('nodeTurns: a conversation the budget unloads after its parse reads {indexing: true} again and starts the parse again, then the header', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  const node = r.commit({ session_id: S1, prompt_id: 'pA' });
+  box.unload(S1, { hear: false });
+  assert.equal(r.api.nodeTurns(node).turns[0].indexing, true);
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1]);
+  const header = { ...r.model.serializeTurn('pA'), role: 'commit' };
+  assert.deepEqual(r.api.nodeTurns(node).turns[0], header);
+
+  box.unload(S1);
+  assert.equal(r.api.nodeTurns(node).turns[0].indexing, true, 'unloaded: indexing again');
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1, S1], 'the inspector\'s read starts the parse again');
+  assert.deepEqual(r.api.nodeTurns(node).turns[0], header, 'the header is back');
+});
+
+test('summaries: a background parse that comes back unavailable (the mirror switched off mid-parse) is kicked again by a later read', async (t) => {
+  const box = await lazyRig(t);
+  const { r } = box;
+  box.listed.add(S1);
+  box.parsed.add(S1);
+  r.turn(S1, 'pA');
+  const node = r.commit({ session_id: S1, prompt_id: 'pA' });
+  box.unload(S1, { hear: false });
+  box.unavailable = true;
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1]);
+  box.unavailable = false;
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1, S1], 'kicked again');
+  assert.equal(r.api.summaries().nodes[node].turns, 1);
+  r.api.summaries();
+  await flushKicks();
+  assert.deepEqual(box.calls, [S1, S1], 'a parse that came back ok is not kicked again');
 });
 
 test('bootCutoff: the newest node\'s created_at, null with no node or no graph', async (t) => {
