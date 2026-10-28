@@ -687,7 +687,9 @@ if (RECORD) {
 
 // The legend's rows exactly as index.html carried them by hand at the branch
 // base (public/index.html :428-451 at f7d4b03): the oracle the generated legend
-// equals byte for byte under the default bindings.
+// equals byte for byte under the default bindings. One row added since, by a
+// granted edit: U404's last-tool key (F.4, 'tools.last', Space), after the
+// tools' rows.
 const LEGEND_ROWS = [
   '<h3>Keyboard</h3>',
   '<div class="legend-row"><span>Command palette</span><span class="keys"><kbd>⌘K</kbd></span></div>',
@@ -696,6 +698,7 @@ const LEGEND_ROWS = [
   '<div class="legend-row"><span>Bookmark node</span><span class="keys"><kbd>B</kbd></span></div>',
   '<div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>',
   '<div class="legend-row"><span>Pin comment</span><span class="keys"><kbd>C</kbd></span></div>',
+  '<div class="legend-row"><span>Put down / pick up the last tool</span><span class="keys"><kbd>Space</kbd></span></div>',
   '<div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>',
   '<div class="legend-row"><span>Toggle queue rail</span><span class="keys"><kbd>Q</kbd></span></div>',
   '<div class="legend-row"><span>Push queue → Claude</span><span class="keys"><kbd>P</kbd></span></div>',
@@ -806,6 +809,93 @@ test('a single key never fires in a text field: C typed into a pane <textarea> i
   await shell.tick();
   assert.equal(e.defaultPrevented, false, 'the character goes into the field');
   assert.equal(W.document.body.classList.contains('pin-mode'), false, 'pin mode stays off');
+});
+
+// ── the last-tool key (U404; F.4, REQ@tool-toggle-key M1) ────────────────────
+// Space puts the armed tool down and picks the last one up again — a chrome
+// action ('tools.last') on the registry; Space is not on the matrix's axes,
+// which stay as recorded. A focused control and a field keep Space's native
+// meaning (the shell prevents nothing); the graph overlay keeps its glance.
+async function lastToolCase(t) {
+  await reset();
+  const ov = await shell.importApp('overlay.js');
+  const tools = await shell.importApp('tools.js');
+  t.after(async () => { tools.disarm(); await reset(); });
+  tools.disarm();
+  shell.key('c');   // comment's arm key: the comment tool armed, then the last tool
+  await shell.tick();
+  assert.deepEqual(ov.armed(), { type: 'comment', profile: null }, 'precondition: the comment tool armed');
+  return { ov, tools };
+}
+const pinMode = () => W.document.body.classList.contains('pin-mode');
+
+test('Space with nothing focused puts the comment tool down and picks it up again, its default prevented', async (t) => {
+  const { ov } = await lastToolCase(t);
+  blur();
+  let e = shell.key(' ');
+  await shell.tick();
+  assert.equal(e.defaultPrevented, true, 'the page does not scroll');
+  assert.equal(ov.armed(), null, 'put down');
+  assert.equal(pinMode(), false);
+  e = shell.key(' ');
+  await shell.tick();
+  assert.equal(e.defaultPrevented, true);
+  assert.deepEqual(ov.armed(), { type: 'comment', profile: null }, 'picked up again');
+  assert.equal(pinMode(), true);
+  // #stage (focused by a click on the page) is no control.
+  $('stage').focus();
+  e = shell.key(' ', { target: $('stage') });
+  await shell.tick();
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(ov.armed(), null, 'from #stage too');
+});
+
+test('Space on a focused pane button, a chrome button or a chrome checkbox is the control\'s: no toggle, nothing prevented', async (t) => {
+  const { ov } = await lastToolCase(t);
+  const btn = W.document.createElement('button');
+  btn.textContent = 'a chrome button';
+  const box = W.document.createElement('input');
+  box.type = 'checkbox';
+  $('topbar').append(btn, box);
+  t.after(() => { btn.remove(); box.remove(); });
+  for (const [name, el] of [['a pane button', pane.button], ['a chrome button', btn], ['a chrome checkbox', box]]) {
+    blur();
+    el.focus();
+    const e = shell.key(' ', { target: el });
+    await shell.tick();
+    assert.equal(e.defaultPrevented, false, `${name}: Space keeps its native meaning`);
+    assert.deepEqual(ov.armed(), { type: 'comment', profile: null }, `${name}: the tool stays armed`);
+  }
+});
+
+test('Space typed into a pane <textarea> is the textarea\'s', async (t) => {
+  const { ov } = await lastToolCase(t);
+  const ta = W.document.createElement('textarea');
+  pane.host.shadowRoot.appendChild(ta);
+  t.after(() => ta.remove());
+  ta.focus();
+  const e = shell.key(' ', { target: ta });
+  await shell.tick();
+  assert.equal(e.defaultPrevented, false, 'the space goes into the field');
+  assert.deepEqual(ov.armed(), { type: 'comment', profile: null });
+});
+
+test('Space with the graph overlay open toggles the glance, not the tool', async (t) => {
+  const { ov } = await lastToolCase(t);
+  gv.openOverlay();
+  await shell.tick(5);
+  const node = W.document.querySelector('#graph-svg g[data-id], #gv-world .gv-srow[data-id]');
+  assert.ok(node, 'precondition: the graph drew a node');
+  node.dispatchEvent(new W.MouseEvent('click', { bubbles: true }));
+  await shell.tick(5);
+  assert.equal(gv.hasFloatPreview(), false);
+  blur();
+  const e = shell.key(' ');
+  await shell.tick(5);
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(gv.hasFloatPreview(), true, 'the glance is up');
+  assert.deepEqual(ov.armed(), { type: 'comment', profile: null }, 'the tool is as it was');
+  gv.toggleFloatPreview();
 });
 
 test('⌘K from a chrome field still opens the palette', async (t) => {

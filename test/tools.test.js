@@ -69,6 +69,15 @@ test('the chrome boots with the built-ins listed and pinned (the generated defau
   assert.equal(armedType(), null);
 });
 
+// Before any test arms a tool: nothing has ever been armed in this chrome.
+test('toggleLast with nothing ever armed is the no-last-tool notice and arms nothing (F.4)', () => {
+  notices.length = 0;
+  const r = tools.toggleLast();
+  assert.equal(r.ok, false);
+  assert.deepEqual(notices, [{ kind: 'no-last-tool', text: 'No tool to pick up yet' }]);
+  assert.equal(overlay.armed(), null);
+});
+
 test('armSlot(2) arms pinned[1]; armSlot(7) is the slot-empty notice; a slot resolves at press time to what the project pins now', async () => {
   notices.length = 0;
   assert.equal(tools.armSlot(2).ok, true);
@@ -102,6 +111,49 @@ test('toggle on the armed tool puts it down; another profile of it switches inst
   tools.arm('comment');
   tools.toggle(inputMode.POINTER);
   assert.equal(overlay.armed(), null, 'the pointer is never "armed": toggling it leaves nothing armed');
+});
+
+test('toggleLast: a tool armed puts it down; again picks the same type and profile up; arming the pointer leaves the last tool as it was (F.4)', async () => {
+  tools.disarm();
+  tools.armTool('highlight', 'Wide');
+  assert.deepEqual(tools.toggleLast(), { ok: true, armed: null }, 'armed → put down');
+  assert.equal(overlay.armed(), null);
+  assert.equal(tools.toggleLast().ok, true);
+  assert.deepEqual(overlay.armed(), { type: 'highlight', profile: 'Wide' }, 'the same type and profile picked up again');
+  tools.arm(inputMode.POINTER);
+  assert.equal(overlay.armed(), null);
+  tools.toggleLast();
+  assert.deepEqual(overlay.armed(), { type: 'highlight', profile: 'Wide' }, 'the pointer is not a tool: the last tool is still highlight · Wide');
+  tools.toggle(inputMode.POINTER);
+  tools.arm('comment');
+  tools.toggleLast();
+  assert.equal(overlay.armed(), null);
+  tools.toggleLast();
+  assert.deepEqual(overlay.armed(), { type: 'comment', profile: null }, 'the last armed, whatever the tool');
+  assert.equal('last' in tools, false, 'no second armed state is exported');
+  tools.disarm();
+});
+
+test('toggleLast\'s refusals are armTool\'s notices: read-only while previewing, view-only below full access (F.4)', async () => {
+  tools.arm('box-grab');
+  tools.disarm();
+  await topbar.previewNode('n1');
+  await shell.tick(5);
+  notices.length = 0;
+  assert.equal(tools.toggleLast().ok, false);
+  assert.deepEqual(notices, [{ kind: 'read-only', text: 'Read-only while previewing n1.0', type: 'box-grab' }]);
+  assert.equal(overlay.armed(), null);
+  topbar.leavePreview({ activeId: 'n2', restoreSnapshot: true });
+  await shell.tick(5);
+  await serve(answer({ canWrite: false, canWriteUser: false }));
+  notices.length = 0;
+  assert.equal(tools.toggleLast().ok, false);
+  assert.deepEqual(notices, [{ kind: 'view-only', text: 'View only: tools need full access', type: 'box-grab' }]);
+  assert.equal(overlay.armed(), null);
+  await serve(answer());
+  assert.equal(tools.toggleLast().ok, true);
+  assert.deepEqual(overlay.armed(), { type: 'box-grab', profile: null }, 'picked up again once it may be');
+  tools.disarm();
 });
 
 test('a hidden tool is armed without pinning ("visiting"): no PATCH is sent', async () => {
