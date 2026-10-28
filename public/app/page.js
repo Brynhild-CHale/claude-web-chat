@@ -537,6 +537,11 @@ export function layoutPage() {
   if (segs.length && !layoutLocked()) want.push(tailElement());
   else if (tailEl) tailEl.remove();
 
+  // The title's meta line sits beside the items, and is no element of the
+  // sequence: left in, it would shift every element after it, and the loop
+  // below would move each run (a moved <iframe> reloads). syncPageMeta, at the
+  // end, puts it back after the title item.
+  for (const el of main.querySelectorAll(':scope > .page-meta')) el.remove();
   want.forEach((el, i) => {
     const cur = main.children[i];
     if (cur !== el) main.insertBefore(el, cur || null);
@@ -573,6 +578,12 @@ function updatedAt() {
 // The topbar title slot and the H1's meta line (node · panes · updated), plus
 // the read-only badge when this is a preview. Cheap, and called from the
 // topbar's updateChip too, because the node label and time arrive with the graph.
+//
+// The meta line is the title item's next sibling on the page, never inside the
+// item: the [data-md-id] block is what the comment tool and the resolver read
+// (lib/core/anchors.js alignBlock walks every text node of it against the
+// item's source map), so a meta line inside it left the title item's heading and
+// prose unpinnable (PQ-F-3). page.css pulls it up under the item.
 export function syncPageMeta() {
   const main = $('main');
   const t = pageTitle();
@@ -586,6 +597,7 @@ export function syncPageMeta() {
   const h = headingEl(t.md, t.slug);
   if (!h) return;
   h.classList.add('page-h1');
+  const item = mdEls.get(t.md);
   const meta = document.createElement('div');
   meta.className = 'page-meta';
   const n = panes.size;
@@ -602,7 +614,7 @@ export function syncPageMeta() {
     badge.textContent = 'PREVIEW · READ-ONLY';
     meta.appendChild(badge);
   }
-  h.insertAdjacentElement('afterend', meta);
+  item.insertAdjacentElement('afterend', meta);
 }
 
 // The Contents nav (≥1100px — app.css hides it narrower): one row per # / ##

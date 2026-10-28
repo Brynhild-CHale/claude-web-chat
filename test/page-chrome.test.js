@@ -157,7 +157,9 @@ after(async () => {
 test('#main is the page: prose between grid runs, panes placed by col / span / rows', () => {
   const kids = [...$('main').children].map((el) => (el.classList.contains('md-block') ? `md:${el.dataset.mdId}`
     : el.classList.contains('page-run') ? `run:${el.dataset.anchor}` : el.className));
-  assert.deepEqual(kids, ['md:md-title', 'run:md-title', 'md:md-res', 'run:md-res', 'md:md-disc', 'run:md-disc', 'page-tail'],
+  // The title's meta line is the title item's next sibling, outside the item
+  // (U403a, PQ-F-3): no element of the sequence, it sits between the item and its run.
+  assert.deepEqual(kids, ['md:md-title', 'page-meta', 'run:md-title', 'md:md-res', 'run:md-res', 'md:md-disc', 'run:md-disc', 'page-tail'],
     'each run of consecutive panes is its own grid, anchored by the markdown before it; the page ends in the tail');
   const inRun = (a) => [...run(a).querySelectorAll('.run-grid > .pane')].map((p) => p.dataset.paneId);
   assert.deepEqual(inRun('md-title'), ['a', 'b']);
@@ -187,8 +189,8 @@ test('the page title: the first # heading, in the topbar and as the H1 with its 
   assert.equal($('page-title').textContent, 'Experiment 12');
   const h1 = md('md-title').querySelector('h1');
   assert.ok(h1.classList.contains('page-h1'), 'the title heading is styled as the page H1');
-  const meta = h1.nextElementSibling;
-  assert.ok(meta && meta.classList.contains('page-meta'), 'its meta line follows it');
+  const meta = md('md-title').nextElementSibling;
+  assert.ok(meta && meta.classList.contains('page-meta'), 'its meta line follows the title item (U403a: outside it)');
   assert.match(meta.textContent, /^n1\.0 · 4 panes · updated \d\d:\d\d/);
   assert.equal(meta.querySelector('.page-badge'), null, 'no read-only badge on the live page');
   assert.equal(W.document.querySelectorAll('.page-h1').length, 1, 'only the first # heading is the title');
@@ -366,7 +368,7 @@ test('a preview shows the previewed page read-only, and folds live page frames a
   await tick(60);
   assert.ok($('main').classList.contains('preview-readonly'), 'precondition: previewing n2');
   assert.equal($('page-title').textContent, 'Old page');
-  const meta = md('md-old').querySelector('.page-meta');
+  const meta = md('md-old').nextElementSibling;
   assert.match(meta.textContent, /^n1\.1 · 2 panes/);
   assert.equal(meta.querySelector('.page-badge').textContent, 'PREVIEW · READ-ONLY');
   assert.equal(W.document.querySelector('#main .page-tail'), null, "no 'Claude's next turn' tail on a read-only page");
