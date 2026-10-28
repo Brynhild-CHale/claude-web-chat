@@ -214,6 +214,9 @@ mod [verb]          the web-chat mod, a Claude Code plugin (2.1.287+) that
                     status — off opts this project out (remembered), on switches
                     it back on, status says 'on', 'off (opted out)' or
                     'tier 1: <reason>' and which sessions attached (mod.md)
+excerpts [verb]     on | off | status: whether Claude receives the words of the
+                    passages you pin, quoted as data (status says which and
+                    whether it is this project's record or the default)
 install             the setup step on its own, and how updates reach a project
 update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back,
