@@ -850,6 +850,41 @@ test('Space with nothing focused puts the comment tool down and picks it up agai
   assert.equal(ov.armed(), null, 'from #stage too');
 });
 
+// U404b (F.4, K.2-157 (4); ruled b): the toggle fires once per press. A held
+// Space sends one keydown, then auto-repeats with e.repeat set; before the
+// flag each one flipped the tool down and up again.
+test('a held Space (a keydown, then auto-repeats) toggles the last tool exactly once; every repeat is claimed', async (t) => {
+  const { ov } = await lastToolCase(t);
+  const flips = [];
+  const off = ov.onArmedChange((a) => flips.push(a ? a.type : null));
+  t.after(off);
+  blur();
+  let e = shell.key(' ');
+  await shell.tick();
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(ov.armed(), null, 'put down on the press');
+  for (let i = 0; i < 6; i++) {
+    e = shell.key(' ', { repeat: true });
+    await shell.tick();
+    assert.equal(e.defaultPrevented, true, `repeat ${i + 1}: claimed, so the page does not scroll`);
+    assert.equal(ov.armed(), null, `repeat ${i + 1}: the tool stays down`);
+  }
+  assert.deepEqual(flips, [null], 'one flip for the whole hold');
+  // Released and pressed again: it picks the tool up, once.
+  e = shell.key(' ');
+  await shell.tick();
+  for (let i = 0; i < 3; i++) { shell.key(' ', { repeat: true }); await shell.tick(); }
+  assert.deepEqual(ov.armed(), { type: 'comment', profile: null }, 'picked up again, and held there');
+  assert.deepEqual(flips, [null, 'comment']);
+  // A focused sink (#stage) is no exception: one flip per press.
+  $('stage').focus();
+  shell.key(' ', { target: $('stage') });
+  for (let i = 0; i < 3; i++) shell.key(' ', { target: $('stage'), repeat: true });
+  await shell.tick();
+  assert.equal(ov.armed(), null, 'from #stage: put down once');
+  assert.deepEqual(flips, [null, 'comment', null]);
+});
+
 test('Space on a focused pane button, a chrome button or a chrome checkbox is the control\'s: no toggle, nothing prevented', async (t) => {
   const { ov } = await lastToolCase(t);
   const btn = W.document.createElement('button');
