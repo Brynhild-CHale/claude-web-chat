@@ -538,3 +538,54 @@ test('appendVersion refuses a malformed version before anything is written', (t)
 test('createElementLog needs an injected redactor', () => {
   assert.throws(() => createElementLog({ file: path.join(os.tmpdir(), 'x.jsonl') }), TypeError);
 });
+
+// ── comment@2: a chained comment (F.6, U406) ────────────────────────────────
+
+test('comment@2: a chained version round-trips through a reopen, its node copy matches it (copyMatches), and a node copy holding a chain mints under comment@2 (a repair too)', (t) => {
+  const { CHAIN_SCHEMA, SCHEMA, commentSchemaOf } = el;
+  const { createElementStore } = require('../lib/server/domain/elements');
+  const dir = tmpDir(t);
+  const log = openIn(t, dir);
+  const chained = copy({ chain: ['h7', 'g3'] });
+  const payload = payloadOf(chained);
+  const rec = log.appendVersion({ id: 'c1', schema: commentSchemaOf(payload), payload, at: 1 });
+  assert.equal(rec.schema, CHAIN_SCHEMA);
+  assert.deepEqual(rec.payload.chain, ['h7', 'g3']);
+  assert.ok(copyMatches(chained, rec), 'the node copy (the pin with its chain) matches');
+  assert.ok(copyMatches({ ...chained, v: 1, writer: { class: 'user' } }, rec), 'keys payloadOf does not read stay outside');
+  assert.ok(!copyMatches(copy(), rec), 'the same copy with no chain is another payload');
+  log.close();
+  const again = openIn(t, dir);
+  const back = again.version('c1', 1);
+  assert.equal(back.schema, CHAIN_SCHEMA);
+  assert.deepEqual(back.payload, payload);
+  assert.ok(copyMatches(chained, back));
+  again.close();
+
+  // The store's mint (attachLive → resolveCopy): a copy with a chain and no
+  // version in the log mints a comment@2 version; a chainless one comment@1.
+  const dir2 = tmpDir(t);
+  const store = createElementStore({ paths: projectPaths(dir2), state: { comments: [] }, graph: { active: null }, redactor: createRedactor(), bootId: 'test:1', now: () => 5 });
+  t.after(() => store.close());
+  const pins = store.attachLive([copy({ id: 'c4', seq: 4, chain: ['h2', 'c1'] }), copy({ id: 'c5', seq: 5 })]);
+  assert.equal(store.version('c4', pins[0].v).schema, CHAIN_SCHEMA);
+  assert.deepEqual(store.version('c4', pins[0].v).payload.chain, ['h2', 'c1']);
+  assert.ok(copyMatches(pins[0], store.version('c4', pins[0].v)));
+  assert.equal(store.version('c5', pins[1].v).schema, SCHEMA);
+  // A repair of a lost chained version re-appends it under comment@2.
+  const r = store.repair({ id: 'c9', v: 1, copy: copy({ id: 'c9', seq: 9, chain: ['g3'] }) });
+  assert.equal(r.repaired, true);
+  assert.equal(store.version('c9', 1).schema, CHAIN_SCHEMA);
+  // An edit, a reply and a re-anchor of a chained pin keep comment@2 and the chain.
+  const pin = store.project('c4', pins[0].v);
+  assert.deepEqual(pin.chain, ['h2', 'c1']);
+  const e = store.edit(pin, { text: 'edited' });
+  assert.equal(store.version('c4', e.pin.v).schema, CHAIN_SCHEMA);
+  const rp = store.reply(e.pin, { text: 'a reply' });
+  assert.equal(store.version('c4', rp.v).schema, CHAIN_SCHEMA);
+  const ra = store.reanchor(rp, { anchor: { mount: 'm2', selector: 'p', text: 'x', ordinal: 0 } });
+  assert.equal(store.version('c4', ra.pin.v).schema, CHAIN_SCHEMA);
+  assert.deepEqual(ra.pin.chain, ['h2', 'c1']);
+  // The chainless pin's projection carries no chain key.
+  assert.equal('chain' in store.project('c5', pins[1].v), false);
+});

@@ -71,6 +71,18 @@
 // "<heading>"`. Its marker sits in the item's left margin (SOURCE_GLYPH, the
 // overlay's margin glyph); Show on page falls back to page.js revealMarkdown.
 //
+// THE CHAIN (F.6, U406; RULED L7 (a), O5 (a) "chain"): no control. create()
+// asks the overlay for the live elements under the press (overlay.js
+// elementsAt: a highlight, a box grab, another comment — every type it draws,
+// never a list here), smallest first, keeps at most CHAIN_MAX of them and
+// posts their ids as payload.chain; the daemon validates each (a live
+// element) and records a comment@2 version. The composer's, the thread's and
+// the marker title's anchor line name the chain smallest first ("on highlight
+// h7 › box grab g3"), a member no longer on the page as "a removed highlight
+// h7" (no silent detach: the comment's own anchor still resolves on its own).
+// The pane and section levels are get_comments' chain_label (the daemon's,
+// derived at read time); the chrome shows the members only.
+//
 // PREVIEWS ARE READ-ONLY (D2). A previewed older node draws its own pins (the
 // overlay's preview set, from the node's lean_elements; their threads from one
 // GET ?type=comment&node=<id>), and a thread opened there shows its messages
@@ -102,6 +114,10 @@ export const SOURCE_RETRY_CHARS = 240;
 // A markdown pin's glyph offsets from the item's left edge at the block's
 // first line: the 26px pin wholly in the gutter, its top level with the line.
 export const SOURCE_GLYPH = Object.freeze({ dx: -27, dy: -4 });
+// The most elements a comment's chain names: lib/core/element-log CHAIN_MAX,
+// which the daemon checks (test/comments-overlay-chrome.test.js holds the two
+// equal; the chrome cannot import the node-only log).
+export const CHAIN_MAX = 8;
 
 const isObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
 const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -297,7 +313,9 @@ const marks = new Set();          // the containers this type drew
 function titleOf(ids) {
   return ids.map((id) => {
     const p = recordOf(id);
-    return p ? (p.shared === false ? '(private) ' : '') + (p.text || '') : '';
+    if (!p) return '';
+    const chain = chainLabel(p.chain);
+    return (p.shared === false ? '(private) ' : '') + (p.text || '') + (chain ? ` (${chain})` : '');
   }).filter(Boolean).join('  •  ');
 }
 // The overlay hands the group the pins resolved to one element (or a section,
@@ -335,6 +353,50 @@ function retitle() {
   }
 }
 
+// ── the chain (F.6) ─────────────────────────────────────────────────────────
+// id → the type last seen for it (the pick's answer, a live row), so a member
+// that has left the page is still named by its type.
+const chainTypes = new Map();
+const typeWords = (t) => String(t).replace(/-/g, ' ');
+// What the drawn set holds of `id` now: its type, or null when it is gone.
+function memberType(id) {
+  const scope = mods ? mods.overlay.drawnScopeOf() : (view.previewing ? 'preview' : 'live');
+  if (scope === 'live' ? liveComments.some((c) => c.id === id) : previewComments.has(id)) return TYPE;
+  const row = mods ? mods.overlay.elementsOf(scope).find((r) => r.id === id) : null;
+  return row ? (row.type || 'element') : null;
+}
+// The chain's label, smallest first: "on highlight h7 › box grab g3", a member
+// gone from the page "a removed highlight h7". '' for no chain.
+function chainLabel(ids) {
+  if (!Array.isArray(ids) || !ids.length) return '';
+  const parts = ids.filter((id) => typeof id === 'string' && id).map((id) => {
+    const t = memberType(id);
+    if (t) { chainTypes.set(id, t); return `${typeWords(t)} ${id}`; }
+    return `a removed ${typeWords(chainTypes.get(id) || 'element')} ${id}`;
+  });
+  return parts.length ? 'on ' + parts.join(' › ') : '';
+}
+// The anchor line's chain, after the breadcrumb ('' for no chain).
+function chainHtml(ids) {
+  const label = chainLabel(ids);
+  return label ? '<span class="pin-path-sep"> · </span><span class="pin-chain">' + esc(label) + '</span>' : '';
+}
+// The live elements under a press, smallest first (overlay.js elementsAt):
+// their ids, each once, at most CHAIN_MAX.
+function chainAt(x, y) {
+  if (!mods || typeof mods.overlay.elementsAt !== 'function') return [];
+  const out = [];
+  let hits = [];
+  try { hits = mods.overlay.elementsAt(x, y); } catch { hits = []; }
+  for (const h of Array.isArray(hits) ? hits : []) {
+    if (!h || typeof h.id !== 'string' || !h.id || !h.type || out.includes(h.id)) continue;
+    chainTypes.set(h.id, h.type);
+    out.push(h.id);
+    if (out.length >= CHAIN_MAX) break;
+  }
+  return out;
+}
+
 // ── create: the tool's tap ──────────────────────────────────────────────────
 const cssEsc = (s) => ((typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') ? CSS.escape(s) : s);
 // The legacy locator get_comments' anchor_label reads: the element's own tag and
@@ -359,7 +421,8 @@ function create(input, ctx) {
   const A = (ctx && ctx.anchors) || (window.__wcMount && window.__wcMount.anchor) || null;
   let record = null;
   try { record = A && typeof A.record === 'function' ? A.record(root, target, { mount }) : null; } catch { record = null; }
-  openComposer({ record, locator: locatorOf(target, root, mount) }, input.clientX, input.clientY);
+  const chain = chainAt(input.clientX, input.clientY);
+  openComposer({ record, locator: locatorOf(target, root, mount), chain }, input.clientX, input.clientY);
 }
 
 // ── a pin on a markdown item (F.3) ──────────────────────────────────────────
@@ -422,11 +485,13 @@ function createOnMarkdown(input, ctx) {
   // in rendered text may still be over it in source: one retry, shorter.
   const record = at((A.CONFIG && A.CONFIG.quote_max) || 2000) || at(SOURCE_RETRY_CHARS);
   if (!record) { note(TOO_LONG_HINT); return; }
-  openComposer({ record, locator: mdLocatorOf(itemEl, block, md, record) }, input.clientX, input.clientY);
+  const chain = chainAt(input.clientX, input.clientY);
+  openComposer({ record, locator: mdLocatorOf(itemEl, block, md, record), chain }, input.clientX, input.clientY);
 }
 
 async function postPin(spot, text, shared) {
   const body = { type: TYPE, anchor: spot.record || spot.locator, payload: { text, shared } };
+  if (Array.isArray(spot.chain) && spot.chain.length) body.payload.chain = spot.chain.slice();
   if (spot.record) body.locator = spot.locator;
   const r = await request('POST', ELEMENTS_PATH, { body, device: true });
   if (!r.ok) { note(r.hint); return; }
@@ -488,7 +553,7 @@ function openComposer(spot, x, y) {
   const el = document.createElement('div');
   el.className = 'popover pin-pop';
   el.innerHTML =
-    '<div class="pin-anchor">' + anchorPath(spot.locator, 40) + '</div>'
+    '<div class="pin-anchor">' + anchorPath(spot.locator, 40) + chainHtml(spot.chain) + '</div>'
     + '<textarea class="pin-text" rows="3" placeholder="Comment…"></textarea>'
     + '<label class="pin-share"><input type="checkbox" class="pin-share-cb"' + (shared ? ' checked' : '') + '> Share with Claude</label>'
     + '<div class="pin-actions"><button class="pin-cancel">Cancel</button><button class="pin-save">Pin</button></div>';
@@ -562,7 +627,7 @@ function openThread(id, x, y) {
     + '<div class="pin-who">' + (m.author === 'claude' ? 'Claude' : 'You') + '</div>'
     + '<div class="pin-body">' + esc(m.text || '') + '</div></div>').join('');
   el.innerHTML =
-    '<div class="pin-anchor">' + anchorPath(locatorOfPin(pin), 32) + '</div>'
+    '<div class="pin-anchor">' + anchorPath(locatorOfPin(pin), 32) + chainHtml(pin.chain) + '</div>'
     + '<div class="pin-thread-msgs">' + msgs + '</div>'
     + (ro
       ? '<div class="pin-reply-err pin-ro-hint">' + esc(mods ? mods.topbar.READONLY_HINT : '') + '</div>'

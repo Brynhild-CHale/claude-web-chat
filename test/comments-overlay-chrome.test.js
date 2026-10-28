@@ -757,6 +757,86 @@ test('a shared pin\'s queue item is drawn through the card registered for \'comm
   assert.equal(railRow('q-c70'), null);
 });
 
+// ── the chain (F.6, U406; RULED L7 (a), O5 (a) "chain") ─────────────────────
+// No control: the comment's tap asks the overlay for the live elements under
+// the press (overlay.js elementsAt), smallest first, and posts their ids as
+// payload.chain; the composer's, the thread's and the marker title's anchor
+// line name them; a member gone from the page reads "a removed …".
+function tapAt(el, x, y, pointerId) {
+  pe(el, 'pointerdown', 'mouse', pointerId, { clientX: x, clientY: y });
+  pe(el, 'pointerup', 'mouse', pointerId, { clientX: x, clientY: y });
+  el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId, clientX: x, clientY: y }));
+}
+
+test('the chain: a tap inside a highlight inside a box grab\'s rect records [highlight, box grab] and the composer shows its label; a tap on bare content records none; the thread\'s anchor line and the marker title name the chain; a removed member reads removed', async () => {
+  const { CHAIN_MAX } = require('../lib/core/element-log');
+  assert.equal(comments.CHAIN_MAX, CHAIN_MAX, 'the chrome\'s cap is the log\'s');
+  assert.equal(typeof ov.elementsAt, 'function');
+  await setLive([]);
+  // A highlight over p2's lead (a range anchor), and a box grab over the
+  // top-left of p2's content box (a page record the overlay never resolves).
+  POS['lead-p2'] = box(80, 90);
+  const leadP2 = lead('p2');
+  const range = W.document.createRange();
+  range.selectNodeContents(leadP2);
+  const hl = { id: 'h7', v: 1, type: 'highlight', anchor: anchors.recordRange(rootOf('p2'), range, { mount: 'p2' }), shared: true };
+  const grab = { id: 'g3', v: 1, type: 'box-grab', shared: true,
+    anchor: { v: 1, kind: 'page', item: 'p2', mount: 'p2', rect: { x: 50, y: 50, w: 200, h: 200 }, box: { w: 1024, h: 768 }, scroll: { top: 0, left: 0 }, viewport: { w: 1024, h: 768 } } };
+  ov.upsertElements('live', [hl, grab]);
+  await drawnUntil(() => ov.elementsAt(100, 100).some((h) => h.id === 'h7'), 'the highlight resolved under the point');
+  try {
+    assert.deepEqual(ov.elementsAt(100, 100).map((h) => [h.id, h.type]), [['h7', 'highlight'], ['g3', 'box-grab']], 'smallest first');
+    assert.deepEqual(ov.elementsAt(600, 600).map((h) => h.id), [], 'nothing under a bare point');
+
+    ov.setArmed('comment');
+    tapAt(leadP2, 100, 100, 41);
+    assert.ok(pinPop() && pinPop().querySelector('.pin-text'), 'the composer opened');
+    assert.equal(pinPop().querySelector('.pin-chain').textContent, 'on highlight h7 › box grab g3');
+    assert.match(pinPop().querySelector('.pin-anchor').textContent, /^p2 › lead of p2 · on highlight h7 › box grab g3$/);
+    const n = posts.length;
+    pinPop().querySelector('.pin-text').value = 'over both';
+    shell.click(pinPop().querySelector('.pin-save'));
+    await waitUntil(() => posts.length > n, { timeout: 4000, what: 'the post' });
+    assert.deepEqual(posts[posts.length - 1].payload.chain, ['h7', 'g3'], 'posted as payload.chain, smallest first');
+
+    // Bare content: no chain, and the anchor line is as before.
+    ov.setArmed('comment');
+    tapAt(rootOf('p2').querySelector('p.more'), 600, 600, 42);
+    assert.ok(pinPop() && pinPop().querySelector('.pin-text'), 'the composer opened');
+    assert.equal(pinPop().querySelector('.pin-chain'), null);
+    assert.match(pinPop().querySelector('.pin-anchor').textContent, /^p2 › more of p2$/);
+    const m = posts.length;
+    shell.click(pinPop().querySelector('.pin-save'));
+    await waitUntil(() => posts.length > m, { timeout: 4000, what: 'the bare post' });
+    assert.equal('chain' in posts[posts.length - 1].payload, false, 'no chain key for a bare comment');
+    ov.setArmed(null);
+
+    // A chained pin's thread and marker title.
+    const pin = pinOn('c80', 'p2', leadP2, { chain: ['h7', 'g3'] });
+    await setLive([pin]);
+    await drawnUntil(() => !!markersFor('c80')[0], 'the chained pin drawn');
+    const marker = markersFor('c80')[0];
+    assert.match(marker.title, /c80 text \(on highlight h7 › box grab g3\)$/);
+    marker.click();
+    assert.equal(pinPop().querySelector('.pin-thread .pin-chain, .pin-chain').textContent, 'on highlight h7 › box grab g3');
+    comments.closePinPop();
+
+    // The highlight removed: the label says so; the comment stays.
+    ov.removeElements('live', ['h7']);
+    await setLive([{ ...pin, v: 2 }]);
+    await drawnUntil(() => !!markersFor('c80')[0], 'the pin still drawn');
+    assert.match(markersFor('c80')[0].title, /\(on a removed highlight h7 › box grab g3\)$/);
+    markersFor('c80')[0].click();
+    assert.equal(pinPop().querySelector('.pin-chain').textContent, 'on a removed highlight h7 › box grab g3');
+    comments.closePinPop();
+  } finally {
+    ov.setArmed(null);
+    closeComposer();
+    ov.removeElements('live', ['h7', 'g3']);
+    await setLive([]);
+  }
+});
+
 // ── get_comments, replayed against a real daemon ───────────────────────────
 // Last: the shell's globals go back first (a daemon's timers need Node's own).
 const captured = { body: null };

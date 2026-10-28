@@ -2,7 +2,8 @@
 // (4); rulings E-STORE a, F-GRAB a, U326@id-prefix a): lib/core/element-log.js.
 //
 // The one writer of element text admits exactly the keys of its version's
-// schema (comment@1, highlight@1, box-grab@1) and hashes exactly those; a
+// schema (comment@1, highlight@1, box-grab@1, and comment@2 — a chained
+// comment, F.6 U406) and hashes exactly those; a
 // legacy comment hashes byte for byte as it did at 39b52f8; an engine anchor
 // record is stored as given in a comment; ids are minted per type over the one
 // seq counter, and the tolerant scanner reads every letter; nodeDigest covers
@@ -20,7 +21,7 @@ const { stableHash } = require('../lib/core/stable-json');
 const { projectPaths } = require('../lib/core/paths');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 
-const { createElementLog, payloadOf, convertAnchor, copyMatches, nodeDigest, maxElementSeqIn, SCHEMAS, SCHEMA, PAYLOAD_KEYS, ID_PREFIX } = el;
+const { createElementLog, payloadOf, convertAnchor, copyMatches, nodeDigest, maxElementSeqIn, SCHEMAS, SCHEMA, PAYLOAD_KEYS, ID_PREFIX, CHAIN_SCHEMA, CHAIN_MAX, commentSchemaOf } = el;
 
 function tmpDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-element-schemas-'));
@@ -37,7 +38,7 @@ function openIn(t, dir, opts = {}) {
 }
 
 // The schema names, read from the table (the ratchet keeps their literals there).
-const [COMMENT, HIGHLIGHT, BOX_GRAB] = Object.keys(SCHEMAS);
+const [COMMENT, HIGHLIGHT, BOX_GRAB, CHAINED] = Object.keys(SCHEMAS);
 
 const ENGINE_ELEMENT = {
   v: 1, kind: 'element', mount: 'm1',
@@ -60,8 +61,9 @@ const boxGrabPayload = (over = {}) => ({
 
 // ── the table ───────────────────────────────────────────────────────────────
 
-test('SCHEMAS: three frozen rows; SCHEMA and PAYLOAD_KEYS are comment@1\'s name and keys', () => {
-  assert.deepEqual(Object.keys(SCHEMAS), [COMMENT, HIGHLIGHT, BOX_GRAB]);
+test('SCHEMAS: four frozen rows; SCHEMA and PAYLOAD_KEYS are comment@1\'s name and keys; comment@2 is comment@1\'s keys + chain', () => {
+  assert.deepEqual(Object.keys(SCHEMAS), [COMMENT, HIGHLIGHT, BOX_GRAB, CHAINED]);
+  assert.deepEqual(Object.keys(SCHEMAS), ['comment@1', 'highlight@1', 'box-grab@1', 'comment@2']);
   assert.ok(Object.isFrozen(SCHEMAS));
   for (const row of Object.values(SCHEMAS)) { assert.ok(Object.isFrozen(row)); assert.ok(Object.isFrozen(row.keys)); }
   assert.equal(SCHEMA, COMMENT);
@@ -70,8 +72,11 @@ test('SCHEMAS: three frozen rows; SCHEMA and PAYLOAD_KEYS are comment@1\'s name 
   assert.equal(SCHEMAS[COMMENT].normalise, payloadOf);
   assert.deepEqual(SCHEMAS[HIGHLIGHT].keys, ['anchor', 'shared', 'color', 'note']);
   assert.deepEqual(SCHEMAS[BOX_GRAB].keys, ['anchor', 'shared', 'rect', 'meta', 'grab']);
+  assert.deepEqual(SCHEMAS[CHAINED].keys, [...SCHEMAS[COMMENT].keys, 'chain'], 'comment@1\'s keys, then chain');
+  assert.equal(SCHEMAS[CHAINED].normalise, payloadOf);
+  assert.ok(!SCHEMAS[COMMENT].keys.includes('chain'), 'never a chain key on comment@1 (the rows are additive)');
   assert.deepEqual(Object.fromEntries(Object.entries(SCHEMAS).map(([k, r]) => [k, r.type])),
-    { [COMMENT]: 'comment', [HIGHLIGHT]: 'highlight', [BOX_GRAB]: 'box-grab' });
+    { [COMMENT]: 'comment', [HIGHLIGHT]: 'highlight', [BOX_GRAB]: 'box-grab', [CHAINED]: 'comment' });
   assert.deepEqual(ID_PREFIX, { comment: 'c', highlight: 'h', 'box-grab': 'g' });
   assert.ok(Object.isFrozen(ID_PREFIX));
 });
@@ -133,7 +138,7 @@ test('appendVersion: a non-comment payload is jsonClean\'d (undefined dropped) w
 test('appendVersion: an unknown schema and a stray key per schema are refused, naming the schema; nothing lands', (t) => {
   const dir = tmpDir(t);
   const log = openIn(t, dir);
-  for (const schema of ['comment@2', 'note@1', '', null, 7, 'toString', '__proto__']) {
+  for (const schema of ['comment@3', 'note@1', '', null, 7, 'toString', '__proto__']) {
     assert.throws(() => log.appendVersion({ id: 'x1', schema, payload: { anchor: null }, at: 1 }),
       (e) => e instanceof TypeError && /unknown schema/.test(e.message) && e.message.includes(JSON.stringify(schema)), `schema ${String(schema)}`);
   }
@@ -273,6 +278,85 @@ test('comment@1: a version storing an engine anchor round-trips and its copy mat
   const again = openIn(t, dir);
   assert.deepEqual(again.version('c1', 1).payload.anchor, ENGINE_ELEMENT);
   assert.ok(copyMatches(copy, again.version('c1', 1)));
+});
+
+// ── comment@2: the chain (F.6, U406) ────────────────────────────────────────
+
+test('CHAIN_SCHEMA is read from the table (the comment row whose keys hold chain); commentSchemaOf picks it only for a payload carrying a chain', () => {
+  const fromTable = Object.keys(SCHEMAS).filter((k) => SCHEMAS[k].type === 'comment' && SCHEMAS[k].keys.includes('chain'));
+  assert.deepEqual(fromTable, [CHAIN_SCHEMA]);
+  assert.equal(CHAIN_SCHEMA, CHAINED);
+  assert.equal(CHAIN_MAX, 8);
+  assert.equal(commentSchemaOf(payloadOf({ text: 'x', anchor: null })), SCHEMA);
+  assert.equal(commentSchemaOf(payloadOf({ text: 'x', anchor: null, chain: [] })), SCHEMA, 'an empty chain is no chain');
+  assert.equal(commentSchemaOf(payloadOf({ text: 'x', anchor: null, chain: ['h7'] })), CHAIN_SCHEMA);
+  assert.equal(commentSchemaOf(null), SCHEMA);
+});
+
+test('payloadOf: a chain is kept (a copy) only when it is a non-empty list of strings; a chainless payload hashes byte-equal to comment@1\'s (the 39b52f8 copies)', (t) => {
+  const chain = ['h7', 'g3'];
+  const p = payloadOf({ text: 't', anchor: null, chain });
+  assert.deepEqual(p.chain, chain);
+  assert.notEqual(p.chain, chain, 'a copy');
+  for (const bad of [[], null, undefined, 'h7', [7], ['h7', null]]) {
+    assert.equal('chain' in payloadOf({ text: 't', anchor: null, chain: bad }), false, JSON.stringify(bad));
+  }
+  // Every legacy copy, with an empty or absent chain, hashes as recorded at 39b52f8.
+  const log = openIn(t, tmpDir(t));
+  let i = 0;
+  for (const [name, { copy, hash }] of Object.entries(LEGACY)) {
+    for (const c of [copy, { ...copy, chain: [] }]) {
+      const payload = payloadOf(c);
+      assert.equal(stableHash(payload), hash, `${name}: the hash`);
+      assert.equal(commentSchemaOf(payload), COMMENT);
+      const rec = log.appendVersion({ id: `c${++i}`, schema: commentSchemaOf(payload), payload, at: 1 });
+      assert.equal(rec.schema, COMMENT);
+      assert.equal(rec.payload_hash, hash, `${name}: payload_hash`);
+      assert.ok(copyMatches(copy, rec), `${name}: the 0.8.5 copy still finds its version`);
+    }
+  }
+});
+
+test('comment@2: a chained payload round-trips and its copy matches; the chain is checked (at most CHAIN_MAX typed ids, each once); a chainless comment@2 and a chain under comment@1 are refused', (t) => {
+  const dir = tmpDir(t);
+  const log = openIn(t, dir);
+  const copy = { id: 'c1', text: 'on the highlight', shared: true, replies: [], anchor: ENGINE_RANGE, chain: ['h7', 'g3'] };
+  const payload = payloadOf(copy);
+  const rec = log.appendVersion({ id: 'c1', schema: commentSchemaOf(payload), payload, at: 1 });
+  assert.equal(rec.schema, CHAINED);
+  assert.deepEqual(rec.payload.chain, ['h7', 'g3']);
+  assert.equal(rec.payload_hash, stableHash(payload), 'the chain is hashed');
+  assert.ok(copyMatches(copy, rec));
+  assert.ok(!copyMatches({ ...copy, chain: undefined }, rec), 'a copy without the chain is another payload');
+  log.close();
+  const again = openIn(t, dir);
+  assert.deepEqual(again.version('c1', 1).payload.chain, ['h7', 'g3']);
+  assert.equal(again.version('c1', 1).schema, CHAINED);
+  // The refusals, naming comment@2; nothing lands.
+  const ids = (n) => Array.from({ length: n }, (_, k) => `h${k + 1}`);
+  assert.doesNotThrow(() => again.appendVersion({ id: 'c2', schema: CHAINED, payload: payloadOf({ text: 'max', anchor: null, chain: ids(CHAIN_MAX) }), at: 1 }));
+  const before = again.stats().versions;
+  for (const [why, chain, re] of [
+    ['CHAIN_MAX + 1', ids(CHAIN_MAX + 1), /at most 8/],
+    ['a duplicate', ['h7', 'g3', 'h7'], /each id once/],
+    ['a non-typed id', ['h7', 'x9'], /typed element ids/],
+    ['a hand-written id', ['note-1'], /typed element ids/],
+    ['a letter with no digits', ['h'], /typed element ids/],
+  ]) {
+    assert.throws(() => again.appendVersion({ id: 'c3', schema: CHAINED, payload: { ...payloadOf({ text: 'x', anchor: null }), chain }, at: 1 }),
+      (e) => e instanceof TypeError && e.message.includes(CHAINED) && re.test(e.message), why);
+  }
+  assert.throws(() => again.appendVersion({ id: 'c3', schema: CHAINED, payload: payloadOf({ text: 'x', anchor: null }), at: 1 }),
+    (e) => e instanceof TypeError && e.message.includes(CHAINED) && /non-empty list/.test(e.message), 'a chainless comment@2');
+  // A stray chain under comment@1 (the default schema) is refused naming comment@1.
+  for (const opts of [{}, { schema: COMMENT }]) {
+    assert.throws(() => again.appendVersion({ id: 'c3', ...opts, payload: payloadOf({ text: 'x', anchor: null, chain: ['h7'] }), at: 1 }),
+      (e) => e instanceof TypeError && e.message.includes(`a ${COMMENT} payload`) && /not chain/.test(e.message));
+  }
+  assert.equal(again.stats().versions, before, 'no refused write landed');
+  // The chain rides a comment only: a highlight's payload never holds one.
+  assert.throws(() => again.appendVersion({ id: 'h9', schema: HIGHLIGHT, payload: { ...highlightPayload(), chain: ['g3'] }, at: 1 }),
+    (e) => e.message.includes(HIGHLIGHT) && /not chain/.test(e.message));
 });
 
 // ── typed mints ─────────────────────────────────────────────────────────────

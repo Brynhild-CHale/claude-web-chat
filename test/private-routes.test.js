@@ -433,6 +433,7 @@ const REVIEWED = new Map([
   // The element API (U325, routes/elements.js): the comment's writes (moved
   // from routes/comments.js, which answers only its 410 since U327a), every type.
   ['elements.js fn:find', 'finds the element a write names (a pin or a reference) for the write routes to gate; never serves'],
+  ['elements.js fn:memberOn', 'the chain label (F.6, U406): reads a node copy\'s shared flag for a chain member, never serves the pin; a member private now reads "a private element" to anyone who does not see private records'],
   ['elements.js POST /api/elements', 'a write: answers the element it just made, to its maker'],
   ['elements.js PATCH /api/elements/:id', 'a write (edit, re-anchor): answers the element it found by id — gated: a private element answers 404 to anyone but a local browser (C-16-2)'],
   ['elements.js POST /api/elements/:id/reply', 'a write (reply): answers the pin it found by id — gated: a private pin answers 404 to anyone but a local browser (C-16-2)'],

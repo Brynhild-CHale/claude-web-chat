@@ -473,7 +473,12 @@ test('comments on markdown: a heading pin reads on section "…" and follows the
   // jsdom does no layout: the item and its lines get boxes inside the well.
   const MD_BOX = { left: 100, top: 180, width: 600, height: 120, right: 700, bottom: 300, x: 100, y: 180 };
   const LINE = { left: 120, top: 200, width: 300, height: 16, right: 420, bottom: 216, x: 120, y: 200 };
-  ov.initOverlay({ rectOf: (x) => (x && x.nodeType === 1 && x.matches && x.matches('[data-md-id]') ? MD_BOX : x && x.startContainer ? LINE : VIEW) });
+  // A pane's content (inside its shadow root) lies elsewhere on the page, away
+  // from the tap: the comment's chain pick (F.6, U406: overlay.js elementsAt)
+  // reads these boxes, and the earlier tests' pane pins are not under it.
+  const PANE_EL = { left: 900, top: 600, width: 200, height: 40, right: 1100, bottom: 640, x: 900, y: 600 };
+  const inPane = (x) => !!(x && x.nodeType === 1 && x.getRootNode && x.getRootNode() !== W.document);
+  ov.initOverlay({ rectOf: (x) => (x && x.nodeType === 1 && x.matches && x.matches('[data-md-id]') ? MD_BOX : x && x.startContainer ? LINE : inPane(x) ? PANE_EL : VIEW) });
   const pinOn = async (el, text, pointerId) => {
     ov.setArmed(null);
     shell.key('c');

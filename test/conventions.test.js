@@ -1608,8 +1608,8 @@ const PATTERNS = [
     exts: ['.js', '.html'],
     re: /['"](?:comment|highlight|box-grab)@\d+['"]/g,
     baseline: {
-      // The table's three rows.
-      'lib/core/element-log.js': 3,
+      // The table's four rows (comment@2, F.6 U406, added the fourth).
+      'lib/core/element-log.js': 4,
     },
   },
   {

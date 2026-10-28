@@ -122,6 +122,41 @@ test('classify: an md pin names its markdown item (origin_mount) and its section
   assert.equal(none.item.summary, 'comment');
 });
 
+// F.6 (U406; RULED Q8 (a)): a chained pin's summary names its chain after the
+// item, smallest first; a member the event's chain_private lists reads 'a
+// private element', with no type and no id. A chainless pin is unchanged.
+test('commentItem / classify: a chained pin\'s summary names the chain smallest first; a hidden member reads "a private element"; a chainless pin\'s summary and event are unchanged', () => {
+  const { commentItem } = require('../lib/channel/policy');
+  const pin = { id: 'c9', seq: 9, shared: true, text: 'why this colour?', anchor: { mount: 'm1' }, chain: ['h7', 'g3', 'c2'] };
+  assert.equal(commentItem(pin).summary, 'm1 · on highlight h7 › box grab g3 › comment c2 · "why this colour?"');
+  const hidden = commentItem(pin, { hidden: ['g3'] });
+  assert.equal(hidden.summary, 'm1 · on highlight h7 › a private element › comment c2 · "why this colour?"');
+  assert.doesNotMatch(hidden.summary, /g3|box grab/, 'no type and no id for a private member');
+  // classify hands the event's chain_private to commentItem, for every op that raises or refreshes.
+  for (const ev of [
+    { op: 'add' },
+    { op: 'reply', author: 'user', pin: { ...pin, replies: [{ author: 'user', text: 'and?' }] } },
+    { op: 'edit', became_shared: true },
+    { op: 'edit' },
+  ]) {
+    const r = classify({ kind: 'comment', pin, ...ev, chain_private: ['h7'] });
+    assert.match(r.item.summary, /^m1 · on a private element › box grab g3 › comment c2 · "/, ev.op);
+    assert.doesNotMatch(r.item.summary, /h7/);
+  }
+  // An md pin: the item, the chain, then the pin's own section.
+  const md = commentItem({ id: 'c10', seq: 10, shared: true, text: 'ok', anchor: { v: 1, kind: 'source', md: 'md-2' },
+    locator: { mount: 'md-2', selector: 'p', text: 'x', ordinal: 0, section: 'Plan' }, chain: ['h4'] });
+  assert.equal(md.summary, 'md-2 · on highlight h4 · on section "Plan" · "ok"');
+  // Chainless: byte-unchanged, whether or not the event carries chain_private.
+  const bare = { id: 'c3', seq: 7, shared: true, text: 'totals look off', anchor: { mount: 'm1' } };
+  const a = classify({ kind: 'comment', op: 'add', pin: bare });
+  const b = classify({ kind: 'comment', op: 'add', pin: bare, chain_private: [] });
+  const c = classify({ kind: 'comment', op: 'add', pin: { ...bare, chain: [] } });
+  assert.deepEqual(b, a);
+  assert.deepEqual(c, a);
+  assert.equal(a.item.summary, 'm1 · "totals look off"');
+});
+
 test('classify: a private pin never enqueues', () => {
   assert.equal(classify({ kind: 'comment', op: 'add', pin: { id: 'c4', shared: false, text: 'secret', anchor: { mount: 'm1' } } }), null);
 });
