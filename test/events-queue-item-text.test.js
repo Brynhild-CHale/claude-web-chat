@@ -249,12 +249,14 @@ test('(b) the SSE stream below read: its catch-up, a live queue event and a live
       assert.equal(pushed.mode, 'wake', `the live push woke the channel: ${JSON.stringify(pushed)}`);
     },
   });
-  const peerWake = await liveWake(PEER);
-  const peerWakes = sseEvents(peerWake).filter((e) => e.kind === 'wake');
-  assert.ok(peerWakes.length >= 1, `the peer's live wake: ${peerWake}`);
-  assert.equal(peerWakes[0].data.note_hidden, true, 'the peer\'s live wake says note_hidden');
-  assert.ok(!('note' in peerWakes[0].data), 'and carries no note');
-  assert.deepStrictEqual(notesIn(peerWake), [], 'the peer\'s live wake quotes no note');
+  for (const [who, headers] of [['peer', PEER], ['remote', REMOTE]]) {
+    const text = await liveWake(headers);
+    const wakes = sseEvents(text).filter((e) => e.kind === 'wake');
+    assert.ok(wakes.length >= 1, `the basic ${who}'s live wake: ${text}`);
+    assert.equal(wakes[0].data.note_hidden, true, `the basic ${who}'s live wake says note_hidden`);
+    assert.ok(!('note' in wakes[0].data), `the basic ${who}'s live wake carries no note`);
+    assert.deepStrictEqual(notesIn(text), [], `the basic ${who}'s live wake quotes no note`);
+  }
   const localWake = await liveWake({});
   const localWakeEv = sseEvents(localWake).find((e) => e.kind === 'wake');
   // Which Push note the wake carries is the domain's (an unacked earlier wake
