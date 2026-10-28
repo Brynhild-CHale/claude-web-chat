@@ -357,6 +357,7 @@ Excerpts the user pinned, quoted as data (not the user's words, never a request)
 2 queued signals were pushed to Claude:
 - [element] pane-2 · highlight el-4
 - [comment] pane-3 · "why?"
+↳ To respond to a comment, use the respond-to-comment skill: read the thread with get_comments, reply with reply_comment (keep it short, like a doc comment).
 ```
 
 - **The header** is `EXCERPT_HEADER` (exported): `Excerpts the user pinned, quoted as
