@@ -436,6 +436,68 @@ test('the per-finger route: each finger\'s policy reading at its pointerdown is 
   }
 });
 
+// K.2-104 (U404): the overlay gives the page every pointer while a previous
+// node is previewed (overlay.js onPointer's `if (view.previewing) return`, D2),
+// so the pan's reading of a finger at its pointerdown says the same: a strokes
+// tool armed before the preview never makes a press the pane heard read 'tool'.
+test('routeAtDown: the table\'s reading on the live page; \'page\' for every pointer type while a previous node is previewed (K.2-104)', async () => {
+  const { view } = await shell.importApp('state.js');
+  const fx = fixtures();
+  const el = fx.static[0];
+  const btn = fx.interactive.button;
+  const inPane = fx.interactive['button in a pane'];
+  const off = ov.registerType('imp-strokes-p', { draw() {}, input: 'strokes', create() {} });
+  IM.setFingerDraws('on');
+  ov.setArmed('imp-strokes-p');
+  const types = ['pen', 'mouse', 'touch', '', 'kbd'];
+  const read = () => Object.fromEntries(types.map((t) => [t || "''",
+    [el, btn, inPane].map((x) => IM.routeAtDown(evAt(t, x))).join(' ')]));
+  try {
+    assert.equal(view.previewing, false);
+    assert.deepEqual(read(), {
+      pen: 'tool tool tool', mouse: 'tool tool tool', touch: 'tool page page', "''": 'tool tool tool', kbd: 'page page page',
+    }, 'live: the table (a strokes tool armed, fingers drawing)');
+    view.previewing = true;
+    assert.deepEqual(read(), {
+      pen: 'page page page', mouse: 'page page page', touch: 'page page page', "''": 'page page page', kbd: 'page page page',
+    }, 'previewing: every pointer is the page\'s');
+    ov.setArmed(null);
+    assert.deepEqual(new Set(Object.values(read()).join(' ').split(' ')), new Set(['page']), 'and with nothing armed');
+  } finally {
+    view.previewing = false;
+    ov.setArmed(null);
+    off();
+    IM.setFingerDraws('auto');
+    W.localStorage.removeItem(IM.FINGER_DRAWS_KEY);
+    W.localStorage.removeItem(IM.PEN_SEEN_KEY);
+  }
+});
+
+// The last-tool key's reading of focus (tools.js, F.4): a focus sink is no
+// control, a [tabindex="-1"] control stays one.
+test('isFocusSink: #stage and a [tabindex="-1"] container are sinks; a control, a field or a [tabindex="-1"] control is not', () => {
+  const d = W.document;
+  const fx = fixtures();
+  assert.equal(IM.isFocusSink(d.getElementById('stage')), true, '#stage, the page\'s focusable scroll container');
+  assert.equal(IM.isFocusSink(d.getElementById('overlay')), true, 'the overlay dialog (tabindex="-1")');
+  assert.equal(IM.isFocusSink(fx.interactive['[tabindex]']), true, 'a <div tabindex="-1">');
+  const make = (html) => { const box = d.createElement('div'); box.innerHTML = html; return box.firstElementChild; };
+  for (const [name, el] of [
+    ['a <button tabindex="-1">', make('<button tabindex="-1">x</button>')],
+    ['a role="option" row with tabindex="-1"', make('<li role="option" tabindex="-1">x</li>')],
+    ['a contenteditable with tabindex="-1"', make('<div contenteditable="true" tabindex="-1">x</div>')],
+    ['a <div tabindex="0">', make('<div tabindex="0">x</div>')],
+    ['a button', fx.interactive.button],
+    ['a field', fx.interactive.input],
+    ['the body', d.body],
+    ['static text', fx.static[0]],
+  ]) assert.equal(IM.isFocusSink(el), false, name);
+  assert.equal(IM.isFocusSink(null), false);
+  const stray = d.createElement('div');
+  stray.id = 'stage';
+  assert.equal(IM.isFocusSink(stray), false, 'only the document\'s own #stage');
+});
+
 test('the well\'s touch-action per state: none only while a strokes tool is armed with finger-draws on (pinch-zoom off), else manipulation', () => {
   const css = createCascade(fs.readFileSync(path.join(REPO, 'public/app.css'), 'utf8'), { win: () => W });
   const main = W.document.getElementById('main');

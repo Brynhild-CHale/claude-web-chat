@@ -7,6 +7,14 @@
 //
 //   route(ev, s)          → 'tool' | 'page' | 'ignore'   THE table (pure)
 //   isInteractive(el)     → boolean                       the finger's control test (K.2-9)
+//   isFocusSink(el)       → boolean                       a focused element that is no control: #stage
+//                                                         (the page's focusable scroll container) or a
+//                                                         [tabindex="-1"] focus target that is no control
+//                                                         by its tag, role or contenteditable (the overlay
+//                                                         dialog, a dismiss zone) — the last-tool key's
+//                                                         reading of focus (tools.js, F.4)
+//   routeAtDown(ev)       → 'tool' | 'page' | 'ignore'    a finger's reading at its pointerdown (the pan's
+//                                                         heard-press rule); 'page' while previewing (K.2-104)
 //   dispatchMode(ev, kind)→ {capture, cancelDefault}      how a tool takes its pointer
 //   POINTER                                               the pointer tool (chrome-owned; arms nothing)
 //   fingerDraws() · fingerDrawsMode() · setFingerDraws(mode) · setFingerDrawsDefault(v)
@@ -62,6 +70,7 @@
 // No DOM is touched at import.
 import { armed, cancelGesture, inputKindOf, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
 import { isTap } from './sheet-model.js';
+import { view } from './state.js';
 import { getLocal, setLocal } from './storage.js';
 
 // ── the pointer tool ─────────────────────────────────────────────────────────
@@ -82,14 +91,14 @@ export const INTERACTIVE_ROLES = Object.freeze([
 const ALWAYS = new Set(['button', 'select', 'textarea', 'label', 'summary', 'iframe', 'embed']);
 const EDITABLE = new Set(['', 'true', 'plaintext-only']);
 
-function selfInteractive(el) {
+function selfInteractive(el, { tabindex = true } = {}) {
   const tag = el.localName;
   if (ALWAYS.has(tag)) return true;
   if (tag === 'a' || tag === 'area') return el.hasAttribute('href');
   if (tag === 'input') return String(el.getAttribute('type') || '').toLowerCase() !== 'hidden';
   if (tag === 'audio' || tag === 'video') return el.hasAttribute('controls');
   if (tag === 'img') return el.hasAttribute('usemap');
-  if (el.hasAttribute('tabindex')) return true;
+  if (tabindex && el.hasAttribute('tabindex')) return true;
   const role = String(el.getAttribute('role') || '').trim().toLowerCase().split(/\s+/)[0];
   return INTERACTIVE_ROLES.includes(role);
 }
@@ -97,6 +106,19 @@ function selfInteractive(el) {
 // (#stage carries a tabindex) never makes the page's content interactive.
 function isWell(el) {
   return el.id === 'main' && el.getRootNode && el.getRootNode() === el.ownerDocument;
+}
+// isFocusSink(el): a focused element that takes focus without being a control
+// — #stage, the page's focusable scroll container (index.html gives it
+// tabindex="0", so a click on the page leaves it focused), or a
+// [tabindex="-1"] focus target (the overlay dialog, the chat dock, a dismiss
+// zone) that is no control by its own tag, role or contenteditable. A
+// [tabindex="-1"] button or role="option" row stays a control.
+export function isFocusSink(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.id === 'stage' && el.getRootNode && el.getRootNode() === el.ownerDocument) return true;
+  if (String(el.getAttribute('tabindex')).trim() !== '-1') return false;
+  if (selfInteractive(el, { tabindex: false })) return false;
+  return !(el.hasAttribute('contenteditable') && EDITABLE.has(String(el.getAttribute('contenteditable')).toLowerCase()));
 }
 // isInteractive(el): el, or an ancestor up to the page well (across a pane's
 // shadow boundary), is interactive content.
@@ -363,8 +385,13 @@ function stop(e) {
 // The policy's reading of a finger at its pointerdown, as the overlay asks it
 // there (askPolicy → policy → route): the gesture absent, a tap so far.
 // 'page' is a press the page under it hears (a pane's control, or static
-// content while no drawing tool takes fingers).
-function routeAtDown(e) {
+// content while no drawing tool takes fingers). While a previous node is
+// previewed it is 'page' for every pointer, as the overlay's own dispatch
+// gives the page everything then (onPointer's `if (view.previewing) return`,
+// D2): a strokes tool armed before the preview no longer makes a press the
+// pane heard read 'tool', so its lift reaches the pane (K.2-104, K.2-99).
+export function routeAtDown(e) {
+  if (view.previewing) return 'page';
   return route(e, { ...stateFor(armed()), gesture: null });
 }
 // The pan's part of the window capture: true when it took the event.

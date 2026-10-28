@@ -704,6 +704,46 @@ test('the heard-press rule is the press\'s: a tool-routed finger\'s lift, and th
   } finally { ears.off(); await settle(); }
 });
 
+// K.2-104 (U404; U334b's hand-off "Open issues"): a strokes tool armed BEFORE
+// a preview stays armed in it, but the overlay gives the page every pointer
+// while previewing (D2), so a finger on a pane's own listener is heard — and
+// the pan's reading of it at its pointerdown says 'page' too, so that
+// finger's lift reaches the pane (K.2-99) instead of being stopped as a tool
+// finger's.
+test('a preview with the box grab armed before it: a finger the pane heard on its canvas delivers its own lift when a second finger pans (K.2-104)', async () => {
+  const { view } = await shell.importApp('state.js');
+  await grabArmed('on');
+  const ears = paneEars();
+  view.previewing = true;
+  try {
+    assert.deepEqual(ov.armed(), { type: 'box-grab', profile: null }, 'armed before the preview, still armed');
+    // Finger 1 on the pane's static content: the pane's own listener hears it.
+    finger(lead(), 'pointerdown', 101, 20, 20, { isPrimary: true });
+    assert.deepEqual(W.__log, ['down:touch'], 'the pane heard the press (the overlay creates nothing in a preview)');
+    // Finger 2 pans.
+    finger(lead(), 'pointerdown', 102, 140, 20);
+    assert.deepEqual(IM.touchesForTests({ routes: true }).routes, { 101: 'page', 102: 'page' });
+    assert.deepEqual(IM.touchesForTests({ routes: true }).heard, [101], 'finger 1\'s press was heard');
+    for (const y of [14, 8]) {
+      finger(lead(), 'pointermove', 101, 20, y);
+      finger(lead(), 'pointermove', 102, 140, y);
+    }
+    assert.equal(scroller().scrollTop, 12, 'the pan scrolled the well');
+    // Finger 1 lifts: the pane hears its pointerup, as sent.
+    const up = finger(lead(), 'pointerup', 101, 20, 8);
+    assert.equal(up.defaultPrevented, false, 'the lift is sent on as it came');
+    assert.deepEqual(ears.heard, ['root:pointerup:101'], 'the pane hears that finger\'s own lift, once');
+    tapClick(lead(), 101);
+    finger(lead(), 'pointerup', 102, 140, 8);
+    tapClick(lead(), 102);
+    await shell.tick();
+    assert.ok(!ears.heard.some((h) => h.endsWith(':102')), 'the pan\'s own finger is never the pane\'s');
+    assert.ok(!W.__log.some((l) => l.startsWith('move:')), 'the pane hears none of the pan\'s moves');
+    assert.equal(grabPosts().length, 0, 'a preview creates nothing');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+  } finally { view.previewing = false; ears.off(); await settle(); }
+});
+
 test('the pan cancels a stroke through the overlay\'s cancelGesture and dispatches no synthetic event', () => {
   const src = fs.readFileSync(path.join(REPO, 'public/app/input-mode.js'), 'utf8');
   assert.match(src, /import \{[^}]*\bcancelGesture\b[^}]*\} from '\.\/overlay\.js'/);
