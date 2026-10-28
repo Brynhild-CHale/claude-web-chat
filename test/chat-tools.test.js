@@ -148,7 +148,7 @@ async function follow(items, { level = 'local', tasks = [], asks = [] } = {}) {
     return t;
   }
   await waitUntil(() => S.mirror.stream.conversationId === cid && !S.mirror.stream.loading
-    && stream().querySelectorAll('[data-item-id]').length === items.length, { what: `the cards of ${cid}` });
+    && stream().querySelectorAll('[data-item-id]:not([data-field])').length === items.length, { what: `the cards of ${cid}` });
   return t;
 }
 

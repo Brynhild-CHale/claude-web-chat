@@ -209,7 +209,7 @@ test('a fixture turn: bubble · intro · one closed group "▸ 3 tool calls · R
   assert.equal(g.open, false, 'closed');
   assert.equal(g.querySelector('summary').textContent, '▸ 3 tool calls · Read, Edit, Bash · 42s');
   const body = [...g.querySelector('.ct-gbody').children];
-  assert.deepEqual(body.map((c) => c.dataset.itemId || c.className), ['tu_r_t1', 'ct-prose ct-narration', 'tu_e_t1', 'tu_b_t1'],
+  assert.deepEqual(body.map((c) => (c.dataset.field ? c.className : c.dataset.itemId)), ['tu_r_t1', 'ct-prose ct-narration', 'tu_e_t1', 'tu_b_t1'],
     'every card and the narration, in order');
   assert.equal(text(body[0].querySelector('.ct-tool-label')), 'Read · app.css', 'the generic card: its label');
   assert.equal(text(body[0].querySelector('.ct-tool-glyph')), '✓', 'and its status glyph');
@@ -318,7 +318,7 @@ test('a mirror frame changing turn B re-renders B only: A keeps its element, and
     turns: [{ ...B, items: undefined, rev: ++rev, counts: { ...B.counts, tools: 2 } }],
     items: [{ ...tool('tb2', 'Edit', 'Edit · y'), turn_id: 'tB', seq: 2999, rev }],
   });
-  await waitUntil(() => turnEl('tB').querySelectorAll('[data-item-id]').length === 2, { what: 'B redrawn' });
+  await waitUntil(() => turnEl('tB').querySelectorAll('[data-item-id]:not([data-field])').length === 2, { what: 'B redrawn' });
   assert.equal(turnEl('tA'), aEl, 'A: the same element');
   assert.equal(aEl.querySelector('.ct-prose'), aProse, 'A: not redrawn at all');
   assert.equal(aEl.querySelector('.ct-foot'), aFoot);

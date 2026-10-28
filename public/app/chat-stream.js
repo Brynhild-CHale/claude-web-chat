@@ -47,6 +47,13 @@
 // DELEGATED on #chat-stream: a code block's Copy (drawer.js copyText) and a click
 // on a remote image's placeholder (U35's span.md-img-remote), which only then
 // becomes an <img>.
+//
+// SETTLED (annotation engine 3A.5, the chat host's settle): after a drawing
+// that built, updated, moved or pruned a turn, the chrome bus hears ONE
+// `chat:drawn` {conversationId, turnIds} — the ids of the turns in the DOM
+// window, in order; a turn pruned out of the window (or not yet paged in) is
+// absent. clearAll says it once with an empty list (for the conversation it
+// cleared). This module is the only emitter of chat:drawn.
 import { bus } from './bus.js';
 import { mirror, loadOlder, atLeast } from './chat-state.js';
 import { renderTurn, turnActionsVersion, setBackNodeOf, onTurnActionsChanged } from './chat-turns.js';
@@ -278,6 +285,11 @@ function onKey(e) {
 
 // ── drawing ──────────────────────────────────────────────────────────────────
 
+// The settle: the drawn turns, in order (U432's chat pins listen).
+function drawn(turnIds) {
+  bus.emit('chat:drawn', { conversationId: cid, turnIds });
+}
+
 function clearAll() {
   for (const e of entries.values()) e.el.remove();
   entries.clear();
@@ -291,6 +303,7 @@ function clearAll() {
     S.turns.replaceChildren();
     showNew();
     updateJump();
+    drawn([]);
   }
 }
 
@@ -353,10 +366,12 @@ function render() {
   const oldFirst = S.turns.firstElementChild;
 
   // Out: turns pruned or gone from the store.
+  let pruned = false;
   for (const [id, e] of entries) {
     if (keep.has(id)) continue;
     e.el.remove();
     entries.delete(id);
+    pruned = true;
   }
 
   let changed = false;
@@ -385,12 +400,14 @@ function render() {
   const head = at > 0 ? built.slice(0, at) : [];
   const rest = at > 0 ? built.slice(at) : built;
   let cursor = S.turns.firstElementChild;
+  let placed = false;
   for (const e of rest) {
     if (e.el === cursor) {
       cursor = cursor.nextElementSibling;
       continue;
     }
     S.turns.insertBefore(e.el, cursor);
+    placed = true;
   }
   const before = { h: S.stream.scrollHeight, top: S.stream.scrollTop };
   const anchor = S.turns.firstElementChild;
@@ -431,6 +448,7 @@ function render() {
   showNew();
   if (moved) renderPending();   // another conversation's pending messages
   updateJump();
+  if (changed || pruned || placed || prepended) drawn(win.map((t) => t.id));
   // Only after a drawing that put turns in: a failed read or a reveal the
   // 150-turn window takes straight back draws nothing new, and must not retry
   // on every frame.
