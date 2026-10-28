@@ -23,6 +23,7 @@ const { projectPaths } = require('../lib/core/paths');
 const { mountElementRoutes, describeAnchor } = require('../lib/server/routes/elements');
 const comments = require('../lib/server/routes/comments');
 const client = require('../lib/client');
+const { WRITER_HEADER } = require('../lib/core/writer-token');
 const { classify } = require('../lib/core/remote-policy');
 
 // A box grab POSTed here is drawn off the request by the export path's
@@ -682,4 +683,31 @@ test('a private member reads "a private element" (no type, no id) for a request 
   const refused = await client.request(port, 'POST', '/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'x', chain: [priv.id] } }, { timeout: 10000 });
   assert.equal(refused.status, 400, JSON.stringify(refused.body));
   assert.match(refused.body.hint, /each an element live on the page/);
+});
+
+// Q8 (a) on the write answers and on a removed member: Claude's reply (lib/client,
+// reply_comment's path) answers the pin with the private member's id null, and
+// a private member deleted later still reads 'a private element' (its newest
+// version was private), in the record and in the event's chain_private.
+test('a chained pin\'s private member stays hidden from lib/client in a write\'s answer, and after the member is deleted', async (t) => {
+  const { api, port, writerToken } = await withServer(t);
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1');
+  const priv = (await addComment(api, 'secret note', { shared: false })).pin;
+  const c = (await ok(api.post('/api/elements', { type: 'comment', anchor: RANGE('m1'), payload: { text: 'over both', shared: true, chain: [priv.id, h.id] } }), 'chained comment')).pin;
+  const rp = await client.request(port, 'POST', `/api/elements/${c.id}/reply`, { text: 'seen', author: 'claude' },
+    { timeout: 10000, headers: { [WRITER_HEADER]: writerToken() } });
+  assert.equal(rp.status, 200, JSON.stringify(rp.body));
+  assert.deepEqual(rp.body.pin.chain, [null, h.id], 'the answered pin: no id for the private member');
+  assert.ok(!JSON.stringify(rp.body).includes(priv.id), 'the private member\'s id never reaches lib/client in a write\'s answer');
+  await ok(api.del(`/api/elements/${priv.id}`), 'delete the private member');
+  const viaClient = await client.request(port, 'GET', '/api/elements?type=comment', undefined, { timeout: 10000 });
+  const seen = viaClient.body.elements.find((e) => e.id === c.id);
+  assert.equal(seen.chain_label, `on a private element › highlight ${h.id} › pane m1`, 'a removed private member is still a private element');
+  assert.ok(!JSON.stringify(viaClient.body).includes(priv.id));
+  const local = (await ok(api.get('/api/elements?type=comment'))).elements.find((e) => e.id === c.id);
+  assert.equal(local.chain_label, `on a removed comment ${priv.id} › highlight ${h.id} › pane m1`, 'the local browser sees it named, removed');
+  await ok(api.patch(`/api/elements/${c.id}`, { text: 'edited' }), 'edit');
+  const ev = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'edit').pop();
+  assert.deepEqual(ev.chain_private, [priv.id], 'a removed private member stays in chain_private');
 });
