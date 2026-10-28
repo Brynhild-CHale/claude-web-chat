@@ -26,6 +26,9 @@
 //     the frames carry each record's answer, and the next frame lacks the
 //     deleted pin; PATCH {anchor} 400; an edit from an older v 409 (stale);
 //     a page Wipe and New graph leave the pin listed (WIPE@chat);
+//   * a private chat pin's Send takes the shared edit first; since and
+//     shared_only filter the chat records; a record made with no session
+//     takes its served turn's, and a turn with none answers 409;
 //   * private: a private chat pin is absent for a remote viewer and lib/client,
 //     and every write naming it from them answers 404;
 //   * the chain (S3, Q8): a chat pin chained on another lands; a dropped chat
@@ -398,6 +401,47 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     assert.equal(typeof sent.item.id, 'string');
     assert.equal(sent.element.id, ids.turn);
     assertAnswered(sent.element, 'send');
+  });
+
+  await t.test('send: a private chat pin first takes the shared edit, then answers 200 with its item', async () => {
+    const mine = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'mine, then sent', shared: false }), 'private pin')).element;
+    assert.equal(mine.shared, false);
+    const sent = await ok(w.anonApi.post(`/api/elements/${mine.id}/send`, { device: 'desktop' }), 'send a private chat pin');
+    assert.equal(typeof sent.item.id, 'string', 'the shared edit raised its item');
+    assert.equal(sent.element.shared, true, 'it is shared now');
+    assertAnswered(sent.element, 'private send');
+  });
+
+  await t.test('GET: since and shared_only filter the chat records', async () => {
+    const cursor = (await ok(w.anonApi.get('/api/elements?type=chat-comment'), 'GET')).next_cursor;
+    const fresh = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'after the cursor' }), 'a shared pin')).element;
+    const hidden = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'a private one after the cursor', shared: false }), 'a private pin')).element;
+    const after = await w.list(`?type=chat-comment&since=${cursor}`);
+    assert.deepEqual(after.map((e) => e.id).sort(), [fresh.id, hidden.id].sort(), 'since: only the records written after the cursor');
+    for (const e of after) assertAnswered(e, `since ${e.id}`);
+    const shared = await w.list('?type=chat-comment&shared_only=1');
+    assert.ok(shared.length > 0 && shared.every((e) => e.shared !== false), 'shared_only: no private chat record');
+    assert.ok(!shared.some((e) => e.id === hidden.id) && shared.some((e) => e.id === fresh.id));
+    await ok(w.anonApi.del(`/api/elements/${hidden.id}`), 'tidy: drop the private one');
+  });
+
+  await t.test('POST: an anchor recorded with no session takes its served turn\'s, and a turn with none is still arriving (409, nothing minted)', async () => {
+    const real = w.srv.mirror;
+    const headless = async (input) => {
+      const made = await real.recordAnchor(input);
+      return made && made.anchor ? { ...made, anchor: { ...made.anchor, session_id: null } } : made;
+    };
+    const filled = await spyApp(t, w, { recordAnchor: headless, turn: (id) => real.turn(id), resolveAnchors: (b) => real.resolveAnchors(b) });
+    const r = await filled('POST', '/api/elements', { type: 'chat-comment', anchor: { kind: 'turn', turn_id: 'cp-1' }, payload: { text: 'a headless record' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.element.anchor.session_id, S1, 'the served turn\'s session');
+    const bytes = logBytes(w.root);
+    const none = await spyApp(t, w, { recordAnchor: headless, turn: async () => null, resolveAnchors: (b) => real.resolveAnchors(b) });
+    const p = await none('POST', '/api/elements', { type: 'chat-comment', anchor: { kind: 'turn', turn_id: 'cp-1' }, payload: { text: 'no session yet' } });
+    assert.equal(p.status, 409, JSON.stringify(p.body));
+    assert.equal(p.body.state, 'provisional');
+    assert.equal(logBytes(w.root), bytes, 'nothing written');
+    await ok(w.anonApi.del(`/api/elements/${r.body.element.id}`), 'tidy');
   });
 
   await t.test('private: absent for a remote viewer and lib/client; every write naming it from them answers 404', async () => {
