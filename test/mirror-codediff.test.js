@@ -404,7 +404,7 @@ test('a git without --attr-source still gets its turn\'s diff, with attr_exact: 
   assert.ok(old.calls.every((c) => !c.opts.attrSource && !c.args.some((a) => a.startsWith('--attr-source'))));
 });
 
-test('housekeeping: tmp emptied of other processes\' copies, git prune run, no record deleted by age, a full shadow turns the source off', async (t) => {
+test('housekeeping: tmp emptied of other processes\' copies, git prune run, no record deleted by age, a budget the mirror cannot get under turns the source off', async (t) => {
   withTempHome(t);
   const repo = scratchRepo(t);
   const paths = projectPaths(repo.root);
@@ -427,10 +427,12 @@ test('housekeeping: tmp emptied of other processes\' copies, git prune run, no r
   assert.ok(runner.calls.some((c) => c.args[0] === 'prune' && c.args.includes(`--expire=${LIMITS.PRUNE_EXPIRE}`)), 'git prune --expire still runs');
   assert.equal(fs.existsSync(oldRec), true, 'a record 400 days old survives: no diff record ages out (L.4 O6)');
   assert.equal(fs.existsSync(newRec), true);
-  assert.deepEqual(await storeFor(repo, { limits: { SHADOW_MAX_BYTES: 1 } }).housekeep(), { ok: true, full: true });
+  // U455: no snapshot cap of its own (shadow-max-bytes folded into the disk
+  // budget); a budget the mirror cannot get under turns the source off.
+  assert.deepEqual(await storeFor(repo, { limits: { SHADOW_MAX_BYTES: 1 } }).housekeep(), { ok: true, full: false });
 
   const repo2 = scratchRepo(t);
-  const h = await mirrorOn(t, repo2, { source: { limits: { SHADOW_MAX_BYTES: 1 } } });
+  const h = await mirrorOn(t, repo2, { source: { limits: { DISK_BUDGET_BYTES: 1 } } });
   h.session();
   await h.run('pFull1', () => repo2.write('a.txt', 'one\n'));
   await waitUntil(() => h.diag().state === 'shadow-store-full', { timeout: 10000, what: 'the size check' });
@@ -909,7 +911,8 @@ test('the exported limits are the brief\'s', () => {
   assert.equal(LIMITS.RECORD_MAX_DAYS, undefined, 'retired: no record ages out');
   assert.equal(LIMITS.DISK_BUDGET_BYTES, null, 'no size limit unless one is set');
   assert.equal(LIMITS.PRUNE_EXPIRE, '7.days.ago');
-  assert.equal(LIMITS.SHADOW_MAX_BYTES, 1024 * 1024 * 1024);
+  assert.equal(LIMITS.SHADOW_MAX_BYTES, undefined, 'folded into the disk budget (L.4 P4)');
+  assert.equal(LIMITS.BUDGET_CHECK_MS, 6 * 60 * 60 * 1000, 'RULED R2 = a');
   assert.equal(LIMITS.REUSE_MS, 1000);
   assert.equal(LIMITS.FRESH_MS, 5000);
   assert.equal(LIMITS.RETURN_MAX, 200);

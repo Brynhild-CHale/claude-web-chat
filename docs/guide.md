@@ -65,9 +65,8 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 **What the chat mirror keeps.** Nothing the chat remembers about a conversation is deleted because of a count: its turns and code diffs go only when Claude Code's own cleanup deletes the session's transcript. A turn whose code diff is no longer on disk says so instead of showing no changes:
 
 - When Claude Code's own cleanup deletes a session's transcript, web-chat deletes that session's turn index and the code diffs no graph node links.
-- The mirror's own files are kept without a size limit.
+- The mirror's own files are kept without a size limit unless you set one with claude-web-chat mirror budget, and then the files it can rebuild go first and a diff linked to a graph node goes last.
 - The file snapshots behind a diff are kept for 7 days.
-- The snapshot store is capped at 1 GiB, and no more diffs are recorded once it is full.
 - The server follows the snapshots of at most 1000 turns in memory at once.
 - A finished background shell or monitor stays listed for 30 minutes.
 - A finished agent stays listed for 30 minutes.
