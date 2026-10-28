@@ -425,6 +425,38 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     await ok(w.anonApi.del(`/api/elements/${hidden.id}`), 'tidy: drop the private one');
   });
 
+  await t.test('frames: two chat writes whose resolves finish out of order still emit in write order — the last frame is the live set', async () => {
+    const a = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'first to go' }), 'pin a')).element;
+    const b = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'second to go' }), 'pin b')).element;
+    const real = w.srv.mirror;
+    let held = false;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const spy = {
+      recordAnchor: (input) => real.recordAnchor(input),
+      turn: (id) => real.turn(id),
+      resolveAnchors: async (batch) => {
+        if (!held) { held = true; await gate; }
+        return real.resolveAnchors(batch);
+      },
+    };
+    const at = await spyApp(t, w, spy);
+    const n = w.frames.length;
+    const pa = at('DELETE', `/api/elements/${a.id}`);
+    await waitUntil(() => held, { ...WAIT, what: 'the first Delete\'s resolve held' });
+    const pb = at('DELETE', `/api/elements/${b.id}`);
+    await waitUntil(() => logRecords(w.root).some((x) => x.t === 'drop' && x.id === b.id), { ...WAIT, what: 'the second Delete written' });
+    release();
+    const [ra, rb] = await Promise.all([pa, pb]);
+    assert.equal(ra.status, 200, JSON.stringify(ra.body));
+    assert.equal(rb.status, 200, JSON.stringify(rb.body));
+    await waitUntil(() => w.frames.length >= n + 2, { ...WAIT, what: 'both Deletes\' frames' });
+    const live = w.srv.elements.chatRecords('chat-comment').map((r) => r.id).sort();
+    const last = w.frames[w.frames.length - 1].elements.map((e) => e.id).sort();
+    assert.ok(!live.includes(a.id) && !live.includes(b.id), 'both pins dropped');
+    assert.deepEqual(last, live, 'the last frame is read after the last write');
+  });
+
   await t.test('POST: an anchor recorded with no session takes its served turn\'s, and a turn with none is still arriving (409, nothing minted)', async () => {
     const real = w.srv.mirror;
     const headless = async (input) => {
