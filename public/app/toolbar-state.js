@@ -24,6 +24,10 @@
 //                    default ⊕ the project's ⊕ the named profile's, field by
 //                    field (lib/core/tier-merge's mergeByKey, served as
 //                    /app/tier-merge.js — never a second merge)
+//   iconSrc(type)    → the URL of a listed type's icon, /api/toolbar/icon/<type>
+//                    with ?mode=dark under web-chat's dark mode: the ONE
+//                    spelling of that route in the chrome (the toolbar's slots
+//                    and the queue rail's rows read it; neither builds it).
 //
 // The daemon validates every record (lib/core/toolbar-record); this module only
 // reads defensively: anything not shaped like a record reads as an empty one,
@@ -87,6 +91,11 @@ function land(body, { access }) {
 }
 
 export function toolbarState() { return view; }
+
+// web-chat's own mode, as theme.js leaves it on <html>: data-theme="light", or
+// anything else (no attribute) for dark — cobrand.js's reading. Read per call.
+const darkMode = () => document.documentElement.dataset.theme !== 'light';
+export const iconSrc = (type) => `/api/toolbar/icon/${encodeURIComponent(type)}${darkMode() ? '?mode=dark' : ''}`;
 
 export function onToolbarChange(fn) {
   if (typeof fn !== 'function') throw new TypeError('onToolbarChange: fn must be a function');

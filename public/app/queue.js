@@ -198,9 +198,23 @@ export async function initQueue() {
   if (push) push.addEventListener('click', pushQueue);
   const add = q('.rail-add');
   if (add) {
-    add.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); pushQueue(); } });
-    // Toggle the Push button live as the comment is typed/cleared.
-    add.addEventListener('input', updatePushLabel);
+    // Enter pushes; Shift+Enter is a new line in the note (A-1); an IME's own
+    // Enter (composing) is the IME's.
+    add.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      pushQueue();
+    });
+    // Toggle the Push button live as the comment is typed/cleared, and size the
+    // box to its text.
+    add.addEventListener('input', () => { fitNote(add); updatePushLabel(); });
+  }
+  // Web-chat's mode flipped (the icon's ?mode=dark): the element rows redraw.
+  // A listed type's label or icons changing redraws them too (onToolbarChange,
+  // attached when toolbar-state.js lands: toolbarTools).
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(() => { if (items.some((it) => typeOfItem(it) != null)) drawRail(); })
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   }
   const cancel = q('.rp-cancel');
   if (cancel) cancel.addEventListener('click', cancelPending);
@@ -419,7 +433,7 @@ export async function pushQueue() {
   if (!ok) { showPushError(); return; } // keep note + rows; surface a visible rail error
   // Confirmed AT THE HTTP LAYER: clear the note and drop the staged rows; held
   // ones survive. The server also emits ONE batched `queue` remove frame (C4).
-  if (add) add.value = '';
+  if (add) { add.value = ''; fitNote(add); }
   // Messages the push left queued (a viewer below `full`: `held_messages`; one
   // the park had no room for: `waiting_ids`) stay on the rail.
   const heldMsgs = result && Number.isFinite(result.held_messages) ? result.held_messages : 0;
@@ -793,8 +807,19 @@ export async function recallPending(parkId) {
 // parked row dropped the source and why-wake lines a staged one shows.
 // What ⟲ actually does, per kind (lib/server/domain/queue revertArtifact). Only a
 // capture's own pane is ever removed — never promise that for anything else.
-function revertTitle(kind) {
+// An element item (any type, any count) is a queued group: ⟲ takes the row out
+// of the queue and deletes nothing (Q2 = a) — a member is deleted from its own
+// tray. A legacy comment item's ⟲ still deletes its pin.
+function revertTitle(it) {
+  const kind = it && it.kind;
   if (kind === 'message') return 'remove — take this message out of the queue (nothing else changes)';
+  if (kind === 'element') {
+    const look = typeLook(it);
+    const noun = (look ? look.label : 'element').toLowerCase();
+    return look && look.count > 1
+      ? `remove from the queue — the ${look.count} ${noun}s stay; delete one from its own tray`
+      : `remove from the queue — the ${noun} stays; delete it from its own tray`;
+  }
   if (kind === 'comment') return 'revert — remove from queue and delete this comment pin';
   if (kind === 'capture') return 'revert — remove from queue and drop the captured pane';
   return 'revert — remove from queue and undo this interaction (the pane stays)';
@@ -828,6 +853,79 @@ function typeOfItem(it) {
   if (it.kind === 'comment') return 'comment';
   return null;
 }
+// How the rail shows an item's type (U424, 3B.2's rail half): its label and
+// icon from the listed types' toolbar fields (toolbarState().tools), else the
+// type's own name and no icon; and the group's count (U423's `count`, 1 for a
+// legacy comment item). null for an item drawn by its kind.
+function typeLook(it) {
+  const type = typeOfItem(it);
+  if (type == null) return null;
+  const tools = toolbarTools();
+  const tool = Array.isArray(tools) ? tools.find((t) => t && t.type === type) || null : null;
+  const label = tool && typeof tool.label === 'string' && tool.label ? tool.label : type;
+  const count = it.kind === 'element' && Number.isSafeInteger(it.count) && it.count > 1 ? it.count : 1;
+  return { type, label, icon: tool && tool.icons ? toolbar.iconSrc(type) : null, count };
+}
+// The listed types' toolbar fields and the icon route's one spelling
+// (public/app/toolbar-state.js: toolbarState().tools, iconSrc), loaded lazily
+// at the first draw with an element or comment item, as pushKey loads
+// hotkeys.js: no-DOM module tests import queue.js (composer-mod.js →
+// chat-composer.js → here), and toolbar-state.js reaches the daemon-served
+// /app/tier-merge.js. Until it lands a typed row reads its type's name and no
+// icon (typeLook's fallback); when it lands, and on each later toolbar change,
+// the rail redraws if a typed item is queued. toolbar-state.js imports nothing
+// that reaches back here (never element-types.js, toolbar.js or shell.js: each
+// comes back through ws.js or shell.js, a cycle).
+let toolbar = null;
+let toolbarLoading = false;
+const hasTypedItem = () => items.some((it) => typeOfItem(it) != null);
+function toolbarTools() {
+  if (toolbar) return toolbar.toolbarState().tools;
+  if (!toolbarLoading) {
+    toolbarLoading = true;
+    import('./toolbar-state.js').then((m) => {
+      toolbar = m;
+      m.onToolbarChange(() => { if (hasTypedItem()) drawRail(); });
+      if (hasTypedItem()) drawRail();
+    }, (e) => console.error('[web-chat] queue: the toolbar state could not load', e));
+  }
+  return null;
+}
+// A type that declares respond (a thread Claude answers): the group's own
+// `respond` (U423 stamps it from the manifest's wake); a legacy comment item is
+// the comment type's, which responds (K.2-22).
+const respondsOf = (it) => !!it && (it.kind === 'comment' || (it.kind === 'element' && it.respond === true));
+// The members a row stands for: a group's element_ids (oldest → newest), else
+// its newest element_id; a legacy comment item's comment_id.
+function memberIds(it) {
+  if (it.kind === 'comment') return it.comment_id != null ? [String(it.comment_id)] : [];
+  if (Array.isArray(it.element_ids) && it.element_ids.length) return it.element_ids.map(String);
+  return it.element_id != null ? [String(it.element_id)] : [];
+}
+// Answered when Claude has replied in EVERY member's thread (B4's dot, per
+// member); a type that does not respond has no answered state.
+function isAnswered(it) {
+  if (!respondsOf(it)) return false;
+  if (it.answered === true) return true;
+  const ids = memberIds(it);
+  return ids.length > 0 && ids.every((id) => isCommentAnswered(id));
+}
+
+// The Push note box (A-1): it grows with its text — upward, since the rail is a
+// flex column whose list above it takes the loss — to NOTE_BOX_MAX px (app.css's
+// max-height, read when the style is there), then scrolls. Empty, it drops its
+// inline height and is one line again.
+export const NOTE_BOX_MAX = 120;
+function fitNote(add) {
+  if (!add || add.tagName !== 'TEXTAREA') return;
+  if (!add.value) { add.style.height = ''; return; }
+  add.style.height = 'auto';
+  let max = NOTE_BOX_MAX;
+  try { const m = parseFloat(getComputedStyle(add).maxHeight); if (Number.isFinite(m) && m > 0) max = m; } catch { /* the default */ }
+  const edge = Math.max(0, (add.offsetHeight || 0) - (add.clientHeight || 0));   // border-box: the borders
+  add.style.height = Math.min(add.scrollHeight + edge, max) + 'px';
+}
+
 function releaseCards() {
   for (const [slot, card] of [...cardSlots]) {
     if (slot.isConnected) continue;
@@ -874,17 +972,34 @@ function itemRow(it, { parked = false, acts = null } = {}) {
   if (it.id) row.dataset.id = it.id;
 
   const dot = document.createElement('span');
-  // B4: a queued comment dot mirrors its marker — coral until Claude has replied,
-  // then green. The item carries no answered flag, so derive from the comments cache.
-  const answered = !parked && it.kind === 'comment' && (it.answered || isCommentAnswered(it.comment_id));
-  dot.className = 'qi-dot qi-' + (it.kind || 'signal') + (answered ? ' answered' : '');
+  // B4: a queued thread's dot mirrors its marker — coral until Claude has
+  // replied, then green; for a group, once Claude has replied to every member.
+  // The item carries no answered flag, so derive from the comments cache. An
+  // element row's dot names its type (qi-element qi-<type>), and qi-respond
+  // when the type responds; a legacy comment item keeps qi-comment.
+  const look = typeLook(it);
+  const answered = !parked && isAnswered(it);
+  dot.className = (it.kind === 'element' && look
+    ? 'qi-dot qi-element qi-' + look.type + (respondsOf(it) ? ' qi-respond' : '')
+    : 'qi-dot qi-' + (it.kind || 'signal')) + (answered ? ' answered' : '');
 
   const body = document.createElement('div');
   body.className = 'qi-body';
   const top = document.createElement('div');
   top.className = 'qi-top';
-  const kindEl = document.createElement('span'); kindEl.className = 'qi-kind'; kindEl.textContent = it.kind || 'signal';
+  // The kind line: an element row's type label (× its count), its icon before
+  // it; every other row its kind.
+  const kindEl = document.createElement('span'); kindEl.className = 'qi-kind';
+  kindEl.textContent = look ? look.label + (look.count > 1 ? ` ×${look.count}` : '') : (it.kind || 'signal');
   const srcEl = document.createElement('span'); srcEl.className = 'qi-src'; srcEl.textContent = it.source || '';
+  if (look && look.icon) {
+    const icon = document.createElement('img');
+    icon.className = 'qi-icon';
+    icon.alt = '';
+    icon.draggable = false;
+    icon.src = look.icon;
+    top.append(icon);
+  }
   top.append(kindEl, srcEl);
   const why = document.createElement('div'); why.className = 'qi-why'; why.textContent = it.why_wake || '';
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
@@ -903,7 +1018,7 @@ function itemRow(it, { parked = false, acts = null } = {}) {
 
   const rev = document.createElement('button');
   rev.className = 'qi-revert'; rev.textContent = '⟲';
-  rev.title = revertTitle(it.kind);
+  rev.title = revertTitle(it);
   // Revert on a message is a plain remove (§6.1): there is no artifact to undo.
   rev.addEventListener('click', () => (isMessage(it) ? removeItem(it.id) : revertItem(it.id)));
 

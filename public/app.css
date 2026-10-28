@@ -3473,3 +3473,20 @@ img.bg-look-img, img.bg-card-img { border: 1px solid var(--wc-border); border-ra
    paints over its host by tree order and under every panel, notice, glance
    and the legend. Its markers take #el-layer's marker rules by their classes. */
 .el-host-layer { position: fixed; inset: 0; pointer-events: none; }
+
+/* ============ the rail's rows per type and the Push note box (U424, 3B.2) ============
+   An element row (U423's group) names its type: the listed type's icon before
+   its label on the kind line (.qi-icon), and its dot qi-element qi-<type>,
+   with qi-respond when the type responds — coral until Claude has replied to
+   every member, then green, as .qi-dot.qi-comment. The Push note is a textarea
+   (A-1) that grows with its text to a bounded height: the rail is a flex column
+   whose .rail-items flex and scroll, so the box's growth takes height from the
+   list above it, upward; queue.js fitNote sizes it (NOTE_BOX_MAX = the
+   max-height here). Tokens only. */
+.qi-icon { flex: none; align-self: center; width: 12px; height: 12px; }
+.qi-dot.qi-respond { background: var(--wc-comment); }
+.qi-dot.qi-respond.answered { background: var(--wc-green); }
+textarea.rail-add { height: auto; min-height: 30px; max-height: 120px; resize: none; overflow-y: auto; padding: 6px 8px; line-height: 18px; }
+@media (max-width: 759px) {
+  textarea.rail-add { min-height: 44px; padding: 12px; }
+}
