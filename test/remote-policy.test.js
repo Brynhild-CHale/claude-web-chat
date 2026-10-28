@@ -2066,3 +2066,44 @@ test('U406a: CHAIN_PRIVATE — projectFrame unions the carried ids into the hidd
   body[CHAIN_PRIVATE] = ['b2'];
   assert.deepStrictEqual(dropPrivate('routes', 'GET /preview/node/:id', body).comments[0].chain, [null]);
 });
+
+// U406a, the node reads (brief item 4): a committed node's comments[] below
+// seesPrivate takes the same path. routes/graph.js privateFor attaches the
+// node's chained copies' private members (domain/elements chainPrivate, read
+// against the node itself) under CHAIN_PRIVATE, so a shared pin chained on a
+// private highlight, and on a private pin deleted before the commit, reaches
+// lib/client and a remote read viewer as [null, null] — in the node read and
+// the node preview alike. The local browser keeps both ids. Red with the
+// CHAIN_PRIVATE attach removed from privateFor.
+test('U406a: GET /api/graph/node/:id and /preview/node/:id — a shared pin chained on a private highlight and a deleted private pin reads [null, null] for lib/client and a remote read viewer; the local browser keeps both ids', async (t) => {
+  const client = require('../lib/client');
+  const { d, ok, LOC, RANGE } = await chainRig(t, 'wc-u406a-node-');
+  const hp = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'wc-u406a-private-hl', shared: false } }), 'private highlight')).element.id;
+  const priv = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOC, payload: { text: 'wc-u406a-private', shared: false } }), 'private pin')).element.id;
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: RANGE,
+    payload: { text: 'over both', shared: true, chain: [hp, priv] } }), 'chained pin')).element.id;
+  await ok(d.anonApi.del(`/api/elements/${priv}`), 'delete the private pin');
+  await ok(d.api.post('/api/turn-begin', { message: 'u406a node' }), 'turn-begin');
+  const id = (await ok(d.api.post('/api/turn-end', { author: 'claude', summary: 'u406a node' }), 'turn-end')).node_id;
+  assert.ok(id, 'a node was committed');
+  const call = (p, headers) => client.request(d.port, 'GET', p, null, { headers, timeout: 10000 });
+  const quoted = (body, x) => (typeof body === 'string' ? body : JSON.stringify(body)).includes(`"${x}"`);
+
+  // The local browser (Node fetch: fetch metadata, seesPrivate) keeps both ids.
+  const browser = await ok(d.anonApi.get(`/api/graph/node/${id}`), 'browser node read');
+  assert.deepStrictEqual(browser.comments.find((c) => c.id === chained).chain, [hp, priv], 'the local browser keeps both ids');
+
+  for (const [who, headers] of [['lib/client', undefined], ['remote read', { 'X-WC-Remote': '1' }]]) {
+    const r = await call(`/api/graph/node/${id}`, headers);
+    assert.equal(r.status, 200, `${who}: ${JSON.stringify(r.body)}`);
+    assert.deepStrictEqual(r.body.comments.find((c) => c.id === chained).chain, [null, null], `${who}: both private members null`);
+    for (const x of [hp, priv]) assert.ok(!quoted(r.body, x), `${who}: ${x} is nowhere in the node read`);
+    const p = await call(`/preview/node/${id}`, headers);
+    assert.equal(p.status, 200, `${who} preview`);
+    const html = typeof p.body === 'string' ? p.body : JSON.stringify(p.body);
+    assert.ok(quoted(html, chained), `${who} preview: the chained pin is drawn`);
+    for (const x of [hp, priv]) assert.ok(!quoted(html, x), `${who} preview: ${x} is nowhere in the document`);
+  }
+  const bp = await d.anonApi.get(`/preview/node/${id}`);
+  for (const x of [hp, priv]) assert.ok(quoted(bp.text, x), `the local browser's preview keeps ${x}`);
+});
