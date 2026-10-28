@@ -337,3 +337,61 @@ test("redactPatch's diff grammar is renderDiff's: PATCH_HUNK_RE and PATCH_META_R
   assert.equal(literal('../lib/core/redact', 'PATCH_HUNK_RE'), literal('../lib/core/markdown', 'HUNK_RE'));
   assert.equal(literal('../lib/core/redact', 'PATCH_META_RE'), literal('../lib/core/markdown', 'DIFF_META_RE').replace('/^(?:', '/^(?:@@|'));
 });
+
+// M-10's remaining rows (GT-13, PLAN 3A.3): every rendered line's
+// data-old/data-new is the true number through createRedactor().patch and
+// renderDiff, and no fake-secret bytes are rendered. The multi-line non-PEM
+// secret is a service-account private_key string over several + lines, its
+// body pem-pkcs8's base64 lines with no marker lines.
+const serviceAccount = (file) => {
+  const body = keyBlock('pem-pkcs8').slice(1, -1);
+  return hunkFile(file, [
+    ...CTX, ['+', '{'], ['+', '  "type": "service_account",'], ['+', `  "private_key": "${body[0]}`],
+    ...body.slice(1).map((s) => ['+', s]), ['+', '",'], ['+', '  "client_email": "svc@example.iam.test"'], ['+', '}'], ...TAIL,
+  ]);
+};
+const dotenvPatch = (file) => hunkFile(file, [...CTX, ...fake('env-dotenv').text.split('\n').filter((l) => l !== '').map((s) => ['+', s]), ...TAIL]);
+
+test('M-10: a multi-line non-PEM secret under config/service-account.json: the file is withheld whole, no line numbered, no key bytes rendered', () => {
+  const file = 'config/service-account.json';
+  const { patch } = serviceAccount(file);
+  const out = createRedactor().patch(patch, { context: { file } });
+  assert.equal(out, WITHHELD('cloud'));
+  assert.deepEqual(numbering(out).filter((r) => r.old || r.new), [], 'a withheld file draws no numbered line');
+  assert.deepEqual(findLeaks(renderDiff(out), [fake('pem-pkcs8')]), []);
+});
+
+test('M-10: the same secret under the neutral src/fixture.json: 19/19 lines numbered true', () => {
+  const file = 'src/fixture.json';
+  const { patch, expected } = serviceAccount(file);
+  const out = createRedactor().patch(patch, { context: { file } });
+  assertShape(patch, out);
+  assert.equal(expected.length, 19);
+  assert.deepEqual(bodyRows(out).map((r) => ({ old: r.old, new: r.new })), expected);
+});
+
+test('M-10: dotenv lines under .env and under the neutral config/app.txt: every line numbered true', () => {
+  for (const file of ['.env', 'config/app.txt']) {
+    const { patch, expected } = dotenvPatch(file);
+    const out = createRedactor().patch(patch, { context: { file } });
+    assertShape(patch, out);
+    assert.deepEqual(bodyRows(out).map((r) => ({ old: r.old, new: r.new })), expected, file);
+  }
+});
+
+// A finding for the gate (U412 hand-off), not a fix here: these rows'
+// numbering holds, but their secrets are rendered. No rule masks the
+// marker-less base64 body under a neutral name, and the env-dotenv mode does
+// not read a patch's `+KEY=value` lines (under .env too). Marked todo so the
+// suite stays green while the gap stays visible; it flips once a ruling lands.
+test('M-10: no fake-secret bytes rendered for src/fixture.json, .env and config/app.txt', { todo: 'U412 finding: redactPatch leaves these secrets; awaiting a ruling' }, () => {
+  const rows = [
+    ['src/fixture.json', serviceAccount('src/fixture.json').patch, fake('pem-pkcs8')],
+    ['.env', dotenvPatch('.env').patch, fake('env-dotenv')],
+    ['config/app.txt', dotenvPatch('config/app.txt').patch, fake('env-dotenv')],
+  ];
+  for (const [file, patch, f] of rows) {
+    const out = createRedactor().patch(patch, { context: { file } });
+    assert.deepEqual(findLeaks(renderDiff(out), [f]).map((l) => l.id), [], file);
+  }
+});
