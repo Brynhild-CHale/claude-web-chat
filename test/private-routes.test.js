@@ -46,6 +46,7 @@ const PEER = Object.freeze({ 'x-test-peer': '10.0.0.5' });
 
 const SHARED = 'wc-u213-shared-mark';
 const PRIVATE = 'wc-u213-private-mark';
+const PUSH_NOTE = 'wc-u401-parked-push-note';
 
 // Requests (and upgrades) carrying x-test-peer arrive from that address.
 function stubPeers(server) {
@@ -310,8 +311,9 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
       assert.deepStrictEqual(msgTheirs, msgMine, 'remote read: the message item whole, as before');
     }
 
-    // Push → parked (no channel): GET /api/queue/pending's items rows.
-    const push = await ok(api.post('/api/queue/push', {}), 'push');
+    // Push → parked (no channel), with a Push note: GET /api/queue/pending's
+    // items rows, and the park's note (J1, K1, U401).
+    const push = await ok(api.post('/api/queue/push', { note: PUSH_NOTE }), 'push');
     assert.equal(push.mode, 'parked', JSON.stringify(push));
     const pMine = (await ok(api.get('/api/queue/pending'), 'local pending')).pending;
     const pTheirs = (await call('GET', '/api/queue/pending', null, REMOTE)).body.pending;
@@ -325,6 +327,24 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
       assert.ok(!has(pTheirs, QUOTE), 'remote basic: no quote anywhere in the parked delivery');
     } else {
       assert.deepStrictEqual(rowTheirs, rowMine, 'remote read: the row itself');
+    }
+    // The Push note is the user's own text: the local read (the turn-begin
+    // hook's path) and a remote read get it byte-equal; below read it is null,
+    // the park says note_hidden, and it is nowhere in the body.
+    assert.strictEqual(pMine.note, PUSH_NOTE, 'local pending: the Push note');
+    assert.ok(!('note_hidden' in pMine), 'local pending: no note_hidden');
+    assert.ok(has(pMine.envelope, PUSH_NOTE), 'local pending: the envelope Claude gets carries the note');
+    if (level === 'basic') {
+      assert.strictEqual(pTheirs.note, null, 'remote basic: the park\'s note is null');
+      assert.equal(pTheirs.note_hidden, true, 'remote basic: note_hidden');
+      assert.ok(!has(pTheirs, PUSH_NOTE), 'remote basic: the Push note nowhere in the parked delivery, envelope included');
+      const pPeer = (await call('GET', '/api/queue/pending', null, PEER)).body.pending;
+      assert.strictEqual(pPeer.note, null, 'a network peer: the park\'s note is null');
+      assert.equal(pPeer.note_hidden, true, 'a network peer: note_hidden');
+      assert.ok(!has(pPeer, PUSH_NOTE), 'a network peer: the Push note nowhere');
+    } else {
+      assert.strictEqual(pTheirs.note, PUSH_NOTE, 'remote read: the Push note byte-equal');
+      assert.ok(!('note_hidden' in pTheirs), 'remote read: no note_hidden');
     }
     const capMine = pMine.items.filter((it) => it.kind === 'capture');
     assert.deepStrictEqual(pTheirs.items.filter((it) => it.kind === 'capture'), capMine, `${level}: a parked capture row is unchanged`);

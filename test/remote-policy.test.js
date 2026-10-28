@@ -60,10 +60,10 @@ const {
   MIRROR_HINT, MIRROR_FULL_HINT, MIRROR_LEVELS, rankLevel, atLeast, fromOptIn,
   FRAME_RULES, SURFACE_FRAMES, projectFrame, projectValue,
   STATUS_SCHEMA, STATUS_ROW_SCHEMA, ASK_SCHEMA, ASK_FRAME_SCHEMA, RESET_SCHEMA,
-  TEXT_RULES, stripText, stripItemText, PRIVATE_RULES, dropPrivate,
+  TEXT_RULES, stripText, stripItemText, stripWakeText, PRIVATE_RULES, dropPrivate,
   ANSWER_RULES, ANSWER_HINT, classifyAnswer,
 } = require('../lib/core/remote-policy');
-const { withServer } = require('../test-support/helpers');
+const { withServer, tmpRoot } = require('../test-support/helpers');
 const { PORTAL_PROTOCOL_VERSION } = require('../lib/core/versions');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -1376,6 +1376,9 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
     // A queue item's own text by kind (the annotation engine, finding 3): a
     // comment item quotes its pin.
     items: { comment: ['summary'], element: ['summary'] },
+    // A ring entry's own text by kind (J1, K1): the Push note a wake carries,
+    // and the park GET /api/queue/pending serves.
+    entries: { wake: ['note'] },
   });
 });
 
@@ -1391,6 +1394,48 @@ test('stripItemText: below read a comment item is a text-free label with text_hi
   assert.equal(stripItemText(capture, 'basic'), capture, 'a capture item names a page, not the conversation');
   for (const v of [null, undefined, 'x', 3, frozen({ summary: 'no kind' })]) assert.equal(stripItemText(v, 'basic'), v);
   assert.equal(item.summary, COMMENT_ITEM.summary, 'never mutated');
+});
+
+test('stripWakeText: below read a wake entry loses its Push note and says note_hidden; read and up, a note-less wake, any other entry, the entry itself', () => {
+  const WAKE = { kind: 'wake', seq: 7, reason: 'push', source: 'queue', batch: [{ id: 'q1', kind: 'comment' }], note: 'wc-u401-policy-note' };
+  const wake = frozen({ ...WAKE });
+  for (const level of ['read', 'full', 'local']) assert.equal(stripWakeText(wake, level), wake, level);
+  for (const level of ['basic', 'nonsense', undefined]) {
+    const out = stripWakeText(wake, level);
+    const { note, ...rest } = WAKE;
+    assert.deepStrictEqual(out, { ...rest, note_hidden: true }, String(level));
+    assert.ok(!('note' in out), `${level}: no note field`);
+    assert.equal(out.batch, wake.batch, `${level}: the batch is shared, not copied`);
+  }
+  const { note, ...noteless } = WAKE;
+  const bare = frozen({ ...noteless });
+  assert.equal(stripWakeText(bare, 'basic'), bare, 'a note-less wake comes back as it is');
+  for (const empty of [null, '']) {
+    const w = frozen({ ...noteless, note: empty });
+    assert.equal(stripWakeText(w, 'basic'), w, `a wake whose note is ${JSON.stringify(empty)} comes back as it is`);
+  }
+  const other = frozen({ kind: 'comment', seq: 3, note: 'not a wake' });
+  assert.equal(stripWakeText(other, 'basic'), other, 'an entry of another kind has no row');
+  for (const v of [null, undefined, 'x', 3, frozen({ note: 'no kind' })]) assert.equal(stripWakeText(v, 'basic'), v);
+  assert.equal(wake.note, WAKE.note, 'never mutated');
+});
+
+test('TEXT_RULES: a field name a per-kind row (items, entries) may not hold is refused at load', () => {
+  // A copy of the module whose entries row names a field that is no plain key:
+  // the load-time check refuses it before the module exports anything.
+  const dir = tmpRoot('wc-u401-policy-');
+  const core = path.join(REPO_ROOT, 'lib', 'core');
+  fs.copyFileSync(path.join(core, 'element-policy.js'), path.join(dir, 'element-policy.js'));
+  const src = fs.readFileSync(path.join(core, 'remote-policy.js'), 'utf8');
+  for (const [row, good, bad] of [
+    ['entries', "wake: ['note'],", "wake: ['note.text'],"],
+    ['items', "comment: ['summary'],", "comment: ['Summary'],"],
+  ]) {
+    assert.equal(src.split(good).length, 2, `${row}: the row is spelled once in remote-policy.js`);
+    const file = path.join(dir, `remote-policy-${row}.js`);
+    fs.writeFileSync(file, src.replace(good, bad));
+    assert.throws(() => require(file), (e) => e instanceof TypeError && e.message.includes(`not a TEXT_RULES.${row} field`), row);
+  }
 });
 
 test('PRIVATE_RULES: the one table of where private records ride — frames and routes; frozen; every key a rowed frame or a mounted route', () => {

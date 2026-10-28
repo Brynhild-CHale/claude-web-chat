@@ -8,7 +8,10 @@
 // goes through stripItemText at the request's level as well, and a wake
 // batch's message is its publicItem with `text_hidden`, as GET /api/queue
 // shows it. A remote viewer at `read`, and a local request, get the notes.
-// Every other entry is U332b's reading: the route-level strip alone.
+// Every other entry is U332b's reading: the route-level strip alone. A wake
+// entry's own note — the Push note, the user's text (J1, K1, U401) — goes
+// through stripWakeText below `read`: gone, and the entry says `note_hidden`;
+// a wake pushed with no note is as it was.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -24,7 +27,9 @@ const PIN_NOTE = 'wc-u332c-pin-note-mark';
 const HL_NOTE = 'wc-u332c-highlight-note-mark';
 const LIVE_NOTE = 'wc-u332c-live-pin-note-mark';
 const MSG_TEXT = 'wc-u332c-message-words-mark';
-const NOTES = [PIN_NOTE, HL_NOTE, LIVE_NOTE, MSG_TEXT];
+const PUSH_NOTE = 'wc-u401-push-note';
+const LIVE_PUSH_NOTE = 'wc-u401-live-push-note';
+const NOTES = [PIN_NOTE, HL_NOTE, LIVE_NOTE, MSG_TEXT, PUSH_NOTE, LIVE_PUSH_NOTE];
 const MOUNT = 'eq-pane';
 const LOCATOR = Object.freeze({ mount: MOUNT, selector: 'p.lead', text: 'Hello', ordinal: 0 });
 const RANGE = Object.freeze({ v: 1, kind: 'range', mount: MOUNT, quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } });
@@ -62,8 +67,9 @@ async function ok(p, what) {
 // Two daemons on one sandbox HOME: remote viewers opted in at nothing (basic)
 // on one, at `read` on the other. Each holds a shared pin and a shared
 // highlight with notes and a Push delivered live (a local wake consumer is
-// connected), so the ring holds their queue adds and a wake whose batch
-// carries both; then a composer message sent now, whose wake carries its words.
+// connected) with a Push note, so the ring holds their queue adds and a wake
+// whose batch carries both and whose note is PUSH_NOTE; then a composer message
+// sent now, whose wake carries its words and no note.
 async function boot(t) {
   const readRoot = tmpRoot('wc-u332c-read-');
   const seed = () => writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(readRoot)]: 'read' } } });
@@ -79,7 +85,7 @@ async function boot(t) {
     assert.deepStrictEqual(queued.map((it) => it.kind).sort(), ['comment', 'element'], `${level}: two items queued`);
     const channel = await openSSE(d.port, { kinds: ['wake'], awaitChannel: d.api });
     t.after(() => channel.close());
-    const pushed = await ok(d.api.post('/api/queue/push', {}), `${level}: push`);
+    const pushed = await ok(d.api.post('/api/queue/push', { note: PUSH_NOTE }), `${level}: push`);
     assert.equal(pushed.mode, 'wake', `${level}: the push woke the channel: ${JSON.stringify(pushed)}`);
     await waitUntil(() => channel.events.some((e) => e.kind === 'wake'), { timeout: 5000, what: `${level}: the wake` });
     // A composer message sent now: its own wake, whose batch carries its words.
@@ -93,6 +99,19 @@ async function boot(t) {
 
 const queueEntries = (body) => body.events.filter((e) => e.kind === 'queue' && e.item);
 const wakeEntries = (body) => body.events.filter((e) => e.kind === 'wake');
+const pushWake = (body) => wakeEntries(body).find((e) => e.batch.some((it) => it.kind === 'comment'));
+const msgWake = (body) => wakeEntries(body).find((e) => e.batch.some((it) => it.kind === 'message'));
+// A wake entry below `read` against its local reading (U401): the same kind,
+// seq, reason and batch ids; no note; `note_hidden` exactly when it had one.
+function assertWakeHidden(local, below, what) {
+  assert.ok(!('note' in below), `${what}: no note field`);
+  assert.equal(below.kind, local.kind, `${what}: kind`);
+  assert.equal(below.seq, local.seq, `${what}: seq`);
+  assert.equal(below.reason, local.reason, `${what}: reason`);
+  assert.deepStrictEqual(below.batch.map((it) => it.id), local.batch.map((it) => it.id), `${what}: the batch ids`);
+  if (local.note) assert.equal(below.note_hidden, true, `${what}: note_hidden`);
+  else assert.ok(!('note_hidden' in below), `${what}: a note-less wake says no note_hidden`);
+}
 // Every queue item the ring's entries carry, in seq order.
 const itemsOf = (body) => body.events.flatMap((e) => (e.kind === 'queue' && e.item ? [e.item] : e.kind === 'wake' ? e.batch : []));
 
@@ -110,6 +129,11 @@ function assertStripped(local, below, what) {
       assert.equal(it.summary, `${MOUNT} · ${it.kind}`, `${what}: ${it.kind} ${it.id} the text-free label`);
     }
   }
+  const lw = wakeEntries(local);
+  const bw = wakeEntries(below);
+  assert.ok(lw.some((e) => e.note === PUSH_NOTE), `${what}: the local ring's push wake carries the Push note`);
+  assert.ok(lw.some((e) => !('note' in e)), `${what}: and the message's wake carries none`);
+  lw.forEach((e, i) => assertWakeHidden(e, bw[i], `${what}: wake seq ${e.seq}`));
   const msgs = wakeEntries(below).flatMap((e) => e.batch).filter((it) => it.kind === 'message');
   assert.ok(msgs.length >= 1, `${what}: the wake batch keeps its message item`);
   for (const m of msgs) {
@@ -128,6 +152,9 @@ function assertCarried(body, what) {
     assert.ok(queueEntries(body).some((e) => textOf(e.item.summary).includes(n)), `${what}: a queue entry's summary quotes ${n}`);
     assert.ok(wakeEntries(body).some((e) => e.batch.some((it) => textOf(it.summary).includes(n))), `${what}: the wake batch quotes ${n}`);
   }
+  assert.strictEqual(pushWake(body).note, PUSH_NOTE, `${what}: the push wake's note, byte-equal`);
+  assert.ok(!('note_hidden' in pushWake(body)), `${what}: and no note_hidden`);
+  assert.ok(!('note' in msgWake(body)) && !('note_hidden' in msgWake(body)), `${what}: the message's wake as it was`);
 }
 
 test('(a) GET /api/events below read: no queue entry\'s item, nor a wake batch, quotes a pin\'s or highlight\'s note; (d) read and local do; (e) other entries are U332b\'s', async (t) => {
@@ -147,6 +174,7 @@ test('(a) GET /api/events below read: no queue entry\'s item, nor a wake batch, 
   const readRemote = (await d.read.call('GET', route, null, REMOTE)).body;
   assertCarried(readRemote, 'read remote');
   assert.strictEqual(JSON.stringify(itemsOf(readRemote)), JSON.stringify(itemsOf(readLocal)), 'read remote: the items whole');
+  assert.strictEqual(JSON.stringify(wakeEntries(readRemote)), JSON.stringify(wakeEntries(readLocal)), 'read remote: the wake entries whole, the Push note included');
   assertStripped(readLocal, (await d.read.call('GET', route, null, PEER)).body, 'read peer');
 });
 
@@ -173,21 +201,26 @@ const sseEvents = (text) => text.split('\n\n').map((block) => {
   return kind && data ? { kind: kind[1], data: JSON.parse(data[1]) } : null;
 }).filter(Boolean);
 
-test('(b) the SSE stream below read: its catch-up and a live queue event carry no note; read and local do', async (t) => {
+test('(b) the SSE stream below read: its catch-up, a live queue event and a live wake carry no note; read and local do', async (t) => {
   const d = await boot(t);
   const query = 'since=0&kinds=queue,wake';
   // Both wakes (the Push's, the message's) have arrived.
   const caughtUp = (text) => (text.match(/event: wake\n/g) || []).length >= 2;
   const local = await streamed(d.basic.port, {}, { query, until: caughtUp });
-  assert.deepStrictEqual(notesIn(local).sort(), [HL_NOTE, MSG_TEXT, PIN_NOTE].sort(), 'the local catch-up carries the notes');
+  assert.deepStrictEqual(notesIn(local).sort(), [HL_NOTE, MSG_TEXT, PIN_NOTE, PUSH_NOTE].sort(), 'the local catch-up carries the notes');
+  const localWakes = sseEvents(local).filter((e) => e.kind === 'wake').map((e) => e.data);
   for (const [who, headers] of [['remote', REMOTE], ['peer', PEER]]) {
     const text = await streamed(d.basic.port, headers, { query, until: caughtUp });
     const evs = sseEvents(text);
     assert.ok(evs.some((e) => e.kind === 'queue') && evs.some((e) => e.kind === 'wake'), `basic ${who}: the catch-up's queue and wake entries`);
     assert.deepStrictEqual(notesIn(text), [], `basic ${who}: the catch-up quotes no note`);
+    const wakes = evs.filter((e) => e.kind === 'wake').map((e) => e.data);
+    assert.equal(wakes.length, localWakes.length, `basic ${who}: every wake`);
+    localWakes.forEach((e, i) => assertWakeHidden(e, wakes[i], `basic ${who}: catch-up wake seq ${e.seq}`));
   }
   const readRemote = await streamed(d.read.port, REMOTE, { query, until: caughtUp });
   assert.ok(notesIn(readRemote).includes(PIN_NOTE) && notesIn(readRemote).includes(HL_NOTE), 'read remote: the catch-up carries the notes');
+  assert.ok(sseEvents(readRemote).some((e) => e.kind === 'wake' && e.data.note === PUSH_NOTE), 'read remote: the catch-up\'s wake carries the Push note byte-equal');
 
   // Live: a stream opened from the ring's head, then a fresh shared pin.
   const head = (await d.basic.call('GET', '/api/events?since=0')).body.events.at(-1).seq;
@@ -204,6 +237,31 @@ test('(b) the SSE stream below read: its catch-up and a live queue event carry n
   assert.deepStrictEqual(notesIn(peerLive), [], 'the peer\'s live queue event quotes no note');
   const localLive = await live({});
   assert.ok(localLive.includes(LIVE_NOTE), 'the local live queue event quotes the note');
+
+  // Live: a stream opened from the ring's head, then a note-only Push (the
+  // boot's channel is still connected, so it wakes).
+  let w = 0;
+  const liveWake = async (headers) => streamed(d.basic.port, headers, {
+    query: `since=${(await d.basic.call('GET', '/api/events?since=0')).body.events.at(-1).seq}&kinds=wake`,
+    until: (text) => /event: wake\n/.test(text),
+    after: async () => {
+      const pushed = await ok(d.basic.api.post('/api/queue/push', { note: `${LIVE_PUSH_NOTE} ${++w}` }), 'live push');
+      assert.equal(pushed.mode, 'wake', `the live push woke the channel: ${JSON.stringify(pushed)}`);
+    },
+  });
+  const peerWake = await liveWake(PEER);
+  const peerWakes = sseEvents(peerWake).filter((e) => e.kind === 'wake');
+  assert.ok(peerWakes.length >= 1, `the peer's live wake: ${peerWake}`);
+  assert.equal(peerWakes[0].data.note_hidden, true, 'the peer\'s live wake says note_hidden');
+  assert.ok(!('note' in peerWakes[0].data), 'and carries no note');
+  assert.deepStrictEqual(notesIn(peerWake), [], 'the peer\'s live wake quotes no note');
+  const localWake = await liveWake({});
+  const localWakeEv = sseEvents(localWake).find((e) => e.kind === 'wake');
+  // Which Push note the wake carries is the domain's (an unacked earlier wake
+  // folds into it); the local stream carries it byte-equal to the local ring.
+  assert.ok(localWakeEv && textOf(localWakeEv.data.note).startsWith(LIVE_PUSH_NOTE), `the local live wake carries a Push note: ${localWake}`);
+  const ringWake = (await d.basic.call('GET', '/api/events?since=0')).body.events.find((e) => e.seq === localWakeEv.data.seq);
+  assert.strictEqual(localWakeEv.data.note, ringWake.note, 'the local live wake\'s note, byte-equal to the ring\'s');
 });
 
 test('(c) /api/wait below read: the matched queue or wake event carries no note; read and local do', async (t) => {
@@ -223,6 +281,7 @@ test('(c) /api/wait below read: the matched queue or wake event carries no note;
       assert.equal(below.event.seq, e.seq, `basic ${who}: the same entry`);
       assert.equal(below.event.kind, e.kind);
       assert.deepStrictEqual(notesIn(below), [], `basic ${who} wait seq ${e.seq}: no note`);
+      if (e.kind === 'wake') assertWakeHidden(local.event, below.event, `basic ${who} wait seq ${e.seq}`);
     }
   }
   const readRing = (await d.read.call('GET', '/api/events?since=0')).body;
@@ -231,4 +290,10 @@ test('(c) /api/wait below read: the matched queue or wake event carries no note;
     assert.equal(remote.event.seq, e.seq);
     assert.ok(notesIn(remote.event).length >= 1, `read remote wait seq ${e.seq}: the note`);
   }
+  for (const e of wakeEntries(readRing)) {
+    const remote = (await wait(d.read, e, REMOTE)).body;
+    assert.equal(remote.event.seq, e.seq);
+    assert.strictEqual(JSON.stringify(remote.event), JSON.stringify(e), `read remote wait seq ${e.seq}: the wake whole, its note byte-equal`);
+  }
+  assert.strictEqual(pushWake(readRing).note, PUSH_NOTE, 'the read daemon\'s ring holds the Push note');
 });
