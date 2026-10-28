@@ -562,8 +562,8 @@ test('the daemon: a remote viewer below read gets no element:comment frame and n
     d.pins = [a.json.pin, b.json.pin];
     await daemonSettle(d.api, [d.local, d.remote]);
   }
-  assert.equal((await basicD.api.get('/api/queue')).json.items.filter((it) => it.kind === 'comment').length, 1,
-    'the shared pin put a comment item on the queue');
+  assert.equal((await basicD.api.get('/api/queue')).json.items.filter((it) => it.type === 'comment').length, 1,
+    'the shared pin put a comment item on the queue'); // U423: the comment's element group
 
   for (const d of [basicD, readD]) {
     const frames = d.local.raw.filter((r) => r.startsWith('{"type":"element:comment"'));
@@ -573,9 +573,9 @@ test('the daemon: a remote viewer below read gets no element:comment frame and n
   }
   // Below read (no opt-in).
   assert.deepStrictEqual(basicD.remote.of('element:comment'), [], 'basic: no element:comment frame');
-  const basicItem = basicD.remote.of('queue').find((f) => f.item && f.item.kind === 'comment');
+  const basicItem = basicD.remote.of('queue').find((f) => f.item && f.item.type === 'comment');
   assert.ok(basicItem, 'basic: the queue frame itself still comes');
-  assert.equal(basicItem.item.summary, 'm1 · comment');
+  assert.equal(basicItem.item.summary, 'm1 · element');
   assert.equal(basicItem.item.text_hidden, true);
   assert.ok(!basicD.remote.raw.some((r) => r.includes('wc-shared-mark') || r.includes('wc-private-mark')), 'basic: no pin text in any frame');
   // At read.

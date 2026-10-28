@@ -144,12 +144,12 @@ test('a wipe dequeues every queued shared pin it drops and keeps the queued item
   const pins = await fixture(ctx);
   const queued = await queueItems(api);
   for (const k of Object.keys(pins)) {
-    assert.ok(queued.some((it) => it.comment_id === pins[k].id), `${k}'s shared pin is queued`);
+    assert.ok(queued.some((it) => (it.element_ids || []).includes(pins[k].id)), `${k}'s shared pin is queued`);
   }
   await ok(api.post('/api/graph/wipe', {}), 'wipe');
   const after = await queueItems(api);
-  for (const k of DROPPED) assert.equal(after.some((it) => it.comment_id === pins[k].id), false, `${k} was dequeued`);
-  for (const k of KEPT) assert.ok(after.some((it) => it.comment_id === pins[k].id), `${k} stays queued`);
+  for (const k of DROPPED) assert.equal(after.some((it) => (it.element_ids || []).includes(pins[k].id)), false, `${k} was dequeued`);
+  for (const k of KEPT) assert.ok(after.some((it) => (it.element_ids || []).includes(pins[k].id)), `${k} stays queued`);
 });
 
 test('a wipe drops a pin whose anchor names an id that is neither a pane nor a markdown item on the page', async (t) => {
@@ -204,7 +204,7 @@ test('a new graph is unchanged: every live pin dropped, committed copies byte-id
   assert.deepEqual(await comments(api), [], 'every live pin is gone');
   const deletes = (await events(api)).slice(before).filter((e) => e.kind === 'comment' && e.op === 'delete');
   assert.deepEqual(deletes.map((e) => e.id).sort(), Object.values(pins).map((p) => p.id).sort());
-  assert.equal((await queueItems(api)).some((it) => it.comment_id), false, 'no pin is left queued');
+  assert.equal((await queueItems(api)).some((it) => it.type === 'comment'), false, 'no pin is left queued');
   assert.deepEqual(nodeDigests(webChatDir), digests, 'no committed node file changed');
   assert.deepEqual(filesUnder(webChatDir).filter((f) => !filesBefore.includes(f)), [], 'no new record');
 

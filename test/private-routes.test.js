@@ -287,12 +287,13 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
 
     const mine = (await ok(api.get('/api/queue'), 'local queue')).items;
     const theirs = (await call('GET', '/api/queue', null, REMOTE)).body.items;
-    const byKind = (items, kind) => items.filter((it) => it.kind === kind);
+    // U423: a shared pin's item is the comment's element group (kind 'element', type 'comment').
+    const byKind = (items, kind) => items.filter((it) => (kind === 'comment' ? it.kind === 'element' && it.type === 'comment' : it.kind === kind));
     assert.equal(byKind(mine, 'comment').length, 1, JSON.stringify(mine));
     assert.ok(byKind(mine, 'comment')[0].summary.includes(QUOTE), 'local: the quote');
     const c = byKind(theirs, 'comment')[0];
     if (level === 'basic') {
-      assert.equal(c.summary, 'm1 · comment');
+      assert.equal(c.summary, 'm1 · element');
       assert.equal(c.text_hidden, true);
       assert.ok(!has(theirs, QUOTE), 'remote basic: no quote anywhere on GET /api/queue');
     } else {
@@ -317,12 +318,12 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
     assert.equal(push.mode, 'parked', JSON.stringify(push));
     const pMine = (await ok(api.get('/api/queue/pending'), 'local pending')).pending;
     const pTheirs = (await call('GET', '/api/queue/pending', null, REMOTE)).body.pending;
-    const rowMine = pMine.items.find((it) => it.kind === 'comment');
-    const rowTheirs = pTheirs.items.find((it) => it.kind === 'comment');
+    const rowMine = pMine.items.find((it) => it.type === 'comment');
+    const rowTheirs = pTheirs.items.find((it) => it.type === 'comment');
     assert.ok(rowMine && rowMine.summary.includes(QUOTE), `local pending: the quote (${JSON.stringify(pMine.items)})`);
     assert.ok(!('text_hidden' in rowMine));
     if (level === 'basic') {
-      assert.equal(rowTheirs.summary, 'm1 · comment');
+      assert.equal(rowTheirs.summary, 'm1 · element');
       assert.equal(rowTheirs.text_hidden, true);
       assert.ok(!has(pTheirs, QUOTE), 'remote basic: no quote anywhere in the parked delivery');
     } else {

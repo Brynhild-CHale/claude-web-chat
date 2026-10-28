@@ -588,6 +588,7 @@ const bus = () => createBus({ bootId: 'boot-u421' });
 
 test('F8 m13 through the real queue: one park, none held back, the parked envelope carries the whole block', () => {
   const state = createState();
+  state.excerptsOn = () => true; // U423: the delivery-time gate (queue gateExcerpts) reads the switch: on
   const b = bus();
   assert.equal(state.wakeConsumers, 0, 'no channel: the park path');
   for (const it of PINS()) {
@@ -610,6 +611,7 @@ test('F8 m13 through the real queue: one park, none held back, the parked envelo
 
 test('the park rule: typed messages are held back one per park, the excerpts never', () => {
   const state = createState();
+  state.excerptsOn = () => true; // U423: the delivery-time gate (queue gateExcerpts) reads the switch: on
   const b = bus();
   queue.enqueueMessage(state, b, { text: 'first', skill: null, files: [], chars: 5, conversation_id: null }, {});
   queue.enqueueMessage(state, b, { text: 'second', skill: null, files: [], chars: 6, conversation_id: null }, {});
@@ -628,6 +630,7 @@ test('the park rule: typed messages are held back one per park, the excerpts nev
 
 test('the live path: the bridge\'s call shape over the wake event carries the whole block', () => {
   const state = createState();
+  state.excerptsOn = () => true; // U423: the delivery-time gate (queue gateExcerpts) reads the switch: on
   state.wakeConsumers = 1;
   state.wakeConsumerSeenAt = Date.now();
   const b = bus();

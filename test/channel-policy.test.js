@@ -88,8 +88,10 @@ test('classify: an immediate signal wins over a queued one in the same patch', (
 test('classify: a newly-added shared pin enqueues as a comment', () => {
   const r = classify({ kind: 'comment', op: 'add', pin: { id: 'c3', seq: 7, shared: true, text: 'totals look off', anchor: { mount: 'm1' } } });
   assert.equal(r.action, 'enqueue');
-  assert.equal(r.item.kind, 'comment');
-  assert.equal(r.item.comment_id, 'c3');
+  assert.equal(r.item.kind, 'element');
+  assert.equal(r.item.type, 'comment');
+  assert.equal(r.item.element_id, 'c3');
+  assert.equal(r.item.respond, true);
   assert.equal(r.item.origin_mount, 'm1');
   assert.equal(r.item.seq, 7);
   assert.match(r.item.summary, /m1/);
@@ -169,8 +171,8 @@ test('classify: a bare comment event (no pin) never classifies', () => {
 
 test('classify: un-sharing (edit → private) or deleting a pin dequeues it from the wake rail', () => {
   // the reverse of the shared toggle/add — a pin that leaves Claude's view leaves the queue
-  assert.deepEqual(classify({ kind: 'comment', op: 'edit', pin: { id: 'c5', shared: false } }), { action: 'dequeue', comment_id: 'c5' });
-  assert.deepEqual(classify({ kind: 'comment', op: 'delete', id: 'c9' }), { action: 'dequeue', comment_id: 'c9' });
+  assert.deepEqual(classify({ kind: 'comment', op: 'edit', pin: { id: 'c5', shared: false } }), { action: 'dequeue', element_id: 'c5' });
+  assert.deepEqual(classify({ kind: 'comment', op: 'delete', id: 'c9' }), { action: 'dequeue', element_id: 'c9' });
 });
 
 test('classify: an un-share dequeue keys on the writer-stamped became_private (B7)', () => {
@@ -179,12 +181,12 @@ test('classify: an un-share dequeue keys on the writer-stamped became_private (B
   // it must NOT fall through to the shared-pin refresh/enqueue branches.
   assert.deepEqual(
     classify({ kind: 'comment', op: 'edit', became_private: true, pin: { id: 'c5', shared: true } }),
-    { action: 'dequeue', comment_id: 'c5' },
+    { action: 'dequeue', element_id: 'c5' },
   );
   // cheap defensive fallback: a raw shared:false with no flag still dequeues.
   assert.deepEqual(
     classify({ kind: 'comment', op: 'edit', pin: { id: 'c7', shared: false } }),
-    { action: 'dequeue', comment_id: 'c7' },
+    { action: 'dequeue', element_id: 'c7' },
   );
 });
 
@@ -192,8 +194,8 @@ test('classify: a private→shared toggle (edit + became_shared) enqueues; a pla
   const pin = { id: 'c5', seq: 11, shared: true, text: 'now visible', anchor: { mount: 'm1' } };
   const r = classify({ kind: 'comment', op: 'edit', became_shared: true, pin });
   assert.equal(r.action, 'enqueue');
-  assert.equal(r.item.kind, 'comment');
-  assert.equal(r.item.comment_id, 'c5');
+  assert.equal(r.item.kind, 'element');
+  assert.equal(r.item.element_id, 'c5');
   assert.equal(r.item.seq, 11);
   assert.match(r.item.summary, /now visible/);
   // an edit that did NOT flip privacy carries no became_shared → not a fresh enqueue,
@@ -207,7 +209,7 @@ test('classify: a USER reply on a shared pin enqueues (continues the thread)', (
     replies: [{ author: 'user', text: 'and another thing', at: 1 }],
   } });
   assert.equal(r.action, 'enqueue');
-  assert.equal(r.item.kind, 'comment');
+  assert.equal(r.item.kind, 'element');
   assert.equal(r.item.seq, 9);
   assert.equal(r.item.why_wake, 'comment reply');
   assert.match(r.item.summary, /and another thing/); // summarizes the LATEST message, not the root
@@ -254,8 +256,8 @@ test('classify: a plain text edit of an already-shared pin refreshes (F9)', () =
   const pin = { id: 'c5', seq: 11, shared: true, text: 'revised ask', anchor: { mount: 'm1' } };
   const r = classify({ kind: 'comment', op: 'edit', pin });
   assert.equal(r.action, 'refresh');
-  assert.equal(r.comment_id, 'c5');
-  assert.equal(r.item.kind, 'comment');
+  assert.equal(r.element_id, 'c5');
+  assert.equal(r.item.kind, 'element');
   assert.match(r.item.summary, /revised ask/, 'the refresh carries the rebuilt summary');
 });
 

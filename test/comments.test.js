@@ -118,7 +118,7 @@ test('comments: toggling shared re-stamps seq; a no-op PATCH does not', async (t
   assert.deepEqual((await get('/api/elements?type=comment&shared_only=1&since=2')).json.elements.map((c) => c.text), []);
 
   // while private, 'b' is NOT in the wake queue
-  assert.equal((await get('/api/queue')).json.items.some((it) => it.comment_id === b.id), false);
+  assert.equal((await get('/api/queue')).json.items.some((it) => (it.element_ids || []).includes(b.id)), false);
 
   // toggling 'b' to shared re-stamps seq → resurfaces past cursor 2
   const upd = await patch('/api/elements/' + b.id, { shared: true });
@@ -127,13 +127,13 @@ test('comments: toggling shared re-stamps seq; a no-op PATCH does not', async (t
 
   // ...and the toggle enqueues it for the wake rail — a private→shared flip is a
   // deliberate handoff, same as an add (the bug: this used to silently drop)
-  const bItem = (await get('/api/queue')).json.items.find((it) => it.comment_id === b.id);
+  const bItem = (await get('/api/queue')).json.items.find((it) => (it.element_ids || []).includes(b.id));
   assert.ok(bItem, 'toggling b to shared enqueues it');
-  assert.equal(bItem.kind, 'comment');
+  assert.deepEqual([bItem.kind, bItem.type], ['element', 'comment']); // U423: the comment's element group
 
   // re-unchecking "share w/ Claude" (shared→private) drops it back off the rail
   await patch('/api/elements/' + b.id, { shared: false });
-  assert.equal((await get('/api/queue')).json.items.some((it) => it.comment_id === b.id), false, 'un-sharing b removes it from the queue');
+  assert.equal((await get('/api/queue')).json.items.some((it) => (it.element_ids || []).includes(b.id)), false, 'un-sharing b removes it from the queue');
 });
 
 test('comments: deleting a shared pin clears its item from the wake queue', async (t) => {
@@ -141,10 +141,10 @@ test('comments: deleting a shared pin clears its item from the wake queue', asyn
   const { post, del, get } = api;
 
   const a = (await post('/api/elements', commentBody({ text: 'a', shared: true, anchor: anchor('m1') }))).json.pin;
-  assert.ok((await get('/api/queue')).json.items.some((it) => it.comment_id === a.id), 'a shared add enqueues');
+  assert.ok((await get('/api/queue')).json.items.some((it) => (it.element_ids || []).includes(a.id)), 'a shared add enqueues');
 
   await del('/api/elements/' + a.id);
-  assert.equal((await get('/api/queue')).json.items.some((it) => it.comment_id === a.id), false, 'deleting the pin clears its queue item');
+  assert.equal((await get('/api/queue')).json.items.some((it) => (it.element_ids || []).includes(a.id)), false, 'deleting the pin clears its queue item');
 });
 
 test('comments: delete removes the pin; 404 on unknown id', async (t) => {

@@ -503,7 +503,7 @@ test('comments on markdown: a heading pin reads on section "…" and follows the
     assert.deepEqual(head.anchor, { mount: 'md-sec', selector: 'h2', text: 'Old heading words', ordinal: 0, section: 'Old heading words' },
       'the served anchor is the locator, section included');
     assert.equal(head.anchor_label, 'md-sec: on section "Old heading words"');
-    const queued = (await daemon('GET', '/api/queue')).json.items.find((it) => it.kind === 'comment' && it.comment_id === head.id);
+    const queued = (await daemon('GET', '/api/queue')).json.items.find((it) => it.type === 'comment' && (it.element_ids || []).includes(head.id)); // U423: its group
     assert.ok(queued, 'the shared pin queued');
     assert.equal(queued.origin_mount, 'md-sec');
     assert.match(queued.summary, /^md-sec · on section "Old heading words" · /);
@@ -532,7 +532,7 @@ test('comments on markdown: a heading pin reads on section "…" and follows the
     assert.equal(shell.scrolls.length, scrolls + 1);
     assert.equal(shell.scrolls.at(-1).el, item(), 'the item revealed');
     const show = () => [...W.document.querySelectorAll('#queue-rail .cm-card-show')]
-      .find((b) => { const slot = b.closest('.qi-card'); return slot && slot._commentItem && slot._commentItem.comment_id === head.id; });
+      .find((b) => { const slot = b.closest('.qi-card'); return slot && slot._commentItem && (slot._commentItem.element_ids || []).includes(head.id); });
     await eventually(() => !!show(), 'the heading pin\'s card in the rail', 15000);
     const before = shell.scrolls.length;
     show().click();

@@ -743,7 +743,7 @@ function renderCard(item, slot) {
   cardSlots.add(slot);
   slot._commentItem = item;
   slot.replaceChildren();
-  const id = item.comment_id == null ? '' : String(item.comment_id);
+  const id = String(item.element_id ?? item.comment_id ?? '');
   const pin = liveComments.find((c) => c.id === id) || null;
   const loc = pin ? locatorOfPin(pin) : null;
   const line = document.createElement('div');

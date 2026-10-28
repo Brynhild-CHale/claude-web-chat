@@ -316,11 +316,12 @@ test('queue: the ADD event stays immutable after a later hold (F7 — no ring re
 });
 
 test('queue: DELETE ?revert=1 reports the domain OUTCOME, not the request flag (B1)', async (t) => {
-  const { api } = await withServer(t);
-  // A shared pin enqueues a comment item whose Revert deletes the pin → reverted true.
-  await api.post('/api/elements', commentBody({ text: 'look', shared: true, anchor: { mount: 'p1', text: 'x' } }));
-  const q1 = (await api.get('/api/queue')).json.items.find((it) => it.kind === 'comment');
-  assert.ok(q1, 'the shared pin enqueued a comment item');
+  const { api, srv } = await withServer(t);
+  // A legacy comment item (a draft's, from before groups) whose Revert deletes
+  // its pin → reverted true. (U423: a shared pin now raises an element group,
+  // whose ⟲ deletes nothing — RULED U423@group-revert Q2 = a.)
+  const pin = (await api.post('/api/elements', commentBody({ text: 'look', shared: false, anchor: { mount: 'p1', text: 'x' } }))).json.pin;
+  const q1 = queue.enqueue(srv.state, srv.bus, { kind: 'comment', comment_id: pin.id, summary: 'look' });
   const del1 = await api.del('/api/queue/' + q1.id + '?revert=1');
   assert.equal(del1.json.reverted, true, 'the pin existed — Revert dropped it');
 
@@ -350,7 +351,7 @@ test('queue: editing a queued shared pin refreshes its summary + emits update, n
   await api.post('/api/render', { id: 'm1', html: '<p>plan</p>' });
   // A shared pin enqueues a comment item quoting the original text.
   const p = (await api.post('/api/elements', commentBody({ text: 'totals look off', shared: true, anchor: { mount: 'm1', text: 'plan' } }))).json.pin;
-  const before = (await api.get('/api/queue')).json.items.find((it) => it.comment_id === p.id);
+  const before = (await api.get('/api/queue')).json.items.find((it) => (it.element_ids || []).includes(p.id));
   assert.ok(before, 'the shared pin enqueued a comment item');
   assert.match(before.summary, /totals look off/);
 
@@ -360,7 +361,7 @@ test('queue: editing a queued shared pin refreshes its summary + emits update, n
 
   const q = (await api.get('/api/queue')).json;
   assert.equal(q.count, 1, 'refresh does not enqueue a second item');
-  const after = q.items.find((it) => it.comment_id === p.id);
+  const after = q.items.find((it) => (it.element_ids || []).includes(p.id));
   assert.ok(after, 'the item is still queued (refresh, not dequeue)');
   assert.match(after.summary, /header is wrong/, 'the summary was rebuilt from the new text');
   assert.doesNotMatch(after.summary, /totals look off/, 'the stale text is gone');

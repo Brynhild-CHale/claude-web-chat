@@ -126,7 +126,7 @@ test('a wipe drops the pins on the panes it removed and the live captures; the p
   const storeBefore = (await api.get('/api/store')).json;
 
   const queued = (await api.get('/api/queue')).json.items;
-  assert.ok(queued.some((it) => it.comment_id === onGone.id), 'the shared pin on the doomed pane is queued');
+  assert.ok(queued.some((it) => (it.element_ids || []).includes(onGone.id)), 'the shared pin on the doomed pane is queued');
 
   const log = await frameLog(ctx);
   t.after(() => log.close());
@@ -147,8 +147,8 @@ test('a wipe drops the pins on the panes it removed and the live captures; the p
   assert.deepEqual((await api.get('/api/store')).json, storeBefore, 'the store is unchanged');
 
   const after = (await api.get('/api/queue')).json.items;
-  assert.equal(after.some((it) => it.comment_id === onGone.id), false, 'the queued pin was dequeued by the wipe');
-  assert.ok(after.some((it) => it.comment_id === onKeep.id), 'the surviving pin stays queued');
+  assert.equal(after.some((it) => (it.element_ids || []).includes(onGone.id)), false, 'the queued pin was dequeued by the wipe');
+  assert.ok(after.some((it) => (it.element_ids || []).includes(onKeep.id)), 'the surviving pin stays queued');
 });
 
 test('a wipe drops the live copy of a pin with no anchor (F7)', async (t) => {
@@ -185,7 +185,7 @@ test('a new graph drops every pin and every live capture; the seq counters keep 
   assert.deepEqual(await liveCaptures(api), [], 'every live capture is gone');
   const deletes = (await events(api)).slice(before).filter((e) => e.kind === 'comment' && e.op === 'delete');
   assert.deepEqual(deletes.map((e) => e.id).sort(), [p1.id, p2.id, loose.id].sort());
-  assert.equal((await api.get('/api/queue')).json.items.some((it) => it.comment_id), false, 'no pin is left queued');
+  assert.equal((await api.get('/api/queue')).json.items.some((it) => it.type === 'comment'), false, 'no pin is left queued');
 
   const nextCap = await capture(api, 3);
   assert.equal(nextCap, `cap${Number(c2.slice(3)) + 1}`, 'the capture counter was not reset');
@@ -220,7 +220,7 @@ test('a wipe queued during a locked turn applies the same rules when it runs', a
   assert.deepEqual((await comments(api)).map((c) => c.id), [onKeep.id]);
   assert.deepEqual(await liveCaptures(api), []);
   assert.equal((await api.get('/api/store')).json.k, 1, 'the store is kept');
-  assert.equal((await api.get('/api/queue')).json.items.some((it) => it.comment_id === onGone.id), false);
+  assert.equal((await api.get('/api/queue')).json.items.some((it) => (it.element_ids || []).includes(onGone.id)), false);
 
   const node = (await api.get(`/api/graph/node/${encodeURIComponent(nodeId)}`)).json;
   assert.deepEqual(node.captures.map((c) => c.id), ['cap1'], 'the committed node keeps the capture the wipe cleared');

@@ -137,8 +137,8 @@ test('enqueue: a comment pinned on a cleared pane has no origin; one on a live m
   const a = await ctx.api.post('/api/elements', commentBody({ text: 'on a cleared pane', shared: true, anchor: { mount: 'gone' } }));
   const b = await ctx.api.post('/api/elements', commentBody({ text: 'on prose', shared: true, anchor: { mount: 'md-a' } }));
   const q = await items(ctx);
-  const qa = q.find((it) => it.comment_id === a.json.pin.id);
-  const qb = q.find((it) => it.comment_id === b.json.pin.id);
+  const qa = q.find((it) => (it.element_ids || []).includes(a.json.pin.id));
+  const qb = q.find((it) => (it.element_ids || []).includes(b.json.pin.id));
   assert.ok(qa && qb, 'both shared pins queued');
   assert.equal(qa.origin_mount, null);
   assert.equal(qb.origin_mount, 'md-a');
