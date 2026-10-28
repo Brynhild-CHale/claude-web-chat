@@ -25,7 +25,10 @@
 //   * `unloaded` (U452's budget at parsedMax 1): the index on disk keeps every
 //     turn; turns(cid) and turn(id) parse again and answer the same ids;
 //   * a hook envelope for an unloaded conversation reopens it as its new turn
-//     opens: its turn_count holds (K.2-161).
+//     opens: its turn_count holds (K.2-161);
+//   * after boot: a conversation a new process starts (its sessions file alone,
+//     no hook) is opened on the registry's `added`; the budget never unloads
+//     the eager set (api.pinned).
 //
 // The Claude tier is a private fake (test-support/claude-home, isolate: true);
 // transcripts are built by test-support/claude-records; nothing is copied.
@@ -512,4 +515,55 @@ test('a hook envelope for an unloaded conversation reopens it as its new turn op
   await waitUntil(() => h.rec.engine.model.turnsOf(a).length === 3, { timeout: 10000, what: 'a reopened with its new turn' });
   assert.equal(h.conv(a).turn_count, 3, 'two restored and the new one');
   assert.deepEqual(h.rec.engine.model.turnsOf(a).map((x) => x.id), ['a-1', 'a-2', 'a-new']);
+});
+
+// ── after boot: the eager set grows, and the budget never takes it ───────────
+
+test('a conversation a new process starts after boot (no hook, its sessions file alone) is opened: the registry\'s `added` makes it eager', async (t) => {
+  const w = world(t);
+  const old = w.cutoff() - 2 * DAY;
+  const a = sid(1, 9);
+  transcript(w, a, ['a-1'], old);
+  writeRegistry(w, [stored(w, { id: a, lastActivity: old })]);
+  const pid = process.pid;
+  const sample = await waitUntil(async () => {
+    const got = (await portfiles.sampleProcs([pid])).get(pid);
+    return got && got.alive === true && Number.isFinite(got.startedAt) ? got : null;
+  }, { timeout: 20000, interval: 200, what: 'a verdict-bearing sample of this process' });
+  const h = boot(t, w, { conversationsOptions: { discoveryMs: 40 }, sampleProcs: (pids) => portfiles.sampleProcs(pids) });
+  const changes = [];
+  h.mirror.register('added-recorder', () => ({ start: async () => {}, stop: async () => {}, onConversation: (ev) => changes.push(ev.change) }));
+  await h.mirror.start();
+  await settle();
+  assert.deepEqual(h.store.loads, [], 'the old one listed, not parsed');
+  const n = sid(2, 9);
+  transcript(w, n, ['n-1'], Date.now());
+  w.ch.writeSession({ pid, procStart: portfiles.formatProcStart(sample.startedAt), sessionId: n, status: 'busy' });
+  await waitUntil(() => (h.conv(n) || {}).turn_count === 1, { timeout: 15000, what: 'the new conversation opened' });
+  assert.ok(changes.includes('added'), 'the registry said added');
+  assert.deepEqual(h.store.loads, [n], 'only the new one');
+  assert.equal(h.rec.engine.indexing(n), false, 'eager');
+  assert.equal(h.rec.engine.indexing(a), true, 'the old one stays listed');
+});
+
+test('the budget never unloads the eager set: at parsedMax 1 the live conversation keeps its turns while listed ones are parsed and unloaded', async (t) => {
+  const w = world(t);
+  const old = w.cutoff() - 2 * DAY;
+  const [live, a, b] = [sid(1, 10), sid(2, 10), sid(3, 10)];
+  transcript(w, live, ['live-1'], old);
+  transcript(w, a, ['a-1'], old);
+  transcript(w, b, ['b-1'], old);
+  writeRegistry(w, [
+    stored(w, { id: live, lastActivity: old, live: true }),
+    stored(w, { id: a, lastActivity: old }),
+    stored(w, { id: b, lastActivity: old }),
+  ]);
+  const h = boot(t, w, { parsedMax: 1 });
+  await h.mirror.start();
+  await waitUntil(() => (h.conv(live) || {}).turn_count === 1, { timeout: 15000, what: 'the live one parsed' });
+  assert.deepEqual(await h.ids(a), ['a-1']);
+  assert.deepEqual(await h.ids(b), ['b-1']);
+  assert.equal(h.rec.engine.model.turnsOf(a).length, 0, 'a listed one was unloaded');
+  assert.equal(h.rec.engine.model.turnsOf(live).length, 1, 'the live one was never unloaded');
+  assert.equal(h.rec.engine.indexing(live), false, 'and stays open');
 });
