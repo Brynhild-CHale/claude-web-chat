@@ -453,6 +453,42 @@ test('a learned value inside a recorded passage answers masked with its span, ne
   assert.deepEqual(v.at, by['one-value'].at);
 });
 
+test('a passage in the served tail past a learned value shorter than its mask records and resolves in served offsets', async (t) => {
+  withTempHome(t);
+  const h = boot(t);
+  await h.begin();
+  const CODE = 'zq8kx2pw'; // 8 characters: its mask ‹redacted:org› is longer
+  const r = h.records(41);
+  r.prompt('which code', { promptId: 'cs-1' });
+  r.assistant([`Project code ${CODE} is set. The tail passage ends here.`]);
+  r.turnDuration({ durationMs: 40 });
+  h.append(r.records);
+  await settled(h, 1);
+  const reply = (await h.items('cs-1')).find((it) => it.kind === 'reply');
+  assert.ok(reply, 'a reply');
+  h.redactor.addKnown(CODE, 'org');
+  const served = (await h.mirror.itemField(reply.id, { field: 'text' })).text;
+  assert.ok(!served.includes(CODE) && marksIn(served).length === 1, 'the code is masked once learned');
+  const record = async (start, end) => h.mirror.recordAnchor({ kind: 'item-range', item_id: reply.id, pos: { start, end } });
+  const exact = 'passage ends here.';
+  const at = served.indexOf(exact);
+  assert.ok(at + exact.length > served.length - 6, 'the passage reaches into the served text\'s last 6 characters');
+  for (const pos of [{ start: at, end: at + exact.length }, { start: served.length - 6, end: served.length }]) {
+    const made = await record(pos.start, pos.end);
+    assert.ok(made.anchor, `recorded at ${pos.start}–${pos.end}: ${JSON.stringify(made)}`);
+    assert.equal(made.anchor.quote.exact, served.slice(pos.start, pos.end));
+    assert.deepEqual(made.anchor.pos, pos);
+    const a = await resolveOne(h, made.anchor, `tail-${pos.start}`);
+    assertAnswer(a, `tail-${pos.start}`);
+    assert.equal(a.visible, 'placed');
+    assert.equal(a.state, 'exact');
+    assert.deepEqual(a.at, { item_id: reply.id, field: 'text', ...pos });
+  }
+  // Past the served text is still refused.
+  const past = await record(served.length - 2, served.length + 1);
+  assert.equal(past.invalid, true);
+});
+
 // ── refused ──────────────────────────────────────────────────────────────────
 
 test('record refuses an rh_ reply, an rm_ reply, a hook-sourced tool card and a provisional turn with the refused hint, and writes nothing', async (t) => {
