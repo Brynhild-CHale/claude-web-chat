@@ -62,12 +62,11 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **What a turn changed in your files.** In a git repository, web-chat records what each of Claude's turns changed in the project's files: the bar reads *Done · 3 files changed*, and the turn's footer in the chat reads *3 files +40 −12* with **View changes**, which opens the turn's diff — or, for the turn that committed a node, the node's. The footer also carries the turn's **node chip** (*n1.14*, or *no surface change · rode into n1.14* for a turn that left the page as it was): click it to preview that node. The snapshots live in a store of web-chat's own under `.web-chat/mirror/git`, which borrows your repository's objects and never writes your `.git` — no commit, no index, no ref. Anything that looks like a secret is masked before a diff is written, and `WEB_CHAT_MIRROR_DIFFS=0` in the daemon's environment turns it off.
 
-**What the chat mirror keeps.** Nothing the chat remembers about a conversation is deleted because of a count: its turns and code diffs go only when Claude Code's own cleanup deletes the session's transcript. A turn whose code diff is no longer on disk says so instead of showing no changes:
+**What the chat mirror keeps.** Nothing the chat remembers about a conversation is deleted because of a count: its turns and code diffs go only when Claude Code's own cleanup deletes the session's transcript, or when a disk budget you set needs the room. A turn whose code diff is no longer on disk says so instead of showing no changes:
 
 - When Claude Code's own cleanup deletes a session's transcript, web-chat deletes that session's turn index and the code diffs no graph node links.
-- The mirror's own files are kept without a size limit.
+- The mirror's own files are kept without a size limit unless you set one with claude-web-chat mirror budget, and then the files it can rebuild go first and a diff linked to a graph node goes last.
 - The file snapshots behind a diff are kept for 7 days.
-- The snapshot store is capped at 1 GiB, and no more diffs are recorded once it is full.
 - The server follows the snapshots of at most 1000 turns in memory at once.
 - A finished background shell or monitor stays listed for 30 minutes.
 - A finished agent stays listed for 30 minutes.
@@ -216,6 +215,11 @@ mod [verb]          the web-chat mod, a Claude Code plugin (2.1.287+) that
 excerpts [verb]     on | off | status: whether Claude receives the words of the
                     passages you pin, quoted as data (status says which and
                     whether it is this project's record or the default)
+mirror [verb]       budget <size> | unlimited | status: the chat mirror's disk
+                    budget (.web-chat/mirror.json), unlimited by default; over a
+                    size you set, the files it can rebuild go first and a diff
+                    linked to a graph node last; status prints the budget and
+                    what .web-chat/mirror/ holds
 install             the setup step on its own, and how updates reach a project
 update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back,

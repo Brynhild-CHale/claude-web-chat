@@ -37,7 +37,6 @@ const OWNERS = [
   ['claude-code-cleanup', 'conversations.js', (m) => m.GONE_TRIGGER, 'GONE_TRIGGER'],
   ['disk-budget-bytes', 'codediff.js', (m) => m.LIMITS.DISK_BUDGET_BYTES, 'DISK_BUDGET_BYTES'],
   ['prune-expire', 'codediff.js', (m) => m.LIMITS.PRUNE_EXPIRE, 'PRUNE_EXPIRE'],
-  ['shadow-max-bytes', 'codediff.js', (m) => m.LIMITS.SHADOW_MAX_BYTES, 'SHADOW_MAX_BYTES'],
   ['codediff-turns-max', 'codediff.js', null, 'TURNS_MAX'],
   ['tasks-finished-keep', 'tasks.js', (m) => m.FINISHED_KEEP_MS, 'FINISHED_KEEP_MS'],
   ['agents-finished-keep', 'agents.js', (m) => m.FINISHED_KEEP_MS, 'FINISHED_KEEP_MS'],
@@ -85,7 +84,7 @@ test('the values are unchanged (no retention value moved with the table)', () =>
   assert.equal(valueOf('disk-budget-bytes'), null, 'unlimited by default (L.4 P4)');
   assert.equal(retention('disk-budget-bytes').unit, 'bytes');
   assert.equal(valueOf('prune-expire'), '7.days.ago');
-  assert.equal(valueOf('shadow-max-bytes'), 1024 * 1024 * 1024);
+  assert.equal(retention('disk-budget-bytes').user_text, 'The mirror\'s own files are kept without a size limit unless you set one with claude-web-chat mirror budget, and then the files it can rebuild go first and a diff linked to a graph node goes last.');
   assert.equal(valueOf('codediff-turns-max'), 1000);
   assert.equal(valueOf('tasks-finished-keep'), 30 * 60 * 1000);
   assert.equal(valueOf('agents-finished-keep'), 30 * 60 * 1000);
@@ -136,6 +135,10 @@ test('no count cap deletes: the four retired rows are gone from the table and fr
       assert.ok(!src.includes(name), `${file} no longer names ${name}`);
     }
   }
+  // U455 (L.4 P4): the snapshot cap folds into the disk budget and lifts with it.
+  assert.equal(retention('shadow-max-bytes'), null, 'shadow-max-bytes is no row');
+  assert.equal(require(path.join(MIRROR, 'codediff.js')).LIMITS.SHADOW_MAX_BYTES, undefined);
+  assert.ok(!fs.readFileSync(path.join(MIRROR, 'codediff.js'), 'utf8').includes('SHADOW_MAX_BYTES'), 'codediff.js no longer names SHADOW_MAX_BYTES');
   // Only the disk budget's row may be unset.
   assert.deepEqual(RETENTION.filter((r) => r.value === null).map((r) => r.id), ['disk-budget-bytes']);
 });

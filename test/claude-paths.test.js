@@ -360,6 +360,7 @@ test('the new project paths all sit inside the project\'s .web-chat/, and the Cl
     'mirrorDir', 'mirrorConversations', 'mirrorIndexDir', 'mirrorDiffsDir', 'mirrorGit', 'mirrorTmp',
     'projectJson', 'projectLogo', 'projectLogoDark', 'projectFavicon', 'projectFaviconDark', 'projectTouchIcon',
     'asksDir', 'asksAudit', 'controlDir', 'controlAudit', 'controlRestores', 'modDir', 'attachmentsDir',
+    'mirrorSettings',
   ];
   for (const key of keys) assert.ok(p[key].startsWith(p.dir + path.sep), key);
   for (const fn of ['mirrorIndex', 'mirrorDiff', 'mirrorNodeDiff']) assert.ok(p[fn](SID).startsWith(p.dir + path.sep), fn);

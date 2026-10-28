@@ -336,14 +336,19 @@ test('head travels with its tree: a previous-turn-close before carries the previ
   assert.equal(nul.src.persistState(S1).chain.after.head, null);
 });
 
-test('the store exposes full(): false on a small shadow, true under an injected cap', async (t) => {
+// U455 (DECISIONS.md L.4 P4): the snapshot cap folded into the disk budget, so
+// full() is the source's verdict, not a size of its own: false whatever the
+// size until the source marks a set budget still exceeded after its whole order.
+test('the store exposes full(): false whatever its size, true only while the source marks a set budget exceeded', async (t) => {
   withTempHome(t);
   const repo = treesnapRepo(t);
-  const small = storeFor(repo);
-  assert.equal((await small.snapshot()).ok, true);
-  assert.equal(small.full(), false);
-  const tiny = storeFor(repo, { limits: { SHADOW_MAX_BYTES: 1 } });
-  assert.equal((await tiny.snapshot()).ok, true);
-  assert.equal(tiny.full(), true);
+  const store = storeFor(repo, { limits: { SHADOW_MAX_BYTES: 1 } }); // a retired limit is ignored
+  assert.equal((await store.snapshot()).ok, true);
+  assert.equal(store.full(), false, 'no snapshot cap of its own');
+  assert.equal((await store.housekeep()).full, false);
+  store.markFull(true);
+  assert.equal(store.full(), true);
+  store.markFull(false);
+  assert.equal(store.full(), false);
   assert.ok(fs.existsSync(path.join(projectPaths(repo.root).mirrorGit, 'objects')));
 });
