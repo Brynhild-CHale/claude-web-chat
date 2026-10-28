@@ -224,7 +224,18 @@ test('a refused PATCH (403) shows the daemon\'s hint as text in the frame', asyn
   const shown = small().querySelector('.ts-hint');
   assert.equal(shown.textContent, hint);
   assert.equal(shown.children.length, 0, 'as text');
+  assert.equal(shown.getAttribute('role'), 'status', 'the hint keeps its role (U402: the change is ink only)');
+  assert.equal(css.value(shown, 'color'), 'var(--wc-muted)',
+    'the hint draws on the muted text token (U402, K.5 K3: earthy light --wc-rust on --wc-panel-bg read 4.43:1)');
   assert.ok(isOpen(small()), 'the frame stays open');
+});
+
+test('the settings hint\'s ink: no .ts-hint rule in app.css names --wc-rust (U402, K.5 J3/K3)', () => {
+  const hints = parseRules(stripComments(CSS)).filter((r) => /\.ts-hint\b/.test(r.selector));
+  assert.ok(hints.length >= 1, 'app.css styles the hint');
+  for (const r of hints) {
+    for (const [prop, raw] of r.decls) assert.ok(!/--wc-rust\b/.test(raw), `${r.selector} ${prop}: ${raw}`);
+  }
 });
 
 test('refusals: tool-drawn content, a non-object schema root, a bad level or type', () => {
