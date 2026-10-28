@@ -19,6 +19,8 @@
 //     pending turn; a transcripts dispatch is a use;
 //   * sources hear `unloaded` before the turns leave: a debounced index write
 //     flushed in that hook is on disk with every turn (R1);
+//   * an update already waiting for the conversation goes out before it is
+//     unloaded (the facade flushes first), never lost;
 //   * with no api.pinned on the transcripts source nothing is unloaded (the real
 //     transcripts.js has none at this head);
 //   * engine.ensureConversation and engine.indexing route to the source's api;
@@ -180,6 +182,7 @@ test('a re-open through restoreTurns gives back the same turn ids and seqs; a `r
   assert.equal(model.turn('p-1'), null);
   assert.equal(model.item('p_p-1'), null, 'its items are gone with it');
   assert.equal(tm.resolve('h_1'), 'h_1', 'the alias went with the turns');
+  assert.equal(tm.sessionTurn('s1'), null, 'the session went with the turns');
   for (const id of ['p-1', 'p-2', 'h_1']) assert.equal(model.unloadedConversationOf(id), 'c1', `${id} is located`);
   assert.equal(model.unloadedConversationOf('p-9'), null);
   const conv = model.serializeConversation('c1');
@@ -190,6 +193,7 @@ test('a re-open through restoreTurns gives back the same turn ids and seqs; a `r
   assert.deepEqual(r, { ok: true, restored: 2 });
   assert.deepEqual(model.turnsOf('c1').map((t) => ({ id: t.id, seq: t.seq })), before, 'the same ids and seqs');
   assert.equal(tm.resolve('h_1'), 'p-1', 'the replaces alias resolves again');
+  assert.equal(tm.sessionTurn('s1'), 'p-2', 'and the session is back on its last turn');
   for (const id of ['p-1', 'p-2', 'h_1']) assert.equal(model.unloadedConversationOf(id), null, `${id} is back`);
   assert.equal(model.serializeConversation('c1').turn_count, 2);
   // The kept per-conversation record: the next turn continues the seqs.
@@ -279,6 +283,44 @@ test('the budget evicts the least recently used conversation that is not pinned:
   assert.deepEqual(h.unloadedHeard(), ['c1', 'c3', 'c4', 'c5'], 'every candidate pinned');
   for (const cid of ['c2', 'c6', 'c7']) assert.ok(h.held(cid), `${cid} holds its turns`);
   assert.equal(h.mirror.snapshot().diagnostics.parsed.held, 3, 'over the budget while everything is pinned');
+});
+
+test('the touched conversation is never unloaded, even when it is the only one the budget could take', async (t) => {
+  const eager = new Set();
+  const h = boot(t, {
+    parsedMax: 1,
+    api: {
+      pinned: (cid) => eager.has(cid),
+      turns: async (cid) => ({ conversation_id: cid, turns: [], next_before: null, total: 0 }),
+    },
+  });
+  eager.add('c1');
+  h.turns('c1', ['a-1']); h.orphan();
+  h.turns('c2', ['b-1']); h.orphan();
+  assert.deepEqual(h.unloadedHeard(), [], 'c1 is eager, c2 was touched (and pending then)');
+  // c2 is unpinned now, and the read touches it: the touched one stays.
+  await h.mirror.turns('c2');
+  assert.deepEqual(h.unloadedHeard(), [], 'the touched one is never the one unloaded');
+  assert.ok(h.held('c1') && h.held('c2'));
+  // Once c1 is no longer eager, the next use of c2 unloads c1, not c2.
+  eager.clear();
+  await h.mirror.turns('c2');
+  assert.deepEqual(h.unloadedHeard(), ['c1']);
+  assert.ok(h.held('c2'));
+});
+
+test('an update already waiting for the conversation goes out before it is unloaded, never lost', async (t) => {
+  const h = boot(t, { api: { pinned: () => false }, parsedMax: 1 });
+  h.turns('c1', ['a-1']);
+  h.orphan();
+  // No flush yet: c1's turn is still waiting to be sent when c2 unloads it.
+  assert.equal(h.frames.filter((f) => f.conversation_id === 'c1' && f.type === 'mirror:stream').length, 0, 'nothing sent yet');
+  h.turns('c2', ['b-1']);
+  assert.deepEqual(h.unloadedHeard(), ['c1']);
+  await sleep(SETTLE_MS);
+  const streamed = h.frames.filter((f) => f.conversation_id === 'c1' && f.type === 'mirror:stream')
+    .flatMap((f) => (f.turns || []).map((x) => x.id));
+  assert.ok(streamed.includes('a-1'), 'c1\'s waiting turn went out before the unload');
 });
 
 test('sources hear `unloaded` before the turns leave: the hook reads every turn, and a debounced index write flushed there is on disk with every turn (R1)', async (t) => {
