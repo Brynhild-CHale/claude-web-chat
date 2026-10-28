@@ -3359,7 +3359,7 @@ img.bg-look-img, img.bg-card-img { border: 1px solid var(--wc-border); border-ra
 .ts-sub { font: 11px var(--wc-font); color: var(--wc-muted); }
 .ts-sub:empty { display: none; }
 .ts-host { min-height: 0; }
-.ts-hint { margin: 0; font: 11.5px var(--wc-font); color: var(--wc-rust); overflow-wrap: anywhere; }
+.ts-hint { margin: 0; font: 11.5px var(--wc-font); color: var(--wc-muted); overflow-wrap: anywhere; }
 .ts-hint:empty { display: none; }
 @media (max-width: 759px) {
   .popover.ts-small { width: calc(100vw - 32px); }
