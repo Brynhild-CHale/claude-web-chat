@@ -463,3 +463,32 @@ test('commitPins skips (and counts) a chat reference a node names; a highlight\'
   assert.deepStrictEqual(rec.pins, [`${h.id}@1`]);
   assert.equal(store.stats().chat_refs_skipped, 1);
 });
+
+// A PAGE comment never stores a chat anchor (the type's anchors are chat
+// kinds iff its family is chat): payloadOf keeps an engine record as given
+// only for a page kind, and a mountless chat-kind record is refused as on
+// ae/int — 'anchor-without-mount', a 400 at the route, nothing appended.
+test('a page comment refuses a chat anchor: POST {type: comment, anchor: TURN} and a PATCH re-anchor to TURN answer 400 and append nothing', async (t) => {
+  for (const anchor of [TURN, ITEM, RANGE, DIFF]) {
+    assert.throws(() => el.payloadOf({ text: 'x', shared: true, replies: [], anchor }), (e) => e.reason === 'anchor-without-mount', anchor.kind);
+  }
+  const d = await withServer(t);
+  const { api, srv } = d;
+  const store = srv.elements;
+  await render(api, 'm1');
+  const before = store.stats();
+  const post = await api.post('/api/elements', { type: 'comment', anchor: TURN, payload: { text: 'secret', shared: true } });
+  assert.equal(post.status, 400, post.text);
+  assert.deepStrictEqual([store.stats().elements, store.stats().versions], [before.elements, before.versions], 'the refused add appended nothing');
+  assert.ok(!(await ok(api.get('/api/elements'), 'GET')).elements.some((e) => e.type === 'comment'), 'no page comment carries the turn anchor');
+
+  // A comment on the page, then a re-anchor of it onto the turn.
+  const c = (await ok(api.post('/api/elements', { type: 'comment', anchor: { mount: 'm1', selector: 'p.lead', text: 'Hello world', ordinal: 0 }, payload: { text: 'page note', shared: true } }), 'POST comment')).element;
+  const mid = store.stats();
+  const patch = await api.patch(`/api/elements/${c.id}`, { anchor: TURN });
+  assert.equal(patch.status, 400, patch.text);
+  assert.deepStrictEqual([store.stats().elements, store.stats().versions], [mid.elements, mid.versions], 'the refused re-anchor appended nothing');
+  const now = (await ok(api.get('/api/elements'), 'GET')).elements.find((e) => e.id === c.id);
+  assert.notEqual(now.anchor && now.anchor.kind, 'turn');
+  assert.equal(now.v, c.v);
+});
