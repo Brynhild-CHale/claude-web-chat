@@ -615,3 +615,35 @@ test('a clean boot over 1,000 nodes redacts nothing and hashes no payload', (t) 
   assert.ok(r2.log.records > 1000, 'every commit record and version was read');
   assert.deepEqual(bootReport(root).states, r2.states, 'the report on disk is the one returned');
 });
+
+// ── the chat family (U416; DECISIONS.md K.2-161, U415@censusVersions-chat) ──
+
+// A chat pin is one line of versions in the log alone: no commit, draft or
+// close ever holds one, so the version census must never count it lost.
+test('a chat pin (the log alone), a hard stop and a reboot: the report names nothing and no "disagreed at boot" line is printed', async (t) => {
+  const s1 = await withServer(t);
+  const CHAT = Object.keys(elementLog.SCHEMAS).find((s) => elementLog.SCHEMAS[s].type === 'chat-comment');
+  const anchor = {
+    v: 1, kind: 'turn', conversation_id: 'conv-u416', session_id: 'sess-u416', turn_id: 't_1',
+    quote: { exact: 'the prompt', prefix: '', suffix: '' }, fp: { h: '0123456789abcdef', len: 10 }, marks: 0, label: 'turn 1',
+  };
+  const pin = s1.srv.graph.elements.addElement({ type: 'chat-comment', schema: CHAT, payload: { text: 'on the turn', shared: true, replies: [], anchor, chain: [] }, author: 'user' });
+  s1.srv.graph.elements.replyElement(pin.id, pin.v, { text: 'a reply', author: 'user' });
+  await s1.stop(); // a hard stop: no graceful shutdown, no draft
+
+  const printed = [];
+  const orig = console.error;
+  console.error = (...a) => { printed.push(a.map(String).join(' ')); };
+  let s2;
+  try {
+    s2 = await withServer(t, { root: s1.root });
+  } finally {
+    console.error = orig;
+  }
+  const report = bootReport(s1.root);
+  assert.deepEqual(report.states, {}, JSON.stringify(report.states));
+  assert.equal(report.clean, true);
+  assert.equal(integrityEvents(s2.srv).length, 0);
+  assert.ok(!printed.some((l) => /disagreed at boot/.test(l)), printed.join('\n'));
+  assert.equal(s2.srv.elements.chatRecords('chat-comment').length, 1, 'the pin is still there');
+});
