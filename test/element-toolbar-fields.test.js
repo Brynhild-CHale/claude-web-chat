@@ -263,6 +263,8 @@ test('the built-ins carry exactly the ruled table (K.2-1, F2 a, K.2-6, K.2-7, K.
     comment: { label: 'Comment', hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }], profiles: false, input: 'taps', wake: true, summary_key: 'text' },
     highlight: { label: 'Highlight', hotkeys: [], profiles: true, input: 'selection', wake: true, summary_key: 'note' },
     'box-grab': { label: 'Box grab', hotkeys: [], profiles: false, input: 'strokes', wake: true },
+    // tranche 3, U415: armed by the Comment tool, no hotkeys of its own.
+    'chat-comment': { label: 'Comment', input: 'taps', wake: true, summary_key: 'text', tool: 'comment' },
   };
   for (const type of BUILTIN_ELEMENT_TYPE_NAMES) {
     const j = builtin(type);

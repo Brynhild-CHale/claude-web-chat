@@ -26,8 +26,11 @@ test('the module has no require(): the portal loads it beside remote-policy, and
 });
 
 test('the built-in types: comment, highlight, box-grab — page family, at the floor, private allowed; frozen', () => {
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(BUILTIN_ELEMENT_TYPES)), ['comment', 'highlight', 'box-grab'].map((type) => (
-    { type, family: 'page', remote: { see: 'read', send: 'full' }, private: true })));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(BUILTIN_ELEMENT_TYPES)), [
+    ...['comment', 'highlight', 'box-grab'].map((type) => ({ type, family: 'page', remote: { see: 'read', send: 'full' }, private: true })),
+    // tranche 3, U415 (RULED CHAT@type a): the chat comment, family chat.
+    { type: 'chat-comment', family: 'chat', remote: { see: 'read', send: 'full' }, private: true },
+  ]);
   const frozenDeep = (o) => !o || typeof o !== 'object' || (Object.isFrozen(o) && Object.values(o).every(frozenDeep));
   assert.ok(frozenDeep(BUILTIN_ELEMENT_TYPES));
   assert.deepStrictEqual(FLOOR, { see: 'read', send: 'full' });
@@ -65,14 +68,16 @@ test('floorRules: exactly the four /api/elements rows, in first-match order, wha
 test('typeGates, frames and privatePaths for the built-ins', () => {
   const { typeGates, frames, privatePaths } = compileElementPolicy(BUILTIN_ELEMENT_TYPES);
   assert.deepStrictEqual(typeGates.comment, { see: 'read', send: 'full' });
-  assert.deepStrictEqual(Object.keys(typeGates), ['box-grab', 'comment', 'highlight'], 'sorted by type');
+  assert.deepStrictEqual(Object.keys(typeGates), ['box-grab', 'chat-comment', 'comment', 'highlight'], 'sorted by type');
+  assert.deepStrictEqual(typeGates['chat-comment'], { see: 'read', send: 'full' });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(frames)), [
     { type: 'element:box-grab', level: 'read' },
+    { type: 'element:chat-comment', level: 'read' },
     { type: 'element:comment', level: 'read' },
     { type: 'element:highlight', level: 'read' },
   ]);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(privatePaths)), {
-    'element:box-grab': ['elements[]'], 'element:comment': ['elements[]'], 'element:highlight': ['elements[]'],
+    'element:box-grab': ['elements[]'], 'element:chat-comment': ['elements[]'], 'element:comment': ['elements[]'], 'element:highlight': ['elements[]'],
   });
   assert.equal(frameType('comment'), 'element:comment');
   // remote-policy carries each: one FRAME_RULES row and one PRIVATE_RULES entry a type.

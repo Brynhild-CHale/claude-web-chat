@@ -1120,6 +1120,7 @@ test('FRAME_RULES: the spec\'s table; one row a type; the schemas exported by na
     // One per built-in element type (lib/core/element-policy), at its `see`:
     // the comment's pins ride element:comment (U327a).
     { type: 'element:box-grab', level: 'read' },
+    { type: 'element:chat-comment', level: 'read' },
     { type: 'element:comment', level: 'read' },
     { type: 'element:highlight', level: 'read' },
   ]);
@@ -1443,6 +1444,7 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(PRIVATE_RULES)), {
     frames: {
       'element:box-grab': ['elements[]'],
+      'element:chat-comment': ['elements[]'],
       'element:comment': ['elements[]'],
       'element:highlight': ['elements[]'],
       // The full-surface frames' lean rows (U304), applied by projectSnapshot.

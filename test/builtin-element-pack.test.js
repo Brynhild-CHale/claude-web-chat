@@ -118,13 +118,13 @@ test('x3: the first boot installs; the second and third write 0 files and change
   assert.deepStrictEqual(first.network, []);
   assert.equal(first.report.installed, true);
   assert.equal(first.report.reason, 'absent');
-  assert.equal(first.report.version, '1.0.0');
+  assert.equal(first.report.version, '1.1.0');
   assert.deepStrictEqual(first.said, []);
 
   const found = findPack(root, BUILTIN_ELEMENT_PACK, 'local');
   assert.ok(found, 'the record is written');
-  assert.equal(found.pack.version, '1.0.0');
-  assert.deepStrictEqual(found.pack.source, { via: 'builtin', sha: first.report.sha, version: '1.0.0' });
+  assert.equal(found.pack.version, '1.1.0');
+  assert.deepStrictEqual(found.pack.source, { via: 'builtin', sha: first.report.sha, version: '1.1.0' });
   assert.deepStrictEqual(found.pack.elements, [...BUILTIN_ELEMENT_TYPE_NAMES]);
   assert.equal(found.pack.actor, 'web-chat');
   const ledger = findLedgerEntry(root, BUILTIN_ELEMENT_PACK);
@@ -145,7 +145,7 @@ test('x3: the first boot installs; the second and third write 0 files and change
 
   for (const n of [2, 3]) {
     const b = boot(root);
-    assert.deepStrictEqual(b.report, { installed: false, reason: 'intact', version: '1.0.0', sha: first.report.sha }, `boot ${n}`);
+    assert.deepStrictEqual(b.report, { installed: false, reason: 'intact', version: '1.1.0', sha: first.report.sha }, `boot ${n}`);
     assert.equal(b.writes, 0, `boot ${n}: 0 fs writes`);
     assert.deepStrictEqual(b.after, b.before, `boot ${n}: 0 bytes changed`);
     assert.deepStrictEqual(b.network, [], `boot ${n}: no network`);
@@ -240,7 +240,7 @@ test('x3: a shipped-tree change (one revised, one added, one dropped) reinstalls
     type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, private: true, schema: 'sticky@1', anchors: ['page'],
   }));
   fs.rmSync(path.join(ship, 'elements', 'box-grab'), { recursive: true });
-  editJson(path.join(ship, 'web-chat-pack.json'), (m) => ({ ...m, elements: ['comment', 'highlight', 'sticky'] }));
+  editJson(path.join(ship, 'web-chat-pack.json'), (m) => ({ ...m, elements: ['comment', 'highlight', 'sticky', 'chat-comment'] }));
 
   const b = boot(root, { templateDir: ship });
   assert.deepStrictEqual(b.network, []);
@@ -248,7 +248,7 @@ test('x3: a shipped-tree change (one revised, one added, one dropped) reinstalls
   assert.equal(b.report.reason, 'shipped-change', 'the same version, another digest');
   assert.notEqual(b.report.sha, first.report.sha);
   const rec = findPack(root, BUILTIN_ELEMENT_PACK, 'local').pack;
-  assert.deepStrictEqual(rec.elements, ['comment', 'highlight', 'sticky']);
+  assert.deepStrictEqual(rec.elements, ['comment', 'highlight', 'sticky', 'chat-comment']);
   assert.equal(rec.source.sha, b.report.sha);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(typeDir(root, 'highlight'), 'element.json'), 'utf8')).anchors, ['range', 'source', 'element']);
   assert.ok(fs.existsSync(path.join(typeDir(root, 'sticky'), 'element.json')), 'the added type installed');

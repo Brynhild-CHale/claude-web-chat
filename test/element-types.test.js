@@ -114,7 +114,7 @@ test('c7: a committed element-types/sticky/ with no record lists nothing', async
     assert.equal(et.readable('sticky', 'sticky@1'), false);
     assert.equal(et.gate('sticky'), null);
     assert.deepStrictEqual(refusedFor(et, 'sticky'), ['no-record']);
-    assert.equal(listedNames(et).length, 3, 'lists 0 sticky');
+    assert.equal(listedNames(et).length, 4, 'lists 0 sticky');
   });
 });
 
@@ -140,7 +140,7 @@ test('c7: a forged packs.json naming it, digests and all, with no ledger entry l
     et.invalidate();
     assert.equal(et.listed('sticky'), false);
     assert.deepStrictEqual(refusedFor(et, 'sticky'), ['no-ledger']);
-    assert.equal(listedNames(et).length, 3);
+    assert.equal(listedNames(et).length, 4);
   });
 });
 

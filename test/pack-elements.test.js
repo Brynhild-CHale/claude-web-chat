@@ -144,7 +144,8 @@ test('the reserved element type names are derived from element-policy, never re-
 });
 
 test('ANCHOR_KINDS is the engine\'s frozen anchor vocabulary, and element-policy still imports nothing', () => {
-  assert.deepStrictEqual([...ANCHOR_KINDS], ['element', 'range', 'source', 'page', 'point']);
+  // tranche 3, U415: the four chat kinds appended (element-policy CHAT_ANCHOR_KINDS).
+  assert.deepStrictEqual([...ANCHOR_KINDS], ['element', 'range', 'source', 'page', 'point', 'turn', 'item', 'item-range', 'diff-line']);
   assert.ok(Object.isFrozen(ANCHOR_KINDS));
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'core', 'element-policy.js'), 'utf8');
   assert.doesNotMatch(src, /\brequire\(/);
@@ -246,7 +247,7 @@ test('validateElement: a loosening remote gate is refused in validateDescriptor\
 test('validateElement: anchors outside ANCHOR_KINDS, a bad schema, bad reads and a type that is not its directory are refused', () => {
   const ok = { type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1', anchors: ['element'] };
   const cases = [
-    [{ anchors: ['pin'] }, /"anchors" must be a non-empty list from element, range, source, page, point \(got \["pin"\]\)/],
+    [{ anchors: ['pin'] }, /"anchors" must be a non-empty list from element, range, source, page, point, turn, item, item-range, diff-line \(got \["pin"\]\)/],
     [{ anchors: [] }, /"anchors" must be a non-empty list/],
     [{ anchors: undefined }, /"anchors" must be a non-empty list .*\(got null\)/],
     [{ schema: 'sticky@0' }, /"schema" must be "sticky@<n>", n a positive integer \(got "sticky@0"\)/],
@@ -416,7 +417,7 @@ for (const [key, build] of Object.entries(VARIANTS)) {
 // ── F10 x1: the four controls ───────────────────────────────────────────────
 const CONTROLS = [
   ['a built-in type name', () => elementPack({ name: 'shadow-pack', elements: [el('comment')] }),
-    /element "comment" is a built-in element type name \(comment, highlight, box-grab\)\. Refused, in either tier; there is no override — rename the type\./],
+    /element "comment" is a built-in element type name \(comment, highlight, box-grab, chat-comment\)\. Refused, in either tier; there is no override — rename the type\./],
   ['a bad schema (comment@0)', () => elementPack({ name: 'bad-pack', elements: [el('wobbly', { json: { schema: 'comment@0' } })] }),
     /element "wobbly": "schema" must be "wobbly@<n>", n a positive integer \(got "comment@0"\)/],
   ['a bad schema (Sticky@1)', () => elementPack({ name: 'bad-pack', elements: [el('sticky', { json: { schema: 'Sticky@1' } })] }),
