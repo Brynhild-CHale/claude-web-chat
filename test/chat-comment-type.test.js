@@ -492,3 +492,49 @@ test('a page comment refuses a chat anchor: POST {type: comment, anchor: TURN} a
   assert.notEqual(now.anchor && now.anchor.kind, 'turn');
   assert.equal(now.v, c.v);
 });
+
+// The head's own fields are checked too (S1: the common head of every row),
+// and the store refuses a payload its schema's check refuses before an id is
+// minted (a refused write spends nothing).
+test('checkChatPayload refuses a malformed head (marks, fp.h, v, conversation_id, turn_id); addElement spends nothing on a refusal', async (t) => {
+  const log = openLogIn(t, tmpDir(t));
+  const id = log.mintId('chat-comment');
+  log.ensureElement({ id, kind: 'chat-comment', created_at: 1 });
+  const refused = (p, re, what) => assert.throws(() => log.appendVersion({ id, schema: CHAT, payload: p, at: 1 }), (e) => e instanceof TypeError && re.test(e.message), what);
+  const { conversation_id, ...noConversation } = TURN;
+  const { turn_id, ...noTurn } = TURN;
+  refused(payload({ ...TURN, marks: -1 }), /malformed marks/, 'a negative marks');
+  refused(payload({ ...TURN, marks: 1.5 }), /malformed marks/, 'a fractional marks');
+  refused(payload({ ...TURN, fp: { h: 'not-hex-at-all!!', len: 1 } }), /malformed fp/, 'an fp whose h is not 16 hex');
+  refused(payload({ ...TURN, v: 2 }), /malformed v/, 'a v that is not 1');
+  refused(payload(noConversation), /lacks conversation_id/, 'no conversation_id');
+  refused(payload(noTurn), /lacks turn_id/, 'no turn_id');
+  assert.equal(log.versionsOf(id).length, 0, 'nothing appended');
+
+  const { srv } = await withServer(t);
+  const store = srv.elements;
+  const before = store.stats();
+  assert.throws(() => store.addElement({ type: 'chat-comment', schema: CHAT, payload: payload({ ...TURN, marks: -1 }), author: 'user' }), (e) => e.reason === 'payload');
+  assert.deepStrictEqual([store.stats().elements, store.stats().versions, store.stats().next_seq],
+    [before.elements, before.versions, before.next_seq], 'the refused add minted and appended nothing');
+});
+
+// A chat comment's record follows the comment's thread rules: each reply
+// carries the stamps of the version that appended it, and `edited` is the
+// newest version whose text or sharing changed — a reply is never an edit.
+test('a chat comment\'s record: each reply is stamped by its own version; a reply is never an edit', async (t) => {
+  const { srv } = await withServer(t);
+  const store = srv.elements;
+  const w = (owner) => ({ class: 'user', owner, verified: false });
+  const a = store.addElement({ type: 'chat-comment', schema: CHAT, payload: payload(), author: 'user', writer: w('w1') });
+  const r1 = store.replyElement(a.id, a.v, { text: 'first reply', author: 'user', writer: w('w2') });
+  assert.equal(r1.edited, undefined, 'a reply alone is no edit');
+  assert.deepStrictEqual(r1.replies.map((r) => r.writer && r.writer.owner), ['w2']);
+  const e = store.editElement(a.id, r1.v, { patch: { text: `${MARK} edited` }, writer: w('w3') }).element;
+  const r2 = store.replyElement(a.id, e.v, { text: 'second reply', author: 'claude', writer: w('w4') });
+  assert.deepStrictEqual(r2.replies.map((r) => [r.author, r.text, r.writer && r.writer.owner]),
+    [['user', 'first reply', 'w2'], ['claude', 'second reply', 'w4']]);
+  assert.equal(r2.edited && r2.edited.writer && r2.edited.writer.owner, 'w3', 'the edit, not the later reply, is the editor');
+  assert.equal(r2.writer && r2.writer.owner, 'w1', 'the creator');
+  assertOneLine(store, a.id);
+});
