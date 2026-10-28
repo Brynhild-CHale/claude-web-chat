@@ -450,7 +450,7 @@ test('route census: every element route sits under a FLOOR_RULES row (read to se
   const routes = [...src.matchAll(/\bapp\.(get|post|patch|delete)\(\s*'([^']+)'/g)].map((m) => [m[1].toUpperCase(), m[2]]);
   assert.deepEqual(routes.map((r) => r.join(' ')), [
     'GET /api/elements', 'POST /api/elements', 'PATCH /api/elements/:id', 'POST /api/elements/:id/reply',
-    'GET /api/elements/:id/grab', 'DELETE /api/elements/:id',
+    'POST /api/elements/:id/send', 'GET /api/elements/:id/grab', 'DELETE /api/elements/:id',
   ]);
   for (const [method, p] of routes) {
     const url = p.replace(':id', 'h7');
@@ -710,4 +710,131 @@ test('a chained pin\'s private member stays hidden from lib/client in a write\'s
   await ok(api.patch(`/api/elements/${c.id}`, { text: 'edited' }), 'edit');
   const ev = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'edit').pop();
   assert.deepEqual(ev.chain_private, [priv.id], 'a removed private member stays in chain_private');
+});
+
+// ── Send to Claude (F.5, U405; RULED M2 (a), J2 (a), U405@route) ───────────
+// POST /api/elements/:id/send: a private element is shared through the PATCH's
+// own edit (its event raises the item); a shared one is raised again by the
+// queue's sendElement through the wake policy — never two items for one
+// element; Push still decides when.
+
+const queueItems = (srv, kind) => srv.state.queue.filter((it) => it.kind === kind);
+const send = (api, id, headers) => api.post(`/api/elements/${id}/send`, { device: 'desktop' }, headers);
+
+test('send: a private highlight is shared and queues one element item (the was_shared: false path); a private comment is shared and queues one comment item', async (t) => {
+  const { api, srv } = await withServer(t);
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1', { note: 'mine', shared: false });
+  assert.deepEqual(queueItems(srv, 'element'), [], 'a private highlight raises nothing');
+  const r = await ok(send(api, h.id), 'send the private highlight');
+  assert.equal(r.element.shared, true, 'the answer is the shared record');
+  assert.equal(r.element.v, 2, 'one edit version');
+  assert.equal(r.already, undefined);
+  const items = queueItems(srv, 'element');
+  assert.deepEqual(items.map((it) => [it.element_id, it.v, it.id]), [[h.id, 2, r.item.id]]);
+  assert.match(items[0].summary, /"mine"/, 'the summary is the wake policy\'s, the note through summary_key');
+  const ev = (await events(api)).filter((e) => e.kind === 'element' && e.id === h.id);
+  assert.deepEqual(ev.map((e) => [e.op, e.was_shared ?? null]), [['add', null], ['edit', false]], 'the PATCH\'s own edit event');
+
+  const c = (await addComment(api, 'my note', { shared: false })).element;
+  assert.deepEqual(queueItems(srv, 'comment'), []);
+  const rc = await ok(send(api, c.id), 'send the private comment');
+  assert.equal(rc.element.shared, true);
+  assert.equal(rc.element.type, 'comment');
+  const ci = queueItems(srv, 'comment');
+  assert.deepEqual(ci.map((it) => [it.comment_id, it.id]), [[c.id, rc.item.id]]);
+  const cev = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'edit').pop();
+  assert.equal(cev.became_shared, true);
+});
+
+test('send: a shared element already queued answers already: true and keeps one item; after a Push, or once its item is removed from the rail, it raises a fresh one', async (t) => {
+  const { api, srv } = await withServer(t);
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1', { note: 'look' });
+  const c = (await addComment(api, 'a shared pin')).element;
+  await waitUntil(() => queueItems(srv, 'element').length === 1 && queueItems(srv, 'comment').length === 1, { timeout: 5000, what: 'the two items' });
+  const [hi] = queueItems(srv, 'element');
+  const [ci] = queueItems(srv, 'comment');
+  const ring = (await events(api)).length;
+  for (const [id, item] of [[h.id, hi], [c.id, ci]]) {
+    const r = await ok(send(api, id), `send ${id} while queued`);
+    assert.equal(r.already, true);
+    assert.equal(r.item.id, item.id, 'the queued item');
+  }
+  assert.equal(queueItems(srv, 'element').length, 1, 'still one element item');
+  assert.equal(queueItems(srv, 'comment').length, 1, 'still one comment item');
+  assert.equal((await events(api)).length, ring, 'an already-queued send emits nothing');
+
+  // Delivered (a Push): a fresh item, through the wake policy, with no frame.
+  await ok(api.post('/api/queue/push', {}), 'push');
+  assert.deepEqual(srv.state.queue.filter((it) => it.kind === 'element' || it.kind === 'comment'), []);
+  const fresh = await ok(send(api, h.id), 'send after the push');
+  assert.equal(fresh.already, undefined);
+  assert.notEqual(fresh.item.id, hi.id);
+  assert.deepEqual(queueItems(srv, 'element').map((it) => [it.element_id, it.v, it.id]), [[h.id, 1, fresh.item.id]]);
+  assert.match(queueItems(srv, 'element')[0].summary, /"look"/);
+  assert.equal(fresh.element.v, 1, 'a shared element is not edited by a send');
+  const sendEv = (await events(api)).filter((e) => e.kind === 'element' && e.op === 'send');
+  assert.equal(sendEv.length, 1);
+  assert.deepEqual(Object.keys(sendEv[0]).filter((k) => !['seq', 'ts', 'kind', 'type', 'op', 'id', 'v', 'shared', 'mount'].includes(k)), [], 'ids, numbers and flags only');
+  const cf = await ok(send(api, c.id), 'send the comment after the push');
+  assert.deepEqual(queueItems(srv, 'comment').map((it) => [it.comment_id, it.id]), [[c.id, cf.item.id]]);
+
+  // Removed from the rail: a fresh item again.
+  await ok(api.del(`/api/queue/${fresh.item.id}`), 'remove from the rail');
+  assert.deepEqual(queueItems(srv, 'element'), []);
+  const back = await ok(send(api, h.id), 'send after the removal');
+  assert.notEqual(back.item.id, fresh.item.id);
+  assert.deepEqual(queueItems(srv, 'element').map((it) => it.id), [back.item.id]);
+});
+
+test('send: a type whose manifest does not declare wake answers 400 with the hint; the store read-only answers 503; an unknown id 404', async (t) => {
+  const d = await withServer(t);
+  const { api } = d;
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1');
+  assert.equal((await send(api, 'h99999')).status, 404);
+  // The same handlers over a registry whose highlight declares no wake.
+  const ctx = { state: d.srv.state, bus: d.srv.bus, audience: d.srv.audience, writers: d.srv.writers, graph: d.srv.graph,
+    elementTypes: { listed: (type) => type === 'highlight', gate: () => null, descriptor: (type) => ({ type, schema: HIGHLIGHT, toolbar: {} }), list: () => [{ type: 'highlight' }] } };
+  const app = express();
+  app.use(express.json());
+  mountElementRoutes(app, ctx);
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const before = d.srv.state.queue.length;
+  const r = await client.request(server.address().port, 'POST', `/api/elements/${h.id}/send`, {}, { headers: { [WRITER_HEADER]: d.writerToken() }, timeout: 10000 });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.match(r.body.hint, /sends nothing to Claude/);
+  assert.equal(d.srv.state.queue.length, before, 'nothing raised');
+});
+
+test('send: read-only (a v3 project with an unmappable copy) answers 503 with the migrate hint', async (t) => {
+  const { api, srv } = await withServer(t, { seed: ({ root }) => { v3Graph(root, { unmappable: true }); } });
+  assert.equal(srv.elements.readOnly, true);
+  const pins = (await ok(api.get('/api/elements?type=comment'))).elements;
+  assert.ok(pins.length >= 1);
+  const r = await send(api, pins[0].id);
+  assert.equal(r.status, 503, r.text);
+  assert.match(r.json.hint, /claude-web-chat migrate/);
+});
+
+test('send, ruling B4: a pane writer sending another pane\'s private element is 403 and changes nothing; its own private element is shared', async (t) => {
+  const { PANE_HEADER } = require('../lib/core/writer-token');
+  const d = await withServer(t);
+  const { api, anonApi, baseUrl, srv } = d;
+  for (const id of ['pa', 'pb']) await render(api, id);
+  const as = (pane) => ({ Origin: baseUrl, 'Sec-Fetch-Site': 'same-origin', ...(pane ? { [PANE_HEADER]: pane } : {}) });
+  const paHl = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE('pa'), payload: { note: 'pa\'s', shared: false } }, as('pa')))).element;
+  const paPin = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'pa\'s', shared: false } }, as('pa')))).element;
+  const before = logBytes(d.root);
+  for (const id of [paHl.id, paPin.id]) {
+    const r = await send(anonApi, id, as('pb'));
+    assert.equal(r.status, 403, `pb sends ${id}: ${r.text}`);
+    assert.equal(r.json.writer, 'pane');
+  }
+  assert.equal(logBytes(d.root), before, 'the refusals appended nothing');
+  assert.equal(srv.state.queue.filter((it) => it.kind === 'element' || it.kind === 'comment').length, 0);
+  const own = await ok(send(anonApi, paHl.id, as('pa')), 'its own pane');
+  assert.equal(own.element.shared, true);
 });

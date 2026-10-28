@@ -629,6 +629,16 @@ test('classifyAnswer: POST /answer/api/elements/report is allowed at full only (
     'the session host decides its own /api/elements/* by the floor; the report is the answer host\'s');
 });
 
+test('classify: Send to Claude (POST /api/elements/:id/send, F.5, U405) is decided by the element floor\'s write row — full only — and no RULES row names it (PROTO@none)', () => {
+  for (const optIn of OPT_INS) {
+    const v = classify('POST', '/api/elements/c1/send', { mirror: optIn });
+    assert.equal(v.key, 'POST|PATCH|DELETE /api/elements/*', `the floor row at ${optIn}`);
+    assert.equal(v.allow, optIn === 'full', `allowed at full only (at ${optIn})`);
+    if (optIn !== 'full') assert.equal(v.reason, 'mirror');
+  }
+  assert.deepStrictEqual(RULES.filter((r) => /\/send\b/.test(r.path)).map(keyOf), [], 'no RULES row of its own');
+});
+
 test('protocol 11: the surface\'s other rows are 0.8.5\'s — the queue, capture and store (signal) rows byte for byte', () => {
   // Pinned on their own (RULES at f3c4a7f, measured 2026-10-17 with digest()),
   // not against before11(RULES), which holds these very rows unchanged. Read

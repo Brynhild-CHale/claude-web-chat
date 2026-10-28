@@ -240,3 +240,53 @@ test('A3 learned later: a value written into a comment and a highlight note, the
   assert.ok(!masked.elements.find((e) => e.id === h.id).note.includes(value));
   assert.equal(logBytes(root), before, 'the log bytes are unchanged');
 });
+
+// Send to Claude (F.5, U405): POST /api/elements/:id/send sits under the
+// floor's POST /api/elements/* row (full to send; no RULES row of its own). A
+// remote read viewer is refused at the floor, a remote full viewer sends a
+// shared element, a network peer is refused whatever the opt-in, and a private
+// element answers the GET's 404 to every reader that does not see private
+// records — nothing shared, nothing queued.
+test('send: a remote read viewer is refused at the floor (403); a remote full viewer sends a shared element; a network peer is refused; a private element answers 404 to a reader who does not see it', async (t) => {
+  const d = await boot(t, ['read', 'full']);
+  const queued = (x) => x.srv.state.queue.filter((it) => it.kind === 'element' || it.kind === 'comment');
+  // Deliver the adds' own items, so a send has something to raise.
+  for (const level of ['read', 'full']) await ok(d[level].api.post('/api/queue/push', {}), 'push');
+
+  const read = d.read;
+  for (const id of [read.ids.shared, read.ids.hShared]) {
+    const r = await read.call('POST', `/api/elements/${id}/send`, {}, REMOTE);
+    assert.equal(r.status, 403, `read ${id}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.mirror, 'read');
+  }
+  assert.deepEqual(queued(read), [], 'a refused send raises nothing');
+
+  const full = d.full;
+  const before = logBytes(full.root);
+  for (const id of [full.ids.shared, full.ids.hShared]) {
+    const r = await full.call('POST', `/api/elements/${id}/send`, {}, REMOTE);
+    assert.equal(r.status, 200, `full ${id}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.ok, true);
+    assert.ok(r.body.item && r.body.item.id, 'the queued item');
+  }
+  assert.equal(queued(full).length, 2, 'one item each');
+  assert.equal(logBytes(full.root), before, 'a shared element\'s send appends nothing');
+
+  for (const id of [full.ids.priv, full.ids.hPriv]) {
+    for (const [who, headers, opts] of [['remote full', REMOTE, {}], ['lib/client (Claude\'s token)', {}, { token: true }], ['lib/client (no token)', {}, {}]]) {
+      const r = await full.call('POST', `/api/elements/${id}/send`, {}, headers, opts);
+      assert.equal(r.status, 404, `${who} sends ${id}: ${JSON.stringify(r.body)}`);
+      assert.deepStrictEqual(r.body, { error: 'not found', id }, `${who}: the GET's answer`);
+    }
+  }
+  assert.equal(logBytes(full.root), before, 'nothing shared');
+  assert.equal(queued(full).length, 2, 'nothing queued');
+
+  for (const level of ['read', 'full']) {
+    for (const opts of [{}, { token: true }]) {
+      const r = await d[level].call('POST', `/api/elements/${d[level].ids.hShared}/send`, {}, { 'x-test-peer': PEER }, opts);
+      assert.equal(r.status, 403, `${level}: a network peer → ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.mirror, 'basic');
+    }
+  }
+});
