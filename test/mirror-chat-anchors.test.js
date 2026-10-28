@@ -334,6 +334,7 @@ test('record + resolve: a turn, an item (a reply, a tool card), an item-range in
   assert.deepEqual(by.card.at, { item_id: h.toolId });
   assert.deepEqual(by.range.at, { item_id: h.replyId, field: 'text', ...range.anchor.pos });
   assert.deepEqual(by.twice.at, { item_id: h.replyId, field: 'text', ...twice.anchor.pos });
+  assert.deepEqual([by.range.how, by.twice.how], ['fingerprint', 'fingerprint'], 'the fast path: the served field\'s fingerprint equal, exact at pos');
 
   // A passage resolved by its quote (the fingerprint changed: a stale fp).
   const stale = { ...range.anchor, fp: { h: '0'.repeat(FP_HEX), len: range.anchor.fp.len } };
