@@ -66,8 +66,12 @@
 // selection), so a pane's control never hears a press the tool took.
 //
 // THE NOTE POPOVER (a stand-in look): note, "Visible to Claude" and colour,
-// saved by PATCH; Delete by DELETE; read-only on a previewed node (D2). It is a
-// registered popover (shell.js registerPopover): Escape and an outside press
+// saved by PATCH; Delete by DELETE; Send to Claude beside Delete (F.5, J2's
+// note: one tap shares a private highlight and queues it, or queues a shared
+// one that is not queued; Push still decides when), drawn at canWrite only;
+// read-only on a previewed node (D2). Every write, and the tool's create, runs
+// through element-types.js trayAction (TRAY@guard: one rule, one hint). It is
+// a registered popover (shell.js registerPopover): Escape and an outside press
 // close it.
 //
 // TO CLAUDE (F3 b, K.2-10, K.2-11): this module writes no queue code. The
@@ -81,7 +85,7 @@
 // daemon decides every write.
 import * as overlay from './overlay.js';
 import anchors from './anchors.js';
-import { registerElementType } from './element-types.js';
+import { registerElementType, trayAction, trayReadOnly, maySend, sendToClaude, SEND_LABEL } from './element-types.js';
 import { request } from './http.js';
 import { onFrame, onHello } from './ws.js';
 import { settingsOf } from './toolbar-state.js';
@@ -503,7 +507,9 @@ function armedSettings() {
 let gesture = null;   // the press the tool took: {pointerId, mount, md, root, target}
 let compat = false;   // the tool took a press: its compatibility mouse events are the tool's
 function create(input, ctx) {
-  if (view.previewing) { showReaimNote(READONLY_HINT); return; }
+  trayAction(() => createLive(input, ctx));
+}
+function createLive(input, ctx) {
   const e = input.event || {};
   if (input.phase === 'pointerdown') {
     if (inField(input.target)) { gesture = null; return; }   // a field keeps its own selection (K.2-9)
@@ -558,7 +564,7 @@ async function finish(g, input, ctx) {
 function onCompatMouse(e) {
   if (!compat) return;
   const a = overlay.armed();
-  if (!a || a.type !== TYPE || view.previewing) { compat = false; return; }
+  if (!a || a.type !== TYPE || trayReadOnly()) { compat = false; return; }
   const well = $('main');
   const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
   if (!well || !path.includes(well)) return;
@@ -593,8 +599,8 @@ export function openNote(container) {
   const ids = container && container._hlIds ? [...container._hlIds] : [];
   const id = ids[0];
   if (!id) return null;
-  const rec = recordOf(id) || { id, color: DEFAULT_COLOR, note: '', shared: true };
-  const readOnly = !!view.previewing;
+  let rec = recordOf(id) || { id, color: DEFAULT_COLOR, note: '', shared: true };
+  const readOnly = trayReadOnly();
   const p = el('div', 'popover hl-pop');
   p.setAttribute('role', 'dialog');
   p.setAttribute('aria-label', 'Highlight');
@@ -636,8 +642,24 @@ export function openNote(container) {
     const del = el('button', 'hl-delete', 'Delete');
     del.type = 'button';
     acts.append(save, del);
+    // Send to Claude beside Delete (J2's note), at canWrite only.
+    if (maySend()) {
+      const toClaude = el('button', 'hl-send', SEND_LABEL);
+      toClaude.type = 'button';
+      acts.appendChild(toClaude);
+      toClaude.addEventListener('click', () => trayAction(async () => {
+        const r = await sendToClaude(id);
+        if (!r.ok) { showReaimNote(r.hint); return; }
+        if (r.element && validRec(r.element)) {
+          applyOne(r.element);
+          rec = r.element;
+          cb.checked = r.element.shared !== false;   // "Visible to Claude" reads shared
+        }
+        showReaimNote(r.note);
+      }));
+    }
     p.append(ta, share, colors, acts);
-    save.addEventListener('click', async () => {
+    save.addEventListener('click', () => trayAction(async () => {
       const patch = {};
       if (ta.value !== (rec.note || '')) patch.note = ta.value;
       if (cb.checked !== (rec.shared !== false)) patch.shared = cb.checked;
@@ -648,13 +670,13 @@ export function openNote(container) {
       if (!r.ok) { showReaimNote(r.hint); return; }
       if (r.body && r.body.element) applyOne(r.body.element);
       closeNote();
-    });
-    del.addEventListener('click', async () => {
+    }));
+    del.addEventListener('click', () => trayAction(async () => {
       const r = await request('DELETE', `${ELEMENTS_PATH}/${encodeURIComponent(id)}`);
       if (!r.ok) { showReaimNote(r.hint); return; }
       dropOne(id);
       closeNote();
-    });
+    }));
   }
   const box = container.getBoundingClientRect ? container.getBoundingClientRect() : { left: 0, bottom: 0 };
   p.style.left = Math.max(8, Math.round(box.left)) + 'px';

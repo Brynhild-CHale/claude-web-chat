@@ -507,3 +507,77 @@ test('a grab in a scrolled .mount-host posts its scroll {top, left} beside box',
     host.scrollLeft = 0;
   }
 });
+
+// ── Send to Claude (F.5, U405; RULED M2 (a); TRAY@guard) ───────────────────
+// The look after the picture settled (the card's Open) carries Send to Claude
+// beside Show on page, at canWrite only: one tap is one POST
+// /api/elements/<id>/send with the device claim; 'already' says so. A grab is
+// always shared, so a send only queues it again. Once a preview has started,
+// Send and the before-look's Discard reach the tray action guard.
+const reaimText = () => { const n = W.document.querySelector('#reaim-note .reaim-note-text'); return n ? n.textContent : ''; };
+const READY = { state: 'ready', capture: 'cap9', width: 40, height: 20, sha256: 'cd' };
+const buttonOf = (label) => [...look().querySelectorAll('button')].find((b) => b.textContent === label) || null;
+
+test('Send to Claude on the look after it settled: beside Show on page at canWrite; one tap is one POST; "already" says so; never on the look before', async () => {
+  const ET = await shell.importApp('element-types.js');
+  const { deviceKind } = await shell.importApp('viewport.js');
+  shell.setRoutes({ '/api/elements/g99/send': { ok: true, element: { id: 'g99', v: 1, type: 'box-grab', shared: true }, item: { id: 'q-s1' } } });
+  try {
+    BG.openLook({ elementId: 'g99', image: READY, before: true });
+    assert.equal(buttonOf(ET.SEND_LABEL), null, 'not on the look before the picture is kept');
+    BG.closeLook();
+    BG.openLook({ elementId: 'g99', image: READY, before: false });
+    const btn = buttonOf(ET.SEND_LABEL);
+    assert.ok(btn, 'drawn');
+    assert.equal(btn.className, 'bg-send');
+    assert.equal(btn.previousElementSibling, buttonOf('Show on page'), 'beside Show on page');
+    const n0 = callsOf('POST', '/api/elements/g99/send').length;
+    btn.click();
+    await shell.tick(3);
+    assert.equal(callsOf('POST', '/api/elements/g99/send').length, n0 + 1, 'exactly one request');
+    assert.equal(callsOf('POST', '/api/elements/g99/send').at(-1).body.device, deviceKind(), 'the device claim');
+    assert.equal(reaimText(), ET.SENT_NOTE);
+    shell.setRoutes({ '/api/elements/g99/send': { ok: true, already: true, element: { id: 'g99', v: 1, type: 'box-grab', shared: true }, item: { id: 'q-s1' } } });
+    buttonOf(ET.SEND_LABEL).click();
+    await shell.tick(3);
+    assert.equal(reaimText(), ET.ALREADY_NOTE);
+  } finally {
+    BG.closeLook();
+    shell.setRoutes({});
+  }
+});
+
+test('Send to Claude is absent below full; once a preview has started, Send and Discard reach the tray action guard: READONLY_HINT, no request', async () => {
+  const ET = await shell.importApp('element-types.js');
+  const topbar = await shell.importApp('topbar.js');
+  try {
+    shell.setRoutes({ '/api/toolbar': { ...(await (await W.fetch('/api/toolbar')).json()), canWrite: false } });
+    await TS.refreshToolbar();
+    BG.openLook({ elementId: 'g99', image: READY, before: false });
+    assert.equal(buttonOf(ET.SEND_LABEL), null, 'absent below full');
+    assert.ok(buttonOf('Show on page'));
+    BG.closeLook();
+    shell.setRoutes({});
+    await TS.refreshToolbar();
+
+    BG.openLook({ elementId: 'g99', image: READY, before: false });
+    const send = buttonOf(ET.SEND_LABEL);
+    BG.closeLook();
+    BG.openLook({ elementId: 'g99', image: READY, queueId: 'q-d', before: true });
+    const discard = buttonOf('Discard');
+    state.previewing = true;
+    try {
+      const n0 = shell.calls.length;
+      send.click();
+      discard.click();
+      await shell.tick(3);
+      assert.equal(shell.calls.length, n0, 'nothing sent');
+      assert.equal(reaimText(), topbar.READONLY_HINT, 'the guard\'s one hint');
+      assert.ok(look(), 'a refused Discard leaves the look up');
+    } finally { state.previewing = false; }
+  } finally {
+    BG.closeLook();
+    shell.setRoutes({});
+    await TS.refreshToolbar();
+  }
+});

@@ -54,10 +54,30 @@
 // (the comment since F.3: a taps tool with 'items' takes a pane's content and
 // a markdown block, and the overlay leaves the chrome inside #main to the
 // page); 'panes' stays for a pack's type.
+//
+// THE TRAY ACTION GUARD (TRAY@guard; PLAN-T3 §2.4 note 8; DECISIONS.md L.5).
+// Every element tray's write action — a pin's reply, share and delete, the
+// highlight popover's Save and Delete, the box grab's Discard and its create
+// gesture, Send to Claude, and a plug-in type's tray (tranche 4) — runs
+// through trayAction: while a committed node is previewed (mounts.js
+// contentReadOnly(), D2) it refuses with READONLY_HINT (topbar.js) and sends
+// nothing — one rule, one hint. trayReadOnly() is the same rule for drawing a
+// tray's read-only branch. No tray checks the preview itself
+// (test/conventions.test.js holds `contentReadOnly(` to its homes).
+//
+// SEND TO CLAUDE (F.5; RULED REQ@highlight-send-to-claude M2 (a), J2 (a)).
+// sendToClaude(id) is the one request for every registered type: POST
+// /api/elements/:id/send with the device claim. One tap shares a private
+// element and queues it, or queues a shared one that is not queued (an item
+// already queued answers `already`); Push still decides when. A tray draws
+// its Send to Claude button only when maySend() (canWrite, and no preview).
 import * as overlayModule from './overlay.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
 import { onFrame, onHello } from './ws.js';
+import { contentReadOnly } from './mounts.js';
+import { READONLY_HINT, showReaimNote } from './topbar.js';
+import { toolbarState } from './toolbar-state.js';
 
 export const TYPES_PATH = '/api/elements/types';
 export const DRAW_STATES = Object.freeze(['parked', 'draw-failed', 'unknown-type']);
@@ -312,4 +332,57 @@ function gatedMove(spec, group, ctx) {
   } catch (err) {
     console.error(`[web-chat] element type '${group.type}': its move failed`, err);
   }
+}
+
+// ── the tray action guard (TRAY@guard) ─────────────────────────────────────
+// trayReadOnly() — whether a tray draws its read-only branch now.
+export function trayReadOnly() { return contentReadOnly(); }
+
+// The guard's refusal: what trayAction answers in place of the action's own.
+export const TRAY_REFUSAL = Object.freeze({ ok: false, refused: 'read-only', hint: READONLY_HINT });
+
+function showNote(text) {
+  try { showReaimNote(text); } catch { /* the note is a courtesy */ }
+}
+
+// trayAction(run, {note}) — run a tray's write action, or, while a preview is
+// up, refuse it: `note` (the tray's own, else the topbar's) shows READONLY_HINT
+// and TRAY_REFUSAL is answered; run is never called, so nothing is sent.
+export function trayAction(run, { note } = {}) {
+  if (contentReadOnly()) {
+    (typeof note === 'function' ? note : showNote)(READONLY_HINT);
+    return TRAY_REFUSAL;
+  }
+  return run();
+}
+
+// ── Send to Claude (F.5) ───────────────────────────────────────────────────
+export const SEND_LABEL = 'Send to Claude';
+export const SENT_NOTE = 'Queued for Claude — Push sends it';
+export const ALREADY_NOTE = 'Already queued';
+const SEND_FAILED = 'It was not sent to Claude: try again.';
+const sendPath = (id) => `/api/elements/${encodeURIComponent(String(id))}/send`;
+
+// Whether a tray draws its Send to Claude button: tools may write (full
+// access, toolbarState().canWrite) and no preview is up.
+export function maySend() {
+  return toolbarState().canWrite === true && !contentReadOnly();
+}
+
+// sendToClaude(id) → {ok: true, already, element, item, note} |
+// {ok: false, status?, hint}. One request, through the guard (a preview
+// refuses it with READONLY_HINT as `hint` and sends nothing); the caller
+// shows `note` or `hint` through its own note and applies `element`.
+export async function sendToClaude(id, { note } = {}) {
+  return trayAction(async () => {
+    if (id == null || id === '') return { ok: false, hint: SEND_FAILED };
+    const r = await request('POST', sendPath(id), { body: {}, device: true });
+    if (!r.ok) return { ok: false, status: r.status, hint: r.hint || SEND_FAILED };
+    const b = r.body && typeof r.body === 'object' ? r.body : {};
+    const already = b.already === true;
+    return {
+      ok: true, already, element: b.element || null, item: b.item || null,
+      note: already ? ALREADY_NOTE : SENT_NOTE,
+    };
+  }, { note: typeof note === 'function' ? note : () => {} });
 }
