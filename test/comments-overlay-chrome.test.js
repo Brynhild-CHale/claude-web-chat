@@ -838,6 +838,32 @@ test('the chain: a tap inside a highlight inside a box grab\'s rect records [hig
   }
 });
 
+// U406a (ruling Q8 a): a viewer that does not see private records gets a
+// private chain member as null (remote-policy dropPrivate); the chrome reads
+// it as 'a private element', no type and no id, as the daemon's chain_label.
+test('the chain: a null member (a private one, to a viewer that does not see it) reads \'a private element\' in the thread\'s .pin-chain and the marker title', async () => {
+  await setLive([]);
+  POS['lead-p2'] = box(80, 90);
+  const leadP2 = lead('p2');
+  const range = W.document.createRange();
+  range.selectNodeContents(leadP2);
+  const hl = { id: 'h7', v: 1, type: 'highlight', anchor: anchors.recordRange(rootOf('p2'), range, { mount: 'p2' }), shared: true };
+  ov.upsertElements('live', [hl]);
+  try {
+    const pin = pinOn('c81', 'p2', leadP2, { chain: [null, 'h7'] });
+    await setLive([pin]);
+    await drawnUntil(() => !!markersFor('c81')[0], 'the chained pin drawn');
+    assert.match(markersFor('c81')[0].title, /c81 text \(on a private element › highlight h7\)$/);
+    markersFor('c81')[0].click();
+    assert.equal(pinPop().querySelector('.pin-chain').textContent, 'on a private element › highlight h7');
+    comments.closePinPop();
+  } finally {
+    closeComposer();
+    ov.removeElements('live', ['h7']);
+    await setLive([]);
+  }
+});
+
 // ── Send to Claude and the tray action guard (F.5, U405; TRAY@guard) ───────
 // The thread's .pin-actions carry Send to Claude beside Delete at canWrite
 // only: one tap is one POST /api/elements/<id>/send with the device claim; a
