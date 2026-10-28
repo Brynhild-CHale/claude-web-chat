@@ -62,7 +62,7 @@
 .md-block h1.page-h1 { font-size: 22px; line-height: 1.2; letter-spacing: -.015em; border-bottom: 0; padding-bottom: 0; margin-bottom: 6px; }
 /* The title item's next sibling (never inside it), pulled up over the page's 22px gap. */
 .page-meta {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -22px 0 12px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -22px 0 0;
   font: 11.5px var(--wc-mono, ui-monospace, SFMono-Regular, Menlo, monospace); color: var(--wc-muted, #57606a);
 }
 

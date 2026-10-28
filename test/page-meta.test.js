@@ -14,12 +14,18 @@
 //     and the resolver records a source anchor over its heading and paragraph
 //     (a control puts a meta line back inside the body: the record is null);
 //   - the meta reads under the H1: the title item's next sibling, after the H1;
+//   - the meta's own margin has a 0 bottom: as the title item's last child it
+//     took `.md-block > :last-child`'s 0, so the page's 22px gap alone parted it
+//     from the next item; a sibling's own bottom margin would add to that gap;
 //   - a re-layout keeps one meta line after the title item and re-parents no run;
 //     a new title takes the meta with it.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
 const { bootShell, helloFrame } = require('../test-support/chrome-shell');
+const { createCascade } = require('../test-support/css-cascade');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const TITLE = '# Experiment 12\n\nThe first paragraph, under the title.\n\n## Method\n\nA later paragraph.';
 const PANE = { id: 'pm-a', html: '<p>a</p>', target: 'main', params: {} };
@@ -112,4 +118,15 @@ test('a re-layout keeps one meta line after the title item and re-parents no run
   assert.equal(item('md-new').nextElementSibling, metas()[0], 'after the new title item');
   assert.equal(item('md-new').querySelector('.page-meta'), null);
   assert.equal(item().querySelector('h1').classList.contains('page-h1'), false, 'the old title is a plain # heading again');
+});
+
+test('the meta\'s winning margin has a 0 bottom, so the page\'s gap alone parts it from the next item', () => {
+  const css = createCascade(fs.readFileSync(path.join(__dirname, '..', 'public', 'page.css'), 'utf8'), { win: () => W });
+  const [meta] = metas();
+  const d = css.cascade(meta, ['margin', 'margin-bottom']);
+  assert.ok(d, 'precondition: page.css sets the meta\'s margin');
+  const parts = d.value.trim().split(/\s+/);
+  const bottom = d.prop === 'margin-bottom' ? parts[0] : (parts[2] ?? parts[0]);
+  assert.match(bottom, /^0(px)?$/, `the meta's margin-bottom is 0 (got ${d.prop}: ${d.value})`);
+  if (d.prop === 'margin') assert.equal(parts[0], '-22px', 'the pull-up over the page\'s gap is unchanged');
 });
