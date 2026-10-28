@@ -257,6 +257,10 @@ test('the edge exception is held to the edges its context names, and to the cont
   const quote = { exact: `${E} x`, prefix: '', suffix: '' };
   assert.equal(matchMasked(`lead ${M} x`, quote), null, 'the start edge does not hold');
   assert.equal(matchMasked(`${M} x tail`, quote), null, 'the end edge does not hold');
+  // One character off an edge is off it: an edge is exactly 0 and exactly
+  // served.length, never near them.
+  assert.equal(matchMasked(` ${M} x`, quote), null, 'one character past the start edge');
+  assert.equal(matchMasked(`${M} x `, quote), null, 'one character short of the end edge');
   assert.deepEqual(matchMasked(`${M} x`, quote), { start: 0, end: M.length + 2, masked: true, how: 'mask', occ: 1 }, 'both hold');
   // A full suffix names no edge; a prefix one short of the context length
   // names the start, a full one does not (and exact alone keeps three literal
