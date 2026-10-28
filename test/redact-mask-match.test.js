@@ -164,6 +164,24 @@ test('a mark the quote already spelled is matched literally, not as a wildcard',
   assert.equal(other.start, served.indexOf('Token'));
 });
 
+test('a window ending inside a mark it spells: that mark stays literal, after a wildcard too', () => {
+  // The quote was made over text that already held the token's mark, and the
+  // selection ends partway into it; its context then changed (exact alone is
+  // tried) and the email was learned. The email's mark is a wildcard; the old
+  // mark, which W ends inside, is still literal, so the end stays inside it.
+  const r = createRedactor();
+  const text = `Mail ${E} first. Rotate now, please: ${G} is the token we lost.`;
+  const before = r.text(text);
+  const s = before.indexOf(E);
+  const e = before.indexOf(MASK('github-token')) + 5;
+  const exact = before.slice(s, e);
+  r.addKnown(E, 'email');
+  const served = r.text(text);
+  const shift = MASK('email').length - E.length;
+  const got = matchMasked(served, { exact, prefix: 'A rewritten opening: ', suffix: '' }, { pos: { start: s, end: e } });
+  assert.deepEqual(got, { start: s, end: e + shift, masked: true, how: 'mask', occ: 1 });
+});
+
 test('several alignments: the one nearest pos.start (ties and no pos: the first); occ counted, capped at 400', () => {
   const unit = `see ${MASK('email')} tail. `;
   const served = unit.repeat(3);
