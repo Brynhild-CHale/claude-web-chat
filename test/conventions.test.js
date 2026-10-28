@@ -1606,10 +1606,11 @@ const PATTERNS = [
     what: 'naming an element schema',
     roots: ['lib', 'public'],
     exts: ['.js', '.html'],
-    re: /['"](?:comment|highlight|box-grab)@\d+['"]/g,
+    re: /['"](?:chat-comment|comment|highlight|box-grab)@\d+['"]/g,
     baseline: {
-      // The table's four rows (comment@2, F.6 U406, added the fourth).
-      'lib/core/element-log.js': 4,
+      // The table's five rows (comment@2, F.6 U406, added the fourth;
+      // chat-comment@1, tranche 3 U415, the fifth).
+      'lib/core/element-log.js': 5,
     },
   },
   {

@@ -37,7 +37,7 @@ test('C-16-1: the shipped pack is templates/elements/web-chat-builtins, named BU
   assert.equal(path.relative(path.join(__dirname, '..'), PACK_DIR).split(path.sep).join('/'), 'templates/elements/web-chat-builtins');
   const m = parseManifest(PACK_DIR);
   assert.equal(m.name, BUILTIN_ELEMENT_PACK);
-  assert.equal(m.version, '1.0.0');
+  assert.equal(m.version, '1.1.0'); // 1.1.0: chat-comment (tranche 3, U415)
   assert.equal(typeof m.description, 'string');
 });
 
@@ -92,6 +92,8 @@ test('the engine fields: schema, reads and anchors (box grab: page only, ruling 
     comment: { schema: 'comment@2', reads: ['comment@1', 'comment@2'], anchors: ['element', 'range', 'source'] },
     highlight: { schema: 'highlight@1', reads: ['highlight@1'], anchors: ['range', 'source'] },
     'box-grab': { schema: 'box-grab@1', reads: ['box-grab@1'], anchors: ['page'] },
+    // tranche 3, U415 (RULED CHAT@type a): the chat comment, on the chat anchors.
+    'chat-comment': { schema: 'chat-comment@1', reads: ['chat-comment@1'], anchors: ['turn', 'item', 'item-range', 'diff-line'] },
   };
   assert.deepStrictEqual(Object.keys(want), [...BUILTIN_ELEMENT_TYPE_NAMES]);
   for (const [type, fields] of Object.entries(want)) {
@@ -144,6 +146,16 @@ const TOOLBAR = {
     profiles: false,
     input: 'strokes',
     wake: true,
+  },
+  // tranche 3, U415: armed by the Comment tool (`tool`), so no hotkeys of its own.
+  'chat-comment': {
+    label: 'Comment',
+    icons: { light: 'icon-light.svg', dark: 'icon-dark.svg' },
+    settings: { small: { type: 'object', properties: { shared: { type: 'boolean', title: 'Visible to Claude', default: true } } } },
+    input: 'taps',
+    wake: true,
+    summary_key: 'text',
+    tool: 'comment',
   },
 };
 

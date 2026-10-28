@@ -87,7 +87,7 @@ test('GET /api/toolbar lists the built-ins first in manifest order, each with it
   assert.deepEqual(body.tools[0], {
     type: 'comment',
     label: 'Comment',
-    pack: { name: 'web-chat-builtins', version: '1.0.0' },
+    pack: { name: 'web-chat-builtins', version: '1.1.0' },
     builtin: true,
     icons: { light: '/api/toolbar/icon/comment', dark: '/api/toolbar/icon/comment?mode=dark' },
     hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }],

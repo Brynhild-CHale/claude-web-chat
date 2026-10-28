@@ -1,0 +1,23 @@
+{
+  "type": "chat-comment",
+  "family": "chat",
+  "remote": { "see": "read", "send": "full" },
+  "private": true,
+  "schema": "chat-comment@1",
+  "reads": ["chat-comment@1"],
+  "anchors": ["turn", "item", "item-range", "diff-line"],
+  "label": "Comment",
+  "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
+  "settings": {
+    "small": {
+      "type": "object",
+      "properties": {
+        "shared": { "type": "boolean", "title": "Visible to Claude", "default": true }
+      }
+    }
+  },
+  "input": "taps",
+  "wake": true,
+  "summary_key": "text",
+  "tool": "comment"
+}

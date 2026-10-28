@@ -1,6 +1,6 @@
 {
   "name": "web-chat-builtins",
-  "version": "1.0.0",
-  "description": "web-chat's own annotation tools: comment, highlight and box grab. Installed by the daemon at every boot; it cannot be removed.",
-  "elements": ["comment", "highlight", "box-grab"]
+  "version": "1.1.0",
+  "description": "web-chat's own annotation tools: comment, highlight and box grab, and the chat comment (a pin on the chat, armed by the Comment tool). Installed by the daemon at every boot; it cannot be removed.",
+  "elements": ["comment", "highlight", "box-grab", "chat-comment"]
 }

@@ -121,17 +121,20 @@ function builtinToolbar() {
   const { parseManifest } = require('../lib/packs/manifest');
   const { ELEMENTS_TEMPLATE_DIR } = require('../lib/server/builtins');
   const { ROW_KEYS } = require('../lib/server/element-types');
-  const { toolEntry } = require('../lib/server/routes/toolbar');
+  const { toolEntry, toolRows } = require('../lib/server/routes/toolbar');
   const { emptyProject, emptyUser } = require('../lib/core/toolbar-record');
   const manifest = parseManifest(ELEMENTS_TEMPLATE_DIR);
-  const tools = manifest.elements.map((type) => {
+  const rows = manifest.elements.map((type) => {
     const read = readElementJson(elementSrcDir(ELEMENTS_TEMPLATE_DIR, type));
     const checked = read.ok ? validateElement(read.raw, { stageDir: null, name: type, builtin: true }) : null;
     if (!checked || !checked.ok) throw new Error(`chrome-shell: the built-in element type '${type}' does not validate`);
     const toolbar = {};
     for (const k of Object.keys(checked.descriptor)) if (!ROW_KEYS.includes(k)) toolbar[k] = checked.descriptor[k];
-    return toolEntry({ type, pack: manifest.name, builtin: true, toolbar }, manifest.version);
+    return { type, pack: manifest.name, builtin: true, toolbar };
   });
+  // A type another type's tool arms (chat-comment, armed by comment) has no
+  // slot: the route leaves it out (toolbar.js toolRows), and so does this.
+  const tools = toolRows(rows).map((row) => toolEntry(row, manifest.version));
   return {
     ok: true, v: 1, project: { ...emptyProject(), pinned: tools.map((t) => t.type) }, user: emptyUser(),
     merged: { bindings: {}, settings: {} }, canWrite: true, canWriteUser: true, tools,
@@ -139,7 +142,7 @@ function builtinToolbar() {
 }
 
 // GET /api/elements/types as a fresh project's daemon answers it: the built-in
-// pack's three types listed (their rows GENERATED from the element.json files
+// pack's types listed (their rows GENERATED from the element.json files
 // on disk, as builtinToolbar's are) and the built-in names `reserved` — so a
 // built-in type's draw runs behind the reads gate (public/app/element-types.js)
 // in every chrome test, as on a real daemon (U327b: the comment pins drawn by

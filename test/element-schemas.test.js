@@ -38,7 +38,7 @@ function openIn(t, dir, opts = {}) {
 }
 
 // The schema names, read from the table (the ratchet keeps their literals there).
-const [COMMENT, HIGHLIGHT, BOX_GRAB, CHAINED] = Object.keys(SCHEMAS);
+const [COMMENT, HIGHLIGHT, BOX_GRAB, CHAINED, CHAT] = Object.keys(SCHEMAS);
 
 const ENGINE_ELEMENT = {
   v: 1, kind: 'element', mount: 'm1',
@@ -62,8 +62,9 @@ const boxGrabPayload = (over = {}) => ({
 // ── the table ───────────────────────────────────────────────────────────────
 
 test('SCHEMAS: four frozen rows; SCHEMA and PAYLOAD_KEYS are comment@1\'s name and keys; comment@2 is comment@1\'s keys + chain', () => {
-  assert.deepEqual(Object.keys(SCHEMAS), [COMMENT, HIGHLIGHT, BOX_GRAB, CHAINED]);
-  assert.deepEqual(Object.keys(SCHEMAS), ['comment@1', 'highlight@1', 'box-grab@1', 'comment@2']);
+  assert.deepEqual(Object.keys(SCHEMAS), [COMMENT, HIGHLIGHT, BOX_GRAB, CHAINED, CHAT]);
+  // tranche 3, U415: chat-comment@1 appended (comment@2's keys, stored as given).
+  assert.deepEqual(Object.keys(SCHEMAS), ['comment@1', 'highlight@1', 'box-grab@1', 'comment@2', 'chat-comment@1']);
   assert.ok(Object.isFrozen(SCHEMAS));
   for (const row of Object.values(SCHEMAS)) { assert.ok(Object.isFrozen(row)); assert.ok(Object.isFrozen(row.keys)); }
   assert.equal(SCHEMA, COMMENT);
@@ -76,8 +77,8 @@ test('SCHEMAS: four frozen rows; SCHEMA and PAYLOAD_KEYS are comment@1\'s name a
   assert.equal(SCHEMAS[CHAINED].normalise, payloadOf);
   assert.ok(!SCHEMAS[COMMENT].keys.includes('chain'), 'never a chain key on comment@1 (the rows are additive)');
   assert.deepEqual(Object.fromEntries(Object.entries(SCHEMAS).map(([k, r]) => [k, r.type])),
-    { [COMMENT]: 'comment', [HIGHLIGHT]: 'highlight', [BOX_GRAB]: 'box-grab', [CHAINED]: 'comment' });
-  assert.deepEqual(ID_PREFIX, { comment: 'c', highlight: 'h', 'box-grab': 'g' });
+    { [COMMENT]: 'comment', [HIGHLIGHT]: 'highlight', [BOX_GRAB]: 'box-grab', [CHAINED]: 'comment', [CHAT]: 'chat-comment' });
+  assert.deepEqual(ID_PREFIX, { comment: 'c', highlight: 'h', 'box-grab': 'g', 'chat-comment': 'k' });
   assert.ok(Object.isFrozen(ID_PREFIX));
 });
 
