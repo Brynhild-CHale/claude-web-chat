@@ -216,6 +216,11 @@ mod [verb]          the web-chat mod, a Claude Code plugin (2.1.287+) that
 excerpts [verb]     on | off | status: whether Claude receives the words of the
                     passages you pin, quoted as data (status says which and
                     whether it is this project's record or the default)
+mirror [verb]       budget <size> | unlimited | status: the chat mirror's disk
+                    budget (.web-chat/mirror.json), unlimited by default; over a
+                    size you set, the files it can rebuild go first and a diff
+                    linked to a graph node last; status prints the budget and
+                    what .web-chat/mirror/ holds
 install             the setup step on its own, and how updates reach a project
 update              install the latest GitHub release (checksum-verified), sync,
                     restart; --list shows versions on disk, --to <v> rolls back,
