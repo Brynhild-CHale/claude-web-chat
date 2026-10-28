@@ -68,7 +68,7 @@
 // tab's mouse-button filter) are theirs and stay as they are.
 //
 // No DOM is touched at import.
-import { armed, cancelGesture, inputKindOf, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
+import { armed, cancelGesture, inputKindOf, isHostRoot, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
 import { isTap } from './sheet-model.js';
 import { view } from './state.js';
 import { getLocal, setLocal } from './storage.js';
@@ -102,10 +102,12 @@ function selfInteractive(el, { tabindex = true } = {}) {
   const role = String(el.getAttribute('role') || '').trim().toLowerCase().split(/\s+/)[0];
   return INTERACTIVE_ROLES.includes(role);
 }
-// The page well's own element: the walk stops there, so the chrome around it
-// (#stage carries a tabindex) never makes the page's content interactive.
+// The page well's own element, or another overlay host's root (overlay.js
+// isHostRoot: the chat's, whose #chat-stream carries a tabindex): the walk
+// stops there, so the chrome around it (#stage carries a tabindex) never makes
+// the host's content interactive.
 function isWell(el) {
-  return el.id === 'main' && el.getRootNode && el.getRootNode() === el.ownerDocument;
+  return (el.id === 'main' && el.getRootNode && el.getRootNode() === el.ownerDocument) || isHostRoot(el);
 }
 // isFocusSink(el): a focused element that takes focus without being a control
 // — #stage, the page's focusable scroll container (index.html gives it
