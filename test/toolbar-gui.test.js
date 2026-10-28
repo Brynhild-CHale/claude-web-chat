@@ -282,7 +282,9 @@ test('the legend\'s "Pin comment" row and the palette\'s key are the head\'s, fr
   const i = rows.indexOf(row);
   assert.ok(i > 0, 'the row is drawn, byte for byte');
   assert.equal(rows[i - 1], '<div class="legend-row"><span>Replay to node</span><span class="keys"><kbd>R</kbd></span></div>');
-  assert.equal(rows[i + 1], '<div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>');
+  // U404's last-tool key (F.4) sits after the tools' rows, before Previous / next.
+  assert.equal(rows[i + 1], '<div class="legend-row"><span>Put down / pick up the last tool</span><span class="keys"><kbd>Space</kbd></span></div>');
+  assert.equal(rows[i + 2], '<div class="legend-row"><span>Previous / next node</span><span class="keys"><kbd>[</kbd><kbd>]</kbd></span></div>');
   const shellMod = await shell.importApp('shell.js');
   shell.key('k', { metaKey: true });
   await shell.tick();

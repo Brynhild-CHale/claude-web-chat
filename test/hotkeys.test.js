@@ -2,9 +2,11 @@
 // module: its table, the one key normaliser, the per-key merge of default ⊕
 // user ⊕ project bindings, the seams later units resolve through, and what the
 // hotkey pane will draw. No DOM: each test builds a registry of its own
-// (createRegistry) over records it hands in. The chrome itself —
-// the key matrix, the legend, the palette and the titles — is
-// test/hotkeys-shell.test.js's.
+// (createRegistry) over records it hands in — except the last-tool key's cases
+// at the end (U404, F.4), which read the chrome's own registry as tools.js
+// registers 'tools.last' in it (the real chrome, test-support/chrome-shell,
+// booted once in before). The chrome itself — the key matrix, the legend, the
+// palette and the titles — is test/hotkeys-shell.test.js's.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,12 +14,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { validChord } = require('../lib/core/toolbar-record');
+const { bootShell } = require('../test-support/chrome-shell');
 
 const REPO = path.resolve(__dirname, '..');
-let hk;
+let hk, shell;
 test.before(async () => {
+  shell = await bootShell({});
   hk = await import(pathToFileURL(path.join(REPO, 'public/app/hotkeys.js')).href);
 });
+test.after(async () => { if (shell) await shell.restore(); });
 
 const chrome = (action) => ({ kind: 'chrome', action });
 
@@ -257,4 +262,95 @@ test('the single-key ratchet row: shell.js 0, graph-view.js its baseline, a plan
   fs.writeFileSync(copy, fs.readFileSync(path.join(appDir, 'shell.js'), 'utf8')
     + "\nfunction planted(e) { switch (e.key) { case 'x': break; } return e.key === 'y'; }\n");
   assert.equal(count(fs.readFileSync(copy, 'utf8')), 2, 'both planted comparisons are counted');
+});
+
+// ── the last-tool key (U404; F.4, REQ@tool-toggle-key M1) ────────────────────
+// ONE chrome action, 'tools.last', which tools.js registers in the chrome's
+// registry (the one hk's module-wide exports are bound to): Space by default,
+// in the page context only; never from a field; stood down while focus sits
+// on a control (pierced through a shadow root), never on a focus sink.
+async function records(user = {}, project = {}) {
+  await shell.frame({ type: 'toolbar', v: 1, project: { v: 1, pinned: [], hidden: [], settings: {}, profiles: {}, ...project },
+    user: { v: 1, bindings: {}, fingerDraws: false, settings: {}, ...user }, merged: { bindings: {}, settings: {} } });
+}
+function blurAll() {
+  const W = shell.window;
+  let a = W.document.activeElement;
+  while (a && a.shadowRoot && a.shadowRoot.activeElement) { const inner = a.shadowRoot.activeElement; inner.blur(); a = W.document.activeElement; if (a === inner) break; }
+  if (W.document.activeElement && W.document.activeElement !== W.document.body) W.document.activeElement.blur();
+}
+const idOf = (a) => (a ? a.id : null);
+
+test('tools.last: Space in the page context; never in a field, never in the overlay or the replay context', async () => {
+  await records();
+  blurAll();
+  assert.equal(idOf(hk.lookup('Space', 'page')), 'tools.last');
+  assert.equal(idOf(hk.lookup('Shift+Space', 'page')), 'tools.last', 'Shift+Space answers it too (the Shift fallback)');
+  assert.equal(hk.lookup('Space', 'page', { inField: true }), null, 'a field keeps Space');
+  assert.equal(hk.lookup('Space', 'overlay'), null, 'the graph overlay keeps its own Space (the glance)');
+  assert.equal(hk.lookup('Space', 'replay'), null, 'the replay player keeps its own Space');
+  const row = hk.bindingsView().find((b) => b.chord === 'Space' && !b.descriptive);
+  assert.equal(row.action, 'tools.last');
+  assert.equal(row.tier, 'default');
+  assert.deepEqual(row.context, ['page']);
+  assert.equal(row.label, 'Put down / pick up the last tool');
+  assert.equal(hk.keyFor('tools.last'), 'Space');
+});
+
+test('tools.last enabled(): false with focus on a control (a pane button or a chrome checkbox, pierced through a shadow root); true on #stage, on body and on a [tabindex=-1] container', async (t) => {
+  await records();
+  const W = shell.window;
+  const d = W.document;
+  const host = d.createElement('div');
+  const root = host.attachShadow({ mode: 'open' });
+  const paneBtn = d.createElement('button');
+  paneBtn.textContent = 'in a pane';
+  const paneBox = d.createElement('input');
+  paneBox.type = 'checkbox';
+  root.append(paneBtn, paneBox);
+  d.getElementById('main').appendChild(host);
+  const box = d.createElement('input');
+  box.type = 'checkbox';
+  d.getElementById('topbar').appendChild(box);
+  const sink = d.createElement('div');
+  sink.tabIndex = -1;
+  d.getElementById('topbar').appendChild(sink);
+  const sinkBtn = d.createElement('button');
+  sinkBtn.tabIndex = -1;
+  d.getElementById('topbar').appendChild(sinkBtn);
+  t.after(() => { host.remove(); box.remove(); sink.remove(); sinkBtn.remove(); blurAll(); });
+  for (const [name, el] of [['a pane button', paneBtn], ['a pane checkbox', paneBox], ['a chrome checkbox', box],
+    ['a [tabindex=-1] button', sinkBtn]]) {
+    blurAll();
+    el.focus();
+    assert.equal(hk.lookup('Space', 'page'), null, `focus on ${name}: Space is the control's`);
+  }
+  assert.equal(d.activeElement, sinkBtn);
+  for (const [name, focus] of [
+    ['#stage', () => d.getElementById('stage').focus()],
+    ['body', () => blurAll()],
+    ['a [tabindex=-1] container', () => sink.focus()],
+  ]) {
+    blurAll();
+    focus();
+    assert.equal(idOf(hk.lookup('Space', 'page')), 'tools.last', `focus on ${name}: the key is the page's`);
+  }
+  assert.equal(d.activeElement, sink);
+});
+
+test('tools.last: rebound in the user record, unbound by a project record, inert as a project chrome binding (G1)', async () => {
+  blurAll();
+  const last = { kind: 'chrome', action: 'tools.last' };
+  await records({ bindings: { Space: null, L: last } });
+  assert.equal(hk.lookup('Space', 'page'), null, 'the user moved it off Space');
+  assert.equal(idOf(hk.lookup('L', 'page')), 'tools.last');
+  assert.deepEqual(hk.keysFor('tools.last'), ['L']);
+  await records({}, { bindings: { Space: null } });
+  assert.equal(hk.lookup('Space', 'page'), null, 'unbound in this project');
+  assert.equal(hk.keyFor('tools.last'), '');
+  await records({}, { bindings: { J: last } });
+  assert.equal(hk.lookup('J', 'page'), null);
+  assert.match(hk.bindingsView().find((b) => b.chord === 'J').inert, /user record only/);
+  assert.equal(idOf(hk.lookup('Space', 'page')), 'tools.last', 'the default holds');
+  await records();
 });

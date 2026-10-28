@@ -2,7 +2,8 @@
 // 1–2, K.2-3, K.2-14; notes-read-toolbar.md W-7, W-11): which tool a slot or a
 // key binding means, and arming it — over the chrome's ONE armed-tool state,
 // the overlay's (public/app/overlay.js setArmed / armed / onArmedChange). This
-// module keeps no second copy of what is armed, nor of its profile.
+// module keeps no second copy of what is armed, nor of its profile; `last` is
+// the last tool armed (never the armed state), which toggleLast picks up again.
 //
 //   arm(target)        target: POINTER (or null) — the pointer tool, armable
 //                      anywhere, as setArmed(null); {kind: 'slot', n} — the
@@ -13,6 +14,10 @@
 //   disarm()           put whatever is armed down.
 //   toggle(target)     pressing an armed tool's key again puts it down: the
 //                      target's tool (and profile) armed now → disarm, else arm.
+//   toggleLast()       the last-tool key (F.4, REQ M1): a tool armed → disarm;
+//                      else the last tool armed ({type, profile}, kept from
+//                      onArmedChange) → armTool(type, profile), its refusals
+//                      armTool's notices; else the notice 'no-last-tool'.
 //   armSlot(n)         pinned[n-1] of this project's record (toolbar-state.js:
 //                      the daemon's default `pinned` included); an empty slot
 //                      is the notice "Slot n is empty in this project".
@@ -24,8 +29,9 @@
 //   listedTools()      tools[] as toolbar-state.js last read it.
 //   visiting()         the armed type when the project does not pin it, else null.
 //   NOTICE             the chrome bus event every refusal goes out on.
-//   initTools()        the hotkey registry's 'slot' and 'tool' target kinds and
-//                      the 'tools' default source (idempotent).
+//   initTools()        the hotkey registry's 'slot' and 'tool' target kinds,
+//                      the 'tools' default source and the chrome action
+//                      'tools.last' (idempotent).
 //
 // Refusals are notices, never throws: ONE chrome bus event,
 //   bus.emit('tools:notice', {kind, text, type?, label?, pack?})
@@ -36,6 +42,8 @@
 //        'view-only'      "View only: tools need full access" — a type tool
 //                         when toolbarState().canWrite is false (the one "may
 //                         act" fact; H-6 a, element-policy's FLOOR_RULES)
+//        'no-last-tool'   "No tool to pick up yet" — toggleLast with nothing
+//                         armed since the chrome booted
 //        'not-installed'  a tool binding whose type tools[] does not list: its
 //                         type and label, and — ONLY for a binding from the
 //                         user record — pack {name, source}. The project tier
@@ -56,17 +64,32 @@
 // type}, label}; a chord the chrome already holds is left unbound and listed by
 // conflicts(), D-7) and the slot keys 1–9 → {kind: 'slot', n} (G2 a: "Slot
 // keys 1–9 follow the pinned order").
+//
+// The last-tool key (F.4; REQ@tool-toggle-key M1; U404@action): ONE chrome
+// action on the registry, 'tools.last' — no binding kind of its own, so the
+// record grammar (lib/core/toolbar-record) is unchanged. Space by default, in
+// the page context only (the graph overlay and the replay player keep their
+// own Space); rebindable in the user record, unbindable per project, inert as
+// a project chrome binding (G1). It keeps Space's native meaning where Space
+// has one: never from a field (whenField false), and not while focus sits on
+// a control — the focused element, pierced through each shadow root, is
+// interactive by input-mode.js isInteractive and is no focus sink
+// (isFocusSink: #stage, a [tabindex="-1"] container) — when the press is the
+// page's and the shell prevents nothing. With nothing focused Space no longer
+// scrolls the page, and Shift+Space answers it too (the registry's Shift
+// fallback): both rebindable.
 import { bus } from './bus.js';
-import { setArmed, armed } from './overlay.js';
+import { setArmed, armed, onArmedChange } from './overlay.js';
 import { toolbarState } from './toolbar-state.js';
-import { registerTargetKind, setDefaultSource } from './hotkeys.js';
-import { POINTER } from './input-mode.js';
+import { registerTargetKind, setDefaultSource, registerAction } from './hotkeys.js';
+import { POINTER, isInteractive, isFocusSink } from './input-mode.js';
 import { contentReadOnly } from './mounts.js';
 import { view } from './state.js';
 import { labelFor } from './labels.js';
 
 export const NOTICE = 'tools:notice';
 export const SLOTS = 9;
+export const LAST_TOOL_ACTION = 'tools.last';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isPointer = (t) => t == null || t === POINTER || (isObject(t) && t.id === POINTER.id && t.chrome === true);
@@ -172,6 +195,26 @@ export function toggle(target) {
   return arm(target);
 }
 
+// ── the last-tool key (F.4) ─────────────────────────────────────────────────
+
+let last = null;   // {type, profile}: the last tool armed — never what is armed now
+
+export function toggleLast() {
+  if (armed()) return disarm();
+  if (last) return armTool(last.type, last.profile, null);
+  return notice({ kind: 'no-last-tool', text: 'No tool to pick up yet' });
+}
+
+// Focus on a control: Space is the control's (a button presses, a checkbox
+// ticks), so the last-tool key stands down and the shell prevents nothing.
+function focusOnControl() {
+  let a = typeof document !== 'undefined' ? document.activeElement : null;
+  while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+  if (!a || a.nodeType !== 1 || a.localName === 'body' || a.localName === 'html') return false;
+  if (isFocusSink(a)) return false;
+  return isInteractive(a);
+}
+
 // ── the hotkey registry's seams ─────────────────────────────────────────────
 
 function slotDefaults() {
@@ -210,4 +253,10 @@ export function initTools() {
     };
   });
   setDefaultSource('tools', () => [...toolDefaults(), ...slotDefaults()]);
+  onArmedChange((a) => { if (a && a.type) last = { type: a.type, profile: a.profile || null }; });
+  // After the tools' legend rows (toolbar.js LEGEND_ORDER 60 + i/1000), before
+  // Previous / next node (70).
+  registerAction({ id: LAST_TOOL_ACTION, label: 'Put down / pick up the last tool', defaultChord: 'Space',
+    context: 'page', rebindable: true, enabled: () => !focusOnControl(),
+    legend: { section: 'Keyboard', order: 61 }, run: () => { toggleLast(); } });
 }
