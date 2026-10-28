@@ -194,8 +194,44 @@ test('a comment through the element API: today\'s pin plus type, schema, anchor_
   // describeAnchor: one copy, the element API's (routes/comments.js is the
   // 410 refusal since U327a and exports none).
   assert.equal(comments.describeAnchor, undefined);
-  assert.equal(describeAnchor({ v: 1, kind: 'source', md: 'md-1', slug: 's', quote: { exact: 'Intro' }, pos: { start: 0, end: 5 } }), 'md-1: "Intro"');
+  // A bare source record with no locator reads its slug (F.3); one above the
+  // item's first heading (slug null) reads as before.
+  assert.equal(describeAnchor({ v: 1, kind: 'source', md: 'md-1', slug: 's', quote: { exact: 'Intro' }, pos: { start: 0, end: 5 } }), 'md-1: "Intro" — on section #s');
+  assert.equal(describeAnchor({ v: 1, kind: 'source', md: 'md-1', slug: null, quote: { exact: 'Intro' }, pos: { start: 0, end: 5 } }), 'md-1: "Intro"');
   assert.equal(describeAnchor(RANGE('m1', 'quoted')), 'm1: "quoted"');
+});
+
+// F.3 (RULED M3 (a)): a pin on a markdown item says which section it is about.
+// Its served anchor is the chrome's locator {mount: <md>, selector: <tag>,
+// text, ordinal, section}; every anchor without a section keeps its label.
+test('describeAnchor: a heading locator reads on section "…", a prose locator its text then the section, a bare source record its slug; every other label unchanged', () => {
+  assert.equal(describeAnchor({ mount: 'md-3', selector: 'h2', text: 'Release plan', ordinal: 0, section: 'Release plan' }),
+    'md-3: on section "Release plan"');
+  assert.equal(describeAnchor({ mount: 'md-3', selector: 'p', text: 'Ship the build on Friday.', ordinal: 1, section: 'Release plan' }),
+    'md-3: "Ship the build on Friday." — on section "Release plan"');
+  const long = 'x'.repeat(80);
+  assert.equal(describeAnchor({ mount: 'md-3', selector: 'h1', text: long, ordinal: 0, section: long }),
+    `md-3: on section "${'x'.repeat(60)}…"`, 'the heading clipped at 60, as a text is');
+  assert.equal(describeAnchor({ v: 1, kind: 'source', md: 'md-4', slug: 'release-plan', quote: { exact: 'Ship it' }, pos: { start: 20, end: 27 } }),
+    'md-4: "Ship it" — on section #release-plan');
+  // Unchanged: a pane locator, a selector-only one, a whole pane, an element
+  // and a range record, and the S-14 golden's own labels.
+  assert.equal(describeAnchor({ mount: 'plan', selector: 'h3', text: 'Timeline', ordinal: 0 }), 'plan: "Timeline"');
+  assert.equal(describeAnchor({ mount: 'plan', selector: 'button.go' }), 'plan @ button.go');
+  assert.equal(describeAnchor({ mount: 'plan' }), 'plan (whole pane)');
+  assert.equal(describeAnchor(ELEMENT('m1')), 'm1: "Hello world"');
+  assert.equal(describeAnchor(RANGE('m1', 'quoted')), 'm1: "quoted"');
+  assert.equal(describeAnchor(null), null);
+  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 's14-today.json'), 'utf8'));
+  let seen = 0;
+  for (const step of golden) {
+    for (const c of ((step.get_comments && step.get_comments.comments) || [])) {
+      if (!c.anchor || c.anchor_label == null) continue;
+      assert.equal(describeAnchor(c.anchor), c.anchor_label, `S-14 ${step.step}: ${c.id}`);
+      seen++;
+    }
+  }
+  assert.ok(seen > 0, 'the golden carried labels');
 });
 
 test('PATCH: a comment\'s {text, shared} as today; a highlight\'s payload keys; {anchor} appends an anchor version (a comment\'s original null); base_v names the version read', async (t) => {

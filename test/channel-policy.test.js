@@ -96,6 +96,32 @@ test('classify: a newly-added shared pin enqueues as a comment', () => {
   assert.match(r.item.summary, /totals look off/);
 });
 
+// F.3: a pin on a markdown item. Its anchor is a source record ({md}, no
+// mount); its locator names the item and the section it is about.
+test('classify: an md pin names its markdown item (origin_mount) and its section in the summary; a pane pin\'s item is unchanged', () => {
+  const src = { v: 1, kind: 'source', md: 'md-3', slug: 'release-plan', quote: { exact: 'Release plan', prefix: '', suffix: '' }, pos: { start: 3, end: 15 } };
+  const r = classify({ kind: 'comment', op: 'add', pin: { id: 'c20', seq: 4, shared: true, text: 'is this the right order?', anchor: src,
+    locator: { mount: 'md-3', selector: 'h2', text: 'Release plan', ordinal: 0, section: 'Release plan' } } });
+  assert.equal(r.action, 'enqueue');
+  assert.equal(r.item.origin_mount, 'md-3', 'the md item');
+  assert.equal(r.item.summary, 'md-3 · on section "Release plan" · "is this the right order?"');
+  // No locator: the source record's md is the item, and no section is said.
+  const bare = classify({ kind: 'comment', op: 'add', pin: { id: 'c21', seq: 5, shared: true, text: 'hm', anchor: src } });
+  assert.equal(bare.item.origin_mount, 'md-3');
+  assert.equal(bare.item.summary, 'md-3 · "hm"');
+  // A pane pin: as before.
+  const pane = classify({ kind: 'comment', op: 'add', pin: { id: 'c22', seq: 6, shared: true, text: 'totals look off', anchor: { mount: 'm1' } } });
+  assert.equal(pane.item.origin_mount, 'm1');
+  assert.equal(pane.item.summary, 'm1 · "totals look off"');
+  const engine = classify({ kind: 'comment', op: 'add', pin: { id: 'c23', seq: 7, shared: true, text: 'x',
+    anchor: { v: 1, kind: 'element', mount: 'm2' }, locator: { mount: 'm2', selector: 'p.lead', text: 'lead', ordinal: 0 } } });
+  assert.equal(engine.item.origin_mount, 'm2');
+  assert.equal(engine.item.summary, 'm2 · "x"');
+  const none = classify({ kind: 'comment', op: 'add', pin: { id: 'c24', seq: 8, shared: true, text: '', anchor: null } });
+  assert.equal(none.item.origin_mount, null);
+  assert.equal(none.item.summary, 'comment');
+});
+
 test('classify: a private pin never enqueues', () => {
   assert.equal(classify({ kind: 'comment', op: 'add', pin: { id: 'c4', shared: false, text: 'secret', anchor: { mount: 'm1' } } }), null);
 });
