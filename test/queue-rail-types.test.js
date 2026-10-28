@@ -159,8 +159,16 @@ test('a respond type\'s group is answered only when every member is; a highlight
   assert.equal(dotOf('q-cm').className, 'qi-dot qi-comment answered', 'a legacy item by its comment_id, as before');
   assert.equal(dotOf('q-cap').className, 'qi-dot qi-capture', 'the other kinds as before');
 
-  answered = new Set(['c1', 'c2', 'c3', 'c9', 'h1']);
+  // The newest member answered but an older one not: still not answered (the
+  // dot reads every member, never the newest alone).
+  answered = new Set(['c2', 'c3', 'c9']);
   await shell.frame(helloFrame());   // comments.js reads its pins again
+  await waitUntil(() => C.isCommentAnswered('c3') && !C.isCommentAnswered('c1'), { ...WAIT, what: 'c3 answered, c1 not' });
+  Q.renderQueue();
+  assert.equal(dotOf('q-g-cm').className, 'qi-dot qi-element qi-comment qi-respond', 'the newest answered, c1 not: not yet');
+
+  answered = new Set(['c1', 'c2', 'c3', 'c9', 'h1']);
+  await shell.frame(helloFrame());
   await waitUntil(() => C.isCommentAnswered('c3'), { ...WAIT, what: 'c3 answered' });
   Q.renderQueue();
   assert.equal(dotOf('q-g-cm').className, 'qi-dot qi-element qi-comment qi-respond answered', 'every member answered');
