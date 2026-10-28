@@ -625,6 +625,26 @@ test('a node restore drops a removed pin\'s member and never a chat-comment memb
   assert.equal(groupOf(srv.state.queue, chat.id), undefined);
 });
 
+test('a node restore drops a highlight member the restored node does not reference, and keeps one it does (other page types by their element references)', async (t) => {
+  const { api, srv } = await bootPage(t);
+  const kept = (await ok(api.post('/api/elements', { type: 'highlight', anchor: RANGE('m1', 'Hello'), payload: { color: 'gold', note: 'kept' } }), 'kept')).element;
+  await turn(api);
+  const n1 = (await ok(api.get('/api/graph'), 'graph')).active;
+  await ok(api.post('/api/render', { id: 'm3', html: '<p>a later node</p>' }), 'render m3');
+  await turn(api);
+  assert.notEqual((await ok(api.get('/api/graph'), 'graph')).active, n1, 'a later node is active');
+  const gone = (await ok(api.post('/api/elements', { type: 'highlight', anchor: RANGE('m1', 'the passage'), payload: { color: 'gold', note: 'gone' } }), 'gone')).element;
+  const g = groupOf(srv.state.queue, gone.id);
+  assert.ok(g, 'the highlight queued');
+  if (!g.element_ids.includes(kept.id)) queue.enqueueElement(srv.state, srv.bus, { ...g, id: undefined, element_id: kept.id, element_ids: [kept.id] });
+  assert.deepStrictEqual(groupOf(srv.state.queue, gone.id).element_ids.slice().sort(), [kept.id, gone.id].sort(), 'both in one group');
+  await ok(api.post('/api/graph/active', { id: n1 }), 'set active');
+  await waitUntil(() => !groupOf(srv.state.queue, gone.id), { timeout: 5000, what: 'the restore\'s drop' });
+  const left = groupOf(srv.state.queue, kept.id);
+  assert.ok(left, 'the referenced highlight stays queued');
+  assert.deepStrictEqual(left.element_ids, [kept.id]);
+});
+
 test('⟲ on a group deletes nothing: the row leaves the queue and every pin stays (RULED U423@group-revert Q2 = a)', async (t) => {
   const { api, srv } = await bootPage(t);
   const a = (await ok(api.post('/api/elements', commentBody({ text: 'a', shared: true, anchor: { mount: 'm1', selector: 'p', text: 'Hello', ordinal: 0 } })), 'a')).pin;
