@@ -1897,3 +1897,70 @@ test('TEXT_RULES: no route a basic viewer may GET serves conversation text its e
     assert.ok(carriers.has(k), `the probe found no conversation text in ${k} (found: ${[...carriers].join(', ')})`);
   }
 });
+
+// U406a (ruling Q8 a; F.6): a shared pin chained on a private element reaches
+// a socket that does not see private records with that member's id null —
+// the rule the element route's pinFor applies — so the remote chrome reads it
+// as 'a private element', never 'a removed comment c5'. A local socket (the
+// one that sees private records) gets the frame byte-identical to before.
+test('U406a: a remote read socket\'s element:comment frame carries chain [null, h] for a shared pin chained on a private element; the local socket keeps the id', async (t) => {
+  const WebSocket = require('ws');
+  const { waitUntil } = require('../test-support/helpers');
+  const { writeJsonAtomic } = require('../lib/core/fsjson');
+  const { userPaths } = require('../lib/core/paths');
+  const root = tmpRoot('wc-u406a-read-');
+  const seed = () => writeJsonAtomic(userPaths().tunnelConfig, {
+    hostname: 'wc.example.test', style: 'flat',
+    access: { team: 'testteam', aud: 'test-aud-0123456789' },
+    allow: { emails: ['me@example.com'], domains: [] },
+    remote: { mirror: { [path.resolve(root)]: 'read' } },
+  });
+  const d = await withServer(t, { root, seed });
+  const ok = async (p, what) => {
+    const r = await p;
+    assert.ok(r.status >= 200 && r.status < 300, `${what}: ${r.status} ${r.text}`);
+    return r.json;
+  };
+  await ok(d.api.post('/api/render', { id: 'm1', html: '<p>Hello</p>' }), 'render');
+  const LOC = { mount: 'm1', selector: 'p', text: 'p', ordinal: 0 };
+  const RANGE = { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } };
+  // A local browser (fetch metadata: seesPrivate) makes the private pin, the
+  // shared highlight and the shared pin chained on both.
+  const priv = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOC, payload: { text: 'wc-u406a-private', shared: false } }), 'private pin')).element.id;
+  const h = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'shared' } }), 'highlight')).element.id;
+  const listen = async (headers) => {
+    const got = [];
+    const sock = new WebSocket(`ws://localhost:${d.port}/ws`, { headers });
+    sock.on('message', (data) => { try { got.push(JSON.parse(data.toString())); } catch {} });
+    await new Promise((resolve, reject) => { sock.on('open', resolve); sock.on('error', reject); });
+    t.after(() => { try { sock.close(); } catch {} });
+    await waitUntil(() => got.some((f) => f.type === 'hello'), { timeout: 5000, what: 'hello' });
+    return got;
+  };
+  const remote = await listen({ 'X-WC-Remote': '1' });
+  const local = await listen({});
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: RANGE,
+    payload: { text: 'over both', shared: true, chain: [priv, h] } }), 'chained pin')).element.id;
+  const frameOf = (got, what) => waitUntil(() => got.filter((f) => f.type === 'element:comment')
+    .find((f) => f.elements.some((p) => p.id === chained)), { timeout: 5000, what });
+  const lf = await frameOf(local, 'local frame');
+  assert.deepStrictEqual(lf.elements.find((p) => p.id === chained).chain, [priv, h], 'the local socket keeps the id');
+  assert.ok(lf.elements.some((p) => p.id === priv), 'and the private pin');
+  const rf = await frameOf(remote, 'remote frame');
+  assert.deepStrictEqual(rf.elements.find((p) => p.id === chained).chain, [null, h], 'a remote read socket: the private member null');
+  assert.ok(!JSON.stringify(rf).includes(`"${priv}"`), 'the private member\'s id is nowhere in the remote frame');
+  assert.ok(!JSON.stringify(remote).includes(`"${priv}"`), 'nor in any frame the remote socket got');
+  // The projection itself: local (the viewer that sees private records) is the
+  // frame itself; read and full null the member in a copy, the frame and the
+  // pin untouched; a kept pin with no private member is shared, not copied.
+  const OTHER = { id: 'c9', shared: true, text: 'x', chain: ['h3'] };
+  const frame = frozen({ type: 'element:comment', elements: [
+    { id: 'c1', shared: true, text: 'a', chain: ['c2', 'h3'] }, { id: 'c2', shared: false, text: 'wc-private' }, OTHER] });
+  assert.equal(projectFrame(frame, 'local'), frame);
+  for (const level of ['read', 'full']) {
+    const out = projectFrame(frame, level);
+    assert.deepStrictEqual(out.elements, [{ id: 'c1', shared: true, text: 'a', chain: [null, 'h3'] }, OTHER], level);
+    assert.equal(out.elements[1], OTHER, `${level}: an unchanged pin is shared`);
+    assert.deepStrictEqual(frame.elements[0].chain, ['c2', 'h3'], `${level}: never mutates`);
+  }
+});
