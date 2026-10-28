@@ -118,7 +118,7 @@ function runCase(c, cfg, exp, label, atDefault) {
 
 test('ANCHOR_STATES: frozen, in PLAN.md 1C.5 order, and the one the factory was handed', () => {
   assert.ok(Object.isFrozen(ANCHOR_STATES));
-  assert.deepEqual([...ANCHOR_STATES], ['exact', 're-resolved', 'orphaned', 'hidden', 'masked', 'provisional', 'superseded', 'expired', 'draw-failed']);
+  assert.deepEqual([...ANCHOR_STATES], ['exact', 're-resolved', 'orphaned', 'hidden', 'masked', 'provisional', 'superseded', 'expired', 'draw-failed', 'indexing', 'unavailable']);
   assert.strictEqual(anchors.ANCHOR_STATES, ANCHOR_STATES);
   assert.strictEqual(anchors.STATES, ANCHOR_STATES);
   for (const s of ANCHOR_STATES) assert.ok(isAnchorState(s));
