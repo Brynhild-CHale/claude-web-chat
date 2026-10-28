@@ -335,6 +335,29 @@ test('chat:drawn: a stream of 160 turns draws 150, and the pruned ids are absent
   for (let i = 0; i < 10; i++) assert.ok(!ids.includes(`b${i}`), `b${i} pruned and absent`);
 });
 
+test('chat:drawn: a drawing that only prunes (back to 150 once stuck again) still settles, without the pruned ids', async () => {
+  const list = Array.from({ length: 160 }, (_, i) => turn(`e${i}`, i + 1, [{ id: `p_e${i}`, kind: 'prompt', text: `p${i}` }]));
+  await follow(list);
+  const s = stream();
+  const m = shell.scrollMetrics(s, { scrollHeight: 50000, clientHeight: 400, scrollTop: 20000 });
+  s.dispatchEvent(new shell.window.Event('scroll'));
+  await shell.frame({ type: 'mirror:stream', rev: ++rev, conversation_id: cid,
+    turns: [{ ...turn('e160', 161), items: undefined }, { ...turn('e161', 162), items: undefined }], items: [] });
+  await shell.tick();
+  await waitUntil(() => domIds().length === 152, { what: 'two more, unpruned while scrolled up' });
+  assert.deepStrictEqual(ofCid(cid).at(-1).turnIds, domIds(), 'the unpruned drawing: 152 ids');
+  m.scrollHeight = 60000;
+  const n = drawn.length;
+  shell.click($('chat-new'));
+  await waitUntil(() => domIds().length === 150, { what: 'pruned once stuck' });
+  await shell.tick();
+  const after1 = drawn.slice(n);
+  assert.equal(after1.length, 1, 'one settle for the prune alone');
+  assert.deepStrictEqual(after1[0].turnIds, domIds());
+  assert.equal(after1[0].turnIds[0], 'e12');
+  assert.ok(!after1[0].turnIds.includes('e11'), 'a pruned id is absent');
+});
+
 test('chat:drawn: clearAll says it once with [] — leaving a conversation, and dropping below read', async () => {
   await follow([m12Turn('c1', 1)]);
   const left = cid;
