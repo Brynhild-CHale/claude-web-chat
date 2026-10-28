@@ -141,7 +141,7 @@ test('navigation: restoring a node without a queued pin dequeues the stranded it
     text: 'look here', shared: true,
     anchor: { mount: 'p2', selector: 'div', text: 'p2', ordinal: 0 },
   }))).json.pin;
-  const item = (await api.get('/api/queue')).json.items.find(it => it.comment_id === pin.id);
+  const item = (await api.get('/api/queue')).json.items.find(it => (it.element_ids || []).includes(pin.id));
   assert.ok(item, 'the shared pin enqueued a comment item');
 
   // Navigate to n1.0, whose committed comments do NOT include this pin — the

@@ -718,7 +718,8 @@ test('a chained pin\'s private member stays hidden from lib/client in a write\'s
 // queue's sendElement through the wake policy — never two items for one
 // element; Push still decides when.
 
-const queueItems = (srv, kind) => srv.state.queue.filter((it) => it.kind === kind);
+// U423: a comment's item is its element group (kind 'element', type 'comment').
+const queueItems = (srv, kind) => srv.state.queue.filter((it) => (kind === 'comment' ? it.kind === 'element' && it.type === 'comment' : it.kind === kind && it.type !== 'comment'));
 const send = (api, id, headers) => api.post(`/api/elements/${id}/send`, { device: 'desktop' }, headers);
 
 test('send: a private highlight is shared and queues one element item (the was_shared: false path); a private comment is shared and queues one comment item', async (t) => {
@@ -742,7 +743,7 @@ test('send: a private highlight is shared and queues one element item (the was_s
   assert.equal(rc.element.shared, true);
   assert.equal(rc.element.type, 'comment');
   const ci = queueItems(srv, 'comment');
-  assert.deepEqual(ci.map((it) => [it.comment_id, it.id]), [[c.id, rc.item.id]]);
+  assert.deepEqual(ci.map((it) => [it.element_id, it.id]), [[c.id, rc.item.id]]);
   const cev = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'edit').pop();
   assert.equal(cev.became_shared, true);
 });
@@ -778,7 +779,7 @@ test('send: a shared element already queued answers already: true and keeps one 
   assert.equal(sendEv.length, 1);
   assert.deepEqual(Object.keys(sendEv[0]).filter((k) => !['seq', 'ts', 'kind', 'type', 'op', 'id', 'v', 'shared', 'mount'].includes(k)), [], 'ids, numbers and flags only');
   const cf = await ok(send(api, c.id), 'send the comment after the push');
-  assert.deepEqual(queueItems(srv, 'comment').map((it) => [it.comment_id, it.id]), [[c.id, cf.item.id]]);
+  assert.deepEqual(queueItems(srv, 'comment').map((it) => [it.element_id, it.id]), [[c.id, cf.item.id]]);
 
   // Removed from the rail: a fresh item again.
   await ok(api.del(`/api/queue/${fresh.item.id}`), 'remove from the rail');

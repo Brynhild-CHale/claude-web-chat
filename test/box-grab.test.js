@@ -96,6 +96,8 @@ function hangingCapture(t, launched = []) {
 }
 
 const elementItems = (srv) => srv.state.queue.filter((it) => it.kind === 'element');
+// The element ids the queue holds, through each group's members (U423).
+const elementMembers = (srv) => elementItems(srv).flatMap((it) => it.element_ids || [it.element_id]);
 const captureOf = (srv, id) => srv.state.captures.find((c) => c.id === id);
 async function settled(srv, capture) {
   await waitUntil(() => { const c = captureOf(srv, capture); return c && c.image && c.image.state !== 'pending'; }, { timeout: 10000, what: `${capture}'s image to settle` });
@@ -328,9 +330,10 @@ test('one render at a time: a burst of five grabs — four admitted, the fifth 4
   for (let i = 0; i < 4; i++) {
     await waitUntil(() => held.held() === 1, { timeout: 5000, what: `render ${i + 1}` });
     held.releaseAll();
-    await waitUntil(() => elementItems(srv).length === i + 1, { timeout: 5000, what: `item ${i + 1}` });
+    // U423: the grabs on one pane share one group; each settle adds a member.
+    await waitUntil(() => elementMembers(srv).length === i + 1, { timeout: 5000, what: `item ${i + 1}` });
   }
-  assert.equal(new Set(elementItems(srv).map((it) => it.element_id)).size, 4);
+  assert.equal(new Set(elementMembers(srv)).size, 4);
 });
 
 test('a daemon stop with a render in flight tears its browser down (liveBrowsers() 0)', async (t) => {
@@ -400,7 +403,8 @@ test('the policy: a waking type\'s shared add raises one element item, an edit r
   assert.equal(classify(ev('add'), { elementTypes: { sticker: { wake: false } } }), null, 'no wake');
   assert.equal(classify(ev('add'), {}), null, 'an unlisted type');
   assert.equal(classify(ev('add', { pending: 'image' }), { elementTypes: wakes }), null, 'a picture still drawing');
-  assert.equal(classify(ev('add', { type: 'comment' }), { elementTypes: { comment: { wake: true } } }), null, 'comments stay on their own items (K.2-22)');
+  // U423 (PLAN.md 3B.2): K.2-22's interim ends — a comment is one more type on the declarative path.
+  assert.equal(classify(ev('add', { type: 'comment' }), { elementTypes: { comment: { wake: true } } }).item.type, 'comment', 'a comment raises its own element item');
   assert.equal(classify(ev('grab', { image: { state: 'ready' } }), { elementTypes: wakes }).item.image.state, 'ready');
   const withText = elementItem(ev('add'), { label: 'Sticker', text: 'look <here>\nnow' });
   assert.equal(withText.summary, 'Sticker · s1@1 · "look here now"', 'the summary_key text, sanitized');
@@ -444,10 +448,12 @@ test('a highlight (U323\'s wake: true) raises one item through the API, its note
   assert.match(elementItems(srv)[0].summary, /"see that"/);
   assert.equal(elementItems(srv)[0].v, 2);
   await ok(api.post('/api/elements', { type: 'comment', anchor: { mount: 'm1', selector: 'p', text: 'Hello', ordinal: 0 }, payload: { text: 'a pin', shared: true } }));
-  assert.equal(elementItems(srv).length, 1, 'no element item for a comment (K.2-22)');
-  assert.equal(srv.state.queue.filter((it) => it.kind === 'comment').length, 1);
+  // U423 (PLAN.md 3B.2; K.2-22's interim ends): the comment raises its own
+  // element item, its type's group beside the highlight's.
+  assert.deepEqual(elementItems(srv).map((it) => it.type), ['highlight', 'comment'], 'one group per (type, pane)');
+  assert.equal(srv.state.queue.filter((it) => it.kind === 'comment').length, 0, 'no legacy comment item');
   await ok(api.del(`/api/elements/${h.id}`));
-  assert.deepEqual(elementItems(srv), []);
+  assert.deepEqual(elementItems(srv).map((it) => it.type), ['comment'], 'the highlight\'s group went with it');
 });
 
 test('a shared highlight\'s note never reaches a basic viewer: its element item is a text-free label with text_hidden (TEXT_RULES.items.element)', async (t) => {

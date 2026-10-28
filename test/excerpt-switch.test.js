@@ -159,6 +159,14 @@ async function parkPush(d) {
   assert.equal(pushed.mode, 'parked', JSON.stringify(pushed));
   return (await ok(d.api.get('/api/queue/pending'), 'pending')).pending;
 }
+// U423: highlights on one pane share one queue group; a member's excerpt is
+// the group's string (a one-member group) or its [{id, text}] entry.
+const groupOf = (items, id) => items.find((it) => (it.element_ids || [it.element_id]).includes(id));
+const excerptOf = (it, id) => {
+  if (!it) return undefined;
+  if (typeof it.excerpt === 'string') return it.element_id === id ? it.excerpt : undefined;
+  return Array.isArray(it.excerpt) ? (it.excerpt.find((e) => e.id === id) || {}).text : undefined;
+};
 const withoutExcerpt = (batch) => batch.map((it) => { const { excerpt: _e, ...rest } = it; return rest; });
 
 test('(2) OFF (no record): the queue item has no excerpt key; the live wake and the park are ids-only, byte-equal to the same flow with no excerpt field', async (t) => {
@@ -194,12 +202,13 @@ test('(2) ON (flipped with no restart): the next shared highlight\'s item carrie
   const before = await postHighlight(d, `${PASSAGE_MARK} before`);
   setSwitch(d.root, true);
   assert.equal(d.srv.state.excerptsOn(), true, 'state.excerptsOn follows the record, no restart');
-  assert.ok(!('excerpt' in elementItems(d.srv).find((it) => it.element_id === before.id)), 'an item queued before the flip keeps what it had');
+  assert.equal(excerptOf(groupOf(elementItems(d.srv), before.id), before.id), undefined, 'an item queued before the flip keeps what it had');
 
   const h = await postHighlight(d);
-  const item = elementItems(d.srv).find((it) => it.element_id === h.id);
-  assert.strictEqual(item.excerpt, EXPECTED, 'the quote, masked then bounded, at the producer');
-  assert.ok(item.excerpt.includes(PASSAGE_MARK));
+  const item = groupOf(elementItems(d.srv), h.id);
+  assert.strictEqual(excerptOf(item, h.id), EXPECTED, 'the quote, masked then bounded, at the producer');
+  assert.ok(excerptOf(item, h.id).includes(PASSAGE_MARK));
+  assert.equal(excerptOf(item, before.id), undefined, 'the member queued before the flip still has none');
   assert.deepStrictEqual(findLeaks(item, [SECRET]), [], 'the fake secret is masked on the item');
   const ring = (await ok(d.api.get('/api/events?since=0'), 'events')).events;
   assert.deepStrictEqual(findLeaks(ring, [SECRET]), [], 'and nowhere on the ring');
@@ -208,15 +217,16 @@ test('(2) ON (flipped with no restart): the next shared highlight\'s item carrie
   // A long quote is bounded by the envelope's one bound.
   const long = `${PASSAGE_MARK} ${'word '.repeat(200)}`;
   const hl = await postHighlight(d, long);
-  const longItem = elementItems(d.srv).find((it) => it.element_id === hl.id);
-  assert.strictEqual(longItem.excerpt, excerptText(long));
-  assert.ok(longItem.excerpt.length <= 240 && longItem.excerpt.endsWith('…'));
-  await ok(d.api.del(`/api/queue/${longItem.id}`), 'drop the long one');
+  const longItem = groupOf(elementItems(d.srv), hl.id);
+  assert.strictEqual(excerptOf(longItem, hl.id), excerptText(long));
+  assert.ok(excerptOf(longItem, hl.id).length <= 240 && excerptOf(longItem, hl.id).endsWith('…'));
+  // U423: it shares the group with the others; deleting it drops its member.
+  await ok(d.api.del(`/api/elements/${hl.id}`), 'drop the long one');
 
   const { wake, content } = await livePush(t, d);
-  const carried = wake.batch.find((it) => it.element_id === h.id);
-  assert.strictEqual(carried.excerpt, EXPECTED, 'the wake batch carries the excerpt');
-  assert.ok(!('excerpt' in wake.batch.find((it) => it.element_id === before.id)));
+  const carried = groupOf(wake.batch, h.id);
+  assert.strictEqual(excerptOf(carried, h.id), EXPECTED, 'the wake batch carries the excerpt');
+  assert.equal(excerptOf(groupOf(wake.batch, before.id), before.id), undefined);
   assert.equal(content.split(`${EXCERPT_HEADER}:`).length - 1, 1, 'one excerpt block in the live envelope');
   assert.ok(content.includes(`- highlight ${h.id}\n${EXCERPT_PREFIX}${PASSAGE_MARK}`), `the block names the id: ${content}`);
   assert.deepStrictEqual(findLeaks(content, [SECRET]), []);

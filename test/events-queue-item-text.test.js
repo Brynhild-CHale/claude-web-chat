@@ -82,7 +82,7 @@ async function boot(t) {
     await ok(d.api.post('/api/elements', commentBody({ text: PIN_NOTE, shared: true, anchor: LOCATOR })), `${level}: pin`);
     await ok(d.api.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { color: 'gold', note: HL_NOTE } }), `${level}: highlight`);
     const queued = (await ok(d.api.get('/api/queue'), `${level}: queue`)).items;
-    assert.deepStrictEqual(queued.map((it) => it.kind).sort(), ['comment', 'element'], `${level}: two items queued`);
+    assert.deepStrictEqual(queued.map((it) => it.type).sort(), ['comment', 'highlight'], `${level}: two items queued`); // U423: both element groups
     const channel = await openSSE(d.port, { kinds: ['wake'], awaitChannel: d.api });
     t.after(() => channel.close());
     const pushed = await ok(d.api.post('/api/queue/push', { note: PUSH_NOTE }), `${level}: push`);
@@ -99,7 +99,7 @@ async function boot(t) {
 
 const queueEntries = (body) => body.events.filter((e) => e.kind === 'queue' && e.item);
 const wakeEntries = (body) => body.events.filter((e) => e.kind === 'wake');
-const pushWake = (body) => wakeEntries(body).find((e) => e.batch.some((it) => it.kind === 'comment'));
+const pushWake = (body) => wakeEntries(body).find((e) => e.batch.some((it) => it.type === 'comment'));
 const msgWake = (body) => wakeEntries(body).find((e) => e.batch.some((it) => it.kind === 'message'));
 // A wake entry below `read` against its local reading (U401): the same kind,
 // seq, reason and batch ids; no note; `note_hidden` exactly when it had one.
@@ -232,7 +232,7 @@ test('(b) the SSE stream below read: its catch-up, a live queue event and a live
   });
   const peerLive = await live(PEER);
   const peerEvs = sseEvents(peerLive).filter((e) => e.kind === 'queue');
-  assert.ok(peerEvs.length >= 1 && peerEvs[0].data.item && peerEvs[0].data.item.kind === 'comment', `the peer's live queue event: ${peerLive}`);
+  assert.ok(peerEvs.length >= 1 && peerEvs[0].data.item && peerEvs[0].data.item.type === 'comment', `the peer's live queue event: ${peerLive}`);
   assert.equal(peerEvs[0].data.item.text_hidden, true);
   assert.deepStrictEqual(notesIn(peerLive), [], 'the peer\'s live queue event quotes no note');
   const localLive = await live({});

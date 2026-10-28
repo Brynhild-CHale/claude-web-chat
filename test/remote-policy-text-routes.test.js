@@ -226,7 +226,7 @@ test('(d) a basic reader — a remote viewer with no opt-in, a network peer — 
 test('(d) GET /api/events at basic: no queue entry\'s item quotes the shared pin\'s note (K.2-126); local does', async (t) => {
   const d = await boot(t);
   const { call } = d.basic;
-  const queued = (b) => b.events.filter((e) => e.kind === 'queue' && e.item && e.item.kind === 'comment');
+  const queued = (b) => b.events.filter((e) => e.kind === 'queue' && e.item && e.item.type === 'comment'); // U423: the comment's element group
   const local = (await call('GET', '/api/events?since=0')).body;
   assert.ok(queued(local).some((e) => has(e.item, PIN_TEXT)), 'the local ring\'s queue entry quotes the note');
   for (const headers of [REMOTE, PEER]) {

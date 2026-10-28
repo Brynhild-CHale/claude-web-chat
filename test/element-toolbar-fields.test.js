@@ -144,7 +144,11 @@ test('each bad field is refused naming its field (icons, hotkeys, label, input, 
     ['a label of 61 characters', { json: { ...GOOD, label: 'x'.repeat(61) } }, 'label', /at most 60 characters/],
     ['a label with U+202E', { json: { ...GOOD, label: 'Sticky‮' } }, 'label', /control, bidi or invisible/],
     ['input drag', { json: { ...GOOD, input: 'drag' } }, 'input', /must be one of taps, strokes, selection \(got "drag"\)/],
-    ['wake yes', { json: { ...GOOD, wake: 'yes' } }, 'wake', /must be true or false \(got "yes"\)/],
+    ['wake yes', { json: { ...GOOD, wake: 'yes' } }, 'wake', /must be true, false or \{coalesce\?, respond\?\} \(got "yes"\)/],
+    // U423 (PLAN.md 3B.2): the object form's keys, each refused naming wake.<key>.
+    ['wake coalesce all', { json: { ...GOOD, wake: { coalesce: 'all' } } }, 'wake.coalesce', /must be one of count, none \(got "all"\)/],
+    ['wake respond yes', { json: { ...GOOD, wake: { respond: 'yes' } } }, 'wake.respond', /must be true or false \(got "yes"\)/],
+    ['wake with a key it does not know', { json: { ...GOOD, wake: { coalesce: 'count', when: 'always' } } }, 'wake.when', /is not a wake field \(coalesce, respond\)/],
     ['profiles 1', { json: { ...GOOD, profiles: 1 } }, 'profiles', /must be true or false/],
     ['settings.small with a nested object', { json: { ...GOOD, settings: { small: { type: 'object', properties: { a: { type: 'object', properties: {} } } } } } }, ['settings.small.properties.a.properties', 'settings.small.properties.a.type'], /no nested object or array/],
     ['a settings level it does not know', { json: { ...GOOD, settings: { medium: { type: 'object', properties: {} } } } }, 'settings.medium', /not a settings level/],
@@ -260,11 +264,11 @@ test('the three built-in element.json files pass toolbarFields and validateEleme
 
 test('the built-ins carry exactly the ruled table (K.2-1, F2 a, K.2-6, K.2-7, K.2-10, K.2-16, K.2-46), and none declares needs', () => {
   const want = {
-    comment: { label: 'Comment', hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }], profiles: false, input: 'taps', wake: true, summary_key: 'text' },
+    comment: { label: 'Comment', hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }], profiles: false, input: 'taps', wake: { coalesce: 'count', respond: true }, summary_key: 'text' },
     highlight: { label: 'Highlight', hotkeys: [], profiles: true, input: 'selection', wake: true, summary_key: 'note' },
     'box-grab': { label: 'Box grab', hotkeys: [], profiles: false, input: 'strokes', wake: true },
     // tranche 3, U415: armed by the Comment tool, no hotkeys of its own.
-    'chat-comment': { label: 'Comment', input: 'taps', wake: true, summary_key: 'text', tool: 'comment' },
+    'chat-comment': { label: 'Comment', input: 'taps', wake: { coalesce: 'count', respond: true }, summary_key: 'text', tool: 'comment' },
   };
   for (const type of BUILTIN_ELEMENT_TYPE_NAMES) {
     const j = builtin(type);
