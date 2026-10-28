@@ -30,9 +30,22 @@
 // (`prev`) to carry its state over.
 //
 // TEXT. A prompt is textContent (pre-wrap). Assistant text goes through
-// renderMarkdown(text, {flavor: 'chat'}), whose output is its own div.md-chat,
-// into a plain element — never inside a page `.md-block`, whose page.css rules
-// would win a tie (U35). Nothing else here is HTML.
+// renderMarkdown(text, {flavor: 'chat', offsets: true}), whose output is its
+// own div.md-chat, into a plain element — never inside a page `.md-block`,
+// whose page.css rules would win a tie (U35). Nothing else here is HTML.
+//
+// STAMPS (annotation engine 3A.5, D5: the chrome owns placement). The element
+// that holds an item's text carries data-item-id (the item's id) and
+// data-field="text": the prompt bubble, each reply's prose element and the
+// thinking row's text. A reply's top-level blocks carry data-src="<start>,<end>"
+// (the engine's offsets, sourceMap's grammar); a prompt's and a thought's text
+// is plain, so its offsets are the identity, data-src="0,<len>". What the
+// chrome adds inside such an element and is not the item's text (a code
+// block's Copy, a prompt's tag) is data-wc-chrome, which the anchor engine's
+// text table skips, so lib/core/anchors recordSource / resolveSource align the
+// element against sourceMap(text, {flavor: 'chat'}) (a reply) or the one-run
+// identity map (a prompt, a thought). Tool cards carry their data-item-id as
+// before, and the turn its data-turn-id.
 //
 // NOTHING IS FETCHED here: the turn arrives from chat-state.js. An image
 // attachment is an <img loading=lazy> the browser loads from the attachment
@@ -130,19 +143,30 @@ export function fmtBytes(n) {
 
 const nodeLabel = (node) => (node && (node.label || labelFor(node.id))) || '';
 
-// Prose: the chat flavour, its own div.md-chat inside a plain element, with each
-// code block given a Copy (the click is the stream's, by delegation).
+// Prose: the chat flavour with its block offsets, its own div.md-chat inside a
+// plain element, with each code block given a Copy (the click is the
+// stream's, by delegation; the button is chrome, not the reply's text).
 function prose(text, cls) {
   const box = el('div', cls);
-  box.innerHTML = renderMarkdown(String(text || ''), { flavor: 'chat' });   // the engine escapes everything
+  box.innerHTML = renderMarkdown(String(text || ''), { flavor: 'chat', offsets: true });   // the engine escapes everything
   for (const pre of [...box.querySelectorAll('pre')]) {
     const wrap = el('div', 'ct-code');
     pre.replaceWith(wrap);
     const copy = button('ct-copy', 'Copy');
     copy.setAttribute('aria-label', 'Copy this code');
+    copy.setAttribute('data-wc-chrome', 'copy');
     wrap.append(pre, copy);
   }
   return box;
+}
+
+// The element that holds item `it`'s text: its id and field, and (plain text)
+// the identity offsets.
+function stampItem(node, it, plainLength) {
+  node.dataset.itemId = it.id;
+  node.dataset.field = 'text';
+  if (Number.isInteger(plainLength)) node.dataset.src = `0,${plainLength}`;
+  return node;
 }
 
 // ── the summary of the group ─────────────────────────────────────────────────
@@ -364,7 +388,8 @@ function thoughtRow(it, ctx) {
   const label = Number.isFinite(it.duration_ms) ? `Thought for ${seconds(it.duration_ms)}` : 'Thought';
   if (!it.text || !atLeast(ctx.level, 'read')) return el('div', 'ct-think', label);
   const d = el('details', 'ct-think');
-  d.append(el('summary', 'ct-think-sum', label), el('div', 'ct-think-text', it.text));
+  const text = String(it.text);
+  d.append(el('summary', 'ct-think-sum', label), stampItem(el('div', 'ct-think-text', text), it, text.length));
   return d;
 }
 
@@ -409,9 +434,16 @@ function queuedBubble(it) {
 function promptBubble(turn, item, { tag = null } = {}) {
   const wrap = el('div', 'ct-prompt');
   wrap.dataset.author = turn.author || 'user';
-  const bubble = el('div', 'ct-bubble', item && typeof item.text === 'string' ? item.text
-    : (turn.prompt && turn.prompt.preview) || '');
-  if (tag) bubble.append(el('span', 'ct-tag', tag));
+  const own = item && typeof item.text === 'string';
+  const bubble = el('div', 'ct-bubble', own ? item.text : (turn.prompt && turn.prompt.preview) || '');
+  // Only an item's own text is stamped (a preview is no item's), and only
+  // the text: the tag after it is chrome.
+  if (own) stampItem(bubble, item, item.text.length);
+  if (tag) {
+    const t = el('span', 'ct-tag', tag);
+    t.setAttribute('data-wc-chrome', 'tag');
+    bubble.append(t);
+  }
   wrap.append(bubble);
   const atts = item ? attachments(item) : null;
   if (atts) wrap.append(atts);
@@ -618,7 +650,7 @@ export function renderTurn(entry, turn, ctx) {
       case 'reply': {
         const cls = i === introAt ? 'ct-prose ct-intro' : i === finalAt ? 'ct-prose ct-final'
           : inGroup ? 'ct-prose ct-narration' : 'ct-prose';
-        node = cached(entry, it.id, it, cls, () => prose(it.text, cls));
+        node = cached(entry, it.id, it, cls, () => stampItem(prose(it.text, cls), it));
         break;
       }
       case 'thinking':
