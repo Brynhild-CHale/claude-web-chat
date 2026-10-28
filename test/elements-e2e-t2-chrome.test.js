@@ -28,6 +28,12 @@
 //   - a previewed older node draws its pins read-only;
 //   - a document (preview, export) of a comment-only node carries only the
 //     resolver kinds U307 splices and draws no element (F-DOCS a);
+//   - comments on markdown (F.3, RULED M3 (a)): a pin on a heading lands in the
+//     daemon as a source anchor whose label and queue summary read `on section
+//     "<heading>"`; the heading rewritten through a markdown frame, the pin is
+//     still placed on the rewritten heading (GT-03's section rule, graded
+//     under GT-07's twin); a pin on prose names its section; Show on page for
+//     an md pin (with no marker, and from the rail card) reveals the item;
 //   - no script-error reached the daemon's event log, and no interval was armed.
 const test = require('node:test');
 const { before, after } = test;
@@ -446,6 +452,84 @@ test('a document of a comment-only node (preview, export) carries only the resol
     assert.ok(r.text.includes(anchorsSrc.source({ kinds })), `${what}: the resolver cut to ${anchorsSrc.kindKey(kinds)}`);
     assert.ok(!r.text.includes(anchorsSrc.source()), `${what}: never the whole resolver`);
     assert.ok(!/el-layer|pin-marker|el-marker/.test(r.text), `${what}: no element is drawn`);
+  }
+});
+
+// F.3: comments on markdown, made in the chrome and held by the daemon.
+test('comments on markdown: a heading pin reads on section "…" and follows the rewritten heading; a prose pin names its section; Show on page reveals the item', async () => {
+  const intro = 'Intro line for the section test.';
+  const body = 'Body paragraph text follows here.';
+  await claude('POST', '/api/markdown', { id: 'md-sec', text: `${intro}\n\n## Old heading words\n\n${body}` });
+  const item = () => W.document.querySelector('[data-md-id="md-sec"]');
+  await eventually(() => !!(item() && item().querySelector('h2')), 'the markdown item drawn');
+  // jsdom does no layout: the item and its lines get boxes inside the well.
+  const MD_BOX = { left: 100, top: 180, width: 600, height: 120, right: 700, bottom: 300, x: 100, y: 180 };
+  const LINE = { left: 120, top: 200, width: 300, height: 16, right: 420, bottom: 216, x: 120, y: 200 };
+  ov.initOverlay({ rectOf: (x) => (x && x.nodeType === 1 && x.matches && x.matches('[data-md-id]') ? MD_BOX : x && x.startContainer ? LINE : VIEW) });
+  const pinOn = async (el, text, pointerId) => {
+    ov.setArmed(null);
+    shell.key('c');
+    assert.equal(armedType(), 'comment');
+    gesture(el, 'mouse', pointerId);
+    const pop = W.document.querySelector('.pin-pop');
+    assert.ok(pop && pop.querySelector('.pin-text'), 'the composer opened');
+    pop.querySelector('.pin-text').value = text;
+    shell.click(pop.querySelector('.pin-save'));
+    let made = null;
+    await eventually(async () => {
+      made = ((await daemon('GET', '/api/elements?type=comment')).json.elements || []).find((c) => c.text === text);
+      return !!made;
+    }, `${text} in the daemon`);
+    return made;
+  };
+  try {
+    const head = await pinOn(item().querySelector('h2'), 'e2e md heading pin', 71);
+    assert.equal(head.record.kind, 'source', 'a source anchor');
+    assert.equal(head.record.md, 'md-sec');
+    assert.equal(head.record.quote.exact, 'Old heading words');
+    assert.deepEqual(head.anchor, { mount: 'md-sec', selector: 'h2', text: 'Old heading words', ordinal: 0, section: 'Old heading words' },
+      'the served anchor is the locator, section included');
+    assert.equal(head.anchor_label, 'md-sec: on section "Old heading words"');
+    const queued = (await daemon('GET', '/api/queue')).json.items.find((it) => it.kind === 'comment' && it.comment_id === head.id);
+    assert.ok(queued, 'the shared pin queued');
+    assert.equal(queued.origin_mount, 'md-sec');
+    assert.match(queued.summary, /^md-sec · on section "Old heading words" · /);
+    const onHeading = (id, words) => {
+      const m = markersFor(id)[0];
+      const g = m && m._group;
+      const sc = g && g.range && g.range.startContainer;
+      const at = sc && (sc.nodeType === 1 ? sc : sc.parentNode);
+      const h = at && at.closest && at.closest('h2');
+      return !!(h && h.textContent === words && m.classList.contains('el-hit') && m.style.display === '');
+    };
+    await eventually(() => onHeading(head.id, 'Old heading words'), 'the heading pin drawn on its heading');
+    assert.equal(markersFor(head.id)[0].style.left, `${MD_BOX.left}px`, 'in the item\'s margin');
+    // The heading rewritten through a markdown frame: the pin follows it.
+    await claude('POST', '/api/markdown', { id: 'md-sec', text: `${intro}\n\n## Brand new title\n\n${body}` });
+    await eventually(() => onHeading(head.id, 'Brand new title'), 'the pin placed on the rewritten heading');
+    // A pin on prose under it names its section.
+    const prose = await pinOn(item().querySelectorAll('p')[1], 'e2e md prose pin', 72);
+    assert.equal(prose.record.quote.exact, body);
+    assert.equal(prose.anchor.section, 'Brand new title');
+    assert.equal(prose.anchor_label, `md-sec: "${body}" — on section "Brand new title"`);
+    // Show on page: with no marker for the pin, its item; from the rail card,
+    // the pin's place in the item.
+    const scrolls = shell.scrolls.length;
+    assert.equal(comments.showOnPage('no-such-pin', 'md-sec'), true);
+    assert.equal(shell.scrolls.length, scrolls + 1);
+    assert.equal(shell.scrolls.at(-1).el, item(), 'the item revealed');
+    const show = () => [...W.document.querySelectorAll('#queue-rail .cm-card-show')]
+      .find((b) => { const slot = b.closest('.qi-card'); return slot && slot._commentItem && slot._commentItem.comment_id === head.id; });
+    await eventually(() => !!show(), 'the heading pin\'s card in the rail', 15000);
+    const before = shell.scrolls.length;
+    show().click();
+    assert.equal(shell.scrolls.length, before + 1, 'the card\'s Show on page scrolled');
+    assert.ok(item().contains(shell.scrolls.at(-1).el), 'to the pin, in the markdown item');
+  } finally {
+    ov.setArmed(null);
+    comments.closePinPop();
+    ov.initOverlay({ rectOf });
+    await claude('POST', '/api/markdown', { id: 'md-sec', remove: true });
   }
 });
 

@@ -27,7 +27,7 @@
 // the overlay has no row for asks for one read, which serves its `record`.
 //
 // THE DRAW. registerElementType('comment', {draw, create, input: 'taps',
-// targets: 'panes'}) (element-types.js: the reads gate runs the draw; never
+// sourceGlyph}) (element-types.js: the reads gate runs the draw; never
 // registerType). The
 // overlay resolves every anchor kind and places, clips and groups the markers
 // — pins on one element share one marker with a count — under its DRAW_RULES:
@@ -53,9 +53,23 @@
 // the engine's recorder (anchors.record) and the legacy locator {mount,
 // selector, text, ordinal} beside it, then opens the composer; Pin posts
 // {type: 'comment', anchor, locator, payload: {text, shared}, device}. The
-// type's targets are 'panes' (K.2-78): a tap outside every pane (a markdown
-// item, the page's own chrome) is never the tool's — it passes through to the
-// page (a link follows) with the tool still armed, as 0.8.5's pin mode did.
+// type's targets are the default 'items' (F.3, RULED M3 (a)): a tap on a pane's
+// content or on a markdown item's block (a heading, a paragraph, a list item, a
+// quote, a code block) is the tool's; a tap on the chrome inside #main (a
+// pane's header controls, the run controls, the Contents nav, a gap between
+// blocks) passes through to the page with the tool still armed (the overlay's
+// dispatch, K.2-78 (c)). M3's trade-off: a link in prose pins instead of
+// following (the pointer button, C and Space put the tool down).
+//
+// A PIN ON MARKDOWN (F.3) is "about this section": create() records a source
+// anchor over the tapped block (anchors.recordSource over the item's text and
+// sourceMap, clamped at CONFIG.quote_max rendered characters, once more at
+// SOURCE_RETRY_CHARS when the source span is still over the cap, else a hint
+// and no pin — never a whole-item anchor) and the locator {mount: <md id>,
+// selector: <the block's tag>, text, ordinal, section: <the heading>} beside
+// it, which get_comments' label and the queue summary read as `on section
+// "<heading>"`. Its marker sits in the item's left margin (SOURCE_GLYPH, the
+// overlay's margin glyph); Show on page falls back to page.js revealMarkdown.
 //
 // PREVIEWS ARE READ-ONLY (D2). A previewed older node draws its own pins (the
 // overlay's preview set, from the node's lean_elements; their threads from one
@@ -82,6 +96,12 @@ import { request } from './http.js';
 export const TYPE = 'comment';
 export const ELEMENTS_PATH = '/api/elements';
 export const GONE_HINT = 'That comment is not on the page now.';
+export const TOO_LONG_HINT = 'That block is too long to pin a comment on: pin its heading or a shorter paragraph.';
+// The retry's span when a block's source span is over the cap (F.3).
+export const SOURCE_RETRY_CHARS = 240;
+// A markdown pin's glyph offsets from the item's left edge at the block's
+// first line: the 26px pin wholly in the gutter, its top level with the line.
+export const SOURCE_GLYPH = Object.freeze({ dx: -27, dy: -4 });
 
 const isObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
 const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -98,8 +118,9 @@ function load() {
     loading = Promise.all([
       import('./overlay.js'), import('./element-types.js'), import('./tools.js'), import('./shell.js'),
       import('./ws.js'), import('./topbar.js'), import('./mounts.js'), import('./bus.js'), import('./toolbar-state.js'),
-    ]).then(([overlay, types, tools, shell, ws, topbar, mounts, bus, toolbar]) => {
-      mods = { overlay, types, tools, shell, ws, topbar, mounts, bus: bus.bus, toolbar };
+      import('./page.js'),
+    ]).then(([overlay, types, tools, shell, ws, topbar, mounts, bus, toolbar, page]) => {
+      mods = { overlay, types, tools, shell, ws, topbar, mounts, bus: bus.bus, toolbar, page };
       return mods;
     });
   }
@@ -332,12 +353,76 @@ function locatorOf(target, root, mount) {
 function create(input, ctx) {
   if (readOnly()) { note(mods && mods.topbar.READONLY_HINT); return; }
   if (!input || input.phase !== 'click') return;
+  if (input.md != null) { createOnMarkdown(input, ctx); return; }
   const { mount, root, target } = input;
   if (mount == null || !root || root === document || !target || target.nodeType !== 1) return;
   const A = (ctx && ctx.anchors) || (window.__wcMount && window.__wcMount.anchor) || null;
   let record = null;
   try { record = A && typeof A.record === 'function' ? A.record(root, target, { mount }) : null; } catch { record = null; }
   openComposer({ record, locator: locatorOf(target, root, mount) }, input.clientX, input.clientY);
+}
+
+// ── a pin on a markdown item (F.3) ──────────────────────────────────────────
+const HEADING = /^h[1-6]$/;
+const blockText = (el) => (el.textContent || '').trim();
+// A Range from the block's start over at most `n` of its rendered characters
+// (its text nodes in order), or its whole contents when it holds fewer.
+function blockRange(block, n) {
+  const doc = block.ownerDocument;
+  const range = doc.createRange();
+  range.selectNodeContents(block);
+  const walk = doc.createTreeWalker(block, 4 /* NodeFilter.SHOW_TEXT */);
+  let left = n;
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+    const len = t.data.length;
+    if (len >= left) { range.setEnd(t, left); break; }
+    left -= len;
+  }
+  return range;
+}
+// The heading a block is under: its own text for a heading; else the item's
+// heading whose data-slug is the record's slug; else the last heading of the
+// nearest earlier markdown item on the page; else none.
+function sectionOf(itemEl, block, record) {
+  if (HEADING.test(block.tagName.toLowerCase())) return blockText(block).slice(0, 120);
+  if (record && typeof record.slug === 'string') {
+    for (const h of itemEl.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+      if (h.getAttribute('data-slug') === record.slug) return blockText(h).slice(0, 120);
+    }
+  }
+  const items = [...document.querySelectorAll('#main [data-md-id]')];
+  for (let i = items.indexOf(itemEl) - 1; i >= 0; i--) {
+    const hs = items[i].querySelectorAll('h1,h2,h3,h4,h5,h6');
+    if (hs.length) return blockText(hs[hs.length - 1]).slice(0, 120);
+  }
+  return '';
+}
+function mdLocatorOf(itemEl, block, md, record) {
+  const tag = block.tagName.toLowerCase();
+  const ordinal = Math.max(0, [...itemEl.querySelectorAll(tag)].indexOf(block));
+  const loc = { mount: md, selector: tag, text: blockText(block).slice(0, 120), ordinal };
+  const section = sectionOf(itemEl, block, record);
+  if (section) loc.section = section;
+  return loc;
+}
+function createOnMarkdown(input, ctx) {
+  const { target, md } = input;
+  if (!target || target.nodeType !== 1 || typeof target.closest !== 'function' || !mods) return;
+  const itemEl = target.closest('[data-md-id]');
+  const block = itemEl ? target.closest(mods.overlay.MD_BLOCKS) : null;
+  if (!block || !itemEl.contains(block) || !blockText(block)) return;   // a gap: nothing pinned
+  const A = ctx && ctx.anchors;
+  const text = ctx && typeof ctx.markdownText === 'function' ? ctx.markdownText(md) : null;
+  if (!A || typeof A.recordSource !== 'function' || text == null) return;
+  const map = ctx.sourceMap(text);
+  const at = (n) => {
+    try { return A.recordSource(itemEl, blockRange(block, n), map, text, { md }); } catch { return null; }
+  };
+  // The source span counts link targets and markup, so a block under the cap
+  // in rendered text may still be over it in source: one retry, shorter.
+  const record = at((A.CONFIG && A.CONFIG.quote_max) || 2000) || at(SOURCE_RETRY_CHARS);
+  if (!record) { note(TOO_LONG_HINT); return; }
+  openComposer({ record, locator: mdLocatorOf(itemEl, block, md, record) }, input.clientX, input.clientY);
 }
 
 async function postPin(spot, text, shared) {
@@ -548,7 +633,8 @@ function openThread(id, x, y) {
 }
 
 // ── the rail's card (K.2-11) ────────────────────────────────────────────────
-// Where a pin is on the page now: its marker's element, else its pane.
+// Where a pin is on the page now: its marker's element, else its pane, else
+// its markdown item.
 export function showOnPage(id, mount) {
   for (const c of [...marks]) {
     if (!c.isConnected || !c._commentIds || !c._commentIds.includes(String(id))) continue;
@@ -557,6 +643,8 @@ export function showOnPage(id, mount) {
     if (at && typeof at.scrollIntoView === 'function') { at.scrollIntoView({ block: 'center', behavior: 'smooth' }); return true; }
   }
   if (mount != null && mods && mods.mounts.revealPane(String(mount))) return true;
+  // A pin on a markdown item (F.3): its item, as the box grab's card does.
+  if (mount != null && mods && mods.page.revealMarkdown(String(mount))) return true;
   note(GONE_HINT);
   return false;
 }
@@ -606,7 +694,7 @@ export function initComments() {
   inited = true;
   document.addEventListener('visibilitychange', onVisibility);
   load().then((m) => {
-    m.types.registerElementType(TYPE, { draw, create, input: 'taps', targets: 'panes' });
+    m.types.registerElementType(TYPE, { draw, create, input: 'taps', sourceGlyph: SOURCE_GLYPH });
     m.shell.registerQueueCard(TYPE, { render: renderCard, unmount: (slot) => { cardSlots.delete(slot); slot._commentItem = null; } });
     m.overlay.onArmedChange(syncArmed);
     syncArmed();

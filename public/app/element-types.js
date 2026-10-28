@@ -50,8 +50,10 @@
 // pane (a markdown link, the chrome inside #main) passes through to the page
 // with the tool still armed, as 0.8.5's pin mode did. It is stored on the
 // type (targetsOf) and handed to the overlay, whose pointer dispatch reads it
-// after the input-mode policy's decision. The comment registers 'panes';
-// the highlight and the box grab keep the default.
+// after the input-mode policy's decision. Every built-in keeps the default
+// (the comment since F.3: a taps tool with 'items' takes a pane's content and
+// a markdown block, and the overlay leaves the chrome inside #main to the
+// page); 'panes' stays for a pack's type.
 import * as overlayModule from './overlay.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
@@ -221,10 +223,12 @@ function standIn(group, type) {
 }
 
 // ── registration ───────────────────────────────────────────────────────────
-// registerElementType(type, {draw, create?, input?, glyph?, move?, targets?})
-// → unregister. The spec is the overlay's (registerType); its draw and move
-// run behind the gate. `targets` is 'items' (the default) or 'panes' (TARGETS
-// above). A later registration of the same type replaces the earlier one.
+// registerElementType(type, {draw, create?, input?, glyph?, sourceGlyph?, move?,
+// targets?}) → unregister. The spec is the overlay's (registerType); its draw
+// and move run behind the gate. `targets` is 'items' (the default) or 'panes'
+// (TARGETS above); `sourceGlyph` {dx, dy} puts the glyph in a markdown item's
+// margin (overlay.js). A later registration of the same type replaces the
+// earlier one.
 export function registerElementType(type, spec) {
   if (typeof type !== 'string' || !type) throw new TypeError('registerElementType: a type name is required');
   if (!spec || typeof spec.draw !== 'function') throw new TypeError('registerElementType: {draw(group, ctx)} is required');
