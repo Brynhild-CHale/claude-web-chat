@@ -18,7 +18,8 @@
 //   * U414a: past the first served page (FIELD_MAX) no fingerprint fast path —
 //     a later-page passage over a value learned after the pin answers masked,
 //     and its memory stands on its own page's fingerprint; a first-page
-//     passage keeps the fast path with one read;
+//     passage keeps the fast path with one read; a passage that starts on the
+//     first page and ends past it never takes it;
 //   * record refuses rh_, rm_, a hook-sourced card and a provisional turn with
 //     EXPLAIN.refused, and writes nothing;
 //   * U413's re-key followed, and after a restart (the replaces alias);
@@ -566,6 +567,45 @@ test('a passage past the first served page that crosses a value learned after th
   h0 = hits();
   assert.deepEqual(await resolveOne(h, opening, 'opening'), o1);
   assert.equal(hits(), h0 + 1, 'the first-page stamp is unchanged: a hit');
+});
+
+test('a passage that starts on the first served page and ends past it never takes the fast path: a value learned past the page boundary answers masked', async (t) => {
+  withTempHome(t);
+  const h = boot(t);
+  await h.begin();
+  const FILL = 'Plain words fill the first page of the reply. ';
+  const lead = FILL.repeat(Math.ceil(FIELD_MAX / FILL.length)).slice(0, FIELD_MAX - 4);
+  const LATER = `Contact ${E} for access`;
+  const r = h.records(44);
+  r.prompt('write a reply that crosses a page', { promptId: 'lp-2' });
+  r.assistant([`${lead} ${LATER} after the boundary. ${FILL.repeat(8)}The end.`]);
+  r.turnDuration({ durationMs: 40 });
+  h.append(r.records);
+  await settled(h, 1);
+  const reply = (await h.items('lp-2')).find((it) => it.kind === 'reply');
+  assert.ok(reply, 'a reply');
+  const first0 = await h.mirror.itemField(reply.id, { field: 'text' });
+  assert.equal(first0.eof, false, 'the reply is longer than one served page');
+  const near = await h.mirror.itemField(reply.id, { field: 'text', from: FIELD_MAX - 64 });
+  const at = near.from + near.text.indexOf('Contact ');
+  assert.ok(at >= near.from && at < FIELD_MAX && at + LATER.length > FIELD_MAX, 'the passage starts on the first page and ends past it');
+  assert.ok(at + 'Contact '.length >= FIELD_MAX, 'the value itself lies past the first page');
+  const rec = (await h.mirror.recordAnchor({ kind: 'item-range', item_id: reply.id, pos: { start: at, end: at + LATER.length } })).anchor;
+  assert.ok(rec, 'the straddling passage records');
+  assert.equal(rec.quote.exact, LATER);
+  assert.equal(rec.marks, 0);
+  const a1 = await resolveOne(h, rec, 'straddle');
+  assertAnswer(a1, 'straddle');
+  assert.equal(a1.state, 'exact');
+  assert.notEqual(a1.how, 'fingerprint', 'a passage that ends past the first page never takes the fast path');
+
+  h.redactor.addKnown(E, 'email');
+  const first1 = await h.mirror.itemField(reply.id, { field: 'text' });
+  assert.equal(first1.text, first0.text, 'the first page is byte-identical: its fingerprint cannot see the value');
+  const a2 = await resolveOne(h, rec, 'straddle');
+  assertAnswer(a2, 'straddle');
+  assert.equal(a2.state, 'masked', 'over a value learned past the page boundary: masked, never placed');
+  assert.equal(a2.visible, 'masked');
 });
 
 test('the item-range memory stamp: the first page\'s fingerprint inside it, the window page\'s past it', async () => {
