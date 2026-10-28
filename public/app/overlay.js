@@ -89,6 +89,10 @@ export const PICK_KINDS = Object.freeze(['element', 'range', 'source']);
 // The generic marker's glyph: a 26px box whose bottom centre is the anchor
 // point (the comment pin's shape). A type may register its own.
 export const MARKER_GLYPH = Object.freeze({ dx: -13, dy: -26, w: 26, h: 26 });
+// The blocks of a markdown item a taps tool with targets 'items' takes (F.3,
+// M3): a press inside one of these, inside a [data-md-id] item, is the tool's;
+// a press on the item's gaps, or on the chrome inside #main, is the page's.
+export const MD_BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
 
 // THE DRAW RULES: how an answer is drawn, first matching row wins. `how` and
 // `guess` null match anything. A section answer (re-resolved, how 'section')
@@ -585,12 +589,32 @@ function refreshKept(gs) {
     g.range = f.range;
     g.items = f.items;
     g.mount = f.mount;
+    g.mdItem = f.mdItem;
   }
 }
 function glyphOf(type) {
   const t = types.get(type);
   const g = t && t.glyph;
   return g || MARKER_GLYPH;
+}
+// THE MARGIN GLYPH (F.3): a range group whose start lies inside a markdown
+// item ([data-md-id]) and whose type registered `sourceGlyph` is anchored at
+// the item's left edge, level with the range's first line, and drawn with
+// sourceGlyph's offsets (the type's glyph size kept) — so a pin on a heading
+// or a paragraph sits in the item's left gutter. The clip and the inset are
+// the placement's own (measureGroup): never drawn outside the well's clip.
+// No box read: the item is found by the DOM alone.
+function marginItemOf(type, range) {
+  const t = types.get(type);
+  if (!t || !t.sourceGlyph) return null;
+  const sc = range.startContainer;
+  const start = sc && (sc.nodeType === 1 ? sc : sc.parentNode);
+  return start && typeof start.closest === 'function' ? start.closest('[data-md-id]') : null;
+}
+function marginGlyph(type) {
+  const gl = glyphOf(type);
+  const sg = types.get(type).sourceGlyph;
+  return Object.freeze({ dx: sg.dx, dy: sg.dy, w: gl.w, h: gl.h });
 }
 // The drawn set as marker groups: per type, the elements grouped by the DOM
 // element they resolve to (a range or a section, one group each). No box read.
@@ -622,8 +646,9 @@ function buildGroups() {
     const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|${rangeKey(range)}`;
     let g = byKey.get(key);
     if (!g) {
+      const mdItem = range ? marginItemOf(type, range) : null;
       g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, items: [],
-        container: null, glyph: glyphOf(type), failed: false };
+        container: null, glyph: mdItem ? marginGlyph(type) : glyphOf(type), mdItem, failed: false };
       byKey.set(key, g);
     }
     g.items.push({ id: e.row.id, v: e.row.v, type, row: e.row, state: e.state, how: raw.how == null ? null : raw.how,
@@ -789,8 +814,16 @@ function measureGroup(g, fr, read) {
   }
   const r = read(g.range || g.el);
   if (!r || (r.width === 0 && r.height === 0 && r.left === 0 && r.top === 0)) return { res: 'unplaced' };
-  const x = r.left;
+  let x = r.left;
   const y = r.top;
+  // The margin glyph (marginItemOf): the anchor point is the item's left edge
+  // at the range's first line.
+  if (g.mdItem) {
+    if (!g.mdItem.isConnected) return { res: 'unplaced' };
+    const ir = read(g.mdItem);
+    if (!ir) return { res: 'unplaced' };
+    x = ir.left;
+  }
   const clip = clipFrom(startEl, fr, read);
   const t = g.range ? types.get(g.type) : null;
   const spans = !!(t && t.move);
@@ -920,10 +953,12 @@ export function failedDraws() {
 
 // ── types ───────────────────────────────────────────────────────────────────
 // registerType(type, {draw(group, ctx), create?(input, ctx), input?, glyph?,
-// move?(group, ctx)}) → unregister. draw fills the group's container (a marker
-// the overlay positions and clips) for the type's elements resolved to one DOM
-// element; move, when given, runs after each placement; create takes the
-// armed tool's input. An element whose type has none draws a generic marker.
+// sourceGlyph?, move?(group, ctx)}) → unregister. draw fills the group's
+// container (a marker the overlay positions and clips) for the type's elements
+// resolved to one DOM element; move, when given, runs after each placement;
+// create takes the armed tool's input. sourceGlyph {dx, dy}, when given, puts
+// the type's glyph in a markdown item's left margin (marginItemOf). An element
+// whose type has none draws a generic marker.
 export function registerType(type, spec) {
   if (typeof type !== 'string' || !type) throw new TypeError('registerType: a type name is required');
   if (!spec || typeof spec.draw !== 'function') throw new TypeError('registerType: {draw(group, ctx)} is required');
@@ -940,8 +975,14 @@ export function registerType(type, spec) {
     }
     glyph = Object.freeze({ dx: g.dx, dy: g.dy, w: g.w, h: g.h });
   }
+  let sourceGlyph = null;
+  if (spec.sourceGlyph != null) {
+    const g = spec.sourceGlyph;
+    if (!Number.isFinite(g.dx) || !Number.isFinite(g.dy)) throw new TypeError('registerType: sourceGlyph is {dx, dy} in px');
+    sourceGlyph = Object.freeze({ dx: g.dx, dy: g.dy });
+  }
   const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph,
-    targets: spec.targets === 'panes' ? 'panes' : 'items' };
+    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items' };
   types.set(type, entry);
   lastSig = null;
   requestDraw();
@@ -1034,6 +1075,11 @@ function whereOf(target) {
   }
   return out;
 }
+// A markdown block of a page item (MD_BLOCKS, inside a [data-md-id] item).
+function isMdBlock(n) {
+  return !!n && n.nodeType === 1 && typeof n.matches === 'function' && n.matches(MD_BLOCKS)
+    && typeof n.closest === 'function' && !!n.closest('[data-md-id]');
+}
 function swallow(e, prevent) {
   e.stopPropagation();
   if (prevent && e.cancelable) e.preventDefault();
@@ -1099,14 +1145,23 @@ function onPointer(e) {
   const t = types.get(armedState.type);
   const kind = (t && t.input) || 'taps';
   // The policy's 'tool', narrowed by the type's targets (element-types.js
-  // TARGETS, K.2-78): a 'panes' tool (the comment) leaves a press outside
-  // every pane's content (.mount-host) to the page — a markdown link
-  // follows, the chrome inside #main works — with the tool still armed.
+  // TARGETS, K.2-78): a 'panes' tool (a pack's) leaves a press outside every
+  // pane's content (.mount-host) to the page — a markdown link follows, the
+  // chrome inside #main works — with the tool still armed. A 'taps' tool with
+  // targets 'items' (the comment, F.3) takes a pane's content and a markdown
+  // block (MD_BLOCKS inside a [data-md-id] item) — a link in prose pins — and
+  // leaves everything else (a pane's header controls, the run controls, the
+  // Contents nav, a gap between blocks) to the page, as K.2-78 (c) made it.
+  // The highlight ('selection') and the box grab ('strokes') are not narrowed.
   const decide = (ev) => {
     const d = askPolicy(ev);
-    if (d !== 'tool' || !t || t.targets !== 'panes') return d;
+    if (d !== 'tool' || !t) return d;
+    const narrowed = t.targets === 'panes' || kind === 'taps';
+    if (!narrowed) return d;
     const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
-    return path.some((n) => n && n.classList && n.classList.contains('mount-host')) ? d : 'page';
+    if (path.some((n) => n && n.classList && n.classList.contains('mount-host'))) return d;
+    if (t.targets === 'panes') return 'page';
+    return path.some(isMdBlock) ? d : 'page';
   };
   let decision;
   let g = null;

@@ -304,3 +304,52 @@ test('in the real overlay a throwing draw stays in the wrapper: draw-failed here
   flush();
   assert.deepStrictEqual(ET.drawStates(), []);
 });
+
+// F.3: the comment keeps the default targets ('items'); a pack type that
+// registers 'panes' is still narrowed as before (K.2-78), and a pack's taps
+// type with 'items' takes a markdown block as the comment does.
+test('targetsOf(\'comment\') is \'items\'; a pack type registering \'panes\' is still narrowed to the panes; a taps type with \'items\' takes a markdown block', async () => {
+  const bootET = await shell.importApp('element-types.js');
+  await waitUntil(() => bootET.targetsOf('comment') != null, { what: 'the comment registered at boot' });
+  assert.equal(bootET.targetsOf('comment'), 'items');
+  const made = [];
+  const create = (type) => (input) => { if (input.phase === 'click') made.push({ type, mount: input.mount, md: input.md }); };
+  const offPanes = ET.registerElementType('pack-panes', { draw() {}, create: create('pack-panes'), input: 'taps', targets: 'panes' });
+  const offItems = ET.registerElementType('pack-items', { draw() {}, create: create('pack-items'), input: 'taps' });
+  assert.equal(ET.targetsOf('pack-panes'), 'panes');
+  assert.equal(ET.targetsOf('pack-items'), 'items');
+  assert.throws(() => realOv.registerType('bad-glyph', { draw() {}, sourceGlyph: { dx: 'a', dy: 0 } }), /sourceGlyph is \{dx, dy\}/);
+  await shell.frame({ type: 'markdown', id: 'md-t', text: 'See [the docs](https://example.com/docs).', owner: 'claude', gen: 1,
+    order: ['p1', 'md-t'], claude_order: ['p1', 'md-t'] });
+  const link = W.document.querySelector('[data-md-id="md-t"] a');
+  const lead = W.__wcMount.itemEl(W.document, 'p1').el.shadowRoot.querySelector('p.lead');
+  assert.ok(link && lead, 'precondition: the link and the pane');
+  const heard = [];
+  const onDoc = (e) => { if (e.target === link) { heard.push(e.type); if (e.type === 'click') e.preventDefault(); } };
+  W.document.addEventListener('click', onDoc);
+  const tap = (el, id) => {
+    el.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId: id, isPrimary: true, buttons: 1 }));
+    el.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId: id, isPrimary: true }));
+    el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: id }));
+  };
+  try {
+    realOv.setArmed('pack-panes');
+    tap(link, 61);
+    assert.deepEqual(heard, ['click'], 'a \'panes\' type leaves the markdown link to the page');
+    assert.deepEqual(made, [], 'and creates nothing there');
+    tap(lead, 62);
+    assert.deepEqual(made, [{ type: 'pack-panes', mount: 'p1', md: null }], 'a pane\'s content is the tool\'s');
+    made.length = 0;
+    heard.length = 0;
+    realOv.setArmed('pack-items');
+    tap(link, 63);
+    assert.deepEqual(heard, [], 'a taps type with \'items\' takes the link');
+    assert.deepEqual(made, [{ type: 'pack-items', mount: null, md: 'md-t' }]);
+  } finally {
+    realOv.setArmed(null);
+    W.document.removeEventListener('click', onDoc);
+    offPanes();
+    offItems();
+    await shell.frame({ type: 'markdown:remove', id: 'md-t', order: ['p1'], claude_order: ['p1'] });
+  }
+});

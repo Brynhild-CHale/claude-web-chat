@@ -28,9 +28,18 @@
 //     finger tap on static content drops one, a finger tap on a pane's button
 //     runs the button with comment still armed; a finger drag drops none and
 //     keeps its default (the page scrolls);
-//   - the comment's targets are 'panes' (K.2-78): a comment-armed click on a
-//     markdown link passes through to the page, no pin; highlight-armed, the
-//     same click is the tool's;
+//   - the comment's targets are the default 'items' (F.3, RULED M3 (a); the
+//     ruled inversion of K.2-78's 'panes'): a comment-armed click on a markdown
+//     link pins (the link does not follow), while a click on a pane's header
+//     button and on a gap in #main passes through with the tool armed
+//     (K.2-78 (c)); highlight-armed, the link click is the tool's;
+//   - a pin on markdown (F.3): a heading tap records a source anchor over the
+//     heading with section = the heading; a prose tap under it records the
+//     paragraph with that section; a paragraph over quote_max is clamped; a
+//     block whose source span is over the cap (a long link target) falls back
+//     to its first 240 characters; a tap on an item's gap pins nothing; the md
+//     pin's marker sits in the item's left margin inside the well's clip, a
+//     pane pin's as before; Show on page reaches the item with no marker;
 //   - the toolbar's comment slot (✎ retired onto it, U338) and C arm and
 //     disarm the comment tool in the overlay's one armed state:
 //     body.pin-mode follows armed(), whoever armed it, and comments.js keeps no
@@ -68,6 +77,12 @@ const box = (left, top) => ({ left, top, width: 60, height: 14, right: left + 60
 function rectOf(x) {
   const key = x && x.dataset && x.dataset.pin;
   if (key && POS[key]) return POS[key];
+  // A Range (a markdown pin's source answer): the box of the nearest element
+  // around its start that names a position.
+  const sc = x && x.startContainer;
+  const at = sc ? (sc.nodeType === 1 ? sc : sc.parentNode) : null;
+  const named = at && at.closest ? at.closest('[data-pin]') : null;
+  if (named && POS[named.dataset.pin]) return POS[named.dataset.pin];
   return VIEW;
 }
 
@@ -215,7 +230,8 @@ test('comments.js holds no resolver, no pin layer, no fetch( and no timer; the t
   assert.doesNotMatch(src, /pin-layer|getBoundingClientRect/, 'no layer and no box reads of its own');
   assert.doesNotMatch(src, /\bset(Interval|Timeout)\(|requestAnimationFrame/, 'no timer of any kind');
   assert.doesNotMatch(src, /\bregisterType\(/, 'never the overlay\'s registerType directly');
-  assert.match(src, /registerElementType\(TYPE, \{ draw, create, input: 'taps', targets: 'panes' \}\)/);
+  assert.match(src, /registerElementType\(TYPE, \{ draw, create, input: 'taps', sourceGlyph: SOURCE_GLYPH \}\)/);
+  assert.doesNotMatch(src, /targets: 'panes'/, 'the comment keeps the default targets (F.3)');
   assert.match(src, /registerQueueCard\(TYPE,/);
   assert.equal(W.document.getElementById('pin-layer'), null, 'no #pin-layer in the page');
   assert.equal(ov.inputKindOf('comment'), 'taps', 'the overlay holds the comment type, a taps tool');
@@ -330,45 +346,88 @@ test('a finger tap on static content drops a pin; on a pane\'s button it runs th
   } finally { ov.setArmed(null); W.localStorage.removeItem('wc:finger-draws'); }
 });
 
-// K.2-78: the comment's targets are 'panes' — a press outside every pane is
-// the page's with the tool armed (0.8.5's pin mode); the highlight's default
-// targets ('items') keep a markdown item the tool's.
-test('a comment-armed click on a markdown link passes through to the page and drops no pin; with highlight armed the same click is the tool\'s', async () => {
+// F.3 (RULED M3 (a), the ruled inversion of K.2-78's 'panes'): the comment's
+// targets are the default 'items' — a comment-armed click on a markdown link
+// pins and the link does not follow (M3's trade-off); the chrome inside #main
+// (a pane's header button, a gap in the well) still passes through with the
+// tool armed (K.2-78 (c), the overlay's taps arm). Highlight-armed, the link
+// click is the tool's, as before.
+test('a comment-armed click on a markdown link pins (the link does not follow); a pane header button and a gap in #main pass through with the tool armed; with highlight armed the link click is the tool\'s', async () => {
   await shell.frame({ type: 'markdown', id: 'md-link', text: 'See [the docs](https://example.com/docs).', owner: 'claude', gen: 1,
     order: ['p1', 'p2', 'f6-s14', 'md-link'], claude_order: ['p1', 'p2', 'f6-s14', 'md-link'] });
   const link = W.document.querySelector('[data-md-id="md-link"] a');
   assert.ok(link, 'precondition: the markdown item drew its link');
   const ET = await shell.importApp('element-types.js');
-  assert.deepEqual(['comment', 'highlight', 'box-grab'].map((x) => ET.targetsOf(x)), ['panes', 'items', 'items'], 'the registrations\' targets');
+  assert.deepEqual(['comment', 'highlight', 'box-grab'].map((x) => ET.targetsOf(x)), ['items', 'items', 'items'], 'the registrations\' targets');
   assert.throws(() => ET.registerElementType('t-bad', { draw() {}, targets: 'everything' }), /targets must be one of items, panes/);
+  const header = M.itemEl(W.document, 'p1').el.closest('.pane').querySelector('.pane-header');
+  const headerBtn = header.querySelector('button');
+  assert.ok(headerBtn, 'precondition: the pane header has a button');
+  const well = W.document.getElementById('main');
   const heard = [];
-  // The page's own listener: it hears what the overlay let through (and keeps
-  // jsdom from navigating).
-  const onClick = (e) => { if (e.target === link) { heard.push(e.type); if (e.type === 'click') e.preventDefault(); } };
-  W.document.addEventListener('click', onClick);
-  W.document.addEventListener('pointerdown', onClick);
+  // The page's own listeners: they hear what the overlay let through. The
+  // document's (bubbling) keeps jsdom from navigating; the header's (capturing,
+  // so after the overlay's capture on #main) keeps the pin button from acting.
+  const nameOf = (t) => (t === link ? 'link' : t === well ? 'well' : 'header');
+  const onDoc = (e) => {
+    if (e.target !== link && e.target !== well) return;
+    heard.push(`${e.type}:${nameOf(e.target)}`);
+    if (e.type === 'click') e.preventDefault();
+  };
+  const onHeader = (e) => {
+    if (e.target !== headerBtn) return;
+    heard.push(`${e.type}:header`);
+    e.stopPropagation();
+  };
+  W.document.addEventListener('click', onDoc);
+  W.document.addEventListener('pointerdown', onDoc);
+  header.addEventListener('click', onHeader, true);
+  header.addEventListener('pointerdown', onHeader, true);
   try {
     ov.setArmed('comment');
     const { down } = gesture(link, 'mouse', { pointerId: 31 });
-    assert.deepEqual(heard, ['pointerdown', 'click'], 'the page heard the press and the click');
-    assert.equal(down.defaultPrevented, false, 'its default was left alone');
-    assert.equal(pinPop(), null, 'no pin dropped');
+    assert.equal(down.defaultPrevented, true, 'the tool took the press');
+    assert.ok(pinPop() && pinPop().querySelector('.pin-text'), 'the link click pinned: the composer opened');
+    assert.match(pinPop().querySelector('.pin-anchor').textContent, /^md-link › See the docs\.$/);
+    closeComposer();
     assert.equal(armedType(), 'comment', 'the tool stays armed');
-    // A lone click (a mouse's, whose press the well never heard) takes the
-    // same targets check.
+    // The chrome inside #main passes through (K.2-78 (c)): the header button
+    // and a gap in the well are the page's.
     heard.length = 0;
-    const lone = new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 77, clientX: 100, clientY: 100 });
-    link.dispatchEvent(lone);
-    assert.deepEqual(heard, ['click'], 'the page heard the lone click');
+    const hb = gesture(headerBtn, 'mouse', { pointerId: 33 });
+    assert.deepEqual(heard, ['pointerdown:header', 'click:header'], 'the page heard the header button');
+    assert.equal(hb.down.defaultPrevented, false);
+    assert.equal(pinPop(), null, 'no pin on the header button');
+    heard.length = 0;
+    const gap = gesture(well, 'mouse', { pointerId: 34 });
+    assert.deepEqual(heard, ['pointerdown:well', 'click:well'], 'the page heard the gap in #main');
+    assert.equal(gap.down.defaultPrevented, false);
+    assert.equal(pinPop(), null, 'no pin on the gap');
+    // A lone click (a mouse's, whose press the well never heard) takes the
+    // same targets check: on the gap it is the page's, on the link the tool's.
+    heard.length = 0;
+    well.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 77, clientX: 100, clientY: 100 }));
+    assert.deepEqual(heard, ['click:well'], 'the page heard the lone click on the gap');
     assert.equal(pinPop(), null, 'no pin dropped by the lone click');
+    heard.length = 0;
+    const lone = new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 78, clientX: 100, clientY: 100 });
+    link.dispatchEvent(lone);
+    assert.deepEqual(heard, [], 'the lone click on the link is the tool\'s');
+    assert.equal(lone.defaultPrevented, true, 'the link does not follow');
+    assert.ok(pinPop() && pinPop().querySelector('.pin-text'), 'the lone click pinned');
+    closeComposer();
+    assert.equal(armedType(), 'comment', 'still armed');
     heard.length = 0;
     ov.setArmed('highlight');
     gesture(link, 'mouse', { pointerId: 32 });
-    assert.deepEqual(heard, [], 'the highlight\'s default targets take the markdown item: the page heard nothing');
+    assert.deepEqual(heard, [], 'the highlight\'s targets take the markdown item: the page heard nothing');
   } finally {
     ov.setArmed(null);
-    W.document.removeEventListener('click', onClick);
-    W.document.removeEventListener('pointerdown', onClick);
+    comments.closePinPop();
+    W.document.removeEventListener('click', onDoc);
+    W.document.removeEventListener('pointerdown', onDoc);
+    header.removeEventListener('click', onHeader, true);
+    header.removeEventListener('pointerdown', onHeader, true);
     await shell.frame({ type: 'markdown:remove', id: 'md-link', order: ['p1', 'p2', 'f6-s14'], claude_order: ['p1', 'p2', 'f6-s14'] });
   }
 });
@@ -440,6 +499,169 @@ test('a previewed older node draws its pins read-only: no create with the tool a
     previewPins = [];
   }
   await drawnUntil(() => markersFor('c50').length === 0 && markersFor('c1').length === 1, 'the live pins again');
+});
+
+// ── comments on markdown (F.3, RULED M3 (a)) ───────────────────────────────
+const MD_ORDER = ['p1', 'p2', 'f6-s14', 'md-sec'];
+const mdItem = () => W.document.querySelector('[data-md-id="md-sec"]');
+async function putMd(text) {
+  await shell.frame({ type: 'markdown', id: 'md-sec', text, owner: 'claude', gen: 1, order: MD_ORDER, claude_order: MD_ORDER });
+  assert.ok(mdItem(), 'precondition: the markdown item is drawn');
+}
+async function dropMd() {
+  await shell.frame({ type: 'markdown:remove', id: 'md-sec', order: ['p1', 'p2', 'f6-s14'], claude_order: ['p1', 'p2', 'f6-s14'] });
+}
+// Tap `el` with the comment tool armed and Pin what the composer holds: the
+// body the chrome posted, or null when no composer opened.
+async function pinTap(el, pointerId) {
+  ov.setArmed('comment');
+  const n = posts.length;
+  try {
+    gesture(el, 'mouse', { pointerId });
+    const pop = pinPop();
+    if (!pop || !pop.querySelector('.pin-text')) return null;
+    pop.querySelector('.pin-text').value = 'about this';
+    shell.click(pop.querySelector('.pin-save'));
+    await waitUntil(() => posts.length === n + 1, { what: 'the POST' });
+    return posts.at(-1);
+  } finally { ov.setArmed(null); comments.closePinPop(); }
+}
+
+test('a heading tap records a source anchor over the heading, section = the heading; a prose tap under it records the paragraph with that section', async () => {
+  await putMd('Lead line above the section.\n\n## Release plan\n\nShip the build on Friday after the review.\n\n## Rollback\n\nRevert the tag if the smoke test fails.');
+  try {
+    const h2 = mdItem().querySelector('h2');
+    const body = await pinTap(h2, 41);
+    assert.ok(body, 'the heading tap opened the composer and posted');
+    assert.equal(body.anchor.kind, 'source', 'a source anchor');
+    assert.equal(body.anchor.md, 'md-sec');
+    assert.equal(body.anchor.quote.exact, 'Release plan', 'over the heading\'s text');
+    assert.equal(body.anchor.slug, 'release-plan');
+    assert.deepEqual(body.locator, { mount: 'md-sec', selector: 'h2', text: 'Release plan', ordinal: 0, section: 'Release plan' });
+    const p = mdItem().querySelectorAll('p')[1];
+    const prose = await pinTap(p, 42);
+    assert.ok(prose, 'the prose tap posted');
+    assert.equal(prose.anchor.kind, 'source');
+    assert.equal(prose.anchor.quote.exact, 'Ship the build on Friday after the review.');
+    assert.deepEqual(prose.locator, { mount: 'md-sec', selector: 'p', text: 'Ship the build on Friday after the review.', ordinal: 1, section: 'Release plan' });
+    // Above the item's first heading: the nearest heading of an earlier item,
+    // here none (no earlier markdown item) — no section.
+    const lead0 = await pinTap(mdItem().querySelector('p'), 43);
+    assert.equal(lead0.anchor.quote.exact, 'Lead line above the section.');
+    assert.equal(lead0.anchor.slug, null);
+    assert.equal(Object.prototype.hasOwnProperty.call(lead0.locator, 'section'), false, 'no heading above it anywhere');
+    // Prose under the item's second heading: that heading (the record's slug),
+    // not the item's first one.
+    const later = await pinTap(mdItem().querySelectorAll('p')[2], 47);
+    assert.equal(later.anchor.slug, 'rollback');
+    assert.equal(later.locator.section, 'Rollback', 'the heading the prose is under');
+  } finally { await dropMd(); }
+});
+
+test('a paragraph longer than quote_max records a quote of at most quote_max; a block whose source span is over the cap falls back to its first 240 characters; a gap pins nothing', async () => {
+  const max = anchors.CONFIG.quote_max;
+  const long = 'word '.repeat(Math.ceil((max + 500) / 5)).trim();
+  // Rendered under the cap, but its link target makes the source span over it.
+  const plain = 'x'.repeat(250);
+  const tail = 'y'.repeat(200);
+  const target = 'https://example.com/' + 'a'.repeat(max);
+  await putMd(`## Long\n\n${long}\n\n${plain} [link](${target}) ${tail}`);
+  try {
+    const ps = mdItem().querySelectorAll('p');
+    const clamped = await pinTap(ps[0], 44);
+    assert.ok(clamped, 'the long paragraph pinned');
+    assert.ok(clamped.anchor.quote.exact.length <= max, `the quote is at most quote_max (${clamped.anchor.quote.exact.length})`);
+    assert.ok(clamped.anchor.quote.exact.length > max - 10, 'clamped at the cap, not short of it');
+    assert.equal(clamped.locator.section, 'Long');
+    assert.ok(ps[1].textContent.length < max, 'precondition: the linked block is under the cap in rendered text');
+    const fell = await pinTap(ps[1], 45);
+    assert.ok(fell, 'the linked block pinned');
+    assert.equal(fell.anchor.quote.exact, plain.slice(0, comments.SOURCE_RETRY_CHARS), 'its first 240 rendered characters');
+    // A tap on the item's own gap (the .md-block between its blocks): nothing.
+    const n = posts.length;
+    assert.equal(await pinTap(mdItem(), 46), null, 'no composer on a gap');
+    assert.equal(posts.length, n, 'nothing posted');
+    // and the gap is the page's (K.2-78 (c)): the overlay lets the press and
+    // the click through with the tool armed.
+    const heard = [];
+    const onDoc = (e) => { if (e.target === mdItem()) heard.push(e.type); };
+    W.document.addEventListener('pointerdown', onDoc);
+    W.document.addEventListener('click', onDoc);
+    ov.setArmed('comment');
+    try {
+      const { down } = gesture(mdItem(), 'mouse', { pointerId: 48 });
+      assert.deepEqual(heard, ['pointerdown', 'click'], 'the page heard the gap');
+      assert.equal(down.defaultPrevented, false);
+    } finally {
+      ov.setArmed(null);
+      W.document.removeEventListener('pointerdown', onDoc);
+      W.document.removeEventListener('click', onDoc);
+    }
+  } finally { await dropMd(); }
+});
+
+test('the md pin\'s marker sits in the item\'s left margin inside the well\'s clip; a pane pin\'s marker is placed as before', async () => {
+  await putMd('Intro text here.\n\n## Margin heading\n\nBody text under it.');
+  const well = W.document.getElementById('main');
+  try {
+    const item = mdItem();
+    const h2 = item.querySelector('h2');
+    const text = item._wcText;
+    const range = W.document.createRange();
+    range.selectNodeContents(h2);
+    const { sourceMap } = await shell.importApp('markdown.js');
+    const rec = anchors.recordSource(item, range, sourceMap(text), text, { md: 'md-sec' });
+    assert.ok(rec, 'precondition: a source record');
+    item.dataset.pin = 'md-item';
+    h2.dataset.pin = 'md-h';
+    POS['md-item'] = box(60, 260);
+    POS['md-h'] = box(100, 300);
+    const pane = pinOn('c80', 'p1', lead('p1'));
+    POS['lead-p1'] = box(400, 120);
+    await setLive([
+      { id: 'c81', v: 1, seq: 1, type: 'comment', text: 'md pin', shared: true, replies: [], anchor: rec,
+        locator: { mount: 'md-sec', selector: 'h2', text: 'Margin heading', ordinal: 0, section: 'Margin heading' } },
+      pane,
+    ]);
+    const m = () => markersFor('c81')[0];
+    await drawnUntil(() => m() && m().style.display === '' && m().style.left === '60px', 'the md pin drawn in the margin');
+    const glyph = comments.SOURCE_GLYPH;
+    assert.equal(m().style.left, '60px', 'anchored at the item\'s left edge');
+    assert.equal(m().style.top, '300px', 'level with the heading\'s line');
+    assert.equal(m().style.transform, `translate(${glyph.dx}px, ${glyph.dy}px)`, 'the margin glyph\'s offsets');
+    assert.ok(60 + glyph.dx + 26 <= 100, 'left of the item\'s text');
+    assert.equal(m().style.clipPath, '', 'wholly inside the clip');
+    assert.ok(m().classList.contains('el-hit'));
+    // The pane pin: as today (the glyph's own offsets, at its element).
+    const pm = markersFor('c80')[0];
+    assert.ok(placedAt(pm, POS['lead-p1']), 'the pane pin at its element');
+    assert.equal(pm.style.transform, 'translate(-13px, -26px)', 'with the type\'s glyph');
+    // A narrower well: the glyph is inset at the clip, never drawn outside it.
+    well.dataset.pin = 'well';
+    POS.well = { left: 45, top: 0, width: 979, height: 768, right: 1024, bottom: 768, x: 45, y: 0 };
+    ov.requestDraw();
+    await drawnUntil(() => m().style.clipPath !== '', 'the glyph inset at the well');
+    assert.equal(m().style.clipPath, `inset(0px 0px 0px ${45 - (60 + glyph.dx)}px)`, 'the part left of the well is clipped');
+    assert.equal(m().style.display, '');
+  } finally {
+    delete well.dataset.pin;
+    delete POS.well;
+    await setLive([]);
+    await dropMd();
+    ov.requestDraw();
+    flush();
+  }
+});
+
+test('Show on page for an md pin with no drawn marker reaches its markdown item', async () => {
+  await putMd('## Somewhere\n\nA line.');
+  try {
+    const scrolls = shell.scrolls.length;
+    assert.equal(comments.showOnPage('c-none', 'md-sec'), true, 'found');
+    assert.equal(shell.scrolls.length, scrolls + 1, 'scrolled');
+    assert.equal(shell.scrolls.at(-1).el, mdItem(), 'to the item');
+    assert.ok(mdItem().classList.contains('md-flash'), 'and flashed it');
+  } finally { await dropMd(); }
 });
 
 // ── migrated anchors and carried guesses ───────────────────────────────────

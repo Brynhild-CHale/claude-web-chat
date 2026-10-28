@@ -296,7 +296,11 @@ test('a section fallback: its marker opens the card with the section wording; Re
   assert.ok(rec && rec.kind === 'source' && rec.slug === 'plan');
   // A range's box inside the window, so the generic marker's glyph shows.
   const SEC_BOX = { left: 200, top: 400, width: 80, height: 16, right: 280, bottom: 416, x: 200, y: 400 };
-  ov.initOverlay({ rectOf: (x) => (x && typeof x.cloneContents === 'function' ? SEC_BOX : rectOf(x)) });
+  // The markdown item's own box (F.3): a comment on markdown draws its glyph
+  // in the item's left margin, so the item sits inside the window too.
+  const MD_BOX = { left: 180, top: 380, width: 600, height: 120, right: 780, bottom: 500, x: 180, y: 380 };
+  ov.initOverlay({ rectOf: (x) => (x && typeof x.cloneContents === 'function' ? SEC_BOX
+    : x && x.dataset && x.dataset.mdId != null ? MD_BOX : rectOf(x)) });
   const S = { id: 'c30', v: 1, type: 'comment', shared: true, replies: 0, anchor: rec };
   ov.upsertElements('live', [S]);
   const seen = [];
@@ -367,7 +371,11 @@ test('a section fallback whose section is too long or gone: Re-anchor here shows
   const rec = anchors.recordSource(block(), range, md.sourceMap(before0), before0);
   assert.ok(rec && rec.kind === 'source' && rec.slug === 'plan');
   const SEC_BOX = { left: 200, top: 400, width: 80, height: 16, right: 280, bottom: 416, x: 200, y: 400 };
-  ov.initOverlay({ rectOf: (x) => (x && typeof x.cloneContents === 'function' ? SEC_BOX : rectOf(x)) });
+  // The markdown item's own box (F.3): a comment on markdown draws its glyph
+  // in the item's left margin, so the item sits inside the window too.
+  const MD_BOX = { left: 180, top: 380, width: 600, height: 120, right: 780, bottom: 500, x: 180, y: 380 };
+  ov.initOverlay({ rectOf: (x) => (x && typeof x.cloneContents === 'function' ? SEC_BOX
+    : x && x.dataset && x.dataset.mdId != null ? MD_BOX : rectOf(x)) });
   ov.upsertElements('live', [{ id: 'c31', v: 1, type: 'comment', shared: true, replies: 0, anchor: rec }]);
   patchAnswer = { ok: true, element: { id: 'c31', v: 2, type: 'comment' } };
   const n0 = patches().length;
