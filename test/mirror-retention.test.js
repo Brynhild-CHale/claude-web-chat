@@ -3,15 +3,19 @@
 //
 // Pinned:
 //   * RETENTION is frozen, its rows too; ids are unique; every row has a
-//     finite or string value, a unit, a `where` naming an existing
+//     finite or string value (null only for disk-budget-bytes: no limit unless
+//     a size is set), a unit, a `where` naming an existing
 //     lib/server/mirror file (or ../domain/asks.js, the one owner outside
 //     the mirror) and a one-sentence user_text;
 //   * retention(id) answers the row (null for an unknown id); valueOf(id) its
 //     value, and throws on an unknown id;
 //   * every owning module's named export equals its row, and its source takes
 //     the value from ./retention — no literal left beside the name;
-//   * docs/guide.md lists every row's user_text verbatim.
-// The expired state codediff answers from the table is pinned in
+//   * docs/guide.md lists every row's user_text verbatim;
+//   * no count cap deletes the conversation record: conversations-max,
+//     sessions-max, index-turns-max and record-max-days are gone, and the two
+//     deleters (claude-code-cleanup, disk-budget-bytes) are rows.
+// The unavailable answer codediff gives from the table is pinned in
 // test/mirror-codediff.test.js, its chrome note in test/chat-detail.test.js.
 
 const test = require('node:test');
@@ -30,13 +34,11 @@ const requireOf = (file) => (file === ASKS ? "require('../mirror/retention')" : 
 
 // Each row's enforcing module, the export it keeps, and how the source names it.
 const OWNERS = [
-  ['record-max-days', 'codediff.js', (m) => m.LIMITS.RECORD_MAX_DAYS, 'RECORD_MAX_DAYS'],
+  ['claude-code-cleanup', 'conversations.js', (m) => m.GONE_TRIGGER, 'GONE_TRIGGER'],
+  ['disk-budget-bytes', 'codediff.js', (m) => m.LIMITS.DISK_BUDGET_BYTES, 'DISK_BUDGET_BYTES'],
   ['prune-expire', 'codediff.js', (m) => m.LIMITS.PRUNE_EXPIRE, 'PRUNE_EXPIRE'],
   ['shadow-max-bytes', 'codediff.js', (m) => m.LIMITS.SHADOW_MAX_BYTES, 'SHADOW_MAX_BYTES'],
   ['codediff-turns-max', 'codediff.js', null, 'TURNS_MAX'],
-  ['conversations-max', 'conversations.js', (m) => m.CONVERSATIONS_MAX, 'CONVERSATIONS_MAX'],
-  ['sessions-max', 'conversations.js', (m) => m.SESSIONS_MAX, 'SESSIONS_MAX'],
-  ['index-turns-max', 'index-store.js', (m) => m.TURNS_MAX, 'TURNS_MAX'],
   ['tasks-finished-keep', 'tasks.js', (m) => m.FINISHED_KEEP_MS, 'FINISHED_KEEP_MS'],
   ['agents-finished-keep', 'agents.js', (m) => m.FINISHED_KEEP_MS, 'FINISHED_KEEP_MS'],
   ['asks-resolved-keep', ASKS, (m) => m.RESOLVED_KEEP_MS, 'RESOLVED_KEEP_MS'],
@@ -47,7 +49,7 @@ const OWNERS = [
 
 test('RETENTION is frozen, rows too; ids unique; every row has a value, a unit, an existing `where` and one sentence for the user', () => {
   assert.ok(Object.isFrozen(RETENTION));
-  assert.ok(RETENTION.length >= 13);
+  assert.ok(RETENTION.length >= 11);
   const ids = new Set();
   for (const r of RETENTION) {
     assert.ok(Object.isFrozen(r), `${r.id} is frozen`);
@@ -55,7 +57,8 @@ test('RETENTION is frozen, rows too; ids unique; every row has a value, a unit, 
     assert.match(r.id, /^[a-z][a-z0-9-]*$/);
     assert.ok(!ids.has(r.id), `${r.id} is unique`);
     ids.add(r.id);
-    assert.ok((typeof r.value === 'number' && Number.isFinite(r.value)) || (typeof r.value === 'string' && r.value), `${r.id}: a finite or string value`);
+    const unset = r.id === 'disk-budget-bytes' && r.value === null; // no limit unless a size is set (L.4 P4)
+    assert.ok(unset || (typeof r.value === 'number' && Number.isFinite(r.value)) || (typeof r.value === 'string' && r.value), `${r.id}: a finite or string value`);
     assert.ok(typeof r.unit === 'string' && r.unit, `${r.id}: a unit`);
     assert.ok(typeof r.what === 'string' && r.what, `${r.id}: what it bounds`);
     assert.ok(r.where === ASKS || /^[a-z-]+\.js$/.test(r.where), `${r.id}: where is a mirror file, or ${ASKS} (${r.where})`);
@@ -76,13 +79,13 @@ test('retention(id) answers the row; valueOf(id) its value, and throws on an unk
 });
 
 test('the values are unchanged (no retention value moved with the table)', () => {
-  assert.equal(valueOf('record-max-days'), 30);
+  assert.equal(valueOf('claude-code-cleanup'), 'transcript-gone');
+  assert.equal(retention('claude-code-cleanup').unit, 'trigger');
+  assert.equal(valueOf('disk-budget-bytes'), null, 'unlimited by default (L.4 P4)');
+  assert.equal(retention('disk-budget-bytes').unit, 'bytes');
   assert.equal(valueOf('prune-expire'), '7.days.ago');
   assert.equal(valueOf('shadow-max-bytes'), 1024 * 1024 * 1024);
   assert.equal(valueOf('codediff-turns-max'), 1000);
-  assert.equal(valueOf('conversations-max'), 200);
-  assert.equal(valueOf('sessions-max'), 100);
-  assert.equal(valueOf('index-turns-max'), 5000);
   assert.equal(valueOf('tasks-finished-keep'), 30 * 60 * 1000);
   assert.equal(valueOf('agents-finished-keep'), 30 * 60 * 1000);
   assert.equal(valueOf('asks-resolved-keep'), 600000);
@@ -113,4 +116,23 @@ test('docs/guide.md lists every row\'s user_text verbatim', () => {
   assert.ok(head > 0, 'the guide has the list');
   const lines = guide.slice(head).split('\n\n')[1].split('\n');
   assert.deepEqual(lines, RETENTION.map((r) => `- ${r.user_text}`), 'the list is the table, in its order');
+});
+
+test('no count cap deletes: the four retired rows are gone from the table and from every owner', () => {
+  for (const id of ['record-max-days', 'conversations-max', 'sessions-max', 'index-turns-max']) {
+    assert.equal(retention(id), null, `${id} is no row`);
+  }
+  assert.equal(require(path.join(MIRROR, 'codediff.js')).LIMITS.RECORD_MAX_DAYS, undefined);
+  const conv = require(path.join(MIRROR, 'conversations.js'));
+  assert.equal(conv.CONVERSATIONS_MAX, undefined);
+  assert.equal(conv.SESSIONS_MAX, undefined);
+  assert.equal(require(path.join(MIRROR, 'index-store.js')).TURNS_MAX, undefined);
+  for (const file of ['codediff.js', 'conversations.js', 'index-store.js']) {
+    const src = fs.readFileSync(path.join(MIRROR, file), 'utf8');
+    for (const name of ['RECORD_MAX_DAYS', 'CONVERSATIONS_MAX', 'SESSIONS_MAX', 'maxConversations', "valueOf('index-turns-max')"]) {
+      assert.ok(!src.includes(name), `${file} no longer names ${name}`);
+    }
+  }
+  // Only the disk budget's row may be unset.
+  assert.deepEqual(RETENTION.filter((r) => r.value === null).map((r) => r.id), ['disk-budget-bytes']);
 });

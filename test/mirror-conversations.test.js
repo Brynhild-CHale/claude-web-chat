@@ -22,9 +22,9 @@
 //     SessionStart;
 //   * SessionEnd never ends a conversation; a gone process does;
 //   * conversations.json: written atomically, set aside when corrupt or invalid
-//     and rebuilt by discovery, every field checked when read back, bounded to
-//     200 by last activity, with a pruned conversation's index and diff files
-//     deleted;
+//     and rebuilt by discovery, every field checked when read back, and never
+//     bounded by a count (no record, session or file is dropped for one; the
+//     cleanup sweep is test/mirror-transcript-gone.test.js);
 //   * the toggle: disabled stops the watches and ignores ingests, re-enabled
 //     reloads and rediscovers; a disabled session is never linked;
 //   * headless (sdk-cli) conversations are flagged; process.interrupt is the
@@ -49,7 +49,7 @@ const portfiles = require('../lib/core/portfiles');
 const registry = require('../lib/util/registry');
 const { projectPaths, userPaths, userClaudePaths } = require('../lib/core/paths');
 const {
-  createConversations, CONVERSATIONS_MAX, FALLBACK_WINDOW_MS, CLEAR_GRACE_MS, DISCOVERY_MS, ARRIVALS_MAX, REASONS, LINKED_BY, CHANGES,
+  createConversations, GONE_TRIGGER, GONE_SWEEP_MS, FALLBACK_WINDOW_MS, CLEAR_GRACE_MS, DISCOVERY_MS, ARRIVALS_MAX, REASONS, LINKED_BY, CHANGES,
 } = require('../lib/server/mirror/conversations');
 const { createClaudeState, ACTIVE_POLL_MS, IDLE_POLL_MS } = require('../lib/server/mirror/claude-state');
 const live = require('../lib/server/mirror/live');
@@ -1357,42 +1357,42 @@ test('every field of conversations.json is checked when it is read back', async 
   assert.ok(h.seen.events.every((e) => e.change === 'added' && e.restored === true));
 });
 
-test('conversations.json is bounded to 200 by last activity; a pruned one\'s index and diff files go', async (t) => {
+// U451 (DECISIONS.md L.3 N1): no count cap deletes. Every record read back is
+// kept and announced, a new conversation removes none, and a session list is
+// never shortened.
+test('conversations.json is never bounded by a count: 205 records load, are announced and listed, and no index or diff file goes', async (t) => {
   const h = setup(t);
   const p = projectPaths(h.root);
   const base = Date.now() - 10 * 24 * 3600 * 1000;
   const sid = (i) => `c${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`;
+  const N = 205;
   const list = [];
-  for (let i = 0; i < CONVERSATIONS_MAX + 5; i++) {
-    list.push(storedConversation(sid(i), { ended_at: base + i, last_activity_at: base + i }));
-  }
-  // The newest has no process and an open session: not prunable first anyway.
+  for (let i = 0; i < N; i++) list.push(storedConversation(sid(i), { ended_at: base + i, last_activity_at: base + i }));
   writeStored(h, list);
   const files = (i) => ({ index: p.mirrorIndex(sid(i)), diff: p.mirrorDiff(`turn-${i}`) });
   for (const i of [0, 4, 5]) {
     fs.mkdirSync(path.dirname(files(i).index), { recursive: true });
-    fs.writeFileSync(files(i).index, JSON.stringify({ v: 1, session_id: sid(i), turns: [{ id: `turn-${i}` }, { id: '../escape' }, null] }));
+    fs.writeFileSync(files(i).index, JSON.stringify({ v: 1, session_id: sid(i), turns: [{ id: `turn-${i}` }] }));
     fs.mkdirSync(path.dirname(files(i).diff), { recursive: true });
     fs.writeFileSync(files(i).diff, '{}');
   }
   await h.reg.start();
   await h.reg.flush();
-  assert.equal(h.reg.list().length, CONVERSATIONS_MAX);
-  assert.equal(h.reg.get(sid(0)), null);
-  assert.equal(h.reg.get(sid(4)), null);
-  assert.ok(h.reg.get(sid(5)), 'the sixth oldest stays');
-  for (const i of [0, 4]) {
-    assert.equal(fs.existsSync(files(i).index), false, `index ${i} deleted`);
-    assert.equal(fs.existsSync(files(i).diff), false, `diff ${i} deleted`);
+  assert.equal(h.reg.list().length, N, 'every record is listed');
+  assert.equal(h.seen.events.filter((e) => e.change === 'added' && e.restored === true).length, N, 'and announced');
+  assert.ok(h.reg.get(sid(0)), 'the oldest stays');
+  for (const i of [0, 4, 5]) {
+    assert.equal(fs.existsSync(files(i).index), true, `index ${i} stays`);
+    assert.equal(fs.existsSync(files(i).diff), true, `diff ${i} stays`);
   }
-  assert.equal(fs.existsSync(files(5).index), true, 'a kept conversation\'s files stay');
-  assert.equal(fs.existsSync(files(5).diff), true);
-  assert.equal(h.saved().conversations.length, CONVERSATIONS_MAX);
-  assert.ok(!h.seen.events.some((e) => e.change === 'removed'), 'never announced, so never removed');
+  h.start(S1, 7001); // the next save
+  await h.reg.flush();
+  assert.equal(h.saved().conversations.length, N + 1, 'the next save keeps them all');
+  assert.ok(!h.seen.events.some((e) => e.change === 'removed'), 'nothing removed');
 });
 
-test('at the bound, a new conversation prunes the least active one nobody writes', async (t) => {
-  const h = setup(t, { options: { maxConversations: 3 } });
+test('at any count a new conversation removes none, and no `removed {reason: \'pruned\'}` is ever queued', async (t) => {
+  const h = setup(t);
   const { reg } = h;
   const p = projectPaths(h.root);
   await reg.start();
@@ -1400,37 +1400,54 @@ test('at the bound, a new conversation prunes the least active one nobody writes
   h.start(S2, 7002);
   h.start(S3, 7003);
   reg.processGone(S2, { pid: 7002, at: h.clock.tick() }); // the one nobody writes
-  h.tool(S1, 7001);
-  for (const [sid, turn] of [[S2, 'turn-s2'], [S3, 'turn-s3']]) {
-    fs.mkdirSync(path.dirname(p.mirrorIndex(sid)), { recursive: true });
-    fs.writeFileSync(p.mirrorIndex(sid), JSON.stringify({ v: 1, turns: [{ id: turn }] }));
-    fs.mkdirSync(path.dirname(p.mirrorDiff(turn)), { recursive: true });
-    fs.writeFileSync(p.mirrorDiff(turn), '{}');
-  }
+  fs.mkdirSync(path.dirname(p.mirrorIndex(S2)), { recursive: true });
+  fs.writeFileSync(p.mirrorIndex(S2), JSON.stringify({ v: 1, turns: [{ id: 'turn-s2' }] }));
+  fs.mkdirSync(path.dirname(p.mirrorDiff('turn-s2')), { recursive: true });
+  fs.writeFileSync(p.mirrorDiff('turn-s2'), '{}');
+  const sid = (i) => `d${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`;
+  for (let i = 0; i < 250; i++) h.start(sid(i), null);
   h.start(S4, 7004);
-  assert.deepEqual(ids(reg.list()), [S1, S3, S4]);
-  const removed = h.seen.events.find((e) => e.change === 'removed');
-  assert.equal(removed.conversation.id, S2);
-  assert.equal(removed.reason, 'pruned');
-  assert.ok(h.seen.transitions.some((x) => x.change === 'removed' && x.conversation_id === S2));
+  assert.equal(reg.list().length, 254);
+  assert.ok(!h.seen.events.some((e) => e.change === 'removed'), 'nothing removed');
+  assert.ok(!h.seen.transitions.some((x) => x.change === 'removed'));
   await reg.flush();
-  assert.deepEqual(h.saved().conversations.map((c) => c.id).sort(), [S1, S3, S4].sort());
-  assert.equal(fs.existsSync(p.mirrorIndex(S2)), false, 'the pruned one\'s index');
-  assert.equal(fs.existsSync(p.mirrorDiff('turn-s2')), false, 'and its diffs');
-  assert.equal(fs.existsSync(p.mirrorIndex(S3)), true);
-  assert.equal(fs.existsSync(p.mirrorDiff('turn-s3')), true);
+  assert.equal(h.saved().conversations.length, 254);
+  assert.equal(fs.existsSync(p.mirrorIndex(S2)), true, 'the ended one\'s index stays');
+  assert.equal(fs.existsSync(p.mirrorDiff('turn-s2')), true, 'and its diffs');
 });
 
-test('how a process came to each session is kept for the newest ARRIVALS_MAX sessions, and leaves with a removed conversation', async (t) => {
-  await t.test('a pruned conversation\'s sessions leave it', async (t2) => {
-    const h = setup(t2, { options: { maxConversations: 3 } });
+test('a session list is never shortened: 150 sessions stay through a /clear link, a save and a reload', async (t) => {
+  const h = setup(t);
+  const sid = (i) => `e${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`;
+  const sessions = Array.from({ length: 150 }, (_, i) => sid(i));
+  const proc = { pid: 7001, proc_start: null, kind: 'interactive', entrypoint: 'cli', linked_by: 'hook', linked_at: Date.now() - 60000 };
+  writeStored(h, [storedConversation(sessions[0], { sessions, process: proc })]);
+  await h.reg.start();
+  assert.equal(h.reg.get(sessions[0]).sessions.length, 150, 'parseRecord keeps every session');
+  h.end(sid(149), 7001, 'clear');
+  assert.equal(h.start(S1, 7001, 'clear').conversation_id, sessions[0], 'the /clear joins it');
+  const c = h.reg.get(sessions[0]);
+  assert.equal(c.sessions.length, 151, 'none dropped by the link');
+  assert.equal(c.sessions[0].session_id, sid(0), 'the oldest stays');
+  assert.equal(h.reg.bySession(sid(0)).id, sessions[0]);
+  await h.reg.flush();
+  assert.equal(h.saved().conversations[0].sessions.length, 151, 'the save keeps them all');
+  await h.reg.stop();
+  const again = setup(t, { root: h.root, home: false });
+  await again.reg.start();
+  assert.equal(again.reg.get(sessions[0]).sessions.length, 151, 'and the reload');
+});
+
+test('how a process came to each session is kept for the newest ARRIVALS_MAX sessions', async (t) => {
+  await t.test('no conversation is pruned, so every session\'s arrival stays', async (t2) => {
+    const h = setup(t2);
     await h.reg.start();
     for (const sid of [S1, S2, S3, S4, S5]) h.start(sid, null);
-    assert.equal(h.reg.list().length, 3);
-    assert.equal(h.reg.stats().arrivals, 3);
+    assert.equal(h.reg.list().length, 5);
+    assert.equal(h.reg.stats().arrivals, 5);
   });
   await t.test('bounded however many sessions start', async (t2) => {
-    const h = setup(t2, { options: { maxConversations: ARRIVALS_MAX + 100 } });
+    const h = setup(t2);
     await h.reg.start();
     const sid = (i) => `a${String(i).padStart(7, '0')}-0000-4000-8000-000000000000`;
     for (let i = 0; i < ARRIVALS_MAX + 5; i++) h.start(sid(i), null);
@@ -1771,7 +1788,8 @@ test('the vocabularies and constants are exported by name', () => {
   assert.deepEqual(REASONS, ['start', 'clear', 'resume', 'fork']);
   assert.deepEqual(LINKED_BY, ['hook', 'sessions-file', 'mcp']);
   assert.deepEqual(CHANGES, ['added', 'linked', 'merged', 'ended', 'removed']);
-  assert.equal(CONVERSATIONS_MAX, 200);
+  assert.equal(GONE_TRIGGER, 'transcript-gone', 'the claude-code-cleanup row\'s value');
+  assert.equal(GONE_SWEEP_MS, 10 * 60 * 1000);
   assert.equal(FALLBACK_WINDOW_MS, 2 * 60 * 1000);
   assert.equal(DISCOVERY_MS, live.DISCOVERY_MS, 'the one home of §2.6\'s discovery tick');
   assert.equal(DISCOVERY_MS, 10000);

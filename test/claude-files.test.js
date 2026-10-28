@@ -30,7 +30,7 @@ const { withTempHome } = require('../test-support/helpers');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 const { redactWindow, PARTIAL_LINE } = require('../lib/core/redact');
 const {
-  transcriptFile, sessionDirFile, taskOutputFile, planFile, readWindow,
+  transcriptFile, transcriptGone, sessionDirFile, taskOutputFile, planFile, readWindow,
   WINDOW_BYTES, WINDOW_MAX_BYTES,
 } = require('../lib/core/claude-files');
 
@@ -299,6 +299,68 @@ test('a path the filesystem will not answer about is refused, not taken for abse
     return lstatSync.call(this, p, ...rest);
   });
   assert.equal(transcriptFile(later), null);
+});
+
+// ── transcriptGone (U451: the one gone rule) ─────────────────────────────────
+
+test('transcriptGone: true only for an ENOENT transcript whose slug directory exists', (t) => {
+  const ch = tier(t);
+  const gone = ch.transcript(SID);
+  assert.equal(fs.existsSync(path.dirname(gone)), true, 'the slug directory is there');
+  assert.equal(transcriptGone(gone), true, 'ENOENT in a slug directory that exists');
+  ch.writeTranscript(SID2, [{ type: 'user' }]);
+  assert.equal(transcriptGone(ch.transcript(SID2)), false, 'a present file is not gone');
+  // The slug directory absent: a removed project directory deletes nothing.
+  assert.equal(transcriptGone(path.join(ch.projectsDir, '-no-such-project', `${SID}.jsonl`)), false);
+});
+
+test('transcriptGone: a moved CLAUDE_CONFIG_DIR is not gone', (t) => {
+  const ch = tier(t);
+  const p = ch.transcript(SID);
+  assert.equal(transcriptGone(p), true);
+  const elsewhere = path.join(scratch(t, 'cf-moved-'), '.claude');
+  fs.mkdirSync(path.join(elsewhere, 'projects'), { recursive: true });
+  configDirFor(t, elsewhere);
+  assert.equal(transcriptGone(p), false, 'outside the projectsDir in force');
+  assert.equal(transcriptGone(path.join(elsewhere, 'projects', ch.slug, `${SID}.jsonl`)), false, 'no slug directory there');
+});
+
+test('transcriptGone: a non-ENOENT lstat error is not gone, on the file or on its directory', (t) => {
+  const ch = tier(t);
+  const p = ch.transcript(SID);
+  const lstatSync = fs.lstatSync;
+  let target = p;
+  t.mock.method(fs, 'lstatSync', function (q, ...rest) {
+    if (q === target) throw Object.assign(new Error(`EACCES: permission denied, lstat '${q}'`), { code: 'EACCES' });
+    return lstatSync.call(this, q, ...rest);
+  });
+  assert.equal(transcriptGone(p), false, 'the file');
+  target = path.dirname(p);
+  assert.equal(transcriptGone(p), false, 'its slug directory');
+  target = null;
+  assert.equal(transcriptGone(p), true);
+});
+
+test('transcriptGone: outside projectsDir, a bad id, the wrong depth or a non-.jsonl name is false, and it never throws', (t) => {
+  const ch = tier(t);
+  for (const p of [
+    path.join(scratch(t, 'cf-out-'), `${SID}.jsonl`),
+    path.join(ch.projectDir, 'not an id.jsonl'),
+    path.join(ch.projectDir, 'bad\nid.jsonl'),
+    path.join(ch.projectDir, `${SID}.json`),
+    path.join(ch.projectDir, SID),
+    path.join(ch.projectDir, 'sub', `${SID}.jsonl`),
+    path.join(ch.projectsDir, `${SID}.jsonl`),
+    raw(ch.projectDir, '..', path.basename(ch.projectDir), `${SID}.jsonl`),
+    `${SID}.jsonl`,
+    ...JUNK,
+  ]) {
+    assert.equal(transcriptGone(p), false, label(p));
+  }
+  // A link where the slug directory should be is not one.
+  const real = scratch(t, 'cf-linked-');
+  const linked = link(real, path.join(ch.projectsDir, '-linked-project'));
+  assert.equal(transcriptGone(path.join(linked, `${SID}.jsonl`)), false);
 });
 
 // ── sessionDirFile ───────────────────────────────────────────────────────────

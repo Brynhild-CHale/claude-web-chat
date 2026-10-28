@@ -62,15 +62,13 @@ That's the core loop: you talk in the terminal, Claude shows its work in the bro
 
 **What a turn changed in your files.** In a git repository, web-chat records what each of Claude's turns changed in the project's files: the bar reads *Done · 3 files changed*, and the turn's footer in the chat reads *3 files +40 −12* with **View changes**, which opens the turn's diff — or, for the turn that committed a node, the node's. The footer also carries the turn's **node chip** (*n1.14*, or *no surface change · rode into n1.14* for a turn that left the page as it was): click it to preview that node. The snapshots live in a store of web-chat's own under `.web-chat/mirror/git`, which borrows your repository's objects and never writes your `.git` — no commit, no index, no ref. Anything that looks like a secret is masked before a diff is written, and `WEB_CHAT_MIRROR_DIFFS=0` in the daemon's environment turns it off.
 
-**What the chat mirror keeps.** What the chat remembers is bounded, and a turn whose diff has been removed says so (*expired*) instead of showing no changes:
+**What the chat mirror keeps.** Nothing the chat remembers about a conversation is deleted because of a count: its turns and code diffs go only when Claude Code's own cleanup deletes the session's transcript. A turn whose code diff is no longer on disk says so instead of showing no changes:
 
-- A turn's code diff is kept for 30 days.
+- When Claude Code's own cleanup deletes a session's transcript, web-chat deletes that session's turn index and the code diffs no graph node links.
+- The mirror's own files are kept without a size limit.
 - The file snapshots behind a diff are kept for 7 days.
 - The snapshot store is capped at 1 GiB, and no more diffs are recorded once it is full.
 - The server follows the snapshots of at most 1000 turns in memory at once.
-- At most 200 conversations are kept, and an older conversation's turns and code diffs are deleted with it.
-- A conversation keeps its newest 100 sessions.
-- A session keeps its newest 5000 turns.
 - A finished background shell or monitor stays listed for 30 minutes.
 - A finished agent stays listed for 30 minutes.
 - A permission, question, plan or MCP form prompt stays on record for 10 minutes after it is answered or closed, so a late second answer to it is refused.

@@ -4,8 +4,9 @@
 //
 // Pinned:
 //   * round trip: schedule then flush writes §2.11's shape, and load answers it,
-//     every turns[] entry with its top-level id; conversations.js deletePruned,
-//     run on a written index, deletes the diff files its turns name;
+//     every turns[] entry with its top-level id; conversations.js deleteGone,
+//     run on a written index whose transcript Claude Code's cleanup deleted,
+//     deletes the diff files its turns name;
 //   * a corrupt file is renamed aside and answers {ok:false, reason:'corrupt'};
 //     a field of the wrong type answers 'invalid' (renamed aside too);
 //   * the boot verification: a replaced transcript (new inode), a rewritten head
@@ -15,7 +16,8 @@
 //   * no known value on disk: one registered with addKnown and slipped into the
 //     meta (title, first prompt, away text, …) or a header is masked in the file,
 //     and the caller's snapshot is not touched;
-//   * 5,001 turns keep the newest 5,000; an unsafe id is never written;
+//   * every turn is kept: 6,000 turns are written and load back whole, in
+//     order (no count bounds the file, U451); an unsafe id is never written;
 //   * readRange: whole lines across readWindow pages, a sub-range exact, and
 //     null for a range holding a line over 8 MiB;
 //   * with the real createTranscriptsSource on a real createMirror: stop,
@@ -42,7 +44,7 @@ const { createTailer } = require('../lib/server/mirror/tail');
 const { createTranscriptsSource } = require('../lib/server/mirror/transcripts');
 const { createConversations } = require('../lib/server/mirror/conversations');
 const {
-  createIndexStore, INDEX_VERSION, DEBOUNCE_MS, TURNS_MAX,
+  createIndexStore, INDEX_VERSION, DEBOUNCE_MS,
 } = require('../lib/server/mirror/index-store');
 
 const S1 = '11111111-1111-4111-8111-111111111111';
@@ -157,28 +159,31 @@ test('round trip: schedule then flush writes §2.11\'s shape, and load answers i
   assert.deepEqual(await store.load(S2, { file }), { ok: false, reason: 'absent' });
 });
 
-test('conversations.js deletePruned, run on a written index, deletes the diff files its turns name', async (t) => {
+test('conversations.js deleteGone, run on a written index whose transcript Claude Code\'s cleanup deleted, deletes the diff files its turns name', async (t) => {
   withTempHome(t);
   const { root, paths, store } = storeFor(t);
-  claudeHome(t, { root, isolate: true });
+  const ch = claudeHome(t, { root, isolate: true });
   const file = transcript(root, S1, LINES);
   store.schedule(S1, () => snapshotOf(S1, file, { turns: [turnEntry('turn-old-1'), turnEntry('turn-old-2')] }));
+  store.schedule(S2, () => snapshotOf(S2, file, { turns: [turnEntry('turn-new-1')] }));
   await store.flush();
   for (const id of ['turn-old-1', 'turn-old-2', 'turn-new-1']) {
     fs.mkdirSync(path.dirname(paths.mirrorDiff(id)), { recursive: true });
     fs.writeFileSync(paths.mirrorDiff(id), '{}');
   }
+  // S1's transcript is gone from its slug directory (Claude Code's cleanup);
+  // S2's is there.
+  ch.writeTranscript(S2, [{ type: 'user', sessionId: S2 }]);
   const at = Date.now() - 3600 * 1000;
   const stored = (id, when) => ({
     id, created_at: when - 1000, last_activity_at: when, ended_at: when, title: null, name: null, forked_from: null,
-    current_session_id: id, sessions: [{ session_id: id, slug: null, reason: 'start', started_at: when - 1000, ended_at: null }], process: null,
+    current_session_id: id, sessions: [{ session_id: id, slug: ch.slug, reason: 'start', started_at: when - 1000, ended_at: null }], process: null,
   });
   fs.mkdirSync(path.dirname(paths.mirrorConversations), { recursive: true });
   fs.writeFileSync(paths.mirrorConversations, JSON.stringify({ v: 1, conversations: [stored(S1, at), stored(S2, at + 1000)] }));
   const reg = createConversations({
     root,
     log: () => {},
-    maxConversations: 1,
     sampleProcs: async (pids) => new Map(pids.map((p) => [p, { alive: false, startedAt: null, cpuMs: null, state: null }])),
     isPidAlive: () => false,
     watchFile: () => ({ trigger: async () => {}, stop: async () => {}, retarget: async () => {}, stats: {} }),
@@ -186,11 +191,12 @@ test('conversations.js deletePruned, run on a written index, deletes the diff fi
   t.after(() => reg.stop());
   await reg.start();
   await reg.flush();
-  assert.equal(reg.get(S1), null, 'the older conversation was pruned');
+  assert.ok(reg.get(S1), 'the conversation stays listed');
   assert.equal(fs.existsSync(paths.mirrorIndex(S1)), false, 'its index');
   assert.equal(fs.existsSync(paths.mirrorDiff('turn-old-1')), false, 'and the diffs its turns name');
   assert.equal(fs.existsSync(paths.mirrorDiff('turn-old-2')), false);
-  assert.equal(fs.existsSync(paths.mirrorDiff('turn-new-1')), true, 'another turn\'s diff stays');
+  assert.equal(fs.existsSync(paths.mirrorIndex(S2)), true, 'a session whose transcript is there keeps its index');
+  assert.equal(fs.existsSync(paths.mirrorDiff('turn-new-1')), true, 'and its diffs');
 });
 
 // ── a bad file ───────────────────────────────────────────────────────────────
@@ -225,7 +231,6 @@ test('a field of the wrong type answers invalid (renamed aside); every field is 
     (x) => { x.conversation_id = 7; },
     (x) => { x.saved_at = 'yesterday'; },
     (x) => { x.v = 2; },
-    (x) => { x.turns = Array.from({ length: TURNS_MAX + 1 }, (_, i) => turnEntry(`t-${i}`)); },
   ];
   for (const [i, spoil] of bad.entries()) {
     store.schedule(S1, () => snapshotOf(S1, file));
@@ -375,18 +380,18 @@ test('no known value reaches the disk: one slipped into the meta or a header is 
   assert.equal((await store.load(S1, { file })).ok, true);
 });
 
-test('5,001 turns keep the newest 5,000; an unsafe session id is never written', async (t) => {
+test('every turn is kept: 6,000 turns are written and load back whole, in order; an unsafe session id is never written', async (t) => {
   const { root, paths, store } = storeFor(t);
   const file = transcript(root, S1, LINES);
-  const turns = Array.from({ length: TURNS_MAX + 1 }, (_, i) => turnEntry(`t-${i}`));
+  const N = 6000;
+  const turns = Array.from({ length: N }, (_, i) => turnEntry(`t-${i}`));
   const snap = snapshotOf(S1, file, { turns });
   store.schedule(S1, () => snap);
   await store.flush();
   const got = await store.load(S1, { file });
-  assert.equal(got.ok, true);
-  assert.equal(got.index.turns.length, TURNS_MAX);
-  assert.equal(got.index.turns[0].id, 't-1', 'the oldest one went');
-  assert.equal(got.index.turns.at(-1).id, `t-${TURNS_MAX}`);
+  assert.equal(got.ok, true, 'a file over alpha.2\'s 5,000 is valid');
+  assert.equal(got.index.turns.length, N);
+  assert.deepEqual(got.index.turns.map((x) => x.id), turns.map((x) => x.id), 'whole, in order');
   assert.deepEqual(got.index.resume, snap.resume, 'the resume is unaffected');
 
   const bad = '../escape';

@@ -58,6 +58,7 @@ const {
 
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
+const S4 = '44444444-4444-4444-8444-444444444444';
 const LIVE_ONLY = SOURCES.filter((s) => s.name === 'live');
 
 // ── the scratch-repository builder ───────────────────────────────────────────
@@ -403,11 +404,12 @@ test('a git without --attr-source still gets its turn\'s diff, with attr_exact: 
   assert.ok(old.calls.every((c) => !c.opts.attrSource && !c.args.some((a) => a.startsWith('--attr-source'))));
 });
 
-test('housekeeping: tmp emptied of other processes\' copies, old records deleted, a full shadow turns the source off', async (t) => {
+test('housekeeping: tmp emptied of other processes\' copies, git prune run, no record deleted by age, a full shadow turns the source off', async (t) => {
   withTempHome(t);
   const repo = scratchRepo(t);
   const paths = projectPaths(repo.root);
-  const store = storeFor(repo);
+  const runner = wrapRunner(runGit);
+  const store = storeFor(repo, { runGit: runner });
   assert.equal((await store.snapshot()).ok, true);
   fs.mkdirSync(paths.mirrorTmp, { recursive: true });
   fs.writeFileSync(path.join(paths.mirrorTmp, 'index-1-1'), 'stale');
@@ -417,11 +419,13 @@ test('housekeeping: tmp emptied of other processes\' copies, old records deleted
   const newRec = paths.mirrorDiff('tNew');
   fs.writeFileSync(oldRec, '{}');
   fs.writeFileSync(newRec, '{}');
-  const long = (Date.now() - 40 * 24 * 3600 * 1000) / 1000;
+  const long = (Date.now() - 400 * 24 * 3600 * 1000) / 1000;
   fs.utimesSync(oldRec, long, long);
+  runner.calls.length = 0;
   assert.deepEqual(await store.housekeep(), { ok: true, full: false });
   assert.deepEqual(fs.readdirSync(paths.mirrorTmp), [`index-${process.pid}-999`]);
-  assert.equal(fs.existsSync(oldRec), false);
+  assert.ok(runner.calls.some((c) => c.args[0] === 'prune' && c.args.includes(`--expire=${LIMITS.PRUNE_EXPIRE}`)), 'git prune --expire still runs');
+  assert.equal(fs.existsSync(oldRec), true, 'a record 400 days old survives: no diff record ages out (L.4 O6)');
   assert.equal(fs.existsSync(newRec), true);
   assert.deepEqual(await storeFor(repo, { limits: { SHADOW_MAX_BYTES: 1 } }).housekeep(), { ok: true, full: true });
 
@@ -902,7 +906,8 @@ test('the exported limits are the brief\'s', () => {
   assert.equal(LIMITS.SLOW_SNAPSHOTS, 2);
   assert.equal(LIMITS.PATCH_MAX, 512 * 1024);
   assert.equal(LIMITS.PATCH_FILE_MAX, 128 * 1024);
-  assert.equal(LIMITS.RECORD_MAX_DAYS, 30);
+  assert.equal(LIMITS.RECORD_MAX_DAYS, undefined, 'retired: no record ages out');
+  assert.equal(LIMITS.DISK_BUDGET_BYTES, null, 'no size limit unless one is set');
   assert.equal(LIMITS.PRUNE_EXPIRE, '7.days.ago');
   assert.equal(LIMITS.SHADOW_MAX_BYTES, 1024 * 1024 * 1024);
   assert.equal(LIMITS.REUSE_MS, 1000);
@@ -951,28 +956,37 @@ test('a turn that adds a fake key mid-file: the record\'s patch renders with the
   assert.equal(masked, pem.secrets.length + 2, 'BEGIN, every body line and END masked, one line each');
 });
 
-// U233b (PLAN 1D.2, M-11): a turn whose record was written (its header says
-// ready) and is gone answers `expired` — the anchor-state vocabulary's own
-// status — naming the retention row that removed it, with that row's
-// user_text as its note; a turn with no header still answers null.
+// U451 (C-13-2 as re-worded; DECISIONS.md L.4 O6): a turn whose record was
+// written (its header says ready) and is gone answers `unavailable`, reason
+// `removed`, naming the deleter where it is known — `claude-code-cleanup` with
+// that row's user_text when the session's transcript is gone, else rule null
+// with REMOVED_NOTE — never `expired`; a turn with no header still answers null.
 const { isAnchorState } = require('../lib/core/anchor-states');
+const { isDeepStrictEqual } = require('util');
 const { retention } = require('../lib/server/mirror/retention');
+const { REMOVED_NOTE } = require('../lib/server/mirror/codediff');
 const DAY = 24 * 60 * 60 * 1000;
+const CLEANUP = (id) => ({ v: 1, turn_id: id, status: 'unavailable', reason: 'removed', rule: 'claude-code-cleanup', note: retention('claude-code-cleanup').user_text });
+const REMOVED = (id) => ({ v: 1, turn_id: id, status: 'unavailable', reason: 'removed', rule: null, note: REMOVED_NOTE });
 
-test('expired: a written record that is gone answers expired with its rule; pending, unavailable and unknown are unchanged', async (t) => {
+test('removed: a written record that is gone answers unavailable with its rule (the cleanup when the transcript is gone); pending, unavailable and unknown are unchanged', async (t) => {
+  withTempHome(t);
   const repo = scratchRepo(t);
+  const ch = claudeHome(t, { root: repo.root, isolate: true });
+  ch.writeTranscript(S2, [{ type: 'user', sessionId: S2 }]); // S2's transcript is there; S1's is gone
   const paths = projectPaths(repo.root);
   fs.mkdirSync(paths.mirrorDiffsDir, { recursive: true });
   fs.writeFileSync(paths.mirrorDiff('tKept'), JSON.stringify({ v: 1, turn_id: 'tKept', status: 'ready', totals: { files: 1, additions: 1, deletions: 0 } }));
   const at = Date.now();
+  const ready = { status: 'ready', files: 1, additions: 1, deletions: 0 };
   const headers = new Map([
-    ['tOld', { id: 'tOld', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
-    ['tNew', { id: 'tNew', session_id: S1, ended_at: at - 1000, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
-    ['tKept', { id: 'tKept', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
+    ['tGone', { id: 'tGone', session_id: S1, ended_at: at - 31 * DAY, code: ready }],
+    ['tNew', { id: 'tNew', session_id: S2, ended_at: at - 1000, code: ready }],
+    ['tKept', { id: 'tKept', session_id: S1, ended_at: at - 400 * DAY, code: ready }],
     ['tPend', { id: 'tPend', session_id: S1, ended_at: at, code: { status: 'pending' } }],
     ['tOff', { id: 'tOff', session_id: S1, ended_at: at - 31 * DAY, code: { status: 'unavailable', reason: 'slow-repo' } }],
     ['tNone', { id: 'tNone', session_id: S1, ended_at: at - 31 * DAY, code: null }],
-    ['tNoEnd', { id: 'tNoEnd', session_id: S1, ended_at: null, code: { status: 'ready', files: 1, additions: 1, deletions: 0 } }],
+    ['tSwitched', { id: 'tSwitched', session_id: S4, ended_at: null, code: ready }],
   ]);
   const engine = {
     root: repo.root, paths, now: () => at, log: () => {}, graph: null,
@@ -982,81 +996,78 @@ test('expired: a written record that is gone answers expired with its rule; pend
       turnsOf: () => [], turn: (id) => headers.get(id) || null, resolveTurn: (id) => (id === 'tAlias' ? 'tNew' : id),
       patchTurn: (id) => headers.get(id), openTurnOf: () => null,
     },
-    conversations: { bySession: () => null, list: () => [] },
+    // S4: a session switched off or unknown — transcriptPath null, never gone.
+    conversations: { bySession: () => null, list: () => [], transcriptPath: (sid) => (sid === S4 ? null : ch.transcript(sid)) },
     live: { noteActivity: () => {} },
   };
   const src = createCodediffSource({ enabled: true }).attach(engine);
   const diff = (turn) => src.api.diff({ turn });
-  const old = await diff('tOld');
-  assert.deepEqual(old, { v: 1, turn_id: 'tOld', status: 'expired', rule: 'record-max-days', note: retention('record-max-days').user_text });
-  assert.equal(old.note, 'A turn\'s code diff is kept for 30 days.');
-  assert.ok(isAnchorState(old.status), 'the status is the anchor-state vocabulary\'s');
-  assert.deepEqual(await diff('tNew'), { v: 1, turn_id: 'tNew', status: 'expired', rule: 'conversations-max', note: retention('conversations-max').user_text });
+  const gone = await diff('tGone');
+  assert.deepEqual(gone, CLEANUP('tGone'));
+  assert.equal(gone.note, 'When Claude Code\'s own cleanup deletes a session\'s transcript, web-chat deletes that session\'s turn index and the code diffs no graph node links.');
+  assert.ok(isAnchorState(gone.status), 'the status is the anchor-state vocabulary\'s');
+  assert.deepEqual(await diff('tNew'), REMOVED('tNew'), 'the transcript is there: no rule can be named');
+  assert.equal(REMOVED_NOTE, 'This turn\'s code diff is no longer on disk.');
+  assert.deepEqual(await diff('tSwitched'), REMOVED('tSwitched'), 'transcriptPath null is never gone');
   assert.equal((await diff('tKept')).turn_id, 'tKept', 'a record on disk is answered, whatever its age');
   assert.deepEqual(await diff('tPend'), { v: 1, turn_id: 'tPend', status: 'pending' });
   assert.deepEqual(await diff('tOff'), { v: 1, turn_id: 'tOff', status: 'unavailable', reason: 'slow-repo' });
-  assert.equal(await diff('tNone'), null, 'no code recorded: unknown, never expired');
-  assert.equal(await diff('tNoHeader'), null, 'no header: unknown, never expired');
-  // No ended_at is never 'older than RECORD_MAX_DAYS'; an id the model
-  // resolves to another turn answers under the header's id, as pending and
-  // unavailable do.
-  assert.equal((await diff('tNoEnd')).rule, 'conversations-max');
+  assert.equal(await diff('tNone'), null, 'no code recorded: unknown');
+  assert.equal(await diff('tNoHeader'), null, 'no header: unknown');
+  // An id the model resolves to another turn answers under the header's id.
   assert.equal((await diff('tAlias')).turn_id, 'tNew');
-  // The cutoff is the store's own RECORD_MAX_DAYS (a `limits` override wins).
-  const short = createCodediffSource({ enabled: true, limits: { RECORD_MAX_DAYS: 0 } }).attach(engine);
-  assert.equal((await short.api.diff({ turn: 'tNew' })).rule, 'record-max-days');
   await src.stop();
-  await short.stop();
-  // codediff.js takes the status from the vocabulary: one require, no literal.
+  // codediff.js never answers `expired` again.
   const code = fs.readFileSync(path.join(__dirname, '..', 'lib', 'server', 'mirror', 'codediff.js'), 'utf8');
-  assert.match(code, /require\('\.\.\/\.\.\/core\/anchor-states'\)/);
-  assert.equal(code.replace(/^\s*\/\/.*$/gm, '').match(/'expired'/g).length, 1, 'one spelling, the vocabulary lookup');
+  assert.equal(code.replace(/^\s*\/\/.*$/gm, '').match(/expired|EXPIRED/g), null, 'no expired answer left');
 });
 
-test('expired on a live mirror: a ready turn whose record file is deleted answers expired through the facade', async (t) => {
+test('removed on a live mirror: a ready turn whose record file is deleted answers unavailable through the facade', async (t) => {
   const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
   const h = await mirrorOn(t, repo);
   h.session();
   assert.equal((await h.run('pGone', () => repo.write('a.txt', 'two\n'))).status, 'ready');
   assert.equal((await h.mirror.diff({ turn: 'pGone' })).status, 'ready');
   fs.rmSync(projectPaths(h.root).mirrorDiff('pGone'));
-  const out = await h.mirror.diff({ turn: 'pGone' });
-  assert.deepEqual(out, { v: 1, turn_id: 'pGone', status: 'expired', rule: 'conversations-max', note: retention('conversations-max').user_text });
+  // The session's transcript was never written (gone from its slug directory).
+  assert.deepEqual(await h.mirror.diff({ turn: 'pGone' }), CLEANUP('pGone'));
+  h.ch.writeTranscript(S1, [{ type: 'user', sessionId: S1 }]);
+  assert.deepEqual(await h.mirror.diff({ turn: 'pGone' }), REMOVED('pGone'), 'the transcript is there: a hand deletion');
   assert.equal(await h.mirror.diff({ turn: 'pNever' }), null);
 });
 
-test('a pruned conversation (maxConversations 1): its diff record and index go, and with its header gone the turn answers null', async (t) => {
+test('Claude Code\'s cleanup of a transcript no process writes: the next boot sweep deletes its index and diff record, the session stays, and the turn never answers ready or expired', async (t) => {
   const { createIndexStore } = require('../lib/server/mirror/index-store');
   const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
-  const h = await mirrorOn(t, repo, { conversationsOptions: { maxConversations: 1 } });
+  const h = await mirrorOn(t, repo);
   const paths = projectPaths(h.root);
   h.session(S1);
   assert.equal((await h.run('pPr', () => repo.write('a.txt', 'two\n'))).status, 'ready');
-  // The session's turn index, written through the one store (deletePruned reads turns[].id).
+  // The session's turn index, written through the one store (deleteGone reads turns[].id).
   const store = createIndexStore({ paths, timers: { setTimeout, clearTimeout }, redactor: createRedactor() });
   store.schedule(S1, () => ({ session_id: S1, conversation_id: S1, slug: null, file: null, resume: null,
     turns: [{ id: 'pPr', header: h.turn('pPr'), internal: {} }], state: {} }));
   await store.flush(S1);
   await store.stop();
   assert.ok(fs.existsSync(paths.mirrorIndex(S1)));
-  // While the header lives, a record removed under it answers expired (conversations-max).
   const recFile = paths.mirrorDiff('pPr');
-  const kept = fs.readFileSync(recFile);
-  fs.rmSync(recFile);
-  assert.equal((await h.mirror.diff({ turn: 'pPr' })).rule, 'conversations-max');
-  fs.writeFileSync(recFile, kept);
-  assert.equal((await h.mirror.diff({ turn: 'pPr' })).status, 'ready');
-  // A second conversation prunes the first: the registry drops its turns from
-  // the model at once, and deletePruned removes its index and diff at the save.
-  h.session(S2);
-  await waitUntil(() => !fs.existsSync(recFile) && !fs.existsSync(paths.mirrorIndex(S1)), { timeout: 10000, what: 'deletePruned' });
-  assert.equal(h.turn('pPr'), null, 'the header is gone');
-  assert.equal(await h.mirror.diff({ turn: 'pPr' }), null, 'no header: unknown, never expired');
+  assert.ok(fs.existsSync(recFile));
+  // The session's transcript is not on disk (Claude Code's cleanup), and no
+  // process writes the conversation: the next daemon's boot sweep deletes both.
+  await h.mirror.stop();
+  const h2 = await mirrorOn(t, repo);
+  await waitUntil(() => !fs.existsSync(recFile) && !fs.existsSync(paths.mirrorIndex(S1)), { timeout: 10000, what: 'deleteGone' });
+  assert.ok(h2.logs.some((l) => l.includes('[mirror] cleanup:') && l.includes(S1)), 'one cleanup line');
+  assert.ok(h2.box.engine.conversations.bySession(S1), 'the session stays in its record');
+  const out = await h2.mirror.diff({ turn: 'pPr' });
+  // No header survives the deleted index (null today); were one restored, it
+  // would name the cleanup.
+  assert.ok(out === null || isDeepStrictEqual(out, CLEANUP('pPr')), `never ready, never expired (${JSON.stringify(out)})`);
 });
 
-test('a node whose only turn expired: settled (the cache is written), turns[0] expired, combined null', async (t) => {
+test('a node whose only turn\'s record is gone: settled (the cache is written), turns[0] unavailable with its rule, combined null', async (t) => {
   const graph = {
-    nodes: new Map([['n7', { id: 'n7', mirror: { v: 1, turns: [{ turn_id: 'pEx' }] } }]]),
+    nodes: new Map([['n7', { id: 'n7', mirror: { v: 1, turns: [{ turn_id: 'pEx', session_id: S1 }] } }]]),
     topology: new Map([['n7', { id: 'n7', parent_id: null, children: [], created_at: 1 }]]),
     active: 'n7',
     snapshotLive: () => ({}),
@@ -1069,7 +1080,50 @@ test('a node whose only turn expired: settled (the cache is written), turns[0] e
   const out = await h.mirror.diff({ node: 'n7' });
   assert.equal(out.combined, null);
   assert.equal(out.turns.length, 1);
-  assert.equal(out.turns[0].status, 'expired');
-  assert.equal(out.turns[0].rule, 'conversations-max');
+  assert.equal(out.turns[0].status, 'unavailable');
+  assert.equal(out.turns[0].reason, 'removed');
+  assert.equal(out.turns[0].rule, 'claude-code-cleanup');
   assert.ok(fs.existsSync(projectPaths(h.root).mirrorNodeDiff('n7')), 'settled: the node cache is written');
+});
+
+test('a node whose ref session the registry no longer lists answers that turn unavailable with the cleanup rule, not dropped, and the cache counts it settled', async (t) => {
+  const graph = {
+    nodes: new Map([['n8', { id: 'n8', mirror: { v: 1, turns: [
+      { turn_id: 'pHere', session_id: S1 },
+      { turn_id: 'pCleaned', session_id: S2 }, // a conversation the registry no longer lists
+    ] } }]]),
+    topology: new Map([['n8', { id: 'n8', parent_id: null, children: [], created_at: 1 }]]),
+    active: 'n8',
+    snapshotLive: () => ({}),
+  };
+  const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
+  const h = await mirrorOn(t, repo, { graph });
+  h.session(S1);
+  await h.run('pHere', () => repo.write('a.txt', 'two\n'));
+  assert.equal(h.box.engine.conversations.bySession(S2), null);
+  const out = await h.mirror.diff({ node: 'n8' });
+  assert.deepEqual(out.turns.map((x) => [x.turn_id, x.status]), [['pHere', 'ready'], ['pCleaned', 'unavailable']]);
+  assert.deepEqual(out.turns[1], CLEANUP('pCleaned'));
+  assert.ok(out.combined, 'the ready turn still combines');
+  assert.ok(fs.existsSync(projectPaths(h.root).mirrorNodeDiff('n8')), 'settled: the node cache is written');
+});
+
+test('a registry that lists nothing yet is no removal: the unlisted ref is not answered as the cleanup, and the node cache is not written', async (t) => {
+  const graph = {
+    nodes: new Map([['n9', { id: 'n9', mirror: { v: 1, turns: [{ turn_id: 'pAway', session_id: S2 }] } }]]),
+    topology: new Map([['n9', { id: 'n9', parent_id: null, children: [], created_at: 1 }]]),
+    active: 'n9',
+    snapshotLive: () => ({}),
+  };
+  const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
+  const h = await mirrorOn(t, repo, { graph });
+  assert.deepEqual(h.box.engine.conversations.list(), [], 'the registry lists nothing');
+  const before = await h.mirror.diff({ node: 'n9' });
+  assert.deepEqual(before.turns, [], 'not claimed as Claude Code\'s cleanup');
+  assert.equal(fs.existsSync(projectPaths(h.root).mirrorNodeDiff('n9')), false, 'unsettled: no cache');
+  // Once the registry lists a conversation, the ref it does not list is the cleanup's.
+  h.session(S1);
+  await waitUntil(() => h.box.engine.conversations.list().length > 0, { what: 'a listed conversation' });
+  const after = await h.mirror.diff({ node: 'n9' });
+  assert.deepEqual(after.turns, [CLEANUP('pAway')]);
 });

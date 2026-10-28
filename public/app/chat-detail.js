@@ -956,13 +956,19 @@ function totalsOf(record) {
     deletions: files.reduce((n, f) => n + (finite(f.deletions) ? f.deletions : 0), 0) };
 }
 
+// Why a turn has no code diff: an `unavailable` record's note when it carries
+// one (a removed record names its rule's sentence), else its reason; an older
+// daemon's `expired` record reads as unavailable, with its note. Text, never HTML.
+function unavailableNote(rec) {
+  if (rec.status === 'expired') return note(str(rec.note) || 'This diff is no longer kept.', 'dv-note dv-unavailable dv-expired');
+  if (str(rec.note)) return note(str(rec.note), 'dv-note dv-unavailable');
+  return note(`No code diff: ${str(rec.reason) || 'unavailable'}`, 'dv-note dv-unavailable');
+}
+
 // A record (a turn's, or a node's combined): its status, its files, its patch.
 function recordNodes(record) {
-  if (record.status === 'unavailable') {
-    return [note(`No code diff: ${str(record.reason) || 'unavailable'}`, 'dv-note dv-unavailable')];
-  }
+  if (record.status === 'unavailable' || record.status === 'expired') return [unavailableNote(record)];
   if (record.status === 'pending') return [note('The changes are still being recorded.', 'dv-note dv-pending')];
-  if (record.status === 'expired') return [note(str(record.note) || 'This diff is no longer kept.', 'dv-note dv-expired')];
   const files = Array.isArray(record.files) ? record.files.filter(isObj) : [];
   if (!files.length) return [note('No files changed.', 'dv-note dv-nochange')];
   const sections = splitPatch(record.patch, files);
@@ -999,8 +1005,7 @@ function turnsNodes(turns) {
     head.append(el('span', 'dv-turn-name', turnName(rec.turn_id)));
     if (rec.status === 'ready') head.append(el('span', 'dv-turn-totals', totalsText(totalsOf(rec))));
     box.append(head);
-    if (rec.status === 'unavailable') box.append(note(`No code diff: ${str(rec.reason) || 'unavailable'}`, 'dv-note dv-unavailable'));
-    if (rec.status === 'expired') box.append(note(str(rec.note) || 'This diff is no longer kept.', 'dv-note dv-expired'));
+    if (rec.status === 'unavailable' || rec.status === 'expired') box.append(unavailableNote(rec));
     const ul = el('ul', 'dv-turn-files');
     for (const f of Array.isArray(rec.files) ? rec.files.filter(isObj) : []) {
       const li = el('li', 'dv-turn-file');

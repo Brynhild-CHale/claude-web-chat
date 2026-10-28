@@ -285,17 +285,20 @@ test('a key a source adds beside §2.10\'s is dropped: no Claude Code path is ev
   assert.ok(!('exit_code' in (await h.get(OUTPUT_URL)).body));
 });
 
-test('GET /api/mirror/diff?turn= for an expired turn carries its rule and note (the retention row that took it)', async (t) => {
-  assert.ok(DIFF_KEYS.includes('rule') && DIFF_KEYS.includes('note'), 'DIFF_KEYS names the expired answer\'s keys');
-  const EXPIRED = {
-    v: 1, turn_id: TURN_ID, status: 'expired', rule: 'record-max-days',
-    note: 'A turn\'s code changes are kept for 30 days, then deleted.',
+test('GET /api/mirror/diff?turn= for a removed turn carries the unavailable answer\'s reason, rule and note (the deleter that took it)', async (t) => {
+  assert.ok(DIFF_KEYS.includes('reason') && DIFF_KEYS.includes('rule') && DIFF_KEYS.includes('note'), 'DIFF_KEYS names the removed answer\'s keys');
+  const REMOVED = {
+    v: 1, turn_id: TURN_ID, status: 'unavailable', reason: 'removed', rule: 'claude-code-cleanup',
+    note: 'When Claude Code\'s own cleanup deletes a session\'s transcript, web-chat deletes that session\'s turn index and the code diffs no graph node links.',
   };
-  const m = fakeMirror({ diff: (q) => (q.turn !== undefined ? EXPIRED : NODE_DIFF_BODY) });
+  const m = fakeMirror({ diff: (q) => (q.turn !== undefined ? REMOVED : NODE_DIFF_BODY) });
   const h = await host(t, { mirror: m });
   const r = await h.get(DIFF_TURN_URL);
   assert.equal(r.status, 200);
-  assert.deepStrictEqual(r.body, { ...EXPIRED, rev: 42 });
+  assert.deepStrictEqual(r.body, { ...REMOVED, rev: 42 });
+  // No rule can be named: rule null and the plain note pass too.
+  m.answers.diff = { ...REMOVED, rule: null, note: 'This turn\'s code diff is no longer on disk.' };
+  assert.deepStrictEqual((await h.get(DIFF_TURN_URL)).body, { ...REMOVED, rule: null, note: 'This turn\'s code diff is no longer on disk.', rev: 42 });
 });
 
 test('GET …/tasks/:taskId/output: `to` passed back as `from` pages through every byte once', async (t) => {
