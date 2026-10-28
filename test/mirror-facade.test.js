@@ -284,7 +284,7 @@ test('the engine a source is handed: the contract\'s members, the turn machine\'
   h.mirror.register('probe', probe.source);
   const e = probe.engine;
   assert.deepEqual(Object.keys(e).sort(), [
-    'applyChanges', 'beginIndex', 'conversations', 'files', 'graph', 'indexing', 'live', 'log', 'mainBus', 'model', 'name', 'now',
+    'applyChanges', 'beginIndex', 'conversations', 'ensureConversation', 'files', 'graph', 'indexing', 'live', 'log', 'mainBus', 'model', 'name', 'now',
     'paths', 'processGone', 'procs', 'read', 'redactor', 'reset', 'restoreSourceStates', 'root', 'sourceStates', 'statusClosed',
     'timers', 'transition', 'watchFile',
   ]);
@@ -298,7 +298,7 @@ test('the engine a source is handed: the contract\'s members, the turn machine\'
     'patchTurn', 'scrubText', 'turn', 'item']) {
     assert.equal(typeof e.model[k], 'function', `model.${k}`);
   }
-  for (const k of ['claimTurnWriter', 'removeConversation', 'refillTurn', 'takeChanges']) assert.equal(e.model[k], undefined, `no model.${k}`);
+  for (const k of ['claimTurnWriter', 'removeConversation', 'refillTurn', 'unloadConversation', 'takeChanges']) assert.equal(e.model[k], undefined, `no model.${k}`);
   for (const k of ['transcriptFile', 'sessionDirFile', 'taskOutputFile', 'planFile', 'readWindow']) assert.equal(typeof e.files[k], 'function');
   assert.deepEqual(Object.keys(e.conversations).sort(), ['bySession', 'get', 'list', 'markFork', 'noteTitle', 'processOf', 'sessionDir', 'transcriptPath']);
   assert.deepEqual(Object.keys(e.live).sort(), ['liveOf', 'noteActivity']);
