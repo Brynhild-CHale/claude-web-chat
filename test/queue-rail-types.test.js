@@ -135,6 +135,21 @@ test('the label follows the toolbar\'s view of the type (a toolbar frame redraws
   await waitUntil(() => kindOf('q-g-hl') === 'Highlight', { ...WAIT, what: 'the label back' });
 });
 
+test('a listed type that names no icons keeps its label and draws no icon (the toolbar draws its glyph)', async () => {
+  const ts = await shell.importApp('toolbar-state.js');
+  const before = ts.toolbarState();
+  const tools = before.tools.map((t) => (t.type === 'highlight' ? { ...t, icons: null } : t));
+  ts.applyToolbarFrame({ project: before.project, user: before.user, merged: before.merged, tools });
+  try {
+    await waitUntil(() => iconOf('q-g-hl') === null, { ...WAIT, what: 'the icon-less row' });
+    assert.equal(kindOf('q-g-hl'), 'Highlight', 'the listed label still');
+    assert.ok(iconOf('q-g-cm'), 'a type that names icons keeps its icon');
+  } finally {
+    ts.applyToolbarFrame({ project: before.project, user: before.user, merged: before.merged, tools: before.tools });
+  }
+  await waitUntil(() => iconOf('q-g-hl') !== null, { ...WAIT, what: 'the icon back' });
+});
+
 /* ── (2) tooltips per type ───────────────────────────────────────────────── */
 
 test('⟲ on an element group says it removes the row from the queue and deletes nothing', () => {
