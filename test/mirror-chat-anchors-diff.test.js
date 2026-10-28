@@ -465,12 +465,16 @@ test('a record removed under a ready header answers unavailable with its rule an
   const made = await h.record({ turn_id: 'pKey', file: FILE, side: 'new', line: 11 });
   fs.rmSync(h.diffFile('pKey'));
   const served = await h.mirror.diff({ turn: 'pKey' });
-  assert.equal(served.status, 'expired');
-  assert.ok(served.rule && served.note, 'codediff names the rule and its note');
+  // U451 (DECISIONS.md L.4 O6): a removed record answers unavailable, reason
+  // removed, never expired; its rule names the deleter where one is known
+  // (else null) and its note is that rule's user_text or REMOVED_NOTE.
+  assert.deepEqual([served.status, served.reason], ['unavailable', 'removed']);
+  assert.ok(served.note, 'codediff carries its note');
+  const rule = served.rule || served.reason;
   const [a] = await h.resolve([made.anchor]);
   assertVisible(a);
-  assert.deepEqual([a.state, a.rule, a.note, a.turn_id], ['unavailable', served.rule, served.note, 'pKey']);
-  assert.deepEqual(await h.record({ turn_id: 'pKey', file: FILE, side: 'new', line: 11 }), { unavailable: true, rule: served.rule });
+  assert.deepEqual([a.state, a.rule, a.note, a.turn_id], ['unavailable', rule, served.note, 'pKey']);
+  assert.deepEqual(await h.record({ turn_id: 'pKey', file: FILE, side: 'new', line: 11 }), { unavailable: true, rule });
 });
 
 test('node_id is a hint only: an anchor whose turn resolves nowhere answers unavailable although its node names a diff with the file', async (t) => {
