@@ -1375,8 +1375,8 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       'GET /api/events': ['events[].pin'],
     },
     // A queue item's own text by kind (the annotation engine, finding 3): a
-    // comment item quotes its pin.
-    items: { comment: ['summary'], element: ['summary'] },
+    // comment item quotes its pin, and an item's excerpt (U422) its passage.
+    items: { comment: ['summary', 'excerpt'], element: ['summary', 'excerpt'] },
     // A ring entry's own text by kind (J1, K1): the Push note a wake carries,
     // and the park GET /api/queue/pending serves.
     entries: { wake: ['note'] },
@@ -1430,7 +1430,7 @@ test('TEXT_RULES: a field name a per-kind row (items, entries) may not hold is r
   const src = fs.readFileSync(path.join(core, 'remote-policy.js'), 'utf8');
   for (const [row, good, bad] of [
     ['entries', "wake: ['note'],", "wake: ['note.text'],"],
-    ['items', "comment: ['summary'],", "comment: ['Summary'],"],
+    ['items', "comment: ['summary', 'excerpt'],", "comment: ['summary', 'Excerpt'],"],
   ]) {
     assert.equal(src.split(good).length, 2, `${row}: the row is spelled once in remote-policy.js`);
     const file = path.join(dir, `remote-policy-${row}.js`);
