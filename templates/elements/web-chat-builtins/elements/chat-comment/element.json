@@ -17,7 +17,7 @@
     }
   },
   "input": "taps",
-  "wake": true,
+  "wake": { "coalesce": "count", "respond": true },
   "summary_key": "text",
   "tool": "comment"
 }

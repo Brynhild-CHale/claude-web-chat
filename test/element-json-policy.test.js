@@ -117,7 +117,8 @@ const TOOLBAR = {
     hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }],
     profiles: false,
     input: 'taps',
-    wake: true,
+    // U423 (PLAN.md 3B.2): a thread-bearing type, coalesced per (type, pane).
+    wake: { coalesce: 'count', respond: true },
     summary_key: 'text',
   },
   highlight: {
@@ -153,7 +154,7 @@ const TOOLBAR = {
     icons: { light: 'icon-light.svg', dark: 'icon-dark.svg' },
     settings: { small: { type: 'object', properties: { shared: { type: 'boolean', title: 'Visible to Claude', default: true } } } },
     input: 'taps',
-    wake: true,
+    wake: { coalesce: 'count', respond: true }, // U423 (RULED U423@toolbar-pin-chat-wake S5-confirm a)
     summary_key: 'text',
     tool: 'comment',
   },

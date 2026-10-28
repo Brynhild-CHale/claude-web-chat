@@ -19,6 +19,6 @@
   "hotkeys": [{ "action": "arm", "label": "Pin comment", "default": "C" }],
   "profiles": false,
   "input": "taps",
-  "wake": true,
+  "wake": { "coalesce": "count", "respond": true },
   "summary_key": "text"
 }
