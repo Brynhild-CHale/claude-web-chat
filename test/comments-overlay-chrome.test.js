@@ -403,6 +403,19 @@ test('a comment-armed click on a markdown link pins (the link does not follow); 
     assert.deepEqual(heard, ['pointerdown:well', 'click:well'], 'the page heard the gap in #main');
     assert.equal(gap.down.defaultPrevented, false);
     assert.equal(pinPop(), null, 'no pin on the gap');
+    // A lone click (a mouse's, whose press the well never heard) takes the
+    // same targets check: on the gap it is the page's, on the link the tool's.
+    heard.length = 0;
+    well.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 77, clientX: 100, clientY: 100 }));
+    assert.deepEqual(heard, ['click:well'], 'the page heard the lone click on the gap');
+    assert.equal(pinPop(), null, 'no pin dropped by the lone click');
+    heard.length = 0;
+    const lone = new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 78, clientX: 100, clientY: 100 });
+    link.dispatchEvent(lone);
+    assert.deepEqual(heard, [], 'the lone click on the link is the tool\'s');
+    assert.equal(lone.defaultPrevented, true, 'the link does not follow');
+    assert.ok(pinPop() && pinPop().querySelector('.pin-text'), 'the lone click pinned');
+    closeComposer();
     assert.equal(armedType(), 'comment', 'still armed');
     heard.length = 0;
     ov.setArmed('highlight');
@@ -515,7 +528,7 @@ async function pinTap(el, pointerId) {
 }
 
 test('a heading tap records a source anchor over the heading, section = the heading; a prose tap under it records the paragraph with that section', async () => {
-  await putMd('Lead line above the section.\n\n## Release plan\n\nShip the build on Friday after the review.');
+  await putMd('Lead line above the section.\n\n## Release plan\n\nShip the build on Friday after the review.\n\n## Rollback\n\nRevert the tag if the smoke test fails.');
   try {
     const h2 = mdItem().querySelector('h2');
     const body = await pinTap(h2, 41);
@@ -537,6 +550,11 @@ test('a heading tap records a source anchor over the heading, section = the head
     assert.equal(lead0.anchor.quote.exact, 'Lead line above the section.');
     assert.equal(lead0.anchor.slug, null);
     assert.equal(Object.prototype.hasOwnProperty.call(lead0.locator, 'section'), false, 'no heading above it anywhere');
+    // Prose under the item's second heading: that heading (the record's slug),
+    // not the item's first one.
+    const later = await pinTap(mdItem().querySelectorAll('p')[2], 47);
+    assert.equal(later.anchor.slug, 'rollback');
+    assert.equal(later.locator.section, 'Rollback', 'the heading the prose is under');
   } finally { await dropMd(); }
 });
 
@@ -563,6 +581,22 @@ test('a paragraph longer than quote_max records a quote of at most quote_max; a 
     const n = posts.length;
     assert.equal(await pinTap(mdItem(), 46), null, 'no composer on a gap');
     assert.equal(posts.length, n, 'nothing posted');
+    // and the gap is the page's (K.2-78 (c)): the overlay lets the press and
+    // the click through with the tool armed.
+    const heard = [];
+    const onDoc = (e) => { if (e.target === mdItem()) heard.push(e.type); };
+    W.document.addEventListener('pointerdown', onDoc);
+    W.document.addEventListener('click', onDoc);
+    ov.setArmed('comment');
+    try {
+      const { down } = gesture(mdItem(), 'mouse', { pointerId: 48 });
+      assert.deepEqual(heard, ['pointerdown', 'click'], 'the page heard the gap');
+      assert.equal(down.defaultPrevented, false);
+    } finally {
+      ov.setArmed(null);
+      W.document.removeEventListener('pointerdown', onDoc);
+      W.document.removeEventListener('click', onDoc);
+    }
   } finally { await dropMd(); }
 });
 
