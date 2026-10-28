@@ -1305,7 +1305,10 @@ function onPick(e) {
 // grab's page record whose rect, placed in its item's current content box
 // (a pane's .mount-host, a markdown item's block: K.2-72's frame of
 // reference) and moved by its content box's scroll since the grab (K.2-80:
-// the rect was measured at the grab's own scroll), holds it. A hidden, an
+// the rect was measured at the grab's own scroll), holds it. The point must
+// also lie inside the element's clip (the viewport ∩ the well ∩ every
+// clipping ancestor: clipFrom, the placement's own), so an element scrolled
+// out of a rows-capped pane is never under a press beside it. A hidden, an
 // orphaned, a carried guess's or a section answer is never one, nor is a
 // pending row. A comment's pick (comments.js) reads it as the chain of the
 // live elements under the press. Box reads go through rectOf; nothing is
@@ -1316,6 +1319,13 @@ export function elementsAt(x, y) {
   if (!Number.isFinite(px) || !Number.isFinite(py)) return [];
   const holds = (r) => !!r && px >= r.left && px <= r.left + r.width && py >= r.top && py <= r.top + r.height;
   const areaOf = (r) => Math.max(0, r.width) * Math.max(0, r.height);
+  const fr = { reads: 0, clipCache: new Map(), startCache: new Map(), well: $('main') };
+  const read = reader(fr);
+  const clipped = (start) => {
+    if (!start) return false;
+    const c = clipFrom(start, fr, read);
+    return !(px >= c.left && px <= c.right && py >= c.top && py <= c.bottom);
+  };
   const hits = new Map();
   const hit = (row, area) => {
     const prior = hits.get(row.id);
@@ -1331,10 +1341,11 @@ export function elementsAt(x, y) {
       const box = (r) => ({ left: r.left, top: r.top,
         width: r.width != null ? r.width : r.right - r.left, height: r.height != null ? r.height : r.bottom - r.top });
       const bs = rs.map(box);
-      if (bs.some(holds)) hit(e.row, bs.reduce((n, b) => n + areaOf(b), 0));
+      const sc = raw.range.startContainer;
+      if (bs.some(holds) && !clipped(sc && (sc.nodeType === 1 ? sc : sc.parentNode))) hit(e.row, bs.reduce((n, b) => n + areaOf(b), 0));
     } else if (raw.el) {
       const r = cfg.rectOf(raw.el);
-      if (holds(r)) hit(e.row, areaOf(r));
+      if (holds(r) && !clipped(raw.el)) hit(e.row, areaOf(r));
     }
   }
   const well = $('main');
@@ -1356,7 +1367,7 @@ export function elementsAt(x, y) {
     const dy = (Number(sc.top) || 0) - (Number(base.scrollTop) || 0);
     const r = { left: frame.left + (Number(a.rect.x) || 0) + dx, top: frame.top + (Number(a.rect.y) || 0) + dy,
       width: Number(a.rect.w) || 0, height: Number(a.rect.h) || 0 };
-    if (holds(r)) hit(row, areaOf(r));
+    if (holds(r) && !clipped(base)) hit(row, areaOf(r));
   }
   return [...hits.values()].sort((m, n) => (m.area - n.area) || (m.id < n.id ? -1 : m.id > n.id ? 1 : 0));
 }
