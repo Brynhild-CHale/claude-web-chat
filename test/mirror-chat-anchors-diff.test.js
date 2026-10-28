@@ -346,6 +346,39 @@ test('a row\'s fingerprint and quote stop at its hunk: a change in the hunk befo
   assert.deepEqual([a.state, a.how, a.at.line], ['exact', 'line', 22]);
 });
 
+test('each file section is walked alone, as the chrome draws it: a section after a first one past 5,000 lines records and resolves exact', async (t) => {
+  const repo = treesnapRepo(t, { files: { 'a-big.txt': 'one\ntwo\n', 'b-small.txt': 'alpha\nbeta\ngamma\n' } });
+  const h = await boot(t, repo);
+  assert.equal((await h.run('pBig', async () => {
+    repo.write('a-big.txt', 'one\ntwo\nthree\n');
+    repo.write('b-small.txt', 'alpha\nbeta two\ngamma\n');
+  })).status, 'ready');
+  const served = await h.mirror.diff({ turn: 'pBig' });
+  assert.ok(served.patch.indexOf('diff --git a/a-big.txt') < served.patch.indexOf('diff --git a/b-small.txt'), 'the big file first');
+  const before = (await h.record({ turn_id: 'pBig', file: 'b-small.txt', side: 'new', line: 2 })).anchor;
+  assertShape(before);
+  // The first file's hunk grown past diffRows's 5,000-line cap, in place.
+  const PAD = 5200;
+  const pad = Array.from({ length: PAD }, (_, i) => `+pad ${i + 1}`).join('\n');
+  h.rewrite('pBig', (p) => {
+    const cut = p.indexOf('diff --git a/b-small.txt');
+    const head = p.slice(0, cut).replace(/^(@@ -\d+(?:,\d+)? \+\d+,)(\d+)( @@.*)$/m, (_, a, n, b) => `${a}${Number(n) + PAD}${b}\n${pad}`);
+    return head + p.slice(cut);
+  });
+  const grown = await h.mirror.diff({ turn: 'pBig' });
+  assert.ok(grown.patch.indexOf('diff --git a/b-small.txt') > 0 && grown.patch.split('\n').length > 5000 + 10, 'the second section starts past line 5,000');
+  const made = await h.record({ turn_id: 'pBig', file: 'b-small.txt', side: 'new', line: 2 });
+  assert.equal(made.invalid, undefined, JSON.stringify(made));
+  assertShape(made.anchor);
+  assert.equal(made.anchor.quote.exact, '+beta two');
+  assert.equal(made.anchor.line_fp.h, before.line_fp.h);
+  const answers = await h.resolve([before, made.anchor]);
+  for (const a of answers) {
+    assertVisible(a);
+    assert.deepEqual([a.state, a.how, a.at], ['exact', 'line', { file: 'b-small.txt', side: 'new', line: 2 }]);
+  }
+});
+
 test('the text-alone match needs a unique row: a quote whose text now appears twice answers line-not-found', async (t) => {
   const h = await pemWorld(t);
   const v100 = h.rows.find((r) => r.text === '+const v10 = 100;');
