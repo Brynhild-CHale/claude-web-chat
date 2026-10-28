@@ -559,3 +559,127 @@ test('anchor_label: a comment re-anchored with a legacy locator keeps its text l
   const noText = { ...got.anchor, fingerprint: { ...got.anchor.fingerprint, text: '' } };
   assert.equal(describeAnchor(noText), 'm1 @ p.lead', 'no text: the converted path.selector');
 });
+
+// ── the chain (F.6, U406; RULED L7 (a), O5 (a) "chain", Q8 (a)) ─────────────
+// A comment made over live elements records their ids, smallest first, as its
+// chain (a comment@2 version); its record adds chain and chain_label, the pane
+// and the section derived at read time; a removed member reads 'a removed …';
+// a private member reads 'a private element' for a request that does not see
+// private records (lib/client: Claude's tools). A chainless comment is as
+// today (comments-store.test.js replays the whole S-14 golden).
+const CHAINED = Object.keys(SCHEMAS).find((s) => SCHEMAS[s].type === 'comment' && SCHEMAS[s].keys.includes('chain'));
+const addGrab = async (api, mount) => (await ok(api.post('/api/elements', {
+  type: 'box-grab', anchor: { v: 1, kind: 'page', item: mount, mount, rect: RECT(mount), viewport: { w: 1200, h: 800 } },
+  payload: { rect: RECT(mount), meta: { tag: 'p' } },
+}), 'POST box grab')).element;
+
+test('a comment posted with a chain of a live highlight and a live box grab is comment@2 with chain and chain_label (smallest first, then the pane and the section, derived); its event carries chain_private', async (t) => {
+  const { api, srv } = await withServer(t);
+  await ok(api.post('/api/markdown', { id: 'md-title', text: '# Plan\n\n## Options\n\nPick one.' }), 'markdown');
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1');
+  const g = await addGrab(api, 'm1');
+  const r = await ok(api.post('/api/elements', { type: 'comment', anchor: RANGE('m1'), payload: { text: 'on both', shared: true, chain: [h.id, g.id] } }), 'chained comment');
+  assert.equal(r.element.schema, CHAINED);
+  assert.equal(srv.elements.version(r.pin.id, r.pin.v).schema, CHAINED);
+  assert.deepEqual(srv.elements.version(r.pin.id, r.pin.v).payload.chain, [h.id, g.id], 'stored: the ids only');
+  assert.deepEqual(r.pin.chain, [h.id, g.id]);
+  assert.deepEqual(r.element.chain, [h.id, g.id]);
+  assert.equal(r.element.chain_label, `on highlight ${h.id} › box grab ${g.id} › pane m1 › section "Options"`);
+  assert.equal(r.element.anchor_label, 'm1: "Hello"', 'the word level is the anchor\'s own label, unchanged');
+  const got = (await ok(api.get('/api/elements?type=comment'))).elements.find((e) => e.id === r.pin.id);
+  assert.equal(got.chain_label, r.element.chain_label, 'the read derives the same label');
+  const ev = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'add').pop();
+  assert.deepEqual(ev.chain_private, [], 'no member is private');
+  // The section follows the page: a heading written above the pane later is read at the next read.
+  await ok(api.post('/api/markdown', { id: 'md-title', text: '# Plan\n\n## Choices' }), 'rewrite the heading');
+  const again = (await ok(api.get('/api/elements?type=comment'))).elements.find((e) => e.id === r.pin.id);
+  assert.match(again.chain_label, /› section "Choices"$/, 'never stored: derived at read time');
+  // A chainless comment: comment@1, no chain, no chain_label, no chain_private.
+  const bare = await addComment(api, 'bare');
+  assert.equal(bare.element.schema, SCHEMA);
+  for (const k of ['chain', 'chain_label']) {
+    assert.equal(k in bare.element, false, k);
+    assert.equal(k in bare.pin, false, k);
+  }
+  const bareEv = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'add').pop();
+  assert.equal('chain_private' in bareEv, false);
+  // Another comment as a member; an empty chain is no chain.
+  const onComment = await ok(api.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'on the pin', chain: [bare.pin.id] } }), 'on a comment');
+  assert.equal(onComment.element.chain_label, `on comment ${bare.pin.id} › pane m1 › section "Choices"`);
+  const empty = await ok(api.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'empty', chain: [] } }), 'empty chain');
+  assert.equal(empty.element.schema, SCHEMA);
+});
+
+test('a chain naming a missing id, a duplicate, more than 8 ids or a non-id is 400 with the hint; nothing is appended', async (t) => {
+  const { api, srv } = await withServer(t);
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1');
+  const before = srv.elements.stats().versions;
+  const many = [];
+  for (let i = 0; i < 9; i++) many.push((await addHighlight(api, 'm1')).id);
+  const afterHighlights = srv.elements.stats().versions;
+  assert.equal(afterHighlights, before + 9);
+  for (const [why, chain] of [
+    ['a missing id', [h.id, 'h999']], ['a duplicate', [h.id, h.id]], ['more than 8', many],
+    ['a non-string', [7]], ['not a list', h.id], ['an empty id', ['']],
+  ]) {
+    const r = await api.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'x', chain } });
+    assert.equal(r.status, 400, `${why}: ${r.status} ${r.text}`);
+    assert.match(r.json.hint, /at most 8 distinct ids, each an element live on the page/, why);
+  }
+  assert.equal(srv.elements.stats().versions, afterHighlights, 'no refused comment landed');
+  assert.ok((await ok(api.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'x', chain: many.slice(0, 8) } }))).element.chain.length === 8, 'eight is the cap');
+});
+
+test('after the highlight\'s DELETE the label reads "a removed highlight"; the comment still resolves; an edit, a reply and a re-anchor keep comment@2 and the chain', async (t) => {
+  const { api, srv } = await withServer(t);
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1');
+  const g = await addGrab(api, 'm1');
+  const c = (await ok(api.post('/api/elements', { type: 'comment', anchor: RANGE('m1'), payload: { text: 'chained', chain: [h.id, g.id] } }))).pin;
+  await ok(api.del(`/api/elements/${h.id}`), 'delete the highlight');
+  const read = async () => (await ok(api.get('/api/elements?type=comment'))).elements.find((e) => e.id === c.id);
+  const got = await read();
+  assert.ok(got, 'the comment stays');
+  assert.equal(got.chain_label, `on a removed highlight ${h.id} › box grab ${g.id} › pane m1`);
+  assert.deepEqual(got.chain, [h.id, g.id], 'the recorded chain is unchanged');
+  assert.equal(got.anchor_label, 'm1: "Hello"');
+  const ed = await ok(api.patch(`/api/elements/${c.id}`, { text: 'edited' }), 'edit');
+  assert.equal(ed.element.schema, CHAINED);
+  assert.deepEqual(ed.pin.chain, [h.id, g.id]);
+  const rp = await ok(api.post(`/api/elements/${c.id}/reply`, { text: 'a reply', author: 'user' }), 'reply');
+  assert.equal(rp.element.schema, CHAINED);
+  assert.deepEqual(rp.pin.chain, [h.id, g.id]);
+  const ra = await ok(api.patch(`/api/elements/${c.id}`, { anchor: ELEMENT('m1') }), 're-anchor');
+  assert.equal(ra.element.schema, CHAINED);
+  assert.deepEqual(ra.pin.chain, [h.id, g.id]);
+  for (const v of [ed.pin.v, rp.pin.v, ra.pin.v]) assert.deepEqual(srv.elements.version(c.id, v).payload.chain, [h.id, g.id]);
+  const ops = (await events(api)).filter((e) => e.kind === 'comment' && e.pin && e.pin.id === c.id).map((e) => [e.op, Array.isArray(e.chain_private)]);
+  assert.deepEqual(ops, [['add', true], ['edit', true], ['reply', true], ['anchor', true]], 'every chained comment event carries chain_private');
+  // A commit keeps the chain on the node copy, which matches its version.
+  const n = (await turn(api, 'chained')).node_id;
+  const nodeRead = (await ok(api.get(`/api/elements?type=comment&node=${n}`))).elements.find((e) => e.id === c.id);
+  assert.equal(nodeRead.chain_label, `on a removed highlight ${h.id} › box grab ${g.id} › pane m1`, 'a node read reads the node\'s own surface');
+});
+
+test('a private member reads "a private element" (no type, no id) for a request that does not see private records; a local browser sees it named', async (t) => {
+  const { api, port } = await withServer(t);
+  await render(api, 'm1');
+  const h = await addHighlight(api, 'm1');
+  const priv = (await addComment(api, 'secret note', { shared: false })).pin;
+  const r = await ok(api.post('/api/elements', { type: 'comment', anchor: RANGE('m1'), payload: { text: 'over both', shared: true, chain: [priv.id, h.id] } }), 'chained comment');
+  assert.equal(r.element.chain_label, `on comment ${priv.id} › highlight ${h.id} › pane m1`, 'the local browser sees its own private pin');
+  const ev = (await events(api)).filter((e) => e.kind === 'comment' && e.op === 'add').pop();
+  assert.deepEqual(ev.chain_private, [priv.id], 'the event names the private member\'s id only');
+  const viaClient = await client.request(port, 'GET', '/api/elements?type=comment', undefined, { timeout: 10000 });
+  assert.equal(viaClient.status, 200);
+  const seen = viaClient.body.elements.find((e) => e.id === r.pin.id);
+  assert.equal(seen.chain_label, `on a private element › highlight ${h.id} › pane m1`);
+  assert.deepEqual(seen.chain, [null, h.id], 'no id for the private member');
+  assert.ok(!JSON.stringify(viaClient.body).includes(priv.id), 'the private member\'s id never reaches lib/client');
+  // A request that does not see private records cannot name a private element in a chain (C-16-2).
+  const refused = await client.request(port, 'POST', '/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'x', chain: [priv.id] } }, { timeout: 10000 });
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  assert.match(refused.body.hint, /each an element live on the page/);
+});
