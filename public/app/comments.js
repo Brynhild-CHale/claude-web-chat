@@ -374,10 +374,14 @@ function memberType(id) {
   return row ? (row.type || 'element') : null;
 }
 // The chain's label, smallest first: "on highlight h7 › box grab g3", a member
-// gone from the page "a removed highlight h7". '' for no chain.
+// gone from the page "a removed highlight h7", and a null member — a private
+// one, to a viewer that does not see private records (remote-policy
+// dropPrivate; Q8 a) — "a private element", as the daemon's chain_label reads
+// it. '' for no chain.
 function chainLabel(ids) {
   if (!Array.isArray(ids) || !ids.length) return '';
-  const parts = ids.filter((id) => typeof id === 'string' && id).map((id) => {
+  const parts = ids.filter((id) => id === null || (typeof id === 'string' && id)).map((id) => {
+    if (id === null) return 'a private element';
     const t = memberType(id);
     if (t) { chainTypes.set(id, t); return `${typeWords(t)} ${id}`; }
     return `a removed ${typeWords(chainTypes.get(id) || 'element')} ${id}`;

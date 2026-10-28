@@ -1897,3 +1897,213 @@ test('TEXT_RULES: no route a basic viewer may GET serves conversation text its e
     assert.ok(carriers.has(k), `the probe found no conversation text in ${k} (found: ${[...carriers].join(', ')})`);
   }
 });
+
+// U406a (ruling Q8 a; F.6): a shared pin chained on a private element reaches
+// a socket that does not see private records with that member's id null —
+// the rule the element route's pinFor applies — so the remote chrome reads it
+// as 'a private element', never 'a removed comment c5'. A local socket (the
+// one that sees private records) gets the frame byte-identical to before.
+test('U406a: a remote read socket\'s element:comment frame carries chain [null, h] for a shared pin chained on a private element; the local socket keeps the id', async (t) => {
+  const WebSocket = require('ws');
+  const { waitUntil } = require('../test-support/helpers');
+  const { writeJsonAtomic } = require('../lib/core/fsjson');
+  const { userPaths } = require('../lib/core/paths');
+  const root = tmpRoot('wc-u406a-read-');
+  const seed = () => writeJsonAtomic(userPaths().tunnelConfig, {
+    hostname: 'wc.example.test', style: 'flat',
+    access: { team: 'testteam', aud: 'test-aud-0123456789' },
+    allow: { emails: ['me@example.com'], domains: [] },
+    remote: { mirror: { [path.resolve(root)]: 'read' } },
+  });
+  const d = await withServer(t, { root, seed });
+  const ok = async (p, what) => {
+    const r = await p;
+    assert.ok(r.status >= 200 && r.status < 300, `${what}: ${r.status} ${r.text}`);
+    return r.json;
+  };
+  await ok(d.api.post('/api/render', { id: 'm1', html: '<p>Hello</p>' }), 'render');
+  const LOC = { mount: 'm1', selector: 'p', text: 'p', ordinal: 0 };
+  const RANGE = { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } };
+  // A local browser (fetch metadata: seesPrivate) makes the private pin, the
+  // shared highlight and the shared pin chained on both.
+  const priv = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOC, payload: { text: 'wc-u406a-private', shared: false } }), 'private pin')).element.id;
+  const h = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'shared' } }), 'highlight')).element.id;
+  const listen = async (headers) => {
+    const got = [];
+    const sock = new WebSocket(`ws://localhost:${d.port}/ws`, { headers });
+    sock.on('message', (data) => { try { got.push(JSON.parse(data.toString())); } catch {} });
+    await new Promise((resolve, reject) => { sock.on('open', resolve); sock.on('error', reject); });
+    t.after(() => { try { sock.close(); } catch {} });
+    await waitUntil(() => got.some((f) => f.type === 'hello'), { timeout: 5000, what: 'hello' });
+    return got;
+  };
+  const remote = await listen({ 'X-WC-Remote': '1' });
+  const local = await listen({});
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: RANGE,
+    payload: { text: 'over both', shared: true, chain: [priv, h] } }), 'chained pin')).element.id;
+  const frameOf = (got, what) => waitUntil(() => got.filter((f) => f.type === 'element:comment')
+    .find((f) => f.elements.some((p) => p.id === chained)), { timeout: 5000, what });
+  const lf = await frameOf(local, 'local frame');
+  assert.deepStrictEqual(lf.elements.find((p) => p.id === chained).chain, [priv, h], 'the local socket keeps the id');
+  assert.ok(lf.elements.some((p) => p.id === priv), 'and the private pin');
+  const rf = await frameOf(remote, 'remote frame');
+  assert.deepStrictEqual(rf.elements.find((p) => p.id === chained).chain, [null, h], 'a remote read socket: the private member null');
+  assert.ok(!JSON.stringify(rf).includes(`"${priv}"`), 'the private member\'s id is nowhere in the remote frame');
+  assert.ok(!JSON.stringify(remote).includes(`"${priv}"`), 'nor in any frame the remote socket got');
+  // The projection itself: local (the viewer that sees private records) is the
+  // frame itself; read and full null the member in a copy, the frame and the
+  // pin untouched; a kept pin with no private member is shared, not copied.
+  const OTHER = { id: 'c9', shared: true, text: 'x', chain: ['h3'] };
+  const frame = frozen({ type: 'element:comment', elements: [
+    { id: 'c1', shared: true, text: 'a', chain: ['c2', 'h3'] }, { id: 'c2', shared: false, text: 'wc-private' }, OTHER] });
+  assert.equal(projectFrame(frame, 'local'), frame);
+  for (const level of ['read', 'full']) {
+    const out = projectFrame(frame, level);
+    assert.deepStrictEqual(out.elements, [{ id: 'c1', shared: true, text: 'a', chain: [null, 'h3'] }, OTHER], level);
+    assert.equal(out.elements[1], OTHER, `${level}: an unchanged pin is shared`);
+    assert.deepStrictEqual(frame.elements[0].chain, ['c2', 'h3'], `${level}: never mutates`);
+  }
+});
+
+// U406a, re-specified (K.2-161): the frame's own list knows only its pins, so
+// a private HIGHLIGHT member, and a private pin deleted after the chain was
+// made, are named by the element log's answer (domain/elements chainPrivate),
+// which domain/comments emitComments attaches under CHAIN_PRIVATE (a Symbol:
+// the JSON never carries it) and projectFrame unions into the hidden set.
+// Each case is red with that union removed; the local socket and a
+// seesPrivate read keep every id.
+async function chainRig(t, prefix) {
+  const WebSocket = require('ws');
+  const { waitUntil } = require('../test-support/helpers');
+  const { writeJsonAtomic } = require('../lib/core/fsjson');
+  const { userPaths } = require('../lib/core/paths');
+  const root = tmpRoot(prefix);
+  const seed = () => writeJsonAtomic(userPaths().tunnelConfig, {
+    hostname: 'wc.example.test', style: 'flat',
+    access: { team: 'testteam', aud: 'test-aud-0123456789' },
+    allow: { emails: ['me@example.com'], domains: [] },
+    remote: { mirror: { [path.resolve(root)]: 'read' } },
+  });
+  const d = await withServer(t, { root, seed });
+  const ok = async (p, what) => {
+    const r = await p;
+    assert.ok(r.status >= 200 && r.status < 300, `${what}: ${r.status} ${r.text}`);
+    return r.json;
+  };
+  await ok(d.api.post('/api/render', { id: 'm1', html: '<p>Hello</p>' }), 'render');
+  const listen = async (headers) => {
+    const got = [];
+    const sock = new WebSocket(`ws://localhost:${d.port}/ws`, { headers });
+    sock.on('message', (data) => { try { got.push(JSON.parse(data.toString())); } catch {} });
+    await new Promise((resolve, reject) => { sock.on('open', resolve); sock.on('error', reject); });
+    t.after(() => { try { sock.close(); } catch {} });
+    await waitUntil(() => got.some((f) => f.type === 'hello'), { timeout: 5000, what: 'hello' });
+    return got;
+  };
+  const frameWhere = (got, pred, what) => waitUntil(() => got.filter((f) => f.type === 'element:comment').reverse()
+    .find(pred), { timeout: 5000, what });
+  return {
+    d, ok, listen, frameWhere,
+    LOC: { mount: 'm1', selector: 'p', text: 'p', ordinal: 0 },
+    RANGE: { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } },
+  };
+}
+
+test('U406a: a shared pin chained on a PRIVATE HIGHLIGHT reaches a remote read socket as [null, h]; the local socket and a seesPrivate read keep the id', async (t) => {
+  const { d, ok, listen, frameWhere, RANGE } = await chainRig(t, 'wc-u406a-hl-');
+  const hp = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'wc-u406a-private-hl', shared: false } }), 'private highlight')).element.id;
+  const h = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'shared' } }), 'shared highlight')).element.id;
+  const remote = await listen({ 'X-WC-Remote': '1' });
+  const local = await listen({});
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: RANGE,
+    payload: { text: 'over both', shared: true, chain: [hp, h] } }), 'chained pin')).element.id;
+  const has = (f) => f.elements.some((p) => p.id === chained);
+  const lf = await frameWhere(local, has, 'local frame');
+  assert.deepStrictEqual(lf.elements.find((p) => p.id === chained).chain, [hp, h], 'the local socket keeps the id');
+  const rf = await frameWhere(remote, has, 'remote frame');
+  assert.deepStrictEqual(rf.elements.find((p) => p.id === chained).chain, [null, h], 'a remote read socket: the private highlight null');
+  assert.ok(!JSON.stringify(remote).includes(`"${hp}"`), 'the private highlight\'s id is in no frame the remote socket got');
+  // A seesPrivate read (a local browser) is unchanged: the id and its label.
+  const got = await ok(d.anonApi.get('/api/elements?type=comment'), 'local read');
+  const rec = got.elements.find((p) => p.id === chained);
+  assert.deepStrictEqual(rec.chain, [hp, h], 'a seesPrivate read keeps the id');
+  assert.match(rec.chain_label, new RegExp(`highlight ${hp}`), 'and names it');
+});
+
+test('U406a: a shared pin chained on a private pin that is then DELETED reaches a remote read socket as [null, h] on the next frame; the local socket keeps the id', async (t) => {
+  const { d, ok, listen, frameWhere, LOC, RANGE } = await chainRig(t, 'wc-u406a-del-');
+  const priv = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOC, payload: { text: 'wc-u406a-private', shared: false } }), 'private pin')).element.id;
+  const h = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'shared' } }), 'highlight')).element.id;
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: RANGE,
+    payload: { text: 'over both', shared: true, chain: [priv, h] } }), 'chained pin')).element.id;
+  const remote = await listen({ 'X-WC-Remote': '1' });
+  const local = await listen({});
+  await ok(d.anonApi.del(`/api/elements/${priv}`), 'delete the private pin');
+  const gone = (f) => f.elements.some((p) => p.id === chained) && !f.elements.some((p) => p.id === priv);
+  const lf = await frameWhere(local, gone, 'local frame after the delete');
+  assert.deepStrictEqual(lf.elements.find((p) => p.id === chained).chain, [priv, h], 'the local socket keeps the id');
+  const rf = await frameWhere(remote, gone, 'remote frame after the delete');
+  assert.deepStrictEqual(rf.elements.find((p) => p.id === chained).chain, [null, h], 'a remote read socket: the deleted private member null');
+  assert.ok(!JSON.stringify(remote).includes(`"${priv}"`), 'the deleted pin\'s id is in no frame the remote socket got');
+});
+
+test('U406a: CHAIN_PRIVATE — projectFrame unions the carried ids into the hidden set below local; the local frame is itself and its JSON never carries them', () => {
+  const { CHAIN_PRIVATE } = require('../lib/core/remote-policy');
+  const frame = { type: 'element:comment', elements: [
+    { id: 'c1', shared: true, text: 'a', chain: ['h5', 'h3'] }, { id: 'c9', shared: true, text: 'x', chain: ['h3'] }] };
+  frame[CHAIN_PRIVATE] = ['h5', 'c4'];
+  const json = JSON.stringify(frame);
+  assert.equal(json, JSON.stringify({ type: frame.type, elements: frame.elements }), 'the Symbol adds no byte');
+  assert.equal(projectFrame(frame, 'local'), frame, 'local: the frame itself');
+  for (const level of ['read', 'full']) {
+    const out = projectFrame(frame, level);
+    assert.deepStrictEqual(out.elements[0].chain, [null, 'h3'], `${level}: the carried member null`);
+    assert.equal(out.elements[1], frame.elements[1], `${level}: a pin no carried id names is shared`);
+    assert.deepStrictEqual(frame.elements[0].chain, ['h5', 'h3'], `${level}: never mutates`);
+  }
+  // A route body carries it too: dropPrivate reads it at the top level.
+  const body = { comments: [{ id: 'c1', shared: true, chain: ['b2'] }] };
+  body[CHAIN_PRIVATE] = ['b2'];
+  assert.deepStrictEqual(dropPrivate('routes', 'GET /preview/node/:id', body).comments[0].chain, [null]);
+});
+
+// U406a, the node reads (brief item 4): a committed node's comments[] below
+// seesPrivate takes the same path. routes/graph.js privateFor attaches the
+// node's chained copies' private members (domain/elements chainPrivate, read
+// against the node itself) under CHAIN_PRIVATE, so a shared pin chained on a
+// private highlight, and on a private pin deleted before the commit, reaches
+// lib/client and a remote read viewer as [null, null] — in the node read and
+// the node preview alike. The local browser keeps both ids. Red with the
+// CHAIN_PRIVATE attach removed from privateFor.
+test('U406a: GET /api/graph/node/:id and /preview/node/:id — a shared pin chained on a private highlight and a deleted private pin reads [null, null] for lib/client and a remote read viewer; the local browser keeps both ids', async (t) => {
+  const client = require('../lib/client');
+  const { d, ok, LOC, RANGE } = await chainRig(t, 'wc-u406a-node-');
+  const hp = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'wc-u406a-private-hl', shared: false } }), 'private highlight')).element.id;
+  const priv = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOC, payload: { text: 'wc-u406a-private', shared: false } }), 'private pin')).element.id;
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: RANGE,
+    payload: { text: 'over both', shared: true, chain: [hp, priv] } }), 'chained pin')).element.id;
+  await ok(d.anonApi.del(`/api/elements/${priv}`), 'delete the private pin');
+  await ok(d.api.post('/api/turn-begin', { message: 'u406a node' }), 'turn-begin');
+  const id = (await ok(d.api.post('/api/turn-end', { author: 'claude', summary: 'u406a node' }), 'turn-end')).node_id;
+  assert.ok(id, 'a node was committed');
+  const call = (p, headers) => client.request(d.port, 'GET', p, null, { headers, timeout: 10000 });
+  const quoted = (body, x) => (typeof body === 'string' ? body : JSON.stringify(body)).includes(`"${x}"`);
+
+  // The local browser (Node fetch: fetch metadata, seesPrivate) keeps both ids.
+  const browser = await ok(d.anonApi.get(`/api/graph/node/${id}`), 'browser node read');
+  assert.deepStrictEqual(browser.comments.find((c) => c.id === chained).chain, [hp, priv], 'the local browser keeps both ids');
+
+  for (const [who, headers] of [['lib/client', undefined], ['remote read', { 'X-WC-Remote': '1' }]]) {
+    const r = await call(`/api/graph/node/${id}`, headers);
+    assert.equal(r.status, 200, `${who}: ${JSON.stringify(r.body)}`);
+    assert.deepStrictEqual(r.body.comments.find((c) => c.id === chained).chain, [null, null], `${who}: both private members null`);
+    for (const x of [hp, priv]) assert.ok(!quoted(r.body, x), `${who}: ${x} is nowhere in the node read`);
+    const p = await call(`/preview/node/${id}`, headers);
+    assert.equal(p.status, 200, `${who} preview`);
+    const html = typeof p.body === 'string' ? p.body : JSON.stringify(p.body);
+    assert.ok(quoted(html, chained), `${who} preview: the chained pin is drawn`);
+    for (const x of [hp, priv]) assert.ok(!quoted(html, x), `${who} preview: ${x} is nowhere in the document`);
+  }
+  const bp = await d.anonApi.get(`/preview/node/${id}`);
+  for (const x of [hp, priv]) assert.ok(quoted(bp.text, x), `the local browser's preview keeps ${x}`);
+});

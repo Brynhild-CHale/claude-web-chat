@@ -439,6 +439,7 @@ const REVIEWED = new Map([
   ['elements.js fn:editOf', 'the one edit PATCH and POST /api/elements/:id/send call (F.5, U405): writes the pin it found by id back into state.comments; it answers that pin only to those two routes, each gated first — a private element answers 404 to anyone but a local browser (C-16-2)'],
   ['elements.js PATCH /api/elements/:id', 'a write (edit, re-anchor): answers the element it found by id — gated: a private element answers 404 to anyone but a local browser (C-16-2)'],
   ['elements.js POST /api/elements/:id/reply', 'a write (reply): answers the pin it found by id — gated: a private pin answers 404 to anyone but a local browser (C-16-2)'],
+  ['graph.js fn:privateFor', 'the node reads\' private filter (U406a, Q8 a): reads the body\'s comments[] only to name each chained copy\'s private members (domain/elements chainPrivate) for dropPrivate to null; it serves nothing itself — its callers are the PRIVATE_RULES.routes handlers'],
   ['graph.js fn:execWipe', 'deletes the pins whose item is gone (deleteComment); never serves'],
   ['graph.js fn:execNewGraph', 'deletes every pin (deleteComment); never serves'],
 ]);
