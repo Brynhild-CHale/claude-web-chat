@@ -1297,6 +1297,70 @@ function onPick(e) {
   st.finish({ kind: st.kind, record: rec, mount: st.kind === 'source' ? where.md : where.mount });
 }
 
+// ── the elements under a point (F.6, U406) ─────────────────────────────────
+// elementsAt(x, y) → [{id, type, area}], smallest first (ties by id): the
+// drawn scope's elements whose PLACED answer holds the viewport point — a
+// range answer whose client rects hold it (area: the rects' total), an
+// element answer whose box holds it (rectOf; its area) — and every live box
+// grab's page record whose rect, placed in its item's current content box
+// (a pane's .mount-host, a markdown item's block: K.2-72's frame of
+// reference) and moved by its content box's scroll since the grab (K.2-80:
+// the rect was measured at the grab's own scroll), holds it. A hidden, an
+// orphaned, a carried guess's or a section answer is never one, nor is a
+// pending row. A comment's pick (comments.js) reads it as the chain of the
+// live elements under the press. Box reads go through rectOf; nothing is
+// drawn or stored here.
+export function elementsAt(x, y) {
+  const px = Number(x);
+  const py = Number(y);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return [];
+  const holds = (r) => !!r && px >= r.left && px <= r.left + r.width && py >= r.top && py <= r.top + r.height;
+  const areaOf = (r) => Math.max(0, r.width) * Math.max(0, r.height);
+  const hits = new Map();
+  const hit = (row, area) => {
+    const prior = hits.get(row.id);
+    if (!prior || area < prior.area) hits.set(row.id, { id: row.id, type: row.type, area });
+  };
+  for (const e of answers.values()) {
+    if (e.scope !== drawnScope || !e.rule || e.rule.draw !== 'hit' || e.row.pending) continue;
+    const raw = e.raw;
+    if (raw.range) {
+      let rs = [];
+      try { rs = typeof raw.range.getClientRects === 'function' ? [...raw.range.getClientRects()] : []; } catch { rs = []; }
+      if (!rs.length) { const r = cfg.rectOf(raw.range); if (r) rs = [r]; }
+      const box = (r) => ({ left: r.left, top: r.top,
+        width: r.width != null ? r.width : r.right - r.left, height: r.height != null ? r.height : r.bottom - r.top });
+      const bs = rs.map(box);
+      if (bs.some(holds)) hit(e.row, bs.reduce((n, b) => n + areaOf(b), 0));
+    } else if (raw.el) {
+      const r = cfg.rectOf(raw.el);
+      if (holds(r)) hit(e.row, areaOf(r));
+    }
+  }
+  const well = $('main');
+  for (const row of scopes[drawnScope].rows.values()) {
+    const a = row.anchor;
+    if (row.pending || !a || a.kind !== 'page' || a.item == null || !a.rect || !well) continue;
+    const item = String(a.item);
+    let base = null;
+    if (a.mount != null) {
+      const pane = [...well.querySelectorAll('.pane[data-pane-id]')].find((el) => el.dataset.paneId === item);
+      base = pane ? pane.querySelector('.mount-host') : null;
+    } else {
+      base = [...well.querySelectorAll('[data-md-id]')].find((el) => el.getAttribute('data-md-id') === item) || null;
+    }
+    const frame = base ? cfg.rectOf(base) : null;
+    if (!frame) continue;
+    const sc = a.scroll && typeof a.scroll === 'object' ? a.scroll : {};
+    const dx = (Number(sc.left) || 0) - (Number(base.scrollLeft) || 0);
+    const dy = (Number(sc.top) || 0) - (Number(base.scrollTop) || 0);
+    const r = { left: frame.left + (Number(a.rect.x) || 0) + dx, top: frame.top + (Number(a.rect.y) || 0) + dy,
+      width: Number(a.rect.w) || 0, height: Number(a.rect.h) || 0 };
+    if (holds(r)) hit(row, areaOf(r));
+  }
+  return [...hits.values()].sort((m, n) => (m.area - n.area) || (m.id < n.id ? -1 : m.id > n.id ? 1 : 0));
+}
+
 // ── init ────────────────────────────────────────────────────────────────────
 // initOverlay(opts?) creates the layer once and wires its inputs; every call
 // may set the injectables: {rectOf, raf, now, budget_ms, clips}.
