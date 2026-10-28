@@ -264,6 +264,52 @@ test('the single-key ratchet row: shell.js 0, graph-view.js its baseline, a plan
   assert.equal(count(fs.readFileSync(copy, 'utf8')), 2, 'both planted comparisons are counted');
 });
 
+// ── once per press: repeat: false (U404b; F.4, K.2-157 (4)) ─────────────────
+// A held key's auto-repeat sends keydowns with e.repeat set; an action
+// registered repeat: false fires on the first and on none of those — the
+// registry's one rule, in lookup — while every other action keeps its repeat.
+test('repeat: false fires once for a keydown followed by auto-repeats; an action without the flag fires on each', () => {
+  const { reg, ran, press } = fixture();
+  reg.registerAction({ id: 'chrome.toggle', label: 'toggle', defaultChord: 'T', repeat: false, run: () => ran.push('chrome.toggle') });
+  // A held T: one keydown, then four with repeat: true.
+  press('T', 'page', { repeat: false });
+  for (let i = 0; i < 4; i++) press('T', 'page', { repeat: true });
+  assert.deepEqual(ran, ['chrome.toggle'], 'the toggle fired once');
+  // The dropped repeat is still the action's key (the dispatch claims it).
+  const held = reg.lookup('T', 'page', { repeat: true });
+  assert.equal(held.id, 'chrome.toggle');
+  assert.equal(held.dropped, 'repeat');
+  assert.equal(reg.lookup('T', 'page').dropped, undefined, 'a fresh press is not dropped');
+  // A second press fires again.
+  press('T', 'page', { repeat: false });
+  assert.deepEqual(ran, ['chrome.toggle', 'chrome.toggle']);
+  // The default: [ held fires on every keydown, repeats included.
+  ran.length = 0;
+  press('[', 'page', { repeat: false });
+  for (let i = 0; i < 4; i++) press('[', 'page', { repeat: true });
+  assert.deepEqual(ran, Array(5).fill('chrome.prev'), 'Previous / next keeps its auto-repeat');
+  assert.equal(reg.lookup('[', 'page', { repeat: true }).dropped, undefined);
+});
+
+test('repeat: false follows the action to a rebound key; a disabled one stays the page\'s on a repeat too', () => {
+  const rec = { user: { bindings: { T: null, Y: chrome('chrome.toggle') } } };
+  const { reg, ran, press } = fixture(rec);
+  let on = true;
+  reg.registerAction({ id: 'chrome.toggle', label: 'toggle', defaultChord: 'T', repeat: false, enabled: () => on,
+    run: () => ran.push('chrome.toggle') });
+  press('Y', 'page');
+  press('Y', 'page', { repeat: true });
+  assert.deepEqual(ran, ['chrome.toggle'], 'the flag is the action\'s, not the key\'s');
+  on = false;
+  assert.equal(reg.lookup('Y', 'page', { repeat: true }), null, 'disabled: the press is the page\'s, repeat or not');
+});
+
+test('registerAction refuses a repeat that is not true or false', () => {
+  const { reg } = fixture();
+  assert.throws(() => reg.registerAction({ id: 'chrome.z', label: 'z', repeat: 'no', run: () => {} }), /repeat is true or false/);
+  assert.equal(reg.actionOf('chrome.graph').repeat, true, 'the default is true');
+});
+
 // ── the last-tool key (U404; F.4, REQ@tool-toggle-key M1) ────────────────────
 // ONE chrome action, 'tools.last', which tools.js registers in the chrome's
 // registry (the one hk's module-wide exports are bound to): Space by default,
@@ -295,6 +341,10 @@ test('tools.last: Space in the page context; never in a field, never in the over
   assert.deepEqual(row.context, ['page']);
   assert.equal(row.label, 'Put down / pick up the last tool');
   assert.equal(hk.keyFor('tools.last'), 'Space');
+});
+  assert.equal(idOf(held), 'tools.last');
+  assert.equal(held.dropped, 'repeat');
+  assert.equal(hk.lookup('Space', 'page').dropped, undefined);
 });
 
 test('tools.last enabled(): false with focus on a control (a pane button or a chrome checkbox, pierced through a shadow root); true on #stage, on body and on a [tabindex=-1] container', async (t) => {

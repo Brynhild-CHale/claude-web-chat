@@ -5,7 +5,7 @@
 // chrome's defaults in initShell, so there is no import cycle):
 //
 //   registerAction({id, label, defaultChord, context, whenField, rebindable,
-//                   enabled?, legend?, run})
+//                   repeat?, enabled?, legend?, run})
 //       id           a chrome action id (the toolbar record's grammar,
 //                    /^[a-z][a-z0-9.-]{0,63}$/): what a {kind: 'chrome', action}
 //                    binding names. A second registration of an id throws.
@@ -23,6 +23,12 @@
 //                    text field has focus, in the chrome or inside a pane.
 //       rebindable   false: no record binding may name it (the palette's ⌘K,
 //                    and every descriptive row).
+//       repeat       true (the default): the key's auto-repeat fires it again on
+//                    every repeated keydown (arrows, Previous / next, the layer
+//                    keys). false: it fires once per press — a keydown with
+//                    e.repeat set is dropped before it runs, whatever key is
+//                    bound to it (U404b: the last-tool toggle, which flickered
+//                    down and up on a held Space). The ONE rule is lookup's.
 //       enabled      () → boolean, read at the press: false and the press is
 //                    the page's (M under a float preview or the replay).
 //       legend       {section, order, row?, label?}: its place in the shortcut
@@ -38,9 +44,15 @@
 //                        metaKey or ctrlKey (Shift dropped under it); Alt never
 //                        read (the shell's switch never read it). Escape, Tab
 //                        and the bare modifiers → null.
-//   lookup(chord, ctx, {inField})  → the resolved action ({id, label, run,
-//                        …}) over default ⊕ user ⊕ project bindings, merged per
-//                        key by /app/tier-merge.js, or null.
+//   lookup(chord, ctx, {inField, repeat})  → the resolved action ({id, label,
+//                        run, …}) over default ⊕ user ⊕ project bindings, merged
+//                        per key by /app/tier-merge.js, or null. `repeat` is the
+//                        keydown's e.repeat: for an action registered repeat:
+//                        false it gives the action with a `run` that does
+//                        nothing and `dropped: 'repeat'`, so the dispatch still
+//                        claims the held key (prevents its default — a held
+//                        Space does not scroll the page once it has toggled)
+//                        but nothing fires.
 //   registerTargetKind(kind, resolve)  a binding kind this module cannot
 //                        resolve itself (U337: 'slot', 'tool'). resolve(target)
 //                        → {run, label?, context?, whenField?, enabled?} | null.
@@ -77,6 +89,7 @@ import { toolbarState, onToolbarChange } from './toolbar-state.js';
 export const CONTEXTS = Object.freeze(['page', 'overlay', 'replay', 'drawer', 'sheet']);
 const ID_RE = /^[a-z][a-z0-9.-]{0,63}$/;
 
+const DROPPED = () => {};    // lookup's run for a dropped auto-repeat
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -144,13 +157,14 @@ export function createRegistry({ records = () => ({ user: null, project: null })
 
   function registerAction(spec) {
     if (!isObject(spec)) throw new TypeError('registerAction: expects {id, label, defaultChord, context, run, …}');
-    const { id, label, defaultChord = null, context, whenField = false, rebindable = true, enabled = null,
-      legend = null, run = null } = spec;
+    const { id, label, defaultChord = null, context, whenField = false, rebindable = true, repeat = true,
+      enabled = null, legend = null, run = null } = spec;
     if (typeof id !== 'string' || !ID_RE.test(id)) throw new TypeError(`registerAction: '${id}' is not an action id`);
     if (actions.has(id)) throw new TypeError(`registerAction: '${id}' is already registered`);
     if (typeof label !== 'string' || !label) throw new TypeError(`registerAction: '${id}' needs a label`);
     if (run !== null && typeof run !== 'function') throw new TypeError(`registerAction: '${id}' run is a function or null`);
     if (enabled !== null && typeof enabled !== 'function') throw new TypeError(`registerAction: '${id}' enabled is a function`);
+    if (typeof repeat !== 'boolean') throw new TypeError(`registerAction: '${id}' repeat is true or false`);
     const chords = listOf(defaultChord);
     for (const c of chords) {
       if (typeof c !== 'string' || !c) throw new TypeError(`registerAction: '${id}' has a chord that is not a string`);
@@ -160,7 +174,7 @@ export function createRegistry({ records = () => ({ user: null, project: null })
     }
     const action = Object.freeze({
       id, label, chords: Object.freeze(chords), contexts: contextsOf(context), whenField: whenField === true,
-      rebindable: run !== null && rebindable !== false, enabled, run,
+      rebindable: run !== null && rebindable !== false, repeat, enabled, run,
       legend: legend ? Object.freeze({ ...legend }) : null,
     });
     actions.set(id, action);
@@ -251,7 +265,8 @@ export function createRegistry({ records = () => ({ user: null, project: null })
       if (!a.run) return { inert: `'${a.id}' is a descriptive row` };
       if (tier === 'project') return { inert: 'a chrome action is rebound in the user record only' };
       if (tier !== 'default' && !a.rebindable) return { inert: `'${a.id}' is not rebindable` };
-      return { action: a.id, label: a.label, run: a.run, contexts: a.contexts, whenField: a.whenField, enabled: a.enabled };
+      return { action: a.id, label: a.label, run: a.run, contexts: a.contexts, whenField: a.whenField, enabled: a.enabled,
+        repeat: a.repeat };
     }
     const r = kinds.get(target.kind);
     if (!r) return { inert: `no resolver for the kind '${target.kind}'` };
@@ -273,7 +288,7 @@ export function createRegistry({ records = () => ({ user: null, project: null })
     return null;
   }
 
-  function lookup(chord, ctx = 'page', { inField = false } = {}) {
+  function lookup(chord, ctx = 'page', { inField = false, repeat = false } = {}) {
     if (typeof chord !== 'string' || !chord) return null;
     const entry = entryFor(chord);
     if (!entry || entry.value == null) return null;
@@ -281,6 +296,11 @@ export function createRegistry({ records = () => ({ user: null, project: null })
     if (r.inert || !r.contexts.includes(ctx)) return null;
     if (inField && !r.whenField) return null;
     if (r.enabled && !r.enabled()) return null;
+    // A once-per-press action on an auto-repeated keydown: still the action's
+    // key (the dispatch claims it), but nothing fires.
+    if (repeat === true && r.repeat === false) {
+      return Object.freeze({ id: r.action || null, label: r.label, run: DROPPED, tier: entry.tier, chord, dropped: 'repeat' });
+    }
     return Object.freeze({ id: r.action || null, label: r.label, run: r.run, tier: entry.tier, chord });
   }
 

@@ -1002,7 +1002,10 @@ function initKeyboard() {
     // The overlay owns every other single key while it is open (arrows, Space, ↵,
     // A, E, B — graph-view.js), so it is its own context: only the actions that
     // answer there (`?`, whose sheet opens over it; ⌘K, which it swallows) do.
-    const a = lookup(chordOf(e), isOverlayOpen() ? 'overlay' : 'page', { inField: editable });
+    // e.repeat rides along: an action registered repeat: false (the last-tool
+    // toggle) fires once per press, never on the key's auto-repeat — the
+    // registry's rule, not this dispatch's.
+    const a = lookup(chordOf(e), isOverlayOpen() ? 'overlay' : 'page', { inField: editable, repeat: e.repeat === true });
     if (a) { e.preventDefault(); a.run(); }
   });
 }
