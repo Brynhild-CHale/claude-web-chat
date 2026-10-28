@@ -939,6 +939,33 @@ test('the thread\'s writes reach the tray action guard: once a preview has start
   }
 });
 
+// ── the page title takes a pin (U403a, K.2-162 PQ-F-3) ─────────────────────
+test('the page title\'s heading and its first paragraph take a comment pin: the meta line sits outside the item the resolver aligns', async () => {
+  const text = '# Page title\n\nThe first paragraph under it.';
+  await putMd(text);
+  try {
+    assert.equal(W.document.getElementById('page-title').textContent, 'Page title', 'precondition: md-sec is the page title');
+    assert.ok(W.document.querySelector('#main .page-meta'), 'precondition: its meta line is drawn');
+    const { sourceMap } = await shell.importApp('markdown.js');
+    const h1 = mdItem().querySelector('h1');
+    const p = mdItem().querySelector('p');
+    for (const el of [h1, p]) {
+      const range = W.document.createRange();
+      range.selectNodeContents(el);
+      assert.ok(anchors.recordSource(mdItem(), range, sourceMap(text), text, { md: 'md-sec' }), `recordSource answers for the title item's ${el.tagName}`);
+    }
+    const head = await pinTap(h1, 51);
+    assert.ok(head, 'the title heading tap opened the composer and posted');
+    assert.equal(head.anchor.kind, 'source');
+    assert.equal(head.anchor.quote.exact, 'Page title');
+    assert.equal(head.locator.selector, 'h1');
+    const prose = await pinTap(p, 52);
+    assert.ok(prose, 'the first paragraph tap posted');
+    assert.equal(prose.anchor.quote.exact, 'The first paragraph under it.');
+    assert.equal(prose.locator.section, 'Page title');
+  } finally { await dropMd(); }
+});
+
 // ── get_comments, replayed against a real daemon ───────────────────────────
 // Last: the shell's globals go back first (a daemon's timers need Node's own).
 const captured = { body: null };
