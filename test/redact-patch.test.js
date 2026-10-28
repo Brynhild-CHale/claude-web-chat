@@ -379,19 +379,28 @@ test('M-10: dotenv lines under .env and under the neutral config/app.txt: every 
   }
 });
 
-// A finding for the gate (U412 hand-off), not a fix here: these rows'
-// numbering holds, but their secrets are rendered. No rule masks the
-// marker-less base64 body under a neutral name, and the env-dotenv mode does
-// not read a patch's `+KEY=value` lines (under .env too). Marked todo so the
-// suite stays green while the gap stays visible; it flips once a ruling lands.
-test('M-10: no fake-secret bytes rendered for src/fixture.json, .env and config/app.txt', { todo: 'U412 finding: redactPatch leaves these secrets; awaiting a ruling' }, () => {
-  const rows = [
-    ['src/fixture.json', serviceAccount('src/fixture.json').patch, fake('pem-pkcs8')],
-    ['.env', dotenvPatch('.env').patch, fake('env-dotenv')],
-    ['config/app.txt', dotenvPatch('config/app.txt').patch, fake('env-dotenv')],
+// The three documented limits (DECISIONS.md L.6, ruled 2026-10-28,
+// REQ@patch-redaction (c)): the line-number half of M-10 holds on each of
+// these rows (above), but their fake secrets reach the rendered diff by
+// design, and no redaction rule changes for them. This case pins today's
+// behaviour so a change to it is seen, and names each limit:
+//   1. a bare PEM body with no BEGIN/END marker in a neutral file — no rule
+//      masks marker-less base64 under a name that says nothing;
+//   2. dotenv-shaped values outside a dotenv file — env values are masked only
+//      in a dotenv context;
+//   3. a tracked .env file's values inside a patch — the dotenv rule reads
+//      KEY= at a line's start, and a patch line opens with its +/-/space prefix
+//      (a tracked .env is the repository's own choice).
+test('M-10 known limits (L.6): a bare PEM body in a neutral file, dotenv values outside a dotenv file, a tracked .env in a patch', () => {
+  const limits = [
+    ['bare PEM body, no marker lines, in a neutral file', 'src/fixture.json', serviceAccount('src/fixture.json').patch, fake('pem-pkcs8')],
+    ['dotenv-shaped values outside a dotenv file', 'config/app.txt', dotenvPatch('config/app.txt').patch, fake('env-dotenv')],
+    ["a tracked .env file's values inside a patch", '.env', dotenvPatch('.env').patch, fake('env-dotenv')],
   ];
-  for (const [file, patch, f] of rows) {
+  for (const [limit, file, patch, f] of limits) {
     const out = createRedactor().patch(patch, { context: { file } });
-    assert.deepEqual(findLeaks(renderDiff(out), [f]).map((l) => l.id), [], file);
+    const leaks = findLeaks(renderDiff(out), [f]);
+    assert.ok(leaks.length > 0, `limit "${limit}" (${file}): today its secret is rendered; if this now masks, the limit closed — update L.6's list`);
+    assert.deepEqual([...new Set(leaks.map((l) => l.id))], [f.id], `${limit}: only ${f.id}'s bytes`);
   }
 });
