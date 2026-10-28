@@ -1,13 +1,17 @@
-// The page well's element overlay (annotation engine 2A.1): ONE body-level
-// layer, #el-layer, that draws the anchored elements of the page from the
-// resolver's answers, clipped to what the page actually shows. It is the one
-// home of the overlay concept (PLAN.md §0's engines rule): the element types
-// (comment, highlight, box grab), the hidden-state probe, the report batching,
-// the input-mode policy, the tool arming and the orphan stand-in all plug in
+// The element overlay (annotation engine 2A.1, 3C.1): a registry of HOSTS,
+// each drawing the anchored elements it holds into a body-level layer of its
+// own at its rung of the z ladder, from the resolver's (or its own place's)
+// answers, clipped to what its well actually shows. The page well is the
+// FIRST host of the registry: initOverlay registers it ('page') before any
+// other, on #main, its layer #el-layer at --z-pins. It is the one home of the
+// overlay concept (PLAN.md §0's engines rule): the element types (comment,
+// highlight, box grab), the hidden-state probe, the report batching, the
+// input-mode policy, the tool arming, the orphan stand-in and every later
+// host (the chat's, the graph inspector's turn list: registerHost) all plug in
 // through the seams below, never by editing this file.
 //
-// What it draws. Two element sets, 'live' and 'preview'; the one drawn is the
-// one matching view.previewing. 'live' is filled from the hello and reset
+// What the page draws. Two element sets, 'live' and 'preview'; the one the
+// page host draws is the one matching view.previewing. 'live' is filled from the hello and reset
 // frames' `elements` (with the frame's `surface` counter kept beside it); a
 // later unit relays incremental element frames through setElements /
 // upsertElements / removeElements. 'preview' is filled from the previewed
@@ -39,13 +43,36 @@
 // 'overlay:frame' and summed in stats().
 //
 // The clip (S-1). A marker is drawn only when its anchor point lies inside the
-// intersection of the viewport, the well's box (#main) and the client box of
+// intersection of the viewport, its host's well's box (#main for the page) and
+// the client box of
 // every overflow-clipping ancestor from the anchor up through each shadow host
 // (getRootNode().host); the glyph's own box — the anchor point plus the
 // marker's transform offset and size, both written inline from the type's
 // glyph, so the clip reads exactly what is drawn — is clipped to that
 // intersection with clip-path, so no part of a glyph paints over the rail,
 // the minbar or the bottom bar.
+//
+// The hosts (3C.1, R2 §3 'a host registry: one overlay layer per host at its
+// rung'). registerHost(name, {root, well, rung, kinds, place, hidden?,
+// settle?, glyph?}) → unregister. A row whose anchor kind a host lists in
+// `kinds` is that host's, never the page resolver's; one row may be several
+// hosts' (a chat pin drawn in the dock and listed in the turn list), so a
+// host's answers are kept per (host, id), apart from the page's. A host's rows
+// live in the 'live' set and are drawn whatever view.previewing says (a chat
+// pin is not a node's content, C1): a preview, a hello or reset frame, a Wipe
+// or New graph swap the page's rows only. A host is marked dirty at its
+// registration, by its settle and by a mutation under its root; the next draw
+// frame re-places each dirty host's rows ONCE — place(row) (DOM queries only,
+// no box read), then hidden(), then DRAW_RULES — and a scroll or a resize only
+// re-measures. Its layer is #el-layer-<name> (class el-host-layer) at
+// var(<rung>), appended to <body> after #stage, so it paints over its host and
+// under every panel; its well (an element, or fn(group) for a host whose rows
+// sit in two scroll boxes) takes #main's place in the clip. THE NEVER-DRAW
+// RULE: a frame is never a host (an iframe root or well, or one in another
+// document, is refused), and no layer paints a glyph over a displayed iframe
+// (each draw frame's census: the document's iframes, and for the page those
+// in the shadow root of each pane holding a group). Answers, reports and
+// orphans() are the page's alone: a host's state is the daemon's (D5).
 //
 // It makes no network call, sends no report (U314's, through onAnswers), and
 // assigns `hidden` only through the probe seam (U303's). Previews are
@@ -76,6 +103,12 @@ const EXACT = stateOf('exact');
 const RE_RESOLVED = stateOf('re-resolved');
 const ORPHANED = stateOf('orphaned');
 const HIDDEN = stateOf('hidden');
+// L4's drawn states (RULED REQ@visible-states): a host's answers carry them
+// (the daemon's, U414 / U416); the page resolver never answers one.
+const MASKED = stateOf('masked');
+const SUPERSEDED = stateOf('superseded');
+const INDEXING = stateOf('indexing');
+const UNAVAILABLE = stateOf('unavailable');
 
 export const DEFAULT_BUDGET_MS = 10;
 export const SCOPES = Object.freeze(['live', 'preview']);
@@ -93,6 +126,15 @@ export const MARKER_GLYPH = Object.freeze({ dx: -13, dy: -26, w: 26, h: 26 });
 // M3): a press inside one of these, inside a [data-md-id] item, is the tool's;
 // a press on the item's gaps, or on the chrome inside #main, is the page's.
 export const MD_BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
+// The hosts a layer may be registered for: each one's layer id is reserved
+// (lib/server/domain/mounts.js RESERVED_IDS: 'el-layer', 'el-layer-chat',
+// 'el-layer-turns'). A later host adds its name here and its id there in one
+// change. The page is registered by initOverlay; U432 registers 'chat', U433
+// 'turns'.
+export const HOST_NAMES = Object.freeze(['page', 'chat', 'turns']);
+// The anchor kinds the page host holds (plus the kind-less and 'page' rows it
+// keeps and never draws): no other host may list one.
+export const PAGE_KINDS = Object.freeze(['element', 'range', 'source']);
 
 // THE DRAW RULES: how an answer is drawn, first matching row wins. `how` and
 // `guess` null match anything. A section answer (re-resolved, how 'section')
@@ -101,7 +143,12 @@ export const MD_BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
 // 'locator-guess', a guess element) is drawn at the guess as a carried guess,
 // flagged for the re-anchor seam (I.8 O1, I.7 M1, alpha.1 finding K-10); an
 // orphan with no guess is never drawn and is listed by orphans(); a hidden
-// element (the probe's) is neither drawn nor listed.
+// element (the probe's) is neither drawn nor listed. L4's four drawn states
+// (masked, superseded, indexing, unavailable: a host's answers, the daemon's)
+// are drawn at the element their host placed them on, each with its own class,
+// and never listed; their one-line explanation is the answer's own (`explain`,
+// the daemon's EXPLAIN), never a table here. 'Placed' is exact | re-resolved
+// (the rows above); 'refused' is never stored (D3) and has no row.
 export const DRAW_RULES = Object.freeze([
   Object.freeze({ state: EXACT, how: null, guess: null, draw: 'hit', cls: 'el-hit', listed: false }),
   Object.freeze({ state: RE_RESOLVED, how: 'section', guess: null, draw: 'section', cls: 'el-section', listed: false }),
@@ -110,6 +157,10 @@ export const DRAW_RULES = Object.freeze([
   Object.freeze({ state: ORPHANED, how: null, guess: true, draw: 'guess', cls: 'el-guess', listed: true }),
   Object.freeze({ state: ORPHANED, how: null, guess: false, draw: 'none', cls: null, listed: true }),
   Object.freeze({ state: HIDDEN, how: null, guess: null, draw: 'none', cls: null, listed: false }),
+  Object.freeze({ state: MASKED, how: null, guess: null, draw: 'hit', cls: 'el-masked', listed: false }),
+  Object.freeze({ state: SUPERSEDED, how: null, guess: null, draw: 'hit', cls: 'el-superseded', listed: false }),
+  Object.freeze({ state: INDEXING, how: null, guess: null, draw: 'hit', cls: 'el-indexing', listed: false }),
+  Object.freeze({ state: UNAVAILABLE, how: null, guess: null, draw: 'hit', cls: 'el-unavailable', listed: false }),
 ]);
 
 // The edited-element reading the re-resolved row's draw relies on (PLAN.md §7
@@ -187,14 +238,16 @@ let probe = null;
 let policy = null;
 let armedState = null;            // {type, profile} or null
 let pickState = null;
-const gestures = new Map();       // pointerId → {decision, pointerType, mode, up}: each pointer's gesture
-let lastDown = null;              // the pointerId of the newest pointerdown
-let listeningOn = null;           // the well the capture listeners are on, or null
-let layer = null;
+let layer = null;                 // the page host's layer, #el-layer
 let inited = false;
-let lastSig = null;
-let groups = [];                  // the built groups (markers) of the drawn set
-let pass = null;                  // a position pass carried across frames
+let pass = null;                  // a position pass carried across frames (every host's groups)
+// THE host registry: name → its record, in registration order, the page first.
+// Each record holds its layer, its built groups (markers) and their signature,
+// its last pass's numbers, and its pointer state: {listeningOn, gestures
+// (pointerId → {decision, pointerType, mode, up}: each pointer's gesture),
+// lastDown (the newest pointerdown's id)}. A non-page host also holds its
+// answers (id → entry) and its dirty flag.
+const registry = new Map();
 let drawPending = false;
 let drawAgain = false;
 let lastOrphanSig = '';
@@ -204,7 +257,11 @@ let nextToken = 1;
 const failed = new Map();         // id → {type, error} for a draw that threw
 
 const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0 };
-const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0 };
+const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };   // the page host's
+// The page host's record: its pointer state is live from the start (a tool may
+// be armed before initOverlay); initOverlay gives it its layer and registers
+// it, first.
+const pageHost = newHost('page', { root: null, well: null, rung: '--z-pins', kinds: PAGE_KINDS, layer: null });
 
 // ── rows ────────────────────────────────────────────────────────────────────
 function checkScope(scope) {
@@ -223,14 +280,40 @@ function normRow(r) {
     pending: !!r.pending,
   };
   if (r.answered !== undefined) row.answered = !!r.answered;
+  // The daemon's answer for a row that carries one (a host's row: {state,
+  // explain, how, and its placement fields — an item-range's start and end, a
+  // diff-line's file, line and side}), copied as given: the chrome invents no
+  // state.
+  if (r.answer && typeof r.answer === 'object') row.answer = copyAnswer(r.answer);
   return row;
 }
+function copyAnswer(a) {
+  const out = { ...a };
+  for (const k of Object.keys(out)) {
+    const v = out[k];
+    if (v && typeof v === 'object') out[k] = Array.isArray(v) ? [...v] : { ...v };
+  }
+  return out;
+}
+// The non-page hosts that list a row's anchor kind (a row is routed to its
+// hosts before the page's resolver paths).
+function hostsOfKind(kind) {
+  const out = [];
+  if (kind == null) return out;
+  for (const h of registry.values()) if (!h.page && h.kinds.includes(kind)) out.push(h);
+  return out;
+}
+function isHostRow(row) {
+  return !!(row && row.anchor && hostsOfKind(row.anchor.kind).length);
+}
 // Where a row resolves: a pane mount (element and range anchors, a converted
-// pin), a markdown item (a source anchor), or nowhere (pending, no anchor).
+// pin), a markdown item (a source anchor), or nowhere (pending, no anchor, a
+// 'page' record, or a row another host holds).
 function placeOf(row) {
   if (row.pending || !row.anchor) return null;
   const a = row.anchor;
   if (a.kind === 'page') return null;
+  if (isHostRow(row)) return null;
   if (a.kind === 'source') return { kind: 'md', key: a.md == null ? null : String(a.md) };
   return { kind: 'pane', key: a.mount == null || a.mount === '' ? null : String(a.mount) };
 }
@@ -290,8 +373,13 @@ export function surfaceOf(scope = 'live') {
 }
 export function drawnScopeOf() { return drawnScope; }
 
-// A set changed: the drawn set's watches, passes and answers follow.
+// A set changed: the drawn set's watches, passes and answers follow, and a
+// host whose rows were touched is re-placed (its rows are the live set's,
+// drawn whatever the page's scope).
 function changed(scope, touchedRows) {
+  if (scope === 'live') {
+    for (const r of touchedRows) for (const h of hostsOfKind(r.anchor && r.anchor.kind)) markDirty(h);
+  }
   if (scope !== drawnScope) return;
   const rows = scopes[scope].rows;
   for (const id of [...answers.keys()]) if (!rows.has(id)) { answers.delete(id); failed.delete(id); }
@@ -536,12 +624,29 @@ function syncScope() {
   answers.clear();
   failed.clear();
   if (want === 'live') { scopes.preview.rows = new Map(); scopes.preview.node = null; }
-  const rows = [...scopes[want].rows.values()];
+  // The page's rows only: a host's rows are drawn in either scope (C1), so a
+  // preview neither clears nor re-places them.
+  const rows = [...scopes[want].rows.values()].filter((r) => !isHostRow(r));
   changed(want, rows);
 }
+// The hello and reset frames' lean rows replace the PAGE host's rows: every
+// row whose kind another host lists is kept (a Wipe, Set active, Branch or New
+// graph never drops a chat marker, REQ@chat-wipe), the frame's own copy of one
+// winning.
 function takeLive(msg) {
   scopes.live.surface = msg && msg.surface != null ? msg.surface : null;
-  setElements('live', msg && Array.isArray(msg.elements) ? msg.elements : []);
+  const S = scopes.live;
+  const before = [...S.rows.values()];
+  S.rows = new Map();
+  for (const r of before) if (isHostRow(r)) S.rows.set(r.id, r);   // kept as they are: not re-placed
+  const fresh = [];
+  for (const r of msg && Array.isArray(msg.elements) ? msg.elements : []) {
+    const row = normRow(r);
+    if (!row) continue;
+    S.rows.set(row.id, row);
+    fresh.push(row);
+  }
+  changed('live', [...before.filter((r) => !isHostRow(r)), ...fresh]);
   scheduleSources();
 }
 // A previewed node's rows: its lean comment rows, and its id@v references held
@@ -580,9 +685,9 @@ function rangeKey(range) {
 // The signature unchanged, the built groups (and their markers) stay; each
 // takes the fresh pass's DOM objects and items, so a placement and a type's
 // move read the current Range and answers, never a stale pass's.
-function refreshKept(gs) {
+function refreshKept(h, gs) {
   for (let i = 0; i < gs.length; i++) {
-    const g = groups[i];
+    const g = h.groups[i];
     const f = gs[i];
     if (!g || g.key !== f.key) continue;
     g.el = f.el;
@@ -592,10 +697,20 @@ function refreshKept(gs) {
     g.mdItem = f.mdItem;
   }
 }
-function glyphOf(type) {
+function glyphOf(type, h) {
+  if (h && h.glyph) {
+    const own = typeof h.glyph === 'function' ? checkGlyph(h.glyph(type)) : h.glyph;
+    if (own) return own;
+  }
   const t = types.get(type);
   const g = t && t.glyph;
   return g || MARKER_GLYPH;
+}
+// A glyph {dx, dy, w, h} in px, frozen; null when it is not one.
+function checkGlyph(g) {
+  if (!g || typeof g !== 'object') return null;
+  if (!['dx', 'dy', 'w', 'h'].every((k) => Number.isFinite(g[k])) || g.w <= 0 || g.h <= 0) return null;
+  return Object.freeze({ dx: g.dx, dy: g.dy, w: g.w, h: g.h });
 }
 // THE MARGIN GLYPH (F.3): a range group whose start lies inside a markdown
 // item ([data-md-id]) and whose type registered `sourceGlyph` is anchored at
@@ -616,13 +731,16 @@ function marginGlyph(type) {
   const sg = types.get(type).sourceGlyph;
   return Object.freeze({ dx: sg.dx, dy: sg.dy, w: gl.w, h: gl.h });
 }
-// The drawn set as marker groups: per type, the elements grouped by the DOM
-// element they resolve to (a range or a section, one group each). No box read.
-function buildGroups() {
+// A host's drawn set as marker groups: per type, the elements grouped by the
+// DOM element they resolve to (a range or a section, one group each). The
+// page's are the drawn scope's answers; another host's, its own answers (the
+// live set's, whatever the scope). No box read.
+function buildGroups(h) {
   const byKey = new Map();
   const M = window.__wcMount;
-  for (const e of answers.values()) {
-    if (e.scope !== drawnScope || !e.rule || e.rule.draw === 'none' || e.row.pending) continue;
+  const list = h.page ? answers.values() : h.answers.values();
+  for (const e of list) {
+    if ((h.page && e.scope !== drawnScope) || !e.rule || e.rule.draw === 'none' || e.row.pending) continue;
     const kind = e.rule.draw;
     const raw = e.raw;
     let el = null;
@@ -630,7 +748,7 @@ function buildGroups() {
     if (kind === 'guess') el = raw.guess;
     else if (raw.range) range = raw.range;
     else if (raw.el) el = raw.el;
-    else if (kind === 'section' && e.mount != null && M && typeof M.itemEl === 'function') {
+    else if (h.page && kind === 'section' && e.mount != null && M && typeof M.itemEl === 'function') {
       const it = M.itemEl(document, e.mount);
       el = it ? it.el : null;
     }
@@ -646,9 +764,9 @@ function buildGroups() {
     const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|${rangeKey(range)}`;
     let g = byKey.get(key);
     if (!g) {
-      const mdItem = range ? marginItemOf(type, range) : null;
-      g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, items: [],
-        container: null, glyph: mdItem ? marginGlyph(type) : glyphOf(type), mdItem, failed: false };
+      const mdItem = h.page && range ? marginItemOf(type, range) : null;
+      g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, host: h.name, items: [],
+        container: null, glyph: mdItem ? marginGlyph(type) : glyphOf(type, h.page ? null : h), mdItem, failed: false };
       byKey.set(key, g);
     }
     g.items.push({ id: e.row.id, v: e.row.v, type, row: e.row, state: e.state, how: raw.how == null ? null : raw.how,
@@ -659,20 +777,46 @@ function buildGroups() {
   out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return out;
 }
-function sigOf(gs) {
-  return drawnScope + '#' + gs.map((g) => g.key + ':' + g.items.map((it) => {
+// A host's signature: the page's as it always was (its drawn scope first); a
+// host's also carries each row's daemon answer (its state, line and how), so
+// a changed explanation rebuilds the marker that shows it.
+function sigOf(h, gs) {
+  const head = h.page ? drawnScope : 'live';
+  return head + '#' + gs.map((g) => g.key + ':' + g.items.map((it) => {
     const r = it.row;
-    return `${it.id}@${it.v}:${it.state}:${r.shared ? 1 : 0}${r.answered ? 1 : 0}:${r.replies}`;
+    const own = `${it.id}@${it.v}:${it.state}:${r.shared ? 1 : 0}${r.answered ? 1 : 0}:${r.replies}`;
+    if (h.page) return own;
+    const a = r.answer;
+    return a ? `${own}:${a.state}~${a.how}~${a.explain}~${a.note}` : own;
   }).join(',')).join('|');
 }
+function hostOfGroup(g) {
+  return (g && g.host && registry.get(g.host)) || pageHost;
+}
+// One delegated click on each layer for every marker: a carried guess, or a
+// section fallback (K.2-74), is offered to the re-anchor seam; `how` says
+// which (a host's group also names its host).
+function onLayerClick(ev) {
+  const m = ev.target && ev.target.closest ? ev.target.closest('.el-marker') : null;
+  const g = m && m._group;
+  if (!g || (g.kind !== 'guess' && g.kind !== 'section')) return;
+  ev.stopPropagation();
+  for (const it of g.items) {
+    const d = { id: it.id, v: it.v, type: it.type, mount: g.mount, scope: g.scope, how: g.kind };
+    if (g.host && g.host !== 'page') d.host = g.host;
+    bus.emit('overlay:guess', d);
+  }
+}
 function drawCtx(g) {
+  const h = hostOfGroup(g);
   return {
-    layer, scope: g.scope, glyph: g.glyph, previewing: view.previewing,
+    layer: h ? h.layer : layer, host: g.host || 'page', scope: g.scope, glyph: g.glyph, previewing: view.previewing,
     rectOf: (x) => cfg.rectOf(x),
     rectsOf: (range) => (range && typeof range.getClientRects === 'function' ? [...range.getClientRects()] : []),
   };
 }
-function rebuild(gs) {
+function rebuild(h, gs) {
+  const layer = h.layer;
   for (const m of [...layer.querySelectorAll('.el-marker')]) m.remove();
   for (const g of gs) {
     const c = document.createElement('div');
@@ -732,10 +876,11 @@ function reader(fr) {
 }
 // The client box of a clipping element (its border box less borders and
 // scrollbars, when the browser reports them), or null when it clips nothing.
-function clipBoxOf(el, fr, read) {
-  if (fr.clipCache.has(el)) return fr.clipCache.get(el);
+function clipBoxOf(el, fr, read, well) {
+  const isWell = el === well;
+  const cache = isWell ? fr.wellCache : fr.clipCache;
+  if (cache.has(el)) return cache.get(el);
   let box = null;
-  const isWell = el === fr.well;
   if (isWell || cfg.clips(el)) {
     const r = read(el);
     if (r) {
@@ -747,32 +892,113 @@ function clipBoxOf(el, fr, read) {
       }
     }
   }
-  fr.clipCache.set(el, box);
+  cache.set(el, box);
   return box;
 }
-// The clip of an anchor: the viewport ∩ the well ∩ every overflow-clipping
-// ancestor from `start` up through each shadow host to the document.
-function clipFrom(start, fr, read) {
-  if (fr.startCache.has(start)) return fr.startCache.get(start);
+// The clip of an anchor: the viewport ∩ the well (its host's: #main for the
+// page) ∩ every overflow-clipping ancestor from `start` up through each
+// shadow host to the document.
+function clipFrom(start, fr, read, well) {
+  let byStart = fr.startCache.get(well);
+  if (!byStart) { byStart = new Map(); fr.startCache.set(well, byStart); }
+  if (byStart.has(start)) return byStart.get(start);
   let clip = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-  if (fr.well) {
-    const w = clipBoxOf(fr.well, fr, read);
+  if (well) {
+    const w = clipBoxOf(well, fr, read, well);
     if (w) clip = intersect(clip, w);
   }
   const de = document.documentElement;
   for (let n = start; n && n !== de && n.nodeType !== 9;) {
     if (n.nodeType === 11) { n = n.host || null; continue; }
-    if (n.nodeType === 1 && n !== fr.well && n !== document.body) {
-      const b = clipBoxOf(n, fr, read);
+    if (n.nodeType === 1 && n !== well && n !== document.body) {
+      const b = clipBoxOf(n, fr, read, well);
       if (b) clip = intersect(clip, b);
     }
     n = n.parentNode;
   }
-  fr.startCache.set(start, clip);
+  byStart.set(start, clip);
   return clip;
+}
+// One frame's reading state: its read count and the clip caches (per well).
+function frameOf() {
+  return { reads: 0, clipCache: new Map(), wellCache: new Map(), startCache: new Map(), pageWell: $('main'),
+    census: null, shadowCensus: new Map() };
+}
+// The well a group is clipped to: the page's #main, or its host's well (an
+// element, or fn(group) → element). A well that is a frame, or lies in another
+// document, is no well: the group is not placed (the never-draw rule).
+function wellOf(g, fr) {
+  if (!g.host || g.host === 'page') return fr.pageWell;
+  const h = registry.get(g.host);
+  if (!h) return undefined;
+  let w = h.well;
+  if (typeof w === 'function') {
+    try { w = w(g); } catch (err) {
+      console.error(`[web-chat] overlay: the '${h.name}' host's well failed`, err);
+      return undefined;
+    }
+  }
+  return w == null ? null : (frameReason(w) ? undefined : w);
 }
 function hide(g) {
   if (g.container) g.container.style.display = 'none';
+}
+
+// ── the never-draw rule (3C.1 finding (6)) ──────────────────────────────────
+const FRAME_TAGS = new Set(['iframe', 'frame']);
+// Why an element can be no host's root or well: it is a frame, lies inside
+// one, or belongs to another document than the chrome's (a sandboxed or
+// cross-origin frame's). Null when it may be one.
+function frameReason(el) {
+  if (!el || el.nodeType !== 1) return 'not an element';
+  if (el.ownerDocument !== document) return 'in another document';
+  if (FRAME_TAGS.has(el.localName)) return 'a frame';
+  if (typeof el.closest === 'function' && el.closest('iframe, frame')) return 'inside a frame';
+  return null;
+}
+// Whether a census frame is shown: no [hidden] or .hidden on it or on any
+// ancestor up through each shadow host (a DOM walk, no read); its box is read
+// after (a zero box is not shown).
+function frameShown(el) {
+  for (let n = el; n;) {
+    if (n.nodeType === 11) { n = n.host || null; continue; }
+    if (n.nodeType !== 1) break;
+    if (n.hasAttribute('hidden') || (n.classList && n.classList.contains('hidden'))) return false;
+    if (n.style && n.style.display === 'none') return false;
+    n = n.parentNode;
+  }
+  return true;
+}
+// The boxes of the displayed frames among `els` (each read counted).
+function frameBoxes(els, read) {
+  const out = [];
+  for (const el of els) {
+    if (!el.isConnected || !frameShown(el)) continue;
+    const r = read(el);
+    if (!r) continue;
+    const b = boxOf(r);
+    if (b.right > b.left && b.bottom > b.top) out.push(b);
+  }
+  return out;
+}
+// The frame's census, taken once per draw frame at its first need: the
+// connected iframes of the document's light DOM (the answer and control
+// frames, the preview and glance frames, the replay's) — and, for a page
+// group, the iframes in its pane's shadow root (a pane's own iframe).
+function censusFor(g, startEl, fr, read) {
+  if (!fr.census) fr.census = frameBoxes([...document.querySelectorAll('iframe, frame')], read);
+  if (g.host && g.host !== 'page') return fr.census;
+  const root = startEl && startEl.getRootNode ? startEl.getRootNode() : null;
+  if (!root || root.nodeType !== 11) return fr.census;
+  let own = fr.shadowCensus.get(root);
+  if (!own) {
+    own = frameBoxes([...root.querySelectorAll('iframe, frame')], read);
+    fr.shadowCensus.set(root, own);
+  }
+  return own.length ? fr.census.concat(own) : fr.census;
+}
+function meets(a, b) {
+  return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
 }
 // Whether any client rect of a range meets the clip (one read, counted).
 function anyRectIn(range, clip, fr) {
@@ -798,6 +1024,8 @@ function anyRectIn(range, clip, fr) {
 // (the glyph, then wholly outside, is inset away entirely).
 function measureGroup(g, fr, read) {
   if (!g.container) return { res: 'unplaced' };
+  const well = wellOf(g, fr);
+  if (well === undefined) return { res: 'unplaced' };
   let startEl;
   if (g.range) {
     const sc = g.range.startContainer;
@@ -824,7 +1052,7 @@ function measureGroup(g, fr, read) {
     if (!ir) return { res: 'unplaced' };
     x = ir.left;
   }
-  const clip = clipFrom(startEl, fr, read);
+  const clip = clipFrom(startEl, fr, read, well);
   const t = g.range ? types.get(g.type) : null;
   const spans = !!(t && t.move);
   const startIn = x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom;
@@ -839,6 +1067,13 @@ function measureGroup(g, fr, read) {
   if (top + bottom >= gl.h || left + right >= gl.w) {
     if (!spans) return { res: 'clipped' };
     return { res: 'drawn', x, y, clip, inset: [gl.h, 0, 0, 0] };
+  }
+  // THE NEVER-DRAW RULE: a glyph whose painted box meets a displayed frame is
+  // not drawn (a range with a move keeps its rectangles, its glyph inset away).
+  const painted = { left: gx + left, top: gy + top, right: gx + gl.w - right, bottom: gy + gl.h - bottom };
+  if (censusFor(g, startEl, fr, read).some((b) => meets(painted, b))) {
+    if (!spans) return { res: 'framed' };
+    return { res: 'drawn', x, y, clip, inset: [gl.h, 0, 0, 0], framed: true };
   }
   return { res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
 }
@@ -868,60 +1103,68 @@ function drawFrame() {
   const t0 = now();
   if (!pass) {
     drawAgain = false;
-    const gs = buildGroups();
-    const sig = sigOf(gs);
-    if (sig !== lastSig) {
-      lastSig = sig;
-      groups = gs;
-      rebuild(gs);
-    } else refreshKept(gs);
-    pass = { i: 0, drawn: 0, clipped: 0, guesses: 0, sections: 0 };
+    // Each dirty host's rows re-placed ONCE, at the frame's start (DOM queries
+    // only: no box read), then every host's groups built — the page's first.
+    for (const h of registry.values()) if (!h.page && h.dirty) replace(h);
+    const list = [];
+    for (const h of registry.values()) {
+      const gs = buildGroups(h);
+      const sig = sigOf(h, gs);
+      if (sig !== h.lastSig) {
+        h.lastSig = sig;
+        h.groups = gs;
+        rebuild(h, gs);
+      } else refreshKept(h, gs);
+      h.passCount = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };
+      for (const g of h.groups) list.push([h, g]);
+    }
+    pass = { i: 0, list };
   }
-  const fr = { reads: 0, clipCache: new Map(), startCache: new Map(), well: $('main') };
+  const fr = frameOf();
   const read = reader(fr);
   const budget = cfg.budget_ms;
   // The read phase: measure groups while this frame's own look-ahead fits the
   // budget. The look-ahead is the costliest group of THIS frame after its first
   // (the first pays the clip reads and any layout flush; alone, it is its own
   // estimate) — nothing carries across frames, so one slow read throttles only
-  // the frame it lands in.
+  // the frame it lands in. ONE loop and one budget across every host's groups.
   const slice = [];
   let firstMs = 0;
   let restMax = 0;
-  while (pass.i < groups.length) {
+  while (pass.i < pass.list.length) {
     const n = slice.length;
     if (n > 0 && now() - t0 + (n === 1 ? firstMs : restMax) > budget) break;
-    const g = groups[pass.i];
+    const [h, g] = pass.list[pass.i];
     const s = now();
-    const m = g.failed ? { res: 'unplaced' } : measureGroup(g, fr, read);
+    const m = g.failed || registry.get(h.name) !== h ? { res: 'unplaced' } : measureGroup(g, fr, read);
     const d = now() - s;
     if (n === 0) firstMs = d;
     else if (d > restMax) restMax = d;
-    slice.push([g, m]);
+    slice.push([h, g, m]);
     pass.i++;
   }
   // The write phase: every marker style of the slice, after all its reads.
-  for (const [g, m] of slice) {
+  for (const [h, g, m] of slice) {
     if (!g.failed) applyGroup(g, m);
+    const c = h.passCount || {};
     if (m.res === 'drawn') {
-      pass.drawn++;
-      if (g.kind === 'guess') pass.guesses++;
-      if (g.kind === 'section') pass.sections++;
-    } else if (m.res === 'clipped') pass.clipped++;
+      c.drawn++;
+      if (g.kind === 'guess') c.guesses++;
+      if (g.kind === 'section') c.sections++;
+      if (m.framed) c.frame_hidden++;
+    } else if (m.res === 'clipped') c.clipped++;
+    else if (m.res === 'framed') c.frame_hidden++;
   }
   const placed = slice.length;
   const ms = now() - t0;
-  const done = pass.i >= groups.length;
+  const done = pass.i >= pass.list.length;
   totals.frames++;
   totals.box_reads += fr.reads;
   totals.box_ms += ms;
   if (ms > totals.longest_frame_ms) totals.longest_frame_ms = ms;
-  const carried = groups.length - pass.i;
+  const carried = pass.list.length - pass.i;
   if (done) {
-    lastPass.drawn = pass.drawn;
-    lastPass.clipped = pass.clipped;
-    lastPass.guesses = pass.guesses;
-    lastPass.sections = pass.sections;
+    for (const h of registry.values()) if (h.passCount) { Object.assign(h.lastPass, h.passCount); h.passCount = null; }
     pass = null;
   }
   bus.emit('overlay:frame', { frame: totals.frames, ms, box_reads: fr.reads, groups: placed, carried, done,
@@ -930,8 +1173,24 @@ function drawFrame() {
   if (drawAgain) { drawAgain = false; requestDraw(); }
 }
 
-export function stats() {
-  return {
+// stats(host?) — with no host, the page host's numbers (the fields they always
+// were); with a host's name, that host's (frame_hidden: the glyphs the
+// never-draw rule kept off a frame in its last pass), or null for no host.
+export function stats(name) {
+  if (name != null && name !== 'page') {
+    const h = registry.get(String(name));
+    if (!h) return null;
+    return {
+      drawn: h.lastPass.drawn,
+      clipped: h.lastPass.clipped,
+      frame_hidden: h.lastPass.frame_hidden,
+      anchors: h.answers.size,
+      places: h.places,
+      listening: !!h.listeningOn,
+      layer: h.layer.id,
+    };
+  }
+  const out = {
     frames: totals.frames,
     longest_frame_ms: totals.longest_frame_ms,
     box_reads: totals.box_reads,
@@ -943,12 +1202,162 @@ export function stats() {
     orphans: orphans().length,
     anchors: answers.size,
     draw_failed: failed.size,
-    listening: !!listeningOn,
+    listening: !!(pageHost && pageHost.listeningOn),
   };
+  if (name === 'page') out.frame_hidden = lastPass.frame_hidden;
+  return out;
 }
 // The elements whose type's draw threw (recorded, never drawn).
 export function failedDraws() {
   return [...failed].map(([id, f]) => ({ id, ...f }));
+}
+
+// ── the host registry (3C.1) ────────────────────────────────────────────────
+// registerHost(name, {root, well, rung, kinds, place, hidden?, settle?,
+// glyph?}) → unregister. `name` one of HOST_NAMES ('page' is initOverlay's);
+// `root` the element whose presses and mutations are the host's; `well` the
+// element its markers are clipped to, or fn(group) → element; `rung` the
+// ladder token its layer sits at ('--z-chat-pins'); `kinds` the anchor kinds
+// whose rows are its (never one of the page's); `place(row)` → {state, how?,
+// el?, range?} | null, DOM queries only (null: unplaced, not drawn, not
+// listed); `hidden({row, answer, host})` → a reason (drawn as hidden) or null;
+// `settle(trigger)` → off, a subscription whose trigger marks the host dirty;
+// `glyph` {dx, dy, w, h} or fn(type) → glyph, sizing its markers (default:
+// the type's glyph). Refused: a name outside HOST_NAMES or already
+// registered, and a root or well that is a frame, inside one, or in another
+// document (the never-draw rule).
+export function registerHost(name, spec) {
+  if (!HOST_NAMES.includes(name)) throw new TypeError(`registerHost: the host must be one of ${HOST_NAMES.join(', ')}`);
+  if (registry.has(name)) throw new TypeError(`registerHost: a host named '${name}' is already registered`);
+  if (!inited) throw new TypeError('registerHost: initOverlay registers the page host first');
+  const o = spec || {};
+  const rootWhy = frameReason(o.root);
+  if (rootWhy) throw new TypeError(`registerHost: the root is ${rootWhy}; a frame is never a host`);
+  if (typeof o.well === 'function') { /* a per-group well: checked at each draw */ } else {
+    const wellWhy = frameReason(o.well);
+    if (wellWhy) throw new TypeError(`registerHost: the well is ${wellWhy}; a frame is never a host`);
+  }
+  if (typeof o.rung !== 'string' || !/^--z-[a-z]+(?:-[a-z]+)*$/.test(o.rung)) {
+    throw new TypeError('registerHost: rung is a ladder token\'s name (--z-…)');
+  }
+  const kinds = Array.isArray(o.kinds) ? o.kinds.map(String) : [];
+  if (!kinds.length || kinds.some((k) => !k || PAGE_KINDS.includes(k) || k === 'page')) {
+    throw new TypeError(`registerHost: kinds is a list of anchor kinds, none of the page's (${PAGE_KINDS.join(', ')}, page)`);
+  }
+  if (typeof o.place !== 'function') throw new TypeError('registerHost: place(row) is required');
+  if (o.hidden != null && typeof o.hidden !== 'function') throw new TypeError('registerHost: hidden must be a function');
+  if (o.settle != null && typeof o.settle !== 'function') throw new TypeError('registerHost: settle must be a function');
+  let glyph = null;
+  if (o.glyph != null) {
+    glyph = typeof o.glyph === 'function' ? o.glyph : checkGlyph(o.glyph);
+    if (!glyph) throw new TypeError('registerHost: glyph is {dx, dy, w, h} in px, or fn(type) → one');
+  }
+  const hl = document.createElement('div');
+  hl.id = `el-layer-${name}`;
+  hl.className = 'el-host-layer';
+  hl.style.zIndex = `var(${o.rung})`;
+  hl.addEventListener('click', onLayerClick);
+  document.body.appendChild(hl);
+  const h = newHost(name, { root: o.root, well: o.well, rung: o.rung, kinds: Object.freeze(kinds), layer: hl,
+    place: o.place, hidden: o.hidden || null, glyph });
+  h.onPointer = (e) => pointerIn(h, e);
+  registry.set(name, h);
+  // Its own layout watch, as #main's: a mutation under its root re-places it.
+  if (typeof MutationObserver === 'function') {
+    h.observer = new MutationObserver(() => { if (rowsOfHost(h).length || h.groups.length) markDirty(h); });
+    h.observer.observe(o.root, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+  }
+  if (o.settle) {
+    try {
+      const off = o.settle(() => markDirty(h));
+      h.settleOff = typeof off === 'function' ? off : null;
+    } catch (err) { console.error(`[web-chat] overlay: the '${name}' host's settle failed`, err); }
+  }
+  rehome(kinds);
+  markDirty(h);
+  syncListening();
+  return () => {
+    if (registry.get(name) !== h) return;
+    registry.delete(name);
+    if (h.observer) h.observer.disconnect();
+    if (h.settleOff) { try { h.settleOff(); } catch { /* the host's own */ } }
+    if (h.listeningOn) for (const t of POINTER_EVENTS) h.listeningOn.removeEventListener(t, h.onPointer, true);
+    h.listeningOn = null;
+    h.gestures.clear();
+    h.answers.clear();
+    hl.remove();
+    rehome(kinds);
+    requestDraw();
+  };
+}
+function newHost(name, o) {
+  return {
+    name, page: name === 'page', root: o.root, well: o.well, rung: o.rung, kinds: o.kinds, layer: o.layer,
+    place: o.place || null, hidden: o.hidden || null, glyph: o.glyph || null,
+    answers: new Map(), dirty: false, places: 0,
+    groups: [], lastSig: null, passCount: null,
+    lastPass: name === 'page' ? lastPass : { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 },
+    listeningOn: null, gestures: new Map(), lastDown: null, onPointer: null, observer: null, settleOff: null,
+  };
+}
+// The kinds the hosts hold changed: the page lets go of (or takes back) the
+// rows of those kinds, which another host now lists (or no longer does); no
+// other page row is touched.
+function rehome(kinds) {
+  const rows = [...scopes[drawnScope].rows.values()].filter((r) => r.anchor && kinds.includes(r.anchor.kind));
+  if (rows.length) changed(drawnScope, rows);
+}
+function rowsOfHost(h) {
+  const out = [];
+  for (const r of scopes.live.rows.values()) {
+    if (!r.pending && r.anchor && h.kinds.includes(r.anchor.kind)) out.push(r);
+  }
+  return out;
+}
+function markDirty(h) {
+  if (!h || h.page || registry.get(h.name) !== h) return;
+  h.dirty = true;
+  requestDraw();
+}
+// Re-place a host's rows (once per draw frame, at its start): place, then
+// hidden, then DRAW_RULES. DOM queries only: no box read.
+function replace(h) {
+  h.dirty = false;
+  h.places++;
+  const next = new Map();
+  for (const row of rowsOfHost(h)) {
+    let p = null;
+    try { p = h.place({ ...row }); } catch (err) {
+      console.error(`[web-chat] overlay: the '${h.name}' host's place failed`, err);
+      p = null;
+    }
+    if (!p || typeof p !== 'object') continue;   // unplaced: not drawn, not listed
+    const raw = { ...p };
+    let reason = null;
+    if (h.hidden) {
+      try {
+        const r = h.hidden({ row: { ...row }, answer: raw, host: h.name });
+        reason = r == null || r === false ? null : r;
+      } catch (err) { console.error(`[web-chat] overlay: the '${h.name}' host's hidden failed`, err); }
+    }
+    const state = reason ? HIDDEN : raw.state;
+    next.set(row.id, { row, raw, state, hidden: reason, rule: drawRuleOf({ ...raw, state }), mount: null, scope: 'live',
+      gen: null, host: h.name });
+  }
+  h.answers = next;
+}
+// hosts() → [{name, layer, rung, root, kinds}], the page first: each host's
+// layer id, its rung (a ladder token's name) and root (GT-07's host half).
+export function hosts() {
+  return [...registry.values()].map((h) => ({ name: h.name, layer: h.layer.id, rung: h.rung,
+    root: h.page ? $('main') : h.root, kinds: [...h.kinds] }));
+}
+// isHostRoot(el): el is a registered host's root (#main for the page). The
+// input-mode policy's interactive walk ends there, as at #main.
+export function isHostRoot(el) {
+  if (!el || el.nodeType !== 1) return false;
+  for (const h of registry.values()) if ((h.page ? $('main') : h.root) === el) return true;
+  return false;
 }
 
 // ── types ───────────────────────────────────────────────────────────────────
@@ -957,8 +1366,10 @@ export function failedDraws() {
 // container (a marker the overlay positions and clips) for the type's elements
 // resolved to one DOM element; move, when given, runs after each placement;
 // create takes the armed tool's input. sourceGlyph {dx, dy}, when given, puts
-// the type's glyph in a markdown item's left margin (marginItemOf). An element
-// whose type has none draws a generic marker.
+// the type's glyph in a markdown item's left margin (marginItemOf). `host`
+// (default 'page') is the host whose presses its create takes, and `tool`
+// (default its own name) the armed tool whose presses it takes there. An
+// element whose type has none draws a generic marker.
 export function registerType(type, spec) {
   if (typeof type !== 'string' || !type) throw new TypeError('registerType: a type name is required');
   if (!spec || typeof spec.draw !== 'function') throw new TypeError('registerType: {draw(group, ctx)} is required');
@@ -981,17 +1392,47 @@ export function registerType(type, spec) {
     if (!Number.isFinite(g.dx) || !Number.isFinite(g.dy)) throw new TypeError('registerType: sourceGlyph is {dx, dy} in px');
     sourceGlyph = Object.freeze({ dx: g.dx, dy: g.dy });
   }
+  const host = spec.host == null ? 'page' : spec.host;
+  if (!HOST_NAMES.includes(host)) throw new TypeError(`registerType: host must be one of ${HOST_NAMES.join(', ')}`);
+  const tool = spec.tool == null ? type : spec.tool;
+  if (typeof tool !== 'string' || !tool) throw new TypeError('registerType: tool is an armed tool\'s name');
   const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph,
-    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items' };
+    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool };
   types.set(type, entry);
-  lastSig = null;
+  resetSigs(type);
+  syncListening();
   requestDraw();
   return () => {
     if (types.get(type) !== entry) return;
     types.delete(type);
-    lastSig = null;
+    resetSigs(type);
+    syncListening();
     requestDraw();
   };
+}
+// A type (un)registered: the page rebuilds its markers (as it always did); a
+// host only when it holds a group of that type, so a type listing re-read on a
+// hello never rebuilds a chat marker the frame did not touch.
+function resetSigs(type) {
+  pageHost.lastSig = null;
+  for (const h of registry.values()) if (!h.page && h.groups.some((g) => g.type === type)) h.lastSig = null;
+}
+// The type that takes the armed tool's presses in a host: the one registered
+// for (that host, the armed tool), or null. For the page, the armed type
+// itself when it is the page's (as it always was); else a page type whose
+// tool is the armed one; else PASS for an armed type registered for another
+// host only (a press in #main passes through, the tool still armed); else
+// null (a type nobody registered: its presses are the tool's, as always).
+const PASS = 'pass';
+function typeFor(h, armedType) {
+  if (h.page) {
+    const own = types.get(armedType);
+    if (own && own.host === 'page') return own;
+    for (const t of types.values()) if (t.host === 'page' && t.tool === armedType && t.create) return t;
+    return own ? PASS : null;
+  }
+  for (const t of types.values()) if (t.host === h.name && t.tool === armedType && t.create) return t;
+  return null;
 }
 export function inputKindOf(type) {
   const t = types.get(type);
@@ -1038,23 +1479,40 @@ export function setPointerPolicy(fn) {
 
 const POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'click'];
 // The capture listeners sit on the well only while a tool is armed or a pick
-// is pending.
+// is pending; on another host's root only while the armed tool has a type
+// registered there that creates (a press there with none passes through).
 function syncListening() {
+  const ph = pageHost;
   const want = !!(armedState || pickState);
-  if (want && !listeningOn) {
+  if (want && !ph.listeningOn) {
     const well = $('main');
-    if (!well) return;
-    for (const t of POINTER_EVENTS) well.addEventListener(t, onPointer, true);
-    listeningOn = well;
-  } else if (!want && listeningOn) {
-    for (const t of POINTER_EVENTS) listeningOn.removeEventListener(t, onPointer, true);
-    listeningOn = null;
-    dropGestures();
+    if (well) {
+      for (const t of POINTER_EVENTS) well.addEventListener(t, onPointer, true);
+      ph.listeningOn = well;
+    }
+  } else if (!want && ph.listeningOn) {
+    for (const t of POINTER_EVENTS) ph.listeningOn.removeEventListener(t, onPointer, true);
+    ph.listeningOn = null;
+    dropGestures(ph);
+  }
+  for (const h of registry.values()) {
+    if (h.page) continue;
+    const wantH = !!armedState && !!typeFor(h, armedState.type);
+    if (wantH && !h.listeningOn) {
+      for (const t of POINTER_EVENTS) h.root.addEventListener(t, h.onPointer, true);
+      h.listeningOn = h.root;
+    } else if (!wantH && h.listeningOn) {
+      for (const t of POINTER_EVENTS) h.listeningOn.removeEventListener(t, h.onPointer, true);
+      h.listeningOn = null;
+      dropGestures(h);
+    }
   }
 }
-function dropGestures() {
-  gestures.clear();
-  lastDown = null;
+function dropGestures(h) {
+  for (const x of h ? [h] : [pageHost, ...registry.values()]) {
+    x.gestures.clear();
+    x.lastDown = null;
+  }
 }
 function innerTarget(e) {
   const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
@@ -1113,7 +1571,9 @@ function askPolicy(e) {
   }
   return POINTER_ANSWERS.includes(decision) ? decision : 'page';
 }
-function gestureOfClick(e) {
+function gestureOfClick(h, e) {
+  const gestures = h.gestures;
+  const lastDown = h.lastDown;
   // A click that names a pointer takes that pointer's gesture or none: never the
   // newest pointerdown's, which may be another pointer's (a mouse released
   // outside the well leaves its entry not up; a pen may still be down). A
@@ -1138,11 +1598,22 @@ function clickStillTool(e, g) {
   };
   return askPolicy(stand) === 'tool';
 }
+// The page well's capture listener (the one #main has always had).
 function onPointer(e) {
-  if (view.previewing) return;   // D2: a preview creates and picks nothing
-  if (pickState) { onPick(e); return; }
+  pointerIn(pageHost, e);
+}
+// A press in a host: handed to the type registered for (that host, the armed
+// tool), with input.host set. A pick is the page's alone; the `.mount-host`
+// and markdown narrowing is the page's alone.
+function pointerIn(h, e) {
+  if (view.previewing) return;   // D2: a preview creates and picks nothing, in any host
+  if (h.page && pickState) { onPick(e); return; }
   if (!armedState) return;
-  const t = types.get(armedState.type);
+  const found = typeFor(h, armedState.type);
+  if (found === PASS) return;   // the armed tool has no type for this host: the press is the page's
+  const t = found || undefined;
+  if (!h.page && !t) return;
+  const gestures = h.gestures;
   const kind = (t && t.input) || 'taps';
   // The policy's 'tool', narrowed by the type's targets (element-types.js
   // TARGETS, K.2-78): a 'panes' tool (a pack's) leaves a press outside every
@@ -1155,7 +1626,7 @@ function onPointer(e) {
   // The highlight ('selection') and the box grab ('strokes') are not narrowed.
   const decide = (ev) => {
     const d = askPolicy(ev);
-    if (d !== 'tool' || !t) return d;
+    if (d !== 'tool' || !t || !h.page) return d;
     const narrowed = t.targets === 'panes' || kind === 'taps';
     if (!narrowed) return d;
     const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
@@ -1170,9 +1641,9 @@ function onPointer(e) {
     decision = decide(e);
     g = { decision, pointerType: e.pointerType || '', mode: decision === 'tool' ? dispatchMode(e, kind) : null, up: false };
     gestures.set(e.pointerId, g);
-    lastDown = e.pointerId;
+    h.lastDown = e.pointerId;
   } else if (e.type === 'click') {
-    const own = gestureOfClick(e);
+    const own = gestureOfClick(h, e);
     if (own) {
       gestures.delete(own[0]);   // its click is spent
       g = own[1];
@@ -1204,13 +1675,13 @@ function onPointer(e) {
   const mode = (g && g.mode) || dispatchMode(e, kind);
   swallow(e, e.type === 'click' || mode.cancelDefault);
   const target = innerTarget(e);
-  if (e.type === 'pointerdown' && mode.capture) capture(target, e.pointerId);
+  if (e.type === 'pointerdown' && mode.capture) capture(target, e.pointerId, h);
   if (!t || !t.create) return;
   if (kind === 'taps' && e.type !== 'click') return;
   const where = whereOf(target);
   const input = { event: e, phase: e.type, kind, target, root: where.root, mount: where.mount, md: where.md,
     clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType || 'mouse',
-    profile: armedState.profile };
+    profile: armedState.profile, host: h.name };
   try { t.create(input, toolCtx()); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
@@ -1223,24 +1694,27 @@ function onPointer(e) {
 // caller is input-mode.js's two-finger pan (U334a, K.4 I1 = b). True when the
 // pointer had a gesture.
 export function cancelGesture(pointerId) {
-  const g = gestures.get(pointerId);
-  if (!g) return false;
-  gestures.delete(pointerId);
+  let h = null;
+  for (const x of [pageHost, ...registry.values()]) if (x.gestures.has(pointerId)) { h = x; break; }
+  if (!h) return false;
+  const g = h.gestures.get(pointerId);
+  h.gestures.delete(pointerId);
   if (g.decision !== 'tool' || !armedState) return true;
-  const t = types.get(armedState.type);
+  const found = typeFor(h, armedState.type);
+  const t = found === PASS ? null : found;
   const kind = (t && t.input) || 'taps';
   if (!t || !t.create || kind === 'taps') return true;   // a taps tool acts only at the click
   const pointerType = g.pointerType || 'mouse';
   const input = { event: { type: 'pointercancel', pointerId, pointerType }, phase: 'pointercancel', kind,
     target: null, root: document, mount: null, md: null, clientX: null, clientY: null, pointerType,
-    profile: armedState.profile };
+    profile: armedState.profile, host: h.name };
   try { t.create(input, toolCtx()); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
   return true;
 }
-function capture(el, pointerId) {
-  const at = el && typeof el.setPointerCapture === 'function' ? el : listeningOn;
+function capture(el, pointerId, h) {
+  const at = el && typeof el.setPointerCapture === 'function' ? el : h.listeningOn;
   if (!at || typeof at.setPointerCapture !== 'function') return;
   try { at.setPointerCapture(pointerId); } catch { /* the pointer is gone (no active pointer with that id) */ }
 }
@@ -1312,18 +1786,23 @@ function onPick(e) {
 // orphaned, a carried guess's or a section answer is never one, nor is a
 // pending row. A comment's pick (comments.js) reads it as the chain of the
 // live elements under the press. Box reads go through rectOf; nothing is
-// drawn or stored here.
-export function elementsAt(x, y) {
+// drawn or stored here. With {host} (a registered host's name other than the
+// page's), the same over THAT host's drawn answers instead, clipped to its own
+// well (a chat pin's chain, U434); a host that is not registered answers [].
+export function elementsAt(x, y, opts) {
   const px = Number(x);
   const py = Number(y);
   if (!Number.isFinite(px) || !Number.isFinite(py)) return [];
+  const hostName = opts && opts.host != null && opts.host !== 'page' ? String(opts.host) : null;
+  const h = hostName ? registry.get(hostName) : pageHost;
+  if (!h) return [];
   const holds = (r) => !!r && px >= r.left && px <= r.left + r.width && py >= r.top && py <= r.top + r.height;
   const areaOf = (r) => Math.max(0, r.width) * Math.max(0, r.height);
-  const fr = { reads: 0, clipCache: new Map(), startCache: new Map(), well: $('main') };
+  const fr = frameOf();
   const read = reader(fr);
-  const clipped = (start) => {
+  const clipped = (start, well) => {
     if (!start) return false;
-    const c = clipFrom(start, fr, read);
+    const c = clipFrom(start, fr, read, well);
     return !(px >= c.left && px <= c.right && py >= c.top && py <= c.bottom);
   };
   const hits = new Map();
@@ -1331,8 +1810,7 @@ export function elementsAt(x, y) {
     const prior = hits.get(row.id);
     if (!prior || area < prior.area) hits.set(row.id, { id: row.id, type: row.type, area });
   };
-  for (const e of answers.values()) {
-    if (e.scope !== drawnScope || !e.rule || e.rule.draw !== 'hit' || e.row.pending) continue;
+  const placedHit = (e, well) => {
     const raw = e.raw;
     if (raw.range) {
       let rs = [];
@@ -1342,11 +1820,29 @@ export function elementsAt(x, y) {
         width: r.width != null ? r.width : r.right - r.left, height: r.height != null ? r.height : r.bottom - r.top });
       const bs = rs.map(box);
       const sc = raw.range.startContainer;
-      if (bs.some(holds) && !clipped(sc && (sc.nodeType === 1 ? sc : sc.parentNode))) hit(e.row, bs.reduce((n, b) => n + areaOf(b), 0));
+      if (bs.some(holds) && !clipped(sc && (sc.nodeType === 1 ? sc : sc.parentNode), well)) hit(e.row, bs.reduce((n, b) => n + areaOf(b), 0));
     } else if (raw.el) {
       const r = cfg.rectOf(raw.el);
-      if (holds(r) && !clipped(raw.el)) hit(e.row, areaOf(r));
+      if (holds(r) && !clipped(raw.el, well)) hit(e.row, areaOf(r));
     }
+  };
+  if (!h.page) {
+    // The host's drawn groups (its last frame's), each item clipped to the
+    // group's own well.
+    for (const g of h.groups) {
+      if (g.kind !== 'hit' || g.failed) continue;
+      const well = wellOf(g, fr);
+      if (well === undefined) continue;
+      for (const it of g.items) {
+        const e = h.answers.get(it.id);
+        if (e && e.rule && e.rule.draw === 'hit' && !e.row.pending) placedHit(e, well);
+      }
+    }
+    return [...hits.values()].sort((m, n) => (m.area - n.area) || (m.id < n.id ? -1 : m.id > n.id ? 1 : 0));
+  }
+  for (const e of answers.values()) {
+    if (e.scope !== drawnScope || !e.rule || e.rule.draw !== 'hit' || e.row.pending) continue;
+    placedHit(e, fr.pageWell);
   }
   const well = $('main');
   for (const row of scopes[drawnScope].rows.values()) {
@@ -1367,7 +1863,7 @@ export function elementsAt(x, y) {
     const dy = (Number(sc.top) || 0) - (Number(base.scrollTop) || 0);
     const r = { left: frame.left + (Number(a.rect.x) || 0) + dx, top: frame.top + (Number(a.rect.y) || 0) + dy,
       width: Number(a.rect.w) || 0, height: Number(a.rect.h) || 0 };
-    if (holds(r) && !clipped(base)) hit(row, areaOf(r));
+    if (holds(r) && !clipped(base, fr.pageWell)) hit(row, areaOf(r));
   }
   return [...hits.values()].sort((m, n) => (m.area - n.area) || (m.id < n.id ? -1 : m.id > n.id ? 1 : 0));
 }
@@ -1391,17 +1887,13 @@ export function initOverlay(opts = {}) {
   layer = document.createElement('div');
   layer.id = 'el-layer';
   document.body.appendChild(layer);
-  // One delegated click for every marker: a carried guess, or a section
-  // fallback (K.2-74), is offered to the re-anchor seam; `how` says which.
-  layer.addEventListener('click', (ev) => {
-    const m = ev.target && ev.target.closest ? ev.target.closest('.el-marker') : null;
-    const g = m && m._group;
-    if (!g || (g.kind !== 'guess' && g.kind !== 'section')) return;
-    ev.stopPropagation();
-    for (const it of g.items) {
-      bus.emit('overlay:guess', { id: it.id, v: it.v, type: it.type, mount: g.mount, scope: g.scope, how: g.kind });
-    }
-  });
+  // The page well, the registry's first host: root and well #main, its layer
+  // #el-layer at --z-pins; its place is the resolver paths above, its hidden
+  // the one probe (setHiddenProbe), its settle the mount runtime's onSettle
+  // and the observer on #main below.
+  pageHost.layer = layer;
+  registry.set('page', pageHost);
+  layer.addEventListener('click', onLayerClick);
   onHello(takeLive);
   onFrame('reset', takeLive);
   onFrame('markdown', scheduleSources);
@@ -1422,7 +1914,7 @@ export function initOverlay(opts = {}) {
   // any marker is built.
   const well = $('main');
   if (well && typeof MutationObserver === 'function') {
-    new MutationObserver(() => { if (groups.length) requestDraw(); })
+    new MutationObserver(() => { if (pageHost.groups.length) requestDraw(); })
       .observe(well, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
   }
 }

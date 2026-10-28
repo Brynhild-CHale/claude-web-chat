@@ -40,7 +40,7 @@ function scale() {
   const block = /:root\s*\{[^}]*--z-depth\s*:[^}]*\}/.exec(CSS);
   assert.ok(block, 'public/app.css declares a --z-* stacking scale on :root');
   const out = {};
-  for (const m of block[0].matchAll(/(--z-[a-z]+)\s*:\s*(-?\d+)/g)) out[m[1]] = Number(m[2]);
+  for (const m of block[0].matchAll(/(--z-[a-z]+(?:-[a-z]+)*)\s*:\s*(-?\d+)/g)) out[m[1]] = Number(m[2]);
   return out;
 }
 // Every `z-index:` declaration in the sheet, as { selectors, value }.
@@ -62,7 +62,7 @@ function zOf(selector) {
   const s = scale();
   const hit = zDeclarations().find((d) => d.selectors.includes(selector));
   assert.ok(hit, `${selector} declares a z-index`);
-  const v = /^var\((--z-[a-z]+)\)$/.exec(hit.value);
+  const v = /^var\((--z-[a-z]+(?:-[a-z]+)*)\)$/.exec(hit.value);
   if (v) {
     assert.ok(v[1] in s, `${selector} names a rung that exists: ${v[1]}`);
     return s[v[1]];
@@ -160,6 +160,13 @@ test('the whole z-index inventory is one ordered scale', () => {
     assert.ok(s[order[i - 1]] < s[order[i]],
       `${order[i - 1]} (${s[order[i - 1]]}) must come before ${order[i]} (${s[order[i]]})`);
   }
+  // The overlay's host layers (U431, 3C.1): each takes its host's rung and
+  // paints over the host by tree order (appended to <body> after #stage), so
+  // its rung is never under its host's nor at the next rung up (GT-07).
+  assert.ok(s['--z-chat'] <= s['--z-chat-pins'] && s['--z-chat-pins'] < s['--z-panel'],
+    `--z-chat-pins (${s['--z-chat-pins']}) sits at the chat's rung, under the panels`);
+  assert.ok(s['--z-overlay'] <= s['--z-turns-pins'] && s['--z-turns-pins'] < s['--z-glance'],
+    `--z-turns-pins (${s['--z-turns-pins']}) sits at the graph viewer's rung, under the glance`);
   // the layering the product actually depends on, spelled out selector by selector
   assert.ok(zOf('#topbar') < zOf('.popover'), 'popovers open above the topbar');
   assert.equal(zOf('.popover'), zOf('.palette'), 'every chrome panel shares one rung');
@@ -196,7 +203,7 @@ test('no z-index in the shell is a hand-picked number any more', () => {
   // bare number here means the scale was bypassed.
   const bare = [];
   for (const d of zDeclarations()) {
-    if (/^var\(--z-[a-z]+\)$/.test(d.value)) continue;
+    if (/^var\(--z-[a-z]+(?:-[a-z]+)*\)$/.test(d.value)) continue;
     bare.push(`${d.selectors.join(', ')} { z-index: ${d.value} }`);
   }
   assert.deepEqual(bare.sort(), [
