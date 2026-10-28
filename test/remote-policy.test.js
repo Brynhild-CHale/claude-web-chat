@@ -1050,6 +1050,7 @@ const NOT_FRAMES = new Map([
   ['turn-duration', 'the mirror\'s normalize/turn-machine entry kinds'],
   ['permission-decision', 'the mirror\'s normalize/turn-machine entry kinds'],
   ['rewind-evidence', 'the mirror\'s normalize/turn-machine entry kinds'],
+  ['rekey', 'turn-machine.js: the re-key change it appends to a batch for the other sources (U413), never a frame'],
   ['start', 'the supervisor\'s IPC to a service child (services.js, service-runner.js)'],
   ['started', 'the supervisor\'s IPC from a service child'],
   ['stop', 'the supervisor\'s IPC to a service child'],
