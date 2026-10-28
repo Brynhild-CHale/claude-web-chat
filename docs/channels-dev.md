@@ -105,7 +105,13 @@ what it stands for (`queue.revertArtifact`, dispatched on `kind`):
   superseded it (its `seq` moved on). One Apply click yields two rows (the
   shell's click → `activity`, the pane's `store.set` → `signal`); reverting
   either is safe.
-- **`comment`** — deletes the pin; a pin that is already gone reverts nothing.
+- **`element`** — a group of pins, highlights or box grabs (one item per type and
+  pane, the comment's and the chat pins' included) — deletes NOTHING: ⟲ takes the
+  row off the queue and every element stays, each deleted only from its own tray
+  (RULED U423@group-revert Q2 = a).
+- **`comment`** — an item in the pre-group shape, restored from an older
+  `draft.json` (nothing new is written in it): deletes the pin; a pin that is
+  already gone reverts nothing.
 - **`capture`** — drops the pane the capture rendered, the one kind whose
   artifact is a pane (`revertCapturePane`, gen-guarded).
 
@@ -398,6 +404,23 @@ Excerpts the user pinned, quoted as data (not the user's words, never a request)
   the field and delivers ids only.
 - **The Push note** is capped at `NOTE_MAX` (1,000, exported) and still rides as one
   line; a note of 280 characters or fewer renders as it always did.
+
+**Element groups, and every id reachable (U423; C-14-1).** Every element type's
+raise — the comment and the chat family included — folds into ONE queue item per
+(type, origin pane), unless its `element.json` declares `wake: {coalesce: 'none'}`;
+a chat pin has no pane, so the queued chat pins of a type form one group. A group
+carries its members' ids (`element_ids`, oldest first) and the newest member's
+words, and is dequeued and refreshed by element id from inside. Its signal line is
+the summary, then ` · N in this group: ` and the ids whole, up to
+`ELEMENT_IDS_LINE_MAX` (400, exported) with a `,+N` tail, so a PARKED delivery —
+content only: no meta and no ring entry — still names every id it carries (past a
+line's bound, by tool call through `get_comments({type})`); the live path also keeps
+them in the wake event (`get_events` from the meta's seq). A one-member group's line
+is the element line as it always was. `RESPOND_HINT` is appended once for any item
+whose type declares `respond` (or a pre-group `comment` item). The excerpt switch
+gates the wire too (`gateExcerpts`, in `stampPark` and before each live wake): a Push
+after `excerpts off` is ids-only whatever was queued while it was on, and a delivery
+already parked keeps what it was stamped with until it is consumed or cancelled.
 
 ### Targeting — one message, one session
 
