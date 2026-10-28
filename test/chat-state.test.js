@@ -431,6 +431,52 @@ test('a reset of the followed conversation reads the snapshot again, and its str
   assert.deepEqual(m.stream.turns.map((x) => x.id), ['t1'], 'the stream shown meanwhile is kept, then replaced');
 });
 
+// ── indexing (U454) ──────────────────────────────────────────────────────────
+
+const INDEXING_LINE = 'the line the daemon served';
+
+test('normalizeTurnPage reads `indexing` (a boolean) and, only with it, the `explain` line the daemon served', () => {
+  const plain = shared.normalizeTurnPage(page([turn('t1', 1)]));
+  assert.equal(plain.indexing, false);
+  assert.equal(plain.explain, null);
+  const busy = shared.normalizeTurnPage({ conversation_id: 'c1', turns: [], next_before: null, total: null, indexing: true,
+    explain: INDEXING_LINE, rev: 11 });
+  assert.equal(busy.indexing, true);
+  assert.equal(busy.explain, INDEXING_LINE);
+  assert.deepEqual(busy.turns, []);
+  assert.equal(busy.total, null);
+  assert.equal(shared.normalizeTurnPage({ ...page([]), indexing: 'yes', explain: 'x' }).indexing, false, 'only true is true');
+  assert.equal(shared.normalizeTurnPage({ ...page([]), explain: 'x' }).explain, null, 'no line without the flag');
+  assert.equal(shared.normalizeTurnPage({ ...page([]), indexing: true, explain: 'z'.repeat(5000) }).explain.length, 300);
+});
+
+test('an indexing page keeps mirror.stream.indexing and its line; the scoped reset reads again and the page without it clears both', async (t) => {
+  let reads = 0;
+  const { store, fetch } = await makeStore(t, {
+    '/api/mirror': () => ({ status: 200, body: snapshot({ rev: 10 + reads }) }),
+    '/api/mirror/conversations/c1/turns': () => ({ status: 200, body: ++reads === 1
+      ? { conversation_id: 'c1', turns: [], next_before: null, total: null, indexing: true, explain: INDEXING_LINE, rev: 10 }
+      : page([{ ...turn('t1', 1), items: [] }], { rev: 12 }) }),
+  });
+  await store.hydrateMirror();
+  const m = store.mirror;
+  assert.equal(m.stream.indexing, false, 'a blank stream is not indexing');
+  assert.equal(m.stream.indexingNote, null);
+  bus.emit('chat:posture', { posture: 'full' });
+  t.after(() => bus.emit('chat:posture', { posture: 'status' }));
+  await waitUntil(() => m.stream.indexing === true && !m.stream.loading, { what: 'the indexing page' });
+  assert.equal(m.stream.indexingNote, INDEXING_LINE, 'the line as served, never a copy of the table');
+  assert.equal(m.stream.turns.length, 0);
+
+  const opened = fetch.calls.length;
+  store.foldMirrorFrame({ type: 'mirror:reset', reason: 'catch-up', conversation_id: 'c1' });
+  await waitUntil(() => fetch.calls.length === opened + 2 && !m.stream.loading, { what: 'the snapshot, then the stream' });
+  assert.deepEqual(fetch.calls.slice(opened), ['/api/mirror', '/api/mirror/conversations/c1/turns?limit=30&items=summary']);
+  assert.equal(m.stream.indexing, false, 'the page without `indexing` clears it');
+  assert.equal(m.stream.indexingNote, null);
+  assert.deepEqual(m.stream.turns.map((x) => x.id), ['t1']);
+});
+
 // ── below read ───────────────────────────────────────────────────────────────
 
 test('below read the store holds no content field even when a frame carries one', async (t) => {

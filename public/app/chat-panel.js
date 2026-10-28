@@ -17,7 +17,7 @@
 //   ├─ header.cp-head  #chat-title "CHAT ↔ CLAUDE" · #cp-stop · #cp-ops · close
 //   ├─ #chat-strip.cp-strip[data-cs-state][data-cs-pace]   dot · LABEL · detail
 //   ├─ #chat-meta.cp-meta  [#chat-session ▾ title] · model · mode · tokens or $
-//   ├─ #chat-notice.cp-notice    below `read`; disabled; offline
+//   ├─ #chat-notice.cp-notice    below `read`; disabled; offline; indexing
 //   ├─ #chat-awaiting.cp-awaiting[role=group]               chat-awaiting.js
 //   ├─ #chat-views  #chat-stream[role=log] · #chat-new · #chat-detail
 //   └─ #chat-composer-slot.cp-composer
@@ -367,15 +367,28 @@ function renderMeta(now) {
   if (sessionsOpen()) renderSessions(list);
 }
 
+// The notice: offline, then disabled, then below `read`, then `indexing` — the
+// followed conversation's last page said the daemon is still reading it (U454),
+// worded by the line that page served (lib/core/anchor-states EXPLAIN, the one
+// table; no copy of it here), and cleared by the next page without it (read
+// again on the conversation's scoped mirror:reset).
+function indexingNote() {
+  const s = mirror.stream;
+  if (!s || !s.indexing || !s.indexingNote || !s.conversationId || s.conversationId !== followed()) return null;
+  return s.indexingNote;
+}
+
 function renderNotice() {
   const conn = mirror.conn;
   const avail = mirror.availability;
   const level = mirror.access.level;
   let kind = null;
+  let line = '';
   if (conn !== 'live' && (conn === 'reconnecting' || avail !== 'unknown')) kind = 'offline';
   else if (avail === 'disabled') kind = 'disabled';
   else if ((avail === 'ok' || level === 'off') && !atLeast(level, 'read')) kind = 'remote';
-  const key = `${kind}|${kind === 'disabled' ? mirror.hint || '' : ''}`;
+  else if (indexingNote()) { kind = 'indexing'; line = indexingNote(); }
+  const key = `${kind}|${kind === 'disabled' ? mirror.hint || '' : line}`;
   if (key === noticeKey) return;
   noticeKey = key;
   const n = P.notice;
@@ -383,6 +396,7 @@ function renderNotice() {
   setAttr(n, 'data-notice', kind);
   if (kind === 'offline') n.replaceChildren(el('p', 'cp-notice-line', OFFLINE_NOTE));
   else if (kind === 'disabled') n.replaceChildren(el('p', 'cp-notice-line', mirror.hint || DISABLED_NOTE));
+  else if (kind === 'indexing') n.replaceChildren(el('p', 'cp-notice-line', line));
   else if (kind === 'remote') {
     const how = el('p', 'cp-notice-line', 'To allow it, run on the host: ');
     how.append(el('code', null, REMOTE_COMMAND));
