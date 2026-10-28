@@ -194,6 +194,30 @@ test('the window is retried with exact alone when its context changed', () => {
   assert.deepEqual(got, { start: served.indexOf('Contact'), end: served.indexOf(' for access') + ' for access'.length, masked: true, how: 'mask', occ: 1 });
 });
 
+test('a quote ending at the text\'s end, whose trailing run also occurs inside the learned value: the end is the text\'s end', () => {
+  // The served run after the mark ('.') reaches the end of the text and also
+  // occurs inside the email, so the first place W holds it is inside the
+  // value; the candidate where W ends with it must still be tried.
+  assert.ok(E.includes('.'), 'the fixture: the trailing run occurs inside the value');
+  const cases = [
+    ['the whole text', 'Write to ', (b) => ({ exact: b, prefix: '', suffix: '' })],
+    ['with a prefix', 'Please write to ', (b) => ({ exact: b.slice('Please '.length), prefix: 'Please ', suffix: '' })],
+    ['exact alone (the context changed)', 'Please write to ', (b) => ({ exact: b.slice('Please '.length), prefix: 'Kindly ', suffix: '' })],
+  ];
+  for (const [name, lead, quoteOf] of cases) {
+    const r = createRedactor();
+    const before = r.text(`${lead}${E}.`);
+    assert.ok(before.endsWith(`${E}.`), `${name}: the value is served before learning`);
+    const quote = quoteOf(before);
+    const s = before.length - quote.exact.length;
+    r.addKnown(E, 'email');
+    const served = r.text(`${lead}${E}.`);
+    assert.equal(served, `${lead}${MASK('email')}.`, `${name}: the value is masked after learning`);
+    const got = matchMasked(served, quote, { pos: { start: s, end: before.length } });
+    assert.deepEqual(got, { start: s, end: served.length, masked: true, how: 'mask', occ: 1 }, name);
+  }
+});
+
 test('a window starting and ending inside marks; context consumed by wildcards is not masked', () => {
   const served = `${MASK('email')} said hello to ${MASK('org')}`;
   const got = matchMasked(served, { exact: 'said hello', prefix: E.slice(-6) + ' ', suffix: ' to ' + O.slice(0, 5) });
