@@ -73,7 +73,8 @@ test('GET /app/anchors.js serves browserModuleSource() as JavaScript', async (t)
 test('the served module exposes the api: record, resolve, restamp, index, install and the later sections\' names', async () => {
   const mod = await importSource(anchors.browserModuleSource());
   for (const n of ['record', 'resolve', 'restamp', 'index', 'install',
-    'resolveAll', 'invalidate', 'watch', 'recordRange', 'resolveRange', 'recordSource', 'resolveSource']) {
+    'resolveAll', 'invalidate', 'watch', 'recordRange', 'resolveRange', 'recordSource', 'resolveSource',
+    'quoteText', 'quoteOf']) {
     assert.equal(typeof mod[n], 'function', n);
   }
   assert.equal(typeof mod.default.resolve, 'function');
@@ -249,9 +250,9 @@ test('documentSource({kinds}): each kind-set evaluates in jsdom and installs; an
   assert.strictEqual(anchors.documentSource({ kinds: [] }), '', 'no kind: nothing');
   assert.throws(() => anchors.documentSource({ kinds: ['page'] }), /no resolver kind page/);
   const want = {
-    element: { recordRange: false, resolveRange: false, recordSource: false, resolveSource: false },
-    range: { recordRange: true, resolveRange: true, recordSource: false, resolveSource: false },
-    source: { recordRange: true, resolveRange: true, recordSource: true, resolveSource: true },
+    element: { recordRange: false, resolveRange: false, recordSource: false, resolveSource: false, quoteText: false, quoteOf: false },
+    range: { recordRange: true, resolveRange: true, recordSource: false, resolveSource: false, quoteText: true, quoteOf: true },
+    source: { recordRange: true, resolveRange: true, recordSource: true, resolveSource: true, quoteText: true, quoteOf: true },
   };
   for (const kinds of KIND_SETS) {
     const top = kinds[kinds.length - 1];
