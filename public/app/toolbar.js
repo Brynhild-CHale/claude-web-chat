@@ -53,7 +53,7 @@
 // profile management, the not-installed popup (W-11), API-key or pack-state
 // chips (W-14, W-15), tool-drawn settings content.
 import { bus } from './bus.js';
-import { toolbarState, onToolbarChange, patchToolbar, patchUserToolbar, settingsOf } from './toolbar-state.js';
+import { toolbarState, onToolbarChange, patchToolbar, patchUserToolbar, settingsOf, iconSrc } from './toolbar-state.js';
 import { toggle, disarm, listedTools, visiting, NOTICE } from './tools.js';
 import { armed, onArmedChange } from './overlay.js';
 import { registerAction, bindingsView, onHotkeysChange } from './hotkeys.js';
@@ -109,10 +109,7 @@ function lists() {
     hidden: Array.isArray(p.hidden) ? p.hidden.filter((x) => typeof x === 'string') : [],
   };
 }
-// web-chat's own mode, as theme.js leaves it on <html>: data-theme="light", or
-// anything else (no attribute) for dark — cobrand.js's reading.
-const darkMode = () => document.documentElement.dataset.theme !== 'light';
-export const iconSrc = (type) => `/api/toolbar/icon/${encodeURIComponent(type)}${darkMode() ? '?mode=dark' : ''}`;
+// A tool's icon URL is toolbar-state.js's iconSrc (one spelling of the route).
 
 // The chords bound to arm a tool now (no profile), as the registry merged them.
 function chordsOfTool(type) {
