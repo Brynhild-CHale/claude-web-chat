@@ -275,6 +275,7 @@ test('checkChatPayload refuses per kind: a page anchor, a long quote, no session
   refused(payload({ ...RANGE, session_id: null }), /malformed session_id/, 'a null session_id');
   refused(payload(RANGE, { chain: 'k1' }), /chain is a list/, 'a chain that is not a list');
   refused(payload(RANGE, { chain: ['nope'] }), /typed element ids/, 'a chain of untyped ids');
+  refused(payload(RANGE, { chain: ['k1', 'k1'] }), /each id once/, 'a chain with a repeated id');
   refused(payload({ ...DIFF, fp: FP }), /holds fp, a turn anchor's field, not a diff-line anchor's/, 'fp on a diff line');
   refused(payload({ ...RANGE, line_fp: { h: 'fedcba9876543210' } }), /holds line_fp, a diff-line anchor's field/, 'line_fp on an item-range');
   refused(payload({ ...ITEM, mount: 'm1' }), /holds mount, which no chat anchor carries/, 'a page field');
