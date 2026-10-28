@@ -77,7 +77,11 @@
 // (isFocusSink: #stage, a [tabindex="-1"] container) — when the press is the
 // page's and the shell prevents nothing. With nothing focused Space no longer
 // scrolls the page, and Shift+Space answers it too (the registry's Shift
-// fallback): both rebindable.
+// fallback): both rebindable. It fires once per press (repeat: false, U404b):
+// a held key's auto-repeat is claimed but never toggles again. A focused sink
+// (#stage, a scrolling chat stream) does not scroll on Space while the toggle
+// is bound to it (U404@space-on-tabindex-minus-one-scrollers, ruled b): the
+// key is rebindable for anyone who wants Space to scroll.
 import { bus } from './bus.js';
 import { setArmed, armed, onArmedChange } from './overlay.js';
 import { toolbarState } from './toolbar-state.js';
@@ -257,6 +261,6 @@ export function initTools() {
   // After the tools' legend rows (toolbar.js LEGEND_ORDER 60 + i/1000), before
   // Previous / next node (70).
   registerAction({ id: LAST_TOOL_ACTION, label: 'Put down / pick up the last tool', defaultChord: 'Space',
-    context: 'page', rebindable: true, enabled: () => !focusOnControl(),
+    context: 'page', rebindable: true, repeat: false, enabled: () => !focusOnControl(),
     legend: { section: 'Keyboard', order: 61 }, run: () => { toggleLast(); } });
 }

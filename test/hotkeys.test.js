@@ -342,6 +342,13 @@ test('tools.last: Space in the page context; never in a field, never in the over
   assert.equal(row.label, 'Put down / pick up the last tool');
   assert.equal(hk.keyFor('tools.last'), 'Space');
 });
+
+test('tools.last is registered repeat: false: a held Space is claimed, never fired again (U404b)', async () => {
+  await records();
+  blurAll();
+  const tools = await import(pathToFileURL(path.join(REPO, 'public/app/tools.js')).href);
+  assert.equal(tools.LAST_TOOL_ACTION, 'tools.last');
+  const held = hk.lookup('Space', 'page', { repeat: true });
   assert.equal(idOf(held), 'tools.last');
   assert.equal(held.dropped, 'repeat');
   assert.equal(hk.lookup('Space', 'page').dropped, undefined);
