@@ -1065,6 +1065,9 @@ function renderDiffView(body, params, ctx) {
       ctx.setTitle(`Changes${SEP}${label}${t ? `${SEP}${t}` : ''}`);
       wrap.append(...(combined ? recordNodes({ status: 'ready', ...combined }) : turnsNodes(turns)));
     } else {
+      // The turn's id on its view (U432): a diff-line chat pin is placed on
+      // the open diff view of its own turn.
+      wrap.dataset.turnId = turnId;
       wrap.append(...recordNodes(b));
     }
     body.replaceChildren(wrap);
