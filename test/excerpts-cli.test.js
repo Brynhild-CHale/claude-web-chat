@@ -33,17 +33,17 @@ function project(t) {
 }
 const recordOf = (root) => JSON.parse(fs.readFileSync(projectPaths(root).excerpts, 'utf8'));
 
-test('excerpts status on a fresh project says off, the default', (t) => {
+test('excerpts status on a fresh project says on, the default', (t) => {
   const root = project(t);
   const log = sink();
   const r = excerpts(['status'], { cwd: root, log });
   assert.equal(r.ok, true);
-  assert.equal(r.on, false);
+  assert.equal(r.on, true, 'U425: the default is on');
   assert.equal(r.source, 'default');
   assert.equal(r.state, 'absent');
   assert.deepEqual(log.lines, [
-    'excerpts: off (the default; this project has no record)',
-    '  Claude receives the passages you pin by id only, never their words',
+    'excerpts: on (the default; this project has no record)',
+    '  Claude receives the words of the passages you pin, quoted as data',
   ]);
   assert.equal(fs.existsSync(projectPaths(root).excerpts), false, 'status writes nothing');
 });
@@ -77,21 +77,21 @@ test('excerpts on, then status, says on from this project\'s record; off writes 
   assert.equal(log.lines[0], 'excerpts: off (this project\'s record, .web-chat/excerpts.json)');
 });
 
-test('a corrupt or invalid record: status names it (reads as off) and leaves it; on rewrites it', (t) => {
+test('a corrupt or invalid record: status names it (reads as on, the default) and leaves it; off rewrites it', (t) => {
   const root = project(t);
   const file = projectPaths(root).excerpts;
   for (const [bytes, state] of [['{"v":1,"on":', 'corrupt'], ['{"v":1,"on":"yes"}', 'invalid']]) {
     fs.writeFileSync(file, bytes);
     const log = sink();
     const r = excerpts(['status'], { cwd: root, log });
-    assert.equal(r.on, false);
+    assert.equal(r.on, true);
     assert.equal(r.state, state);
-    assert.equal(log.lines[0], `excerpts: off (the default; .web-chat/excerpts.json is ${state}: reads as off; \`excerpts on|off\` rewrites it)`);
+    assert.equal(log.lines[0], `excerpts: on (the default; .web-chat/excerpts.json is ${state}: reads as on; \`excerpts on|off\` rewrites it)`);
     assert.equal(fs.readFileSync(file, 'utf8'), bytes, 'status leaves the record as it is');
   }
-  excerpts(['on'], { cwd: root, log: sink() });
-  assert.deepEqual(recordOf(root), { v: 1, on: true });
-  assert.deepEqual(readSwitch(root), { on: true, source: 'record', state: 'ok' });
+  excerpts(['off'], { cwd: root, log: sink() });
+  assert.deepEqual(recordOf(root), { v: 1, on: false });
+  assert.deepEqual(readSwitch(root), { on: false, source: 'record', state: 'ok' });
 });
 
 test('a subdirectory of a project reaches the project\'s record', (t) => {

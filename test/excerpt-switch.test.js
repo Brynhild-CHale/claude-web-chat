@@ -2,11 +2,13 @@
 // host-only project record, .web-chat/excerpts.json {v: 1, on}, read by
 // lib/core/excerpts and written only by `claude-web-chat excerpts on|off`.
 //
-//   (1) the record: absent, torn or the wrong shape reads as the default (off),
-//       honestly reported and never thrown, the file untouched by the read;
-//       setSwitch writes {v: 1, on} atomically and refuses a folder that is no
-//       project and the home directory.
-//   (2) the one gate (lib/server/index.js elementWake): OFF, no queue item
+//   (1) the record: absent, torn or the wrong shape reads as the default (on,
+//       since U425 — the real-session check passed, K.2-171), honestly
+//       reported and never thrown, the file untouched by the read; setSwitch
+//       writes {v: 1, on} atomically and refuses a folder that is no project
+//       and the home directory.
+//   (2) the one gate (lib/server/index.js elementWake): OFF (the record
+//       {v: 1, on: false}; U425 made the default on), no queue item
 //       carries an excerpt and every envelope — the live wake's and the park's
 //       — is ids-only; ON (flipped with no restart), a shared highlight's item
 //       carries its quote masked and bounded, and both envelopes carry one
@@ -57,19 +59,20 @@ async function ok(p, what) {
 
 // ── (1) the record ──────────────────────────────────────────────────────────
 
-test('(1) readSwitch: absent → off from the default; {v:1,on:true} → on from the record; torn or the wrong shape → off, named, never thrown, the file untouched', () => {
-  assert.equal(EXCERPTS_DEFAULT, false, 'the default stays off until the real-session check (D2)');
+test('(1) readSwitch: absent → on from the default; {v:1,on:true} → on and {v:1,on:false} → off from the record; torn or the wrong shape → on, named, never thrown, the file untouched', () => {
+  assert.equal(EXCERPTS_DEFAULT, true, 'U425: the default is on since the real-session check passed (D2, K.2-171)');
   const root = tmpRoot('wc-u422-rec-');
   const file = projectPaths(root).excerpts;
   assert.equal(file, path.join(root, '.web-chat', 'excerpts.json'));
-  assert.deepStrictEqual(readSwitch(root), { on: false, source: 'default', state: 'absent' });
-  assert.equal(excerptsOn(root), false);
+  assert.deepStrictEqual(readSwitch(root), { on: true, source: 'default', state: 'absent' });
+  assert.equal(excerptsOn(root), true);
 
   fs.writeFileSync(file, JSON.stringify({ v: 1, on: true }));
   assert.deepStrictEqual(readSwitch(root), { on: true, source: 'record', state: 'ok' });
   assert.equal(excerptsOn(root), true);
   fs.writeFileSync(file, JSON.stringify({ v: 1, on: false }));
   assert.deepStrictEqual(readSwitch(root), { on: false, source: 'record', state: 'ok' });
+  assert.equal(excerptsOn(root), false, 'the record still wins over the default');
 
   const cases = [
     ['{"v":1,"on":tr', 'corrupt'],
@@ -87,17 +90,17 @@ test('(1) readSwitch: absent → off from the default; {v:1,on:true} → on from
     fs.writeFileSync(file, bytes);
     let r;
     assert.doesNotThrow(() => { r = readSwitch(root); }, bytes);
-    assert.deepStrictEqual(r, { on: false, source: 'default', state }, bytes);
-    assert.equal(excerptsOn(root), false, bytes);
+    assert.deepStrictEqual(r, { on: true, source: 'default', state }, bytes);
+    assert.equal(excerptsOn(root), true, bytes);
     assert.equal(fs.readFileSync(file, 'utf8'), bytes, `${bytes}: the read left the file as it was`);
     assert.deepStrictEqual(fs.readdirSync(path.dirname(file)).filter((f) => f.startsWith('excerpts')), ['excerpts.json'], `${bytes}: nothing renamed aside`);
   }
   // A directory in the record's place is a failed read, not a throw.
   fs.rmSync(file);
   fs.mkdirSync(file);
-  assert.deepStrictEqual(readSwitch(root), { on: false, source: 'default', state: 'corrupt' });
+  assert.deepStrictEqual(readSwitch(root), { on: true, source: 'default', state: 'corrupt' });
   // A folder that is no project at all reads as the default.
-  assert.deepStrictEqual(readSwitch(path.join(root, 'nowhere')), { on: false, source: 'default', state: 'absent' });
+  assert.deepStrictEqual(readSwitch(path.join(root, 'nowhere')), { on: true, source: 'default', state: 'absent' });
 });
 
 test('(1) setSwitch writes {v:1,on} atomically, and refuses a folder with no .web-chat/, the home directory, a folder holding the user tier and a non-boolean', () => {
@@ -169,9 +172,10 @@ const excerptOf = (it, id) => {
 };
 const withoutExcerpt = (batch) => batch.map((it) => { const { excerpt: _e, ...rest } = it; return rest; });
 
-test('(2) OFF (no record): the queue item has no excerpt key; the live wake and the park are ids-only, byte-equal to the same flow with no excerpt field', async (t) => {
+test('(2) OFF (the record {v:1,on:false}): the queue item has no excerpt key; the live wake and the park are ids-only, byte-equal to the same flow with no excerpt field', async (t) => {
   const d = await bootLocal(t);
-  assert.equal(d.srv.state.excerptsOn(), false, 'state.excerptsOn reads the record (none: the default)');
+  setSwitch(d.root, false); // U425: the default is on; ids-only is this project's record
+  assert.equal(d.srv.state.excerptsOn(), false, 'state.excerptsOn reads the record (off)');
   const h = await postHighlight(d);
   const [item] = elementItems(d.srv);
   assert.equal(item.element_id, h.id);
@@ -199,6 +203,7 @@ test('(2) OFF (no record): the queue item has no excerpt key; the live wake and 
 
 test('(2) ON (flipped with no restart): the next shared highlight\'s item carries excerptText(redactor.value(quote)), the secret masked; the live wake and the park carry one block naming its id; a box grab and a delete carry none', async (t) => {
   const d = await bootLocal(t);
+  setSwitch(d.root, false); // U425: the default is on; start from the record off, then flip
   const before = await postHighlight(d, `${PASSAGE_MARK} before`);
   setSwitch(d.root, true);
   assert.equal(d.srv.state.excerptsOn(), true, 'state.excerptsOn follows the record, no restart');
@@ -461,5 +466,5 @@ test('(4) no route names the switch, and no request a pane can make changes the 
     }
   }
   assert.ok(!fs.existsSync(file), 'the record was never written');
-  assert.equal(excerptsOn(d.root), false);
+  assert.deepStrictEqual(readSwitch(d.root), { on: EXCERPTS_DEFAULT, source: 'default', state: 'absent' }, 'still the default: no record');
 });
