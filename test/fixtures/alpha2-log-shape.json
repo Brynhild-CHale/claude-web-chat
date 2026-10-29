@@ -1,0 +1,40 @@
+{
+  "about": "What alpha.2's element-log reader (cf3af5d = ae-t2-done = ae-alpha.2, lib/core/element-log.js createElementLog's index(), the switch at :611-680) does with each record type, and which schema each built-in type's manifest reads there. A record whose `t` is listed under `indexed` is indexed only when every field listed passes its kind (else alpha.2 counts it `skipped`); any other `t` falls to the default arm, which counts it `unknown` and ignores it. The field kinds' patterns are cf3af5d's own (ELEMENT_ID_RE :128, ACK_KEY_RE :132, ANSWER_CODE_RE :140, ANSWER_HASH_RE :142, PIN_V_RE :324; answerItemProblem :153-174 with ANSWER_KEYS :149, ANSWER_STATES = the first three ANCHOR_STATES, ANSWER_PEERS, ANSWER_DEVICES and ANSWER_RECORD_MAX :139-147). test/elements-e2e-t3.test.js's AG-1 step holds every record of a tranche-3 project to this table, so a tranche-3 log rolled back to alpha.2 reads without a skipped record; a version whose schema no type below reads is one alpha.2's draw parks (C-5).",
+  "source": "cf3af5d:lib/core/element-log.js index() and cf3af5d:templates/elements/web-chat-builtins/elements/*/element.json",
+  "derived_by": [
+    "git show cf3af5d:lib/core/element-log.js | sed -n '124,175p;320,333p;611,680p'",
+    "for t in box-grab comment highlight; do git show cf3af5d:templates/elements/web-chat-builtins/elements/$t/element.json; done",
+    "git show cf3af5d:lib/core/anchor-states.js | sed -n '12,16p'"
+  ],
+  "indexed": {
+    "epoch": {},
+    "el": { "id": "non-empty-string" },
+    "ver": { "id": "non-empty-string", "v": "positive-integer", "seq": "positive-integer" },
+    "commit": { "node": "non-empty-string", "pins": "array" },
+    "migration": {},
+    "close": { "held": "array-of-pin-keys", "complete": "boolean" },
+    "ack": { "keys": "array-of-ack-keys" },
+    "answers": { "node": "non-empty-string", "items": "answer-items" }
+  },
+  "default": "unknown",
+  "patterns": {
+    "element_id": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+    "pin_v": "^[1-9][0-9]*$",
+    "ack_key": "^[a-z][a-z-]{0,63} [A-Za-z0-9@:._+-]{1,200}$",
+    "answer_code": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,31}$",
+    "answer_hash": "^[A-Za-z0-9_-]{1,128}$"
+  },
+  "answer_item": {
+    "keys": ["id", "v", "mount", "state", "how", "why", "tie", "gen", "surface", "qual", "source", "record"],
+    "states": ["exact", "re-resolved", "orphaned"],
+    "peers": ["local", "remote"],
+    "devices": ["desktop", "mobile"],
+    "mount_max": 200,
+    "record_max": 8192
+  },
+  "types": {
+    "box-grab": { "schema": "box-grab@1", "reads": ["box-grab@1"] },
+    "comment": { "schema": "comment@1", "reads": ["comment@1"] },
+    "highlight": { "schema": "highlight@1", "reads": ["highlight@1"] }
+  }
+}
