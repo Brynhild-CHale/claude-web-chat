@@ -460,6 +460,10 @@ function saveButtonStates(text) {
   assert.equal(rest.length, 1, 'one rest rule for the Save button');
   assert.equal(active.length, 1, 'one hover rule for the Save button');
   assert.ok(sels(active[0]).includes(':host .submit:focus-visible'), 'focus-visible draws as hover does');
+  // No third rule may repaint the button in some other state (`:active`,
+  // `:hover:not(:disabled)`, …): every rule naming .submit is one measured here.
+  const others = rules.filter((r) => /\.submit\b/.test(r.selector) && r !== rest[0] && r !== active[0]);
+  assert.deepEqual(others.map((r) => r.selector), [], 'every rule drawing the Save button is measured');
   const at = Object.fromEntries(rest[0].decls);
   return { rest: at, hover: { ...at, ...Object.fromEntries(active[0].decls) } };
 }
