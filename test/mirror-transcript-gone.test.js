@@ -23,6 +23,10 @@
 //     conversations.json, on disk before its index is unlinked, so a
 //     no-process record cleaned across two daemon lives leaves; a session never
 //     indexed is never marked; a transcript that comes back takes its mark off.
+//   * a gone session's index never outlives the sweep (U462, C-3E-1): the
+//     stop's flush writes none back for a transcript deleted under an open
+//     session, and an index found for a gone-marked session is deleted again
+//     (the mark not re-dated); a transcript that comes back is read again.
 //
 // The Claude tier is a private fake (claudeHome, isolate: true), its transcripts
 // built with createRecords; the registry's timers run on an injected clock.
@@ -762,4 +766,112 @@ test('a failed save of the gone marks deletes nothing: the index waits for the n
   assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] }, 'the next sweep deletes them');
   assert.equal(w.cleanups().length, 1);
   assert.equal(reg.get(S1), null, 'and the record leaves (its only transcript gone)');
+});
+
+// ── a gone session's index never outlives the sweep (U462; C-3E-1) ──────────
+// No snapshot is scheduled or written for a session whose transcript is gone
+// (transcripts.js indexWritable / snapshot, on the one gone rule), and the
+// sweep deletes again an index it finds for a gone-marked session whose
+// transcript is still absent, the mark kept. No disk budget is set anywhere
+// here (P4 = c): nothing else would ever take such an index.
+
+// A real facade (the real SOURCES, the transcripts source and the real index
+// store among them) over the world's project, no graph (every conversation
+// eager, R4), the registry's tick and sweep at `tickMs`.
+function facade(t, w, { tickMs = 40 } = {}) {
+  const { createBus } = require('../lib/core/bus');
+  const { createRedactor } = require('../lib/core/redact');
+  const { createHookTap } = require('../lib/server/hook-tap');
+  const { createMirror } = require('../lib/server/mirror');
+  const mirrorBus = createBus({ maxEvents: 5000 });
+  mirrorBus.setBroadcaster(() => {});
+  const mirror = createMirror({
+    root: w.dir, graph: null, hooks: createHookTap(), mainBus: createBus(), mirrorBus, redactor: createRedactor(),
+    log: (...a) => w.logs.push(a.join(' ')),
+    sampleProcs: async (pids) => new Map(pids.map((x) => [x, { alive: false, startedAt: null, cpuMs: null, state: null }])),
+    conversationsOptions: { discoveryMs: tickMs, goneSweepMs: tickMs },
+  });
+  let stopped = false;
+  const h = { mirror };
+  h.stop = async () => { if (!stopped) { stopped = true; await mirror.stop(); } };
+  t.after(() => h.stop());
+  return h;
+}
+
+const WAIT = { timeout: 15000, interval: 20 };
+
+test('a transcript deleted under an open session: the sweep deletes its index and the stop writes none back; the present session\'s index is kept', { timeout: 60000 }, async (t) => {
+  const { waitUntil } = require('../test-support/helpers');
+  // Two sessions (a /clear chain no process writes): S2's transcript stays, so the record stays.
+  const w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] })] });
+  const f1 = w.transcript(S1);
+  w.transcript(S2);
+  const h = facade(t, w);
+  await h.mirror.start();
+  // Both sessions read and indexed (the store's debounced write).
+  await waitUntil(() => fs.existsSync(w.p.mirrorIndex(S1)) && fs.existsSync(w.p.mirrorIndex(S2)), { ...WAIT, what: 'both indexes written' });
+  // Claude Code's cleanup, while the session is open and writable: the sweep from the tick takes its index.
+  fs.unlinkSync(f1);
+  await waitUntil(() => !fs.existsSync(w.p.mirrorIndex(S1)), { ...WAIT, what: 'the sweep deletes S1\'s index' });
+  assert.equal(w.cleanups().length, 1, 'one cleanup line');
+  await h.stop();
+  assert.equal(fs.existsSync(w.p.mirrorIndex(S1)), false, 'the stop\'s flush wrote no index for the gone session');
+  assert.equal(fs.existsSync(w.p.mirrorIndex(S2)), true, 'the present session\'s index kept');
+  assert.equal(typeof savedSessions(w, S1)[S1], 'number', 'S1 carries its gone mark');
+});
+
+test('an index found for a gone-marked session in a next life is deleted again at its boot sweep, the mark not re-dated; the present session\'s is kept', async (t) => {
+  const w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] })] });
+  const f1 = w.transcript(S1);
+  w.transcript(S2);
+  w.index(S1, ['t-a']);
+  w.index(S2, ['t-b']);
+  fs.unlinkSync(f1);
+  const first = w.make();
+  await first.start();
+  assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] });
+  await first.stop();
+  const mark = savedSessions(w, S1)[S1];
+  assert.equal(typeof mark, 'number', 'life 1 marked S1');
+  assert.equal(w.cleanups().length, 1);
+
+  // Between the lives a writer that raced the sweep put S1's index back (with a diff its turn names).
+  w.index(S1, ['t-x']);
+  await w.clock.advance(60 * 1000);
+  const second = w.make();
+  await second.start();
+  assert.deepEqual(w.has(S1, ['t-x']), { index: false, diffs: [false] }, 'the boot sweep deletes it again');
+  assert.equal(w.cleanups().length, 2, 'one cleanup line more');
+  assert.match(w.cleanups()[1], new RegExp(`session ${S1}.*written again.*1 code diff deleted, 0 kept`));
+  assert.deepEqual(w.has(S2, ['t-b']), { index: true, diffs: [true] }, 'the present session untouched');
+  await second.flush();
+  assert.equal(savedSessions(w, S1)[S1], mark, 'the mark kept as it was, not re-dated');
+  assert.ok(second.get(S1), 'the record stays (S2\'s transcript is there)');
+  // Judged again only when there is something: a later sweep says nothing more.
+  second.sweepGone();
+  assert.equal(w.cleanups().length, 2);
+});
+
+test('a transcript that comes back after its session was marked gone is unmarked, read again and its index written', { timeout: 60000 }, async (t) => {
+  const { waitUntil } = require('../test-support/helpers');
+  const w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] })] });
+  const f1 = w.transcript(S1);
+  w.transcript(S2);
+  w.index(S1, ['t-a']);
+  fs.unlinkSync(f1);
+  const first = w.make();
+  await first.start();
+  await first.stop();
+  assert.equal(typeof savedSessions(w, S1)[S1], 'number', 'marked');
+  assert.equal(fs.existsSync(w.p.mirrorIndex(S1)), false);
+
+  // Restored from a backup before the next life.
+  w.transcript(S1);
+  const h = facade(t, w);
+  await h.mirror.start();
+  await waitUntil(() => fs.existsSync(w.p.mirrorIndex(S1)), { ...WAIT, what: 'S1 read again and indexed' });
+  await h.stop();
+  assert.equal(fs.existsSync(w.p.mirrorIndex(S1)), true, 'its index rewritten');
+  assert.equal(fs.existsSync(w.p.mirrorIndex(S2)), true);
+  assert.equal(savedSessions(w, S1)[S1], 'unmarked', 'the mark is off');
 });
