@@ -916,3 +916,35 @@ test('a page range pin beside a value learned later: a highlight\'s quote prefix
   assert.ok(spelled.length === 1 && spelled[0].start === 0 && iq.suffix.slice(spelled[0].end) === rest, `the suffix is cut at the value and the mask spelled there: ${JSON.stringify(iq.suffix)}`);
   assert.equal(logBytes(root), before, 'the log bytes are unchanged');
 });
+
+// U415b: the context mask cuts a prefix's outer edge only where a learned
+// value's tail sits (lib/core/redact knownTailAt). A 32-character prefix that
+// opens on a long word, with no learned value there, is served as stored. Red
+// at aa60492e, where U415a's rule dropped any leading run of 8+ characters.
+test('a clean 32-character prefix that opens on a long word is served as stored, a value learned elsewhere or not', async (t) => {
+  const { api, anonApi, root } = await withServer(t);
+  const text = 'Configuration information about the staging host is kept in the vault.';
+  await render(api, 'm-clean', `<p>${text}</p>`);
+  const exact = 'the staging host';
+  const i = text.indexOf(exact);
+  const quote = { exact, prefix: text.slice(i - 32, i), suffix: text.slice(i + exact.length, i + exact.length + 32) };
+  assert.equal(quote.prefix.length, 32);
+  assert.ok(/^\S{8,}\s/.test(quote.prefix), `precondition: the prefix opens on a run of 8+ characters: ${JSON.stringify(quote.prefix)}`);
+  const anchor = { v: 1, kind: 'range', mount: 'm-clean', quote, pos: { start: i, end: i + exact.length } };
+  const h = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor, payload: { note: 'clean' } }), 'highlight')).element;
+  const c = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor, payload: { text: 'clean', shared: true } }), 'comment')).element;
+  const served = async () => {
+    const b = (await anonApi.get('/api/elements')).json;
+    return ['highlight', 'comment'].map((k, j) => b.elements.find((e) => e.id === [h.id, c.id][j]).anchor.quote);
+  };
+  for (const q of await served()) assert.deepEqual({ prefix: q.prefix, suffix: q.suffix }, { prefix: quote.prefix, suffix: quote.suffix }, 'nothing learned: served as stored');
+  // A value learned elsewhere: its tail does not open the prefix.
+  const other = `unrelated${'Q7'.repeat(8)}`;
+  fs.writeFileSync(projectPaths(root).captureToken, other + '\n');
+  const marker = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: `names ${other}`, shared: true } }), 'marker')).element;
+  await waitUntil(async () => {
+    const live = ((await anonApi.get('/api/elements')).json.elements || []).find((e) => e.id === marker.id);
+    return live && !live.text.includes(other);
+  }, { timeout: 6000, what: 'the redactor learned the other value' });
+  for (const q of await served()) assert.equal(q.prefix, quote.prefix, 'a value learned elsewhere: the clean prefix is served as stored');
+});
