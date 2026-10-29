@@ -194,7 +194,9 @@ test('conversations.js deleteGone, run on a written index whose transcript Claud
   t.after(() => reg.stop());
   await reg.start();
   await reg.flush();
-  assert.ok(reg.get(S1), 'the conversation stays listed');
+  // Its one transcript gone, the conversation leaves the registry (U456).
+  assert.equal(reg.get(S1), null, 'every transcript gone: the conversation leaves');
+  assert.ok(reg.get(S2), 'the other stays listed');
   assert.equal(fs.existsSync(paths.mirrorIndex(S1)), false, 'its index');
   assert.equal(fs.existsSync(paths.mirrorDiff('turn-old-1')), false, 'and the diffs its turns name');
   assert.equal(fs.existsSync(paths.mirrorDiff('turn-old-2')), false);

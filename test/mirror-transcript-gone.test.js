@@ -148,8 +148,11 @@ function world(t, { conversations = (ch) => [], options = {} } = {}) {
 // ── the sweep ────────────────────────────────────────────────────────────────
 
 test('an ended conversation whose transcript Claude Code deleted: its index and diffs go at the boot sweep, the session stays', async (t) => {
-  const w = world(t, { conversations: (ch) => [stored(S1, ch.slug)] });
+  // Two sessions, the other's transcript still there, so the record stays
+  // (U456: a record whose every transcript is gone leaves; cases below).
+  const w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] })] });
   const file = w.transcript(S1);
+  w.transcript(S2);
   w.index(S1, ['t-a', 't-b']);
   fs.unlinkSync(file); // Claude Code's cleanupPeriodDays
   const reg = w.make();
@@ -158,10 +161,10 @@ test('an ended conversation whose transcript Claude Code deleted: its index and 
   assert.equal(w.cleanups().length, 1, 'one line');
   assert.match(w.cleanups()[0], new RegExp(`session ${S1}.*2 code diffs deleted, 0 kept`));
   assert.ok(w.cleanups()[0].includes(GONE_TRIGGER));
-  assert.deepEqual(reg.get(S1).sessions.map((s) => s.session_id), [S1], 'the session stays in the record');
+  assert.deepEqual(reg.get(S1).sessions.map((s) => s.session_id), [S1, S2], 'the session stays in the record');
   await reg.flush();
   const saved = JSON.parse(fs.readFileSync(w.p.mirrorConversations, 'utf8'));
-  assert.deepEqual(saved.conversations[0].sessions.map((s) => s.session_id), [S1]);
+  assert.deepEqual(saved.conversations[0].sessions.map((s) => s.session_id), [S1, S2]);
   // Judged once: a later sweep says nothing more.
   reg.sweepGone();
   assert.equal(w.cleanups().length, 1);
@@ -316,4 +319,180 @@ test('an orphan index whose file names another session is not judged by its slug
   await w.make().start();
   assert.deepEqual(w.has(S1, ['t-a']), { index: true, diffs: [true] });
   assert.equal(w.cleanups().length, 0);
+});
+
+// ── a conversation whose every transcript is gone leaves (U456) ──────────────
+// PLAN.md 3E.5; settled default GONE@leave (PLAN-T3 §2.3): the record leaves
+// in the sweep that finds its last session gone, after that session's
+// deletions; a partly cleaned record stays; a live one, a session switched off
+// (transcriptPath null) and a session with no slug never leave this way.
+
+// The registry's events, as the facade hears them.
+function heard(w) {
+  const events = [];
+  const transitions = [];
+  return {
+    events,
+    transitions,
+    options: {
+      onConversation: (ev) => events.push({
+        change: ev.change, id: ev.conversation && ev.conversation.id, reason: ev.reason,
+        // What was on disk when the removal was heard: its sessions' indexes.
+        indexes: ev.change === 'removed' ? (ev.conversation.sessions || []).map((s) => fs.existsSync(w().p.mirrorIndex(s.session_id))) : undefined,
+      }),
+      transition: (tr) => transitions.push(tr),
+    },
+    removed: () => events.filter((e) => e.change === 'removed'),
+  };
+}
+const savedIds = (w) => JSON.parse(fs.readFileSync(w.p.mirrorConversations, 'utf8')).conversations.map((c) => c.id);
+
+test('two sessions: one transcript cleaned keeps the record whole; both cleaned, the sweep removes it with removed {reason: transcript-gone}, after its deletions, and conversations.json loses it', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] }), stored(S3, ch.slug)], options: h.options });
+  const f1 = w.transcript(S1);
+  const f2 = w.transcript(S2);
+  w.transcript(S3);
+  w.index(S1, ['t-a']);
+  w.index(S2, ['t-b']);
+  w.index(S3, ['t-c']);
+  fs.unlinkSync(f1);
+  const reg = w.make();
+  await reg.start();
+  assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] }, 'the gone session\'s files go');
+  assert.deepEqual(w.has(S2, ['t-b']), { index: true, diffs: [true] });
+  assert.deepEqual(h.removed(), [], 'partly cleaned: no removal');
+  assert.deepEqual(reg.get(S1).sessions.map((s) => s.session_id), [S1, S2], 'the record stays whole');
+  assert.equal(reg.bySession(S1).id, S1);
+  await reg.flush();
+  assert.deepEqual(savedIds(w).sort(), [S1, S3]);
+
+  // Claude Code cleans the other: the next sweep deletes it, then removes the record.
+  fs.unlinkSync(f2);
+  reg.sweepGone();
+  assert.deepEqual(w.has(S2, ['t-b']), { index: false, diffs: [false] });
+  assert.deepEqual(h.removed(), [{ change: 'removed', id: S1, reason: GONE_TRIGGER, indexes: [false, false] }],
+    'one removal, heard after both indexes were deleted');
+  assert.equal(GONE_TRIGGER, 'transcript-gone');
+  assert.ok(h.transitions.some((tr) => tr.op === 'conversation' && tr.change === 'removed' && tr.conversation_id === S1), 'on the mirror bus');
+  assert.equal(reg.get(S1), null);
+  for (const sid of [S1, S2]) assert.equal(reg.bySession(sid), null);
+  assert.ok(!reg.list().some((c) => c.id === S1), 'no longer listed');
+  assert.equal(reg.get(S3).id, S3, 'another conversation is untouched');
+  assert.deepEqual(w.has(S3, ['t-c']), { index: true, diffs: [true] });
+  await reg.flush();
+  assert.deepEqual(savedIds(w), [S3], 'conversations.json loses it');
+
+  // Judged once: a later sweep removes nothing more and logs nothing more.
+  const lines = w.cleanups().length;
+  reg.sweepGone();
+  assert.equal(h.removed().length, 1);
+  assert.equal(w.cleanups().length, lines);
+});
+
+test('a conversation whose only transcript is gone leaves at the boot sweep, and a registry loaded from the saved file never brings it back', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug), stored(S3, ch.slug)], options: h.options });
+  const f1 = w.transcript(S1);
+  w.transcript(S3);
+  w.index(S1, ['t-a']);
+  fs.unlinkSync(f1);
+  const reg = w.make();
+  await reg.start();
+  assert.deepEqual(h.removed().map((e) => [e.id, e.reason]), [[S1, GONE_TRIGGER]]);
+  await reg.stop();
+  assert.deepEqual(savedIds(w), [S3]);
+  const again = w.make();
+  await again.start();
+  assert.equal(again.get(S1), null, 'stays gone');
+  assert.equal(again.get(S3).id, S3);
+  assert.deepEqual(h.removed().length, 1, 'nothing more removed');
+});
+
+test('a live conversation whose transcripts are missing never leaves, nor does one with no process whose transcript is not written yet', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  const proc = { pid: process.pid, proc_start: null, kind: 'interactive', entrypoint: 'cli', linked_by: 'hook', linked_at: Date.now() };
+  w = world(t, {
+    conversations: (ch) => [
+      stored(S1, ch.slug, { ended: false, process: proc, sessions: [S1, S2] }), // live: none of its transcripts on disk
+      stored(S3, ch.slug, { ended: false }), // no process, never indexed: its transcript still to come
+    ],
+    options: h.options,
+  });
+  w.index(S1, ['t-a']);
+  const reg = w.make();
+  await reg.start();
+  reg.sweepGone();
+  assert.deepEqual(h.removed(), []);
+  for (const sid of [S1, S3]) assert.equal(reg.get(sid).id, sid);
+  assert.deepEqual(w.has(S1, ['t-a']), { index: true, diffs: [true] });
+  await reg.flush();
+  assert.deepEqual(savedIds(w).sort(), [S1, S3]);
+});
+
+test('a conversation with no process whose indexed transcript is gone leaves; its index found and deleted first', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, { conversations: (ch) => [stored(S3, ch.slug, { ended: false })], options: h.options });
+  const f3 = w.transcript(S3);
+  w.index(S3, ['t-c']);
+  fs.unlinkSync(f3);
+  const reg = w.make();
+  await reg.start();
+  assert.deepEqual(w.has(S3, ['t-c']), { index: false, diffs: [false] });
+  assert.deepEqual(h.removed().map((e) => [e.id, e.reason, e.indexes]), [[S3, GONE_TRIGGER, [false]]]);
+});
+
+test('transcriptPath() null never removes: a session switched off whose transcript is there, and a session with no slug', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, {
+    conversations: (ch) => [stored(S1, ch.slug), stored(S3, null)],
+    options: {
+      ...h.options,
+      resolveToggle: ({ sessionId, scopes }) => (scopes.includes('session') && sessionId === S1 ? { enabled: false, by: 'session' } : { enabled: true }),
+    },
+  });
+  w.transcript(S1);
+  w.index(S1, ['t-a']);
+  w.index(S3, ['t-c']); // no slug, and no transcript anywhere: never judged
+  const reg = w.make();
+  await reg.start();
+  reg.sweepGone();
+  assert.equal(reg.transcriptPath(S1), null, 'switched off');
+  assert.equal(reg.transcriptPath(S3), null, 'no slug');
+  assert.deepEqual(h.removed(), []);
+  for (const sid of [S1, S3]) assert.equal(reg.get(sid).id, sid);
+  await reg.flush();
+  assert.deepEqual(savedIds(w).sort(), [S1, S3]);
+});
+
+test('an ended conversation cleaned across two daemon lives: one session gone in the first, the other in the second, and the second boot sweep removes it', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] })], options: h.options });
+  const f1 = w.transcript(S1);
+  const f2 = w.transcript(S2);
+  w.index(S1, ['t-a']);
+  w.index(S2, ['t-b']);
+  fs.unlinkSync(f1);
+  const first = w.make();
+  await first.start();
+  assert.deepEqual(h.removed(), [], 'partly cleaned: it stays');
+  assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] });
+  await first.stop();
+  assert.deepEqual(savedIds(w), [S1]);
+  // The first session's index went in the earlier life (nothing in this one's
+  // memory names it); the record is ended, so the gone check alone decides.
+  fs.unlinkSync(f2);
+  const second = w.make();
+  await second.start();
+  assert.deepEqual(w.has(S2, ['t-b']), { index: false, diffs: [false] });
+  assert.deepEqual(h.removed().map((e) => [e.id, e.reason]), [[S1, GONE_TRIGGER]], 'every transcript gone: it leaves');
+  assert.equal(second.get(S1), null);
+  await second.flush();
+  assert.deepEqual(savedIds(w), [], 'conversations.json loses it');
 });
