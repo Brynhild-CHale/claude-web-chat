@@ -2107,3 +2107,197 @@ test('U406a: GET /api/graph/node/:id and /preview/node/:id — a shared pin chai
   const bp = await d.anonApi.get(`/preview/node/${id}`);
   for (const x of [hp, priv]) assert.ok(quoted(bp.text, x), `the local browser's preview keeps ${x}`);
 });
+
+// ── tranche 3 · the chat rows (U441; 3D.1; L6) ──────────────────────────────
+// The chat-comment type (U415, RULED CHAT@type a) is decided by the engines
+// tranche 2 built, the moment element-policy lists it: its frame row, its
+// private entry and its gate are the compiled ones, equal to the page
+// comment's, at `read` — the chat's own level (RULED REQ@chat-remote-levels
+// a); its routes ride the path-generic element floor; nothing chat-family
+// lives under /api/comments/*; and none of that costs a protocol bump
+// (PROTO@none, L.4 A0 = a). C-15-1: no gate here is a writer claim.
+const CHAT_TYPE = 'chat-comment';
+const CHAT_FRAME = `element:${CHAT_TYPE}`;
+
+test('U441 C1: the chat rows are the compiled ones — element:chat-comment at read (element:comment\'s and mirror:update\'s level), no posture; its gate and private entry the page comment\'s', () => {
+  const { ELEMENT_POLICY } = require('../lib/core/remote-policy');
+  const rows = FRAME_RULES.filter((r) => r.type === CHAT_FRAME);
+  assert.equal(rows.length, 1, 'exactly one element:chat-comment row (a hand-written one would be a second)');
+  const [row] = rows;
+  const compiled = ELEMENT_POLICY.frames.find((r) => r.type === CHAT_FRAME);
+  assert.ok(compiled, 'the compile gives the chat type a frame row');
+  assert.deepStrictEqual({ ...row }, { ...compiled }, 'the FRAME_RULES row is the compiled entry, as it is');
+  const levelOf = (type) => FRAME_RULES.find((r) => r.type === type).level;
+  assert.equal(row.level, 'read', 'the chat\'s own level (L6)');
+  assert.equal(row.level, levelOf('element:comment'), 'a page pin\'s level');
+  assert.equal(row.level, levelOf('mirror:update'), 'the conversation\'s level');
+  assert.ok(!Object.hasOwn(row, 'posture'), 'a pin is a record, not the stream: no posture');
+  assert.ok(!Object.hasOwn(row, 'basic') && !Object.hasOwn(row, 'item'), 'no basic projection, no item: basic gets nothing');
+  assert.deepStrictEqual({ ...ELEMENT_POLICY.typeGates[CHAT_TYPE] }, { ...ELEMENT_POLICY.typeGates.comment }, 'the chat gate is the comment\'s');
+  assert.deepStrictEqual({ ...ELEMENT_POLICY.typeGates[CHAT_TYPE] }, { see: 'read', send: 'full' });
+  assert.deepStrictEqual([...PRIVATE_RULES.frames[CHAT_FRAME]], [...PRIVATE_RULES.frames['element:comment']]);
+  assert.deepStrictEqual([...PRIVATE_RULES.frames[CHAT_FRAME]], ['elements[]']);
+  assert.deepStrictEqual([...PRIVATE_RULES.frames[CHAT_FRAME]], [...ELEMENT_POLICY.privatePaths[CHAT_FRAME]], 'the compiled entry');
+  // No chat row spelled by hand in the table's source: every chat-comment
+  // name in remote-policy.js is in a comment line.
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'lib/core/remote-policy.js'), 'utf8');
+  const spelled = src.split('\n').filter((l) => l.includes(CHAT_TYPE) && !/^\s*\/\//.test(l));
+  assert.deepStrictEqual(spelled, [], 'no code line of remote-policy.js names chat-comment: its rows are compiled');
+});
+
+const CHAT_MARKS = Object.freeze({
+  text: 'wc-u441-c2-text', reply: 'wc-u441-c2-reply', exact: 'wc-u441-c2-exact', prefix: 'wc-u441-c2-prefix',
+  suffix: 'wc-u441-c2-suffix', fp: 'wc-u441-c2-fp', label: 'wc-u441-c2-label', explain: 'wc-u441-c2-explain',
+});
+const chatPin = (id, shared, tag) => ({
+  id, v: 1, seq: 1, type: CHAT_TYPE, schema: 'chat-comment@1', shared, chain: [],
+  text: `${CHAT_MARKS.text}-${tag}`, replies: [{ author: 'user', text: `${CHAT_MARKS.reply}-${tag}`, at: 1 }],
+  anchor: {
+    v: 1, kind: 'item-range', conversation_id: 'conv-1', session_id: 'sess-1', turn_id: 't1', item_id: 'r_t1_0', field: 'text',
+    quote: { exact: `${CHAT_MARKS.exact}-${tag}`, prefix: `${CHAT_MARKS.prefix}-${tag}`, suffix: `${CHAT_MARKS.suffix}-${tag}` },
+    pos: { start: 3, end: 9 }, fp: { h: `${CHAT_MARKS.fp}-${tag}`, len: 48 }, marks: 0, label: `${CHAT_MARKS.label}-${tag}`,
+  },
+  anchor_label: `on ${CHAT_MARKS.label}-${tag}`, state: 'exact', visible: 'placed', explain: `${CHAT_MARKS.explain}-${tag}`,
+});
+
+test('U441 C2: projectFrame over element:chat-comment — local the frame itself; read and full drop the private pin and keep the shared one by identity; basic, an unknown level and none get nothing', () => {
+  const shared = chatPin('k1', true, 'shared');
+  const priv = chatPin('k2', false, 'private');
+  const frame = frozen({ type: CHAT_FRAME, elements: [shared, priv] });
+  for (const f of Object.values(CHAT_MARKS)) assert.ok(JSON.stringify(frame).includes(`${f}-private`), `the fixture carries ${f} in the private pin`);
+  assert.equal(projectFrame(frame, 'local'), frame, 'local: the same object');
+  for (const level of ['read', 'full']) {
+    const out = projectFrame(frame, level);
+    assert.deepStrictEqual(out, { type: CHAT_FRAME, elements: [shared] }, level);
+    assert.equal(out.elements[0], frame.elements[0], `${level}: the shared pin kept by identity`);
+    assert.ok(!JSON.stringify(out).includes('-private'), `${level}: no private marker anywhere`);
+  }
+  for (const level of ['basic', 'nonsense', undefined]) assert.equal(projectFrame(frame, level), null, `${String(level)}: no frame at all`);
+  // Every posture, the same answer: the row has none.
+  for (const posture of ['status', 'full']) {
+    assert.equal(projectFrame(frame, 'basic', posture), null, `basic, posture ${posture}`);
+    assert.deepStrictEqual(projectFrame(frame, 'read', posture), { type: CHAT_FRAME, elements: [shared] }, `read, posture ${posture}`);
+  }
+});
+
+test('U441 C3: every element route on a chat pin is classified exactly as on a page pin — reads from read, writes from full, refusals carrying `mirror` and the floor\'s hint (path-generic: no row keyed by type)', () => {
+  const CHAT_ID = 'k7';
+  const PAGE_ID = 'c7';
+  const routes = [
+    ['GET', (id) => `/api/elements?type=${id === CHAT_ID ? CHAT_TYPE : 'comment'}`, 'read'],
+    ['GET', (id) => `/api/elements/${id}/grab`, 'read'],
+    ['POST', () => '/api/elements', 'full'],
+    ['PATCH', (id) => `/api/elements/${id}`, 'full'],
+    ['DELETE', (id) => `/api/elements/${id}`, 'full'],
+    ['POST', (id) => `/api/elements/${id}/reply`, 'full'],
+    ['POST', (id) => `/api/elements/${id}/send`, 'full'],
+  ];
+  for (const [m, url, need] of routes) {
+    for (const optIn of OPT_INS) {
+      const chat = classify(m, url(CHAT_ID), { mirror: optIn });
+      const page = classify(m, url(PAGE_ID), { mirror: optIn });
+      assert.deepStrictEqual(chat, page, `${m} ${url(CHAT_ID)} at ${optIn}: the page pin's verdict`);
+      const level = fromOptIn(optIn);
+      assert.equal(chat.allow, atLeast(level, need), `${m} ${url(CHAT_ID)} at ${optIn} (needs ${need})`);
+      assert.ok(chat.key && chat.key.includes('/api/elements'), `${m}: decided by an element floor row (${chat.key})`);
+      if (!chat.allow) {
+        assert.equal(chat.reason, 'mirror', `${m} at ${optIn}: refused by level`);
+        const body = refusalBody(chat);
+        assert.equal(body.mirror, level, `${m} at ${optIn}: the refusal names the viewer's level`);
+        assert.equal(body.hint, need === 'full' ? MIRROR_FULL_HINT : MIRROR_HINT, `${m} at ${optIn}: the floor's hint`);
+      }
+    }
+  }
+  // A body-declared writer is not a classify input (C-15-1, C-15-3): the
+  // verdict is the path's and the opt-in's only.
+  assert.deepStrictEqual(classify('POST', `/api/elements/${CHAT_ID}/reply`, { mirror: 'read', writer: 'claude', author: 'claude' }),
+    classify('POST', `/api/elements/${CHAT_ID}/reply`, { mirror: 'read' }));
+  assert.deepStrictEqual(RULES.filter((r) => r.path.includes(CHAT_TYPE)).map(keyOf), [], 'no RULES row names the chat type');
+});
+
+test('U441 C4: /api/comments/* stays one refusal and chat-free — every method, every level; no RULES path names chat; no chat route outside /api/elements', () => {
+  for (const u of ['/api/comments', '/api/comments/k7', '/api/comments/k7/reply']) {
+    for (const m of ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'PUT']) {
+      for (const optIn of [undefined, ...OPT_INS]) {
+        const v = classify(m, u, { mirror: optIn });
+        assert.deepStrictEqual([v.allow, v.key, v.hint], [false, '* /api/comments/*', SPEC_COMMENTS_FOLD_HINT], `${m} ${u} at ${optIn}`);
+      }
+    }
+  }
+  assert.deepStrictEqual(RULES.filter((r) => /chat/i.test(r.path)).map(keyOf), [], 'no RULES path names chat');
+  const routes = daemonRoutes();
+  const under = routes.filter((r) => /^\/api\/comments(\/|$)/.test(r.path));
+  assert.deepStrictEqual(under.map((r) => [r.method, r.path, r.file]), [['*', '/api/comments', 'lib/server/routes/comments.js']],
+    'the 410 handler is the one route under /api/comments');
+  const chatRoutes = routes.filter((r) => /chat/i.test(r.path) && !r.path.startsWith('/api/elements'));
+  assert.deepStrictEqual(chatRoutes, [], 'no chat-comment route outside /api/elements');
+});
+
+test('U441 C5: a chat-comment queue item from the real producer — every key carrying its words is in TEXT_RULES.items[kind]; below read none of them, text_hidden, the ids kept, the label `chat · chat-comment`', () => {
+  const { classify: classifyEvent, mergeElement } = require('../lib/channel/policy');
+  const { wakeOf } = require('../lib/packs/elements');
+  const { excerptText } = require('../lib/channel/envelope');
+  const MARK = 'wc-u441-c5-mark';
+  const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'templates/elements/web-chat-builtins/elements/chat-comment/element.json'), 'utf8'));
+  const wake = wakeOf(manifest);
+  assert.ok(wake, 'the chat type wakes');
+  // The declaration as lib/server/index.js elementWake builds it for a chat
+  // type: the summary_key's text, the replies, `where` = `on <anchor label>`
+  // plus the chain words (a private member: 'a private element', Q8 a).
+  const decl = (n) => ({
+    wake, label: manifest.label, text: `${MARK}-text-${n}`,
+    replies: [{ author: 'user', text: `${MARK}-reply-${n}` }, { author: 'claude', text: `${MARK}-claude-${n}` }],
+    where: `on turn 1's reply: "${MARK}-label-${n}" · on a private element › chat comment k3`,
+  });
+  const event = (id) => ({ kind: 'element', type: CHAT_TYPE, op: 'add', id, v: 1, shared: true, mount: null, chain_private: ['k9'] });
+  const raise = (id, n) => {
+    const c = classifyEvent(event(id), { elementTypes: { [CHAT_TYPE]: decl(n) } });
+    assert.equal(c.action, 'enqueue', 'a shared chat pin enqueues');
+    // raiseFor (lib/server/index.js): the declaration's label and, while the
+    // excerpt switch is on, the passage the anchor quotes.
+    c.item.label = manifest.label;
+    c.item.excerpt = excerptText(`${MARK}-excerpt-${n}`);
+    return c.item;
+  };
+  const one = raise('k1', 1);
+  const group = mergeElement(raise('k1', 1), raise('k2', 2));
+  assert.ok(Array.isArray(group.excerpt) && group.excerpt.length === 2, 'a two-member group carries an excerpt per member');
+  for (const [what, item] of [['one pin', one], ['a group', group]]) {
+    assert.equal(item.kind, 'element');
+    assert.equal(item.type, CHAT_TYPE);
+    assert.ok(JSON.stringify(item).includes(MARK), `${what}: the item carries the pin's words at read`);
+    const fields = TEXT_RULES.items[item.kind];
+    const carriers = Object.keys(item).filter((k) => JSON.stringify(item[k]).includes(MARK));
+    assert.ok(carriers.includes('summary') && carriers.includes('excerpt'), `${what}: the census sees the summary and the excerpt (${carriers})`);
+    for (const k of carriers) assert.ok(fields.includes(k), `${what}: ${k} carries chat text and is not in TEXT_RULES.items.${item.kind}`);
+    assert.ok(!JSON.stringify(item).includes('k9'), `${what}: the private chain member's id is nowhere`);
+    for (const level of ['read', 'full', 'local']) assert.equal(stripItemText(frozen({ ...item }), level).summary, item.summary, `${what} at ${level}: the item's words`);
+    const frozenItem = frozen(JSON.parse(JSON.stringify(item)));
+    for (const level of ['read', 'full', 'local']) assert.equal(stripItemText(frozenItem, level), frozenItem, `${what} at ${level}: the item itself`);
+    for (const level of ['basic', 'nonsense', undefined]) {
+      const out = stripItemText(frozenItem, level);
+      assert.ok(!JSON.stringify(out).includes(MARK), `${what} at ${String(level)}: no chat text anywhere: ${JSON.stringify(out)}`);
+      assert.equal(out.text_hidden, true, `${what}: text_hidden`);
+      assert.equal(out.summary, 'chat · chat-comment', `${what}: the label names the family and the type (K.2-163)`);
+      assert.equal(out.excerpt, 'chat · chat-comment', `${what}: the excerpt is the same label`);
+      assert.deepStrictEqual([out.kind, out.type, out.element_id, out.v], [item.kind, item.type, item.element_id, item.v], `${what}: the ids kept`);
+      assert.ok(!String(out.origin_mount ?? '').includes(MARK), `${what}: origin_mount carries no text`);
+    }
+  }
+  // A page type's item: the type with its mount (K.2-163, as test/private-routes holds for a comment group).
+  const page = frozen({ kind: 'element', type: 'highlight', element_id: 'h1', v: 1, origin_mount: 'm1', summary: `${MARK}`, excerpt: MARK });
+  assert.equal(stripItemText(page, 'basic').summary, 'm1 · highlight');
+  // A type no built-in names keeps its kind (nothing an item carries reaches the label).
+  const odd = frozen({ kind: 'element', type: `${MARK} words`, element_id: 'x1', origin_mount: 'm1', summary: MARK });
+  assert.equal(stripItemText(odd, 'basic').summary, 'm1 · element', 'an unknown type never reaches the label');
+});
+
+test('U441 C6: PROTO@none — PORTAL_PROTOCOL_VERSION is 12 and RULES and ANSWER_RULES are ae/int cf3af5d\'s byte for byte', () => {
+  // Measured 2026-10-28 with digest() at ae/int cf3af5d (and at 3eaba45, the
+  // same): the chat rows ride the element floor and the compiled frame rows,
+  // so tranche 3 adds no portal row.
+  const STOP = 'a tranche-3 RULES or ANSWER_RULES row is a protocol-13 bump: stop and ask (PROTO@none, L.4 A0 = a)';
+  assert.equal(PORTAL_PROTOCOL_VERSION, 12, STOP);
+  assert.equal(digest(RULES), '431329a71300f4a5', STOP);
+  assert.equal(digest(ANSWER_RULES), 'dfa80f57e66ac433', STOP);
+});
