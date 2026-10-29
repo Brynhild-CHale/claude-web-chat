@@ -5,11 +5,13 @@
 // items' `excerpt` field, so all three delivery paths (the channel bridge, the
 // park, the mod transport) carry it with no edit of their own.
 //
-// Nothing produces an `excerpt` yet (the switch is U422's, off by default), so
-// the first test holds the ids-only form byte for byte: a frozen table of
-// wakeEnvelope outputs recorded at cf3af5d (before the block existed) for every
-// branch, compared with this build's output for the same inputs — with no
-// excerpt, an empty one, and an excerpt on a message item (never read).
+// Whether an item carries an `excerpt` is the switch's decision (U422,
+// lib/core/excerpts): on by default since U425, and `claude-web-chat excerpts
+// off` turns it off per project. With no item carrying one, the first test
+// holds the ids-only form byte for byte: a frozen table of wakeEnvelope outputs
+// recorded at cf3af5d (before the block existed) for every branch, compared
+// with this build's output for the same inputs — with no excerpt, an empty
+// one, and an excerpt on a message item (never read).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
