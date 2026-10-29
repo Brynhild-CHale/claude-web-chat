@@ -176,6 +176,17 @@ export function toggleMode() {
   announceMode();
   return next === 'light';
 }
+// The embed bridge's `mode` message (U470; web-chat-contracts 06): set light or
+// dark explicitly, so the hub shell's toggle and the frame agree. The same
+// stored preference toggleMode flips (wc-mode, per origin). Under a single-mode
+// pack it stores nothing and returns null, as toggleMode does; a mode already
+// shown is kept (true/false: whether the mode shown is light).
+export function setMode(mode) {
+  if (mode !== 'light' && mode !== 'dark') return null;
+  if (!modeToggleable()) return null;
+  if (effectiveMode() === mode) { modePref = mode; setLocal(MODE_KEY, mode); return mode === 'light'; }
+  return toggleMode();
+}
 // The ◑ button reflects whether the current pack has a second mode.
 export function syncModeToggle() {
   const btn = $('btn-theme-toggle');

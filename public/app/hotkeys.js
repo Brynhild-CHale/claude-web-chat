@@ -72,6 +72,13 @@
 //                        aria-keyshortcuts or <kbd> name the action's key:
 //                        rewritten from keyFor at init, on every rebind, and
 //                        whenever its owner rewrites one of those attributes.
+//   runAction(id, {context})  run one chrome action BY ID, as its key would
+//                        (U470: the embed bridge's commands). → {ok: true}, or
+//                        {ok: false, refused} — 'unknown' (no such id),
+//                        'descriptive' (a row with no run), 'context' (it does
+//                        not answer in `context`, default 'page'), 'disabled'
+//                        (its enabled() said no). The action itself, whatever
+//                        key a record bound to it; a target kind is not an id.
 //   initHotkeys()        draw the legend (#key-legend .legend-card) and the
 //                        keyed titles, and re-merge on every toolbar change.
 //   createRegistry({records})  a registry of its own (the tests'); the module's
@@ -304,6 +311,16 @@ export function createRegistry({ records = () => ({ user: null, project: null })
     return Object.freeze({ id: r.action || null, label: r.label, run: r.run, tier: entry.tier, chord });
   }
 
+  function runAction(id, { context = 'page' } = {}) {
+    const a = typeof id === 'string' ? actions.get(id) : null;
+    if (!a) return Object.freeze({ ok: false, refused: 'unknown' });
+    if (!a.run) return Object.freeze({ ok: false, refused: 'descriptive' });
+    if (!a.contexts.includes(context)) return Object.freeze({ ok: false, refused: 'context' });
+    if (a.enabled && !a.enabled()) return Object.freeze({ ok: false, refused: 'disabled' });
+    a.run();
+    return Object.freeze({ ok: true });
+  }
+
   function bindingsView() {
     const { merged, labels } = state();
     const out = [];
@@ -507,7 +524,7 @@ export function createRegistry({ records = () => ({ user: null, project: null })
   }
 
   return {
-    registerAction, registerTargetKind, setDefaultSource, onHotkeysChange, lookup, bindingsView, conflicts,
+    registerAction, registerTargetKind, setDefaultSource, onHotkeysChange, lookup, runAction, bindingsView, conflicts,
     keyFor, keysFor, legendModel, registerKeyedElement, init, refresh: changed,
     actionOf: (id) => actions.get(id) || null,
   };
@@ -524,6 +541,8 @@ export const registerTargetKind = registry.registerTargetKind;
 export const setDefaultSource = registry.setDefaultSource;
 export const onHotkeysChange = registry.onHotkeysChange;
 export const lookup = registry.lookup;
+export const runAction = registry.runAction;
+export const actionOf = registry.actionOf;
 export const bindingsView = registry.bindingsView;
 export const conflicts = registry.conflicts;
 export const keyFor = registry.keyFor;
