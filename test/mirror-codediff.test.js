@@ -1039,7 +1039,7 @@ test('removed on a live mirror: a ready turn whose record file is deleted answer
   assert.equal(await h.mirror.diff({ turn: 'pNever' }), null);
 });
 
-test('Claude Code\'s cleanup of a transcript no process writes: the next boot sweep deletes its index and diff record, the session stays, and the turn never answers ready or expired', async (t) => {
+test('Claude Code\'s cleanup of a transcript no process writes: the next boot sweep deletes its index and diff record, the conversation (its every transcript gone) leaves the registry, and the turn never answers ready or expired', async (t) => {
   const { createIndexStore } = require('../lib/server/mirror/index-store');
   const repo = scratchRepo(t, { files: { 'a.txt': 'one\n' } });
   const h = await mirrorOn(t, repo);
@@ -1061,7 +1061,8 @@ test('Claude Code\'s cleanup of a transcript no process writes: the next boot sw
   const h2 = await mirrorOn(t, repo);
   await waitUntil(() => !fs.existsSync(recFile) && !fs.existsSync(paths.mirrorIndex(S1)), { timeout: 10000, what: 'deleteGone' });
   assert.ok(h2.logs.some((l) => l.includes('[mirror] cleanup:') && l.includes(S1)), 'one cleanup line');
-  assert.ok(h2.box.engine.conversations.bySession(S1), 'the session stays in its record');
+  // Its one session gone, the record leaves in the same sweep (U456).
+  assert.equal(h2.box.engine.conversations.bySession(S1), null, 'every transcript gone: the conversation leaves');
   const out = await h2.mirror.diff({ turn: 'pPr' });
   // No header survives the deleted index (null today); were one restored, it
   // would name the cleanup.
