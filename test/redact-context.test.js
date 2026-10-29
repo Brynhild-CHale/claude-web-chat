@@ -561,7 +561,7 @@ test('addKnownSource: nothing of a source is serialized — JSON.stringify of a 
   r.addKnownSource(() => token, 'capture-token');
   r.text('consult it');
   assert.equal(JSON.stringify(r), '{}');
-  assert.deepEqual(Object.keys(r).sort(), ['addKnown', 'addKnownSource', 'knownTailAt', 'patch', 'removeKnown', 'text', 'value', 'window']);
+  assert.deepEqual(Object.keys(r).sort(), ['addKnown', 'addKnownSource', 'knownFragmentAt', 'knownTailAt', 'patch', 'removeKnown', 'text', 'value', 'window']);
   assert.ok(Object.isFrozen(r));
   const util = require('node:util');
   assert.ok(!util.inspect(r, { depth: 5, showHidden: true }).includes(token));
