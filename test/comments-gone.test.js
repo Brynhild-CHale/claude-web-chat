@@ -125,7 +125,7 @@ module.exports = {
 // into a scratch directory, node_modules linked, the two tools put back.
 function preUpgradeTree(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-pre-u327a-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
   for (const sub of ['lib', 'bin']) fs.cpSync(path.join(REPO, sub), path.join(dir, sub), { recursive: true });
   fs.copyFileSync(path.join(REPO, 'package.json'), path.join(dir, 'package.json'));
   fs.symlinkSync(fs.realpathSync(path.join(REPO, 'node_modules')), path.join(dir, 'node_modules'), 'dir');
@@ -137,9 +137,16 @@ test('a session that loaded the tools before the upgrade: its get_comments and r
   const d = await withServer(t);
   await d.api.post('/api/render', { id: 'm1', html: '<p>Hello</p>' });
   const pin = (await d.api.post('/api/elements', commentBody({ text: 'a note', anchor: ANCHOR }))).json.pin;
+  // The child closes BEFORE its tree and home are removed (K.2-187): after hooks run
+  // in registration order and stop at the first that throws, and a home removed
+  // while the child still writes into it (its update check lands within the
+  // second) throws ENOTEMPTY — which skipped the close, left the child attached,
+  // and hung the whole suite on this file (the W11 integration gate, 2026-10-29).
+  let mcp = null;
+  t.after(async () => { if (mcp) await mcp.close(); });
   const tree = preUpgradeTree(t);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-pre-u327a-home-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  t.after(() => { try { fs.rmSync(home, { recursive: true, force: true }); } catch {} });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(tree, 'bin', 'claude-web-chat-mcp.js')],
@@ -148,9 +155,8 @@ test('a session that loaded the tools before the upgrade: its get_comments and r
     cwd: d.root,
     env: { ...process.env, HOME: home, USERPROFILE: home, WEB_CHAT_PORT: String(d.port), WEB_CHAT_CHANNEL: '0' },
   });
-  const mcp = new Client({ name: 'u327a-test', version: '0.0.0' });
+  mcp = new Client({ name: 'u327a-test', version: '0.0.0' });
   await mcp.connect(transport);
-  t.after(() => mcp.close());
 
   const tools = (await mcp.listTools()).tools.map((x) => x.name);
   assert.ok(tools.includes('get_comments') && tools.includes('reply_comment'));
