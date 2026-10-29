@@ -123,6 +123,7 @@ function stateOf(name) {
   return name;
 }
 const EXACT = stateOf('exact');
+const MASKED = stateOf('masked');
 
 export function highlightName(color, guess = false) {
   return NAME_PREFIX + colorToken(color) + (guess ? GUESS_SUFFIX : '');
@@ -145,13 +146,19 @@ function colorOf(id) {
   const r = recordOf(id);
   return colorToken(r && r.color);
 }
+// A record the daemon served masked (its words hold a learned value, U415c)
+// carries the served answer {state, visible, explain}, which beats the page
+// resolver's own for it (overlay.js servedAnswerOf; X3, U415d).
 function rowOf(rec) {
+  const answer = overlay.servedAnswerOf(rec);
   return {
     id: String(rec.id), v: rec.v == null ? null : rec.v, type: TYPE,
     schema: typeof rec.schema === 'string' ? rec.schema : null,
     anchor: isObj(rec.anchor) ? rec.anchor : null, shared: rec.shared !== false,
+    ...(answer ? { answer } : {}),
   };
 }
+const sameAnswer = (a, b) => JSON.stringify(a.answer || null) === JSON.stringify(b.answer || null);
 const validRec = (r) => isObj(r) && typeof r.id === 'string' && r.id !== '' && (r.type == null || r.type === TYPE);
 
 // The live highlights the daemon holds now (a frame, or the GET): the records
@@ -166,7 +173,7 @@ function applyLive(list) {
   for (const rec of recs) {
     const row = rowOf(rec);
     const h = have.get(row.id);
-    if (h && !h.pending && h.v === row.v && h.shared === row.shared && h.anchor) continue;
+    if (h && !h.pending && h.v === row.v && h.shared === row.shared && h.anchor && sameAnswer(h, row)) continue;
     fresh.push(row);
   }
   if (gone.length) overlay.removeElements('live', gone);
@@ -272,6 +279,11 @@ function rangeOfGroup(g) {
   return r;
 }
 const groupOf = (c) => (c && c._group) || null;
+// A group drawn only because its record was served masked, at an element (the
+// resolver's carried guess, or its item's box) rather than a range of its own:
+// its handle is drawn, the element is never painted whole.
+const maskedOnly = (g) => (g.items || []).length > 0 && g.items.every((it) => it.state === MASKED);
+const paintsAt = (g) => !!g.range || !maskedOnly(g);
 function isGuess(g, it) {
   return g.kind === 'section' || (it && it.state !== EXACT);
 }
@@ -282,7 +294,7 @@ function paints() {
     if (!c.isConnected) { marks.delete(c); continue; }
     const g = groupOf(c);
     const ids = c._hlIds;
-    if (!g || !ids || g.kind === 'guess') continue;
+    if (!g || !ids || g.kind === 'guess' || !paintsAt(g)) continue;
     const range = rangeOfGroup(g);
     if (!range || !range.startContainer || !range.startContainer.isConnected) continue;
     const root = range.startContainer.getRootNode ? range.startContainer.getRootNode() : document;
@@ -348,7 +360,7 @@ function drawRects() {
   const measured = [];
   for (const m of list) {
     const c = m.container;
-    if (!c.isConnected || c.style.display === 'none') continue;
+    if (!c.isConnected || c.style.display === 'none' || !paintsAt(m.group)) continue;
     const range = rangeOfGroup(m.group);
     const rects = range && typeof range.getClientRects === 'function' ? [...range.getClientRects()] : [];
     measured.push({ ...m, rects });
@@ -401,7 +413,7 @@ function draw(group) {
   const first = items[0];
   c.dataset.color = first ? colorOf(first.id) : DEFAULT_COLOR;
   c.classList.toggle('hl-guess', items.some((it) => isGuess(group, it)));
-  c.title = items.length > 1 ? `${items.length} highlights` : 'Highlight';
+  c.title = (items.length > 1 ? `${items.length} highlights` : 'Highlight') + maskedLine(items);
   c.setAttribute('role', 'button');
   if (group.kind === 'section') {
     // A section fallback (K.2-79): no note listener — the click reaches the
@@ -420,6 +432,15 @@ function draw(group) {
     });
   }
   marks.add(c);
+}
+// A record served masked: its state's one line (anchor-states EXPLAIN, the
+// daemon's), never a wording of this file's.
+function maskedLine(items) {
+  for (const it of items) {
+    const a = it.row && it.row.answer;
+    if (a && a.state === MASKED && a.explain) return ` — ${a.explain}`;
+  }
+  return '';
 }
 function move(group, ctx) {
   if (!group.container || !group.container._hlIds) return;

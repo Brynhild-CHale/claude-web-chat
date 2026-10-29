@@ -265,17 +265,23 @@ function setLive(list, { fromFrame = false } = {}) {
   refreshCards();
 }
 
-// The overlay row of a pin: its anchor in the resolver's form, its state.
+// The overlay row of a pin: its anchor in the resolver's form, its state —
+// and, for a pin the daemon served masked (its words hold a learned value,
+// U415c), the served answer {state, visible, explain}, which beats the page
+// resolver's own for it (overlay.js servedAnswerOf; X3, U415d).
 function rowOf(pin, anchor) {
+  const answer = mods ? mods.overlay.servedAnswerOf(pin) : null;
   return {
     id: pin.id, v: pin.v == null ? null : pin.v, type: TYPE,
     ...(typeof pin.schema === 'string' ? { schema: pin.schema } : {}),
     anchor, shared: pin.shared !== false,
     replies: Array.isArray(pin.replies) ? pin.replies.length : 0, answered: answeredOf(pin),
+    ...(answer ? { answer } : {}),
   };
 }
 const sameRow = (a, b) => !a.pending && a.v === b.v && a.shared === b.shared && a.replies === b.replies
-  && !!a.answered === !!b.answered && JSON.stringify(a.anchor) === JSON.stringify(b.anchor);
+  && !!a.answered === !!b.answered && JSON.stringify(a.anchor) === JSON.stringify(b.anchor)
+  && JSON.stringify(a.answer || null) === JSON.stringify(b.answer || null);
 
 // The overlay's live comment rows brought to match the live pins: new or
 // changed ones upserted, nothing touched otherwise; and, for a frame (the
@@ -381,7 +387,11 @@ function titleOf(ids) {
     const p = recordOf(id);
     if (!p) return '';
     const chain = chainLabel(p.chain);
-    return (p.shared === false ? '(private) ' : '') + (p.text || '') + (chain ? ` (${chain})` : '');
+    // A pin served masked shows its state's one line (anchor-states EXPLAIN,
+    // the daemon's), never a wording of this file's.
+    const masked = mods && mods.overlay.servedAnswerOf(p);
+    return (p.shared === false ? '(private) ' : '') + (p.text || '') + (chain ? ` (${chain})` : '')
+      + (masked && masked.explain ? ` — ${masked.explain}` : '');
   }).filter(Boolean).join('  •  ');
 }
 // The overlay hands the group the pins resolved to one element (or a section,
