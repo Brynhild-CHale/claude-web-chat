@@ -703,8 +703,12 @@ test('get_comments({type: \'highlight\'}) reads the one element read with shared
   const c = await tool.handler({});
   assert.equal(gets[1], '/api/elements?type=comment&shared_only=1', 'the comment request, unchanged');
   assert.deepEqual(Object.keys(c), ['comments', 'next_cursor', 'respond_hint']);
+  // U419: then the chat pins' read beside it (a stub's highlight is no chat pin).
+  assert.equal(gets[2], '/api/elements?type=chat-comment&shared_only=1');
+  assert.deepEqual(c.comments, [{ id: 'h1', type: 'highlight' }]);
   await tool.handler({ since: 3, mount: 'm1' });
-  assert.equal(gets[2], '/api/elements?type=comment&shared_only=1&since=3&mount=m1');
+  assert.equal(gets[3], '/api/elements?type=comment&shared_only=1&since=3&mount=m1', 'mount: the comment request alone');
+  assert.equal(gets.length, 4);
   assert.ok(/highlight/.test(tool.description), 'its description names highlights');
   assert.equal(tool.inputSchema.properties.type.type, 'string');
 });
