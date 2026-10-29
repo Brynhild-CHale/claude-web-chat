@@ -98,6 +98,36 @@
 // queued (element-types.js sendToClaude); Push still decides when.
 // Documents (a preview document, an export, a replay) draw no pin (F-DOCS a).
 //
+// THE CHAT PIN (3C.1, U434; RULED CHAT@type a, REQ@chat-pin-kinds L1 a,
+// REQ@chat-pin-hosts L2 a, M2 a, Q5 a). The one Comment tool also records a
+// chat-comment: the chat layer (chat-pins.js, U432) registers the type on the
+// overlay's 'chat' host with this tool, and this module hands it its create
+// and its marker's open through registerChatPinActions — one thread engine,
+// two types. A press in the chat (the dock, docked or windowed, and the phone
+// sheet; never a frame, never the inspector) reaches createChat under the
+// same input-mode policy as on the page, and the target names the kind:
+//   a tool card's [data-item-id]                     → item
+//   a prompt, reply or thinking's [data-item-id] with a non-collapsed
+//     selection of its text holding the press      → item-range, its pos from
+//     anchors.recordSource over the item's element and its text (the reply's
+//     sourceMap(text, {flavor: 'chat'}), the identity map for a prompt or a
+//     thought: the chat layer's own placement), else  → item
+//   a .dl line of the turn's open diff view          → diff-line
+//   the turn root outside every item                 → turn
+// What is posted is a LOCATOR ({kind, conversation_id, session_id?, turn_id,
+// item_id?, field?, pos?, file?, side?, line?}): the daemon takes the quote
+// and the fingerprint from served, masked text (D4), never the chrome's. The
+// composer is the comment's (its .pin-anchor line names the chat place, then
+// the chain of the chat elements under the press, elementsAt(x, y, {host:
+// 'chat'})); Pin posts {type: 'chat-comment', anchor, payload: {text, shared,
+// chain}} and keeps the composer open with its draft when the daemon refuses
+// (a 409 provisional target's hint in its .pin-reply-err line, F10). The
+// marker's click opens the same thread (recordOf reads chat-pins chatPinOf),
+// whose answers apply through applyChatPin / dropChatPin; its writes go
+// through the same tray action guard, so a previewed node leaves it read-only
+// with READONLY_HINT (Q5). The marker's title is the chat layer's explain
+// line; the comment's text is shown only in the thread.
+//
 // THE CARD (K.2-11). A shared pin's queue item ({kind: 'comment', comment_id})
 // is drawn in the rail through the card registered here: where the pin is, its
 // reply count and Show on page. The rail owns the row and the engine the item
@@ -127,10 +157,16 @@ export const SOURCE_GLYPH = Object.freeze({ dx: -27, dy: -4 });
 // which the daemon checks (test/comments-overlay-chrome.test.js holds the two
 // equal; the chrome cannot import the node-only log).
 export const CHAIN_MAX = 8;
+// The chat pin's type (chat-pins.js CHAT_TYPE, which a test holds equal: this
+// module reaches the chat layer lazily).
+export const CHAT_TYPE = 'chat-comment';
+// The composer's line for a press the daemon refused, when it sent no hint.
+export const CHAT_REFUSED_HINT = 'That chat pin was not made — draft kept. Try again.';
 
 const isObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
 const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 const validPin = (p) => isObj(p) && typeof p.id === 'string' && p.id !== '' && (p.type == null || p.type === TYPE);
+const validChat = (p) => isObj(p) && typeof p.id === 'string' && p.id !== '' && (p.type == null || p.type === CHAT_TYPE);
 // An anchor in the resolver's form: an engine record, or a converted
 // pin-locator@1 — never a 0.8.5 locator {mount, selector, text, ordinal}.
 const resolverForm = (a) => isObj(a) && a.v === 1 && typeof a.kind === 'string';
@@ -143,9 +179,9 @@ function load() {
     loading = Promise.all([
       import('./overlay.js'), import('./element-types.js'), import('./tools.js'), import('./shell.js'),
       import('./ws.js'), import('./topbar.js'), import('./mounts.js'), import('./bus.js'), import('./toolbar-state.js'),
-      import('./page.js'),
-    ]).then(([overlay, types, tools, shell, ws, topbar, mounts, bus, toolbar, page]) => {
-      mods = { overlay, types, tools, shell, ws, topbar, mounts, bus: bus.bus, toolbar, page };
+      import('./page.js'), import('./chat-pins.js'), import('./chat-state.js'),
+    ]).then(([overlay, types, tools, shell, ws, topbar, mounts, bus, toolbar, page, chat, chatState]) => {
+      mods = { overlay, types, tools, shell, ws, topbar, mounts, bus: bus.bus, toolbar, page, chat, chatState };
       return mods;
     });
   }
@@ -198,10 +234,20 @@ export function applyCommentsFrame(comments) {
 }
 
 // B4: has Claude replied in this pin's thread? The rail's dot goes green only
-// then. Exported for queue.js, which derives the dot from the live pins.
-export function isCommentAnswered(id) {
-  const pin = liveComments.find((c) => c.id === id);
-  return !!(pin && Array.isArray(pin.replies) && pin.replies.some((r) => r && r.author === 'claude'));
+// then. Exported for queue.js, which derives the dot from the live pins — the
+// ONE answered lookup for both families (K.2-164): a page comment's from the
+// live pins here, a chat pin's (type 'chat-comment', or an id no page pin
+// holds) from the chat layer's records (chat-pins.js chatPinOf, once it is
+// loaded: queue.js imports this module and no-DOM tests import queue.js, so
+// the chat layer is reached lazily).
+export function isCommentAnswered(id, type) {
+  const key = String(id);
+  if (type !== CHAT_TYPE) {
+    const pin = liveComments.find((c) => c.id === key);
+    if (pin || type === TYPE) return !!(pin && answeredOf(pin));
+  }
+  const hit = mods && mods.chat ? mods.chat.chatPinOf(key) : null;
+  return !!(hit && hit.record && answeredOf(hit.record));
 }
 
 const answeredOf = (pin) => Array.isArray(pin.replies) && pin.replies.some((r) => isObj(r) && r.author === 'claude');
@@ -303,8 +349,20 @@ function onView() {
   if (!view.previewing) { previewId = null; previewComments = new Map(); }
 }
 
-// The pin `id` names in the set the page draws now.
+// A chat pin's record (the chat layer's: drawn in either scope, C1), or null.
+function chatRecordOf(id) {
+  const hit = mods && mods.chat ? mods.chat.chatPinOf(String(id)) : null;
+  return hit && validChat(hit.record) ? hit.record : null;
+}
+// The chat anchor kinds (chat-pins.js KINDS, held equal by a test).
+export const CHAT_KINDS = Object.freeze(['turn', 'item', 'item-range', 'diff-line']);
+const isChatPin = (pin) => !!pin && (pin.type === CHAT_TYPE || (isObj(pin.anchor) && CHAT_KINDS.includes(pin.anchor.kind)));
+
+// The pin `id` names in the set the page draws now (a chat pin's from the
+// chat layer, U432's chatPinOf).
 function recordOf(id) {
+  const chat = chatRecordOf(id);
+  if (chat) return chat;
   const scope = mods ? mods.overlay.drawnScopeOf() : (view.previewing ? 'preview' : 'live');
   if (scope === 'preview') return previewComments.get(String(id)) || null;
   return liveComments.find((c) => c.id === String(id)) || null;
@@ -368,6 +426,7 @@ const chainTypes = new Map();
 const typeWords = (t) => String(t).replace(/-/g, ' ');
 // What the drawn set holds of `id` now: its type, or null when it is gone.
 function memberType(id) {
+  if (chatRecordOf(id)) return CHAT_TYPE;
   const scope = mods ? mods.overlay.drawnScopeOf() : (view.previewing ? 'preview' : 'live');
   if (scope === 'live' ? liveComments.some((c) => c.id === id) : previewComments.has(id)) return TYPE;
   const row = mods ? mods.overlay.elementsOf(scope).find((r) => r.id === id) : null;
@@ -394,12 +453,13 @@ function chainHtml(ids) {
   return label ? '<span class="pin-path-sep"> · </span><span class="pin-chain">' + esc(label) + '</span>' : '';
 }
 // The live elements under a press, smallest first (overlay.js elementsAt):
-// their ids, each once, at most CHAIN_MAX.
-function chainAt(x, y) {
+// their ids, each once, at most CHAIN_MAX. In the chat (`host` 'chat'), the
+// chat host's own drawn elements (U431's host reading of U406's export).
+function chainAt(x, y, host) {
   if (!mods || typeof mods.overlay.elementsAt !== 'function') return [];
   const out = [];
   let hits = [];
-  try { hits = mods.overlay.elementsAt(x, y); } catch { hits = []; }
+  try { hits = host ? mods.overlay.elementsAt(x, y, { host }) : mods.overlay.elementsAt(x, y); } catch { hits = []; }
   for (const h of Array.isArray(hits) ? hits : []) {
     if (!h || typeof h.id !== 'string' || !h.id || !h.type || out.includes(h.id)) continue;
     chainTypes.set(h.id, h.type);
@@ -503,6 +563,176 @@ function createOnMarkdown(input, ctx) {
   openComposer({ record, locator: mdLocatorOf(itemEl, block, md, record), chain }, input.clientX, input.clientY);
 }
 
+// ── a chat pin (3C.1, U434) ─────────────────────────────────────────────────
+// The chat host's create (registered through chat-pins.js
+// registerChatPinActions): the press the overlay's dispatch gave the tool in
+// the 'chat' host, under the input-mode policy. The previewed node creates
+// nothing (the overlay's dispatch returns; the guard is defence in depth).
+function createChat(input, ctx) {
+  mods.types.trayAction(() => createChatLive(input, ctx), { note });
+}
+function createChatLive(input, ctx) {
+  if (!input || input.phase !== 'click' || input.host !== 'chat' || !mods) return;
+  const spot = chatSpotOf(input, ctx);
+  if (!spot) return;   // a press on no chat place (the new pill, a gap, another detail view)
+  spot.chain = chainAt(input.clientX, input.clientY, 'chat');
+  openComposer(spot, input.clientX, input.clientY);
+}
+const isNat = (n) => Number.isInteger(n) && n >= 0;
+// A plain item's map (a prompt, a thought): the identity, as the chat layer
+// places it (chat-pins.js mapOf, U418's contract).
+const identityMap = (len) => ({ v: 1, len, runs: [[0, len, len, 'exact']], headings: [] });
+function storeTurnOf(tid) {
+  const s = mods && mods.chatState && mods.chatState.mirror ? mods.chatState.mirror.stream : null;
+  const turns = s && Array.isArray(s.turns) ? s.turns : [];
+  return turns.find((t) => t && t.id === tid) || null;
+}
+function storeItemOf(turn, itemId) {
+  return turn && Array.isArray(turn.items) ? turn.items.find((it) => it && it.id === itemId) || null : null;
+}
+// The anchor's head: the followed conversation (or the turn's own), the
+// turn's session where it carries one, the turn.
+function headOf(tid, cid) {
+  const turn = storeTurnOf(tid);
+  const head = { conversation_id: (turn && typeof turn.conversation_id === 'string' && turn.conversation_id) || cid };
+  if (turn && typeof turn.session_id === 'string' && turn.session_id) head.session_id = turn.session_id;
+  head.turn_id = tid;
+  return head;
+}
+const ITEM_WORDS = Object.freeze({ prompt: 'prompt', reply: 'reply', thinking: 'thinking' });
+// The composer's words for an item: "turn · reply", "tool card Bash".
+function itemPlace(it, el) {
+  if ((it && it.kind === 'tool_call') || (!it && !el.dataset.field)) return `tool card ${(it && (it.tool_kind || it.tool)) || ''}`.trim();
+  return `turn · ${(it && ITEM_WORDS[it.kind]) || 'item'}`;
+}
+const numAttr = (el, name) => {
+  const v = el.getAttribute(name);
+  return typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : null;
+};
+// The selection the press lands in, when it is a non-collapsed one inside
+// the item's element: the press inside one of its client rects (a browser's
+// layout), else — no layout to read — on an element the range holds.
+function selectionIn(itemEl, target, x, y) {
+  const sel = typeof document.getSelection === 'function' ? document.getSelection() : null;
+  if (!sel || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  if (!r || r.collapsed || !itemEl.contains(r.startContainer) || !itemEl.contains(r.endContainer)) return null;
+  let boxes = [];
+  try { boxes = typeof r.getClientRects === 'function' ? [...r.getClientRects()].filter((b) => b && b.width > 0 && b.height > 0) : []; } catch { boxes = []; }
+  if (boxes.length && Number.isFinite(x) && Number.isFinite(y)) {
+    return boxes.some((b) => x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) ? r : null;
+  }
+  try { return target && r.intersectsNode(target) ? r : null; } catch { return null; }
+}
+// A passage's record through the page's ONE text-offset engine (S2-confirm):
+// anchors.recordSource over the item's element and its LF-normalised text,
+// with the reply's chat sourceMap or a plain item's identity map. Only its
+// pos is sent (the daemon quotes the served text); null when it cannot align.
+function passageOf(itemEl, range, it, ctx) {
+  const A = ctx && ctx.anchors;
+  if (!A || typeof A.recordSource !== 'function' || !it || typeof it.text !== 'string') return null;
+  const text = it.text.replace(/\r\n?/g, '\n');
+  const sm = ctx && typeof ctx.sourceMap === 'function' ? ctx.sourceMap : null;
+  const map = it.kind === 'reply' ? (sm ? sm(text, { flavor: 'chat' }) : null) : identityMap(text.length);
+  if (!map) return null;
+  let rec = null;
+  try { rec = A.recordSource(itemEl, range, map, text, { md: null }); } catch { rec = null; }
+  return rec && rec.pos && isNat(rec.pos.start) && isNat(rec.pos.end) && rec.pos.end > rec.pos.start ? rec : null;
+}
+// The open diff view's line: its turn (the view's data-turn-id), its file
+// (data-path), its number on the new side (data-new), or the old one's for a
+// deleted line. A hunk or meta line has no number: nothing is pinned.
+function diffSpot(line, cid) {
+  const wrap = line.closest('.dv-diffview[data-turn-id]');
+  const file = line.closest('details.dv-file[data-path]');
+  if (!wrap || !file || !wrap.contains(file)) return null;
+  const tid = wrap.dataset.turnId;
+  const path = file.dataset.path;
+  const n = numAttr(line, 'data-new');
+  const o = numAttr(line, 'data-old');
+  const side = n != null ? 'new' : o != null ? 'old' : null;
+  if (!tid || !path || !side) return null;
+  const at = side === 'new' ? n : o;
+  return { chat: true, place: `${path}:${at}`, anchor: { kind: 'diff-line', ...headOf(tid, cid), file: path, side, line: at } };
+}
+// The chat place under a press → {chat, place, quote?, anchor} or null.
+function chatSpotOf(input, ctx) {
+  const target = input.target;
+  if (!target || target.nodeType !== 1 || typeof target.closest !== 'function') return null;
+  const cid = mods.chatState.followed();
+  if (!cid) return null;
+  const line = target.closest('.dl');
+  if (line && line.closest('.dv-diffview[data-turn-id]')) return diffSpot(line, cid);
+  const stream = document.getElementById('chat-stream');
+  const turnEl = target.closest('article.ct-turn[data-turn-id]');
+  if (!turnEl || !stream || !stream.contains(turnEl)) return null;
+  const tid = turnEl.dataset.turnId;
+  const head = headOf(tid, cid);
+  const itemEl = target.closest('[data-item-id]');
+  if (!itemEl || !turnEl.contains(itemEl)) return { chat: true, place: 'turn', anchor: { kind: 'turn', ...head } };
+  const itemId = itemEl.dataset.itemId;
+  const it = storeItemOf(storeTurnOf(tid), itemId);
+  const place = itemPlace(it, itemEl);
+  if (itemEl.dataset.field !== 'text') return { chat: true, place, anchor: { kind: 'item', ...head, item_id: itemId } };
+  const range = selectionIn(itemEl, target, input.clientX, input.clientY);
+  const rec = range ? passageOf(itemEl, range, it, ctx) : null;
+  if (rec) {
+    return { chat: true, place, quote: rec.quote && rec.quote.exact,
+      anchor: { kind: 'item-range', ...head, item_id: itemId, field: 'text', pos: { start: rec.pos.start, end: rec.pos.end } } };
+  }
+  return { chat: true, place, anchor: { kind: 'item', ...head, item_id: itemId, field: 'text' } };
+}
+// The chat place's anchor line: the place, then a passage's quote head.
+function chatPlaceHtml(place, quote) {
+  const q = typeof quote === 'string' ? quote.replace(/\s+/g, ' ').trim() : '';
+  const tail = q ? '<span class="pin-path-sep"> › </span>' + esc('"' + (q.length > 40 ? q.slice(0, 40) + '…' : q) + '"') : '';
+  return esc(place || 'chat') + tail;
+}
+// A chat record's place: a diff line's file:line, else the daemon's label
+// ("turn 3's reply", "tool card Read"), else its kind.
+function chatPlaceOf(pin) {
+  const a = isObj(pin.anchor) ? pin.anchor : {};
+  if (a.kind === 'diff-line' && typeof a.file === 'string') return `${a.file}:${a.line}`;
+  return (typeof a.label === 'string' && a.label) || String(a.kind || 'chat').replace(/-/g, ' ');
+}
+const chatQuoteOf = (pin) => {
+  const a = isObj(pin.anchor) ? pin.anchor : {};
+  return a.kind === 'item-range' && isObj(a.quote) && typeof a.quote.exact === 'string' ? a.quote.exact : '';
+};
+// The refusal line at the foot of a chat pin's composer (F10: the draft is
+// kept); a later refusal replaces it.
+function showErr(el, text) {
+  const old = el.querySelector('.pin-reply-err');
+  if (old) old.remove();
+  const err = document.createElement('div');
+  err.className = 'pin-reply-err';
+  err.textContent = text;
+  el.appendChild(err);
+}
+// Pin for a chat pin: ONE POST of the locator; the composer stays open with
+// its draft until the daemon answers ok — a 409 provisional target's hint (the
+// reply is still streaming) in its .pin-reply-err line where the press
+// landed, any other refusal's hint there and in the note.
+async function postChatPin(spot, text, shared, el) {
+  const save = el.querySelector('.pin-save');
+  if (save) save.disabled = true;
+  const body = { type: CHAT_TYPE, anchor: { ...spot.anchor }, payload: { text, shared, chain: (spot.chain || []).slice() } };
+  const r = await request('POST', ELEMENTS_PATH, { body, device: true });
+  if (save) save.disabled = false;
+  if (r.ok) {
+    if (pop === el) closePop();
+    setPinMode(false);
+    const pin = r.body && r.body.element;
+    if (validChat(pin)) mods.chat.applyChatPin(pin);
+    else mods.chat.refreshChatPins();
+    return;
+  }
+  const hint = r.hint || CHAT_REFUSED_HINT;
+  const provisional = r.status === 409 && !!r.body && r.body.state === 'provisional';
+  if (el.isConnected) showErr(el, hint);
+  if (!provisional || !el.isConnected) note(hint);
+}
+
 async function postPin(spot, text, shared) {
   const body = { type: TYPE, anchor: spot.record || spot.locator, payload: { text, shared } };
   if (Array.isArray(spot.chain) && spot.chain.length) body.payload.chain = spot.chain.slice();
@@ -567,7 +797,8 @@ function openComposer(spot, x, y) {
   const el = document.createElement('div');
   el.className = 'popover pin-pop';
   el.innerHTML =
-    '<div class="pin-anchor">' + anchorPath(spot.locator, 40) + chainHtml(spot.chain) + '</div>'
+    '<div class="pin-anchor">' + (spot.chat ? chatPlaceHtml(spot.place, spot.quote) : anchorPath(spot.locator, 40))
+    + chainHtml(spot.chain) + '</div>'
     + '<textarea class="pin-text" rows="3" placeholder="Comment…"></textarea>'
     + '<label class="pin-share"><input type="checkbox" class="pin-share-cb"' + (shared ? ' checked' : '') + '> Share with Claude</label>'
     + '<div class="pin-actions"><button class="pin-cancel">Cancel</button><button class="pin-save">Pin</button></div>';
@@ -586,6 +817,12 @@ function openComposer(spot, x, y) {
   el.querySelector('.pin-save').addEventListener('click', () => {
     const text = ta.value.trim();
     const share = el.querySelector('.pin-share-cb').checked;
+    if (spot.chat) {
+      // A chat pin's composer stays until the daemon answers (F10).
+      if (el.querySelector('.pin-save').disabled) return;
+      mods.types.trayAction(() => postChatPin(spot, text, share, el).catch((e) => console.error('[web-chat] comments: the chat pin was not sent', e)), { note });
+      return;
+    }
     closePop();
     setPinMode(false);
     mods.types.trayAction(() => postPin(spot, text, share).catch((e) => console.error('[web-chat] comments: the pin was not sent', e)), { note });
@@ -600,10 +837,14 @@ function threadMessages(pin) {
 }
 
 // A marker click opens the thread(s) it stands for — one pin opens its thread,
-// a grouped marker opens a chooser.
-function openPinMenu(ids, x, y) {
+// a grouped marker opens a chooser. A chat marker's ids (`chat`) not held yet
+// ask the chat layer for one read.
+function openPinMenu(ids, x, y, { chat = false } = {}) {
   const pins = ids.map(recordOf).filter(Boolean);
-  if (!pins.length) { if (!view.previewing) refresh(); return; }
+  if (!pins.length) {
+    if (chat) { if (mods) mods.chat.refreshChatPins(); } else if (!view.previewing) refresh();
+    return;
+  }
   if (pins.length > 1) openThreadChooser(pins, x, y);
   else openThread(pins[0].id, x, y);
 }
@@ -632,6 +873,12 @@ function openThread(id, x, y) {
   const pin = recordOf(id);
   if (!pin) { closePop(); return; }
   const ro = !mods || mods.types.trayReadOnly();
+  // A chat pin's answers go to the chat layer (U432's applyChatPin /
+  // dropChatPin); a page pin's to this module's live set.
+  const chat = isChatPin(pin);
+  const valid = chat ? validChat : validPin;
+  const apply = (next) => (chat ? mods.chat.applyChatPin(next) : applyOne(next));
+  const reread = () => (chat ? mods.chat.refreshChatPins() : refresh());
   const el = document.createElement('div');
   el.className = 'popover pin-pop pin-thread' + (ro ? ' pin-readonly' : '');
   el.dataset.id = pin.id;
@@ -640,7 +887,8 @@ function openThread(id, x, y) {
     + '<div class="pin-who">' + (m.author === 'claude' ? 'Claude' : 'You') + '</div>'
     + '<div class="pin-body">' + esc(m.text || '') + '</div></div>').join('');
   el.innerHTML =
-    '<div class="pin-anchor">' + anchorPath(locatorOfPin(pin), 32) + chainHtml(pin.chain) + '</div>'
+    '<div class="pin-anchor">' + (chat ? chatPlaceHtml(chatPlaceOf(pin), chatQuoteOf(pin)) : anchorPath(locatorOfPin(pin), 32))
+    + chainHtml(pin.chain) + '</div>'
     + '<div class="pin-thread-msgs">' + msgs + '</div>'
     + (ro
       ? '<div class="pin-reply-err pin-ro-hint">' + esc(mods ? mods.topbar.READONLY_HINT : '') + '</div>'
@@ -671,14 +919,14 @@ function openThread(id, x, y) {
     const next = r.ok && r.body ? (r.body.element || r.body.pin) : null;
     // F10: only a confirmed answer with the pin clears the draft (the re-render
     // below). A refusal or a network failure keeps the typed reply and says so.
-    if (!validPin(next)) {
+    if (!valid(next)) {
       const err = document.createElement('div');
       err.className = 'pin-reply-err';
       err.textContent = 'Reply failed — draft kept. Try again.';
       el.querySelector('.pin-reply').appendChild(err);
       return;
     }
-    applyOne(next);
+    apply(next);
     openThread(pin.id, x, y); // the thread again, in place, with the new message
   };
   el.querySelector('.pin-reply-send').addEventListener('click', send);
@@ -701,24 +949,26 @@ function openThread(id, x, y) {
       const r = await request('PATCH', `${ELEMENTS_PATH}/${encodeURIComponent(pin.id)}`,
         { body: { shared: box.checked }, device: true });
       const next = r.ok && r.body ? (r.body.element || r.body.pin) : null;
-      if (validPin(next)) applyOne(next);
+      if (valid(next)) apply(next);
       else if (!r.ok) note(r.hint);
-      else refresh();
+      else reread();
     });
     if (done === mods.types.TRAY_REFUSAL) box.checked = !box.checked;
   });
   el.querySelector('.pin-del').addEventListener('click', () => guard(async () => {
     closePop();
     const r = await request('DELETE', `${ELEMENTS_PATH}/${encodeURIComponent(pin.id)}`, { body: {}, device: true });
-    if (r.ok) dropOne(pin.id); else note(r.hint);
+    if (!r.ok) note(r.hint);
+    else if (chat) mods.chat.dropChatPin(pin.id);
+    else dropOne(pin.id);
   }));
   const toClaude = el.querySelector('.pin-send');
   if (toClaude) {
     toClaude.addEventListener('click', () => guard(async () => {
       const r = await mods.types.sendToClaude(pin.id);
       if (!r.ok) { note(r.hint); return; }
-      if (validPin(r.element)) {
-        applyOne(r.element);
+      if (valid(r.element)) {
+        apply(r.element);
         shareCb.checked = r.element.shared !== false;   // "Shared with Claude" reads shared
       }
       note(r.note);
@@ -789,6 +1039,12 @@ export function initComments() {
   document.addEventListener('visibilitychange', onVisibility);
   load().then((m) => {
     m.types.registerElementType(TYPE, { draw, create, input: 'taps', sourceGlyph: SOURCE_GLYPH });
+    // The chat-comment's create and its marker's open (U432's seam): the one
+    // thread engine serves both types.
+    m.chat.registerChatPinActions({
+      create: createChat,
+      open: (ids, at) => openPinMenu(ids, at && at.x, at && at.y, { chat: true }),
+    });
     m.shell.registerQueueCard(TYPE, { render: renderCard, unmount: (slot) => { cardSlots.delete(slot); slot._commentItem = null; } });
     m.overlay.onArmedChange(syncArmed);
     syncArmed();

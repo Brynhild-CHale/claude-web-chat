@@ -303,3 +303,36 @@ test('Enter pushes the note as `note` (one POST), Shift+Enter does not; a Push c
   assert.equal(box.style.height, '', 'shrunk back to one line');
   await Q.hydrateQueue();
 });
+
+/* ── (6) a chat-comment group's answered dot (U434; K.2-164) ─────────────── */
+
+// The rail's answered lookup is comments.js isCommentAnswered, which also
+// reads the chat layer's records (chat-pins.js chatPinOf) for a chat pin: a
+// queued chat-comment group (respond: true) turns green once Claude has
+// replied to every member, as a comment group does.
+test('a chat-comment group whose pins have Claude\'s reply shows the answered dot', async () => {
+  const CP = await shell.importApp('chat-pins.js');
+  const chatPin = (id, replied) => ({ id, v: 1, type: 'chat-comment', schema: 'chat-comment@1', shared: true, text: 'chat ' + id,
+    anchor: { v: 1, kind: 'turn', conversation_id: 'cX', session_id: 's1', turn_id: 'tX' },
+    replies: replied ? [{ author: 'claude', at: 1, text: 'answered' }] : [] });
+  const group = { id: 'q-g-k', kind: 'element', type: 'chat-comment', label: 'Comment', element_id: 'k2', element_ids: ['k1', 'k2'],
+    v: 1, count: 2, respond: true, summary: 'two chat pins', why_wake: 'comment pinned for Claude', source: 'browser', staged: true };
+  shell.setRoutes({ '/api/queue': () => ({ items: [...JSON.parse(JSON.stringify(QUEUE.items)), group], count: QUEUE.count + 1 }) });
+  try {
+    CP.applyChatPin(chatPin('k1', true));
+    CP.applyChatPin(chatPin('k2', false));
+    await Q.hydrateQueue();
+    await waitUntil(() => row('q-g-k'), { ...WAIT, what: 'the chat group\'s row' });
+    Q.renderQueue();
+    assert.equal(dotOf('q-g-k').className, 'qi-dot qi-element qi-chat-comment qi-respond', 'one of two answered: not yet');
+    CP.applyChatPin({ ...chatPin('k2', true), v: 2 });
+    assert.equal(C.isCommentAnswered('k2', 'chat-comment'), true);
+    Q.renderQueue();
+    assert.equal(dotOf('q-g-k').className, 'qi-dot qi-element qi-chat-comment qi-respond answered', 'every chat pin answered: green');
+  } finally {
+    CP.dropChatPin('k1');
+    CP.dropChatPin('k2');
+    shell.setRoutes({});
+    await Q.hydrateQueue();
+  }
+});

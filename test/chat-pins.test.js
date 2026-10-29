@@ -770,6 +770,14 @@ test('Q4: pins whose conversation left the mirror: one ⌘K row \'Chat pins no l
 });
 
 test('a marker\'s click opens the pin list until an open is registered; registerChatPinActions re-registers the type with its create', async () => {
+  // U434: comments.js (main.js's initComments) registers the chat pin's open
+  // at boot, so the marker's click opens the comment's thread; with no open
+  // registered (a registration naming none), the pin list.
+  shell.click(markerOf('k1'));
+  const thread = doc.querySelector('.pin-pop.pin-thread');
+  assert.ok(thread && thread.dataset.id === 'k1', 'the open comments.js registered: the comment\'s thread');
+  (await shell.importApp('comments.js')).closePinPop();
+  CP.registerChatPinActions({});
   shell.click(markerOf('k1'));
   const pop = doc.querySelector('.chat-pin-list');
   assert.ok(pop, 'the default open');
