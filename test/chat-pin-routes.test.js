@@ -616,7 +616,7 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     ]) {
       const r = await get();
       const body = r.json || r.body;
-      // Every record but the neighbour's (its context is the finding below).
+      // Every record but the neighbour's (its context has its own test below).
       const text = JSON.stringify({ ...body, elements: body.elements.filter((x) => x.id !== neighbour.id) });
       const leaks = findLeaks(text, [EMAIL]);
       assert.deepEqual(leaks, [], `${who}: no body holds the email: ${leaks.map((l) => text.slice(Math.max(0, l.at - 200), l.at + 40)).join(' | ')}`);
@@ -625,11 +625,10 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     }
   });
 
-  // FINDING U416@learned-later-context (outside this unit's cell; open in the
-  // hand-off): the log's masking view masks a value learned after a pin was
-  // written only where the WHOLE value occurs, so a passage beside it keeps
-  // the value's tail in its quote's 32-character prefix, served at every read.
-  // Pinned here as a known gap, not hidden by the fixture.
+  // U416@learned-later-context, closed by U415a (DECISIONS K.2-164): a passage
+  // beside a value learned after it was pinned keeps the value's tail in its
+  // stored quote's 32-character prefix; the read view (domain/elements.js
+  // maskQuoteContext) masks that fragment at every read, the log unchanged.
   await t.test('a passage beside a value learned later: its quote context holds no fragment of the value', async () => {
     const e = (await w.list('?type=chat-comment', w.anonApi)).find((x) => x.id === neighbour.id);
     assert.deepEqual(findLeaks(JSON.stringify(e), [EMAIL]), [], 'the neighbour\'s record holds no fragment of the email');
