@@ -149,6 +149,8 @@ before(async () => {
   // main.js registers the real 'chat' host (chat-pins.js, U432): this file's
   // fixture stands in for it, so the real one is taken down first.
   (await shell.importApp('chat-pins.js')).stopChatPins();
+  // And the real 'turns' host (graph-turns.js, U433), for the same reason.
+  (await shell.importApp('graph-turns.js')).stopGraphTurns();
   IM = await shell.importApp('input-mode.js');
   anchors = (await shell.importApp('anchors.js')).default;
   bus = (await shell.importApp('bus.js')).bus;
