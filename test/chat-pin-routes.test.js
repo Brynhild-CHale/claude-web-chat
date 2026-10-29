@@ -509,6 +509,14 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     assert.equal(dropped.status, 400, dropped.text);
     assert.equal(dropped.json.error, 'bad chain');
     assert.equal((await w.pin({ kind: 'turn', turn_id: 'cp-1' }, { chain: ['k999999'] })).status, 400, 'an id the log never had');
+    // A private chat pin is not found by a request that does not see private
+    // records (C-16-2), in the chat branch of the chain too: Claude's tools
+    // cannot name one in a chain (nor learn that it exists), and nothing is minted.
+    const seqBefore = w.srv.elements.maxSeq();
+    const probe = await w.lib('POST', '/api/elements', { type: 'chat-comment', anchor: { kind: 'turn', turn_id: 'cp-1' }, payload: { text: 'a probe', shared: true, chain: [ids.priv] } }, {}, { token: true });
+    assert.equal(probe.status, 400, `a private chat member from Claude's tools: ${JSON.stringify(probe.body)}`);
+    assert.equal(probe.body.error, 'bad chain');
+    assert.equal(w.srv.elements.maxSeq(), seqBefore, 'nothing minted');
 
     const since = w.srv.bus.read({ since: 0 }).events.slice(-1)[0].seq;
     const mixed = await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'over a private one', chain: [ids.priv, ids.turn] }), 'chained on a private pin');
