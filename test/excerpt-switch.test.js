@@ -350,7 +350,8 @@ function assertLabelled(body, what) {
   const items = excerptsIn(body);
   assert.ok(items.length >= 1, `${what}: an item still says it had an excerpt`);
   for (const it of items) {
-    assert.equal(it.excerpt, `${MOUNT} · ${it.kind}`, `${what}: the text-free label`);
+    // K.2-163: an element item's label names its type.
+    assert.equal(it.excerpt, `${MOUNT} · ${it.kind === 'element' ? it.type : it.kind}`, `${what}: the text-free label`);
     assert.equal(it.text_hidden, true, `${what}: text_hidden`);
   }
 }
@@ -386,7 +387,7 @@ test('(3) below read the excerpt is the text-free label in GET /api/queue, the q
     const r = await d.basic.call('GET', '/api/events?since=0', null, headers);
     assert.equal(r.status, 200);
     assertLabelled(r.body, `basic ${who} GET /api/events`);
-    assert.ok(r.body.events.some((e) => e.kind === 'wake' && e.batch.some((it) => it.excerpt === `${MOUNT} · element`)), `basic ${who}: the wake batch's label`);
+    assert.ok(r.body.events.some((e) => e.kind === 'wake' && e.batch.some((it) => it.excerpt === `${MOUNT} · highlight`)), `basic ${who}: the wake batch's label`);
   }
   const ringRead = (await d.read.call('GET', '/api/events?since=0', null, REMOTE)).body;
   assert.ok(ringRead.events.some((e) => e.kind === 'wake' && e.batch.some((it) => it.excerpt === EXPECTED)), 'read remote ring: the words');
@@ -409,7 +410,7 @@ test('(3) below read the excerpt is the text-free label in GET /api/queue, the q
     const text = await streamed(d.basic.port, headers);
     assert.ok(/event: wake\n/.test(text), `basic ${who}: the catch-up's wake`);
     assert.ok(!hasWords(text), `basic ${who} stream: none of the words`);
-    assert.ok(text.includes(`"excerpt":"${MOUNT} · element"`), `basic ${who} stream: the label`);
+    assert.ok(text.includes(`"excerpt":"${MOUNT} · highlight"`), `basic ${who} stream: the label`);
   }
   assert.ok(hasWords(await streamed(d.read.port, REMOTE)), 'read remote stream: the words');
 

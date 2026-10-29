@@ -575,7 +575,7 @@ test('the daemon: a remote viewer below read gets no element:comment frame and n
   assert.deepStrictEqual(basicD.remote.of('element:comment'), [], 'basic: no element:comment frame');
   const basicItem = basicD.remote.of('queue').find((f) => f.item && f.item.type === 'comment');
   assert.ok(basicItem, 'basic: the queue frame itself still comes');
-  assert.equal(basicItem.item.summary, 'm1 · element');
+  assert.equal(basicItem.item.summary, 'm1 · comment', 'K.2-163: the type names the label');
   assert.equal(basicItem.item.text_hidden, true);
   assert.ok(!basicD.remote.raw.some((r) => r.includes('wc-shared-mark') || r.includes('wc-private-mark')), 'basic: no pin text in any frame');
   // At read.

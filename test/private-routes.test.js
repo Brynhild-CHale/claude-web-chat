@@ -293,7 +293,7 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
     assert.ok(byKind(mine, 'comment')[0].summary.includes(QUOTE), 'local: the quote');
     const c = byKind(theirs, 'comment')[0];
     if (level === 'basic') {
-      assert.equal(c.summary, 'm1 · element');
+      assert.equal(c.summary, 'm1 · comment', 'K.2-163: the type names the label');
       assert.equal(c.text_hidden, true);
       assert.ok(!has(theirs, QUOTE), 'remote basic: no quote anywhere on GET /api/queue');
     } else {
@@ -323,7 +323,7 @@ test('the queue: below read a comment item\'s quote is the text-free label on GE
     assert.ok(rowMine && rowMine.summary.includes(QUOTE), `local pending: the quote (${JSON.stringify(pMine.items)})`);
     assert.ok(!('text_hidden' in rowMine));
     if (level === 'basic') {
-      assert.equal(rowTheirs.summary, 'm1 · element');
+      assert.equal(rowTheirs.summary, 'm1 · comment', 'K.2-163: the type names the label');
       assert.equal(rowTheirs.text_hidden, true);
       assert.ok(!has(pTheirs, QUOTE), 'remote basic: no quote anywhere in the parked delivery');
     } else {
