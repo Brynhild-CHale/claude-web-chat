@@ -99,6 +99,14 @@ export const HIDDEN_REASONS = Object.freeze({
   SHEET: 'sheet',
   SERVICE_PENDING: 'service-pending',
   MOUNTING: 'mounting',
+  // The chat host's own reasons (public/app/chat-pins.js, U432; the page
+  // probe's rules above never answer them): a turn the stream does not draw
+  // (past its 150-turn window, or not paged in), a pin on another
+  // conversation than the followed one, and a row under a detail view (or a
+  // diff-line row whose diff view is not the open one).
+  PRUNED: 'pruned',
+  ELSEWHERE: 'elsewhere',
+  COVERED: 'covered',
 });
 
 // The settle reasons this module passes (mount-runtime's `why`).

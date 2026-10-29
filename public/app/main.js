@@ -39,6 +39,7 @@ import { initTabDock } from './tab-dock.js';
 import { initModControls } from './mod-controls.js';
 import { initComposerMod } from './composer-mod.js';
 import { initSessionOps } from './session-ops.js';
+import { initChatPins } from './chat-pins.js';   // 3C.1: the chat-comment pins in the chat (the 'chat' overlay host)
 // The anchor resolver (lib/core/anchors, served by the daemon as
 // /app/anchors.js — browserModuleSource(); annotation engine 1C.1–1C.4).
 import { install as installAnchors } from './anchors.js';
@@ -133,6 +134,11 @@ initFavicon();    // the tab icon (light and dark) and its waiting badge
 initChatTrays();
 initChatDetail();
 initGraphTurns();
+// Annotation engine tranche 3 (3C.1, U432), after the chat panel whose
+// #chat-views it registers the 'chat' overlay host over, and after the overlay
+// and the shell: the chat-comment pins, their relay, placement, hidden reasons
+// and draw. Idempotent.
+initChatPins();
 // Tranche 4, after the chat, its trays and the graph's turns: the asks (the
 // answer frames on the answer origin, registered as the approvals once the
 // first answer-surface port is known), the composer (it takes over the

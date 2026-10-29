@@ -314,6 +314,9 @@ function placeOf(row) {
   const a = row.anchor;
   if (a.kind === 'page') return null;
   if (isHostRow(row)) return null;
+  // A row of another host's kind (a chat kind) with no host registered for it
+  // yet, or none still: unplaced, never the page's pane path (K.2-161).
+  if (a.kind != null && !PAGE_KINDS.includes(a.kind)) return null;
   if (a.kind === 'source') return { kind: 'md', key: a.md == null ? null : String(a.md) };
   return { kind: 'pane', key: a.mount == null || a.mount === '' ? null : String(a.mount) };
 }

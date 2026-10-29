@@ -146,6 +146,9 @@ before(async () => {
   W = shell.window;
   M = W.__wcMount;
   ov = await shell.importApp('overlay.js');
+  // main.js registers the real 'chat' host (chat-pins.js, U432): this file's
+  // fixture stands in for it, so the real one is taken down first.
+  (await shell.importApp('chat-pins.js')).stopChatPins();
   IM = await shell.importApp('input-mode.js');
   anchors = (await shell.importApp('anchors.js')).default;
   bus = (await shell.importApp('bus.js')).bus;
@@ -252,22 +255,22 @@ test('a host\'s row is placed by its place, never the page resolver; drawn in it
   }
 });
 
-test('a row of a host\'s kind that came before the host: the page lets it go at registration and takes it back at unregister', async () => {
+test('a row of a host\'s kind that came before the host is unplaced, never the page\'s (K.2-161): no orphan, no answer, before or after', async () => {
   const answered = [];
   const offAns = ov.onAnswers((m) => answered.push(...m.items.map((it) => it.id)));
   try {
     ov.upsertElements('live', [row('early', 4)]);
     await settle();
-    assert.ok(ov.orphans().some((o) => o.id === 'early' && o.how === 'no-mount'), 'no host lists it yet: the page orphans it');
+    assert.ok(!ov.orphans().some((o) => o.id === 'early'), 'no host lists it yet: unplaced, never a page orphan');
+    assert.deepEqual(answered, [], 'never delivered to onAnswers');
     const off = register('chat');
     await settle();
     assert.ok(!ov.orphans().some((o) => o.id === 'early'), 'the host took it');
     assert.ok(shown(markersIn('chat', 'early')[0]));
-    answered.length = 0;
     off();
     await settle();
-    assert.ok(ov.orphans().some((o) => o.id === 'early'), 'unregistered: the page holds it again');
-    assert.deepEqual(answered, ['early'], 'only that row was re-delivered');
+    assert.ok(!ov.orphans().some((o) => o.id === 'early'), 'unregistered: held, unplaced, never page-orphaned');
+    assert.deepEqual(answered, [], 'no answer at any step');
   } finally {
     ov.removeElements('live', ['early']);
     offAns();
