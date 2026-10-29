@@ -268,3 +268,19 @@ test('a comment and a highlight served exact are drawn as before: .el-hit, never
   await serve('comment', []);
   await serve('highlight', []);
 });
+
+// LAST in the file: the probe set here replaces the shell's own (overlay.js
+// hiddenProbe is not exported, so it cannot be put back for a later case).
+test('a comment served masked over a hidden pane stays hidden: never drawn, never an orphan, delivered hidden', async () => {
+  const pin = maskedServed(comment('c7', 'p2'));
+  ov.setHiddenProbe(({ row }) => (row && row.id === 'c7' ? 'test-hidden' : null));
+  await serve('comment', [pin]);
+  await waitUntil(async () => { await settle(40); flush(); return deliveredOf('c7').includes('hidden'); },
+    { timeout: 4000, what: 'c7 delivered hidden' });
+  await settle(100);
+  flush();
+  assert.equal(markersFor('c7').length, 0, 'a hidden pin is never drawn, masked or not');
+  assert.ok(!orphanIds().includes('c7'), 'never an orphan');
+  assert.ok(!deliveredOf('c7').includes('masked'), 'hidden beats the served masked state');
+  await serve('comment', []);
+});
