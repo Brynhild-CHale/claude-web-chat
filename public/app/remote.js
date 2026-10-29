@@ -50,6 +50,17 @@
 // runs) whenever the page is framed; the same block pre-hides the items under
 // it, and it is dropped once health answers not embedded.
 //
+// ONLY AN ANSWERED READ SETTLES IT (U470a; DECISIONS.md K.2-182). A health read
+// that fails, or answers non-ok, says nothing of embedding: a framed page keeps
+// html.framed (and shellHidden() stays true) and asks health again, once after
+// EMBED_RETRY_MS and again each time the socket comes back live (the bus's
+// `conn`), until one read answers. Without that a daemon restarting under the
+// hub's connector left the page with the full topbar for the rest of its life,
+// because isRemote() keeps its first promise. The re-read settles the embed
+// only: isRemote()'s answer (and remoteNow(), remoteKnown(), answerOrigin()) is
+// the first read's, failed closed to local as ever. Top-level, a failed read is
+// what it always was: not embedded, nothing retried.
+//
 //   isFramed()           → boolean            window.self !== window.top
 //   isEmbedded()         → boolean            framed AND health said embedded (false until known)
 //   embedParent()        → string | null      the parent's https origin, once known
@@ -57,10 +68,16 @@
 //                                            what the openers of a shell-provided panel (Sessions) ask
 //   frameParent()        → Window | null      the window the bridge talks to (window.parent when framed)
 //   healthVersion()      → string | null      health's package_version (the bridge's ready)
-//   onEmbedChange(fn)    → unsubscribe        fn({embedded, parent}) each time health is read
-//   resetEmbedForTests({framed, parent})      TESTS ONLY: jsdom cannot frame a window (its
+//   onEmbedChange(fn)    → unsubscribe        fn({embedded, parent}) each time health answers
+//   EMBED_RETRY_MS                            the delay before a framed page's one timed re-read
+//   resetEmbedForTests({framed, parent, retryMs})  TESTS ONLY: jsdom cannot frame a window (its
 //                                            top/parent are unforgeable), so a test swaps the
 //                                            frame probe and drops the cached health answer
+//                                            (retryMs: the timed re-read's delay, for this reset)
+
+import { bus } from './bus.js';
+
+export const EMBED_RETRY_MS = 1500;
 
 let answer = null;     // Promise<boolean>
 let known = false;
@@ -69,6 +86,11 @@ let origin = null;
 let embedded = false;
 let parentOrigin = null;
 let version = null;
+let embedAnswered = false;   // has a health read ANSWERED (ok) the embed question?
+let embedGen = 0;            // bumped by a reset: a re-read from before it is dropped
+let retryTimer = null;
+let retryDelay = EMBED_RETRY_MS;
+let rereading = false;
 const embedListeners = new Set();
 
 const ANSWER_ORIGIN_HEADER = 'X-WC-Answer-Origin';
@@ -122,6 +144,7 @@ export function readEmbed({ embeddedHeader = null, parentHeader = null, body = n
 }
 
 function settleEmbed(r, j) {
+  embedAnswered = !!r;
   const said = r ? readEmbed({ embeddedHeader: headerOf(r, EMBEDDED_HEADER), parentHeader: headerOf(r, EMBED_PARENT_HEADER), body: j })
     : { embedded: false, parent: null };
   embedded = isFramed() && said.embedded;
@@ -135,18 +158,50 @@ function settleEmbed(r, j) {
   }
 }
 
+// The one health request (both the first read and the embed's re-read).
+const readHealth = () => fetch('/api/health');
+
+// A read that did not answer: top-level it settles "not embedded" as before;
+// framed it keeps the pre-hide and asks again (see the head).
+function unanswered() {
+  if (!isFramed()) { settleEmbed(null, null); return; }
+  if (retryTimer === null && !embedAnswered) {
+    const gen = embedGen;
+    retryTimer = setTimeout(() => { retryTimer = null; if (gen === embedGen) reread(); }, retryDelay);
+  }
+}
+
+// One more health read for the embed alone (never the remote flag). Only an ok
+// answer settles; another failure leaves it to the socket's next return.
+function reread() {
+  if (embedAnswered || rereading || !isFramed()) return;
+  rereading = true;
+  const gen = embedGen;
+  let res = null;
+  readHealth()
+    .then((r) => { if (!r || !r.ok) return null; res = r; return r.json(); })
+    .then((j) => { if (gen === embedGen && res) settleEmbed(res, j); }, () => {})
+    .then(() => { if (gen === embedGen) rereading = false; });
+}
+
+bus.on('conn', (d) => { if (d && d.state === 'live' && answer && settled && !embedAnswered) reread(); });
+
 export function isRemote() {
   if (!answer) {
     let res = null;
-    answer = fetch('/api/health')
+    answer = readHealth()
       .then((r) => {
         if (!r || !r.ok) return null;
         res = r;
         origin = parseAnswerOrigin(headerOf(r));
         return r.json();
       })
-      .then((j) => { known = !!(j && j.remote === true); settleEmbed(res, j); return known; })
-      .catch(() => { settleEmbed(null, null); return false; })
+      .then((j) => {
+        known = !!(j && j.remote === true);
+        if (res) settleEmbed(res, j); else unanswered();
+        return known;
+      })
+      .catch(() => { if (res) settleEmbed(res, null); else unanswered(); return false; })
       .then((v) => { settled = true; return v; });
   }
   return answer;
@@ -167,8 +222,9 @@ export function isEmbedded() { return embedded; }
 export function embedParent() { return parentOrigin; }
 export function healthVersion() { return version; }
 // The openers of a panel the shell provides ask this: embedded, or framed with
-// the health answer still out (the same moment html.framed pre-hides them).
-export function shellHidden() { return embedded || (isFramed() && !settled); }
+// no health answer yet — still out, or failed and being asked again (the same
+// moments html.framed pre-hides them).
+export function shellHidden() { return embedded || (isFramed() && !embedAnswered); }
 
 export function onEmbedChange(fn) {
   if (typeof fn !== 'function') throw new TypeError('onEmbedChange: fn must be a function');
@@ -178,9 +234,12 @@ export function onEmbedChange(fn) {
 
 // TESTS ONLY (see the head): frame the page or not, and ask health again on the
 // next isRemote(). Returns that promise.
-export function resetEmbedForTests({ framed = false, parent = undefined } = {}) {
+export function resetEmbedForTests({ framed = false, parent = undefined, retryMs = EMBED_RETRY_MS } = {}) {
   framedProbe = () => framed === true;
   parentOverride = parent;
+  if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+  embedGen += 1; rereading = false; embedAnswered = false;
+  retryDelay = Number.isFinite(retryMs) && retryMs >= 0 ? retryMs : EMBED_RETRY_MS;
   answer = null; known = false; settled = false; origin = null;
   embedded = false; parentOrigin = null; version = null;
   setRootClass('embedded', false);

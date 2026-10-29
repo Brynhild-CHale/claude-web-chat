@@ -396,3 +396,72 @@ test('the composer\'s host note names the hub\'s grant when embedded, never a ho
     mirrorSnap = null;
   }
 });
+
+/* ── a failed health read (U470a; DECISIONS.md K.2-182) ───────────────────── */
+// Only an ANSWERED read settles embedded or not. A framed page whose read fails
+// (the daemon restarting under the hub's connector) keeps html.framed and asks
+// again: once after a short delay, and each time the socket comes back live.
+
+const DOWN = () => respond({ error: 'restarting' }, { status: 503 });
+const healthReads = () => shell.calls.filter((c) => c.url === '/api/health').length;
+function assertPreHidden(what) {
+  assert.equal(root().classList.contains('framed'), true, `${what}: html.framed kept`);
+  assert.equal(root().classList.contains('embedded'), false, `${what}: not embedded yet`);
+  assert.equal(remote.isEmbedded(), false);
+  assert.equal(remote.shellHidden(), true, `${what}: the shell's openers still stand down`);
+  for (const id of HIDDEN) assert.equal(display(id), 'none', `${what}: #${id} still hidden`);
+  for (const id of KEPT) assert.notEqual(display(id), 'none', `${what}: #${id} kept`);
+}
+
+for (const [name, failing] of [['a 503', DOWN], ['a network error', () => { throw new TypeError('fetch failed'); }]]) {
+  test(`framed, the first health read is ${name}: html.framed stays, and the retry settles embedded`, async () => {
+    // A page load starts with no bridge running; a reset alone tells no listener,
+    // so the last case's embedded bridge is first stood down by an answer.
+    await frameWith({ framed: true, answer: NEITHER });
+    health = failing;
+    parent = fakeParent();
+    const read = remote.resetEmbedForTests({ framed: true, parent, retryMs: 150 });
+    assert.equal(await read, false, 'isRemote fails closed to local, as ever');
+    await shell.tick();
+    assertPreHidden(`after ${name}`);
+    sessions.openSessions();
+    assert.equal(shown('sessions-panel'), false, 'Sessions does not open inside the frame');
+    health = HEADER_FORM;
+    await waitUntil(() => remote.isEmbedded(), { timeout: 3000, what: 'the retry to settle embedded' });
+    assert.equal(root().classList.contains('embedded'), true, 'html.embedded set by the retry');
+    assert.equal(remote.embedParent(), HUB);
+    for (const id of HIDDEN) assert.equal(display(id), 'none', `#${id} hidden`);
+    await waitUntil(() => parent.posts.some((p) => p.msg.type === 'ready'), { timeout: 2000, what: 'the bridge\'s ready' });
+  });
+}
+
+test('framed, the retry fails too: still pre-hidden; the socket coming back live asks again, and an answer of neither drops html.framed', async () => {
+  health = DOWN;
+  parent = fakeParent();
+  await remote.resetEmbedForTests({ framed: true, parent, retryMs: 50 });
+  const before = healthReads();
+  await waitUntil(() => healthReads() > before, { timeout: 2000, what: 'the timed retry' });
+  await shell.tick(200);
+  assert.equal(healthReads(), before + 1, 'one timed retry, no more');
+  assertPreHidden('after the retry failed');
+  health = NEITHER;
+  shell.socket().drop();
+  await waitUntil(() => root().classList.contains('framed') === false, { timeout: 4000, what: 'the re-read on the socket\'s return' });
+  assert.equal(remote.isEmbedded(), false);
+  assert.equal(remote.shellHidden(), false, 'answered: not embedded');
+  assertFullChrome();
+});
+
+test('top-level, a failed health read changes nothing: no html.framed, no html.embedded, no retry', async () => {
+  health = DOWN;
+  parent = fakeParent();
+  await remote.resetEmbedForTests({ framed: false, parent, retryMs: 20 });
+  const before = healthReads();
+  await shell.tick(150);
+  assert.equal(healthReads(), before, 'nothing asked again');
+  assert.equal(root().classList.contains('framed'), false);
+  assert.equal(root().classList.contains('embedded'), false);
+  assert.equal(remote.shellHidden(), false);
+  assertFullChrome();
+  health = NEITHER;
+});
