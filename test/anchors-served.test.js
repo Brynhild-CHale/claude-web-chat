@@ -446,16 +446,17 @@ test('the whole document copy, its compacted copy, the element kind\'s and the b
 // The factory's text with the api object and resolveAll's range arm (and the
 // whole-line comments above each) masked: what U307 may change; and U403b's
 // heading rule (RULED U2 (a), 2026-10-28) masked too: the CONFIG.source_heading
-// line, the source section's header comment, headingAt and resolveSource (each
+// line, the source section's header comment (up to its bare '//' line, so
+// alignBlock's own comment stays held), headingAt and resolveSource (each
 // with the whole-line comments above it). Everything else is byte-identical to
 // ae/int 39b52f8's createAnchors.toString(): the same masks over 39b52f8's
 // text give this digest (4633fc65… was the digest with U307's masks alone).
-const UNCHANGED_SHA256 = '704677dd25ad4407bb9011af64d73a91d4c12a3022af730e0a36be0010e826d9';
+const UNCHANGED_SHA256 = 'e0701d341e8ffd9e0898b6b501d5d132ba6b6043f16dbd35bc74d1b0b030569b';
 const maskEdits = (t) => t
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}var api = \{[\s\S]*?\n {2}\};/, '\n  /* api */')
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}function isRange\(rec\) \{[^\n]*/, '\n  /* isRange */')
   .replace(/\n {4}source_heading: true,/, '')
-  .replace(/(\n {2}\/\/ ── source ──)(\n {2}\/\/[^\n]*)*/, '$1\n  /* source header */')
+  .replace(/(\n {2}\/\/ ── source ──)(\n {2}\/\/ [^\n]*)*/, '$1\n  /* source header */')
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}function headingAt\([\s\S]*?\n {2}\}/, '')
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}function resolveSource\([\s\S]*?\n {2}\}/, '\n  /* resolveSource */');
 
