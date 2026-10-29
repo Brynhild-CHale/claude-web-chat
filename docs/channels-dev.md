@@ -343,8 +343,9 @@ is allowed over. A batch that fit before renders byte-identical.
 
 Words the user pinned on the page or in the chat can ride a delivery as **data**,
 in a block of their own that only `wakeEnvelope` writes (PLAN.md 3B.1, DECISIONS.md
-D2). Whether any item carries one is the excerpt switch's decision (U422; off
-by default, a host-only project setting): with no item carrying a non-empty
+D2). Whether any item carries one is the excerpt switch's decision (U422; on
+by default since U425, a host-only project setting, `claude-web-chat excerpts
+off` for ids only): with no item carrying a non-empty
 `excerpt` there is no block, and the envelope is the ids-only form, byte for byte what it was
 before the block existed (test/envelope-excerpt.test.js holds a frozen table).
 
@@ -410,8 +411,11 @@ raise — the comment and the chat family included — folds into ONE queue item
 (type, origin pane), unless its `element.json` declares `wake: {coalesce: 'none'}`;
 a chat pin has no pane, so the queued chat pins of a type form one group. A group
 carries its members' ids (`element_ids`, oldest first) and the newest member's
-words, and is dequeued and refreshed by element id from inside. Its signal line is
-the summary, then ` · N in this group: ` and the ids whole, up to
+words, and is dequeued and refreshed by element id from inside. It also carries
+`members` — up to three `{id, words}`, the newest, in queue order — and `more`, the
+count of members not listed, for the rail only: the signal line and the envelope
+never read them, and below `read` the list becomes the item's text-free label. Its
+signal line is the summary, then ` · N in this group: ` and the ids whole, up to
 `ELEMENT_IDS_LINE_MAX` (400, exported) with a `,+N` tail, so a PARKED delivery —
 content only: no meta and no ring entry — still names every id it carries (past a
 line's bound, by tool call through `get_comments({type})`); the live path also keeps
