@@ -19,6 +19,10 @@
 //   * GONE_SWEEP_MS is exported; the sweep runs at start after the first
 //     discovery, again from the tick once GONE_SWEEP_MS has passed, and never
 //     while the mirror is off.
+//   * the gone mark (U456a): a session's verdict is `gone_at` in
+//     conversations.json, on disk before its index is unlinked, so a
+//     no-process record cleaned across two daemon lives leaves; a session never
+//     indexed is never marked; a transcript that comes back takes its mark off.
 //
 // The Claude tier is a private fake (claudeHome, isolate: true), its transcripts
 // built with createRecords; the registry's timers run on an injected clock.
@@ -495,4 +499,240 @@ test('an ended conversation cleaned across two daemon lives: one session gone in
   assert.equal(second.get(S1), null);
   await second.flush();
   assert.deepEqual(savedIds(w), [], 'conversations.json loses it');
+});
+
+// ── the gone mark: a durable per-session verdict (U456a; DECISIONS.md K.2-176, K.2-177) ──
+// A record with no process that never ended leaves only when every session
+// carries `gone_at` in conversations.json: its index found and deleted with its
+// transcript gone, in whichever daemon life did it. A session whose transcript
+// is there again loses its mark.
+
+const savedSessions = (w, id) => {
+  const c = JSON.parse(fs.readFileSync(w.p.mirrorConversations, 'utf8')).conversations.find((x) => x.id === id);
+  return c ? Object.fromEntries(c.sessions.map((s) => [s.session_id, s.gone_at === undefined ? 'unmarked' : s.gone_at])) : null;
+};
+
+test('a conversation with no process cleaned across two daemon lives: the first life marks one session gone on disk, the second marks the other and removes it', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  // What the saved file said each time the gone rule was asked about S1 while its index was still there.
+  const seen = [];
+  const options = {
+    ...h.options,
+    transcriptGone: (f) => {
+      if (w && f.endsWith(`${S1}.jsonl`) && fs.existsSync(w.p.mirrorIndex(S1))) {
+        try { seen.push(savedSessions(w, S1)[S1]); } catch { seen.push('unreadable'); }
+      }
+      return claudeFiles.transcriptGone(f);
+    },
+  };
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { ended: false, sessions: [S1, S2] })], options });
+  const f1 = w.transcript(S1);
+  const f2 = w.transcript(S2);
+  w.index(S1, ['t-a']);
+  w.index(S2, ['t-b']);
+  fs.unlinkSync(f1);
+
+  // ── life 1 ──
+  const first = w.make();
+  await first.start();
+  assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] }, 'S1\'s index and diff go');
+  assert.deepEqual(h.removed(), [], 'partly cleaned: it stays');
+  assert.equal(first.stats().sessions_gone, 1);
+  assert.ok(seen.some((v) => typeof v === 'number'), `the mark was on disk before S1's index was unlinked: ${JSON.stringify(seen)}`);
+  await first.stop();
+  const marks = savedSessions(w, S1);
+  assert.equal(typeof marks[S1], 'number', 'conversations.json carries S1\'s gone_at');
+  assert.equal(marks[S2], 'unmarked', 'S2 carries no mark (written only when set)');
+
+  // ── Claude Code cleans the other; life 2 ──
+  fs.unlinkSync(f2);
+  const second = w.make();
+  await second.start();
+  assert.deepEqual(w.has(S2, ['t-b']), { index: false, diffs: [false] });
+  assert.deepEqual(h.removed().map((e) => [e.id, e.reason, e.indexes]), [[S1, GONE_TRIGGER, [false, false]]],
+    'every session marked, whichever life marked it: removed {reason: transcript-gone}');
+  assert.equal(second.get(S1), null);
+  for (const sid of [S1, S2]) assert.equal(second.bySession(sid), null);
+  await second.flush();
+  assert.deepEqual(savedIds(w), [], 'conversations.json loses it');
+});
+
+test('a live hook-made conversation (no process, never ended) whose newest transcript is not written yet never leaves, in any life, though its older session is marked gone', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, {
+    conversations: (ch) => [
+      stored(S1, ch.slug, { ended: false, sessions: [S1, S2] }), // S2 a /clear whose transcript Claude Code has not written
+      stored(S3, ch.slug, { ended: false }), // a fresh hook-made conversation: no transcript, no index
+    ],
+    options: h.options,
+  });
+  const f1 = w.transcript(S1);
+  w.index(S1, ['t-a']);
+  fs.unlinkSync(f1);
+  for (let life = 1; life <= 2; life += 1) {
+    const reg = w.make();
+    await reg.start();
+    reg.sweepGone();
+    reg.sweepGone();
+    // Read before any save the clock could fire: no sweep ever put a mark on an
+    // unindexed session on disk, not even for a moment (a crash there would
+    // leave a verdict that removes this live conversation in the next life).
+    const between = savedSessions(w, S1);
+    assert.equal(between[S2], 'unmarked', `life ${life}: S2 never marked on disk, even between saves`);
+    assert.deepEqual(savedSessions(w, S3), { [S3]: 'unmarked' }, `life ${life}: S3 never marked on disk, even between saves`);
+    assert.deepEqual(h.removed(), [], `life ${life}: nothing removed`);
+    for (const sid of [S1, S3]) assert.equal(reg.get(sid).id, sid, `life ${life}: ${sid} listed`);
+    assert.equal(reg.stats().sessions_gone, 1, `life ${life}: only S1 is marked`);
+    await reg.stop();
+    const marks = savedSessions(w, S1);
+    assert.equal(typeof marks[S1], 'number', `life ${life}: S1 marked on disk`);
+    assert.equal(marks[S2], 'unmarked', `life ${life}: S2 (not written yet) never marked`);
+    assert.deepEqual(savedSessions(w, S3), { [S3]: 'unmarked' }, `life ${life}: S3 never marked`);
+  }
+  assert.deepEqual(savedIds(w).sort(), [S1, S3]);
+});
+
+test('a session whose transcript comes back loses its mark; indexed again and cleaned again, it is marked again and the record leaves', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { ended: false, sessions: [S1, S2] })], options: h.options });
+  const f1 = w.transcript(S1);
+  const f2 = w.transcript(S2);
+  w.index(S1, ['t-a']);
+  w.index(S2, ['t-b']);
+  fs.unlinkSync(f1);
+  const first = w.make();
+  await first.start();
+  await first.stop();
+  assert.equal(typeof savedSessions(w, S1)[S1], 'number', 'life 1 marked S1');
+
+  // The transcript is there again (restored from a backup) before life 2.
+  w.transcript(S1);
+  fs.unlinkSync(f2);
+  const second = w.make();
+  await second.start();
+  assert.deepEqual(w.has(S2, ['t-b']), { index: false, diffs: [false] }, 'S2 judged and marked');
+  assert.equal(second.stats().sessions_gone, 1, 'only S2 carries a mark now');
+  assert.deepEqual(h.removed(), [], 'S1 is back: the record stays');
+  await second.flush();
+  assert.deepEqual(savedSessions(w, S1), { [S1]: 'unmarked', [S2]: savedSessions(w, S1)[S2] });
+  assert.equal(typeof savedSessions(w, S1)[S2], 'number');
+
+  // Gone again with no index: no evidence it was written, so no mark and no removal.
+  fs.unlinkSync(f1);
+  second.sweepGone();
+  assert.deepEqual(h.removed(), [], 'an unindexed session is never marked');
+  assert.equal(second.stats().sessions_gone, 1);
+
+  // Indexed again (as the transcripts source would), then cleaned again: marked, and the record leaves.
+  w.transcript(S1);
+  w.index(S1, ['t-c']);
+  second.sweepGone();
+  assert.deepEqual(h.removed(), []);
+  fs.unlinkSync(f1);
+  second.sweepGone();
+  assert.deepEqual(w.has(S1, ['t-c']), { index: false, diffs: [false] });
+  assert.deepEqual(h.removed().map((e) => [e.id, e.reason]), [[S1, GONE_TRIGGER]]);
+});
+
+test('a transcript that comes back while its session is being judged takes the mark off again, in memory and on disk', async (t) => {
+  let w = null;
+  let asks = 0;
+  const h = heard(() => w);
+  const options = {
+    ...h.options,
+    transcriptGone: (f) => {
+      // The first ask marks S1; Claude Code's file is back before the deletion asks again.
+      if (w && f.endsWith(`${S1}.jsonl`) && (asks += 1) === 2) w.transcript(S1);
+      return claudeFiles.transcriptGone(f);
+    },
+  };
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { ended: false })], options });
+  const f1 = w.transcript(S1);
+  w.index(S1, ['t-a']);
+  fs.unlinkSync(f1);
+  const reg = w.make();
+  await reg.start();
+  assert.ok(asks >= 2, `the deletion asked again: ${asks}`);
+  assert.deepEqual(w.has(S1, ['t-a']), { index: true, diffs: [true] }, 'it came back: nothing deleted');
+  assert.equal(reg.stats().sessions_gone, 0, 'no mark in memory');
+  assert.deepEqual(h.removed(), []);
+  await reg.flush();
+  assert.deepEqual(savedSessions(w, S1), { [S1]: 'unmarked' }, 'no mark on disk');
+});
+
+test('a gone mark the file holds is read back only as a finite number; anything else is no mark', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, {
+    conversations: (ch) => {
+      const rec = stored(S1, ch.slug, { ended: false, sessions: [S1, S2] });
+      rec.sessions[0].gone_at = Date.now() - 1000;
+      rec.sessions[1].gone_at = 'yesterday';
+      return [rec];
+    },
+    options: h.options,
+  });
+  // Neither transcript exists; neither session has an index.
+  const reg = w.make();
+  await reg.start();
+  reg.sweepGone();
+  assert.equal(reg.stats().sessions_gone, 1, 'S1\'s finite mark read back, S2\'s string dropped');
+  assert.deepEqual(h.removed(), [], 'S2 carries no mark: the record stays');
+  assert.equal(reg.get(S1).sessions.some((s) => 'gone_at' in s), false, 'the mark is the registry\'s own: never in the view');
+});
+
+// The same two lives through the daemon as createServer wires it: a new
+// withServer over the same root is the restart, the boot sweep the judge.
+test('through the daemon: a no-process conversation cleaned across two withServer lives over one root leaves at the second boot sweep', { timeout: 120000 }, async (t) => {
+  const { withServer, waitUntil } = require('../test-support/helpers');
+  const client = require('../lib/client');
+  const WAIT = { timeout: 15000, interval: 20 };
+  withTempHome(t);
+  const dir = project(t);
+  const ch = claudeHome(t, { root: dir, isolate: true });
+  const p = projectPaths(dir);
+  const transcript = (sid) => {
+    const r = createRecords({ seed: sid.length, sessionId: sid, cwd: ch.cwd });
+    r.prompt('hello');
+    r.assistant(['hi']);
+    ch.writeTranscript(sid, r.records);
+    return ch.transcript(sid);
+  };
+  const f1 = transcript(S1);
+  const f2 = transcript(S2);
+  fs.mkdirSync(path.dirname(p.mirrorConversations), { recursive: true });
+  writeJsonAtomic(p.mirrorConversations, { v: 1, conversations: [stored(S1, ch.slug, { ended: false, sessions: [S1, S2] })] });
+  for (const sid of [S1, S2]) {
+    writeJsonAtomic(p.mirrorIndex(sid), {
+      v: 1, session_id: sid, conversation_id: S1, slug: ch.slug, file: null, resume: null, turns: [],
+      state: { meta: {}, skills: { names: [], descriptions: {} }, sources: {} }, saved_at: Date.now(),
+    });
+  }
+  fs.unlinkSync(f1);
+  const marksOnDisk = () => {
+    const c = JSON.parse(fs.readFileSync(p.mirrorConversations, 'utf8')).conversations.find((x) => x.id === S1);
+    return c ? Object.fromEntries(c.sessions.map((s) => [s.session_id, Number.isFinite(s.gone_at)])) : null;
+  };
+  let d = null;
+  t.after(async () => { if (d) await d.stop(); });
+  const listed = async () => ((await client.get('/api/mirror', { port: d.port, noSpawn: true, timeout: 15000 })).conversations || []).map((c) => c.id);
+
+  // ── life 1: S1's transcript is gone ──
+  d = await withServer(t, { root: dir });
+  await waitUntil(() => !fs.existsSync(p.mirrorIndex(S1)), { ...WAIT, what: 'life 1\'s sweep deletes S1\'s index' });
+  await waitUntil(() => { const m = marksOnDisk(); return m && m[S1] ? m : null; }, { ...WAIT, what: 'S1\'s mark on disk' });
+  assert.deepEqual(await listed(), [S1], 'partly cleaned: listed');
+  await d.stop();
+  d = null;
+  assert.deepEqual(marksOnDisk(), { [S1]: true, [S2]: false }, 'life 1 leaves S1 marked, S2 not');
+
+  // ── Claude Code cleans S2; life 2 ──
+  fs.unlinkSync(f2);
+  d = await withServer(t, { root: dir });
+  await waitUntil(async () => !(await listed()).includes(S1), { ...WAIT, what: 'life 2\'s boot sweep removes S1' });
+  await waitUntil(() => marksOnDisk() === null, { ...WAIT, what: 'conversations.json loses S1' });
+  assert.equal(fs.existsSync(p.mirrorIndex(S2)), false, 'S2\'s index deleted');
 });
