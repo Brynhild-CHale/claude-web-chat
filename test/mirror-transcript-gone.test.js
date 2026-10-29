@@ -576,6 +576,12 @@ test('a live hook-made conversation (no process, never ended) whose newest trans
     await reg.start();
     reg.sweepGone();
     reg.sweepGone();
+    // Read before any save the clock could fire: no sweep ever put a mark on an
+    // unindexed session on disk, not even for a moment (a crash there would
+    // leave a verdict that removes this live conversation in the next life).
+    const between = savedSessions(w, S1);
+    assert.equal(between[S2], 'unmarked', `life ${life}: S2 never marked on disk, even between saves`);
+    assert.deepEqual(savedSessions(w, S3), { [S3]: 'unmarked' }, `life ${life}: S3 never marked on disk, even between saves`);
     assert.deepEqual(h.removed(), [], `life ${life}: nothing removed`);
     for (const sid of [S1, S3]) assert.equal(reg.get(sid).id, sid, `life ${life}: ${sid} listed`);
     assert.equal(reg.stats().sessions_gone, 1, `life ${life}: only S1 is marked`);
@@ -629,6 +635,32 @@ test('a session whose transcript comes back loses its mark; indexed again and cl
   second.sweepGone();
   assert.deepEqual(w.has(S1, ['t-c']), { index: false, diffs: [false] });
   assert.deepEqual(h.removed().map((e) => [e.id, e.reason]), [[S1, GONE_TRIGGER]]);
+});
+
+test('a transcript that comes back while its session is being judged takes the mark off again, in memory and on disk', async (t) => {
+  let w = null;
+  let asks = 0;
+  const h = heard(() => w);
+  const options = {
+    ...h.options,
+    transcriptGone: (f) => {
+      // The first ask marks S1; Claude Code's file is back before the deletion asks again.
+      if (w && f.endsWith(`${S1}.jsonl`) && (asks += 1) === 2) w.transcript(S1);
+      return claudeFiles.transcriptGone(f);
+    },
+  };
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { ended: false })], options });
+  const f1 = w.transcript(S1);
+  w.index(S1, ['t-a']);
+  fs.unlinkSync(f1);
+  const reg = w.make();
+  await reg.start();
+  assert.ok(asks >= 2, `the deletion asked again: ${asks}`);
+  assert.deepEqual(w.has(S1, ['t-a']), { index: true, diffs: [true] }, 'it came back: nothing deleted');
+  assert.equal(reg.stats().sessions_gone, 0, 'no mark in memory');
+  assert.deepEqual(h.removed(), []);
+  await reg.flush();
+  assert.deepEqual(savedSessions(w, S1), { [S1]: 'unmarked' }, 'no mark on disk');
 });
 
 test('a gone mark the file holds is read back only as a finite number; anything else is no mark', async (t) => {
