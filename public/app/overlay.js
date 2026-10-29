@@ -293,6 +293,11 @@ function normRow(r) {
   // diff-line's file, line and side}), copied as given: the chrome invents no
   // state.
   if (r.answer && typeof r.answer === 'object') row.answer = copyAnswer(r.answer);
+  // A lean row the daemon served masked (U415e: the hello, reset and node
+  // read lean rows go through the read view) carries its served state on the
+  // row itself; that is the row's answer (servedAnswerOf), so a previewed
+  // node's pin over a learned value draws masked.
+  else { const a = servedAnswerOf(r); if (a) row.answer = a; }
   return row;
 }
 // A page record the daemon served masked (U415c: a learned value's fragment

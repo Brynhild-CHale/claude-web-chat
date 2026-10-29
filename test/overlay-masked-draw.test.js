@@ -314,3 +314,34 @@ test('a page marker drawn .el-masked has the masked look: the dashed border the 
     assert.notEqual(css.value(plain, 'border'), '1.5px dashed currentColor', 'a hit is not');
   } finally { box.remove(); }
 });
+
+// U415e (normRow): a previewed node's lean row the daemon served masked (its
+// state / visible / explain on the row, its anchor's exact holding the mark;
+// routes/graph lean_elements through the read view) is the row's answer, so
+// the pin is delivered masked and drawn .el-masked. (The hidden probe the c7
+// case left set hides c7 alone.)
+test('a previewed node\'s lean row served masked is delivered masked and drawn .el-masked', async () => {
+  const topbar = await shell.importApp('topbar.js');
+  const rec = maskedServed(comment('c8', 'p1'));
+  assert.ok(rec.anchor.quote.exact.startsWith(MASK('secret')), 'precondition: the served exact holds the mark');
+  const lean = { id: 'c8', v: 1, type: 'comment', schema: 'comment@1', anchor: rec.anchor, shared: true, replies: 0, answered: false,
+    state: rec.state, visible: rec.visible, explain: rec.explain };
+  shell.setRoutes({ '/api/graph/node/n2': { id: 'n2', mounts: MOUNTS, store: {}, created_at: 2, lean_elements: [lean], elements: [] } });
+  try {
+    await topbar.previewNode('n2');
+    await shell.tick();
+    assert.equal(ov.drawnScopeOf(), 'preview');
+    const row = ov.elementsOf('preview').find((r) => r.id === 'c8');
+    assert.deepEqual(row.answer, { state: 'masked', visible: 'masked', explain: EXPLAIN.masked }, 'the served state is the row\'s answer');
+    await drawnUntil(() => markersFor('c8').length === 1 && markersFor('c8')[0].classList.contains('el-masked'), 'the previewed pin drawn masked');
+    assert.ok(!markersFor('c8')[0].classList.contains('el-hit'), 'never a plain hit');
+    assert.ok(!orphanIds().includes('c8'), 'not listed as an orphan');
+    assert.ok(deliveredOf('c8').includes('masked'), 'delivered masked');
+    assert.ok(!deliveredOf('c8').includes('orphaned'), 'never the resolver\'s orphaned');
+  } finally {
+    topbar.returnToActive();
+    await shell.tick();
+    shell.setRoutes({});
+  }
+  assert.equal(ov.drawnScopeOf(), 'live');
+});
