@@ -34,7 +34,9 @@
 //   * the chain (S3, Q8): a chat pin chained on another lands; a dropped chat
 //     id is refused 400; a private member reads 'a private element' for a
 //     reader who does not see private records, and the events carry
-//     chain_private.
+//     chain_private; a remote read socket's element:chat-comment frame nulls
+//     a private page member and a private member deleted since (CHAIN_PRIVATE,
+//     K.2-164), the local socket keeping every id.
 // A test never requires design/ (CI has none).
 
 const test = require('node:test');
@@ -525,6 +527,43 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     assert.ok(edit.element);
     const ev = w.srv.bus.read({ since }).events.find((e) => e.kind === 'element' && e.op === 'edit' && e.id === mixed.element.id);
     assert.deepEqual(ev.chain_private, [ids.priv], 'and its edit event');
+  });
+
+  // K.2-164 (Q8 a, U406a's rule): the element:chat-comment frame's own list
+  // knows only its chat records, so a private PAGE element under a chat pin's
+  // chain, and a private chat pin deleted since, are named by the log's answer
+  // (domain/elements chainPrivate), which emitElements attaches under
+  // CHAIN_PRIVATE. Each is red with that attachment removed.
+  await t.test('frames: a remote read socket\'s element:chat-comment frame reads [null, …] for a private page member and a deleted private member; the local socket keeps the ids', async () => {
+    const listen = async (headers) => {
+      const got = [];
+      const sock = new WebSocket(`ws://localhost:${w.port}/ws`, { headers });
+      sock.on('message', (data) => { try { got.push(JSON.parse(data.toString())); } catch {} });
+      await new Promise((resolve, reject) => { sock.on('open', resolve); sock.on('error', reject); });
+      t.after(() => { try { sock.terminate(); } catch {} });
+      await waitUntil(() => got.some((f) => f.type === 'hello'), { ...WAIT, what: 'hello' });
+      return got;
+    };
+    const frameWhere = (got, pred, what) => waitUntil(() => got.filter((f) => f.type === 'element:chat-comment').reverse().find(pred), { ...WAIT, what });
+    await ok(w.api.post('/api/render', { id: 'cp-chain', html: '<p>Hello</p>' }), 'render');
+    const RANGE = { v: 1, kind: 'range', mount: 'cp-chain', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } };
+    const hp = (await ok(w.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'wc-u416-private-hl', shared: false } }), 'private highlight')).element.id;
+    const kp = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'wc-u416-private-chat', shared: false }), 'private chat pin')).element.id;
+    const remote = await listen(REMOTE);
+    const local = await listen({});
+    const chained = (await ok(w.pin({ kind: 'turn', turn_id: 'cp-1' }, { text: 'over a private highlight and a private chat pin', chain: [hp, kp, ids.turn] }), 'chained')).element.id;
+    const has = (f) => f.elements.some((e) => e.id === chained);
+    const chainIn = (f) => f.elements.find((e) => e.id === chained).chain;
+    assert.deepEqual(chainIn(await frameWhere(local, has, 'local frame')), [hp, kp, ids.turn], 'the local socket keeps every id');
+    assert.deepEqual(chainIn(await frameWhere(remote, has, 'remote frame')), [null, null, ids.turn], 'a remote read socket: the private highlight and chat pin null');
+    // The private chat pin deleted: no longer in the frame's own list.
+    await ok(w.anonApi.del(`/api/elements/${kp}`), 'delete the private chat pin');
+    const gone = (f) => has(f) && !f.elements.some((e) => e.id === kp);
+    assert.deepEqual(chainIn(await frameWhere(local, gone, 'local frame after the delete')), [hp, kp, ids.turn], 'the local socket still keeps every id');
+    assert.deepEqual(chainIn(await frameWhere(remote, gone, 'remote frame after the delete')), [null, null, ids.turn], 'a remote read socket: the deleted private member null');
+    const sent = JSON.stringify(remote.filter((f) => f.type === 'element:chat-comment'));
+    assert.ok(!sent.includes(`"${hp}"`) && !sent.includes(`"${kp}"`), 'neither private id is in any chat frame the remote socket got');
+    await ok(w.anonApi.del(`/api/elements/${chained}`), 'tidy');
   });
 
   await t.test('served states: a rewind in the terminal supersedes a pinned turn', async () => {
