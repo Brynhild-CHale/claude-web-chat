@@ -366,3 +366,31 @@ test('the source: no request, no timer, no element id, and nothing drawn inside 
   assert.match(css, /#gi-turns \.gi-turn-pins \{[^}]*width: 18px; height: 16px;/, 'the slot is the badge\'s size');
   assert.match(css, /#el-layer-turns \.el-marker/);
 });
+
+test('a pin of another conversation naming a listed turn id is not placed on its row; a mixed group with an unavailable pin still opens the chat', async () => {
+  await openOn('n2');
+  const other = pin('kX1', { kind: 'turn', turn_id: 'tA', conversation_id: 'c-other' });
+  const gone = pin('kA4', { kind: 'item', turn_id: 'tA', item_id: 'r_tA2', field: 'text' }, A('unavailable'));
+  CP.applyChatPin(other);
+  CP.applyChatPin(gone);
+  const opens = [];
+  const off = bus.on('chat:open', (d) => opens.push({ ...d }));
+  try {
+    ov.requestDraw();
+    await settle();
+    const m = markerOn('tA');
+    assert.ok(shown(m));
+    assert.deepEqual(m.dataset.elIds.split(' ').sort(), ['kA1', 'kA2', 'kA3', 'kA4'],
+      'the row\'s own conversation only: c-other\'s pin on a same-named turn is not on it');
+    m.dispatchEvent(new shell.window.MouseEvent('click', { bubbles: true, clientX: 1200, clientY: 320 }));
+    await settle();
+    assert.deepEqual(opens, [{ view: 'turn', id: 'tA', conversation_id: 'c9' }], 'not all unavailable: the chat at the turn');
+    assert.equal(doc.querySelector('.chat-pin-list'), null, 'no pin list');
+  } finally {
+    off();
+    CP.dropChatPin('kX1');
+    CP.dropChatPin('kA4');
+    CP.closePinList();
+    await closeGraph();
+  }
+});
