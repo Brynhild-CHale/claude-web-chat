@@ -252,19 +252,19 @@ test('a chat pin readable after its transcript is gone: the conversation leaves,
   });
 
   await t.test('nothing else is lost: the other conversation\'s turns and pin, the page\'s elements, the graph\'s nodes', async () => {
-    // The other conversation read as its chat host reads it (its turns), then
-    // its pin. (Before that read, a pin on a conversation the boot opened can
-    // answer unavailable: the hand-off's open issue, measured with no cleanup
-    // at all, so not this unit's.)
+    // The other conversation's pin, read before anything reads its turns: a
+    // pin on a present conversation never answers unavailable (U453a), so it
+    // reaches its old state with no other reader; then its turns.
+    const kept = await waitUntil(async () => {
+      const e = (await L.elements('?type=chat-comment')).find((x) => x.id === keptPin.id);
+      assert.notEqual(e && e.state, 'unavailable', JSON.stringify(e));
+      return e && e.state === before.kept.state ? e : null;
+    }, { ...WAIT, what: `the other conversation's pin answers ${before.kept.state}` });
     const s2 = await waitUntil(async () => {
       const pg = await L.turnsOf(S2);
       return pg && Array.isArray(pg.turns) && pg.turns.length ? pg : null;
     }, { ...WAIT, what: 'S2\'s turns' });
     assert.deepEqual(s2.turns.map((x) => [x.id, x.status, x.seq]), before.s2turns);
-    const kept = await waitUntil(async () => {
-      const e = (await L.elements('?type=chat-comment')).find((x) => x.id === keptPin.id);
-      return e && e.state === before.kept.state ? e : null;
-    }, { ...WAIT, what: `the other conversation's pin answers ${before.kept.state}` });
     assert.equal(before.kept.state, 'exact');
     assert.deepEqual(PIN_FIELDS(kept), PIN_FIELDS(before.kept));
     assert.deepEqual(await L.elements('?type=comment'), before.page, 'the page\'s elements');
