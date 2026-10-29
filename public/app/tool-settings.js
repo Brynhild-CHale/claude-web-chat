@@ -98,11 +98,14 @@ export const SHADOW_CSS = [
   // fill carries a label at 4.5:1 on all six pack-modes (--wc-accent-fg on
   // --wc-accent reads 3.45 earthy light), and this style cannot read the mode.
   // The hover and focus fill, --wc-header-bg, reads 11.34:1 or more with
-  // --wc-fg on every pack-mode; --wc-accent stays the border there, because
-  // --wc-accent-dark reads 2.32:1 on it in earthy dark.
+  // --wc-fg on every pack-mode. That tint alone is not a cue everywhere
+  // (georgetown-blue light draws --wc-header-bg and --wc-panel-bg both
+  // #ffffff), so the one hover rule also darkens the border to the label's
+  // own --wc-fg (U402b, X2/Y2): a visible change on every pack-mode, no
+  // per-pack case, and the border pair is the label pair, 11.34:1 or more.
   ':host .submit { background: var(--wc-panel-bg); border-color: var(--wc-accent); color: var(--wc-fg);'
     + ' border-radius: var(--wc-radius-sm); }',
-  ':host .submit:hover, :host .submit:focus-visible { background: var(--wc-header-bg); border-color: var(--wc-accent);'
+  ':host .submit:hover, :host .submit:focus-visible { background: var(--wc-header-bg); border-color: var(--wc-fg);'
     + ' color: var(--wc-fg); }',
 ].join('\n');
 

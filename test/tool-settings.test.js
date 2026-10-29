@@ -30,8 +30,10 @@
 //     (no #hex, rgb(), hsl() or named colour), only --wc-* tokens;
 //   - the Save button (U402a, K.5 J3): its label is --wc-fg on --wc-panel-bg at
 //     rest and on --wc-header-bg on hover and focus-visible, the --wc-accent
-//     border its mark; every pair reads 4.5:1 (label) and 3:1 (border) on every
-//     built-in pack-mode;
+//     border its mark at rest; every pair reads 4.5:1 (label) and 3:1 (border)
+//     on every built-in pack-mode; on hover and focus-visible the border
+//     darkens to --wc-fg beside the tint, so the hover is a visible change on
+//     every pack-mode (U402b, X2/Y2);
 //   - RESERVED_IDS holds the two frame ids and U338's planned ids.
 const test = require('node:test');
 const { before, beforeEach, after } = test;
@@ -479,7 +481,10 @@ test('the Save button\'s ink: --wc-fg on --wc-panel-bg at rest, --wc-fg on --wc-
   assert.equal(rest['border-color'], 'var(--wc-accent)', 'the accent marks the control');
   assert.equal(hover.color, 'var(--wc-fg)', 'the label\'s ink never changes between states');
   assert.equal(hover.background, 'var(--wc-header-bg)', 'the hover/focus fill is the neutral --wc-header-bg');
-  assert.equal(hover['border-color'], 'var(--wc-accent)');
+  // U402b (X2/Y2 = a): one rule everywhere — the border darkens to the
+  // foreground token beside the tint, so the hover shows on every pack-mode
+  // whatever its --wc-header-bg (georgetown-blue light's equals its panel).
+  assert.equal(hover['border-color'], 'var(--wc-fg)', 'on hover and focus the border darkens to --wc-fg');
   for (const [state, d] of [['rest', rest], ['hover', hover]]) {
     assert.ok(!/--wc-accent/.test(d.background), `${state}: the label leaves the accent fill`);
   }
@@ -490,7 +495,7 @@ test('the Save button\'s pairs read >= 4.5:1 (label) and >= 3:1 (border) on ever
   const { flattenTheme, MODES } = require('../lib/server/theme');
   const { contrastRatio, TEXT_MIN, UI_MIN } = require('../lib/server/answer-surface/palette');
   const states = saveButtonStates(TS.SHADOW_CSS);
-  const low = [];
+  const low = [], unseen = [], sameEdge = [];
   let n = 0;
   for (const pack of PACKS) for (const mode of MODES) {
     const t = flattenTheme(pack, mode).tokens;
@@ -505,9 +510,17 @@ test('the Save button\'s pairs read >= 4.5:1 (label) and >= 3:1 (border) on ever
         if (!(r >= need)) low.push(`${pack.name || pack.id} ${mode} ${state}: ${a} on ${b} ${r.toFixed(2)} < ${need}`);
       }
     }
+    // U402b (X2): the hover is a visible change on this pack-mode — its fill
+    // or its border resolves to another colour than at rest.
+    const drawn = (d) => [t[tokenOf(d.background)], t[tokenOf(d['border-color'])]].map((c) => String(c).trim().toLowerCase());
+    const [restFill, restEdge] = drawn(states.rest), [hoverFill, hoverEdge] = drawn(states.hover);
+    if (restFill === hoverFill && restEdge === hoverEdge) unseen.push(`${pack.name || pack.id} ${mode}`);
+    if (restEdge === hoverEdge) sameEdge.push(`${pack.name || pack.id} ${mode}`);
   }
   assert.ok(n >= 36, `every pack-mode measured (${n})`);
   assert.deepEqual(low, []);
+  assert.deepEqual(unseen, [], 'the hover shows a change on every pack-mode (X2)');
+  assert.deepEqual(sameEdge, [], 'the border itself changes on every pack-mode, whatever the tint (Y2)');
 });
 
 test('theming: an open frame is a fixed panel on the panel rung, hidden when closed', async () => {
