@@ -585,7 +585,10 @@ test('world A: a conversation through the hooks meets tranche 3 end to end (step
     assert.ok(before.length >= 10, `chat pins live: ${before.length}`);
     await ok(w.api.post('/api/graph/wipe', {}), 'wipe');
     assert.deepEqual((await w.list()).map((e) => e.id).sort(), before, 'after a Wipe');
-    await w.api.post('/api/clear', {});
+    // A pane on the page again, so the bulk clear has something to take.
+    await ok(w.api.post('/api/render', { id: 'e2e-cleared', html: '<p>a pane for the bulk clear</p>' }), 'render before the clear');
+    await ok(w.api.post('/api/clear', {}), 'bulk clear');
+    assert.equal(w.srv.state.mounts.has('e2e-cleared'), false, 'the bulk clear took the pane');
     assert.deepEqual((await w.list()).map((e) => e.id).sort(), before, 'after a bulk clear');
     await ok(w.api.post('/api/graph/new', {}), 'new graph');
     assert.deepEqual((await w.list()).map((e) => e.id).sort(), before, 'after New graph');
