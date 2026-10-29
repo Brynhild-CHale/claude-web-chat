@@ -172,7 +172,7 @@ test('the fixture is C-8-shaped: four panes, an anchor on every 10th row, all re
   assert.equal(ROWS.length, 3 * (N / 10) + SVC_N / 10);
   assert.deepEqual(new Set(ROWS.map((r) => r.anchor.mount)), new Set([...FIXTURES, 'svc']));
   assert.equal(oh.MOUNT_GRACE_MS, 500, 'F4\'s settleMs');
-  assert.deepEqual(Object.values(oh.HIDDEN_REASONS).sort(), ['minimized', 'mounting', 'preview', 'service-pending', 'sheet']);
+  assert.deepEqual(Object.values(oh.HIDDEN_REASONS).sort(), ['covered', 'elsewhere', 'minimized', 'mounting', 'preview', 'pruned', 'service-pending', 'sheet']);
   assert.deepEqual(ov.orphans(), []);
 });
 
