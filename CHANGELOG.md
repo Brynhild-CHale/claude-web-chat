@@ -87,6 +87,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   in the chat, a pinned passage's words ride the delivery quoted as data, in
   a block of their own, on every project unless you run
   `claude-web-chat excerpts off` there.
+- **The excerpt switch is a record only the host's terminal writes.**
+  `.web-chat/excerpts.json` holds it, set with `claude-web-chat excerpts on`,
+  `off` or `status`; nothing on the page, no pane and no remote viewer can
+  reach it. A project with no record reads the default, on, and a running
+  server takes a flip at the next pin, with no restart.
+- **The chat mirror no longer deletes anything because of a count.** No cap
+  on conversations, sessions or turns deletes them, code diffs no longer age
+  out after 30 days, and the 1 GiB cap that stopped new diffs is gone: a
+  conversation's turns, and the diffs no graph node links, go only when
+  Claude Code's own cleanup deletes its transcript. The mirror's disk use is
+  unlimited until you set a budget with `claude-web-chat mirror budget
+  <size>` (at least 64 MiB; `unlimited` lifts it, `status` shows it); over
+  one, the files it can rebuild go first and a diff linked to a graph node
+  last.
+- **Space picks up the last annotation tool.** Space (and Shift+Space) arms
+  the last tool you used and puts it down again; while it is bound, Space no
+  longer scrolls the page or a focused chat stream, and holding it toggles
+  once. Bind another key to the `tools.last` action to have Space scroll
+  again; a text field and a focused control keep Space. While the Comment
+  tool is armed, a tap on a link in prose pins it instead of following it.
+- **Chat pins are a fourth built-in type, and the portal protocol stays 12.**
+  `web-chat-builtins` gains `chat-comment` and is reinstalled over at the
+  first boot. Chat pins, excerpts and Send to Claude add no portal row, so
+  a portal that already reports protocol 12 needs no restart.
+- **A rollback to 0.9.0-alpha.2 hides chat pins and chained comments.** That
+  alpha parks every chat pin and every comment made over other elements
+  (their `chat-comment@1` and `comment@2` versions) and draws neither, and a
+  chained comment's copy in a node is minted again as `comment@1`, without
+  its chain. It prunes the chat mirror by its old caps again (conversations
+  above 200, diffs older than 30 days), reads neither
+  `.web-chat/excerpts.json` nor `.web-chat/mirror.json`, and sets aside as
+  invalid any session index longer than 5,000 turns, which it then reads
+  again from the transcript.
+- **Developing web-chat: the chat's markdown and the MCP tools.** An edit to
+  `lib/core/markdown.js` (now also the chat's source offsets and diff rows)
+  or to `lib/core/anchors.js` needs `claude-web-chat restart` and a browser
+  refresh; an edit to `lib/mcp/*` (`get_comments` reading chat pins,
+  `reply_comment` answering them) needs `/exit` and a reopened Claude Code.
 - **The element API refuses two shapes the comment routes let through.** An
   element whose anchor names no pane or markdown item answers 400 with a hint
   (a page note's anchor is null), and a write to a live pin the element log
