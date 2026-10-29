@@ -191,7 +191,7 @@ test('GET /api/mirror/turns/:turnId: {turn, items, rev}', async (t) => {
   const r = await h.get(TURN_URL);
   assert.equal(r.status, 200);
   assert.deepStrictEqual(r.body, { ...TURN_BODY, rev: 42 });
-  assert.deepStrictEqual(m.calls, [['enabled'], ['status'], ['turn', TURN_ID]]);
+  assert.deepStrictEqual(m.calls, [['enabled'], ['status'], ['turn', TURN_ID, { bounded: true }]]);
 });
 
 test('GET /api/mirror/items/:itemId: {id, field, text, from, to, total, eof, rev}, and `to` passed back as `from` pages on', async (t) => {
@@ -306,7 +306,7 @@ test('query parameters: defaults, the bounds accepted, and a 400 for each malfor
     [`${ITEM_URL}?field=result`, ['itemField', ITEM_ID, { field: 'result', from: 0, max: FIELD_MAX }]],
     [`${ITEM_URL}?field=text&from=0&max=1`, ['itemField', ITEM_ID, { field: 'text', from: 0, max: 1 }]],
     [`${ITEM_URL}?from=9007199254&max=262144`, ['itemField', ITEM_ID, { field: 'text', from: 9007199254, max: 262144 }]],
-    [`${TURN_URL}?ignored=1`, ['turn', TURN_ID]],
+    [`${TURN_URL}?ignored=1`, ['turn', TURN_ID, { bounded: true }]],
   ];
   for (const [url, call] of ok) {
     m.calls.length = 0;
