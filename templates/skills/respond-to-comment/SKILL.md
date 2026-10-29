@@ -1,6 +1,6 @@
 ---
 name: respond-to-comment
-description: Reply to a user's comment pin on the web-chat surface — the Google-Docs-style markup thread. Use when a channel wake or get_comments surfaces a comment the user pinned to a rendered element and you should answer in-thread (not in chat). Triggers - a `[comment]` wake line, a `respond_hint` pointing here, or the user saying they left a comment/note on the surface.
+description: Reply to a user's comment pin on the web-chat surface — the Google-Docs-style markup thread, on the page or in the chat. Use when a channel wake or get_comments surfaces a comment the user pinned to a rendered element, a markdown section, another annotation or a part of the chat (a chat pin), and you should answer in-thread (not in chat). Triggers - a `[comment]` or `[element]` wake line naming a comment or a chat pin, a `respond_hint` pointing here, or the user saying they left a comment/note on the surface or in the chat.
 ---
 
 # Responding to comment pins
@@ -16,7 +16,8 @@ answer **in the thread**, not in chat.
    `{ id, text, anchor_label, replies:[{author,text,at}], ... }`. `text` is the user's
    opening note; `anchor_label` says what it's pinned to (e.g. `plan: "Timeline"`);
    `replies` is the conversation so far. Pass `since` (the prior `next_cursor`) to fetch
-   only new/updated threads. `respond_hint` (one top-level field, not per pin) points
+   only new/updated threads. With no `type`, it lists the page's comments and the chat's
+   pins together (see *Chat pins* below). `respond_hint` (one top-level field, not per pin) points
    back here. Both tools go through web-chat's element API, where a comment pin is one
    element type among others.
 
@@ -34,6 +35,39 @@ answer **in the thread**, not in chat.
    a new pin). Read the new message, act, reply again. Stop when the thread is settled or
    the user moves on — don't leave a reply hanging with an open question unless you're
    genuinely blocked.
+
+## What a pin is on
+
+- **A point of a pane** — `anchor_label` like `plan: "Timeline"`.
+- **A markdown item** — `md-2: on section "Options"` for a pin on the heading itself,
+  `md-2: "the words…" — on section "Options"` for one on prose. Answer about that section.
+- **Other annotations** — a comment made over a highlight, a box grab or another comment
+  also carries `chain` and `chain_label`, e.g. `on highlight h7 › box grab g3 › pane m1 ›
+  section "Options"`: the comment is about those elements, smallest first. A member the
+  user keeps private reads `a private element` (no type, no id) — don't ask what it is.
+
+## Chat pins
+
+A **chat pin** (`type: 'chat-comment'`) is a comment on the chat, not the page: on a turn,
+a passage of a prompt, reply or thinking block, a tool card, or a line of a turn's code diff
+(`anchor_label` like `on turn 3's reply: "…"`, `on tool card Bash`,
+`on diff line lib/x.js:42`). `get_comments({type: 'chat-comment'})` reads them alone, and
+`reply_comment({ id, text })` answers one in its thread exactly as for a page comment (a chat
+pin's id starts with `k`). Each carries `visible` — where it stands now — and `explain`, the
+one line the user sees for it:
+
+- `placed` — Pinned here.
+- `refused` — This reply is still arriving — pin it once the transcript has it.
+- `superseded` — This turn was rewound in the terminal; the pin stays on the turn it was made on.
+- `masked` — The pinned words now hold a value web-chat hides; the pin covers the hidden part and never shows it.
+- `indexing` — This conversation is being read; the pin places when that is done.
+- `unavailable` — What this pin was on is no longer on this machine; its quote is kept.
+
+When a chat pin is not `placed`, answer it from its `quote` (`quote.exact` is the pinned
+words, masked where they hold a value web-chat hides) and its `anchor_label` — never ask the
+user to re-pin it. An `unavailable` pin is still listed, with its quote: what it was on has
+left this machine, so answer from what it quotes. A pin whose whole conversation has left
+the chat is still listed; the user finds those under ⌘K **Chat pins no longer in a chat (n)**.
 
 ## Etiquette
 
