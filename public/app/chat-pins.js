@@ -27,10 +27,11 @@
 //   - the daemon's `element:chat-comment` frame (ws.js onFrame), the whole
 //     live chat set.
 // The list never kicks a parse (O2): a conversation is read when the chat's
-// own view of it asks (chat-state.js → the mirror routes). While a pin of the
-// followed conversation answers `indexing`, one more read follows a bus
-// 'mirror' change naming 'stream' or 'all' (a parse's scoped mirror:reset),
-// single-flight. Below the mirror's `read` level nothing is requested and
+// own view of it asks (chat-state.js → the mirror routes). While the followed
+// conversation has a pin (any state: a terminal rewind may supersede or
+// re-key its turn), or an `indexing` pin's turn is listed by another host
+// (the inspector's turn list), one more read follows a bus 'mirror' change
+// naming 'stream' or 'all' (a parse's scoped mirror:reset), single-flight. Below the mirror's `read` level nothing is requested and
 // nothing drawn; the daemon's projection decides what a level sees (L6,
 // C-15-1) and no rule here narrows or widens it.
 //
@@ -73,7 +74,9 @@
 //
 // REVEAL. bus chat:open {view: 'turn', id, conversation_id} follows the
 // conversation when it is not the followed one and scrolls the turn into view
-// on the first chat:drawn that draws it, then flashes its markers once.
+// on the first chat:drawn that draws it, then flashes its markers once; a
+// first chat:drawn of that conversation without the turn, a later follow or a
+// later chat:open ends the reveal.
 //
 // THE SEAM (U433, U434 plug in here, never editing this file): CHAT_TYPE,
 // initChatPins(), stopChatPins(), chatPins(), chatPinOf(id), applyChatPin(pin),
@@ -86,7 +89,7 @@
 import { bus } from './bus.js';
 import { request } from './http.js';
 import { onFrame, onHello } from './ws.js';
-import { registerHost, upsertElements, removeElements, elementsOf } from './overlay.js';
+import { registerHost, upsertElements, removeElements, elementsOf, hosts } from './overlay.js';
 import { registerElementType } from './element-types.js';
 import { HIDDEN_REASONS } from './overlay-hidden.js';
 import { mirror, followed, followConversation, atLeast } from './chat-state.js';
@@ -131,7 +134,8 @@ const $ = (id) => (typeof document !== 'undefined' ? document.getElementById(id)
 let records = new Map();          // id → the served record (its answer at its top level)
 let seq = 0;                      // bumped by every frame and read: an older read's answer is dropped
 let inFlight = null;              // the one read in flight
-let again = false;                // an indexing re-read asked for while one was in flight
+let again = false;                // false, or the Set of mirror changes heard while a read was in flight
+const againFor = (prev, what) => new Set([...(prev || []), ...what]);
 let rerun = false;                // a read asked for while one was in flight (sent after it)
 let stale = false;                // a read asked for while the tab was hidden
 let levelOk = false;
@@ -213,7 +217,7 @@ function read() {
     // One more read when one was asked for meanwhile (a hello, a reset, a
     // frame naming a pin it cannot place), or when an indexing re-read was and
     // a pin of the followed conversation still answers indexing.
-    const more = rerun || (again && followedIndexing());
+    const more = rerun || (!!again && wantsReread(again));
     rerun = false;
     again = false;
     if (more) refreshChatPins();
@@ -225,14 +229,38 @@ function onVisibility() {
   if (!isHidden() && stale) refreshChatPins();
 }
 
-// A pin of the followed conversation answers `indexing`.
-function followedIndexing() {
+// Whether a mirror change asks for the one single-flight re-read: on a
+// 'stream' change, a pin of the followed conversation in any state (a
+// terminal rewind may have superseded or re-keyed its turn, K.2-177 g3); on a
+// 'stream' or 'all' change, an `indexing` pin of the followed conversation, or
+// one whose turn another registered host lists — the graph inspector's turn
+// list (U433), whatever conversation the chat follows (K.2-181 g7).
+function wantsReread(what) {
   const cid = followed();
-  if (!cid) return false;
+  const stream = what.has('stream');
+  if (!stream && !what.has('all')) return false;
+  let listed = null;
   for (const rec of records.values()) {
-    if (rec.state === INDEXING && isObj(rec.anchor) && rec.anchor.conversation_id === cid) return true;
+    if (!isObj(rec.anchor)) continue;
+    const mine = !!cid && rec.anchor.conversation_id === cid;
+    if (mine && (stream || rec.state === INDEXING)) return true;
+    if (mine || rec.state !== INDEXING || !str(rec.anchor.turn_id)) continue;
+    if (!listed) listed = turnsListed();
+    if (listed.has(rec.anchor.turn_id)) return true;
   }
   return false;
+}
+// The turn ids the registered hosts other than the chat's (and the page's)
+// draw rows for ([data-turn-id] under the host's root). DOM reads only.
+function turnsListed() {
+  const out = new Set();
+  let list = [];
+  try { list = hosts(); } catch { list = []; }
+  for (const h of list) {
+    if (!h || h.name === HOST || h.name === 'page' || !h.root || typeof h.root.querySelectorAll !== 'function') continue;
+    for (const el of h.root.querySelectorAll('[data-turn-id]')) if (el.dataset.turnId) out.add(el.dataset.turnId);
+  }
+  return out;
 }
 
 // bus 'mirror': the level gate, and the indexing → placed re-read.
@@ -249,9 +277,11 @@ function onMirror(d) {
     refreshChatPins();
     return;
   }
-  const what = d && Array.isArray(d.what) ? d.what : [];
-  if (ok && (what.includes('stream') || what.includes('all')) && followedIndexing()) {
-    if (inFlight) again = true;
+  // A follow elsewhere ends a reveal still waiting (K.2-177 g4).
+  if (reveal && followed() !== reveal.cid) reveal = null;
+  const what = new Set(d && Array.isArray(d.what) ? d.what : []);
+  if (ok && wantsReread(what)) {
+    if (inFlight) again = againFor(again, what);
     else refreshChatPins();
   }
 }
@@ -460,7 +490,6 @@ function onTap(host, ids, x, y) {
   }
   openPinList(ids, x, y);
 }
-const marks = new Set();
 function draw(group, ctx) {
   const c = group.container;
   if (!c) return;
@@ -479,7 +508,6 @@ function draw(group, ctx) {
   c.setAttribute('aria-label', items.length > 1 ? `${items.length} chat pins` : 'Chat pin');
   const ids = items.map((it) => String(it.id));
   c._chatPinIds = ids;
-  marks.add(c);
   const host = (ctx && ctx.host) || HOST;
   c.addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -585,11 +613,16 @@ export function revealTurn({ conversation_id: cid, turn_id: tid } = {}) {
   if (followed() !== want) followConversation(want);
   return tryReveal();
 }
+// The first draw of the reveal's conversation decides it: one that draws the
+// turn reveals it; one that does not ends the reveal, so a turn the stream
+// never draws is never scrolled to minutes later (K.2-177 g4).
 function onDrawn(d) {
   if (!reveal || !d || d.conversationId !== reveal.cid) return;
   if (Array.isArray(d.turnIds) && d.turnIds.includes(reveal.tid)) tryReveal();
+  else reveal = null;
 }
 function onOpen(d) {
+  reveal = null;
   if (!d || d.view !== 'turn' || !str(d.id)) return;
   queueMicrotask(() => revealTurn({ conversation_id: d.conversation_id, turn_id: d.id }));
 }
