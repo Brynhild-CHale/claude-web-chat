@@ -285,10 +285,12 @@ test('the engine a source is handed: the contract\'s members, the turn machine\'
   const e = probe.engine;
   assert.deepEqual(Object.keys(e).sort(), [
     'applyChanges', 'beginIndex', 'conversations', 'ensureConversation', 'files', 'graph', 'indexing', 'live', 'log', 'mainBus', 'model', 'name', 'now',
-    'paths', 'processGone', 'procs', 'read', 'redactor', 'reset', 'restoreSourceStates', 'root', 'sourceStates', 'statusClosed',
+    'opening', 'paths', 'processGone', 'procs', 'read', 'redactor', 'reset', 'restoreSourceStates', 'root', 'sourceStates', 'statusClosed',
     'timers', 'transition', 'watchFile',
   ]);
   assert.ok(Object.isFrozen(e));
+  // U453a: opening(cid) is false with no transcripts source that answers it.
+  assert.equal(e.opening('c-none'), false);
   assert.equal(e.name, 'probe');
   assert.equal(e.root, h.root);
   assert.equal(e.paths.mirrorDir, projectPaths(h.root).mirrorDir);
