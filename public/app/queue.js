@@ -902,6 +902,37 @@ function memberIds(it) {
   if (Array.isArray(it.element_ids) && it.element_ids.length) return it.element_ids.map(String);
   return it.element_id != null ? [String(it.element_id)] : [];
 }
+// A grouped row's members (U424a; RULED X4 = a, Y5 = b): the group's
+// `members` (lib/channel/policy syncMembers: up to three {id, words}, the
+// newest, in queue order) as one short line each under the kind line — the
+// member's first words, else its id — and '+N more' for the group's `more`.
+// Drawn only for a group of more than one with a list to draw: a single
+// row, a legacy group with no list, and an item whose list a remote viewer
+// below `read` sees as its text-free label (a string, TEXT_RULES.items) are
+// drawn as they always were. null when there is nothing to draw.
+function membersBlock(it, look) {
+  if (!it || it.kind !== 'element' || !look || look.count <= 1 || !Array.isArray(it.members)) return null;
+  const list = it.members.filter((m) => m && typeof m === 'object' && m.id != null);
+  if (!list.length) return null;
+  const box = document.createElement('div');
+  box.className = 'qi-members';
+  for (const m of list) {
+    const line = document.createElement('div');
+    const words = typeof m.words === 'string' ? m.words : '';
+    line.className = words ? 'qi-member' : 'qi-member qi-member-id';
+    line.dataset.member = String(m.id);
+    line.textContent = words || String(m.id);   // text, never markup
+    box.append(line);
+  }
+  const more = Number.isSafeInteger(it.more) && it.more > 0 ? it.more : 0;
+  if (more) {
+    const tail = document.createElement('div');
+    tail.className = 'qi-member qi-more';
+    tail.textContent = `+${more} more`;
+    box.append(tail);
+  }
+  return box;
+}
 // Answered when Claude has replied in EVERY member's thread (B4's dot, per
 // member); a type that does not respond has no answered state.
 function isAnswered(it) {
@@ -1004,6 +1035,8 @@ function itemRow(it, { parked = false, acts = null } = {}) {
   const why = document.createElement('div'); why.className = 'qi-why'; why.textContent = it.why_wake || '';
   const sum = document.createElement('div'); sum.className = 'qi-summary'; sum.textContent = it.summary || '';
   body.append(top);
+  const members = membersBlock(it, look);
+  if (members) body.append(members);
   if (!cardBody(it, body, { parked, staged })) body.append(why, sum);
   if (!parked && isMessage(it)) messageBody(row, it, sum, body);
   if (!parked && acts && isTypedMessage(it)) messageActions(row, it, body, acts);
