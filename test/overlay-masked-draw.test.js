@@ -284,3 +284,33 @@ test('a comment served masked over a hidden pane stays hidden: never drawn, neve
   assert.ok(!deliveredOf('c7').includes('masked'), 'hidden beats the served masked state');
   await serve('comment', []);
 });
+
+// U415e (Z2 = a): the page layer's masked look, the chat layer's rule on
+// #el-layer (public/app.css). Reads the stylesheet only (it never draws, so
+// the hidden probe the case above left set does not reach it).
+test('a page marker drawn .el-masked has the masked look: the dashed border the chat layer\'s masked marker has', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { createCascade } = require('../test-support/css-cascade');
+  const css = createCascade(fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8'), { win: () => W });
+  const host = W.document.createElement('div');
+  host.id = 'el-layer';
+  const masked = W.document.createElement('div');
+  masked.className = 'el-marker pin-marker el-masked';
+  const plain = W.document.createElement('div');
+  plain.className = 'el-marker pin-marker el-hit';
+  const chat = W.document.createElement('div');
+  chat.id = 'el-layer-chat';
+  const chatMasked = W.document.createElement('div');
+  chatMasked.className = 'el-marker pin-marker el-masked';
+  chat.append(chatMasked);
+  host.append(masked, plain);
+  const box = W.document.createElement('div');
+  box.append(host, chat);
+  try {
+    assert.equal(css.value(masked, 'border'), '1.5px dashed currentColor', 'a masked page marker is dashed');
+    assert.equal(css.value(masked, 'border'), css.value(chatMasked, 'border'), 'the chat layer\'s masked look');
+    assert.equal(css.value(masked, 'border-radius'), 'var(--wc-radius-sm)');
+    assert.notEqual(css.value(plain, 'border'), '1.5px dashed currentColor', 'a hit is not');
+  } finally { box.remove(); }
+});

@@ -3596,3 +3596,7 @@ html.framed #topbar > #btn-graph { margin-left: auto; }
   html.embedded #topbar,
   html.framed #topbar { display: none !important; }
 }
+/* A page pin served masked (U415e; Z2 = a): the chat and turns layers' masked
+   look (#el-layer-chat / #el-layer-turns .el-marker.el-masked, above) on the
+   page layer, so a pin whose words hold a learned value looks masked. */
+#el-layer .el-marker.el-masked { border: 1.5px dashed currentColor; border-radius: var(--wc-radius-sm); }
