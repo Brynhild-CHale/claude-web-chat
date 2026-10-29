@@ -191,11 +191,9 @@ test('a listed, unparsed conversation\'s pin answers indexing, and one chat read
 
 // The pins of `n` eager conversations, read at once after a restart: the
 // sessions still queued behind the others answer `indexing`, never
-// `unavailable`. Needs the transcripts source's api.opening (engine.opening is
-// false without it): the grant U453a's hand-off asks for, with its patch.
+// `unavailable` (the transcripts source's api.opening, through engine.opening).
 test('after a restart, the pins of conversations still queued for their eager open answer indexing, never unavailable', {
   timeout: 180000,
-  todo: 'needs lib/server/mirror/transcripts.js api.opening (U453a hand-off: the grant and its patch)',
 }, async (t) => {
   const p = project(t);
   let L = null;
