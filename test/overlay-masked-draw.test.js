@@ -284,3 +284,64 @@ test('a comment served masked over a hidden pane stays hidden: never drawn, neve
   assert.ok(!deliveredOf('c7').includes('masked'), 'hidden beats the served masked state');
   await serve('comment', []);
 });
+
+// U415e (Z2 = a): the page layer's masked look, the chat layer's rule on
+// #el-layer (public/app.css). Reads the stylesheet only (it never draws, so
+// the hidden probe the case above left set does not reach it).
+test('a page marker drawn .el-masked has the masked look: the dashed border the chat layer\'s masked marker has', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { createCascade } = require('../test-support/css-cascade');
+  const css = createCascade(fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8'), { win: () => W });
+  const host = W.document.createElement('div');
+  host.id = 'el-layer';
+  const masked = W.document.createElement('div');
+  masked.className = 'el-marker pin-marker el-masked';
+  const plain = W.document.createElement('div');
+  plain.className = 'el-marker pin-marker el-hit';
+  const chat = W.document.createElement('div');
+  chat.id = 'el-layer-chat';
+  const chatMasked = W.document.createElement('div');
+  chatMasked.className = 'el-marker pin-marker el-masked';
+  chat.append(chatMasked);
+  host.append(masked, plain);
+  const box = W.document.createElement('div');
+  box.append(host, chat);
+  try {
+    assert.equal(css.value(masked, 'border'), '1.5px dashed currentColor', 'a masked page marker is dashed');
+    assert.equal(css.value(masked, 'border'), css.value(chatMasked, 'border'), 'the chat layer\'s masked look');
+    assert.equal(css.value(masked, 'border-radius'), 'var(--wc-radius-sm)');
+    assert.notEqual(css.value(plain, 'border'), '1.5px dashed currentColor', 'a hit is not');
+  } finally { box.remove(); }
+});
+
+// U415e (normRow): a previewed node's lean row the daemon served masked (its
+// state / visible / explain on the row, its anchor's exact holding the mark;
+// routes/graph lean_elements through the read view) is the row's answer, so
+// the pin is delivered masked and drawn .el-masked. (The hidden probe the c7
+// case left set hides c7 alone.)
+test('a previewed node\'s lean row served masked is delivered masked and drawn .el-masked', async () => {
+  const topbar = await shell.importApp('topbar.js');
+  const rec = maskedServed(comment('c8', 'p1'));
+  assert.ok(rec.anchor.quote.exact.startsWith(MASK('secret')), 'precondition: the served exact holds the mark');
+  const lean = { id: 'c8', v: 1, type: 'comment', schema: 'comment@1', anchor: rec.anchor, shared: true, replies: 0, answered: false,
+    state: rec.state, visible: rec.visible, explain: rec.explain };
+  shell.setRoutes({ '/api/graph/node/n2': { id: 'n2', mounts: MOUNTS, store: {}, created_at: 2, lean_elements: [lean], elements: [] } });
+  try {
+    await topbar.previewNode('n2');
+    await shell.tick();
+    assert.equal(ov.drawnScopeOf(), 'preview');
+    const row = ov.elementsOf('preview').find((r) => r.id === 'c8');
+    assert.deepEqual(row.answer, { state: 'masked', visible: 'masked', explain: EXPLAIN.masked }, 'the served state is the row\'s answer');
+    await drawnUntil(() => markersFor('c8').length === 1 && markersFor('c8')[0].classList.contains('el-masked'), 'the previewed pin drawn masked');
+    assert.ok(!markersFor('c8')[0].classList.contains('el-hit'), 'never a plain hit');
+    assert.ok(!orphanIds().includes('c8'), 'not listed as an orphan');
+    assert.ok(deliveredOf('c8').includes('masked'), 'delivered masked');
+    assert.ok(!deliveredOf('c8').includes('orphaned'), 'never the resolver\'s orphaned');
+  } finally {
+    topbar.returnToActive();
+    await shell.tick();
+    shell.setRoutes({});
+  }
+  assert.equal(ov.drawnScopeOf(), 'live');
+});
