@@ -895,14 +895,17 @@ async function launchMcp(t, env) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-grab-mcp-'));
   fs.mkdirSync(path.join(cwd, '.web-chat'), { recursive: true });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-grab-home-'));
-  t.after(() => { for (const d of [cwd, home]) fs.rmSync(d, { recursive: true, force: true }); });
+  // The child closes before cwd and home go (K.2-187): a removal racing the
+  // child's own writes throws, and a throwing after hook skips every later one.
+  let mcp = null;
+  t.after(async () => { if (mcp) await mcp.close(); });
+  t.after(() => { for (const d of [cwd, home]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} } });
   const transport = new StdioClientTransport({
     command: process.execPath, args: [MCP_BIN], cwd,
     env: { ...process.env, WEB_CHAT_CHANNEL: '0', ...env, HOME: home, USERPROFILE: home },
   });
-  const mcp = new Client({ name: 'box-grab-test', version: '0.0.0' });
+  mcp = new Client({ name: 'box-grab-test', version: '0.0.0' });
   await mcp.connect(transport);
-  t.after(() => mcp.close());
   return mcp;
 }
 
