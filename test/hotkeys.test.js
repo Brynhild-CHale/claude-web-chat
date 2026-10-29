@@ -310,6 +310,27 @@ test('registerAction refuses a repeat that is not true or false', () => {
   assert.equal(reg.actionOf('chrome.graph').repeat, true, 'the default is true');
 });
 
+// ── runAction (U470: the embed bridge's commands, by action id) ──────────────
+test('runAction runs an action by id with its guards: refuses an unknown id, a descriptive row, the wrong context, a disabled one', () => {
+  const { reg, ran } = fixture();
+  let on = true;
+  reg.registerAction({ id: 'chrome.gated', label: 'gated', defaultChord: null, enabled: () => on, run: () => ran.push('chrome.gated') });
+  assert.deepEqual(reg.runAction('chrome.graph'), { ok: true });
+  assert.deepEqual(ran, ['chrome.graph'], 'it ran, with no key pressed');
+  assert.deepEqual(reg.runAction('chrome.nope'), { ok: false, refused: 'unknown' });
+  assert.deepEqual(reg.runAction(null), { ok: false, refused: 'unknown' });
+  assert.deepEqual(reg.runAction('graph.bookmark', { context: 'overlay' }), { ok: false, refused: 'descriptive' });
+  assert.deepEqual(reg.runAction('chrome.graph', { context: 'overlay' }), { ok: false, refused: 'context' });
+  assert.deepEqual(reg.runAction('chrome.legend', { context: 'overlay' }), { ok: true }, 'an action that answers there runs');
+  assert.deepEqual(reg.runAction('chrome.gated'), { ok: true }, 'a chordless action runs by id');
+  on = false;
+  assert.deepEqual(reg.runAction('chrome.gated'), { ok: false, refused: 'disabled' });
+  assert.deepEqual(ran, ['chrome.graph', 'chrome.legend', 'chrome.gated'], 'nothing refused ran');
+  // A user record that rebinds the key leaves the action's id runnable.
+  const moved = fixture({ user: { bindings: { G: null, H: chrome('chrome.graph') } } });
+  assert.deepEqual(moved.reg.runAction('chrome.graph'), { ok: true });
+});
+
 // ── the last-tool key (U404; F.4, REQ@tool-toggle-key M1) ────────────────────
 // ONE chrome action, 'tools.last', which tools.js registers in the chrome's
 // registry (the one hk's module-wide exports are bound to): Space by default,

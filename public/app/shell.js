@@ -26,7 +26,8 @@ import { initWakePanel } from './wake-panel.js';
 import { isPickingFile } from './brand.js';
 import { openSessions, toggleSessions } from './sessions.js';
 import { closePaneHistory } from './pane-history.js';
-import { isRemote } from './remote.js';
+import { isRemote, shellHidden } from './remote.js';
+import { initEmbedBridge } from './embed-bridge.js';
 import { bus } from './bus.js';
 import { escapeChatViews } from './chat-slots.js';
 import { closeChat, resetChatWindow } from './chat-dock.js';
@@ -563,7 +564,8 @@ async function buildPalette(q) {
     // default, and its key the toolbar's legend row for it (tool.comment).
     { kind: 'command', label: 'Pin comment', key: keyFor('tool.comment'), run: () => toggleTool({ kind: 'tool', type: 'comment' }) },
     { kind: 'command', label: 'Settings', run: openSettings },
-    { kind: 'command', label: 'Sessions…', key: keyFor('chrome.sessions'), run: openSessions },
+    // Embedded, the hub shell provides Sessions (U470): no row for it.
+    ...(shellHidden() ? [] : [{ kind: 'command', label: 'Sessions…', key: keyFor('chrome.sessions'), run: openSessions }]),
     { kind: 'command', label: 'Chat with Claude', key: keyFor('chrome.chat'), run: openChatComposer },
     // The keyboard way out of a window dragged somewhere unusable: the handles
     // are pointer-only.
@@ -1060,8 +1062,9 @@ function registerKeyDefaults() {
   // and an editable field already keep it out.
   registerAction({ id: 'chrome.chat', label: 'Chat with Claude', defaultChord: 'M', legend: { section: K, order: 100 },
     enabled: () => !(hasFloatPreview() || isReplayOpen()), run: () => openChatComposer() });
+  // Embedded, the hub shell provides Sessions (U470): S is the page's there.
   registerAction({ id: 'chrome.sessions', label: 'Sessions on this computer', defaultChord: 'S',
-    legend: { section: K, order: 110 }, run: () => toggleSessions() });
+    legend: { section: K, order: 110 }, enabled: () => !shellHidden(), run: () => toggleSessions() });
   registerAction({ id: 'chrome.mode', label: 'Light / dark', defaultChord: 'T', legend: { section: K, order: 120 },
     run: () => toggleMode() });
   registerAction({ id: 'replay.play', label: 'Replay: play · step', defaultChord: ['Space', 'ArrowLeft', 'ArrowRight'],
@@ -1072,6 +1075,12 @@ function registerKeyDefaults() {
     legend: { section: K, order: 140, row: 'legend', label: 'Shortcuts · close' }, run: () => toggleLegend() });
   registerAction({ id: 'chrome.escape', label: 'Close one layer', defaultChord: 'Escape', context: CONTEXTS,
     legend: { section: K, order: 140, row: 'legend' }, run: null });
+  // The ⋯ menu's actions by id, with no key and no legend row (U470): what the
+  // hub shell's own menu runs through the embed bridge while ⋯ is hidden.
+  registerAction({ id: 'chrome.settings', label: 'Settings', run: () => openSettings() });
+  registerAction({ id: 'chrome.export', label: 'Export node', run: () => doExport() });
+  registerAction({ id: 'chrome.wipe', label: 'Wipe surface', run: () => openWipe() });
+  registerAction({ id: 'chrome.new-graph', label: 'New graph', run: () => openNewGraph() });
   const graphRow = (id, label, chords, order) => registerAction({ id, label, defaultChord: chords, context: 'overlay',
     legend: { section: G, order }, run: null });
   graphRow('graph.select', 'Select node', ['ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'], 200);
@@ -1112,6 +1121,9 @@ export function initShell() {
     mode: effectiveMode,
   });
   registerKeyDefaults();
+  // Embedded in the hub's chat view (U470): the hub shell's commands, by action
+  // id, in the context the keyboard's dispatch would use; Escape is handleEscape.
+  initEmbedBridge({ escape: handleEscape, context: () => (isOverlayOpen() ? 'overlay' : 'page') });
   initKeyboard();
   initDismissLayer();
   initModality();

@@ -3552,3 +3552,47 @@ textarea.rail-add { height: auto; min-height: 30px; max-height: 120px; resize: n
   .qi-member { font-size: 12.5px; }
   .qi-member.qi-member-id, .qi-member.qi-more { font-size: 11px; }
 }
+
+/* ============ embedded mode: the slim strip (U470; form 6 V1/V2, W2 = a) =====
+   Inside the hub's chat view the daemon's chrome is framed, and the shell
+   around it provides the project name, the node label and page title, the
+   Sessions panel, the theme toggle, the version banner and the ⋯ menu. One
+   block, no script: public/app/remote.js sets html.embedded once /api/health
+   says embedded (and the page is framed), and html.framed synchronously at boot
+   whenever the page is framed, so the full topbar never flashes before health
+   answers (dropped when it answers not embedded). The topbar keeps the slim
+   strip — ＋ ⚑, the toolbar, ↑ ↓, ↩ active, Graph — in its own order and looks;
+   the spacer gives way to Graph's own push, so Graph keeps the right edge. Below
+   760px the whole topbar goes (the bottom bar's narrow-only rule unchanged). */
+html.embedded #topbar > #cobrand,
+html.embedded #topbar > #node-label,
+html.embedded #topbar > #page-title,
+html.embedded #topbar > #cmd-trigger,
+html.embedded #topbar > #active-pill,
+html.embedded #topbar > #btn-theme-toggle,
+html.embedded #topbar > #btn-more,
+html.embedded #topbar > .tb-spacer,
+html.embedded #topbar > #cobrand + .tb-div,
+html.embedded #update-banner,
+html.embedded #sessions-panel,
+html.embedded #more-menu [data-act="sessions"],
+html.framed #topbar > #cobrand,
+html.framed #topbar > #node-label,
+html.framed #topbar > #page-title,
+html.framed #topbar > #cmd-trigger,
+html.framed #topbar > #active-pill,
+html.framed #topbar > #btn-theme-toggle,
+html.framed #topbar > #btn-more,
+html.framed #topbar > .tb-spacer,
+html.framed #topbar > #cobrand + .tb-div,
+html.framed #update-banner,
+html.framed #sessions-panel,
+html.framed #more-menu [data-act="sessions"] {
+  display: none !important;
+}
+html.embedded #topbar > #btn-graph,
+html.framed #topbar > #btn-graph { margin-left: auto; }
+@media (max-width: 759px) {
+  html.embedded #topbar,
+  html.framed #topbar { display: none !important; }
+}

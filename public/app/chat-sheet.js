@@ -66,6 +66,9 @@
 // open sheet; init and a flip to wide clear a stale entry with replaceState.
 // The chrome's only History API consumer — a second one is the moment to
 // extract a back-stack engine.
+// EMBEDDED (U470): inside the hub's chat view Back is the shell's (it sends
+// the bridge's chrome.escape), so the sheet pushes no entry while remote.js
+// shellHidden() says the chrome is embedded (or framed, health unanswered).
 //
 // PAGES. Each view (chat, tasks) keeps a stack: pushPage builds div.sh-page >
 // div.sh-phead (button.sh-back, .sh-ptitle, .sh-psub) + div.sh-pbody and calls
@@ -84,6 +87,7 @@
 // removed by stopChatSheet.
 import { bus } from './bus.js';
 import { isNarrow, isPhone } from './viewport.js';
+import { shellHidden } from './remote.js';
 import { registerChatView, approvals, composer } from './chat-slots.js';
 import { mirror, serverNow } from './chat-state.js';
 import { runningCount, ANNOUNCE_GAP_MS } from './chat-present.js';
@@ -214,7 +218,7 @@ function ensureHost() {
 function onOpened() {
   window.dispatchEvent(new CustomEvent('wc:close-popovers'));   // one panel at a time, as the dock does
   ensureHost();
-  if (isPhone()) pushEntry();
+  if (isPhone() && !shellHidden()) pushEntry();
 }
 
 // A phone's Back closes the sheet: one wcSheet entry above the page's own.

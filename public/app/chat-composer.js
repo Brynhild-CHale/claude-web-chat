@@ -71,6 +71,7 @@ import { mirror, followed, atLeast } from './chat-state.js';
 import { registerComposer, escapeChatViews } from './chat-slots.js';
 import { sendMessage, queueSnapshot } from './queue.js';
 import { getLocalJson, setLocalJson, removeLocal } from './storage.js';
+import { isEmbedded, onEmbedChange } from './remote.js';
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,9 @@ export const HINT_KEYS = '/ skills · @ files';
 export const SKILLS_FOOTER = 'A skill picked here asks Claude to run it.';
 export const HOST_NOTE = 'Messages are sent from the host, or with ';
 export const HOST_COMMAND = 'claude-web-chat tunnel mirror on';
+// Embedded in the hub's chat view (U470, form 6; 06 C-06.34a): the hub grants
+// the access, so the note names that grant and never a host command.
+export const HOST_NOTE_EMBEDDED = 'Messages are sent from the host, or once the hub grants this chat full access.';
 export const OFF_NOTE = 'Sending messages from this page is off — reply in the terminal.';
 
 // What a refusal says when the daemon's body carries no hint (§6.3's codes).
@@ -408,7 +412,9 @@ function decide() {
     return;
   }
   closeList();
-  if (next === 'host') {
+  if (next === 'host' && isEmbedded()) {
+    R.off.textContent = HOST_NOTE_EMBEDDED;
+  } else if (next === 'host') {
     const code = el('code', null, HOST_COMMAND);
     R.off.replaceChildren(document.createTextNode(HOST_NOTE), code);
   } else {
@@ -1015,7 +1021,9 @@ export function initChatComposer() {
   mode = null;
   decide();
   unregister = registerComposer(makeImpl());
-  offs = [bus.on('mirror', decide)];
+  offs = [bus.on('mirror', decide),
+    // The host note's wording follows the embedded flag, which health settles later.
+    onEmbedChange(() => { if (mode === 'host') { mode = null; decide(); } })];
   wired = import('./chat-stream.js').then((stream) => {
     if (my !== gen || !running) return false;
     pendingKey = null;
