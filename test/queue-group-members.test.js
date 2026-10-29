@@ -117,6 +117,29 @@ test('a reply that re-raises a queued member moves it to the end of the list wit
   assert.equal(g.count, 4);
 });
 
+test('an in-place edit of a listed member refreshes its words on the item and the update frame (refreshElement); a frame already served keeps its own', () => {
+  const state = freshState();
+  const bus = createBus();
+  const frames = [];
+  bus.subscribe((e) => { if (e.kind === 'queue') frames.push(e); });
+  raise(state, bus, pinEvent('c1', 'first'));
+  raise(state, bus, pinEvent('c2', 'second'));
+  const [g] = state.queue;
+  const served = frames[frames.length - 1].item.members;
+  raise(state, bus, { kind: 'comment', op: 'edit', pin: { id: 'c2', seq: 1, shared: true, text: 'EDITED second', anchor: { mount: 'm1' } } });
+  assert.equal(state.queue.length, 1, 'still one group');
+  assert.equal(g.summary, 'm1 · "EDITED second"');
+  assert.deepStrictEqual(g.members, [{ id: 'c1', words: 'first' }, { id: 'c2', words: 'EDITED second' }], 'the edited member\'s new words, never the retracted ones');
+  const last = frames[frames.length - 1];
+  assert.equal(last.op, 'update');
+  assert.equal(last.item.members[1].words, 'EDITED second', 'the update frame carries the new words');
+  assert.deepStrictEqual(served.map((m) => m.words), ['first', 'second'], 'a frame already served keeps its own (F7)');
+  // An older member edited in place: its line changes, the summary stays the newest's.
+  raise(state, bus, { kind: 'comment', op: 'edit', pin: { id: 'c1', seq: 1, shared: true, text: 'EDITED first', anchor: { mount: 'm1' } } });
+  assert.deepStrictEqual(g.members.map((m) => m.words), ['EDITED first', 'EDITED second']);
+  assert.equal(g.summary, 'm1 · "EDITED second"');
+});
+
 test('the wake and the envelope are byte-equal with and without members and more; the update frame carries them', () => {
   const state = freshState();
   const bus = createBus();
