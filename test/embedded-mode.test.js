@@ -20,7 +20,7 @@ const { before, after, beforeEach } = test;
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { bootShell, respond } = require('../test-support/chrome-shell');
+const { bootShell, respond, helloFrame } = require('../test-support/chrome-shell');
 const { createCascade } = require('../test-support/css-cascade');
 const { waitUntil } = require('../test-support/helpers');
 
@@ -34,6 +34,9 @@ const PHONE = { width: 390, height: 844 };
 let shell, W, $, css, remote, bridge, theme, hotkeys, version, sheet, sessions, shellMod;
 let health = () => ({ ok: true, remote: false });
 let versionBody = { ok: true, current: '0.9.0-test.1', updateAvailable: false };
+// The chat mirror's snapshot, for the composer's host note (null: no mirror).
+let mirrorSnap = null;
+let mirrorRev = 100;
 
 // The parent window the bridge posts to.
 function fakeParent() {
@@ -47,6 +50,7 @@ before(async () => {
       '/api/health': () => health(),
       '/api/version': () => versionBody,
       '/api/version?force=1': () => versionBody,
+      '/api/mirror': () => mirrorSnap || { status: 404, body: { error: 'none' } },
     },
   });
   W = shell.window;
@@ -249,7 +253,13 @@ test('the bridge posts ready, then status, to embed_parent only', async () => {
   await waitUntil(() => parent.posts.length > n, { timeout: 2000, what: 'a status after the mode moved' });
   assert.equal(parent.posts[parent.posts.length - 1].msg.mode, 'dark');
   theme.setMode('light');
+  await waitUntil(() => parent.posts[parent.posts.length - 1].msg.mode === 'light', { timeout: 2000, what: 'the status back to light' });
   await shell.tick(300);
+  const settledCount = parent.posts.length;
+  const { bus } = await shell.importApp('bus.js');
+  bus.emit('mode', { mode: theme.effectiveMode() });
+  await shell.tick(300);
+  assert.equal(parent.posts.length, settledCount, 'an unchanged status is not posted again');
 });
 
 test('the bridge ignores the wrong origin, a non-parent source and an untrusted event', async () => {
@@ -362,6 +372,27 @@ test('embedded, the version banner is hidden and checkVersion\'s reload-on-new-b
 
 test('the composer\'s host note names the hub\'s grant when embedded, never a host command', async () => {
   const composer = await shell.importApp('chat-composer.js');
+  const state = await shell.importApp('chat-state.js');
   assert.equal(composer.HOST_NOTE_EMBEDDED.includes('claude-web-chat'), false);
   assert.match(composer.HOST_NOTE_EMBEDDED, /hub/);
+  // Below full, remotely: the composer draws the host note. Embedded, it is the
+  // hub's wording with no <code> command; top-level again, the host command.
+  const T0 = Date.now();
+  mirrorSnap = { v: 1, enabled: true, now: T0, rev: ++mirrorRev, content: true, access: { level: 'read', remote: true },
+    capabilities: { queue_message: true }, primary: 'c1', aggregate: { state: 'idle' },
+    conversations: [{ id: 'c1', rev: 1, headless: false, counts: { shells: 0, agents: 0, workflows: 0, monitors: 0 },
+      live: { state: 'idle', since: T0, last_activity_at: T0 } }], tasks: [], asks: [] };
+  const slot = () => $('chat-composer-slot');
+  try {
+    await frameWith({ framed: true, answer: HEADER_FORM });
+    await shell.frame(helloFrame());
+    await waitUntil(() => state.mirror.rev >= mirrorRev, { timeout: 2000, what: 'the mirror snapshot' });
+    await waitUntil(() => slot() && slot().textContent === composer.HOST_NOTE_EMBEDDED, { timeout: 2000, what: 'the embedded host note' });
+    assert.equal(slot().querySelector('.cc-off code'), null, 'no host command');
+    await frameWith({ framed: false, answer: NEITHER });
+    await waitUntil(() => slot().textContent === composer.HOST_NOTE + composer.HOST_COMMAND, { timeout: 2000, what: 'the host note' });
+    assert.equal(slot().querySelector('.cc-off code').textContent, composer.HOST_COMMAND);
+  } finally {
+    mirrorSnap = null;
+  }
 });
