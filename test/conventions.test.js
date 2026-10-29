@@ -480,6 +480,12 @@ const PATTERNS = [
     re: /#\{1,\d\}/g,
     baseline: {
       'lib/core/markdown.js': 1,
+      // U403c (K.2-176/177, the brief's own pattern): the source anchor's
+      // heading-pin guard reads a RECORDED quote.prefix for a heading line's
+      // opener, so only a pin made on a heading takes the heading rule. It
+      // renders nothing and parses no document; the factory runs standalone in
+      // the browser and export, so it cannot reach markdown.js's parser.
+      'lib/core/anchors.js': 1,
     },
   },
   {
