@@ -175,3 +175,26 @@ test('the rule is only for a pin made on a heading: a prose pin whose section he
   assert.deepStrictEqual([got.state, got.how], ['re-resolved', 'heading']);
   assert.equal(nb.src.slice(got.start, got.end), 'Fresh** opening title');
 });
+
+test('the rule\'s two bounds a coincidence could slip past: the heading\'s text must start at pos.start, and the opener must open a line', () => {
+  // U403c review: the linear pass confirms no earlier index maps into the
+  // heading before pos.start. Here the heading's level changed ('## ' to '# '),
+  // so the old pos.start (3) lies inside the new heading but one character into
+  // its text: no answer, never 'nother lone heading'.
+  const rec = headingRecord('## Lone heading words', 'Lone heading words');
+  const b = block('# Another lone heading');
+  assert.ok(b.map.headings[0].start < rec.pos.start && rec.pos.start < b.map.headings[0].end, 'pos.start lies inside the new heading');
+  const ans = anchors.resolveSource(b.el, b.src, b.map, rec);
+  checkAnswer(ans);
+  assert.deepStrictEqual([ans.state, ans.how], ['orphaned', 'none']);
+  // A prose pin whose prefix ends with a '# ' mid-line ('C# ') is no heading
+  // pin, even where a new heading's text starts at its old pos.start.
+  const p = block('## Plan\n\nC# Ship it on Friday.');
+  const prose = wire(anchors.recordSource(p.el, selIn(p.el, 'Ship it'), p.map, p.src));
+  assert.deepStrictEqual([prose.slug, prose.pos.start, prose.quote.prefix], ['plan', 12, '## Plan\n\nC# ']);
+  const q = block('Hello w\n\n## Roadmap\n\nHold everything.');
+  assert.equal(q.src.indexOf('Roadmap'), prose.pos.start, 'a heading of the new source starts at the pin\'s old pos.start');
+  const got = anchors.resolveSource(q.el, q.src, q.map, prose);
+  checkAnswer(got);
+  assert.deepStrictEqual([got.state, got.how], ['orphaned', 'none']);
+});
