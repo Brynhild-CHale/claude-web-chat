@@ -1386,8 +1386,9 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       'GET /api/events': ['events[].pin'],
     },
     // A queue item's own text by kind (the annotation engine, finding 3): a
-    // comment item quotes its pin, and an item's excerpt (U422) its passage.
-    items: { comment: ['summary', 'excerpt'], element: ['summary', 'excerpt'] },
+    // comment item quotes its pin, and an item's excerpt (U422) its passage;
+    // a group's members (U424a, Y5 = b) are its members' first words.
+    items: { comment: ['summary', 'excerpt'], element: ['summary', 'excerpt', 'members'] },
     // A ring entry's own text by kind (J1, K1): the Push note a wake carries,
     // and the park GET /api/queue/pending serves.
     entries: { wake: ['note'] },
@@ -2300,4 +2301,33 @@ test('U441 C6: PROTO@none — PORTAL_PROTOCOL_VERSION is 12 and RULES and ANSWER
   assert.equal(PORTAL_PROTOCOL_VERSION, 12, STOP);
   assert.equal(digest(RULES), '431329a71300f4a5', STOP);
   assert.equal(digest(ANSWER_RULES), 'dfa80f57e66ac433', STOP);
+});
+
+test('U424a (Y5 = b): a comment group\'s members from the real producer are text — in TEXT_RULES.items.element, the label below read, the item itself at read and above; the envelope reads none of it', () => {
+  const { classify: classifyEvent, mergeElement } = require('../lib/channel/policy');
+  const { wakeEnvelope } = require('../lib/channel/envelope');
+  const MARK = 'wc-u424a-mark';
+  const decl = { wake: { coalesce: 'count', respond: true }, label: 'Comment' };
+  const raise = (id, n) => classifyEvent({ kind: 'comment', op: 'add', pin: { id, seq: n, shared: true, text: `${MARK}-${n}`, anchor: { mount: 'm1' } } },
+    { elementTypes: { comment: decl } }).item;
+  let group = mergeElement({ ...raise('c1', 1), element_ids: [], excerpt: undefined }, raise('c1', 1));
+  for (let n = 2; n <= 5; n++) group = mergeElement(group, raise(`c${n}`, n));
+  assert.equal(group.count, 5);
+  assert.equal(group.more, 2);
+  assert.ok(JSON.stringify(group.members).includes(`${MARK}-3`), 'the members carry an older member\'s words');
+  assert.ok(!group.summary.includes(`${MARK}-3`), '…which the summary does not');
+  assert.ok(TEXT_RULES.items.element.includes('members'), 'members is a text row of the element item');
+  const item = frozen(JSON.parse(JSON.stringify(group)));
+  for (const level of ['read', 'full', 'local']) assert.equal(stripItemText(item, level), item, `${level}: the item itself`);
+  for (const level of ['basic', 'nonsense', undefined]) {
+    const out = stripItemText(item, level);
+    assert.ok(!JSON.stringify(out).includes(MARK), `${String(level)}: no member's words: ${JSON.stringify(out)}`);
+    assert.equal(out.members, 'm1 · comment', 'the same text-free label as the summary');
+    assert.equal(out.more, 2, 'the count beyond the list is no text');
+    assert.equal(out.text_hidden, true);
+  }
+  const bare = { ...group };
+  delete bare.members;
+  delete bare.more;
+  assert.equal(JSON.stringify(wakeEnvelope([group], { note: 'n' })), JSON.stringify(wakeEnvelope([bare], { note: 'n' })), 'the envelope is byte-equal');
 });

@@ -395,6 +395,8 @@ test('the policy: a waking type\'s shared add raises one element item, an edit r
   assert.deepEqual(add, { action: 'enqueue', item: {
     kind: 'element', source: 'browser', type: 'sticker', element_id: 's1', v: 1,
     why_wake: 'Sticker sent to Claude', summary: 'Sticker · s1@1', origin_mount: 'm1',
+    // U424a (Y5 = b): a raise is a group of one, its member list its own words.
+    members: [{ id: 's1', words: '' }], more: 0,
   } });
   assert.deepEqual(classify(ev('edit', { v: 2 }), { elementTypes: wakes }).action, 'refresh');
   assert.deepEqual(classify(ev('delete'), { elementTypes: wakes }), { action: 'dequeue', element_id: 's1' });
