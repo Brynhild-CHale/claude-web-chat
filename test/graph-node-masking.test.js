@@ -88,3 +88,27 @@ test('a range pin committed into a node, the value learned after the commit: GET
     assert.ok(r.text.includes('the pin names '), `${who}: the preview still embeds the copy`);
   }
 });
+
+// The head check reads the whole window (prefix + exact + suffix), not the
+// prefix alone: a learned value that began before the window and runs on past
+// the prefix into exact has no tail inside the prefix, so only the window
+// shows it, and the whole prefix goes (lib/server/domain/elements.js
+// maskQuoteContext step 3). The node read and the preview serve each copy's
+// quote through this mask. Red with the head check handed the prefix alone.
+test('a learned value whose tail runs from a cut prefix on into exact: the prefix holds no fragment of it', () => {
+  const { createRedactor } = require('../lib/core/redact');
+  const { maskQuoteContext } = require('../lib/server/domain/elements');
+  const r = createRedactor();
+  const value = `wcspan${crypto.randomBytes(20).toString('hex')}`;
+  const LEARNED = [{ id: 'learned', rule: 'known', secrets: [value] }];
+  r.addKnown(value, 'token');
+  const redact = Object.assign((t) => r.text(t), { tailAt: (t) => r.knownTailAt(t) });
+  const text = `Use ${value} for access to the staging host now.`;
+  const start = text.indexOf(value) + 10;          // the prefix opens 10 characters into the value
+  const i = start + 32;                            // and exact opens inside it too
+  const quote = { exact: text.slice(i, i + 24), prefix: text.slice(start, i), suffix: text.slice(i + 24, i + 56) };
+  assert.ok(value.length - 10 > 32 && findLeaks(quote.prefix, LEARNED).length, 'precondition: the prefix is all value, and the value runs on into exact');
+  const served = maskQuoteContext(quote, redact);
+  assert.deepEqual(findLeaks(served.prefix, LEARNED), [], `the prefix holds no fragment: ${JSON.stringify(served.prefix)}`);
+  assert.equal(served.exact, r.text(quote.exact), 'exact is the redactor\'s own pass (a fragment inside it is out of scope, U415a)');
+});
