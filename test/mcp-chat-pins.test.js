@@ -242,6 +242,16 @@ test('get_comments and reply_comment on chat pins, over a real daemon', { timeou
     assertAnswered(again, 'after the reply');
   });
 
+  await t.test('a page comment written after the chat pins: the merge is in seq order, not the comments first', async () => {
+    const later = (await ok(w.api.post('/api/elements', commentBody({ text: 'a later page note', anchor: ANCHOR })), 'comment')).pin.id;
+    const out = await getComments.handler({});
+    const seqs = out.comments.map((e) => e.seq);
+    assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), 'seq order across both reads');
+    const at = (id) => out.comments.findIndex((e) => e.id === id);
+    assert.ok(at(later) > at(ids.card), 'the later comment sits after the chat pins written before it');
+    assert.ok(at(ids.comment) < at(ids.card), 'and the first comment before them');
+  });
+
   await t.test('an older daemon: a typed 400 \'unknown element type\' on the chat read → comments only; another refusal throws', async () => {
     tools.intercept = (method, p) => (/type=chat-comment/.test(p)
       ? new client.HttpError(400, { error: 'unknown element type', type: 'chat-comment', hint: 'x' }, method, p) : null);
