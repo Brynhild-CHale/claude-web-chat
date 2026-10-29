@@ -19,6 +19,24 @@
 //     inspector only: the phone's graph log draws none in 0.8.5 (notes-B Q18,
 //     ruling U80@marks-scope).
 //
+//   * the 'turns' overlay host (3C.1, L2: the third chat-pin host) — each
+//     turn row is stamped data-turn-id and ends in one empty slot
+//     (span.gi-turn-pins, a class); overlay.js registerHost('turns') places
+//     every chat-comment pin on a turn (on the turn itself or on any of its
+//     items, passages or diff lines) at its turn row's slot, so the overlay
+//     draws ONE marker per row with the count. The draw is chat-comment's own
+//     (chat-pins.js, at this host's glyph size): the glyph, the count and, on
+//     hover, the pins' explain lines. A tap (chat-pins.js onMarkerTap) closes
+//     the graph and opens the chat at the turn (bus chat:open {view: 'turn'}),
+//     or — when every pin of the row is unavailable (L5 d: no turn to open) —
+//     the pin list, each pin with its own quote and explain line. The host's
+//     root is the static #gv-inspector, its well #gi-turns (rebuilt per
+//     paint); the never-draw census keeps a badge off the inspector's preview
+//     iframe and the glance. No canvas marker: the ↶ marks are the canvas's
+//     only producer here (HOSTS@L2). The pins' states are the daemon's,
+//     relayed by chat-pins.js; this host requests nothing (O2: the inspector's
+//     own node read is its view of the conversations its turns name).
+//
 // Below the `read` mirror level nothing is drawn and nothing is requested, so
 // the inspector is 0.8.0's for a basic viewer (notes-B Q19). Any answer that is
 // not a turn list (403, 404, 503, a disabled body, the shell's {ok: true})
@@ -27,16 +45,26 @@
 // Timers (§10.1): no poller. A bus 'mirror' change to the stream, while the
 // graph is open, schedules ONE refresh of the marks 2 s later — a one-shot
 // setTimeout, never a chain; stopGraphTurns() clears it.
-import { onInspectorRender, setNodeMarker, isOverlayOpen, layoutAndRender } from './graph-view.js';
+import { onInspectorRender, setNodeMarker, isOverlayOpen, layoutAndRender, closeOverlay } from './graph-view.js';
 import { mirror, atLeast, normalizeTurn } from './chat-state.js';
 import { fmtShort } from './chat-present.js';
 import { nodeTime } from './labels.js';
 import { bus } from './bus.js';
+import { $ } from './state.js';
+import { registerHost } from './overlay.js';
+import { KINDS as CHAT_KINDS, onMarkerTap, openPinList, chatPinOf } from './chat-pins.js';
 
 // GET /api/mirror/nodes at most once per this long.
 export const REFRESH_GAP_MS = 2000;
 // How long after a stream change the marks are refreshed.
 export const REFRESH_DELAY_MS = 2000;
+
+// The turn list's overlay host (overlay.js HOST_NAMES; its layer
+// #el-layer-turns at the ladder's --z-turns-pins) and its badge: 18 × 16 px,
+// hung from the row slot's top-left corner (the slot is the same size).
+export const TURNS_HOST = 'turns';
+export const TURNS_GLYPH = Object.freeze({ dx: 0, dy: 0, w: 18, h: 16 });
+const UNAVAILABLE = 'unavailable';
 
 const ROLE_MARK = Object.freeze({ commit: '●', folded: '◦' });
 const ROLE_TITLE = Object.freeze({ commit: 'committed this node', folded: 'rode into this node (no surface change)' });
@@ -180,13 +208,18 @@ function turnText(t) {
   return preview || AUTHOR_LINE[t.author] || '(no prompt)';
 }
 
+// The row's chat-pin slot: empty, the 'turns' host's anchor (a class only).
+const pinSlot = () => el('span', 'gi-turn-pins');
+
 function turnRow({ t, role, unavailable }) {
   const li = el('li', 'gi-turn');
   li.dataset.role = role;
+  li.dataset.turnId = t.id;
   li.appendChild(el('span', 'gi-turn-role', ROLE_MARK[role])).title = ROLE_TITLE[role];
   if (unavailable) {
     li.classList.add('gi-turn-gone');
     li.appendChild(el('span', 'gi-turn-text', 'turn no longer in the chat history'));
+    li.appendChild(pinSlot());
     return li;
   }
   li.appendChild(el('span', 'gi-turn-text', turnText(t)));
@@ -205,10 +238,12 @@ function turnRow({ t, role, unavailable }) {
     line.appendChild(el('span', 'gi-turn-tag gi-turn-tag-rewound', 'rewound'));
   }
   li.appendChild(line);
+  li.appendChild(pinSlot());
   return li;
 }
 
 function section(id, turns) {
+  listed = new Map(turns.map(({ t }) => [t.id, t.conversation_id || null]));
   const sec = el('section', 'gi-turns');
   sec.id = 'gi-turns';
   sec.setAttribute('aria-label', 'Chat turns');
@@ -247,6 +282,7 @@ async function onInspector(ctx) {
   const sec = section(id, turns);
   sec.dataset.marks = String(marksRev);
   meta.after(sec);
+  markPins();
 }
 
 // The marks changed: the open node's section, painted from the older marks,
@@ -260,6 +296,98 @@ function rerunOpen() {
   onInspector(o).catch((e) => console.error('[web-chat] the chat turns section failed', e));
 }
 
+/* ── the 'turns' host: the chat pins on each turn row ──────────────────────── */
+
+let listed = new Map();       // turn id → conversation id, of the painted section's rows
+const placedAt = new Map();   // pin id → {turn_id, conversation_id}: the row place() put it on
+let pinsDirty = null;         // the host's settle trigger, while it is registered
+
+function markPins() { if (pinsDirty) pinsDirty(); }
+const str = (v) => (typeof v === 'string' && v ? v : null);
+
+// The row of a turn in the painted section, and its slot.
+function slotOf(sec, tid) {
+  for (const li of sec.querySelectorAll('li.gi-turn')) {
+    if (li.dataset.turnId !== tid) continue;
+    return li.querySelector(':scope > .gi-turn-pins');
+  }
+  return null;
+}
+// place(row): the slot of the turn row the pin's anchor names (its turn, or
+// the turn its item, passage or diff line is in) — so a turn's pins group on
+// its row — with the daemon's state; null (unplaced, not drawn) below `read`,
+// with the graph closed, with no section painted, or when the node lists no
+// such turn. DOM queries only.
+function placePin(row) {
+  const a = row && row.anchor;
+  const ans = row && row.answer;
+  if (!a || !ans || !str(ans.state) || !readable() || !isOverlayOpen()) { placedAt.delete(row && row.id); return null; }
+  const sec = $('gi-turns');
+  const tids = [str(a.turn_id), str(ans.turn_id_now)].filter(Boolean);
+  for (const tid of sec ? tids : []) {
+    const cid = listed.get(tid);
+    if (cid && str(a.conversation_id) && cid !== a.conversation_id) continue;
+    const slot = slotOf(sec, tid);
+    if (!slot) continue;
+    placedAt.set(row.id, { turn_id: tid, conversation_id: cid || str(a.conversation_id) });
+    return { state: ans.state, how: 'turn', el: slot };
+  }
+  placedAt.delete(row.id);
+  return null;
+}
+// A marker's tap: the chat at the turn (the graph closes first: the chat
+// opens under it), once per tap; a row whose pins are all unavailable has no
+// turn to open, so the pin list opens instead, raised over the graph to the
+// glance's rung (a panel raised from inside the overlay).
+function onTurnsTap(ids, { x, y } = {}) {
+  const pins = (Array.isArray(ids) ? ids : []).map((id) => [String(id), chatPinOf(id)]).filter(([, p]) => p);
+  if (!pins.length) return;
+  const stateOf = (p) => (p.row && p.row.answer ? p.row.answer.state : null);
+  const live = pins.find(([id, p]) => stateOf(p) !== UNAVAILABLE && placedAt.has(id));
+  if (!live) {
+    const pop = openPinList(pins.map(([id]) => id), x, y);
+    if (pop) pop.style.zIndex = 'var(--z-glance)';
+    return;
+  }
+  const at = placedAt.get(live[0]);
+  if (isOverlayOpen()) closeOverlay();
+  bus.emit('chat:open', { view: 'turn', id: at.turn_id, conversation_id: at.conversation_id });
+}
+// settle: a paint of the section (markPins), the graph's open and close (its
+// class), and the mirror's level crossing `read`.
+function settlePins(trigger) {
+  pinsDirty = trigger;
+  let was = readable();
+  const offMirror = bus.on('mirror', () => {
+    const now = readable();
+    if (now !== was) { was = now; trigger(); }
+  });
+  const ov = $('overlay');
+  let mo = null;
+  if (ov && typeof MutationObserver === 'function') {
+    mo = new MutationObserver(() => trigger());
+    mo.observe(ov, { attributes: true, attributeFilter: ['class'] });
+  }
+  return () => {
+    offMirror();
+    if (mo) mo.disconnect();
+    if (pinsDirty === trigger) pinsDirty = null;
+  };
+}
+function registerTurnsHost() {
+  const root = $('gv-inspector');
+  if (!root) return null;
+  try {
+    return registerHost(TURNS_HOST, {
+      root, well: () => $('gi-turns'), rung: '--z-turns-pins', kinds: [...CHAT_KINDS], glyph: TURNS_GLYPH,
+      place: placePin, hidden: () => null, settle: settlePins,
+    });
+  } catch (e) {
+    console.error('[web-chat] the turn list\'s chat-pin host failed to register', e);
+    return null;
+  }
+}
+
 /* ── lifecycle ────────────────────────────────────────────────────────────── */
 
 let offs = null;
@@ -269,13 +397,18 @@ export function initGraphTurns() {
     onInspectorRender(onInspector),
     setNodeMarker({ mark, refresh }),
     bus.on('mirror', onMirror),
+    onMarkerTap(TURNS_HOST, onTurnsTap),
   ];
+  const hostOff = registerTurnsHost();
+  if (hostOff) offs.push(hostOff);
 }
 
 export function stopGraphTurns() {
   clearTimer();
   summaries = new Map();
   open = null;
+  listed = new Map();
+  placedAt.clear();
   if (!offs) return;
   for (const off of offs) { try { off(); } catch { /* already gone */ } }
   offs = null;
