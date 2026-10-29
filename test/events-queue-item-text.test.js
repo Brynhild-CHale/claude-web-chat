@@ -126,7 +126,8 @@ function assertStripped(local, below, what) {
   for (const it of bi) {
     if (it.kind === 'comment' || it.kind === 'element') {
       assert.equal(it.text_hidden, true, `${what}: ${it.kind} ${it.id} text_hidden`);
-      assert.equal(it.summary, `${MOUNT} · ${it.kind}`, `${what}: ${it.kind} ${it.id} the text-free label`);
+      // K.2-163: an element item's label names its type (a comment group reads `· comment`).
+      assert.equal(it.summary, `${MOUNT} · ${it.kind === 'element' ? it.type : it.kind}`, `${what}: ${it.kind} ${it.id} the text-free label`);
     }
   }
   const lw = wakeEntries(local);

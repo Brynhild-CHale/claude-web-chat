@@ -468,7 +468,7 @@ test('a shared highlight\'s note never reaches a basic viewer: its element item 
   for (const it of shown) {
     assert.doesNotMatch(JSON.stringify(it), /see this/, 'no note text below read');
     assert.equal(it.text_hidden, true);
-    assert.equal(it.summary, 'm1 · element');
+    assert.equal(it.summary, 'm1 · highlight', 'K.2-163: the type names the label');
     assert.deepEqual([it.kind, it.type, it.element_id, it.v], ['element', 'highlight', h.id, 1], 'the item is still named');
   }
   const [atRead] = queueDomain.list(srv.state, { level: 'read' });
