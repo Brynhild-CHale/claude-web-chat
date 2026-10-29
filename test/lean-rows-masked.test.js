@@ -203,3 +203,19 @@ test('a copy the log cannot map is projected through the same read view; no stor
     assert.ok(!('state' in r));
   }
 });
+
+// The node read's lean rows are built from the MASKED node (graph.js
+// maskedNode), so a copy the log cannot map is served through the read view
+// over HTTP too: never the raw node's copy claimed as served.
+test('GET /api/graph/node/:id: a node copy the log cannot map is served masked in lean_elements', async (t) => {
+  const w = await world(t);
+  const node = w.srv.graph.nodes.get(w.nodeA);
+  const orphan = { id: 'c9999', v: 77, text: 'orphan', shared: true, anchor: w.tail, replies: [] };
+  node.comments = [...node.comments, orphan];
+  const r = await w.anonApi.get(`/api/graph/node/${w.nodeA}`);
+  assert.equal(r.status, 200, r.text);
+  const row = (r.json.lean_elements || []).find((e) => e.id === 'c9999');
+  assertMaskedRow(row, 'the unmapped node copy');
+  noLeaks(r.json.lean_elements, w.LEARNED, 'lean_elements');
+  noLeaks(r.text, w.LEARNED, 'the node read');
+});
