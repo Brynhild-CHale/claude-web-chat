@@ -968,3 +968,42 @@ test('speed: a 1 MiB mixed corpus, with no leak and no ordinary line changed', (
   const changed = text.split('\n').filter((line) => !carried.has(line) && redactText(line) !== line);
   assert.deepEqual(changed, [], 'code, logs, JSON and prose lines with no secret are unchanged');
 });
+
+// U415b (DECISIONS K.2-176, K.2-177): the head check, the tail check's mirror.
+// knownTailAt answers whether a known value's tail of 8 characters or more
+// opens a text — a window cut out of a longer text, the value begun before it
+// (domain/elements maskQuoteContext reads it at a quote prefix's outer edge) —
+// and how long it is. It masks nothing and names no value.
+test('createRedactor knownTailAt: a known value\'s 8+ character tail at a text\'s start, not a non-tail, not a 7-character tail', () => {
+  const r = createRedactor();
+  const value = 'wcctxA1b2C3d4E5f6G7h8';
+  assert.equal(r.knownTailAt(`${value.slice(5)} for access`), 0, 'nothing known yet: 0');
+  r.addKnown(value, 'token');
+  assert.equal(r.knownTailAt(`${value.slice(5)} for access`), value.length - 5, 'a tail at the start: its length');
+  assert.equal(r.knownTailAt(`${value.slice(-8)} for access`), 8, 'an 8-character tail is the shortest it finds');
+  assert.equal(r.knownTailAt(`${value.slice(-7)} for access`), 0, 'a 7-character tail is not one');
+  assert.equal(r.knownTailAt(`${value.slice(5).toUpperCase()} x`), value.length - 5, 'in any case, as the masks are');
+  assert.equal(r.knownTailAt(`${value} for access`), value.length, 'the whole value is its own tail');
+  assert.equal(r.knownTailAt(`${value.slice(0, 12)} for access`), 0, 'the value\'s head is not a tail');
+  assert.equal(r.knownTailAt(`${value.slice(3, 15)} for access`), 0, 'nor is its middle');
+  assert.equal(r.knownTailAt(`and ${value.slice(5)}`), 0, 'a tail only at the very start');
+  assert.equal(r.knownTailAt('information about the staging host'), 0, 'an ordinary long first word is not one');
+  assert.equal(r.knownTailAt(value.slice(-9)), 9, 'a text that is the tail alone');
+  assert.equal(r.knownTailAt(value.slice(5, -1)), 0, 'a tail the text does not hold whole is not one');
+  for (const v of [null, undefined, 42, '', 'short']) assert.equal(r.knownTailAt(v), 0);
+  // The longest tail wins over every value, and a call's own known values join.
+  r.addKnown('zzzzzzzz-for-access-now', 'other');
+  assert.equal(r.knownTailAt('for-access-now please'), 14);
+  assert.equal(r.knownTailAt('Q9w8E7r6T5y4 next', { known: [['prefixQ9w8E7r6T5y4', 'call']] }), 12, 'a call\'s own value');
+  assert.equal(JSON.stringify(r), '{}', 'still nothing serialised');
+});
+
+test('createRedactor knownTailAt: a source\'s value is consulted, and one it stops answering is no longer found', () => {
+  let token = 'srcTOKENabcdefgh1234';
+  const r = createRedactor();
+  r.addKnownSource(() => token, 'capture', { maxAgeMs: 0 });
+  assert.equal(r.knownTailAt(`${token.slice(4)} rest`), token.length - 4);
+  const old = token;
+  token = null;
+  assert.equal(r.knownTailAt(`${old.slice(4)} rest`), 0);
+});
