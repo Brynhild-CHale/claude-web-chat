@@ -7,6 +7,8 @@
 //
 //   route(ev, s)          → 'tool' | 'page' | 'ignore'   THE table (pure)
 //   isInteractive(el)     → boolean                       the finger's control test (K.2-9)
+//                                                         (a [tabindex="-1"] focus sink inside a
+//                                                         non-page host's root is no control, K.2-181)
 //   isFocusSink(el)       → boolean                       a focused element that is no control: #stage
 //                                                         (the page's focusable scroll container) or a
 //                                                         [tabindex="-1"] focus target that is no control
@@ -103,9 +105,10 @@ function selfInteractive(el, { tabindex = true } = {}) {
   return INTERACTIVE_ROLES.includes(role);
 }
 // The page well's own element, or another overlay host's root (overlay.js
-// isHostRoot: the chat's, whose #chat-stream carries a tabindex): the walk
-// stops there, so the chrome around it (#stage carries a tabindex) never makes
-// the host's content interactive.
+// isHostRoot: the chat's #chat-views): the walk stops there, so the chrome
+// around it (#stage carries a tabindex) never makes the host's content
+// interactive. A focus sink below a host's root (#chat-stream's tabindex -1)
+// is hostSink's, below (K.2-181).
 function isWell(el) {
   return (el.id === 'main' && el.getRootNode && el.getRootNode() === el.ownerDocument) || isHostRoot(el);
 }
@@ -122,13 +125,25 @@ export function isFocusSink(el) {
   if (selfInteractive(el, { tabindex: false })) return false;
   return !(el.hasAttribute('contenteditable') && EDITABLE.has(String(el.getAttribute('contenteditable')).toLowerCase()));
 }
+// A focus sink inside another overlay host's root (the chat's #chat-stream:
+// tabindex -1 for focus, role log) is that host's scroll box, never a
+// control: a finger's tap on the static text it holds is the tool's, as on
+// the page (K.2-9; U434a, K.2-181). The page well's own content is unchanged.
+function hostSink(el) {
+  if (!isFocusSink(el)) return false;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (p.id === 'main' && p.getRootNode() === p.ownerDocument) return false;
+    if (isHostRoot(p)) return true;
+  }
+  return false;
+}
 // isInteractive(el): el, or an ancestor up to the page well (across a pane's
 // shadow boundary), is interactive content.
 export function isInteractive(el) {
   let editableBlocked = false;
   for (let n = el; n && n.nodeType === 1; ) {
     if (isWell(n) || n.localName === 'body' || n.localName === 'html') return false;
-    if (selfInteractive(n)) return true;
+    if (selfInteractive(n) && !hostSink(n)) return true;
     if (!editableBlocked && n.hasAttribute('contenteditable')) {
       const v = String(n.getAttribute('contenteditable')).toLowerCase();
       if (EDITABLE.has(v)) return true;
