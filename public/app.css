@@ -3490,3 +3490,33 @@ textarea.rail-add { height: auto; min-height: 30px; max-height: 120px; resize: n
 @media (max-width: 759px) {
   textarea.rail-add { min-height: 44px; padding: 12px; }
 }
+
+/* ===================== the chat layer's pins (U432, 3C.1) ===================
+   public/app/chat-pins.js draws the chat-comment pins into the 'chat' host's
+   layer (#el-layer-chat): the comment's map pin and count (.pin-marker,
+   .pin-count) in the overlay's marker, hung from its anchor's top-left corner.
+   Each L4 state is the overlay's class on the marker: superseded and
+   unavailable muted, masked dashed, indexing dotted — STAND-INS until the dock's
+   and the sheet's looks are designed (no redesign). The reveal flashes a
+   marker once (none under prefers-reduced-motion). The pin list
+   (openPinList) is the chooser's popover; each row adds its explain line. */
+#el-layer-chat .el-marker.pin-marker { filter: none; }
+#el-layer-chat .el-marker.pin-marker svg { filter: drop-shadow(0 1px 1px rgba(0,0,0,.45)); }
+#el-layer-chat .el-marker.pin-marker .pin-count { right: 0; }
+#el-layer-chat .el-marker.el-superseded,
+#el-layer-chat .el-marker.el-unavailable { color: var(--wc-muted); opacity: .6; }
+#el-layer-chat .el-marker.el-masked { border: 1.5px dashed currentColor; border-radius: var(--wc-radius-sm); }
+#el-layer-chat .el-marker.el-indexing { border: 1.5px dotted currentColor; border-radius: var(--wc-radius-sm); opacity: .8; }
+#el-layer-chat .el-marker.el-flash { animation: chat-pin-flash .9s ease-out 1; }
+@keyframes chat-pin-flash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--wc-accent) 70%, transparent); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #el-layer-chat .el-marker.el-flash { animation: none; }
+}
+.chat-pin-list .pin-thread-row { align-items: flex-start; }
+.chat-pin-list .ptr-dot { margin-top: 4px; }
+.chat-pin-list .ptr-text { white-space: normal; }
+.chat-pin-list .ptr-quote { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wc-fg); }
+.chat-pin-list .ptr-explain { display: block; font: 11px var(--wc-font); color: var(--wc-muted); }
