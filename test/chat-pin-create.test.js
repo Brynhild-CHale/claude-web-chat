@@ -530,15 +530,11 @@ test('the sheet at 390×844 (half): a pen\'s press on reply text creates; a fing
   }
 });
 
-// OPEN (U434's hand-off, outside its cell): input-mode.js isInteractive walks
-// from the press up to the host's root, #chat-views, and #chat-stream on the
-// way carries tabindex -1 (chat-panel.js, for focus) — so every finger tap in
-// the stream reads as a control's and goes to the page. The ready patch
-// (input-mode.js hostSink: a focus sink inside another host's root is never a
-// control) turns this green; until it lands, the case is a todo.
-test('the sheet: a finger tap on reply text creates (input-mode.js: #chat-stream\'s tabindex makes the stream a control)', {
-  todo: 'U434 open issue: input-mode.js isInteractive reads #chat-stream[tabindex=-1] as a control (ready patch in the hand-off)',
-}, async () => {
+// U434a (K.2-181): input-mode.js isInteractive walks from the press up to the
+// host's root, #chat-views, and #chat-stream on the way carries tabindex -1
+// (chat-panel.js, for focus); hostSink reads a focus sink inside a host's
+// root as no control, so a finger tap on the stream's text is the tool's.
+test('the sheet: a finger tap on reply text creates (input-mode.js: #chat-stream\'s tabindex is a focus sink, no control)', async () => {
   await intoSheet();
   try {
     arm();
