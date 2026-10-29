@@ -83,6 +83,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   types — comment, highlight and box grab — are a pack, `web-chat-builtins`,
   installed at every boot from web-chat's own tree: `pack list` shows it as
   built in, and `pack remove web-chat-builtins` is refused.
+- **Claude now receives the words of the passages you pin.** On the page and
+  in the chat, a pinned passage's words ride the delivery quoted as data, in
+  a block of their own, on every project unless you run
+  `claude-web-chat excerpts off` there.
 - **The element API refuses two shapes the comment routes let through.** An
   element whose anchor names no pane or markdown item answers 400 with a hint
   (a page note's anchor is null), and a write to a live pin the element log
