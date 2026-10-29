@@ -110,7 +110,9 @@ const RE_RESOLVED = stateOf('re-resolved');
 const ORPHANED = stateOf('orphaned');
 const HIDDEN = stateOf('hidden');
 // L4's drawn states (RULED REQ@visible-states): a host's answers carry them
-// (the daemon's, U414 / U416); the page resolver never answers one.
+// (the daemon's, U414 / U416); the page resolver never answers one. A page
+// row reads MASKED only when the daemon served its record masked
+// (servedAnswerOf, U415d).
 const MASKED = stateOf('masked');
 const SUPERSEDED = stateOf('superseded');
 const INDEXING = stateOf('indexing');
@@ -293,6 +295,20 @@ function normRow(r) {
   if (r.answer && typeof r.answer === 'object') row.answer = copyAnswer(r.answer);
   return row;
 }
+// A page record the daemon served masked (U415c: a learned value's fragment
+// inside its own words, so its quote holds a mark the pane's raw DOM never
+// does) carries the served answer {state, visible, explain} on its row: that
+// state beats the page resolver's own for the record (X3, Y3 = a). Null for
+// any other record. comments.js and highlight.js pass it as the row's answer.
+export function servedAnswerOf(rec) {
+  if (!rec || typeof rec !== 'object' || rec.state !== MASKED) return null;
+  return {
+    state: MASKED,
+    visible: typeof rec.visible === 'string' ? rec.visible : null,
+    explain: typeof rec.explain === 'string' ? rec.explain : null,
+  };
+}
+const servedMasked = (row) => !!(row && row.answer && row.answer.state === MASKED);
 function copyAnswer(a) {
   const out = { ...a };
   for (const k of Object.keys(out)) {
@@ -549,10 +565,14 @@ function probed(row, raw, mount, scope) {
     return null;
   }
 }
+// A page row served masked (servedAnswerOf) reads masked whatever the
+// resolver answered — a hidden one stays hidden — and is drawn with the MASKED
+// row at what the resolver found (buildGroups), never listed as an orphan.
 function entryOf(row, raw, mount, scope, gen) {
   const hidden = probed(row, raw, mount, scope);
-  const state = hidden ? HIDDEN : raw.state;
-  return { row, raw, state, hidden, rule: drawRuleOf({ ...raw, state }), mount, scope, gen };
+  const masked = !hidden && servedMasked(row);
+  const state = hidden ? HIDDEN : masked ? MASKED : raw.state;
+  return { row, raw, state, hidden, masked, rule: drawRuleOf({ ...raw, state }), mount, scope, gen };
 }
 // A pass delivered (the resolver's, a set change's or the sources'): the
 // answers are STORED, the probe applied, the listeners told, and a draw frame
@@ -757,7 +777,10 @@ function buildGroups(h) {
     if (kind === 'guess') el = raw.guess;
     else if (raw.range) range = raw.range;
     else if (raw.el) el = raw.el;
-    else if (h.page && kind === 'section' && e.mount != null && M && typeof M.itemEl === 'function') {
+    // A row served masked: at the element the resolver's own pass found (its
+    // range or element above, else its carried guess), else at its item's box.
+    else if (e.masked && raw.guess) el = raw.guess;
+    else if (h.page && (kind === 'section' || e.masked) && e.mount != null && M && typeof M.itemEl === 'function') {
       const it = M.itemEl(document, e.mount);
       el = it ? it.el : null;
     }
